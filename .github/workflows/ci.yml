@@ -28,6 +28,7 @@ env:
 
 jobs:
   build:
+    timeout-minutes: 60
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -48,10 +49,12 @@ jobs:
           submodules: recursive # Git LFS stays off: the build needs no binary assets yet
 
       - name: Install packages (Linux)
+        timeout-minutes: 15
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES
 
       - name: Install packages (macOS)
+        timeout-minutes: 15
         if: runner.os == 'macOS'
         run: brew install ninja ccache
 
@@ -83,6 +86,7 @@ jobs:
           retention-days: 14
 
   sanitizers:
+    timeout-minutes: 60
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     strategy:
@@ -101,6 +105,7 @@ jobs:
           submodules: recursive
 
       - name: Install packages
+        timeout-minutes: 15
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES
 
       - name: Allow sanitizer memory layout
@@ -123,6 +128,7 @@ jobs:
         run: ctest --preset linux-clang
 
   clang-tidy:
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -130,6 +136,7 @@ jobs:
           submodules: recursive
 
       - name: Install packages
+        timeout-minutes: 15
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES clang-tidy
 
       - name: Compiler cache
