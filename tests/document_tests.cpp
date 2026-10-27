@@ -157,7 +157,7 @@ TEST_CASE("every change is announced to every client", "[unit]")
 			if (event->name == "track.changed")
 				CHECK(event->data.at("track").at("name") == "Drums");
 		}
-	CHECK(names == std::vector<std::string>{"track.added", "track.changed"});
+	CHECK(names == std::vector<std::string>{"track.added", "history.changed", "track.changed", "history.changed"});
 }
 
 TEST_CASE("a folder's group channel sums the tracks added to it", "[unit]")

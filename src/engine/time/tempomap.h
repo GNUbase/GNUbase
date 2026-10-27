@@ -43,6 +43,9 @@ namespace gnubase::time
 		Ticks toTicks(Samples sample, double sampleRate) const;
 		double bpmAt(Ticks tick) const;
 
+		bool operator==(const TempoMap& other) const;
+		bool operator!=(const TempoMap& other) const { return !(*this == other); }
+
 	private:
 		// The tempo from one point to the next. Before the first point, the first tempo holds.
 		struct Segment
@@ -69,6 +72,16 @@ namespace gnubase::time
 		TimeBase base = TimeBase::Musical;
 		int64_t value = 0;
 	};
+
+	inline bool operator==(const Position& a, const Position& b)
+	{
+		return a.base == b.base && a.value == b.value;
+	}
+
+	inline bool operator!=(const Position& a, const Position& b)
+	{
+		return !(a == b);
+	}
 
 	inline Samples toSamples(const Position& position, const TempoMap& tempo, double sampleRate)
 	{
