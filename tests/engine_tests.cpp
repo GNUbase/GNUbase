@@ -147,8 +147,13 @@ TEST_CASE("every command describes itself", "[unit]")
 
 	std::vector<std::string> names;
 	for (const CommandInfo& info : engine.commands())
+	{
 		names.push_back(info.name);
-	CHECK(names == std::vector<std::string>{"engine.commands", "engine.version", "test.setValue"});
+		CHECK_FALSE(info.description.empty());
+	}
+	CHECK(std::is_sorted(names.begin(), names.end()));
+	for (const char* name : {"engine.commands", "engine.version", "test.setValue"})
+		CHECK(std::find(names.begin(), names.end(), name) != names.end());
 	CHECK_THROWS_AS(registerSetValue(engine, stored), std::logic_error); // names are unique
 }
 

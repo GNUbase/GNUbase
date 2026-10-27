@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/schema.h"
+#include "platform/rt/snapshotpublisher.h"
 
 #include <chrono>
 #include <condition_variable>
@@ -20,6 +21,9 @@
 
 namespace gnubase::engine
 {
+	class ProjectModel;
+	struct RenderSnapshot;
+
 	using RequestId = uint64_t;
 
 	// GNUbase version, e.g. "0.1.0".
@@ -110,6 +114,10 @@ namespace gnubase::engine
 		// Every registered command, sorted by name. The engine.commands query returns the same as JSON.
 		std::vector<CommandInfo> commands() const;
 
+		// The project's render snapshots, published after every command that changes the project. The audio thread
+		// is their only reader.
+		rt::SnapshotPublisher<RenderSnapshot>& renderSnapshots();
+
 	private:
 		friend class Client;
 
@@ -137,6 +145,7 @@ namespace gnubase::engine
 		RequestId m_nextRequest = 1;
 		bool m_stopping = false;
 		std::condition_variable m_wake;
+		std::unique_ptr<ProjectModel> m_project; // only the command thread touches the document
 		std::thread m_thread;
 	};
 

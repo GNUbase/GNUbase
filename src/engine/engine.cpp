@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/engine.h"
 
+#include "engine/document/projectmodel.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 
@@ -79,6 +80,8 @@ namespace gnubase::engine
 					list.push_back(toJson(info));
 				return Json{{"commands", list}};
 			});
+		m_project = std::make_unique<ProjectModel>();
+		m_project->registerCommands(*this);
 		m_thread = std::thread([this] { run(); });
 	}
 
@@ -101,6 +104,11 @@ namespace gnubase::engine
 		auto command = std::make_shared<const Command>(Command{std::move(info), std::move(handler)});
 		if (!m_commands.emplace(name, std::move(command)).second)
 			throw std::logic_error("command " + name + " is already registered");
+	}
+
+	rt::SnapshotPublisher<RenderSnapshot>& Engine::renderSnapshots()
+	{
+		return m_project->snapshots();
 	}
 
 	std::vector<CommandInfo> Engine::commands() const
