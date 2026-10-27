@@ -26,7 +26,7 @@ TEST_CASE("TempDir creates a folder and deletes it with its contents", "[unit]")
 {
 	std::filesystem::path path;
 	{
-		TempDir dir;
+		const TempDir dir;
 		path = dir.path();
 		REQUIRE(std::filesystem::is_directory(path));
 		std::ofstream(path / "file.txt") << "content";
@@ -80,7 +80,7 @@ TEST_CASE("compareAudio treats NaN as a mismatch", "[unit]")
 
 TEST_CASE("WAV files round-trip float samples exactly", "[unit]")
 {
-	TempDir dir;
+	const TempDir dir;
 	const Audio audio = ramp(2, 1000);
 	writeWav(dir.path() / "ramp.wav", audio);
 
@@ -92,7 +92,8 @@ TEST_CASE("WAV files round-trip float samples exactly", "[unit]")
 
 TEST_CASE("compareWithGolden fails for a missing golden file and saves the actual audio", "[unit]")
 {
-	TempDir golden, output;
+	const TempDir golden;
+	const TempDir output;
 	const AudioDiff diff = compareWithGolden(golden.path(), output.path(), "ramp", ramp(1, 10), 0.0f);
 	CHECK_FALSE(diff.equal);
 	CHECK(readWav(output.path() / "ramp.actual.wav").samples == ramp(1, 10).samples);
@@ -100,14 +101,16 @@ TEST_CASE("compareWithGolden fails for a missing golden file and saves the actua
 
 TEST_CASE("compareWithGolden passes when the audio matches the golden file", "[unit]")
 {
-	TempDir golden, output;
+	const TempDir golden;
+	const TempDir output;
 	writeWav(golden.path() / "ramp.wav", ramp(2, 100));
 	CHECK(compareWithGolden(golden.path(), output.path(), "ramp", ramp(2, 100), 0.0f).equal);
 }
 
 TEST_CASE("compareWithGolden saves the actual audio and the difference on a mismatch", "[unit]")
 {
-	TempDir golden, output;
+	const TempDir golden;
+	const TempDir output;
 	const Audio expected = ramp(2, 100);
 	writeWav(golden.path() / "ramp.wav", expected);
 	Audio actual = expected;
@@ -123,7 +126,8 @@ TEST_CASE("compareWithGolden saves the actual audio and the difference on a mism
 
 TEST_CASE("compareWithGolden writes the golden file in update mode", "[unit]")
 {
-	TempDir golden, output;
+	const TempDir golden;
+	const TempDir output;
 	CHECK(compareWithGolden(golden.path(), output.path(), "ramp", ramp(1, 10), 0.0f, true).equal);
 	CHECK(readWav(golden.path() / "ramp.wav").samples == ramp(1, 10).samples);
 }

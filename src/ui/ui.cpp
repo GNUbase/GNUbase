@@ -9,7 +9,7 @@ namespace gnubase::ui
 	std::string libraryVersions()
 	{
 		const int sdl = SDL_GetVersion();
-		return "SDL " + std::to_string(SDL_VERSIONNUM_MAJOR(sdl)) + "." + std::to_string(SDL_VERSIONNUM_MINOR(sdl)) + "." +
-			std::to_string(SDL_VERSIONNUM_MICRO(sdl)) + ", RmlUi " + Rml::GetVersion();
+		return "SDL " + std::to_string(SDL_VERSIONNUM_MAJOR(sdl)) + "." + std::to_string(SDL_VERSIONNUM_MINOR(sdl)) +
+			"." + std::to_string(SDL_VERSIONNUM_MICRO(sdl)) + ", RmlUi " + Rml::GetVersion();
 	}
 }

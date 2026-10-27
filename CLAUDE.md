@@ -38,7 +38,10 @@ Open-source (GPLv3) digital audio workstation for Windows, macOS and Linux. GNUb
 
 ## Code conventions
 - Every source file starts with the SPDX header `SPDX-License-Identifier: GPL-3.0-or-later`.
-- `.clang-format` and `.clang-tidy` are authoritative once they exist. Until then: types `PascalCase`, functions and variables `camelCase`, member variables `m_camelCase`, `#pragma once`, RAII, no raw `new`/`delete`, no `using namespace` in headers.
+- Formatting: clang-format 22 with `.clang-format` (tabs, braces on their own line, 120 columns). Run `tools/format.sh` before committing; CI fails on unformatted code. Visual Studio 2026 ships clang-format and clang-tidy 22 in `VC/Tools/Llvm/x64/bin`.
+- clang-tidy (`.clang-tidy`) runs in CI with warnings as errors. A finding is fixed, not silenced; `NOLINT` only with the check name and a reason.
+- Naming, enforced by clang-tidy: types `PascalCase`, functions and variables `camelCase`, private and protected members `m_camelCase`, globals and namespace-level constants `g_camelCase`, macros `UPPER_CASE`.
+- `#pragma once`, RAII, no raw `new`/`delete`, no `using namespace` in headers.
 - Small, focused commits with tests green.
 
 ## Repository layout (target)
