@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
+#include "platform/rt/snapshotpublisher.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -116,4 +117,20 @@ TEST_CASE("logging from real-time code passes the RT checker", "[unit]")
 	gnubase::logging::flush();
 	CHECK_THAT(gnubase::test::readText(dir.path() / "test.log"),
 		Catch::Matchers::ContainsSubstring("block 42 took 0.75 ms in Delay (true)"));
+}
+
+TEST_CASE("SnapshotPublisher readers never allocate or free", "[unit]")
+{
+	SnapshotPublisher<std::vector<int>> publisher(std::make_unique<std::vector<int>>(64, 1));
+	const RecordViolations record;
+	publisher.publish(std::make_unique<std::vector<int>>(64, 2));
+	int seen = 0;
+	{
+		const ScopedRealtimeContext realtime;
+		seen = publisher.acquire().back();
+		publisher.release();
+	}
+	publisher.publish(std::make_unique<std::vector<int>>(64, 3)); // frees the others outside real-time code
+	CHECK(seen == 2);
+	CHECK(g_violations == 0);
 }

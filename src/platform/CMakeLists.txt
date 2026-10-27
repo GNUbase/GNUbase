@@ -8,6 +8,7 @@ add_library(gnubase-platform STATIC
 	rt/mpmcqueue.h
 	rt/realtime.cpp rt/realtime.h
 	rt/rtutil.h
+	rt/snapshotpublisher.h
 	rt/spscqueue.h
 	rt/triplebuffer.h)
 target_include_directories(gnubase-platform PUBLIC ${PROJECT_SOURCE_DIR}/src)
