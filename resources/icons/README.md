@@ -1,0 +1,60 @@
+# GNUbase UI icons
+
+Style: 24 × 24 viewBox, 2 px rounded outline strokes, 2 px padding, simple geometry, and solid shapes only when they improve small-size legibility. All artwork is monochrome and inherits `currentColor`.
+
+- `transport-play.svg` — Start playback.
+- `transport-pause.svg` — Pause playback.
+- `transport-stop.svg` — Stop playback.
+- `transport-record.svg` — Start recording.
+- `transport-loop.svg` — Toggle loop playback.
+- `transport-to-start.svg` — Move playhead to the start.
+- `transport-to-end.svg` — Move playhead to the end.
+- `transport-rewind.svg` — Rewind.
+- `transport-forward.svg` — Fast forward.
+- `transport-punch-in.svg` — Punch into recording at the left boundary.
+- `transport-punch-out.svg` — Punch out of recording at the right boundary.
+- `transport-metronome.svg` — Toggle the metronome.
+- `tool-pointer.svg` — Select and move objects.
+- `tool-range.svg` — Select a time range.
+- `tool-split.svg` — Split events with scissors.
+- `tool-glue.svg` — Join adjacent events.
+- `tool-erase.svg` — Erase events.
+- `tool-zoom.svg` — Zoom the arrangement view.
+- `tool-mute.svg` — Mute the selected event.
+- `tool-draw.svg` — Draw events with a pencil.
+- `tool-line.svg` — Draw lines and automation curves.
+- `tool-audition.svg` — Audition the item under the pointer.
+- `track-mute.svg` — Mute the track.
+- `track-solo.svg` — Solo the track.
+- `track-record-arm.svg` — Arm the track for recording.
+- `track-monitor.svg` — Monitor the track input.
+- `track-read-automation.svg` — Read track automation (`R`).
+- `track-write-automation.svg` — Write track automation (`W`).
+- `track-lanes.svg` — Show stacked take lanes.
+- `track-audio.svg` — Audio track.
+- `track-instrument.svg` — Instrument track.
+- `track-midi.svg` — MIDI track (5-pin DIN connector).
+- `track-folder.svg` — Folder track.
+- `track-group.svg` — Group tracks into one bus.
+- `track-effect.svg` — Effect track (`fx`).
+- `track-marker.svg` — Marker track.
+- `layout-left-zone.svg` — Show or hide the left zone.
+- `layout-lower-zone.svg` — Show or hide the lower zone.
+- `layout-right-zone.svg` — Show or hide the right zone.
+- `layout-mixer.svg` — Open the mixer layout.
+- `layout-editor.svg` — Open the piano roll editor.
+- `layout-detach.svg` — Detach the panel into its own window.
+- `general-add.svg` — Add a new item.
+- `general-remove.svg` — Remove the selected item.
+- `general-close.svg` — Close the current item or window.
+- `general-settings.svg` — Open settings.
+- `general-search.svg` — Search.
+- `general-menu.svg` — Open the menu.
+- `general-more.svg` — Show more actions.
+- `general-undo.svg` — Undo the last action.
+- `general-redo.svg` — Redo the last undone action.
+- `general-save.svg` — Save the project.
+- `general-open.svg` — Open a project or file.
+- `general-snap.svg` — Toggle snapping to the grid.
+- `general-lock.svg` — Lock the selected item.
+- `general-link.svg` — Link selected items.
