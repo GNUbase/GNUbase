@@ -7,8 +7,8 @@ target_compile_definitions(gnubase-testutils PRIVATE
 	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 gnubase_target_defaults(gnubase-testutils)
 
-add_executable(gnubase-tests engine_tests.cpp testutils_tests.cpp)
-target_link_libraries(gnubase-tests PRIVATE gnubase-engine gnubase-testutils Catch2::Catch2WithMain)
+add_executable(gnubase-tests engine_tests.cpp rt_tests.cpp rtcheck_tests.cpp testutils_tests.cpp)
+target_link_libraries(gnubase-tests PRIVATE gnubase-engine gnubase-rtcheck gnubase-testutils Catch2::Catch2WithMain)
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}")
 gnubase_target_defaults(gnubase-tests)
 
