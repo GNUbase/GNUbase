@@ -44,11 +44,12 @@ namespace
 			});
 	}
 
-	template <typename T> T expect(std::optional<Message> message)
+	// The message as a T; fails the test if there is none or it is something else.
+	template <typename T> T expect(const std::optional<Message>& message)
 	{
-		REQUIRE(message.has_value());
-		REQUIRE(std::holds_alternative<T>(*message));
-		return std::get<T>(*message);
+		const T* value = message ? std::get_if<T>(&*message) : nullptr;
+		REQUIRE(value != nullptr);
+		return value != nullptr ? *value : T{};
 	}
 }
 
