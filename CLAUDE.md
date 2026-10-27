@@ -25,6 +25,7 @@ Open-source (GPLv3) digital audio workstation for Windows, macOS and Linux. GNUb
 - Audio: ASIO and WASAPI (Windows), CoreAudio (macOS), PipeWire and JACK (Linux), plus a dummy device for tests and headless runs.
 - Plugin bridges over the same IPC: 32-bit plugins (Windows, Linux), x86-64 plugins on Apple Silicon (Rosetta) and on Windows ARM64 (emulation).
 - Third-party code: pinned git submodules in `ext/`, GPLv3-compatible licenses only, each listed in `docs/third-party.md`.
+- Binary files (images, fonts, audio, video, executables, libraries, archives) are stored in Git LFS. Add a new binary type to `.gitattributes` before committing the first file of that type. Text formats such as SVG, RML, RCSS and Lua stay in plain git.
 
 ## Test-driven development
 - Write the failing test first, then the code. No feature is done without tests.
