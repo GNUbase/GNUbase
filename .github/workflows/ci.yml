@@ -160,6 +160,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Check license headers
+        run: sh tools/check-spdx.sh
+
       - name: Install clang-format
         run: pipx install clang-format==22.1.3 # exactly the version Visual Studio 2026 bundles
 
