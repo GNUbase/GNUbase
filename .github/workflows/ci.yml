@@ -1,0 +1,144 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # SDL's documented Ubuntu build dependencies (ext/SDL/docs/README-linux.md) without the optional extras.
+  LINUX_PACKAGES: >-
+    ninja-build ccache
+    libasound2-dev libpulse-dev libpipewire-0.3-dev libjack-dev
+    libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev
+    libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev
+    libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev
+    libdbus-1-dev libibus-1.0-dev libudev-dev libfribidi-dev libthai-dev
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_LAUNCHER: -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-x64, runner: windows-2025, preset: windows-x64 }
+          - { name: windows-arm64, runner: windows-11-arm, preset: windows-arm64 }
+          - { name: macos-universal, runner: macos-15, preset: macos }
+          - { name: linux-x64-gcc, runner: ubuntu-24.04, preset: linux-gcc }
+          - { name: linux-x64-clang, runner: ubuntu-24.04, preset: linux-clang }
+          - { name: linux-arm64-gcc, runner: ubuntu-24.04-arm, preset: linux-gcc }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive # Git LFS stays off: the build needs no binary assets yet
+
+      - name: Install packages (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES
+
+      - name: Install packages (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja ccache
+
+      # ponytail: no compiler cache on Windows; the Visual Studio generator ignores compiler launchers.
+      # Switch Windows to Ninja + sccache if its builds get slow.
+      - name: Compiler cache
+        if: runner.os != 'Windows'
+        uses: actions/cache@v6
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.name }}-
+
+      - name: Configure
+        shell: bash
+        run: cmake --preset ${{ matrix.preset }} ${{ runner.os != 'Windows' && env.CCACHE_LAUNCHER || '' }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} --config Release
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }} -C Release
+
+      - name: Upload app
+        uses: actions/upload-artifact@v7
+        with:
+          name: gnubase-${{ matrix.name }}
+          path: build/${{ matrix.preset }}/bin/Release/
+          retention-days: 14
+
+  sanitizers:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: asan-ubsan, sanitizers: "address,undefined" }
+          - { name: tsan, sanitizers: thread }
+    env:
+      ASAN_OPTIONS: detect_leaks=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install packages
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES
+
+      - name: Allow sanitizer memory layout
+        run: sudo sysctl vm.mmap_rnd_bits=28 # newer kernels randomize more address bits than ASan/TSan support
+
+      - name: Compiler cache
+        uses: actions/cache@v6
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.name }}-
+
+      - name: Configure
+        run: cmake --preset linux-clang -DGNUBASE_SANITIZERS=${{ matrix.sanitizers }} $CCACHE_LAUNCHER
+
+      - name: Build tests
+        run: cmake --build --preset linux-clang --target gnubase-tests
+
+      - name: Test
+        run: ctest --preset linux-clang
+
+  clang-tidy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install packages
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES clang-tidy
+
+      - name: Compiler cache
+        uses: actions/cache@v6
+        with:
+          path: .ccache
+          key: ccache-clang-tidy-${{ github.sha }}
+          restore-keys: ccache-clang-tidy-
+
+      - name: Configure
+        run: cmake --preset linux-clang -DGNUBASE_CLANG_TIDY=ON $CCACHE_LAUNCHER
+
+      - name: Build with clang-tidy
+        run: cmake --build --preset linux-clang
