@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "engine/rt/realtime.h"
+#include "platform/log.h"
+#include "platform/rt/realtime.h"
+#include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <atomic>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 // gnubase-tests links the RT checker (gnubase-rtcheck), which reports allocations made in real-time code.
@@ -95,4 +99,21 @@ TEST_CASE("real-time contexts nest", "[unit]")
 	}
 	CHECK_FALSE(isRealtimeContext());
 	CHECK(g_violations == 1);
+}
+
+TEST_CASE("logging from real-time code passes the RT checker", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	const gnubase::logging::Session session(dir.path() / "test.log");
+	{
+		const RecordViolations violations;
+		{
+			const ScopedRealtimeContext realtime;
+			gnubase::logging::info("block {} took {} ms in {} ({})", 42, 0.75, "Delay", "true");
+		}
+		CHECK(g_violations == 0);
+	}
+	gnubase::logging::flush();
+	CHECK_THAT(gnubase::test::readText(dir.path() / "test.log"),
+		Catch::Matchers::ContainsSubstring("block 42 took 0.75 ms in Delay (true)"));
 }

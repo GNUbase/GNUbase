@@ -58,7 +58,7 @@ flowchart TD
 
 | Module | Folder | Contents | May depend on |
 |---|---|---|---|
-| platform | `src/platform` | OS abstractions: audio and MIDI backends, threads and priorities, shared memory, clocks | OS libraries |
+| platform | `src/platform` | OS abstractions: audio and MIDI backends, threads and priorities, shared memory, clocks. Real-time primitives (lock-free queues, RT checker), logging, assertions, crash reports | OS libraries |
 | ipc | `src/ipc` | Shared-memory buffers and rings, wake-up primitives, message protocol | platform |
 | engine | `src/engine` | Command registry, document model, undo, time, audio graph, transport, file I/O, plugin slots | ipc, platform |
 | scripting | `src/scripting` | Lua runtime and the bindings generated from the command registry | engine API |
@@ -82,6 +82,7 @@ flowchart TD
 | Audio workers | Track chains in parallel (#212) | Real-time rules, real-time priority |
 | Disk threads | Streaming audio files in and recordings out (#17) | Work ahead of the audio thread |
 | Background threads | Peak files, analysis, saving projects, plugin scan coordination | Low priority |
+| Log writer | Writes what audio threads logged, every 10 ms (#8) | Low priority |
 | MCP I/O thread | The MCP server's HTTP or stdio transport | Only forwards to the command thread |
 | Script thread | Lua in headless mode; with a UI, Lua runs on the UI thread | Never an audio thread |
 
@@ -90,6 +91,13 @@ Data moves between threads only through:
 - lock-free queues: commands to the engine, events to clients, messages to the audio thread (#14);
 - immutable render snapshots, published with an atomic pointer swap; the command thread frees an old snapshot once the audio thread no longer uses it;
 - triple buffers for continuous values such as meters and the playback position, read by the UI once per frame.
+
+## Logging and crash reports
+
+- Every process (the app, each plugin host) writes its own log file in the per-user log folder, through a `logging::Session` created in `main`. The previous run's file is kept as `<name>.previous.log` (#8).
+- Audio threads log without allocating or locking: the message and its strings are copied into a lock-free queue, and the log writer thread writes them. If the queue is full, messages are dropped and the number is logged.
+- `GNUBASE_ASSERT` checks in every build: a failure is logged, and debug builds stop there. `GNUBASE_ASSERT_REALTIME` marks code that must run on an audio thread; `rt::assertNotRealtime` marks code that must not.
+- A crash adds a backtrace to the log (macOS, Linux) or writes a minidump next to it (Windows).
 
 ## Engine API
 

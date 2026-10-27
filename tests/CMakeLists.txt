@@ -7,13 +7,22 @@ target_compile_definitions(gnubase-testutils PRIVATE
 	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 gnubase_target_defaults(gnubase-testutils)
 
-add_executable(gnubase-tests engine_tests.cpp rt_tests.cpp testutils_tests.cpp time_tests.cpp)
+add_executable(gnubase-tests engine_tests.cpp log_tests.cpp rt_tests.cpp testutils_tests.cpp time_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE gnubase-engine gnubase-testutils Catch2::Catch2WithMain)
 
 # ThreadSanitizer defines its own operator new/delete, which the RT checker replaces; every other build runs it.
 if(NOT GNUBASE_SANITIZERS MATCHES "thread")
 	target_sources(gnubase-tests PRIVATE rtcheck_tests.cpp)
 	target_link_libraries(gnubase-tests PRIVATE gnubase-rtcheck)
+endif()
+# Crash tests run a helper process that crashes. Sanitizers install their own crash handlers, so their builds skip it.
+if(NOT GNUBASE_SANITIZERS)
+	add_executable(gnubase-crashtest crashtest.cpp)
+	target_link_libraries(gnubase-crashtest PRIVATE gnubase-platform)
+	gnubase_target_defaults(gnubase-crashtest)
+	target_sources(gnubase-tests PRIVATE crash_tests.cpp)
+	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_CRASHTEST="$<TARGET_FILE:gnubase-crashtest>")
+	add_dependencies(gnubase-tests gnubase-crashtest)
 endif()
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}")
 gnubase_target_defaults(gnubase-tests)

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "engine/rt/denormals.h"
+#include "platform/rt/denormals.h"
 
 #if defined(_M_X64) || defined(__x86_64__)
 #include <xmmintrin.h>
