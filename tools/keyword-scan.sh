@@ -79,8 +79,9 @@ for text in "$@"; do
 	fi
 done
 
+# On stdout like the findings, so that the summary comes last in the CI log.
 if [ $found -eq 1 ]; then
-	echo "Private keywords found. Remove them from the changes and commit messages; see CLAUDE.md." >&2
+	echo "Private keywords found at the locations above. Remove them; see CLAUDE.md, \"Source of truth and naming\"."
 	exit 1
 fi
-echo "No private keywords in $(wc -l < "$tmp/commits" | tr -d ' ') commits."
+echo "No private keywords found (commits scanned: $(wc -l < "$tmp/commits" | tr -d ' '))."

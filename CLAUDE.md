@@ -39,7 +39,7 @@ Details and reasoning (processes, modules, threads, engine API, IPC) are in [doc
 - Definition of done for every ticket: tests first and green in CI on all platforms, reachable through the engine API and MCP, UI only through the engine API, real-time rules respected, docs updated.
 
 ## Code conventions
-- Every source file starts with the SPDX header `SPDX-License-Identifier: GPL-3.0-or-later`.
+- Every source file starts with the SPDX header `SPDX-License-Identifier: GPL-3.0-or-later`; CI checks every tracked file with `tools/check-spdx.sh`.
 - Formatting: clang-format 22 with `.clang-format` (tabs, braces on their own line, 120 columns). Run `tools/format.sh` before committing; CI fails on unformatted code. Visual Studio 2026 ships clang-format and clang-tidy 22 in `VC/Tools/Llvm/x64/bin`.
 - clang-tidy (`.clang-tidy`) runs in CI with warnings as errors. A finding is fixed, not silenced; `NOLINT` only with the check name and a reason.
 - Naming, enforced by clang-tidy: types `PascalCase`, functions and variables `camelCase`, private and protected members `m_camelCase`, globals and namespace-level constants `g_camelCase`, macros `UPPER_CASE`.

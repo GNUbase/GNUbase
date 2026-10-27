@@ -1,15 +1,15 @@
 # Dependencies
 
-Third-party code lives in `ext/` as git submodules. Only GPLv3-compatible licenses are allowed.
+Third-party code lives in `ext/` as git submodules. Only GPLv3-compatible licenses are allowed; [third-party.md](third-party.md) lists every component with its license. Add new ones there too.
 
 ## Forks
 
 SDL and RmlUi are forked to the GNUbase account so we can carry our own changes.
 
-| Submodule | Fork | Upstream | Branch | Pinned at | License |
-|---|---|---|---|---|---|
-| `ext/SDL` | [GNUbase/SDL](https://github.com/GNUbase/SDL) | [libsdl-org/SDL](https://github.com/libsdl-org/SDL) | `gnubase` | `release-3.4.18` | zlib |
-| `ext/RmlUi` | [GNUbase/RmlUi](https://github.com/GNUbase/RmlUi) | [mikke89/RmlUi](https://github.com/mikke89/RmlUi) | `gnubase` | `6.3` | MIT |
+| Submodule | Fork | Upstream | Branch | Pinned at |
+|---|---|---|---|---|
+| `ext/SDL` | [GNUbase/SDL](https://github.com/GNUbase/SDL) | [libsdl-org/SDL](https://github.com/libsdl-org/SDL) | `gnubase` | `release-3.4.18` |
+| `ext/RmlUi` | [GNUbase/RmlUi](https://github.com/GNUbase/RmlUi) | [mikke89/RmlUi](https://github.com/mikke89/RmlUi) | `gnubase` | `6.3` |
 
 Rules:
 - GNUbase changes are commits on the fork's `gnubase` branch: small, focused and written so they could be sent upstream.
@@ -21,10 +21,10 @@ Rules:
 
 Used unchanged, pinned to an upstream release tag.
 
-| Submodule | Upstream | Pinned at | License |
-|---|---|---|---|
-| `ext/Catch2` | [catchorg/Catch2](https://github.com/catchorg/Catch2) | `v3.16.1` | BSL-1.0 |
-| `ext/json` | [nlohmann/json](https://github.com/nlohmann/json) | `v3.12.0` | MIT |
+| Submodule | Upstream | Pinned at |
+|---|---|---|
+| `ext/Catch2` | [catchorg/Catch2](https://github.com/catchorg/Catch2) | `v3.16.1` |
+| `ext/json` | [nlohmann/json](https://github.com/nlohmann/json) | `v3.12.0` |
 
 `ext/json` is a shallow submodule (`shallow = true` in `.gitmodules`): its full history is large and never needed. Implicit conversions are off (`JSON_ImplicitConversions`), so values are read with `get<T>()`.
 
