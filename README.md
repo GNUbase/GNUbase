@@ -2,6 +2,14 @@
   <img src="art/loadingbanner.png" alt="GNUbase" width="100%">
 </p>
 
+<p align="center">
+  <a href="https://github.com/GNUbase/GNUbase/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/GNUbase/GNUbase/ci.yml?branch=main&style=flat-square&label=CI"></a>
+  <a href="LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue?style=flat-square"></a>
+  <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-00599c?style=flat-square&logo=cplusplus&logoColor=white">
+  <img alt="Platform: Windows | macOS | Linux" src="https://img.shields.io/badge/platform-Windows_%7C_macOS_%7C_Linux-0078d4?style=flat-square">
+  <a href="https://github.com/GNUbase/GNUbase/milestones"><img alt="Status: planning" src="https://img.shields.io/badge/status-planning-ffe066?style=flat-square"></a>
+</p>
+
 # GNUbase
 
 GNUbase is a free and open-source digital audio workstation for Windows, macOS and Linux. The goal is a complete professional environment for recording, editing, MIDI and mixing, with features and workflow that closely follow an established commercial DAW, built from scratch in C++.
