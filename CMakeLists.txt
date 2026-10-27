@@ -33,9 +33,11 @@ set(SDL_STATIC ON CACHE BOOL "Build a static version of SDL")
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "Build the SDL3_test library")
 # ponytail: no font engine yet; switch to "freetype" when FreeType lands (#207)
 set(RMLUI_FONT_ENGINE "none" CACHE STRING "RmlUi font engine")
+set(JSON_ImplicitConversions OFF CACHE BOOL "Enable implicit conversions") # use get<T>() explicitly
 add_subdirectory(ext/SDL EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/RmlUi EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/Catch2 EXCLUDE_FROM_ALL SYSTEM)
+add_subdirectory(ext/json EXCLUDE_FROM_ALL SYSTEM)
 
 # Settings for every GNUbase target; third-party code is not affected.
 function(gnubase_target_defaults target)

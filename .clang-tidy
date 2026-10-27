@@ -14,6 +14,7 @@ Checks: >-
   -clang-analyzer-optin.performance.Padding,
   -concurrency-mt-unsafe,
   -misc-include-cleaner,
+  -misc-no-recursion,
   -misc-non-private-member-variables-in-classes,
   -modernize-avoid-c-arrays,
   -modernize-use-nodiscard,
@@ -28,6 +29,7 @@ Checks: >-
 # clang-analyzer-optin.performance.Padding: lock-free code pads on purpose to keep threads on separate cache lines
 # concurrency-mt-unsafe: flags libc calls like getenv that are fine outside the audio path
 # misc-include-cleaner, misc-non-private-member-variables-in-classes: too noisy for plain structs and umbrella headers
+# misc-no-recursion: trees (JSON schemas, the project document) are walked recursively; audio code avoids it anyway
 # modernize-avoid-c-arrays, modernize-use-nodiscard, modernize-use-trailing-return-type: style choices
 # portability-avoid-pragma-once: CLAUDE.md uses #pragma once
 # readability-braces-around-statements: single-statement bodies without braces are allowed

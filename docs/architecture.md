@@ -111,13 +111,15 @@ sequenceDiagram
   C->>Q: command (request id, parameters)
   Q->>Q: change the document, record an undo step
   Q->>A: publish a new render snapshot
-  Q-->>C: result (request id)
-  Q-->>C: events (what changed)
-  A-->>C: meters and position (triple buffers)
+  Q-->>C: events (what changed), to every client
+  Q-->>C: result (request id), to the sender
+  A-->>C: meters and position (lock-free buffers, no JSON)
 ```
 
-- Commands are asynchronous: a client gets a request id, then the result and the events.
-- **Events** name what changed (object ids and properties), so a client updates only what it shows. Meters and the playback position are not events; clients read them from triple buffers.
+- The API is `gnubase::engine::Engine` and `Client` (`src/engine/engine.h`). Commands are asynchronous: `send` returns a request id, then the events and the result arrive in the client's queue; `call` sends and waits for the result.
+- Parameters are checked against the command's JSON schema before it runs, and results against theirs; a failure becomes an error result with the reason. A command's events reach every client before its result reaches the sender, and a failed command emits none.
+- **Events** name what changed (object ids and properties), so a client updates only what it shows.
+- **Meters and the playback position** are not events and never JSON. The audio thread writes them into lock-free buffers, holding each meter's peak until it is read so none is lost between frames, and the UI reads all of them at once per frame (#111). MCP and Lua get them through a query when they need them.
 - **Queries** are read-only commands. They also run on the command thread, so they always see a consistent document.
 - Because commands, results and events are serializable, the same API works in-process (UI, tests), over MCP and from Lua, and could later run across processes.
 
