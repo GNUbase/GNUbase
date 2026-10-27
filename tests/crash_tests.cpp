@@ -16,11 +16,13 @@ namespace
 	// Runs gnubase-crashtest, which opens a log session in the folder and crashes the way it is told.
 	int crash(const std::filesystem::path& dir, const std::string& how)
 	{
-		std::string command = "\"" + std::string(GNUBASE_CRASHTEST) + "\" \"" + dir.string() + "\" " + how;
+		const std::string command = "\"" + std::string(GNUBASE_CRASHTEST) + "\" \"" + dir.string() + "\" " + how;
 #ifdef _WIN32
-		command = "\"" + command + "\""; // cmd.exe removes the outer quotes
-#endif
+		// cmd.exe removes the outer quotes.
+		return std::system(("\"" + command + "\"").c_str()); // NOLINT(bugprone-command-processor): fixed helper command
+#else
 		return std::system(command.c_str()); // NOLINT(bugprone-command-processor): fixed helper command
+#endif
 	}
 }
 
