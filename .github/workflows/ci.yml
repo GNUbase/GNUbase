@@ -36,7 +36,9 @@ jobs:
         include:
           - { name: windows-x64, runner: windows-2025, preset: windows-x64 }
           - { name: windows-arm64, runner: windows-11-arm, preset: windows-arm64 }
-          - { name: macos-universal, runner: macos-15, preset: macos }
+          # ponytail: Intel runner because hosted macOS arm64 runners had no capacity (jobs were never picked up).
+          # Builds both slices, tests the x86_64 one. Move back to macos-15 (arm64) before Intel images retire in 2027.
+          - { name: macos-universal, runner: macos-15-intel, preset: macos }
           - { name: linux-x64-gcc, runner: ubuntu-24.04, preset: linux-gcc }
           - { name: linux-x64-clang, runner: ubuntu-24.04, preset: linux-clang }
           - { name: linux-arm64-gcc, runner: ubuntu-24.04-arm, preset: linux-gcc }
