@@ -8,6 +8,8 @@ Open-source (GPLv3) digital audio workstation for Windows, macOS and Linux. GNUb
 - Planning lives in GitHub milestones and issues: https://github.com/GNUbase/GNUbase. Basic functionality first, optional features later.
 
 ## Architecture rules (non-negotiable)
+Details and reasoning (processes, modules, threads, engine API, IPC) are in [docs/architecture.md](docs/architecture.md). Read it before changing module boundaries, threads or the engine API.
+
 1. **Engine/UI separation.** The engine is a headless library with no UI dependency. The UI is an editor and event listener: it sends commands through the engine API and renders state from engine events. It never touches engine internals. Anything the UI can do must be possible through the engine API.
 2. **Everything is testable and remote-controllable.** Every engine command is exposed by the built-in MCP server, generated from the command registry. UI features are reachable through the MCP UI tools: DOM tree, screenshots, input injection, audio capture, MIDI send/receive, plugin parameters.
 3. **Third-party plugins never run inside GNUbase.** VST3, CLAP, AU (macOS), LV2 (Linux) and FST (VST2-compatible) plugins run in `gnubase-pluginhost` processes connected through shared-memory IPC. A crashing or hanging plugin must never take GNUbase down. How plugins are grouped into host processes is a user setting (shared, per vendor, per plugin, per instance); there is no in-process mode. Only GNUbase's own built-in processors run inside the engine.
