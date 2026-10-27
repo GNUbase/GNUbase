@@ -6,3 +6,6 @@
 	path = ext/RmlUi
 	url = https://github.com/GNUbase/RmlUi.git
 	branch = gnubase
+[submodule "ext/Catch2"]
+	path = ext/Catch2
+	url = https://github.com/catchorg/Catch2.git

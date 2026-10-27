@@ -31,6 +31,8 @@ Open-source (GPLv3) digital audio workstation for Windows, macOS and Linux. GNUb
 - Write the failing test first, then the code. No feature is done without tests.
 - Catch2 v3 for C++ tests, Lua tests in `tests/lua/`, all run with `ctest`. Engine tests render offline through the dummy device and compare against golden files with tolerance.
 - UI tests, in C++ or Lua, drive the real app through the same automation API the MCP server exposes.
+- Tag every Catch2 test case with `[unit]`, `[integration]` or `[ui]`, plus `[slow]` for long ones. Tags become ctest labels: `ctest --preset <platform> -L unit`.
+- Shared helpers live in `tests/testutils/`: `TempDir`, `compareAudio`, float WAV read/write and `compareWithGolden`. Golden files are `tests/golden/<name>.wav` (Git LFS). On a mismatch the actual and difference WAVs are written to the build's test output folder; run with `GNUBASE_UPDATE_GOLDEN=1` to accept new audio.
 - Definition of done for every ticket: tests first and green in CI on all platforms, reachable through the engine API and MCP, UI only through the engine API, real-time rules respected, docs updated.
 
 ## Code conventions
@@ -48,7 +50,7 @@ src/ipc         shared-memory IPC used by the engine and the plugin hosts
 src/pluginhost  plugin host process, scanner and format adapters
 src/platform    OS abstractions: audio/MIDI backends, threads
 src/scripting   Lua runtime and generated engine bindings
-tests/          Catch2 tests (unit, integration, ui); tests/lua for Lua tests
+tests/          Catch2 tests (unit, integration, ui); tests/testutils helpers, tests/golden files, tests/lua for Lua tests
 resources/      fonts (with license files), UI documents, SVG icons
 ext/            git submodules (SDL, RmlUi, Lua, FreeType, LunaSVG, Catch2, ...)
 docs/           architecture and design notes

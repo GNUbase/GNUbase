@@ -63,10 +63,17 @@
 		{ "name": "linux-clang", "configurePreset": "linux-clang" }
 	],
 	"testPresets": [
-		{ "name": "windows-x64", "configurePreset": "windows-x64", "output": { "outputOnFailure": true } },
-		{ "name": "windows-arm64", "configurePreset": "windows-arm64", "output": { "outputOnFailure": true } },
-		{ "name": "macos", "configurePreset": "macos", "output": { "outputOnFailure": true } },
-		{ "name": "linux-gcc", "configurePreset": "linux-gcc", "output": { "outputOnFailure": true } },
-		{ "name": "linux-clang", "configurePreset": "linux-clang", "output": { "outputOnFailure": true } }
+		{
+			"name": "test-base",
+			"hidden": true,
+			"configuration": "Debug",
+			"output": { "outputOnFailure": true },
+			"execution": { "noTestsAction": "error" }
+		},
+		{ "name": "windows-x64", "inherits": "test-base", "configurePreset": "windows-x64" },
+		{ "name": "windows-arm64", "inherits": "test-base", "configurePreset": "windows-arm64" },
+		{ "name": "macos", "inherits": "test-base", "configurePreset": "macos" },
+		{ "name": "linux-gcc", "inherits": "test-base", "configurePreset": "linux-gcc" },
+		{ "name": "linux-clang", "inherits": "test-base", "configurePreset": "linux-clang" }
 	]
 }

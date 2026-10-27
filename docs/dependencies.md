@@ -17,6 +17,25 @@ Rules:
 - Never force-push `gnubase`. Older GNUbase commits must still be able to check out the submodule commit they pinned.
 - The GNUbase repository pins an exact submodule commit. `branch = gnubase` in `.gitmodules` only matters for `git submodule update --remote`.
 
+## Other dependencies
+
+Used unchanged, pinned to an upstream release tag.
+
+| Submodule | Upstream | Pinned at | License |
+|---|---|---|---|
+| `ext/Catch2` | [catchorg/Catch2](https://github.com/catchorg/Catch2) | `v3.16.1` | BSL-1.0 |
+
+To update one, check out the new tag inside the submodule and commit the new submodule commit:
+
+```bash
+cd ext/Catch2
+git fetch --tags
+git checkout v3.17.0      # the new release tag
+cd ../..
+git add ext/Catch2
+git commit -m "Update Catch2 to v3.17.0"
+```
+
 ## Cloning
 
 ```bash

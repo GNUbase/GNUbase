@@ -26,6 +26,7 @@ set(SDL_TEST_LIBRARY OFF CACHE BOOL "Build the SDL3_test library")
 set(RMLUI_FONT_ENGINE "none" CACHE STRING "RmlUi font engine")
 add_subdirectory(ext/SDL EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/RmlUi EXCLUDE_FROM_ALL SYSTEM)
+add_subdirectory(ext/Catch2 EXCLUDE_FROM_ALL SYSTEM)
 
 function(gnubase_set_warnings target)
 	if(MSVC)
