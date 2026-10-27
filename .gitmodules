@@ -1,0 +1,8 @@
+[submodule "ext/SDL"]
+	path = ext/SDL
+	url = https://github.com/GNUbase/SDL.git
+	branch = gnubase
+[submodule "ext/RmlUi"]
+	path = ext/RmlUi
+	url = https://github.com/GNUbase/RmlUi.git
+	branch = gnubase
