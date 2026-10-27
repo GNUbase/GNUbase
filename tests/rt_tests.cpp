@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "engine/rt/denormals.h"
-#include "engine/rt/mpmcqueue.h"
-#include "engine/rt/spscqueue.h"
-#include "engine/rt/triplebuffer.h"
+#include "platform/rt/denormals.h"
+#include "platform/rt/mpmcqueue.h"
+#include "platform/rt/spscqueue.h"
+#include "platform/rt/triplebuffer.h"
 
 #include <catch2/catch_test_macros.hpp>
 

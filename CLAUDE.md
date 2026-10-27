@@ -14,7 +14,7 @@ Details and reasoning (processes, modules, threads, engine API, IPC) are in [doc
 2. **Everything is testable and remote-controllable.** Every engine command is exposed by the built-in MCP server, generated from the command registry. UI features are reachable through the MCP UI tools: DOM tree, screenshots, input injection, audio capture, MIDI send/receive, plugin parameters.
 3. **Third-party plugins never run inside GNUbase.** VST3, CLAP, AU (macOS), LV2 (Linux) and FST (VST2-compatible) plugins run in `gnubase-pluginhost` processes connected through shared-memory IPC. A crashing or hanging plugin must never take GNUbase down. How plugins are grouped into host processes is a user setting (shared, per vendor, per plugin, per instance); there is no in-process mode. Only GNUbase's own built-in processors run inside the engine.
 4. **One internal plugin API.** Every format is adapted to the GNUbase plugin wrapper, which is modeled on CLAP's extension mechanism. Host code never talks to a plugin format directly. GNUbase-specific plugin features are added as wrapper extensions.
-5. **Real-time safety.** On audio threads: no allocations, no locks, no blocking system calls, no file or network I/O, no exceptions, and no logging except through the RT-safe logger. Use the engine's lock-free queues. The RT-safety checker must stay green.
+5. **Real-time safety.** On audio threads: no allocations, no locks, no blocking system calls, no file or network I/O, no exceptions, and no logging except through the RT-safe logger (`platform/log.h`). Use the lock-free queues in `src/platform/rt`. The RT-safety checker must stay green.
 6. **Deterministic rendering.** The same project and input produce bit-identical output for any number of processing threads. Independent track chains run in parallel; busses sum their inputs in a fixed order once all are ready (#212).
 7. **Project format is DAWproject** (`.dawproject`). GNUbase-only data goes into an extra entry inside the container, so other DAWproject applications can still open the file. Importing other project formats comes later.
 8. **Lua is the scripting language.** Users automate GNUbase with Lua, and we write integration and UI tests in it. Lua bindings are generated from the engine command registry, like the MCP tools, so both always cover the same commands. The UI uses RmlUi's Lua plugin on the same runtime. Lua never runs on audio threads, and scripts that come with a project never run without the user's consent.
@@ -54,7 +54,7 @@ src/app         executable: engine + UI + MCP server, also --headless
 src/mcp         MCP server
 src/ipc         shared-memory IPC used by the engine and the plugin hosts
 src/pluginhost  plugin host process, scanner and format adapters
-src/platform    OS abstractions: audio/MIDI backends, threads
+src/platform    OS abstractions (audio/MIDI backends, threads), real-time primitives, logging, crash reports
 src/scripting   Lua runtime and generated engine bindings
 tests/          Catch2 tests (unit, integration, ui); tests/testutils helpers, tests/golden files, tests/lua for Lua tests
 resources/      fonts (with license files), UI documents, SVG icons

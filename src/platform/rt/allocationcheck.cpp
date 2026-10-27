@@ -3,7 +3,7 @@
 // Linked only into test and debug executables (gnubase-rtcheck).
 // ponytail: sees C++ allocations only, not malloc, locks or system calls in third-party code. RealtimeSanitizer
 // (Clang 20+, -fsanitize=realtime, Linux and macOS) catches all of those if we need it.
-#include "engine/rt/realtime.h"
+#include "platform/rt/realtime.h"
 
 #include <cstdlib>
 #include <new>

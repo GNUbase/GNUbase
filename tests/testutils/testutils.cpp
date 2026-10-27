@@ -230,4 +230,12 @@ namespace gnubase::test
 		return compareWithGolden(GNUBASE_GOLDEN_DIR, GNUBASE_TEST_OUTPUT_DIR, name, actual, tolerance,
 			update != nullptr && std::string(update) == "1");
 	}
+
+	std::string readText(const std::filesystem::path& file)
+	{
+		const std::ifstream in(file, std::ios::binary);
+		std::ostringstream text;
+		text << in.rdbuf();
+		return text.str();
+	}
 }

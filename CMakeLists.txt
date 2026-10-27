@@ -53,6 +53,7 @@ function(gnubase_target_defaults target)
 	endif()
 endfunction()
 
+add_subdirectory(src/platform)
 add_subdirectory(src/engine)
 add_subdirectory(src/ui)
 add_subdirectory(src/app)

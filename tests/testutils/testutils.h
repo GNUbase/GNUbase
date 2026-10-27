@@ -56,4 +56,7 @@ namespace gnubase::test
 
 	// Same, using tests/golden and the build's test output folder. GNUBASE_UPDATE_GOLDEN=1 enables update mode.
 	AudioDiff compareWithGolden(const std::string& name, const Audio& actual, float tolerance);
+
+	// The whole file, or an empty string if it cannot be read.
+	std::string readText(const std::filesystem::path& file);
 }

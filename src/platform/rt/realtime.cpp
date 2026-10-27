@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "engine/rt/realtime.h"
+#include "platform/rt/realtime.h"
 
 #include <atomic>
 #include <cstdio>
