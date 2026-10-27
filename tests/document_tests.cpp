@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
@@ -41,35 +42,34 @@ namespace
 		return run(client, "track.add", std::move(parameters)).at("track").at("id").get<ObjectId>();
 	}
 
+	// The object in list with the given id; fails the test if there is none.
+	Json withId(const Json& list, ObjectId id)
+	{
+		const auto found = std::find_if(
+			list.begin(), list.end(), [id](const Json& object) { return object.at("id").get<ObjectId>() == id; });
+		REQUIRE(found != list.end());
+		return *found;
+	}
+
 	Json track(Client& client, ObjectId id)
 	{
-		const Json project = run(client, "project.get");
-		for (const Json& candidate : project.at("tracks"))
-			if (candidate.at("id").get<ObjectId>() == id)
-				return candidate;
-		FAIL("no track " << id);
-		return nullptr;
+		return withId(run(client, "project.get").at("tracks"), id);
 	}
 
 	Json channelOf(Client& client, ObjectId trackId)
 	{
 		const ObjectId channel = track(client, trackId).at("channel").get<ObjectId>();
-		const Json project = run(client, "project.get");
-		for (const Json& candidate : project.at("channels"))
-			if (candidate.at("id").get<ObjectId>() == channel)
-				return candidate;
-		FAIL("track " << trackId << " has no channel");
-		return nullptr;
+		REQUIRE(channel != 0);
+		return withId(run(client, "project.get").at("channels"), channel);
 	}
 
 	// The snapshot channel of a track.
 	const RenderChannel& renderChannel(const RenderSnapshot& snapshot, ObjectId trackId)
 	{
-		for (const RenderChannel& channel : snapshot.channels)
-			if (channel.track == trackId)
-				return channel;
-		FAIL("no snapshot channel for track " << trackId);
-		return snapshot.channels.front();
+		const auto found = std::find_if(snapshot.channels.begin(), snapshot.channels.end(),
+			[trackId](const RenderChannel& channel) { return channel.track == trackId; });
+		REQUIRE(found != snapshot.channels.end());
+		return *found;
 	}
 
 	// A clip of a 4-second stereo file at 48 kHz.
