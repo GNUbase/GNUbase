@@ -8,7 +8,10 @@ add_library(gnubase-engine STATIC
 	rt/realtime.cpp rt/realtime.h
 	rt/rtutil.h
 	rt/spscqueue.h
-	rt/triplebuffer.h)
+	rt/triplebuffer.h
+	time/signaturemap.cpp time/signaturemap.h
+	time/tempomap.cpp time/tempomap.h
+	time/timecode.cpp time/timecode.h)
 target_include_directories(gnubase-engine PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-engine PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}")
 target_link_libraries(gnubase-engine PUBLIC Threads::Threads)
