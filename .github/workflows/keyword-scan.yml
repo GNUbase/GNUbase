@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Scans pull requests and pushes to main for private keywords (CLAUDE.md, "Source of truth and naming") with the list
+# in the PRIVATE_KEYWORDS repository secret: one keyword per line, case-insensitive extended regexes, the same list as
+# .git/info/private-keywords in maintainer clones.
+#
+# pull_request_target, unlike pull_request, gives pull requests from forks access to the secret. It runs this workflow
+# and tools/keyword-scan.sh from the base branch; the pull request's commits are only fetched and read by git, never
+# checked out or run. Changes to this workflow or the scan script take effect once they are on main.
+name: Keyword scan
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited] # edited: the title and body become the squash commit's message
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keyword-scan-${{ github.event.pull_request.number || github.ref }}
+  # Each push scans only its own commits, so pushes must not cancel each other.
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
+
+jobs:
+  keyword-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the scan diffs against the base commit
+          persist-credentials: false
+
+      - name: Load keyword list
+        env:
+          PRIVATE_KEYWORDS: ${{ secrets.PRIVATE_KEYWORDS }}
+        run: |
+          if [ -z "$PRIVATE_KEYWORDS" ]; then
+            echo "::error::The PRIVATE_KEYWORDS repository secret is missing or empty."
+            exit 1
+          fi
+          printf '%s\n' "$PRIVATE_KEYWORDS" | tr -d '\r' | sed '/^$/d' > "$RUNNER_TEMP/private-keywords"
+          # Hide every keyword in the public log before anything can print it.
+          while IFS= read -r keyword; do echo "::add-mask::$keyword"; done < "$RUNNER_TEMP/private-keywords"
+
+      - name: Scan pull request
+        if: github.event_name == 'pull_request_target'
+        env:
+          NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          git fetch --no-tags origin "refs/pull/$NUMBER/head"
+          printf '%s\n' "$TITLE" > "$RUNNER_TEMP/pull-request-title"
+          printf '%s\n' "$BODY" > "$RUNNER_TEMP/pull-request-body"
+          sh tools/keyword-scan.sh "$RUNNER_TEMP/private-keywords" "$BASE_SHA" "$HEAD_SHA" \
+            "$RUNNER_TEMP/pull-request-title" "$RUNNER_TEMP/pull-request-body"
+
+      - name: Scan push
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: sh tools/keyword-scan.sh "$RUNNER_TEMP/private-keywords" "$BEFORE" "$AFTER"

@@ -1,0 +1,17 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Blocks commit messages containing a keyword from .git/info/private-keywords.
+# See pre-commit for the list format and for clones without a list. Scan errors
+# block too (fail closed).
+list="$(git rev-parse --git-common-dir)/info/private-keywords"
+if [ ! -e "$list" ]; then
+	required=$(git config --bool gnubase.requireKeywordList); rc=$?
+	{ [ $rc -eq 1 ] || [ "$required" = false ]; } && exit 0
+fi
+pattern=$(tr -d '\r' < "$list" | sed -e '/^$/d' | paste -sd '|' -)
+[ -n "$pattern" ] || { echo "Commit blocked, keyword list $list missing or empty" >&2; exit 1; }
+hits=$(git stripspace --strip-comments < "$1" | grep -n -i -E -e "$pattern"); rc=$?
+[ $rc -eq 1 ] && exit 0
+[ $rc -eq 0 ] && echo "Commit blocked, private keywords in message:
+$hits" >&2 || echo "Commit blocked, keyword scan failed ($rc)" >&2
+exit 1
