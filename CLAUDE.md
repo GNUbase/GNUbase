@@ -21,6 +21,7 @@ Open-source (GPLv3) digital audio workstation for Windows, macOS and Linux. GNUb
 - C++17, CMake. 64-bit only: Windows x64/ARM64, macOS universal (arm64 + x86_64), Linux x86_64/aarch64.
 - Window management: SDL3. UI: RmlUi with its Lua plugin (Lua 5.4). Both are GNUbase forks (github.com/GNUbase) included as git submodules in `ext/`.
 - Text: FreeType with bundled free fonts (SIL OFL or Apache-2.0, e.g. from Google Fonts), license files shipped next to the fonts.
+- Graphics: icons and UI graphics are SVG, rendered by LunaSVG through RmlUi's SVG plugin, so they stay sharp at every UI scale. Bitmaps only where unavoidable.
 - Audio: ASIO and WASAPI (Windows), CoreAudio (macOS), PipeWire and JACK (Linux), plus a dummy device for tests and headless runs.
 - Plugin bridges over the same IPC: 32-bit plugins (Windows, Linux), x86-64 plugins on Apple Silicon (Rosetta) and on Windows ARM64 (emulation).
 - Third-party code: pinned git submodules in `ext/`, GPLv3-compatible licenses only, each listed in `docs/third-party.md`.
@@ -47,7 +48,7 @@ src/pluginhost  plugin host process, scanner and format adapters
 src/platform    OS abstractions: audio/MIDI backends, threads
 src/scripting   Lua runtime and generated engine bindings
 tests/          Catch2 tests (unit, integration, ui); tests/lua for Lua tests
-resources/      fonts (with license files), UI documents, icons
-ext/            git submodules (SDL, RmlUi, Lua, FreeType, Catch2, ...)
+resources/      fonts (with license files), UI documents, SVG icons
+ext/            git submodules (SDL, RmlUi, Lua, FreeType, LunaSVG, Catch2, ...)
 docs/           architecture and design notes
 ```
