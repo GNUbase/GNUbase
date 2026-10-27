@@ -24,6 +24,9 @@ Used unchanged, pinned to an upstream release tag.
 | Submodule | Upstream | Pinned at | License |
 |---|---|---|---|
 | `ext/Catch2` | [catchorg/Catch2](https://github.com/catchorg/Catch2) | `v3.16.1` | BSL-1.0 |
+| `ext/json` | [nlohmann/json](https://github.com/nlohmann/json) | `v3.12.0` | MIT |
+
+`ext/json` is a shallow submodule (`shallow = true` in `.gitmodules`): its full history is large and never needed. Implicit conversions are off (`JSON_ImplicitConversions`), so values are read with `get<T>()`.
 
 To update one, check out the new tag inside the submodule and commit the new submodule commit:
 
