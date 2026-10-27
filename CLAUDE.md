@@ -13,9 +13,10 @@ Open-source (GPLv3) digital audio workstation for Windows, macOS and Linux. GNUb
 3. **Third-party plugins never run inside GNUbase.** VST3, CLAP, AU (macOS), LV2 (Linux) and FST (VST2-compatible) plugins run in `gnubase-pluginhost` processes connected through shared-memory IPC. A crashing or hanging plugin must never take GNUbase down. How plugins are grouped into host processes is a user setting (shared, per vendor, per plugin, per instance); there is no in-process mode. Only GNUbase's own built-in processors run inside the engine.
 4. **One internal plugin API.** Every format is adapted to the GNUbase plugin wrapper, which is modeled on CLAP's extension mechanism. Host code never talks to a plugin format directly. GNUbase-specific plugin features are added as wrapper extensions.
 5. **Real-time safety.** On audio threads: no allocations, no locks, no blocking system calls, no file or network I/O, no exceptions, and no logging except through the RT-safe logger. Use the engine's lock-free queues. The RT-safety checker must stay green.
-6. **Project format is DAWproject** (`.dawproject`). GNUbase-only data goes into an extra entry inside the container, so other DAWproject applications can still open the file. Importing other project formats comes later.
-7. **Lua is the scripting language.** Users automate GNUbase with Lua, and we write integration and UI tests in it. Lua bindings are generated from the engine command registry, like the MCP tools, so both always cover the same commands. The UI uses RmlUi's Lua plugin on the same runtime. Lua never runs on audio threads, and scripts that come with a project never run without the user's consent.
-8. **Docking UI.** Windows are built from zones, tab groups and splitters modeled on the reference: an always-visible main zone, switchable left, right and lower zones, panels that can be docked or opened as their own window. Layouts are serializable for workspaces.
+6. **Deterministic rendering.** The same project and input produce bit-identical output for any number of processing threads. Independent track chains run in parallel; busses sum their inputs in a fixed order once all are ready (#212).
+7. **Project format is DAWproject** (`.dawproject`). GNUbase-only data goes into an extra entry inside the container, so other DAWproject applications can still open the file. Importing other project formats comes later.
+8. **Lua is the scripting language.** Users automate GNUbase with Lua, and we write integration and UI tests in it. Lua bindings are generated from the engine command registry, like the MCP tools, so both always cover the same commands. The UI uses RmlUi's Lua plugin on the same runtime. Lua never runs on audio threads, and scripts that come with a project never run without the user's consent.
+9. **Docking UI.** Windows are built from zones, tab groups and splitters modeled on the reference: an always-visible main zone, switchable left, right and lower zones, panels that can be docked or opened as their own window. Layouts are serializable for workspaces.
 
 ## Platforms and dependencies
 - C++17, CMake. 64-bit only: Windows x64/ARM64, macOS universal (arm64 + x86_64), Linux x86_64/aarch64.
@@ -37,7 +38,10 @@ Open-source (GPLv3) digital audio workstation for Windows, macOS and Linux. GNUb
 
 ## Code conventions
 - Every source file starts with the SPDX header `SPDX-License-Identifier: GPL-3.0-or-later`.
-- `.clang-format` and `.clang-tidy` are authoritative once they exist. Until then: types `PascalCase`, functions and variables `camelCase`, member variables `m_camelCase`, `#pragma once`, RAII, no raw `new`/`delete`, no `using namespace` in headers.
+- Formatting: clang-format 22 with `.clang-format` (tabs, braces on their own line, 120 columns). Run `tools/format.sh` before committing; CI fails on unformatted code. Visual Studio 2026 ships clang-format and clang-tidy 22 in `VC/Tools/Llvm/x64/bin`.
+- clang-tidy (`.clang-tidy`) runs in CI with warnings as errors. A finding is fixed, not silenced; `NOLINT` only with the check name and a reason.
+- Naming, enforced by clang-tidy: types `PascalCase`, functions and variables `camelCase`, private and protected members `m_camelCase`, globals and namespace-level constants `g_camelCase`, macros `UPPER_CASE`.
+- `#pragma once`, RAII, no raw `new`/`delete`, no `using namespace` in headers.
 - Small, focused commits with tests green.
 
 ## Repository layout (target)

@@ -20,6 +20,7 @@ namespace gnubase::test
 		while (!std::filesystem::create_directory(m_path));
 	}
 
+	// NOLINTNEXTLINE(bugprone-exception-escape): only std::bad_alloc could escape, which ends the test run anyway
 	TempDir::~TempDir()
 	{
 		std::error_code ignored;
@@ -60,12 +61,14 @@ namespace gnubase::test
 		if (mismatches == 0)
 			return diff;
 
-		const size_t channels = static_cast<size_t>(actual.channels);
-		const auto describe = [&](size_t i) {
+		const auto channels = static_cast<size_t>(actual.channels);
+		const auto describe = [&](size_t i)
+		{
+			const size_t frame = i / channels;
 			std::ostringstream s;
-			s << "sample " << i << " (frame " << i / channels << ", channel " << i % channels << ", "
-			  << static_cast<double>(i / channels) / actual.sampleRate << " s): actual " << actual.samples[i]
-			  << ", expected " << expected.samples[i];
+			s << "sample " << i << " (frame " << frame << ", channel " << i % channels << ", "
+			  << static_cast<double>(frame) / actual.sampleRate << " s): actual " << actual.samples[i] << ", expected "
+			  << expected.samples[i];
 			return s.str();
 		};
 
@@ -137,8 +140,8 @@ namespace gnubase::test
 		char id[4] = {};
 		const auto readId = [&] { return static_cast<bool>(in.read(id, 4)); };
 
-		const bool isWav = readId() && std::memcmp(id, "RIFF", 4) == 0 && in.ignore(4) && readId() &&
-			std::memcmp(id, "WAVE", 4) == 0;
+		const bool isWav =
+			readId() && std::memcmp(id, "RIFF", 4) == 0 && in.ignore(4) && readId() && std::memcmp(id, "WAVE", 4) == 0;
 		if (!isWav)
 			throw std::runtime_error(file.string() + " is not a WAV file");
 

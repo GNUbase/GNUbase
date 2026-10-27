@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# clang-tidy 22 (bundled with Visual Studio 2026; CI pins 22). Disabled checks are listed with the reason.
+Checks: >-
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  concurrency-*,
+  misc-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -bugprone-easily-swappable-parameters,
+  -concurrency-mt-unsafe,
+  -misc-include-cleaner,
+  -misc-non-private-member-variables-in-classes,
+  -modernize-avoid-c-arrays,
+  -modernize-use-nodiscard,
+  -modernize-use-trailing-return-type,
+  -portability-avoid-pragma-once,
+  -readability-braces-around-statements,
+  -readability-function-cognitive-complexity,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-uppercase-literal-suffix
+# bugprone-easily-swappable-parameters: flags most audio APIs (several float/size parameters)
+# concurrency-mt-unsafe: flags libc calls like getenv that are fine outside the audio path
+# misc-include-cleaner, misc-non-private-member-variables-in-classes: too noisy for plain structs and umbrella headers
+# modernize-avoid-c-arrays, modernize-use-nodiscard, modernize-use-trailing-return-type: style choices
+# portability-avoid-pragma-once: CLAUDE.md uses #pragma once
+# readability-braces-around-statements: single-statement bodies without braces are allowed
+# readability-function-cognitive-complexity: test macros inflate it
+# readability-identifier-length, readability-magic-numbers, readability-uppercase-literal-suffix: DSP code uses i, 0.5f, 48000
+WarningsAsErrors: '*'
+HeaderFilterRegex: '(src|tests)[/\\]'
+CheckOptions:
+  readability-identifier-naming.NamespaceCase: lower_case
+  readability-identifier-naming.ClassCase: CamelCase
+  readability-identifier-naming.StructCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.EnumConstantCase: CamelCase
+  readability-identifier-naming.TemplateParameterCase: CamelCase
+  readability-identifier-naming.FunctionCase: camelBack
+  readability-identifier-naming.MethodCase: camelBack
+  readability-identifier-naming.ParameterCase: camelBack
+  readability-identifier-naming.VariableCase: camelBack
+  readability-identifier-naming.PublicMemberCase: camelBack
+  readability-identifier-naming.PrivateMemberCase: camelBack
+  readability-identifier-naming.PrivateMemberPrefix: m_
+  readability-identifier-naming.ProtectedMemberCase: camelBack
+  readability-identifier-naming.ProtectedMemberPrefix: m_
+  readability-identifier-naming.GlobalConstantCase: camelBack
+  readability-identifier-naming.GlobalConstantPrefix: g_
+  readability-identifier-naming.GlobalVariableCase: camelBack
+  readability-identifier-naming.GlobalVariablePrefix: g_
+  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE

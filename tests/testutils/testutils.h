@@ -36,7 +36,7 @@ namespace gnubase::test
 	struct AudioDiff
 	{
 		bool equal = true;
-		std::string report; // empty when equal
+		std::string report;       // empty when equal
 		size_t firstMismatch = 0; // sample index
 		float maxDifference = 0.0f;
 	};
