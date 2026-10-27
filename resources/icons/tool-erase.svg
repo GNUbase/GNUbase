@@ -1,0 +1,6 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="m4 15 9-11 7 6-8 10H7l-3-3v-2Z"/>
+  <line x1="10" y1="20" x2="21" y2="20"/>
+  <line x1="8" y1="10" x2="15" y2="16"/>
+</svg>
