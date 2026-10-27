@@ -14,6 +14,9 @@ namespace
 {
 	std::atomic<int> g_violations{0};
 
+	// Optimizers may remove allocations whose memory is never used; publishing the pointer keeps them.
+	void* volatile g_keepAlive = nullptr;
+
 	void countViolation(const char* /*what*/) noexcept
 	{
 		++g_violations;
@@ -40,6 +43,7 @@ TEST_CASE("the RT checker reports an allocation in real-time code", "[unit]")
 	{
 		const ScopedRealtimeContext realtime;
 		values.reserve(16);
+		g_keepAlive = values.data();
 	}
 	CHECK(g_violations == 1);
 }
@@ -48,6 +52,7 @@ TEST_CASE("the RT checker reports a deallocation in real-time code", "[unit]")
 {
 	const RecordViolations record;
 	auto value = std::make_unique<int>(42);
+	g_keepAlive = value.get();
 	{
 		const ScopedRealtimeContext realtime;
 		value.reset();
@@ -86,6 +91,7 @@ TEST_CASE("real-time contexts nest", "[unit]")
 		}
 		CHECK(isRealtimeContext());
 		values.reserve(16);
+		g_keepAlive = values.data();
 	}
 	CHECK_FALSE(isRealtimeContext());
 	CHECK(g_violations == 1);
