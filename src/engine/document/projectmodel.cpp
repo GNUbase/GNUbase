@@ -3,7 +3,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
+#include <ctime>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -843,21 +845,326 @@ namespace gnubase::engine
 		}
 	}
 
+	namespace
+	{
+		// The undo step each command records, as shown in the history.
+		struct ActionName
+		{
+			const char* command;
+			const char* action;
+		};
+
+		constexpr ActionName g_actions[] = {
+			{"project.set", "Change project"},
+			{"bus.add", "Add bus"},
+			{"bus.set", "Rename bus"},
+			{"bus.remove", "Remove bus"},
+			{"track.add", "Add track"},
+			{"track.set", "Change track"},
+			{"track.move", "Move track"},
+			{"track.remove", "Remove track"},
+			{"channel.set", "Change channel"},
+			{"media.add", "Add media file"},
+			{"media.remove", "Remove media file"},
+			{"clip.add", "Add clip"},
+			{"clip.remove", "Remove clip"},
+			{"audioEvent.add", "Add audio event"},
+			{"audioEvent.set", "Change audio event"},
+			{"audioEvent.remove", "Remove audio event"},
+			{"midiPart.add", "Add MIDI part"},
+			{"midiPart.set", "Change MIDI part"},
+			{"midiPart.remove", "Remove MIDI part"},
+			{"note.add", "Add notes"},
+			{"note.remove", "Remove notes"},
+			{"controller.add", "Add controllers"},
+			{"controller.remove", "Remove controllers"},
+		};
+
+		// Empty for commands without a fixed name, such as transactions.
+		std::string actionName(const std::string& command)
+		{
+			for (const ActionName& entry : g_actions)
+				if (command == entry.command)
+					return entry.action;
+			return {};
+		}
+
+		// The current time in UTC, e.g. 2026-10-27T21:05:00Z.
+		std::string now()
+		{
+			const std::time_t seconds = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+			std::tm utc{};
+#ifdef _WIN32
+			gmtime_s(&utc, &seconds);
+#else
+			gmtime_r(&seconds, &utc);
+#endif
+			char text[32];
+			std::strftime(text, sizeof text, "%Y-%m-%dT%H:%M:%SZ", &utc);
+			return text;
+		}
+
+		// Announces undone or redone objects with the same events as the commands that change them; a track and
+		// its channel come as separate track and channel events.
+		template <typename T> void announceObjects(const std::vector<ObjectChange<T>>& changes, Direction direction,
+			const std::string& kind, const char* key, CommandContext& context)
+		{
+			for (const ObjectChange<T>& change : changes)
+			{
+				const std::optional<T>& current = direction == Direction::Redo ? change.after : change.before;
+				const std::optional<T>& previous = direction == Direction::Redo ? change.before : change.after;
+				if (!current)
+					context.emit(kind + ".removed", {{key, change.id}});
+				else
+					context.emit(kind + (previous ? ".changed" : ".added"), {{key, toJson(*current)}});
+			}
+		}
+
+		void announceBusses(const std::vector<Bus>& previous, const std::vector<Bus>& current, CommandContext& context)
+		{
+			const auto find = [](const std::vector<Bus>& busses, ObjectId id)
+			{ return std::find_if(busses.begin(), busses.end(), [id](const Bus& bus) { return bus.id == id; }); };
+			for (const Bus& bus : current)
+			{
+				const auto match = find(previous, bus.id);
+				if (match == previous.end())
+					context.emit("bus.added", {{"bus", toJson(bus)}});
+				else if (!(*match == bus))
+					context.emit("bus.changed", {{"bus", toJson(bus)}});
+			}
+			for (const Bus& bus : previous)
+				if (find(current, bus.id) == current.end())
+					context.emit("bus.removed", {{"bus", bus.id}});
+		}
+
+		// Called after the change was applied to project in the given direction.
+		void announce(const Project& project, const ProjectChange& change, Direction direction, CommandContext& context)
+		{
+			bool reordered = false;
+			if (change.settingsBefore && change.settingsAfter)
+			{
+				const bool redo = direction == Direction::Redo;
+				const ProjectSettings& current = redo ? *change.settingsAfter : *change.settingsBefore;
+				const ProjectSettings& previous = redo ? *change.settingsBefore : *change.settingsAfter;
+				if (current.name != previous.name || current.sampleRate != previous.sampleRate)
+					context.emit("project.changed", {{"name", current.name}, {"sampleRate", current.sampleRate}});
+				announceBusses(previous.busses, current.busses, context);
+				reordered = current.tracks != previous.tracks;
+			}
+			for (const ObjectChange<Track>& track : change.tracks)
+				reordered = reordered || !track.before || !track.after || track.before->parent != track.after->parent ||
+					track.before->children != track.after->children;
+			announceObjects(change.tracks, direction, "track", "track", context);
+			announceObjects(change.channels, direction, "channel", "channel", context);
+			announceObjects(change.media, direction, "media", "media", context);
+			announceObjects(change.clips, direction, "clip", "clip", context);
+			announceObjects(change.audioEvents, direction, "audioEvent", "event", context);
+			for (const MidiPartChange& part : change.midiParts)
+			{
+				const auto current = project.midiParts.find(part.id);
+				const bool existed = direction == Direction::Redo ? part.before.has_value() : part.after.has_value();
+				if (current == project.midiParts.end())
+					context.emit("midiPart.removed", {{"part", part.id}});
+				else
+					context.emit(existed ? "midiPart.changed" : "midiPart.added", {{"part", toJson(current->second)}});
+			}
+			if (reordered)
+				context.emit("track.reordered", {{"tracks", project.trackOrder()}});
+		}
+	}
+
 	ProjectModel::ProjectModel() : m_project(newProject()), m_snapshots(compile(m_project, 0))
 	{
 	}
 
 	void ProjectModel::add(Engine& engine, CommandInfo info, Handler handler)
 	{
-		const bool query = info.query;
+		if (info.query)
+		{
+			engine.registerCommand(std::move(info),
+				[this, handler = std::move(handler)](CommandContext& context) { return handler(m_project, context); });
+			return;
+		}
+		std::string action = actionName(info.name);
+		if (!action.empty())
+			m_edits[info.name] = {info, handler};
 		engine.registerCommand(std::move(info),
-			[this, query, handler = std::move(handler)](CommandContext& context)
+			[this, action = std::move(action), handler = std::move(handler)](CommandContext& context)
 			{
-				Json result = handler(m_project, context);
-				if (!query)
-					m_snapshots.publish(compile(m_project, ++m_revision));
+				Project before = m_project;
+				Json result;
+				try
+				{
+					result = handler(m_project, context);
+				}
+				catch (...)
+				{
+					m_project = std::move(before);
+					throw;
+				}
+				record(action.empty() ? context.parameters().at("description").get<std::string>() : action, before,
+					context);
+				publish();
 				return result;
 			});
+	}
+
+	void ProjectModel::addControl(
+		Engine& engine, CommandInfo info, std::function<Json(CommandContext& context)> handler)
+	{
+		engine.registerCommand(std::move(info), std::move(handler));
+	}
+
+	void ProjectModel::record(std::string action, const Project& before, CommandContext& context)
+	{
+		ProjectChange change = difference(before, m_project);
+		if (change.empty())
+			return;
+		m_history.record({std::move(action), now(), {}, std::move(change)});
+		announceHistory(context);
+	}
+
+	void ProjectModel::announceHistory(CommandContext& context) const
+	{
+		const std::vector<HistoryStep>& steps = m_history.steps();
+		const size_t position = m_history.position();
+		context.emit("history.changed",
+			{{"position", position}, {"steps", steps.size()},
+				{"undo", position > 0 ? Json(steps[position - 1].action) : Json(nullptr)},
+				{"redo", position < steps.size() ? Json(steps[position].action) : Json(nullptr)}});
+	}
+
+	void ProjectModel::publish()
+	{
+		m_snapshots.publish(compile(m_project, ++m_revision));
+	}
+
+	Json ProjectModel::undoOrRedo(CommandContext& context, Direction direction)
+	{
+		const bool undo = direction == Direction::Undo;
+		const auto steps = context.parameters().value("steps", int64_t{1});
+		require(steps >= 1, "steps must be at least 1");
+		const size_t position = m_history.position();
+		const size_t available = undo ? position : m_history.steps().size() - position;
+		require(available > 0, undo ? "nothing to undo" : "nothing to redo");
+		require(static_cast<size_t>(steps) <= available,
+			"only " + std::to_string(available) + (undo ? " steps can be undone" : " steps can be redone"));
+		for (int64_t i = 0; i < steps; ++i)
+		{
+			const HistoryStep& step = undo ? m_history.undo() : m_history.redo();
+			apply(m_project, step.change, direction);
+			announce(m_project, step.change, direction, context);
+		}
+		announceHistory(context);
+		publish();
+		return {{"position", m_history.position()}};
+	}
+
+	Json ProjectModel::transaction(Project& project, CommandContext& context)
+	{
+		Json results = Json::array();
+		const Json& commands = context.parameters().at("commands");
+		for (size_t i = 0; i < commands.size(); ++i)
+		{
+			const std::string name = commands[i].at("command").get<std::string>();
+			std::string where = "commands[";
+			where += std::to_string(i);
+			where += ']';
+			const auto edit = m_edits.find(name);
+			if (edit == m_edits.end())
+			{
+				std::string message = where;
+				message += ": ";
+				message += name;
+				message += " can't be part of a transaction";
+				throw CommandError(message);
+			}
+			const Json parameters = commands[i].value("parameters", Json::object());
+			std::string prefix = where;
+			prefix += " (";
+			prefix += name;
+			prefix += "): ";
+			if (const std::string problem = validate(parameters, edit->second.info.parameters, where + ".parameters");
+				!problem.empty())
+				throw CommandError(prefix + problem);
+			CommandContext inner(parameters, &context);
+			try
+			{
+				results.push_back(edit->second.handler(project, inner));
+			}
+			catch (const std::exception& error)
+			{
+				throw CommandError(prefix + error.what());
+			}
+		}
+		return {{"results", results}};
+	}
+
+	void ProjectModel::registerHistoryCommands(Engine& engine)
+	{
+		const Json stepsSchema = {
+			{"type", "object"}, {"properties", {{"steps", {{"type", "integer"}}}}}, {"additionalProperties", false}};
+		const Json positionResult = {
+			{"type", "object"}, {"properties", {{"position", {{"type", "integer"}}}}}, {"required", {"position"}}};
+
+		addControl(engine,
+			{"history.get", 1,
+				"The undo history: every step with its action, time (UTC) and details, the position (steps before it "
+				"are done, the ones after it can be redone) and the maximum number of steps (0: no limit).",
+				objectSchema({}), {{"type", "object"}}, true},
+			[this](CommandContext&)
+			{
+				Json steps = Json::array();
+				for (const HistoryStep& step : m_history.steps())
+					steps.push_back({{"action", step.action}, {"time", step.time}, {"details", step.details}});
+				return Json{{"position", m_history.position()}, {"maxSteps", m_history.maxSteps()}, {"steps", steps}};
+			});
+		addControl(engine,
+			{"history.undo", 1, "Undoes the last step, or the given number of steps.", stepsSchema, positionResult,
+				false},
+			[this](CommandContext& context) { return undoOrRedo(context, Direction::Undo); });
+		addControl(engine,
+			{"history.redo", 1, "Redoes the next undone step, or the given number of steps.", stepsSchema,
+				positionResult, false},
+			[this](CommandContext& context) { return undoOrRedo(context, Direction::Redo); });
+		addControl(engine,
+			{"history.set", 1,
+				"Sets the maximum number of undo steps (0: no limit). The oldest steps beyond it are dropped. A "
+				"setting, so it stays when a new project starts.",
+				objectSchema({{"maxSteps", {{"type", "integer"}}}}, {"maxSteps"}), Json::object(), false},
+			[this](CommandContext& context)
+			{
+				const auto maxSteps = context.parameters().at("maxSteps").get<int64_t>();
+				require(maxSteps >= 0, "maxSteps must not be negative");
+				m_history.setMaxSteps(static_cast<size_t>(maxSteps));
+				announceHistory(context);
+				return Json::object();
+			});
+		addControl(engine,
+			{"history.describe", 1, "Sets the details of a history step, a note for the user.",
+				objectSchema({{"step", {{"type", "integer"}}}, {"details", {{"type", "string"}}}}, {"step", "details"}),
+				Json::object(), false},
+			[this](CommandContext& context)
+			{
+				const auto step = context.parameters().at("step").get<int64_t>();
+				requireRange(step, 0, static_cast<int64_t>(m_history.steps().size()) - 1, "step");
+				m_history.step(static_cast<size_t>(step)).details =
+					context.parameters().at("details").get<std::string>();
+				announceHistory(context);
+				return Json::object();
+			});
+
+		const Json command =
+			objectSchema({{"command", {{"type", "string"}}}, {"parameters", {{"type", "object"}}}}, {"command"});
+		add(engine,
+			{"history.transaction", 1,
+				"Runs document commands in order as one undo step named description. If one fails, none of them "
+				"changes the project. Returns each command's result.",
+				objectSchema({{"description", {{"type", "string"}}}, {"commands", arraySchema(command)}},
+					{"description", "commands"}),
+				{{"type", "object"}, {"properties", {{"results", {{"type", "array"}}}}}, {"required", {"results"}}},
+				false},
+			[this](Project& project, CommandContext& context) { return transaction(project, context); });
 	}
 
 	void ProjectModel::registerCommands(Engine& engine)
@@ -876,13 +1183,18 @@ namespace gnubase::engine
 			{"project.get", 1, "The whole project: busses, tracks in order, channels, media, clips, events and parts.",
 				objectSchema({}), {{"type", "object"}}, true},
 			[](Project& project, CommandContext&) { return toJson(project); });
-		add(engine,
-			{"project.new", 1, "Replaces the project with an empty one that has a stereo input and output bus.",
+		addControl(engine,
+			{"project.new", 1,
+				"Replaces the project with an empty one that has a stereo input and output bus, and clears the undo "
+				"history.",
 				objectSchema({}), noResult, false},
-			[](Project& project, CommandContext& context)
+			[this](CommandContext& context)
 			{
-				project = newProject();
+				m_project = newProject();
+				m_history.clear();
 				context.emit("project.reset");
+				announceHistory(context);
+				publish();
 				return Json::object();
 			});
 		add(engine,
@@ -1050,5 +1362,7 @@ namespace gnubase::engine
 				noResult, false},
 			[](Project& project, CommandContext& context)
 			{ return removeFromPart(project, context, &MidiPart::controllers, "controllers", "controller"); });
+
+		registerHistoryCommands(engine);
 	}
 }

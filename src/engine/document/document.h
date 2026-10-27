@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <tuple>
 #include <vector>
 
 // The project document: a tree of objects with stable ids. Only the engine's command thread reads and changes it,
@@ -151,4 +152,58 @@ namespace gnubase::engine
 
 	// An empty project with a stereo input and a stereo output bus.
 	Project newProject();
+
+	// Equality compares every member; the undo history uses it to find what a command changed.
+	inline bool operator==(const Bus& a, const Bus& b)
+	{
+		return std::tie(a.id, a.name, a.direction, a.channels) == std::tie(b.id, b.name, b.direction, b.channels);
+	}
+
+	inline bool operator==(const Channel& a, const Channel& b)
+	{
+		return std::tie(a.id, a.track, a.channels, a.input, a.output) ==
+			std::tie(b.id, b.track, b.channels, b.input, b.output);
+	}
+
+	inline bool operator==(const MediaFile& a, const MediaFile& b)
+	{
+		return std::tie(a.id, a.path, a.sampleRate, a.channels, a.length) ==
+			std::tie(b.id, b.path, b.sampleRate, b.channels, b.length);
+	}
+
+	inline bool operator==(const Clip& a, const Clip& b)
+	{
+		return std::tie(a.id, a.name, a.media) == std::tie(b.id, b.name, b.media);
+	}
+
+	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
+	{
+		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length) ==
+			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length);
+	}
+
+	inline bool operator==(const Note& a, const Note& b)
+	{
+		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel) ==
+			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel);
+	}
+
+	inline bool operator==(const Controller& a, const Controller& b)
+	{
+		return std::tie(a.id, a.position, a.number, a.value, a.channel) ==
+			std::tie(b.id, b.position, b.number, b.value, b.channel);
+	}
+
+	// A MIDI part's own properties, without its notes and controllers.
+	inline bool sameProperties(const MidiPart& a, const MidiPart& b)
+	{
+		return std::tie(a.id, a.track, a.name, a.position, a.length) ==
+			std::tie(b.id, b.track, b.name, b.position, b.length);
+	}
+
+	inline bool operator==(const Track& a, const Track& b)
+	{
+		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children) ==
+			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children);
+	}
 }

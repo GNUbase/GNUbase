@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/time/tempomap.h"
 
+#include <algorithm>
+
 #include <cmath>
 #include <stdexcept>
 
@@ -70,6 +72,13 @@ namespace gnubase::time
 	Ticks TempoMap::toTicks(Samples sample, double sampleRate) const
 	{
 		return toTicks(static_cast<double>(sample) / sampleRate);
+	}
+
+	bool TempoMap::operator==(const TempoMap& other) const
+	{
+		return std::equal(m_segments.begin(), m_segments.end(), other.m_segments.begin(), other.m_segments.end(),
+			[](const Segment& a, const Segment& b)
+			{ return a.start == b.start && a.seconds == b.seconds && a.bpm == b.bpm && a.slope == b.slope; });
 	}
 
 	double TempoMap::bpmAt(Ticks tick) const

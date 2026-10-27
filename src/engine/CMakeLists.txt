@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 add_library(gnubase-engine STATIC
 	document/document.cpp document/document.h
+	document/history.cpp document/history.h
 	document/projectmodel.cpp document/projectmodel.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	engine.cpp engine.h

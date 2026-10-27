@@ -71,21 +71,30 @@ namespace gnubase::engine
 	class CommandContext
 	{
 	public:
-		explicit CommandContext(const Json& parameters) : m_parameters(parameters) {}
+		// A command run inside another one, as in a transaction, has the outer command's context as outer.
+		explicit CommandContext(const Json& parameters, CommandContext* outer = nullptr)
+			: m_parameters(parameters), m_outer(outer)
+		{
+		}
 
 		// Checked against the command's parameter schema.
 		const Json& parameters() const { return m_parameters; }
 
 		// Announces a change. Clients receive it before the command's result, and not at all if the command fails.
+		// Inside another command, the outer command announces it.
 		void emit(std::string name, Json data = Json::object())
 		{
-			m_events.push_back({std::move(name), std::move(data)});
+			if (m_outer != nullptr)
+				m_outer->emit(std::move(name), std::move(data));
+			else
+				m_events.push_back({std::move(name), std::move(data)});
 		}
 
 	private:
 		friend class Engine;
 
 		const Json& m_parameters;
+		CommandContext* m_outer = nullptr;
 		std::vector<Event> m_events;
 	};
 
