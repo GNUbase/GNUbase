@@ -1,0 +1,24 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Blocks commits whose staged files (content or path) contain a keyword from
+# .git/info/private-keywords (one per line, case-insensitive, extended regex).
+# The list lives outside the repo on purpose: committing it would publish the
+# keywords. Binary files are not scanned. Scan errors block too (fail closed).
+# Without a list, a clone that tools/install-git-hooks.sh marked as a maintainer
+# clone blocks every commit; other clones skip the scan and rely on the CI scan
+# of pull requests.
+list="$(git rev-parse --git-common-dir)/info/private-keywords"
+if [ ! -e "$list" ]; then
+	required=$(git config --bool gnubase.requireKeywordList); rc=$?
+	{ [ $rc -eq 1 ] || [ "$required" = false ]; } && exit 0
+fi
+pattern=$(tr -d '\r' < "$list" | sed -e '/^$/d' | paste -sd '|' -)
+[ -n "$pattern" ] || { echo "Commit blocked, keyword list $list missing or empty" >&2; exit 1; }
+
+content=$(git grep --cached -I -n -i -E -e "$pattern"); rc1=$?
+names=$(git ls-files | grep -i -E -e "$pattern"); rc2=$?
+[ $rc1 -le 1 ] && [ $rc2 -le 1 ] || { echo "Commit blocked, keyword scan failed ($rc1/$rc2)" >&2; exit 1; }
+[ -z "$content$names" ] && exit 0
+echo "Commit blocked, private keywords found:" >&2
+{ [ -n "$content" ] && echo "$content"; [ -n "$names" ] && echo "$names"; } >&2
+exit 1

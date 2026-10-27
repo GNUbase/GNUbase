@@ -31,3 +31,13 @@ gnubase_target_defaults(gnubase-tests)
 # PRE_TEST discovery lets cross-compiled builds (e.g. Windows ARM64 on x64) configure and build.
 include(Catch)
 catch_discover_tests(gnubase-tests DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS)
+
+# Shell tests for the scripts in tools/. They use the sh next to Git, which on Windows is the one Git runs hooks with
+# (Git/bin, found from Git/cmd or Git/mingw64/bin).
+find_package(Git REQUIRED)
+get_filename_component(gitBinDir "${GIT_EXECUTABLE}" DIRECTORY)
+find_program(GNUBASE_SH sh HINTS "${gitBinDir}/../bin" "${gitBinDir}/../../bin" REQUIRED)
+set(keywordGuardTest "the keyword guard blocks private keywords in commits and pull requests")
+add_test(NAME "${keywordGuardTest}"
+	COMMAND "${GNUBASE_SH}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/keyword_guard_tests.sh" "${PROJECT_SOURCE_DIR}")
+set_tests_properties("${keywordGuardTest}" PROPERTIES LABELS integration)

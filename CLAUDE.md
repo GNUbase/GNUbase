@@ -4,7 +4,7 @@ Open-source (GPLv3) digital audio workstation for Windows, macOS and Linux. GNUb
 
 ## Source of truth and naming
 - The reference's operation manual is in the maintainers' private resources folder `u:\resources\GNUbase`. It is not part of this repo. Tickets cite it as "Reference manual: pp. N". Read the cited pages before implementing a ticket.
-- Never write the reference product's or vendor's name anywhere public: code, comments, file names, commits, issues, wiki, docs. Use generic feature names, not the vendor's trademarked ones (say "mixer", not the branded name). Local git hooks enforce this using `.git/info/private-keywords`; never bypass them with `--no-verify`.
+- Never write the reference product's or vendor's name anywhere public: code, comments, file names, commits, issues, wiki, docs. Use generic feature names, not the vendor's trademarked ones (say "mixer", not the branded name). The git hooks in `tools/git-hooks` enforce this with the private list in `.git/info/private-keywords`: install them once per clone with `tools/install-git-hooks.sh` and never bypass them with `--no-verify`. CI scans every pull request and every push to main against the same list (`.github/workflows/keyword-scan.yml`).
 - Planning lives in GitHub milestones and issues: https://github.com/GNUbase/GNUbase. Basic functionality first, optional features later.
 
 ## Architecture rules (non-negotiable)

@@ -1,0 +1,8 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Runs Git LFS's pre-push hook, which core.hooksPath would otherwise skip (see tools/install-git-hooks.sh).
+if ! command -v git-lfs > /dev/null 2>&1; then
+	echo "This repository uses Git LFS, but git-lfs is not installed." >&2
+	exit 2
+fi
+exec git lfs pre-push "$@"

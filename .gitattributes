@@ -74,3 +74,7 @@
 *.xz filter=lfs diff=lfs merge=lfs -text
 *.bz2 filter=lfs diff=lfs merge=lfs -text
 *.dawproject filter=lfs diff=lfs merge=lfs -text
+
+# Shell scripts and Git hooks keep LF line endings on every platform, because sh fails on CRLF.
+*.sh text eol=lf
+tools/git-hooks/* text eol=lf
