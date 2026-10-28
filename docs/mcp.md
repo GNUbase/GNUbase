@@ -559,6 +559,21 @@ Arguments:
 - `controllers`: array of integer, required
 - `part`: integer, required
 
+#### `controller_set`
+
+Engine command `controller.set`.
+
+Changes controller events of a MIDI part: each change names a controller event by id and gives what changes, position in ticks, controller number 0-127, value 0-1 or MIDI channel 0-15. Returns the changed controller events.
+
+Arguments:
+
+- `controllers`: array of object, required
+- `part`: integer, required
+
+Result:
+
+- `controllers`: array, required
+
 ### engine
 
 #### `engine_commands`
@@ -779,6 +794,21 @@ Arguments:
 
 - `notes`: array of integer, required
 - `part`: integer, required
+
+#### `note_set`
+
+Engine command `note.set`.
+
+Changes notes of a MIDI part: each change names a note by id and gives what changes, position and length in ticks, pitch 0-127, velocity 0-1 or MIDI channel 0-15. Returns the changed notes.
+
+Arguments:
+
+- `notes`: array of object, required
+- `part`: integer, required
+
+Result:
+
+- `notes`: array, required
 
 ### processor
 
