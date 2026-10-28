@@ -18,16 +18,16 @@ using gnubase::scripting::Trust;
 
 namespace
 {
-	// test.echo returns its parameters; test.emit announces test.changed with its parameters.
+	// fake.echo returns its parameters; fake.emit announces fake.changed with its parameters.
 	void registerTestCommands(Engine& engine)
 	{
 		const Json anything = Json{{"type", "object"}};
-		engine.registerCommand({"test.echo", 1, "Returns its parameters.", anything, anything, true},
+		engine.registerCommand({"fake.echo", 1, "Returns its parameters.", anything, anything, true},
 			[](CommandContext& context) { return context.parameters(); });
-		engine.registerCommand({"test.emit", 1, "Announces test.changed.", anything, Json::object(), false},
+		engine.registerCommand({"fake.emit", 1, "Announces fake.changed.", anything, Json::object(), false},
 			[](CommandContext& context)
 			{
-				context.emit("test.changed", context.parameters());
+				context.emit("fake.changed", context.parameters());
 				return Json::object();
 			});
 	}
@@ -86,7 +86,7 @@ TEST_CASE("values travel between Lua tables and JSON", "[unit]")
 	std::ostringstream output;
 	Runtime lua(engine, Trust::Trusted, output);
 	run(lua, R"(
-		local result = gnubase.test.echo{
+		local result = gnubase.fake.echo{
 			integer = 42, number = 0.25, text = "hello", yes = true, no = false,
 			list = {1, 2, 3}, nested = {inner = {deeper = "x"}}, empty = {}
 		}
@@ -98,10 +98,10 @@ TEST_CASE("values travel between Lua tables and JSON", "[unit]")
 		assert(next(result.empty) == nil)
 	)");
 
-	const std::optional<std::string> cycle = lua.run("local t = {}; t.self = t; gnubase.test.echo(t)", "cycle.lua");
+	const std::optional<std::string> cycle = lua.run("local t = {}; t.self = t; gnubase.fake.echo(t)", "cycle.lua");
 	CHECK_THAT(cycle.value_or(""), ContainsSubstring("too deep"));
 	CHECK_THAT(
-		lua.run("gnubase.test.echo{f = print}", "function.lua").value_or(""), ContainsSubstring("can't be sent"));
+		lua.run("gnubase.fake.echo{f = print}", "function.lua").value_or(""), ContainsSubstring("can't be sent"));
 }
 
 TEST_CASE("Lua handles engine events and waits for them", "[unit]")
@@ -112,16 +112,16 @@ TEST_CASE("Lua handles engine events and waits for them", "[unit]")
 	Runtime lua(engine, Trust::Trusted, output);
 	run(lua, R"(
 		local seen = {}
-		gnubase.on("test.changed", function(event) seen[#seen + 1] = event.data.value end)
-		gnubase.test.emit{value = 1}
-		gnubase.test.emit{value = 2}
+		gnubase.on("fake.changed", function(event) seen[#seen + 1] = event.data.value end)
+		gnubase.fake.emit{value = 1}
+		gnubase.fake.emit{value = 2}
 		assert(#seen == 2 and seen[1] == 1 and seen[2] == 2)
 
 		-- The same events wait to be taken.
-		local event = gnubase.waitFor("test.changed", 0)
-		assert(event.name == "test.changed" and event.data.value == 1)
+		local event = gnubase.waitFor("fake.changed", 0)
+		assert(event.name == "fake.changed" and event.data.value == 1)
 		assert(#gnubase.events() == 1) -- the second one
-		assert(gnubase.waitFor("test.changed", 0.01) == nil)
+		assert(gnubase.waitFor("fake.changed", 0.01) == nil)
 	)");
 
 	// Coroutines can call commands as well.
