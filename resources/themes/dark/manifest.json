@@ -1,0 +1,604 @@
+{
+  "theme": "dark",
+  "units": "dp",
+  "assets": {
+    "dialog": {
+      "file": "dialog.svg",
+      "width": 32,
+      "height": 32,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "dialog-titlebar": {
+      "file": "dialog-titlebar.svg",
+      "width": 32,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "panel": {
+      "file": "panel.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "panel-header": {
+      "file": "panel-header.svg",
+      "width": 24,
+      "height": 20,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "toolbar": {
+      "file": "toolbar.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "display": {
+      "file": "display.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "tooltip": {
+      "file": "tooltip.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "focus-ring": {
+      "file": "focus-ring.svg",
+      "width": 20,
+      "height": 20,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "button-normal": {
+      "file": "button-normal.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "button-hover": {
+      "file": "button-hover.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "button-pressed": {
+      "file": "button-pressed.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "button-disabled": {
+      "file": "button-disabled.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "button-checked": {
+      "file": "button-checked.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "button-primary-normal": {
+      "file": "button-primary-normal.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "button-primary-hover": {
+      "file": "button-primary-hover.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "button-primary-pressed": {
+      "file": "button-primary-pressed.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "toggle-off": {
+      "file": "toggle-off.svg",
+      "width": 20,
+      "height": 20,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "toggle-hover": {
+      "file": "toggle-hover.svg",
+      "width": 20,
+      "height": 20,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "toggle-mute": {
+      "file": "toggle-mute.svg",
+      "width": 20,
+      "height": 20,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "toggle-solo": {
+      "file": "toggle-solo.svg",
+      "width": 20,
+      "height": 20,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "toggle-record": {
+      "file": "toggle-record.svg",
+      "width": 20,
+      "height": 20,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "toggle-monitor": {
+      "file": "toggle-monitor.svg",
+      "width": 20,
+      "height": 20,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "field-normal": {
+      "file": "field-normal.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "field-focus": {
+      "file": "field-focus.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "field-disabled": {
+      "file": "field-disabled.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "dropdown-normal": {
+      "file": "dropdown-normal.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "dropdown-hover": {
+      "file": "dropdown-hover.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "dropdown-open": {
+      "file": "dropdown-open.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "menu": {
+      "file": "menu.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "menu-item-hover": {
+      "file": "menu-item-hover.svg",
+      "width": 24,
+      "height": 20,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "menu-separator": {
+      "file": "menu-separator.svg",
+      "width": 16,
+      "height": 8,
+      "slice": {
+        "left": 2,
+        "top": 2,
+        "right": 2,
+        "bottom": 2
+      }
+    },
+    "list": {
+      "file": "list.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "list-item-hover": {
+      "file": "list-item-hover.svg",
+      "width": 24,
+      "height": 20,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "list-item-selected": {
+      "file": "list-item-selected.svg",
+      "width": 24,
+      "height": 20,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "tabbar": {
+      "file": "tabbar.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "tab-normal": {
+      "file": "tab-normal.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "tab-hover": {
+      "file": "tab-hover.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "tab-active": {
+      "file": "tab-active.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "scrollbar-track-vertical": {
+      "file": "scrollbar-track-vertical.svg",
+      "width": 10,
+      "height": 24,
+      "slice": {
+        "left": 3,
+        "top": 3,
+        "right": 3,
+        "bottom": 3
+      }
+    },
+    "scrollbar-track-horizontal": {
+      "file": "scrollbar-track-horizontal.svg",
+      "width": 24,
+      "height": 10,
+      "slice": {
+        "left": 3,
+        "top": 3,
+        "right": 3,
+        "bottom": 3
+      }
+    },
+    "scrollbar-thumb-vertical": {
+      "file": "scrollbar-thumb-vertical.svg",
+      "width": 10,
+      "height": 24,
+      "slice": {
+        "left": 2,
+        "top": 2,
+        "right": 2,
+        "bottom": 2
+      }
+    },
+    "scrollbar-thumb-horizontal": {
+      "file": "scrollbar-thumb-horizontal.svg",
+      "width": 24,
+      "height": 10,
+      "slice": {
+        "left": 2,
+        "top": 2,
+        "right": 2,
+        "bottom": 2
+      }
+    },
+    "scrollbar-thumb-vertical-hover": {
+      "file": "scrollbar-thumb-vertical-hover.svg",
+      "width": 10,
+      "height": 24,
+      "slice": {
+        "left": 2,
+        "top": 2,
+        "right": 2,
+        "bottom": 2
+      }
+    },
+    "scrollbar-thumb-horizontal-hover": {
+      "file": "scrollbar-thumb-horizontal-hover.svg",
+      "width": 24,
+      "height": 10,
+      "slice": {
+        "left": 2,
+        "top": 2,
+        "right": 2,
+        "bottom": 2
+      }
+    },
+    "slider-track": {
+      "file": "slider-track.svg",
+      "width": 24,
+      "height": 8,
+      "slice": {
+        "left": 1,
+        "top": 1,
+        "right": 1,
+        "bottom": 1
+      }
+    },
+    "slider-fill": {
+      "file": "slider-fill.svg",
+      "width": 24,
+      "height": 8,
+      "slice": {
+        "left": 1,
+        "top": 1,
+        "right": 1,
+        "bottom": 1
+      }
+    },
+    "fader-track": {
+      "file": "fader-track.svg",
+      "width": 12,
+      "height": 32,
+      "slice": {
+        "left": 2,
+        "top": 2,
+        "right": 2,
+        "bottom": 2
+      }
+    },
+    "meter-background": {
+      "file": "meter-background.svg",
+      "width": 12,
+      "height": 32,
+      "slice": {
+        "left": 1,
+        "top": 1,
+        "right": 1,
+        "bottom": 1
+      }
+    },
+    "dropdown-arrow": {
+      "file": "dropdown-arrow.svg",
+      "width": 12,
+      "height": 8
+    },
+    "checkbox-off": {
+      "file": "checkbox-off.svg",
+      "width": 18,
+      "height": 18
+    },
+    "checkbox-on": {
+      "file": "checkbox-on.svg",
+      "width": 18,
+      "height": 18
+    },
+    "checkbox-mixed": {
+      "file": "checkbox-mixed.svg",
+      "width": 18,
+      "height": 18
+    },
+    "radio-off": {
+      "file": "radio-off.svg",
+      "width": 18,
+      "height": 18
+    },
+    "radio-on": {
+      "file": "radio-on.svg",
+      "width": 18,
+      "height": 18
+    },
+    "slider-thumb": {
+      "file": "slider-thumb.svg",
+      "width": 16,
+      "height": 16
+    },
+    "fader-cap": {
+      "file": "fader-cap.svg",
+      "width": 22,
+      "height": 12
+    },
+    "knob-base": {
+      "file": "knob-base.svg",
+      "width": 40,
+      "height": 40
+    },
+    "knob-pointer": {
+      "file": "knob-pointer.svg",
+      "width": 40,
+      "height": 40
+    },
+    "meter-fill": {
+      "file": "meter-fill.svg",
+      "width": 12,
+      "height": 96
+    },
+    "meter-peak": {
+      "file": "meter-peak.svg",
+      "width": 12,
+      "height": 4
+    },
+    "splitter-grip-vertical": {
+      "file": "splitter-grip-vertical.svg",
+      "width": 8,
+      "height": 24
+    },
+    "splitter-grip-horizontal": {
+      "file": "splitter-grip-horizontal.svg",
+      "width": 24,
+      "height": 8
+    }
+  }
+}
