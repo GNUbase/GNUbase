@@ -42,7 +42,7 @@ namespace gnubase::app
 		{
 			engine::Client client(engine);
 			if (!setUp(client, "audio.setDevice",
-					{{"sampleRate", options.sampleRate}, {"blockSize", options.blockSize}},
+					{{"backend", options.audio}, {"sampleRate", options.sampleRate}, {"blockSize", options.blockSize}},
 					"cannot set up the audio device", err))
 				return g_exitSetup;
 			if (!options.project.empty() &&

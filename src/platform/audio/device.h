@@ -4,18 +4,61 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
-// What audio devices and the engine exchange once per block. The dummy device implements it now; the hardware
-// backends (ASIO, WASAPI, CoreAudio, PipeWire, JACK) follow in M03.
+// Audio devices and their backends, and what devices and the engine exchange once per block. A backend is a kind of
+// driver (dummy, ASIO, WASAPI, CoreAudio, PipeWire, JACK); it lists its devices and opens them.
 namespace gnubase::audio
 {
 	struct DeviceFormat
 	{
 		double sampleRate = 48000.0;
-		uint32_t blockSize = 256; // frames per block
+		uint32_t blockSize = 256; // the most frames a block has
 		int inputChannels = 2;
 		int outputChannels = 2;
+	};
+
+	// Thrown when a device can't be listed, opened or started.
+	class DeviceError : public std::runtime_error
+	{
+	public:
+		using std::runtime_error::runtime_error;
+	};
+
+	// What a backend knows about a device. Some drivers tell more once the device is open: Backend::devices may leave
+	// lists empty that Device::info fills.
+	struct DeviceInfo
+	{
+		std::string id; // what Backend::open takes; stays the same across runs where the driver allows
+		std::string name;
+		std::vector<std::string> inputs; // channel names
+		std::vector<std::string> outputs;
+		std::vector<double> sampleRates; // the device opens with each of these
+		std::vector<uint32_t> blockSizes;
+		std::vector<std::string> clockSources;
+		int clockSource = -1;      // the current one, an index into clockSources; -1 if there are none
+		bool controlPanel = false; // the driver has a control panel (Device::openControlPanel)
+	};
+
+	// How to open a device. Zero and empty values leave the choice to the driver.
+	struct DeviceConfig
+	{
+		std::string device;      // an id from Backend::devices; empty: the default device
+		double sampleRate = 0.0; // 0: the device's current sample rate
+		uint32_t blockSize = 0;  // 0: the driver's preferred block size
+		std::string clockSource; // a name from DeviceInfo::clockSources; empty: as it is
+	};
+
+	// In frames, as the driver reports them.
+	struct DeviceLatency
+	{
+		uint32_t input = 0;
+		uint32_t output = 0;
 	};
 
 	// A MIDI 1.0 channel message at a frame within a block.
@@ -79,4 +122,68 @@ namespace gnubase::audio
 
 		virtual void process(const DeviceBlock& block) noexcept = 0;
 	};
+
+	// An open audio device. While it runs, it calls its callback once per block on its audio thread, in the realtime
+	// context (rt::ScopedRealtimeContext), with positions counting on from block to block and across restarts.
+	class Device
+	{
+	public:
+		Device() = default;
+		virtual ~Device() = default; // a running device stops first
+		Device(const Device&) = delete;
+		Device& operator=(const Device&) = delete;
+
+		virtual const DeviceFormat& format() const = 0;
+		virtual DeviceInfo info() const = 0; // its sample rates and block sizes include the current ones
+		virtual DeviceLatency latency() const = 0;
+
+		// Throws DeviceError if the device can't start.
+		virtual void start(AudioCallback& callback) = 0;
+		// Returns after the last callback. Does nothing while stopped.
+		virtual void stop() = 0;
+		virtual bool running() const = 0;
+
+		// Frames processed since the device was opened.
+		virtual uint64_t position() const = 0;
+
+		// Opens the driver's control panel, if it has one (DeviceInfo::controlPanel).
+		virtual void openControlPanel() {}
+
+		// Called when the driver asks to be opened again, e.g. because its settings changed in its control panel. Never
+		// called on the audio thread. Set it while the device is stopped.
+		void onReset(std::function<void()> handler) { m_reset = std::move(handler); }
+
+	protected:
+		// For backends, when their driver asks for a reset.
+		void requestReset() const
+		{
+			if (m_reset)
+				m_reset();
+		}
+
+	private:
+		std::function<void()> m_reset;
+	};
+
+	// A kind of driver. It lists its devices and opens them.
+	class Backend
+	{
+	public:
+		Backend() = default;
+		virtual ~Backend() = default;
+		Backend(const Backend&) = delete;
+		Backend& operator=(const Backend&) = delete;
+
+		virtual std::string name() const = 0; // e.g. "dummy", "wasapi"
+
+		// The devices there are now. Throws DeviceError if the driver can't list them.
+		virtual std::vector<DeviceInfo> devices() = 0;
+
+		// Opens a device stopped. Throws DeviceError if it can't, e.g. for an unknown device or an unsupported sample
+		// rate, block size or clock source.
+		virtual std::unique_ptr<Device> open(const DeviceConfig& config) = 0;
+	};
+
+	// The backends this build has, the preferred one first and the dummy backend last.
+	std::vector<std::unique_ptr<Backend>> makeBackends();
 }
