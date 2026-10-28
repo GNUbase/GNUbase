@@ -1,0 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 32" width="12" height="32">
+<rect x="0.5" y="0.5" width="11.0" height="31.0" rx="3" fill="#c3c6c9" stroke="#b9c1cc" stroke-width="1"/><line x1="2" y1="7.5" x2="10" y2="7.5" stroke="#b9c1cc" opacity=".45"/><line x1="2" y1="14.5" x2="10" y2="14.5" stroke="#b9c1cc" opacity=".45"/><line x1="2" y1="21.5" x2="10" y2="21.5" stroke="#b9c1cc" opacity=".45"/><line x1="2" y1="28.5" x2="10" y2="28.5" stroke="#b9c1cc" opacity=".45"/>
+</svg>

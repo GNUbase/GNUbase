@@ -1,0 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 8" width="12" height="8">
+<polyline points="2,2 6,6 10,2" fill="none" stroke="#b7bbc0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
