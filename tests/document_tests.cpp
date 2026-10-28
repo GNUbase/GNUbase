@@ -3,15 +3,18 @@
 #include "engine/engine.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <utility>
 #include <vector>
 
 using namespace gnubase::engine;
 using Catch::Matchers::ContainsSubstring;
+using Catch::Matchers::WithinAbs;
 using gnubase::time::g_ticksPerQuarter;
 
 namespace
@@ -253,6 +256,31 @@ TEST_CASE("audio events play sections of clips at sample positions", "[unit]")
 	REQUIRE(second.audioEvents.size() == 1);
 	CHECK(second.audioEvents[0].start == 12345);
 	CHECK(second.audioEvents[0].length == 192000); // the whole clip by default
+}
+
+TEST_CASE("audio events have a volume in dB and can be muted, which the render snapshot applies", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId clip = addClip(client);
+	const ObjectId audio = addTrack(client, {{"type", "audio"}, {"timeBase", "linear"}});
+	const Json event = run(client, "audioEvent.add", {{"track", audio}, {"clip", clip}, {"position", 0}}).at("event");
+	CHECK(event.at("volume") == 0.0);
+	CHECK(event.at("mute") == false);
+	const ObjectId id = event.at("id").get<ObjectId>();
+
+	const Json changed = run(client, "audioEvent.set", {{"event", id}, {"volume", -6.0}, {"mute", true}}).at("event");
+	CHECK(changed.at("volume") == -6.0);
+	CHECK(changed.at("mute") == true);
+	const RenderAudioEvent& compiled = renderChannel(engine.renderSnapshots().acquire(), audio).audioEvents[0];
+	CHECK_THAT(compiled.gain, WithinAbs(std::pow(10.0, -6.0 / 20.0), 1e-6));
+	CHECK(compiled.muted);
+
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("audioEvents")[0].at("volume") == 0.0);
+	CHECK_THAT(reject(client, "audioEvent.set", {{"event", id}, {"volume", 6.5}}), ContainsSubstring("volume"));
+	CHECK_THAT(reject(client, "audioEvent.add", {{"track", audio}, {"clip", clip}, {"position", 0}, {"volume", -200}}),
+		ContainsSubstring("volume"));
 }
 
 TEST_CASE("audio events stay within their clip and on audio tracks", "[unit]")

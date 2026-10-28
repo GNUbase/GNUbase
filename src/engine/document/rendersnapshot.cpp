@@ -2,6 +2,7 @@
 #include "engine/document/rendersnapshot.h"
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <tuple>
 
@@ -93,7 +94,8 @@ namespace gnubase::engine
 		{
 			const Clip& clip = project.clips.at(event.clip);
 			snapshot->channels[trackChannel.at(event.track)].audioEvents.push_back(
-				{id, toSamples(project, event.position), mediaIndex.at(clip.media), event.offset, event.length});
+				{id, toSamples(project, event.position), mediaIndex.at(clip.media), event.offset, event.length,
+					static_cast<float>(std::pow(10.0, event.volume / 20.0)), event.mute});
 		}
 		for (const auto& [id, part] : project.midiParts)
 			compilePart(project, part, snapshot->channels[trackChannel.at(part.track)]);

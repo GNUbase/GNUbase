@@ -627,6 +627,8 @@ namespace gnubase::engine
 			require(event.length > 0, "length must be positive");
 			require(event.offset + event.length <= media.length,
 				"the event must stay within its clip (" + std::to_string(media.length) + " sample frames)");
+			require(event.volume >= g_minEventVolume && event.volume <= g_maxEventVolume,
+				"volume must be from -144 to 6 dB");
 		}
 
 		Json addAudioEvent(Project& project, CommandContext& context)
@@ -639,6 +641,8 @@ namespace gnubase::engine
 			event.clip = parameters.at("clip").get<ObjectId>();
 			event.offset = parameters.value("offset", time::Samples{0});
 			event.length = parameters.value("length", time::Samples{0});
+			event.volume = parameters.value("volume", 0.0);
+			event.mute = parameters.value("mute", false);
 			require(!parameters.contains("length") || event.length > 0, "length must be positive");
 			checkAudioEvent(project, event);
 			event.id = project.newId();
@@ -658,6 +662,8 @@ namespace gnubase::engine
 			changed.clip = parameters.value("clip", event.clip);
 			changed.offset = parameters.value("offset", event.offset);
 			changed.length = parameters.value("length", event.length);
+			changed.volume = parameters.value("volume", event.volume);
+			changed.mute = parameters.value("mute", event.mute);
 			require(changed.length > 0, "length must be positive");
 			checkAudioEvent(project, changed);
 			event = changed;
@@ -1333,16 +1339,19 @@ namespace gnubase::engine
 			{"audioEvent.add", 1,
 				"Adds an audio event that plays a section of a clip on an audio track. position is in the track's time "
 				"base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the "
-				"rest of the clip.",
-				objectSchema({{"track", idSchema}, {"clip", idSchema}, {"position", integerSchema},
-								 {"offset", integerSchema}, {"length", integerSchema}},
+				"rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track "
+				"plays one event at a time: where events overlap, the one added last plays.",
+				objectSchema(
+					{{"track", idSchema}, {"clip", idSchema}, {"position", integerSchema}, {"offset", integerSchema},
+						{"length", integerSchema}, {"volume", numberSchema}, {"mute", booleanSchema}},
 					{"track", "clip", "position"}),
 				resultSchema({"event"}), false},
 			addAudioEvent);
 		add(engine,
-			{"audioEvent.set", 1, "Changes an audio event's position, clip, offset or length.",
-				objectSchema({{"event", idSchema}, {"clip", idSchema}, {"position", integerSchema},
-								 {"offset", integerSchema}, {"length", integerSchema}},
+			{"audioEvent.set", 1, "Changes an audio event's position, clip, offset, length, volume (dB) or mute.",
+				objectSchema(
+					{{"event", idSchema}, {"clip", idSchema}, {"position", integerSchema}, {"offset", integerSchema},
+						{"length", integerSchema}, {"volume", numberSchema}, {"mute", booleanSchema}},
 					{"event"}),
 				resultSchema({"event"}), false},
 			setAudioEvent);
