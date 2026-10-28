@@ -9,8 +9,8 @@
 // The VST3 preset file (.vstpreset): the state of a VST3 plugin as the adapter saves and loads it, so a project's
 // plugin state and a preset file are the same bytes (docs/plugin-api.md, "State and presets").
 //
-// Layout, little-endian: the header "VST3", version 1 (int32), the class id as 32 ASCII hex digits and the offset of the
-// chunk list (int64); then the chunks' data; then the chunk list: "List", the entry count (int32) and per entry the
+// Layout, little-endian: the header "VST3", version 1 (int32), the class id as 32 ASCII hex digits and the offset of
+// the chunk list (int64); then the chunks' data; then the chunk list: "List", the entry count (int32) and per entry the
 // chunk id (4 ASCII characters: "Comp" component state, "Cont" controller state), its offset and its size (int64).
 namespace gnubase::pluginhost::vst3
 {

@@ -17,6 +17,16 @@ Rules:
 - Never force-push `gnubase`. Older GNUbase commits must still be able to check out the submodule commit they pinned.
 - The GNUbase repository pins an exact submodule commit. `branch = gnubase` in `.gitmodules` only matters for `git submodule update --remote`.
 
+## VST3 SDK
+
+The VST3 SDK is used unchanged, from mirrors in the GNUbase account: the SDK's own repository names its vendor, which GNUbase never writes (CLAUDE.md, "Source of truth and naming"). `ext/vst3sdk` is [GNUbase/vst3sdk](https://github.com/GNUbase/vst3sdk), pinned at `v3.8.1_build_84`, the first release under the MIT license. Its own submodules have relative URLs, so they resolve to the GNUbase mirrors too (`vst3_base`, `vst3_cmake`, `vst3_pluginterfaces`, `vst3_public_sdk`, ...).
+
+GNUbase needs only `base`, `cmake`, `pluginterfaces` and `public.sdk`, not the SDK's documentation, tutorials or GUI library. So `.gitmodules` sets `update = none` for `ext/vst3sdk`, which a recursive update skips, and the SDK is fetched with two extra commands (see [Cloning](#cloning)). CMake stops with these commands if the SDK is missing.
+
+The test plugins use only the interface headers in `pluginterfaces` (the `vst3-sdk` target) and implement the interfaces themselves. The VST3 adapter of the plugin host (`src/pluginhost/vst3`, #68) also builds two static libraries from the SDK, defined in the top-level `CMakeLists.txt`: `vst3-interfaces`, the interface ids, and `vst3-hosting`, the module loader, the host classes (host application, messages, attribute lists) and the string conversion of `public.sdk/source`. The adapter's own test plugin (`tests/vst3adapter`) links `vst3-interfaces`. The SDK's C++ namespace also names the vendor, so GNUbase code never writes it either: CMake reads it from `pluginterfaces/base/funknown.h` and passes it as the compile definition `GNUBASE_VST3_NS` (the `vst3-sdk` target), and `src/pluginhost/vst3/vst3ns.h` makes it available as `namespace vst`. Code includes that header and writes `vst::FUnknown`, `vst::Vst::IComponent` and so on.
+
+To update the SDK, the maintainers update the mirrors first; then check out the new tag in `ext/vst3sdk`, update its four submodules and commit `ext/vst3sdk`.
+
 ## Other dependencies
 
 Used unchanged, pinned to an upstream release tag.
@@ -52,13 +62,20 @@ git commit -m "Update Catch2 to v3.17.0"
 
 ```bash
 git clone --recursive https://github.com/GNUbase/GNUbase.git
+cd GNUbase
+git submodule update --init --checkout ext/vst3sdk
+git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
 ```
 
 In an existing clone:
 
 ```bash
 git submodule update --init --recursive
+git submodule update --init --checkout ext/vst3sdk
+git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
 ```
+
+The recursive update skips the VST3 SDK, so the last two commands fetch only the parts of it GNUbase needs (see [VST3 SDK](#vst3-sdk)).
 
 ## Changing a fork
 

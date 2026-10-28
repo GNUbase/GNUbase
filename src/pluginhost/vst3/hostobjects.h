@@ -134,8 +134,9 @@ namespace gnubase::pluginhost::vst3
 	};
 
 	// The host's side of a controller: edits, restarts, the dirty state and program list changes.
-	class ComponentHandler final : public vst::U::ImplementsNonDestroyable<vst::U::Directly<
-									   vst::Vst::IComponentHandler, vst::Vst::IComponentHandler2, vst::Vst::IUnitHandler>>
+	class ComponentHandler final
+		: public vst::U::ImplementsNonDestroyable<
+			  vst::U::Directly<vst::Vst::IComponentHandler, vst::Vst::IComponentHandler2, vst::Vst::IUnitHandler>>
 	{
 	public:
 		explicit ComponentHandler(ComponentHandlerListener& listener) : m_listener(listener) {}
@@ -151,7 +152,8 @@ namespace gnubase::pluginhost::vst3
 		vst::tresult PLUGIN_API finishGroupEdit() override { return vst::kResultOk; }
 
 		vst::tresult PLUGIN_API notifyUnitSelection(vst::Vst::UnitID unitId) override;
-		vst::tresult PLUGIN_API notifyProgramListChange(vst::Vst::ProgramListID listId, vst::int32 programIndex) override;
+		vst::tresult PLUGIN_API notifyProgramListChange(
+			vst::Vst::ProgramListID listId, vst::int32 programIndex) override;
 
 	private:
 		ComponentHandlerListener& m_listener;

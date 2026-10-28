@@ -25,14 +25,16 @@ namespace gnubase::pluginhost::vst3
 		using vst::Vst::BusDirections;
 		using vst::Vst::MediaTypes;
 
-		constexpr size_t g_maxQueues = 512;      // parameters changed in one block
-		constexpr size_t g_maxInPoints = 64;     // changes of one parameter in one block
-		constexpr size_t g_maxOutPoints = 32;    // changes of one parameter the plugin reports per block
-		constexpr size_t g_maxEvents = 1024;     // VST3 events per block, in and out
-		constexpr size_t g_maxOutputs = 4096;    // GNUbase output events per sub-block
-		constexpr size_t g_channels = 16;        // MIDI channels per event bus
+		constexpr size_t g_maxQueues = 512;         // parameters changed in one block
+		constexpr size_t g_maxInPoints = 64;        // changes of one parameter in one block
+		constexpr size_t g_maxOutPoints = 32;       // changes of one parameter the plugin reports per block
+		constexpr size_t g_maxEvents = 1024;        // VST3 events per block, in and out
+		constexpr size_t g_maxOutputs = 4096;       // GNUbase output events per sub-block
+		constexpr size_t g_channels = 16;           // MIDI channels per event bus
 		constexpr double g_perNoteBendRange = 48.0; // semitones of a MIDI 2.0 per-note pitch bend, as MPE's default
 		constexpr double g_maxUint32 = 4294967295.0;
+		constexpr vst::TBool g_true = 1;
+		constexpr vst::TBool g_false = 0;
 
 		std::string toUtf8(const vst::Vst::TChar* text)
 		{
@@ -180,12 +182,11 @@ namespace gnubase::pluginhost::vst3
 	}
 
 	Vst3Plugin::Vst3Plugin(
-		VST3::Hosting::Module::Ptr module, VST3::UID classId, plugin::Descriptor descriptor, plugin::Host& host)
+		VST3::Hosting::Module::Ptr module, const VST3::UID& classId, plugin::Descriptor descriptor, plugin::Host& host)
 		: m_module(std::move(module)), m_classId(classId), m_descriptor(std::move(descriptor)), m_host(host),
-		  m_inChanges(g_maxQueues, g_maxInPoints), m_outChanges(g_maxQueues, g_maxOutPoints),
-		  m_inEvents(g_maxEvents), m_outEvents(g_maxEvents)
+		  m_inChanges(g_maxQueues, g_maxInPoints), m_outChanges(g_maxQueues, g_maxOutPoints), m_inEvents(g_maxEvents),
+		  m_outEvents(g_maxEvents), m_outputs(g_maxOutputs)
 	{
-		m_outputs.reserve(g_maxOutputs);
 	}
 
 	Vst3Plugin::~Vst3Plugin()
@@ -197,7 +198,7 @@ namespace gnubase::pluginhost::vst3
 	{
 		if (m_active)
 			deactivate();
-		if (m_componentConnection && m_controllerConnection)
+		if (m_componentConnection != nullptr && m_controllerConnection != nullptr)
 		{
 			m_componentConnection->disconnect(m_controllerConnection);
 			m_controllerConnection->disconnect(m_componentConnection);
@@ -206,7 +207,7 @@ namespace gnubase::pluginhost::vst3
 		m_controllerConnection = nullptr;
 		m_units = nullptr;
 		m_midiMapping = nullptr;
-		if (m_controller)
+		if (m_controller != nullptr)
 		{
 			m_controller->setComponentHandler(nullptr);
 			if (m_separateController)
@@ -214,7 +215,7 @@ namespace gnubase::pluginhost::vst3
 		}
 		m_controller = nullptr;
 		m_processor = nullptr;
-		if (m_component)
+		if (m_component != nullptr)
 			m_component->terminate();
 		m_component = nullptr;
 		m_initialized = false;
@@ -234,7 +235,7 @@ namespace gnubase::pluginhost::vst3
 		vst::FUnknown* context = static_cast<vst::Vst::IHostApplication*>(&m_application);
 		const VST3::Hosting::PluginFactory& factory = m_module->getFactory();
 		m_component = factory.createInstance<vst::Vst::IComponent>(m_classId);
-		if (!m_component)
+		if (m_component == nullptr)
 			return false;
 		if (!succeeded(m_component->initialize(context)))
 		{
@@ -244,19 +245,19 @@ namespace gnubase::pluginhost::vst3
 
 		// The controller: the component itself, or a class of its own.
 		m_controller = vst::U::cast<vst::Vst::IEditController>(m_component);
-		if (!m_controller)
+		if (m_controller == nullptr)
 		{
 			vst::TUID controllerId{};
 			if (succeeded(m_component->getControllerClassId(controllerId)))
 			{
 				m_controller = factory.createInstance<vst::Vst::IEditController>(VST3::UID::fromTUID(controllerId));
-				if (m_controller && !succeeded(m_controller->initialize(context)))
+				if (m_controller != nullptr && !succeeded(m_controller->initialize(context)))
 					m_controller = nullptr;
 				m_separateController = static_cast<bool>(m_controller);
 			}
 		}
 		m_processor = vst::U::cast<vst::Vst::IAudioProcessor>(m_component);
-		if (!m_processor || m_processor->canProcessSampleSize(vst::Vst::kSample32) != kResultOk)
+		if (m_processor == nullptr || m_processor->canProcessSampleSize(vst::Vst::kSample32) != kResultOk)
 		{
 			terminate();
 			return false;
@@ -265,13 +266,13 @@ namespace gnubase::pluginhost::vst3
 		{
 			m_componentConnection = vst::U::cast<vst::Vst::IConnectionPoint>(m_component);
 			m_controllerConnection = vst::U::cast<vst::Vst::IConnectionPoint>(m_controller);
-			if (m_componentConnection && m_controllerConnection)
+			if (m_componentConnection != nullptr && m_controllerConnection != nullptr)
 			{
 				m_componentConnection->connect(m_controllerConnection);
 				m_controllerConnection->connect(m_componentConnection);
 			}
 		}
-		if (m_controller)
+		if (m_controller != nullptr)
 		{
 			m_controller->setComponentHandler(&m_handler);
 			// The controller starts from the component's state, as in every VST3 host.
@@ -293,7 +294,8 @@ namespace gnubase::pluginhost::vst3
 
 	void Vst3Plugin::readBuses()
 	{
-		auto read = [this](vst::Vst::MediaType type, vst::Vst::BusDirection direction, std::vector<Bus>& buses) {
+		auto read = [this](vst::Vst::MediaType type, vst::Vst::BusDirection direction, std::vector<Bus>& buses)
+		{
 			const std::vector<Bus> previous = std::move(buses);
 			buses.clear();
 			const vst::int32 count = m_component->getBusCount(type, direction);
@@ -329,7 +331,7 @@ namespace gnubase::pluginhost::vst3
 	{
 		m_params.clear();
 		m_paramIndex.clear();
-		if (!m_controller)
+		if (m_controller == nullptr)
 			return;
 		const vst::int32 count = m_controller->getParameterCount();
 		for (vst::int32 i = 0; i < count; ++i)
@@ -373,7 +375,7 @@ namespace gnubase::pluginhost::vst3
 	void Vst3Plugin::readMidiMapping()
 	{
 		m_midiMap.clear();
-		if (!m_midiMapping || m_eventInputs.empty())
+		if (m_midiMapping == nullptr || m_eventInputs.empty())
 			return;
 		const size_t controls = vst::Vst::kCountCtrlNumber;
 		m_midiMap.assign(m_eventInputs.size() * g_channels * controls, vst::Vst::kNoParamId);
@@ -385,8 +387,8 @@ namespace gnubase::pluginhost::vst3
 				{
 					vst::Vst::ParamID id = vst::Vst::kNoParamId;
 					if (m_midiMapping->getMidiControllerAssignment(static_cast<vst::int32>(bus),
-							static_cast<vst::int16>(channel), static_cast<vst::Vst::CtrlNumber>(control), id) ==
-						vst::kResultTrue)
+							static_cast<vst::int16>(channel), static_cast<vst::Vst::CtrlNumber>(control),
+							id) == vst::kResultTrue)
 						m_midiMap[(((bus * g_channels) + channel) * controls) + control] = id;
 				}
 			}
@@ -399,8 +401,8 @@ namespace gnubase::pluginhost::vst3
 			return false;
 		if (m_active)
 			return true;
-		vst::Vst::ProcessSetup setup{vst::Vst::kRealtime, vst::Vst::kSample32, static_cast<vst::int32>(maxFrames),
-			sampleRate};
+		vst::Vst::ProcessSetup setup{
+			vst::Vst::kRealtime, vst::Vst::kSample32, static_cast<vst::int32>(maxFrames), sampleRate};
 		if (!succeeded(m_processor->setupProcessing(setup)))
 			return false;
 		// The buses may have changed while inactive (kIoChanged); the mapping too (kMidiCCAssignmentChanged).
@@ -408,15 +410,15 @@ namespace gnubase::pluginhost::vst3
 		readMidiMapping();
 		for (size_t i = 0; i < m_audioInputs.size(); ++i)
 			m_component->activateBus(MediaTypes::kAudio, BusDirections::kInput, static_cast<vst::int32>(i),
-				m_audioInputs[i].active);
+				static_cast<vst::TBool>(m_audioInputs[i].active));
 		for (size_t i = 0; i < m_audioOutputs.size(); ++i)
 			m_component->activateBus(MediaTypes::kAudio, BusDirections::kOutput, static_cast<vst::int32>(i),
-				m_audioOutputs[i].active);
+				static_cast<vst::TBool>(m_audioOutputs[i].active));
 		for (size_t i = 0; i < m_eventInputs.size(); ++i)
-			m_component->activateBus(MediaTypes::kEvent, BusDirections::kInput, static_cast<vst::int32>(i), true);
+			m_component->activateBus(MediaTypes::kEvent, BusDirections::kInput, static_cast<vst::int32>(i), g_true);
 		for (size_t i = 0; i < m_eventOutputs.size(); ++i)
-			m_component->activateBus(MediaTypes::kEvent, BusDirections::kOutput, static_cast<vst::int32>(i), true);
-		if (!succeeded(m_component->setActive(true)))
+			m_component->activateBus(MediaTypes::kEvent, BusDirections::kOutput, static_cast<vst::int32>(i), g_true);
+		if (!succeeded(m_component->setActive(g_true)))
 			return false;
 
 		m_sampleRate = sampleRate;
@@ -432,7 +434,8 @@ namespace gnubase::pluginhost::vst3
 			channels += bus.channelCount;
 		m_scratch.assign(channels * maxFrames, 0.0f);
 		auto setUp = [this](const std::vector<Bus>& buses, std::vector<std::vector<float*>>& pointers,
-						 std::vector<vst::Vst::AudioBusBuffers>& buffers) {
+						 std::vector<vst::Vst::AudioBusBuffers>& buffers)
+		{
 			pointers.assign(buses.size(), {});
 			buffers.assign(buses.size(), vst::Vst::AudioBusBuffers{});
 			for (size_t i = 0; i < buses.size(); ++i)
@@ -455,7 +458,7 @@ namespace gnubase::pluginhost::vst3
 			return;
 		if (m_processing.load(std::memory_order_acquire))
 			stopProcessing();
-		m_component->setActive(false);
+		m_component->setActive(g_false);
 		m_active = false;
 	}
 
@@ -491,7 +494,7 @@ namespace gnubase::pluginhost::vst3
 	{
 		if (id == plugin::NotePorts::extensionId() && m_eventInputs.empty() && m_eventOutputs.empty())
 			return nullptr;
-		if ((id == plugin::Presets::extensionId() || id == plugin::NoteNames::extensionId()) && !m_units)
+		if ((id == plugin::Presets::extensionId() || id == plugin::NoteNames::extensionId()) && m_units == nullptr)
 			return nullptr;
 		return plugin::provide<plugin::AudioPorts, plugin::ConfigurableAudioPorts, plugin::AudioPortsActivation,
 			plugin::NotePorts, plugin::Params, plugin::State, plugin::Presets, plugin::Latency, plugin::Tail,
@@ -504,7 +507,7 @@ namespace gnubase::pluginhost::vst3
 		Update update;
 		while (m_toController.tryPop(update))
 		{
-			if (m_controller)
+			if (m_controller != nullptr)
 				m_controller->setParamNormalized(update.id, update.value);
 		}
 	}
@@ -521,9 +524,11 @@ namespace gnubase::pluginhost::vst3
 		const plugin::TransportSegment* segments = process.transportCount > 0 ? process.transport : &fallback;
 		const uint32_t segmentCount = std::max(process.transportCount, 1U);
 		const uint32_t frames = std::min(process.frames, m_maxFrames);
-		const vst::int32 mode = process.mode == plugin::ProcessMode::Offline ? vst::Vst::kOffline
-			: process.mode == plugin::ProcessMode::Prefetch                  ? vst::Vst::kPrefetch
-																			 : vst::Vst::kRealtime;
+		vst::int32 mode = vst::Vst::kRealtime;
+		if (process.mode == plugin::ProcessMode::Offline)
+			mode = vst::Vst::kOffline;
+		else if (process.mode == plugin::ProcessMode::Prefetch)
+			mode = vst::Vst::kPrefetch;
 
 		// Silence flags of the inputs: constant channels that are zero.
 		for (size_t bus = 0; bus < m_inputBuffers.size(); ++bus)
@@ -583,7 +588,7 @@ namespace gnubase::pluginhost::vst3
 				for (size_t c = 0; c < pointers.size(); ++c, ++scratch)
 				{
 					pointers[c] = in != nullptr && c < in->channelCount ? in->channels[c] + start
-																		 : m_scratch.data() + (scratch * m_maxFrames);
+																		: m_scratch.data() + (scratch * m_maxFrames);
 				}
 			}
 			for (size_t bus = 0; bus < m_outputBuffers.size(); ++bus)
@@ -593,7 +598,7 @@ namespace gnubase::pluginhost::vst3
 				for (size_t c = 0; c < pointers.size(); ++c, ++scratch)
 				{
 					pointers[c] = out != nullptr && c < out->channelCount ? out->channels[c] + start
-																		   : m_scratch.data() + (scratch * m_maxFrames);
+																		  : m_scratch.data() + (scratch * m_maxFrames);
 				}
 				m_outputBuffers[bus].silenceFlags = 0;
 			}
@@ -664,9 +669,13 @@ namespace gnubase::pluginhost::vst3
 			plugin::Event event;
 			event.param = edit.id;
 			if (edit.kind == Edit::Begin)
+			{
 				event.type = plugin::EventType::ParamGestureBegin;
+			}
 			else if (edit.kind == Edit::End)
+			{
 				event.type = plugin::EventType::ParamGestureEnd;
+			}
 			else
 			{
 				event.type = plugin::EventType::ParamValue;
@@ -678,8 +687,8 @@ namespace gnubase::pluginhost::vst3
 			}
 			if (out != nullptr)
 				out->push(event);
-			else if (m_outputs.size() < m_outputs.capacity())
-				m_outputs.push_back(Output{event, -1});
+			else
+				m_outputs.push(Output{event, -1});
 		}
 	}
 
@@ -709,8 +718,9 @@ namespace gnubase::pluginhost::vst3
 		}
 		if ((transport.flags & plugin::Transport::MusicalValid) != 0)
 		{
-			const double quarters =
-				tempoValid && m_sampleRate > 0.0 ? static_cast<double>(since) * transport.tempo / 60.0 / m_sampleRate : 0.0;
+			const double quarters = tempoValid && m_sampleRate > 0.0
+				? static_cast<double>(since) * transport.tempo / 60.0 / m_sampleRate
+				: 0.0;
 			m_context.projectTimeMusic = transport.positionQuarters + quarters;
 			m_context.barPositionMusic = transport.barStart;
 			m_context.timeSigNumerator = transport.timeSignatureNumerator;
@@ -824,7 +834,8 @@ namespace gnubase::pluginhost::vst3
 	void Vst3Plugin::noteOff(int16_t port, int16_t channel, int16_t key, int32_t noteId, float velocity, uint16_t flags,
 		vst::int32 offset) noexcept
 	{
-		auto send = [&](const Voice& voice) {
+		auto send = [&](const Voice& voice)
+		{
 			vst::Vst::Event event{};
 			event.busIndex = voice.port;
 			event.sampleOffset = offset;
@@ -848,7 +859,9 @@ namespace gnubase::pluginhost::vst3
 				found = true;
 			}
 			else
+			{
 				++i;
+			}
 		}
 		if (!found && key >= 0 && key <= 127)
 			send(Voice{port < 0 ? int16_t{0} : port, channel < 0 ? int16_t{0} : channel, key, noteId});
@@ -859,7 +872,8 @@ namespace gnubase::pluginhost::vst3
 		vst::Vst::NoteExpressionTypeID type = 0;
 		double normalized = 0.0;
 		const bool pressure = !expressionToVst(event.expression, event.value, type, normalized);
-		auto send = [&](const Voice& voice) {
+		auto send = [&](const Voice& voice)
+		{
 			vst::Vst::Event out{};
 			out.busIndex = voice.port;
 			out.sampleOffset = offset;
@@ -910,17 +924,14 @@ namespace gnubase::pluginhost::vst3
 		normalized = std::clamp(normalized, 0.0, 1.0);
 		hostParamChange(id, normalized, offset);
 		// The engine's mirror learns the value as a change the plugin made.
-		if (m_outputs.size() < m_outputs.capacity())
-		{
-			plugin::Event event;
-			event.type = plugin::EventType::ParamValue;
-			event.flags = plugin::Event::DontRecord;
-			event.param = id;
-			const Param* param = findParam(id);
-			event.value = param != nullptr ? fromNormalized(*param, normalized) : normalized;
-			event.offset = m_subBlockStart + static_cast<uint32_t>(offset);
-			m_outputs.push_back(Output{event, -1});
-		}
+		plugin::Event event;
+		event.type = plugin::EventType::ParamValue;
+		event.flags = plugin::Event::DontRecord;
+		event.param = id;
+		const Param* param = findParam(id);
+		event.value = param != nullptr ? fromNormalized(*param, normalized) : normalized;
+		event.offset = m_subBlockStart + static_cast<uint32_t>(offset);
+		m_outputs.push(Output{event, -1});
 	}
 
 	void Vst3Plugin::midi1(const plugin::Event& event, const uint8_t* bytes, vst::int32 offset) noexcept
@@ -1029,10 +1040,7 @@ namespace gnubase::pluginhost::vst3
 
 	void Vst3Plugin::collectOutputs(uint32_t start) noexcept
 	{
-		auto add = [this](const plugin::Event& event, int32_t sysex) {
-			if (m_outputs.size() < m_outputs.capacity())
-				m_outputs.push_back(Output{event, sysex});
-		};
+		auto add = [this](const plugin::Event& event, int32_t sysex) { m_outputs.push(Output{event, sysex}); };
 		bool changed = false;
 		for (vst::int32 i = 0; i < m_outChanges.getParameterCount(); ++i)
 		{
@@ -1155,7 +1163,9 @@ namespace gnubase::pluginhost::vst3
 				out.pushSysex(output.event.offset, output.event.port, data.bytes, data.size);
 			}
 			else
+			{
 				out.push(output.event);
+			}
 		}
 		m_outputs.clear();
 	}
@@ -1204,7 +1214,9 @@ namespace gnubase::pluginhost::vst3
 			if (request.index >= list.size() || !arrangementOf(request, list[request.index]))
 				return false;
 		}
-		auto apply = [this](std::vector<vst::Vst::SpeakerArrangement>& in, std::vector<vst::Vst::SpeakerArrangement>& out) {
+		auto apply = [this](
+						 std::vector<vst::Vst::SpeakerArrangement>& in, std::vector<vst::Vst::SpeakerArrangement>& out)
+		{
 			return m_processor->setBusArrangements(in.empty() ? nullptr : in.data(), static_cast<vst::int32>(in.size()),
 				out.empty() ? nullptr : out.data(), static_cast<vst::int32>(out.size()));
 		};
@@ -1264,13 +1276,13 @@ namespace gnubase::pluginhost::vst3
 		return it != m_paramIndex.end() && it->first == id ? &m_params[it->second] : nullptr;
 	}
 
-	double Vst3Plugin::toNormalized(const Param& param, double value) const noexcept
+	double Vst3Plugin::toNormalized(const Param& param, double value) noexcept
 	{
 		const double normalized = param.stepCount > 0 ? value / param.stepCount : value;
 		return std::clamp(normalized, 0.0, 1.0);
 	}
 
-	double Vst3Plugin::fromNormalized(const Param& param, double normalized) const noexcept
+	double Vst3Plugin::fromNormalized(const Param& param, double normalized) noexcept
 	{
 		normalized = std::clamp(normalized, 0.0, 1.0);
 		return param.stepCount > 0 ? std::round(normalized * param.stepCount) : normalized;
@@ -1278,7 +1290,7 @@ namespace gnubase::pluginhost::vst3
 
 	std::string Vst3Plugin::unitPath(vst::Vst::UnitID unit) const
 	{
-		if (!m_units)
+		if (m_units == nullptr)
 			return {};
 		std::vector<vst::Vst::UnitInfo> units(static_cast<size_t>(std::max(m_units->getUnitCount(), 0)));
 		for (size_t i = 0; i < units.size(); ++i)
@@ -1294,7 +1306,9 @@ namespace gnubase::pluginhost::vst3
 			if (it == units.end())
 				break;
 			const std::string name = toUtf8(it->name);
-			path = path.empty() ? name : name + "/" + path;
+			if (!path.empty())
+				path.insert(0, "/");
+			path.insert(0, name);
 			unit = it->parentUnitId;
 		}
 		return path;
@@ -1316,7 +1330,7 @@ namespace gnubase::pluginhost::vst3
 	bool Vst3Plugin::paramValue(uint32_t param, double& value) const
 	{
 		const Param* found = findParam(param);
-		if (found == nullptr || !m_controller)
+		if (found == nullptr || m_controller == nullptr)
 			return false;
 		value = fromNormalized(*found, m_controller->getParamNormalized(param));
 		return true;
@@ -1325,7 +1339,7 @@ namespace gnubase::pluginhost::vst3
 	bool Vst3Plugin::paramValueToText(uint32_t param, double value, std::string& text) const
 	{
 		const Param* found = findParam(param);
-		if (found == nullptr || !m_controller)
+		if (found == nullptr || m_controller == nullptr)
 			return false;
 		vst::Vst::String128 string{};
 		if (!succeeded(m_controller->getParamStringByValue(param, toNormalized(*found, value), string)))
@@ -1337,7 +1351,7 @@ namespace gnubase::pluginhost::vst3
 	bool Vst3Plugin::paramTextToValue(uint32_t param, std::string_view text, double& value) const
 	{
 		const Param* found = findParam(param);
-		if (found == nullptr || !m_controller)
+		if (found == nullptr || m_controller == nullptr)
 			return false;
 		vst::Vst::String128 string{};
 		if (!vst::Vst::StringConvert::convert(std::string(text), string))
@@ -1363,7 +1377,7 @@ namespace gnubase::pluginhost::vst3
 				if (const Param* param = findParam(event.param))
 				{
 					const double normalized = toNormalized(*param, event.value);
-					if (m_controller)
+					if (m_controller != nullptr)
 						m_controller->setParamNormalized(event.param, normalized);
 					m_toProcessor.tryPush(Edit{Edit::Silent, event.param, normalized});
 				}
@@ -1444,7 +1458,7 @@ namespace gnubase::pluginhost::vst3
 			if (m_active)
 				m_host.requestRestart();
 		}
-		if ((flags & vst::Vst::kParamTitlesChanged) != 0 && m_controller)
+		if ((flags & vst::Vst::kParamTitlesChanged) != 0 && m_controller != nullptr)
 		{
 			// Names and flags change in place; the audio thread only reads ids and step counts, which stay.
 			for (Param& param : m_params)
@@ -1499,7 +1513,7 @@ namespace gnubase::pluginhost::vst3
 		PresetFile preset;
 		preset.classId = m_classId.toString();
 		preset.component = component.data();
-		if (m_controller)
+		if (m_controller != nullptr)
 		{
 			MemoryStream controller;
 			if (succeeded(m_controller->getState(&controller)))
@@ -1520,7 +1534,7 @@ namespace gnubase::pluginhost::vst3
 		MemoryStream component(preset.component.data(), preset.component.size());
 		if (!succeeded(m_component->setState(&component)))
 			return false;
-		if (m_controller)
+		if (m_controller != nullptr)
 		{
 			component.rewind();
 			m_controller->setComponentState(&component);
@@ -1537,7 +1551,7 @@ namespace gnubase::pluginhost::vst3
 
 	vst::Vst::ProgramListID Vst3Plugin::rootProgramList() const
 	{
-		if (!m_units)
+		if (m_units == nullptr)
 			return vst::Vst::kNoProgramListId;
 		for (vst::int32 i = 0; i < m_units->getUnitCount(); ++i)
 		{
@@ -1550,7 +1564,7 @@ namespace gnubase::pluginhost::vst3
 
 	const Vst3Plugin::Param* Vst3Plugin::programParam(vst::Vst::ProgramListID list) const
 	{
-		if (!m_units)
+		if (m_units == nullptr)
 			return nullptr;
 		for (const Param& param : m_params)
 		{
@@ -1569,7 +1583,7 @@ namespace gnubase::pluginhost::vst3
 	std::vector<plugin::PresetInfo> Vst3Plugin::presets()
 	{
 		std::vector<plugin::PresetInfo> result;
-		if (!m_units)
+		if (m_units == nullptr)
 			return result;
 		for (vst::int32 l = 0; l < m_units->getProgramListCount(); ++l)
 		{
@@ -1637,7 +1651,7 @@ namespace gnubase::pluginhost::vst3
 	{
 		std::vector<plugin::NoteName> names;
 		const vst::Vst::ProgramListID list = rootProgramList();
-		if (list == vst::Vst::kNoProgramListId || !m_controller)
+		if (list == vst::Vst::kNoProgramListId || m_controller == nullptr)
 			return names;
 		int32_t program = 0;
 		if (const Param* param = programParam(list))
@@ -1657,7 +1671,7 @@ namespace gnubase::pluginhost::vst3
 
 	uint32_t Vst3Plugin::latency() const
 	{
-		return m_processor ? m_processor->getLatencySamples() : 0;
+		return m_processor != nullptr ? m_processor->getLatencySamples() : 0;
 	}
 
 	uint32_t Vst3Plugin::tail() const noexcept

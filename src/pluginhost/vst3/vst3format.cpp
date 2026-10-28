@@ -22,7 +22,7 @@ namespace gnubase::pluginhost
 		// CLAP's feature names for VST3's sub-categories ("Fx|Delay", "Instrument|Synth").
 		std::vector<std::string> features(const std::vector<std::string>& subCategories)
 		{
-			static const std::pair<const char*, const char*> g_names[] = {{"Fx", "audio-effect"},
+			static const std::pair<const char*, const char*> names[] = {{"Fx", "audio-effect"},
 				{"Instrument", "instrument"}, {"Analyzer", "analyzer"}, {"Synth", "synthesizer"},
 				{"Sampler", "sampler"}, {"Drum", "drum"}, {"EQ", "equalizer"}, {"Dynamics", "compressor"},
 				{"Pitch Shift", "pitch-shifter"}, {"Tools", "utility"}, {"Spatial", "surround"}};
@@ -30,7 +30,7 @@ namespace gnubase::pluginhost
 			for (const std::string& category : subCategories)
 			{
 				std::string feature;
-				for (const auto& [vst3Name, name] : g_names)
+				for (const auto& [vst3Name, name] : names)
 				{
 					if (category == vst3Name)
 						feature = name;

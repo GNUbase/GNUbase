@@ -5,6 +5,7 @@ Open-source (GPLv3) digital audio workstation for Windows, macOS and Linux. GNUb
 ## Source of truth and naming
 - The source of truth is the reference's Operation Manual for version 15 Pro (English, 1655 pages). It is not part of this repo. Tickets cite it as "Reference manual: pp. N". Read the cited pages before implementing a ticket; if you don't have the manual, ask a maintainer about them.
 - Never write the reference product's or vendor's name anywhere public: code, comments, file names, commits, issues, wiki, docs. Use generic feature names, not the vendor's trademarked ones (say "mixer", not the branded name). The git hooks in `tools/git-hooks` enforce this with the private list in `.git/info/private-keywords`: install them once per clone with `tools/install-git-hooks.sh` and never bypass them with `--no-verify`. CI scans every pull request and every push to main against the same list (`.github/workflows/keyword-scan.yml`).
+- One exception: the VST3 SDK's C++ namespace is the vendor's name, so the list allows that name in the content of files in `src/pluginhost/vst3/`, the VST3 adapter, and nowhere else: not in file names, commit messages, comments or prose, and not in any other folder. The SDK is the submodule `ext/vst3sdk`, from the GNUbase mirror. In the list, a keyword followed by a tab and folders separated by spaces is allowed in those folders' file content.
 - Planning lives in GitHub milestones and issues: https://github.com/GNUbase/GNUbase. Basic functionality first, optional features later.
 
 ## Architecture rules (non-negotiable)

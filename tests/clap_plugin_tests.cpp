@@ -5,6 +5,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "testutils/library.h"
+
 #include <clap/clap.h>
 
 #include <algorithm>
@@ -17,15 +19,8 @@
 #include <string>
 #include <vector>
 
-#ifdef _WIN32
-#define NOMINMAX
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
-
 using Catch::Matchers::WithinRel;
+using gnubase::testutils::Library;
 
 namespace
 {
@@ -48,47 +43,6 @@ namespace
 		return pluginPath(name);
 #endif
 	}
-
-	class Library
-	{
-	public:
-		explicit Library(const std::filesystem::path& path)
-		{
-#ifdef _WIN32
-			m_handle = LoadLibraryW(path.c_str());
-#else
-			m_handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
-#endif
-		}
-		~Library()
-		{
-			if (m_handle == nullptr)
-				return;
-#ifdef _WIN32
-			FreeLibrary(static_cast<HMODULE>(m_handle));
-#else
-			dlclose(m_handle);
-#endif
-		}
-		Library(const Library&) = delete;
-		Library& operator=(const Library&) = delete;
-		Library(Library&&) = delete;
-		Library& operator=(Library&&) = delete;
-
-		bool loaded() const { return m_handle != nullptr; }
-
-		const void* symbol(const char* name) const
-		{
-#ifdef _WIN32
-			return reinterpret_cast<const void*>(GetProcAddress(static_cast<HMODULE>(m_handle), name));
-#else
-			return dlsym(m_handle, name);
-#endif
-		}
-
-	private:
-		void* m_handle = nullptr;
-	};
 
 	// A minimal host that counts the plugin's requests.
 	struct TestHost

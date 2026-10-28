@@ -52,7 +52,7 @@ namespace gnubase::pluginhost::vst3
 							 private ComponentHandlerListener
 	{
 	public:
-		Vst3Plugin(VST3::Hosting::Module::Ptr module, VST3::UID classId, plugin::Descriptor descriptor,
+		Vst3Plugin(VST3::Hosting::Module::Ptr module, const VST3::UID& classId, plugin::Descriptor descriptor,
 			plugin::Host& host);
 		~Vst3Plugin() override;
 		Vst3Plugin(const Vst3Plugin&) = delete;
@@ -160,6 +160,29 @@ namespace gnubase::pluginhost::vst3
 			int32_t sysex = -1; // index of a data event in m_outEvents
 		};
 
+		// The output events of a sub-block. Memory is allocated once, so adding and clearing are real-time safe.
+		class OutputList
+		{
+		public:
+			explicit OutputList(size_t capacity) : m_items(capacity) {}
+
+			// Drops the output if the list is full.
+			void push(const Output& output) noexcept
+			{
+				if (m_size < m_items.size())
+					m_items[m_size++] = output;
+			}
+			void clear() noexcept { m_size = 0; }
+			size_t size() const noexcept { return m_size; }
+			Output& operator[](size_t index) noexcept { return m_items[index]; }
+			const Output* begin() const noexcept { return m_items.data(); }
+			const Output* end() const noexcept { return m_items.data() + m_size; }
+
+		private:
+			std::vector<Output> m_items;
+			size_t m_size = 0;
+		};
+
 		// ComponentHandlerListener
 		bool editBegin(uint32_t id) override;
 		bool editValue(uint32_t id, double normalized) override;
@@ -173,8 +196,8 @@ namespace gnubase::pluginhost::vst3
 		void readParams();
 		void readMidiMapping();
 		const Param* findParam(uint32_t id) const noexcept;
-		double toNormalized(const Param& param, double value) const noexcept;
-		double fromNormalized(const Param& param, double normalized) const noexcept;
+		static double toNormalized(const Param& param, double value) noexcept;
+		static double fromNormalized(const Param& param, double normalized) noexcept;
 		std::string unitPath(vst::Vst::UnitID unit) const;
 		const Param* programParam(vst::Vst::ProgramListID list) const;
 		vst::Vst::ProgramListID rootProgramList() const;
@@ -245,14 +268,14 @@ namespace gnubase::pluginhost::vst3
 		EventList m_inEvents;
 		EventList m_outEvents;
 		vst::Vst::ProcessContext m_context{};
-		std::vector<Output> m_outputs; // capacity reserved; filled per sub-block
+		OutputList m_outputs; // filled per sub-block
 		uint32_t m_subBlockStart = 0;
 		std::array<Voice, 256> m_voices{};
 		size_t m_voiceCount = 0;
 		int32_t m_nextNoteId = 0;
 
-		rt::SpscQueue<Edit> m_edits{4096};     // main -> audio: editor edits
-		rt::SpscQueue<Edit> m_toProcessor{4096}; // main -> audio: values the processor has to learn
+		rt::SpscQueue<Edit> m_edits{4096};          // main -> audio: editor edits
+		rt::SpscQueue<Edit> m_toProcessor{4096};    // main -> audio: values the processor has to learn
 		rt::SpscQueue<Update> m_toController{4096}; // audio -> main
 	};
 }

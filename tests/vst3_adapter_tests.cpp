@@ -2,9 +2,9 @@
 #include "engine/graph/graph.h"
 #include "engine/plugins/hostmanager.h"
 #include "engine/plugins/pluginslot.h"
+#include "platform/rt/realtime.h"
 #include "plugin/extensions.h"
 #include "plugin/plugin.h"
-#include "platform/rt/realtime.h"
 #include "plugin/remote/proxy.h"
 #include "pluginhost/formats.h"
 #include "pluginhost/vst3/presetfile.h"
@@ -16,12 +16,15 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 // CMake passes the full paths; the fallbacks only serve tools that compile this file on its own.
@@ -31,10 +34,14 @@
 #ifndef GNUBASE_PLUGINHOST
 #define GNUBASE_PLUGINHOST "gnubase-pluginhost"
 #endif
+#ifndef GNUBASE_TEST_PLUGINS_DIR
+#define GNUBASE_TEST_PLUGINS_DIR "plugins"
+#endif
 
 using namespace gnubase;
 using namespace gnubase::tests::vst3adapter;
 using Catch::Approx;
+using namespace std::chrono_literals;
 
 namespace
 {
@@ -78,13 +85,18 @@ namespace
 	class Vst3Fixture
 	{
 	public:
-		Vst3Fixture() : m_format(pluginhost::makeVst3Format()), m_factory(m_format->load(GNUBASE_VST3_ADAPTERTEST)) {}
+		explicit Vst3Fixture(const std::string& path = GNUBASE_VST3_ADAPTERTEST)
+			: m_format(pluginhost::makeVst3Format()), m_factory(m_format->load(path))
+		{
+			REQUIRE(m_factory->count() > 0);
+		}
 
 		plugin::Factory& factory() const { return *m_factory; }
 
+		// The module's first plugin, initialized.
 		std::unique_ptr<plugin::Plugin> create()
 		{
-			std::unique_ptr<plugin::Plugin> plugin = m_factory->create(pluginId(), host);
+			std::unique_ptr<plugin::Plugin> plugin = m_factory->create(m_factory->descriptor(0).id, host);
 			REQUIRE(plugin != nullptr);
 			REQUIRE(plugin->init());
 			return plugin;
@@ -272,6 +284,89 @@ namespace
 		return value;
 	}
 
+	// One of the shared test plugins (tests/plugins/README.md) as a VST3 bundle.
+	std::string testPlugin(const std::string& name)
+	{
+		return (std::filesystem::path(GNUBASE_TEST_PLUGINS_DIR) / "vst3" / ("gnubase-test-" + name + ".vst3")).string();
+	}
+
+	// An input bus, a plugin slot and an output bus, in a compiled graph, as the engine hosts a plugin.
+	class SlotGraph
+	{
+	public:
+		explicit SlotGraph(
+			std::unique_ptr<plugin::Plugin> plugin, plugin::ProcessMode mode = plugin::ProcessMode::Offline)
+			: m_slot(std::make_shared<engine::plugins::PluginSlot>(std::move(plugin)))
+		{
+			m_slot->setProcessMode(mode);
+			engine::graph::GraphDesc desc;
+			desc.nodes = {{engine::graph::NodeKind::InputBus, 1, 2, nullptr},
+				{engine::graph::NodeKind::PluginSlot, 2, 2, m_slot},
+				{engine::graph::NodeKind::OutputBus, 3, 2, nullptr}};
+			desc.audio = {{0, 1}, {1, 2}};
+			m_graph = std::make_unique<engine::graph::CompiledGraph>(desc, g_sampleRate, g_maxFrames);
+		}
+
+		engine::plugins::PluginSlot& slot() const { return *m_slot; }
+
+		// A block of `input` (the right channel: its negative), with a parameter change if `change`; both output
+		// channels one after the other.
+		std::vector<float> render(const std::vector<float>& input, uint32_t param = 0, double value = 0.0,
+			uint32_t offset = 0, bool change = false)
+		{
+			const auto frames = static_cast<uint32_t>(input.size());
+			float* const* in = m_graph->audio(0);
+			for (uint32_t i = 0; i < frames; ++i)
+			{
+				in[0][i] = input[i];
+				in[1][i] = -input[i];
+			}
+			if (change)
+			{
+				engine::graph::ProcessEvent event;
+				event.offset = offset;
+				event.type = engine::graph::ProcessEvent::Type::Parameter;
+				event.parameter = param;
+				event.parameterValue = value;
+				m_graph->events(1).add(event);
+			}
+			m_graph->process(frames);
+			float* const* out = m_graph->audio(2);
+			std::vector<float> output(out[0], out[0] + frames);
+			output.insert(output.end(), out[1], out[1] + frames);
+			return output;
+		}
+
+	private:
+		std::shared_ptr<engine::plugins::PluginSlot> m_slot;
+		std::unique_ptr<engine::graph::CompiledGraph> m_graph;
+	};
+
+	engine::plugins::HostManager::Options hostOptions()
+	{
+		engine::plugins::HostManager::Options options;
+		options.executable = GNUBASE_PLUGINHOST;
+		return options;
+	}
+
+	bool silent(const std::vector<float>& samples)
+	{
+		return std::all_of(samples.begin(), samples.end(), [](float x) { return x == 0.0f; });
+	}
+
+	// Waits until the condition holds, for up to five seconds.
+	template <typename Condition> bool eventually(Condition condition)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + 5s;
+		while (!condition())
+		{
+			if (std::chrono::steady_clock::now() >= deadline)
+				return false;
+			std::this_thread::sleep_for(5ms);
+		}
+		return true;
+	}
+
 	std::atomic<int> g_violations{0};
 
 	void countViolation(const char* /*what*/) noexcept
@@ -329,8 +424,8 @@ TEST_CASE("a VST3 plugin's buses, parameters and units become ports and paramete
 	plugin::NotePortInfo notePort;
 	REQUIRE(notes.notePortInfo(true, 0, notePort));
 	CHECK(notePort.name == "MIDI In");
-	CHECK(notePort.dialects ==
-		(plugin::NotePortInfo::Notes | plugin::NotePortInfo::Midi | plugin::NotePortInfo::Midi2));
+	CHECK(
+		notePort.dialects == (plugin::NotePortInfo::Notes | plugin::NotePortInfo::Midi | plugin::NotePortInfo::Midi2));
 
 	auto& params = ext<plugin::Params>(*plugin);
 	REQUIRE(params.paramCount() == ParamCount);
@@ -451,55 +546,48 @@ TEST_CASE("notes, expressions, MIDI 1.0, MIDI 2.0 and sysex reach a VST3 plugin 
 	runner.run(ramp(128), events);
 
 	const plugin::EventList& out = runner.out;
-	const plugin::Event* noteOn = find(out, [](const plugin::Event& e) {
-		return e.type == plugin::EventType::NoteOn && e.key == 60;
-	});
+	const plugin::Event* noteOn =
+		find(out, [](const plugin::Event& e) { return e.type == plugin::EventType::NoteOn && e.key == 60; });
 	REQUIRE(noteOn != nullptr);
 	CHECK(noteOn->offset == 10);
 	CHECK(noteOn->value == Approx(0.5));
 	CHECK(noteOn->noteId >= 0); // the adapter gives every note an id
 	const int32_t noteId = noteOn->noteId;
 
-	const plugin::Event* expression = find(out, [](const plugin::Event& e) {
-		return e.type == plugin::EventType::NoteExpression;
-	});
+	const plugin::Event* expression =
+		find(out, [](const plugin::Event& e) { return e.type == plugin::EventType::NoteExpression; });
 	REQUIRE(expression != nullptr);
 	CHECK(expression->offset == 20);
 	CHECK(expression->expression == plugin::NoteExpression::Tuning);
 	CHECK(expression->noteId == noteId);
 	CHECK(expression->value == Approx(12.0));
-	const plugin::Event* lastTuning = find(out, [](const plugin::Event& e) {
-		return isParam(e, plugin::EventType::ParamValue, LastTuning);
-	});
+	const plugin::Event* lastTuning =
+		find(out, [](const plugin::Event& e) { return isParam(e, plugin::EventType::ParamValue, LastTuning); });
 	REQUIRE(lastTuning != nullptr);
 	CHECK(lastTuning->value == Approx((12.0 / 240.0) + 0.5));
 	CHECK((lastTuning->flags & plugin::Event::DontRecord) != 0);
 
-	const plugin::Event* fromMidi = find(out, [](const plugin::Event& e) {
-		return e.type == plugin::EventType::NoteOn && e.key == 64;
-	});
+	const plugin::Event* fromMidi =
+		find(out, [](const plugin::Event& e) { return e.type == plugin::EventType::NoteOn && e.key == 64; });
 	REQUIRE(fromMidi != nullptr);
 	CHECK(fromMidi->offset == 30);
 	CHECK(fromMidi->value == Approx(100.0 / 127.0));
-	const plugin::Event* fromMidi2 = find(out, [](const plugin::Event& e) {
-		return e.type == plugin::EventType::NoteOn && e.key == 62;
-	});
+	const plugin::Event* fromMidi2 =
+		find(out, [](const plugin::Event& e) { return e.type == plugin::EventType::NoteOn && e.key == 62; });
 	REQUIRE(fromMidi2 != nullptr);
 	CHECK(fromMidi2->offset == 40);
 	CHECK(fromMidi2->channel == 1);
 	CHECK(fromMidi2->value == Approx(1.0));
 
 	// CC 7 changed Gain through the plugin's MIDI mapping, and the engine's mirror learns it.
-	const plugin::Event* gain = find(out, [](const plugin::Event& e) {
-		return isParam(e, plugin::EventType::ParamValue, Gain);
-	});
+	const plugin::Event* gain =
+		find(out, [](const plugin::Event& e) { return isParam(e, plugin::EventType::ParamValue, Gain); });
 	REQUIRE(gain != nullptr);
 	CHECK(gain->offset == 45);
 	CHECK(gain->value == 1.0);
 
-	const plugin::Event* noteOff = find(out, [](const plugin::Event& e) {
-		return e.type == plugin::EventType::NoteOff && e.key == 60;
-	});
+	const plugin::Event* noteOff =
+		find(out, [](const plugin::Event& e) { return e.type == plugin::EventType::NoteOff && e.key == 60; });
 	REQUIRE(noteOff != nullptr);
 	CHECK(noteOff->offset == 60);
 	CHECK(noteOff->noteId == noteId);
@@ -515,17 +603,16 @@ TEST_CASE("notes, expressions, MIDI 1.0, MIDI 2.0 and sysex reach a VST3 plugin 
 	CHECK(lastCount->offset == 40);
 	CHECK(lastCount->value == Approx(3.0 / 128.0));
 	// Output events are in order.
-	CHECK(std::is_sorted(out.begin(), out.end(),
-		[](const plugin::Event& a, const plugin::Event& b) { return a.offset < b.offset; }));
+	CHECK(std::is_sorted(
+		out.begin(), out.end(), [](const plugin::Event& a, const plugin::Event& b) { return a.offset < b.offset; }));
 
 	// System exclusive messages pass with their bytes.
 	const std::vector<uint8_t> sysex{0xf0, 0x7e, 0x7f, 0x06, 0x01, 0xf7};
 	runner.prepare(ramp(64));
 	runner.prepareSysex(5, sysex);
 	REQUIRE(runner.process() == plugin::ProcessStatus::Continue);
-	const plugin::Event* echoed = find(runner.out, [](const plugin::Event& e) {
-		return e.type == plugin::EventType::Sysex;
-	});
+	const plugin::Event* echoed =
+		find(runner.out, [](const plugin::Event& e) { return e.type == plugin::EventType::Sysex; });
 	REQUIRE(echoed != nullptr);
 	CHECK(echoed->offset == 5);
 	REQUIRE(echoed->data[1] == sysex.size());
@@ -533,8 +620,8 @@ TEST_CASE("notes, expressions, MIDI 1.0, MIDI 2.0 and sysex reach a VST3 plugin 
 	stop(*plugin);
 }
 
-TEST_CASE("edits in a VST3 plugin's controller become gestures and values for the host and the processor",
-	"[integration]")
+TEST_CASE(
+	"edits in a VST3 plugin's controller become gestures and values for the host and the processor", "[integration]")
 {
 	Vst3Fixture fixture;
 	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
@@ -778,10 +865,7 @@ TEST_CASE("the VST3 preset file keeps both states and rejects damaged files", "[
 
 TEST_CASE("a VST3 plugin processes in the plugin host process as it does in-process", "[integration]")
 {
-	using namespace gnubase::engine;
-	plugins::HostManager::Options options;
-	options.executable = GNUBASE_PLUGINHOST;
-	plugins::HostManager manager(options);
+	engine::plugins::HostManager manager(hostOptions());
 	std::unique_ptr<plugin::remote::RemotePlugin> remote =
 		manager.create({pluginId(), GNUBASE_VST3_ADAPTERTEST, "GNUbase"});
 	REQUIRE(remote->init());
@@ -792,50 +876,21 @@ TEST_CASE("a VST3 plugin processes in the plugin host process as it does in-proc
 	CHECK(text == "0.50");
 
 	Vst3Fixture fixture;
-	auto graphOf = [](std::unique_ptr<plugin::Plugin> plugin) {
-		auto slot = std::make_shared<plugins::PluginSlot>(std::move(plugin));
-		slot->setProcessMode(plugin::ProcessMode::Offline);
-		graph::GraphDesc desc;
-		desc.nodes = {{graph::NodeKind::InputBus, 1, 2, nullptr}, {graph::NodeKind::PluginSlot, 2, 2, slot},
-			{graph::NodeKind::OutputBus, 3, 2, nullptr}};
-		desc.audio = {{0, 1}, {1, 2}};
-		return std::make_unique<graph::CompiledGraph>(desc, g_sampleRate, g_maxFrames);
-	};
-	const std::unique_ptr<graph::CompiledGraph> local = graphOf(fixture.create());
-	const std::unique_ptr<graph::CompiledGraph> hosted = graphOf(std::move(remote));
-
-	auto render = [](graph::CompiledGraph& graph, const std::vector<float>& input, uint32_t offset, double gain) {
-		const auto frames = static_cast<uint32_t>(input.size());
-		float* const* in = graph.audio(0);
-		for (uint32_t i = 0; i < frames; ++i)
-		{
-			in[0][i] = input[i];
-			in[1][i] = -input[i];
-		}
-		graph::ProcessEvent event;
-		event.offset = offset;
-		event.type = graph::ProcessEvent::Type::Parameter;
-		event.parameter = Gain;
-		event.parameterValue = gain;
-		graph.events(1).add(event);
-		graph.process(frames);
-		float* const* out = graph.audio(2);
-		std::vector<float> output(out[0], out[0] + frames);
-		output.insert(output.end(), out[1], out[1] + frames);
-		return output;
-	};
+	SlotGraph local(fixture.create());
+	SlotGraph hosted(std::move(remote));
 	bool sounded = false;
 	for (uint32_t block = 0; block < 12; ++block)
 	{
 		const std::vector<float> input = ramp(200, 0.01f * static_cast<float>(block));
 		const uint32_t offset = (block * 37) % 200;
 		const double gain = 0.1 * static_cast<double>(block % 10);
-		const std::vector<float> expected = render(*local, input, offset, gain);
-		const std::vector<float> actual = render(*hosted, input, offset, gain);
+		const std::vector<float> expected = local.render(input, Gain, gain, offset, true);
+		const std::vector<float> actual = hosted.render(input, Gain, gain, offset, true);
 		REQUIRE(actual == expected);
-		sounded = sounded || std::any_of(actual.begin(), actual.end(), [](float x) { return x != 0.0f; });
+		sounded = sounded || !silent(actual);
 	}
 	CHECK(sounded);
+	CHECK(!hosted.slot().failed());
 }
 
 TEST_CASE("a VST3 plugin processes notes, MIDI, parameters and transport changes without allocating", "[integration]")
@@ -890,4 +945,252 @@ TEST_CASE("a VST3 plugin processes notes, MIDI, parameters and transport changes
 	rt::setViolationHandler(previous);
 	CHECK(violations == 0);
 	stop(*plugin);
+}
+
+// ---- The shared test plugins (tests/plugins/README.md): components that are their own controllers ----
+
+TEST_CASE("the VST3 adapter loads, activates and processes every VST3 test plugin", "[integration]")
+{
+	for (const std::string name : {"gain", "synth", "latency", "paramstress", "crash", "hang", "stateblob"})
+	{
+		INFO(name);
+		Vst3Fixture fixture(testPlugin(name));
+		REQUIRE(fixture.factory().count() == 1);
+		const plugin::Descriptor& descriptor = fixture.factory().descriptor(0);
+		CHECK(descriptor.id == "vst3:" + descriptor.formatId);
+		CHECK(descriptor.formatId.size() == 32);
+		CHECK(descriptor.vendor == "GNUbase");
+		const bool instrument = std::find(descriptor.features.begin(), descriptor.features.end(), "instrument") !=
+			descriptor.features.end();
+		CHECK(instrument == (name == "synth"));
+
+		const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+		CHECK(ext<plugin::Params>(*plugin).paramCount() > 0);
+		auto& ports = ext<plugin::AudioPorts>(*plugin);
+		REQUIRE(ports.audioPortCount(false) == 1);
+		plugin::AudioPortInfo info;
+		REQUIRE(ports.audioPortInfo(false, 0, info));
+		CHECK(info.channelCount == 2);
+		CHECK(ports.audioPortCount(true) == (name == "synth" ? 0U : 1U));
+
+		// A block without events is safe for crash and hang too.
+		start(*plugin);
+		Runner runner(*plugin);
+		runner.run(ramp(64));
+		stop(*plugin);
+	}
+}
+
+TEST_CASE("the VST3 gain test plugin sounds the same through the plugin host process", "[integration]")
+{
+	Vst3Fixture fixture(testPlugin("gain"));
+	const std::string id = fixture.factory().descriptor(0).id;
+	engine::plugins::HostManager manager(hostOptions());
+	std::unique_ptr<plugin::remote::RemotePlugin> remote = manager.create({id, testPlugin("gain"), "GNUbase"});
+	REQUIRE(remote->init());
+	SlotGraph local(fixture.create());
+	SlotGraph hosted(std::move(remote));
+
+	// Parameter 1 is the normalized gain, -60 to +12 dB; it starts at 0 dB.
+	constexpr uint32_t gainParam = 1;
+	const std::vector<float> input = ramp(128, 0.1f);
+	const std::vector<float> unity = local.render(input);
+	CHECK(std::equal(input.begin(), input.end(), unity.begin()));
+	CHECK(hosted.render(input) == unity);
+	for (uint32_t block = 1; block < 10; ++block)
+	{
+		const double value = 0.1 * static_cast<double>(block);
+		const uint32_t offset = (block * 29) % 128;
+		const std::vector<float> expected = local.render(input, gainParam, value, offset, true);
+		REQUIRE(hosted.render(input, gainParam, value, offset, true) == expected);
+		CHECK(expected[offset] != input[offset]); // the new gain applies from the event's sample
+	}
+	CHECK(!hosted.slot().failed());
+}
+
+TEST_CASE("the VST3 synth test plugin plays notes through the adapter", "[integration]")
+{
+	Vst3Fixture fixture(testPlugin("synth"));
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	REQUIRE(ext<plugin::NotePorts>(*plugin).notePortCount(true) == 1);
+	start(*plugin);
+	Runner runner(*plugin);
+	const std::vector<float> nothing(128);
+	CHECK(silent(runner.run(nothing)));
+	const std::vector<float> note = runner.run(nothing, {noteEvent(plugin::EventType::NoteOn, 32, 69, 0.8)});
+	CHECK(std::all_of(note.begin(), note.begin() + 32, [](float x) { return x == 0.0f; }));
+	CHECK(!silent(note));
+	CHECK(!silent(runner.run(nothing)));
+	runner.run(nothing, {noteEvent(plugin::EventType::NoteOff, 0, 69, 0.0)});
+	// The release lasts 20 ms by default.
+	std::vector<float> last;
+	for (int block = 0; block < 20; ++block)
+		last = runner.run(nothing);
+	CHECK(silent(last));
+	stop(*plugin);
+}
+
+TEST_CASE("the VST3 latency test plugin's latency change restarts it through the adapter", "[integration]")
+{
+	Vst3Fixture fixture(testPlugin("latency"));
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	start(*plugin);
+	CHECK(ext<plugin::Latency>(*plugin).latency() == 64);
+	Runner runner(*plugin);
+	const std::vector<float> input = ramp(128);
+	const std::vector<float> output = runner.run(input);
+	for (size_t i = 0; i < output.size(); ++i)
+		REQUIRE(output[i] == (i < 64 ? 0.0f : input[i - 64]));
+
+	// A stepped parameter: its plain values are samples.
+	constexpr uint32_t latencyParam = 1;
+	plugin::ParamInfo info;
+	REQUIRE(ext<plugin::Params>(*plugin).paramInfo(0, info));
+	CHECK(info.id == latencyParam);
+	CHECK(info.maximum == 48000.0);
+	runner.run(input, {paramEvent(0, latencyParam, 100.0)});
+	CHECK(fixture.host.restarts == 0);
+	plugin->onMainThread(); // the controller learns the value and passes the plugin's restart on
+	CHECK(fixture.host.latencyChanges == 1);
+	CHECK(fixture.host.restarts == 1);
+	stop(*plugin);
+	REQUIRE(plugin->activate(g_sampleRate, 1, g_maxFrames));
+	CHECK(ext<plugin::Latency>(*plugin).latency() == 100);
+	plugin->deactivate();
+}
+
+TEST_CASE(
+	"the VST3 parameter stress test plugin's 1024 parameters and their automation pass the adapter", "[integration]")
+{
+	Vst3Fixture fixture(testPlugin("paramstress"));
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	auto& params = ext<plugin::Params>(*plugin);
+	REQUIRE(params.paramCount() == 1024);
+	std::vector<uint32_t> ids;
+	bool contiguous = true;
+	bool inRange = true;
+	for (uint32_t i = 0; i < params.paramCount(); ++i)
+	{
+		plugin::ParamInfo info;
+		REQUIRE(params.paramInfo(i, info));
+		contiguous = contiguous && info.id == i;
+		ids.push_back(info.id);
+		double value = -1.0;
+		REQUIRE(params.paramValue(info.id, value));
+		inRange = inRange && value >= info.minimum && value <= info.maximum;
+	}
+	CHECK(!contiguous);
+	CHECK(inRange);
+	std::sort(ids.begin(), ids.end());
+	CHECK(std::adjacent_find(ids.begin(), ids.end()) == ids.end());
+
+	// "Emit automation" on: every block changes eight parameters, which the host learns as the plugin's own changes.
+	constexpr uint32_t emitParam = 1;
+	start(*plugin);
+	Runner runner(*plugin);
+	runner.run(ramp(64), {paramEvent(0, emitParam, 1.0)});
+	runner.run(ramp(64));
+	std::vector<plugin::Event> changes;
+	for (const plugin::Event& event : runner.out)
+	{
+		if (event.type == plugin::EventType::ParamValue && event.param != emitParam)
+			changes.push_back(event);
+	}
+	REQUIRE(changes.size() >= 8);
+	for (const plugin::Event& event : changes)
+	{
+		CHECK((event.flags & plugin::Event::DontRecord) != 0);
+		CHECK(std::binary_search(ids.begin(), ids.end(), event.param));
+	}
+	plugin->onMainThread();
+	CHECK(valueOf(*plugin, changes.back().param) == Approx(changes.back().value));
+	stop(*plugin);
+}
+
+TEST_CASE("the VST3 state blob test plugin's state survives the adapter's preset file", "[integration]")
+{
+	Vst3Fixture fixture(testPlugin("stateblob"));
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	constexpr uint32_t seedParam = 1;
+	constexpr uint32_t sizeParam = 2;
+	plugin::EventList in(4);
+	plugin::EventList out(16);
+	REQUIRE(in.push(paramEvent(0, seedParam, 7.0)));
+	REQUIRE(in.push(paramEvent(0, sizeParam, 100000.0)));
+	ext<plugin::Params>(*plugin).flushParams(in, out);
+	CHECK(valueOf(*plugin, sizeParam) == 100000.0);
+
+	std::vector<uint8_t> state;
+	REQUIRE(ext<plugin::State>(*plugin).saveState(state, plugin::StateContext::Project));
+	CHECK(state.size() > 100000);
+	const std::unique_ptr<plugin::Plugin> other = fixture.create();
+	REQUIRE(ext<plugin::State>(*other).loadState(state.data(), state.size(), plugin::StateContext::Project));
+	CHECK(valueOf(*other, seedParam) == 7.0);
+	std::vector<uint8_t> again;
+	REQUIRE(ext<plugin::State>(*other).saveState(again, plugin::StateContext::Project));
+	CHECK(again == state);
+
+	// A damaged blob is refused by the plugin, and so by the adapter.
+	pluginhost::vst3::PresetFile preset;
+	REQUIRE(pluginhost::vst3::readPresetFile(state.data(), state.size(), preset));
+	preset.component[preset.component.size() / 2] ^= 0x55;
+	const std::vector<uint8_t> damaged = pluginhost::vst3::writePresetFile(preset);
+	CHECK(!ext<plugin::State>(*other).loadState(damaged.data(), damaged.size(), plugin::StateContext::Project));
+}
+
+TEST_CASE("a crashing VST3 plugin takes down only its plugin host process", "[integration]")
+{
+	const Vst3Fixture fixture(testPlugin("crash"));
+	const std::string id = fixture.factory().descriptor(0).id;
+	engine::plugins::HostManager manager(hostOptions());
+	std::unique_ptr<plugin::remote::RemotePlugin> remote = manager.create({id, testPlugin("crash"), "GNUbase"});
+	REQUIRE(remote->init());
+	SlotGraph graph(std::move(remote));
+	const std::vector<float> input = ramp(128, 0.1f);
+	CHECK(!silent(graph.render(input)));
+
+	constexpr uint32_t crashParam = 1;
+	CHECK(silent(graph.render(input, crashParam, 1.0, 10, true)));
+	CHECK(graph.slot().failed());
+	CHECK(silent(graph.render(input)));
+	std::vector<engine::plugins::PluginFailure> failures;
+	CHECK(eventually(
+		[&]
+		{
+			failures = manager.takeFailures();
+			return !failures.empty();
+		}));
+	REQUIRE(failures.size() == 1);
+	CHECK(failures[0].plugin == id);
+	CHECK(failures[0].reason == "crashed");
+}
+
+TEST_CASE("a hanging VST3 plugin is detected within the deadline", "[integration]")
+{
+	const Vst3Fixture fixture(testPlugin("hang"));
+	const std::string id = fixture.factory().descriptor(0).id;
+	engine::plugins::HostManager::Options options = hostOptions();
+	options.deadlines.realtime = 300ms;
+	engine::plugins::HostManager manager(options);
+	std::unique_ptr<plugin::remote::RemotePlugin> remote = manager.create({id, testPlugin("hang"), "GNUbase"});
+	REQUIRE(remote->init());
+	SlotGraph graph(std::move(remote), plugin::ProcessMode::Realtime);
+	const std::vector<float> input = ramp(128, 0.1f);
+	CHECK(!silent(graph.render(input)));
+
+	constexpr uint32_t hangParam = 1;
+	const auto start = std::chrono::steady_clock::now();
+	CHECK(silent(graph.render(input, hangParam, 1.0, 0, true)));
+	CHECK(std::chrono::steady_clock::now() - start < 1300ms);
+	CHECK(graph.slot().failed());
+	std::vector<engine::plugins::PluginFailure> failures;
+	CHECK(eventually(
+		[&]
+		{
+			failures = manager.takeFailures();
+			return !failures.empty();
+		}));
+	REQUIRE(failures.size() == 1);
+	CHECK(failures[0].plugin == id);
+	CHECK(failures[0].reason == "hung");
 }

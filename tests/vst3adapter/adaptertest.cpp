@@ -48,7 +48,7 @@ namespace
 	constexpr std::array<double, 3> g_programGains{0.5, 1.0, 0.25}; // normalized Gain of each program
 	constexpr std::array<const char*, 3> g_programNames{"Init", "Loud", "Quiet"};
 	constexpr std::array<const char*, 3> g_modeNames{"Clean", "Invert", "Mute"};
-	constexpr int32_t g_componentMagic = 0x33424e47; // "GNB3"
+	constexpr int32_t g_componentMagic = 0x33424e47;  // "GNB3"
 	constexpr int32_t g_controllerMagic = 0x43424e47; // "GNBC"
 
 	void copy(sv::TChar* to, const char* from, size_t size = 128)
@@ -117,9 +117,9 @@ namespace
 
 	// ---- The component: buses, processing, state ----
 
-	class Component final : public vst::U::Implements<vst::U::Directly<sv::IComponent, sv::IAudioProcessor,
-												  sv::IConnectionPoint>,
-								vst::U::Indirectly<vst::IPluginBase>>
+	class Component final
+		: public vst::U::Implements<vst::U::Directly<sv::IComponent, sv::IAudioProcessor, sv::IConnectionPoint>,
+			  vst::U::Indirectly<vst::IPluginBase>>
 	{
 	public:
 		// IPluginBase
@@ -163,7 +163,10 @@ namespace
 				const sv::SpeakerArrangement arrangement =
 					direction == sv::kInput ? m_inputs[static_cast<size_t>(index)] : m_output;
 				info.channelCount = sv::SpeakerArr::getChannelCount(arrangement);
-				copy(info.name, direction == sv::kOutput ? "Output" : index == 0 ? "Input" : "Sidechain");
+				const char* name = "Output";
+				if (direction == sv::kInput)
+					name = index == 0 ? "Input" : "Sidechain";
+				copy(info.name, name);
 			}
 			else
 			{
@@ -250,8 +253,7 @@ namespace
 		{
 			collectChanges(data);
 			handleEvents(data);
-			if (data.processContext != nullptr &&
-				(data.processContext->state & sv::ProcessContext::kTempoValid) != 0)
+			if (data.processContext != nullptr && (data.processContext->state & sv::ProcessContext::kTempoValid) != 0)
 				output(data, Tempo, 0, data.processContext->tempo / 1000.0);
 			if (data.numSamples > 0 && data.numOutputs > 0)
 				render(data);
@@ -263,7 +265,7 @@ namespace
 		// IConnectionPoint: the component greets the controller, through a message the host allocates.
 		tresult PLUGIN_API connect(sv::IConnectionPoint* other) override
 		{
-			if (other == nullptr || !m_host)
+			if (other == nullptr || m_host == nullptr)
 				return kResultFalse;
 			// createInstance takes the class and the interface id; for a message both are IMessage's.
 			sv::IMessage* message = nullptr;
@@ -333,7 +335,7 @@ namespace
 			}
 		}
 
-		void output(sv::ProcessData& data, sv::ParamID id, vst::int32 offset, double value)
+		static void output(sv::ProcessData& data, sv::ParamID id, vst::int32 offset, double value)
 		{
 			if (data.outputParameterChanges == nullptr)
 				return;
@@ -376,14 +378,15 @@ namespace
 				applyChanges(i);
 				const double gain = 2.0 * m_state.values[Gain];
 				const int mode = programIndex(m_state.values[Mode]);
-				const float factor = static_cast<float>(mode == 2 ? 0.0 : mode == 1 ? -gain : gain);
+				auto factor = static_cast<float>(mode == 1 ? -gain : gain); // Invert
+				if (mode == 2)
+					factor = 0.0f; // Mute
 				const bool bypass = m_state.values[Bypass] >= 0.5;
 				const size_t size = m_delay[0].size();
 				for (size_t c = 0; c < channels; ++c)
 				{
-					const float x = in != nullptr && static_cast<size_t>(in->numChannels) > c
-						? in->channelBuffers32[c][i]
-						: 0.0f;
+					const float x =
+						in != nullptr && static_cast<size_t>(in->numChannels) > c ? in->channelBuffers32[c][i] : 0.0f;
 					const float s = side != nullptr && static_cast<size_t>(side->numChannels) > c
 						? side->channelBuffers32[c][i]
 						: 0.0f;
@@ -402,7 +405,8 @@ namespace
 		sv::SpeakerArrangement m_output = sv::SpeakerArr::kStereo;
 		bool m_sidechain = false;
 		uint32_t m_latency = 0;
-		std::array<std::vector<float>, 2> m_delay{std::vector<float>(g_maxLatency + 1), std::vector<float>(g_maxLatency + 1)};
+		std::array<std::vector<float>, 2> m_delay{
+			std::vector<float>(g_maxLatency + 1), std::vector<float>(g_maxLatency + 1)};
 		size_t m_position = 0;
 		std::array<Change, 256> m_changes{};
 		size_t m_changeCount = 0;
@@ -412,9 +416,10 @@ namespace
 
 	// ---- The controller: parameters, units, programs, MIDI mapping, edits ----
 
-	class Controller final : public vst::U::Implements<vst::U::Directly<sv::IEditController, sv::IUnitInfo,
-												   sv::IMidiMapping, sv::IConnectionPoint>,
-								 vst::U::Indirectly<vst::IPluginBase>>
+	class Controller final
+		: public vst::U::Implements<
+			  vst::U::Directly<sv::IEditController, sv::IUnitInfo, sv::IMidiMapping, sv::IConnectionPoint>,
+			  vst::U::Indirectly<vst::IPluginBase>>
 	{
 	public:
 		Controller()
@@ -424,9 +429,9 @@ namespace
 				sv::ParameterInfo info{};
 				info.id = static_cast<sv::ParamID>(i);
 				info.flags = sv::ParameterInfo::kCanAutomate;
-				static constexpr std::array<const char*, ParamCount> g_titles{"Gain", "Bypass", "Mode", "Latency",
+				static constexpr std::array<const char*, ParamCount> titles{"Gain", "Bypass", "Mode", "Latency",
 					"Program", "Note count", "Last tuning", "Tempo", "Edit trigger"};
-				copy(info.title, g_titles[static_cast<size_t>(i)]);
+				copy(info.title, titles[static_cast<size_t>(i)]);
 				switch (i)
 				{
 				case Gain:
@@ -572,7 +577,7 @@ namespace
 				return vst::kInvalidArgument;
 			const double old = m_values[id];
 			m_values[id] = value;
-			if (!m_handler)
+			if (m_handler == nullptr)
 				return kResultOk;
 			if (id == Latency && value != old)
 				m_handler->restartComponent(sv::kLatencyChanged);
@@ -622,7 +627,9 @@ namespace
 				copy(info.name, "Amp");
 			}
 			else
+			{
 				return vst::kInvalidArgument;
+			}
 			return kResultOk;
 		}
 
@@ -646,8 +653,8 @@ namespace
 			return kResultOk;
 		}
 
-		tresult PLUGIN_API getProgramInfo(
-			sv::ProgramListID /*list*/, vst::int32 /*index*/, sv::CString /*attribute*/, sv::String128 /*value*/) override
+		tresult PLUGIN_API getProgramInfo(sv::ProgramListID /*list*/, vst::int32 /*index*/, sv::CString /*attribute*/,
+			sv::String128 /*value*/) override
 		{
 			return vst::kNotImplemented;
 		}
@@ -783,7 +790,7 @@ extern "C"
 		return &factory;
 	}
 
-#if defined(__APPLE__)
+#ifdef __APPLE__
 	SMTG_EXPORT_SYMBOL bool bundleEntry(void* /*bundle*/)
 	{
 		return true;

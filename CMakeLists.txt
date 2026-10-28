@@ -62,22 +62,30 @@ add_library(cpp-httplib INTERFACE)
 target_include_directories(cpp-httplib SYSTEM INTERFACE ${PROJECT_SOURCE_DIR}/ext/cpp-httplib)
 find_package(Threads REQUIRED)
 target_link_libraries(cpp-httplib INTERFACE Threads::Threads $<$<PLATFORM_ID:Windows>:ws2_32>)
-# The VST3 SDK (ext/vst3sdk): its plugin interfaces, for the VST3 adapter of the plugin host and the VST3 test plugins,
-# and its module loader and host classes, for the adapter. GNUbase code names the interfaces' C++ namespace only
-# through GNUBASE_VST3_NS, read from the SDK here (src/pluginhost/vst3/vst3ns.h).
-set(vst3sdk ${PROJECT_SOURCE_DIR}/ext/vst3sdk)
-file(STRINGS ${vst3sdk}/pluginterfaces/base/funknown.h vst3Namespace REGEX "^namespace [A-Za-z_]+ {" LIMIT_COUNT 1)
-string(REGEX REPLACE "^namespace ([A-Za-z_]+) {.*$" "\\1" vst3Namespace "${vst3Namespace}")
-if(NOT vst3Namespace MATCHES "^[A-Za-z_]+$")
-	message(FATAL_ERROR "The VST3 SDK's namespace was not found: are its parts checked out (docs/dependencies.md)?")
+# The VST3 SDK's interfaces, header-only: GNUbase implements and calls the interfaces itself. The SDK's C++ namespace
+# is read from its header and passed as GNUBASE_VST3_NS, so GNUbase code refers to it only through the alias in
+# src/pluginhost/vst3/vst3ns.h (docs/dependencies.md).
+set(vst3Header "${PROJECT_SOURCE_DIR}/ext/vst3sdk/pluginterfaces/base/funknown.h")
+if(NOT EXISTS "${vst3Header}")
+	message(FATAL_ERROR "The VST3 SDK is missing. Fetch it with\n"
+		"  git submodule update --init --checkout ext/vst3sdk\n"
+		"  git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk")
 endif()
+file(STRINGS "${vst3Header}" vst3Namespace REGEX "^namespace [A-Za-z_][A-Za-z0-9_]* *{")
+list(GET vst3Namespace 0 vst3Namespace)
+string(REGEX REPLACE "^namespace ([A-Za-z0-9_]+).*" "\\1" vst3Namespace "${vst3Namespace}")
+add_library(vst3-sdk INTERFACE)
+target_include_directories(vst3-sdk SYSTEM INTERFACE ${PROJECT_SOURCE_DIR}/ext/vst3sdk)
+target_compile_definitions(vst3-sdk INTERFACE GNUBASE_VST3_NS=${vst3Namespace})
+# The parts of the SDK the VST3 adapter of the plugin host builds: the interface ids, and the module loader and host
+# classes. Test plugins built against the interfaces alone link vst3-interfaces too.
+set(vst3sdk ${PROJECT_SOURCE_DIR}/ext/vst3sdk)
 add_library(vst3-interfaces STATIC
 	${vst3sdk}/pluginterfaces/base/coreiids.cpp
 	${vst3sdk}/pluginterfaces/base/funknown.cpp
 	${vst3sdk}/public.sdk/source/common/commoniids.cpp
 	${vst3sdk}/public.sdk/source/vst/vstinitiids.cpp)
-target_include_directories(vst3-interfaces SYSTEM PUBLIC ${vst3sdk})
-target_compile_definitions(vst3-interfaces PUBLIC GNUBASE_VST3_NS=${vst3Namespace})
+target_link_libraries(vst3-interfaces PUBLIC vst3-sdk)
 # Linked into plugin modules too: position-independent, and exporting nothing.
 set_target_properties(vst3-interfaces PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden)
 if(APPLE)

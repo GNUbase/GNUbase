@@ -46,10 +46,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          submodules: true # not recursive: of the VST3 SDK's parts, only those the next step names
+          submodules: recursive
 
-      - name: Fetch VST3 SDK parts
-        run: git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
+      # The recursive checkout skips the VST3 SDK (update = none in .gitmodules). Only the parts GNUbase builds with,
+      # without the SDK's documentation, tutorials and GUI library (docs/dependencies.md).
+      - name: Fetch the VST3 SDK
+        run: |
+          git submodule update --init --checkout ext/vst3sdk
+          git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
 
       # Only the audio the tests read (test data and golden files), not every image in Git LFS.
       - name: Fetch test audio
@@ -109,10 +113,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          submodules: true # not recursive: of the VST3 SDK's parts, only those the next step names
+          submodules: recursive
 
-      - name: Fetch VST3 SDK parts
-        run: git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
+      - name: Fetch the VST3 SDK
+        run: |
+          git submodule update --init --checkout ext/vst3sdk
+          git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
 
       - name: Fetch test audio
         run: git lfs pull --include "tests/data/**,tests/golden/**"
@@ -146,10 +152,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          submodules: true # not recursive: of the VST3 SDK's parts, only those the next step names
+          submodules: recursive
 
-      - name: Fetch VST3 SDK parts
-        run: git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
+      - name: Fetch the VST3 SDK
+        run: |
+          git submodule update --init --checkout ext/vst3sdk
+          git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
 
       - name: Install packages
         timeout-minutes: 15

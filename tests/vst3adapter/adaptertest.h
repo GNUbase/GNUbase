@@ -12,7 +12,7 @@ namespace gnubase::tests::vst3adapter
 	// The component's class id, as the adapter writes it in plugin ids: "vst3:<class id>".
 	inline constexpr const char* g_classId = "6E7A2B114C3D4E5F8A9B0C1D2E3F4051";
 
-	enum Param : uint32_t
+	enum Param : uint8_t
 	{
 		Gain = 0,        // linear gain 2 * normalized, applied from the sample of each change; unit "Amp"
 		Bypass = 1,      // the plugin's bypass: the input, delayed by the latency
