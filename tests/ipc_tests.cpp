@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -178,7 +179,7 @@ TEST_CASE("a message ring wraps around with messages of any size", "[unit]")
 			}
 			REQUIRE(status == ipc::ReadStatus::Ok);
 			REQUIRE(header.size == expected.front().size());
-			REQUIRE(std::memcmp(buffer.data(), expected.front().data(), header.size) == 0);
+			REQUIRE(std::equal(expected.front().begin(), expected.front().end(), buffer.begin()));
 			expected.pop_front();
 		}
 	}
