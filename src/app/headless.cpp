@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/headless.h"
 
+#include "app/scripttool.h"
+
 #include "engine/engine.h"
 #include "mcp/server.h"
 #include "mcp/transport.h"
@@ -62,6 +64,7 @@ namespace gnubase::app
 		}
 
 		mcp::Server server(engine);
+		addScriptTool(server, engine);
 		if (options.transport == Transport::Stdio)
 		{
 			logging::info("Headless, serving MCP on stdio");

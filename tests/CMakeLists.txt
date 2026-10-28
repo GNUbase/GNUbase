@@ -7,7 +7,7 @@ target_compile_definitions(gnubase-testutils PRIVATE
 	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 gnubase_target_defaults(gnubase-testutils)
 
-add_executable(gnubase-tests app_tests.cpp audio_tests.cpp audiofile_tests.cpp dawproject_tests.cpp document_tests.cpp engine_tests.cpp graph_tests.cpp history_tests.cpp log_tests.cpp mcp_tests.cpp processor_tests.cpp rt_tests.cpp scripting_tests.cpp streaming_tests.cpp testutils_tests.cpp time_tests.cpp
+add_executable(gnubase-tests app_tests.cpp audio_tests.cpp audiofile_tests.cpp coverage_tests.cpp dawproject_tests.cpp document_tests.cpp engine_tests.cpp graph_tests.cpp history_tests.cpp log_tests.cpp mcp_tests.cpp processor_tests.cpp rt_tests.cpp scripting_tests.cpp streaming_tests.cpp testutils_tests.cpp time_tests.cpp
 	transport_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-mcp gnubase-scripting gnubase-testutils Catch2::Catch2WithMain miniz
 	cpp-httplib)
@@ -30,6 +30,8 @@ if(NOT GNUBASE_SANITIZERS)
 	add_dependencies(gnubase-tests gnubase)
 endif()
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}"
+	GNUBASE_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs"
+	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>
 	GNUBASE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 gnubase_target_defaults(gnubase-tests)
 
