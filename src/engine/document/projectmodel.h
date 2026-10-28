@@ -26,9 +26,13 @@ namespace gnubase::engine
 
 		rt::SnapshotPublisher<RenderSnapshot>& snapshots() { return m_snapshots; }
 
-	private:
 		using Handler = std::function<Json(Project& project, CommandContext& context)>;
 
+		// Registers a command that changes the project and records an undo step named action. Transactions can run
+		// it. Command groups in their own files, such as the MIDI functions, register through it.
+		void addEdit(Engine& engine, CommandInfo info, std::string action, Handler handler);
+
+	private:
 		// Registers a query, or a command that changes the project. Such a command runs on the project, and if it
 		// fails the project is restored from a copy, so a failed command changes nothing. If it succeeds, what it
 		// changed becomes an undo step, named after the command (see g_actions in the .cpp) or, for a

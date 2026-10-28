@@ -6,6 +6,7 @@
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/serialize.h"
 #include "engine/graph/graph.h"
+#include "engine/midi/functioncommands.h"
 #include "engine/processors/builtin.h"
 
 #include <algorithm>
@@ -1018,6 +1019,11 @@ namespace gnubase::engine
 			return;
 		}
 		std::string action = actionName(info.name);
+		addEdit(engine, std::move(info), std::move(action), std::move(handler));
+	}
+
+	void ProjectModel::addEdit(Engine& engine, CommandInfo info, std::string action, Handler handler)
+	{
 		if (!action.empty())
 			m_edits[info.name] = {info, handler};
 		engine.registerCommand(std::move(info),
@@ -1469,6 +1475,7 @@ namespace gnubase::engine
 			[](Project& project, CommandContext& context)
 			{ return removeFromPart(project, context, &MidiPart::controllers, "controllers", "controller"); });
 
+		midi::registerFunctionCommands(*this, engine);
 		registerHistoryCommands(engine);
 	}
 }

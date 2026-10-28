@@ -33,6 +33,8 @@ add_library(gnubase-engine STATIC
 	graph/events.h
 	graph/graph.cpp graph/graph.h
 	graph/processor.h
+	midi/functioncommands.cpp midi/functioncommands.h
+	midi/functions.cpp midi/functions.h
 	midi/midivalues.cpp midi/midivalues.h
 	processors/builtin.cpp processors/builtin.h
 	processors/gainpan.cpp processors/gainpan.h
