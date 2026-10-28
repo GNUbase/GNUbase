@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -72,6 +73,33 @@ TEST_CASE("the RT checker reports a deallocation in real-time code", "[unit]")
 	}
 	CHECK(g_violations == 1);
 }
+
+#if defined(_MSC_VER) && defined(_DEBUG)
+// MSVC debug builds hook the C runtime's heap too, for malloc in third-party code such as Rubber Band Library.
+TEST_CASE("the RT checker reports malloc and free in real-time code", "[unit]")
+{
+	const RecordViolations record;
+	void* memory = nullptr;
+	{
+		const ScopedRealtimeContext realtime;
+		memory = std::malloc(64);
+		g_keepAlive = memory;
+	}
+	CHECK(g_violations == 1);
+	{
+		const ScopedRealtimeContext realtime;
+		std::free(memory);
+	}
+	CHECK(g_violations == 2);
+	// operator new reports once, not again for the malloc inside it.
+	{
+		const ScopedRealtimeContext realtime;
+		const auto value = std::make_unique<int>(42);
+		g_keepAlive = value.get();
+	}
+	CHECK(g_violations == 4);
+}
+#endif
 
 TEST_CASE("allocations outside real-time code are fine", "[unit]")
 {
