@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "platform/audio/dummydevice.h"
+#include "platform/audio/inputfifo.h"
+#include "platform/audio/sampleformat.h"
+#ifdef _WIN32
+#include "platform/audio/wasapi.h"
+#endif
 #include "platform/rt/realtime.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -8,6 +13,8 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <memory>
 #include <set>
 #include <string>
@@ -170,6 +177,38 @@ TEST_CASE("every hardware backend keeps the device contract", "[.hardware]")
 			checkContract(*backend);
 }
 
+#ifdef _WIN32
+// Only lists devices, so it runs in CI too, where there are none; the contract suite above opens them ("[hardware]").
+TEST_CASE("the WASAPI backends list their devices and refuse unknown ones", "[unit]")
+{
+	for (const bool exclusive : {false, true})
+	{
+		const std::unique_ptr<Backend> backend = makeWasapiBackend(exclusive);
+		INFO("backend " << backend->name());
+		CHECK(backend->name() == (exclusive ? "wasapi-exclusive" : "wasapi"));
+		for (const DeviceInfo& device : backend->devices())
+		{
+			CHECK(!device.outputs.empty());
+			CHECK(!device.sampleRates.empty());
+			CHECK(device.controlPanel);
+		}
+		CHECK_THROWS_AS(backend->open(config("no such device")), DeviceError);
+	}
+}
+
+TEST_CASE("this build prefers WASAPI to the dummy backend", "[unit]")
+{
+	const std::vector<std::unique_ptr<Backend>> backends = makeBackends();
+	std::vector<std::string> names;
+	for (const std::unique_ptr<Backend>& backend : backends)
+		names.push_back(backend->name());
+	const auto at = [&names](const std::string& name)
+	{ return std::find(names.begin(), names.end(), name) - names.begin(); };
+	CHECK(at("wasapi") < at("wasapi-exclusive"));
+	CHECK(at("wasapi-exclusive") < at("dummy"));
+}
+#endif
+
 TEST_CASE("the backends of this build come with the dummy backend last", "[unit]")
 {
 	const std::vector<std::unique_ptr<Backend>> backends = makeBackends();
@@ -206,4 +245,115 @@ TEST_CASE("a device passes its driver's reset requests on", "[unit]")
 	device.onReset([&resets] { ++resets; });
 	device.requestReset();
 	CHECK(resets == 1);
+}
+
+TEST_CASE("driver samples convert to float and back in every sample format", "[unit]")
+{
+	const std::array<float, 6> left{0.0f, 0.5f, -0.5f, 1.0f, -1.0f, 0.25f};
+	const std::array<float, 6> right{-0.25f, 0.75f, 2.0f, -2.0f, 0.125f, 0.0f}; // out of range: clipped
+	const std::array<const float*, 2> planar{left.data(), right.data()};
+	constexpr uint32_t frames = 6;
+	for (const SampleFormat format :
+		{SampleFormat::Float32, SampleFormat::Int16, SampleFormat::Int24, SampleFormat::Int32})
+	{
+		INFO("format " << static_cast<int>(format));
+		std::vector<uint8_t> interleaved(bytesPerSample(format) * 2 * left.size());
+		fromFloat(planar.data(), 2, frames, format, interleaved.data());
+		std::array<float, 6> backLeft{};
+		std::array<float, 6> backRight{};
+		const std::array<float*, 2> back{backLeft.data(), backRight.data()};
+		toFloat(interleaved.data(), format, 2, frames, back.data());
+		const bool integer = format != SampleFormat::Float32;
+		for (size_t i = 0; i < left.size(); ++i)
+		{
+			// Integer formats end just below 1.0.
+			const float expectedLeft = integer ? std::clamp(left[i], -1.0f, 0.99997f) : left[i];
+			const float expectedRight = integer ? std::clamp(right[i], -1.0f, 0.99997f) : right[i];
+			CHECK(std::abs(backLeft[i] - expectedLeft) < 0.0001f);
+			CHECK(std::abs(backRight[i] - expectedRight) < 0.0001f);
+		}
+	}
+
+	// Int24 is packed little-endian: 0.5 is 0x400000.
+	const float half = 0.5f;
+	const float* channel = &half;
+	std::array<uint8_t, 3> packed{};
+	fromFloat(&channel, 1, 1, SampleFormat::Int24, packed.data());
+	CHECK(packed == std::array<uint8_t, 3>{0x00, 0x00, 0x40});
+}
+
+namespace
+{
+	// A mono input FIFO whose samples count the frames written, so drops and repeats show.
+	struct FifoRun
+	{
+		FifoRun(uint32_t target, uint32_t slack) : fifo(1, 8192, target, slack) {}
+
+		void write(uint32_t frames)
+		{
+			std::vector<float> samples(frames);
+			for (float& sample : samples)
+				sample = static_cast<float>(++written);
+			const std::vector<const float*> channels{samples.data()};
+			fifo.write(channels.data(), frames);
+		}
+
+		std::vector<float> read(uint32_t frames)
+		{
+			std::vector<float> samples(frames);
+			const std::vector<float*> channels{samples.data()};
+			fifo.read(channels.data(), frames);
+			return samples;
+		}
+
+		InputFifo fifo;
+		uint64_t written = 0;
+	};
+}
+
+TEST_CASE("the input FIFO starts once its target is buffered and pads an underrun with silence", "[unit]")
+{
+	FifoRun run(256, 8192); // no drift correction
+	run.write(200);
+	CHECK(run.read(128) == std::vector<float>(128, 0.0f)); // not filled up yet
+	run.write(100);
+	const std::vector<float> first = run.read(128);
+	CHECK(first.front() == 1.0f);
+	CHECK(first.back() == 128.0f);
+	CHECK(run.read(128).front() == 129.0f);
+	const std::vector<float> last = run.read(128); // 44 frames left
+	CHECK(last[43] == 300.0f);
+	CHECK(last[44] == 0.0f);
+	CHECK(run.fifo.underruns() == 1);
+	CHECK(run.fifo.overruns() == 0);
+	run.write(8193); // one more than fits
+	CHECK(run.fifo.overruns() == 1);
+}
+
+TEST_CASE("the input FIFO follows a faster or slower input clock without running dry or over", "[unit]")
+{
+	for (const uint32_t extra : {481U, 479U}) // one block in ten: about 200 ppm of drift, more than real clocks have
+	{
+		INFO(extra << " frames in every tenth block");
+		FifoRun run(960, 32);
+		float previous = 0.0f;
+		bool inOrder = true; // each frame follows the one before, or repeats it, or skips one
+		for (int block = 0; block < 20000; ++block)
+		{
+			run.write(block % 10 == 0 ? extra : 480);
+			for (const float sample : run.read(480))
+			{
+				const float step = sample - previous;
+				inOrder = inOrder && (previous == 0.0f || step == 0.0f || step == 1.0f || step == 2.0f);
+				previous = sample;
+			}
+		}
+		CHECK(inOrder);
+		CHECK(run.fifo.underruns() == 0);
+		CHECK(run.fifo.overruns() == 0);
+		run.write(480);
+		CHECK(run.fifo.size() > 960 - 64); // before the next read: around the target
+		CHECK(run.fifo.size() < 960 + 64);
+		CHECK((extra > 480 ? run.fifo.drops() : run.fifo.repeats()) > 0);
+	}
 }
