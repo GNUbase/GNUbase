@@ -40,6 +40,7 @@ namespace gnubase::engine
 
 		void registerAutomationCommands(Engine& engine);
 		void registerHistoryCommands(Engine& engine);
+		void registerMidiEditCommands(Engine& engine); // midiedits.cpp: note.set and controller.set
 		void record(std::string action, const Project& before, CommandContext& context);
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);

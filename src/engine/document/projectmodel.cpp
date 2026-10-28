@@ -1220,8 +1220,10 @@ namespace gnubase::engine
 			{"midiPart.remove", "Remove MIDI part"},
 			{"note.add", "Add notes"},
 			{"note.remove", "Remove notes"},
+			{"note.set", "Change notes"},
 			{"controller.add", "Add controllers"},
 			{"controller.remove", "Remove controllers"},
+			{"controller.set", "Change controllers"},
 			{"automationLane.add", "Add automation lane"},
 			{"automationLane.set", "Change automation lane"},
 			{"automationLane.remove", "Remove automation lane"},
@@ -1804,6 +1806,7 @@ namespace gnubase::engine
 			[](Project& project, CommandContext& context)
 			{ return removeFromPart(project, context, &MidiPart::controllers, "controllers", "controller"); });
 
+		registerMidiEditCommands(engine);
 		registerAutomationCommands(engine);
 		registerHistoryCommands(engine);
 	}
