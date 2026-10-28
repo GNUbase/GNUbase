@@ -32,3 +32,7 @@
 [submodule "ext/miniz"]
 	path = ext/miniz
 	url = https://github.com/richgel999/miniz.git
+[submodule "ext/cpp-httplib"]
+	path = ext/cpp-httplib
+	url = https://github.com/yhirose/cpp-httplib.git
+	shallow = true
