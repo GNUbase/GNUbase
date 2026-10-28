@@ -76,6 +76,10 @@ namespace gnubase::app
 			{
 				options.project = value();
 			}
+			else if (arg == "--script")
+			{
+				options.script = value();
+			}
 			else if (arg == "--audio")
 			{
 				options.audio = value();
@@ -97,8 +101,10 @@ namespace gnubase::app
 				throw UsageError("unknown option " + arg);
 			}
 		}
-		if (mcp && !options.headless && !options.help && !options.version)
-			throw UsageError("the MCP transports need --headless for now");
+		if ((mcp || !options.script.empty()) && !options.headless && !options.help && !options.version)
+			throw UsageError("the MCP transports and --script need --headless for now");
+		if (mcp && !options.script.empty())
+			throw UsageError("--script runs a script and exits; it doesn't serve MCP");
 		return options;
 	}
 
@@ -111,13 +117,15 @@ namespace gnubase::app
   --mcp-http[=PORT]     MCP over HTTP on 127.0.0.1, on PORT or a free port; prints the URL and the access token
                         and serves until Ctrl+C
   --project FILE        load a DAWproject file
+  --script FILE         run a Lua script, then exit (trusted: all standard libraries but os.exit)
   --audio dummy         the audio device: only "dummy" (no hardware) so far
   --sample-rate HZ      the audio device's sample rate (default 48000)
   --block-size FRAMES   frames per audio block (default 256)
   --version             print the version
   -h, --help            print this help
 
-Exit codes: 0 done, 1 unexpected error, 2 invalid command line, 3 audio device or project could not be set up.
+Exit codes: 0 done, 1 unexpected error, 2 invalid command line, 3 audio device or project could not be set up,
+4 the script failed.
 )";
 	}
 }

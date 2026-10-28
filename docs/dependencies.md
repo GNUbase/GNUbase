@@ -32,8 +32,9 @@ Used unchanged, pinned to an upstream release tag.
 | `ext/pugixml` | [zeux/pugixml](https://github.com/zeux/pugixml) | `v1.16` |
 | `ext/miniz` | [richgel999/miniz](https://github.com/richgel999/miniz) | `3.1.2` |
 | `ext/cpp-httplib` | [yhirose/cpp-httplib](https://github.com/yhirose/cpp-httplib) | `v0.61.0` |
+| `ext/lua` | [lua/lua](https://github.com/lua/lua) (the Lua team's repository) | `v5.4.9` |
 
-`ext/json`, `ext/flac` and `ext/cpp-httplib` are shallow submodules (`shallow = true` in `.gitmodules`): their full history is large and never needed. dr_libs tags each library separately, so the pin is the newest tag whose commit has the newest release of all three; stb has no tags, so it is pinned to a commit. In the JSON library, implicit conversions are off (`JSON_ImplicitConversions`), so values are read with `get<T>()`.
+`ext/json`, `ext/flac`, `ext/cpp-httplib` and `ext/lua` are shallow submodules (`shallow = true` in `.gitmodules`): their full history is large and never needed. dr_libs tags each library separately, so the pin is the newest tag whose commit has the newest release of all three; stb has no tags, so it is pinned to a commit. Lua is compiled as C++ (see the top-level `CMakeLists.txt`), so a Lua error unwinds C++ code with an exception and destructors run; include its C headers (`lua.h`, `lauxlib.h`, `lualib.h`), not `lua.hpp`. In the JSON library, implicit conversions are off (`JSON_ImplicitConversions`), so values are read with `get<T>()`.
 
 To update one, check out the new tag inside the submodule and commit the new submodule commit:
 
