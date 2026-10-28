@@ -580,6 +580,43 @@ Parameters:
 
 - `media`: integer, required
 
+### midiFile
+
+#### `gnubase.midiFile.export`
+
+Exports MIDI and instrument tracks (tracks, default all of them) as a standard MIDI file of type 0 (one track with every MIDI channel) or 1 (default: a tempo track, then a track per exported track), with ppq ticks per quarter note (24-960, default 480). The file has the notes and controllers as they play, converted to MIDI 1.0, the track names, tempo and time signatures, and the markers unless markers is false. range {start, end} in ticks exports only what starts in it, moved to the file's start. Returns the number of tracks in the file.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `markers`: boolean
+- `path`: string, required
+- `ppq`: integer
+- `range`: object
+- `tracks`: array of integer
+- `type`: one of 0 | 1
+
+Returns:
+
+- `tracks`: integer, required
+
+#### `gnubase.midiFile.import`
+
+Imports a standard MIDI file (type 0, 1 or 2) into new MIDI tracks (trackType midi, the default) or instrument tracks, one part per track from the bar of its first event to the bar after its last. A type 0 file gets a track per MIDI channel. Unless tempo is false, the file's tempo and time signatures replace the project's; unless markers is false, its markers are added. One undo step. Returns the new tracks and parts.
+
+Parameters:
+
+- `markers`: boolean
+- `path`: string, required
+- `tempo`: boolean
+- `trackType`: one of "midi" | "instrument"
+
+Returns:
+
+- `parts`: array, required
+- `tracks`: array, required
+
 ### midiPart
 
 #### `gnubase.midiPart.add`
@@ -624,7 +661,7 @@ Returns:
 
 #### `gnubase.note.add`
 
-Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity 0-1, MIDI channel 0-15 (default 0).
+Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity 0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0).
 
 Parameters:
 
@@ -646,7 +683,7 @@ Parameters:
 
 #### `gnubase.note.set`
 
-Changes notes of a MIDI part: each change names a note by id and gives what changes, position and length in ticks, pitch 0-127, velocity 0-1 or MIDI channel 0-15. Returns the changed notes.
+Changes notes of a MIDI part: each change names a note by id and gives what changes, position and length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1 or MIDI channel 0-15. Returns the changed notes.
 
 Parameters:
 

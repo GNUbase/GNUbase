@@ -91,15 +91,19 @@ namespace gnubase::engine
 	inline constexpr double g_minEventVolume = -144.0;
 	inline constexpr double g_maxEventVolume = 6.0;
 
+	// A note's release velocity unless it has one of its own: MIDI 1.0's 64, the center.
+	inline constexpr uint16_t g_defaultReleaseVelocity = 0x8000;
+
 	// Note and controller values have the resolution of MIDI 2.0 (#19): MIDI 1.0 values fit without loss.
 	struct Note
 	{
 		ObjectId id = 0;
 		time::Ticks position = 0; // from the start of the part
 		time::Ticks length = 0;
-		uint8_t pitch = 60;    // 0-127
-		uint16_t velocity = 0; // 0-65535
-		uint8_t channel = 0;   // 0-15
+		uint8_t pitch = 60;                                  // 0-127
+		uint16_t velocity = 0;                               // 0-65535
+		uint8_t channel = 0;                                 // 0-15
+		uint16_t releaseVelocity = g_defaultReleaseVelocity; // 0-65535, the note-off velocity
 	};
 
 	// The MIDI events besides notes, all held as controller events.
@@ -219,8 +223,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const Note& a, const Note& b)
 	{
-		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel) ==
-			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel);
+		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel, a.releaseVelocity) ==
+			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel, b.releaseVelocity);
 	}
 
 	inline bool operator==(const Controller& a, const Controller& b)

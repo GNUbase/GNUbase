@@ -84,6 +84,7 @@ namespace gnubase::engine
 				note.pitch = integer(item, "pitch", note.pitch, 0, 127, name);
 				note.channel = integer(item, "channel", note.channel, 0, 15, name);
 				note.velocity = scaled(item, "velocity", note.velocity, g_maxVelocity, name);
+				note.releaseVelocity = scaled(item, "releaseVelocity", note.releaseVelocity, g_maxVelocity, name);
 				notes.push_back(note);
 			}
 			// Changed only once every item is valid. ProjectModel::add would restore the project anyway.
@@ -146,10 +147,11 @@ namespace gnubase::engine
 		add(engine,
 			{"note.set", 1,
 				"Changes notes of a MIDI part: each change names a note by id and gives what changes, position and "
-				"length in ticks, pitch 0-127, velocity 0-1 or MIDI channel 0-15. Returns the changed notes.",
+				"length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1 or MIDI channel 0-15. Returns the "
+				"changed notes.",
 				changesSchema("notes",
 					{{"position", integer}, {"length", integer}, {"pitch", integer}, {"velocity", number},
-						{"channel", integer}}),
+						{"releaseVelocity", number}, {"channel", integer}}),
 				resultSchema("notes"), false},
 			setNotes);
 		add(engine,

@@ -74,12 +74,14 @@ TEST_CASE("note.set changes notes of a MIDI part as one undo step", "[unit]")
 	const Json changed = call(client, "note.set",
 		{{"part", part},
 			{"notes",
-				{{{"id", c}, {"position", 960}, {"pitch", 72}, {"velocity", 0.0}, {"channel", 9}},
+				{{{"id", c}, {"position", 960}, {"pitch", 72}, {"velocity", 0.0}, {"releaseVelocity", 1.0},
+					 {"channel", 9}},
 					{{"id", e}, {"length", 240}}}}})
 							 .at("notes");
 	REQUIRE(changed.size() == 2);
 	CHECK(changed[0] ==
-		Json{{"id", c}, {"position", 960}, {"length", 480}, {"pitch", 72}, {"velocity", 0.0}, {"channel", 9}});
+		Json{{"id", c}, {"position", 960}, {"length", 480}, {"pitch", 72}, {"velocity", 0.0}, {"releaseVelocity", 1.0},
+			{"channel", 9}});
 	CHECK(changed[1].at("length") == 240);
 	CHECK(changed[1].at("position") == 480);
 	CHECK(changed[1].at("pitch") == 64);
@@ -139,8 +141,9 @@ TEST_CASE("controller.set changes controllers of a MIDI part as one undo step", 
 	const Json changed = call(client, "controller.set",
 		{{"part", part}, {"controllers", {{{"id", volume}, {"position", 240}, {"number", 11}, {"value", 0.0}}}}})
 							 .at("controllers");
-	CHECK(
-		changed == Json::array({{{"id", volume}, {"position", 240}, {"number", 11}, {"value", 0.0}, {"channel", 2}}}));
+	CHECK(changed ==
+		Json::array({{{"id", volume}, {"position", 240}, {"type", "controller"}, {"number", 11}, {"value", 0.0},
+			{"channel", 2}}}));
 	CHECK(takeEvent(client, "controller.changed") == Json{{"part", part}, {"controllers", changed}});
 	CHECK(call(client, "history.get").at("steps").back().at("action") == "Change controllers");
 	call(client, "history.undo");
