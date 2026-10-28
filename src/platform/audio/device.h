@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "platform/hosttime.h"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -107,6 +109,7 @@ namespace gnubase::audio
 		float* const* outputs = nullptr;      // outputChannels channels, silent on entry
 		uint32_t frames = 0;                  // at most the format's blockSize
 		uint64_t position = 0;                // frames processed before this block
+		HostTime time = 0;                    // when the block started (hostTime): where MIDI input is placed
 		const MidiBuffer& midiIn;
 		MidiBuffer& midiOut; // empty on entry
 	};

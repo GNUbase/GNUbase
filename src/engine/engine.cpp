@@ -64,7 +64,8 @@ namespace gnubase::engine
 		return GNUBASE_VERSION;
 	}
 
-	Engine::Engine(std::vector<std::unique_ptr<audio::Backend>> backends)
+	Engine::Engine(
+		std::vector<std::unique_ptr<audio::Backend>> backends, std::vector<std::unique_ptr<midi::Backend>> midiBackends)
 	{
 		registerCommand({"engine.version", 1, "The GNUbase version.", CommandInfo{}.parameters,
 							Json::parse(R"({"type": "object", "properties": {"version": {"type": "string"}},
@@ -86,7 +87,7 @@ namespace gnubase::engine
 		processors::registerCommands(*this);
 		m_project = std::make_unique<ProjectModel>();
 		m_project->registerCommands(*this);
-		m_audio = std::make_unique<AudioEngine>(m_project->snapshots(), std::move(backends));
+		m_audio = std::make_unique<AudioEngine>(m_project->snapshots(), std::move(backends), std::move(midiBackends));
 		m_audio->registerCommands(*this);
 		m_thread = std::thread([this] { run(); });
 	}

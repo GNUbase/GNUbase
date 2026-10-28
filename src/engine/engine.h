@@ -3,6 +3,7 @@
 
 #include "engine/schema.h"
 #include "platform/audio/device.h"
+#include "platform/midi/port.h"
 #include "platform/rt/snapshotpublisher.h"
 
 #include <chrono>
@@ -114,8 +115,10 @@ namespace gnubase::engine
 	class Engine
 	{
 	public:
-		// The audio engine plays through devices of these backends.
-		explicit Engine(std::vector<std::unique_ptr<audio::Backend>> backends = audio::makeBackends());
+		// The audio engine plays through devices of these backends and takes MIDI from the ports of these MIDI
+		// backends.
+		explicit Engine(std::vector<std::unique_ptr<audio::Backend>> backends = audio::makeBackends(),
+			std::vector<std::unique_ptr<midi::Backend>> midiBackends = midi::makeBackends());
 		~Engine();
 		Engine(const Engine&) = delete;
 		Engine& operator=(const Engine&) = delete;
