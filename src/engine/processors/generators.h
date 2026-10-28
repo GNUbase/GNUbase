@@ -11,7 +11,7 @@ namespace gnubase::engine::processors
 	class Sine : public graph::Processor
 	{
 	public:
-		enum Parameter : uint32_t
+		enum Parameter : uint8_t
 		{
 			Frequency, // Hz
 			Level,     // linear amplitude
@@ -33,7 +33,7 @@ namespace gnubase::engine::processors
 	class Noise : public graph::Processor
 	{
 	public:
-		enum Parameter : uint32_t
+		enum Parameter : uint8_t
 		{
 			Level, // linear amplitude
 		};
@@ -49,7 +49,7 @@ namespace gnubase::engine::processors
 	class Impulse : public graph::Processor
 	{
 	public:
-		enum Parameter : uint32_t
+		enum Parameter : uint8_t
 		{
 			Interval, // seconds
 			Level,    // linear amplitude

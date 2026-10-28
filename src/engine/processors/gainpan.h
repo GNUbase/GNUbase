@@ -12,7 +12,7 @@ namespace gnubase::engine::processors
 	class GainPan : public graph::Processor
 	{
 	public:
-		enum Parameter : uint32_t
+		enum Parameter : uint8_t
 		{
 			Gain, // dB
 			Pan,  // -1 left, 0 center, 1 right

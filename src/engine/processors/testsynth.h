@@ -15,7 +15,7 @@ namespace gnubase::engine::processors
 	class TestSynth : public graph::Processor
 	{
 	public:
-		enum Parameter : uint32_t
+		enum Parameter : uint8_t
 		{
 			Level,   // linear amplitude of a note at full velocity
 			Attack,  // seconds
