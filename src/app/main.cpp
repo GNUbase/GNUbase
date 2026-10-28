@@ -1,23 +1,78 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "app/headless.h"
+#include "app/options.h"
 #include "engine/engine.h"
 #include "platform/log.h"
 #include "ui/ui.h"
 
+#include <csignal>
 #include <cstdio>
 #include <exception>
+#include <iostream>
+#include <string>
+#include <vector>
 
-int main()
+extern "C" void gnubaseRequestStop(int /*signal*/)
+{
+	gnubase::app::g_stopRequested = 1;
+}
+
+namespace
+{
+	namespace app = gnubase::app;
+
+	int run(int argc, char** argv)
+	{
+		try
+		{
+			const app::Options options = app::parseOptions(std::vector<std::string>(argv + 1, argv + argc));
+			if (options.help)
+			{
+				std::cout << app::usage();
+				return app::g_exitOk;
+			}
+			if (options.version)
+			{
+				std::cout << "GNUbase " << gnubase::engine::version() << '\n';
+				return app::g_exitOk;
+			}
+
+			const gnubase::logging::Session logSession(
+				gnubase::logging::defaultDirectory() / (options.headless ? "gnubase-headless.log" : "gnubase.log"));
+			gnubase::logging::info("GNUbase {} ({})", gnubase::engine::version(), gnubase::ui::libraryVersions());
+			if (options.headless)
+			{
+				if (std::signal(SIGINT, gnubaseRequestStop) == SIG_ERR ||
+					std::signal(SIGTERM, gnubaseRequestStop) == SIG_ERR)
+					gnubase::logging::warning("Ctrl+C won't stop GNUbase: no signal handler");
+				return app::runHeadless(options, std::cin, std::cout, std::cerr);
+			}
+
+			// ponytail: no windows yet; the UI arrives with M04.
+			std::printf("GNUbase %s (%s)\n", gnubase::engine::version(), gnubase::ui::libraryVersions().c_str());
+			return app::g_exitOk;
+		}
+		catch (const app::UsageError& error)
+		{
+			std::cerr << "gnubase: " << error.what() << "\n\n" << app::usage();
+			return app::g_exitUsage;
+		}
+		catch (const std::exception& error)
+		{
+			std::cerr << "gnubase: " << error.what() << '\n';
+			return app::g_exitError;
+		}
+	}
+}
+
+int main(int argc, char** argv)
 {
 	try
 	{
-		const gnubase::logging::Session logSession(gnubase::logging::defaultDirectory() / "gnubase.log");
-		gnubase::logging::info("GNUbase {} ({})", gnubase::engine::version(), gnubase::ui::libraryVersions());
-		std::printf("GNUbase %s (%s)\n", gnubase::engine::version(), gnubase::ui::libraryVersions().c_str());
-		return 0;
+		return run(argc, argv);
 	}
-	catch (const std::exception& error)
+	catch (...)
 	{
-		std::fprintf(stderr, "GNUbase: %s\n", error.what());
-		return 1;
+		return gnubase::app::g_exitError; // even reporting the error failed
 	}
 }
