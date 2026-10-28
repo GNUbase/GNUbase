@@ -197,15 +197,15 @@ flowchart LR
 
 ## Project format
 
-- Projects are `.dawproject` files: a zip container with XML and media (#22).
-- GNUbase data that DAWproject cannot express goes into an extra entry in the same container, so other applications can still open the file. Its name and format are **decided in #22**.
+- Projects are `.dawproject` files: a zip container with XML and media (#22). `project.save` and `project.load` write and read them (`src/engine/dawproject`), with miniz for the container and pugixml for the XML.
+- `project.xml` gets everything DAWproject can describe: tracks with their folders, channels with their routing (groups as `submix`, output busses as `master` channels), audio events and MIDI parts as clips, notes, MIDI controllers as `Points`, markers, and tempo and time signature with their changes. Media files are embedded under `audio/` or referenced where they are. GNUbase's output validates against the format's `Project.xsd`.
+- GNUbase data that DAWproject cannot express goes into an extra entry in the same container, so other applications can still open the file. The entry is **`gnubase.json`**: the whole document as `project.get` returns it, the id counter, the media paths, and a checksum of `project.xml`. If the checksum matches, loading restores the project exactly (ids, input busses, time bases, MIDI tracks, exact sample positions); if another application changed `project.xml`, the entry is ignored and the project is built from `project.xml`, so stale GNUbase data never overrides someone else's edits.
 - Plugin states are stored as DAWproject specifies (#72).
 
 ## Open decisions
 
 | Topic | Ticket |
 |---|---|
-| DAWproject extension entry | #22 |
 | Anticipative processing | #23 |
 | UI render backend | #47 |
 | Plugin API details | #61 |

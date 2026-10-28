@@ -3,6 +3,8 @@
 
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
+#include "engine/dawproject/dawproject.h"
+#include "engine/document/serialize.h"
 #include "engine/graph/graph.h"
 
 #include <algorithm>
@@ -39,7 +41,7 @@ namespace gnubase::engine
 			{TrackType::Effect, "effect", "FX"},
 		};
 
-		const TrackTypeName& trackTypeName(TrackType type)
+		const TrackTypeName& trackTypeEntry(TrackType type)
 		{
 			for (const TrackTypeName& entry : g_trackTypes)
 				if (entry.type == type)
@@ -56,111 +58,8 @@ namespace gnubase::engine
 			throw CommandError("unknown track type " + name);
 		}
 
-		const char* timeBaseName(time::TimeBase base)
-		{
-			return base == time::TimeBase::Musical ? "musical" : "linear";
-		}
-
-		time::TimeBase timeBase(const std::string& name)
-		{
-			return name == "linear" ? time::TimeBase::Linear : time::TimeBase::Musical;
-		}
-
-		const char* directionName(BusDirection direction)
-		{
-			return direction == BusDirection::Input ? "input" : "output";
-		}
-
 		// What media.add reads from the file unless all of them are given.
 		constexpr std::array<const char*, 3> g_mediaProperties{"sampleRate", "channels", "length"};
-
-		// Note velocities and controller values are 0 to 1 in JSON, whatever the internal resolution.
-		constexpr double g_maxVelocity = 65535.0;
-		constexpr double g_maxControllerValue = 4294967295.0;
-
-		// JSON for every object.
-
-		Json toJson(const Bus& bus)
-		{
-			return {{"id", bus.id}, {"name", bus.name}, {"direction", directionName(bus.direction)},
-				{"channels", bus.channels}};
-		}
-
-		Json toJson(const Track& track)
-		{
-			return {{"id", track.id}, {"type", trackTypeName(track.type).name}, {"name", track.name},
-				{"color", track.color.empty() ? Json(nullptr) : Json(track.color)},
-				{"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent}, {"channel", track.channel}};
-		}
-
-		Json toJson(const Channel& channel)
-		{
-			return {{"id", channel.id}, {"track", channel.track}, {"channels", channel.channels},
-				{"input", channel.input}, {"output", channel.output}};
-		}
-
-		Json toJson(const MediaFile& media)
-		{
-			return {{"id", media.id}, {"path", media.path}, {"sampleRate", media.sampleRate},
-				{"channels", media.channels}, {"length", media.length}};
-		}
-
-		Json toJson(const Clip& clip)
-		{
-			return {{"id", clip.id}, {"name", clip.name}, {"media", clip.media}};
-		}
-
-		Json toJson(const AudioEvent& event)
-		{
-			return {{"id", event.id}, {"track", event.track}, {"clip", event.clip}, {"position", event.position.value},
-				{"offset", event.offset}, {"length", event.length}};
-		}
-
-		Json toJson(const Note& note)
-		{
-			return {{"id", note.id}, {"position", note.position}, {"length", note.length}, {"pitch", note.pitch},
-				{"velocity", note.velocity / g_maxVelocity}, {"channel", note.channel}};
-		}
-
-		Json toJson(const Controller& controller)
-		{
-			return {{"id", controller.id}, {"position", controller.position}, {"number", controller.number},
-				{"value", controller.value / g_maxControllerValue}, {"channel", controller.channel}};
-		}
-
-		Json toJson(const MidiPart& part)
-		{
-			Json notes = Json::array();
-			for (const auto& [id, note] : part.notes)
-				notes.push_back(toJson(note));
-			Json controllers = Json::array();
-			for (const auto& [id, controller] : part.controllers)
-				controllers.push_back(toJson(controller));
-			return {{"id", part.id}, {"track", part.track}, {"name", part.name}, {"position", part.position.value},
-				{"length", part.length}, {"notes", notes}, {"controllers", controllers}};
-		}
-
-		template <typename Map> Json toJsonArray(const Map& objects)
-		{
-			Json array = Json::array();
-			for (const auto& entry : objects)
-				array.push_back(toJson(entry.second));
-			return array;
-		}
-
-		Json toJson(const Project& project)
-		{
-			Json busses = Json::array();
-			for (const Bus& bus : project.busses)
-				busses.push_back(toJson(bus));
-			Json tracks = Json::array();
-			for (const ObjectId id : project.trackOrder())
-				tracks.push_back(toJson(project.trackById.at(id)));
-			return {{"name", project.name}, {"sampleRate", project.sampleRate}, {"busses", busses}, {"tracks", tracks},
-				{"channels", toJsonArray(project.channels)}, {"media", toJsonArray(project.media)},
-				{"clips", toJsonArray(project.clips)}, {"audioEvents", toJsonArray(project.audioEvents)},
-				{"midiParts", toJsonArray(project.midiParts)}};
-		}
 
 		Json graphToJson(const graph::GraphDesc& graph)
 		{
@@ -402,7 +301,7 @@ namespace gnubase::engine
 			const auto count = std::count_if(project.trackById.begin(), project.trackById.end(),
 				[type](const auto& entry) { return entry.second.type == type; });
 			const std::string number = std::to_string(count + 1);
-			return trackTypeName(type).defaultName + std::string(number.size() < 2 ? " 0" : " ") + number;
+			return trackTypeEntry(type).defaultName + std::string(number.size() < 2 ? " 0" : " ") + number;
 		}
 
 		// Commands.
@@ -425,7 +324,7 @@ namespace gnubase::engine
 			track.type = type;
 			track.name = parameters.value("name", defaultTrackName(project, type));
 			track.color = color(parameters, {});
-			track.timeBase = timeBase(parameters.value("timeBase", "musical"));
+			track.timeBase = timeBaseFromName(parameters.value("timeBase", "musical"));
 			track.parent = parent;
 
 			// New tracks play through the main output, or through the folder's group channel when added to one.
@@ -468,7 +367,7 @@ namespace gnubase::engine
 			track.color = newColor;
 			if (parameters.contains("timeBase"))
 			{
-				const time::TimeBase base = timeBase(parameters.at("timeBase").get<std::string>());
+				const time::TimeBase base = timeBaseFromName(parameters.at("timeBase").get<std::string>());
 				if (base != track.timeBase)
 					rebaseTrack(project, track, base, context);
 			}
@@ -1025,7 +924,8 @@ namespace gnubase::engine
 				const bool redo = direction == Direction::Redo;
 				const ProjectSettings& current = redo ? *change.settingsAfter : *change.settingsBefore;
 				const ProjectSettings& previous = redo ? *change.settingsBefore : *change.settingsAfter;
-				if (current.name != previous.name || current.sampleRate != previous.sampleRate)
+				if (current.name != previous.name || current.sampleRate != previous.sampleRate ||
+					current.tempo != previous.tempo || current.signatures != previous.signatures)
 					context.emit("project.changed", {{"name", current.name}, {"sampleRate", current.sampleRate}});
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
@@ -1038,6 +938,7 @@ namespace gnubase::engine
 			announceObjects(change.media, direction, "media", "media", context);
 			announceObjects(change.clips, direction, "clip", "clip", context);
 			announceObjects(change.audioEvents, direction, "audioEvent", "event", context);
+			announceObjects(change.markers, direction, "marker", "marker", context);
 			for (const MidiPartChange& part : change.midiParts)
 			{
 				const auto current = project.midiParts.find(part.id);
@@ -1268,6 +1169,52 @@ namespace gnubase::engine
 				"they receive audio and events from, and the order they are processed in.",
 				objectSchema({}), {{"type", "object"}}, true},
 			[this](Project&, CommandContext&) { return graphToJson(graph::describe(m_snapshots.latest())); });
+		add(engine,
+			{"project.save", 1,
+				"Saves the project as a DAWproject file. Media files are copied into it unless embedMedia is false; "
+				"then the file refers to them where they are.",
+				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}, {"path"}), noResult, true},
+			[](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				DawProjectSaveOptions options;
+				options.embedMedia = parameters.value("embedMedia", true);
+				try
+				{
+					saveDawProject(project, parameters.at("path").get<std::string>(), options);
+				}
+				catch (const std::runtime_error& error)
+				{
+					throw CommandError(error.what());
+				}
+				return Json::object();
+			});
+		addControl(engine,
+			{"project.load", 1,
+				"Replaces the project with a DAWproject file and clears the undo history. Media files embedded in "
+				"it are extracted to mediaFolder, by default a folder named after the file next to it.",
+				objectSchema({{"path", stringSchema}, {"mediaFolder", stringSchema}}, {"path"}), noResult, false},
+			[this](CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				const std::string path = parameters.at("path").get<std::string>();
+				const std::filesystem::path file = std::filesystem::u8path(path);
+				const std::string folder = parameters.value("mediaFolder",
+					(file.parent_path() / std::filesystem::u8path(file.stem().u8string() + " media")).u8string());
+				try
+				{
+					m_project = loadDawProject(path, folder);
+				}
+				catch (const std::runtime_error& error)
+				{
+					throw CommandError(error.what());
+				}
+				m_history.clear();
+				context.emit("project.reset");
+				announceHistory(context);
+				publish();
+				return Json::object();
+			});
 		addControl(engine,
 			{"project.new", 1,
 				"Replaces the project with an empty one that has a stereo input and output bus, and clears the undo "
