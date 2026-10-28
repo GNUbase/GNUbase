@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -137,7 +138,7 @@ namespace gnubase::pluginhost
 			{
 				if (param >= paramCount())
 					return false;
-				value = m_values[param];
+				value = m_values[param].load(std::memory_order_relaxed);
 				return true;
 			}
 
@@ -178,15 +179,18 @@ namespace gnubase::pluginhost
 			// State: "GNBG", then the two values.
 			bool saveState(std::vector<uint8_t>& data, StateContext /*context*/) override
 			{
-				data.assign(4 + sizeof(m_values), 0);
+				std::array<double, 2> values{};
+				for (size_t param = 0; param < values.size(); ++param)
+					values[param] = m_values[param].load(std::memory_order_relaxed);
+				data.assign(4 + sizeof(values), 0);
 				std::memcpy(data.data(), "GNBG", 4);
-				std::memcpy(data.data() + 4, m_values.data(), sizeof(m_values));
+				std::memcpy(data.data() + 4, values.data(), sizeof(values));
 				return true;
 			}
 
 			bool loadState(const uint8_t* data, size_t size, StateContext /*context*/) override
 			{
-				if (size != 4 + sizeof(m_values) || std::memcmp(data, "GNBG", 4) != 0)
+				if (size != 4 + (2 * sizeof(double)) || std::memcmp(data, "GNBG", 4) != 0)
 					return false;
 				std::array<double, 2> values{};
 				std::memcpy(values.data(), data + 4, sizeof(values));
@@ -211,24 +215,30 @@ namespace gnubase::pluginhost
 				if (param >= paramCount())
 					return;
 				// The ranges paramInfo reports, without its allocations: this runs on the audio thread.
-				m_values[param] =
-					param == Gain ? std::clamp(value, g_minimumGain, g_maximumGain) : std::clamp(value, 0.0, 1.0);
-				const auto gain = static_cast<float>(std::pow(10.0, m_values[Gain] / 20.0));
-				m_factor = m_values[Invert] >= 0.5 ? -gain : gain;
+				m_values[param].store(
+					param == Gain ? std::clamp(value, g_minimumGain, g_maximumGain) : std::clamp(value, 0.0, 1.0),
+					std::memory_order_relaxed);
 			}
 
 			void render(const AudioBuffer& in, const AudioBuffer& out, uint32_t begin, uint32_t end) const noexcept
 			{
+				if (begin == end)
+					return;
+				const auto gain =
+					static_cast<float>(std::pow(10.0, m_values[Gain].load(std::memory_order_relaxed) / 20.0));
+				const float factor = m_values[Invert].load(std::memory_order_relaxed) >= 0.5 ? -gain : gain;
 				for (uint32_t c = 0; c < 2; ++c)
 				{
 					for (uint32_t i = begin; i < end; ++i)
-						out.channels[c][i] = in.channels[c][i] * m_factor;
+						out.channels[c][i] = in.channels[c][i] * factor;
 				}
 			}
 
 			Descriptor m_descriptor = testDescriptor("gain", "Test Gain");
-			std::array<double, 2> m_values{};
-			float m_factor = 1.0f;
+			// Written by parameter events on the audio thread and by loadState on the main thread, read by both
+			// (paramValue and saveState run on the main thread while the plugin processes). Each value stands on its
+			// own and publishes nothing else, so relaxed atomics are enough.
+			std::array<std::atomic<double>, 2> m_values{};
 		};
 
 		// Hangs in process(), as a plugin with a deadlock would.
