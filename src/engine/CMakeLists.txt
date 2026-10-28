@@ -13,6 +13,8 @@ target_include_directories(gnubase-r8brain PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(gnubase-r8brain PUBLIC Threads::Threads)
 
 add_library(gnubase-engine STATIC
+	analysis/analysis.cpp analysis/analysis.h
+	audio/analysiscommands.cpp
 	audio/audioengine.cpp audio/audioengine.h
 	audio/transport.cpp audio/transport.h
 	audiofile/audiofile.h
