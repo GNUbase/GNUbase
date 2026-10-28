@@ -587,6 +587,7 @@ TEST_CASE("MIDI input reaches the monitor at its frame position once the device 
 	backend.addLoopback("Keys");
 	Engine engine(makeBackends(), midiBackends(std::move(dummy)));
 	Client client(engine);
+	CHECK(run(client, "midi.monitor").at("received").empty()); // the first MIDI command opens the ports
 	run(client, "audio.setDevice", {{"blockSize", 64}});
 
 	constexpr gnubase::HostTime second = 1000000000;

@@ -55,8 +55,15 @@ namespace gnubase::engine
 		}
 	}
 
+	void MidiPorts::listOnce()
+	{
+		if (!m_listed)
+			refresh();
+	}
+
 	bool MidiPorts::refresh()
 	{
+		m_listed = true;
 		bool changed = false;
 		std::vector<bool> seen(m_ports.size(), false);
 		for (const std::unique_ptr<midi::Backend>& backend : m_backends)
@@ -163,6 +170,7 @@ namespace gnubase::engine
 
 	Json MidiPorts::setPort(const Json& parameters)
 	{
+		listOnce();
 		Port& port = find(parameters);
 		if (parameters.contains("inAllInputs") && !port.info.input)
 			throw CommandError("only inputs belong to all MIDI inputs");
@@ -179,7 +187,6 @@ namespace gnubase::engine
 	{
 		for (const std::unique_ptr<midi::Backend>& backend : m_backends)
 			backend->onPortsChanged([&engine] { engine.post("midi.refresh"); });
-		refresh();
 
 		engine.registerCommand(
 			{"midi.ports", 1,
@@ -188,7 +195,11 @@ namespace gnubase::engine
 				"the port is present now and open, and whether the system speaks MIDI 2.0 with it. Ports that were "
 				"unplugged stay listed with their settings, not present.",
 				CommandInfo{}.parameters, portsSchema(), true},
-			[this](CommandContext&) { return list(); });
+			[this](CommandContext&)
+			{
+				listOnce();
+				return list();
+			});
 		engine.registerCommand(
 			{"midi.setPort", 1,
 				"Changes a MIDI port's settings. The port is given by its id, whether it is an input, and its backend "
@@ -228,6 +239,7 @@ namespace gnubase::engine
 				true},
 			[this](CommandContext&)
 			{
+				listOnce();
 				Json received = Json::array();
 				Received entry;
 				while (m_monitor.tryPop(entry))
