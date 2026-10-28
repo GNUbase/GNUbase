@@ -7,11 +7,17 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <memory>
+#include <optional>
 #include <string>
 #include <thread>
+#include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase::audio;
@@ -19,7 +25,9 @@ using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::WithinAbs;
 using gnubase::engine::Client;
 using gnubase::engine::Engine;
+using gnubase::engine::Event;
 using gnubase::engine::Json;
+using gnubase::engine::Message;
 using gnubase::engine::Result;
 
 namespace
@@ -100,6 +108,113 @@ namespace
 		return run(client, "audio.capture", {{"channel", channel}, {"start", 0}, {"frames", frames}})
 			.at("samples")
 			.get<std::vector<float>>();
+	}
+
+	// What the fake backend's driver does, shared with the test.
+	struct FakeDriver
+	{
+		std::atomic<uint32_t> preferredBlockSize{256};
+		std::atomic<int> controlPanels{0};
+		std::atomic<DummyDevice*> device{nullptr}; // the device opened last
+	};
+
+	DeviceInfo fakeInfo()
+	{
+		DeviceInfo info;
+		info.id = "fake-1";
+		info.name = "Fake interface";
+		info.inputs = {"Mic", "Line"};
+		info.outputs = {"Main L", "Main R"};
+		info.sampleRates = {44100.0, 48000.0};
+		info.blockSizes = {128, 256};
+		info.clockSources = {"Internal", "Word clock"};
+		info.clockSource = 0;
+		info.controlPanel = true;
+		return info;
+	}
+
+	// A device that describes itself like hardware and otherwise runs like the dummy device.
+	class FakeDevice : public DummyDevice
+	{
+	public:
+		FakeDevice(const DeviceFormat& format, int clockSource, FakeDriver& driver)
+			: DummyDevice(format, 0), m_clockSource(clockSource), m_driver(driver)
+		{
+		}
+
+		DeviceInfo info() const override
+		{
+			DeviceInfo info = fakeInfo();
+			info.clockSource = m_clockSource;
+			return info;
+		}
+
+		DeviceLatency latency() const override { return {format().blockSize, 2 * format().blockSize}; }
+		void openControlPanel() override { ++m_driver.controlPanels; }
+
+	private:
+		int m_clockSource;
+		FakeDriver& m_driver;
+	};
+
+	// A backend with one device, fake-1, whose driver can change its preferred block size and ask for a reset.
+	class FakeBackend : public Backend
+	{
+	public:
+		explicit FakeBackend(std::shared_ptr<FakeDriver> driver) : m_driver(std::move(driver)) {}
+
+		std::string name() const override { return "fake"; }
+		std::vector<DeviceInfo> devices() override { return {fakeInfo()}; }
+
+		std::unique_ptr<Device> open(const DeviceConfig& config) override
+		{
+			const DeviceInfo info = fakeInfo();
+			if (!config.device.empty() && config.device != info.id)
+				throw DeviceError("no device " + config.device);
+			DeviceFormat format;
+			format.sampleRate = config.sampleRate == 0.0 ? 48000.0 : config.sampleRate;
+			format.blockSize = config.blockSize == 0 ? m_driver->preferredBlockSize.load() : config.blockSize;
+			if (std::find(info.sampleRates.begin(), info.sampleRates.end(), format.sampleRate) ==
+					info.sampleRates.end() ||
+				std::find(info.blockSizes.begin(), info.blockSizes.end(), format.blockSize) == info.blockSizes.end())
+				throw DeviceError("the fake interface doesn't run at that sample rate or block size");
+			int clockSource = 0;
+			if (!config.clockSource.empty())
+			{
+				const auto found = std::find(info.clockSources.begin(), info.clockSources.end(), config.clockSource);
+				if (found == info.clockSources.end())
+					throw DeviceError("no clock source " + config.clockSource);
+				clockSource = static_cast<int>(found - info.clockSources.begin());
+			}
+			auto device = std::make_unique<FakeDevice>(format, clockSource, *m_driver);
+			m_driver->device = device.get();
+			return device;
+		}
+
+	private:
+		std::shared_ptr<FakeDriver> m_driver;
+	};
+
+	std::vector<std::unique_ptr<Backend>> fakeBackends(const std::shared_ptr<FakeDriver>& driver)
+	{
+		std::vector<std::unique_ptr<Backend>> backends;
+		backends.push_back(std::make_unique<FakeBackend>(driver));
+		backends.push_back(std::make_unique<DummyBackend>());
+		return backends;
+	}
+
+	// Waits for an event whose data matches; false after five seconds.
+	template <typename Match> bool waitForEvent(Client& client, const std::string& name, Match match)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		while (std::chrono::steady_clock::now() < deadline)
+		{
+			const std::optional<Message> message = client.wait(std::chrono::milliseconds(50));
+			const auto* event = message ? std::get_if<Event>(&*message) : nullptr;
+			if (event != nullptr && event->name == name && match(event->data))
+				return true;
+		}
+		return false;
 	}
 
 	// A project whose output depends on routing: the input through an audio track and a group to the output, and a
@@ -269,9 +384,19 @@ TEST_CASE("audio.get reports the device, and audio commands check what they can 
 		ContainsSubstring("no parameter Pitch"));
 
 	status = run(client, "audio.setDevice", {{"sampleRate", 44100}, {"blockSize", 32}, {"outputChannels", 6}});
-	CHECK(status.at("device") ==
-		Json{{"type", "dummy"}, {"sampleRate", 44100.0}, {"blockSize", 32}, {"inputChannels", 2},
-			{"outputChannels", 6}});
+	const Json& device = status.at("device");
+	CHECK(device.at("backend") == "dummy");
+	CHECK(device.at("id") == "dummy");
+	CHECK(device.at("sampleRate") == 44100.0);
+	CHECK(device.at("blockSize") == 32);
+	CHECK(device.at("inputChannels") == 2);
+	CHECK(device.at("outputChannels") == 6);
+	CHECK(device.at("inputs") == Json{"Input 1", "Input 2"});
+	CHECK(device.at("outputs").size() == 6);
+	CHECK(device.at("inputLatency") == 0);
+	CHECK(device.at("outputLatency") == 0);
+	CHECK(device.at("clockSource").is_null());
+	CHECK(device.at("controlPanel") == false);
 	CHECK(status.at("running") == false);
 	CHECK(status.at("position") == 0);
 
@@ -283,4 +408,118 @@ TEST_CASE("audio.get reports the device, and audio commands check what they can 
 
 	CHECK_THAT(reject(client, "audio.capture", {{"channel", 6}, {"start", 0}, {"frames", 1}}),
 		ContainsSubstring("no output channel 6"));
+}
+
+TEST_CASE("audio.devices lists every backend's devices", "[unit]")
+{
+	Engine engine(fakeBackends(std::make_shared<FakeDriver>()));
+	Client client(engine);
+	const Json backends = run(client, "audio.devices").at("backends");
+	REQUIRE(backends.size() == 2);
+	CHECK(backends[0].at("name") == "fake");
+	CHECK(backends[0].at("devices") ==
+		Json::array({{{"id", "fake-1"}, {"name", "Fake interface"}, {"inputs", {"Mic", "Line"}},
+			{"outputs", {"Main L", "Main R"}}, {"sampleRates", {44100.0, 48000.0}}, {"blockSizes", {128, 256}},
+			{"clockSources", {"Internal", "Word clock"}}, {"clockSource", "Internal"}, {"controlPanel", true}}}));
+	CHECK(backends[1].at("name") == "dummy");
+	CHECK(backends[1].at("devices")[0].at("id") == "dummy");
+}
+
+TEST_CASE(
+	"audio.setDevice opens a backend's device with the sample rate, block size and clock source asked for", "[unit]")
+{
+	Engine engine(fakeBackends(std::make_shared<FakeDriver>()));
+	Client client(engine);
+	Json device = run(client, "audio.setDevice", {{"backend", "fake"}}).at("device");
+	CHECK(device.at("backend") == "fake");
+	CHECK(device.at("id") == "fake-1");
+	CHECK(device.at("name") == "Fake interface");
+	CHECK(device.at("sampleRate") == 48000.0);
+	CHECK(device.at("blockSize") == 256); // the driver's preferred size
+	CHECK(device.at("inputChannels") == 2);
+	CHECK(device.at("outputs") == Json{"Main L", "Main R"});
+	CHECK(device.at("inputLatency") == 256);
+	CHECK(device.at("outputLatency") == 512);
+	CHECK(device.at("clockSource") == "Internal");
+	CHECK(device.at("controlPanel") == true);
+
+	device = run(client, "audio.setDevice",
+		{{"backend", "fake"}, {"device", "fake-1"}, {"sampleRate", 44100}, {"blockSize", 128},
+			{"clockSource", "Word clock"}})
+				 .at("device");
+	CHECK(device.at("sampleRate") == 44100.0);
+	CHECK(device.at("blockSize") == 128);
+	CHECK(device.at("clockSource") == "Word clock");
+
+	CHECK_THAT(reject(client, "audio.setDevice", {{"backend", "nope"}}), ContainsSubstring("no audio backend nope"));
+	CHECK_THAT(reject(client, "audio.setDevice", {{"backend", "fake"}, {"inputChannels", 1}}),
+		ContainsSubstring("only the dummy device"));
+	CHECK_THAT(reject(client, "audio.setDevice", {{"clockSource", "Internal"}}), ContainsSubstring("clock source"));
+	CHECK_THAT(reject(client, "audio.setDevice", {{"device", "fake-1"}}), ContainsSubstring("no device fake-1"));
+	CHECK(run(client, "audio.get").at("device").at("blockSize") == 128); // checked before anything changed
+
+	// The audio device of another backend is closed before the new one opens; if that fails, there is none.
+	CHECK_THAT(reject(client, "audio.setDevice", {{"backend", "fake"}, {"sampleRate", 96000}}),
+		ContainsSubstring("sample rate"));
+	CHECK(run(client, "audio.get").at("device").is_null());
+
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	CHECK_THAT(reject(client, "audio.render", {{"frames", 10}}), ContainsSubstring("dummy device"));
+	CHECK_THAT(reject(client, "audio.capture", {{"channel", 0}, {"start", 0}, {"frames", 1}}),
+		ContainsSubstring("dummy device"));
+}
+
+TEST_CASE("audio.controlPanel opens the driver's control panel", "[unit]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	CHECK_THAT(reject(client, "audio.controlPanel"), ContainsSubstring("no audio device"));
+	run(client, "audio.setDevice");
+	CHECK_THAT(reject(client, "audio.controlPanel"), ContainsSubstring("no control panel"));
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "audio.controlPanel");
+	CHECK(driver->controlPanels == 1);
+}
+
+TEST_CASE("a driver's reset request reopens its device with the new settings and keeps it running", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "track.add", {{"type", "audio"}});
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "audio.start");
+
+	// The user picks a smaller buffer in the driver's control panel, and the driver asks to be reset.
+	driver->preferredBlockSize = 128;
+	driver->device.load()->requestReset();
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("device").at("blockSize") == 128 && data.at("running") == true; }));
+	const Json status = run(client, "audio.get");
+	CHECK(status.at("device").at("blockSize") == 128);
+	CHECK(status.at("running") == true);
+
+	// audio.reset does the same, and a stopped device stays stopped.
+	run(client, "audio.stop");
+	driver->preferredBlockSize = 256;
+	const Json reset = run(client, "audio.reset");
+	CHECK(reset.at("device").at("blockSize") == 256);
+	CHECK(reset.at("running") == false);
+}
+
+TEST_CASE("audio.reset keeps the dummy device's settings", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	CHECK_THAT(reject(client, "audio.reset"), ContainsSubstring("no audio device"));
+	run(client, "track.add", {{"type", "audio"}}); // plays the input
+	run(client, "audio.setDevice", {{"blockSize", 64}, {"outputChannels", 4}, {"input", {{"processor", "sine"}}}});
+	run(client, "audio.render", {{"frames", 64}});
+	const Json status = run(client, "audio.reset");
+	CHECK(status.at("device").at("blockSize") == 64);
+	CHECK(status.at("device").at("outputChannels") == 4);
+	CHECK(status.at("position") == 0); // a new device
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(capture(client, 0, 64) != std::vector<float>(64, 0.0f)); // with its input
 }

@@ -136,11 +136,7 @@ namespace gnubase::engine
 
 	void AudioEngine::registerAnalysisCommands(Engine& engine)
 	{
-		const auto device = [this]() -> const audio::DummyDevice&
-		{
-			require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
-			return *m_device;
-		};
+		const auto device = [this]() -> const audio::DummyDevice& { return requireDummy(); };
 
 		Json analyzedChannel = Json::parse(g_levelsSchema);
 		analyzedChannel["required"].push_back("spectrum");

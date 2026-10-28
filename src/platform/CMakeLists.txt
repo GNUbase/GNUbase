@@ -2,6 +2,7 @@
 find_package(Threads REQUIRED)
 
 add_library(gnubase-platform STATIC
+	audio/backends.cpp
 	audio/device.h
 	audio/dummydevice.cpp audio/dummydevice.h
 	crashhandler.cpp crashhandler.h

@@ -9,6 +9,7 @@ gnubase_target_defaults(gnubase-testutils)
 
 add_executable(gnubase-tests analysis_tests.cpp app_tests.cpp audio_tests.cpp audiofile_tests.cpp coverage_tests.cpp dawproject_tests.cpp document_tests.cpp engine_tests.cpp graph_tests.cpp history_tests.cpp log_tests.cpp mcp_tests.cpp processor_tests.cpp rt_tests.cpp scripting_tests.cpp streaming_tests.cpp testing_tests.cpp testutils_tests.cpp theme_tests.cpp time_tests.cpp
 	playback_tests.cpp transport_tests.cpp)
+target_sources(gnubase-tests PRIVATE device_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-mcp gnubase-scripting gnubase-testutils Catch2::Catch2WithMain miniz pugixml::pugixml
 	cpp-httplib)
 

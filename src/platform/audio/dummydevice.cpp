@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace gnubase::audio
@@ -24,6 +25,14 @@ namespace gnubase::audio
 				pointers.push_back(samples.data() + (static_cast<size_t>(c) * frames));
 			return pointers;
 		}
+
+		// Adds a value to a sorted list unless it is there.
+		template <typename T> void include(std::vector<T>& values, T value)
+		{
+			const auto at = std::lower_bound(values.begin(), values.end(), value);
+			if (at == values.end() || *at != value)
+				values.insert(at, value);
+		}
 	}
 
 	DummyDevice::DummyDevice(DeviceFormat format, size_t captureFrames, size_t captureMidi)
@@ -34,14 +43,30 @@ namespace gnubase::audio
 		  m_midiCapture(captureMidi)
 	{
 		if (format.blockSize == 0 || format.sampleRate <= 0.0)
-			throw std::invalid_argument("the dummy device needs a block size and a sample rate");
+			throw DeviceError("the dummy device needs a block size and a sample rate");
 		m_inputs = channelPointers(m_inputSamples, format.inputChannels, format.blockSize);
 		m_outputs = channelPointers(m_outputSamples, format.outputChannels, format.blockSize);
 	}
 
 	DummyDevice::~DummyDevice()
 	{
-		stop();
+		DummyDevice::stop(); // not virtually: a derived device is already gone
+	}
+
+	DeviceInfo DummyDevice::info() const
+	{
+		DeviceInfo info;
+		info.id = "dummy";
+		info.name = "Dummy device";
+		for (int c = 0; c < m_format.inputChannels; ++c)
+			info.inputs.push_back("Input " + std::to_string(c + 1));
+		for (int c = 0; c < m_format.outputChannels; ++c)
+			info.outputs.push_back("Output " + std::to_string(c + 1));
+		info.sampleRates = {44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0};
+		info.blockSizes = {32, 64, 128, 256, 512, 1024, 2048};
+		include(info.sampleRates, m_format.sampleRate);
+		include(info.blockSizes, m_format.blockSize);
+		return info;
 	}
 
 	void DummyDevice::setInput(InputSource source)
@@ -92,7 +117,7 @@ namespace gnubase::audio
 
 	void DummyDevice::stop()
 	{
-		if (!running())
+		if (!m_thread.joinable())
 			return;
 		m_stopping = true;
 		m_thread.join();
@@ -128,7 +153,7 @@ namespace gnubase::audio
 		const size_t captured = m_capturedFrames.load(std::memory_order_relaxed);
 		const size_t room = m_capture.empty() ? 0 : m_capture[0].size() - captured;
 		const size_t keep = std::min<size_t>(room, frames);
-		for (size_t c = 0; c < m_capture.size(); ++c)
+		for (size_t c = 0; keep > 0 && c < m_capture.size(); ++c) // without capture memory, data() is null
 			std::memcpy(m_capture[c].data() + captured, m_outputs[c], keep * sizeof(float));
 		m_droppedFrames.fetch_add(frames - keep, std::memory_order_release);
 		m_capturedFrames.store(captured + keep, std::memory_order_release);
@@ -157,5 +182,28 @@ namespace gnubase::audio
 	{
 		const size_t count = m_capturedMidi.load(std::memory_order_acquire);
 		return {m_midiCapture.begin(), m_midiCapture.begin() + static_cast<std::ptrdiff_t>(count)};
+	}
+
+	std::vector<DeviceInfo> DummyBackend::devices()
+	{
+		return {DummyDevice(DeviceFormat{}, 0).info()};
+	}
+
+	std::unique_ptr<Device> DummyBackend::open(const DeviceConfig& config)
+	{
+		if (!config.device.empty() && config.device != "dummy")
+			throw DeviceError("the dummy backend has no device " + config.device);
+		if (!config.clockSource.empty())
+			throw DeviceError("the dummy device has no clock source " + config.clockSource);
+		DeviceFormat format;
+		if (config.sampleRate != 0.0)
+			format.sampleRate = config.sampleRate;
+		if (config.blockSize != 0)
+			format.blockSize = config.blockSize;
+		if (format.sampleRate < 8000.0 || format.sampleRate > 384000.0)
+			throw DeviceError("the dummy device runs at 8000 to 384000 Hz");
+		if (format.blockSize > 8192)
+			throw DeviceError("the dummy device's blocks have at most 8192 frames");
+		return std::make_unique<DummyDevice>(format, static_cast<size_t>(format.sampleRate));
 	}
 }
