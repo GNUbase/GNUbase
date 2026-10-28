@@ -6,6 +6,7 @@
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/serialize.h"
 #include "engine/graph/graph.h"
+#include "engine/midi/quantizecommands.h"
 #include "engine/processors/builtin.h"
 
 #include <algorithm>
@@ -1011,13 +1012,18 @@ namespace gnubase::engine
 
 	void ProjectModel::add(Engine& engine, CommandInfo info, Handler handler)
 	{
+		std::string action = actionName(info.name);
+		addEdit(engine, std::move(info), std::move(action), std::move(handler));
+	}
+
+	void ProjectModel::addEdit(Engine& engine, CommandInfo info, std::string action, Handler handler)
+	{
 		if (info.query)
 		{
 			engine.registerCommand(std::move(info),
 				[this, handler = std::move(handler)](CommandContext& context) { return handler(m_project, context); });
 			return;
 		}
-		std::string action = actionName(info.name);
 		if (!action.empty())
 			m_edits[info.name] = {info, handler};
 		engine.registerCommand(std::move(info),
@@ -1469,6 +1475,7 @@ namespace gnubase::engine
 			[](Project& project, CommandContext& context)
 			{ return removeFromPart(project, context, &MidiPart::controllers, "controllers", "controller"); });
 
+		midi::registerQuantizeCommands(*this, engine);
 		registerHistoryCommands(engine);
 	}
 }

@@ -622,6 +622,165 @@ Parameters:
 - `name`: string
 - `sampleRate`: number
 
+### quantize
+
+#### `gnubase.quantize.apply`
+
+Quantizes note starts: moves them toward the nearest position of the grid, or of the groove, and keeps their lengths. Takes the notes of part (only notes, if given) or of every part in parts. The settings are the project's (see quantize.set), or preset's, changed by settings. Quantizing starts from the notes' original timing unless settings.soft is true, and keeps it, so quantize.reset puts it back. Returns the notes that changed. Grids are in project time and start again at every bar; notes don't move before their part's start.
+
+Parameters:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+- `preset`: string
+- `settings`: object
+
+Returns:
+
+- `notes`: array, required
+
+#### `gnubase.quantize.ends`
+
+Quantizes note ends: moves them toward the nearest grid position and keeps the starts. Takes the notes of part (only notes, if given) or of every part in parts. The settings are the project's (see quantize.set), or preset's, changed by settings. Quantizing starts from the notes' original timing unless settings.soft is true, and keeps it, so quantize.reset puts it back. Returns the notes that changed.
+
+Parameters:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+- `preset`: string
+- `settings`: object
+
+Returns:
+
+- `notes`: array, required
+
+#### `gnubase.quantize.extractGroove`
+
+Makes a groove preset from a MIDI part's rhythm: a groove position at every note start, with the highest velocity and the longest length of the notes there. The groove is length ticks long, by default the part's length, and the preset is named name, by default after the part.
+
+Parameters:
+
+- `length`: integer
+- `name`: string
+- `part`: integer, required
+
+Returns:
+
+- `preset`: object, required
+
+#### `gnubase.quantize.freeze`
+
+Makes quantized notes' timing permanent: quantizing starts from it from now on, and quantize.reset no longer goes back. Takes the notes of part (only notes, if given) or of every part in parts and returns the notes that changed.
+
+Parameters:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+
+Returns:
+
+- `notes`: array, required
+
+#### `gnubase.quantize.get`
+
+The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).
+
+Only reads; changes nothing.
+
+Returns:
+
+- `autoQuantize`: boolean, required
+- `settings`: object, required
+
+#### `gnubase.quantize.lengths`
+
+Sets note lengths and keeps the starts: to length, a note value ("1/8", "1/8T", "1/8.") or ticks, or without length to the step of the grid at each note's start, so tuplets and swing count and notes outside the catch range keep their length. Takes the notes of part (only notes, if given) or of every part in parts. The settings are the project's (see quantize.set), or preset's, changed by settings. quantize.reset puts the lengths back. Returns the notes that changed.
+
+Parameters:
+
+- `length`: string or integer
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+- `preset`: string
+- `settings`: object
+
+Returns:
+
+- `notes`: array, required
+
+#### `gnubase.quantize.presets`
+
+The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `presets`: array, required
+
+#### `gnubase.quantize.removePreset`
+
+Removes one of the user's quantize presets.
+
+Parameters:
+
+- `name`: string, required
+
+#### `gnubase.quantize.renamePreset`
+
+Renames one of the user's quantize presets.
+
+Parameters:
+
+- `name`: string, required
+- `newName`: string, required
+
+#### `gnubase.quantize.reset`
+
+Puts quantized notes back to their timing before quantizing: starts, lengths and velocities. Notes changed by other means since keep their timing. Takes the notes of part (only notes, if given) or of every part in parts and returns the notes that changed.
+
+Parameters:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+
+Returns:
+
+- `notes`: array, required
+
+#### `gnubase.quantize.savePreset`
+
+Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset of that name. Factory presets can't be replaced. Presets belong to GNUbase, not to the project.
+
+Parameters:
+
+- `name`: string, required
+- `settings`: object
+
+Returns:
+
+- `preset`: object, required
+
+#### `gnubase.quantize.set`
+
+Changes the project's quantize settings: to preset's, if given, then changed by settings. Settings: grid, a note value from "1/1" to "1/128", "T" for a triplet and "." for dotted; tuplet, 0 (off) or 3 to 15 notes in the time of the largest power of two below it; swing 0-1, moving every second grid position later, at 1 by a third of a step (straight grids without tuplets only); catchRange, ticks from a grid position within which notes are quantized (0: all); safeRange, ticks within which they stay; randomize, ticks by which quantized notes move at random, by seed; soft, starting from the current positions instead of the original ones; strength 0-1, the part of the way notes move. groove {length, points: [{position, velocity 0-1, length}]} quantizes to a groove instead of the grid, with preQuantize (a note value), maxMove (ticks), velocityStrength, lengthStrength and origin (where it starts repeating, in project ticks). autoQuantize is whether recording quantizes. Settings are not undo steps; they are saved with the project.
+
+Parameters:
+
+- `autoQuantize`: boolean
+- `preset`: string
+- `settings`: object
+
+Returns:
+
+- `autoQuantize`: boolean, required
+- `settings`: object, required
+
 ### track
 
 #### `gnubase.track.add`

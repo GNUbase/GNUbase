@@ -34,6 +34,9 @@ add_library(gnubase-engine STATIC
 	graph/graph.cpp graph/graph.h
 	graph/processor.h
 	midi/midivalues.cpp midi/midivalues.h
+	midi/quantize.cpp midi/quantize.h
+	midi/quantizecommands.cpp midi/quantizecommands.h
+	midi/quantizesettings.cpp midi/quantizesettings.h
 	processors/builtin.cpp processors/builtin.h
 	processors/gainpan.cpp processors/gainpan.h
 	processors/generators.cpp processors/generators.h
