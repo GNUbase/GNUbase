@@ -119,7 +119,7 @@ TEST_CASE("a killed host process misses its deadline", "[integration]")
 	REQUIRE(receiveEcho(engine, 1, 64, 0.0f, 0));
 
 	peer.kill();
-	CHECK_FALSE(peer.running());
+	CHECK(!peer.running());
 	sendBlock(engine, 2, 64, 0.0f, 0);
 	const auto start = std::chrono::steady_clock::now();
 	CHECK(engine.waitForBlock(50ms) == ipc::WaitResult::Timeout);
@@ -137,7 +137,7 @@ TEST_CASE("a hung host process misses its deadline but keeps running", "[integra
 	CHECK(engine.waitForBlock(50ms) == ipc::WaitResult::Timeout);
 	CHECK(peer.running());
 	peer.kill();
-	CHECK_FALSE(peer.running());
+	CHECK(!peer.running());
 }
 
 TEST_CASE("a host process that closes the connection is noticed at once", "[integration]")

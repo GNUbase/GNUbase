@@ -135,8 +135,8 @@ TEST_CASE("a message ring refuses messages that do not fit", "[unit]")
 	MessageRingStorage storage(256);
 	ipc::MessageRing& ring = storage.ring;
 	const std::vector<std::byte> tooLarge(ring.maxMessageSize() + 1);
-	CHECK_FALSE(ring.tryWrite(1, 1, tooLarge.data(), static_cast<uint32_t>(tooLarge.size())));
-	CHECK_FALSE(ring.tryWrite(0, 1, nullptr, 0)); // type 0 is reserved for padding
+	CHECK(!ring.tryWrite(1, 1, tooLarge.data(), static_cast<uint32_t>(tooLarge.size())));
+	CHECK(!ring.tryWrite(0, 1, nullptr, 0)); // type 0 is reserved for padding
 
 	// 16 bytes per message with its header: the ring holds exactly 16 of them.
 	int written = 0;
@@ -245,7 +245,7 @@ TEST_CASE("a block ring hands out its slots in order", "[unit]")
 		ring.endRead();
 	}
 	CHECK(ring.beginRead() == nullptr);
-	CHECK_FALSE(ring.corrupt());
+	CHECK(!ring.corrupt());
 }
 
 TEST_CASE("a block ring passes blocks between two threads", "[unit]")
@@ -368,9 +368,9 @@ TEST_CASE("a doorbell wakes a waiter in another thread", "[unit]")
 	SECTION("without a ring the wait times out")
 	{
 		const auto start = std::chrono::steady_clock::now();
-		CHECK_FALSE(waiter.wait(waiter.value(), 30ms));
+		CHECK(!waiter.wait(waiter.value(), 30ms));
 		CHECK(std::chrono::steady_clock::now() - start >= 30ms);
-		CHECK_FALSE(waiter.wait(waiter.value(), 0ms));
+		CHECK(!waiter.wait(waiter.value(), 0ms));
 	}
 }
 
@@ -398,13 +398,13 @@ TEST_CASE("invalid configurations are refused", "[unit]")
 	ipc::Config config = smallConfig();
 	CHECK(ipc::validConfig(config));
 	config.eventRingSize = 1000; // not a power of two
-	CHECK_FALSE(ipc::validConfig(config));
+	CHECK(!ipc::validConfig(config));
 	config = smallConfig();
 	config.maxChannels = 0;
-	CHECK_FALSE(ipc::validConfig(config));
+	CHECK(!ipc::validConfig(config));
 	config = smallConfig();
 	config.maxFrames = 1 << 20;
-	CHECK_FALSE(ipc::validConfig(config));
+	CHECK(!ipc::validConfig(config));
 	CHECK_THROWS_AS(ipc::Connection::create(config), ipc::Error);
 }
 
@@ -412,7 +412,7 @@ TEST_CASE("an engine and a host exchange audio blocks and events", "[unit]")
 {
 	ipc::Connection engine = ipc::Connection::create(smallConfig());
 	CHECK(engine.side() == ipc::Side::Engine);
-	CHECK_FALSE(engine.waitForPeer(0ms));
+	CHECK(!engine.waitForPeer(0ms));
 	ipc::Connection host = ipc::Connection::open(engine.name());
 	CHECK(host.side() == ipc::Side::Host);
 	REQUIRE(engine.waitForPeer(1s));
@@ -562,8 +562,8 @@ TEST_CASE("segment headers are checked before anything else is read", "[unit]")
 	const size_t size = segment.size() * sizeof(CacheLine);
 	ipc::initializeSegment(segment.data(), config, 1234);
 	CHECK(ipc::checkSegment(segment.data(), size).empty());
-	CHECK_FALSE(ipc::checkSegment(segment.data(), size - 64).empty());
-	CHECK_FALSE(ipc::checkSegment(segment.data(), 16).empty());
+	CHECK(!ipc::checkSegment(segment.data(), size - 64).empty());
+	CHECK(!ipc::checkSegment(segment.data(), 16).empty());
 
 	Random random(62);
 	int refused = 0;

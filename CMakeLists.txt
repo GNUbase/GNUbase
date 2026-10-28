@@ -12,6 +12,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 option(GNUBASE_WARNINGS_AS_ERRORS "Treat compiler warnings in GNUbase code as errors" ON)
 set(GNUBASE_SANITIZERS "" CACHE STRING "Sanitizers for GNUbase code (GCC/Clang), e.g. address,undefined or thread")
 option(GNUBASE_CLANG_TIDY "Run clang-tidy on GNUbase code while compiling" OFF)
+option(GNUBASE_TEST_PLUGINS "Build the test plugins (tests/plugins) and the tests that load them" ON)
 
 if(GNUBASE_SANITIZERS AND MSVC)
 	message(FATAL_ERROR "GNUBASE_SANITIZERS is only supported with GCC and Clang")
