@@ -37,21 +37,25 @@ namespace gnubase::engine
 	//
 	// Busses take consecutive device channels in bus order: the first input bus the first input channels, and so on.
 	// Bus channels beyond the device's are silent, device outputs no bus reaches stay silent. Choosing device ports
-	// per bus comes with the hardware backends (M03).
+	// per bus comes with #43.
 	//
 	// The graph runs on the audio thread and a pool of real-time workers (audio.setProcessing): by default one thread
 	// per hardware thread, the audio thread included.
 	//
-	// For now the only device is the dummy device (audio.setDevice). Its input can be one of the built-in generators.
+	// The device comes from one of the audio backends (audio.devices, audio.setDevice). When its driver asks for a
+	// reset, the engine opens it again with the same settings and restarts it if it ran (audio.reset). The dummy
+	// device also renders offline and captures its output; its input can be one of the built-in generators.
 	class AudioEngine : public audio::AudioCallback
 	{
 	public:
-		explicit AudioEngine(rt::SnapshotPublisher<RenderSnapshot>& snapshots);
+		AudioEngine(
+			rt::SnapshotPublisher<RenderSnapshot>& snapshots, std::vector<std::unique_ptr<audio::Backend>> backends);
 		~AudioEngine() override; // stops the device
 
-		// Registers audio.setDevice, audio.setProcessing, audio.get, audio.performance, audio.render, audio.start,
-		// audio.stop and audio.capture, and the transport commands transport.play, transport.stop, transport.toggle,
-		// transport.locate, transport.set, transport.exchangeLocators and transport.get.
+		// Registers audio.devices, audio.setDevice, audio.setProcessing, audio.get, audio.performance, audio.reset,
+		// audio.controlPanel, audio.render, audio.start, audio.stop and audio.capture, and the transport commands
+		// transport.play, transport.stop, transport.toggle, transport.locate, transport.set, transport.exchangeLocators
+		// and transport.get.
 		void registerCommands(Engine& engine);
 
 		// Command thread: compiles a new graph if the project changed since the last one.
@@ -84,11 +88,16 @@ namespace gnubase::engine
 
 		void rebuild();
 		void setDevice(const Json& parameters);
+		void openDummy(const Json& parameters);
+		void closeDevice();
+		void reset();
+		Json devices() const;
 		void setProcessing(const Json& parameters);
-		void startWorkers(); // for the device's format and the processing settings
+		void startWorkers();          // for the device's format and the processing settings
+		size_t activeThreads() const; // the threads that process: the setting, at most one per hardware thread
 		Json status() const;
 		Json performance(bool reset);
-		audio::DummyDevice& requireStopped();
+		audio::DummyDevice& requireDummy();
 		void registerTransportCommands(Engine& engine);
 		void setTransport(const Json& parameters);
 		void locate(const Json& parameters);
@@ -107,8 +116,13 @@ namespace gnubase::engine
 		rt::SnapshotPublisher<RenderSnapshot>& m_snapshots;
 		uint64_t m_revision = 0;
 
-		std::unique_ptr<audio::DummyDevice> m_device;
-		Playback m_playback; // before m_programs: their track players use it
+		Engine* m_engine = nullptr;
+		std::vector<std::unique_ptr<audio::Backend>> m_backends;
+		std::string m_backend; // the device's
+		Json m_parameters;     // what audio.setDevice opened the device with
+		std::unique_ptr<audio::Device> m_device;
+		audio::DummyDevice* m_dummy = nullptr; // m_device, if it is the dummy device
+		Playback m_playback;                   // before m_programs: their track players use it
 
 		struct Instrument
 		{

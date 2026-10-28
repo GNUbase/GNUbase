@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/schema.h"
+#include "platform/audio/device.h"
 #include "platform/rt/snapshotpublisher.h"
 
 #include <chrono>
@@ -113,13 +114,18 @@ namespace gnubase::engine
 	class Engine
 	{
 	public:
-		Engine();
+		// The audio engine plays through devices of these backends.
+		explicit Engine(std::vector<std::unique_ptr<audio::Backend>> backends = audio::makeBackends());
 		~Engine();
 		Engine(const Engine&) = delete;
 		Engine& operator=(const Engine&) = delete;
 
 		// Throws std::logic_error if the name is taken.
 		void registerCommand(CommandInfo info, CommandHandler handler);
+
+		// Queues a command from the engine's own threads, e.g. when an audio driver asks for a reset. Its events
+		// reach every client; its result goes nowhere, and a failure is logged. Not for audio threads.
+		void post(std::string command, Json parameters = Json::object());
 
 		// Every registered command, sorted by name. The engine.commands query returns the same as JSON.
 		std::vector<CommandInfo> commands() const;

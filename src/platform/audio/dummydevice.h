@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -31,19 +33,23 @@ namespace gnubase::audio
 	// and simulated real time, where its own thread processes one block per block duration.
 	//
 	// Capture memory is allocated up front; what doesn't fit is dropped and counted. Captured audio and MIDI can be
-	// read while the device runs.
-	class DummyDevice
+	// read while the device runs. Its latency is zero, and it has no clock sources and no control panel.
+	class DummyDevice : public Device
 	{
 	public:
 		// Fills the inputs for a block that starts at position. Runs on the audio thread: real-time rules apply.
 		using InputSource = std::function<void(float* const* inputs, int channels, uint32_t frames, uint64_t position)>;
 
+		// Throws DeviceError for a format without a block size or sample rate.
 		DummyDevice(DeviceFormat format, size_t captureFrames, size_t captureMidi = 4096);
-		~DummyDevice(); // stops the device
-		DummyDevice(const DummyDevice&) = delete;
-		DummyDevice& operator=(const DummyDevice&) = delete;
+		~DummyDevice() override; // stops the device
 
-		const DeviceFormat& format() const { return m_format; }
+		const DeviceFormat& format() const override { return m_format; }
+		DeviceInfo info() const override;
+		DeviceLatency latency() const override { return {}; }
+
+		// Simulates the driver asking for a reset.
+		using Device::requestReset;
 
 		// While stopped. Without a source the inputs are silent.
 		void setInput(InputSource source);
@@ -56,12 +62,11 @@ namespace gnubase::audio
 		void render(AudioCallback& callback, uint64_t frames);
 
 		// Simulated real time: processes blocks on the device's thread, one per block duration, until stop.
-		void start(AudioCallback& callback);
-		void stop();
-		bool running() const { return m_thread.joinable(); }
+		void start(AudioCallback& callback) override;
+		void stop() override;
+		bool running() const override { return m_thread.joinable(); }
 
-		// Frames processed so far.
-		uint64_t position() const { return m_position.load(std::memory_order_acquire); }
+		uint64_t position() const override { return m_position.load(std::memory_order_acquire); }
 
 		size_t capturedFrames() const { return m_capturedFrames.load(std::memory_order_acquire); }
 		size_t droppedFrames() const { return m_droppedFrames.load(std::memory_order_acquire); }
@@ -97,5 +102,16 @@ namespace gnubase::audio
 
 		std::atomic<bool> m_stopping{false};
 		std::thread m_thread;
+	};
+
+	// The dummy device as a backend. Its one device, "dummy", has two inputs and two outputs and captures one second.
+	// It opens with any sample rate from 8000 to 384000 Hz and block size from 1 to 8192 frames; 48000 Hz and 256
+	// frames by default.
+	class DummyBackend : public Backend
+	{
+	public:
+		std::string name() const override { return "dummy"; }
+		std::vector<DeviceInfo> devices() override;
+		std::unique_ptr<Device> open(const DeviceConfig& config) override;
 	};
 }
