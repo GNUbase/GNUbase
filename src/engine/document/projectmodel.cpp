@@ -312,16 +312,18 @@ namespace gnubase::engine
 		// A lane's target from a command, checked against the track it automates.
 		AutomationTarget automationTarget(const Project& project, const Track& track, const Json& json)
 		{
-			const std::optional<AutomationTargetType> type =
+			const std::optional<AutomationTargetType> parsed =
 				automationTargetTypeFromName(json.at("type").get<std::string>());
-			require(type.has_value(),
-				"target.type must be volume, pan, instrument, controller, pitchBend or channelPressure");
+			if (!parsed.has_value())
+				throw CommandError(
+					"target.type must be volume, pan, instrument, controller, pitchBend or channelPressure");
+			const AutomationTargetType type = *parsed;
 			AutomationTarget target;
-			target.type = *type;
+			target.type = type;
 			require(track.channel != 0, "track " + idText(track.id) + " has no channel to automate");
 			const Channel& channel = project.channels.at(track.channel);
 			const bool midi = track.type == TrackType::Midi || track.type == TrackType::Instrument;
-			const auto only = [&json, type = *type](std::initializer_list<const char*> keys)
+			const auto only = [&json, type](std::initializer_list<const char*> keys)
 			{
 				for (const auto& [key, value] : json.items())
 					require(key == "type" ||
@@ -431,7 +433,8 @@ namespace gnubase::engine
 			{
 				const std::optional<AutomationShape> shape =
 					automationShapeFromName(item.at("shape").get<std::string>());
-				require(shape.has_value(), name + ".shape must be step, linear or curve");
+				if (!shape.has_value())
+					throw CommandError(name + ".shape must be step, linear or curve");
 				point.shape = *shape;
 			}
 			if (item.contains("curve"))
