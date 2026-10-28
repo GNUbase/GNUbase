@@ -80,6 +80,7 @@ flowchart TD
 | Engine command thread | Every command: document changes, undo, building render snapshots | The only thread that writes the document |
 | Audio thread | The device callback, one processing cycle at a time | Real-time rules |
 | Audio workers | Track chains in parallel (#212) | Real-time rules, real-time priority |
+| Prefetch threads | Nodes without live input, ahead of the device in larger blocks (#23) | Real-time rules, real-time priority below the audio workers |
 | Disk threads | Streaming audio files in and recordings out (#17) | Work ahead of the audio thread |
 | Background threads | Peak files, analysis, saving projects, plugin scan coordination | Low priority |
 | Log writer | Writes what audio threads logged, every 10 ms (#8) | Low priority |
@@ -153,7 +154,7 @@ The **processing graph** (`src/engine/graph`) is what the audio thread runs:
 - The **transport** (`Transport` in `src/engine/audio`) holds the project cursor, the left and right locators and the playback modes. Commands (`transport.play`, `stop`, `toggle`, `locate`, `set`, `exchangeLocators`, `get`) send requests through a lock-free queue; the audio thread applies them at the start of its next block, or the command thread right away while no device runs. For every block it hands the graph a `graph::TransportBlock`: whether it plays and, while playing, segments of consecutive project positions. In cycle mode a new segment starts at the exact sample where playback reaches the right locator and jumps to the left one, so loop points are sample-accurate for any block size; with the right locator before the left one the range is skipped instead. Processors read the block from `ProcessContext::transport`; the built-in `positionProbe` outputs each frame's position, so tests check where every frame played. Start from cycle start and return to start position on stop are settings; the selection-based start modes belong to the UI, which knows the selection. Every transport command emits `transport.changed`.
 - GNUbase's built-in processors (`src/engine/processors`) are `graph::Processor`s that run in the engine: for now signal generators (sine, noise, impulse), a position probe for transport tests, gain and pan, and a polyphonic test synth, so MIDI-to-audio paths are tested before plugin hosting. Each one handles parameter changes and notes at their sample offset. `processor.list` returns them with their parameters' ids, ranges, defaults and units, and `processors::createBuiltin` creates one by id.
 
-Time is kept in samples and in musical time (PPQ ticks), with tempo and time signature maps (#13). Tracks that are not monitored live can be processed ahead with larger buffers; how is **decided in #23**.
+Time is kept in samples and in musical time (PPQ ticks), with tempo and time signature maps (#13). Tracks that are not monitored live are processed ahead with larger buffers on lower-priority threads; [anticipative-processing.md](anticipative-processing.md) describes how (#23).
 
 ## Audio files and disk streaming
 
@@ -215,7 +216,6 @@ flowchart LR
 
 | Topic | Ticket |
 |---|---|
-| Anticipative processing | #23 |
 | UI render backend | #47 |
 | Plugin API details | #61 |
 | IPC wake-up details, default hosting mode | #62, #76 |
