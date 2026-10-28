@@ -22,7 +22,9 @@ add_library(gnubase-platform STATIC
 	rt/spscqueue.h
 	rt/triplebuffer.h)
 if(WIN32)
-	target_sources(gnubase-platform PRIVATE audio/wasapi.cpp audio/wasapi.h midi/winmm.cpp midi/winmm.h winutf8.h)
+	target_sources(gnubase-platform PRIVATE audio/asiohost.cpp audio/asiohost.h audio/wasapi.cpp audio/wasapi.h
+		midi/winmm.cpp midi/winmm.h winutf8.h)
+	target_include_directories(gnubase-platform SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/ext/asio/common)
 endif()
 target_include_directories(gnubase-platform PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-platform PRIVATE $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
