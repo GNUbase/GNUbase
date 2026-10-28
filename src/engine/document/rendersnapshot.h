@@ -47,6 +47,8 @@ namespace gnubase::engine
 		int media = -1;           // index into RenderSnapshot::media
 		time::Samples offset = 0; // in the media file's sample frames
 		time::Samples length = 0; // in the media file's sample frames
+		float gain = 1.0f;        // the event volume, linear
+		bool muted = false;
 	};
 
 	struct RenderNote
