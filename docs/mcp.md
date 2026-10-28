@@ -114,25 +114,32 @@ Play a 1 kHz sine on the device input through the new audio track, rendered offl
 {"id":4,"jsonrpc":"2.0","result":{"content":[…],"isError":false,"structuredContent":{"capturedFrames":48000,"device":{"backend":"dummy",…},"droppedFrames":0,"playbackDropouts":0,"position":48000,"running":false}}}
 ```
 
-Check the result with a Lua test case in `script_run`; a failing case would come back with `isError` and the file and line:
+Measure what was rendered: levels in dBFS, the strongest frequency and octave bands, and the loudness in LUFS:
 
 ```json
-{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"script_run","arguments":{"name":"level.lua","code":"local test = gnubase.test\ntest.case('the output plays the sine', function()\n\tlocal peak = 0\n\tfor _, s in ipairs(gnubase.audio.capture{channel = 0, start = 0, frames = 4800}.samples) do\n\t\tpeak = math.max(peak, math.abs(s))\n\tend\n\ttest.near(peak, 0.5, 0.01)\nend)"}}}
-{"id":5,"jsonrpc":"2.0","result":{"content":[…],"isError":false,"structuredContent":{"output":"1..1\nok 1 - the output plays the sine\n"}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"audio_analyze","arguments":{"channels":[0],"peaks":1}}}
+{"id":5,"jsonrpc":"2.0","result":{"content":[…],"isError":false,"structuredContent":{"channels":[{"channel":0,"peak":0.5,"peakDb":-6.020599913279624,"rms":0.35355338722797996,"rmsDb":-9.030899952595973,"spectrum":{"bands":[…],"peaks":[{"frequency":999.9819858148717,"level":-6.020600003146717}]}}],"frames":48000,"loudness":-9.024238371036198,"sampleRate":48000.0,"start":0}}}
+```
+
+Or check it with a Lua test case in `script_run`; a failing case would come back with `isError` and the file and line:
+
+```json
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"script_run","arguments":{"name":"level.lua","code":"local test = gnubase.test\ntest.case('the output plays the sine', function()\n\tlocal peak = 0\n\tfor _, s in ipairs(gnubase.audio.capture{channel = 0, start = 0, frames = 4800}.samples) do\n\t\tpeak = math.max(peak, math.abs(s))\n\tend\n\ttest.near(peak, 0.5, 0.01)\nend)"}}}
+{"id":6,"jsonrpc":"2.0","result":{"content":[…],"isError":false,"structuredContent":{"output":"1..1\nok 1 - the output plays the sine\n"}}}
 ```
 
 Read a query as a resource:
 
 ```json
-{"jsonrpc":"2.0","id":6,"method":"resources/read","params":{"uri":"gnubase://transport.get"}}
-{"id":6,"jsonrpc":"2.0","result":{"contents":[{"mimeType":"application/json","text":"{\"cycle\":false,\"left\":0,\"playing\":false,\"position\":0,\"returnToStart\":false,\"right\":0,\"startMode\":\"cursor\"}","uri":"gnubase://transport.get"}]}}
+{"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"gnubase://transport.get"}}
+{"id":7,"jsonrpc":"2.0","result":{"contents":[{"mimeType":"application/json","text":"{\"cycle\":false,\"left\":0,\"playing\":false,\"position\":0,\"returnToStart\":false,\"right\":0,\"startMode\":\"cursor\"}","uri":"gnubase://transport.get"}]}}
 ```
 
 A command that fails tells the agent why:
 
 ```json
-{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"track_add","arguments":{"type":"nonsense"}}}
-{"id":7,"jsonrpc":"2.0","result":{"content":[{"text":"parameters.type must be one of [\"audio\",\"instrument\",\"midi\",\"folder\",\"group\",\"effect\"]","type":"text"}],"isError":true}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"track_add","arguments":{"type":"nonsense"}}}
+{"id":8,"jsonrpc":"2.0","result":{"content":[{"text":"parameters.type must be one of [\"audio\",\"instrument\",\"midi\",\"folder\",\"group\",\"effect\"]","type":"text"}],"isError":true}}
 ```
 
 Over HTTP, the same messages go one per request:
@@ -150,7 +157,7 @@ The MCP server gives a client the same power over GNUbase as the person using it
 - **HTTP listens on 127.0.0.1 only.** Requests from other addresses are refused (`403`), so the server can't be reached from the network.
 - **Every HTTP request needs the access token** (`401` without it). The token is 32 random bytes from the operating system's random source, new on every start, and compared in constant time. Other users and programs on the machine can't use the server without it.
 - **Web pages can't use it.** Browsers send an `Origin` header; requests from pages of other origins are refused (`403`), which stops DNS rebinding attacks, where a web page reaches a local server through a name that resolves to 127.0.0.1.
-- **Tools act with your rights.** Some tools read and write files wherever you can, such as `project_load`, `project_save`, `media_add` and `media_convert`. Only connect agents you trust with your files, and review what they do, as with any tool that edits files.
+- **Tools act with your rights.** Some tools read and write files wherever you can, such as `project_load`, `project_save`, `media_add`, `media_convert`, `audio_record` and `audio_compare`. Only connect agents you trust with your files, and review what they do, as with any tool that edits files.
 - **`script_run` is sandboxed:** Lua without files, processes or bytecode (no `io`, `os`, `debug`, `package`, `require`, `dofile` or `loadfile`), and at most 60 seconds of Lua code per call. Scripts that come with a project never run without your consent.
 
 ## Troubleshooting
@@ -225,6 +232,27 @@ Result:
 
 ### audio
 
+#### `audio_analyze`
+
+Engine command `audio.analyze`. Read-only.
+
+Measures the captured output of channels (default: every output) from frame start for frames frames (default: to the end of the capture). Per channel: the peak and RMS level, and a spectrum summary with the strongest frequencies (at most peaks, default 5, up to 20) and the power of octave bands. For the channels together: the integrated loudness in LUFS (ITU-R BS.1770), null below 400 ms. Levels are linear and in dBFS (a full-scale sine's peak is 0 dBFS, its RMS -3 dBFS); dBFS is null for silence.
+
+Arguments:
+
+- `channels`: array of integer
+- `frames`: integer
+- `peaks`: integer
+- `start`: integer
+
+Result:
+
+- `channels`: array of object, required
+- `frames`: integer, required
+- `loudness`: number or null, required
+- `sampleRate`: number, required
+- `start`: integer, required
+
 #### `audio_capture`
 
 Engine command `audio.capture`. Read-only.
@@ -240,6 +268,26 @@ Arguments:
 Result:
 
 - `samples`: array, required
+
+#### `audio_compare`
+
+Engine command `audio.compare`. Read-only.
+
+Null test: subtracts an audio file, reference, from the captured output and measures what remains. The file's channels are compared with channels (default: every output) in order, from frame start, for frames frames (default: the file's length); its sample rate must be the device's. peak is the largest difference of all channels, 0 if they cancel completely.
+
+Arguments:
+
+- `channels`: array of integer
+- `frames`: integer
+- `reference`: string, required
+- `start`: integer
+
+Result:
+
+- `channels`: array of object, required
+- `frames`: integer, required
+- `peak`: number, required
+- `peakDb`: number or null, required
 
 #### `audio_controlPanel`
 
@@ -280,6 +328,27 @@ Result:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `running`: boolean, required
+
+#### `audio_record`
+
+Engine command `audio.record`. Read-only.
+
+Writes the captured output of channels (default: every output) from frame start for frames frames (default: to the end of the capture) to a WAV file at path, with samples in format (default float32). Returns the file's absolute path.
+
+Arguments:
+
+- `channels`: array of integer
+- `format`: one of "float32" | "int16" | "int24" | "int32"
+- `frames`: integer
+- `path`: string, required
+- `start`: integer
+
+Result:
+
+- `channels`: array of integer, required
+- `frames`: integer, required
+- `path`: string, required
+- `sampleRate`: number, required
 
 #### `audio_render`
 
@@ -979,6 +1048,7 @@ Result:
 
 Queries without required arguments can also be read as resources:
 
+- `gnubase://audio.analyze`: Measures the captured output of channels (default: every output) from frame start for frames frames (default: to the end of the capture). Per channel: the peak and RMS level, and a spectrum summary with the strongest frequencies (at most peaks, default 5, up to 20) and the power of octave bands. For the channels together: the integrated loudness in LUFS (ITU-R BS.1770), null below 400 ms. Levels are linear and in dBFS (a full-scale sine's peak is 0 dBFS, its RMS -3 dBFS); dBFS is null for silence.
 - `gnubase://audio.devices`: The audio backends of this build, the preferred one first, and the devices each has now: their ids, names, channel names, sample rates, block sizes, clock sources (and the current one), and whether the driver has a control panel. A backend that can't list its devices has an error instead.
 - `gnubase://audio.get`: The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, and how many frames of audio track playback were silent because a disk stream was late.
 - `gnubase://engine.commands`: Every command with its documentation, parameters and result.
