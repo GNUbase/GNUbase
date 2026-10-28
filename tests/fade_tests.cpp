@@ -231,7 +231,8 @@ TEST_CASE("mirrored fade shapes add up to 1, and equal power fades keep the powe
 		}
 	}
 	FadeShape mirror = FadeShape::Linear;
-	CHECK_FALSE(mirrorShape(FadeShape::EqualPower, mirror));
+	// Not CHECK_FALSE: Catch2's ContinueOnFailure | FalseTest trips clang-analyzer's EnumCastOutOfRange check
+	CHECK(!mirrorShape(FadeShape::EqualPower, mirror));
 	for (int i = 0; i <= 100; ++i)
 	{
 		const double x = i / 100.0;
