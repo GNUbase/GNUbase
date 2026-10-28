@@ -13,6 +13,11 @@
 #include <string>
 #include <vector>
 
+// CMake passes the helper's full path; the fallback only serves tools that compile this file on its own.
+#ifndef GNUBASE_IPCPEER
+#define GNUBASE_IPCPEER "gnubase-ipcpeer"
+#endif
+
 using namespace gnubase;
 using namespace std::chrono_literals;
 
