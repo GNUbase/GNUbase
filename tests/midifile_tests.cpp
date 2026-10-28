@@ -70,7 +70,10 @@ namespace
 				static_cast<uint8_t>(ticksPerQuarter >> 8), static_cast<uint8_t>(ticksPerQuarter)});
 	}
 
-	const Bytes g_endOfTrack = {0xFF, 0x2F, 0x00};
+	Bytes endOfTrack()
+	{
+		return {0xFF, 0x2F, 0x00};
+	}
 
 	std::string hex(const Bytes& bytes)
 	{
@@ -108,6 +111,7 @@ namespace
 	std::vector<EventKey> keys(const midifile::Track& track)
 	{
 		std::vector<EventKey> result;
+		result.reserve(track.events.size());
 		for (const midifile::Event& event : track.events)
 			result.push_back(key(event));
 		return result;
@@ -160,39 +164,45 @@ namespace
 	}
 
 	// exampleProject() at 96 ticks per quarter note: the tempo track, then the piano track.
-	const Bytes g_exampleTempoTrack = join({
-		{0x00, 0xFF, 0x03, 0x04},
-		text("Song"),
-		{0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20},       // 120 BPM: 500000 microseconds per quarter note
-		{0x00, 0xFF, 0x58, 0x04, 0x04, 0x02, 0x18, 0x08}, // 4/4
-		{0x83, 0x00, 0xFF, 0x51, 0x03, 0x0A, 0x2C, 0x2B}, // tick 384: 90 BPM
-		{0x00, 0xFF, 0x06, 0x05},
-		text("Verse"),                                          // the marker
-		{0x83, 0x00, 0xFF, 0x58, 0x04, 0x03, 0x02, 0x18, 0x08}, // tick 768: 3/4
-		{0x00},
-		g_endOfTrack,
-	});
+	Bytes exampleTempoTrack()
+	{
+		return join({
+			{0x00, 0xFF, 0x03, 0x04},
+			text("Song"),
+			{0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20},       // 120 BPM: 500000 microseconds per quarter note
+			{0x00, 0xFF, 0x58, 0x04, 0x04, 0x02, 0x18, 0x08}, // 4/4
+			{0x83, 0x00, 0xFF, 0x51, 0x03, 0x0A, 0x2C, 0x2B}, // tick 384: 90 BPM
+			{0x00, 0xFF, 0x06, 0x05},
+			text("Verse"),                                          // the marker
+			{0x83, 0x00, 0xFF, 0x58, 0x04, 0x03, 0x02, 0x18, 0x08}, // tick 768: 3/4
+			{0x00},
+			endOfTrack(),
+		});
+	}
 
-	const Bytes g_examplePianoTrack = join({
-		{0x00, 0xFF, 0x03, 0x05},
-		text("Piano"),
-		{0x83, 0x00, 0xB0, 0x00, 0x01}, // tick 384: bank select 130 = 1 * 128 + 2
-		{0x00, 0x20, 0x02},             // running status
-		{0x00, 0xC0, 0x05},             // program 5
-		{0x00, 0xB0, 0x07, 0x5A},       // volume 90
-		{0x00, 0x90, 0x3C, 0x64},       // note-ons after controllers
-		{0x30, 0x91, 0x40, 0x50},       // tick 432
-		{0x30, 0x80, 0x3C, 0x1E},       // tick 480: note-offs first, with the release velocity
-		{0x00, 0x81, 0x40, 0x40},
-		{0x00, 0xE1, 0x00, 0x42}, // pitch bend 0x2100
-		{0x00, 0xD0, 0x60},       // channel pressure 96
-		{0x60, 0xA0, 0x3C, 0x32}, // tick 576: poly pressure
-		{0x00, 0xF0, 0x05, 0x7E, 0x7F, 0x09, 0x01, 0xF7},
-		{0x60, 0x90, 0x43, 0x01}, // tick 672: SysEx cancelled running status; velocity at least 1
-		{0x60, 0x80, 0x43, 0x40}, // tick 768: cut at the part's end
-		{0x00},
-		g_endOfTrack,
-	});
+	Bytes examplePianoTrack()
+	{
+		return join({
+			{0x00, 0xFF, 0x03, 0x05},
+			text("Piano"),
+			{0x83, 0x00, 0xB0, 0x00, 0x01}, // tick 384: bank select 130 = 1 * 128 + 2
+			{0x00, 0x20, 0x02},             // running status
+			{0x00, 0xC0, 0x05},             // program 5
+			{0x00, 0xB0, 0x07, 0x5A},       // volume 90
+			{0x00, 0x90, 0x3C, 0x64},       // note-ons after controllers
+			{0x30, 0x91, 0x40, 0x50},       // tick 432
+			{0x30, 0x80, 0x3C, 0x1E},       // tick 480: note-offs first, with the release velocity
+			{0x00, 0x81, 0x40, 0x40},
+			{0x00, 0xE1, 0x00, 0x42}, // pitch bend 0x2100
+			{0x00, 0xD0, 0x60},       // channel pressure 96
+			{0x60, 0xA0, 0x3C, 0x32}, // tick 576: poly pressure
+			{0x00, 0xF0, 0x05, 0x7E, 0x7F, 0x09, 0x01, 0xF7},
+			{0x60, 0x90, 0x43, 0x01}, // tick 672: SysEx cancelled running status; velocity at least 1
+			{0x60, 0x80, 0x43, 0x40}, // tick 768: cut at the part's end
+			{0x00},
+			endOfTrack(),
+		});
+	}
 
 	// Engine helpers.
 
@@ -235,6 +245,7 @@ namespace
 	std::vector<NoteKey> absoluteNotes(const midifile::ImportedTrack& track)
 	{
 		std::vector<NoteKey> notes;
+		notes.reserve(track.notes.size());
 		for (const Note& note : track.notes)
 			notes.emplace_back(
 				note.position, note.length, note.pitch, note.velocity, note.releaseVelocity, note.channel);
@@ -245,6 +256,7 @@ namespace
 	std::vector<ControllerKey> absoluteControllers(const midifile::ImportedTrack& track)
 	{
 		std::vector<ControllerKey> controllers;
+		controllers.reserve(track.controllers.size());
 		for (const Controller& c : track.controllers)
 			controllers.emplace_back(c.position, c.type, c.number, c.value, c.channel, c.data);
 		std::sort(controllers.begin(), controllers.end());
@@ -273,12 +285,12 @@ TEST_CASE("the MIDI file writer writes variable-length deltas, running status an
 	file.tracks = {names, notes};
 
 	const Bytes expected =
-		join({header(1, 2, 96), chunk("MTrk", join({{0x00, 0xFF, 0x03, 0x01, 'A'}, {0x60}, g_endOfTrack})),
+		join({header(1, 2, 96), chunk("MTrk", join({{0x00, 0xFF, 0x03, 0x01, 'A'}, {0x60}, endOfTrack()})),
 			chunk("MTrk",
 				join({{0x00, 0x90, 0x3C, 0x64}, {0x00, 0x40, 0x64}, {0x60, 0x80, 0x3C, 0x40}, {0x00, 0x40, 0x40},
 					{0x81, 0x00, 0xB0, 0x07, 0x7F}, {0xFF, 0x7F, 0xC0, 0x05},
 					{0x81, 0x80, 0x80, 0x00, 0xF0, 0x05, 0x7E, 0x7F, 0x09, 0x01, 0xF7}, {0x00, 0xB0, 0x07, 0x00},
-					{0x00}, g_endOfTrack}))});
+					{0x00}, endOfTrack()}))});
 	const Bytes written = midifile::write(file);
 	CHECK(hex(written) == hex(expected));
 
@@ -318,7 +330,7 @@ TEST_CASE("the MIDI file reader follows running status, also across meta events"
 				{0x10, 0x3C, 0x00},                 // velocity 0: a note-off
 				{0x00, 0xFF, 0x01, 0x02, 'h', 'i'}, // a text event
 				{0x10, 0x3E, 0x00},                 // running status kept across it
-				{0x00}, g_endOfTrack}))});
+				{0x00}, endOfTrack()}))});
 	const midifile::File file = midifile::read(bytes);
 	CHECK(file.format == 0);
 	REQUIRE(file.tracks.size() == 1);
@@ -358,7 +370,7 @@ TEST_CASE("the MIDI file reader copes with odd files", "[unit]")
 
 	SECTION("a RIFF container")
 	{
-		const Bytes smf = join({header(0, 1, 96), chunk("MTrk", join({notes, {0x00}, g_endOfTrack}))});
+		const Bytes smf = join({header(0, 1, 96), chunk("MTrk", join({notes, {0x00}, endOfTrack()}))});
 		const auto size = static_cast<uint32_t>(smf.size());
 		const Bytes riff = join({text("RIFF"), {0, 0, 0, 0}, text("RMID"), text("data"),
 			{static_cast<uint8_t>(size), static_cast<uint8_t>(size >> 8), 0, 0}, smf});
@@ -376,7 +388,7 @@ TEST_CASE("the MIDI file reader copes with odd files", "[unit]")
 					{0x60, 0x80, 0x3C, 0x10},                     // ends the first one
 					{0x60, 0x3C, 0x20},                           // and the second
 					{0x00, 0x90, 0x40, 0x64},                     // never ends
-					{0x60}, g_endOfTrack}))}));
+					{0x60}, endOfTrack()}))}));
 		const midifile::Import imported = midifile::importFile(file);
 		REQUIRE(imported.tracks.size() == 1);
 		const Ticks tick = g_quarter / 96;
@@ -392,7 +404,7 @@ TEST_CASE("the MIDI file reader copes with odd files", "[unit]")
 			chunk("MTrk",
 				join({{0x00, 0xF0, 0x02, 0x43, 0x10}, {0x10, 0xF7, 0x02, 0x4C, 0xF7}, // one message in two packets
 					{0x00, 0xF7, 0x01, 0xF8},                                         // a raw escape: left out
-					{0x00}, g_endOfTrack}))}));
+					{0x00}, endOfTrack()}))}));
 		const midifile::Import imported = midifile::importFile(file);
 		REQUIRE(imported.tracks.size() == 1);
 		REQUIRE(imported.tracks[0].controllers.size() == 1);
@@ -404,7 +416,8 @@ TEST_CASE("the MIDI file reader copes with odd files", "[unit]")
 
 	SECTION("what isn't a readable MIDI file")
 	{
-		CHECK_THROWS_WITH(midifile::read(text("RIFF\0\0\0\0WAVE")), ContainsSubstring("not a MIDI file"));
+		CHECK_THROWS_WITH(
+			midifile::read(join({text("RIFF"), {0, 0, 0, 0}, text("WAVE")})), ContainsSubstring("not a MIDI file"));
 		CHECK_THROWS_WITH(midifile::read(text("hello")), ContainsSubstring("not a MIDI file"));
 		CHECK_THROWS_WITH(midifile::read(chunk("MThd", {0, 1, 0, 1, 0xE7, 0x28})), ContainsSubstring("SMPTE"));
 		CHECK_THROWS_WITH(midifile::read(chunk("MThd", {0, 1})), ContainsSubstring("header"));
@@ -424,7 +437,7 @@ TEST_CASE("MIDI file export writes tempo, signatures, markers, names and MIDI 1.
 	SECTION("type 1")
 	{
 		const Bytes expected =
-			join({header(1, 2, 96), chunk("MTrk", g_exampleTempoTrack), chunk("MTrk", g_examplePianoTrack)});
+			join({header(1, 2, 96), chunk("MTrk", exampleTempoTrack()), chunk("MTrk", examplePianoTrack())});
 		CHECK(hex(midifile::write(midifile::exportProject(project, options))) == hex(expected));
 	}
 
@@ -455,7 +468,7 @@ TEST_CASE("MIDI file export writes tempo, signatures, markers, names and MIDI 1.
 			{0x60, 0xFF, 0x58, 0x04, 0x03, 0x02, 0x18, 0x08}, // meta events before note-offs
 			{0x00, 0x80, 0x43, 0x40},
 			{0x00},
-			g_endOfTrack,
+			endOfTrack(),
 		});
 		CHECK(hex(midifile::write(midifile::exportProject(project, options))) ==
 			hex(join({header(0, 1, 96), chunk("MTrk", track)})));
@@ -467,9 +480,9 @@ TEST_CASE("MIDI file export writes tempo, signatures, markers, names and MIDI 1.
 		options.end = 7 * g_quarter;
 		options.markers = false;
 		const Bytes tempo = join({{0x00, 0xFF, 0x03, 0x04}, text("Song"), {0x00, 0xFF, 0x51, 0x03, 0x0A, 0x2C, 0x2B},
-			{0x00, 0xFF, 0x58, 0x04, 0x04, 0x02, 0x18, 0x08}, {0x81, 0x40}, g_endOfTrack});
+			{0x00, 0xFF, 0x58, 0x04, 0x04, 0x02, 0x18, 0x08}, {0x81, 0x40}, endOfTrack()});
 		const Bytes piano = join({{0x00, 0xFF, 0x03, 0x05}, text("Piano"), {0x00, 0xE1, 0x00, 0x42}, {0x00, 0xD0, 0x60},
-			{0x60, 0xA0, 0x3C, 0x32}, {0x00, 0xF0, 0x05, 0x7E, 0x7F, 0x09, 0x01, 0xF7}, {0x60}, g_endOfTrack});
+			{0x60, 0xA0, 0x3C, 0x32}, {0x00, 0xF0, 0x05, 0x7E, 0x7F, 0x09, 0x01, 0xF7}, {0x60}, endOfTrack()});
 		CHECK(hex(midifile::write(midifile::exportProject(project, options))) ==
 			hex(join({header(1, 2, 96), chunk("MTrk", tempo), chunk("MTrk", piano)})));
 	}
@@ -498,6 +511,7 @@ TEST_CASE("MIDI file export and import keep notes, controllers, tempo, signature
 
 	std::vector<NoteKey> notes = absoluteNotes(project, 2);
 	std::vector<ControllerKey> controllers;
+	controllers.reserve(part.controllers.size());
 	for (const auto& [id, c] : part.controllers)
 		controllers.emplace_back(part.position.value + c.position, c.type, c.number, c.value, c.channel, c.data);
 	std::sort(controllers.begin(), controllers.end());
@@ -537,7 +551,7 @@ TEST_CASE("MIDI file export turns tempo ramps into steps that take as long", "[u
 	project.tempo = TempoMap({{0, 120.0, false}, {8 * g_quarter, 60.0, true}, {12 * g_quarter, 60.0, false}});
 	const midifile::Import imported =
 		midifile::importFile(midifile::read(midifile::write(midifile::exportProject(project, {}))));
-	CHECK(imported.tempo.points().size() == 8 * 4 + 1);
+	CHECK(imported.tempo.points().size() == (8 * 4) + 1);
 	for (const Ticks at : {2 * g_quarter, 8 * g_quarter, 12 * g_quarter})
 		CHECK_THAT(imported.tempo.toSeconds(at), WithinAbs(project.tempo.toSeconds(at), 1e-5));
 }
@@ -548,7 +562,7 @@ TEST_CASE("MIDI file import places signatures at bars and keeps tempo in range",
 		{0x00, 0xFF, 0x51, 0x03, 0x00, 0x00, 0x01},                             // far too fast
 		{0x81, 0x40, 0xFF, 0x58, 0x04, 0x02, 0x02, 0x18, 0x08},                 // 2/4 after a quarter: next bar
 		{0x00, 0xFF, 0x58, 0x04, 0x05, 0x05, 0x18, 0x08},                       // 5/32: left out
-		{0x00}, g_endOfTrack});
+		{0x00}, endOfTrack()});
 	const midifile::Import imported =
 		midifile::importFile(midifile::read(join({header(1, 1, 192), chunk("MTrk", track)})));
 	CHECK(imported.signatures == SignatureMap({{0, {6, 8}}, {1, {2, 4}}}));
@@ -564,11 +578,11 @@ TEST_CASE("midiFile.import and midiFile.export round-trip a file through the eng
 	Client client(engine);
 
 	// exampleProject()'s file, in a new project whose name is the default.
+	const Bytes tempoTrack = exampleTempoTrack();
 	const Bytes original = join({header(1, 2, 96),
 		chunk("MTrk",
-			join({{0x00, 0xFF, 0x03, 0x08}, text("Untitled"),
-				Bytes(g_exampleTempoTrack.begin() + 8, g_exampleTempoTrack.end())})),
-		chunk("MTrk", g_examplePianoTrack)});
+			join({{0x00, 0xFF, 0x03, 0x08}, text("Untitled"), Bytes(tempoTrack.begin() + 8, tempoTrack.end())})),
+		chunk("MTrk", examplePianoTrack())});
 	const std::filesystem::path source = dir.path() / "song.mid";
 	writeBytes(source, original);
 
@@ -620,7 +634,7 @@ TEST_CASE("midiFile.import splits a type 0 file by channel", "[integration]")
 		join({header(0, 1, 480),
 			chunk("MTrk",
 				join({{0x00, 0xFF, 0x03, 0x04}, text("Band"), {0x00, 0x99, 0x24, 0x64}, {0x00, 0x91, 0x30, 0x50},
-					{0x83, 0x60, 0x89, 0x24, 0x40}, {0x00, 0x81, 0x30, 0x40}, {0x00}, g_endOfTrack}))}));
+					{0x83, 0x60, 0x89, 0x24, 0x40}, {0x00, 0x81, 0x30, 0x40}, {0x00}, endOfTrack()}))}));
 	run(client, "midiFile.import", {{"path", utf8(path)}});
 	const Json project = run(client, "project.get");
 	REQUIRE(project.at("tracks").size() == 2);
