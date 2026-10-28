@@ -19,12 +19,14 @@ Details and reasoning (processes, modules, threads, engine API, IPC) are in [doc
 7. **Project format is DAWproject** (`.dawproject`). GNUbase-only data goes into an extra entry inside the container, so other DAWproject applications can still open the file. Importing other project formats comes later.
 8. **Lua is the scripting language.** Users automate GNUbase with Lua, and we write integration and UI tests in it. Lua bindings are generated from the engine command registry, like the MCP tools, so both always cover the same commands. The UI uses RmlUi's Lua plugin on the same runtime. Lua never runs on audio threads, and scripts that come with a project never run without the user's consent.
 9. **Docking UI.** Windows are built from zones, tab groups and splitters modeled on the reference: an always-visible main zone, switchable left, right and lower zones, panels that can be docked or opened as their own window. Layouts are serializable for workspaces.
+10. **Multi-monitor.** GNUbase works across several monitors through separate top-level windows: the mixer, the editors and other panels open in windows of their own, e.g. the mixer with a key command (F3 by default, as in the reference). Each window renders at its own monitor's scale and follows it when moved to another monitor. Workspaces save which windows are open, with their positions, sizes and monitors, and move windows whose monitor is gone onto a connected one.
 
 ## Platforms and dependencies
 - C++17, CMake. 64-bit only: Windows x64/ARM64, macOS universal (arm64 + x86_64), Linux x86_64/aarch64.
 - Window management: SDL3. UI: RmlUi with its Lua plugin (Lua 5.4). Both are GNUbase forks (github.com/GNUbase) included as git submodules in `ext/`.
 - Text: FreeType with bundled free fonts (SIL OFL or Apache-2.0, e.g. from Google Fonts), license files shipped next to the fonts.
 - Graphics: icons and UI graphics are SVG, rendered by LunaSVG through RmlUi's SVG plugin, so they stay sharp at every UI scale. Bitmaps only where unavoidable.
+- UI sizes: lay out the UI in `dp` (RmlUi's density-independent pixels), not `px`: fonts, spacing, borders, icon and widget sizes. Scaling for HiDPI displays and a user-chosen UI scale then only changes the context's dp ratio (#48, #53). Use `px` only where exactly one device pixel is meant, such as hairline separators.
 - Audio: ASIO and WASAPI (Windows), CoreAudio (macOS), PipeWire and JACK (Linux), plus a dummy device for tests and headless runs.
 - Plugin bridges over the same IPC: 32-bit plugins (Windows, Linux), x86-64 plugins on Apple Silicon (Rosetta) and on Windows ARM64 (emulation).
 - Third-party code: pinned git submodules in `ext/`, GPLv3-compatible licenses only, each listed in `docs/third-party.md`.
