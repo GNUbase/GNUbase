@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/audio/midiports.h"
+#include "engine/audio/playback.h"
 #include "engine/audio/transport.h"
 #include "engine/graph/graph.h"
 #include "engine/schema.h"
@@ -9,9 +10,12 @@
 #include "platform/audio/dummydevice.h"
 #include "platform/rt/snapshotpublisher.h"
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace gnubase::engine
@@ -22,7 +26,8 @@ namespace gnubase::engine
 	// Plays the project through an audio device. On the command thread it compiles the processing graph for the
 	// device's format whenever the project's render snapshot changes, and hands it to the audio thread. On the audio
 	// thread it copies the device inputs into the input busses, processes the graph where the transport plays and
-	// copies the output busses to the device outputs.
+	// copies the output busses to the device outputs. Audio tracks play their events from disk streams (Playback):
+	// offline rendering waits for the streams before every block; in real time a cue thread keeps them ahead.
 	//
 	// Busses take consecutive device channels in bus order: the first input bus the first input channels, and so on.
 	// Bus channels beyond the device's are silent, device outputs no bus reaches stay silent. Choosing device ports
@@ -85,8 +90,14 @@ namespace gnubase::engine
 		void setTransport(const Json& parameters);
 		void locate(const Json& parameters);
 		void sent(bool accepted); // after a transport request
+		void play();
 		Json transportStatus() const;
 		time::Samples projectEnd() const;
+		void render(audio::DummyDevice& device, uint64_t frames);
+		void cue(time::Samples position, bool playing, time::Samples window, bool wait);
+		void startCueing();
+		void stopCueing();
+		void stopDevice();
 
 		rt::SnapshotPublisher<RenderSnapshot>& m_snapshots;
 		uint64_t m_revision = 0;
@@ -97,10 +108,23 @@ namespace gnubase::engine
 		Json m_parameters;     // what audio.setDevice opened the device with
 		std::unique_ptr<audio::Device> m_device;
 		audio::DummyDevice* m_dummy = nullptr; // m_device, if it is the dummy device
+		Playback m_playback;                   // before m_programs: their track players use it
 		std::unique_ptr<rt::SnapshotPublisher<Program>> m_programs;
 		Transport m_transport; // advanced by the audio thread
 		MidiPorts m_midi;
 		audio::MidiBuffer m_midiInput; // the block's messages from all MIDI inputs, for MIDI recording (#97)
+
+		// The cue thread, while the device runs in real time. It reads the transport's settings and play state from
+		// m_cueState, which the command thread updates.
+		struct CueState
+		{
+			bool playing = false;
+			TransportSettings settings;
+		};
+		std::mutex m_cueMutex; // guards m_cueState
+		CueState m_cueState;
+		std::atomic<bool> m_cueing{false};
+		std::thread m_cueThread;
 
 		// The dummy device's input generator, if any; runs on the audio thread.
 		std::shared_ptr<graph::Processor> m_generator;

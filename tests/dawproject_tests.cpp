@@ -124,8 +124,8 @@ namespace
 		const ObjectId media = idOf(run(client, "media.add", {{"path", audioFile}}), "media");
 		const ObjectId clip = idOf(run(client, "clip.add", {{"media", media}, {"name", "Take 1"}}), "clip");
 		run(client, "audioEvent.add",
-			{{"track", idOf(vocals, "track")}, {"clip", clip}, {"position", 12345}, {"offset", 777},
-				{"length", 20001}});
+			{{"track", idOf(vocals, "track")}, {"clip", clip}, {"position", 12345}, {"offset", 777}, {"length", 20001},
+				{"volume", -3.5}, {"mute", true}});
 		const ObjectId part = idOf(run(client, "midiPart.add",
 									   {{"track", idOf(piano, "track")}, {"position", 4 * g_ticksPerQuarter},
 										   {"length", 8 * g_ticksPerQuarter}, {"name", "Chords"}}),
@@ -404,6 +404,8 @@ TEST_CASE("without GNUbase's entry, a project is read from project.xml", "[integ
 	const Json& event = after.at("audioEvents")[0];
 	CHECK(event.at("offset") == 777);
 	CHECK(std::abs(event.at("length").get<int64_t>() - 20001) <= 1);
+	CHECK(event.at("mute") == true); // DAWproject's enable; it has no event volume
+	CHECK(event.at("volume") == 0.0);
 	const Json& part = withId(after.at("midiParts"), "name", "Chords");
 	CHECK(part.at("position") == 4 * g_ticksPerQuarter);
 	CHECK(part.at("length") == 8 * g_ticksPerQuarter);

@@ -83,7 +83,12 @@ namespace gnubase::engine
 		ObjectId clip = 0;
 		time::Samples offset = 0; // where in the clip playback starts, in the clip's sample frames
 		time::Samples length = 0; // in the clip's sample frames
+		double volume = 0.0;      // dB, from g_minEventVolume to g_maxEventVolume
+		bool mute = false;
 	};
+
+	inline constexpr double g_minEventVolume = -144.0;
+	inline constexpr double g_maxEventVolume = 6.0;
 
 	// Note and controller values have the resolution of MIDI 2.0 (#19): MIDI 1.0 values fit without loss.
 	struct Note
@@ -138,6 +143,7 @@ namespace gnubase::engine
 		std::string color; // "#rrggbb", or empty for the default color
 	};
 
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct Project
 	{
 		std::string name = "Untitled";
@@ -190,8 +196,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
-		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length) ==
-			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length);
+		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute) ==
+			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute);
 	}
 
 	inline bool operator==(const Note& a, const Note& b)
