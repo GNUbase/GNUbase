@@ -174,6 +174,7 @@ namespace gnubase::engine
 	};
 
 	// Holds notes and controllers on an instrument or MIDI track. Notes and controllers outside it are not played.
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct MidiPart
 	{
 		ObjectId id = 0;
