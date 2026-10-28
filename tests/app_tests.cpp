@@ -144,15 +144,13 @@ namespace
 	// Runs the gnubase executable with arguments, stdin from a file and stdout into one; returns its exit code.
 	int runApp(const std::string& arguments, const std::filesystem::path& in, const std::filesystem::path& out)
 	{
-		std::string command = "\"" + std::string(GNUBASE_APP) + "\" " + arguments + " < \"" + in.u8string() +
+		const std::string command = "\"" + std::string(GNUBASE_APP) + "\" " + arguments + " < \"" + in.u8string() +
 			"\" > \"" + out.u8string() + "\"";
 #ifdef _WIN32
-		command = "\"" + command + "\""; // cmd.exe removes the outer quotes
-#endif
-		const int status = std::system(command.c_str()); // NOLINT(bugprone-command-processor): fixed test command
-#ifdef _WIN32
-		return status;
+		// cmd.exe removes the outer quotes.
+		return std::system(("\"" + command + "\"").c_str()); // NOLINT(bugprone-command-processor): fixed test command
 #else
+		const int status = std::system(command.c_str()); // NOLINT(bugprone-command-processor): fixed test command
 		return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 #endif
 	}
