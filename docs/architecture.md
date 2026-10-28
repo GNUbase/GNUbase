@@ -83,6 +83,7 @@ flowchart TD
 | Prefetch threads | Nodes without live input, ahead of the device in larger blocks (#23) | Real-time rules, real-time priority below the audio workers |
 | Disk threads | Streaming audio files in and recordings out (#17) | Work ahead of the audio thread |
 | Background threads | Peak files, analysis, saving projects, plugin scan coordination | Low priority |
+| Job threads | Background jobs such as backups, one thread each (`src/engine/jobs`) | Normal priority, never wait for the command thread |
 | Log writer | Writes what audio threads logged, every 10 ms (#8) | Low priority |
 | MCP I/O thread | The MCP server's HTTP or stdio transport | Only forwards to the command thread |
 | Script thread | Lua in headless mode; with a UI, Lua runs on the UI thread | Never an audio thread |
@@ -122,6 +123,7 @@ sequenceDiagram
 - **Events** name what changed (object ids and properties), so a client updates only what it shows.
 - **Meters and the playback position** are not events and never JSON. The audio thread writes them into lock-free buffers, holding each meter's peak until it is read so none is lost between frames, and the UI reads all of them at once per frame (#111). MCP and Lua get them through a query when they need them.
 - **Queries** are read-only commands. They also run on the command thread, so they always see a consistent document.
+- **Jobs** are long work that would hold up the command thread, such as `project.backup` (`Jobs` in `src/engine/jobs/jobs.h`). The command checks its parameters, copies what the job needs (the project as it is then) and starts the job on a thread of its own; it returns the job at once and emits `job.started`. The job announces `job.progress` (0 to 1, at most once per percent, and what it is working on) and ends with `job.finished`: done with a result, failed with an error, or cancelled. These events come from the job's thread through `Engine::broadcast`, so they have no request id. `job.get` and `job.list` report jobs, for MCP clients that poll; `job.cancel` asks one to stop, and the job checks between chunks of work and cleans up what it made. Jobs never touch the document: one that changes it posts a command (`Engine::post`), such as `project.load` for a backup that is opened when it's done. The engine cancels and waits for running jobs when it shuts down.
 - Because commands, results and events are serializable, the same API works in-process (UI, tests), over MCP and from Lua, and could later run across processes.
 
 ## Document model and undo
@@ -226,9 +228,24 @@ flowchart LR
 ## Project format
 
 - Projects are `.dawproject` files: a zip container with XML and media (#22). `project.save` and `project.load` write and read them (`src/engine/dawproject`), with miniz for the container and pugixml for the XML.
-- `project.xml` gets everything DAWproject can describe: tracks with their folders, channels with their routing (groups as `submix`, output busses as `master` channels), audio events and MIDI parts as clips, notes, MIDI controllers as `Points`, markers, and tempo and time signature with their changes. Media files are embedded under `audio/` or referenced where they are. GNUbase's output validates against the format's `Project.xsd`.
+- `project.xml` gets everything DAWproject can describe: tracks with their folders, channels with their routing (groups as `submix`, output busses as `master` channels), audio events and MIDI parts as clips, notes, MIDI controllers as `Points`, markers, and tempo and time signature with their changes. Media files are embedded under `audio/` or referenced: relative to the project file if they are in its folder, so the folder can move, otherwise by their absolute path. GNUbase's output validates against the format's `Project.xsd`.
 - GNUbase data that DAWproject cannot express goes into an extra entry in the same container, so other applications can still open the file. The entry is **`gnubase.json`**: the whole document as `project.get` returns it, the id counter, the media paths, and a checksum of `project.xml`. If the checksum matches, loading restores the project exactly (ids, input busses, time bases, MIDI tracks, exact sample positions); if another application changed `project.xml`, the entry is ignored and the project is built from `project.xml`, so stale GNUbase data never overrides someone else's edits.
 - Plugin states are stored as DAWproject specifies (#72).
+
+### Self-contained projects and backups
+
+A project that is moved or archived needs its media with it (#170). `src/engine/media/backup.h` has the file work; the commands are in the project model.
+
+- The **project folder** is the folder of the file the project was last saved as or loaded from (`project.location`; `project.save` announces it with `project.saved`); its **media folder** is `Audio` in it. A project without a file has neither. Project folder layout beyond that comes with project handling (#77).
+- `media.add` with `copy` copies a file from outside the project folder into the media folder and adds the copy (the engine part of the import option, #92). Names stay unique: `take.wav`, `take-2.wav`.
+- `media.prepareArchive` copies every media file from outside the project folder into the media folder and points the media at the copies, as one undo step; missing files are listed and left alone. Saved without embedding, the project then refers to its media relative to itself, and the folder can move.
+- `project.backup` writes a copy of the project as it is into an empty or new folder: `<name>.dawproject` and its media in `Audio`, referred to relatively, so the backup opens on another machine. The open project and its files stay as they are. It runs as a job (see "Engine API"): it copies in 1 MB chunks, reports progress, and if it is cancelled or fails it removes what it wrote. Options:
+  - `minimize` writes only the ranges of each audio file that its audio events play, plus `handles` seconds on each side, merged where they overlap and joined one after the other; the events' offsets move with them. Files at the project's sample rate play sample for sample the same. A minimized file keeps its format where GNUbase writes it without changing a sample (16- and 24-bit WAV, AIFF and FLAC, float WAV) and is a 32-bit float WAV otherwise. A file that no range leaves out is copied as it is.
+  - `removeUnused` leaves out clips that no audio event uses and media that no clip uses.
+  - `name` names the file and the backed-up project.
+  - `activate` opens the backup once it's done.
+  - `currentVersionsOnly` (offline processing #141, track versions #165) and `skipVideo` (#198) are accepted and do nothing until those exist.
+  - A media file that can't be read doesn't stop the backup: the result lists it under `missing`, and the backup keeps its old path.
 
 ## Open decisions
 

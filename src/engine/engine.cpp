@@ -3,6 +3,7 @@
 
 #include "engine/audio/audioengine.h"
 #include "engine/document/projectmodel.h"
+#include "engine/jobs/jobs.h"
 #include "engine/processors/builtin.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
@@ -84,8 +85,10 @@ namespace gnubase::engine
 				return Json{{"commands", list}};
 			});
 		processors::registerCommands(*this);
+		m_jobs = std::make_unique<Jobs>(*this);
+		m_jobs->registerCommands(*this);
 		m_project = std::make_unique<ProjectModel>();
-		m_project->registerCommands(*this);
+		m_project->registerCommands(*this, *m_jobs);
 		m_audio = std::make_unique<AudioEngine>(m_project->snapshots(), std::move(backends));
 		m_audio->registerCommands(*this);
 		m_thread = std::thread([this] { run(); });
@@ -100,6 +103,7 @@ namespace gnubase::engine
 		}
 		m_wake.notify_all();
 		m_thread.join();
+		m_jobs.reset(); // no command starts a job anymore; cancels the running ones and waits for them
 	}
 
 	void Engine::registerCommand(CommandInfo info, CommandHandler handler)
@@ -120,6 +124,19 @@ namespace gnubase::engine
 			m_requests.push_back({m_nextRequest++, std::move(command), std::move(parameters), nullptr});
 		}
 		m_wake.notify_one();
+	}
+
+	void Engine::broadcast(std::string name, Json data)
+	{
+		rt::assertNotRealtime("engine::Engine::broadcast");
+		std::vector<std::shared_ptr<detail::Mailbox>> clients;
+		{
+			const std::scoped_lock lock(m_mutex);
+			clients = m_clients;
+		}
+		const Event event{std::move(name), std::move(data), 0};
+		for (const auto& client : clients)
+			client->post(event);
 	}
 
 	rt::SnapshotPublisher<RenderSnapshot>& Engine::renderSnapshots()

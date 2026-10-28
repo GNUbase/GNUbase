@@ -23,6 +23,7 @@
 namespace gnubase::engine
 {
 	class AudioEngine;
+	class Jobs;
 	class ProjectModel;
 	struct RenderSnapshot;
 
@@ -127,6 +128,10 @@ namespace gnubase::engine
 		// reach every client; its result goes nowhere, and a failure is logged. Not for audio threads.
 		void post(std::string command, Json parameters = Json::object());
 
+		// Announces an event from one of the engine's own threads, such as a background job's progress. Every client
+		// receives it. Not for audio threads.
+		void broadcast(std::string name, Json data = Json::object());
+
 		// Every registered command, sorted by name. The engine.commands query returns the same as JSON.
 		std::vector<CommandInfo> commands() const;
 
@@ -161,6 +166,7 @@ namespace gnubase::engine
 		RequestId m_nextRequest = 1;
 		bool m_stopping = false;
 		std::condition_variable m_wake;
+		std::unique_ptr<Jobs> m_jobs;            // background work such as backups
 		std::unique_ptr<ProjectModel> m_project; // only the command thread touches the document
 		std::unique_ptr<AudioEngine> m_audio;    // plays the project; only the command thread changes it
 		std::thread m_thread;

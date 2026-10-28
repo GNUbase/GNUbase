@@ -540,15 +540,54 @@ Returns:
 
 - `position`: integer, required
 
+### job
+
+#### `gnubase.job.cancel`
+
+Asks a running job to stop. It ends soon after as cancelled, with a job.finished event, and cleans up what it made; a job that has ended stays as it is.
+
+Parameters:
+
+- `job`: integer, required
+
+Returns:
+
+- `job`: object, required
+
+#### `gnubase.job.get`
+
+A background job, as job.list shows it.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `job`: integer, required
+
+Returns:
+
+- `job`: object, required
+
+#### `gnubase.job.list`
+
+Every background job since the engine started, such as backups: id, kind, state (running, done, failed or cancelled), progress from 0 to 1, what it is doing, and its result or error once it ended.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `jobs`: array of object, required
+
 ### media
 
 #### `gnubase.media.add`
 
-Adds an audio file. Its sample rate, channel count and length in sample frames are read from the file, or taken as given, for a file that is still being recorded.
+Adds an audio file. Its sample rate, channel count and length in sample frames are read from the file, or taken as given, for a file that is still being recorded. With copy, a file from outside the project folder is copied into its media folder (see project.location) and added from there; the project must have been saved.
 
 Parameters:
 
 - `channels`: integer
+- `copy`: boolean
 - `length`: integer
 - `path`: string, required
 - `sampleRate`: number
@@ -570,6 +609,15 @@ Parameters:
 Returns:
 
 - `media`: object, required
+
+#### `gnubase.media.prepareArchive`
+
+Makes the project self-contained, so that its folder can be archived or moved: copies every media file from outside the project folder into its media folder and uses the copies, as one undo step. Media files that can't be found are left as they are and listed as missing. The project must have been saved; save it again without embedding media to keep the new paths.
+
+Returns:
+
+- `copied`: array of object, required
+- `missing`: array of object, required
 
 #### `gnubase.media.remove`
 
@@ -670,6 +718,25 @@ Returns:
 
 ### project
 
+#### `gnubase.project.backup`
+
+Backs the project up as it is now into folder, which must be empty or new: the project file, named name (by default after the project file, or else the project), and copies of its media in the folder Audio, which the project file refers to relative to itself, so that the folder opens on another machine. The project itself stays as it is. minimize keeps only the ranges of audio files that audio events play, with handles seconds (default 1) before and after; removeUnused leaves out clips that no audio event uses and media that no clip uses. currentVersionsOnly and skipVideo have no effect until clips have versions and projects have video. activate opens the backup once it is done. The backup runs as a job: this returns at once, job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. The job's result is {file, files, missing}, missing listing the media files that couldn't be read and keep their old paths.
+
+Parameters:
+
+- `activate`: boolean
+- `currentVersionsOnly`: boolean
+- `folder`: string, required
+- `handles`: number
+- `minimize`: boolean
+- `name`: string
+- `removeUnused`: boolean
+- `skipVideo`: boolean
+
+Returns:
+
+- `job`: object, required
+
 #### `gnubase.project.get`
 
 The whole project: busses, tracks in order, channels, media, clips, events and parts.
@@ -684,6 +751,18 @@ Parameters:
 
 - `mediaFolder`: string
 - `path`: string, required
+
+#### `gnubase.project.location`
+
+Where the project is: its project file (set by project.save and project.load), the folder of that file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. All null for a project that has no file yet.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `file`: string or null, required
+- `folder`: string or null, required
+- `mediaFolder`: string or null, required
 
 #### `gnubase.project.new`
 
