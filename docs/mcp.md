@@ -676,6 +676,176 @@ Result:
 
 - `position`: integer, required
 
+### marker
+
+#### `marker_activateTrack`
+
+Engine command `marker.activateTrack`.
+
+Makes a marker track the active one, which marker commands use when they are given no track.
+
+Arguments:
+
+- `track`: integer, required
+
+#### `marker_add`
+
+Engine command `marker.add`.
+
+Adds a position marker, or with type cycle a cycle marker, to a marker track (default: the active one; without a marker track one is added). position and end are in the track's time base (ticks or samples) or "cursor". A position marker defaults to the cursor, a cycle marker to the locators. Position and cycle markers are numbered separately on each track; a new marker gets the first free number unless one is given.
+
+Arguments:
+
+- `color`: string or null
+- `end`: integer or string
+- `name`: string
+- `number`: integer
+- `position`: integer or string
+- `track`: integer
+- `type`: one of "position" | "cycle"
+
+Result:
+
+- `marker`: object, required
+
+#### `marker_list`
+
+Engine command `marker.list`. Read-only.
+
+The markers of a marker track (default: the active one; track 0 if there is none) in timeline order, with their position and end also in the project's samples.
+
+Arguments:
+
+- `track`: integer
+
+Result:
+
+- `markers`: array, required
+- `track`: integer, required
+
+#### `marker_locate`
+
+Engine command `marker.locate`.
+
+Moves the project cursor to a marker, given by id (marker) or by its number on a marker track (default: the active one) and type (default: position). Cycle markers locate to their start.
+
+Arguments:
+
+- `marker`: integer
+- `number`: integer
+- `track`: integer
+- `type`: one of "position" | "cycle"
+
+Result:
+
+- `marker`: object or null, required
+- `position`: integer, required
+
+#### `marker_locateNext`
+
+Engine command `marker.locateNext`.
+
+Moves the project cursor to the next marker after it on a marker track (default: the active one): position markers and the start and end of cycle markers. Without one the cursor stays and marker is null. Returns the marker and the cursor in samples.
+
+Arguments:
+
+- `track`: integer
+
+Result:
+
+- `marker`: object or null, required
+- `position`: integer, required
+
+#### `marker_locatePrevious`
+
+Engine command `marker.locatePrevious`.
+
+Moves the project cursor to the previous marker before it on a marker track (default: the active one), like marker.locateNext.
+
+Arguments:
+
+- `track`: integer
+
+Result:
+
+- `marker`: object or null, required
+- `position`: integer, required
+
+#### `marker_range`
+
+Engine command `marker.range`. Read-only.
+
+The range between the markers around a position in samples, on a marker track (default: the active one): from the last marker at or before it to the next one, counting position markers and the start and end of cycle markers. A range selection between markers spans it.
+
+Arguments:
+
+- `position`: integer, required
+- `track`: integer
+
+Result:
+
+- `end`: integer, required
+- `start`: integer, required
+
+#### `marker_remove`
+
+Engine command `marker.remove`.
+
+Removes markers.
+
+Arguments:
+
+- `markers`: array of integer, required
+
+#### `marker_renumber`
+
+Engine command `marker.renumber`.
+
+Numbers a marker track's position or cycle markers again from 1, in timeline order (default: the active track).
+
+Arguments:
+
+- `track`: integer
+- `type`: one of "position" | "cycle", required
+
+#### `marker_set`
+
+Engine command `marker.set`.
+
+Changes a marker: moves it (position, in the track's time base or "cursor"; a cycle marker keeps its length unless end is given), renames it, changes its color or number, or moves it to another marker track, where it takes the first free number if its own is taken.
+
+Arguments:
+
+- `color`: string or null
+- `end`: integer or string
+- `marker`: integer, required
+- `name`: string
+- `number`: integer
+- `position`: integer or string
+- `track`: integer
+
+Result:
+
+- `marker`: object, required
+
+#### `marker_setLocators`
+
+Engine command `marker.setLocators`.
+
+Sets the left and right locators to a cycle marker's start and end, given by id (marker) or by its number on a marker track (default: the active one).
+
+Arguments:
+
+- `marker`: integer
+- `number`: integer
+- `track`: integer
+
+Result:
+
+- `left`: integer, required
+- `marker`: object, required
+- `right`: integer, required
+
 ### media
 
 #### `media_add`
@@ -890,7 +1060,7 @@ Result:
 
 Engine command `track.add`.
 
-Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; folders get a channel only with groupChannel. New channels play through the main output, or through the folder's group channel.
+Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; folders get a channel only with groupChannel. New channels play through the main output, or through the folder's group channel. Marker tracks have no channel and stay at the top level; a project has at most 10, and a new one becomes the active marker track.
 
 Arguments:
 
@@ -901,7 +1071,7 @@ Arguments:
 - `name`: string
 - `parent`: integer
 - `timeBase`: one of "musical" | "linear"
-- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect", required
+- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect" | "marker", required
 
 Result:
 
@@ -924,7 +1094,7 @@ Arguments:
 
 Engine command `track.remove`.
 
-Removes a track with its channel, events and parts; a folder also removes the tracks inside it.
+Removes a track with its channel, events, parts or markers; a folder also removes the tracks inside it. Without the active marker track, the topmost marker track becomes the active one.
 
 Arguments:
 
@@ -934,7 +1104,7 @@ Arguments:
 
 Engine command `track.set`.
 
-Changes a track's name, color (#rrggbb, or null for the default) or time base. A new time base keeps its events and parts at the same time.
+Changes a track's name, color (#rrggbb, or null for the default) or time base. A new time base keeps its events, parts and markers at the same time.
 
 Arguments:
 
@@ -1085,6 +1255,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://engine.version`: The GNUbase version.
 - `gnubase://graph.get`: The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes they receive audio and events from, and the order they are processed in.
 - `gnubase://history.get`: The undo history: every step with its action, time (UTC) and details, the position (steps before it are done, the ones after it can be redone) and the maximum number of steps (0: no limit).
+- `gnubase://marker.list`: The markers of a marker track (default: the active one; track 0 if there is none) in timeline order, with their position and end also in the project's samples.
 - `gnubase://processor.list`: Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units.
 - `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts.
 - `gnubase://transport.get`: Whether playback runs, the project cursor in samples, the locators and the modes.
