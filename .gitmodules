@@ -26,3 +26,9 @@
 [submodule "ext/r8brain"]
 	path = ext/r8brain
 	url = https://github.com/avaneev/r8brain-free-src.git
+[submodule "ext/pugixml"]
+	path = ext/pugixml
+	url = https://github.com/zeux/pugixml.git
+[submodule "ext/miniz"]
+	path = ext/miniz
+	url = https://github.com/richgel999/miniz.git

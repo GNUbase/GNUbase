@@ -20,7 +20,7 @@ namespace gnubase::time
 	{
 	}
 
-	TempoMap::TempoMap(const std::vector<TempoPoint>& points)
+	TempoMap::TempoMap(const std::vector<TempoPoint>& points) : m_points(points)
 	{
 		if (points.empty() || points.front().position != 0)
 			throw std::invalid_argument("a tempo map starts with a point at position 0");
@@ -76,9 +76,9 @@ namespace gnubase::time
 
 	bool TempoMap::operator==(const TempoMap& other) const
 	{
-		return std::equal(m_segments.begin(), m_segments.end(), other.m_segments.begin(), other.m_segments.end(),
-			[](const Segment& a, const Segment& b)
-			{ return a.start == b.start && a.seconds == b.seconds && a.bpm == b.bpm && a.slope == b.slope; });
+		return std::equal(m_points.begin(), m_points.end(), other.m_points.begin(), other.m_points.end(),
+			[](const TempoPoint& a, const TempoPoint& b)
+			{ return a.position == b.position && a.bpm == b.bpm && a.ramp == b.ramp; });
 	}
 
 	double TempoMap::bpmAt(Ticks tick) const
