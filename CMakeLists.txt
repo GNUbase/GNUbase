@@ -38,6 +38,12 @@ add_subdirectory(ext/SDL EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/RmlUi EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/Catch2 EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/json EXCLUDE_FROM_ALL SYSTEM)
+# libFLAC only, for writing FLAC files (dr_flac reads them): no C++ library, programs, tests, docs or Ogg.
+foreach(flacOption BUILD_CXXLIBS BUILD_PROGRAMS BUILD_EXAMPLES BUILD_TESTING BUILD_DOCS INSTALL_MANPAGES
+		INSTALL_PKGCONFIG_MODULES INSTALL_CMAKE_CONFIG_MODULE WITH_OGG ENABLE_MULTITHREADING)
+	set(${flacOption} OFF CACHE BOOL "Set by GNUbase for libFLAC")
+endforeach()
+add_subdirectory(ext/flac EXCLUDE_FROM_ALL SYSTEM)
 
 # Settings for every GNUbase target; third-party code is not affected.
 function(gnubase_target_defaults target)
