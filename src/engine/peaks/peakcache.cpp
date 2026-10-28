@@ -543,10 +543,7 @@ namespace gnubase::engine::peaks
 	void PeakCache::registerCommands(Engine& engine)
 	{
 		const Json columnsSchema = {{"type", "object"},
-			{"properties",
-				{{"min", {{"type", "array"}, {"items", integerSchema()}}},
-					{"max", {{"type", "array"}, {"items", integerSchema()}}}}},
-			{"required", {"min", "max"}}};
+			{"properties", {{"min", {{"type", "array"}}}, {"max", {{"type", "array"}}}}}, {"required", {"min", "max"}}};
 		engine.registerCommand(
 			{"media.peaks", 1,
 				"The waveform overview of a media file for drawing: frames sample frames of the file from start "

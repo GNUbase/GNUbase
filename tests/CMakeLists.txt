@@ -45,9 +45,12 @@ target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERS
 	GNUBASE_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs"
 	GNUBASE_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources"
 	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>
-	$<$<BOOL:${GNUBASE_SANITIZERS}>:GNUBASE_SANITIZED> # too slow for benchmarks
 	GNUBASE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 gnubase_target_defaults(gnubase-tests)
+# Sanitizer builds are too slow for benchmarks.
+if(GNUBASE_SANITIZERS)
+	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_SANITIZED)
+endif()
 
 # Every TEST_CASE becomes a ctest test; its tags ([unit], [integration], [ui], [slow]) become ctest labels.
 # PRE_TEST discovery lets cross-compiled builds (e.g. Windows ARM64 on x64) configure and build.
