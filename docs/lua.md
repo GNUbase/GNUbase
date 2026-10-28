@@ -324,6 +324,19 @@ Parameters:
 - `controllers`: array of integer, required
 - `part`: integer, required
 
+#### `gnubase.controller.set`
+
+Changes controller events of a MIDI part: each change names a controller event by id and gives what changes, position in ticks, controller number 0-127, value 0-1 or MIDI channel 0-15. Returns the changed controller events.
+
+Parameters:
+
+- `controllers`: array of object, required
+- `part`: integer, required
+
+Returns:
+
+- `controllers`: array, required
+
 ### engine
 
 #### `gnubase.engine.commands`
@@ -518,6 +531,19 @@ Parameters:
 
 - `notes`: array of integer, required
 - `part`: integer, required
+
+#### `gnubase.note.set`
+
+Changes notes of a MIDI part: each change names a note by id and gives what changes, position and length in ticks, pitch 0-127, velocity 0-1 or MIDI channel 0-15. Returns the changed notes.
+
+Parameters:
+
+- `notes`: array of object, required
+- `part`: integer, required
+
+Returns:
+
+- `notes`: array, required
 
 ### processor
 
