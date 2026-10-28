@@ -308,7 +308,7 @@ Features that need no extension, because the engine builds them on the core for 
 4. **DAWproject parameter ids** are signed 32-bit integers, VST3's are unsigned. Store them as their two's complement, as other hosts do? To check with #72.
 5. **Sub-block splitting** for formats without sample-accurate parameters: split at every change, or at a minimum sub-block size such as 32 frames, which bounds the overhead of automation that changes every frame?
 6. **Automation interpolation**: is the engine's sampled automation close enough to VST3's linear segments for null tests between formats, or does the engine send VST3 adapters its breakpoints instead?
-7. **The plugin control thread**: one per host process connection, or one for all? Owned by #64.
+7. **The plugin control thread**: decided in #64: one per host process connection (`plugin::remote::HostConnection`). It reads replies and notifications; main-thread calls send their request and wait for the reply with a timeout.
 8. **The editor header**: a glued GNUbase window, or drawn by the host process (#69)?
 9. **CLAP's thread pool** extension: the host process serves it with its own workers within the block's deadline. How many, per host process or per instance (#64, #76)?
 10. **MIDI 2.0**: should notes and expressions be replaced by MIDI 2.0 packets as the engine's internal note format, or stay CLAP-like with MIDI 2.0 as a dialect?
@@ -321,7 +321,7 @@ Each step comes with its tests first.
 
 1. **This spike (#61):** the note and the header draft in `src/plugin`, with a test that adapts a built-in processor through the API.
 2. **IPC transport (#62):** the audio path and control channel carry `Event`, `Transport` and the block header as fixed-layout records; the round-trip benchmark uses a plugin-shaped block.
-3. **New: remote plugin proxy and stub** (or part of #64): `src/plugin/remote`, a proxy and a stub per extension, the caches and the parameter mirror, the coverage test for extension ids. Tests run a built-in plugin through proxy and stub in one process and compare its output with the direct path, bit for bit.
+3. **New: remote plugin proxy and stub** (started in #64: `src/plugin/remote` with the core, `AudioPorts`, `Params`, `State`, `Latency` and `Tail`, the caches and the parameter mirror; the other extensions and the coverage test for extension ids remain). Tests run a built-in plugin through proxy and stub in one process and compare its output with the direct path, bit for bit.
 4. **New: plugin slots in the document and graph:** insert, instrument and MIDI effect slots in the document model and DAWproject, the plugin slot node (`graph::Processor` hosting a `plugin::Plugin`), sleeping on silence, bypass with crossfade, activation. Tested with built-in plugins.
 5. **Built-in plugins (#114):** the existing built-in processors behind the API, then the mixing set; they implement `LowLatency` where they have look-ahead.
 6. **Plugin host process (#64)** with the stub, hosting modes and the plugin control thread; **test plugins (#63)**.

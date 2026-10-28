@@ -3,11 +3,14 @@
 #include "engine/audiofile/diskstream.h"
 #include "engine/engine.h"
 #include "engine/graph/graph.h"
+#include "engine/plugins/hostmanager.h"
+#include "engine/plugins/pluginslot.h"
 #include "engine/processors/builtin.h"
 #include "ipc/connection.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 #include "platform/rt/snapshotpublisher.h"
+#include "plugin/remote/proxy.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -23,6 +26,10 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+
+#ifndef GNUBASE_PLUGINHOST
+#define GNUBASE_PLUGINHOST "gnubase-pluginhost"
+#endif
 
 // gnubase-tests links the RT checker (gnubase-rtcheck), which reports allocations made in real-time code.
 using namespace gnubase::rt;
@@ -409,4 +416,42 @@ TEST_CASE("sending blocks to a plugin host and waiting for its answers passes th
 	hostThread.join();
 	CHECK(answered == blocks);
 	CHECK(g_violations == 0);
+}
+
+TEST_CASE("a plugin in a plugin host process processes blocks without allocating or locking", "[integration]")
+{
+	using namespace gnubase;
+	engine::plugins::HostManager::Options options;
+	options.executable = GNUBASE_PLUGINHOST;
+	engine::plugins::HostManager manager(options);
+	std::unique_ptr<plugin::remote::RemotePlugin> remote = manager.create({"test:gain", "", "GNUbase"});
+	REQUIRE(remote->init());
+	engine::plugins::PluginSlot slot(std::move(remote));
+	slot.setProcessMode(plugin::ProcessMode::Offline);
+	slot.prepareFor(48000.0, 128);
+
+	std::vector<float> left(128, 0.5f);
+	std::vector<float> right(128, -0.5f);
+	const std::array<float*, 2> audio{left.data(), right.data()};
+	engine::graph::EventBuffer eventsIn(4);
+	engine::graph::EventBuffer eventsOut(4);
+	const engine::graph::TransportBlock transport;
+	engine::graph::ProcessEvent change;
+	change.type = engine::graph::ProcessEvent::Type::Parameter;
+	change.offset = 10;
+	change.parameterValue = -6.0;
+	eventsIn.add(change);
+
+	const RecordViolations record;
+	{
+		const ScopedRealtimeContext realtime;
+		for (int i = 0; i < 100; ++i)
+		{
+			slot.process({audio.data(), 2, 128, eventsIn, eventsOut, transport});
+			eventsOut.clear();
+		}
+	}
+	CHECK(g_violations == 0);
+	CHECK(!slot.failed());
+	CHECK(left[0] != 0.0f);
 }

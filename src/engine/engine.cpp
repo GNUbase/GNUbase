@@ -3,6 +3,7 @@
 
 #include "engine/audio/audioengine.h"
 #include "engine/document/projectmodel.h"
+#include "engine/plugins/hostmanager.h"
 #include "engine/processors/builtin.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
@@ -84,6 +85,9 @@ namespace gnubase::engine
 				return Json{{"commands", list}};
 			});
 		processors::registerCommands(*this);
+		m_plugins = std::make_unique<plugins::HostManager>();
+		m_plugins->registerCommands(*this);
+		m_plugins->onFailure([this] { post("pluginhost.check"); });
 		m_project = std::make_unique<ProjectModel>();
 		m_project->registerCommands(*this);
 		m_audio = std::make_unique<AudioEngine>(m_project->snapshots(), std::move(backends));
@@ -125,6 +129,11 @@ namespace gnubase::engine
 	rt::SnapshotPublisher<RenderSnapshot>& Engine::renderSnapshots()
 	{
 		return m_project->snapshots();
+	}
+
+	plugins::HostManager& Engine::pluginHosts()
+	{
+		return *m_plugins;
 	}
 
 	std::vector<CommandInfo> Engine::commands() const

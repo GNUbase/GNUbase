@@ -35,6 +35,8 @@ add_library(gnubase-engine STATIC
 	graph/events.h
 	graph/graph.cpp graph/graph.h
 	graph/processor.h
+	plugins/hostmanager.cpp plugins/hostmanager.h
+	plugins/pluginslot.cpp plugins/pluginslot.h
 	processors/builtin.cpp processors/builtin.h
 	processors/gainpan.cpp processors/gainpan.h
 	processors/generators.cpp processors/generators.h
@@ -45,5 +47,5 @@ add_library(gnubase-engine STATIC
 	time/timecode.cpp time/timecode.h)
 target_include_directories(gnubase-engine PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-engine PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}")
-target_link_libraries(gnubase-engine PUBLIC gnubase-platform nlohmann_json::nlohmann_json PRIVATE gnubase-decoders gnubase-r8brain FLAC::FLAC pugixml::pugixml miniz)
+target_link_libraries(gnubase-engine PUBLIC gnubase-platform gnubase-plugin-remote nlohmann_json::nlohmann_json PRIVATE gnubase-decoders gnubase-r8brain FLAC::FLAC pugixml::pugixml miniz)
 gnubase_target_defaults(gnubase-engine)

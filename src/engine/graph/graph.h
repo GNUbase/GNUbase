@@ -27,7 +27,7 @@ namespace gnubase::engine::graph
 		OutputBus,  // audio for the device; read from the node's buffer after processing
 		Channel,    // a track's mixer channel; sums its inputs
 		Builtin,    // one of GNUbase's own processors
-		PluginSlot, // a third-party plugin; until plugin hosting (M05) a placeholder with a built-in processor
+		PluginSlot, // a plugin, built in or in a plugin host process (plugins::PluginSlot)
 	};
 
 	const char* toString(NodeKind kind);

@@ -13,6 +13,13 @@ namespace gnubase::platform
 	// The id of the calling process.
 	uint32_t currentProcessId() noexcept;
 
+	// True while a process with this id runs. Ids are reused once a process is gone, so a long-dead process may seem
+	// to run again; plugin hosts use this to notice that the engine went away without closing its connections.
+	bool processExists(uint32_t id) noexcept;
+
+	// The running program's file, e.g. to find the programs installed next to it.
+	std::filesystem::path currentExecutablePath();
+
 	// A process GNUbase started, such as a plugin host. Not for audio threads: every call is a system call that may
 	// allocate. Destroying a ChildProcess that still runs kills it, so no process outlives its owner unnoticed.
 	class ChildProcess
