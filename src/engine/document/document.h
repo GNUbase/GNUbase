@@ -143,6 +143,7 @@ namespace gnubase::engine
 		std::string color; // "#rrggbb", or empty for the default color
 	};
 
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct Project
 	{
 		std::string name = "Untitled";
