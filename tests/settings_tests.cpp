@@ -100,6 +100,15 @@ namespace
 		return format;
 	}
 
+	// The client's next message, which must be an event.
+	gnubase::engine::Event nextEvent(gnubase::engine::Client& client)
+	{
+		const std::optional<gnubase::engine::Message> message = client.poll();
+		const auto* event = message.has_value() ? std::get_if<gnubase::engine::Event>(&*message) : nullptr;
+		REQUIRE(event != nullptr);
+		return *event;
+	}
+
 	std::atomic<int> g_violations{0};
 
 	void countViolation(const char* /*what*/) noexcept
@@ -512,11 +521,9 @@ TEST_CASE("settings.get, settings.set and settings.reset change the user setting
 		const gnubase::engine::Result set = client.call("settings.set", {{"key", "ui.scale"}, {"value", 1.5}});
 		REQUIRE(set.ok());
 		CHECK(set.value == Json::parse(R"({"key": "ui.scale", "value": 1.5})"));
-		const std::optional<gnubase::engine::Message> changed = client.poll();
-		REQUIRE(changed.has_value());
-		REQUIRE(std::holds_alternative<Event>(*changed));
-		CHECK(std::get<Event>(*changed).name == "settings.changed");
-		CHECK(std::get<Event>(*changed).data == Json::parse(R"({"values": {"ui.scale": 1.5}})"));
+		const Event changed = nextEvent(client);
+		CHECK(changed.name == "settings.changed");
+		CHECK(changed.data == Json::parse(R"({"values": {"ui.scale": 1.5}})"));
 		CHECK(readJson(file) == Json::parse(R"({"version": 1, "values": {"ui.scale": 1.5}})"));
 
 		const gnubase::engine::Result invalid = client.call("settings.set", {{"key", "ui.scale"}, {"value", 40}});
@@ -551,14 +558,10 @@ TEST_CASE("settings.get, settings.set and settings.reset change the user setting
 
 		const gnubase::engine::Result one = client.call("settings.reset", {{"key", "ui.scale"}});
 		CHECK(one.value == Json::parse(R"({"values": {"ui.scale": 1.0}})"));
-		const std::optional<gnubase::engine::Message> resetOne = client.poll();
-		REQUIRE(resetOne.has_value());
-		CHECK(std::get<Event>(*resetOne).data == Json::parse(R"({"values": {"ui.scale": 1.0}})"));
+		CHECK(nextEvent(client).data == Json::parse(R"({"values": {"ui.scale": 1.0}})"));
 		const gnubase::engine::Result all = client.call("settings.reset");
 		CHECK(all.value.at("values") == settings::Store(settings::userFormat()).values());
-		const std::optional<gnubase::engine::Message> resetAll = client.poll();
-		REQUIRE(resetAll.has_value());
-		CHECK(std::get<Event>(*resetAll).data == Json::parse(R"({"values": {"audio.blockSize": 256}})"));
+		CHECK(nextEvent(client).data == Json::parse(R"({"values": {"audio.blockSize": 256}})"));
 		CHECK_FALSE(client.poll().has_value()); // nothing else changed
 		CHECK(readJson(file).at("values") == Json::object());
 	}
