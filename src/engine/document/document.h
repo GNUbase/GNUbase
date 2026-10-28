@@ -133,6 +133,7 @@ namespace gnubase::engine
 	};
 
 	// Holds notes and controllers on an instrument or MIDI track. Notes and controllers outside it are not played.
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct MidiPart
 	{
 		ObjectId id = 0;
@@ -204,6 +205,7 @@ namespace gnubase::engine
 	// The automation of one parameter on a track. Points at the same position make a jump; before the first point the
 	// curve has its value, after the last point the last one's. read: the curve plays; without it, or without points,
 	// the parameter keeps its static value (write modes come with #122).
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct AutomationLane
 	{
 		ObjectId id = 0;

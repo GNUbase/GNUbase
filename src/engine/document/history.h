@@ -23,6 +23,7 @@ namespace gnubase::engine
 
 	// A MIDI part's own properties (with its notes and controllers left out) and its changed notes and controllers,
 	// so that editing one note doesn't store the whole part.
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct MidiPartChange
 	{
 		ObjectId id = 0;
@@ -33,6 +34,7 @@ namespace gnubase::engine
 	};
 
 	// An automation lane's own properties (with its points left out) and its changed points.
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct AutomationLaneChange
 	{
 		ObjectId id = 0;
