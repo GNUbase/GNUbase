@@ -12,6 +12,40 @@ target_include_directories(gnubase-r8brain SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/
 target_include_directories(gnubase-r8brain PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(gnubase-r8brain PUBLIC Threads::Threads)
 
+# Rubber Band Library for time-stretching and pitch-shifting (docs/time-stretch.md): its single-file build, configured
+# the same on every platform (built-in FFT and resampler, no threads, no timing), so every platform runs the same code.
+# Third-party code, without GNUbase's warnings and clang-tidy checks; only dsp/timestretch.cpp includes it.
+# One patch, applied to a copy in the build folder: the built-in resampler (BQResampler) replaces its buffer with a new
+# vector whenever its ratio changes, which allocates on the audio thread; assigning to the buffer keeps the memory it
+# reserved up front. ponytail: send it upstream, or carry it in a GNUbase fork like SDL and RmlUi, then drop this.
+set(rubberband ${PROJECT_SOURCE_DIR}/ext/rubberband)
+set(rubberbandPatched ${CMAKE_CURRENT_BINARY_DIR}/rubberband)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${rubberband}/src/common/BQResampler.cpp
+	${rubberband}/single/RubberBandSingle.cpp)
+file(READ ${rubberband}/src/common/BQResampler.cpp source)
+string(REPLACE "target_state.buffer = floatbuf(buffer_length, 0.0);" "target_state.buffer.assign(buffer_length, 0.0);"
+	patched "${source}")
+string(FIND "${patched}" "floatbuf(buffer_length" unpatched)
+if(patched STREQUAL source OR NOT unpatched EQUAL -1)
+	message(FATAL_ERROR "The Rubber Band resampler patch no longer applies; check ${rubberband}/src/common/BQResampler.cpp")
+endif()
+file(WRITE ${rubberbandPatched}/BQResampler.cpp.new "${patched}")
+configure_file(${rubberbandPatched}/BQResampler.cpp.new ${rubberbandPatched}/BQResampler.cpp COPYONLY)
+file(READ ${rubberband}/single/RubberBandSingle.cpp source)
+string(REPLACE "#include \"../src/common/BQResampler.cpp\"" "#include \"${rubberbandPatched}/BQResampler.cpp\"" patched
+	"${source}")
+string(REPLACE "#include \"../src/" "#include \"${rubberband}/src/" patched "${patched}")
+file(WRITE ${rubberbandPatched}/RubberBandSingle.cpp.new "${patched}")
+configure_file(${rubberbandPatched}/RubberBandSingle.cpp.new ${rubberbandPatched}/RubberBandSingle.cpp COPYONLY)
+add_library(gnubase-rubberband STATIC ${rubberbandPatched}/RubberBandSingle.cpp)
+target_include_directories(gnubase-rubberband SYSTEM PUBLIC ${rubberband})
+target_include_directories(gnubase-rubberband SYSTEM PRIVATE ${rubberband}/src/common)
+target_compile_definitions(gnubase-rubberband PRIVATE ALREADY_CONFIGURED USE_BUILTIN_FFT USE_BQRESAMPLER NO_TIMING
+	NO_THREADING NO_THREAD_CHECKS $<$<CXX_COMPILER_ID:MSVC>:__MSVC__ NOMINMAX _USE_MATH_DEFINES>)
+if(NOT MSVC)
+	target_compile_options(gnubase-rubberband PRIVATE -ffp-contract=off) # as GNUbase's own code, see gnubase_target_defaults
+endif()
+
 add_library(gnubase-engine STATIC
 	analysis/analysis.cpp analysis/analysis.h
 	audio/analysiscommands.cpp
@@ -31,6 +65,7 @@ add_library(gnubase-engine STATIC
 	document/projectmodel.cpp document/projectmodel.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/serialize.cpp document/serialize.h
+	dsp/timestretch.cpp dsp/timestretch.h
 	engine.cpp engine.h
 	graph/events.h
 	graph/graph.cpp graph/graph.h
@@ -45,5 +80,5 @@ add_library(gnubase-engine STATIC
 	time/timecode.cpp time/timecode.h)
 target_include_directories(gnubase-engine PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-engine PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}")
-target_link_libraries(gnubase-engine PUBLIC gnubase-platform nlohmann_json::nlohmann_json PRIVATE gnubase-decoders gnubase-r8brain FLAC::FLAC pugixml::pugixml miniz)
+target_link_libraries(gnubase-engine PUBLIC gnubase-platform nlohmann_json::nlohmann_json PRIVATE gnubase-decoders gnubase-r8brain gnubase-rubberband FLAC::FLAC pugixml::pugixml miniz)
 gnubase_target_defaults(gnubase-engine)
