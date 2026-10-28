@@ -46,6 +46,21 @@ target_compile_definitions(gnubase-rubberband PRIVATE ALREADY_CONFIGURED USE_BUI
 if(NOT MSVC)
 	target_compile_options(gnubase-rubberband PRIVATE -ffp-contract=off) # as GNUbase's own code, see gnubase_target_defaults
 endif()
+# Rubber Band asks std::atomic<double> whether it is lock-free, which needs libatomic with clang on Linux; the same
+# check as in Rubber Band's own build.
+include(CheckCXXSourceCompiles)
+set(atomicCheck "#include <atomic>
+int main() { std::atomic<int> i; std::atomic<double> d; return int(i.is_lock_free() && d.is_lock_free()); }")
+check_cxx_source_compiles("${atomicCheck}" GNUBASE_ATOMIC_WITHOUT_LIBATOMIC)
+if(NOT GNUBASE_ATOMIC_WITHOUT_LIBATOMIC)
+	set(CMAKE_REQUIRED_LIBRARIES atomic)
+	check_cxx_source_compiles("${atomicCheck}" GNUBASE_ATOMIC_WITH_LIBATOMIC)
+	unset(CMAKE_REQUIRED_LIBRARIES)
+	if(NOT GNUBASE_ATOMIC_WITH_LIBATOMIC)
+		message(FATAL_ERROR "std::atomic<double> needs libatomic, which was not found")
+	endif()
+	target_link_libraries(gnubase-rubberband PUBLIC atomic)
+endif()
 
 add_library(gnubase-engine STATIC
 	analysis/analysis.cpp analysis/analysis.h
