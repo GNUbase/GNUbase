@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/midiports.h"
 #include "engine/audio/transport.h"
 #include "engine/graph/graph.h"
 #include "engine/schema.h"
@@ -33,13 +34,15 @@ namespace gnubase::engine
 	class AudioEngine : public audio::AudioCallback
 	{
 	public:
-		AudioEngine(
-			rt::SnapshotPublisher<RenderSnapshot>& snapshots, std::vector<std::unique_ptr<audio::Backend>> backends);
+		AudioEngine(rt::SnapshotPublisher<RenderSnapshot>& snapshots,
+			std::vector<std::unique_ptr<audio::Backend>> backends,
+			std::vector<std::unique_ptr<midi::Backend>> midiBackends);
 		~AudioEngine() override; // stops the device
 
 		// Registers audio.devices, audio.setDevice, audio.get, audio.reset, audio.controlPanel, audio.render,
-		// audio.start, audio.stop and audio.capture, and the transport commands transport.play, transport.stop,
-		// transport.toggle, transport.locate, transport.set, transport.exchangeLocators and transport.get.
+		// audio.start, audio.stop and audio.capture, the transport commands transport.play, transport.stop,
+		// transport.toggle, transport.locate, transport.set, transport.exchangeLocators and transport.get, and the
+		// MIDI port commands (MidiPorts).
 		void registerCommands(Engine& engine);
 
 		// Command thread: compiles a new graph if the project changed since the last one.
@@ -96,6 +99,8 @@ namespace gnubase::engine
 		audio::DummyDevice* m_dummy = nullptr; // m_device, if it is the dummy device
 		std::unique_ptr<rt::SnapshotPublisher<Program>> m_programs;
 		Transport m_transport; // advanced by the audio thread
+		MidiPorts m_midi;
+		audio::MidiBuffer m_midiInput; // the block's messages from all MIDI inputs, for MIDI recording (#97)
 
 		// The dummy device's input generator, if any; runs on the audio thread.
 		std::shared_ptr<graph::Processor> m_generator;

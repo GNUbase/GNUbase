@@ -6,7 +6,12 @@ add_library(gnubase-platform STATIC
 	audio/device.h
 	audio/dummydevice.cpp audio/dummydevice.h
 	crashhandler.cpp crashhandler.h
+	hosttime.h
 	log.cpp log.h
+	midi/backends.cpp
+	midi/dummyport.cpp midi/dummyport.h
+	midi/inputqueue.h
+	midi/port.h
 	rt/denormals.cpp rt/denormals.h
 	rt/mpmcqueue.h
 	rt/realtime.cpp rt/realtime.h

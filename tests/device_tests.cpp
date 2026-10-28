@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "platform/audio/dummydevice.h"
+#include "platform/hosttime.h"
 #include "platform/rt/realtime.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -30,7 +31,9 @@ namespace
 			bool ok = gnubase::rt::isRealtimeContext() && block.frames >= 1 && block.frames <= m_format.blockSize &&
 				block.midiOut.empty();
 			if (m_blocks > 0)
-				ok = ok && block.position == m_next;
+				ok = ok && block.position == m_next && block.time >= m_lastTime;
+			const gnubase::HostTime now = gnubase::hostTime();
+			ok = ok && block.time > now - g_second && block.time < now + g_second; // on the host clock
 			for (int c = 0; c < m_format.inputChannels; ++c)
 				ok = ok && block.inputs[c] != nullptr;
 			for (int c = 0; c < m_format.outputChannels; ++c)
@@ -39,6 +42,7 @@ namespace
 			if (!ok)
 				m_violations.fetch_add(1, std::memory_order_relaxed);
 			m_next = block.position + block.frames;
+			m_lastTime = block.time;
 			m_blocks.fetch_add(1, std::memory_order_release);
 		}
 
@@ -61,7 +65,10 @@ namespace
 
 	private:
 		DeviceFormat m_format;
+		static constexpr gnubase::HostTime g_second = 1000000000;
+
 		uint64_t m_next = 0;
+		gnubase::HostTime m_lastTime = 0;
 		std::atomic<size_t> m_blocks{0};
 		std::atomic<size_t> m_violations{0};
 	};
