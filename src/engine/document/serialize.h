@@ -36,6 +36,17 @@ namespace gnubase::engine
 	Controller controllerFromJson(const Json& json);
 	Json toJson(const MidiPart& part);
 	Json toJson(const Marker& marker);
+	const char* automationTargetTypeName(AutomationTargetType type);
+	std::optional<AutomationTargetType> automationTargetTypeFromName(const std::string& name);
+	const char* automationShapeName(AutomationShape shape);
+	std::optional<AutomationShape> automationShapeFromName(const std::string& name);
+	// {"type": ..., plus "parameter" for instrument, "number" and "channel" for controller, "channel" for pitchBend
+	// and channelPressure}.
+	Json toJson(const AutomationTarget& target);
+	// The inverse of toJson(const AutomationTarget&), without checking the values.
+	AutomationTarget automationTargetFromJson(const Json& json);
+	Json toJson(const AutomationPoint& point);
+	Json toJson(const AutomationLane& lane); // with its points, sorted by position
 
 	// The whole project, with the tracks from top to bottom. The id counter is left out: undo doesn't restore it,
 	// so that ids stay unique.

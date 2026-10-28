@@ -38,6 +38,7 @@ namespace gnubase::engine
 		// Registers a command that manages the project or its history and records no undo step.
 		static void addControl(Engine& engine, CommandInfo info, std::function<Json(CommandContext& context)> handler);
 
+		void registerAutomationCommands(Engine& engine);
 		void registerHistoryCommands(Engine& engine);
 		void record(std::string action, const Project& before, CommandContext& context);
 		Json undoOrRedo(CommandContext& context, Direction direction);
@@ -55,6 +56,7 @@ namespace gnubase::engine
 		History m_history;
 		std::map<std::string, Edit> m_edits; // the commands a transaction can run
 		uint64_t m_revision = 0;
+		bool m_automationFollowsEvents = false; // a setting, not part of the project
 		rt::SnapshotPublisher<RenderSnapshot> m_snapshots;
 	};
 }

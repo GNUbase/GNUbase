@@ -36,6 +36,29 @@ namespace gnubase::engine
 			{ControllerType::SysEx, "sysEx"},
 		};
 
+		constexpr struct
+		{
+			AutomationTargetType type;
+			const char* name;
+		} g_automationTargetNames[] = {
+			{AutomationTargetType::Volume, "volume"},
+			{AutomationTargetType::Pan, "pan"},
+			{AutomationTargetType::Instrument, "instrument"},
+			{AutomationTargetType::Controller, "controller"},
+			{AutomationTargetType::PitchBend, "pitchBend"},
+			{AutomationTargetType::ChannelPressure, "channelPressure"},
+		};
+
+		constexpr struct
+		{
+			AutomationShape shape;
+			const char* name;
+		} g_automationShapeNames[] = {
+			{AutomationShape::Step, "step"},
+			{AutomationShape::Linear, "linear"},
+			{AutomationShape::Curve, "curve"},
+		};
+
 		Json colorJson(const std::string& color)
 		{
 			return color.empty() ? Json(nullptr) : Json(color);
@@ -87,6 +110,38 @@ namespace gnubase::engine
 		return std::nullopt;
 	}
 
+	const char* automationTargetTypeName(AutomationTargetType type)
+	{
+		for (const auto& entry : g_automationTargetNames)
+			if (entry.type == type)
+				return entry.name;
+		return "volume"; // not reached: every type is in the table
+	}
+
+	std::optional<AutomationTargetType> automationTargetTypeFromName(const std::string& name)
+	{
+		for (const auto& entry : g_automationTargetNames)
+			if (name == entry.name)
+				return entry.type;
+		return std::nullopt;
+	}
+
+	const char* automationShapeName(AutomationShape shape)
+	{
+		for (const auto& entry : g_automationShapeNames)
+			if (entry.shape == shape)
+				return entry.name;
+		return "linear"; // not reached: every shape is in the table
+	}
+
+	std::optional<AutomationShape> automationShapeFromName(const std::string& name)
+	{
+		for (const auto& entry : g_automationShapeNames)
+			if (name == entry.name)
+				return entry.shape;
+		return std::nullopt;
+	}
+
 	const char* timeBaseName(time::TimeBase base)
 	{
 		return base == time::TimeBase::Musical ? "musical" : "linear";
@@ -118,7 +173,8 @@ namespace gnubase::engine
 	Json toJson(const Channel& channel)
 	{
 		return {{"id", channel.id}, {"track", channel.track}, {"channels", channel.channels}, {"input", channel.input},
-			{"output", channel.output}, {"instrument", channel.instrument}};
+			{"output", channel.output}, {"instrument", channel.instrument}, {"volume", channel.volume},
+			{"pan", channel.pan}};
 	}
 
 	Json toJson(const MediaFile& media)
@@ -202,6 +258,63 @@ namespace gnubase::engine
 			{"color", colorJson(marker.color)}};
 	}
 
+	Json toJson(const AutomationTarget& target)
+	{
+		Json json = {{"type", automationTargetTypeName(target.type)}};
+		switch (target.type)
+		{
+		case AutomationTargetType::Volume:
+		case AutomationTargetType::Pan:
+			break;
+		case AutomationTargetType::Instrument:
+			json["parameter"] = target.parameter;
+			break;
+		case AutomationTargetType::Controller:
+			json["number"] = target.number;
+			json["channel"] = target.channel;
+			break;
+		case AutomationTargetType::PitchBend:
+		case AutomationTargetType::ChannelPressure:
+			json["channel"] = target.channel;
+			break;
+		}
+		return json;
+	}
+
+	AutomationTarget automationTargetFromJson(const Json& json)
+	{
+		AutomationTarget target;
+		target.type = automationTargetTypeFromName(json.at("type").get<std::string>()).value_or(target.type);
+		target.parameter = json.value("parameter", uint32_t{0});
+		target.number = json.value("number", uint8_t{0});
+		target.channel = json.value("channel", uint8_t{0});
+		return target;
+	}
+
+	Json toJson(const AutomationPoint& point)
+	{
+		Json json = {{"id", point.id}, {"position", point.position}, {"value", point.value},
+			{"shape", automationShapeName(point.shape)}};
+		if (point.shape == AutomationShape::Curve)
+			json["curve"] = point.curve;
+		return json;
+	}
+
+	Json toJson(const AutomationLane& lane)
+	{
+		std::vector<const AutomationPoint*> points;
+		points.reserve(lane.points.size());
+		for (const auto& [id, point] : lane.points)
+			points.push_back(&point);
+		std::stable_sort(points.begin(), points.end(),
+			[](const AutomationPoint* a, const AutomationPoint* b) { return a->position < b->position; });
+		Json list = Json::array();
+		for (const AutomationPoint* point : points)
+			list.push_back(toJson(*point));
+		return {{"id", lane.id}, {"track", lane.track}, {"target", toJson(lane.target)}, {"read", lane.read},
+			{"points", std::move(list)}};
+	}
+
 	Json toJson(const Project& project)
 	{
 		Json busses = Json::array();
@@ -221,7 +334,8 @@ namespace gnubase::engine
 			{"signatures", signatures}, {"busses", busses}, {"tracks", tracks},
 			{"channels", toJsonArray(project.channels)}, {"media", toJsonArray(project.media)},
 			{"clips", toJsonArray(project.clips)}, {"audioEvents", toJsonArray(project.audioEvents)},
-			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)}};
+			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
+			{"automation", toJsonArray(project.automation)}};
 	}
 
 	Project projectFromJson(const Json& json)
@@ -264,9 +378,10 @@ namespace gnubase::engine
 		for (const Json& item : json.at("channels"))
 		{
 			const auto id = item.at("id").get<ObjectId>();
+			// Files from before instruments and channel volume have none.
 			project.channels[id] = {id, item.at("track").get<ObjectId>(), item.at("channels").get<int>(),
 				item.at("input").get<ObjectId>(), item.at("output").get<ObjectId>(),
-				item.value("instrument", std::string())};
+				item.value("instrument", std::string()), item.value("volume", 0.0), item.value("pan", 0.0)};
 		}
 		for (const Json& item : json.at("media"))
 		{
@@ -327,6 +442,25 @@ namespace gnubase::engine
 			project.markers[id] = {id, item.at("position").get<time::Ticks>(), item.at("name").get<std::string>(),
 				colorFrom(item.at("color"))};
 		}
+		for (const Json& item : json.value("automation", Json::array()))
+		{
+			AutomationLane lane;
+			lane.id = item.at("id").get<ObjectId>();
+			lane.track = item.at("track").get<ObjectId>();
+			lane.target = automationTargetFromJson(item.at("target"));
+			lane.read = item.at("read").get<bool>();
+			for (const Json& p : item.at("points"))
+			{
+				AutomationPoint point;
+				point.id = p.at("id").get<ObjectId>();
+				point.position = p.at("position").get<time::Ticks>();
+				point.value = p.at("value").get<double>();
+				point.shape = automationShapeFromName(p.at("shape").get<std::string>()).value_or(point.shape);
+				point.curve = p.value("curve", 0.0);
+				lane.points[point.id] = point;
+			}
+			project.automation[lane.id] = std::move(lane);
+		}
 		// Without a counter, ids continue after the highest one.
 		ObjectId highest = 0;
 		const auto see = [&highest](ObjectId id) { highest = std::max(highest, id); };
@@ -352,6 +486,12 @@ namespace gnubase::engine
 		}
 		for (const auto& [id, marker] : project.markers)
 			see(id);
+		for (const auto& [id, lane] : project.automation)
+		{
+			see(id);
+			for (const auto& [pointId, point] : lane.points)
+				see(pointId);
+		}
 		project.nextId = std::max(json.value("nextId", ObjectId{0}), highest + 1);
 		return project;
 	}

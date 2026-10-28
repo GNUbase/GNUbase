@@ -41,6 +41,11 @@ namespace gnubase::engine
 		}
 	}
 
+	double volumeGain(double decibels)
+	{
+		return std::pow(10.0, decibels / 20.0);
+	}
+
 	std::unique_ptr<const RenderSnapshot> compile(const Project& project, uint64_t revision)
 	{
 		auto snapshot = std::make_unique<RenderSnapshot>();
@@ -76,6 +81,8 @@ namespace gnubase::engine
 			render.type = track.type;
 			render.channels = channel.channels;
 			render.instrument = channel.instrument;
+			render.volume = volumeGain(channel.volume);
+			render.pan = channel.pan;
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;
 			snapshot->channels.push_back(std::move(render));
@@ -100,6 +107,22 @@ namespace gnubase::engine
 		}
 		for (const auto& [id, part] : project.midiParts)
 			compilePart(project, part, snapshot->channels[trackChannel.at(part.track)]);
+
+		for (const auto& [id, lane] : project.automation)
+		{
+			const auto channel = trackChannel.find(lane.track);
+			if (!lane.read || lane.points.empty() || channel == trackChannel.end())
+				continue;
+			RenderAutomationLane render;
+			render.target = lane.target;
+			for (const auto& [pointId, point] : lane.points)
+				render.points.push_back({toSamples(project, point.position),
+					lane.target.type == AutomationTargetType::Volume ? volumeGain(point.value) : point.value,
+					point.shape, point.curve});
+			std::stable_sort(render.points.begin(), render.points.end(),
+				[](const RenderAutomationPoint& a, const RenderAutomationPoint& b) { return a.position < b.position; });
+			snapshot->channels[static_cast<size_t>(channel->second)].automation.push_back(std::move(render));
+		}
 
 		for (RenderChannel& channel : snapshot->channels)
 		{

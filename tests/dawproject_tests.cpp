@@ -147,6 +147,38 @@ namespace
 						{{"position", 40}, {"type", "program"}, {"number", 5}, {"bank", 129}},
 						{{"position", 50}, {"type", "sysEx"}, {"data", {0xF0, 0x43, 0x10, 0x4C, 0xF7}}}}}});
 		run(client, "midiPart.add", {{"track", idOf(midi, "track")}, {"position", 0}, {"length", g_ticksPerQuarter}});
+
+		// Channel volume and pan, and automation of each kind.
+		run(client, "channel.set", {{"channel", vocals.at("channel").at("id")}, {"volume", -4.5}});
+		run(client, "channel.set", {{"channel", piano.at("channel").at("id")}, {"volume", 3.0}, {"pan", -0.25}});
+		run(client, "channel.set", {{"channel", piano.at("channel").at("id")}, {"instrument", "testSynth"}});
+		const auto lane = [&client](const Json& track, const Json& target, bool read = true)
+		{
+			return idOf(run(client, "automationLane.add",
+							{{"track", idOf(track, "track")}, {"target", target}, {"read", read}}),
+				"lane");
+		};
+		run(client, "automationPoint.add",
+			{{"lane", lane(vocals, {{"type", "volume"}})},
+				{"points",
+					{{{"position", 0}, {"value", -20.0}, {"shape", "step"}},
+						{{"position", g_ticksPerQuarter}, {"value", -6.0}, {"shape", "linear"}},
+						{{"position", 2 * g_ticksPerQuarter}, {"value", 0.0}, {"shape", "curve"}, {"curve", 0.4}},
+						{{"position", 3 * g_ticksPerQuarter}, {"value", -144.0}}}}});
+		run(client, "automationPoint.add",
+			{{"lane", lane(piano, {{"type", "pan"}})},
+				{"points",
+					{{{"position", 0}, {"value", -1.0}}, {{"position", 4 * g_ticksPerQuarter}, {"value", 0.5}}}}});
+		run(client, "automationPoint.add",
+			{{"lane", lane(piano, {{"type", "instrument"}, {"parameter", 0}})},
+				{"points", {{{"position", 0}, {"value", 0.75}}}}});
+		run(client, "automationPoint.add",
+			{{"lane", lane(midi, {{"type", "controller"}, {"number", 11}, {"channel", 1}})},
+				{"points",
+					{{{"position", 0}, {"value", 0.25}, {"shape", "step"}},
+						{{"position", g_ticksPerQuarter / 2}, {"value", 1.0}}}}});
+		run(client, "automationPoint.add",
+			{{"lane", lane(reverb, {{"type", "pan"}}, false)}, {"points", {{{"position", 0}, {"value", 0.5}}}}});
 	}
 
 	// The README's example project, exported from Bitwig Studio 5.0 (https://github.com/bitwig/dawproject, MIT).
@@ -428,6 +460,43 @@ TEST_CASE("without GNUbase's entry, a project is read from project.xml", "[integ
 	CHECK(std::abs(bend.at("value").get<double>() - 0.75) < 1e-9);
 	CHECK(std::abs(withId(part.at("controllers"), "type", "channelPressure").at("value").get<double>() - 0.5) < 1e-9);
 	CHECK(withId(part.at("controllers"), "type", "polyPressure").at("number") == 61);
+
+	// Channel volume and pan, and the automation DAWproject has: volume, pan and MIDI controllers. Instrument
+	// parameters wait for plugin devices; the read state isn't in project.xml.
+	CHECK(std::abs(channelOf("Vocals").at("volume").get<double>() + 4.5) < 1e-9);
+	CHECK(std::abs(channelOf("Piano").at("volume").get<double>() - 3.0) < 1e-9);
+	CHECK(std::abs(channelOf("Piano").at("pan").get<double>() + 0.25) < 1e-9);
+	const Json& lanes = after.at("automation");
+	REQUIRE(lanes.size() == 4);
+	const auto laneOf = [&](const std::string& track, const std::string& type)
+	{
+		const ObjectId id = withId(after.at("tracks"), "name", track).at("id").get<ObjectId>();
+		Json found;
+		for (const Json& lane : lanes)
+			if (lane.at("track") == id && lane.at("target").at("type") == type)
+				found = lane;
+		INFO(type << " lane on " << track);
+		REQUIRE(found.is_object());
+		return found;
+	};
+	const Json volume = laneOf("Vocals", "volume");
+	const Json& points = volume.at("points");
+	REQUIRE(points.size() == 3 + 8); // the curve in eight straight pieces
+	CHECK(points[0].at("shape") == "step");
+	CHECK(std::abs(points[0].at("value").get<double>() + 20.0) < 1e-9);
+	CHECK(std::abs(points[1].at("position").get<int64_t>() - g_ticksPerQuarter) <= 1); // through seconds
+	CHECK(std::abs(points[1].at("value").get<double>() + 6.0) < 1e-9);
+	CHECK(points[1].at("shape") == "linear");
+	CHECK(points.back().at("value") == -144.0);
+	const Json pan = laneOf("Piano", "pan");
+	CHECK(pan.at("points")[0].at("value") == -1.0);
+	CHECK(pan.at("points")[1].at("position") == 4 * g_ticksPerQuarter);
+	CHECK(std::abs(pan.at("points")[1].at("value").get<double>() - 0.5) < 1e-9);
+	const Json controller = laneOf("Strings", "controller");
+	CHECK(controller.at("target") == Json{{"type", "controller"}, {"number", 11}, {"channel", 1}});
+	REQUIRE(controller.at("points").size() == 2);
+	CHECK(controller.at("points")[1].at("position") == g_ticksPerQuarter / 2);
+	CHECK(laneOf("Reverb", "pan").at("read") == true);
 }
 
 TEST_CASE("a project exported from Bitwig Studio loads", "[integration]")

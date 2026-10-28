@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/automation.h"
 #include "engine/audio/playback.h"
 #include "engine/audio/sequencer.h"
 #include "engine/audio/transport.h"
@@ -101,6 +102,8 @@ namespace gnubase::engine
 		void stopDevice();
 		// Gives MIDI and instrument channels their sequencers and instruments.
 		void attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
+		// Puts every channel's processor into a channel strip with the channel's fader and automation.
+		void attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
 
 		rt::SnapshotPublisher<RenderSnapshot>& m_snapshots;
 		uint64_t m_revision = 0;
@@ -119,8 +122,9 @@ namespace gnubase::engine
 			std::set<ObjectId> sources; // the MIDI channels routed to it
 			std::shared_ptr<InstrumentChannel> channel;
 		};
-		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers; // per MIDI and instrument channel
-		std::map<ObjectId, Instrument> m_instruments;                    // per instrument channel
+		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers;   // per MIDI and instrument channel
+		std::map<ObjectId, Instrument> m_instruments;                      // per instrument channel
+		std::map<ObjectId, std::shared_ptr<ChannelState>> m_channelStates; // per channel
 
 		std::unique_ptr<rt::SnapshotPublisher<Program>> m_programs;
 		Transport m_transport; // advanced by the audio thread

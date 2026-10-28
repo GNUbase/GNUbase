@@ -32,6 +32,9 @@ namespace gnubase::engine::graph
 		uint32_t value = 0;            // 0-4294967295; see Type
 		uint32_t parameter = 0;        // parameter changes: the processor's parameter id
 		double parameterValue = 0.0;   // parameter changes: the new value
+		uint32_t ramp = 0;             // parameter changes: frames over which the value moves in a straight line from
+									   // the current one to the new one, the frame at offset still having the current
+									   // one; 0 jumps. Processors that don't glide take the new value at once.
 		const uint8_t* data = nullptr; // SysEx; valid during the block
 		uint32_t size = 0;
 	};

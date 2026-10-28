@@ -272,6 +272,118 @@ Returns:
 
 - `event`: object, required
 
+### automation
+
+#### `gnubase.automation.get`
+
+The automation settings. followsEvents (default false): when an audio event or MIDI part moves, the automation of its track in its range moves with it and replaces the points where it lands.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `followsEvents`: boolean, required
+
+#### `gnubase.automation.set`
+
+Changes the automation settings (see automation.get). A setting, so it stays when a new project starts.
+
+Parameters:
+
+- `followsEvents`: boolean
+
+Returns:
+
+- `followsEvents`: boolean, required
+
+### automationLane
+
+#### `gnubase.automationLane.add`
+
+Adds an automation lane to a track: the curve of one parameter. target.type says which: volume (the channel's fader, in dB) and pan (-1 to 1) on tracks with audio channels; instrument, a parameter of an instrument track's built-in instrument (target.parameter, an id from processor.list, in its range); controller (target.number 0-127), pitchBend (0.5 is no bend) and channelPressure, all 0 to 1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). A track has one lane per target. read (default true): the curve plays; without it, or without points, the parameter keeps its static value.
+
+Parameters:
+
+- `read`: boolean
+- `target`: object, required
+- `track`: integer, required
+
+Returns:
+
+- `lane`: object, required
+
+#### `gnubase.automationLane.list`
+
+The automation lanes of a track, or of every track in track order, with their points sorted by position.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `track`: integer
+
+Returns:
+
+- `lanes`: array, required
+
+#### `gnubase.automationLane.remove`
+
+Removes an automation lane with its points.
+
+Parameters:
+
+- `lane`: integer, required
+
+#### `gnubase.automationLane.set`
+
+Turns reading an automation lane on or off.
+
+Parameters:
+
+- `lane`: integer, required
+- `read`: boolean
+
+Returns:
+
+- `lane`: object, required
+
+### automationPoint
+
+#### `gnubase.automationPoint.add`
+
+Adds points to an automation lane: position in ticks (musical time, so automation follows tempo changes), value in the target's unit, shape of the curve to the next point (step, linear or curve; default linear) and for curves the bend, curve, from -1 to 1 (above 0 the value moves fast at first). Before the first point the curve has its value, after the last point the last one's; points at one position make a jump. A ramp of volume moves the gain in a straight line.
+
+Parameters:
+
+- `lane`: integer, required
+- `points`: array of object, required
+
+Returns:
+
+- `points`: array, required
+
+#### `gnubase.automationPoint.remove`
+
+Removes points from an automation lane.
+
+Parameters:
+
+- `lane`: integer, required
+- `points`: array of integer, required
+
+#### `gnubase.automationPoint.set`
+
+Changes points of an automation lane: their position, value, shape or curve.
+
+Parameters:
+
+- `lane`: integer, required
+- `points`: array of object, required
+
+Returns:
+
+- `points`: array, required
+
 ### bus
 
 #### `gnubase.bus.add`
@@ -313,7 +425,7 @@ Returns:
 
 #### `gnubase.channel.set`
 
-Changes a channel's audio channels, input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none.
+Changes a channel's audio channels, input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 to 6 (default 0); pan is a stereo channel's balance from -1 (left) to 1 (right). Automation of volume and pan overrides them while it plays.
 
 Parameters:
 
@@ -322,6 +434,8 @@ Parameters:
 - `input`: integer
 - `instrument`: string
 - `output`: integer
+- `pan`: number
+- `volume`: number
 
 Returns:
 
