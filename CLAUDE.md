@@ -25,6 +25,7 @@ Details and reasoning (processes, modules, threads, engine API, IPC) are in [doc
 - Window management: SDL3. UI: RmlUi with its Lua plugin (Lua 5.4). Both are GNUbase forks (github.com/GNUbase) included as git submodules in `ext/`.
 - Text: FreeType with bundled free fonts (SIL OFL or Apache-2.0, e.g. from Google Fonts), license files shipped next to the fonts.
 - Graphics: icons and UI graphics are SVG, rendered by LunaSVG through RmlUi's SVG plugin, so they stay sharp at every UI scale. Bitmaps only where unavoidable.
+- UI sizes: lay out the UI in `dp` (RmlUi's density-independent pixels), not `px`: fonts, spacing, borders, icon and widget sizes. Scaling for HiDPI displays and a user-chosen UI scale then only changes the context's dp ratio (#48, #53). Use `px` only where exactly one device pixel is meant, such as hairline separators.
 - Audio: ASIO and WASAPI (Windows), CoreAudio (macOS), PipeWire and JACK (Linux), plus a dummy device for tests and headless runs.
 - Plugin bridges over the same IPC: 32-bit plugins (Windows, Linux), x86-64 plugins on Apple Silicon (Rosetta) and on Windows ARM64 (emulation).
 - Third-party code: pinned git submodules in `ext/`, GPLv3-compatible licenses only, each listed in `docs/third-party.md`.
