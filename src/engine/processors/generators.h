@@ -69,4 +69,12 @@ namespace gnubase::engine::processors
 		uint64_t m_period = 48000; // samples between impulses
 		uint64_t m_untilNext = 0;  // samples until the next impulse
 	};
+
+	// Each frame's project position in samples while the transport plays, -1 while it is stopped, so tests can check
+	// where every frame played.
+	class PositionProbe : public graph::Processor
+	{
+	public:
+		void process(const graph::ProcessContext& context) noexcept override;
+	};
 }

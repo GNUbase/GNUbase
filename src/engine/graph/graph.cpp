@@ -170,7 +170,7 @@ namespace gnubase::engine::graph
 		return m_eventsIn[static_cast<size_t>(node)];
 	}
 
-	void CompiledGraph::process(uint32_t frames) const noexcept
+	void CompiledGraph::process(uint32_t frames, const TransportBlock& transport) const noexcept
 	{
 		GNUBASE_ASSERT(frames <= m_maxFrames);
 		frames = std::min(frames, m_maxFrames);
@@ -193,7 +193,7 @@ namespace gnubase::engine::graph
 			EventBuffer& eventsOut = m_eventsOut[i];
 			eventsOut.clear();
 			if (node.processor != nullptr)
-				node.processor->process({audio, node.channels, frames, eventsIn, eventsOut});
+				node.processor->process({audio, node.channels, frames, eventsIn, eventsOut, transport});
 			else
 				for (const ProcessEvent& event : eventsIn)
 					eventsOut.add(event);

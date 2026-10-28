@@ -9,7 +9,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <string>
+#include <utility>
 
 namespace gnubase::engine
 {
@@ -25,6 +27,16 @@ namespace gnubase::engine
 				"position": {"type": "integer"}, "capturedFrames": {"type": "integer"},
 				"droppedFrames": {"type": "integer"}},
 			"required": ["device", "running", "position", "capturedFrames", "droppedFrames"]})");
+		}
+
+		Json transportSchema()
+		{
+			return Json::parse(R"({"type": "object",
+			"properties": {"playing": {"type": "boolean"}, "position": {"type": "integer"},
+				"left": {"type": "integer"}, "right": {"type": "integer"}, "cycle": {"type": "boolean"},
+				"startMode": {"type": "string", "enum": ["cursor", "cycleStart"]},
+				"returnToStart": {"type": "boolean"}},
+			"required": ["playing", "position", "left", "right", "cycle", "startMode", "returnToStart"]})");
 		}
 
 		Json noParameters()
@@ -114,7 +126,7 @@ namespace gnubase::engine
 					std::memset(bus[c], 0, bytes);
 			}
 		}
-		program.graph.process(block.frames);
+		program.graph.process(block.frames, m_transport.advance(block.frames));
 		for (const BusLink& link : program.outputs)
 		{
 			float* const* bus = program.graph.audio(link.node);
@@ -171,7 +183,8 @@ namespace gnubase::engine
 			generator = processors::createBuiltin(id);
 			generator->prepareFor(format.sampleRate, format.blockSize);
 			m_generatorOut.clear();
-			generator->process({nullptr, 0, 0, settings, m_generatorOut}); // applies the parameters
+			generator->process(
+				{nullptr, 0, 0, settings, m_generatorOut, graph::TransportBlock{}}); // applies the parameters
 		}
 
 		if (m_device)
@@ -186,7 +199,8 @@ namespace gnubase::engine
 				[this](float* const* channels, int count, uint32_t frames, uint64_t /*position*/)
 				{
 					m_generatorOut.clear();
-					m_generator->process({channels, count, frames, m_generatorEvents, m_generatorOut});
+					m_generator->process(
+						{channels, count, frames, m_generatorEvents, m_generatorOut, graph::TransportBlock{}});
 				});
 		rebuild();
 	}
@@ -293,5 +307,160 @@ namespace gnubase::engine
 					m_device->captured(
 						static_cast<int>(channel), static_cast<size_t>(start), static_cast<size_t>(frames))}};
 			});
+		registerTransportCommands(engine);
+	}
+
+	void AudioEngine::sent(bool accepted)
+	{
+		require(accepted, "the transport is busy; try again");
+		if (!m_device || !m_device->running())
+			m_transport.update(); // no audio thread applies the request
+	}
+
+	Json AudioEngine::transportStatus() const
+	{
+		const TransportSettings& settings = m_transport.settings();
+		return {{"playing", m_transport.playing()}, {"position", m_transport.position()}, {"left", settings.left},
+			{"right", settings.right}, {"cycle", settings.cycle},
+			{"startMode", settings.startMode == StartMode::CycleStart ? "cycleStart" : "cursor"},
+			{"returnToStart", settings.returnToStart}};
+	}
+
+	time::Samples AudioEngine::projectEnd() const
+	{
+		const RenderSnapshot& snapshot = m_snapshots.latest();
+		time::Samples end = 0;
+		for (const RenderChannel& channel : snapshot.channels)
+		{
+			for (const RenderAudioEvent& event : channel.audioEvents)
+			{
+				// The event's length is in media frames; the project may run at another rate.
+				double ratio = 1.0;
+				if (event.media >= 0 && static_cast<size_t>(event.media) < snapshot.media.size())
+					ratio = snapshot.sampleRate / snapshot.media[static_cast<size_t>(event.media)].sampleRate;
+				end = std::max(end,
+					event.start + static_cast<time::Samples>(std::llround(static_cast<double>(event.length) * ratio)));
+			}
+			for (const RenderNote& note : channel.notes)
+				end = std::max(end, note.end);
+			for (const RenderController& controller : channel.controllers)
+				end = std::max(end, controller.position);
+		}
+		return end;
+	}
+
+	void AudioEngine::locate(const Json& parameters)
+	{
+		time::Samples position = 0;
+		if (const auto value = parameters.find("position"); value != parameters.end())
+		{
+			position = value->get<time::Samples>();
+			require(position >= 0, "position must not be negative");
+		}
+		else if (const auto target = parameters.find("target"); target != parameters.end())
+		{
+			const auto name = target->get<std::string>();
+			if (name == "projectStart")
+				position = 0;
+			else if (name == "projectEnd")
+				position = projectEnd();
+			else if (name == "leftLocator")
+				position = m_transport.settings().left;
+			else if (name == "rightLocator")
+				position = m_transport.settings().right;
+			else
+				throw CommandError("no target " + name + "; use projectStart, projectEnd, leftLocator or rightLocator");
+		}
+		else
+		{
+			throw CommandError("give a position or target");
+		}
+		sent(m_transport.locate(position));
+	}
+
+	void AudioEngine::setTransport(const Json& parameters)
+	{
+		TransportSettings settings = m_transport.settings();
+		const auto locator = [this, &parameters](const std::string& name, time::Samples& value)
+		{
+			const auto found = parameters.find(name);
+			if (found == parameters.end())
+				return;
+			if (found->is_string())
+			{
+				require(found->get<std::string>() == "cursor", name + " must be a position or \"cursor\"");
+				value = m_transport.position();
+				return;
+			}
+			value = found->get<time::Samples>();
+			require(value >= 0, name + " must not be negative");
+		};
+		locator("left", settings.left);
+		locator("right", settings.right);
+		settings.cycle = parameters.value("cycle", settings.cycle);
+		settings.returnToStart = parameters.value("returnToStart", settings.returnToStart);
+		if (const auto mode = parameters.find("startMode"); mode != parameters.end())
+		{
+			const auto name = mode->get<std::string>();
+			require(name == "cursor" || name == "cycleStart", "startMode must be cursor or cycleStart");
+			settings.startMode = name == "cycleStart" ? StartMode::CycleStart : StartMode::Cursor;
+		}
+		sent(m_transport.set(settings));
+	}
+
+	void AudioEngine::registerTransportCommands(Engine& engine)
+	{
+		// Every transport command returns the transport's state and announces it with transport.changed. While the
+		// device runs, the audio thread applies the request at its next block, so the position may not show it yet.
+		const auto command = [this, &engine](const char* name, const char* description, const char* parameters,
+								 std::function<void(const Json&)> handle)
+		{
+			engine.registerCommand(
+				{name, 1, description, parameters != nullptr ? Json::parse(parameters) : noParameters(),
+					transportSchema(), false},
+				[this, handle = std::move(handle)](CommandContext& context)
+				{
+					handle(context.parameters());
+					Json result = transportStatus();
+					context.emit("transport.changed", result);
+					return result;
+				});
+		};
+		command("transport.play",
+			"Starts playback from the project cursor, or from the left locator if startMode is cycleStart. Does "
+			"nothing while playing.",
+			nullptr, [this](const Json&) { sent(m_transport.play()); });
+		command("transport.stop",
+			"Stops playback. With returnToStart the cursor goes back to where playback started or was last located "
+			"to.",
+			nullptr, [this](const Json&) { sent(m_transport.stop()); });
+		command("transport.toggle", "Stops playback if it plays, otherwise starts it.", nullptr,
+			[this](const Json&) { sent(m_transport.playing() ? m_transport.stop() : m_transport.play()); });
+		command("transport.locate",
+			"Moves the project cursor to a position in samples, or to a target: projectStart, projectEnd (the end of "
+			"the last event), leftLocator or rightLocator. While playing, playback continues from there.",
+			R"({"type": "object", "additionalProperties": false, "properties": {"position": {"type": "integer"},
+				"target": {"type": "string"}}})",
+			[this](const Json& parameters) { locate(parameters); });
+		command("transport.set",
+			"Changes the given settings and keeps the rest. left and right: the locators, in samples, or \"cursor\" "
+			"for the cursor position. cycle: cycle playback between the locators; with the right locator before the "
+			"left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). "
+			"returnToStart: on stop, return to where playback started.",
+			R"({"type": "object", "additionalProperties": false, "properties": {
+				"left": {"type": ["integer", "string"]}, "right": {"type": ["integer", "string"]},
+				"cycle": {"type": "boolean"}, "startMode": {"type": "string"}, "returnToStart": {"type": "boolean"}}})",
+			[this](const Json& parameters) { setTransport(parameters); });
+		command("transport.exchangeLocators", "Swaps the left and right locators.", nullptr,
+			[this](const Json&)
+			{
+				TransportSettings settings = m_transport.settings();
+				std::swap(settings.left, settings.right);
+				sent(m_transport.set(settings));
+			});
+		engine.registerCommand(
+			{"transport.get", 1, "Whether playback runs, the project cursor in samples, the locators and the modes.",
+				noParameters(), transportSchema(), true},
+			[this](CommandContext&) { return transportStatus(); });
 	}
 }

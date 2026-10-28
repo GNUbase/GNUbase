@@ -3,10 +3,29 @@
 
 #include "engine/graph/events.h"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace gnubase::engine::graph
 {
+	// Frames of a block that play consecutive project positions.
+	struct TransportSegment
+	{
+		uint32_t offset = 0;  // the segment's first frame in the block
+		uint32_t frames = 0;  // at least 1
+		int64_t position = 0; // the project position, in samples, of the segment's first frame
+	};
+
+	// Where a block plays in the project. While playing, the segments cover the block in order; a new segment starts
+	// where cycle playback jumps from the right to the left locator. While stopped there are none.
+	struct TransportBlock
+	{
+		bool playing = false;
+		int64_t position = 0; // the project position of the block's first frame: the cursor while stopped
+		const TransportSegment* segments = nullptr;
+		size_t segmentCount = 0;
+	};
+
 	// What a processor gets for one block.
 	struct ProcessContext
 	{
@@ -17,6 +36,7 @@ namespace gnubase::engine::graph
 		uint32_t frames = 0;
 		const EventBuffer& eventsIn;
 		EventBuffer& eventsOut; // empty on entry; events for the nodes this one has event connections to
+		const TransportBlock& transport;
 	};
 
 	// Processes a node's audio and events on the audio thread: GNUbase's built-in processors (#20) and, until plugin

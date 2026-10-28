@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "engine/audio/transport.h"
 #include "engine/audiofile/diskstream.h"
 #include "engine/engine.h"
 #include "engine/graph/graph.h"
@@ -184,6 +185,35 @@ TEST_CASE("processing a processing graph and swapping in a new one never allocat
 	CHECK(g_violations == 0);
 }
 
+TEST_CASE("the transport applies requests and computes cycle segments without allocating", "[unit]")
+{
+	using namespace gnubase::engine;
+	Transport transport(256);
+	TransportSettings settings;
+	settings.left = 100;
+	settings.right = 101; // a jump every sample: the most segments a block can have
+	settings.cycle = true;
+	settings.returnToStart = true;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(100));
+	REQUIRE(transport.play());
+
+	const RecordViolations record;
+	size_t segments = 0;
+	for (int block = 0; block < 4; ++block)
+	{
+		const ScopedRealtimeContext realtime;
+		segments = transport.advance(256).segmentCount;
+	}
+	CHECK(segments == 256);
+	REQUIRE(transport.stop());
+	{
+		const ScopedRealtimeContext realtime;
+		transport.advance(256);
+	}
+	CHECK(g_violations == 0);
+}
+
 TEST_CASE("every built-in processor processes notes and parameter changes without allocating", "[unit]")
 {
 	using namespace gnubase::engine::graph;
@@ -218,7 +248,7 @@ TEST_CASE("every built-in processor processes notes and parameter changes withou
 			note.velocity = 0x8000;
 			eventsIn.add(note);
 			const ScopedRealtimeContext realtime;
-			processor->process({channels, 2, frames, eventsIn, eventsOut});
+			processor->process({channels, 2, frames, eventsIn, eventsOut, TransportBlock{}});
 		}
 	}
 	CHECK(g_violations == 0);
