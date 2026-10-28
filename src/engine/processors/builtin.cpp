@@ -35,6 +35,11 @@ namespace gnubase::engine::processors
 				{{"noise", "Noise generator", "White noise, the same samples every time.", false,
 					 {{Noise::Level, "Level", 0.0, 1.0, 0.5, ""}}},
 					[] { return std::make_shared<Noise>(); }},
+				{{"noteProbe", "Note probe",
+					 "An instrument for tests: each frame, how many notes are on (channel 0 and from channel 2 on) and "
+					 "the sum of their pitches (channel 1).",
+					 true, {}},
+					[] { return std::make_shared<NoteProbe>(); }},
 				{{"positionProbe", "Position probe",
 					 "Each frame's project position in samples while playing, -1 while stopped. For tests.", false, {}},
 					[] { return std::make_shared<PositionProbe>(); }},

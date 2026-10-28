@@ -23,6 +23,19 @@ namespace gnubase::engine
 			{TrackType::Effect, "effect"},
 		};
 
+		constexpr struct
+		{
+			ControllerType type;
+			const char* name;
+		} g_controllerTypeNames[] = {
+			{ControllerType::Control, "controller"},
+			{ControllerType::PitchBend, "pitchBend"},
+			{ControllerType::ChannelPressure, "channelPressure"},
+			{ControllerType::PolyPressure, "polyPressure"},
+			{ControllerType::Program, "program"},
+			{ControllerType::SysEx, "sysEx"},
+		};
+
 		Json colorJson(const std::string& color)
 		{
 			return color.empty() ? Json(nullptr) : Json(color);
@@ -53,6 +66,22 @@ namespace gnubase::engine
 	std::optional<TrackType> trackTypeFromName(const std::string& name)
 	{
 		for (const auto& entry : g_trackTypeNames)
+			if (name == entry.name)
+				return entry.type;
+		return std::nullopt;
+	}
+
+	const char* controllerTypeName(ControllerType type)
+	{
+		for (const auto& entry : g_controllerTypeNames)
+			if (entry.type == type)
+				return entry.name;
+		return "controller"; // not reached: every type is in the table
+	}
+
+	std::optional<ControllerType> controllerTypeFromName(const std::string& name)
+	{
+		for (const auto& entry : g_controllerTypeNames)
 			if (name == entry.name)
 				return entry.type;
 		return std::nullopt;
@@ -89,7 +118,7 @@ namespace gnubase::engine
 	Json toJson(const Channel& channel)
 	{
 		return {{"id", channel.id}, {"track", channel.track}, {"channels", channel.channels}, {"input", channel.input},
-			{"output", channel.output}};
+			{"output", channel.output}, {"instrument", channel.instrument}};
 	}
 
 	Json toJson(const MediaFile& media)
@@ -117,8 +146,47 @@ namespace gnubase::engine
 
 	Json toJson(const Controller& controller)
 	{
-		return {{"id", controller.id}, {"position", controller.position}, {"number", controller.number},
-			{"value", controller.value / g_maxControllerValue}, {"channel", controller.channel}};
+		Json json = {
+			{"id", controller.id}, {"position", controller.position}, {"type", controllerTypeName(controller.type)}};
+		switch (controller.type)
+		{
+		case ControllerType::Control:
+		case ControllerType::PolyPressure:
+			json["number"] = controller.number;
+			json["value"] = controller.value / g_maxControllerValue;
+			break;
+		case ControllerType::PitchBend:
+		case ControllerType::ChannelPressure:
+			json["value"] = controller.value / g_maxControllerValue;
+			break;
+		case ControllerType::Program:
+			json["number"] = controller.number;
+			if (controller.value != g_noBank)
+				json["bank"] = controller.value;
+			break;
+		case ControllerType::SysEx:
+			json["data"] = controller.data;
+			return json;
+		}
+		json["channel"] = controller.channel;
+		return json;
+	}
+
+	Controller controllerFromJson(const Json& json)
+	{
+		Controller controller;
+		controller.type =
+			controllerTypeFromName(json.value("type", std::string("controller"))).value_or(ControllerType::Control);
+		controller.number = json.value("number", uint8_t{0});
+		controller.channel = json.value("channel", uint8_t{0});
+		if (controller.type == ControllerType::Program)
+			controller.value = json.value("bank", g_noBank);
+		else if (json.contains("value"))
+			controller.value =
+				static_cast<uint32_t>(std::llround(json.at("value").get<double>() * g_maxControllerValue));
+		if (controller.type == ControllerType::SysEx)
+			controller.data = json.at("data").get<std::vector<uint8_t>>();
+		return controller;
 	}
 
 	Json toJson(const MidiPart& part)
@@ -197,7 +265,8 @@ namespace gnubase::engine
 		{
 			const auto id = item.at("id").get<ObjectId>();
 			project.channels[id] = {id, item.at("track").get<ObjectId>(), item.at("channels").get<int>(),
-				item.at("input").get<ObjectId>(), item.at("output").get<ObjectId>()};
+				item.at("input").get<ObjectId>(), item.at("output").get<ObjectId>(),
+				item.value("instrument", std::string())};
 		}
 		for (const Json& item : json.at("media"))
 		{
@@ -245,14 +314,10 @@ namespace gnubase::engine
 			}
 			for (const Json& c : item.at("controllers"))
 			{
-				Controller controller;
+				Controller controller = controllerFromJson(c);
 				controller.id = c.at("id").get<ObjectId>();
 				controller.position = c.at("position").get<time::Ticks>();
-				controller.number = c.at("number").get<uint8_t>();
-				controller.value =
-					static_cast<uint32_t>(std::llround(c.at("value").get<double>() * g_maxControllerValue));
-				controller.channel = c.at("channel").get<uint8_t>();
-				part.controllers[controller.id] = controller;
+				part.controllers[controller.id] = std::move(controller);
 			}
 			project.midiParts[part.id] = std::move(part);
 		}

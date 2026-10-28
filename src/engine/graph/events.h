@@ -7,25 +7,33 @@
 
 namespace gnubase::engine::graph
 {
-	// A note, controller or parameter change at a sample offset within one processing block.
+	// A MIDI event or parameter change at a sample offset within one processing block. MIDI values have the
+	// resolution of MIDI 2.0 (see engine/midi/midivalues.h for MIDI 1.0).
 	struct ProcessEvent
 	{
 		enum class Type : uint8_t
 		{
 			NoteOn,
 			NoteOff,
-			Controller,
+			Controller,      // key: the controller number; value
+			PitchBend,       // value: 0x80000000 is no bend
+			ChannelPressure, // value
+			PolyPressure,    // key: the pitch; value
+			Program,         // key: the program; value: the bank, or 0xFFFFFFFF for none
+			SysEx,           // data and size: the whole message, from 0xF0 to 0xF7
 			Parameter,
 		};
 
 		uint32_t offset = 0; // frame within the block
 		Type type = Type::NoteOn;
-		uint8_t channel = 0;         // MIDI channel, 0-15
-		uint8_t key = 0;             // notes: the pitch; controllers: the controller number
-		uint16_t velocity = 0;       // notes, 0-65535
-		uint32_t value = 0;          // controllers, 0-4294967295
-		uint32_t parameter = 0;      // parameter changes: the processor's parameter id
-		double parameterValue = 0.0; // parameter changes: the new value
+		uint8_t channel = 0;           // MIDI channel, 0-15
+		uint8_t key = 0;               // notes: the pitch; see Type for the others
+		uint16_t velocity = 0;         // notes, 0-65535
+		uint32_t value = 0;            // 0-4294967295; see Type
+		uint32_t parameter = 0;        // parameter changes: the processor's parameter id
+		double parameterValue = 0.0;   // parameter changes: the new value
+		const uint8_t* data = nullptr; // SysEx; valid during the block
+		uint32_t size = 0;
 	};
 
 	// The events of one block, sorted by offset. Memory is allocated in the constructor only, so adding, reading and

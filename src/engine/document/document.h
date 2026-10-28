@@ -51,9 +51,10 @@ namespace gnubase::engine
 	{
 		ObjectId id = 0;
 		ObjectId track = 0;
-		int channels = 2;    // audio channels: 1 mono, 2 stereo, more for surround; 0 for MIDI
-		ObjectId input = 0;  // audio tracks: an input bus, or 0
-		ObjectId output = 0; // an output bus or a group channel; MIDI: an instrument channel; or 0
+		int channels = 2;       // audio channels: 1 mono, 2 stereo, more for surround; 0 for MIDI
+		ObjectId input = 0;     // audio tracks: an input bus, or 0
+		ObjectId output = 0;    // an output bus or a group channel; MIDI: an instrument channel; or 0
+		std::string instrument; // instrument tracks: the built-in instrument that plays, or empty (plugins: M05)
 	};
 
 	// An audio file on disk.
@@ -101,13 +102,29 @@ namespace gnubase::engine
 		uint8_t channel = 0;   // 0-15
 	};
 
+	// The MIDI events besides notes, all held as controller events.
+	enum class ControllerType : uint8_t
+	{
+		Control,         // a control change: number is the controller
+		PitchBend,       // value: midi::g_pitchBendCenter is no bend
+		ChannelPressure, // value
+		PolyPressure,    // number is the pitch; value
+		Program,         // number is the program; value is the bank, or g_noBank
+		SysEx,           // data is the whole message, from 0xF0 to 0xF7
+	};
+
+	inline constexpr uint32_t g_noBank = 0xFFFFFFFFU;
+	inline constexpr uint32_t g_maxBank = 16383; // MIDI's bank select: 14 bits
+
 	struct Controller
 	{
 		ObjectId id = 0;
 		time::Ticks position = 0; // from the start of the part
-		uint8_t number = 0;       // 0-127
-		uint32_t value = 0;       // 0-4294967295
-		uint8_t channel = 0;      // 0-15
+		ControllerType type = ControllerType::Control;
+		uint8_t number = 0;        // 0-127
+		uint32_t value = 0;        // 0-4294967295
+		uint8_t channel = 0;       // 0-15
+		std::vector<uint8_t> data; // SysEx
 	};
 
 	// Holds notes and controllers on an instrument or MIDI track. Notes and controllers outside it are not played.
@@ -179,8 +196,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
-		return std::tie(a.id, a.track, a.channels, a.input, a.output) ==
-			std::tie(b.id, b.track, b.channels, b.input, b.output);
+		return std::tie(a.id, a.track, a.channels, a.input, a.output, a.instrument) ==
+			std::tie(b.id, b.track, b.channels, b.input, b.output, b.instrument);
 	}
 
 	inline bool operator==(const MediaFile& a, const MediaFile& b)
@@ -208,8 +225,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const Controller& a, const Controller& b)
 	{
-		return std::tie(a.id, a.position, a.number, a.value, a.channel) ==
-			std::tie(b.id, b.position, b.number, b.value, b.channel);
+		return std::tie(a.id, a.position, a.type, a.number, a.value, a.channel, a.data) ==
+			std::tie(b.id, b.position, b.type, b.number, b.value, b.channel, b.data);
 	}
 
 	// A MIDI part's own properties, without its notes and controllers.

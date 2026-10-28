@@ -18,6 +18,8 @@ namespace gnubase::engine
 
 	const char* trackTypeName(TrackType type);
 	std::optional<TrackType> trackTypeFromName(const std::string& name);
+	const char* controllerTypeName(ControllerType type);
+	std::optional<ControllerType> controllerTypeFromName(const std::string& name);
 	const char* timeBaseName(time::TimeBase base);
 	time::TimeBase timeBaseFromName(const std::string& name);
 	const char* directionName(BusDirection direction);
@@ -30,6 +32,8 @@ namespace gnubase::engine
 	Json toJson(const AudioEvent& event);
 	Json toJson(const Note& note);
 	Json toJson(const Controller& controller);
+	// A controller's type and values, without checking them; its id and position are left to the caller.
+	Controller controllerFromJson(const Json& json);
 	Json toJson(const MidiPart& part);
 	Json toJson(const Marker& marker);
 

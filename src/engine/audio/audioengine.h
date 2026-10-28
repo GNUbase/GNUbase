@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/audio/playback.h"
+#include "engine/audio/sequencer.h"
 #include "engine/audio/transport.h"
 #include "engine/graph/graph.h"
 #include "engine/schema.h"
@@ -11,8 +12,11 @@
 
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <set>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -25,7 +29,8 @@ namespace gnubase::engine
 	// device's format whenever the project's render snapshot changes, and hands it to the audio thread. On the audio
 	// thread it copies the device inputs into the input busses, processes the graph where the transport plays and
 	// copies the output busses to the device outputs. Audio tracks play their events from disk streams (Playback):
-	// offline rendering waits for the streams before every block; in real time a cue thread keeps them ahead.
+	// offline rendering waits for the streams before every block; in real time a cue thread keeps them ahead. MIDI
+	// and instrument tracks play their parts through sequencers, which last across rebuilds, as do instruments.
 	//
 	// Busses take consecutive device channels in bus order: the first input bus the first input channels, and so on.
 	// Bus channels beyond the device's are silent, device outputs no bus reaches stay silent. Choosing device ports
@@ -87,12 +92,24 @@ namespace gnubase::engine
 		void startCueing();
 		void stopCueing();
 		void stopDevice();
+		// Gives MIDI and instrument channels their sequencers and instruments.
+		void attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
 
 		rt::SnapshotPublisher<RenderSnapshot>& m_snapshots;
 		uint64_t m_revision = 0;
 
 		std::unique_ptr<audio::DummyDevice> m_device;
 		Playback m_playback; // before m_programs: their track players use it
+
+		struct Instrument
+		{
+			std::string id;             // the built-in instrument, or empty
+			std::set<ObjectId> sources; // the MIDI channels routed to it
+			std::shared_ptr<InstrumentChannel> channel;
+		};
+		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers; // per MIDI and instrument channel
+		std::map<ObjectId, Instrument> m_instruments;                    // per instrument channel
+
 		std::unique_ptr<rt::SnapshotPublisher<Program>> m_programs;
 		Transport m_transport; // advanced by the audio thread
 

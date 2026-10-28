@@ -15,6 +15,7 @@ target_link_libraries(gnubase-r8brain PUBLIC Threads::Threads)
 add_library(gnubase-engine STATIC
 	audio/audioengine.cpp audio/audioengine.h
 	audio/playback.cpp audio/playback.h
+	audio/sequencer.cpp audio/sequencer.h
 	audio/transport.cpp audio/transport.h
 	audiofile/audiofile.h
 	audiofile/diskstream.cpp audiofile/diskstream.h
@@ -32,6 +33,7 @@ add_library(gnubase-engine STATIC
 	graph/events.h
 	graph/graph.cpp graph/graph.h
 	graph/processor.h
+	midi/midivalues.cpp midi/midivalues.h
 	processors/builtin.cpp processors/builtin.h
 	processors/gainpan.cpp processors/gainpan.h
 	processors/generators.cpp processors/generators.h

@@ -12,6 +12,7 @@
 #include <cstring>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -170,6 +171,7 @@ namespace gnubase::engine
 			tracks.push_back({channel.id, std::move(playlist)});
 		}
 		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate);
+		attachMidi(snapshot, desc);
 
 		auto program = std::make_unique<Program>(desc, format.sampleRate, format.blockSize);
 		int input = 0;
@@ -193,6 +195,59 @@ namespace gnubase::engine
 			m_programs->publish(std::move(program));
 		else
 			m_programs = std::make_unique<rt::SnapshotPublisher<Program>>(std::move(program));
+	}
+
+	void AudioEngine::attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc)
+	{
+		std::map<ObjectId, std::set<ObjectId>> sources; // per instrument channel, the MIDI channels routed to it
+		for (const RenderChannel& channel : snapshot.channels)
+			if (channel.type == TrackType::Midi && channel.output.kind == RenderTarget::Kind::Channel)
+				sources[snapshot.channels[static_cast<size_t>(channel.output.index)].id].insert(channel.id);
+
+		std::map<ObjectId, std::shared_ptr<MidiSequencer>> sequencers;
+		std::map<ObjectId, Instrument> instruments;
+		for (const RenderChannel& channel : snapshot.channels)
+		{
+			if (channel.type != TrackType::Midi && channel.type != TrackType::Instrument)
+				continue;
+			const auto kept = m_sequencers.find(channel.id);
+			const std::shared_ptr<MidiSequencer> sequencer =
+				kept != m_sequencers.end() ? kept->second : std::make_shared<MidiSequencer>();
+			auto sequence = std::make_unique<MidiSequence>();
+			sequence->notes = channel.notes;
+			sequence->controllers = channel.controllers;
+			sequencer->setSequence(std::move(sequence));
+			sequencers[channel.id] = sequencer;
+
+			std::shared_ptr<graph::Processor> processor = sequencer;
+			if (channel.type == TrackType::Instrument)
+			{
+				const std::set<ObjectId>& from = sources[channel.id];
+				Instrument instrument;
+				const auto old = m_instruments.find(channel.id);
+				if (old != m_instruments.end() && old->second.id == channel.instrument)
+				{
+					instrument = old->second;
+					// A MIDI track that left can't end its notes any more.
+					if (!std::includes(from.begin(), from.end(), instrument.sources.begin(), instrument.sources.end()))
+						instrument.channel->releaseNotes();
+				}
+				else
+				{
+					instrument.id = channel.instrument;
+					instrument.channel = std::make_shared<InstrumentChannel>(sequencer,
+						channel.instrument.empty() ? nullptr : processors::createBuiltin(channel.instrument));
+				}
+				instrument.sources = from;
+				processor = instrument.channel;
+				instruments[channel.id] = instrument;
+			}
+			for (graph::NodeDesc& node : desc.nodes)
+				if (node.kind == graph::NodeKind::Channel && node.object == channel.id)
+					node.processor = processor;
+		}
+		m_sequencers = std::move(sequencers);
+		m_instruments = std::move(instruments);
 	}
 
 	void AudioEngine::process(const audio::DeviceBlock& block) noexcept
