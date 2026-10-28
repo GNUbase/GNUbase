@@ -40,6 +40,7 @@ add_library(gnubase-engine STATIC
 	processors/generators.cpp processors/generators.h
 	processors/testsynth.cpp processors/testsynth.h
 	schema.cpp schema.h
+	schematext.cpp schematext.h
 	settings/store.cpp settings/store.h
 	settings/usersettings.cpp settings/usersettings.h
 	time/signaturemap.cpp time/signaturemap.h
