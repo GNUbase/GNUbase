@@ -106,7 +106,7 @@ namespace gnubase::engine
 	Json toJson(const AudioEvent& event)
 	{
 		return {{"id", event.id}, {"track", event.track}, {"clip", event.clip}, {"position", event.position.value},
-			{"offset", event.offset}, {"length", event.length}};
+			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute}};
 	}
 
 	Json toJson(const Note& note)
@@ -220,6 +220,8 @@ namespace gnubase::engine
 			event.clip = item.at("clip").get<ObjectId>();
 			event.offset = item.at("offset").get<time::Samples>();
 			event.length = item.at("length").get<time::Samples>();
+			event.volume = item.value("volume", 0.0); // files from before event volume and mute
+			event.mute = item.value("mute", false);
 			project.audioEvents[event.id] = event;
 		}
 		for (const Json& item : json.at("midiParts"))
