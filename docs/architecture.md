@@ -211,6 +211,7 @@ flowchart LR
 - Plugin editors are windows of the host process, kept in front of and positioned relative to GNUbase's windows (#69).
 - Inside the host, every format is adapted to the **GNUbase plugin API**, modeled on CLAP: a core interface (`plugin::Plugin`, `plugin::Host`) plus extensions looked up by id, in `src/plugin`. [plugin-api.md](plugin-api.md) describes it, how each format maps onto it, and how it is split between the processes. GNUbase's own built-in plugins implement the same API but run inside the engine (#114).
 - In the engine, a plugin slot is a `graph::Processor` that hosts a `plugin::Plugin`: a built-in plugin, or a proxy that forwards to an adapter in a host process. Events (`plugin::Event`) and the transport are fixed-layout records, so the IPC copies them as they are. The engine mirrors every parameter value, so reading one never waits for a host process.
+- **Test plugins** (`tests/plugins`, #63) are GNUbase's own minimal plugins for hosting tests: gain, a synth, a latency reporter, a parameter stress plugin, crash and hang on demand, and a state blob round trip. They are built as CLAP plugins with each platform's file layout (CMake option `GNUBASE_TEST_PLUGINS`, on by default), and loader smoke tests load them through the format's own entry points. Crash and hang are only ever triggered in a plugin host process. [tests/plugins/README.md](../tests/plugins/README.md) describes each plugin and how tests use them.
 
 ## Scripting, MCP and tests
 
