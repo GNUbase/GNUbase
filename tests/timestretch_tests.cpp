@@ -182,13 +182,13 @@ TEST_CASE("modes and presets have names", "[unit]")
 	{
 		const auto preset = stretchPresetFromString(name);
 		REQUIRE(preset.has_value());
-		CHECK(toString(*preset) == name);
+		CHECK(toString(preset.value_or(StretchPreset::Quality)) == name);
 	}
 	for (const std::string& name : stretchModeNames())
 	{
 		const auto mode = stretchModeFromString(name);
 		REQUIRE(mode.has_value());
-		CHECK(toString(*mode) == name);
+		CHECK(toString(mode.value_or(StretchMode::Offline)) == name);
 	}
 	CHECK(stretchPresetNames().size() == 8);
 	CHECK(stretchPresetNames().front() == "quality");
@@ -288,7 +288,7 @@ TEST_CASE("every preset stretches and shifts", "[unit]")
 	CAPTURE(toString(mode), name);
 	const size_t frames = 48000;
 	StretchSettings settings = settingsFor(mode, 2);
-	settings.preset = *stretchPresetFromString(name);
+	settings.preset = stretchPresetFromString(name).value_or(StretchPreset::Quality);
 	settings.ratio = 1.25;
 	settings.semitones = 3.0;
 	const std::vector<float> input = sine(330.0, frames);
@@ -364,7 +364,7 @@ TEST_CASE("the real-time process path neither allocates nor blocks", "[unit]")
 	const std::string name = GENERATE(from_range(stretchPresetNames()));
 	CAPTURE(name);
 	StretchSettings settings = settingsFor(StretchMode::RealTime, 2);
-	settings.preset = *stretchPresetFromString(name);
+	settings.preset = stretchPresetFromString(name).value_or(StretchPreset::Quality);
 	settings.maxBlockFrames = 2048;
 	TimeStretcher stretcher(settings);
 	const std::vector<float> tone = harmonicTone(48000);
