@@ -4,6 +4,9 @@
 #include "platform/midi/dummyport.h"
 #include "platform/midi/inputqueue.h"
 #include "platform/midi/port.h"
+#ifdef _WIN32
+#include "platform/midi/winmm.h"
+#endif
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -76,8 +79,9 @@ namespace
 	};
 
 	// What every MIDI backend promises: the same suite runs against the dummy backend in CI and against the hardware
-	// backends locally. With a loopback (an output wired to an input of the same name), it also sends and receives.
-	void checkContract(Backend& backend, const std::string& loopback)
+	// backends locally. With a loopback, an output named sendTo wired to an input named receiveFrom, it also sends and
+	// receives.
+	void checkContract(Backend& backend, const std::string& sendTo, const std::string& receiveFrom)
 	{
 		INFO("backend " << backend.name());
 		const std::vector<PortInfo> ports = backend.ports();
@@ -99,14 +103,15 @@ namespace
 			else
 				CHECK(backend.openOutput(port.id) != nullptr);
 		}
-		if (loopback.empty())
+		if (sendTo.empty())
 			return;
 
-		INFO("loopback " << loopback);
-		const auto named = [&ports, &loopback](bool input)
+		INFO("loopback from " << sendTo << " to " << receiveFrom);
+		const auto named = [&ports, &sendTo, &receiveFrom](bool input)
 		{
 			return std::find_if(ports.begin(), ports.end(),
-				[&loopback, input](const PortInfo& port) { return port.input == input && port.name == loopback; });
+				[&name = input ? receiveFrom : sendTo, input](const PortInfo& port)
+				{ return port.input == input && port.name == name; });
 		};
 		REQUIRE(named(true) != ports.end());
 		REQUIRE(named(false) != ports.end());
@@ -205,7 +210,7 @@ TEST_CASE("the dummy MIDI backend keeps the port contract and reports loopbacks 
 	int changes = 0;
 	backend.onPortsChanged([&changes] { ++changes; });
 	CHECK(backend.ports().empty());
-	checkContract(backend, "");
+	checkContract(backend, "", "");
 
 	backend.addLoopback("Loop");
 	CHECK(changes == 1);
@@ -214,7 +219,7 @@ TEST_CASE("the dummy MIDI backend keeps the port contract and reports loopbacks 
 	CHECK(ports[0].input);
 	CHECK(!ports[1].input);
 	CHECK(ports[1].id == "Loop");
-	checkContract(backend, "Loop");
+	checkContract(backend, "Loop", "Loop");
 
 	Inbox inbox;
 	const auto input = backend.openInput("Loop", inbox.receiver());
@@ -228,14 +233,52 @@ TEST_CASE("the dummy MIDI backend keeps the port contract and reports loopbacks 
 }
 
 // Hidden: opens every MIDI port of the machine. Run it on a machine with MIDI ports: gnubase-tests "[hardware]".
-// With GNUBASE_TEST_MIDI_LOOPBACK set to the name of a loopback port (an output wired to the input of the same name),
-// it also sends and receives through it.
+// With GNUBASE_TEST_MIDI_LOOPBACK set to a loopback port's name (an output wired to the input of the same name, as
+// loopMIDI makes them), or to "output>input" (as Windows MIDI Services' "Loopback A>Loopback B"), it also sends and
+// receives through it.
 TEST_CASE("every hardware MIDI backend keeps the port contract", "[.hardware]")
 {
-	const char* loopback = std::getenv("GNUBASE_TEST_MIDI_LOOPBACK");
+	const char* variable = std::getenv("GNUBASE_TEST_MIDI_LOOPBACK");
+	const std::string loopback = variable != nullptr ? variable : "";
+	const size_t arrow = loopback.find('>');
+	const std::string sendTo = loopback.substr(0, arrow);
+	const std::string receiveFrom = arrow == std::string::npos ? loopback : loopback.substr(arrow + 1);
 	for (const std::unique_ptr<Backend>& backend : makeBackends())
 		if (backend->name() != "dummy")
-			checkContract(*backend, loopback != nullptr ? loopback : "");
+			checkContract(*backend, sendTo, receiveFrom);
+}
+
+#ifdef _WIN32
+// Only lists ports; the contract suite above opens them ("[hardware]").
+TEST_CASE("the WinMM backend lists its ports and refuses unknown ones", "[unit]")
+{
+	const std::unique_ptr<Backend> backend = makeWinmmBackend();
+	std::set<std::pair<std::string, bool>> ids;
+	for (const PortInfo& port : backend->ports())
+	{
+		CHECK(!port.name.empty());
+		CHECK(ids.insert({port.id, port.input}).second);
+	}
+	Inbox inbox;
+	CHECK_THROWS_AS(backend->openInput("no such port", inbox.receiver()), std::runtime_error);
+	CHECK_THROWS_AS(backend->openOutput("no such port"), std::runtime_error);
+}
+#endif
+
+TEST_CASE("MIDI status bytes tell how long their message is", "[unit]")
+{
+	CHECK(messageSize(0x90) == 3); // note on
+	CHECK(messageSize(0xb5) == 3); // controller
+	CHECK(messageSize(0xc0) == 2); // program change
+	CHECK(messageSize(0xdf) == 2); // channel pressure
+	CHECK(messageSize(0xe0) == 3); // pitch bend
+	CHECK(messageSize(0xf1) == 2); // time code quarter frame
+	CHECK(messageSize(0xf2) == 3); // song position
+	CHECK(messageSize(0xf3) == 2); // song select
+	CHECK(messageSize(0xf8) == 1); // clock
+	CHECK(messageSize(0xfe) == 1); // active sensing
+	CHECK(messageSize(0xf0) == 0); // SysEx
+	CHECK(messageSize(0x40) == 0); // a data byte
 }
 
 TEST_CASE("the MIDI backends of this build come with the dummy backend last", "[unit]")

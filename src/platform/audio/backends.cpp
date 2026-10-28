@@ -3,6 +3,7 @@
 #include "platform/audio/dummydevice.h"
 
 #ifdef _WIN32
+#include "platform/audio/asiohost.h"
 #include "platform/audio/wasapi.h"
 #endif
 
@@ -12,6 +13,7 @@ namespace gnubase::audio
 	{
 		std::vector<std::unique_ptr<Backend>> backends;
 #ifdef _WIN32
+		backends.push_back(makeAsioBackend());
 		backends.push_back(makeWasapiBackend(false));
 		backends.push_back(makeWasapiBackend(true));
 #endif

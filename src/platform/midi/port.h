@@ -4,6 +4,7 @@
 #include "platform/audio/device.h"
 #include "platform/hosttime.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -83,6 +84,19 @@ namespace gnubase::midi
 	private:
 		std::function<void()> m_portsChanged;
 	};
+
+	// The bytes a MIDI 1.0 message with this status byte has, 1 to 3; 0 for SysEx and data bytes, which don't start
+	// a message of their own.
+	constexpr int messageSize(uint8_t status) noexcept
+	{
+		if (status < 0x80 || status == 0xf0 || status == 0xf7)
+			return 0;
+		if (status < 0xf0)
+			return (status & 0xe0) == 0xc0 ? 2 : 3; // program change and channel pressure have one data byte
+		if (status == 0xf1 || status == 0xf3)
+			return 2;
+		return status == 0xf2 ? 3 : 1;
+	}
 
 	// The MIDI backends this build has, the dummy backend last.
 	std::vector<std::unique_ptr<Backend>> makeBackends();
