@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="art/loadingbanner.png" alt="GNUbase" width="100%">
+  <img src="art/splash/loadingbanner.png" alt="GNUbase" width="100%">
 </p>
 
 <p align="center">

@@ -58,6 +58,7 @@ src/platform    OS abstractions (audio/MIDI backends, threads), real-time primit
 src/scripting   Lua runtime and generated engine bindings
 tests/          Catch2 tests (unit, integration, ui); tests/testutils helpers, tests/golden files, tests/lua for Lua tests
 resources/      fonts (with license files), UI documents, SVG icons
+art/            source artwork (Git LFS): icon/ program icon, splash/ loading banner (also in the README), social/ avatar
 ext/            git submodules (SDL, RmlUi, Lua, FreeType, LunaSVG, Catch2, nlohmann/json, ...)
 docs/           architecture and design notes
 ```
