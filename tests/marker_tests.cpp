@@ -352,7 +352,7 @@ TEST_CASE("locating to the next and previous marker and to marker N", "[unit]")
 
 	CHECK(run(client, "marker.locatePrevious").at("position") == 8 * g_quarterSamples);
 	CHECK(run(client, "marker.locatePrevious").at("position") == 4 * g_quarterSamples);
-	run(client, "transport.locate", {{"position", 2 * g_quarterSamples + 1}});
+	run(client, "transport.locate", {{"position", (2 * g_quarterSamples) + 1}});
 	CHECK(run(client, "marker.locatePrevious").at("position") == 2 * g_quarterSamples);
 	CHECK(run(client, "marker.locatePrevious").at("marker").is_null());
 

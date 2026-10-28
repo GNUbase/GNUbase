@@ -393,8 +393,10 @@ namespace gnubase::engine
 					end = point.position;
 			}
 			const std::string where = "position " + std::to_string(position) + " on track " + idText(track);
-			require(start.has_value(), "no marker at or before " + where);
-			require(end.has_value(), "no marker after " + where);
+			if (!start)
+				throw CommandError("no marker at or before " + where);
+			if (!end)
+				throw CommandError("no marker after " + where);
 			return {{"start", *start}, {"end", *end}};
 		}
 

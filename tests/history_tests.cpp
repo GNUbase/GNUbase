@@ -229,7 +229,7 @@ namespace
 			if (chance())
 			{
 				parameters["type"] = "cycle";
-				parameters["end"] = parameters["position"].get<int64_t>() + (1 + number(4)) * g_ticksPerQuarter;
+				parameters["end"] = parameters["position"].get<int64_t>() + ((1 + number(4)) * g_ticksPerQuarter);
 			}
 			call("marker.add", parameters);
 		}
