@@ -114,7 +114,7 @@ namespace
 		const char* m_iid;
 	};
 
-	class HostApplication : public TestObject<vst::Vst::IHostApplication>
+	class HostApplication final : public TestObject<vst::Vst::IHostApplication>
 	{
 	public:
 		HostApplication() : TestObject(vst::Vst::IHostApplication_iid) {}
@@ -135,7 +135,7 @@ namespace
 	};
 
 	// Counts the controller's requests.
-	class ComponentHandler : public TestObject<vst::Vst::IComponentHandler>
+	class ComponentHandler final : public TestObject<vst::Vst::IComponentHandler>
 	{
 	public:
 		ComponentHandler() : TestObject(vst::Vst::IComponentHandler_iid) {}
@@ -155,7 +155,7 @@ namespace
 		std::vector<int32> restarts;
 	};
 
-	class ParamQueue : public TestObject<vst::Vst::IParamValueQueue>
+	class ParamQueue final : public TestObject<vst::Vst::IParamValueQueue>
 	{
 	public:
 		explicit ParamQueue(ParamID paramId) : TestObject(vst::Vst::IParamValueQueue_iid), id(paramId) {}
@@ -183,7 +183,7 @@ namespace
 		std::vector<std::pair<int32, ParamValue>> points;
 	};
 
-	class ParamChanges : public TestObject<vst::Vst::IParameterChanges>
+	class ParamChanges final : public TestObject<vst::Vst::IParameterChanges>
 	{
 	public:
 		ParamChanges() : TestObject(vst::Vst::IParameterChanges_iid) {}
@@ -215,7 +215,7 @@ namespace
 		std::deque<ParamQueue> queues; // a deque keeps the queues' addresses
 	};
 
-	class EventList : public TestObject<vst::Vst::IEventList>
+	class EventList final : public TestObject<vst::Vst::IEventList>
 	{
 	public:
 		EventList() : TestObject(vst::Vst::IEventList_iid) {}
@@ -261,7 +261,7 @@ namespace
 	};
 
 	// A memory stream that moves at most maxChunk bytes per call, as hosts may.
-	class Stream : public TestObject<vst::IBStream>
+	class Stream final : public TestObject<vst::IBStream>
 	{
 	public:
 		explicit Stream(size_t chunk, std::vector<uint8_t> data = {})
