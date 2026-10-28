@@ -8,6 +8,7 @@
 #include "platform/rt/realtime.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace gnubase::engine
 {
@@ -63,7 +64,7 @@ namespace gnubase::engine
 		return GNUBASE_VERSION;
 	}
 
-	Engine::Engine()
+	Engine::Engine(std::vector<std::unique_ptr<audio::Backend>> backends)
 	{
 		registerCommand({"engine.version", 1, "The GNUbase version.", CommandInfo{}.parameters,
 							Json::parse(R"({"type": "object", "properties": {"version": {"type": "string"}},
@@ -85,7 +86,7 @@ namespace gnubase::engine
 		processors::registerCommands(*this);
 		m_project = std::make_unique<ProjectModel>();
 		m_project->registerCommands(*this);
-		m_audio = std::make_unique<AudioEngine>(m_project->snapshots());
+		m_audio = std::make_unique<AudioEngine>(m_project->snapshots(), std::move(backends));
 		m_audio->registerCommands(*this);
 		m_thread = std::thread([this] { run(); });
 	}
@@ -109,6 +110,16 @@ namespace gnubase::engine
 		auto command = std::make_shared<const Command>(Command{std::move(info), std::move(handler)});
 		if (!m_commands.emplace(name, std::move(command)).second)
 			throw std::logic_error("command " + name + " is already registered");
+	}
+
+	void Engine::post(std::string command, Json parameters)
+	{
+		rt::assertNotRealtime("engine::Engine::post");
+		{
+			const std::scoped_lock lock(m_mutex);
+			m_requests.push_back({m_nextRequest++, std::move(command), std::move(parameters), nullptr});
+		}
+		m_wake.notify_one();
 	}
 
 	rt::SnapshotPublisher<RenderSnapshot>& Engine::renderSnapshots()
@@ -183,7 +194,10 @@ namespace gnubase::engine
 			for (const auto& client : clients)
 				client->post(event);
 		}
-		request.sender->post(std::move(result));
+		if (request.sender)
+			request.sender->post(std::move(result));
+		else if (!result.ok())
+			logging::error("{} failed: {}", request.command, result.error);
 	}
 
 	Client::Client(Engine& engine) : m_engine(engine), m_mailbox(std::make_shared<detail::Mailbox>())

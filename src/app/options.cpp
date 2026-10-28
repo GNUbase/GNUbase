@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/options.h"
 
+#include "platform/audio/device.h"
+
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <memory>
 
 namespace gnubase::app
 {
@@ -24,6 +28,15 @@ namespace gnubase::app
 			if (text.empty() || end != text.c_str() + text.size())
 				throw UsageError(option + " needs a whole number, not \"" + text + "\"");
 			return value;
+		}
+
+		// The audio backends of this build, e.g. "wasapi, dummy".
+		std::string backendNames()
+		{
+			std::string names;
+			for (const std::unique_ptr<audio::Backend>& backend : audio::makeBackends())
+				names.append(names.empty() ? "" : ", ").append(backend->name());
+			return names;
 		}
 	}
 
@@ -83,10 +96,12 @@ namespace gnubase::app
 			else if (arg == "--audio")
 			{
 				options.audio = value();
-				if (options.audio != "dummy")
-				{
-					throw UsageError("there is no audio device " + options.audio + " yet, only \"dummy\"");
-				}
+				const auto backends = audio::makeBackends();
+				if (std::none_of(backends.begin(), backends.end(),
+						[&options](const std::unique_ptr<audio::Backend>& backend)
+						{ return backend->name() == options.audio; }))
+					throw UsageError(
+						"there is no audio backend " + options.audio + "; this build has " + backendNames());
 			}
 			else if (arg == "--sample-rate")
 			{
@@ -118,7 +133,8 @@ namespace gnubase::app
                         and serves until Ctrl+C
   --project FILE        load a DAWproject file
   --script FILE         run a Lua script, then exit (trusted: all standard libraries but os.exit)
-  --audio dummy         the audio device: only "dummy" (no hardware) so far
+  --audio BACKEND       the audio backend: )" +
+			backendNames() + R"(; by default dummy, which has no hardware
   --sample-rate HZ      the audio device's sample rate (default 48000)
   --block-size FRAMES   frames per audio block (default 256)
   --version             print the version
