@@ -100,8 +100,8 @@ namespace gnubase::engine::graph
 		// up.
 		EventBuffer& events(int node) const;
 
-		// Audio thread. Processes a block of up to maxFrames frames.
-		void process(uint32_t frames) const noexcept;
+		// Audio thread. Processes a block of up to maxFrames frames, which plays where transport says.
+		void process(uint32_t frames, const TransportBlock& transport = TransportBlock{}) const noexcept;
 
 	private:
 		struct Node

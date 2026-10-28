@@ -118,4 +118,21 @@ namespace gnubase::engine::processors
 				}
 			});
 	}
+
+	void PositionProbe::process(const graph::ProcessContext& context) noexcept
+	{
+		const graph::TransportBlock& transport = context.transport;
+		if (!transport.playing)
+		{
+			for (uint32_t i = 0; i < context.frames; ++i)
+				writeAll(context, i, -1.0f);
+			return;
+		}
+		for (size_t s = 0; s < transport.segmentCount; ++s)
+		{
+			const graph::TransportSegment& segment = transport.segments[s];
+			for (uint32_t i = 0; i < segment.frames && segment.offset + i < context.frames; ++i)
+				writeAll(context, segment.offset + i, static_cast<float>(segment.position + i));
+		}
+	}
 }

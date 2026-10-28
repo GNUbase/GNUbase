@@ -50,7 +50,7 @@ namespace
 		std::vector<float> process()
 		{
 			m_out.clear();
-			m_processor.process({m_pointers.data(), m_channels, m_frames, m_events, m_out});
+			m_processor.process({m_pointers.data(), m_channels, m_frames, m_events, m_out, TransportBlock{}});
 			m_events.clear();
 			return m_samples;
 		}
@@ -303,9 +303,9 @@ TEST_CASE("processor.list describes every built-in processor and its parameters"
 	std::vector<std::string> ids;
 	for (const Json& processor : list)
 		ids.push_back(processor.at("id").get<std::string>());
-	CHECK(ids == std::vector<std::string>{"gainPan", "impulse", "noise", "sine", "testSynth"});
+	CHECK(ids == std::vector<std::string>{"gainPan", "impulse", "noise", "positionProbe", "sine", "testSynth"});
 
-	const Json& synth = list[4];
+	const Json& synth = list[5];
 	CHECK(synth.at("instrument") == true);
 	CHECK(list[0].at("instrument") == false);
 	const Json& release = synth.at("parameters")[TestSynth::Release];
