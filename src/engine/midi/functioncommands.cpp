@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -149,7 +150,10 @@ namespace gnubase::engine::midi
 		Scale scaleOf(const Json& value, const std::string& name)
 		{
 			requireRange(value.at("root").get<int64_t>(), 0, 11, name + ".root");
-			return {value.at("root").get<int>(), *scaleTypeFromName(value.at("type").get<std::string>())};
+			const std::optional<ScaleType> type = scaleTypeFromName(value.at("type").get<std::string>());
+			if (!type.has_value())
+				throw CommandError(name + ".type is not a scale type");
+			return {value.at("root").get<int>(), *type};
 		}
 
 		PartFunction prepareTranspose(const Json& parameters)
