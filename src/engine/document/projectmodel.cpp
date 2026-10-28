@@ -906,8 +906,10 @@ namespace gnubase::engine
 			{"midiPart.remove", "Remove MIDI part"},
 			{"note.add", "Add notes"},
 			{"note.remove", "Remove notes"},
+			{"note.set", "Change notes"},
 			{"controller.add", "Add controllers"},
 			{"controller.remove", "Remove controllers"},
+			{"controller.set", "Change controllers"},
 		};
 
 		// Empty for commands without a fixed name, such as transactions.
@@ -1469,6 +1471,7 @@ namespace gnubase::engine
 			[](Project& project, CommandContext& context)
 			{ return removeFromPart(project, context, &MidiPart::controllers, "controllers", "controller"); });
 
+		registerMidiEditCommands(engine);
 		registerHistoryCommands(engine);
 	}
 }
