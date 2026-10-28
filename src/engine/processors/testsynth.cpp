@@ -37,10 +37,12 @@ namespace gnubase::engine::processors
 			noteOff(channel, pitch);
 			return;
 		}
-		auto voice = std::find_if(m_voices.begin(), m_voices.end(), [](const Voice& v) { return !v.active; });
-		if (voice == m_voices.end())
-			voice = std::min_element(
-				m_voices.begin(), m_voices.end(), [](const Voice& a, const Voice& b) { return a.started < b.started; });
+		// Pointers rather than iterators: std::array's iterator is a pointer in some standard libraries only.
+		Voice* const first = m_voices.data();
+		Voice* const last = first + m_voices.size();
+		Voice* voice = std::find_if(first, last, [](const Voice& v) { return !v.active; });
+		if (voice == last)
+			voice = std::min_element(first, last, [](const Voice& a, const Voice& b) { return a.started < b.started; });
 
 		const double attack = ramp(m_attack, m_sampleRate);
 		*voice = {};

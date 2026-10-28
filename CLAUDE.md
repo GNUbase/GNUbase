@@ -3,7 +3,7 @@
 Open-source (GPLv3) digital audio workstation for Windows, macOS and Linux. GNUbase closely follows the feature set and user experience of an established commercial DAW, called "the reference" below.
 
 ## Source of truth and naming
-- The reference's operation manual is in the maintainers' private resources folder `u:\resources\GNUbase`. It is not part of this repo. Tickets cite it as "Reference manual: pp. N". Read the cited pages before implementing a ticket.
+- The source of truth is the reference's Operation Manual for version 15 Pro (English, 1655 pages). It is not part of this repo. Tickets cite it as "Reference manual: pp. N". Read the cited pages before implementing a ticket; if you don't have the manual, ask a maintainer about them.
 - Never write the reference product's or vendor's name anywhere public: code, comments, file names, commits, issues, wiki, docs. Use generic feature names, not the vendor's trademarked ones (say "mixer", not the branded name). The git hooks in `tools/git-hooks` enforce this with the private list in `.git/info/private-keywords`: install them once per clone with `tools/install-git-hooks.sh` and never bypass them with `--no-verify`. CI scans every pull request and every push to main against the same list (`.github/workflows/keyword-scan.yml`).
 - Planning lives in GitHub milestones and issues: https://github.com/GNUbase/GNUbase. Basic functionality first, optional features later.
 
@@ -58,6 +58,7 @@ src/platform    OS abstractions (audio/MIDI backends, threads), real-time primit
 src/scripting   Lua runtime and generated engine bindings
 tests/          Catch2 tests (unit, integration, ui); tests/testutils helpers, tests/golden files, tests/lua for Lua tests
 resources/      fonts (with license files), UI documents, SVG icons
+art/            source artwork (Git LFS): icon/ program icon, splash/ loading banner (also in the README), social/ avatar
 ext/            git submodules (SDL, RmlUi, Lua, FreeType, LunaSVG, Catch2, nlohmann/json, ...)
 docs/           architecture and design notes
 ```
