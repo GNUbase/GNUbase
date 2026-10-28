@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 add_library(gnubase-engine STATIC
+	audio/audioengine.cpp audio/audioengine.h
 	document/document.cpp document/document.h
 	document/history.cpp document/history.h
 	document/projectmodel.cpp document/projectmodel.h

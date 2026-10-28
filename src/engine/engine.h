@@ -21,6 +21,7 @@
 
 namespace gnubase::engine
 {
+	class AudioEngine;
 	class ProjectModel;
 	struct RenderSnapshot;
 
@@ -155,6 +156,7 @@ namespace gnubase::engine
 		bool m_stopping = false;
 		std::condition_variable m_wake;
 		std::unique_ptr<ProjectModel> m_project; // only the command thread touches the document
+		std::unique_ptr<AudioEngine> m_audio;    // plays the project; only the command thread changes it
 		std::thread m_thread;
 	};
 
