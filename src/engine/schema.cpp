@@ -49,6 +49,12 @@ namespace gnubase::engine
 		if (const auto choices = schema.find("enum");
 			choices != schema.end() && std::find(choices->begin(), choices->end(), value) == choices->end())
 			return name + " must be one of " + choices->dump();
+		if (const auto minimum = schema.find("minimum");
+			value.is_number() && minimum != schema.end() && value.get<double>() < minimum->get<double>())
+			return name + " must be at least " + minimum->dump();
+		if (const auto maximum = schema.find("maximum");
+			value.is_number() && maximum != schema.end() && value.get<double>() > maximum->get<double>())
+			return name + " must be at most " + maximum->dump();
 
 		if (value.is_object())
 		{

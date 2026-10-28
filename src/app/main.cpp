@@ -25,7 +25,7 @@ namespace
 	{
 		try
 		{
-			const app::Options options = app::parseOptions(std::vector<std::string>(argv + 1, argv + argc));
+			app::Options options = app::parseOptions(std::vector<std::string>(argv + 1, argv + argc));
 			if (options.help)
 			{
 				std::cout << app::usage();
@@ -40,6 +40,8 @@ namespace
 			const gnubase::logging::Session logSession(
 				gnubase::logging::defaultDirectory() / (options.headless ? "gnubase-headless.log" : "gnubase.log"));
 			gnubase::logging::info("GNUbase {} ({})", gnubase::engine::version(), gnubase::ui::libraryVersions());
+			options.settings = app::settingsDirectory(options).u8string();
+			gnubase::logging::info("Settings in {}", options.settings);
 			if (options.headless)
 			{
 				if (std::signal(SIGINT, gnubaseRequestStop) == SIG_ERR ||

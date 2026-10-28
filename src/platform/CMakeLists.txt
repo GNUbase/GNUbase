@@ -6,6 +6,7 @@ add_library(gnubase-platform STATIC
 	audio/device.h
 	audio/dummydevice.cpp audio/dummydevice.h
 	crashhandler.cpp crashhandler.h
+	files.cpp files.h
 	log.cpp log.h
 	rt/denormals.cpp rt/denormals.h
 	rt/mpmcqueue.h

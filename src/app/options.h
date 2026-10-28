@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -27,6 +28,9 @@ namespace gnubase::app
 		std::string audio = "dummy"; // the audio device
 		double sampleRate = 48000.0;
 		int64_t blockSize = 256;
+		// The user settings folder (UTF-8). parseOptions leaves it empty unless --settings gives one; main then
+		// fills in settingsDirectory(options). runHeadless keeps the settings in memory if it is still empty.
+		std::string settings;
 	};
 
 	// Exit codes, for scripts and CI.
@@ -44,6 +48,9 @@ namespace gnubase::app
 
 	// The command-line arguments after the program name. Throws UsageError for invalid ones.
 	Options parseOptions(const std::vector<std::string>& args);
+
+	// The settings folder: --settings if given, otherwise the user's (GNUBASE_SETTINGS_DIR or the OS's folder).
+	std::filesystem::path settingsDirectory(const Options& options);
 
 	// The text for --help.
 	std::string usage();
