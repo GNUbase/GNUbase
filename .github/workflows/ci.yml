@@ -48,9 +48,9 @@ jobs:
         with:
           submodules: recursive
 
-      # Only the audio files the tests read, not every image in Git LFS.
+      # Only the audio the tests read (test data and golden files), not every image in Git LFS.
       - name: Fetch test audio
-        run: git lfs pull --include "tests/data/**"
+        run: git lfs pull --include "tests/data/**,tests/golden/**"
 
       - name: Install packages (Linux)
         timeout-minutes: 15
@@ -109,7 +109,7 @@ jobs:
           submodules: recursive
 
       - name: Fetch test audio
-        run: git lfs pull --include "tests/data/**"
+        run: git lfs pull --include "tests/data/**,tests/golden/**"
 
       - name: Install packages
         timeout-minutes: 15
