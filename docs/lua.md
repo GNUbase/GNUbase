@@ -90,6 +90,27 @@ folder. AI agents run test cases with the MCP tool `script_run`, whose output ha
 
 ### audio
 
+#### `gnubase.audio.analyze`
+
+Measures the captured output of channels (default: every output) from frame start for frames frames (default: to the end of the capture). Per channel: the peak and RMS level, and a spectrum summary with the strongest frequencies (at most peaks, default 5, up to 20) and the power of octave bands. For the channels together: the integrated loudness in LUFS (ITU-R BS.1770), null below 400 ms. Levels are linear and in dBFS (a full-scale sine's peak is 0 dBFS, its RMS -3 dBFS); dBFS is null for silence.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `channels`: array of integer
+- `frames`: integer
+- `peaks`: integer
+- `start`: integer
+
+Returns:
+
+- `channels`: array of object, required
+- `frames`: integer, required
+- `loudness`: number or null, required
+- `sampleRate`: number, required
+- `start`: integer, required
+
 #### `gnubase.audio.capture`
 
 Captured output samples of one output channel of the dummy device, from frame start, at most 1048576 frames.
@@ -105,6 +126,26 @@ Parameters:
 Returns:
 
 - `samples`: array, required
+
+#### `gnubase.audio.compare`
+
+Null test: subtracts an audio file, reference, from the captured output and measures what remains. The file's channels are compared with channels (default: every output) in order, from frame start, for frames frames (default: the file's length); its sample rate must be the device's. peak is the largest difference of all channels, 0 if they cancel completely.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `channels`: array of integer
+- `frames`: integer
+- `reference`: string, required
+- `start`: integer
+
+Returns:
+
+- `channels`: array of object, required
+- `frames`: integer, required
+- `peak`: number, required
+- `peakDb`: number or null, required
 
 #### `gnubase.audio.controlPanel`
 
@@ -143,6 +184,27 @@ Returns:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `running`: boolean, required
+
+#### `gnubase.audio.record`
+
+Writes the captured output of channels (default: every output) from frame start for frames frames (default: to the end of the capture) to a WAV file at path, with samples in format (default float32). Returns the file's absolute path.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `channels`: array of integer
+- `format`: one of "float32" | "int16" | "int24" | "int32"
+- `frames`: integer
+- `path`: string, required
+- `start`: integer
+
+Returns:
+
+- `channels`: array of integer, required
+- `frames`: integer, required
+- `path`: string, required
+- `sampleRate`: number, required
 
 #### `gnubase.audio.render`
 
@@ -373,6 +435,19 @@ Parameters:
 
 - `controllers`: array of integer, required
 - `part`: integer, required
+
+#### `gnubase.controller.set`
+
+Changes controller events of a MIDI part: each change names a controller event by id and gives what changes, position in ticks, controller number 0-127, value 0-1 or MIDI channel 0-15. Returns the changed controller events.
+
+Parameters:
+
+- `controllers`: array of object, required
+- `part`: integer, required
+
+Returns:
+
+- `controllers`: array, required
 
 ### engine
 
@@ -817,6 +892,19 @@ Parameters:
 
 - `notes`: array of integer, required
 - `part`: integer, required
+
+#### `gnubase.note.set`
+
+Changes notes of a MIDI part: each change names a note by id and gives what changes, position and length in ticks, pitch 0-127, velocity 0-1 or MIDI channel 0-15. Returns the changed notes.
+
+Parameters:
+
+- `notes`: array of object, required
+- `part`: integer, required
+
+Returns:
+
+- `notes`: array, required
 
 ### processor
 
