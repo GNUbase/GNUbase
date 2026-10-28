@@ -13,6 +13,8 @@ GNUbase is licensed under the GPL-3.0-or-later, so everything that goes into it 
 | [stb_vorbis](https://github.com/nothings/stb) | `ext/stb` | reading Ogg Vorbis files | yes, compiled in | MIT or Unlicense (public domain), at the user's choice | `ext/stb/LICENSE` |
 | [libFLAC](https://github.com/xiph/flac) | `ext/flac` | writing FLAC files | yes, linked statically | BSD-3-Clause | `ext/flac/COPYING.Xiph` |
 | [r8brain-free-src](https://github.com/avaneev/r8brain-free-src) | `ext/r8brain` | sample-rate conversion | yes, linked statically | MIT | `ext/r8brain/LICENSE` |
+| [pugixml](https://github.com/zeux/pugixml) | `ext/pugixml` | reading and writing DAWproject's XML | yes, linked statically | MIT | `ext/pugixml/LICENSE.md` |
+| [miniz](https://github.com/richgel999/miniz) | `ext/miniz` | reading and writing DAWproject's ZIP container | yes, linked statically | MIT | `ext/miniz/LICENSE` |
 | [Catch2](https://github.com/catchorg/Catch2) | `ext/Catch2` | tests | no, only test programs | BSL-1.0 | `ext/Catch2/LICENSE.txt` |
 
 Some of these bundle code from other projects under its own license:

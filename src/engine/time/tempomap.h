@@ -43,6 +43,9 @@ namespace gnubase::time
 		Ticks toTicks(Samples sample, double sampleRate) const;
 		double bpmAt(Ticks tick) const;
 
+		// The points the map was made from.
+		const std::vector<TempoPoint>& points() const { return m_points; }
+
 		bool operator==(const TempoMap& other) const;
 		bool operator!=(const TempoMap& other) const { return !(*this == other); }
 
@@ -56,6 +59,7 @@ namespace gnubase::time
 			double slope = 0.0;   // BPM per quarter note, 0 for a constant tempo
 		};
 
+		std::vector<TempoPoint> m_points;
 		std::vector<Segment> m_segments;
 	};
 

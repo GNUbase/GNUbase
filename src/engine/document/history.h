@@ -32,13 +32,14 @@ namespace gnubase::engine
 		std::vector<ObjectChange<Controller>> controllers;
 	};
 
-	// The parts of a project that are not objects with ids, or keep their order: name, sample rate, tempo, busses
-	// and the top-level tracks.
+	// The parts of a project that are not objects with ids, or keep their order: name, sample rate, tempo, time
+	// signatures, busses and the top-level tracks.
 	struct ProjectSettings
 	{
 		std::string name;
 		double sampleRate = 48000.0;
 		time::TempoMap tempo{120.0};
+		time::SignatureMap signatures;
 		std::vector<Bus> busses;
 		std::vector<ObjectId> tracks;
 	};
@@ -55,6 +56,7 @@ namespace gnubase::engine
 		std::vector<ObjectChange<Clip>> clips;
 		std::vector<ObjectChange<AudioEvent>> audioEvents;
 		std::vector<MidiPartChange> midiParts;
+		std::vector<ObjectChange<Marker>> markers;
 
 		bool empty() const;
 	};

@@ -44,6 +44,10 @@ foreach(flacOption BUILD_CXXLIBS BUILD_PROGRAMS BUILD_EXAMPLES BUILD_TESTING BUI
 	set(${flacOption} OFF CACHE BOOL "Set by GNUbase for libFLAC")
 endforeach()
 add_subdirectory(ext/flac EXCLUDE_FROM_ALL SYSTEM)
+# pugixml and miniz for DAWproject files: XML inside a ZIP file.
+set(PUGIXML_INSTALL OFF CACHE BOOL "Set by GNUbase for pugixml")
+add_subdirectory(ext/pugixml EXCLUDE_FROM_ALL SYSTEM)
+add_subdirectory(ext/miniz EXCLUDE_FROM_ALL SYSTEM)
 
 # Settings for every GNUbase target; third-party code is not affected.
 function(gnubase_target_defaults target)

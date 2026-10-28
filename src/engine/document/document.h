@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
 
 #include <cstdint>
@@ -128,11 +129,21 @@ namespace gnubase::engine
 		std::vector<ObjectId> children; // folders: the tracks inside, from top to bottom
 	};
 
+	// A named position on the timeline.
+	struct Marker
+	{
+		ObjectId id = 0;
+		time::Ticks position = 0;
+		std::string name;
+		std::string color; // "#rrggbb", or empty for the default color
+	};
+
 	struct Project
 	{
 		std::string name = "Untitled";
 		double sampleRate = 48000.0;
 		time::TempoMap tempo{120.0};
+		time::SignatureMap signatures;
 		ObjectId nextId = 1;
 
 		std::vector<Bus> busses;      // in the order they are shown
@@ -143,6 +154,7 @@ namespace gnubase::engine
 		std::map<ObjectId, Clip> clips;
 		std::map<ObjectId, AudioEvent> audioEvents;
 		std::map<ObjectId, MidiPart> midiParts;
+		std::map<ObjectId, Marker> markers;
 
 		ObjectId newId() { return nextId++; }
 
@@ -199,6 +211,11 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.name, a.position, a.length) ==
 			std::tie(b.id, b.track, b.name, b.position, b.length);
+	}
+
+	inline bool operator==(const Marker& a, const Marker& b)
+	{
+		return std::tie(a.id, a.position, a.name, a.color) == std::tie(b.id, b.position, b.name, b.color);
 	}
 
 	inline bool operator==(const Track& a, const Track& b)

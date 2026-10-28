@@ -19,10 +19,12 @@ add_library(gnubase-engine STATIC
 	audiofile/reader.cpp
 	audiofile/resampler.cpp audiofile/resampler.h
 	audiofile/writer.cpp
+	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/document.cpp document/document.h
 	document/history.cpp document/history.h
 	document/projectmodel.cpp document/projectmodel.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
+	document/serialize.cpp document/serialize.h
 	engine.cpp engine.h
 	graph/events.h
 	graph/graph.cpp graph/graph.h
@@ -37,5 +39,5 @@ add_library(gnubase-engine STATIC
 	time/timecode.cpp time/timecode.h)
 target_include_directories(gnubase-engine PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-engine PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}")
-target_link_libraries(gnubase-engine PUBLIC gnubase-platform nlohmann_json::nlohmann_json PRIVATE gnubase-decoders gnubase-r8brain FLAC::FLAC)
+target_link_libraries(gnubase-engine PUBLIC gnubase-platform nlohmann_json::nlohmann_json PRIVATE gnubase-decoders gnubase-r8brain FLAC::FLAC pugixml::pugixml miniz)
 gnubase_target_defaults(gnubase-engine)
