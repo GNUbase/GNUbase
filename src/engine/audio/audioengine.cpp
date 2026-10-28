@@ -26,14 +26,18 @@ namespace gnubase::engine
 		constexpr auto g_startWait = std::chrono::seconds(2);    // for the streams before playback starts or locates
 		constexpr auto g_offlineWait = std::chrono::seconds(30); // for the streams before an offline block
 		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20;   // frames one audio.capture returns at most
+		constexpr int64_t g_maxThreads = 64;
 
 		Json statusSchema()
 		{
 			return Json::parse(R"({"type": "object",
 			"properties": {"device": {"type": ["object", "null"]}, "running": {"type": "boolean"},
 				"position": {"type": "integer"}, "capturedFrames": {"type": "integer"},
-				"droppedFrames": {"type": "integer"}, "playbackDropouts": {"type": "integer"}},
-			"required": ["device", "running", "position", "capturedFrames", "droppedFrames", "playbackDropouts"]})");
+				"droppedFrames": {"type": "integer"}, "playbackDropouts": {"type": "integer"},
+				"processing": {"type": "object", "properties": {"multiProcessing": {"type": "boolean"},
+					"threads": {"type": "integer"}}, "required": ["multiProcessing", "threads"]}},
+			"required": ["device", "running", "position", "capturedFrames", "droppedFrames", "playbackDropouts",
+				"processing"]})");
 		}
 
 		Json transportSchema()
@@ -268,7 +272,7 @@ namespace gnubase::engine
 			}
 		}
 		m_playback.beginBlock();
-		program.graph.process(block.frames, m_transport.advance(block.frames));
+		program.graph.process(block.frames, m_transport.advance(block.frames), m_workers.get());
 		m_playback.endBlock();
 		for (const BusLink& link : program.outputs)
 		{
@@ -331,6 +335,7 @@ namespace gnubase::engine
 		}
 
 		stopDevice();
+		m_workers.reset();
 		m_device.reset();
 		m_programs.reset();
 		m_generator = std::move(generator);
@@ -344,21 +349,43 @@ namespace gnubase::engine
 					m_generator->process(
 						{channels, count, frames, m_generatorEvents, m_generatorOut, graph::TransportBlock{}});
 				});
+		startWorkers();
 		rebuild();
+	}
+
+	void AudioEngine::setProcessing(const Json& parameters)
+	{
+		const bool multiProcessing = parameters.value("multiProcessing", m_multiProcessing);
+		const auto threads = parameters.value("threads", static_cast<int64_t>(m_threads));
+		require(threads >= 1 && threads <= g_maxThreads, "threads must be from 1 to 64");
+		require(!m_device || !m_device->running(), "the audio device is running");
+		m_multiProcessing = multiProcessing;
+		m_threads = static_cast<size_t>(threads);
+		m_workers.reset();
+		if (m_device)
+			startWorkers();
+	}
+
+	void AudioEngine::startWorkers()
+	{
+		const audio::DeviceFormat& format = m_device->format();
+		if (m_multiProcessing && m_threads > 1)
+			m_workers = std::make_unique<rt::WorkerPool>(m_threads - 1, format.blockSize / format.sampleRate);
 	}
 
 	Json AudioEngine::status() const
 	{
+		const Json processing = {{"multiProcessing", m_multiProcessing}, {"threads", m_threads}};
 		if (!m_device)
 			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"capturedFrames", 0},
-				{"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()}};
+				{"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()}, {"processing", processing}};
 		const audio::DeviceFormat& format = m_device->format();
 		return {{"device",
 					{{"type", "dummy"}, {"sampleRate", format.sampleRate}, {"blockSize", format.blockSize},
 						{"inputChannels", format.inputChannels}, {"outputChannels", format.outputChannels}}},
 			{"running", m_device->running()}, {"position", m_device->position()},
 			{"capturedFrames", m_device->capturedFrames()}, {"droppedFrames", m_device->droppedFrames()},
-			{"playbackDropouts", m_playback.dropouts()}};
+			{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}};
 	}
 
 	void AudioEngine::registerCommands(Engine& engine)
@@ -384,9 +411,25 @@ namespace gnubase::engine
 				return result;
 			});
 		engine.registerCommand(
+			{"audio.setProcessing", 1,
+				"Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; "
+				"default: the number of hardware threads). With multiProcessing off only the audio thread does. "
+				"Independent tracks then run in parallel; the output is the same for any number of threads. The "
+				"device must be stopped.",
+				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
+					"multiProcessing": {"type": "boolean"}, "threads": {"type": "integer"}}})"),
+				statusSchema(), false},
+			[this](CommandContext& context)
+			{
+				setProcessing(context.parameters());
+				Json result = status();
+				context.emit("audio.changed", result);
+				return result;
+			});
+		engine.registerCommand(
 			{"audio.get", 1,
-				"The audio device, whether it runs, how many frames it has processed and captured, and how many frames "
-				"of audio track playback were silent because a disk stream was late.",
+				"The audio device, whether it runs, how many frames it has processed and captured, how many frames of "
+				"audio track playback were silent because a disk stream was late, and the processing threads.",
 				noParameters(), statusSchema(), true},
 			[this](CommandContext&) { return status(); });
 		engine.registerCommand(

@@ -53,7 +53,7 @@ Returns:
 
 #### `gnubase.audio.get`
 
-The audio device, whether it runs, how many frames it has processed and captured, and how many frames of audio track playback were silent because a disk stream was late.
+The audio device, whether it runs, how many frames it has processed and captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads.
 
 Only reads; changes nothing.
 
@@ -64,6 +64,7 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `gnubase.audio.render`
@@ -81,6 +82,7 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `gnubase.audio.setDevice`
@@ -103,6 +105,26 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
+- `running`: boolean, required
+
+#### `gnubase.audio.setProcessing`
+
+Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; default: the number of hardware threads). With multiProcessing off only the audio thread does. Independent tracks then run in parallel; the output is the same for any number of threads. The device must be stopped.
+
+Parameters:
+
+- `multiProcessing`: boolean
+- `threads`: integer
+
+Returns:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `playbackDropouts`: integer, required
+- `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `gnubase.audio.start`
@@ -116,6 +138,7 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `gnubase.audio.stop`
@@ -129,6 +152,7 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 ### audioEvent

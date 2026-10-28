@@ -15,10 +15,15 @@ namespace gnubase::engine
 	struct RenderSnapshot;
 }
 
+namespace gnubase::rt
+{
+	class WorkerPool;
+}
+
 // The real-time audio processing graph. The command thread describes it from a render snapshot (describe), adds
 // processors and compiles it (CompiledGraph), and hands it to the audio thread with rt::SnapshotPublisher. The audio
-// thread processes one block at a time: every node after the nodes it receives from. Parallel processing follows in
-// #212, latency compensation in #71.
+// thread processes one block at a time: every node after the nodes it receives from, on its own or with a worker
+// pool (#212). Latency compensation follows in #71.
 namespace gnubase::engine::graph
 {
 	enum class NodeKind : uint8_t
@@ -71,15 +76,21 @@ namespace gnubase::engine::graph
 	// audio and event buffers are the audio thread's scratch memory, so they can be used through a const graph, as
 	// rt::SnapshotPublisher hands it out.
 	//
-	// A node's input is the sum of its audio inputs, added in the order of their node indices, so the output is
-	// bit-identical for the same graph and input. A mono input feeds every channel of the node it is connected to;
-	// otherwise channels are connected one by one and channels the other node lacks are left out.
+	// A node's input is the sum of its audio inputs, added in the order of their node indices once all of them are
+	// done, so the output is bit-identical for the same graph and input, however many threads process it. A mono
+	// input feeds every channel of the node it is connected to; otherwise channels are connected one by one and
+	// channels the other node lacks are left out.
 	class CompiledGraph
 	{
 	public:
 		// Throws std::invalid_argument like processingOrder. Prepares every processor for the sample rate and block
 		// size (Processor::prepareFor).
 		CompiledGraph(const GraphDesc& graph, double sampleRate, uint32_t maxFrames);
+		~CompiledGraph();
+		CompiledGraph(const CompiledGraph&) = delete;
+		CompiledGraph& operator=(const CompiledGraph&) = delete;
+		CompiledGraph(CompiledGraph&&) = delete;
+		CompiledGraph& operator=(CompiledGraph&&) = delete;
 
 		double sampleRate() const { return m_sampleRate; }
 		uint32_t maxFrames() const { return m_maxFrames; }
@@ -100,10 +111,16 @@ namespace gnubase::engine::graph
 		// up.
 		EventBuffer& events(int node) const;
 
-		// Audio thread. Processes a block of up to maxFrames frames, which plays where transport says.
-		void process(uint32_t frames, const TransportBlock& transport = TransportBlock{}) const noexcept;
+		// Audio thread. Processes a block of up to maxFrames frames, which plays where transport says. With workers,
+		// the nodes are tasks on the pool: a node starts once the nodes it receives from are done, and of the nodes
+		// that are ready at the start, those with the most work ahead of them go first, measured in earlier blocks.
+		// Without workers, or with none, this thread processes the nodes in order.
+		void process(uint32_t frames, const TransportBlock& transport = TransportBlock{},
+			rt::WorkerPool* workers = nullptr) const noexcept;
 
 	private:
+		class Scheduler;
+
 		struct Node
 		{
 			NodeKind kind = NodeKind::Channel;
@@ -112,10 +129,13 @@ namespace gnubase::engine::graph
 			Processor* processor = nullptr; // owned by m_processors
 			std::vector<int> audioInputs;   // node indices, ascending
 			std::vector<int> eventInputs;   // node indices, ascending
+			std::vector<int> receivers;     // the nodes that receive its audio or events, ascending, once each
+			int senders = 0;                // the nodes it receives from, once each
 			size_t firstChannel = 0;        // into m_channels
 			uint32_t pathLatency = 0;
 		};
 
+		void processNode(size_t index, uint32_t frames, const TransportBlock& transport) const noexcept;
 		void mix(const Node& from, const Node& to, uint32_t frames) const noexcept;
 
 		double m_sampleRate;
@@ -129,6 +149,7 @@ namespace gnubase::engine::graph
 		mutable std::vector<float*> m_channels; // into m_samples, maxFrames apart
 		mutable std::vector<EventBuffer> m_eventsIn;
 		mutable std::vector<EventBuffer> m_eventsOut;
+		std::unique_ptr<Scheduler> m_scheduler; // the parallel cycle's state
 	};
 
 	// The most events a node receives or sends in one block; the rest are dropped.

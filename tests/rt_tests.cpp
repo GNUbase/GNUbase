@@ -4,10 +4,13 @@
 #include "platform/rt/snapshotpublisher.h"
 #include "platform/rt/spscqueue.h"
 #include "platform/rt/triplebuffer.h"
+#include "platform/rt/workerpool.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <limits>
 #include <memory>
 #include <thread>
@@ -259,4 +262,134 @@ TEST_CASE("SnapshotPublisher keeps the reader's snapshot alive while publishing 
 		CHECK(last == count);
 	}
 	CHECK(g_liveSnapshots == 0);
+}
+
+TEST_CASE("Semaphore wakes a waiting thread once per release", "[unit]")
+{
+	Semaphore semaphore;
+	semaphore.release(2);
+	semaphore.wait();
+	semaphore.wait(); // both releases counted: neither wait blocks
+
+	std::atomic<int> woken{0};
+	std::thread waiter(
+		[&]
+		{
+			semaphore.wait();
+			++woken;
+			semaphore.wait();
+			++woken;
+		});
+	semaphore.release();
+	while (woken < 1)
+		std::this_thread::yield();
+	std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	CHECK(woken == 1);
+	semaphore.release();
+	waiter.join();
+	CHECK(woken == 2);
+}
+
+namespace
+{
+	// Hands out tasks 0 to count - 1 to whichever thread asks, and records which thread ran each.
+	class Tasks : public ParallelJob
+	{
+	public:
+		explicit Tasks(size_t count) : m_ranBy(count) {}
+
+		void reset()
+		{
+			m_next = 0;
+			m_done = 0;
+			for (std::atomic<int>& ranBy : m_ranBy)
+				ranBy = -1;
+		}
+
+		void work(size_t thread) noexcept override
+		{
+			for (size_t task = m_next++; task < m_ranBy.size(); task = m_next++)
+			{
+				volatile double sum = 0.0; // a little work, so several threads get some
+				for (int i = 0; i < 2000; ++i)
+					sum = sum + (i * 0.5);
+				m_ranBy[task] = static_cast<int>(thread);
+				++m_done;
+			}
+			calls[std::min<size_t>(thread, calls.size() - 1)]++;
+		}
+
+		size_t done() const { return m_done; }
+		int ranBy(size_t task) const { return m_ranBy[task]; }
+
+		std::array<std::atomic<int>, 9> calls{};
+
+	private:
+		std::vector<std::atomic<int>> m_ranBy;
+		std::atomic<size_t> m_next{0};
+		std::atomic<size_t> m_done{0};
+	};
+}
+
+TEST_CASE("WorkerPool runs a job on the calling thread and its workers until it is done", "[unit]")
+{
+	for (const size_t workers : {size_t{0}, size_t{1}, size_t{3}, size_t{7}})
+	{
+		CAPTURE(workers);
+		WorkerPool pool(workers);
+		CHECK(pool.workers() == workers);
+		Tasks tasks(500);
+		std::array<int, 9> ran{};
+		for (int run = 0; run < 200; ++run)
+		{
+			tasks.reset();
+			pool.run(tasks);
+			REQUIRE(tasks.done() == 500); // finished when run returns
+			for (size_t task = 0; task < 500; ++task)
+			{
+				const int thread = tasks.ranBy(task);
+				REQUIRE(thread >= 0);
+				REQUIRE(static_cast<size_t>(thread) <= workers);
+				++ran[static_cast<size_t>(thread)];
+			}
+		}
+		CHECK(tasks.calls[0] == 200); // the calling thread works on every run
+		if (workers > 0)
+			CHECK(ran[0] < 200 * 500); // and the workers helped
+	}
+}
+
+TEST_CASE("WorkerPool never runs a job after run returned", "[unit]")
+{
+	class Probe : public ParallelJob
+	{
+	public:
+		void work(size_t /*thread*/) noexcept override
+		{
+			if (closed)
+				++late;
+		}
+
+		std::atomic<bool> closed{false};
+		std::atomic<int> late{0};
+	};
+
+	WorkerPool pool(4);
+	std::vector<std::unique_ptr<Probe>> probes;
+	for (int run = 0; run < 500; ++run)
+	{
+		probes.push_back(std::make_unique<Probe>());
+		pool.run(*probes.back());
+		probes.back()->closed = true;
+	}
+	std::this_thread::sleep_for(std::chrono::milliseconds(50)); // late wake-ups have happened by now
+	int late = 0;
+	for (const auto& probe : probes)
+		late += probe->late;
+	CHECK(late == 0);
+}
+
+TEST_CASE("hardwareThreads counts at least one thread", "[unit]")
+{
+	CHECK(hardwareThreads() >= 1);
 }

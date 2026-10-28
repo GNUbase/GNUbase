@@ -7,6 +7,7 @@
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 #include "platform/rt/snapshotpublisher.h"
+#include "platform/rt/workerpool.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -182,6 +183,35 @@ TEST_CASE("processing a processing graph and swapping in a new one never allocat
 	graphs.publish(std::make_unique<CompiledGraph>(desc, 48000.0, 256)); // built outside real-time code
 	cycle();
 	cycle();
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("processing a graph on a worker pool never allocates or frees, on any thread", "[unit]")
+{
+	using namespace gnubase::engine::graph;
+	using namespace gnubase::engine::processors;
+	GraphDesc desc;
+	for (int i = 0; i < 16; ++i)
+		desc.nodes.push_back({NodeKind::Builtin, 0, 2, createBuiltin(i % 2 == 0 ? "testSynth" : "noise")});
+	desc.nodes.push_back({NodeKind::Channel, 0, 2, nullptr});
+	desc.nodes.push_back({NodeKind::OutputBus, 0, 2, nullptr});
+	for (int i = 0; i < 16; ++i)
+		desc.audio.push_back({i, i < 8 ? 16 : 17});
+	desc.audio.push_back({16, 17});
+	WorkerPool pool(3);
+	const CompiledGraph graph(desc, 48000.0, 256);
+
+	const RecordViolations record;
+	for (int block = 0; block < 50; ++block)
+	{
+		ProcessEvent note;
+		note.type = ProcessEvent::Type::NoteOn;
+		note.key = static_cast<uint8_t>(40 + block);
+		note.velocity = 0x8000;
+		graph.events(0).add(note);
+		const ScopedRealtimeContext realtime;
+		graph.process(256, TransportBlock{}, &pool);
+	}
 	CHECK(g_violations == 0);
 }
 

@@ -8,9 +8,14 @@ target_compile_definitions(gnubase-testutils PRIVATE
 gnubase_target_defaults(gnubase-testutils)
 
 add_executable(gnubase-tests app_tests.cpp audio_tests.cpp audiofile_tests.cpp coverage_tests.cpp dawproject_tests.cpp document_tests.cpp engine_tests.cpp graph_tests.cpp history_tests.cpp log_tests.cpp mcp_tests.cpp processor_tests.cpp rt_tests.cpp scripting_tests.cpp streaming_tests.cpp testutils_tests.cpp time_tests.cpp
-	debugreports.cpp midi_tests.cpp playback_tests.cpp sequencing_tests.cpp transport_tests.cpp)
+	debugreports.cpp midi_tests.cpp multicore_tests.cpp playback_tests.cpp sequencing_tests.cpp transport_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-mcp gnubase-scripting gnubase-testutils Catch2::Catch2WithMain miniz
 	cpp-httplib)
+
+# Engine benchmarks (#212, #24): not a test, run by hand or by CI's benchmark job.
+add_executable(gnubase-bench bench/bench.cpp)
+target_link_libraries(gnubase-bench PRIVATE gnubase-engine)
+gnubase_target_defaults(gnubase-bench)
 
 # ThreadSanitizer defines its own operator new/delete, which the RT checker replaces; every other build runs it.
 if(NOT GNUBASE_SANITIZERS MATCHES "thread")

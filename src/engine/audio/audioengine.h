@@ -9,6 +9,7 @@
 #include "platform/audio/device.h"
 #include "platform/audio/dummydevice.h"
 #include "platform/rt/snapshotpublisher.h"
+#include "platform/rt/workerpool.h"
 
 #include <atomic>
 #include <cstdint>
@@ -36,6 +37,9 @@ namespace gnubase::engine
 	// Bus channels beyond the device's are silent, device outputs no bus reaches stay silent. Choosing device ports
 	// per bus comes with the hardware backends (M03).
 	//
+	// The graph runs on the audio thread and a pool of real-time workers (audio.setProcessing): by default one thread
+	// per hardware thread, the audio thread included.
+	//
 	// For now the only device is the dummy device (audio.setDevice). Its input can be one of the built-in generators.
 	class AudioEngine : public audio::AudioCallback
 	{
@@ -43,9 +47,9 @@ namespace gnubase::engine
 		explicit AudioEngine(rt::SnapshotPublisher<RenderSnapshot>& snapshots);
 		~AudioEngine() override; // stops the device
 
-		// Registers audio.setDevice, audio.get, audio.render, audio.start, audio.stop and audio.capture, and the
-		// transport commands transport.play, transport.stop, transport.toggle, transport.locate, transport.set,
-		// transport.exchangeLocators and transport.get.
+		// Registers audio.setDevice, audio.setProcessing, audio.get, audio.render, audio.start, audio.stop and
+		// audio.capture, and the transport commands transport.play, transport.stop, transport.toggle,
+		// transport.locate, transport.set, transport.exchangeLocators and transport.get.
 		void registerCommands(Engine& engine);
 
 		// Command thread: compiles a new graph if the project changed since the last one.
@@ -78,6 +82,8 @@ namespace gnubase::engine
 
 		void rebuild();
 		void setDevice(const Json& parameters);
+		void setProcessing(const Json& parameters);
+		void startWorkers(); // for the device's format and the processing settings
 		Json status() const;
 		audio::DummyDevice& requireStopped();
 		void registerTransportCommands(Engine& engine);
@@ -112,6 +118,11 @@ namespace gnubase::engine
 
 		std::unique_ptr<rt::SnapshotPublisher<Program>> m_programs;
 		Transport m_transport; // advanced by the audio thread
+
+		// Changed only while the device is stopped.
+		bool m_multiProcessing = true;
+		size_t m_threads = rt::hardwareThreads(); // processing threads, the audio thread included
+		std::unique_ptr<rt::WorkerPool> m_workers;
 
 		// The cue thread, while the device runs in real time. It reads the transport's settings and play state from
 		// m_cueState, which the command thread updates.

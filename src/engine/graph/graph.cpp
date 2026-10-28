@@ -3,9 +3,13 @@
 
 #include "engine/document/rendersnapshot.h"
 #include "platform/log.h"
+#include "platform/rt/mpmcqueue.h"
 #include "platform/rt/realtime.h"
+#include "platform/rt/workerpool.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <functional>
 #include <queue>
@@ -100,6 +104,89 @@ namespace gnubase::engine::graph
 		return order;
 	}
 
+	// One parallel cycle: which nodes are ready, how many senders each still waits for, and what nodes cost.
+	class CompiledGraph::Scheduler : public rt::ParallelJob
+	{
+	public:
+		explicit Scheduler(const CompiledGraph& graph)
+			: m_graph(graph), m_waiting(std::make_unique<std::atomic<int>[]>(graph.m_nodes.size())),
+			  m_ready(graph.m_nodes.size()), m_cost(graph.m_nodes.size(), 0), m_rank(graph.m_nodes.size(), 0)
+		{
+			for (size_t i = 0; i < graph.m_nodes.size(); ++i)
+				if (graph.m_nodes[i].senders == 0)
+					m_roots.push_back(static_cast<int>(i));
+		}
+
+		void run(uint32_t frames, const TransportBlock& transport, rt::WorkerPool& workers) noexcept
+		{
+			const std::vector<Node>& nodes = m_graph.m_nodes;
+			m_frames = frames;
+			m_transport = &transport;
+			m_done.store(0, std::memory_order_relaxed);
+			for (size_t i = 0; i < nodes.size(); ++i)
+				m_waiting[i].store(nodes[i].senders, std::memory_order_relaxed);
+
+			// The longest path of measured work from a node to the end goes first.
+			for (auto index = m_graph.m_order.rbegin(); index != m_graph.m_order.rend(); ++index)
+			{
+				const auto i = static_cast<size_t>(*index);
+				uint64_t after = 0;
+				for (const int receiver : nodes[i].receivers)
+					after = std::max(after, m_rank[static_cast<size_t>(receiver)]);
+				m_rank[i] = m_cost[i] + after;
+			}
+			std::sort(m_roots.begin(), m_roots.end(),
+				[this](int a, int b)
+				{
+					const uint64_t rankA = m_rank[static_cast<size_t>(a)];
+					const uint64_t rankB = m_rank[static_cast<size_t>(b)];
+					return rankA != rankB ? rankA > rankB : a < b;
+				});
+			for (const int root : m_roots)
+				m_ready.tryPush(root); // never full: it holds every node
+			workers.run(*this);
+		}
+
+		void work(size_t /*thread*/) noexcept override
+		{
+			const std::vector<Node>& nodes = m_graph.m_nodes;
+			while (m_done.load(std::memory_order_acquire) < nodes.size())
+			{
+				int index = 0;
+				if (!m_ready.tryPop(index))
+				{
+					rt::cpuPause();
+					continue;
+				}
+				const auto i = static_cast<size_t>(index);
+				const auto start = std::chrono::steady_clock::now();
+				m_graph.processNode(i, m_frames, *m_transport);
+				const auto nanoseconds = static_cast<uint64_t>(
+					std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start)
+						.count());
+				m_cost[i] = m_cost[i] - (m_cost[i] / 8) + (nanoseconds / 8); // a moving average over a few blocks
+
+				// The last sender to finish makes a receiver ready; its acquire sees every sender's output.
+				for (const int receiver : nodes[i].receivers)
+					if (m_waiting[static_cast<size_t>(receiver)].fetch_sub(1, std::memory_order_acq_rel) == 1)
+						m_ready.tryPush(receiver);
+				m_done.fetch_add(1, std::memory_order_acq_rel);
+			}
+		}
+
+	private:
+		const CompiledGraph& m_graph;
+		std::unique_ptr<std::atomic<int>[]> m_waiting; // per node, the senders not done yet
+		rt::MpmcQueue<int> m_ready;
+		std::atomic<size_t> m_done{0};
+		uint32_t m_frames = 0;
+		const TransportBlock* m_transport = nullptr;
+		// Written by the thread that processes the node and read at the start of the next cycle, after run returned.
+		std::vector<uint64_t> m_cost; // nanoseconds per node
+		std::vector<uint64_t> m_rank; // a node's cost plus the most its receivers have ahead of them
+		std::vector<int> m_roots;     // the nodes that receive from none
+	};
+
 	CompiledGraph::CompiledGraph(const GraphDesc& graph, double sampleRate, uint32_t maxFrames)
 		: m_sampleRate(sampleRate), m_maxFrames(maxFrames), m_order(processingOrder(graph))
 	{
@@ -132,6 +219,17 @@ namespace gnubase::engine::graph
 			std::sort(node.audioInputs.begin(), node.audioInputs.end());
 			std::sort(node.eventInputs.begin(), node.eventInputs.end());
 		}
+		for (size_t i = 0; i < m_nodes.size(); ++i)
+		{
+			Node& node = m_nodes[i];
+			std::vector<int> senders = node.audioInputs;
+			senders.insert(senders.end(), node.eventInputs.begin(), node.eventInputs.end());
+			std::sort(senders.begin(), senders.end());
+			senders.erase(std::unique(senders.begin(), senders.end()), senders.end());
+			node.senders = static_cast<int>(senders.size());
+			for (const int sender : senders)
+				m_nodes[static_cast<size_t>(sender)].receivers.push_back(static_cast<int>(i));
+		}
 
 		for (const int index : m_order)
 		{
@@ -149,7 +247,10 @@ namespace gnubase::engine::graph
 			m_channels[c] = m_samples.data() + (c * maxFrames);
 		m_eventsIn.assign(m_nodes.size(), EventBuffer(g_maxEventsPerBlock));
 		m_eventsOut.assign(m_nodes.size(), EventBuffer(g_maxEventsPerBlock));
+		m_scheduler = std::make_unique<Scheduler>(*this);
 	}
+
+	CompiledGraph::~CompiledGraph() = default;
 
 	int CompiledGraph::find(ObjectId object) const
 	{
@@ -170,35 +271,43 @@ namespace gnubase::engine::graph
 		return m_eventsIn[static_cast<size_t>(node)];
 	}
 
-	void CompiledGraph::process(uint32_t frames, const TransportBlock& transport) const noexcept
+	void CompiledGraph::process(
+		uint32_t frames, const TransportBlock& transport, rt::WorkerPool* workers) const noexcept
 	{
 		GNUBASE_ASSERT(frames <= m_maxFrames);
 		frames = std::min(frames, m_maxFrames);
-		for (const int index : m_order)
+		if (workers != nullptr && workers->workers() > 0)
 		{
-			const auto i = static_cast<size_t>(index);
-			const Node& node = m_nodes[i];
-			float* const* audio = m_channels.data() + node.firstChannel;
-			if (node.kind != NodeKind::InputBus)
-				for (int c = 0; c < node.channels; ++c)
-					std::memset(audio[c], 0, frames * sizeof(float));
-			for (const int input : node.audioInputs)
-				mix(m_nodes[static_cast<size_t>(input)], node, frames);
-
-			EventBuffer& eventsIn = m_eventsIn[i];
-			for (const int input : node.eventInputs)
-				for (const ProcessEvent& event : m_eventsOut[static_cast<size_t>(input)])
-					eventsIn.add(event);
-
-			EventBuffer& eventsOut = m_eventsOut[i];
-			eventsOut.clear();
-			if (node.processor != nullptr)
-				node.processor->process({audio, node.channels, frames, eventsIn, eventsOut, transport});
-			else
-				for (const ProcessEvent& event : eventsIn)
-					eventsOut.add(event);
-			eventsIn.clear();
+			m_scheduler->run(frames, transport, *workers);
+			return;
 		}
+		for (const int index : m_order)
+			processNode(static_cast<size_t>(index), frames, transport);
+	}
+
+	void CompiledGraph::processNode(size_t i, uint32_t frames, const TransportBlock& transport) const noexcept
+	{
+		const Node& node = m_nodes[i];
+		float* const* audio = m_channels.data() + node.firstChannel;
+		if (node.kind != NodeKind::InputBus)
+			for (int c = 0; c < node.channels; ++c)
+				std::memset(audio[c], 0, frames * sizeof(float));
+		for (const int input : node.audioInputs)
+			mix(m_nodes[static_cast<size_t>(input)], node, frames);
+
+		EventBuffer& eventsIn = m_eventsIn[i];
+		for (const int input : node.eventInputs)
+			for (const ProcessEvent& event : m_eventsOut[static_cast<size_t>(input)])
+				eventsIn.add(event);
+
+		EventBuffer& eventsOut = m_eventsOut[i];
+		eventsOut.clear();
+		if (node.processor != nullptr)
+			node.processor->process({audio, node.channels, frames, eventsIn, eventsOut, transport});
+		else
+			for (const ProcessEvent& event : eventsIn)
+				eventsOut.add(event);
+		eventsIn.clear();
 	}
 
 	void CompiledGraph::mix(const Node& from, const Node& to, uint32_t frames) const noexcept
