@@ -37,19 +37,21 @@ if(NOT GNUBASE_SANITIZERS)
 	add_dependencies(gnubase-tests gnubase-crashtest)
 	# The app itself, for end-to-end tests of headless mode.
 	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_APP="$<TARGET_FILE:gnubase>")
-	add_dependencies(gnubase-tests gnubase)
-
-	# Every tests/lua/*.lua is a ctest test that the app runs headless; its test cases use gnubase.test (docs/lua.md).
-	# They run in the source folder, so a failure names tests/lua/<file>.lua and the line.
-	file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/output")
-	file(GLOB luaTests CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/lua/*.lua")
-	foreach(luaTest IN LISTS luaTests)
-		file(RELATIVE_PATH script "${PROJECT_SOURCE_DIR}" "${luaTest}")
-		add_test(NAME "${script}" COMMAND gnubase --headless --script "${script}" WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
-		set_tests_properties("${script}" PROPERTIES LABELS "integration;lua" ENVIRONMENT
-			"GNUBASE_GOLDEN_DIR=${CMAKE_CURRENT_SOURCE_DIR}/golden;GNUBASE_TEST_OUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/output")
-	endforeach()
 endif()
+
+# Every tests/lua/*.lua is a ctest test that the app runs headless; its test cases use gnubase.test (docs/lua.md).
+# They run in the source folder, so a failure names tests/lua/<file>.lua and the line. Sanitizer builds run them too,
+# with the app built under the same sanitizers, so building gnubase-tests builds the app.
+add_dependencies(gnubase-tests gnubase)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/output")
+file(GLOB luaTests CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/lua/*.lua")
+foreach(luaTest IN LISTS luaTests)
+	file(RELATIVE_PATH script "${PROJECT_SOURCE_DIR}" "${luaTest}")
+	add_test(NAME "${script}" COMMAND gnubase --headless --script "${script}" WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+	set_tests_properties("${script}" PROPERTIES LABELS "integration;lua" ENVIRONMENT
+		"GNUBASE_GOLDEN_DIR=${CMAKE_CURRENT_SOURCE_DIR}/golden;GNUBASE_TEST_OUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/output")
+endforeach()
+
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}"
 	GNUBASE_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs"
 	GNUBASE_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources"
