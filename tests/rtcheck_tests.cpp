@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "engine/audiofile/diskstream.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 #include "platform/rt/snapshotpublisher.h"
@@ -8,8 +9,10 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 // gnubase-tests links the RT checker (gnubase-rtcheck), which reports allocations made in real-time code.
@@ -132,5 +135,34 @@ TEST_CASE("SnapshotPublisher readers never allocate or free", "[unit]")
 	}
 	publisher.publish(std::make_unique<std::vector<int>>(64, 3)); // frees the others outside real-time code
 	CHECK(seen == 2);
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("the audio thread reads disk streams without allocating or locking", "[integration]")
+{
+	using namespace gnubase::engine;
+	const gnubase::test::TempDir dir;
+	const std::string path = (dir.path() / "stream.wav").u8string();
+	{
+		WriteOptions options;
+		options.sampleRate = 44100.0; // played at 48 kHz, so the disk thread resamples too
+		const auto writer = AudioFileWriter::create(path, options);
+		const std::vector<float> silence(size_t{2} * 44100);
+		writer->write(silence.data(), 44100);
+		writer->close();
+	}
+	DiskStreamer streamer;
+	const auto stream = streamer.open(AudioFileReader::open(path), 48000.0);
+	for (int i = 0; i < 10000 && !stream->ready(); ++i)
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	REQUIRE(stream->ready());
+
+	std::vector<float> buffer(size_t{2} * 64);
+	const RecordViolations record;
+	{
+		const ScopedRealtimeContext realtime;
+		for (int i = 0; i < 1000; ++i)
+			stream->read(buffer.data(), 64);
+	}
 	CHECK(g_violations == 0);
 }

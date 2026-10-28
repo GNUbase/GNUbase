@@ -2,6 +2,7 @@
 #include "engine/document/projectmodel.h"
 
 #include "engine/audiofile/audiofile.h"
+#include "engine/audiofile/resampler.h"
 
 #include <algorithm>
 #include <array>
@@ -628,6 +629,33 @@ namespace gnubase::engine
 			return result;
 		}
 
+		Json convertMedia(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			const MediaFile& source = find(project.media, parameters.at("media").get<ObjectId>(), "media file");
+			MediaFile media;
+			media.path = parameters.at("path").get<std::string>();
+			require(!media.path.empty(), "path must not be empty");
+			const double sampleRate = parameters.value("sampleRate", project.sampleRate);
+			require(sampleRate > 0.0, "sampleRate must be positive");
+			try
+			{
+				const AudioFileInfo info = convertSampleRate(source.path, media.path, sampleRate);
+				media.sampleRate = info.sampleRate;
+				media.channels = info.channels;
+				media.length = info.frames;
+			}
+			catch (const AudioFileError& error)
+			{
+				throw CommandError(error.what());
+			}
+			media.id = project.newId();
+			project.media[media.id] = media;
+			Json result = {{"media", toJson(media)}};
+			context.emit("media.added", result);
+			return result;
+		}
+
 		Json removeMedia(Project& project, CommandContext& context)
 		{
 			const ObjectId id = context.parameters().at("media").get<ObjectId>();
@@ -892,6 +920,7 @@ namespace gnubase::engine
 			{"track.remove", "Remove track"},
 			{"channel.set", "Change channel"},
 			{"media.add", "Add media file"},
+			{"media.convert", "Convert media file"},
 			{"media.remove", "Remove media file"},
 			{"clip.add", "Add clip"},
 			{"clip.remove", "Remove clip"},
@@ -1301,6 +1330,14 @@ namespace gnubase::engine
 					{"path"}),
 				resultSchema({"media"}), false},
 			addMedia);
+		add(engine,
+			{"media.convert", 1,
+				"Converts a media file to another sample rate (by default the project's), writes the result to path as "
+				"a 32-bit float WAV file and adds it as a new media file.",
+				objectSchema(
+					{{"media", idSchema}, {"path", stringSchema}, {"sampleRate", numberSchema}}, {"media", "path"}),
+				resultSchema({"media"}), false},
+			convertMedia);
 		add(engine,
 			{"media.remove", 1, "Removes an audio file that no clip uses.",
 				objectSchema({{"media", idSchema}}, {"media"}), noResult, false},
