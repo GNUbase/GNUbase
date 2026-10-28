@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/performance.h"
 #include "engine/audio/playback.h"
 #include "engine/audio/sequencer.h"
 #include "engine/audio/transport.h"
@@ -9,6 +10,7 @@
 #include "platform/audio/device.h"
 #include "platform/audio/dummydevice.h"
 #include "platform/rt/snapshotpublisher.h"
+#include "platform/rt/triplebuffer.h"
 #include "platform/rt/workerpool.h"
 
 #include <atomic>
@@ -47,8 +49,8 @@ namespace gnubase::engine
 		explicit AudioEngine(rt::SnapshotPublisher<RenderSnapshot>& snapshots);
 		~AudioEngine() override; // stops the device
 
-		// Registers audio.setDevice, audio.setProcessing, audio.get, audio.render, audio.start, audio.stop and
-		// audio.capture, and the transport commands transport.play, transport.stop, transport.toggle,
+		// Registers audio.setDevice, audio.setProcessing, audio.get, audio.performance, audio.render, audio.start,
+		// audio.stop and audio.capture, and the transport commands transport.play, transport.stop, transport.toggle,
 		// transport.locate, transport.set, transport.exchangeLocators and transport.get.
 		void registerCommands(Engine& engine);
 
@@ -85,6 +87,7 @@ namespace gnubase::engine
 		void setProcessing(const Json& parameters);
 		void startWorkers(); // for the device's format and the processing settings
 		Json status() const;
+		Json performance(bool reset);
 		audio::DummyDevice& requireStopped();
 		void registerTransportCommands(Engine& engine);
 		void setTransport(const Json& parameters);
@@ -123,6 +126,11 @@ namespace gnubase::engine
 		bool m_multiProcessing = true;
 		size_t m_threads = rt::hardwareThreads(); // processing threads, the audio thread included
 		std::unique_ptr<rt::WorkerPool> m_workers;
+
+		// Performance data: measured by the audio thread, read by the command thread.
+		PerformanceMeter m_meter; // audio thread, or the command thread while the device is stopped
+		rt::TripleBuffer<PerformanceData> m_performance;
+		std::atomic<bool> m_resetPerformance{false};
 
 		// The cue thread, while the device runs in real time. It reads the transport's settings and play state from
 		// m_cueState, which the command thread updates.

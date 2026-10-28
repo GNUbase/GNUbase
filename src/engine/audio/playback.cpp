@@ -377,6 +377,16 @@ namespace gnubase::engine
 		}
 	}
 
+	double Playback::diskLoad() const
+	{
+		const std::scoped_lock lock(m_mutex);
+		double load = 0.0;
+		for (const auto& voice : m_voices)
+			if (voice->stream)
+				load = std::max(load, voice->stream->load());
+		return load;
+	}
+
 	uint64_t Playback::dropouts() const
 	{
 		const std::scoped_lock lock(m_mutex);

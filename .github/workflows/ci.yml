@@ -82,6 +82,22 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }} -C Release
 
+      # Non-blocking (#24): shared runners vary too much to fail on numbers, so the results are only kept.
+      - name: Benchmarks
+        continue-on-error: true
+        timeout-minutes: 10
+        shell: bash
+        run: build/${{ matrix.preset }}/bin/Release/gnubase-bench --quick --json benchmarks-${{ matrix.name }}.json
+
+      - name: Upload benchmarks
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmarks-${{ matrix.name }}
+          path: benchmarks-${{ matrix.name }}.json
+          if-no-files-found: ignore
+          retention-days: 90
+
       - name: Upload app
         uses: actions/upload-artifact@v7
         with:

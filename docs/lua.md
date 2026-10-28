@@ -67,6 +67,26 @@ Returns:
 - `processing`: object, required
 - `running`: boolean, required
 
+#### `gnubase.audio.performance`
+
+Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1; cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last reset: reset starts a new measurement with the next block, after this result. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `reset`: boolean
+
+Returns:
+
+- `cycles`: integer, required
+- `diskDropouts`: integer, required
+- `diskLoad`: number, required
+- `load`: number, required
+- `overloads`: integer, required
+- `peak`: number, required
+- `threads`: array of number, required
+
 #### `gnubase.audio.render`
 
 Offline mode: processes the given number of frames as fast as possible, then returns. The device must be stopped.

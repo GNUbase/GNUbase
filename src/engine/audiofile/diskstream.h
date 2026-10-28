@@ -66,6 +66,10 @@ namespace gnubase::engine
 		// block the audio thread gave back since. Offline rendering waits for this, so it never drops out.
 		bool full() const;
 
+		// Any thread: the share of the read-ahead buffer the disk thread still has to refill, from 0 (full) to 1
+		// (empty). 0 once the file is read to the end.
+		double load() const;
+
 		// True if reading the file failed; the stream then plays silence.
 		bool failed() const { return m_failed.load(std::memory_order_relaxed); }
 

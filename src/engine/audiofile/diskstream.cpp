@@ -48,6 +48,14 @@ namespace gnubase::engine
 				m_endGeneration.load(std::memory_order_acquire) == generation);
 	}
 
+	double DiskStream::load() const
+	{
+		if (m_endGeneration.load(std::memory_order_acquire) == m_generation.load(std::memory_order_acquire))
+			return 0.0;
+		const auto returned = static_cast<double>(m_returned.load(std::memory_order_acquire));
+		return std::min(1.0, returned / static_cast<double>(std::max<size_t>(m_blocks.size(), 1)));
+	}
+
 	void DiskStream::giveBack(Block* block)
 	{
 		if (m_empty.tryPush(block))

@@ -14,6 +14,7 @@ target_link_libraries(gnubase-r8brain PUBLIC Threads::Threads)
 
 add_library(gnubase-engine STATIC
 	audio/audioengine.cpp audio/audioengine.h
+	audio/performance.cpp audio/performance.h
 	audio/playback.cpp audio/playback.h
 	audio/sequencer.cpp audio/sequencer.h
 	audio/transport.cpp audio/transport.h

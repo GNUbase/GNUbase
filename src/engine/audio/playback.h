@@ -84,6 +84,9 @@ namespace gnubase::engine
 		// Frames of silence where a voice was not in time or its disk stream was late.
 		uint64_t dropouts() const;
 
+		// Any thread but the audio thread: the load of the disk stream furthest behind (DiskStream::load), or 0.
+		double diskLoad() const;
+
 		// A voice: one of a track's disk streams, and where it is.
 		struct Voice
 		{

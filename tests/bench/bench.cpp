@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Engine benchmarks. Each case renders a project offline through the engine API and reports how many times faster
-// than real time it ran. Build a Release configuration for meaningful numbers.
+// Engine benchmarks (#212, #24). Each case renders a project offline through the engine API and reports how many
+// times faster than real time it ran: workers (scaling with threads), tracks (scaling with track count) and
+// blockSizes (32 to 2048 frames). Build a Release configuration for meaningful numbers. CI runs it with --quick and
+// keeps the JSON as an artifact.
 //
 //   gnubase-bench [--quick] [--case <name>] [--json <file>]
 #include "engine/document/document.h"
@@ -111,6 +113,43 @@ namespace
 		return results;
 	}
 
+	// Speed with more and more tracks, on every hardware thread: the cost of a track should stay the same.
+	Json tracks(const Options& options)
+	{
+		Json results = Json::array();
+		for (const int count : {8, 16, 32, 64, 128})
+		{
+			Song song;
+			song.tracks = count;
+			song.seconds = options.quick ? 1.0 : 4.0;
+			song.threads = static_cast<int>(gnubase::rt::hardwareThreads());
+			const double speed = render(song);
+			const double perTrack = 1000.0 * song.blockSize / 48000.0 / speed / count; // ms of a block per track
+			std::printf(
+				"tracks   tracks %4d  %8.2fx real time  %7.4f ms per track and block\n", count, speed, perTrack);
+			results.push_back({{"tracks", count}, {"realTimeFactor", speed}, {"msPerTrackBlock", perTrack}});
+		}
+		return results;
+	}
+
+	// Speed at device blocks from 32 to 2048 frames, on every hardware thread: small blocks cost more per sample.
+	Json blockSizes(const Options& options)
+	{
+		Json results = Json::array();
+		for (int blockSize = 32; blockSize <= 2048; blockSize *= 2)
+		{
+			Song song;
+			song.tracks = 64;
+			song.blockSize = blockSize;
+			song.seconds = options.quick ? 1.0 : 4.0;
+			song.threads = static_cast<int>(gnubase::rt::hardwareThreads());
+			const double speed = render(song);
+			std::printf("blocks   frames %4d  %8.2fx real time\n", blockSize, speed);
+			results.push_back({{"blockSize", blockSize}, {"realTimeFactor", speed}});
+		}
+		return results;
+	}
+
 	struct Case
 	{
 		const char* name;
@@ -119,6 +158,8 @@ namespace
 
 	const Case g_cases[] = {
 		{"workers", &workers},
+		{"tracks", &tracks},
+		{"blockSizes", &blockSizes},
 	};
 
 	int benchmark(int argc, char** argv)

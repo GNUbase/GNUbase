@@ -7,6 +7,7 @@
 #include "platform/rt/realtime.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -256,6 +257,9 @@ namespace gnubase::engine
 
 	void AudioEngine::process(const audio::DeviceBlock& block) noexcept
 	{
+		const auto start = std::chrono::steady_clock::now();
+		if (m_resetPerformance.exchange(false, std::memory_order_acq_rel))
+			m_meter.reset();
 		const Program& program = m_programs->acquire();
 		const audio::DeviceFormat& format = m_device->format();
 		const size_t bytes = block.frames * sizeof(float);
@@ -280,6 +284,15 @@ namespace gnubase::engine
 			for (int c = 0; c < link.channels && link.firstChannel + c < format.outputChannels; ++c)
 				std::memcpy(block.outputs[link.firstChannel + c], bus[c], bytes);
 		}
+
+		const std::chrono::duration<double> busy = std::chrono::steady_clock::now() - start;
+		std::array<double, PerformanceData::g_maxThreads> threads{};
+		const size_t count = std::min(m_workers ? m_workers->workers() + 1 : size_t{1}, threads.size());
+		for (size_t t = 0; t < count; ++t)
+			threads[t] = static_cast<double>(program.graph.busyNanoseconds(t)) * 1e-9;
+		m_meter.cycle(busy.count(), block.frames / format.sampleRate, threads.data(), count);
+		m_performance.writeBuffer() = m_meter.data();
+		m_performance.publish();
 		m_programs->release();
 	}
 
@@ -336,6 +349,7 @@ namespace gnubase::engine
 
 		stopDevice();
 		m_workers.reset();
+		m_meter = PerformanceMeter();
 		m_device.reset();
 		m_programs.reset();
 		m_generator = std::move(generator);
@@ -388,6 +402,19 @@ namespace gnubase::engine
 			{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}};
 	}
 
+	Json AudioEngine::performance(bool reset)
+	{
+		m_performance.update();
+		const PerformanceData& data = m_performance.readBuffer();
+		Json threads = Json::array();
+		for (size_t t = 0; t < data.threads; ++t)
+			threads.push_back(data.threadLoad[t]);
+		if (reset)
+			m_resetPerformance.store(true, std::memory_order_release);
+		return {{"load", data.load}, {"peak", data.peak}, {"overloads", data.overloads}, {"cycles", data.cycles},
+			{"threads", threads}, {"diskLoad", m_playback.diskLoad()}, {"diskDropouts", m_playback.dropouts()}};
+	}
+
 	void AudioEngine::registerCommands(Engine& engine)
 	{
 		engine.registerCommand(
@@ -426,6 +453,24 @@ namespace gnubase::engine
 				context.emit("audio.changed", result);
 				return result;
 			});
+		engine.registerCommand(
+			{"audio.performance", 1,
+				"Performance data for the performance monitor. Loads are the share of a block's duration spent "
+				"processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest "
+				"block; overloads: blocks above 1; cycles: blocks measured; threads: the load of each processing "
+				"thread, the audio thread first. Peak, overloads and cycles count since the last reset: reset starts a "
+				"new measurement with the next block, after this result. diskLoad: how far the disk stream furthest "
+				"behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a "
+				"disk stream was late.",
+				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
+					"reset": {"type": "boolean"}}})"),
+				Json::parse(R"({"type": "object", "properties": {"load": {"type": "number"},
+					"peak": {"type": "number"}, "overloads": {"type": "integer"}, "cycles": {"type": "integer"},
+					"threads": {"type": "array", "items": {"type": "number"}}, "diskLoad": {"type": "number"},
+					"diskDropouts": {"type": "integer"}},
+					"required": ["load", "peak", "overloads", "cycles", "threads", "diskLoad", "diskDropouts"]})"),
+				true},
+			[this](CommandContext& context) { return performance(context.parameters().value("reset", false)); });
 		engine.registerCommand(
 			{"audio.get", 1,
 				"The audio device, whether it runs, how many frames it has processed and captured, how many frames of "
