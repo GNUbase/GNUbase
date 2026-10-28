@@ -571,6 +571,42 @@ Returns:
 
 - `media`: object, required
 
+#### `gnubase.media.peakStatus`
+
+The state of the waveform overviews of a media file, or of every media file: pending, generating (with progress from 0 to 1), ready, failed (with the error) or recording; the frames that have peaks; the peak file they were loaded from or written to; whether they were generated from the audio file rather than loaded. Peak files are kept next to their audio file as <file name>.gbpeaks, or in fallbackFolder where that can't be written.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `media`: integer
+
+Returns:
+
+- `fallbackFolder`: string, required
+- `media`: array of object, required
+
+#### `gnubase.media.peaks`
+
+The waveform overview of a media file for drawing: frames sample frames of the file from start (default: all of it), in pixels columns (up to 65536). Per channel, the smallest and largest sample of each column, from -32767 to 32767 (full scale). The columns come from the coarsest level of the file's peaks (level: 256, 4096 or 65536 frames per peak) that has a peak per column, so they cost the same at any length. status says whether the peaks are ready; while they are generated, only the first available frames have columns and the rest are 0. A file that changed since its peaks were made gets new ones; media.peaksProgress and media.peaksReady report how that goes.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `frames`: integer
+- `media`: integer, required
+- `pixels`: integer, required
+- `start`: integer
+
+Returns:
+
+- `available`: integer, required
+- `channels`: array of object, required
+- `level`: integer, required
+- `media`: integer, required
+- `status`: one of "pending" | "generating" | "ready" | "failed" | "recording", required
+
 #### `gnubase.media.remove`
 
 Removes an audio file that no clip uses.

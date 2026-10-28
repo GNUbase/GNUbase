@@ -82,7 +82,7 @@ flowchart TD
 | Audio workers | Track chains in parallel (#212) | Real-time rules, real-time priority |
 | Prefetch threads | Nodes without live input, ahead of the device in larger blocks (#23) | Real-time rules, real-time priority below the audio workers |
 | Disk threads | Streaming audio files in and recordings out (#17) | Work ahead of the audio thread |
-| Background threads | Peak files, analysis, saving projects, plugin scan coordination | Low priority |
+| Background threads | Peak files (the peak cache's worker), analysis, saving projects, plugin scan coordination | Low priority |
 | Log writer | Writes what audio threads logged, every 10 ms (#8) | Low priority |
 | MCP I/O thread | The MCP server's HTTP or stdio transport | Only forwards to the command thread |
 | Script thread | Lua in headless mode; with a UI, Lua runs on the UI thread | Never an audio thread |
@@ -177,6 +177,18 @@ Audio devices are OS abstractions in `src/platform/audio` (`device.h`); the engi
 - The audio thread never touches files. A `DiskStream` holds blocks of frames, allocated once, that pass between the disk thread (`DiskStreamer`) and the audio thread through lock-free queues; the disk thread keeps them filled ahead of playback. `read()` never waits: missing frames are silence and count as dropouts, and later frames stay at their time.
 - A seek starts a new generation of blocks: the disk thread takes back the older ones and reads from the new position, and the audio thread ignores blocks of older generations. `ready()` says when the buffer is full again, and `full()` when it also holds again every block the audio thread gave back since; offline rendering waits for `full()` before every block.
 - Files at another sample rate are converted by the disk thread with r8brain-free-src (`Resampler`). After a seek, reading starts early enough for the filters and on the same frame grid as from the start, so the output is the same as when playing through. `media.convert` writes a converted copy, for importing at the project's sample rate.
+
+## Waveform overviews
+
+Waveforms draw from **peaks**, not from the audio file (#83). The code is in `src/engine/peaks`.
+
+- A file's peaks are the smallest and largest sample per channel over blocks of 256, 4096 and 65536 frames: three levels, each built from the one before (`PeakBuilder`). They are 16-bit, with full scale at 32767; minimums round down and maximums up, so a peak always contains its samples. A one-hour stereo file at 48 kHz has about 5.7 MB of peaks.
+- **Peak files** (`<audio file name>.gbpeaks`) are stored **next to their audio file**, so they move with the project folder and need no clean-up. Where that folder can't be written (a read-only sample library), they go to the per-user cache folder (`%LOCALAPPDATA%\GNUbase\peaks`, `~/Library/Caches/GNUbase/peaks` or `~/.cache/gnubase/peaks`), named after the file plus a hash of its path. Peak files are never committed (`.gitignore`).
+- The binary format is versioned and little-endian: a header (magic, version, channels, sample rate, frames, the audio file's stamp and path), a level table and the levels' values. It is written to a temporary file and renamed, so no reader sees half a file; a file of another version or with a wrong size is ignored and generated again.
+- A peak file is valid only for the audio file it was made from: its **stamp** is the file's size, its modification time and an FNV-1a hash of its first 64 KiB. Loading compares all three. Every `media.peaks` query compares the size and time (one `stat`), so a file changed while the project is open gets new peaks.
+- The **peak cache** (`PeakCache`) belongs to the engine. After every command it compares the render snapshot's media files with its own: for a new file, its background worker loads the peak file, or generates the peaks from the audio file in chunks and writes the peak file. A removed file's generation stops at the next chunk. It reports `media.peaksProgress` (at most every 5 %), `media.peaksReady` and `media.peaksFailed` to every client (`Engine::broadcast`). A file that failed is tried again once it changes or appears.
+- `media.peaks {media, start, frames, pixels}` returns min and max columns from the coarsest level that still has a peak per column, so a view costs a few peaks per column at any zoom and any length: a few milliseconds for a one-hour file (`[slow]` test in `tests/peaks_tests.cpp`). Positions are in the file's sample frames, like audio event offsets. While peaks are generated, the frames done so far have columns. `media.peakStatus` reports each file's state.
+- **Recording** appends to peaks as the file grows: `PeakCache::record` returns a `PeakRecorder`, whose `append` the disk thread calls with each block it writes, and whose `finish` writes the peak file once the file is closed. Queries read the growing peaks meanwhile. Peaks never touch audio threads.
 
 ## Plugin hosting and IPC
 

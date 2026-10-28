@@ -26,6 +26,11 @@ namespace gnubase::engine
 	class ProjectModel;
 	struct RenderSnapshot;
 
+	namespace peaks
+	{
+		class PeakCache;
+	}
+
 	using RequestId = uint64_t;
 
 	// GNUbase version, e.g. "0.1.0".
@@ -153,6 +158,8 @@ namespace gnubase::engine
 
 		void run();
 		void execute(Request& request);
+		// Announces an event from one of the engine's background threads to every client.
+		void broadcast(Event event);
 
 		mutable std::mutex m_mutex; // guards everything below except the thread
 		std::map<std::string, std::shared_ptr<const Command>> m_commands;
@@ -161,8 +168,9 @@ namespace gnubase::engine
 		RequestId m_nextRequest = 1;
 		bool m_stopping = false;
 		std::condition_variable m_wake;
-		std::unique_ptr<ProjectModel> m_project; // only the command thread touches the document
-		std::unique_ptr<AudioEngine> m_audio;    // plays the project; only the command thread changes it
+		std::unique_ptr<ProjectModel> m_project;   // only the command thread touches the document
+		std::unique_ptr<AudioEngine> m_audio;      // plays the project; only the command thread changes it
+		std::unique_ptr<peaks::PeakCache> m_peaks; // waveform overviews of the project's media files
 		std::thread m_thread;
 	};
 
