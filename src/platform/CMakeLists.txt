@@ -22,11 +22,11 @@ add_library(gnubase-platform STATIC
 	rt/spscqueue.h
 	rt/triplebuffer.h)
 if(WIN32)
-	target_sources(gnubase-platform PRIVATE audio/wasapi.cpp audio/wasapi.h)
+	target_sources(gnubase-platform PRIVATE audio/wasapi.cpp audio/wasapi.h midi/winmm.cpp midi/winmm.h winutf8.h)
 endif()
 target_include_directories(gnubase-platform PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-platform PRIVATE $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
-target_link_libraries(gnubase-platform PUBLIC Threads::Threads PRIVATE $<$<PLATFORM_ID:Windows>:dbghelp;avrt>)
+target_link_libraries(gnubase-platform PUBLIC Threads::Threads PRIVATE $<$<PLATFORM_ID:Windows>:dbghelp;avrt;cfgmgr32;winmm>)
 gnubase_target_defaults(gnubase-platform)
 
 # RT checker: replaces the global operator new/delete to report allocations in real-time code.
