@@ -139,6 +139,29 @@ TEST_CASE("MCP clients run Lua scripts in a sandbox with script_run", "[unit]")
 	CHECK(call("io.open('secret.txt')").at("isError") == true); // no files
 }
 
+TEST_CASE("MCP clients run Lua test cases with script_run", "[unit]")
+{
+	gnubase::engine::Engine engine;
+	gnubase::mcp::Server server(engine);
+	addScriptTool(server, engine);
+	const auto call = [&server](const std::string& code)
+	{
+		const Json request = Json::parse(callTool(1, "script_run", {{"code", code}, {"name", "agent.lua"}}));
+		return server.handle(request).value_or(Json()).at("result");
+	};
+
+	const Json passed =
+		call("gnubase.test.case('has a version', function() gnubase.test.ok(gnubase.engine.version().version) end)");
+	CHECK(passed.at("isError") == false);
+	CHECK(passed.at("structuredContent").at("output") == "1..1\nok 1 - has a version\n");
+
+	const Json failed = call("local test = gnubase.test\ntest.case('adds', function()\n\ttest.equal(1 + 1, 3)\nend)");
+	CHECK(failed.at("isError") == true);
+	const std::string text = failed.at("content").at(0).at("text").get<std::string>();
+	CHECK_THAT(text, ContainsSubstring("not ok 1 - adds\n# agent.lua:3: expected 3, got 2\n"));
+	CHECK_THAT(text, ContainsSubstring("1 of 1 test cases failed: adds"));
+}
+
 TEST_CASE("headless GNUbase loads a project and renders it for an MCP client on stdio", "[integration]")
 {
 	const gnubase::test::TempDir dir;
@@ -249,5 +272,23 @@ TEST_CASE("the gnubase executable serves MCP on stdio in headless mode", "[integ
 	CHECK(runApp("--no-such-option", in, out) == g_exitUsage);
 	CHECK(runApp("--headless --project \"" + (dir.path() / "missing.dawproject").u8string() + "\"", in, out) ==
 		g_exitSetup);
+}
+
+TEST_CASE("the gnubase executable runs a Lua test file and exits with code 4 when an assertion fails", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const auto in = writeScript(dir, "in.txt", "");
+	const auto out = dir.path() / "out.txt";
+	const auto script = writeScript(dir, "version.lua", R"(local test = gnubase.test
+test.case("has a version", function() test.ok(gnubase.engine.version().version) end)
+test.case("is version 0", function()
+	test.equal(gnubase.engine.version().version, "0")
+end)
+)");
+	CHECK(runApp("--headless --script \"" + script.u8string() + "\"", in, out) == g_exitScript);
+	const std::string output = gnubase::test::readText(out); // Windows writes CRLF to stdout
+	CHECK_THAT(output, ContainsSubstring("ok 1 - has a version"));
+	CHECK_THAT(output, ContainsSubstring("not ok 2 - is version 0"));
+	CHECK_THAT(output, ContainsSubstring("version.lua:4: expected \"0\", got \"" GNUBASE_VERSION "\""));
 }
 #endif
