@@ -31,6 +31,15 @@ namespace gnubase::time
 	{
 	}
 
+	std::vector<SignatureChange> SignatureMap::changes() const
+	{
+		std::vector<SignatureChange> changes;
+		changes.reserve(m_sections.size());
+		for (const Section& section : m_sections)
+			changes.push_back({section.bar, section.signature});
+		return changes;
+	}
+
 	SignatureMap::SignatureMap(const std::vector<SignatureChange>& changes)
 	{
 		if (changes.empty() || changes.front().bar != 0)

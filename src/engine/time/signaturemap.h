@@ -25,6 +25,16 @@ namespace gnubase::time
 		TimeSignature signature;
 	};
 
+	inline bool operator==(const TimeSignature& a, const TimeSignature& b)
+	{
+		return a.numerator == b.numerator && a.denominator == b.denominator;
+	}
+
+	inline bool operator==(const SignatureChange& a, const SignatureChange& b)
+	{
+		return a.bar == b.bar && a.signature == b.signature;
+	}
+
 	// A zero-based musical position; formatBarsBeats shows it the way rulers do, starting at 1.1.1.0.
 	struct BarsBeats
 	{
@@ -46,6 +56,12 @@ namespace gnubase::time
 
 		Ticks barStart(int64_t bar) const;
 		TimeSignature signatureAt(Ticks tick) const;
+
+		// The changes the map was made from.
+		std::vector<SignatureChange> changes() const;
+
+		bool operator==(const SignatureMap& other) const { return changes() == other.changes(); }
+		bool operator!=(const SignatureMap& other) const { return !(*this == other); }
 		// Positions between display ticks round down to the display tick.
 		BarsBeats toBarsBeats(Ticks tick, int displayTicksPerSixteenth = g_defaultDisplayTicksPerSixteenth) const;
 		Ticks toTicks(

@@ -23,6 +23,7 @@ add_library(gnubase-engine STATIC
 	document/history.cpp document/history.h
 	document/projectmodel.cpp document/projectmodel.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
+	document/serialize.cpp document/serialize.h
 	engine.cpp engine.h
 	graph/events.h
 	graph/graph.cpp graph/graph.h

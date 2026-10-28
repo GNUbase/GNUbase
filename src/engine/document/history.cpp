@@ -14,13 +14,14 @@ namespace gnubase::engine
 	{
 		bool operator==(const ProjectSettings& a, const ProjectSettings& b)
 		{
-			return std::tie(a.name, a.sampleRate, a.tempo, a.busses, a.tracks) ==
-				std::tie(b.name, b.sampleRate, b.tempo, b.busses, b.tracks);
+			return std::tie(a.name, a.sampleRate, a.tempo, a.signatures, a.busses, a.tracks) ==
+				std::tie(b.name, b.sampleRate, b.tempo, b.signatures, b.busses, b.tracks);
 		}
 
 		ProjectSettings settings(const Project& project)
 		{
-			return {project.name, project.sampleRate, project.tempo, project.busses, project.tracks};
+			return {
+				project.name, project.sampleRate, project.tempo, project.signatures, project.busses, project.tracks};
 		}
 
 		// Walks two maps in id order and calls visit(id, before, after) with nullptr for a missing object.
@@ -99,7 +100,7 @@ namespace gnubase::engine
 	bool ProjectChange::empty() const
 	{
 		return !settingsBefore && tracks.empty() && channels.empty() && media.empty() && clips.empty() &&
-			audioEvents.empty() && midiParts.empty();
+			audioEvents.empty() && midiParts.empty() && markers.empty();
 	}
 
 	ProjectChange difference(const Project& before, const Project& after)
@@ -117,6 +118,7 @@ namespace gnubase::engine
 		change.media = differences(before.media, after.media);
 		change.clips = differences(before.clips, after.clips);
 		change.audioEvents = differences(before.audioEvents, after.audioEvents);
+		change.markers = differences(before.markers, after.markers);
 
 		const MidiPart empty;
 		compare(before.midiParts, after.midiParts,
@@ -142,6 +144,7 @@ namespace gnubase::engine
 			project.name = target.name;
 			project.sampleRate = target.sampleRate;
 			project.tempo = target.tempo;
+			project.signatures = target.signatures;
 			project.busses = target.busses;
 			project.tracks = target.tracks;
 		}
@@ -150,6 +153,7 @@ namespace gnubase::engine
 		applyObjects(project.media, change.media, direction);
 		applyObjects(project.clips, change.clips, direction);
 		applyObjects(project.audioEvents, change.audioEvents, direction);
+		applyObjects(project.markers, change.markers, direction);
 		for (const MidiPartChange& partChange : change.midiParts)
 		{
 			const std::optional<MidiPart>& target = direction == Direction::Redo ? partChange.after : partChange.before;
