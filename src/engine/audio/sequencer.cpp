@@ -146,9 +146,9 @@ namespace gnubase::engine
 	void MidiSequencer::noteOn(const RenderNote& note, uint32_t offset, graph::EventBuffer& out) noexcept
 	{
 		const auto index = static_cast<uint16_t>(((note.channel % 16) * 128) + (note.pitch % 128));
-		const auto first = m_sounding.begin();
-		const auto last = first + static_cast<std::ptrdiff_t>(m_soundingCount);
-		const auto position = std::lower_bound(first, last, index);
+		uint16_t* const first = m_sounding.data();
+		uint16_t* const last = first + m_soundingCount;
+		uint16_t* const position = std::lower_bound(first, last, index);
 		if (position != last && *position == index)
 		{
 			out.add(noteEvent(graph::ProcessEvent::Type::NoteOff, index, offset)); // it sounds: end it first
@@ -167,9 +167,9 @@ namespace gnubase::engine
 
 	void MidiSequencer::noteOff(uint16_t index, uint32_t offset, graph::EventBuffer& out) noexcept
 	{
-		const auto first = m_sounding.begin();
-		const auto last = first + static_cast<std::ptrdiff_t>(m_soundingCount);
-		const auto position = std::lower_bound(first, last, index);
+		uint16_t* const first = m_sounding.data();
+		uint16_t* const last = first + m_soundingCount;
+		uint16_t* const position = std::lower_bound(first, last, index);
 		if (position == last || *position != index)
 			return;
 		std::move(position + 1, last, position);

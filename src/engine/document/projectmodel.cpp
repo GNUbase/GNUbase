@@ -332,7 +332,7 @@ namespace gnubase::engine
 			std::optional<Channel> channel;
 			if (hasChannel)
 			{
-				channel = Channel{project.newId(), track.id, channels, 0, 0};
+				channel = Channel{project.newId(), track.id, channels, 0, 0, {}};
 				const auto mainOutput = std::find_if(project.busses.begin(), project.busses.end(),
 					[](const Bus& bus) { return bus.direction == BusDirection::Output; });
 				if (hasAudio && mainOutput != project.busses.end())
@@ -784,26 +784,28 @@ namespace gnubase::engine
 		// A controller event from a command, checked; its id is left to the caller.
 		Controller controllerFrom(const Json& item, const std::string& name)
 		{
-			const std::optional<ControllerType> type =
+			const std::optional<ControllerType> parsed =
 				controllerTypeFromName(item.value("type", std::string("controller")));
-			require(type.has_value(),
-				name + ".type must be controller, pitchBend, channelPressure, polyPressure, program or sysEx");
+			if (!parsed.has_value())
+				throw CommandError(
+					name + ".type must be controller, pitchBend, channelPressure, polyPressure, program or sysEx");
+			const ControllerType type = *parsed;
 			const auto needs = [&](const char* key) { require(item.contains(key), name + "." + key + " is required"); };
-			const bool numbered = *type == ControllerType::Control || *type == ControllerType::PolyPressure ||
-				*type == ControllerType::Program;
+			const bool numbered = type == ControllerType::Control || type == ControllerType::PolyPressure ||
+				type == ControllerType::Program;
 			if (numbered)
 			{
 				needs("number");
 				requireRange(item.at("number").get<int64_t>(), 0, 127, name + ".number");
 			}
-			if (*type != ControllerType::Program && *type != ControllerType::SysEx)
+			if (type != ControllerType::Program && type != ControllerType::SysEx)
 			{
 				needs("value");
 				unitValue(item, "value", name);
 			}
-			if (*type == ControllerType::Program && item.contains("bank"))
+			if (type == ControllerType::Program && item.contains("bank"))
 				requireRange(item.at("bank").get<int64_t>(), 0, g_maxBank, name + ".bank");
-			if (*type == ControllerType::SysEx)
+			if (type == ControllerType::SysEx)
 			{
 				needs("data");
 				const auto data = item.at("data").get<std::vector<int64_t>>();
