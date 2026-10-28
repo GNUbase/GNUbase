@@ -12,6 +12,7 @@ GNUbase is licensed under the GPL-3.0-or-later, so everything that goes into it 
 | [dr_libs](https://github.com/mackron/dr_libs): dr_wav, dr_flac, dr_mp3 | `ext/dr_libs` | reading WAV, RF64, AIFF, FLAC and MP3 files | yes, compiled in | Unlicense (public domain) or MIT-0, at the user's choice | `ext/dr_libs/LICENSE` |
 | [stb_vorbis](https://github.com/nothings/stb) | `ext/stb` | reading Ogg Vorbis files | yes, compiled in | MIT or Unlicense (public domain), at the user's choice | `ext/stb/LICENSE` |
 | [libFLAC](https://github.com/xiph/flac) | `ext/flac` | writing FLAC files | yes, linked statically | BSD-3-Clause | `ext/flac/COPYING.Xiph` |
+| [r8brain-free-src](https://github.com/avaneev/r8brain-free-src) | `ext/r8brain` | sample-rate conversion | yes, linked statically | MIT | `ext/r8brain/LICENSE` |
 | [Catch2](https://github.com/catchorg/Catch2) | `ext/Catch2` | tests | no, only test programs | BSL-1.0 | `ext/Catch2/LICENSE.txt` |
 
 Some of these bundle code from other projects under its own license:
@@ -22,8 +23,9 @@ Some of these bundle code from other projects under its own license:
 | SDL | yuv2rgb | `ext/SDL/src/video/yuv2rgb` | BSD-3-Clause |
 | RmlUi | itlib and robin_hood containers | `ext/RmlUi/Include/RmlUi/Core/Containers` | MIT |
 | RmlUi | Courier Prime Code font, embedded in the debugger | `ext/RmlUi/Source/Debugger` | SIL Open Font License 1.1 |
+| r8brain-free-src | Takuya Ooura's FFT | `ext/r8brain/fft4g.h` | free to use, copy, modify and distribute for any purpose; see the file's header |
 
-The JSON library's repository also contains files under Apache-2.0, BSD-3-Clause and GPL-3.0 (its `LICENSES` folder). The headers GNUbase includes are all MIT. The FLAC repository also contains programs under GPL-2.0-or-later and documentation under GFDL; GNUbase builds only libFLAC. Of stb, GNUbase uses only `stb_vorbis.c`.
+The JSON library's repository also contains files under Apache-2.0, BSD-3-Clause and GPL-3.0 (its `LICENSES` folder). The headers GNUbase includes are all MIT. The FLAC repository also contains programs under GPL-2.0-or-later and documentation under GFDL; GNUbase builds only libFLAC. Of stb, GNUbase uses only `stb_vorbis.c`. r8brain-free-src also contains PFFFT (FFTPACK license), which GNUbase doesn't build: it uses the built-in Ooura FFT.
 
 ## Why these licenses are compatible
 
