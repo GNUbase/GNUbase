@@ -20,9 +20,10 @@ namespace gnubase::engine
 	class Engine;
 
 	// The ports of every MIDI backend, with their settings: the name they are shown as, whether they are visible, and
-	// whether an input belongs to "all MIDI inputs". Visible inputs are open; their messages reach the audio thread,
-	// which places them in its blocks. A port that disappears keeps its settings and opens again when it comes back.
-	// Only the command thread changes ports; outputs open once something sends to them.
+	// whether an input belongs to "all MIDI inputs". The first midi command lists the ports and opens the visible
+	// inputs, so an engine that never uses MIDI leaves the hardware alone. Their messages reach the audio thread, which
+	// places them in its blocks. A port that disappears keeps its settings and opens again when it comes back. Only the
+	// command thread changes ports; outputs open once something sends to them.
 	class MidiPorts
 	{
 	public:
@@ -31,14 +32,15 @@ namespace gnubase::engine
 		MidiPorts(const MidiPorts&) = delete;
 		MidiPorts& operator=(const MidiPorts&) = delete;
 
-		// Registers midi.ports, midi.setPort, midi.refresh and midi.monitor, and opens the ports. When a backend's
-		// ports change, the engine refreshes them on its own.
+		// Registers midi.ports, midi.setPort, midi.refresh and midi.monitor. When a backend's ports change, the engine
+		// refreshes them on its own.
 		void registerCommands(Engine& engine);
 
 		// Lists the ports again, opens new and returning visible inputs, closes the others. True if anything changed.
 		bool refresh();
 
-		// Changes a port's settings as midi.setPort does and returns the port.
+		// Changes a port's settings as midi.setPort does and returns the port. Lists the ports first if they never
+		// were.
 		Json setPort(const Json& parameters);
 
 		// Audio thread, once per block: the messages that arrived for this block go into allInputs if their port
@@ -73,12 +75,14 @@ namespace gnubase::engine
 		};
 
 		void open(Port& port);
+		void listOnce();
 		Port& find(const Json& parameters);
 		static Json toJson(const Port& port);
 		Json list() const;
 
 		std::vector<std::unique_ptr<midi::Backend>> m_backends;
 		std::vector<Port> m_ports;
+		bool m_listed = false;
 		int m_nextSlot = 0;
 		midi::InputQueue m_queue;
 		std::array<std::atomic<bool>, g_maxInputs> m_allInputs{};
