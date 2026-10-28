@@ -7,9 +7,11 @@
 #include "platform/rt/realtime.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <functional>
+#include <map>
 #include <string>
 #include <utility>
 
@@ -18,15 +20,19 @@ namespace gnubase::engine
 	namespace
 	{
 		constexpr double g_maxCaptureSeconds = 600.0;
-		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20; // frames one audio.capture returns at most
+		constexpr double g_cueSeconds = 2.0; // how far ahead the cue thread positions disk streams
+		constexpr auto g_cueInterval = std::chrono::milliseconds(5);
+		constexpr auto g_startWait = std::chrono::seconds(2);    // for the streams before playback starts or locates
+		constexpr auto g_offlineWait = std::chrono::seconds(30); // for the streams before an offline block
+		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20;   // frames one audio.capture returns at most
 
 		Json statusSchema()
 		{
 			return Json::parse(R"({"type": "object",
 			"properties": {"device": {"type": ["object", "null"]}, "running": {"type": "boolean"},
 				"position": {"type": "integer"}, "capturedFrames": {"type": "integer"},
-				"droppedFrames": {"type": "integer"}},
-			"required": ["device", "running", "position", "capturedFrames", "droppedFrames"]})");
+				"droppedFrames": {"type": "integer"}, "playbackDropouts": {"type": "integer"}},
+			"required": ["device", "running", "position", "capturedFrames", "droppedFrames", "playbackDropouts"]})");
 		}
 
 		Json transportSchema()
@@ -70,8 +76,70 @@ namespace gnubase::engine
 
 	AudioEngine::~AudioEngine()
 	{
+		stopDevice();
+	}
+
+	void AudioEngine::stopDevice()
+	{
 		if (m_device)
 			m_device->stop();
+		stopCueing();
+	}
+
+	void AudioEngine::cue(time::Samples position, bool playing, time::Samples window, bool wait)
+	{
+		Playback::Cue cue;
+		cue.position = position;
+		cue.playing = playing;
+		cue.settings = m_transport.settings();
+		cue.window = window;
+		m_playback.cue(cue);
+		if (wait)
+			m_playback.waitUntilBuffered(g_startWait);
+	}
+
+	void AudioEngine::startCueing()
+	{
+		m_cueing = true;
+		m_cueThread = std::thread(
+			[this]
+			{
+				while (m_cueing)
+				{
+					Playback::Cue cue;
+					{
+						const std::scoped_lock lock(m_cueMutex);
+						cue.playing = m_cueState.playing;
+						cue.settings = m_cueState.settings;
+					}
+					cue.position = m_transport.position();
+					cue.window = static_cast<time::Samples>(g_cueSeconds * m_device->format().sampleRate);
+					m_playback.cue(cue);
+					std::this_thread::sleep_for(g_cueInterval);
+				}
+			});
+	}
+
+	void AudioEngine::stopCueing()
+	{
+		m_cueing = false;
+		if (m_cueThread.joinable())
+			m_cueThread.join();
+	}
+
+	void AudioEngine::render(audio::DummyDevice& device, uint64_t frames)
+	{
+		// Block by block, each after its streams are positioned and buffered: the same output every time. Between
+		// blocks nothing reads the streams, so the cue is as for a stopped transport: exactly at the cursor.
+		const uint32_t blockSize = device.format().blockSize;
+		for (uint64_t done = 0; done < frames;)
+		{
+			const auto block = static_cast<uint32_t>(std::min<uint64_t>(blockSize, frames - done));
+			cue(m_transport.position(), false, block, false);
+			m_playback.waitUntilBuffered(g_offlineWait);
+			device.render(*this, block);
+			done += block;
+		}
 	}
 
 	void AudioEngine::sync()
@@ -84,7 +152,25 @@ namespace gnubase::engine
 	{
 		const RenderSnapshot& snapshot = m_snapshots.latest();
 		const audio::DeviceFormat& format = m_device->format();
-		const graph::GraphDesc desc = graph::describe(snapshot);
+		graph::GraphDesc desc = graph::describe(snapshot);
+
+		// Audio tracks play their playlists.
+		std::vector<Playback::Track> tracks;
+		std::map<ObjectId, std::string> paths;
+		for (const RenderMedia& media : snapshot.media)
+			paths[media.id] = media.path;
+		for (const RenderChannel& channel : snapshot.channels)
+		{
+			if (channel.type != TrackType::Audio)
+				continue;
+			auto playlist = std::make_shared<const Playlist>(makePlaylist(snapshot, channel));
+			for (graph::NodeDesc& node : desc.nodes)
+				if (node.kind == graph::NodeKind::Channel && node.object == channel.id)
+					node.processor = std::make_shared<TrackPlayer>(playlist, channel.id, m_playback);
+			tracks.push_back({channel.id, std::move(playlist)});
+		}
+		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate);
+
 		auto program = std::make_unique<Program>(desc, format.sampleRate, format.blockSize);
 		int input = 0;
 		int output = 0;
@@ -126,7 +212,9 @@ namespace gnubase::engine
 					std::memset(bus[c], 0, bytes);
 			}
 		}
+		m_playback.beginBlock();
 		program.graph.process(block.frames, m_transport.advance(block.frames));
+		m_playback.endBlock();
 		for (const BusLink& link : program.outputs)
 		{
 			float* const* bus = program.graph.audio(link.node);
@@ -187,8 +275,7 @@ namespace gnubase::engine
 				{nullptr, 0, 0, settings, m_generatorOut, graph::TransportBlock{}}); // applies the parameters
 		}
 
-		if (m_device)
-			m_device->stop();
+		stopDevice();
 		m_device.reset();
 		m_programs.reset();
 		m_generator = std::move(generator);
@@ -208,14 +295,15 @@ namespace gnubase::engine
 	Json AudioEngine::status() const
 	{
 		if (!m_device)
-			return {
-				{"device", nullptr}, {"running", false}, {"position", 0}, {"capturedFrames", 0}, {"droppedFrames", 0}};
+			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"capturedFrames", 0},
+				{"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()}};
 		const audio::DeviceFormat& format = m_device->format();
 		return {{"device",
 					{{"type", "dummy"}, {"sampleRate", format.sampleRate}, {"blockSize", format.blockSize},
 						{"inputChannels", format.inputChannels}, {"outputChannels", format.outputChannels}}},
 			{"running", m_device->running()}, {"position", m_device->position()},
-			{"capturedFrames", m_device->capturedFrames()}, {"droppedFrames", m_device->droppedFrames()}};
+			{"capturedFrames", m_device->capturedFrames()}, {"droppedFrames", m_device->droppedFrames()},
+			{"playbackDropouts", m_playback.dropouts()}};
 	}
 
 	void AudioEngine::registerCommands(Engine& engine)
@@ -241,7 +329,9 @@ namespace gnubase::engine
 				return result;
 			});
 		engine.registerCommand(
-			{"audio.get", 1, "The audio device, whether it runs, and how many frames it has processed and captured.",
+			{"audio.get", 1,
+				"The audio device, whether it runs, how many frames it has processed and captured, and how many frames "
+				"of audio track playback were silent because a disk stream was late.",
 				noParameters(), statusSchema(), true},
 			[this](CommandContext&) { return status(); });
 		engine.registerCommand(
@@ -255,7 +345,7 @@ namespace gnubase::engine
 			{
 				const auto frames = context.parameters().at("frames").get<int64_t>();
 				require(frames >= 0, "frames must not be negative");
-				requireStopped().render(*this, static_cast<uint64_t>(frames));
+				render(requireStopped(), static_cast<uint64_t>(frames));
 				Json result = status();
 				context.emit("audio.changed", result);
 				return result;
@@ -267,6 +357,7 @@ namespace gnubase::engine
 			{
 				require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
 				require(!m_device->running(), "the audio device is already running");
+				startCueing();
 				m_device->start(*this);
 				Json result = status();
 				context.emit("audio.changed", result);
@@ -278,7 +369,7 @@ namespace gnubase::engine
 			{
 				if (m_device && m_device->running())
 				{
-					m_device->stop();
+					stopDevice();
 					context.emit("audio.changed", status());
 				}
 				return status();
@@ -315,6 +406,21 @@ namespace gnubase::engine
 		require(accepted, "the transport is busy; try again");
 		if (!m_device || !m_device->running())
 			m_transport.update(); // no audio thread applies the request
+		const std::scoped_lock lock(m_cueMutex);
+		m_cueState.playing = m_transport.playing();
+		m_cueState.settings = m_transport.settings();
+	}
+
+	void AudioEngine::play()
+	{
+		if (m_device && !m_transport.playing())
+		{
+			const TransportSettings& settings = m_transport.settings();
+			const time::Samples start =
+				settings.startMode == StartMode::CycleStart ? settings.left : m_transport.position();
+			cue(start, false, m_device->format().blockSize, true);
+		}
+		sent(m_transport.play());
 	}
 
 	Json AudioEngine::transportStatus() const
@@ -375,6 +481,8 @@ namespace gnubase::engine
 		{
 			throw CommandError("give a position or target");
 		}
+		if (m_device)
+			cue(position, false, m_device->format().blockSize, true); // exactly there, like a start
 		sent(m_transport.locate(position));
 	}
 
@@ -429,13 +537,19 @@ namespace gnubase::engine
 		command("transport.play",
 			"Starts playback from the project cursor, or from the left locator if startMode is cycleStart. Does "
 			"nothing while playing.",
-			nullptr, [this](const Json&) { sent(m_transport.play()); });
+			nullptr, [this](const Json&) { play(); });
 		command("transport.stop",
 			"Stops playback. With returnToStart the cursor goes back to where playback started or was last located "
 			"to.",
 			nullptr, [this](const Json&) { sent(m_transport.stop()); });
 		command("transport.toggle", "Stops playback if it plays, otherwise starts it.", nullptr,
-			[this](const Json&) { sent(m_transport.playing() ? m_transport.stop() : m_transport.play()); });
+			[this](const Json&)
+			{
+				if (m_transport.playing())
+					sent(m_transport.stop());
+				else
+					play();
+			});
 		command("transport.locate",
 			"Moves the project cursor to a position in samples, or to a target: projectStart, projectEnd (the end of "
 			"the last event), leftLocator or rightLocator. While playing, playback continues from there.",
