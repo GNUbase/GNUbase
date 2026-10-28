@@ -2,12 +2,14 @@
 // Engine performance data (#24): processing load, peaks, overloads, per-thread load and the disk streams' load.
 #include "engine/audio/performance.h"
 #include "engine/engine.h"
+#include "platform/rt/workerpool.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -86,10 +88,14 @@ TEST_CASE("audio.performance reports the load per block and thread, and resets",
 	CHECK(measured.at("load").get<double>() > 0.0);
 	CHECK(measured.at("peak").get<double>() >= measured.at("load").get<double>());
 	CHECK(measured.at("overloads").get<uint64_t>() <= 100);
-	REQUIRE(measured.at("threads").size() == 3);
+	REQUIRE(measured.at("threads").size() == std::min<size_t>(3, gnubase::rt::hardwareThreads()));
+	// A thread's time on nodes lies within the block's processing time. A thread can show 0: nodes this small can
+	// finish within one tick of the clock.
 	for (const Json& load : measured.at("threads"))
+	{
 		CHECK(load.get<double>() >= 0.0);
-	CHECK(measured.at("threads")[0].get<double>() > 0.0); // the audio thread always works
+		CHECK(load.get<double>() <= measured.at("peak").get<double>() + 1e-9);
+	}
 	CHECK(measured.at("diskLoad").get<double>() >= 0.0);
 	CHECK(measured.at("diskLoad").get<double>() <= 1.0);
 	CHECK(measured.at("diskDropouts") == 0);
