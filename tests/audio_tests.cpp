@@ -191,7 +191,8 @@ TEST_CASE("simulated real time takes as long as the audio and renders the same a
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
 	const auto elapsed = std::chrono::steady_clock::now() - started;
 	device.stop();
-	CHECK_FALSE(device.running());
+	// Not CHECK_FALSE: Catch2's ContinueOnFailure | FalseTest trips clang-analyzer's EnumCastOutOfRange check
+	CHECK(!device.running());
 
 	CHECK(elapsed >= std::chrono::milliseconds(180));
 	CHECK(recorder.realtime);
