@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# GNUbase's test plugins (README.md): one CLAP plugin per file in <build>/plugins/<config>/clap, with each platform's
-# layout: a .clap bundle folder on macOS, a single .clap library file on Windows and Linux.
+# GNUbase's test plugins (README.md): every plugin as a CLAP plugin in <build>/plugins/<config>/clap and as a VST3
+# plugin in <build>/plugins/<config>/vst3, with each platform's layout.
 
 # The CLAP SDK is header-only.
 add_library(clap-sdk INTERFACE)
@@ -9,35 +9,74 @@ target_include_directories(clap-sdk SYSTEM INTERFACE ${PROJECT_SOURCE_DIR}/ext/c
 set(GNUBASE_TEST_PLUGINS gain synth latency paramstress crash hang stateblob)
 set(GNUBASE_TEST_PLUGINS_DIR "${CMAKE_BINARY_DIR}/plugins/$<CONFIG>" PARENT_SCOPE)
 
-# The format-independent part and the CLAP wrapper, compiled once and linked into every plugin. Object libraries,
-# because nothing in a plugin's own code refers to the wrapper's entry point, so a static library would drop it.
+# The format-independent part and each format's wrapper, compiled once and linked into every plugin. Object libraries,
+# because nothing in a plugin's own code refers to the wrapper's entry points, so a static library would drop them.
 add_library(gnubase-testplugin-clap OBJECT common/testplugin.cpp common/testplugin.h clap/wrapper.cpp)
 target_link_libraries(gnubase-testplugin-clap PUBLIC clap-sdk)
+add_library(gnubase-testplugin-vst3 OBJECT common/testplugin.cpp common/testplugin.h vst3/wrapper.cpp)
+target_link_libraries(gnubase-testplugin-vst3 PUBLIC vst3-sdk)
+target_include_directories(gnubase-testplugin-vst3 PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
-set(clapTargets "")
-foreach(name IN LISTS GNUBASE_TEST_PLUGINS)
-	set(target gnubase-test-${name}-clap)
-	add_library(${target} MODULE common/${name}.cpp)
-	target_link_libraries(${target} PRIVATE gnubase-testplugin-clap)
-	set_target_properties(${target} PROPERTIES OUTPUT_NAME gnubase-test-${name} PREFIX ""
-		LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/$<CONFIG>/clap")
-	if(APPLE)
-		set_target_properties(${target} PROPERTIES BUNDLE TRUE BUNDLE_EXTENSION clap
-			MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/clap/Info.plist.in
-			MACOSX_BUNDLE_GUI_IDENTIFIER org.gnubase.test.${name}
-			MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-			MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION})
+# The VST3 bundle's architecture folder on Windows and Linux (Contents/<architecture>/), as the VST3 format names it.
+if(WIN32)
+	if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID MATCHES "ARM64")
+		set(vst3Architecture arm64-win)
 	else()
-		set_target_properties(${target} PROPERTIES SUFFIX .clap)
+		set(vst3Architecture x86_64-win)
 	endif()
-	list(APPEND clapTargets ${target})
+elseif(NOT APPLE)
+	if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+		set(vst3Architecture aarch64-linux)
+	else()
+		set(vst3Architecture x86_64-linux)
+	endif()
+endif()
+
+set(pluginTargets "")
+foreach(name IN LISTS GNUBASE_TEST_PLUGINS)
+	set(clapTarget gnubase-test-${name}-clap)
+	add_library(${clapTarget} MODULE common/${name}.cpp)
+	target_link_libraries(${clapTarget} PRIVATE gnubase-testplugin-clap)
+	set_target_properties(${clapTarget} PROPERTIES
+		LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/$<CONFIG>/clap")
+
+	set(vst3Target gnubase-test-${name}-vst3)
+	add_library(${vst3Target} MODULE common/${name}.cpp)
+	target_link_libraries(${vst3Target} PRIVATE gnubase-testplugin-vst3)
+
+	foreach(target ${clapTarget} ${vst3Target})
+		set_target_properties(${target} PROPERTIES OUTPUT_NAME gnubase-test-${name} PREFIX "")
+	endforeach()
+	if(APPLE)
+		# Bundle folders: <name>.clap or <name>.vst3/Contents/MacOS/<name> with Contents/Info.plist.
+		foreach(format clap vst3)
+			set_target_properties(gnubase-test-${name}-${format} PROPERTIES BUNDLE TRUE BUNDLE_EXTENSION ${format}
+				MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/common/Info.plist.in
+				MACOSX_BUNDLE_GUI_IDENTIFIER org.gnubase.test.${name}.${format}
+				MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
+				MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION})
+		endforeach()
+		set_target_properties(${vst3Target} PROPERTIES
+			LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/$<CONFIG>/vst3")
+	else()
+		# A single .clap file; the VST3 binary inside a <name>.vst3 folder: .vst3 on Windows, .so on Linux.
+		set_target_properties(${clapTarget} PROPERTIES SUFFIX .clap)
+		if(WIN32)
+			set_target_properties(${vst3Target} PROPERTIES SUFFIX .vst3)
+		else()
+			set_target_properties(${vst3Target} PROPERTIES SUFFIX .so)
+		endif()
+		set_target_properties(${vst3Target} PROPERTIES LIBRARY_OUTPUT_DIRECTORY
+			"${CMAKE_BINARY_DIR}/plugins/$<CONFIG>/vst3/gnubase-test-${name}.vst3/Contents/${vst3Architecture}")
+	endif()
+	list(APPEND pluginTargets ${clapTarget} ${vst3Target})
 endforeach()
 
-# Only the entry point is exported.
-foreach(target IN LISTS clapTargets ITEMS gnubase-testplugin-clap)
+# Only the entry points are exported.
+foreach(target IN LISTS pluginTargets ITEMS gnubase-testplugin-clap gnubase-testplugin-vst3)
 	set_target_properties(${target} PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON
 		POSITION_INDEPENDENT_CODE ON)
 	gnubase_target_defaults(${target})
 endforeach()
 
-add_custom_target(gnubase-test-plugins DEPENDS ${clapTargets})
+add_custom_target(gnubase-test-plugins DEPENDS ${pluginTargets})
