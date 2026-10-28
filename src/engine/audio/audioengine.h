@@ -56,6 +56,7 @@ namespace gnubase::engine
 		// audio.controlPanel, audio.render, audio.start, audio.stop and audio.capture, and the transport commands
 		// transport.play, transport.stop, transport.toggle, transport.locate, transport.set, transport.exchangeLocators
 		// and transport.get.
+		// audio.analyze, audio.compare and audio.record are in analysiscommands.cpp.
 		void registerCommands(Engine& engine);
 
 		// Command thread: compiles a new graph if the project changed since the last one.
@@ -99,6 +100,7 @@ namespace gnubase::engine
 		Json performance(bool reset);
 		audio::DummyDevice& requireDummy();
 		void registerTransportCommands(Engine& engine);
+		void registerAnalysisCommands(Engine& engine); // analysiscommands.cpp
 		void setTransport(const Json& parameters);
 		void locate(const Json& parameters);
 		void sent(bool accepted); // after a transport request
