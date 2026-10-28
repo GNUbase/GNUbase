@@ -44,8 +44,8 @@ namespace gnubase::engine::midi
 		{
 			const std::optional<NoteValue> value = noteValueFromString(json.at(key).get<std::string>());
 			if (!value)
-				throw std::invalid_argument(
-					std::string(key) + " must be a note value from 1/1 to 1/128, like 1/16, 1/8T (triplet) or 1/4. (dotted)");
+				throw std::invalid_argument(std::string(key) +
+					" must be a note value from 1/1 to 1/128, like 1/16, 1/8T (triplet) or 1/4. (dotted)");
 			return *value;
 		}
 
