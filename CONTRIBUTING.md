@@ -31,6 +31,8 @@ Two checks enforce this:
 - **Git hooks:** `tools/install-git-hooks.sh` makes Git run `tools/git-hooks`. Maintainers keep the private keyword list in `.git/info/private-keywords`, and the hooks block commits whose files, file names or messages contain a keyword. Contributors don't have the list, so their hooks don't scan and CI does instead. Never bypass the hooks with `--no-verify`.
 - **CI:** the keyword scan checks every pull request: added lines, file names, commit messages, title and description. If it fails, its log lists where the keywords are, without repeating them. Remove them with new commits, or edit the title or description.
 
+One exception: the VST3 SDK's C++ namespace is a keyword, so the list allows it in file content under `src/pluginhost/vst3/`, the VST3 adapter, and nowhere else. A list entry does that with a tab and the folders after the keyword, e.g. `<keyword><TAB>src/pluginhost/vst3/`; `tools/keyword-scan.sh` describes the format. If you keep a copy of the list, update that entry the same way: the CI secret has it. File names, commit messages and pull request texts are still scanned there, and all other keywords stay blocked in that folder.
+
 ## Workflow
 
 1. Create one branch per issue from an up-to-date `main`.
