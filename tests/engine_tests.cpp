@@ -128,6 +128,40 @@ TEST_CASE("failed commands report why and change nothing", "[unit]")
 	CHECK(stored == 0);
 }
 
+TEST_CASE("a command can run other commands as part of it", "[unit]")
+{
+	Engine engine;
+	int stored = 0;
+	registerSetValue(engine, stored);
+	// test.double stores twice its value through test.setValue; a negative value fails test.setValue's schema.
+	engine.registerCommand({"test.double", 1, "Stores twice the value.", valueParameters(), Json::object(), false},
+		[](CommandContext& context)
+		{
+			const int value = context.parameters().at("value").get<int>();
+			context.call("test.setValue", {{"value", value < 0 ? Json("negative") : Json(value * 2)}});
+			context.emit("test.doubled");
+			return Json::object();
+		});
+	engine.registerCommand(
+		{"test.unknown", 1, "Runs a command that doesn't exist.", Json::object(), Json::object(), false},
+		[](CommandContext& context) { return context.call("test.nothing"); });
+	Client client(engine);
+
+	REQUIRE(client.call("test.double", {{"value", 4}}).ok());
+	CHECK(stored == 8);
+	// The inner command's events come with the outer command's, in order and with its request id.
+	const auto changed = expect<Event>(client.poll());
+	CHECK(changed.name == "test.changed");
+	CHECK(changed.data.at("value") == 8);
+	CHECK(expect<Event>(client.poll()).name == "test.doubled");
+	CHECK_FALSE(client.poll().has_value());
+
+	CHECK_THAT(client.call("test.double", {{"value", -1}}).error, ContainsSubstring("test.setValue"));
+	CHECK_THAT(client.call("test.unknown").error, ContainsSubstring("unknown command test.nothing"));
+	CHECK_FALSE(client.poll().has_value()); // a failed command emits no events
+	CHECK(stored == 8);
+}
+
 TEST_CASE("every command describes itself", "[unit]")
 {
 	Engine engine;

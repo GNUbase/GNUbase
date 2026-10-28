@@ -23,6 +23,7 @@ namespace gnubase::engine
 
 	// A MIDI part's own properties (with its notes and controllers left out) and its changed notes and controllers,
 	// so that editing one note doesn't store the whole part.
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct MidiPartChange
 	{
 		ObjectId id = 0;
@@ -33,7 +34,7 @@ namespace gnubase::engine
 	};
 
 	// The parts of a project that are not objects with ids, or keep their order: name, sample rate, tempo, time
-	// signatures, busses and the top-level tracks.
+	// signatures, busses, the top-level tracks and the active marker track.
 	struct ProjectSettings
 	{
 		std::string name;
@@ -42,6 +43,7 @@ namespace gnubase::engine
 		time::SignatureMap signatures;
 		std::vector<Bus> busses;
 		std::vector<ObjectId> tracks;
+		ObjectId activeMarkerTrack = 0;
 	};
 
 	// How a project changed, object by object. The id counter is left out on purpose: undoing an addition doesn't

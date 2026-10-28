@@ -72,7 +72,8 @@ namespace
 		{
 			const Json project = run(m_client, "project.get");
 			// Weights: adding is likelier than removing, so projects grow.
-			std::discrete_distribution<int> choose({6, 4, 2, 1, 3, 1, 1, 2, 4, 2, 1, 4, 2, 1, 4, 2, 2, 1, 1, 2});
+			std::discrete_distribution<int> choose(
+				{6, 4, 2, 1, 3, 1, 1, 2, 4, 2, 1, 4, 2, 1, 4, 2, 2, 1, 1, 3, 2, 1, 1, 2});
 			switch (choose(m_random))
 			{
 			case 0:
@@ -150,6 +151,20 @@ namespace
 					{{"sampleRate", std::vector<double>{44100.0, 48000.0, 96000.0}[number(2)]},
 						{"name", "Song " + std::to_string(number(9))}});
 				break;
+			case 19:
+				addMarker(project);
+				break;
+			case 20:
+				call("marker.set",
+					{{"marker", pick(project, "markers")}, {"position", number(8) * g_ticksPerQuarter},
+						{"name", "M" + std::to_string(number(9))}, {"track", pick(project, "tracks", "marker")}});
+				break;
+			case 21:
+				call("marker.remove", {{"markers", {pick(project, "markers")}}});
+				break;
+			case 22:
+				call("marker.activateTrack", {{"track", pick(project, "tracks", "marker")}});
+				break;
 			default:
 				call("history.transaction",
 					{{"description", "Write"},
@@ -194,8 +209,8 @@ namespace
 
 		void addTrack(const Json& project)
 		{
-			const char* const types[] = {"audio", "instrument", "midi", "folder", "group", "effect"};
-			Json parameters = {{"type", types[number(5)]}, {"timeBase", timeBase()}};
+			const char* const types[] = {"audio", "instrument", "midi", "folder", "group", "effect", "marker"};
+			Json parameters = {{"type", types[number(6)]}, {"timeBase", timeBase()}};
 			if (chance())
 				parameters["parent"] = pick(project, "tracks", "folder");
 			if (parameters["type"] == "folder")
@@ -203,6 +218,20 @@ namespace
 			if (number(3) == 0)
 				parameters["channels"] = 1 + number(1);
 			call("track.add", parameters);
+		}
+
+		// A position or cycle marker, on the active marker track or a picked one.
+		void addMarker(const Json& project)
+		{
+			Json parameters = {{"position", number(8) * g_ticksPerQuarter}};
+			if (chance())
+				parameters["track"] = pick(project, "tracks", "marker");
+			if (chance())
+			{
+				parameters["type"] = "cycle";
+				parameters["end"] = parameters["position"].get<int64_t>() + (1 + number(4)) * g_ticksPerQuarter;
+			}
+			call("marker.add", parameters);
 		}
 
 		void addClip()

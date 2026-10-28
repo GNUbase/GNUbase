@@ -21,6 +21,7 @@ namespace gnubase::engine
 			{TrackType::Folder, "folder"},
 			{TrackType::Group, "group"},
 			{TrackType::Effect, "effect"},
+			{TrackType::Marker, "marker"},
 		};
 
 		Json colorJson(const std::string& color)
@@ -71,6 +72,20 @@ namespace gnubase::engine
 	const char* directionName(BusDirection direction)
 	{
 		return direction == BusDirection::Input ? "input" : "output";
+	}
+
+	const char* markerTypeName(MarkerType type)
+	{
+		return type == MarkerType::Cycle ? "cycle" : "position";
+	}
+
+	std::optional<MarkerType> markerTypeFromName(const std::string& name)
+	{
+		if (name == "position")
+			return MarkerType::Position;
+		if (name == "cycle")
+			return MarkerType::Cycle;
+		return std::nullopt;
 	}
 
 	Json toJson(const Bus& bus)
@@ -130,7 +145,9 @@ namespace gnubase::engine
 
 	Json toJson(const Marker& marker)
 	{
-		return {{"id", marker.id}, {"position", marker.position}, {"name", marker.name},
+		return {{"id", marker.id}, {"track", marker.track}, {"type", markerTypeName(marker.type)},
+			{"number", marker.number}, {"position", marker.position.value},
+			{"end", marker.type == MarkerType::Cycle ? Json(marker.end.value) : Json(nullptr)}, {"name", marker.name},
 			{"color", colorJson(marker.color)}};
 	}
 
@@ -153,7 +170,8 @@ namespace gnubase::engine
 			{"signatures", signatures}, {"busses", busses}, {"tracks", tracks},
 			{"channels", toJsonArray(project.channels)}, {"media", toJsonArray(project.media)},
 			{"clips", toJsonArray(project.clips)}, {"audioEvents", toJsonArray(project.audioEvents)},
-			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)}};
+			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
+			{"activeMarkerTrack", project.activeMarkerTrack}};
 	}
 
 	Project projectFromJson(const Json& json)
@@ -258,10 +276,23 @@ namespace gnubase::engine
 		}
 		for (const Json& item : json.at("markers"))
 		{
-			const auto id = item.at("id").get<ObjectId>();
-			project.markers[id] = {id, item.at("position").get<time::Ticks>(), item.at("name").get<std::string>(),
-				colorFrom(item.at("color"))};
+			Marker marker;
+			marker.id = item.at("id").get<ObjectId>();
+			marker.track = item.at("track").get<ObjectId>();
+			const auto type = markerTypeFromName(item.at("type").get<std::string>());
+			if (!type)
+				throw std::invalid_argument("unknown marker type " + item.at("type").dump());
+			marker.type = *type;
+			marker.number = item.at("number").get<int>();
+			marker.position = {base(marker.track), item.at("position").get<int64_t>()};
+			marker.end = marker.type == MarkerType::Cycle
+				? time::Position{base(marker.track), item.at("end").get<int64_t>()}
+				: marker.position;
+			marker.name = item.at("name").get<std::string>();
+			marker.color = colorFrom(item.at("color"));
+			project.markers[marker.id] = marker;
 		}
+		project.activeMarkerTrack = json.value("activeMarkerTrack", ObjectId{0});
 		// Without a counter, ids continue after the highest one.
 		ObjectId highest = 0;
 		const auto see = [&highest](ObjectId id) { highest = std::max(highest, id); };

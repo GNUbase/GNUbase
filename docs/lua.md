@@ -540,6 +540,158 @@ Returns:
 
 - `position`: integer, required
 
+### marker
+
+#### `gnubase.marker.activateTrack`
+
+Makes a marker track the active one, which marker commands use when they are given no track.
+
+Parameters:
+
+- `track`: integer, required
+
+#### `gnubase.marker.add`
+
+Adds a position marker, or with type cycle a cycle marker, to a marker track (default: the active one; without a marker track one is added). position and end are in the track's time base (ticks or samples) or "cursor". A position marker defaults to the cursor, a cycle marker to the locators. Position and cycle markers are numbered separately on each track; a new marker gets the first free number unless one is given.
+
+Parameters:
+
+- `color`: string or null
+- `end`: integer or string
+- `name`: string
+- `number`: integer
+- `position`: integer or string
+- `track`: integer
+- `type`: one of "position" | "cycle"
+
+Returns:
+
+- `marker`: object, required
+
+#### `gnubase.marker.list`
+
+The markers of a marker track (default: the active one; track 0 if there is none) in timeline order, with their position and end also in the project's samples.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `track`: integer
+
+Returns:
+
+- `markers`: array, required
+- `track`: integer, required
+
+#### `gnubase.marker.locate`
+
+Moves the project cursor to a marker, given by id (marker) or by its number on a marker track (default: the active one) and type (default: position). Cycle markers locate to their start.
+
+Parameters:
+
+- `marker`: integer
+- `number`: integer
+- `track`: integer
+- `type`: one of "position" | "cycle"
+
+Returns:
+
+- `marker`: object or null, required
+- `position`: integer, required
+
+#### `gnubase.marker.locateNext`
+
+Moves the project cursor to the next marker after it on a marker track (default: the active one): position markers and the start and end of cycle markers. Without one the cursor stays and marker is null. Returns the marker and the cursor in samples.
+
+Parameters:
+
+- `track`: integer
+
+Returns:
+
+- `marker`: object or null, required
+- `position`: integer, required
+
+#### `gnubase.marker.locatePrevious`
+
+Moves the project cursor to the previous marker before it on a marker track (default: the active one), like marker.locateNext.
+
+Parameters:
+
+- `track`: integer
+
+Returns:
+
+- `marker`: object or null, required
+- `position`: integer, required
+
+#### `gnubase.marker.range`
+
+The range between the markers around a position in samples, on a marker track (default: the active one): from the last marker at or before it to the next one, counting position markers and the start and end of cycle markers. A range selection between markers spans it.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `position`: integer, required
+- `track`: integer
+
+Returns:
+
+- `end`: integer, required
+- `start`: integer, required
+
+#### `gnubase.marker.remove`
+
+Removes markers.
+
+Parameters:
+
+- `markers`: array of integer, required
+
+#### `gnubase.marker.renumber`
+
+Numbers a marker track's position or cycle markers again from 1, in timeline order (default: the active track).
+
+Parameters:
+
+- `track`: integer
+- `type`: one of "position" | "cycle", required
+
+#### `gnubase.marker.set`
+
+Changes a marker: moves it (position, in the track's time base or "cursor"; a cycle marker keeps its length unless end is given), renames it, changes its color or number, or moves it to another marker track, where it takes the first free number if its own is taken.
+
+Parameters:
+
+- `color`: string or null
+- `end`: integer or string
+- `marker`: integer, required
+- `name`: string
+- `number`: integer
+- `position`: integer or string
+- `track`: integer
+
+Returns:
+
+- `marker`: object, required
+
+#### `gnubase.marker.setLocators`
+
+Sets the left and right locators to a cycle marker's start and end, given by id (marker) or by its number on a marker track (default: the active one).
+
+Parameters:
+
+- `marker`: integer
+- `number`: integer
+- `track`: integer
+
+Returns:
+
+- `left`: integer, required
+- `marker`: object, required
+- `right`: integer, required
+
 ### media
 
 #### `gnubase.media.add`
@@ -713,7 +865,7 @@ Parameters:
 
 #### `gnubase.track.add`
 
-Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; folders get a channel only with groupChannel. New channels play through the main output, or through the folder's group channel.
+Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; folders get a channel only with groupChannel. New channels play through the main output, or through the folder's group channel. Marker tracks have no channel and stay at the top level; a project has at most 10, and a new one becomes the active marker track.
 
 Parameters:
 
@@ -724,7 +876,7 @@ Parameters:
 - `name`: string
 - `parent`: integer
 - `timeBase`: one of "musical" | "linear"
-- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect", required
+- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect" | "marker", required
 
 Returns:
 
@@ -743,7 +895,7 @@ Parameters:
 
 #### `gnubase.track.remove`
 
-Removes a track with its channel, events and parts; a folder also removes the tracks inside it.
+Removes a track with its channel, events, parts or markers; a folder also removes the tracks inside it. Without the active marker track, the topmost marker track becomes the active one.
 
 Parameters:
 
@@ -751,7 +903,7 @@ Parameters:
 
 #### `gnubase.track.set`
 
-Changes a track's name, color (#rrggbb, or null for the default) or time base. A new time base keeps its events and parts at the same time.
+Changes a track's name, color (#rrggbb, or null for the default) or time base. A new time base keeps its events, parts and markers at the same time.
 
 Parameters:
 

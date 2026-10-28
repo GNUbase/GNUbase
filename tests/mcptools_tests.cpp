@@ -256,6 +256,53 @@ TEST_CASE("MCP clients play, stop, locate and cycle the transport", "[integratio
 	mcp.fails("transport_locate", {{"target", "nowhere"}});
 }
 
+TEST_CASE("MCP clients add markers and navigate with them", "[integration]")
+{
+	// At 120 BPM and 48 kHz a quarter note is 1720320 ticks and 24000 samples.
+	constexpr int64_t quarterTicks = 1720320;
+	constexpr int64_t quarterSamples = 24000;
+	Engine engine;
+	McpClient mcp(engine);
+	const int64_t track = idOf(mcp.call("track_add", {{"type", "marker"}}).at("track"));
+	const Json intro = mcp.call("marker_add", {{"position", 0}, {"name", "Intro"}}).at("marker");
+	CHECK(intro.at("track") == track);
+	CHECK(intro.at("number") == 1);
+	const Json verse =
+		mcp.call("marker_add",
+			   {{"type", "cycle"}, {"position", 4 * quarterTicks}, {"end", 8 * quarterTicks}, {"name", "Verse"}})
+			.at("marker");
+	const Json outro = mcp.call("marker_add", {{"position", 12 * quarterTicks}, {"name", "Outro"}}).at("marker");
+	CHECK(outro.at("number") == 2);
+	mcp.call("marker_set", {{"marker", idOf(outro)}, {"name", "End"}, {"position", 16 * quarterTicks}});
+	const Json list = mcp.call("marker_list");
+	REQUIRE(list.at("markers").size() == 3);
+	CHECK(list.at("markers").at(2).at("name") == "End");
+	CHECK(list.at("markers").at(2).at("positionSamples") == 16 * quarterSamples);
+
+	// The commands key commands call: next and previous marker, marker N, cycle marker N to the locators.
+	CHECK(mcp.call("marker_locateNext").at("position") == 4 * quarterSamples);
+	CHECK(mcp.call("transport_get").at("position") == 4 * quarterSamples);
+	CHECK(mcp.call("marker_locateNext").at("position") == 8 * quarterSamples); // the cycle marker's end
+	CHECK(mcp.call("marker_locateNext").at("marker").at("name") == "End");
+	CHECK(mcp.call("marker_locatePrevious").at("position") == 8 * quarterSamples);
+	CHECK(mcp.call("marker_locate", {{"number", 1}}).at("marker").at("name") == "Intro");
+	CHECK(mcp.call("transport_get").at("position") == 0);
+	const Json locators = mcp.call("marker_setLocators", {{"number", 1}});
+	CHECK(locators.at("left") == 4 * quarterSamples);
+	CHECK(locators.at("right") == 8 * quarterSamples);
+	CHECK(mcp.call("transport_get").at("right") == 8 * quarterSamples);
+	const Json range = mcp.call("marker_range", {{"position", 10 * quarterSamples}});
+	CHECK(range.at("start") == 8 * quarterSamples);
+	CHECK(range.at("end") == 16 * quarterSamples);
+	CHECK_THAT(mcp.fails("marker_locate", {{"number", 7}}), ContainsSubstring("7"));
+
+	mcp.call("marker_remove", {{"markers", {idOf(verse)}}});
+	CHECK(mcp.call("history_get").at("steps").back().at("action") == "Remove markers");
+	mcp.call("history_undo");
+	CHECK(mcp.project().at("markers").size() == 3);
+	CHECK(mcp.project().at("activeMarkerTrack") == track);
+}
+
 TEST_CASE("MCP clients undo and redo, step by step and in transactions", "[integration]")
 {
 	Engine engine;

@@ -43,7 +43,11 @@ namespace gnubase::engine
 		Folder, // contains other tracks; has a channel only if its group channel is on
 		Group,  // sums the channels routed to it; holds no events
 		Effect, // receives sends; holds no events
+		Marker, // holds markers; has no channel and stays at the top level
 	};
+
+	// A project has at most this many marker tracks.
+	inline constexpr int g_maxMarkerTracks = 10;
 
 	// The mixer channel of a track. MIDI tracks have a MIDI channel: no audio channels, and their output is an
 	// instrument track's channel.
@@ -111,6 +115,7 @@ namespace gnubase::engine
 	};
 
 	// Holds notes and controllers on an instrument or MIDI track. Notes and controllers outside it are not played.
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct MidiPart
 	{
 		ObjectId id = 0;
@@ -134,11 +139,22 @@ namespace gnubase::engine
 		std::vector<ObjectId> children; // folders: the tracks inside, from top to bottom
 	};
 
-	// A named position on the timeline.
+	enum class MarkerType : uint8_t
+	{
+		Position, // a position on the timeline
+		Cycle,    // a range, e.g. a section of a song, that can become the locators
+	};
+
+	// A marker on a marker track. Position and cycle markers are numbered separately on each track, from 1; key
+	// commands use the numbers.
 	struct Marker
 	{
 		ObjectId id = 0;
-		time::Ticks position = 0;
+		ObjectId track = 0;
+		MarkerType type = MarkerType::Position;
+		int number = 1;
+		time::Position position; // in the track's time base; a cycle marker's start
+		time::Position end;      // cycle markers: after the position; position markers: the same as the position
 		std::string name;
 		std::string color; // "#rrggbb", or empty for the default color
 	};
@@ -161,6 +177,7 @@ namespace gnubase::engine
 		std::map<ObjectId, AudioEvent> audioEvents;
 		std::map<ObjectId, MidiPart> midiParts;
 		std::map<ObjectId, Marker> markers;
+		ObjectId activeMarkerTrack = 0; // the marker track that marker commands use by default, or 0
 
 		ObjectId newId() { return nextId++; }
 
@@ -221,7 +238,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const Marker& a, const Marker& b)
 	{
-		return std::tie(a.id, a.position, a.name, a.color) == std::tie(b.id, b.position, b.name, b.color);
+		return std::tie(a.id, a.track, a.type, a.number, a.position, a.end, a.name, a.color) ==
+			std::tie(b.id, b.track, b.type, b.number, b.position, b.end, b.name, b.color);
 	}
 
 	inline bool operator==(const Track& a, const Track& b)

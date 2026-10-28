@@ -69,6 +69,8 @@ namespace gnubase::engine
 		using std::runtime_error::runtime_error;
 	};
 
+	class Engine;
+
 	// What a command handler gets while it runs on the command thread.
 	class CommandContext
 	{
@@ -92,11 +94,18 @@ namespace gnubase::engine
 				m_events.push_back({std::move(name), std::move(data)});
 		}
 
+		// Runs another command as part of this one and returns its result, e.g. for a marker command that moves the
+		// transport. The parameters and the result are checked against the command's schemas; the command's events
+		// are announced with this command's, and if it fails, this one fails with the reason. Commands that change
+		// the project record their own undo step, so call only commands outside the document this way.
+		Json call(const std::string& command, const Json& parameters = Json::object());
+
 	private:
 		friend class Engine;
 
 		const Json& m_parameters;
 		CommandContext* m_outer = nullptr;
+		Engine* m_engine = nullptr; // set on the outermost context
 		std::vector<Event> m_events;
 	};
 
@@ -136,6 +145,7 @@ namespace gnubase::engine
 
 	private:
 		friend class Client;
+		friend class CommandContext;
 
 		struct Command
 		{
@@ -153,6 +163,8 @@ namespace gnubase::engine
 
 		void run();
 		void execute(Request& request);
+		std::shared_ptr<const Command> find(const std::string& name) const; // throws CommandError if unknown
+		Json runInside(const std::string& command, const Json& parameters, CommandContext& outer);
 
 		mutable std::mutex m_mutex; // guards everything below except the thread
 		std::map<std::string, std::shared_ptr<const Command>> m_commands;

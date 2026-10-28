@@ -14,14 +14,14 @@ namespace gnubase::engine
 	{
 		bool operator==(const ProjectSettings& a, const ProjectSettings& b)
 		{
-			return std::tie(a.name, a.sampleRate, a.tempo, a.signatures, a.busses, a.tracks) ==
-				std::tie(b.name, b.sampleRate, b.tempo, b.signatures, b.busses, b.tracks);
+			return std::tie(a.name, a.sampleRate, a.tempo, a.signatures, a.busses, a.tracks, a.activeMarkerTrack) ==
+				std::tie(b.name, b.sampleRate, b.tempo, b.signatures, b.busses, b.tracks, b.activeMarkerTrack);
 		}
 
 		ProjectSettings settings(const Project& project)
 		{
-			return {
-				project.name, project.sampleRate, project.tempo, project.signatures, project.busses, project.tracks};
+			return {project.name, project.sampleRate, project.tempo, project.signatures, project.busses, project.tracks,
+				project.activeMarkerTrack};
 		}
 
 		// Walks two maps in id order and calls visit(id, before, after) with nullptr for a missing object.
@@ -147,6 +147,7 @@ namespace gnubase::engine
 			project.signatures = target.signatures;
 			project.busses = target.busses;
 			project.tracks = target.tracks;
+			project.activeMarkerTrack = target.activeMarkerTrack;
 		}
 		applyObjects(project.trackById, change.tracks, direction);
 		applyObjects(project.channels, change.channels, direction);

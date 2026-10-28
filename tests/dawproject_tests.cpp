@@ -142,6 +142,19 @@ namespace
 					{{{"position", 0}, {"number", 7}, {"value", 0.9}},
 						{{"position", g_ticksPerQuarter}, {"number", 1}, {"value", 0.333333}, {"channel", 2}}}}});
 		run(client, "midiPart.add", {{"track", idOf(midi, "track")}, {"position", 0}, {"length", g_ticksPerQuarter}});
+
+		// Two marker tracks, the first one active, with position and cycle markers.
+		const ObjectId markers = idOf(run(client, "track.add", {{"type", "marker"}, {"index", 0}}), "track");
+		const ObjectId linear =
+			idOf(run(client, "track.add", {{"type", "marker"}, {"name", "Takes"}, {"timeBase", "linear"}}), "track");
+		run(client, "marker.add", {{"track", markers}, {"position", 0}, {"name", "Intro"}, {"color", "#ff0000"}});
+		run(client, "marker.add",
+			{{"track", markers}, {"type", "cycle"}, {"position", 4 * g_ticksPerQuarter},
+				{"end", 12 * g_ticksPerQuarter}, {"name", "Verse"}});
+		run(client, "marker.add",
+			{{"track", markers}, {"position", 16 * g_ticksPerQuarter}, {"name", "Bridge"}, {"number", 5}});
+		run(client, "marker.add", {{"track", linear}, {"position", 44100}, {"name", "Take"}}); // 2 beats
+		run(client, "marker.activateTrack", {{"track", markers}});
 	}
 
 	// The README's example project, exported from Bitwig Studio 5.0 (https://github.com/bitwig/dawproject, MIT).
@@ -382,17 +395,44 @@ TEST_CASE("without GNUbase's entry, a project is read from project.xml", "[integ
 
 	run(client, "project.load", {{"path", other}});
 	const Json after = run(client, "project.get");
-	// Tracks, their order, types, folders and colors.
-	const Json& tracks = after.at("tracks");
-	REQUIRE(tracks.size() == before.at("tracks").size());
+	// Tracks, their order, types, folders and colors. Marker tracks aren't DAWproject tracks.
+	const auto withoutMarkerTracks = [](const Json& list)
+	{
+		Json tracks = Json::array();
+		for (const Json& track : list)
+			if (track.at("type") != "marker")
+				tracks.push_back(track);
+		return tracks;
+	};
+	const Json tracks = withoutMarkerTracks(after.at("tracks"));
+	const Json expected = withoutMarkerTracks(before.at("tracks"));
+	REQUIRE(tracks.size() == expected.size());
 	for (size_t i = 0; i < tracks.size(); ++i)
 	{
-		INFO(before.at("tracks")[i].at("name"));
-		CHECK(tracks[i].at("name") == before.at("tracks")[i].at("name"));
-		CHECK(tracks[i].at("type") == before.at("tracks")[i].at("type"));
-		CHECK(tracks[i].at("color") == before.at("tracks")[i].at("color"));
-		CHECK((tracks[i].at("parent") == 0) == (before.at("tracks")[i].at("parent") == 0));
+		INFO(expected[i].at("name"));
+		CHECK(tracks[i].at("name") == expected[i].at("name"));
+		CHECK(tracks[i].at("type") == expected[i].at("type"));
+		CHECK(tracks[i].at("color") == expected[i].at("color"));
+		CHECK((tracks[i].at("parent") == 0) == (expected[i].at("parent") == 0));
 	}
+	// The markers of every marker track, cycle markers by their start, come back on one marker track at the top.
+	const Json& markerTrack = after.at("tracks").at(0);
+	CHECK(markerTrack.at("type") == "marker");
+	CHECK(markerTrack.at("name") == "Markers");
+	CHECK(after.at("activeMarkerTrack") == markerTrack.at("id"));
+	const Json& markers = after.at("markers");
+	REQUIRE(markers.size() == 4);
+	for (const Json& marker : markers)
+	{
+		CHECK(marker.at("track") == markerTrack.at("id"));
+		CHECK(marker.at("type") == "position");
+	}
+	CHECK(withId(markers, "name", "Intro").at("color") == "#ff0000");
+	CHECK(withId(markers, "name", "Intro").at("number") == 1);
+	CHECK(withId(markers, "name", "Take").at("position") == 2 * g_ticksPerQuarter);
+	CHECK(withId(markers, "name", "Take").at("number") == 2); // numbered in timeline order
+	CHECK(withId(markers, "name", "Verse").at("position") == 4 * g_ticksPerQuarter);
+	CHECK(withId(markers, "name", "Bridge").at("number") == 4);
 	// Routing: Vocals into the folder's group channel, Reverb into the Cue bus.
 	const auto channelOf = [&after](const std::string& name)
 	{ return withId(after.at("channels"), "id", withId(after.at("tracks"), "name", name).at("channel")); };
@@ -489,6 +529,12 @@ TEST_CASE("folders, groups, nested clips, markers and tempo changes load from pr
 	CHECK(project.at("markers")[0].at("name") == "Intro");
 	CHECK(project.at("markers")[0].at("color") == "#ff0000");
 	CHECK(project.at("markers")[1].at("position") == 12 * g_ticksPerQuarter);
+	CHECK(project.at("markers")[1].at("type") == "position");
+	CHECK(project.at("markers")[1].at("number") == 2);
+	const Json markerTrack = project.at("tracks").at(0);
+	CHECK(markerTrack.at("type") == "marker");
+	CHECK(project.at("markers")[1].at("track") == markerTrack.at("id"));
+	CHECK(project.at("activeMarkerTrack") == markerTrack.at("id"));
 
 	const auto track = [&project](const std::string& name) { return withId(project.at("tracks"), "name", name); };
 	const auto channel = [&project, &track](const std::string& name)
