@@ -37,7 +37,7 @@ An event is a table with `name`, `data` (what changed) and `request` (the comman
 
 #### `gnubase.audio.capture`
 
-Captured output samples of one device output channel, from frame start, at most 1048576 frames.
+Captured output samples of one output channel of the dummy device, from frame start, at most 1048576 frames.
 
 Only reads; changes nothing.
 
@@ -51,9 +51,31 @@ Returns:
 
 - `samples`: array, required
 
+#### `gnubase.audio.controlPanel`
+
+Opens the control panel of the audio device's driver. Changes made there may reset the device.
+
+Returns:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `position`: integer, required
+- `running`: boolean, required
+
+#### `gnubase.audio.devices`
+
+The audio backends of this build, the preferred one first, and the devices each has now: their ids, names, channel names, sample rates, block sizes, clock sources (and the current one), and whether the driver has a control panel. A backend that can't list its devices has an error instead.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `backends`: array, required
+
 #### `gnubase.audio.get`
 
-The audio device, whether it runs, and how many frames it has processed and captured.
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, and how many frames it has processed and, if it is the dummy device, captured.
 
 Only reads; changes nothing.
 
@@ -67,7 +89,7 @@ Returns:
 
 #### `gnubase.audio.render`
 
-Offline mode: processes the given number of frames as fast as possible, then returns. The device must be stopped.
+Offline mode: processes the given number of frames as fast as possible, then returns. Only the dummy device, and only while it is stopped.
 
 Parameters:
 
@@ -81,14 +103,30 @@ Returns:
 - `position`: integer, required
 - `running`: boolean, required
 
+#### `gnubase.audio.reset`
+
+Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this when their settings change, e.g. in their control panel; the engine then resets on its own.
+
+Returns:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `position`: integer, required
+- `running`: boolean, required
+
 #### `gnubase.audio.setDevice`
 
-Replaces the audio device with a dummy device: no hardware, its output captured in memory (audio.capture). Defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs, 60 s of capture. The input is silent, or a built-in generator (see processor.list) with parameters by name. Starts stopped at position 0.
+Replaces the audio device. backend: one from audio.devices, by default "dummy". device: its id, by default the backend's default device. sampleRate and blockSize: by default the driver's current rate and preferred size. clockSource: a name from the device's clockSources. The device starts stopped at position 0. Another backend's device is closed before the new one opens, since drivers often allow only one; if opening fails, there is no device.
+The dummy device has no hardware: its output is captured in memory (audio.capture) and it renders offline (audio.render). Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs (inputChannels, outputChannels), 60 s of capture (captureSeconds). Its input is silent, or a built-in generator (see processor.list) with parameters by name.
 
 Parameters:
 
+- `backend`: string
 - `blockSize`: integer
 - `captureSeconds`: number
+- `clockSource`: string
+- `device`: string
 - `input`: object
 - `inputChannels`: integer
 - `outputChannels`: integer

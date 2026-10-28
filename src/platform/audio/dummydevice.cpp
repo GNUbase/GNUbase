@@ -50,7 +50,7 @@ namespace gnubase::audio
 
 	DummyDevice::~DummyDevice()
 	{
-		stop();
+		DummyDevice::stop(); // not virtually: a derived device is already gone
 	}
 
 	DeviceInfo DummyDevice::info() const
@@ -117,7 +117,7 @@ namespace gnubase::audio
 
 	void DummyDevice::stop()
 	{
-		if (!running())
+		if (!m_thread.joinable())
 			return;
 		m_stopping = true;
 		m_thread.join();
@@ -153,7 +153,7 @@ namespace gnubase::audio
 		const size_t captured = m_capturedFrames.load(std::memory_order_relaxed);
 		const size_t room = m_capture.empty() ? 0 : m_capture[0].size() - captured;
 		const size_t keep = std::min<size_t>(room, frames);
-		for (size_t c = 0; c < m_capture.size(); ++c)
+		for (size_t c = 0; keep > 0 && c < m_capture.size(); ++c) // without capture memory, data() is null
 			std::memcpy(m_capture[c].data() + captured, m_outputs[c], keep * sizeof(float));
 		m_droppedFrames.fetch_add(frames - keep, std::memory_order_release);
 		m_capturedFrames.store(captured + keep, std::memory_order_release);
