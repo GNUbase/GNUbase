@@ -23,3 +23,6 @@
 	path = ext/flac
 	url = https://github.com/xiph/flac.git
 	shallow = true
+[submodule "ext/r8brain"]
+	path = ext/r8brain
+	url = https://github.com/avaneev/r8brain-free-src.git

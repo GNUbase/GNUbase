@@ -28,6 +28,7 @@ Used unchanged, pinned to an upstream release tag.
 | `ext/dr_libs` | [mackron/dr_libs](https://github.com/mackron/dr_libs) | `wav-0.14.5` (also has dr_flac 0.13.3 and dr_mp3 0.7.3) |
 | `ext/stb` | [nothings/stb](https://github.com/nothings/stb) | commit `003501f` (stb_vorbis 1.22); stb has no release tags |
 | `ext/flac` | [xiph/flac](https://github.com/xiph/flac) | `1.5.0` |
+| `ext/r8brain` | [avaneev/r8brain-free-src](https://github.com/avaneev/r8brain-free-src) | `version-6.5` |
 
 `ext/json` and `ext/flac` are shallow submodules (`shallow = true` in `.gitmodules`): their full history is large and never needed. dr_libs tags each library separately, so the pin is the newest tag whose commit has the newest release of all three; stb has no tags, so it is pinned to a commit. In the JSON library, implicit conversions are off (`JSON_ImplicitConversions`), so values are read with `get<T>()`.
 
