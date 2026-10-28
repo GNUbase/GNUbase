@@ -5,6 +5,7 @@
 #ifdef _WIN32
 #include "platform/audio/wasapi.h"
 #endif
+#include "devicecontract.h"
 #include "platform/hosttime.h"
 #include "platform/rt/realtime.h"
 
@@ -99,71 +100,69 @@ namespace
 	{
 		return std::find(values.begin(), values.end(), value) != values.end();
 	}
+}
 
-	// What every backend promises, for each of its devices: the same suite runs against the dummy backend in CI and
-	// against the hardware backends locally.
-	void checkContract(Backend& backend)
+void checkDeviceContract(Backend& backend)
+{
+	INFO("backend " << backend.name());
+	const std::vector<DeviceInfo> devices = backend.devices();
+	std::set<std::string> ids;
+	for (const DeviceInfo& listed : devices)
 	{
-		INFO("backend " << backend.name());
-		const std::vector<DeviceInfo> devices = backend.devices();
-		std::set<std::string> ids;
-		for (const DeviceInfo& listed : devices)
-		{
-			CHECK(!listed.id.empty());
-			CHECK(!listed.name.empty());
-			CHECK(ids.insert(listed.id).second);
-		}
-		CHECK_THROWS_AS(backend.open(config("no such device")), DeviceError);
-		CHECK_THROWS_AS(backend.open(config("", 1.0)), DeviceError); // no device runs at 1 Hz
+		CHECK(!listed.id.empty());
+		CHECK(!listed.name.empty());
+		CHECK(ids.insert(listed.id).second);
+	}
+	CHECK_THROWS_AS(backend.open(config("no such device")), DeviceError);
+	CHECK_THROWS_AS(backend.open(config("", 1.0)), DeviceError); // no device runs at 1 Hz
 
-		for (const DeviceInfo& listed : devices)
-		{
-			INFO("device " << listed.id);
+	for (const DeviceInfo& listed : devices)
+	{
+		INFO("device " << listed.id);
 
-			// With its defaults the device describes itself completely.
-			std::unique_ptr<Device> device = backend.open(config(listed.id));
-			const DeviceFormat format = device->format();
-			const DeviceInfo info = device->info();
-			CHECK(info.id == listed.id);
-			CHECK(format.sampleRate > 0.0);
-			CHECK(format.blockSize > 0);
-			CHECK(info.inputs.size() == static_cast<size_t>(format.inputChannels));
-			CHECK(info.outputs.size() == static_cast<size_t>(format.outputChannels));
-			CHECK(contains(info.sampleRates, format.sampleRate));
-			CHECK(contains(info.blockSizes, format.blockSize));
-			CHECK(info.clockSource >= (info.clockSources.empty() ? -1 : 0));
-			CHECK(info.clockSource < static_cast<int>(info.clockSources.size()));
-			const DeviceLatency latency = device->latency();
-			CHECK(latency.input < format.sampleRate); // less than a second
-			CHECK(latency.output < format.sampleRate);
-			CHECK(!device->running());
+		// With its defaults the device describes itself completely.
+		std::unique_ptr<Device> device = backend.open(config(listed.id));
+		const DeviceFormat format = device->format();
+		const DeviceInfo info = device->info();
+		CHECK(info.id == listed.id);
+		CHECK(format.sampleRate > 0.0);
+		CHECK(format.blockSize > 0);
+		CHECK(info.inputs.size() == static_cast<size_t>(format.inputChannels));
+		CHECK(info.outputs.size() == static_cast<size_t>(format.outputChannels));
+		CHECK(contains(info.sampleRates, format.sampleRate));
+		CHECK(contains(info.blockSizes, format.blockSize));
+		CHECK(info.clockSource >= (info.clockSources.empty() ? -1 : 0));
+		CHECK(info.clockSource < static_cast<int>(info.clockSources.size()));
+		const DeviceLatency latency = device->latency();
+		CHECK(latency.input < format.sampleRate); // less than a second
+		CHECK(latency.output < format.sampleRate);
+		CHECK(!device->running());
 
-			// It runs until stopped, and runs again after a restart, its positions counting on.
-			ContractCallback callback(format);
-			device->start(callback);
-			CHECK(device->running());
-			CHECK(callback.waitFor(8));
-			device->stop();
-			CHECK(!device->running());
-			const size_t stoppedAt = callback.blocks();
-			std::this_thread::sleep_for(std::chrono::milliseconds(20));
-			CHECK(callback.blocks() == stoppedAt);
-			CHECK(device->position() > 0);
-			device->start(callback);
-			CHECK(callback.waitFor(4));
-			CHECK(callback.violations() == 0);
-			device.reset(); // stops it
+		// It runs until stopped, and runs again after a restart, its positions counting on.
+		ContractCallback callback(format);
+		device->start(callback);
+		CHECK(device->running());
+		CHECK(callback.waitFor(8));
+		device->stop();
+		CHECK(!device->running());
+		const size_t stoppedAt = callback.blocks();
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		CHECK(callback.blocks() == stoppedAt);
+		CHECK(device->position() > 0);
+		device->start(callback);
+		CHECK(callback.waitFor(4));
+		CHECK(callback.violations() == 0);
+		device.reset(); // stops it
 
-			// Every listed sample rate, block size and clock source opens as asked.
-			for (const double rate : info.sampleRates)
-				CHECK(backend.open(config(listed.id, rate))->format().sampleRate == rate);
-			for (const uint32_t size : info.blockSizes)
-				CHECK(backend.open(config(listed.id, 0.0, size))->format().blockSize == size);
-			for (size_t i = 0; i < info.clockSources.size(); ++i)
-				CHECK(backend.open(config(listed.id, 0.0, 0, info.clockSources[i]))->info().clockSource ==
-					static_cast<int>(i));
-			CHECK_THROWS_AS(backend.open(config(listed.id, 0.0, 0, "no such clock")), DeviceError);
-		}
+		// Every listed sample rate, block size and clock source opens as asked.
+		for (const double rate : info.sampleRates)
+			CHECK(backend.open(config(listed.id, rate))->format().sampleRate == rate);
+		for (const uint32_t size : info.blockSizes)
+			CHECK(backend.open(config(listed.id, 0.0, size))->format().blockSize == size);
+		for (size_t i = 0; i < info.clockSources.size(); ++i)
+			CHECK(backend.open(config(listed.id, 0.0, 0, info.clockSources[i]))->info().clockSource ==
+				static_cast<int>(i));
+		CHECK_THROWS_AS(backend.open(config(listed.id, 0.0, 0, "no such clock")), DeviceError);
 	}
 }
 
@@ -171,7 +170,7 @@ TEST_CASE("the dummy backend keeps the device contract", "[unit]")
 {
 	DummyBackend backend;
 	REQUIRE(backend.devices().size() == 1);
-	checkContract(backend);
+	checkDeviceContract(backend);
 }
 
 // Hidden: opens real devices and plays silence through them. Run it on a machine with audio hardware:
@@ -180,7 +179,7 @@ TEST_CASE("every hardware backend keeps the device contract", "[.hardware]")
 {
 	for (const std::unique_ptr<Backend>& backend : makeBackends())
 		if (backend->name() != "dummy")
-			checkContract(*backend);
+			checkDeviceContract(*backend);
 }
 
 #ifdef _WIN32

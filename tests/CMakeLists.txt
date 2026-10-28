@@ -44,6 +44,10 @@ target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERS
 	GNUBASE_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs"
 	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>
 	GNUBASE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+if(WIN32)
+	target_sources(gnubase-tests PRIVATE asio_tests.cpp devicecontract.h)
+	target_include_directories(gnubase-tests SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/ext/asio/common)
+endif()
 gnubase_target_defaults(gnubase-tests)
 
 # Every TEST_CASE becomes a ctest test; its tags ([unit], [integration], [ui], [slow]) become ctest labels.

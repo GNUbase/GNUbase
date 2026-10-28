@@ -40,3 +40,6 @@
 	path = ext/lua
 	url = https://github.com/lua/lua.git
 	shallow = true
+[submodule "ext/asio"]
+	path = ext/asio
+	url = https://github.com/audiosdk/asio.git
