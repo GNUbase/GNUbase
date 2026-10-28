@@ -37,10 +37,10 @@ namespace gnubase::engine::graph
 		GraphDesc graph;
 		for (const RenderBus& bus : snapshot.busses)
 			graph.nodes.push_back({bus.direction == BusDirection::Input ? NodeKind::InputBus : NodeKind::OutputBus,
-				bus.id, bus.channels});
+				bus.id, bus.channels, nullptr});
 		const int firstChannel = static_cast<int>(snapshot.busses.size());
 		for (const RenderChannel& channel : snapshot.channels)
-			graph.nodes.push_back({NodeKind::Channel, channel.id, channel.channels});
+			graph.nodes.push_back({NodeKind::Channel, channel.id, channel.channels, nullptr});
 
 		for (size_t i = 0; i < snapshot.channels.size(); ++i)
 		{
