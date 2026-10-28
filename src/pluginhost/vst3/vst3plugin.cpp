@@ -433,7 +433,7 @@ namespace gnubase::pluginhost::vst3
 		for (const Bus& bus : m_audioOutputs)
 			channels += bus.channelCount;
 		m_scratch.assign(channels * maxFrames, 0.0f);
-		auto setUp = [this](const std::vector<Bus>& buses, std::vector<std::vector<float*>>& pointers,
+		auto setUp = [](const std::vector<Bus>& buses, std::vector<std::vector<float*>>& pointers,
 						 std::vector<vst::Vst::AudioBusBuffers>& buffers)
 		{
 			pointers.assign(buses.size(), {});
