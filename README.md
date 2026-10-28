@@ -84,6 +84,8 @@ claude mcp add gnubase -- /path/to/gnubase --headless
 
 `--mcp-http` serves MCP over HTTP on 127.0.0.1 instead and prints the URL and the access token. `--script file.lua` runs a Lua script instead of serving MCP, with every engine command as a function, e.g. `gnubase.track.add{type = "audio"}` (reference: [docs/lua.md](docs/lua.md)); a script that raises an error, or whose test cases fail (`gnubase.test`), ends with exit code 4. MCP clients run scripts with the tool `script_run`. `--project FILE` loads a DAWproject file first, and `--sample-rate` and `--block-size` set up the audio device, which is the dummy device (no hardware) for now. `gnubase --help` lists everything. Exit codes: 0 done, 1 unexpected error, 2 invalid command line, 3 the audio device or the project could not be set up.
 
+[docs/mcp.md](docs/mcp.md) explains how to connect Claude Code and other MCP clients, shows example sessions and the security model, and lists every tool.
+
 ## Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and [CLAUDE.md](CLAUDE.md) first: they hold the workflow, the architecture rules and the conventions for everyone, human or AI. Then pick an issue from the earliest open milestone.
