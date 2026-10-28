@@ -25,6 +25,13 @@ namespace gnubase::scripting
 		constexpr size_t g_maxQueuedEvents = 10000;
 		constexpr std::chrono::minutes g_callTimeout{10}; // long enough for an offline render
 		constexpr const char* g_handlersKey = "gnubase.handlers";
+		constexpr const char* g_finishTestsKey = "gnubase.test.finish";
+
+		// testing.lua, the test framework, as bytes: CMake generates them, because MSVC limits the length of string
+		// literals.
+		constexpr unsigned char g_testFramework[] = {
+#include "testing.lua.inc"
+		};
 
 		// Lua is compiled as C++, so lua_error throws and the destructors of C++ frames run.
 		void push(lua_State* state, const Json& value)
@@ -187,6 +194,7 @@ namespace gnubase::scripting
 		*static_cast<Runtime**>(lua_getextraspace(m_state.get())) = this; // for hooks; coroutines get a copy
 		openLibraries(trust);
 		bindCommands(engine);
+		loadTestFramework();
 	}
 
 	Runtime::~Runtime() = default;
@@ -268,6 +276,26 @@ namespace gnubase::scripting
 		lua_setglobal(state, "gnubase");
 	}
 
+	void Runtime::loadTestFramework()
+	{
+		lua_State* state = m_state.get();
+		lua_getglobal(state, "gnubase");
+		if (lua_getfield(state, -1, "test") != LUA_TNIL)
+			throw std::logic_error("a command area is called test, but gnubase.test is the test framework");
+		lua_pop(state, 1);
+		// The chunk gets the message handler for tracebacks and returns gnubase.test and the function that runs the
+		// test cases when a script ends.
+		const auto* source = reinterpret_cast<const char*>(g_testFramework);
+		if (luaL_loadbufferx(state, source, sizeof(g_testFramework), "=gnubase.test", "t") != LUA_OK)
+			throw std::runtime_error(lua_tostring(state, -1));
+		lua_pushcfunction(state, traceback);
+		if (lua_pcall(state, 1, 2, 0) != LUA_OK)
+			throw std::runtime_error(lua_tostring(state, -1));
+		lua_setfield(state, LUA_REGISTRYINDEX, g_finishTestsKey);
+		lua_setfield(state, -2, "test");
+		lua_pop(state, 1);
+	}
+
 	std::optional<std::string> Runtime::run(std::string_view code, const std::string& chunkName)
 	{
 		return execute(code, "=" + chunkName); // shown as is in messages
@@ -283,16 +311,26 @@ namespace gnubase::scripting
 			m_deadline = std::chrono::steady_clock::now() + m_timeLimit;
 			lua_sethook(state, &Runtime::stopWhenLate, LUA_MASKCOUNT, 10000);
 		}
+		const auto message = [state]() -> std::string
+		{
+			const char* text = lua_tostring(state, -1);
+			return text != nullptr ? text : "(the error is not a string)";
+		};
 		lua_pushcfunction(state, traceback);
 		int status = luaL_loadbufferx(state, code.data(), code.size(), luaChunkName.c_str(), "t");
 		if (status == LUA_OK)
 			status = lua_pcall(state, 0, 0, top + 1);
 		std::optional<std::string> error;
 		if (status != LUA_OK)
-		{
-			const char* message = lua_tostring(state, -1);
-			error = message != nullptr ? message : "(the error is not a string)";
-		}
+			error = message();
+		lua_settop(state, top);
+
+		// The test cases the script registered run now, or are dropped if it failed. They print their report as they
+		// run, so the error only sums it up, without a traceback.
+		lua_getfield(state, LUA_REGISTRYINDEX, g_finishTestsKey);
+		lua_pushboolean(state, error ? 0 : 1);
+		if (lua_pcall(state, 1, 0, 0) != LUA_OK && !error)
+			error = message();
 		lua_settop(state, top);
 		return error;
 	}

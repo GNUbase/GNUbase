@@ -33,6 +33,8 @@ namespace gnubase::scripting
 	// - gnubase.waitFor(name, seconds): takes the next event with that name, waiting up to seconds (default 10);
 	//   nil on timeout.
 	// - gnubase.events(): takes every event that arrived and hasn't been taken.
+	// - gnubase.test: the test framework (testing.lua). The test cases a script registers run when it ends; their
+	//   report is printed, and if one fails, the script fails. So no command area may be called test.
 	// print writes to the output given to the constructor. Use a runtime on one thread, never an audio thread.
 	class Runtime
 	{
@@ -70,6 +72,7 @@ namespace gnubase::scripting
 		std::optional<std::string> execute(std::string_view code, const std::string& luaChunkName);
 		void openLibraries(Trust trust);
 		void bindCommands(const engine::Engine& engine);
+		void loadTestFramework();
 		void takeEvents(lua_State* state);
 
 		engine::Client m_client;
