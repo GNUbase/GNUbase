@@ -438,6 +438,50 @@ Parameters:
 
 - `media`: integer, required
 
+### midi
+
+#### `gnubase.midi.monitor`
+
+The MIDI input received since the last call from every open input, at most 4096 messages, each with its port, its frame position on the audio device and its bytes. dropped counts what didn't fit. Input reaches the monitor while an audio device processes blocks, which places it in time.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `dropped`: integer, required
+- `received`: array, required
+
+#### `gnubase.midi.ports`
+
+The MIDI ports of every MIDI backend, inputs and outputs: backend, id, system name, the name they are shown as (showAs), whether they are visible, whether an input belongs to all MIDI inputs, whether the port is present now and open, and whether the system speaks MIDI 2.0 with it. Ports that were unplugged stay listed with their settings, not present.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `ports`: array, required
+
+#### `gnubase.midi.refresh`
+
+Lists the MIDI ports again: opens new and returning visible inputs and marks unplugged ports as not present. Runs on its own when a backend reports that its ports changed.
+
+Returns:
+
+- `ports`: array, required
+
+#### `gnubase.midi.setPort`
+
+Changes a MIDI port's settings. The port is given by its id, whether it is an input, and its backend if ids repeat. showAs: the name it is shown as; empty shows the system name. visible: hidden inputs are closed. inAllInputs, for inputs: whether tracks set to all MIDI inputs receive it. Returns the port.
+
+Parameters:
+
+- `backend`: string
+- `id`: string, required
+- `inAllInputs`: boolean
+- `input`: boolean, required
+- `showAs`: string
+- `visible`: boolean
+
 ### midiPart
 
 #### `gnubase.midiPart.add`

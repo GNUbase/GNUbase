@@ -33,9 +33,9 @@ namespace gnubase::midi
 			return false;
 		}
 
-		// Audio thread. Calls handle(port, message) for each message of the block, message.offset set.
-		template <typename Handle>
-		void take(HostTime blockTime, double sampleRate, uint32_t frames, Handle&& handle) noexcept
+		// Audio thread. Calls handle(port, message) for each message of the block, message.offset set. Throws only what
+		// handle throws.
+		template <typename Handle> void take(HostTime blockTime, double sampleRate, uint32_t frames, Handle&& handle)
 		{
 			if (frames == 0)
 				return;
