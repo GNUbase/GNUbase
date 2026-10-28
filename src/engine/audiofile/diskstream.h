@@ -23,6 +23,11 @@ namespace gnubase::engine
 		size_t blocks = 32;        // the buffer holds blocks * blockFrames frames: about 2.7 s at 48 kHz
 	};
 
+#ifdef _MSC_VER
+// The queues keep their producer and consumer data on separate cache lines; the padding that adds here is intended.
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
 	// Plays an audio file to the audio thread from a buffer that the disk thread keeps filled ahead of it, converted
 	// to the output sample rate. Blocks of frames, allocated once, pass between the two threads through lock-free
 	// queues, so read() never waits, allocates or touches the file.
@@ -115,6 +120,10 @@ namespace gnubase::engine
 		time::Samples m_discard = 0; // resampled frames before the seek position, still to drop
 		bool m_sourceEnded = false;
 	};
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 	// The disk thread: keeps every open stream's buffer filled, and sleeps briefly when all are full.
 	class DiskStreamer
