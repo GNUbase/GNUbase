@@ -23,6 +23,7 @@ namespace gnubase::app
 		Transport transport = Transport::Stdio;
 		int port = 0;                // HTTP: 0 picks a free port
 		std::string project;         // a DAWproject file to load, or none
+		std::string script;          // a Lua file to run instead of serving MCP, or none
 		std::string audio = "dummy"; // the audio device
 		double sampleRate = 48000.0;
 		int64_t blockSize = 256;
@@ -30,9 +31,10 @@ namespace gnubase::app
 
 	// Exit codes, for scripts and CI.
 	inline constexpr int g_exitOk = 0;
-	inline constexpr int g_exitError = 1; // something unexpected went wrong
-	inline constexpr int g_exitUsage = 2; // the command line is invalid
-	inline constexpr int g_exitSetup = 3; // the audio device or the project couldn't be set up
+	inline constexpr int g_exitError = 1;  // something unexpected went wrong
+	inline constexpr int g_exitUsage = 2;  // the command line is invalid
+	inline constexpr int g_exitSetup = 3;  // the audio device or the project couldn't be set up
+	inline constexpr int g_exitScript = 4; // the Lua script raised an error
 
 	class UsageError : public std::runtime_error
 	{

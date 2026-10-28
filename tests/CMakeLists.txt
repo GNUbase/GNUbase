@@ -7,9 +7,9 @@ target_compile_definitions(gnubase-testutils PRIVATE
 	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 gnubase_target_defaults(gnubase-testutils)
 
-add_executable(gnubase-tests app_tests.cpp audio_tests.cpp audiofile_tests.cpp dawproject_tests.cpp device_tests.cpp document_tests.cpp engine_tests.cpp graph_tests.cpp history_tests.cpp log_tests.cpp mcp_tests.cpp processor_tests.cpp rt_tests.cpp streaming_tests.cpp testutils_tests.cpp time_tests.cpp
+add_executable(gnubase-tests app_tests.cpp audio_tests.cpp audiofile_tests.cpp dawproject_tests.cpp device_tests.cpp document_tests.cpp engine_tests.cpp graph_tests.cpp history_tests.cpp log_tests.cpp mcp_tests.cpp processor_tests.cpp rt_tests.cpp scripting_tests.cpp streaming_tests.cpp testutils_tests.cpp time_tests.cpp
 	transport_tests.cpp)
-target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-mcp gnubase-testutils Catch2::Catch2WithMain miniz
+target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-mcp gnubase-scripting gnubase-testutils Catch2::Catch2WithMain miniz
 	cpp-httplib)
 
 # ThreadSanitizer defines its own operator new/delete, which the RT checker replaces; every other build runs it.

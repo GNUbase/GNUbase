@@ -104,6 +104,9 @@ TEST_CASE("the command line selects headless mode, the MCP transport, the audio 
 	CHECK_THROWS_AS(parseOptions({"--block-size", "12x"}), UsageError);
 	CHECK_THROWS_AS(parseOptions({"--mcp-http=port"}), UsageError);
 	CHECK_THROWS_AS(parseOptions({"--audio", "nothing"}), UsageError); // no backend of this build
+	CHECK(parseOptions({"--headless", "--script", "check.lua"}).script == "check.lua");
+	CHECK_THROWS_AS(parseOptions({"--script"}), UsageError);
+	CHECK_THROWS_AS(parseOptions({"--headless", "--script", "a.lua", "--mcp-http"}), UsageError); // one or the other
 	CHECK_THAT(usage(), ContainsSubstring("--headless"));
 }
 
@@ -132,6 +135,49 @@ TEST_CASE("headless GNUbase reports a project it cannot load", "[integration]")
 	CHECK(runHeadless(options, in, out, err) == g_exitSetup);
 	CHECK_THAT(err.str(), ContainsSubstring("no such file.dawproject"));
 	CHECK(out.str().empty()); // stdout belongs to MCP
+}
+
+namespace
+{
+	// The acceptance script for Lua: build a project, render it and check the level.
+	constexpr const char* g_renderScript = R"(
+gnubase.project.new()
+gnubase.track.add{type = "audio"} -- plays the device input
+gnubase.audio.setDevice{blockSize = 128, captureSeconds = 1, input = {processor = "sine"}}
+gnubase.audio.render{frames = 24000}
+local peak = 0
+for _, sample in ipairs(gnubase.audio.capture{channel = 0, start = 0, frames = 24000}.samples) do
+	peak = math.max(peak, math.abs(sample))
+end
+print(string.format("peak %.2f", peak))
+assert(peak > 0.4, "too quiet")
+)";
+
+	std::filesystem::path writeScript(
+		const gnubase::test::TempDir& dir, const std::string& name, const std::string& code)
+	{
+		const std::filesystem::path file = dir.path() / name;
+		std::ofstream(file) << code;
+		return file;
+	}
+}
+
+TEST_CASE("headless GNUbase runs a Lua script that renders a project and checks its level", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Options options;
+	options.headless = true;
+	options.script = writeScript(dir, "render.lua", g_renderScript).u8string();
+	std::istringstream in;
+	std::ostringstream out;
+	std::ostringstream err;
+	CHECK(runHeadless(options, in, out, err) == g_exitOk);
+	CHECK(out.str() == "peak 0.50\n"); // the sine generator's default level
+	CHECK(err.str().empty());
+
+	options.script = writeScript(dir, "fail.lua", "local level = 0\nassert(level > 1, 'too quiet')\n").u8string();
+	CHECK(runHeadless(options, in, out, err) == g_exitScript);
+	CHECK_THAT(err.str(), ContainsSubstring("fail.lua:2: too quiet"));
 }
 
 #ifdef GNUBASE_APP
@@ -166,6 +212,10 @@ TEST_CASE("the gnubase executable serves MCP on stdio in headless mode", "[integ
 
 	CHECK(runApp("--headless --block-size 128 --project \"" + project + "\"", in, out) == g_exitOk);
 	checkRendered(responses(gnubase::test::readText(out)));
+
+	const auto script = writeScript(dir, "render.lua", g_renderScript);
+	CHECK(runApp("--headless --script \"" + script.u8string() + "\"", in, out) == g_exitOk);
+	CHECK_THAT(gnubase::test::readText(out), ContainsSubstring("peak 0.50"));
 
 	CHECK(runApp("--no-such-option", in, out) == g_exitUsage);
 	CHECK(runApp("--headless --project \"" + (dir.path() / "missing.dawproject").u8string() + "\"", in, out) ==

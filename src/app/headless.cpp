@@ -5,8 +5,11 @@
 #include "mcp/server.h"
 #include "mcp/transport.h"
 #include "platform/log.h"
+#include "scripting/runtime.h"
 
 #include <chrono>
+#include <filesystem>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <thread>
@@ -43,6 +46,19 @@ namespace gnubase::app
 			if (!options.project.empty() &&
 				!setUp(client, "project.load", {{"path", options.project}}, "cannot load " + options.project, err))
 				return g_exitSetup;
+		}
+
+		if (!options.script.empty())
+		{
+			logging::info("Headless, running {}", options.script);
+			scripting::Runtime lua(engine, scripting::Trust::Trusted, out);
+			if (const std::optional<std::string> error = lua.runFile(std::filesystem::u8path(options.script)))
+			{
+				err << "gnubase: " << *error << '\n';
+				logging::error("{}", *error);
+				return g_exitScript;
+			}
+			return g_exitOk;
 		}
 
 		mcp::Server server(engine);
