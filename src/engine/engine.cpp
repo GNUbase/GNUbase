@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/engine.h"
 
+#include "engine/audio/audioengine.h"
 #include "engine/document/projectmodel.h"
 #include "engine/processors/builtin.h"
 #include "platform/log.h"
@@ -84,6 +85,8 @@ namespace gnubase::engine
 		processors::registerCommands(*this);
 		m_project = std::make_unique<ProjectModel>();
 		m_project->registerCommands(*this);
+		m_audio = std::make_unique<AudioEngine>(m_project->snapshots());
+		m_audio->registerCommands(*this);
 		m_thread = std::thread([this] { run(); });
 	}
 
@@ -159,6 +162,7 @@ namespace gnubase::engine
 			if (const std::string problem = validate(request.parameters, command->info.parameters); !problem.empty())
 				throw CommandError(problem);
 			Json value = command->handler(context);
+			m_audio->sync(); // a changed project gets a new processing graph
 			if (const std::string problem = validate(value, command->info.result, "result"); !problem.empty())
 				throw CommandError(request.command + " returned an invalid result: " + problem);
 			result.value = std::move(value);

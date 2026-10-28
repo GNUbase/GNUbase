@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audiofile/diskstream.h"
+#include "engine/engine.h"
 #include "engine/graph/graph.h"
 #include "engine/processors/builtin.h"
 #include "platform/log.h"
@@ -13,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -219,6 +221,28 @@ TEST_CASE("every built-in processor processes notes and parameter changes withou
 			processor->process({channels, 2, frames, eventsIn, eventsOut});
 		}
 	}
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("rendering a project through the dummy device passes the RT checker", "[unit]")
+{
+	using gnubase::engine::Json;
+	gnubase::engine::Engine engine;
+	gnubase::engine::Client client(engine);
+	const auto run = [&client](const std::string& command, const Json& parameters)
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+	};
+	run("track.add", {{"type", "group"}});
+	run("track.add", {{"type", "audio"}});
+	run("audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}, {"input", {{"processor", "noise"}}}});
+
+	const RecordViolations record;
+	run("audio.render", {{"frames", 4800}});
+	run("track.add", {{"type", "audio"}}); // a new graph, swapped in between blocks
+	run("audio.render", {{"frames", 4800}});
 	CHECK(g_violations == 0);
 }
 
