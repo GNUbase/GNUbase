@@ -417,7 +417,7 @@ namespace gnubase::engine
 				{
 					if (project.clips.at(event.clip).media != media.id)
 						continue;
-					const std::vector<Range>::const_iterator range = std::find_if(ranges.cbegin(), ranges.cend(),
+					const auto range = std::find_if(ranges.cbegin(), ranges.cend(),
 						[&event](const Range& r) { return event.offset >= r.start && event.offset < r.end; });
 					if (range != ranges.cend())
 						event.offset = event.offset - range->start + range->target;
