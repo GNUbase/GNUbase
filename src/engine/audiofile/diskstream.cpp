@@ -40,6 +40,20 @@ namespace gnubase::engine
 		return m_readyGeneration.load(std::memory_order_acquire) == m_generation.load(std::memory_order_acquire);
 	}
 
+	bool DiskStream::full() const
+	{
+		const uint64_t generation = m_generation.load(std::memory_order_acquire);
+		return m_readyGeneration.load(std::memory_order_acquire) == generation &&
+			(m_returned.load(std::memory_order_acquire) == 0 ||
+				m_endGeneration.load(std::memory_order_acquire) == generation);
+	}
+
+	void DiskStream::giveBack(Block* block)
+	{
+		if (m_empty.tryPush(block))
+			m_returned.fetch_add(1, std::memory_order_release);
+	}
+
 	size_t DiskStream::read(float* buffer, size_t frames)
 	{
 		const auto channels = static_cast<size_t>(m_channels);
@@ -47,7 +61,7 @@ namespace gnubase::engine
 		if (generation != m_readGeneration)
 		{
 			if (m_current != nullptr)
-				m_empty.tryPush(m_current);
+				giveBack(m_current);
 			m_current = nullptr;
 			m_readGeneration = generation;
 			m_located = false;
@@ -66,7 +80,7 @@ namespace gnubase::engine
 			if (m_offset == block.frames)
 			{
 				m_ended = block.last;
-				m_empty.tryPush(m_current);
+				giveBack(m_current);
 				m_current = nullptr;
 			}
 		}
@@ -95,7 +109,7 @@ namespace gnubase::engine
 			}
 			if (block->generation < m_readGeneration)
 			{
-				m_empty.tryPush(block);
+				giveBack(block);
 				continue;
 			}
 			// A generation's first block starts where the seek went.
@@ -108,7 +122,7 @@ namespace gnubase::engine
 			if (end <= m_next) // passed during a dropout
 			{
 				m_ended = block->last;
-				m_empty.tryPush(block);
+				giveBack(block);
 				if (m_ended)
 					return false;
 				continue;
@@ -142,17 +156,23 @@ namespace gnubase::engine
 		}
 		if (m_fillEnded)
 		{
+			m_endGeneration.store(generation, std::memory_order_release);
 			m_readyGeneration.store(generation, std::memory_order_release);
 			return false;
 		}
 
 		Block* block = nullptr;
+		bool returned = false; // counted in m_returned until it is filled again
 		if (!m_spare.empty())
 		{
 			block = m_spare.back();
 			m_spare.pop_back();
 		}
-		else if (!m_empty.tryPop(block))
+		else if (m_empty.tryPop(block))
+		{
+			returned = true;
+		}
+		else
 		{
 			m_readyGeneration.store(generation, std::memory_order_release); // the buffer is full
 			return false;
@@ -173,8 +193,13 @@ namespace gnubase::engine
 		block->last = failed() || frames < m_settings.blockFrames || m_fillPosition >= m_frames;
 		m_fillEnded = block->last;
 		m_filled.tryPush(block);
+		if (returned)
+			m_returned.fetch_sub(1, std::memory_order_acq_rel);
 		if (m_fillEnded)
+		{
+			m_endGeneration.store(generation, std::memory_order_release);
 			m_readyGeneration.store(generation, std::memory_order_release);
+		}
 		return true;
 	}
 

@@ -115,6 +115,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `playbackDropouts`: integer, required
 - `position`: integer, required
 - `running`: boolean, required
 
@@ -130,7 +131,7 @@ Returns:
 
 #### `gnubase.audio.get`
 
-The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, and how many frames it has processed and, if it is the dummy device, captured.
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, and how many frames of audio track playback were silent because a disk stream was late.
 
 Only reads; changes nothing.
 
@@ -139,6 +140,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `playbackDropouts`: integer, required
 - `position`: integer, required
 - `running`: boolean, required
 
@@ -155,6 +157,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `playbackDropouts`: integer, required
 - `position`: integer, required
 - `running`: boolean, required
 
@@ -167,6 +170,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `playbackDropouts`: integer, required
 - `position`: integer, required
 - `running`: boolean, required
 
@@ -192,6 +196,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `playbackDropouts`: integer, required
 - `position`: integer, required
 - `running`: boolean, required
 
@@ -204,6 +209,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `playbackDropouts`: integer, required
 - `position`: integer, required
 - `running`: boolean, required
 
@@ -216,6 +222,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `playbackDropouts`: integer, required
 - `position`: integer, required
 - `running`: boolean, required
 
@@ -223,15 +230,17 @@ Returns:
 
 #### `gnubase.audioEvent.add`
 
-Adds an audio event that plays a section of a clip on an audio track. position is in the track's time base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the rest of the clip.
+Adds an audio event that plays a section of a clip on an audio track. position is in the track's time base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track plays one event at a time: where events overlap, the one added last plays.
 
 Parameters:
 
 - `clip`: integer, required
 - `length`: integer
+- `mute`: boolean
 - `offset`: integer
 - `position`: integer, required
 - `track`: integer, required
+- `volume`: number
 
 Returns:
 
@@ -247,15 +256,17 @@ Parameters:
 
 #### `gnubase.audioEvent.set`
 
-Changes an audio event's position, clip, offset or length.
+Changes an audio event's position, clip, offset, length, volume (dB) or mute.
 
 Parameters:
 
 - `clip`: integer
 - `event`: integer, required
 - `length`: integer
+- `mute`: boolean
 - `offset`: integer
 - `position`: integer
+- `volume`: number
 
 Returns:
 

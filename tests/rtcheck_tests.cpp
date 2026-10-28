@@ -276,6 +276,41 @@ TEST_CASE("rendering a project through the dummy device passes the RT checker", 
 	CHECK(g_violations == 0);
 }
 
+TEST_CASE("playing audio events, with overlaps and cycle jumps, passes the RT checker", "[integration]")
+{
+	using gnubase::engine::Json;
+	const gnubase::test::TempDir dir;
+	const std::string path = (dir.path() / "clip.wav").u8string();
+	gnubase::test::Audio audio;
+	audio.channels = 2;
+	audio.samples.assign(size_t{2} * 20000, 0.25f);
+	gnubase::test::writeWav(path, audio);
+
+	gnubase::engine::Engine engine;
+	gnubase::engine::Client client(engine);
+	const auto run = [&client](const std::string& command, const Json& parameters)
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	const Json track = run("track.add", {{"type", "audio"}, {"timeBase", "linear"}});
+	const Json media = run("media.add", {{"path", path}});
+	const Json clip = run("clip.add", {{"media", media.at("media").at("id")}});
+	for (const int position : {0, 700, 1500})
+		run("audioEvent.add",
+			{{"track", track.at("track").at("id")}, {"clip", clip.at("clip").at("id")}, {"position", position},
+				{"length", 1000}});
+	run("audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}});
+	run("transport.set", {{"left", 500}, {"right", 2000}, {"cycle", true}});
+	run("transport.play", Json::object());
+
+	const RecordViolations record;
+	run("audio.render", {{"frames", 9600}});
+	CHECK(g_violations == 0);
+}
+
 TEST_CASE("the audio thread reads disk streams without allocating or locking", "[integration]")
 {
 	using namespace gnubase::engine;
