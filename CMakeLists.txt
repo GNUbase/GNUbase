@@ -60,6 +60,9 @@ function(gnubase_target_defaults target)
 		target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8 $<$<BOOL:${GNUBASE_WARNINGS_AS_ERRORS}>:/WX>)
 	else()
 		target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic $<$<BOOL:${GNUBASE_WARNINGS_AS_ERRORS}>:-Werror>)
+		# No fused multiply-adds where the source has none: they round differently, and rendering must give the same
+		# samples on every platform (CLAUDE.md, rule 6). GCC fuses by default on ARM64.
+		target_compile_options(${target} PRIVATE -ffp-contract=off)
 	endif()
 	if(GNUBASE_SANITIZERS)
 		target_compile_options(${target} PRIVATE -fsanitize=${GNUBASE_SANITIZERS} -fno-sanitize-recover=all -fno-omit-frame-pointer)
