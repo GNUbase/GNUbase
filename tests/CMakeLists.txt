@@ -9,9 +9,16 @@ gnubase_target_defaults(gnubase-testutils)
 
 add_executable(gnubase-tests app_tests.cpp audio_tests.cpp audiofile_tests.cpp coverage_tests.cpp dawproject_tests.cpp document_tests.cpp engine_tests.cpp graph_tests.cpp history_tests.cpp log_tests.cpp mcp_tests.cpp processor_tests.cpp rt_tests.cpp scripting_tests.cpp streaming_tests.cpp testing_tests.cpp testutils_tests.cpp theme_tests.cpp time_tests.cpp
 	playback_tests.cpp transport_tests.cpp)
-target_sources(gnubase-tests PRIVATE device_tests.cpp)
-target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-mcp gnubase-scripting gnubase-testutils Catch2::Catch2WithMain miniz pugixml::pugixml
+target_sources(gnubase-tests PRIVATE device_tests.cpp ipc_tests.cpp ipc_process_tests.cpp)
+target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-ipc gnubase-mcp gnubase-scripting gnubase-testutils Catch2::Catch2WithMain miniz pugixml::pugixml
 	cpp-httplib)
+
+# IPC tests run a helper process that plays a plugin host (tests/ipcpeer.cpp).
+add_executable(gnubase-ipcpeer ipcpeer.cpp)
+target_link_libraries(gnubase-ipcpeer PRIVATE gnubase-ipc)
+gnubase_target_defaults(gnubase-ipcpeer)
+target_compile_definitions(gnubase-tests PRIVATE GNUBASE_IPCPEER="$<TARGET_FILE:gnubase-ipcpeer>")
+add_dependencies(gnubase-tests gnubase-ipcpeer)
 
 # ThreadSanitizer defines its own operator new/delete, which the RT checker replaces; every other build runs it.
 if(NOT GNUBASE_SANITIZERS MATCHES "thread")

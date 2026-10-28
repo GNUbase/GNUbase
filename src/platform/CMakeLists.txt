@@ -7,16 +7,20 @@ add_library(gnubase-platform STATIC
 	audio/dummydevice.cpp audio/dummydevice.h
 	crashhandler.cpp crashhandler.h
 	log.cpp log.h
+	process.cpp process.h
 	rt/denormals.cpp rt/denormals.h
 	rt/mpmcqueue.h
 	rt/realtime.cpp rt/realtime.h
 	rt/rtutil.h
 	rt/snapshotpublisher.h
 	rt/spscqueue.h
-	rt/triplebuffer.h)
+	rt/triplebuffer.h
+	sharedmemory.cpp sharedmemory.h)
 target_include_directories(gnubase-platform PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-platform PRIVATE $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
-target_link_libraries(gnubase-platform PUBLIC Threads::Threads PRIVATE $<$<PLATFORM_ID:Windows>:dbghelp>)
+# shm_open is in librt on glibc before 2.34.
+target_link_libraries(gnubase-platform PUBLIC Threads::Threads PRIVATE $<$<PLATFORM_ID:Windows>:dbghelp>
+	$<$<PLATFORM_ID:Linux>:rt>)
 gnubase_target_defaults(gnubase-platform)
 
 # RT checker: replaces the global operator new/delete to report allocations in real-time code.

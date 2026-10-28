@@ -58,7 +58,7 @@ flowchart TD
 
 | Module | Folder | Contents | May depend on |
 |---|---|---|---|
-| platform | `src/platform` | OS abstractions: audio and MIDI backends, threads and priorities, shared memory, clocks. Real-time primitives (lock-free queues, RT checker), logging, assertions, crash reports | OS libraries |
+| platform | `src/platform` | OS abstractions: audio and MIDI backends, threads and priorities, shared memory, child processes, clocks. Real-time primitives (lock-free queues, RT checker), logging, assertions, crash reports | OS libraries |
 | ipc | `src/ipc` | Shared-memory buffers and rings, wake-up primitives, message protocol | platform |
 | engine | `src/engine` | Command registry, document model, undo, time, audio graph, transport, file I/O, plugin slots | ipc, platform |
 | scripting | `src/scripting` | Lua runtime and the bindings generated from the command registry | engine API |
@@ -198,9 +198,20 @@ flowchart LR
   Slot -.->|"control channel: load, state, editor"| Adapter
 ```
 
-- **Audio path:** audio, notes and parameter changes for a block go through shared memory. Wake-up uses OS primitives: events on Windows, semaphores with the device's audio workgroup on macOS, futexes on Linux. No allocations or locks on this path (#62).
+- **Audio path:** audio, notes and parameter changes for a block go through shared memory, and a wake-up tells the other side. No allocations or locks on this path (#62).
 - **Control path:** loading, state, presets, editor windows and scans use a separate, versioned message channel that is not real-time.
 - The binary layout is fixed (no pointers, explicit sizes and alignment), so 32-bit and emulated host processes use the same protocol.
+
+The **IPC transport** (`src/ipc`, #62) is a `Connection` between the engine and a host process: one segment of named shared memory (`platform::SharedMemory`: a file mapping on Windows, `shm_open` elsewhere) that the engine creates under a unique name and passes to the host on its command line. A plugin slot owns one connection, so a host process running several plugins holds one connection per plugin, and parallel audio workers never share a ring.
+
+- **Layout** (`ipc/protocol.h`): a 128-byte `SegmentHeader` (magic, protocol version, configuration, process ids, each side's state), then two audio lanes and two control lanes (engine to host, host to engine), then their data. Each lane has a wake word, and each ring a head and a tail, on cache lines of their own. Both sides compute every offset from the configuration in the header (`layoutFor`), so the memory holds no offsets or pointers. Only fixed-width integers and lock-free 32-bit atomics are in it; static asserts pin every size and offset.
+- **Versions:** a host refuses a segment with another major version, an unknown header size, an invalid configuration or the wrong size (`checkSegment`), and a second host. Minor versions only add what older peers can ignore. Every message carries its own type and version, so hosts and engines of different minor versions can skip what they don't know.
+- **Rings** (`ipc/rings.h`), all single-producer, single-consumer with free-running 32-bit indices: a `BlockRing` of fixed-size slots per audio lane, each slot a `BlockHeader` (sequence, position, frames, channels, event count) followed by the channels, which both sides read and write in place; and a `MessageRing` of variable-sized messages for events and for control messages, each with an 8-byte header, padded to 8 bytes, wrapping with a padding record. A block's events go into the event ring before the block, and its event count says how many belong to it, so several blocks can be in flight.
+- **Nothing from the peer is trusted.** A host runs third-party code that may scribble over the memory, so each side keeps its own indices privately and checks the peer's (a head more than a ring ahead, a misaligned head, impossible sizes or headers). The reader copies messages and block headers out before checking them, so the peer cannot change them afterwards, and never reads outside a ring. A peer that breaks the protocol makes reads return `Corrupt` from then on. Fuzz tests feed random ring contents and headers to the readers.
+- **Wake-up** (`ipc::Doorbell`): the sender counts up a 32-bit word in shared memory and wakes the receiver: a shared futex on Linux, the kernel's shared compare-and-wait (`__ulock_wait`/`__ulock_wake`, what the system's own locks use; named semaphores have no timed wait on macOS) on macOS, and a named auto-reset event on Windows, where the word tells a real wake-up from a stale one. Ringing never blocks, so the audio thread rings after committing a block. Joining the device's audio workgroup on macOS is up to the host's audio thread (#64).
+- **Deadlines:** `waitForBlock` waits for the answer until a timeout and returns `Ready`, `Timeout` or `PeerClosed`. It is the one wait on the audio path, bounded by the timeout; on Windows its timeout is rounded up to whole milliseconds. A peer that closes in an orderly way sets its state to `Closed` and rings, so the wait ends at once. A crashed or hung host just misses the deadline; the watchdog (#65) tells the two apart through the process (`platform::ChildProcess`), which also starts host processes.
+- **Real-time safety:** `beginBlock`, `sendBlock`, `sendEvent`, `receiveBlock`, `releaseBlock`, `receiveEvent` and `waitForBlock` never allocate, lock or make blocking calls other than that wait; a test runs a round trip under the RT checker. Creating and opening connections and the control path are for other threads.
+- A test runs a helper host process (`tests/ipcpeer.cpp`) and checks round trips, the control channel, a killed and a hung host and an orderly close. It also measures the round-trip latency: around 10 µs for 128 frames on a desktop PC.
 - A watchdog gives every host process a deadline per cycle (#65).
 - Plugin editors are windows of the host process, kept in front of and positioned relative to GNUbase's windows (#69).
 - Inside the host, every format is adapted to the **GNUbase plugin API** (#61), modeled on CLAP's extension mechanism. GNUbase's own built-in processors implement the same API but run inside the engine (#114).
@@ -234,4 +245,4 @@ flowchart LR
 |---|---|
 | UI render backend | #47 |
 | Plugin API details | #61 |
-| IPC wake-up details, default hosting mode | #62, #76 |
+| Default hosting mode | #76 |
