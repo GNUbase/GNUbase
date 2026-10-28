@@ -103,7 +103,7 @@ TEST_CASE("the command line selects headless mode, the MCP transport, the audio 
 	CHECK_THROWS_AS(parseOptions({"--sample-rate", "fast"}), UsageError);
 	CHECK_THROWS_AS(parseOptions({"--block-size", "12x"}), UsageError);
 	CHECK_THROWS_AS(parseOptions({"--mcp-http=port"}), UsageError);
-	CHECK_THROWS_AS(parseOptions({"--audio", "asio"}), UsageError); // only the dummy device so far
+	CHECK_THROWS_AS(parseOptions({"--audio", "nothing"}), UsageError); // no backend of this build
 	CHECK_THAT(usage(), ContainsSubstring("--headless"));
 }
 

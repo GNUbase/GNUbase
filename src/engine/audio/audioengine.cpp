@@ -4,6 +4,7 @@
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
 #include "engine/processors/builtin.h"
+#include "platform/log.h"
 #include "platform/rt/realtime.h"
 
 #include <algorithm>
@@ -50,6 +51,16 @@ namespace gnubase::engine
 				throw CommandError(message);
 		}
 
+		Json toJson(const audio::DeviceInfo& info)
+		{
+			Json clockSource = nullptr;
+			if (info.clockSource >= 0 && static_cast<size_t>(info.clockSource) < info.clockSources.size())
+				clockSource = info.clockSources[static_cast<size_t>(info.clockSource)];
+			return {{"id", info.id}, {"name", info.name}, {"inputs", info.inputs}, {"outputs", info.outputs},
+				{"sampleRates", info.sampleRates}, {"blockSizes", info.blockSizes}, {"clockSources", info.clockSources},
+				{"clockSource", clockSource}, {"controlPanel", info.controlPanel}};
+		}
+
 		const processors::BuiltinInfo& generatorInfo(const std::string& id)
 		{
 			for (const processors::BuiltinInfo& info : processors::builtins())
@@ -62,8 +73,9 @@ namespace gnubase::engine
 		}
 	}
 
-	AudioEngine::AudioEngine(rt::SnapshotPublisher<RenderSnapshot>& snapshots)
-		: m_snapshots(snapshots), m_generatorEvents(graph::g_maxEventsPerBlock),
+	AudioEngine::AudioEngine(
+		rt::SnapshotPublisher<RenderSnapshot>& snapshots, std::vector<std::unique_ptr<audio::Backend>> backends)
+		: m_snapshots(snapshots), m_backends(std::move(backends)), m_generatorEvents(graph::g_maxEventsPerBlock),
 		  m_generatorOut(graph::g_maxEventsPerBlock)
 	{
 	}
@@ -136,15 +148,106 @@ namespace gnubase::engine
 		m_programs->release();
 	}
 
-	audio::DummyDevice& AudioEngine::requireStopped()
+	audio::DummyDevice& AudioEngine::requireDummy()
 	{
 		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
-		require(!m_device->running(), "the audio device is running");
-		return *m_device;
+		require(m_dummy != nullptr, "only the dummy device renders offline and captures its output");
+		return *m_dummy;
+	}
+
+	void AudioEngine::closeDevice()
+	{
+		if (m_device)
+			m_device->stop();
+		m_device.reset();
+		m_dummy = nullptr;
+		m_programs.reset();
 	}
 
 	void AudioEngine::setDevice(const Json& parameters)
 	{
+		const auto name = parameters.value("backend", std::string("dummy"));
+		const auto backend = std::find_if(m_backends.begin(), m_backends.end(),
+			[&name](const std::unique_ptr<audio::Backend>& candidate) { return candidate->name() == name; });
+		if (backend == m_backends.end())
+		{
+			std::string names;
+			for (const std::unique_ptr<audio::Backend>& candidate : m_backends)
+				names.append(names.empty() ? "" : ", ").append(candidate->name());
+			throw CommandError("no audio backend " + name + "; there are " + names);
+		}
+
+		if (name == "dummy")
+		{
+			openDummy(parameters);
+		}
+		else
+		{
+			for (const char* key : {"inputChannels", "outputChannels", "captureSeconds", "input"})
+				require(!parameters.contains(key), std::string("only the dummy device takes ") + key);
+			audio::DeviceConfig config;
+			config.device = parameters.value("device", std::string());
+			config.sampleRate = parameters.value("sampleRate", 0.0);
+			const auto blockSize = parameters.value("blockSize", int64_t{0});
+			require(blockSize >= 0 && blockSize <= 8192, "blockSize must be from 0 (the driver's choice) to 8192");
+			config.blockSize = static_cast<uint32_t>(blockSize);
+			config.clockSource = parameters.value("clockSource", std::string());
+
+			// Drivers often allow one open device at a time: close the old one first.
+			closeDevice();
+			m_generator.reset();
+			m_device = (*backend)->open(config);
+		}
+		m_backend = name;
+		m_parameters = parameters;
+		m_device->onReset(
+			[engine = m_engine]
+			{
+				if (engine != nullptr)
+					engine->post("audio.reset");
+			});
+		rebuild();
+	}
+
+	void AudioEngine::reset()
+	{
+		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
+		const bool running = m_device->running();
+		logging::info("Resetting the audio device ({} {})", m_backend, m_device->info().id);
+		const Json parameters = m_parameters;
+		setDevice(parameters);
+		if (running)
+			m_device->start(*this);
+	}
+
+	Json AudioEngine::devices() const
+	{
+		Json backends = Json::array();
+		for (const std::unique_ptr<audio::Backend>& backend : m_backends)
+		{
+			Json entry = {{"name", backend->name()}, {"devices", Json::array()}};
+			try
+			{
+				for (const audio::DeviceInfo& info : backend->devices())
+					entry["devices"].push_back(toJson(info));
+			}
+			catch (const std::exception& error)
+			{
+				entry["error"] = error.what();
+			}
+			backends.push_back(std::move(entry));
+		}
+		return {{"backends", std::move(backends)}};
+	}
+
+	void AudioEngine::openDummy(const Json& parameters)
+	{
+		if (const auto device = parameters.find("device"); device != parameters.end())
+			require(
+				device->get<std::string>() == "dummy", "the dummy backend has no device " + device->get<std::string>());
+		if (const auto clock = parameters.find("clockSource"); clock != parameters.end())
+			throw CommandError("the dummy device has no clock source " + clock->get<std::string>());
+
 		audio::DeviceFormat format;
 		format.sampleRate = parameters.value("sampleRate", format.sampleRate);
 		const auto blockSize = parameters.value("blockSize", int64_t{format.blockSize});
@@ -187,22 +290,20 @@ namespace gnubase::engine
 				{nullptr, 0, 0, settings, m_generatorOut, graph::TransportBlock{}}); // applies the parameters
 		}
 
-		if (m_device)
-			m_device->stop();
-		m_device.reset();
-		m_programs.reset();
+		closeDevice();
 		m_generator = std::move(generator);
-		m_device = std::make_unique<audio::DummyDevice>(
+		auto device = std::make_unique<audio::DummyDevice>(
 			format, static_cast<size_t>(std::llround(seconds * format.sampleRate)));
+		m_dummy = device.get();
+		m_device = std::move(device);
 		if (m_generator)
-			m_device->setInput(
+			m_dummy->setInput(
 				[this](float* const* channels, int count, uint32_t frames, uint64_t /*position*/)
 				{
 					m_generatorOut.clear();
 					m_generator->process(
 						{channels, count, frames, m_generatorEvents, m_generatorOut, graph::TransportBlock{}});
 				});
-		rebuild();
 	}
 
 	Json AudioEngine::status() const
@@ -211,22 +312,41 @@ namespace gnubase::engine
 			return {
 				{"device", nullptr}, {"running", false}, {"position", 0}, {"capturedFrames", 0}, {"droppedFrames", 0}};
 		const audio::DeviceFormat& format = m_device->format();
-		return {{"device",
-					{{"type", "dummy"}, {"sampleRate", format.sampleRate}, {"blockSize", format.blockSize},
-						{"inputChannels", format.inputChannels}, {"outputChannels", format.outputChannels}}},
-			{"running", m_device->running()}, {"position", m_device->position()},
-			{"capturedFrames", m_device->capturedFrames()}, {"droppedFrames", m_device->droppedFrames()}};
+		const audio::DeviceLatency latency = m_device->latency();
+		Json device = toJson(m_device->info());
+		device.update({{"backend", m_backend}, {"sampleRate", format.sampleRate}, {"blockSize", format.blockSize},
+			{"inputChannels", format.inputChannels}, {"outputChannels", format.outputChannels},
+			{"inputLatency", latency.input}, {"outputLatency", latency.output}});
+		return {{"device", std::move(device)}, {"running", m_device->running()}, {"position", m_device->position()},
+			{"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
+			{"droppedFrames", m_dummy != nullptr ? m_dummy->droppedFrames() : 0}};
 	}
 
 	void AudioEngine::registerCommands(Engine& engine)
 	{
+		m_engine = &engine;
+		engine.registerCommand(
+			{"audio.devices", 1,
+				"The audio backends of this build, the preferred one first, and the devices each has now: their ids, "
+				"names, channel names, sample rates, block sizes, clock sources (and the current one), and whether "
+				"the driver has a control panel. A backend that can't list its devices has an error instead.",
+				noParameters(), Json::parse(R"({"type": "object", "properties": {"backends": {"type": "array"}},
+					"required": ["backends"]})"),
+				true},
+			[this](CommandContext&) { return devices(); });
 		engine.registerCommand(
 			{"audio.setDevice", 1,
-				"Replaces the audio device with a dummy device: no hardware, its output captured in memory "
-				"(audio.capture). Defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs, 60 s of capture. "
-				"The input is silent, or a built-in generator (see processor.list) with parameters by name. Starts "
-				"stopped at position 0.",
+				"Replaces the audio device. backend: one from audio.devices, by default \"dummy\". device: its id, by "
+				"default the backend's default device. sampleRate and blockSize: by default the driver's current "
+				"rate and preferred size. clockSource: a name from the device's clockSources. The device starts "
+				"stopped at position 0. Another backend's device is closed before the new one opens, since drivers "
+				"often allow only one; if opening fails, there is no device.\n"
+				"The dummy device has no hardware: its output is captured in memory (audio.capture) and it renders "
+				"offline (audio.render). Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs "
+				"(inputChannels, outputChannels), 60 s of capture (captureSeconds). Its input is silent, or a "
+				"built-in generator (see processor.list) with parameters by name.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
+					"backend": {"type": "string"}, "device": {"type": "string"}, "clockSource": {"type": "string"},
 					"sampleRate": {"type": "number"}, "blockSize": {"type": "integer"},
 					"inputChannels": {"type": "integer"}, "outputChannels": {"type": "integer"},
 					"captureSeconds": {"type": "number"},
@@ -241,13 +361,39 @@ namespace gnubase::engine
 				return result;
 			});
 		engine.registerCommand(
-			{"audio.get", 1, "The audio device, whether it runs, and how many frames it has processed and captured.",
+			{"audio.get", 1,
+				"The audio device (its backend, id, name, format, channel names, latencies in frames, clock source "
+				"and whether it has a control panel), whether it runs, and how many frames it has processed and, if "
+				"it is the dummy device, captured.",
 				noParameters(), statusSchema(), true},
 			[this](CommandContext&) { return status(); });
 		engine.registerCommand(
+			{"audio.reset", 1,
+				"Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this "
+				"when their settings change, e.g. in their control panel; the engine then resets on its own.",
+				noParameters(), statusSchema(), false},
+			[this](CommandContext& context)
+			{
+				reset();
+				Json result = status();
+				context.emit("audio.changed", result);
+				return result;
+			});
+		engine.registerCommand(
+			{"audio.controlPanel", 1,
+				"Opens the control panel of the audio device's driver. Changes made there may reset the device.",
+				noParameters(), statusSchema(), false},
+			[this](CommandContext&)
+			{
+				require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
+				require(m_device->info().controlPanel, "the audio device has no control panel");
+				m_device->openControlPanel();
+				return status();
+			});
+		engine.registerCommand(
 			{"audio.render", 1,
-				"Offline mode: processes the given number of frames as fast as possible, then returns. The device "
-				"must be stopped.",
+				"Offline mode: processes the given number of frames as fast as possible, then returns. Only the dummy "
+				"device, and only while it is stopped.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["frames"],
 					"properties": {"frames": {"type": "integer"}}})"),
 				statusSchema(), false},
@@ -255,7 +401,9 @@ namespace gnubase::engine
 			{
 				const auto frames = context.parameters().at("frames").get<int64_t>();
 				require(frames >= 0, "frames must not be negative");
-				requireStopped().render(*this, static_cast<uint64_t>(frames));
+				audio::DummyDevice& device = requireDummy();
+				require(!device.running(), "the audio device is running");
+				device.render(*this, static_cast<uint64_t>(frames));
 				Json result = status();
 				context.emit("audio.changed", result);
 				return result;
@@ -285,7 +433,8 @@ namespace gnubase::engine
 			});
 		engine.registerCommand(
 			{"audio.capture", 1,
-				"Captured output samples of one device output channel, from frame start, at most 1048576 frames.",
+				"Captured output samples of one output channel of the dummy device, from frame start, at most "
+				"1048576 frames.",
 				Json::parse(R"({"type": "object", "additionalProperties": false,
 					"required": ["channel", "start", "frames"], "properties": {"channel": {"type": "integer"},
 					"start": {"type": "integer"}, "frames": {"type": "integer"}}})"),
@@ -294,17 +443,17 @@ namespace gnubase::engine
 				true},
 			[this](CommandContext& context)
 			{
-				require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
+				const audio::DummyDevice& device = requireDummy();
 				const Json& parameters = context.parameters();
 				const auto channel = parameters.at("channel").get<int64_t>();
 				const auto start = parameters.at("start").get<int64_t>();
 				const auto frames = parameters.at("frames").get<int64_t>();
-				require(channel >= 0 && channel < m_device->format().outputChannels,
+				require(channel >= 0 && channel < device.format().outputChannels,
 					"no output channel " + std::to_string(channel));
 				require(start >= 0, "start must not be negative");
 				require(frames >= 0 && frames <= g_maxCaptureRead, "frames must be from 0 to 1048576");
 				return Json{{"samples",
-					m_device->captured(
+					device.captured(
 						static_cast<int>(channel), static_cast<size_t>(start), static_cast<size_t>(frames))}};
 			});
 		registerTransportCommands(engine);
