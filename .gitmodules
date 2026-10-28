@@ -36,3 +36,7 @@
 	path = ext/cpp-httplib
 	url = https://github.com/yhirose/cpp-httplib.git
 	shallow = true
+[submodule "ext/lua"]
+	path = ext/lua
+	url = https://github.com/lua/lua.git
+	shallow = true

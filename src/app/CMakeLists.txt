@@ -3,7 +3,7 @@
 add_library(gnubase-app STATIC
 	headless.cpp headless.h
 	options.cpp options.h)
-target_link_libraries(gnubase-app PUBLIC gnubase-engine gnubase-mcp)
+target_link_libraries(gnubase-app PUBLIC gnubase-engine gnubase-mcp gnubase-scripting)
 gnubase_target_defaults(gnubase-app)
 
 add_executable(gnubase main.cpp)

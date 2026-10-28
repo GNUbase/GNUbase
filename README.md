@@ -82,7 +82,7 @@ The programs end up in `build/<preset>/bin/<configuration>/`. Add `-L unit` to t
 claude mcp add gnubase -- /path/to/gnubase --headless
 ```
 
-`--mcp-http` serves MCP over HTTP on 127.0.0.1 instead and prints the URL and the access token. `--project FILE` loads a DAWproject file first, and `--sample-rate` and `--block-size` set up the audio device, which is the dummy device (no hardware) for now. `gnubase --help` lists everything. Exit codes: 0 done, 1 unexpected error, 2 invalid command line, 3 the audio device or the project could not be set up.
+`--mcp-http` serves MCP over HTTP on 127.0.0.1 instead and prints the URL and the access token. `--script file.lua` runs a Lua script instead of serving MCP, with every engine command as a function, e.g. `gnubase.track.add{type = "audio"}`; a script that raises an error ends with exit code 4. `--project FILE` loads a DAWproject file first, and `--sample-rate` and `--block-size` set up the audio device, which is the dummy device (no hardware) for now. `gnubase --help` lists everything. Exit codes: 0 done, 1 unexpected error, 2 invalid command line, 3 the audio device or the project could not be set up.
 
 ## Contributing
 
