@@ -810,6 +810,69 @@ Result:
 
 - `notes`: array, required
 
+### pluginhost
+
+#### `pluginhost_check`
+
+Engine command `pluginhost.check`.
+
+Reports the plugins that failed since the last check because their host process crashed, missed a processing deadline (reason "hung") or broke the protocol, and emits plugin.failed for each with its instance, plugin id, process and reason. A failed plugin is bypassed and outputs silence. The engine runs this on its own as soon as a failure is detected.
+
+Result:
+
+- `failures`: array of object, required
+
+#### `pluginhost_get`
+
+Engine command `pluginhost.get`. Read-only.
+
+How plugins are grouped into plugin host processes, and the processes. mode: the hosting mode, "shared" (one process for every plugin), "perVendor", "perPlugin" or "perInstance"; defaultMode: the mode GNUbase starts with; overrides: plugin ids with a mode of their own. hosts: each process with its id (process), its group ("shared", "vendor:<vendor>", "plugin:<id>" or "instance:<instance>"), its state ("running", "hung" or "exited") and its plugin instances, whether they failed.
+
+Result:
+
+- `defaultMode`: string, required
+- `errors`: array of string
+- `hosts`: array of object, required
+- `mode`: string, required
+- `overrides`: object, required
+
+#### `pluginhost_setMode`
+
+Engine command `pluginhost.setMode`.
+
+Sets the hosting mode (see pluginhost.get). Plugins whose process changes are moved to their new process with their state, between two blocks, so they keep sounding the same; plugins that can't move stay where they are and are listed in errors. Emits pluginhost.changed.
+
+Arguments:
+
+- `mode`: one of "shared" | "perVendor" | "perPlugin" | "perInstance", required
+
+Result:
+
+- `defaultMode`: string, required
+- `errors`: array of string
+- `hosts`: array of object, required
+- `mode`: string, required
+- `overrides`: object, required
+
+#### `pluginhost_setOverride`
+
+Engine command `pluginhost.setOverride`.
+
+Gives a plugin (its id, e.g. "clap:com.example.synth") a hosting mode of its own, e.g. "perInstance" to isolate an unstable plugin, or removes its override with null. Moves the plugin's instances like pluginhost.setMode. Emits pluginhost.changed.
+
+Arguments:
+
+- `mode`: one of "shared" | "perVendor" | "perPlugin" | "perInstance" | null, required
+- `plugin`: string, required
+
+Result:
+
+- `defaultMode`: string, required
+- `errors`: array of string
+- `hosts`: array of object, required
+- `mode`: string, required
+- `overrides`: object, required
+
 ### processor
 
 #### `processor_list`
@@ -1085,6 +1148,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://engine.version`: The GNUbase version.
 - `gnubase://graph.get`: The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes they receive audio and events from, and the order they are processed in.
 - `gnubase://history.get`: The undo history: every step with its action, time (UTC) and details, the position (steps before it are done, the ones after it can be redone) and the maximum number of steps (0: no limit).
+- `gnubase://pluginhost.get`: How plugins are grouped into plugin host processes, and the processes. mode: the hosting mode, "shared" (one process for every plugin), "perVendor", "perPlugin" or "perInstance"; defaultMode: the mode GNUbase starts with; overrides: plugin ids with a mode of their own. hosts: each process with its id (process), its group ("shared", "vendor:<vendor>", "plugin:<id>" or "instance:<instance>"), its state ("running", "hung" or "exited") and its plugin instances, whether they failed.
 - `gnubase://processor.list`: Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units.
 - `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts.
 - `gnubase://transport.get`: Whether playback runs, the project cursor in samples, the locators and the modes.
