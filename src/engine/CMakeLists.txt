@@ -24,6 +24,9 @@ add_library(gnubase-engine STATIC
 	document/projectmodel.cpp document/projectmodel.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	engine.cpp engine.h
+	graph/events.h
+	graph/graph.cpp graph/graph.h
+	graph/processor.h
 	schema.cpp schema.h
 	time/signaturemap.cpp time/signaturemap.h
 	time/tempomap.cpp time/tempomap.h

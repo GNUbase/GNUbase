@@ -3,6 +3,7 @@
 
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
+#include "engine/graph/graph.h"
 
 #include <algorithm>
 #include <array>
@@ -159,6 +160,28 @@ namespace gnubase::engine
 				{"channels", toJsonArray(project.channels)}, {"media", toJsonArray(project.media)},
 				{"clips", toJsonArray(project.clips)}, {"audioEvents", toJsonArray(project.audioEvents)},
 				{"midiParts", toJsonArray(project.midiParts)}};
+		}
+
+		Json graphToJson(const graph::GraphDesc& graph)
+		{
+			Json nodes = Json::array();
+			for (const graph::NodeDesc& node : graph.nodes)
+				nodes.push_back({{"kind", graph::toString(node.kind)}, {"object", node.object},
+					{"channels", node.channels}, {"audioInputs", Json::array()}, {"eventInputs", Json::array()}});
+			// Inputs in ascending order, the order a node sums them in.
+			for (const auto& [connections, key] :
+				{std::pair{&graph.audio, "audioInputs"}, std::pair{&graph.events, "eventInputs"}})
+			{
+				std::vector<std::vector<int>> inputs(graph.nodes.size());
+				for (const graph::Connection& connection : *connections)
+					inputs[static_cast<size_t>(connection.to)].push_back(connection.from);
+				for (size_t i = 0; i < inputs.size(); ++i)
+				{
+					std::sort(inputs[i].begin(), inputs[i].end());
+					nodes[i][key] = inputs[i];
+				}
+			}
+			return {{"nodes", std::move(nodes)}, {"order", graph::processingOrder(graph)}};
 		}
 
 		// Schemas.
@@ -1239,6 +1262,12 @@ namespace gnubase::engine
 			{"project.get", 1, "The whole project: busses, tracks in order, channels, media, clips, events and parts.",
 				objectSchema({}), {{"type", "object"}}, true},
 			[](Project& project, CommandContext&) { return toJson(project); });
+		add(engine,
+			{"graph.get", 1,
+				"The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes "
+				"they receive audio and events from, and the order they are processed in.",
+				objectSchema({}), {{"type", "object"}}, true},
+			[this](Project&, CommandContext&) { return graphToJson(graph::describe(m_snapshots.latest())); });
 		addControl(engine,
 			{"project.new", 1,
 				"Replaces the project with an empty one that has a stereo input and output bus, and clears the undo "
