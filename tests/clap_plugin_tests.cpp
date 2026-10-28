@@ -680,10 +680,10 @@ TEST_CASE("the CLAP state blob test plugin round-trips its state byte for byte",
 
 	std::vector<uint8_t> corrupt = state;
 	corrupt[corrupt.size() / 2] ^= 1;
-	CHECK_FALSE(loadState(copy, corrupt, 1 << 20));
+	CHECK(!loadState(copy, corrupt, 1 << 20));
 	corrupt = state;
 	corrupt.pop_back();
-	CHECK_FALSE(loadState(copy, corrupt, 1 << 20));
+	CHECK(!loadState(copy, corrupt, 1 << 20));
 }
 
 TEST_CASE("the CLAP crash and hang test plugins have their trigger parameters, off by default", "[integration]")
@@ -702,6 +702,6 @@ TEST_CASE("the CLAP crash and hang test plugins have their trigger parameters, o
 		char text[CLAP_NAME_SIZE] = {};
 		REQUIRE(params.value_to_text(plugin.get(), id, 1.0, text, sizeof(text)));
 		CHECK(std::string(text) == "On");
-		CHECK_FALSE(saveState(plugin, 1 << 20).empty());
+		CHECK(!saveState(plugin, 1 << 20).empty());
 	}
 }
