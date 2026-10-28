@@ -13,6 +13,14 @@ target_sources(gnubase-tests PRIVATE device_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-mcp gnubase-scripting gnubase-testutils Catch2::Catch2WithMain miniz pugixml::pugixml
 	cpp-httplib)
 
+# The test plugins and the loader tests that load them into the test process (plugins/README.md).
+if(GNUBASE_TEST_PLUGINS)
+	add_subdirectory(plugins)
+	target_sources(gnubase-tests PRIVATE clap_plugin_tests.cpp)
+	target_link_libraries(gnubase-tests PRIVATE clap-sdk ${CMAKE_DL_LIBS})
+	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_TEST_PLUGINS_DIR="${GNUBASE_TEST_PLUGINS_DIR}")
+	add_dependencies(gnubase-tests gnubase-test-plugins)
+endif()
 # Engine benchmarks (#212, #24): not a test, run by hand or by CI's benchmark job.
 add_executable(gnubase-bench bench/bench.cpp)
 target_link_libraries(gnubase-bench PRIVATE gnubase-engine)
