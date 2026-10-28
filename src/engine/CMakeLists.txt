@@ -27,6 +27,7 @@ add_library(gnubase-engine STATIC
 	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/document.cpp document/document.h
 	document/history.cpp document/history.h
+	document/midiedits.cpp
 	document/projectmodel.cpp document/projectmodel.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/serialize.cpp document/serialize.h
@@ -39,6 +40,7 @@ add_library(gnubase-engine STATIC
 	processors/generators.cpp processors/generators.h
 	processors/testsynth.cpp processors/testsynth.h
 	schema.cpp schema.h
+	schematext.cpp schematext.h
 	time/signaturemap.cpp time/signaturemap.h
 	time/tempomap.cpp time/tempomap.h
 	time/timecode.cpp time/timecode.h)
