@@ -20,6 +20,30 @@ namespace gnubase::engine
 				[](time::Samples at, const PlaylistEntry& e) { return at < e.end; });
 			return entry != playlist.end() && entry->start <= position ? &*entry : nullptr;
 		}
+
+		// A voice's state (Playback::Voice): waiting after its nth cue, read in a block (blocks count from 1), or
+		// being repositioned by a cue.
+		constexpr uint64_t g_cueing = ~uint64_t{0};
+
+		constexpr uint64_t waitingAfter(uint64_t cues)
+		{
+			return (cues << 1U) | 1U;
+		}
+
+		constexpr uint64_t readIn(uint64_t block)
+		{
+			return block << 1U;
+		}
+
+		constexpr bool isWaiting(uint64_t state)
+		{
+			return (state & 1U) != 0 && state != g_cueing;
+		}
+
+		constexpr uint64_t blockOf(uint64_t state)
+		{
+			return state >> 1U;
+		}
 	}
 
 	Playlist makePlaylist(const RenderSnapshot& snapshot, const RenderChannel& channel)
@@ -157,11 +181,16 @@ namespace gnubase::engine
 		return position;
 	}
 
-	void Playback::send(Voice& voice, time::Samples frame)
+	bool Playback::claim(Voice& voice, uint64_t seen)
+	{
+		return voice.state.compare_exchange_strong(seen, g_cueing, std::memory_order_acq_rel);
+	}
+
+	void Playback::place(Voice& voice, time::Samples frame)
 	{
 		voice.stream->seek(frame);
 		voice.cueFrame.store(frame, std::memory_order_relaxed);
-		voice.cueGeneration.fetch_add(1, std::memory_order_release);
+		voice.state.store(waitingAfter(++voice.cues), std::memory_order_release);
 	}
 
 	std::shared_ptr<Playback::Voice> Playback::open(ObjectId channel, ObjectId media, time::Samples frame)
@@ -185,7 +214,7 @@ namespace gnubase::engine
 		voice->channel = channel;
 		voice->media = media;
 		voice->stream = m_streamer->open(std::move(reader), m_sampleRate, m_streamSettings);
-		send(*voice, frame);
+		place(*voice, frame);
 		return voice;
 	}
 
@@ -216,26 +245,30 @@ namespace gnubase::engine
 			changed = true;
 		}
 
-		// What every voice was doing, read once: the audio thread goes on meanwhile, and deciding on fresher reads
-		// half way could take a voice for free that it has just started reading.
+		// What every voice was doing, read once. The audio thread goes on meanwhile and may start reading a voice
+		// that looks free here: repositioning a voice claims it from exactly the state read here, which fails then.
 		struct State
 		{
-			bool started = false;
+			uint64_t seen = 0;
+			bool started = false;       // read since its last cue
 			time::Samples next = 0;     // where it reads on, once started
 			time::Samples cueFrame = 0; // where it waits, until then
-			uint64_t lastBlock = 0;
+			uint64_t lastBlock = 0;     // the block it was last read in, once started
 		};
+		const auto waitingAt = [](uint64_t seen, time::Samples frame) { return State{seen, false, frame, frame, 0}; };
 		std::vector<State> states;
 		states.reserve(m_voices.size());
 		for (const auto& voice : m_voices)
 		{
 			State state;
-			state.lastBlock = voice->lastBlock.load(std::memory_order_acquire);
-			state.started = voice->started.load(std::memory_order_acquire);
+			state.seen = voice->state.load(std::memory_order_acquire);
+			state.started = !isWaiting(state.seen);
+			state.lastBlock = state.started ? blockOf(state.seen) : 0;
 			state.next = voice->next.load(std::memory_order_relaxed);
 			state.cueFrame = voice->cueFrame.load(std::memory_order_relaxed);
 			states.push_back(state);
 		}
+		voicesRead();
 
 		for (const Track& track : m_tracks)
 		{
@@ -311,36 +344,55 @@ namespace gnubase::engine
 					unmet.push_back(point);
 			}
 
+			// A free voice that the audio thread hasn't started reading since its state was read: claimed for the
+			// cue, or the end of mine.
+			const auto claimFree = [&](bool sameMedia, ObjectId media)
+			{
+				for (;;)
+				{
+					const auto free = std::find_if(mine.begin(), mine.end(),
+						[&](size_t i) { return !taken[i] && (!sameMedia || m_voices[i]->media == media); });
+					if (free == mine.end())
+						return free;
+					taken[*free] = true;
+					if (claim(*m_voices[*free], states[*free].seen))
+						return free;
+				}
+			};
+
 			// The others get a free voice: one of the same clip if there is one, else a new stream.
 			for (const Point& point : unmet)
 			{
-				auto free = std::find_if(
-					mine.begin(), mine.end(), [&](size_t i) { return !taken[i] && m_voices[i]->media == point.media; });
+				auto free = claimFree(true, point.media);
 				if (free != mine.end())
 				{
-					send(*m_voices[*free], point.frame);
-					states[*free] = State{false, point.frame, point.frame, states[*free].lastBlock};
-					taken[*free] = true;
+					Voice& voice = *m_voices[*free];
+					place(voice, point.frame);
+					states[*free] = waitingAt(voice.state.load(std::memory_order_relaxed), point.frame);
 					continue;
 				}
-				free = std::find_if(mine.begin(), mine.end(), [&](size_t i) { return !taken[i]; });
+				free = claimFree(false, point.media);
 				if (free == mine.end() && mine.size() >= m_voicesPerTrack)
 					continue; // every voice is busy; the point gets one in a later cue
 				std::shared_ptr<Voice> voice = open(track.channel, point.media, point.frame);
 				if (!voice)
+				{
+					if (free != mine.end())
+						m_voices[*free]->state.store(states[*free].seen, std::memory_order_release); // unclaimed
 					continue;
+				}
+				const State state = waitingAt(voice->state.load(std::memory_order_relaxed), point.frame);
 				if (free != mine.end())
 				{
-					retire(m_voices[*free]);
+					retire(m_voices[*free]); // stays claimed: the audio thread leaves it alone until the next table
 					m_voices[*free] = std::move(voice);
-					states[*free] = State{false, point.frame, point.frame, 0};
-					taken[*free] = true;
+					states[*free] = state;
 				}
 				else
 				{
 					mine.push_back(m_voices.size());
 					m_voices.push_back(std::move(voice));
-					states.push_back(State{false, point.frame, point.frame, 0});
+					states.push_back(state);
 					taken.push_back(true);
 				}
 				changed = true;
@@ -411,22 +463,29 @@ namespace gnubase::engine
 			Voice& v = **voice;
 			if (v.media != media)
 				continue;
-			const uint64_t generation = v.cueGeneration.load(std::memory_order_acquire);
-			if (generation != v.seenGeneration)
-			{
-				v.seenGeneration = generation;
-				v.next.store(v.cueFrame.load(std::memory_order_relaxed), std::memory_order_relaxed);
-				v.started.store(false, std::memory_order_release);
-			}
-			// Until its first read after a cue, a voice is only there once its stream has the frames.
-			if (!v.started.load(std::memory_order_relaxed) && !v.stream->ready())
+			uint64_t state = v.state.load(std::memory_order_acquire);
+			if (state == g_cueing)
 				continue;
-			const time::Samples next = v.next.load(std::memory_order_relaxed);
-			if (next >= frame && next < frame + frames)
+			time::Samples next = 0;
+			if (isWaiting(state))
 			{
-				lead = next - frame;
-				return &v;
+				// Until its first read after a cue, a voice is only there once its stream has the frames.
+				if (!v.stream->ready())
+					continue;
+				next = v.cueFrame.load(std::memory_order_relaxed);
 			}
+			else
+			{
+				next = v.next.load(std::memory_order_relaxed);
+			}
+			if (next < frame || next >= frame + frames)
+				continue;
+			// Read from it, unless a cue has just claimed it.
+			v.next.store(next, std::memory_order_relaxed);
+			if (!v.state.compare_exchange_strong(state, readIn(block()), std::memory_order_acq_rel))
+				continue;
+			lead = next - frame;
+			return &v;
 		}
 		return nullptr;
 	}
@@ -491,8 +550,6 @@ namespace gnubase::engine
 			return; // a clip with more channels than prepared for; the next graph has room
 		voice->stream->read(m_buffer.data(), count);
 		voice->next.store(frame + lead + static_cast<time::Samples>(count), std::memory_order_relaxed);
-		voice->started.store(true, std::memory_order_release);
-		voice->lastBlock.store(m_playback.block(), std::memory_order_release);
 
 		// One to one, a mono clip on every channel, extra clip channels unused.
 		const auto start = offset + static_cast<uint32_t>(lead);
