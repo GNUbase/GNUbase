@@ -3,6 +3,7 @@
 
 #include "engine/engine.h"
 
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -12,6 +13,7 @@
 #include <string>
 #include <string_view>
 
+struct lua_Debug; // NOLINT(readability-identifier-naming): Lua's own name
 struct lua_State;
 
 // GNUbase's Lua 5.4 scripting. The API is generated from the engine's command registry, like the MCP tools.
@@ -47,6 +49,10 @@ namespace gnubase::scripting
 		// Runs a Lua file. A first line starting with # (e.g. #!/usr/bin/env ...) is ignored.
 		std::optional<std::string> runFile(const std::filesystem::path& file);
 
+		// Stops every later run with an error once its Lua code has run longer than the limit. Time spent in engine
+		// commands counts too, but only Lua code is interrupted. Zero, the default, means no limit.
+		void setTimeLimit(std::chrono::milliseconds limit) { m_timeLimit = limit; }
+
 	private:
 		struct CloseState
 		{
@@ -59,6 +65,7 @@ namespace gnubase::scripting
 		static int on(lua_State* state);
 		static int waitFor(lua_State* state);
 		static int events(lua_State* state);
+		static void stopWhenLate(lua_State* state, lua_Debug* debug);
 
 		std::optional<std::string> execute(std::string_view code, const std::string& luaChunkName);
 		void openLibraries(Trust trust);
@@ -67,7 +74,9 @@ namespace gnubase::scripting
 
 		engine::Client m_client;
 		std::ostream& m_output;
-		std::deque<engine::Event> m_events;             // arrived, not taken yet
+		std::deque<engine::Event> m_events; // arrived, not taken yet
+		std::chrono::milliseconds m_timeLimit{0};
+		std::chrono::steady_clock::time_point m_deadline;
 		std::unique_ptr<lua_State, CloseState> m_state; // closed first: its functions use the members above
 	};
 }

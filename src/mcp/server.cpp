@@ -160,9 +160,22 @@ namespace gnubase::mcp
 		throw ProtocolError(g_methodNotFound, "no method " + method);
 	}
 
+	void Server::addTool(Tool tool)
+	{
+		m_tools.push_back(std::move(tool));
+	}
+
 	Json Server::listTools() const
 	{
 		Json tools = Json::array();
+		for (const Tool& extra : m_tools)
+		{
+			Json tool = {{"name", extra.name}, {"description", extra.description}, {"inputSchema", extra.inputSchema},
+				{"annotations", {{"readOnlyHint", extra.readOnly}}}};
+			if (!extra.outputSchema.is_null())
+				tool["outputSchema"] = extra.outputSchema;
+			tools.push_back(std::move(tool));
+		}
 		for (const CommandInfo& info : m_engine.commands())
 		{
 			Json tool = {{"name", toolName(info.name)}, {"title", info.name}, {"description", info.description},
@@ -177,14 +190,34 @@ namespace gnubase::mcp
 	Json Server::callTool(const Json& params)
 	{
 		const std::string& name = stringParameter(params, "name", "tools/call");
+		const Json arguments = params.value("arguments", Json::object());
+		if (const auto extra =
+				std::find_if(m_tools.begin(), m_tools.end(), [&name](const Tool& tool) { return tool.name == name; });
+			extra != m_tools.end())
+		{
+			try
+			{
+				if (const std::string problem = engine::validate(arguments, extra->inputSchema, "arguments");
+					!problem.empty())
+					throw std::invalid_argument(problem);
+				Json value = extra->run(arguments);
+				Json response = {{"content", textContent(text(value))}, {"isError", false}};
+				response["structuredContent"] = std::move(value);
+				return response;
+			}
+			catch (const std::exception& error)
+			{
+				return {{"content", textContent(error.what())}, {"isError", true}};
+			}
+		}
+
 		const std::vector<CommandInfo> commands = m_engine.commands();
 		const auto command = std::find_if(
 			commands.begin(), commands.end(), [&name](const CommandInfo& info) { return toolName(info.name) == name; });
 		if (command == commands.end())
 			throw ProtocolError(g_invalidParams, "no tool " + name);
 
-		const engine::Result result =
-			engine::Client(m_engine).call(command->name, params.value("arguments", Json::object()), g_callTimeout);
+		const engine::Result result = engine::Client(m_engine).call(command->name, arguments, g_callTimeout);
 		if (!result.ok())
 			return {{"content", textContent(result.error)}, {"isError", true}};
 		Json response = {{"content", textContent(text(result.value))}, {"isError", false}};

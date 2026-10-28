@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/headless.h"
 #include "app/options.h"
+#include "app/scripttool.h"
 #include "engine/engine.h"
+#include "mcp/server.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -108,6 +110,33 @@ TEST_CASE("the command line selects headless mode, the MCP transport, the audio 
 	CHECK_THROWS_AS(parseOptions({"--script"}), UsageError);
 	CHECK_THROWS_AS(parseOptions({"--headless", "--script", "a.lua", "--mcp-http"}), UsageError); // one or the other
 	CHECK_THAT(usage(), ContainsSubstring("--headless"));
+}
+
+TEST_CASE("MCP clients run Lua scripts in a sandbox with script_run", "[unit]")
+{
+	gnubase::engine::Engine engine;
+	gnubase::mcp::Server server(engine);
+	addScriptTool(server, engine);
+	const auto call = [&server](const std::string& code)
+	{
+		const Json request = Json::parse(callTool(1, "script_run", {{"code", code}, {"name", "agent.lua"}}));
+		return server.handle(request).value_or(Json()).at("result");
+	};
+
+	const Json tools = server.handle(Json::parse(message(1, "tools/list"))).value_or(Json()).at("result").at("tools");
+	CHECK(std::any_of(tools.begin(), tools.end(), [](const Json& tool) { return tool.at("name") == "script_run"; }));
+
+	const Json printed = call("print('version', gnubase.engine.version().version)");
+	CHECK(printed.at("isError") == false);
+	CHECK(printed.at("structuredContent").at("output") == std::string("version\t") + GNUBASE_VERSION + "\n");
+
+	const Json failed = call("print('before'); error('nope')");
+	CHECK(failed.at("isError") == true);
+	const std::string text = failed.at("content").at(0).at("text").get<std::string>();
+	CHECK_THAT(text, ContainsSubstring("agent.lua:1: nope"));
+	CHECK_THAT(text, ContainsSubstring("before")); // what it printed until then
+
+	CHECK(call("io.open('secret.txt')").at("isError") == true); // no files
 }
 
 TEST_CASE("headless GNUbase loads a project and renders it for an MCP client on stdio", "[integration]")
