@@ -42,7 +42,8 @@ namespace gnubase::engine
 		FadeShape shape(const Json& value)
 		{
 			const auto shape = fadeShapeFromName(value.get<std::string>());
-			require(shape.has_value(), "unknown fade shape " + value.dump());
+			if (!shape)
+				throw CommandError("unknown fade shape " + value.dump());
 			return *shape;
 		}
 
@@ -144,7 +145,8 @@ namespace gnubase::engine
 			if (parameters.contains("mode"))
 			{
 				const auto mode = crossfadeModeFromName(parameters.at("mode").get<std::string>());
-				require(mode.has_value(), "unknown crossfade mode " + parameters.at("mode").dump());
+				if (!mode)
+					throw CommandError("unknown crossfade mode " + parameters.at("mode").dump());
 				crossfade.mode = *mode;
 			}
 			const bool shaped = parameters.contains("shape") || parameters.contains("outShape");
@@ -256,7 +258,7 @@ namespace gnubase::engine
 
 			if (track == nullptr)
 			{
-				project.autoFades = *settings;
+				project.autoFades = settings.value_or(project.autoFades); // useProject is for tracks only
 				context.emit("project.changed",
 					{{"name", project.name}, {"sampleRate", project.sampleRate},
 						{"autoFades", toJson(project.autoFades)}});
