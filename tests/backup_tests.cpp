@@ -113,8 +113,8 @@ namespace
 	Json waitForJob(Client& client, uint64_t job, std::vector<Json>* progress = nullptr)
 	{
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-		std::optional<Json> finished;
-		while (!finished && std::chrono::steady_clock::now() < deadline)
+		Json finished; // null until the job finishes
+		while (finished.is_null() && std::chrono::steady_clock::now() < deadline)
 		{
 			const std::optional<Message> message = client.wait(std::chrono::milliseconds(100));
 			const auto* event = message ? std::get_if<Event>(&*message) : nullptr;
@@ -126,8 +126,8 @@ namespace
 				finished = event->data.at("job");
 		}
 		INFO("job " << job << " didn't finish");
-		REQUIRE(finished.has_value());
-		return *finished;
+		REQUIRE(!finished.is_null());
+		return finished;
 	}
 
 	// Starts a backup and waits for it; requires it to succeed and returns its result.
