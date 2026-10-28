@@ -74,6 +74,16 @@ ctest --preset linux-gcc -C Release
 
 The programs end up in `build/<preset>/bin/<configuration>/`. Add `-L unit` to the `ctest` command to run only the unit tests; the other labels are `integration`, `ui` and `slow`.
 
+## Headless mode and MCP
+
+`gnubase --headless` runs the engine without UI and lets MCP clients, such as AI agents, use every engine command. By default it speaks MCP over stdin and stdout, so an agent can start it directly, for example in Claude Code:
+
+```bash
+claude mcp add gnubase -- /path/to/gnubase --headless
+```
+
+`--mcp-http` serves MCP over HTTP on 127.0.0.1 instead and prints the URL and the access token. `--project FILE` loads a DAWproject file first, and `--sample-rate` and `--block-size` set up the audio device, which is the dummy device (no hardware) for now. `gnubase --help` lists everything. Exit codes: 0 done, 1 unexpected error, 2 invalid command line, 3 the audio device or the project could not be set up.
+
 ## Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and [CLAUDE.md](CLAUDE.md) first: they hold the workflow, the architecture rules and the conventions for everyone, human or AI. Then pick an issue from the earliest open milestone.
