@@ -38,8 +38,6 @@ namespace gnubase::engine::midi
 		// The presets users saved, after the factory presets. Names are unique among both.
 		class PresetLibrary
 		{
-			using Iterator = std::vector<QuantizePreset>::iterator;
-
 		public:
 			static bool isFactory(const std::string& name)
 			{
@@ -62,8 +60,7 @@ namespace gnubase::engine::midi
 			{
 				require(!preset.name.empty(), "name must not be empty");
 				require(!isFactory(preset.name), preset.name + " is a factory preset");
-				const Iterator existing = userPreset(preset.name);
-				if (existing != m_user.end())
+				if (QuantizePreset* existing = userPreset(preset.name))
 					*existing = preset;
 				else
 					m_user.push_back(preset);
@@ -72,18 +69,20 @@ namespace gnubase::engine::midi
 			void remove(const std::string& name)
 			{
 				require(!isFactory(name), "factory presets can't be removed");
-				m_user.erase(existingUserPreset(name));
+				existingUserPreset(name);
+				m_user.erase(std::remove_if(m_user.begin(), m_user.end(),
+								 [&name](const QuantizePreset& p) { return p.name == name; }),
+					m_user.end());
 			}
 
 			void rename(const std::string& name, const std::string& newName)
 			{
 				require(!isFactory(name), "factory presets can't be renamed");
-				const Iterator preset = existingUserPreset(name);
+				QuantizePreset& preset = existingUserPreset(name);
 				require(!newName.empty(), "newName must not be empty");
 				require(!isFactory(newName), newName + " is a factory preset");
-				require(
-					newName == name || userPreset(newName) == m_user.end(), "a preset named " + newName + " exists");
-				preset->name = newName;
+				require(newName == name || userPreset(newName) == nullptr, "a preset named " + newName + " exists");
+				preset.name = newName;
 			}
 
 			Json toJson() const
@@ -110,17 +109,20 @@ namespace gnubase::engine::midi
 			}
 
 		private:
-			Iterator userPreset(const std::string& name)
+			QuantizePreset* userPreset(const std::string& name)
 			{
-				return std::find_if(
-					m_user.begin(), m_user.end(), [&name](const QuantizePreset& p) { return p.name == name; });
+				for (QuantizePreset& preset : m_user)
+					if (preset.name == name)
+						return &preset;
+				return nullptr;
 			}
 
-			Iterator existingUserPreset(const std::string& name)
+			QuantizePreset& existingUserPreset(const std::string& name)
 			{
-				const Iterator preset = userPreset(name);
-				require(preset != m_user.end(), "no quantize preset " + name);
-				return preset;
+				QuantizePreset* preset = userPreset(name);
+				if (preset == nullptr)
+					throw CommandError("no quantize preset " + name);
+				return *preset;
 			}
 
 			std::vector<QuantizePreset> m_user;
