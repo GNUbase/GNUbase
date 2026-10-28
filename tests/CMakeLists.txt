@@ -23,6 +23,14 @@ add_dependencies(gnubase-tests gnubase-ipcpeer)
 # Plugin hosting tests start the real plugin host process.
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_PLUGINHOST="$<TARGET_FILE:gnubase-pluginhost>")
 add_dependencies(gnubase-tests gnubase-pluginhost)
+# The test plugins and the loader tests that load them into the test process (plugins/README.md).
+if(GNUBASE_TEST_PLUGINS)
+	add_subdirectory(plugins)
+	target_sources(gnubase-tests PRIVATE clap_plugin_tests.cpp)
+	target_link_libraries(gnubase-tests PRIVATE clap-sdk ${CMAKE_DL_LIBS})
+	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_TEST_PLUGINS_DIR="${GNUBASE_TEST_PLUGINS_DIR}")
+	add_dependencies(gnubase-tests gnubase-test-plugins)
+endif()
 
 # ThreadSanitizer defines its own operator new/delete, which the RT checker replaces; every other build runs it.
 if(NOT GNUBASE_SANITIZERS MATCHES "thread")
