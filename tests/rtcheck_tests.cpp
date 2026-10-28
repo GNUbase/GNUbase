@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "engine/graph/graph.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 #include "platform/rt/snapshotpublisher.h"
@@ -132,5 +133,47 @@ TEST_CASE("SnapshotPublisher readers never allocate or free", "[unit]")
 	}
 	publisher.publish(std::make_unique<std::vector<int>>(64, 3)); // frees the others outside real-time code
 	CHECK(seen == 2);
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("processing a processing graph and swapping in a new one never allocate or free", "[unit]")
+{
+	using namespace gnubase::engine::graph;
+	// Every node kind, audio and event connections, and a processor that writes events.
+	class Echo : public Processor
+	{
+	public:
+		void process(const ProcessContext& context) noexcept override
+		{
+			for (const ProcessEvent& event : context.eventsIn)
+				context.eventsOut.add(event);
+		}
+	};
+	GraphDesc desc;
+	desc.nodes = {{NodeKind::InputBus, 1, 2, nullptr}, {NodeKind::Channel, 2, 0, nullptr},
+		{NodeKind::PluginSlot, 0, 2, std::make_shared<Echo>()}, {NodeKind::Builtin, 0, 1, std::make_shared<Echo>()},
+		{NodeKind::OutputBus, 3, 2, nullptr}};
+	desc.audio = {{0, 2}, {2, 3}, {2, 4}, {3, 4}};
+	desc.events = {{1, 2}, {2, 3}};
+	SnapshotPublisher<CompiledGraph> graphs(std::make_unique<CompiledGraph>(desc, 48000.0, 256));
+
+	const RecordViolations record;
+	const auto cycle = [&graphs]
+	{
+		const ScopedRealtimeContext realtime;
+		const CompiledGraph& graph = graphs.acquire();
+		ProcessEvent event;
+		for (uint32_t offset = 0; offset < 256; offset += 16)
+		{
+			event.offset = offset;
+			graph.events(1).add(event);
+		}
+		graph.process(256);
+		graphs.release();
+	};
+	cycle();
+	graphs.publish(std::make_unique<CompiledGraph>(desc, 48000.0, 256)); // built outside real-time code
+	cycle();
+	cycle();
 	CHECK(g_violations == 0);
 }
