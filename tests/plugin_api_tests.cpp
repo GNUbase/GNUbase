@@ -159,7 +159,7 @@ TEST_CASE("the plugin API describes a built-in processor through its factory and
 		CHECK(info.channelCount == 2);
 		CHECK(info.layout == ChannelLayout::Stereo);
 		CHECK(info.flags == AudioPortInfo::Main);
-		CHECK_FALSE(ports->audioPortInfo(false, 1, info));
+		CHECK(!ports->audioPortInfo(false, 1, info));
 	}
 
 	SECTION("parameters with their ranges, values and texts")
@@ -181,7 +181,7 @@ TEST_CASE("the plugin API describes a built-in processor through its factory and
 		CHECK(text == "-6.00 dB");
 		REQUIRE(params->paramTextToValue(engine::processors::GainPan::Gain, "-3.5 dB", value));
 		CHECK(value == -3.5);
-		CHECK_FALSE(params->paramValue(99, value));
+		CHECK(!params->paramValue(99, value));
 	}
 
 	SECTION("an instrument has no audio input")
@@ -246,7 +246,7 @@ TEST_CASE("the plugin API restores a plugin's state in another instance", "[unit
 
 	TestHost otherHost;
 	const std::unique_ptr<Plugin> copy = createActive(factory, "builtin:gainPan", otherHost);
-	CHECK_FALSE(extension<State>(*copy)->loadState(state.data(), 3, StateContext::Project));
+	CHECK(!extension<State>(*copy)->loadState(state.data(), 3, StateContext::Project));
 	REQUIRE(extension<State>(*copy)->loadState(state.data(), state.size(), StateContext::Project));
 	CHECK(otherHost.rescans == std::vector<uint32_t>{HostParams::Values});
 
@@ -269,13 +269,13 @@ TEST_CASE("plugin event lists keep their order and carry system exclusive messag
 {
 	EventList list(3, 8);
 	REQUIRE(list.push(paramValue(5, 0, 1.0)));
-	CHECK_FALSE(list.push(paramValue(3, 0, 1.0))); // earlier than the last one
+	CHECK(!list.push(paramValue(3, 0, 1.0))); // earlier than the last one
 	REQUIRE(list.push(paramValue(5, 1, 1.0)));
 
 	const uint8_t sysex[] = {0xf0, 0x7e, 0x7f, 0x06, 0x01, 0xf7};
 	REQUIRE(list.pushSysex(9, 0, sysex, sizeof(sysex)));
-	CHECK_FALSE(list.pushSysex(10, 0, sysex, sizeof(sysex))); // no room for the bytes
-	CHECK_FALSE(list.push(paramValue(10, 0, 1.0)));           // full
+	CHECK(!list.pushSysex(10, 0, sysex, sizeof(sysex))); // no room for the bytes
+	CHECK(!list.push(paramValue(10, 0, 1.0)));           // full
 	REQUIRE(list.size() == 3);
 	CHECK(list[2].type == EventType::Sysex);
 	CHECK(list[2].data[1] == sizeof(sysex));
