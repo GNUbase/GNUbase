@@ -169,6 +169,7 @@ The MCP server gives a client the same power over GNUbase as the person using it
 | `401 Unauthorized` over HTTP | The token is missing or old: it changes every time GNUbase starts. Use the one it printed last, as `Authorization: Bearer <token>`. |
 | `403 Forbidden` over HTTP | The request came from another machine or a web page. Connect from this machine, to `127.0.0.1`, without a browser. |
 | `405 Method Not Allowed` | The client opened `GET /mcp` for server-initiated messages, which GNUbase doesn't send yet. Clients fall back to POST. |
+| `project_backup` returned before the backup was written | Backups run as background jobs: the tool returns the job. Call `job_get` with its id until `state` is `done` (the result is there), `failed` or `cancelled`; `job_cancel` stops it. |
 | A tool result has `isError: true` | The command failed, and the text says why; nothing changed. `engine_commands` describes every command. |
 | This catalogue misses a tool | It's generated from the server; the tests fail when it's out of date. Run them with `GNUBASE_UPDATE_DOCS=1` and commit `docs/mcp.md`. |
 
@@ -676,17 +677,58 @@ Result:
 
 - `position`: integer, required
 
+### job
+
+#### `job_cancel`
+
+Engine command `job.cancel`.
+
+Asks a running job to stop. It ends soon after as cancelled, with a job.finished event, and cleans up what it made; a job that has ended stays as it is.
+
+Arguments:
+
+- `job`: integer, required
+
+Result:
+
+- `job`: object, required
+
+#### `job_get`
+
+Engine command `job.get`. Read-only.
+
+A background job, as job.list shows it.
+
+Arguments:
+
+- `job`: integer, required
+
+Result:
+
+- `job`: object, required
+
+#### `job_list`
+
+Engine command `job.list`. Read-only.
+
+Every background job since the engine started, such as backups: id, kind, state (running, done, failed or cancelled), progress from 0 to 1, what it is doing, and its result or error once it ended.
+
+Result:
+
+- `jobs`: array of object, required
+
 ### media
 
 #### `media_add`
 
 Engine command `media.add`.
 
-Adds an audio file. Its sample rate, channel count and length in sample frames are read from the file, or taken as given, for a file that is still being recorded.
+Adds an audio file. Its sample rate, channel count and length in sample frames are read from the file, or taken as given, for a file that is still being recorded. With copy, a file from outside the project folder is copied into its media folder (see project.location) and added from there; the project must have been saved.
 
 Arguments:
 
 - `channels`: integer
+- `copy`: boolean
 - `length`: integer
 - `path`: string, required
 - `sampleRate`: number
@@ -710,6 +752,17 @@ Arguments:
 Result:
 
 - `media`: object, required
+
+#### `media_prepareArchive`
+
+Engine command `media.prepareArchive`.
+
+Makes the project self-contained, so that its folder can be archived or moved: copies every media file from outside the project folder into its media folder and uses the copies, as one undo step. Media files that can't be found are left as they are and listed as missing. The project must have been saved; save it again without embedding media to keep the new paths.
+
+Result:
+
+- `copied`: array of object, required
+- `missing`: array of object, required
 
 #### `media_remove`
 
@@ -824,6 +877,27 @@ Result:
 
 ### project
 
+#### `project_backup`
+
+Engine command `project.backup`.
+
+Backs the project up as it is now into folder, which must be empty or new: the project file, named name (by default after the project file, or else the project), and copies of its media in the folder Audio, which the project file refers to relative to itself, so that the folder opens on another machine. The project itself stays as it is. minimize keeps only the ranges of audio files that audio events play, with handles seconds (default 1) before and after; removeUnused leaves out clips that no audio event uses and media that no clip uses. currentVersionsOnly and skipVideo have no effect until clips have versions and projects have video. activate opens the backup once it is done. The backup runs as a job: this returns at once, job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. The job's result is {file, files, missing}, missing listing the media files that couldn't be read and keep their old paths.
+
+Arguments:
+
+- `activate`: boolean
+- `currentVersionsOnly`: boolean
+- `folder`: string, required
+- `handles`: number
+- `minimize`: boolean
+- `name`: string
+- `removeUnused`: boolean
+- `skipVideo`: boolean
+
+Result:
+
+- `job`: object, required
+
 #### `project_get`
 
 Engine command `project.get`. Read-only.
@@ -840,6 +914,18 @@ Arguments:
 
 - `mediaFolder`: string
 - `path`: string, required
+
+#### `project_location`
+
+Engine command `project.location`. Read-only.
+
+Where the project is: its project file (set by project.save and project.load), the folder of that file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. All null for a project that has no file yet.
+
+Result:
+
+- `file`: string or null, required
+- `folder`: string or null, required
+- `mediaFolder`: string or null, required
 
 #### `project_new`
 
@@ -1085,8 +1171,10 @@ Queries without required arguments can also be read as resources:
 - `gnubase://engine.version`: The GNUbase version.
 - `gnubase://graph.get`: The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes they receive audio and events from, and the order they are processed in.
 - `gnubase://history.get`: The undo history: every step with its action, time (UTC) and details, the position (steps before it are done, the ones after it can be redone) and the maximum number of steps (0: no limit).
+- `gnubase://job.list`: Every background job since the engine started, such as backups: id, kind, state (running, done, failed or cancelled), progress from 0 to 1, what it is doing, and its result or error once it ended.
 - `gnubase://processor.list`: Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units.
 - `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts.
+- `gnubase://project.location`: Where the project is: its project file (set by project.save and project.load), the folder of that file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. All null for a project that has no file yet.
 - `gnubase://transport.get`: Whether playback runs, the project cursor in samples, the locators and the modes.
 
 <!-- End of the generated tool catalogue -->
