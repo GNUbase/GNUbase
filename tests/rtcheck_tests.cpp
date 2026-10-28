@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audiofile/diskstream.h"
 #include "engine/graph/graph.h"
+#include "engine/processors/builtin.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 #include "platform/rt/snapshotpublisher.h"
@@ -178,6 +179,46 @@ TEST_CASE("processing a processing graph and swapping in a new one never allocat
 	graphs.publish(std::make_unique<CompiledGraph>(desc, 48000.0, 256)); // built outside real-time code
 	cycle();
 	cycle();
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("every built-in processor processes notes and parameter changes without allocating", "[unit]")
+{
+	using namespace gnubase::engine::graph;
+	using namespace gnubase::engine::processors;
+	constexpr uint32_t frames = 256;
+	std::vector<float> samples(size_t{2} * frames);
+	float* const channels[] = {samples.data(), samples.data() + frames};
+	EventBuffer eventsIn(64);
+	EventBuffer eventsOut(64);
+
+	const RecordViolations record;
+	for (const BuiltinInfo& info : builtins())
+	{
+		const std::shared_ptr<Processor> processor = createBuiltin(info.id);
+		processor->prepareFor(48000.0, frames);
+		for (int block = 0; block < 4; ++block)
+		{
+			eventsIn.clear();
+			for (const ParameterInfo& parameter : info.parameters)
+			{
+				ProcessEvent event;
+				event.type = ProcessEvent::Type::Parameter;
+				event.offset = 10;
+				event.parameter = parameter.id;
+				event.parameterValue = parameter.maximum;
+				eventsIn.add(event);
+			}
+			ProcessEvent note;
+			note.type = block < 2 ? ProcessEvent::Type::NoteOn : ProcessEvent::Type::NoteOff;
+			note.offset = 20;
+			note.key = 60;
+			note.velocity = 0x8000;
+			eventsIn.add(note);
+			const ScopedRealtimeContext realtime;
+			processor->process({channels, 2, frames, eventsIn, eventsOut});
+		}
+	}
 	CHECK(g_violations == 0);
 }
 

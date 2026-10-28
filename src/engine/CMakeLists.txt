@@ -29,6 +29,10 @@ add_library(gnubase-engine STATIC
 	graph/events.h
 	graph/graph.cpp graph/graph.h
 	graph/processor.h
+	processors/builtin.cpp processors/builtin.h
+	processors/gainpan.cpp processors/gainpan.h
+	processors/generators.cpp processors/generators.h
+	processors/testsynth.cpp processors/testsynth.h
 	schema.cpp schema.h
 	time/signaturemap.cpp time/signaturemap.h
 	time/tempomap.cpp time/tempomap.h
