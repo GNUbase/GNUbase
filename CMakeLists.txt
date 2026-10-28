@@ -62,6 +62,46 @@ add_library(cpp-httplib INTERFACE)
 target_include_directories(cpp-httplib SYSTEM INTERFACE ${PROJECT_SOURCE_DIR}/ext/cpp-httplib)
 find_package(Threads REQUIRED)
 target_link_libraries(cpp-httplib INTERFACE Threads::Threads $<$<PLATFORM_ID:Windows>:ws2_32>)
+# The VST3 SDK (ext/vst3sdk): its plugin interfaces, for the VST3 adapter of the plugin host and the VST3 test plugins,
+# and its module loader and host classes, for the adapter. GNUbase code names the interfaces' C++ namespace only
+# through GNUBASE_VST3_NS, read from the SDK here (src/pluginhost/vst3/vst3ns.h).
+set(vst3sdk ${PROJECT_SOURCE_DIR}/ext/vst3sdk)
+file(STRINGS ${vst3sdk}/pluginterfaces/base/funknown.h vst3Namespace REGEX "^namespace [A-Za-z_]+ {" LIMIT_COUNT 1)
+string(REGEX REPLACE "^namespace ([A-Za-z_]+) {.*$" "\\1" vst3Namespace "${vst3Namespace}")
+if(NOT vst3Namespace MATCHES "^[A-Za-z_]+$")
+	message(FATAL_ERROR "The VST3 SDK's namespace was not found: are its parts checked out (docs/dependencies.md)?")
+endif()
+add_library(vst3-interfaces STATIC
+	${vst3sdk}/pluginterfaces/base/coreiids.cpp
+	${vst3sdk}/pluginterfaces/base/funknown.cpp
+	${vst3sdk}/public.sdk/source/common/commoniids.cpp
+	${vst3sdk}/public.sdk/source/vst/vstinitiids.cpp)
+target_include_directories(vst3-interfaces SYSTEM PUBLIC ${vst3sdk})
+target_compile_definitions(vst3-interfaces PUBLIC GNUBASE_VST3_NS=${vst3Namespace})
+# Linked into plugin modules too: position-independent, and exporting nothing.
+set_target_properties(vst3-interfaces PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden)
+if(APPLE)
+	enable_language(OBJCXX)
+	set(vst3ModuleLoader ${vst3sdk}/public.sdk/source/vst/hosting/module_mac.mm)
+	set_source_files_properties(${vst3ModuleLoader} PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+elseif(WIN32)
+	set(vst3ModuleLoader ${vst3sdk}/public.sdk/source/vst/hosting/module_win32.cpp)
+else()
+	set(vst3ModuleLoader ${vst3sdk}/public.sdk/source/vst/hosting/module_linux.cpp)
+endif()
+add_library(vst3-hosting STATIC
+	${vst3ModuleLoader}
+	${vst3sdk}/public.sdk/source/vst/hosting/hostclasses.cpp
+	${vst3sdk}/public.sdk/source/vst/hosting/module.cpp
+	${vst3sdk}/public.sdk/source/vst/hosting/pluginterfacesupport.cpp
+	${vst3sdk}/public.sdk/source/common/commonstringconvert.cpp
+	${vst3sdk}/public.sdk/source/vst/utility/stringconvert.cpp)
+target_link_libraries(vst3-hosting PUBLIC vst3-interfaces ${CMAKE_DL_LIBS})
+if(APPLE)
+	target_link_libraries(vst3-hosting PUBLIC "-framework Cocoa")
+elseif(WIN32)
+	target_link_libraries(vst3-hosting PUBLIC ole32 shell32)
+endif()
 
 # Settings for every GNUbase target; third-party code is not affected.
 function(gnubase_target_defaults target)

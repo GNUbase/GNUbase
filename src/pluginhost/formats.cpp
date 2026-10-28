@@ -2,6 +2,7 @@
 #include "pluginhost/formats.h"
 
 #include "pluginhost/testplugins.h"
+#include "pluginhost/vst3/vst3format.h"
 
 #include <stdexcept>
 
@@ -37,6 +38,7 @@ namespace gnubase::pluginhost
 	{
 		Formats formats;
 		formats.add(makeTestFormat());
+		formats.add(makeVst3Format());
 		return formats;
 	}
 }

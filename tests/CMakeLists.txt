@@ -30,6 +30,12 @@ if(GNUBASE_TEST_PLUGINS)
 	target_link_libraries(gnubase-tests PRIVATE clap-sdk ${CMAKE_DL_LIBS})
 	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_TEST_PLUGINS_DIR="${GNUBASE_TEST_PLUGINS_DIR}")
 	add_dependencies(gnubase-tests gnubase-test-plugins)
+	# The VST3 adapter's tests and their plugin (vst3adapter/README.md).
+	add_subdirectory(vst3adapter)
+	target_sources(gnubase-tests PRIVATE vst3_adapter_tests.cpp)
+	target_link_libraries(gnubase-tests PRIVATE gnubase-pluginhost-vst3)
+	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VST3_ADAPTERTEST="${GNUBASE_VST3_ADAPTERTEST}")
+	add_dependencies(gnubase-tests gnubase-vst3-adaptertest)
 endif()
 
 # ThreadSanitizer defines its own operator new/delete, which the RT checker replaces; every other build runs it.

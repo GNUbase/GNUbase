@@ -46,7 +46,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          submodules: recursive
+          submodules: true # not recursive: of the VST3 SDK's parts, only those the next step names
+
+      - name: Fetch VST3 SDK parts
+        run: git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
 
       # Only the audio the tests read (test data and golden files), not every image in Git LFS.
       - name: Fetch test audio
@@ -106,7 +109,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          submodules: recursive
+          submodules: true # not recursive: of the VST3 SDK's parts, only those the next step names
+
+      - name: Fetch VST3 SDK parts
+        run: git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
 
       - name: Fetch test audio
         run: git lfs pull --include "tests/data/**,tests/golden/**"
@@ -140,7 +146,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          submodules: recursive
+          submodules: true # not recursive: of the VST3 SDK's parts, only those the next step names
+
+      - name: Fetch VST3 SDK parts
+        run: git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
 
       - name: Install packages
         timeout-minutes: 15
