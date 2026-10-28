@@ -21,7 +21,8 @@ namespace gnubase::app
 		server.addTool({"script_run",
 			"Runs Lua code with GNUbase's API: every engine command as gnubase.<area>.<name>(parameters), e.g. "
 			"gnubase.track.add{type = \"audio\"}, and events through gnubase.on, gnubase.waitFor and gnubase.events "
-			"(see docs/lua.md). Runs in a sandbox without files, processes or bytecode, for at most 60 s of Lua code. "
+			"(see docs/lua.md). Test cases registered with gnubase.test.case run when the code ends. Runs in a sandbox "
+			"without files, processes or bytecode, for at most 60 s of Lua code. "
 			"Returns what the script printed; an error comes back with its traceback and what was printed until then.",
 			Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["code"],
 				"properties": {"code": {"type": "string"}, "name": {"type": "string"}}})"),
