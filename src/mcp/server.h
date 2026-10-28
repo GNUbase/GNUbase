@@ -3,9 +3,11 @@
 
 #include "engine/engine.h"
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // The built-in MCP server, so AI agents and other MCP clients can use every engine command. Tools and resources are
 // generated from the engine's command registry. The protocol here doesn't depend on a transport; transport.h has
@@ -23,7 +25,23 @@ namespace gnubase::mcp
 	class Server
 	{
 	public:
+		// A tool that isn't an engine command, such as script_run.
+		struct Tool
+		{
+			std::string name;
+			std::string description;
+			engine::Json inputSchema;  // arguments are checked against it before run
+			engine::Json outputSchema; // or null
+			bool readOnly = false;
+			// Returns the structured result. A thrown std::exception becomes a tool result with isError and its
+			// message.
+			std::function<engine::Json(const engine::Json& arguments)> run;
+		};
+
 		explicit Server(engine::Engine& engine);
+
+		// Adds a tool next to the engine's commands. Call it before the server handles messages.
+		void addTool(Tool tool);
 
 		// One JSON-RPC message from the client. Returns the response, or nothing for notifications and responses.
 		std::optional<engine::Json> handle(const engine::Json& message);
@@ -39,5 +57,6 @@ namespace gnubase::mcp
 		engine::Json readResource(const engine::Json& params);
 
 		engine::Engine& m_engine;
+		std::vector<Tool> m_tools;
 	};
 }
