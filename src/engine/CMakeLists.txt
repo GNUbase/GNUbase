@@ -41,7 +41,8 @@ add_library(gnubase-rubberband STATIC ${rubberbandPatched}/RubberBandSingle.cpp)
 target_include_directories(gnubase-rubberband SYSTEM PUBLIC ${rubberband})
 target_include_directories(gnubase-rubberband SYSTEM PRIVATE ${rubberband}/src/common)
 target_compile_definitions(gnubase-rubberband PRIVATE ALREADY_CONFIGURED USE_BUILTIN_FFT USE_BQRESAMPLER NO_TIMING
-	NO_THREADING NO_THREAD_CHECKS $<$<CXX_COMPILER_ID:MSVC>:__MSVC__ NOMINMAX _USE_MATH_DEFINES>)
+	NO_THREADING NO_THREAD_CHECKS $<$<CXX_COMPILER_ID:MSVC>:__MSVC__ NOMINMAX _USE_MATH_DEFINES>
+	$<$<PLATFORM_ID:Darwin>:LACK_SINCOS>) # macOS's C library has no sincos; Rubber Band's own build sets this too
 if(NOT MSVC)
 	target_compile_options(gnubase-rubberband PRIVATE -ffp-contract=off) # as GNUbase's own code, see gnubase_target_defaults
 endif()

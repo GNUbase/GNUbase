@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <string>
@@ -386,75 +387,92 @@ namespace
 	}
 }
 
+namespace
+{
+	void runBenchmark()
+	{
+		const size_t seconds2 = 96000;
+		const std::vector<float> sine440 = sine(440.0, seconds2);
+		const std::vector<float> pulse = pulseTone(seconds2);
+		const std::vector<float> drums = hits(seconds2);
+		// 10 s of stereo for CPU: the tone and the hits, a little apart.
+		std::vector<float> left(480000);
+		std::vector<float> right(480000);
+		{
+			const std::vector<float> tone = pulseTone(480000);
+			const std::vector<float> beat = hits(480000);
+			for (size_t i = 0; i < left.size(); ++i)
+			{
+				left[i] = (0.7f * tone[i]) + (0.5f * beat[i]);
+				right[i] = (0.5f * tone[i]) + (0.7f * beat[i]);
+			}
+		}
+		const Channels mix{left, right};
+		const double pulseCrest = crestFactor(pulse, 9600, seconds2 - 9600);
+
+		struct Shift
+		{
+			double semitones;
+			const char* label;
+		};
+		const Shift shifts[] = {{7.0, "+7"}, {-5.0, "-5"}, {12.0, "+12"}, {0.5, "+0.5"}, {-12.3, "-12.3"}};
+
+		for (const bool realtime : {false, true})
+		{
+			std::printf("\n## %s mode\n\n", realtime ? "Real-time" : "Offline");
+			std::printf("| Candidate | Pitch error, max (cents) | Pre-echo (dB) | Attack (ms) | Crest loss (dB) | "
+						"Ripple (dB) | "
+						"Unity null (dB) | CPU (x real time) | Worst block (%% of %zu frames) | Latency (frames) | "
+						"Allocations |\n",
+				g_block);
+			std::printf("|---|---|---|---|---|---|---|---|---|---|---|\n");
+			for (const Candidate& candidate : candidates())
+			{
+				double pitchError = 0.0;
+				for (const Shift& shift : shifts)
+				{
+					const Rendered shifted = candidate.render({sine440}, 1.0, shift.semitones, realtime);
+					const double expected = 440.0 * dsp::pitchScale(shift.semitones, 0.0);
+					const double measured = frequency(shifted.output.front(), 9600, seconds2 - 9600);
+					pitchError = std::max(pitchError, std::abs(1200.0 * std::log2(measured / expected)));
+				}
+				const Rendered smeared = candidate.render({drums}, 1.5, 0.0, realtime);
+				const Smear smear = transientSmear(smeared.output.front(), 1.5, 8);
+				const Rendered stretched = candidate.render({pulse}, 1.5, 0.0, realtime);
+				const size_t stretchedEnd = stretched.output.front().size() - 9600;
+				const double crestLoss = pulseCrest - crestFactor(stretched.output.front(), 9600, stretchedEnd);
+				const double rippleDb = ripple(stretched.output.front(), 9600, stretchedEnd);
+				const Rendered unity = candidate.render({pulse}, 1.0, 0.0, realtime);
+				const double null = nullResidual(unity.output.front(), pulse);
+				const Rendered cpu = candidate.render(mix, 1.25, 3.0, realtime);
+				const double speed = 10.0 / cpu.seconds;
+				const double worst = 100.0 * cpu.worstBlock / (static_cast<double>(g_block) / g_rate);
+				std::printf("| %s | %.1f | %.1f | %.2f | %.1f | %.2f | %.1f | %.0f | %s | %s | %s |\n",
+					candidate.name.c_str(), pitchError, smear.preEcho, smear.rise, crestLoss, rippleDb, null, speed,
+					realtime ? std::to_string(static_cast<int>(std::lround(worst))).c_str() : "-",
+					realtime ? std::to_string(cpu.latency).c_str() : "0",
+					realtime ? std::to_string(cpu.allocations).c_str() : "-");
+				std::fflush(stdout);
+			}
+		}
+		std::printf(
+			"\nInput: crest factor %.1f dB, ripple %.2f dB; pre-echo and attack of the unstretched hits: %.1f dB, "
+			"%.2f ms\n",
+			pulseCrest, ripple(pulse, 9600, seconds2 - 9600), transientSmear(drums, 1.0, 8).preEcho,
+			transientSmear(drums, 1.0, 8).rise);
+	}
+}
+
 int main()
 {
-	const size_t seconds2 = 96000;
-	const std::vector<float> sine440 = sine(440.0, seconds2);
-	const std::vector<float> pulse = pulseTone(seconds2);
-	const std::vector<float> drums = hits(seconds2);
-	// 10 s of stereo for CPU: the tone and the hits, a little apart.
-	std::vector<float> left(480000);
-	std::vector<float> right(480000);
+	try
 	{
-		const std::vector<float> tone = pulseTone(480000);
-		const std::vector<float> beat = hits(480000);
-		for (size_t i = 0; i < left.size(); ++i)
-		{
-			left[i] = (0.7f * tone[i]) + (0.5f * beat[i]);
-			right[i] = (0.5f * tone[i]) + (0.7f * beat[i]);
-		}
+		runBenchmark();
+		return 0;
 	}
-	const Channels mix{left, right};
-	const double pulseCrest = crestFactor(pulse, 9600, seconds2 - 9600);
-
-	struct Shift
+	catch (const std::exception& error)
 	{
-		double semitones;
-		const char* label;
-	};
-	const Shift shifts[] = {{7.0, "+7"}, {-5.0, "-5"}, {12.0, "+12"}, {0.5, "+0.5"}, {-12.3, "-12.3"}};
-
-	for (const bool realtime : {false, true})
-	{
-		std::printf("\n## %s mode\n\n", realtime ? "Real-time" : "Offline");
-		std::printf(
-			"| Candidate | Pitch error, max (cents) | Pre-echo (dB) | Attack (ms) | Crest loss (dB) | Ripple (dB) | "
-			"Unity null (dB) | CPU (x real time) | Worst block (%% of %zu frames) | Latency (frames) | "
-			"Allocations |\n",
-			g_block);
-		std::printf("|---|---|---|---|---|---|---|---|---|---|---|\n");
-		for (const Candidate& candidate : candidates())
-		{
-			double pitchError = 0.0;
-			for (const Shift& shift : shifts)
-			{
-				const Rendered shifted = candidate.render({sine440}, 1.0, shift.semitones, realtime);
-				const double expected = 440.0 * dsp::pitchScale(shift.semitones, 0.0);
-				const double measured = frequency(shifted.output.front(), 9600, seconds2 - 9600);
-				pitchError = std::max(pitchError, std::abs(1200.0 * std::log2(measured / expected)));
-			}
-			const Rendered smeared = candidate.render({drums}, 1.5, 0.0, realtime);
-			const Smear smear = transientSmear(smeared.output.front(), 1.5, 8);
-			const Rendered stretched = candidate.render({pulse}, 1.5, 0.0, realtime);
-			const size_t stretchedEnd = stretched.output.front().size() - 9600;
-			const double crestLoss = pulseCrest - crestFactor(stretched.output.front(), 9600, stretchedEnd);
-			const double rippleDb = ripple(stretched.output.front(), 9600, stretchedEnd);
-			const Rendered unity = candidate.render({pulse}, 1.0, 0.0, realtime);
-			const double null = nullResidual(unity.output.front(), pulse);
-			const Rendered cpu = candidate.render(mix, 1.25, 3.0, realtime);
-			const double speed = 10.0 / cpu.seconds;
-			const double worst = 100.0 * cpu.worstBlock / (static_cast<double>(g_block) / g_rate);
-			std::printf("| %s | %.1f | %.1f | %.2f | %.1f | %.2f | %.1f | %.0f | %s | %s | %s |\n",
-				candidate.name.c_str(), pitchError, smear.preEcho, smear.rise, crestLoss, rippleDb, null, speed,
-				realtime ? std::to_string(static_cast<int>(std::lround(worst))).c_str() : "-",
-				realtime ? std::to_string(cpu.latency).c_str() : "0",
-				realtime ? std::to_string(cpu.allocations).c_str() : "-");
-			std::fflush(stdout);
-		}
+		std::fprintf(stderr, "benchmark failed: %s\n", error.what());
+		return 1;
 	}
-	std::printf("\nInput: crest factor %.1f dB, ripple %.2f dB; pre-echo and attack of the unstretched hits: %.1f dB, "
-				"%.2f ms\n",
-		pulseCrest, ripple(pulse, 9600, seconds2 - 9600), transientSmear(drums, 1.0, 8).preEcho,
-		transientSmear(drums, 1.0, 8).rise);
-	return 0;
 }
