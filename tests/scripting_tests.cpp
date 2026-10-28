@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <chrono>
 #include <sstream>
 #include <string>
 
@@ -145,4 +146,16 @@ TEST_CASE("untrusted scripts have no access to files, processes or bytecode", "[
 
 	Runtime trusted(engine, Trust::Trusted, output);
 	run(trusted, "assert(io and os and os.exit == nil)"); // os.exit would skip the engine's shutdown
+}
+
+TEST_CASE("a time limit stops scripts that run too long", "[unit]")
+{
+	Engine engine;
+	std::ostringstream output;
+	Runtime lua(engine, Trust::Untrusted, output);
+	lua.setTimeLimit(std::chrono::milliseconds(100));
+	CHECK_THAT(lua.run("while true do end", "loop.lua").value_or(""), ContainsSubstring("ran longer than"));
+	CHECK_THAT(lua.run("coroutine.wrap(function() while true do end end)()", "coroutine.lua").value_or(""),
+		ContainsSubstring("ran longer than"));
+	run(lua, "assert(gnubase.engine.version())"); // each run gets the full time again
 }

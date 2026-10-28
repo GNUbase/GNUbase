@@ -184,6 +184,7 @@ namespace gnubase::scripting
 		rt::assertNotRealtime("scripting::Runtime");
 		if (!m_state)
 			throw std::runtime_error("Lua has no memory");
+		*static_cast<Runtime**>(lua_getextraspace(m_state.get())) = this; // for hooks; coroutines get a copy
 		openLibraries(trust);
 		bindCommands(engine);
 	}
@@ -277,6 +278,11 @@ namespace gnubase::scripting
 		rt::assertNotRealtime("scripting::Runtime::run");
 		lua_State* state = m_state.get();
 		const int top = lua_gettop(state);
+		if (m_timeLimit.count() > 0)
+		{
+			m_deadline = std::chrono::steady_clock::now() + m_timeLimit;
+			lua_sethook(state, &Runtime::stopWhenLate, LUA_MASKCOUNT, 10000);
+		}
 		lua_pushcfunction(state, traceback);
 		int status = luaL_loadbufferx(state, code.data(), code.size(), luaChunkName.c_str(), "t");
 		if (status == LUA_OK)
@@ -300,6 +306,13 @@ namespace gnubase::scripting
 		if (!code.empty() && code.front() == '#')
 			code.insert(0, "--");                    // keeps the line numbers
 		return execute(code, "@" + file.u8string()); // a long path keeps its end in messages
+	}
+
+	void Runtime::stopWhenLate(lua_State* state, lua_Debug* /*debug*/)
+	{
+		const Runtime& runtime = **static_cast<Runtime**>(lua_getextraspace(state));
+		if (std::chrono::steady_clock::now() > runtime.m_deadline)
+			luaL_error(state, "the script ran longer than %d ms", static_cast<int>(runtime.m_timeLimit.count()));
 	}
 
 	Runtime& Runtime::self(lua_State* state)
