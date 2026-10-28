@@ -150,6 +150,7 @@ namespace
 		run(client, "audio.render", {{"frames", frames}});
 		run(client, "transport.stop");
 		std::vector<std::vector<float>> channels;
+		channels.reserve(2);
 		for (int channel = 0; channel < 2; ++channel)
 			channels.push_back(run(client, "audio.capture", {{"channel", channel}, {"start", 0}, {"frames", frames}})
 					.at("samples")
@@ -353,7 +354,7 @@ TEST_CASE("a backup can leave out unused media", "[integration]")
 	song.addEvent(used, 0, 0, 4800);
 
 	// By default every media file goes along.
-	const Json all = backup(song.client, {{"folder", utf8(dir.path() / "all")}});
+	backup(song.client, {{"folder", utf8(dir.path() / "all")}});
 	CHECK(filesIn(dir.path() / "all" / "Audio").size() == 4);
 
 	const fs::path folder = dir.path() / "used";
@@ -407,7 +408,7 @@ TEST_CASE("a backup reports its progress and can be cancelled", "[integration][s
 {
 	const test::TempDir dir;
 	const fs::path big = dir.path() / "big.wav";
-	writeNoise(big, 48000 * 60, 2, 1, SampleFormat::Float32); // 23 MB
+	writeNoise(big, int64_t{48000} * 60, 2, 1, SampleFormat::Float32); // 23 MB
 	Song song;
 	for (int i = 0; i < 8; ++i)
 		song.addEvent(song.addClip(song.addMedia(big)), 0, 0, 1000);

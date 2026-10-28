@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <functional>
@@ -328,10 +329,10 @@ namespace gnubase::engine
 		{
 			ObjectId media = 0;
 			bool minimize = false;
-			uintmax_t bytes = 0;
+			std::uintmax_t bytes = 0;
 		};
 		std::vector<Plan> plans;
-		uintmax_t total = 1;
+		std::uintmax_t total = 1;
 		for (const auto& [id, media] : project.media)
 		{
 			Plan plan{id, options.minimize && hasEvents(project, id), 0};
@@ -339,20 +340,20 @@ namespace gnubase::engine
 			{
 				const auto handle = static_cast<time::Samples>(std::llround(options.handles * media.sampleRate));
 				for (const Range& range : usedRanges(project, id, media.length, handle))
-					plan.bytes += static_cast<uintmax_t>(range.end - range.start) *
-						static_cast<uintmax_t>(media.channels) * sizeof(float);
+					plan.bytes += static_cast<std::uintmax_t>(range.end - range.start) *
+						static_cast<std::uintmax_t>(media.channels) * sizeof(float);
 			}
 			else
 			{
 				std::ifstream file(pathOf(media.path), std::ios::binary | std::ios::ate);
 				const std::streamoff size = file ? static_cast<std::streamoff>(file.tellg()) : 0;
-				plan.bytes = size > 0 ? static_cast<uintmax_t>(size) : 0;
+				plan.bytes = size > 0 ? static_cast<std::uintmax_t>(size) : 0;
 			}
 			total += plan.bytes;
 			plans.push_back(plan);
 		}
 
-		uintmax_t done = 0;
+		std::uintmax_t done = 0;
 		std::string detail;
 		const auto advance = [&](size_t bytes)
 		{
@@ -413,12 +414,14 @@ namespace gnubase::engine
 				const fs::path target = freePath(audio, minimizedName(source, reader->info(), format), taken);
 				cleanup.add(target);
 				writeRanges(*reader, ranges, target, format, advance);
-				for (auto& [id, event] : project.audioEvents)
+				for (auto& entry : project.audioEvents)
 				{
+					AudioEvent& event = entry.second;
 					if (project.clips.at(event.clip).media != media.id)
 						continue;
+					const time::Samples offset = event.offset;
 					const auto range = std::find_if(ranges.cbegin(), ranges.cend(),
-						[&event](const Range& r) { return event.offset >= r.start && event.offset < r.end; });
+						[offset](const Range& r) { return offset >= r.start && offset < r.end; });
 					if (range != ranges.cend())
 						event.offset = event.offset - range->start + range->target;
 				}
