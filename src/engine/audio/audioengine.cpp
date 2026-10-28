@@ -604,6 +604,7 @@ namespace gnubase::engine
 					device.captured(
 						static_cast<int>(channel), static_cast<size_t>(start), static_cast<size_t>(frames))}};
 			});
+		registerAnalysisCommands(engine);
 		registerTransportCommands(engine);
 	}
 

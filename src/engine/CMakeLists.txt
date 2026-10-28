@@ -13,6 +13,8 @@ target_include_directories(gnubase-r8brain PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(gnubase-r8brain PUBLIC Threads::Threads)
 
 add_library(gnubase-engine STATIC
+	analysis/analysis.cpp analysis/analysis.h
+	audio/analysiscommands.cpp
 	audio/audioengine.cpp audio/audioengine.h
 	audio/playback.cpp audio/playback.h
 	audio/sequencer.cpp audio/sequencer.h
@@ -26,6 +28,7 @@ add_library(gnubase-engine STATIC
 	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/document.cpp document/document.h
 	document/history.cpp document/history.h
+	document/midiedits.cpp
 	document/projectmodel.cpp document/projectmodel.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/serialize.cpp document/serialize.h
