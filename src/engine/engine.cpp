@@ -2,6 +2,7 @@
 #include "engine/engine.h"
 
 #include "engine/document/projectmodel.h"
+#include "engine/processors/builtin.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 
@@ -80,6 +81,7 @@ namespace gnubase::engine
 					list.push_back(toJson(info));
 				return Json{{"commands", list}};
 			});
+		processors::registerCommands(*this);
 		m_project = std::make_unique<ProjectModel>();
 		m_project->registerCommands(*this);
 		m_thread = std::thread([this] { run(); });
