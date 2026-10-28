@@ -3,6 +3,7 @@
 
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
+#include "engine/dawproject/dawproject.h"
 #include "engine/document/serialize.h"
 #include "engine/graph/graph.h"
 
@@ -1168,6 +1169,52 @@ namespace gnubase::engine
 				"they receive audio and events from, and the order they are processed in.",
 				objectSchema({}), {{"type", "object"}}, true},
 			[this](Project&, CommandContext&) { return graphToJson(graph::describe(m_snapshots.latest())); });
+		add(engine,
+			{"project.save", 1,
+				"Saves the project as a DAWproject file. Media files are copied into it unless embedMedia is false; "
+				"then the file refers to them where they are.",
+				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}, {"path"}), noResult, true},
+			[](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				DawProjectSaveOptions options;
+				options.embedMedia = parameters.value("embedMedia", true);
+				try
+				{
+					saveDawProject(project, parameters.at("path").get<std::string>(), options);
+				}
+				catch (const std::runtime_error& error)
+				{
+					throw CommandError(error.what());
+				}
+				return Json::object();
+			});
+		addControl(engine,
+			{"project.load", 1,
+				"Replaces the project with a DAWproject file and clears the undo history. Media files embedded in "
+				"it are extracted to mediaFolder, by default a folder named after the file next to it.",
+				objectSchema({{"path", stringSchema}, {"mediaFolder", stringSchema}}, {"path"}), noResult, false},
+			[this](CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				const std::string path = parameters.at("path").get<std::string>();
+				const std::filesystem::path file = std::filesystem::u8path(path);
+				const std::string folder = parameters.value("mediaFolder",
+					(file.parent_path() / std::filesystem::u8path(file.stem().u8string() + " media")).u8string());
+				try
+				{
+					m_project = loadDawProject(path, folder);
+				}
+				catch (const std::runtime_error& error)
+				{
+					throw CommandError(error.what());
+				}
+				m_history.clear();
+				context.emit("project.reset");
+				announceHistory(context);
+				publish();
+				return Json::object();
+			});
 		addControl(engine,
 			{"project.new", 1,
 				"Replaces the project with an empty one that has a stereo input and output bus, and clears the undo "
