@@ -14,8 +14,10 @@ namespace gnubase::engine
 	class Engine;
 }
 
-// GNUbase's built-in processors: they run inside the engine, unlike third-party plugins. For now these are test
-// processors (generators, gain and pan, a simple synth), so MIDI-to-audio paths can be tested before plugin hosting.
+// GNUbase's built-in processors: they run inside the engine, unlike third-party plugins. The mixing effects (EQ,
+// gate, compressor, limiter, delay, reverb, dither; effects.h), and test processors (generators, gain and pan, a
+// simple synth), so MIDI-to-audio paths can be tested before plugin hosting. builtinplugin.h offers them all through
+// the plugin API.
 namespace gnubase::engine::processors
 {
 	struct ParameterInfo
@@ -25,7 +27,9 @@ namespace gnubase::engine::processors
 		double minimum = 0.0;
 		double maximum = 1.0;
 		double defaultValue = 0.0;
-		std::string unit; // e.g. "Hz", "dB", "s"; empty for plain numbers
+		std::string unit;                 // e.g. "Hz", "dB", "s"; empty for plain numbers
+		bool stepped = false;             // whole numbers only
+		std::vector<std::string> options; // the names of a stepped parameter's values, from the minimum on
 	};
 
 	struct BuiltinInfo

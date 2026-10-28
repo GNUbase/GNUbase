@@ -30,11 +30,20 @@ add_library(gnubase-engine STATIC
 	document/projectmodel.cpp document/projectmodel.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/serialize.cpp document/serialize.h
+	dsp/biquad.cpp dsp/biquad.h
+	dsp/delay.cpp dsp/delay.h
+	dsp/dither.cpp dsp/dither.h
+	dsp/dsp.h
+	dsp/dynamics.cpp dsp/dynamics.h
+	dsp/equalizer.cpp dsp/equalizer.h
+	dsp/reverb.cpp dsp/reverb.h
 	engine.cpp engine.h
 	graph/events.h
 	graph/graph.cpp graph/graph.h
 	graph/processor.h
 	processors/builtin.cpp processors/builtin.h
+	processors/builtinplugin.cpp processors/builtinplugin.h
+	processors/effects.h
 	processors/gainpan.cpp processors/gainpan.h
 	processors/generators.cpp processors/generators.h
 	processors/testsynth.cpp processors/testsynth.h
@@ -44,5 +53,5 @@ add_library(gnubase-engine STATIC
 	time/timecode.cpp time/timecode.h)
 target_include_directories(gnubase-engine PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-engine PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}")
-target_link_libraries(gnubase-engine PUBLIC gnubase-platform nlohmann_json::nlohmann_json PRIVATE gnubase-decoders gnubase-r8brain FLAC::FLAC pugixml::pugixml miniz)
+target_link_libraries(gnubase-engine PUBLIC gnubase-platform gnubase-plugin nlohmann_json::nlohmann_json PRIVATE gnubase-decoders gnubase-r8brain FLAC::FLAC pugixml::pugixml miniz)
 gnubase_target_defaults(gnubase-engine)

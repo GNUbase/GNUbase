@@ -74,6 +74,8 @@ namespace gnubase::engine
 			graph::CompiledGraph graph;
 			std::vector<BusLink> inputs;
 			std::vector<BusLink> outputs;
+			time::TempoMap tempo{120.0}; // the project's, for the tempo in each transport block
+			double sampleRate = 48000.0; // the project's: transport positions are in its samples
 		};
 
 		void rebuild();

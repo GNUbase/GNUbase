@@ -46,6 +46,7 @@ namespace gnubase::engine
 		auto snapshot = std::make_unique<RenderSnapshot>();
 		snapshot->revision = revision;
 		snapshot->sampleRate = project.sampleRate;
+		snapshot->tempo = project.tempo;
 
 		std::map<ObjectId, int> busIndex;
 		for (const Bus& bus : project.busses)

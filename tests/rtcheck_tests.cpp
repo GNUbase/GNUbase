@@ -4,9 +4,12 @@
 #include "engine/engine.h"
 #include "engine/graph/graph.h"
 #include "engine/processors/builtin.h"
+#include "engine/processors/builtinplugin.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 #include "platform/rt/snapshotpublisher.h"
+#include "plugin/extensions.h"
+#include "plugin/plugin.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -250,6 +253,120 @@ TEST_CASE("every built-in processor processes notes and parameter changes withou
 			const ScopedRealtimeContext realtime;
 			processor->process({channels, 2, frames, eventsIn, eventsOut, TransportBlock{}});
 		}
+	}
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("every built-in processor processes signals, parameter sweeps and resets without allocating", "[unit]")
+{
+	using namespace gnubase::engine::graph;
+	using namespace gnubase::engine::processors;
+	constexpr uint32_t frames = 256;
+	EventBuffer eventsIn(256);
+	EventBuffer eventsOut(64);
+	TransportBlock transport;
+	transport.tempo = 97.0;
+
+	const RecordViolations record;
+	for (const int channels : {1, 2, 6})
+	{
+		std::vector<float> samples(static_cast<size_t>(channels) * frames);
+		std::vector<float*> pointers;
+		pointers.reserve(static_cast<size_t>(channels));
+		for (int c = 0; c < channels; ++c)
+			pointers.push_back(samples.data() + (static_cast<size_t>(c) * frames));
+		for (const BuiltinInfo& info : builtins())
+		{
+			const std::shared_ptr<Processor> processor = createBuiltin(info.id);
+			processor->prepareFor(48000.0, frames);
+			for (int block = 0; block < 6; ++block)
+			{
+				// A loud signal, every parameter at its minimum, maximum and default in turn, and a reset.
+				for (size_t i = 0; i < samples.size(); ++i)
+					samples[i] = (i % 7 == 0 ? 3.0f : -0.5f) * static_cast<float>(block % 3);
+				eventsIn.clear();
+				for (const ParameterInfo& parameter : info.parameters)
+				{
+					ProcessEvent event;
+					event.type = ProcessEvent::Type::Parameter;
+					event.offset = static_cast<uint32_t>(block * 40);
+					event.parameter = parameter.id;
+					event.parameterValue = parameter.defaultValue;
+					if (block % 3 == 0)
+						event.parameterValue = parameter.minimum;
+					else if (block % 3 == 1)
+						event.parameterValue = parameter.maximum;
+					eventsIn.add(event);
+				}
+				const ScopedRealtimeContext realtime;
+				processor->process({pointers.data(), channels, frames, eventsIn, eventsOut, transport});
+				if (block == 3)
+					(*processor).reset();
+			}
+		}
+	}
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("the built-in plugins process, flush parameters and reset without allocating", "[unit]")
+{
+	using namespace gnubase;
+	using namespace gnubase::plugin;
+	class NullHost final : public Host
+	{
+	public:
+		void requestRestart() override {}
+		void requestProcess() override {}
+		void requestCallback() override {}
+		void* extension(std::string_view /*id*/) override { return nullptr; }
+	};
+	constexpr uint32_t frames = 128;
+	std::vector<float> in(size_t{2} * frames, 0.25f);
+	std::vector<float> out(size_t{2} * frames, 0.0f);
+	float* const inputs[] = {in.data(), in.data() + frames};
+	float* const outputs[] = {out.data(), out.data() + frames};
+	EventList eventsIn(64);
+	EventList eventsOut(64);
+	TransportSegment segment;
+	segment.transport.flags = Transport::Playing | Transport::TempoValid;
+
+	NullHost host;
+	engine::processors::BuiltinFactory factory;
+	const RecordViolations record;
+	for (size_t i = 0; i < factory.count(); ++i)
+	{
+		const std::unique_ptr<Plugin> instance = factory.create(factory.descriptor(i).id, host);
+		REQUIRE(instance->init());
+		REQUIRE(instance->activate(48000.0, 1, frames));
+		auto* params = extension<Params>(*instance);
+		const bool instrument = extension<AudioPorts>(*instance)->audioPortCount(true) == 0;
+		REQUIRE(instance->startProcessing());
+		for (int block = 0; block < 4; ++block)
+		{
+			eventsIn.clear();
+			ParamInfo info;
+			for (uint32_t p = 0; p < params->paramCount(); ++p)
+				if (params->paramInfo(p, info))
+				{
+					Event event;
+					event.offset = static_cast<uint32_t>(block * 8);
+					event.type = EventType::ParamValue;
+					event.param = info.id;
+					event.value = block % 2 == 0 ? info.maximum : info.defaultValue;
+					eventsIn.push(event);
+				}
+			const AudioBuffer input{inputs, 2, 0};
+			AudioBuffer output{outputs, 2, 0};
+			const Process process{frames, int64_t{block} * frames, ProcessMode::Realtime, &input, instrument ? 0U : 1U,
+				&output, 1, eventsIn, eventsOut, &segment, 1};
+			const ScopedRealtimeContext realtime;
+			CHECK(instance->process(process) == ProcessStatus::Continue);
+			eventsOut.clear();
+			params->flushParams(eventsIn, eventsOut);
+			(*instance).reset();
+		}
+		instance->stopProcessing();
+		instance->deactivate();
 	}
 	CHECK(g_violations == 0);
 }

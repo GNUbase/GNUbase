@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "engine/dsp/delay.h"
+#include "engine/dsp/dither.h"
+#include "engine/dsp/equalizer.h"
 #include "engine/graph/events.h"
 #include "engine/graph/graph.h"
 #include "engine/graph/processor.h"
 #include "engine/processors/builtin.h"
+#include "engine/processors/builtinplugin.h"
 #include "engine/processors/gainpan.h"
 #include "plugin/events.h"
 #include "plugin/extensions.h"
@@ -12,10 +16,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <algorithm>
-#include <atomic>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -29,323 +30,8 @@ namespace
 {
 	constexpr double g_sampleRate = 48000.0;
 	constexpr uint32_t g_frames = 64;
-	constexpr size_t g_maxTransportSegments = 16;
 
-	// Adapts one of the engine's built-in processors to the plugin API, as #114 will do for the built-in plugins: a
-	// main audio input (none for instruments) and output with the same channels, the processor's parameters, notes,
-	// and the parameter values as its state.
-	class BuiltinPlugin final : public Plugin,
-								public AudioPorts,
-								public Params,
-								public State,
-								public Latency,
-								public Tail
-	{
-	public:
-		BuiltinPlugin(const engine::processors::BuiltinInfo& info, Host& host, uint32_t channels)
-			: m_info(info), m_host(host), m_channels(channels), m_values(info.parameters.size()),
-			  m_pending(info.parameters.size())
-		{
-			m_descriptor.id = "builtin:" + info.id;
-			m_descriptor.format = "builtin";
-			m_descriptor.formatId = info.id;
-			m_descriptor.name = info.name;
-			m_descriptor.vendor = "GNUbase";
-			m_descriptor.version = GNUBASE_VERSION;
-			m_descriptor.features = {info.instrument ? "instrument" : "audio-effect"};
-		}
-
-		const Descriptor& descriptor() const override { return m_descriptor; }
-
-		bool init() override
-		{
-			m_processor = engine::processors::createBuiltin(m_info.id);
-			for (size_t i = 0; i < m_info.parameters.size(); ++i)
-			{
-				m_values[i] = m_info.parameters[i].defaultValue;
-				m_pending[i] = false;
-			}
-			return true;
-		}
-
-		bool activate(double sampleRate, uint32_t /*minFrames*/, uint32_t maxFrames) override
-		{
-			m_processor->prepareFor(sampleRate, maxFrames);
-			m_segments.resize(g_maxTransportSegments);
-			return true;
-		}
-
-		void deactivate() override {}
-		bool startProcessing() noexcept override { return true; }
-		void stopProcessing() noexcept override {}
-		void reset() noexcept override {} // graph::Processor can't forget its past yet; #114 adds that
-
-		ProcessStatus process(const Process& process) noexcept override
-		{
-			const uint32_t inputs = m_info.instrument ? 0 : 1;
-			if (process.audioInputCount != inputs || process.audioOutputCount != 1 ||
-				process.audioOutputs[0].channelCount != m_channels ||
-				(inputs == 1 && process.audioInputs[0].channelCount != m_channels) || process.transportCount == 0)
-				return ProcessStatus::Error;
-
-			// graph::Processor processes in place, in the plugin's output.
-			const AudioBuffer& out = process.audioOutputs[0];
-			for (uint32_t c = 0; c < m_channels; ++c)
-			{
-				if (inputs == 1)
-					std::memcpy(out.channels[c], process.audioInputs[0].channels[c], process.frames * sizeof(float));
-				else
-					std::fill(out.channels[c], out.channels[c] + process.frames, 0.0f);
-			}
-
-			m_events.clear();
-			m_eventsOut.clear();
-			applyPending();
-			for (const Event& event : process.eventsIn)
-				translate(event);
-
-			const engine::graph::TransportBlock transport = convert(process);
-			m_processor->process(
-				{out.channels, static_cast<int>(m_channels), process.frames, m_events, m_eventsOut, transport});
-			return ProcessStatus::Continue;
-		}
-
-		void* extension(std::string_view id) override
-		{
-			return provide<AudioPorts, Params, State, Latency, Tail>(this, id);
-		}
-
-		// AudioPorts
-		uint32_t audioPortCount(bool input) const override { return input && m_info.instrument ? 0 : 1; }
-
-		bool audioPortInfo(bool input, uint32_t index, AudioPortInfo& info) const override
-		{
-			if (index >= audioPortCount(input))
-				return false;
-			info.id = 0;
-			info.name = input ? "Input" : "Output";
-			info.channelCount = m_channels;
-			info.layout = m_channels == 2 ? ChannelLayout::Stereo : ChannelLayout::Mono;
-			info.flags = AudioPortInfo::Main;
-			return true;
-		}
-
-		// Params
-		uint32_t paramCount() const override { return static_cast<uint32_t>(m_info.parameters.size()); }
-
-		bool paramInfo(uint32_t index, ParamInfo& info) const override
-		{
-			if (index >= paramCount())
-				return false;
-			const engine::processors::ParameterInfo& parameter = m_info.parameters[index];
-			info.id = parameter.id;
-			info.flags = ParamInfo::Automatable;
-			info.name = parameter.name;
-			info.minimum = parameter.minimum;
-			info.maximum = parameter.maximum;
-			info.defaultValue = parameter.defaultValue;
-			return true;
-		}
-
-		bool paramValue(uint32_t param, double& value) const override
-		{
-			const int index = indexOf(param);
-			if (index < 0)
-				return false;
-			value = m_values[static_cast<size_t>(index)];
-			return true;
-		}
-
-		bool paramValueToText(uint32_t param, double value, std::string& text) const override
-		{
-			const int index = indexOf(param);
-			if (index < 0)
-				return false;
-			char buffer[32];
-			std::snprintf(buffer, sizeof(buffer), "%.2f", value);
-			text = buffer;
-			const std::string& unit = m_info.parameters[static_cast<size_t>(index)].unit;
-			if (!unit.empty())
-				text += " " + unit;
-			return true;
-		}
-
-		bool paramTextToValue(uint32_t param, std::string_view text, double& value) const override
-		{
-			if (indexOf(param) < 0)
-				return false;
-			const std::string copy(text);
-			char* end = nullptr;
-			value = std::strtod(copy.c_str(), &end);
-			return end != copy.c_str();
-		}
-
-		void flushParams(const EventList& in, EventList& /*out*/) noexcept override
-		{
-			for (const Event& event : in)
-				if (event.type == EventType::ParamValue)
-					setValue(event.param, event.value);
-		}
-
-		// State: the parameter values, as pairs of id and value.
-		bool saveState(std::vector<uint8_t>& data, StateContext /*context*/) override
-		{
-			data.clear();
-			for (size_t i = 0; i < m_info.parameters.size(); ++i)
-			{
-				const uint32_t id = m_info.parameters[i].id;
-				const double value = m_values[i];
-				const size_t at = data.size();
-				data.resize(at + sizeof(id) + sizeof(value));
-				std::memcpy(data.data() + at, &id, sizeof(id));
-				std::memcpy(data.data() + at + sizeof(id), &value, sizeof(value));
-			}
-			return true;
-		}
-
-		bool loadState(const uint8_t* data, size_t size, StateContext /*context*/) override
-		{
-			constexpr size_t entry = sizeof(uint32_t) + sizeof(double);
-			if (size % entry != 0)
-				return false;
-			for (size_t at = 0; at < size; at += entry)
-			{
-				uint32_t id = 0;
-				double value = 0.0;
-				std::memcpy(&id, data + at, sizeof(id));
-				std::memcpy(&value, data + at + sizeof(id), sizeof(value));
-				setValue(id, value);
-			}
-			if (auto* hostParams = plugin::extension<HostParams>(m_host))
-				hostParams->rescanParams(HostParams::Values);
-			return true;
-		}
-
-		uint32_t latency() const override { return 0; }
-		uint32_t tail() const noexcept override { return 0; }
-
-	private:
-		int indexOf(uint32_t param) const
-		{
-			for (size_t i = 0; i < m_info.parameters.size(); ++i)
-				if (m_info.parameters[i].id == param)
-					return static_cast<int>(i);
-			return -1;
-		}
-
-		// The processor gets the value at the start of the next block.
-		void setValue(uint32_t param, double value) noexcept
-		{
-			const int index = indexOf(param);
-			if (index < 0)
-				return;
-			m_values[static_cast<size_t>(index)] = value;
-			m_pending[static_cast<size_t>(index)] = true;
-		}
-
-		void applyPending() noexcept
-		{
-			for (size_t i = 0; i < m_pending.size(); ++i)
-				if (m_pending[i].exchange(false))
-					addParameter(0, m_info.parameters[i].id, m_values[i]);
-		}
-
-		void addParameter(uint32_t offset, uint32_t param, double value) noexcept
-		{
-			engine::graph::ProcessEvent event;
-			event.offset = offset;
-			event.type = engine::graph::ProcessEvent::Type::Parameter;
-			event.parameter = param;
-			event.parameterValue = value;
-			m_events.add(event);
-		}
-
-		void translate(const Event& event) noexcept
-		{
-			if (event.type == EventType::ParamValue)
-			{
-				const int index = indexOf(event.param);
-				if (index < 0)
-					return;
-				m_values[static_cast<size_t>(index)] = event.value;
-				addParameter(event.offset, event.param, event.value);
-			}
-			else if ((event.type == EventType::NoteOn || event.type == EventType::NoteOff) && event.key >= 0)
-			{
-				engine::graph::ProcessEvent note;
-				note.offset = event.offset;
-				note.type = event.type == EventType::NoteOn ? engine::graph::ProcessEvent::Type::NoteOn
-															: engine::graph::ProcessEvent::Type::NoteOff;
-				note.channel = static_cast<uint8_t>(std::max<int16_t>(event.channel, 0));
-				note.key = static_cast<uint8_t>(event.key);
-				note.velocity = static_cast<uint16_t>(std::lround(std::clamp(event.value, 0.0, 1.0) * 65535.0));
-				m_events.add(note);
-			}
-		}
-
-		engine::graph::TransportBlock convert(const Process& process) noexcept
-		{
-			const Transport& first = process.transport[0].transport;
-			engine::graph::TransportBlock block;
-			block.playing = (first.flags & Transport::Playing) != 0;
-			block.position = first.position;
-			if (!block.playing)
-				return block;
-			const size_t count = std::min<size_t>(process.transportCount, m_segments.size());
-			for (size_t i = 0; i < count; ++i)
-			{
-				const uint32_t begin = process.transport[i].offset;
-				const uint32_t end = i + 1 < count ? process.transport[i + 1].offset : process.frames;
-				m_segments[i] = {begin, end - begin, process.transport[i].transport.position};
-			}
-			block.segments = m_segments.data();
-			block.segmentCount = count;
-			return block;
-		}
-
-		const engine::processors::BuiltinInfo& m_info;
-		Host& m_host;
-		uint32_t m_channels;
-		Descriptor m_descriptor;
-		std::shared_ptr<engine::graph::Processor> m_processor;
-		std::vector<std::atomic<double>> m_values; // written while processing, read by value() on the main thread
-		std::vector<std::atomic<bool>> m_pending;  // values the processor hasn't got yet
-		engine::graph::EventBuffer m_events{engine::graph::g_maxEventsPerBlock};
-		engine::graph::EventBuffer m_eventsOut{engine::graph::g_maxEventsPerBlock};
-		std::vector<engine::graph::TransportSegment> m_segments;
-	};
-
-	// The built-in processors as a plugin factory, with stereo ports.
-	class BuiltinFactory final : public Factory
-	{
-	public:
-		BuiltinFactory()
-		{
-			for (const engine::processors::BuiltinInfo& info : engine::processors::builtins())
-			{
-				Descriptor descriptor;
-				descriptor.id = "builtin:" + info.id;
-				descriptor.format = "builtin";
-				descriptor.formatId = info.id;
-				descriptor.name = info.name;
-				m_descriptors.push_back(descriptor);
-			}
-		}
-
-		size_t count() const override { return m_descriptors.size(); }
-		const Descriptor& descriptor(size_t index) const override { return m_descriptors[index]; }
-
-		std::unique_ptr<Plugin> create(std::string_view id, Host& host) override
-		{
-			for (const engine::processors::BuiltinInfo& info : engine::processors::builtins())
-				if (id == "builtin:" + info.id)
-					return std::make_unique<BuiltinPlugin>(info, host, 2);
-			return nullptr;
-		}
-
-	private:
-		std::vector<Descriptor> m_descriptors;
-	};
+	using engine::processors::BuiltinFactory;
 
 	// Records what plugins ask of it.
 	class TestHost final : public Host, public HostParams, public HostState, public HostLatency
@@ -599,4 +285,107 @@ TEST_CASE("plugin event lists keep their order and carry system exclusive messag
 	CHECK(list.empty());
 	REQUIRE(list.pushSysex(0, 0, sysex, sizeof(sysex)));
 	CHECK(list.bytes(list[0])[0] == 0xf0);
+}
+
+TEST_CASE("the mixing effects are built-in plugins with their latency, tail and named values", "[unit]")
+{
+	BuiltinFactory factory;
+	TestHost host;
+
+	SECTION("the limiter reports its look-ahead as latency, the delay and the reverb their tails")
+	{
+		const std::unique_ptr<Plugin> limiter = createActive(factory, "builtin:limiter", host);
+		CHECK(extension<Latency>(*limiter)->latency() == 48); // 1 ms
+		CHECK(extension<Tail>(*limiter)->tail() == 48);
+
+		const std::unique_ptr<Plugin> reverb = createActive(factory, "builtin:reverb", host);
+		// Predelay 20 ms plus 1.5 times the decay of 2 s.
+		CHECK_THAT(static_cast<double>(extension<Tail>(*reverb)->tail()), WithinAbs(3.02 * g_sampleRate, 1.0));
+
+		const std::unique_ptr<Plugin> delay = createActive(factory, "builtin:delay", host);
+		Runner runner(*delay);
+		runner.add(paramValue(0, engine::dsp::Delay::Feedback, 100.0));
+		runner.process();
+		CHECK(extension<Tail>(*delay)->tail() == g_infiniteTail);
+	}
+
+	SECTION("stepped parameters, and the names of their values")
+	{
+		using engine::dsp::Equalizer;
+		const std::unique_ptr<Plugin> eq = factory.create("builtin:eq", host);
+		REQUIRE(eq->init());
+		const Params* params = extension<Params>(*eq);
+		REQUIRE(params->paramCount() == Equalizer::g_parameterCount);
+		ParamInfo info;
+		REQUIRE(params->paramInfo(Equalizer::parameter(0, Equalizer::Type), info));
+		CHECK(info.name == "Band 1 type");
+		CHECK((info.flags & ParamInfo::Stepped) != 0);
+		CHECK((info.flags & ParamInfo::Enum) != 0);
+		CHECK(info.maximum == 4.0);
+		std::string text;
+		REQUIRE(params->paramValueToText(info.id, 3.0, text));
+		CHECK(text == "Low cut");
+		double value = 0.0;
+		REQUIRE(params->paramTextToValue(info.id, "High cut", value));
+		CHECK(value == 4.0);
+		REQUIRE(params->paramValueToText(Equalizer::parameter(0, Equalizer::Frequency), 1000.0, text));
+		CHECK(text == "1000.00 Hz");
+
+		const std::unique_ptr<Plugin> dither = factory.create("builtin:dither", host);
+		REQUIRE(dither->init());
+		REQUIRE(extension<Params>(*dither)->paramInfo(0, info));
+		CHECK(info.id == engine::dsp::Dither::Bits);
+		CHECK((info.flags & ParamInfo::Stepped) != 0);
+		CHECK((info.flags & ParamInfo::Enum) == 0);
+		REQUIRE(extension<Params>(*dither)->paramValueToText(info.id, 16.0, text));
+		CHECK(text == "16");
+	}
+
+	SECTION("an effect sounds the same through the plugin API as a processor, and forgets its past on reset")
+	{
+		using engine::dsp::Delay;
+		const std::unique_ptr<Plugin> plugin = createActive(factory, "builtin:delay", host);
+		Runner runner(*plugin);
+		const std::shared_ptr<engine::graph::Processor> processor = engine::processors::createBuiltin("delay");
+		processor->prepareFor(g_sampleRate, g_frames);
+		std::vector<float> samples(size_t{2} * g_frames);
+		float* const channels[] = {samples.data(), samples.data() + g_frames};
+		engine::graph::EventBuffer events(8);
+		engine::graph::EventBuffer eventsOut(8);
+		const auto change = [&](uint32_t offset, uint32_t id, double value)
+		{
+			runner.add(paramValue(offset, id, value));
+			engine::graph::ProcessEvent event;
+			event.offset = offset;
+			event.type = engine::graph::ProcessEvent::Type::Parameter;
+			event.parameter = id;
+			event.parameterValue = value;
+			events.add(event);
+		};
+
+		std::vector<std::vector<float>> first;
+		for (int block = 0; block < 4; ++block)
+		{
+			if (block == 0)
+			{
+				change(0, Delay::Time, 1.0); // 48 frames
+				change(10, Delay::Feedback, 50.0);
+				change(30, Delay::Mix, 60.0);
+			}
+			const float level = block == 0 ? 0.25f : 0.0f;
+			runner.fill(level);
+			std::fill(samples.begin(), samples.end(), level);
+			const std::vector<float> out = runner.process();
+			processor->process({channels, 2, g_frames, events, eventsOut, engine::graph::TransportBlock{}});
+			events.clear();
+			CHECK(out == samples);
+			first.push_back(out);
+		}
+		const std::vector<float> silence(size_t{2} * g_frames, 0.0f);
+		CHECK(first[3] != silence); // echoes of the first block
+
+		(*plugin).reset();
+		runner.fill(0.0f);
+		CHECK(runner.process() == silence);
+	}
 }
