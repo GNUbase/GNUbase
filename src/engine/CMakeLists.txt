@@ -16,6 +16,7 @@ add_library(gnubase-engine STATIC
 	analysis/analysis.cpp analysis/analysis.h
 	audio/analysiscommands.cpp
 	audio/audioengine.cpp audio/audioengine.h
+	audio/fades.cpp audio/fades.h
 	audio/playback.cpp audio/playback.h
 	audio/transport.cpp audio/transport.h
 	audiofile/audiofile.h
@@ -26,6 +27,7 @@ add_library(gnubase-engine STATIC
 	audiofile/writer.cpp
 	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/document.cpp document/document.h
+	document/fadeedits.cpp
 	document/history.cpp document/history.h
 	document/midiedits.cpp
 	document/projectmodel.cpp document/projectmodel.h

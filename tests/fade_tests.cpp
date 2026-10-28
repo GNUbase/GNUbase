@@ -1,0 +1,644 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Fades and crossfades (#138): the curves, the commands, and playback that applies them sample by sample.
+#include "engine/audio/fades.h"
+#include "engine/document/document.h"
+#include "engine/engine.h"
+#include "testutils/testutils.h"
+
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <functional>
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
+
+using namespace gnubase::engine;
+using Catch::Matchers::ContainsSubstring;
+using Catch::Matchers::WithinAbs;
+
+namespace
+{
+	constexpr double g_pi = 3.14159265358979323846;
+
+	// The curves as the documentation gives them, written out again: gain from 0 to 1 over x from 0 to 1.
+	double curve(const std::string& shape, double x)
+	{
+		x = std::clamp(x, 0.0, 1.0);
+		const auto exponential = [](double v) { return (std::exp(3.0 * v) - 1.0) / (std::exp(3.0) - 1.0); };
+		if (shape == "exponential")
+			return exponential(x);
+		if (shape == "logarithmic")
+			return 1.0 - exponential(1.0 - x);
+		if (shape == "sCurve")
+			return (1.0 - std::cos(g_pi * x)) / 2.0;
+		if (shape == "equalPower")
+			return std::sin(g_pi * x / 2.0);
+		return x;
+	}
+
+	// A fade in over [start, start + length), a fade out over [end - length, end), at a project sample.
+	double fadeIn(const std::string& shape, int64_t at, int64_t start, int64_t length)
+	{
+		if (at < start)
+			return 0.0;
+		return curve(shape, static_cast<double>(at - start) / static_cast<double>(length));
+	}
+
+	double fadeOut(const std::string& shape, int64_t at, int64_t end, int64_t length)
+	{
+		if (at >= end)
+			return 0.0;
+		return curve(shape, static_cast<double>(end - at) / static_cast<double>(length));
+	}
+
+	Json run(Client& client, const std::string& command, Json parameters = Json::object())
+	{
+		const Result result = client.call(command, std::move(parameters));
+		INFO(command << " failed: " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	}
+
+	std::string reject(Client& client, const std::string& command, Json parameters)
+	{
+		const Result result = client.call(command, std::move(parameters));
+		REQUIRE(!result.ok());
+		return result.error;
+	}
+
+	ObjectId idOf(const Json& result, const char* kind)
+	{
+		return result.at(kind).at("id").get<ObjectId>();
+	}
+
+	// A clip whose sample at frame f, channel c is value(f, c).
+	std::string writeClip(const gnubase::test::TempDir& dir, const std::string& name, int channels, int64_t frames,
+		const std::function<float(int64_t, int)>& value)
+	{
+		gnubase::test::Audio audio;
+		audio.channels = channels;
+		for (int64_t f = 0; f < frames; ++f)
+			for (int c = 0; c < channels; ++c)
+				audio.samples.push_back(value(f, c));
+		const std::filesystem::path file = dir.path() / (name + ".wav");
+		gnubase::test::writeWav(file, audio);
+		return file.u8string();
+	}
+
+	float one(int64_t /*frame*/, int /*channel*/)
+	{
+		return 1.0f;
+	}
+
+	// Exact in float: (frame + 1) / 65536.
+	float ramp(int64_t frame, int /*channel*/ = 0)
+	{
+		return static_cast<float>(frame + 1) / 65536.0f;
+	}
+
+	float sine(double frequency, int64_t frame)
+	{
+		return static_cast<float>(0.5 * std::sin(2.0 * g_pi * frequency * static_cast<double>(frame) / 48000.0));
+	}
+
+	// An engine with a dummy device and linear audio tracks, at 48 kHz.
+	class Session
+	{
+	public:
+		explicit Session(int blockSize = 64)
+		{
+			run(client, "audio.setDevice", {{"blockSize", blockSize}, {"inputChannels", 0}, {"captureSeconds", 5}});
+		}
+
+		ObjectId addTrack(int channels = 2)
+		{
+			return idOf(
+				run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", channels}}), "track");
+		}
+
+		ObjectId addClip(const std::string& path)
+		{
+			return idOf(run(client, "clip.add", {{"media", idOf(run(client, "media.add", {{"path", path}}), "media")}}),
+				"clip");
+		}
+
+		ObjectId addEvent(ObjectId track, ObjectId clip, int64_t position, int64_t length, int64_t offset = 0)
+		{
+			return idOf(
+				run(client, "audioEvent.add",
+					{{"track", track}, {"clip", clip}, {"position", position}, {"offset", offset}, {"length", length}}),
+				"event");
+		}
+
+		// Plays frames from position and returns what each output channel got.
+		std::vector<std::vector<float>> render(int64_t frames, int64_t position = 0)
+		{
+			run(client, "transport.locate", {{"position", position}});
+			run(client, "transport.play");
+			run(client, "audio.render", {{"frames", frames}});
+			run(client, "transport.stop");
+			std::vector<std::vector<float>> output;
+			output.reserve(2);
+			for (int channel = 0; channel < 2; ++channel)
+				output.push_back(
+					run(client, "audio.capture", {{"channel", channel}, {"start", m_rendered}, {"frames", frames}})
+						.at("samples")
+						.get<std::vector<float>>());
+			m_rendered += frames;
+			CHECK(run(client, "audio.get").at("playbackDropouts") == 0);
+			return output;
+		}
+
+		Engine engine;
+		Client client{engine};
+
+	private:
+		int64_t m_rendered = 0; // the device's capture keeps every render
+	};
+
+	// Checks every sample against expected(position), reporting the first wrong one.
+	void checkSamples(const std::vector<float>& output, const std::function<double(int64_t)>& expected,
+		double tolerance = 1e-6, int64_t first = 0)
+	{
+		size_t wrong = 0;
+		size_t at = 0;
+		for (size_t i = 0; i < output.size(); ++i)
+			if (std::abs(output[i] - expected(first + static_cast<int64_t>(i))) > tolerance && wrong++ == 0)
+				at = i;
+		INFO(wrong << " wrong samples, the first at position " << (first + static_cast<int64_t>(at)) << ": "
+				   << output[at] << " instead of " << expected(first + static_cast<int64_t>(at)));
+		CHECK(wrong == 0);
+	}
+
+	gnubase::test::Audio mono(const std::vector<float>& samples)
+	{
+		gnubase::test::Audio audio;
+		audio.channels = 1;
+		audio.samples = samples;
+		return audio;
+	}
+}
+
+TEST_CASE("fade curves rise from 0 to 1 with the documented shapes", "[unit]")
+{
+	const std::vector<std::pair<FadeShape, std::string>> shapes = {{FadeShape::Linear, "linear"},
+		{FadeShape::Exponential, "exponential"}, {FadeShape::Logarithmic, "logarithmic"}, {FadeShape::SCurve, "sCurve"},
+		{FadeShape::EqualPower, "equalPower"}};
+	for (const auto& [shape, name] : shapes)
+	{
+		INFO(name);
+		CHECK(fadeGain(shape, 0.0) == 0.0);
+		CHECK_THAT(fadeGain(shape, 1.0), WithinAbs(1.0, 1e-15));
+		CHECK(fadeGain(shape, -1.0) == 0.0);
+		CHECK_THAT(fadeGain(shape, 2.0), WithinAbs(1.0, 1e-15));
+		double previous = 0.0;
+		for (int i = 1; i <= 1000; ++i)
+		{
+			const double x = i / 1000.0;
+			const double gain = fadeGain(shape, x);
+			REQUIRE(gain > previous);
+			REQUIRE_THAT(gain, WithinAbs(curve(name, x), 1e-12));
+			previous = gain;
+		}
+	}
+	// Half way: linear and sCurve -6 dB, equal power -3 dB, exponential about -15 dB, logarithmic about -1.7 dB.
+	CHECK(fadeGain(FadeShape::Linear, 0.5) == 0.5);
+	CHECK_THAT(fadeGain(FadeShape::SCurve, 0.5), WithinAbs(0.5, 1e-15));
+	CHECK_THAT(fadeGain(FadeShape::EqualPower, 0.5), WithinAbs(std::sqrt(0.5), 1e-15));
+	CHECK_THAT(20.0 * std::log10(fadeGain(FadeShape::Exponential, 0.5)), WithinAbs(-14.78, 0.01));
+	CHECK_THAT(20.0 * std::log10(fadeGain(FadeShape::Logarithmic, 0.5)), WithinAbs(-1.75, 0.01));
+}
+
+TEST_CASE("mirrored fade shapes add up to 1, and equal power fades keep the power at 1", "[unit]")
+{
+	for (const FadeShape shape : {FadeShape::Linear, FadeShape::Exponential, FadeShape::Logarithmic, FadeShape::SCurve})
+	{
+		FadeShape mirror = FadeShape::EqualPower;
+		REQUIRE(mirrorShape(shape, mirror));
+		for (int i = 0; i <= 100; ++i)
+		{
+			// A fade in at x and the mirrored fade out at the same moment, whose own progress is 1 - x.
+			const double x = i / 100.0;
+			CHECK_THAT(fadeGain(shape, x) + fadeGain(mirror, 1.0 - x), WithinAbs(1.0, 1e-12));
+		}
+	}
+	FadeShape mirror = FadeShape::Linear;
+	CHECK_FALSE(mirrorShape(FadeShape::EqualPower, mirror));
+	for (int i = 0; i <= 100; ++i)
+	{
+		const double x = i / 100.0;
+		const double in = fadeGain(FadeShape::EqualPower, x);
+		const double out = fadeGain(FadeShape::EqualPower, 1.0 - x);
+		CHECK_THAT((in * in) + (out * out), WithinAbs(1.0, 1e-12));
+	}
+}
+
+TEST_CASE("audio events and clips have fades, which the commands check and undo restores", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	Session session;
+	Client& client = session.client;
+	const ObjectId track = session.addTrack();
+	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 10000, one));
+	const ObjectId event = session.addEvent(track, clip, 0, 4000);
+
+	const Json added = run(client, "project.get").at("audioEvents")[0];
+	CHECK(added.at("fadeIn") == Json{{"length", 0}, {"shape", "linear"}});
+	CHECK(added.at("fadeOut") == Json{{"length", 0}, {"shape", "linear"}});
+	CHECK(added.at("crossfade").is_null());
+
+	const Json changed = run(client, "audioEvent.setFades",
+		{{"event", event}, {"fadeIn", {{"length", 1000}, {"shape", "sCurve"}}}, {"fadeOut", {{"length", 500}}}})
+							 .at("event");
+	CHECK(changed.at("fadeIn") == Json{{"length", 1000}, {"shape", "sCurve"}});
+	CHECK(changed.at("fadeOut") == Json{{"length", 500}, {"shape", "linear"}});
+	// What isn't given stays.
+	CHECK(run(client, "audioEvent.setFades", {{"event", event}, {"fadeOut", {{"shape", "exponential"}}}})
+			  .at("event")
+			  .at("fadeIn") == Json{{"length", 1000}, {"shape", "sCurve"}});
+
+	CHECK_THAT(reject(client, "audioEvent.setFades", {{"event", event}, {"fadeIn", {{"length", 3600}}}}),
+		ContainsSubstring("fit into the event"));
+	CHECK_THAT(reject(client, "audioEvent.setFades", {{"event", event}, {"fadeIn", {{"length", -1}}}}),
+		ContainsSubstring("must not be negative"));
+	CHECK(!client.call("audioEvent.setFades", {{"event", event}, {"fadeIn", {{"shape", "cubic"}}}}).ok());
+	CHECK_THAT(reject(client, "audioEvent.setFades", {{"event", 999}}), ContainsSubstring("no audio event 999"));
+
+	const Json clipFades =
+		run(client, "clip.setFades", {{"clip", clip}, {"fadeIn", {{"length", 2000}, {"shape", "equalPower"}}}})
+			.at("clip");
+	CHECK(clipFades.at("fadeIn") == Json{{"length", 2000}, {"shape", "equalPower"}});
+	CHECK_THAT(reject(client, "clip.setFades", {{"clip", clip}, {"fadeOut", {{"length", 9000}}}}),
+		ContainsSubstring("fit into the clip"));
+
+	// Each command is an undo step.
+	run(client, "history.undo", {{"steps", 2}});
+	const Json undone = run(client, "project.get");
+	CHECK(undone.at("audioEvents")[0].at("fadeOut") == Json{{"length", 500}, {"shape", "linear"}});
+	CHECK(undone.at("clips")[0].at("fadeIn") == Json{{"length", 0}, {"shape", "linear"}});
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("audioEvents")[0] == added);
+}
+
+TEST_CASE("crossfades join overlapping events on a track", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	Session session;
+	Client& client = session.client;
+	const ObjectId track = session.addTrack();
+	const ObjectId other = session.addTrack();
+	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 10000, one));
+	const ObjectId a = session.addEvent(track, clip, 0, 3000);
+	const ObjectId b = session.addEvent(track, clip, 2000, 3000);
+	const ObjectId c = session.addEvent(track, clip, 5000, 1000); // right after b, without overlap
+	const ObjectId d = session.addEvent(other, clip, 2500, 1000);
+
+	// The default: symmetric over the whole overlap, equal gain and linear.
+	const Json crossfade = run(client, "crossfade.set", {{"from", a}, {"to", b}}).at("event").at("crossfade");
+	CHECK(crossfade ==
+		Json{{"from", a}, {"mode", "equalGain"}, {"shape", "linear"}, {"outShape", "linear"}, {"length", 0},
+			{"outLength", 0}});
+	// Equal gain mirrors the fade in; equal power is quarter sines; custom takes both shapes.
+	CHECK(run(client, "crossfade.set", {{"from", a}, {"to", b}, {"shape", "exponential"}})
+			  .at("event")
+			  .at("crossfade")
+			  .at("outShape") == "logarithmic");
+	const Json power =
+		run(client, "crossfade.set", {{"from", a}, {"to", b}, {"mode", "equalPower"}}).at("event").at("crossfade");
+	CHECK(power.at("shape") == "equalPower");
+	CHECK(power.at("outShape") == "equalPower");
+	const Json custom = run(client, "crossfade.set",
+		{{"from", a}, {"to", b}, {"mode", "custom"}, {"shape", "sCurve"}, {"outShape", "exponential"}, {"length", 400},
+			{"outLength", 1000}})
+							.at("event")
+							.at("crossfade");
+	CHECK(custom ==
+		Json{{"from", a}, {"mode", "custom"}, {"shape", "sCurve"}, {"outShape", "exponential"}, {"length", 400},
+			{"outLength", 1000}});
+
+	CHECK_THAT(reject(client, "crossfade.set", {{"from", b}, {"to", c}}), ContainsSubstring("must start inside"));
+	CHECK_THAT(reject(client, "crossfade.set", {{"from", b}, {"to", a}}), ContainsSubstring("must start inside"));
+	CHECK_THAT(reject(client, "crossfade.set", {{"from", a}, {"to", d}}), ContainsSubstring("same track"));
+	CHECK_THAT(reject(client, "crossfade.set", {{"from", a}, {"to", a}}), ContainsSubstring("itself"));
+	CHECK_THAT(reject(client, "crossfade.set", {{"from", a}, {"to", b}, {"length", 1001}}),
+		ContainsSubstring("length must be 0 (the whole overlap) to 1000"));
+	CHECK_THAT(
+		reject(client, "crossfade.set", {{"from", a}, {"to", b}, {"mode", "equalGain"}, {"shape", "equalPower"}}),
+		ContainsSubstring("equal gain"));
+	CHECK_THAT(reject(client, "crossfade.set", {{"from", a}, {"to", b}, {"mode", "equalGain"}, {"outShape", "linear"}}),
+		ContainsSubstring("outShape"));
+	CHECK_THAT(reject(client, "crossfade.set", {{"from", a}, {"to", b}, {"mode", "equalPower"}, {"shape", "linear"}}),
+		ContainsSubstring("quarter sines"));
+
+	// Removing either event of a crossfade removes it.
+	run(client, "audioEvent.remove", {{"event", a}});
+	CHECK(run(client, "project.get").at("audioEvents")[0].at("crossfade").is_null());
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("audioEvents")[1].at("crossfade").at("from") == a);
+	run(client, "crossfade.remove", {{"event", a}});
+	CHECK(run(client, "project.get").at("audioEvents")[1].at("crossfade").is_null());
+	CHECK_THAT(reject(client, "crossfade.remove", {{"event", a}}), ContainsSubstring("has no crossfade"));
+}
+
+TEST_CASE("auto fade settings belong to the project or to an audio track", "[unit]")
+{
+	Session session;
+	Client& client = session.client;
+	const ObjectId track = session.addTrack();
+	const ObjectId midi = idOf(run(client, "track.add", {{"type", "midi"}}), "track");
+	const Json defaults = run(client, "project.get").at("autoFades");
+	CHECK(defaults ==
+		Json{{"fadeIn", false}, {"fadeOut", false}, {"crossfades", false}, {"length", 10.0}, {"fadeInShape", "linear"},
+			{"fadeOutShape", "linear"}, {"crossfadeMode", "equalGain"}, {"crossfadeShape", "linear"}});
+
+	const Json project = run(client, "autoFades.set", {{"fadeIn", true}, {"length", 5.0}}).at("autoFades");
+	CHECK(project.at("fadeIn") == true);
+	CHECK(project.at("length") == 5.0);
+	CHECK(run(client, "project.get").at("tracks")[0].at("autoFades").is_null());
+
+	// A track's own settings start from the project's.
+	const Json own =
+		run(client, "autoFades.set", {{"track", track}, {"crossfades", true}, {"crossfadeMode", "equalPower"}})
+			.at("autoFades");
+	CHECK(own.at("fadeIn") == true);
+	CHECK(own.at("crossfades") == true);
+	CHECK(run(client, "project.get").at("tracks")[0].at("autoFades") == own);
+	CHECK(run(client, "autoFades.set", {{"track", track}, {"useProject", true}}).at("autoFades") == project);
+	CHECK(run(client, "project.get").at("tracks")[0].at("autoFades").is_null());
+
+	CHECK_THAT(reject(client, "autoFades.set", {{"length", 0.5}}), ContainsSubstring("1 to 500 ms"));
+	CHECK_THAT(reject(client, "autoFades.set", {{"length", 501.0}}), ContainsSubstring("1 to 500 ms"));
+	CHECK_THAT(reject(client, "autoFades.set", {{"crossfadeMode", "custom"}}), ContainsSubstring("equal gain or"));
+	CHECK_THAT(reject(client, "autoFades.set", {{"track", midi}, {"fadeIn", true}}), ContainsSubstring("audio tracks"));
+	CHECK_THAT(reject(client, "autoFades.set", {{"useProject", true}}), ContainsSubstring("for tracks"));
+	CHECK_THAT(reject(client, "autoFades.set", {{"track", track}, {"useProject", true}, {"fadeIn", true}}),
+		ContainsSubstring("useProject"));
+
+	// Undo puts the project's settings back and announces them.
+	run(client, "history.undo", {{"steps", 2}});
+	while (client.poll())
+	{
+	}
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("autoFades") == defaults);
+	bool announced = false;
+	while (const auto message = client.poll())
+		if (const auto* event = std::get_if<Event>(&*message))
+			announced = announced || (event->name == "project.changed" && event->data.at("autoFades") == defaults);
+	CHECK(announced);
+}
+
+TEST_CASE("fades shape an event's start and end sample by sample, for any block size", "[integration]")
+{
+	const int blockSize = GENERATE(1, 64, 333);
+	const std::string shape = GENERATE("linear", "exponential", "logarithmic", "sCurve", "equalPower");
+	INFO("block size " << blockSize << ", " << shape);
+	const gnubase::test::TempDir dir;
+	Session session(blockSize);
+	const ObjectId track = session.addTrack();
+	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 10000, one));
+	const ObjectId event = session.addEvent(track, clip, 500, 4000, 2000);
+	run(session.client, "audioEvent.setFades",
+		{{"event", event}, {"fadeIn", {{"length", 1500}, {"shape", shape}}},
+			{"fadeOut", {{"length", 1000}, {"shape", shape}}}});
+	run(session.client, "audioEvent.set", {{"event", event}, {"volume", -6.0}});
+
+	const auto output = session.render(5000);
+	const double volume = std::pow(10.0, -6.0 / 20.0);
+	checkSamples(output[0],
+		[&](int64_t at)
+		{
+			if (at < 500 || at >= 4500)
+				return 0.0;
+			return volume * fadeIn(shape, at, 500, 1500) * fadeOut(shape, at, 4500, 1000);
+		});
+	CHECK(output[1] == output[0]);
+}
+
+TEST_CASE("equal gain and equal power crossfades keep the gain or the power constant", "[integration]")
+{
+	const int blockSize = GENERATE(1, 100);
+	INFO("block size " << blockSize);
+	const gnubase::test::TempDir dir;
+	Session session(blockSize);
+	const ObjectId track = session.addTrack();
+	// The event fading out plays on the left, the one fading in on the right.
+	const ObjectId left =
+		session.addClip(writeClip(dir, "left", 2, 5000, [](int64_t, int c) { return c == 0 ? 1.0f : 0.0f; }));
+	const ObjectId right =
+		session.addClip(writeClip(dir, "right", 2, 5000, [](int64_t, int c) { return c == 1 ? 1.0f : 0.0f; }));
+	const ObjectId a = session.addEvent(track, left, 0, 3000);
+	const ObjectId b = session.addEvent(track, right, 2000, 3000);
+
+	SECTION("equal gain, linear and exponential")
+	{
+		for (const std::string shape : {"linear", "exponential", "sCurve"})
+		{
+			INFO(shape);
+			run(session.client, "crossfade.set", {{"from", a}, {"to", b}, {"mode", "equalGain"}, {"shape", shape}});
+			const auto output = session.render(5000);
+			checkSamples(output[1], [&](int64_t at) { return at < 5000 ? fadeIn(shape, at, 2000, 1000) : 0.0; });
+			for (size_t i = 0; i < 5000; ++i)
+				REQUIRE_THAT(output[0][i] + output[1][i], WithinAbs(1.0, 1e-6));
+		}
+	}
+	SECTION("equal power")
+	{
+		run(session.client, "crossfade.set", {{"from", a}, {"to", b}, {"mode", "equalPower"}});
+		const auto output = session.render(5000);
+		checkSamples(output[0], [&](int64_t at) { return fadeOut("equalPower", at, 3000, 1000); });
+		checkSamples(output[1], [&](int64_t at) { return at < 5000 ? fadeIn("equalPower", at, 2000, 1000) : 0.0; });
+		for (size_t i = 0; i < 5000; ++i)
+		{
+			const double l = output[0][i];
+			const double r = output[1][i];
+			REQUIRE_THAT((l * l) + (r * r), WithinAbs(1.0, 1e-6));
+		}
+	}
+	SECTION("asymmetric, with shapes of its own")
+	{
+		run(session.client, "crossfade.set",
+			{{"from", a}, {"to", b}, {"mode", "custom"}, {"shape", "sCurve"}, {"outShape", "logarithmic"},
+				{"length", 400}, {"outLength", 700}});
+		const auto output = session.render(5000);
+		checkSamples(output[0], [&](int64_t at) { return fadeOut("logarithmic", at, 3000, 700); });
+		checkSamples(output[1], [&](int64_t at) { return at < 5000 ? fadeIn("sCurve", at, 2000, 400) : 0.0; });
+	}
+	SECTION("the event in front can be the one fading out")
+	{
+		const ObjectId c = session.addEvent(track, left, 0, 3000); // added after b, so in front of it
+		run(session.client, "audioEvent.remove", {{"event", a}});
+		run(session.client, "crossfade.set", {{"from", c}, {"to", b}});
+		const auto output = session.render(5000);
+		checkSamples(output[0], [&](int64_t at) { return fadeOut("linear", at, 3000, 1000); });
+		checkSamples(output[1], [&](int64_t at) { return at < 5000 ? fadeIn("linear", at, 2000, 1000) : 0.0; });
+	}
+}
+
+TEST_CASE("a crossfade of a clip with itself plays it seamlessly, also from inside and in cycles", "[integration]")
+{
+	const int blockSize = GENERATE(1, 64, 100, 333);
+	INFO("block size " << blockSize);
+	const gnubase::test::TempDir dir;
+	Session session(blockSize);
+	const ObjectId track = session.addTrack(1);
+	const ObjectId clip = session.addClip(writeClip(dir, "ramp", 1, 5000, ramp));
+	// As after splitting an event at 1000 and dragging both ends over the cut: the same frames overlap.
+	const ObjectId a = session.addEvent(track, clip, 0, 1100);
+	const ObjectId b = session.addEvent(track, clip, 900, 1100, 900);
+	run(session.client, "crossfade.set", {{"from", a}, {"to", b}});
+	const auto expected = [](int64_t at) { return at < 2000 ? ramp(at) : 0.0; };
+
+	checkSamples(session.render(2500)[0], expected);
+	checkSamples(session.render(1000, 1000)[0], expected, 1e-6, 1000);
+	// Cycles that play across the crossfade, entering it after each jump.
+	// Cycles that jump into and out of the crossfade.
+	run(session.client, "transport.set", {{"left", 850}, {"right", 1150}, {"cycle", true}});
+	const auto output = session.render(1000, 800);
+	std::vector<int64_t> positions;
+	for (int64_t at = 800; positions.size() < 1000;)
+	{
+		positions.push_back(at);
+		at = at + 1 == 1150 ? 850 : at + 1;
+	}
+	for (size_t i = 0; i < positions.size(); ++i)
+		REQUIRE_THAT(output[0][i], WithinAbs(ramp(positions[i]), 1e-6));
+}
+
+TEST_CASE("auto fades and crossfades apply where events have none of their own", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Session session(64);
+	Client& client = session.client;
+	const ObjectId track = session.addTrack();
+	const ObjectId other = session.addTrack();
+	const ObjectId left =
+		session.addClip(writeClip(dir, "left", 2, 9000, [](int64_t, int c) { return c == 0 ? 1.0f : 0.0f; }));
+	const ObjectId right =
+		session.addClip(writeClip(dir, "right", 2, 9000, [](int64_t, int c) { return c == 1 ? 1.0f : 0.0f; }));
+	constexpr int64_t n = 480; // 10 ms at 48 kHz
+
+	SECTION("auto fades, and an event's own fade instead")
+	{
+		run(client, "autoFades.set", {{"fadeIn", true}, {"fadeOut", true}, {"fadeOutShape", "sCurve"}});
+		const ObjectId event = session.addEvent(track, left, 1000, 3000);
+		run(client, "audioEvent.setFades", {{"event", event}, {"fadeIn", {{"length", 200}}}});
+		const auto output = session.render(5000);
+		checkSamples(output[0], [&](int64_t at)
+			{ return at < 4000 ? fadeIn("linear", at, 1000, 200) * fadeOut("sCurve", at, 4000, n) : 0.0; });
+
+		// A track with settings of its own.
+		run(client, "autoFades.set", {{"track", track}, {"fadeOut", false}});
+		checkSamples(
+			session.render(5000)[0], [&](int64_t at) { return at < 4000 ? fadeIn("linear", at, 1000, 200) : 0.0; });
+	}
+	SECTION("auto crossfades where an event starts on top of another and ends above one")
+	{
+		run(client, "autoFades.set", {{"track", track}, {"crossfades", true}});
+		run(client, "autoFades.set", {{"track", other}, {"crossfades", false}});
+		session.addEvent(track, left, 0, 3000);
+		session.addEvent(track, right, 2000, 3000); // starts on top of the first
+		session.addEvent(track, right, 6000, 3000); // behind the next one
+		session.addEvent(track, left, 6500, 1000);  // starts and ends on top of it
+		const auto output = session.render(9000);
+		checkSamples(output[0],
+			[&](int64_t at)
+			{
+				if (at < 2000)
+					return 1.0;
+				if (at < 2000 + n)
+					return fadeOut("linear", at, 2000 + n, n);
+				if (at < 6500)
+					return 0.0;
+				return at < 7500 ? fadeIn("linear", at, 6500, n) * fadeOut("linear", at, 7500, n) : 0.0;
+			});
+		checkSamples(output[1],
+			[&](int64_t at)
+			{
+				if (at < 2000)
+					return 0.0;
+				if (at < 5000)
+					return fadeIn("linear", at, 2000, n);
+				if (at < 6000)
+					return 0.0;
+				if (at < 6500)
+					return 1.0;
+				if (at < 7500)
+					return fadeOut("linear", at, 6500 + n, n) + fadeIn("linear", at, 7500 - n, n);
+				return 1.0;
+			});
+	}
+}
+
+TEST_CASE("clip fades apply to every event of the clip, at the clip's start and end", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Session session(64);
+	const ObjectId track = session.addTrack();
+	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 4000, one));
+	run(session.client, "clip.setFades",
+		{{"clip", clip}, {"fadeIn", {{"length", 1000}}}, {"fadeOut", {{"length", 800}, {"shape", "equalPower"}}}});
+	session.addEvent(track, clip, 0, 2000);
+	session.addEvent(track, clip, 5000, 3500, 500); // from clip frame 500 to the clip's end
+	const auto output = session.render(9000);
+	checkSamples(output[0],
+		[&](int64_t at)
+		{
+			if (at < 2000)
+				return fadeIn("linear", at, 0, 1000);
+			if (at < 5000 || at >= 8500)
+				return 0.0;
+			return fadeIn("linear", at, 4500, 1000) * fadeOut("equalPower", at, 8500, 800);
+		});
+}
+
+TEST_CASE("a render of every fade shape matches its golden file", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Session session(256);
+	const ObjectId track = session.addTrack(1);
+	const ObjectId clip =
+		session.addClip(writeClip(dir, "sine", 1, 48000, [](int64_t f, int) { return sine(441.0, f); }));
+	int64_t position = 0;
+	for (const std::string shape : {"linear", "exponential", "logarithmic", "sCurve", "equalPower"})
+	{
+		const ObjectId event = session.addEvent(track, clip, position, 6000, position);
+		run(session.client, "audioEvent.setFades",
+			{{"event", event}, {"fadeIn", {{"length", 2500}, {"shape", shape}}},
+				{"fadeOut", {{"length", 2500}, {"shape", shape}}}});
+		position += 7000;
+	}
+	const auto output = session.render(position);
+	const gnubase::test::AudioDiff diff = gnubase::test::compareWithGolden("fade-shapes", mono(output[0]), 1e-6f);
+	INFO(diff.report);
+	CHECK(diff.equal);
+}
+
+TEST_CASE("a render of equal power crossfades matches its golden file", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Session session(256);
+	const ObjectId track = session.addTrack(1);
+	const ObjectId low =
+		session.addClip(writeClip(dir, "low", 1, 48000, [](int64_t f, int) { return sine(330.0, f); }));
+	const ObjectId high =
+		session.addClip(writeClip(dir, "high", 1, 48000, [](int64_t f, int) { return sine(550.0, f); }));
+	const ObjectId a = session.addEvent(track, low, 0, 12000);
+	const ObjectId b = session.addEvent(track, high, 8000, 12000);
+	const ObjectId c = session.addEvent(track, low, 19000, 6000, 3000);
+	run(session.client, "crossfade.set", {{"from", a}, {"to", b}, {"mode", "equalPower"}});
+	run(session.client, "crossfade.set", {{"from", b}, {"to", c}, {"mode", "equalPower"}});
+	const auto output = session.render(26000);
+	const gnubase::test::AudioDiff diff =
+		gnubase::test::compareWithGolden("crossfade-equal-power", mono(output[0]), 1e-6f);
+	INFO(diff.report);
+	CHECK(diff.equal);
+}

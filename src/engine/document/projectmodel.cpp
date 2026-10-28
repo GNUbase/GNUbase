@@ -677,6 +677,12 @@ namespace gnubase::engine
 			const ObjectId id = context.parameters().at("event").get<ObjectId>();
 			find(project.audioEvents, id, "audio event");
 			project.audioEvents.erase(id);
+			for (auto& [otherId, other] : project.audioEvents)
+				if (other.crossfade.from == id)
+				{
+					other.crossfade = Crossfade();
+					context.emit("audioEvent.changed", {{"event", toJson(other)}});
+				}
 			context.emit("audioEvent.removed", {{"event", id}});
 			return Json::object();
 		}
@@ -823,7 +829,8 @@ namespace gnubase::engine
 			project.name = parameters.value("name", project.name);
 			if (sampleRate != project.sampleRate)
 				changeSampleRate(project, sampleRate, context);
-			context.emit("project.changed", {{"name", project.name}, {"sampleRate", project.sampleRate}});
+			context.emit("project.changed",
+				{{"name", project.name}, {"sampleRate", project.sampleRate}, {"autoFades", toJson(project.autoFades)}});
 			return Json::object();
 		}
 	}
@@ -855,6 +862,11 @@ namespace gnubase::engine
 			{"audioEvent.add", "Add audio event"},
 			{"audioEvent.set", "Change audio event"},
 			{"audioEvent.remove", "Remove audio event"},
+			{"audioEvent.setFades", "Change fades"},
+			{"clip.setFades", "Change clip fades"},
+			{"crossfade.set", "Crossfade"},
+			{"crossfade.remove", "Remove crossfades"},
+			{"autoFades.set", "Change auto fades"},
 			{"midiPart.add", "Add MIDI part"},
 			{"midiPart.set", "Change MIDI part"},
 			{"midiPart.remove", "Remove MIDI part"},
@@ -933,8 +945,11 @@ namespace gnubase::engine
 				const ProjectSettings& current = redo ? *change.settingsAfter : *change.settingsBefore;
 				const ProjectSettings& previous = redo ? *change.settingsBefore : *change.settingsAfter;
 				if (current.name != previous.name || current.sampleRate != previous.sampleRate ||
-					current.tempo != previous.tempo || current.signatures != previous.signatures)
-					context.emit("project.changed", {{"name", current.name}, {"sampleRate", current.sampleRate}});
+					current.tempo != previous.tempo || current.signatures != previous.signatures ||
+					!(current.autoFades == previous.autoFades))
+					context.emit("project.changed",
+						{{"name", current.name}, {"sampleRate", current.sampleRate},
+							{"autoFades", toJson(current.autoFades)}});
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
 			}
@@ -1340,7 +1355,7 @@ namespace gnubase::engine
 				"Adds an audio event that plays a section of a clip on an audio track. position is in the track's time "
 				"base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the "
 				"rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track "
-				"plays one event at a time: where events overlap, the one added last plays.",
+				"plays one event at a time: where events overlap, the one added last plays, unless they crossfade.",
 				objectSchema(
 					{{"track", idSchema}, {"clip", idSchema}, {"position", integerSchema}, {"offset", integerSchema},
 						{"length", integerSchema}, {"volume", numberSchema}, {"mute", booleanSchema}},
@@ -1418,6 +1433,7 @@ namespace gnubase::engine
 			{ return removeFromPart(project, context, &MidiPart::controllers, "controllers", "controller"); });
 
 		registerMidiEditCommands(engine);
+		registerFadeCommands(engine);
 		registerHistoryCommands(engine);
 	}
 }

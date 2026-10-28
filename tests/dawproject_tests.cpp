@@ -578,6 +578,77 @@ TEST_CASE("unsafe and broken DAWproject files are refused", "[integration]")
 		ContainsSubstring("missing.dawproject"));
 }
 
+TEST_CASE(
+	"fades and crossfades are fade times in project.xml and come back exactly from GNUbase's entry", "[integration]")
+{
+	const test::TempDir dir;
+	const std::string audio = utf8(dir.path() / "take.wav");
+	writeWav(audio, 44100.0, 1, 88200);
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = idOf(run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}), "track");
+	const ObjectId media = idOf(run(client, "media.add", {{"path", audio}}), "media");
+	const ObjectId clip = idOf(run(client, "clip.add", {{"media", media}}), "clip");
+	const auto add = [&](int64_t position, int64_t length)
+	{
+		return idOf(run(client, "audioEvent.add",
+						{{"track", track}, {"clip", clip}, {"position", position}, {"length", length}}),
+			"event");
+	};
+	const ObjectId a = add(0, 20000);
+	const ObjectId b = add(15000, 20000); // overlaps a from 15000 / 48000 s to 20000 / 44100 s
+	const ObjectId c = add(96000, 20000);
+	run(client, "crossfade.set", {{"from", a}, {"to", b}, {"mode", "equalPower"}});
+	run(client, "audioEvent.setFades",
+		{{"event", c}, {"fadeIn", {{"length", 4410}, {"shape", "sCurve"}}}, {"fadeOut", {{"length", 2205}}}});
+	run(client, "clip.setFades", {{"clip", clip}, {"fadeIn", {{"length", 441}, {"shape", "exponential"}}}});
+	run(client, "autoFades.set", {{"crossfades", true}, {"length", 3.0}});
+	run(client, "autoFades.set", {{"track", track}, {"fadeIn", true}, {"crossfadeMode", "equalPower"}});
+	const Json before = run(client, "project.get");
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+
+	run(client, "project.new");
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "project.get") == before);
+
+	// Other applications read the fade times: the crossfade's as a fade out and a fade in.
+	std::map<std::string, std::string> entries = readZip(file);
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	CHECK_THAT(entries.at("project.xml"), ContainsSubstring("fadeTimeUnit=\"seconds\""));
+	const auto loaded = [&](const std::map<std::string, std::string>& zip)
+	{
+		const std::string other = utf8(dir.path() / "other.dawproject");
+		writeZip(other, zip);
+		run(client, "project.load", {{"path", other}});
+		return run(client, "project.get").at("audioEvents");
+	};
+	const auto near = [](const Json& value, double expected)
+	{
+		INFO(value << " instead of about " << expected);
+		CHECK(std::abs(value.get<double>() - expected) <= 1.0);
+	};
+	const double overlap = ((20000.0 / 44100.0) - (15000.0 / 48000.0)) * 44100.0;
+	Json events = loaded(entries);
+	REQUIRE(events.size() == 3);
+	near(events[0].at("fadeIn").at("length"), 0.0);
+	near(events[0].at("fadeOut").at("length"), overlap);
+	near(events[1].at("fadeIn").at("length"), overlap);
+	near(events[2].at("fadeIn").at("length"), 4410.0);
+	near(events[2].at("fadeOut").at("length"), 2205.0);
+	CHECK(events[2].at("fadeIn").at("shape") == "linear");
+	CHECK(events[1].at("crossfade").is_null());
+
+	// Fade times in beats, at 120 beats per minute.
+	std::string& xml = entries.at("project.xml");
+	for (size_t at = xml.find("fadeTimeUnit=\"seconds\""); at != std::string::npos;
+		at = xml.find("fadeTimeUnit=\"seconds\"", at))
+		xml.replace(at, 22, "fadeTimeUnit=\"beats\"");
+	events = loaded(entries);
+	near(events[2].at("fadeIn").at("length"), 2205.0);
+	near(events[2].at("fadeOut").at("length"), 1102.5);
+}
+
 TEST_CASE("saving keeps the history, loading starts a new one", "[integration]")
 {
 	const test::TempDir dir;

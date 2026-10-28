@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -66,12 +67,71 @@ namespace gnubase::engine
 		time::Samples length = 0; // in the file's sample frames
 	};
 
-	// What audio events play: for now, a whole media file.
+	// The curve of a fade in, from silence at 0 to full volume at 1 (src/engine/audio/fades.h has the formulas). A
+	// fade out plays it backwards.
+	enum class FadeShape : uint8_t
+	{
+		Linear,
+		Exponential, // starts slowly, rises fast: about -15 dB half way
+		Logarithmic, // rises fast, then slowly: the mirror image of exponential, about -1.7 dB half way
+		SCurve,      // half a cosine: slow at both ends, -6 dB half way
+		EqualPower,  // a quarter sine, -3 dB half way: a fade out and a fade in keep the power constant
+	};
+
+	// A fade in or out. Its length is in the clip's sample frames; 0 means none.
+	struct Fade
+	{
+		time::Samples length = 0;
+		FadeShape shape = FadeShape::Linear;
+	};
+
+	enum class CrossfadeMode : uint8_t
+	{
+		EqualGain,  // the fade out mirrors the fade in, so their gains add up to 1
+		EqualPower, // both are quarter sines, so their power adds up to 1
+		Custom,     // the fade in and the fade out have shapes of their own
+	};
+
+	// A crossfade from the event before (from) into this one, where the two overlap. Both play there: from fades out
+	// over outLength up to its end, this event fades in over length from its start. A length of 0 is the whole
+	// overlap, so equal lengths make the crossfade symmetric.
+	struct Crossfade
+	{
+		ObjectId from = 0; // 0: no crossfade
+		CrossfadeMode mode = CrossfadeMode::EqualGain;
+		FadeShape shape = FadeShape::Linear;    // the fade in
+		FadeShape outShape = FadeShape::Linear; // the fade out; for equal gain and equal power, derived from shape
+		time::Samples length = 0;               // in this event's clip frames
+		time::Samples outLength = 0;            // in from's clip frames
+	};
+
+	inline constexpr double g_minAutoFadeLength = 1.0; // milliseconds
+	inline constexpr double g_maxAutoFadeLength = 500.0;
+
+	// Short fades and crossfades applied automatically to the events of audio tracks, against clicks. Auto fades go
+	// where an event has no fade of its own; auto crossfades where an event starts on top of another or ends above
+	// one that goes on, unless the two have a crossfade of their own.
+	struct AutoFades
+	{
+		bool fadeIn = false;
+		bool fadeOut = false;
+		bool crossfades = false;
+		double length = 10.0; // milliseconds, g_minAutoFadeLength to g_maxAutoFadeLength
+		FadeShape fadeInShape = FadeShape::Linear;
+		FadeShape fadeOutShape = FadeShape::Linear;
+		CrossfadeMode crossfadeMode = CrossfadeMode::EqualGain;
+		FadeShape crossfadeShape = FadeShape::Linear; // the fade in, as in Crossfade
+	};
+
+	// What audio events play: for now, a whole media file. Its fades apply to every event that plays it, at the
+	// file's start and end.
 	struct Clip
 	{
 		ObjectId id = 0;
 		std::string name;
 		ObjectId media = 0;
+		Fade fadeIn;
+		Fade fadeOut;
 	};
 
 	// Plays a section of a clip on an audio track.
@@ -85,6 +145,9 @@ namespace gnubase::engine
 		time::Samples length = 0; // in the clip's sample frames
 		double volume = 0.0;      // dB, from g_minEventVolume to g_maxEventVolume
 		bool mute = false;
+		Fade fadeIn;         // from the event's start
+		Fade fadeOut;        // up to the event's end
+		Crossfade crossfade; // from the event before; replaces the fade in, and from's fade out
 	};
 
 	inline constexpr double g_minEventVolume = -144.0;
@@ -129,9 +192,10 @@ namespace gnubase::engine
 		std::string name;
 		std::string color; // "#rrggbb", or empty for the default color
 		time::TimeBase timeBase = time::TimeBase::Musical;
-		ObjectId parent = 0;            // a folder track, or 0 at the top level
-		ObjectId channel = 0;           // 0 for folders without a group channel
-		std::vector<ObjectId> children; // folders: the tracks inside, from top to bottom
+		ObjectId parent = 0;                // a folder track, or 0 at the top level
+		ObjectId channel = 0;               // 0 for folders without a group channel
+		std::vector<ObjectId> children;     // folders: the tracks inside, from top to bottom
+		std::optional<AutoFades> autoFades; // audio tracks: settings of their own instead of the project's
 	};
 
 	// A named position on the timeline.
@@ -150,6 +214,7 @@ namespace gnubase::engine
 		double sampleRate = 48000.0;
 		time::TempoMap tempo{120.0};
 		time::SignatureMap signatures;
+		AutoFades autoFades; // for audio tracks without settings of their own
 		ObjectId nextId = 1;
 
 		std::vector<Bus> busses;      // in the order they are shown
@@ -189,15 +254,37 @@ namespace gnubase::engine
 			std::tie(b.id, b.path, b.sampleRate, b.channels, b.length);
 	}
 
+	inline bool operator==(const Fade& a, const Fade& b)
+	{
+		return std::tie(a.length, a.shape) == std::tie(b.length, b.shape);
+	}
+
+	inline bool operator==(const Crossfade& a, const Crossfade& b)
+	{
+		return std::tie(a.from, a.mode, a.shape, a.outShape, a.length, a.outLength) ==
+			std::tie(b.from, b.mode, b.shape, b.outShape, b.length, b.outLength);
+	}
+
+	inline bool operator==(const AutoFades& a, const AutoFades& b)
+	{
+		return std::tie(a.fadeIn, a.fadeOut, a.crossfades, a.length, a.fadeInShape, a.fadeOutShape, a.crossfadeMode,
+				   a.crossfadeShape) ==
+			std::tie(b.fadeIn, b.fadeOut, b.crossfades, b.length, b.fadeInShape, b.fadeOutShape, b.crossfadeMode,
+				b.crossfadeShape);
+	}
+
 	inline bool operator==(const Clip& a, const Clip& b)
 	{
-		return std::tie(a.id, a.name, a.media) == std::tie(b.id, b.name, b.media);
+		return std::tie(a.id, a.name, a.media, a.fadeIn, a.fadeOut) ==
+			std::tie(b.id, b.name, b.media, b.fadeIn, b.fadeOut);
 	}
 
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
-		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute) ==
-			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute);
+		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.fadeIn, a.fadeOut,
+				   a.crossfade) ==
+			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.fadeIn, b.fadeOut,
+				b.crossfade);
 	}
 
 	inline bool operator==(const Note& a, const Note& b)
@@ -226,7 +313,7 @@ namespace gnubase::engine
 
 	inline bool operator==(const Track& a, const Track& b)
 	{
-		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children) ==
-			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children);
+		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades) ==
+			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades);
 	}
 }

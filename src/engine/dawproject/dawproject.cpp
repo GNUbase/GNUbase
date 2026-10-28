@@ -374,6 +374,15 @@ namespace gnubase::engine
 				element.append_attribute("contentTimeUnit") = "seconds";
 				if (event.mute)
 					element.append_attribute("enable") = false;
+				// Fades and crossfades as fade times; their shapes are GNUbase-only.
+				const double fadeIn = fadeInSeconds(event);
+				const double fadeOut = fadeOutSeconds(event);
+				if (fadeIn > 0.0 || fadeOut > 0.0)
+				{
+					element.append_attribute("fadeTimeUnit") = "seconds";
+					element.append_attribute("fadeInTime") = fadeIn;
+					element.append_attribute("fadeOutTime") = fadeOut;
+				}
 				element.append_attribute("name") = clip.name.c_str();
 				pugi::xml_node audio = element.append_child("Audio");
 				audio.append_attribute("id") = xmlId("a", event.id).c_str();
@@ -384,6 +393,49 @@ namespace gnubase::engine
 				file.append_attribute("path") = m_mediaPaths.at(media.id).c_str();
 				if (!m_embed)
 					file.append_attribute("external") = true;
+			}
+
+			// An event's start and end in seconds, and its clip's sample rate.
+			struct Seconds
+			{
+				double start = 0.0;
+				double end = 0.0;
+				double rate = 48000.0;
+			};
+
+			Seconds seconds(const AudioEvent& event) const
+			{
+				Seconds result;
+				result.rate = m_project.media.at(m_project.clips.at(event.clip).media).sampleRate;
+				result.start =
+					static_cast<double>(time::toSamples(event.position, m_project.tempo, m_project.sampleRate)) /
+					m_project.sampleRate;
+				result.end = result.start + (static_cast<double>(event.length) / result.rate);
+				return result;
+			}
+
+			// A crossfade's length, or the whole overlap.
+			static double crossfadeSeconds(time::Samples length, double rate, const Seconds& out, const Seconds& in)
+			{
+				return length > 0 ? static_cast<double>(length) / rate : std::max(0.0, out.end - in.start);
+			}
+
+			double fadeInSeconds(const AudioEvent& event) const
+			{
+				const Seconds in = seconds(event);
+				const auto from = m_project.audioEvents.find(event.crossfade.from);
+				if (event.crossfade.from != 0 && from != m_project.audioEvents.end())
+					return crossfadeSeconds(event.crossfade.length, in.rate, seconds(from->second), in);
+				return static_cast<double>(event.fadeIn.length) / in.rate;
+			}
+
+			double fadeOutSeconds(const AudioEvent& event) const
+			{
+				const Seconds out = seconds(event);
+				for (const auto& [id, to] : m_project.audioEvents)
+					if (to.crossfade.from == event.id)
+						return crossfadeSeconds(to.crossfade.outLength, out.rate, out, seconds(to));
+				return static_cast<double>(event.fadeOut.length) / out.rate;
 			}
 
 			void writeMidiClip(pugi::xml_node clips, const Track& track, const MidiPart& part)
@@ -550,6 +602,8 @@ namespace gnubase::engine
 				bool seconds = false; // the time unit is seconds rather than beats
 				double origin = 0.0;  // where the content's time 0 is on the lane
 				bool enabled = true;  // false inside a disabled (muted) clip
+				double fadeIn = 0.0;  // seconds, of the innermost clip with fades
+				double fadeOut = 0.0;
 			};
 
 			time::Ticks toTicks(double time, bool seconds) const
@@ -748,6 +802,8 @@ namespace gnubase::engine
 					content.seconds = std::string(unit.as_string()) == "seconds";
 				content.origin = content.seconds == context.seconds ? start - playStart : 0.0;
 				content.enabled = context.enabled && clip.attribute("enable").as_bool(true);
+				if (!clip.attribute("fadeInTime").empty() || !clip.attribute("fadeOutTime").empty())
+					readFades(clip, context, start, duration, content);
 				const TrackType type = m_project.trackById.at(context.track).type;
 				MidiPart* part = nullptr;
 				const auto partFor = [&]() -> MidiPart&
@@ -790,7 +846,7 @@ namespace gnubase::engine
 					{
 						const pugi::xml_node audio = name == "Audio" ? child : child.child("Audio");
 						const double offset = content.seconds ? playStart : secondsBetween(0.0, playStart, false);
-						addAudioEvent(lane, start, duration, offset, audio, !content.enabled);
+						addAudioEvent(lane, start, duration, offset, audio, content);
 					}
 				}
 			}
@@ -901,9 +957,31 @@ namespace gnubase::engine
 				return m_clips[xmlPath] = clip.id;
 			}
 
-			void addAudioEvent(const Context& lane, double start, double duration, double offset,
-				const pugi::xml_node& audio, bool mute)
+			// Fade times in seconds. In beats they count from the clip's start and end.
+			void readFades(
+				const pugi::xml_node& clip, const Context& lane, double start, double duration, Context& content) const
 			{
+				const pugi::xml_attribute unit = clip.attribute("fadeTimeUnit");
+				const bool beats = !unit.empty() ? std::string(unit.as_string()) == "beats" : !lane.seconds;
+				const double fadeIn = std::max(0.0, clip.attribute("fadeInTime").as_double());
+				const double fadeOut = std::max(0.0, clip.attribute("fadeOutTime").as_double());
+				if (!beats)
+				{
+					content.fadeIn = fadeIn;
+					content.fadeOut = fadeOut;
+					return;
+				}
+				const double first = lane.seconds ? toBeats(m_project.tempo.toTicks(start)) : start;
+				const double last =
+					lane.seconds ? toBeats(m_project.tempo.toTicks(start + duration)) : start + duration;
+				content.fadeIn = secondsBetween(first, first + fadeIn, false);
+				content.fadeOut = secondsBetween(last - fadeOut, last, false);
+			}
+
+			void addAudioEvent(const Context& lane, double start, double duration, double offset,
+				const pugi::xml_node& audio, const Context& content)
+			{
+				const bool mute = !content.enabled;
 				const ObjectId clipId = clipFor(audio);
 				if (clipId == 0)
 					return;
@@ -919,6 +997,11 @@ namespace gnubase::engine
 				const double seconds = secondsBetween(start, start + duration, lane.seconds);
 				event.length =
 					std::min<time::Samples>(std::llround(seconds * media.sampleRate), media.length - event.offset);
+				// Linear fades, shortened to fit if they don't.
+				event.fadeIn.length = std::clamp<time::Samples>(
+					std::llround(content.fadeIn * media.sampleRate), 0, std::max<time::Samples>(0, event.length));
+				event.fadeOut.length = std::clamp<time::Samples>(std::llround(content.fadeOut * media.sampleRate), 0,
+					std::max<time::Samples>(0, event.length - event.fadeIn.length));
 				if (event.length > 0)
 					m_project.audioEvents[event.id] = event;
 			}

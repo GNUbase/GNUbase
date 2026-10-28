@@ -23,6 +23,58 @@ namespace gnubase::engine
 			{TrackType::Effect, "effect"},
 		};
 
+		constexpr struct
+		{
+			FadeShape shape;
+			const char* name;
+		} g_fadeShapeNames[] = {
+			{FadeShape::Linear, "linear"},
+			{FadeShape::Exponential, "exponential"},
+			{FadeShape::Logarithmic, "logarithmic"},
+			{FadeShape::SCurve, "sCurve"},
+			{FadeShape::EqualPower, "equalPower"},
+		};
+
+		constexpr struct
+		{
+			CrossfadeMode mode;
+			const char* name;
+		} g_crossfadeModeNames[] = {
+			{CrossfadeMode::EqualGain, "equalGain"},
+			{CrossfadeMode::EqualPower, "equalPower"},
+			{CrossfadeMode::Custom, "custom"},
+		};
+
+		FadeShape shapeFrom(const Json& json)
+		{
+			const auto shape = fadeShapeFromName(json.get<std::string>());
+			if (!shape)
+				throw std::invalid_argument("unknown fade shape " + json.dump());
+			return *shape;
+		}
+
+		CrossfadeMode modeFrom(const Json& json)
+		{
+			const auto mode = crossfadeModeFromName(json.get<std::string>());
+			if (!mode)
+				throw std::invalid_argument("unknown crossfade mode " + json.dump());
+			return *mode;
+		}
+
+		Crossfade crossfadeFrom(const Json& json)
+		{
+			Crossfade crossfade;
+			if (json.is_null())
+				return crossfade;
+			crossfade.from = json.at("from").get<ObjectId>();
+			crossfade.mode = modeFrom(json.at("mode"));
+			crossfade.shape = shapeFrom(json.at("shape"));
+			crossfade.outShape = shapeFrom(json.at("outShape"));
+			crossfade.length = json.at("length").get<time::Samples>();
+			crossfade.outLength = json.at("outLength").get<time::Samples>();
+			return crossfade;
+		}
+
 		Json colorJson(const std::string& color)
 		{
 			return color.empty() ? Json(nullptr) : Json(color);
@@ -73,6 +125,105 @@ namespace gnubase::engine
 		return direction == BusDirection::Input ? "input" : "output";
 	}
 
+	const char* fadeShapeName(FadeShape shape)
+	{
+		for (const auto& entry : g_fadeShapeNames)
+			if (entry.shape == shape)
+				return entry.name;
+		return "linear"; // not reached: every shape is in the table
+	}
+
+	std::optional<FadeShape> fadeShapeFromName(const std::string& name)
+	{
+		for (const auto& entry : g_fadeShapeNames)
+			if (name == entry.name)
+				return entry.shape;
+		return std::nullopt;
+	}
+
+	const char* crossfadeModeName(CrossfadeMode mode)
+	{
+		for (const auto& entry : g_crossfadeModeNames)
+			if (entry.mode == mode)
+				return entry.name;
+		return "equalGain"; // not reached: every mode is in the table
+	}
+
+	std::optional<CrossfadeMode> crossfadeModeFromName(const std::string& name)
+	{
+		for (const auto& entry : g_crossfadeModeNames)
+			if (name == entry.name)
+				return entry.mode;
+		return std::nullopt;
+	}
+
+	std::vector<std::string> fadeShapeNames()
+	{
+		std::vector<std::string> names;
+		for (const auto& entry : g_fadeShapeNames)
+			names.emplace_back(entry.name);
+		return names;
+	}
+
+	std::vector<std::string> crossfadeModeNames()
+	{
+		std::vector<std::string> names;
+		for (const auto& entry : g_crossfadeModeNames)
+			names.emplace_back(entry.name);
+		return names;
+	}
+
+	Json toJson(const Fade& fade)
+	{
+		return {{"length", fade.length}, {"shape", fadeShapeName(fade.shape)}};
+	}
+
+	Json toJson(const Crossfade& crossfade)
+	{
+		if (crossfade.from == 0)
+			return nullptr;
+		return {{"from", crossfade.from}, {"mode", crossfadeModeName(crossfade.mode)},
+			{"shape", fadeShapeName(crossfade.shape)}, {"outShape", fadeShapeName(crossfade.outShape)},
+			{"length", crossfade.length}, {"outLength", crossfade.outLength}};
+	}
+
+	Json toJson(const AutoFades& settings)
+	{
+		return {{"fadeIn", settings.fadeIn}, {"fadeOut", settings.fadeOut}, {"crossfades", settings.crossfades},
+			{"length", settings.length}, {"fadeInShape", fadeShapeName(settings.fadeInShape)},
+			{"fadeOutShape", fadeShapeName(settings.fadeOutShape)},
+			{"crossfadeMode", crossfadeModeName(settings.crossfadeMode)},
+			{"crossfadeShape", fadeShapeName(settings.crossfadeShape)}};
+	}
+
+	Fade fadeFromJson(const Json& json, const Fade& fallback)
+	{
+		Fade fade = fallback;
+		if (json.contains("length"))
+			fade.length = json.at("length").get<time::Samples>();
+		if (json.contains("shape"))
+			fade.shape = shapeFrom(json.at("shape"));
+		return fade;
+	}
+
+	AutoFades autoFadesFromJson(const Json& json, const AutoFades& fallback)
+	{
+		AutoFades settings = fallback;
+		settings.fadeIn = json.value("fadeIn", settings.fadeIn);
+		settings.fadeOut = json.value("fadeOut", settings.fadeOut);
+		settings.crossfades = json.value("crossfades", settings.crossfades);
+		settings.length = json.value("length", settings.length);
+		if (json.contains("fadeInShape"))
+			settings.fadeInShape = shapeFrom(json.at("fadeInShape"));
+		if (json.contains("fadeOutShape"))
+			settings.fadeOutShape = shapeFrom(json.at("fadeOutShape"));
+		if (json.contains("crossfadeMode"))
+			settings.crossfadeMode = modeFrom(json.at("crossfadeMode"));
+		if (json.contains("crossfadeShape"))
+			settings.crossfadeShape = shapeFrom(json.at("crossfadeShape"));
+		return settings;
+	}
+
 	Json toJson(const Bus& bus)
 	{
 		return {{"id", bus.id}, {"name", bus.name}, {"direction", directionName(bus.direction)},
@@ -83,7 +234,7 @@ namespace gnubase::engine
 	{
 		return {{"id", track.id}, {"type", trackTypeName(track.type)}, {"name", track.name},
 			{"color", colorJson(track.color)}, {"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent},
-			{"channel", track.channel}};
+			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)}};
 	}
 
 	Json toJson(const Channel& channel)
@@ -100,13 +251,16 @@ namespace gnubase::engine
 
 	Json toJson(const Clip& clip)
 	{
-		return {{"id", clip.id}, {"name", clip.name}, {"media", clip.media}};
+		return {{"id", clip.id}, {"name", clip.name}, {"media", clip.media}, {"fadeIn", toJson(clip.fadeIn)},
+			{"fadeOut", toJson(clip.fadeOut)}};
 	}
 
 	Json toJson(const AudioEvent& event)
 	{
 		return {{"id", event.id}, {"track", event.track}, {"clip", event.clip}, {"position", event.position.value},
-			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute}};
+			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute},
+			{"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
+			{"crossfade", toJson(event.crossfade)}};
 	}
 
 	Json toJson(const Note& note)
@@ -150,8 +304,8 @@ namespace gnubase::engine
 			signatures.push_back({{"bar", change.bar}, {"numerator", change.signature.numerator},
 				{"denominator", change.signature.denominator}});
 		return {{"name", project.name}, {"sampleRate", project.sampleRate}, {"tempo", tempo},
-			{"signatures", signatures}, {"busses", busses}, {"tracks", tracks},
-			{"channels", toJsonArray(project.channels)}, {"media", toJsonArray(project.media)},
+			{"signatures", signatures}, {"autoFades", toJson(project.autoFades)}, {"busses", busses},
+			{"tracks", tracks}, {"channels", toJsonArray(project.channels)}, {"media", toJsonArray(project.media)},
 			{"clips", toJsonArray(project.clips)}, {"audioEvents", toJsonArray(project.audioEvents)},
 			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)}};
 	}
@@ -171,6 +325,8 @@ namespace gnubase::engine
 			signatures.push_back({change.at("bar").get<int64_t>(),
 				{change.at("numerator").get<int>(), change.at("denominator").get<int>()}});
 		project.signatures = time::SignatureMap(signatures);
+		// Files from before fades have none of them.
+		project.autoFades = autoFadesFromJson(json.value("autoFades", Json::object()));
 
 		for (const Json& bus : json.at("busses"))
 			project.busses.push_back({bus.at("id").get<ObjectId>(), bus.at("name").get<std::string>(),
@@ -190,6 +346,8 @@ namespace gnubase::engine
 			track.timeBase = timeBaseFromName(item.at("timeBase").get<std::string>());
 			track.parent = item.at("parent").get<ObjectId>();
 			track.channel = item.at("channel").get<ObjectId>();
+			if (const Json autoFades = item.value("autoFades", Json()); !autoFades.is_null())
+				track.autoFades = autoFadesFromJson(autoFades);
 			(track.parent == 0 ? project.tracks : project.trackById.at(track.parent).children).push_back(track.id);
 			project.trackById[track.id] = track;
 		}
@@ -208,7 +366,9 @@ namespace gnubase::engine
 		for (const Json& item : json.at("clips"))
 		{
 			const auto id = item.at("id").get<ObjectId>();
-			project.clips[id] = {id, item.at("name").get<std::string>(), item.at("media").get<ObjectId>()};
+			project.clips[id] = {id, item.at("name").get<std::string>(), item.at("media").get<ObjectId>(),
+				fadeFromJson(item.value("fadeIn", Json::object())),
+				fadeFromJson(item.value("fadeOut", Json::object()))};
 		}
 		const auto base = [&project](ObjectId track) { return project.trackById.at(track).timeBase; };
 		for (const Json& item : json.at("audioEvents"))
@@ -222,6 +382,9 @@ namespace gnubase::engine
 			event.length = item.at("length").get<time::Samples>();
 			event.volume = item.value("volume", 0.0); // files from before event volume and mute
 			event.mute = item.value("mute", false);
+			event.fadeIn = fadeFromJson(item.value("fadeIn", Json::object()));
+			event.fadeOut = fadeFromJson(item.value("fadeOut", Json::object()));
+			event.crossfade = crossfadeFrom(item.value("crossfade", Json()));
 			project.audioEvents[event.id] = event;
 		}
 		for (const Json& item : json.at("midiParts"))

@@ -49,6 +49,11 @@ namespace gnubase::engine
 		time::Samples length = 0; // in the media file's sample frames
 		float gain = 1.0f;        // the event volume, linear
 		bool muted = false;
+		Fade fadeIn; // fade lengths in the media file's sample frames
+		Fade fadeOut;
+		Fade clipFadeIn; // at the media file's start and end
+		Fade clipFadeOut;
+		Crossfade crossfade; // with outShape resolved for its mode
 	};
 
 	struct RenderNote
@@ -76,6 +81,7 @@ namespace gnubase::engine
 		int channels = 2;
 		int input = -1; // index into RenderSnapshot::busses, or -1
 		RenderTarget output;
+		AutoFades autoFades;                       // audio tracks: their own settings or the project's
 		std::vector<RenderAudioEvent> audioEvents; // sorted by start
 		std::vector<RenderNote> notes;             // sorted by start, then pitch
 		std::vector<RenderController> controllers; // sorted by position
