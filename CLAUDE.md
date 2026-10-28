@@ -26,11 +26,16 @@ Details and reasoning (processes, modules, threads, engine API, IPC) are in [doc
 - Window management: SDL3. UI: RmlUi with its Lua plugin (Lua 5.4). Both are GNUbase forks (github.com/GNUbase) included as git submodules in `ext/`.
 - Text: FreeType with bundled free fonts (SIL OFL or Apache-2.0, e.g. from Google Fonts), license files shipped next to the fonts.
 - Graphics: icons and UI graphics are SVG, rendered by LunaSVG through RmlUi's SVG plugin, so they stay sharp at every UI scale. Bitmaps only where unavoidable.
-- UI sizes: lay out the UI in `dp` (RmlUi's density-independent pixels), not `px`: fonts, spacing, borders, icon and widget sizes. Scaling for HiDPI displays and a user-chosen UI scale then only changes the context's dp ratio (#48, #53). Use `px` only where exactly one device pixel is meant, such as hairline separators.
 - Audio: ASIO and WASAPI (Windows), CoreAudio (macOS), PipeWire and JACK (Linux), plus a dummy device for tests and headless runs.
 - Plugin bridges over the same IPC: 32-bit plugins (Windows, Linux), x86-64 plugins on Apple Silicon (Rosetta) and on Windows ARM64 (emulation).
 - Third-party code: pinned git submodules in `ext/`, GPLv3-compatible licenses only, each listed in `docs/third-party.md`.
 - Binary files (images, fonts, audio, video, executables, libraries, archives) are stored in Git LFS. Add a new binary type to `.gitattributes` before committing the first file of that type. Text formats such as SVG, RML, RCSS and Lua stay in plain git.
+
+## UI conventions
+- **Styling lives in RCSS, never in code.** C++ and Lua don't set colors, fonts, borders, spacing or any other style property. They change an element's state, and the stylesheets decide how each state looks: pseudo-classes (`:hover`, `:active`, `:focus`, `:checked`, `:disabled`) and state classes such as `.selected`, `.muted` or `.recording`. Code may only set geometry that comes from data, such as where an event sits in the timeline or a fader's position.
+- **One design system.** Shared stylesheets give every widget its look in one place. Documents add layout, not a look of their own, so the whole UI follows one design.
+- **Themes.** The overall look is a theme that can be switched at runtime: GNUbase default, dark and light to start with (#53). A theme is a set of stylesheets over the shared ones, and it owns every color, font and visual detail. Code and documents never refer to a particular theme.
+- **Sizes in `dp`.** Lay out the UI in `dp` (RmlUi's density-independent pixels), not `px`: fonts, spacing, borders, icon and widget sizes. Scaling for HiDPI displays and a user-chosen UI scale then only changes the context's dp ratio (#48, #53). Use `px` only where exactly one device pixel is meant, such as hairline separators.
 
 ## Test-driven development
 - Write the failing test first, then the code. No feature is done without tests.
