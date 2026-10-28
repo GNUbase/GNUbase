@@ -816,7 +816,7 @@ Result:
 
 Engine command `processor.list`. Read-only.
 
-Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units.
+Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units. A stepped parameter takes whole numbers only; its options, if any, name its values from the minimum on.
 
 Result:
 
@@ -1085,7 +1085,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://engine.version`: The GNUbase version.
 - `gnubase://graph.get`: The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes they receive audio and events from, and the order they are processed in.
 - `gnubase://history.get`: The undo history: every step with its action, time (UTC) and details, the position (steps before it are done, the ones after it can be redone) and the maximum number of steps (0: no limit).
-- `gnubase://processor.list`: Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units.
+- `gnubase://processor.list`: Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units. A stepped parameter takes whole numbers only; its options, if any, name its values from the minimum on.
 - `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts.
 - `gnubase://transport.get`: Whether playback runs, the project cursor in samples, the locators and the modes.
 
