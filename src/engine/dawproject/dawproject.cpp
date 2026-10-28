@@ -372,6 +372,8 @@ namespace gnubase::engine
 				element.append_attribute("duration") = duration;
 				element.append_attribute("playStart") = static_cast<double>(event.offset) / media.sampleRate;
 				element.append_attribute("contentTimeUnit") = "seconds";
+				if (event.mute)
+					element.append_attribute("enable") = false;
 				element.append_attribute("name") = clip.name.c_str();
 				pugi::xml_node audio = element.append_child("Audio");
 				audio.append_attribute("id") = xmlId("a", event.id).c_str();
@@ -547,6 +549,7 @@ namespace gnubase::engine
 				ObjectId track = 0;
 				bool seconds = false; // the time unit is seconds rather than beats
 				double origin = 0.0;  // where the content's time 0 is on the lane
+				bool enabled = true;  // false inside a disabled (muted) clip
 			};
 
 			time::Ticks toTicks(double time, bool seconds) const
@@ -744,6 +747,7 @@ namespace gnubase::engine
 				if (const pugi::xml_attribute unit = clip.attribute("contentTimeUnit"))
 					content.seconds = std::string(unit.as_string()) == "seconds";
 				content.origin = content.seconds == context.seconds ? start - playStart : 0.0;
+				content.enabled = context.enabled && clip.attribute("enable").as_bool(true);
 				const TrackType type = m_project.trackById.at(context.track).type;
 				MidiPart* part = nullptr;
 				const auto partFor = [&]() -> MidiPart&
@@ -786,7 +790,7 @@ namespace gnubase::engine
 					{
 						const pugi::xml_node audio = name == "Audio" ? child : child.child("Audio");
 						const double offset = content.seconds ? playStart : secondsBetween(0.0, playStart, false);
-						addAudioEvent(lane, start, duration, offset, audio);
+						addAudioEvent(lane, start, duration, offset, audio, !content.enabled);
 					}
 				}
 			}
@@ -897,8 +901,8 @@ namespace gnubase::engine
 				return m_clips[xmlPath] = clip.id;
 			}
 
-			void addAudioEvent(
-				const Context& lane, double start, double duration, double offset, const pugi::xml_node& audio)
+			void addAudioEvent(const Context& lane, double start, double duration, double offset,
+				const pugi::xml_node& audio, bool mute)
 			{
 				const ObjectId clipId = clipFor(audio);
 				if (clipId == 0)
@@ -908,6 +912,7 @@ namespace gnubase::engine
 				event.id = m_project.newId();
 				event.track = lane.track;
 				event.clip = clipId;
+				event.mute = mute;
 				event.position = {time::TimeBase::Musical, toTicks(start, lane.seconds)};
 				event.offset = std::clamp<time::Samples>(
 					std::llround(offset * media.sampleRate), 0, std::max<time::Samples>(0, media.length - 1));
