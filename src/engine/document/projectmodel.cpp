@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/projectmodel.h"
 
+#include "engine/audiofile/audiofile.h"
 #include "engine/graph/graph.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -67,6 +69,9 @@ namespace gnubase::engine
 		{
 			return direction == BusDirection::Input ? "input" : "output";
 		}
+
+		// What media.add reads from the file unless all of them are given.
+		constexpr std::array<const char*, 3> g_mediaProperties{"sampleRate", "channels", "length"};
 
 		// Note velocities and controller values are 0 to 1 in JSON, whatever the internal resolution.
 		constexpr double g_maxVelocity = 65535.0;
@@ -611,10 +616,31 @@ namespace gnubase::engine
 			const Json& parameters = context.parameters();
 			MediaFile media;
 			media.path = parameters.at("path").get<std::string>();
-			media.sampleRate = parameters.at("sampleRate").get<double>();
-			media.channels = parameters.at("channels").get<int>();
-			media.length = parameters.at("length").get<int64_t>();
 			require(!media.path.empty(), "path must not be empty");
+			const auto given = std::count_if(g_mediaProperties.begin(), g_mediaProperties.end(),
+				[&parameters](const char* name) { return parameters.contains(name); });
+			require(given == 0 || given == 3,
+				"give sampleRate, channels and length together, or none of them to read them from the file");
+			if (given == 3)
+			{
+				media.sampleRate = parameters.at("sampleRate").get<double>();
+				media.channels = parameters.at("channels").get<int>();
+				media.length = parameters.at("length").get<int64_t>();
+			}
+			else
+			{
+				try
+				{
+					const AudioFileInfo info = AudioFileReader::open(media.path)->info();
+					media.sampleRate = info.sampleRate;
+					media.channels = info.channels;
+					media.length = info.frames;
+				}
+				catch (const AudioFileError& error)
+				{
+					throw CommandError(error.what());
+				}
+			}
 			require(media.sampleRate > 0.0, "sampleRate must be positive");
 			requireRange(media.channels, 1, g_maxAudioChannels, "channels");
 			require(media.length >= 0, "length must not be negative");
@@ -1295,10 +1321,13 @@ namespace gnubase::engine
 			setChannel);
 
 		add(engine,
-			{"media.add", 1, "Adds an audio file with its sample rate, channel count and length in sample frames.",
+			{"media.add", 1,
+				"Adds an audio file. Its sample rate, channel count and length in sample frames are read from the "
+				"file, "
+				"or taken as given, for a file that is still being recorded.",
 				objectSchema({{"path", stringSchema}, {"sampleRate", numberSchema}, {"channels", integerSchema},
 								 {"length", integerSchema}},
-					{"path", "sampleRate", "channels", "length"}),
+					{"path"}),
 				resultSchema({"media"}), false},
 			addMedia);
 		add(engine,

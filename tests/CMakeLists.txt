@@ -7,7 +7,7 @@ target_compile_definitions(gnubase-testutils PRIVATE
 	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 gnubase_target_defaults(gnubase-testutils)
 
-add_executable(gnubase-tests audio_tests.cpp document_tests.cpp engine_tests.cpp graph_tests.cpp history_tests.cpp log_tests.cpp processor_tests.cpp rt_tests.cpp testutils_tests.cpp time_tests.cpp)
+add_executable(gnubase-tests audio_tests.cpp audiofile_tests.cpp document_tests.cpp engine_tests.cpp graph_tests.cpp history_tests.cpp log_tests.cpp processor_tests.cpp rt_tests.cpp testutils_tests.cpp time_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE gnubase-engine gnubase-testutils Catch2::Catch2WithMain)
 
 # ThreadSanitizer defines its own operator new/delete, which the RT checker replaces; every other build runs it.
@@ -24,7 +24,8 @@ if(NOT GNUBASE_SANITIZERS)
 	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_CRASHTEST="$<TARGET_FILE:gnubase-crashtest>")
 	add_dependencies(gnubase-tests gnubase-crashtest)
 endif()
-target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}"
+	GNUBASE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 gnubase_target_defaults(gnubase-tests)
 
 # Every TEST_CASE becomes a ctest test; its tags ([unit], [integration], [ui], [slow]) become ctest labels.

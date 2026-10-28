@@ -46,7 +46,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          submodules: recursive # Git LFS stays off: the build needs no binary assets yet
+          submodules: recursive
+
+      # Only the audio files the tests read, not every image in Git LFS.
+      - name: Fetch test audio
+        run: git lfs pull --include "tests/data/**"
 
       - name: Install packages (Linux)
         timeout-minutes: 15
@@ -103,6 +107,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
+
+      - name: Fetch test audio
+        run: git lfs pull --include "tests/data/**"
 
       - name: Install packages
         timeout-minutes: 15
