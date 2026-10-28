@@ -369,12 +369,11 @@ namespace gnubase::engine::midi
 					continue;
 				const std::vector<const Controller*>& events = found->second;
 				// At the note's end its note-off comes before a pedal event at the same tick.
-				const std::vector<const Controller*>::const_iterator after = std::partition_point(events.begin(),
-					events.end(), [&](const Controller* pedal) { return pedal->position < noteEnd(note); });
+				const auto after = std::partition_point(events.begin(), events.end(),
+					[&](const Controller* pedal) { return pedal->position < noteEnd(note); });
 				if (after == events.begin() || !down(*std::prev(after)))
 					continue;
-				const std::vector<const Controller*>::const_iterator release =
-					std::find_if_not(after, events.end(), down);
+				const auto release = std::find_if_not(after, events.end(), down);
 				Ticks newEnd = release == events.end() ? std::max(part.length, noteEnd(note)) : (*release)->position;
 				const Note* again = nextLater(notes, i, [&](const Note& other) { return other.pitch == note.pitch; });
 				if (again != nullptr)
