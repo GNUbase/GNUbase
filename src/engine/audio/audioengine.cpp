@@ -35,7 +35,8 @@ namespace gnubase::engine
 				"position": {"type": "integer"}, "capturedFrames": {"type": "integer"},
 				"droppedFrames": {"type": "integer"}, "playbackDropouts": {"type": "integer"},
 				"processing": {"type": "object", "properties": {"multiProcessing": {"type": "boolean"},
-					"threads": {"type": "integer"}}, "required": ["multiProcessing", "threads"]}},
+					"threads": {"type": "integer"}, "activeThreads": {"type": "integer"}},
+					"required": ["multiProcessing", "threads", "activeThreads"]}},
 			"required": ["device", "running", "position", "capturedFrames", "droppedFrames", "playbackDropouts",
 				"processing"]})");
 		}
@@ -369,13 +370,21 @@ namespace gnubase::engine
 	void AudioEngine::startWorkers()
 	{
 		const audio::DeviceFormat& format = m_device->format();
-		if (m_multiProcessing && m_threads > 1)
-			m_workers = std::make_unique<rt::WorkerPool>(m_threads - 1, format.blockSize / format.sampleRate);
+		if (activeThreads() > 1)
+			m_workers = std::make_unique<rt::WorkerPool>(activeThreads() - 1, format.blockSize / format.sampleRate);
+	}
+
+	size_t AudioEngine::activeThreads() const
+	{
+		// More threads than cores only wait for each other: a worker that holds a node loses its core to the ones
+		// spinning for the next.
+		return m_multiProcessing ? std::min(m_threads, rt::hardwareThreads()) : 1;
 	}
 
 	Json AudioEngine::status() const
 	{
-		const Json processing = {{"multiProcessing", m_multiProcessing}, {"threads", m_threads}};
+		const Json processing = {
+			{"multiProcessing", m_multiProcessing}, {"threads", m_threads}, {"activeThreads", activeThreads()}};
 		if (!m_device)
 			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"capturedFrames", 0},
 				{"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()}, {"processing", processing}};
@@ -413,9 +422,9 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"audio.setProcessing", 1,
 				"Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; "
-				"default: the number of hardware threads). With multiProcessing off only the audio thread does. "
-				"Independent tracks then run in parallel; the output is the same for any number of threads. The "
-				"device must be stopped.",
+				"default: the number of hardware threads). At most one thread per hardware thread processes: "
+				"activeThreads in the result. With multiProcessing off only the audio thread does. Independent tracks "
+				"then run in parallel; the output is the same for any number of threads. The device must be stopped.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
 					"multiProcessing": {"type": "boolean"}, "threads": {"type": "integer"}}})"),
 				statusSchema(), false},

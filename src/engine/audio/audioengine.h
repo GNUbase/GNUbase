@@ -83,7 +83,8 @@ namespace gnubase::engine
 		void rebuild();
 		void setDevice(const Json& parameters);
 		void setProcessing(const Json& parameters);
-		void startWorkers(); // for the device's format and the processing settings
+		void startWorkers();          // for the device's format and the processing settings
+		size_t activeThreads() const; // the threads that process: the setting, at most one per hardware thread
 		Json status() const;
 		audio::DummyDevice& requireStopped();
 		void registerTransportCommands(Engine& engine);

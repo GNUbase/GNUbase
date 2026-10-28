@@ -165,7 +165,7 @@ Returns:
 
 #### `gnubase.audio.setProcessing`
 
-Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; default: the number of hardware threads). With multiProcessing off only the audio thread does. Independent tracks then run in parallel; the output is the same for any number of threads. The device must be stopped.
+Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; default: the number of hardware threads). At most one thread per hardware thread processes: activeThreads in the result. With multiProcessing off only the audio thread does. Independent tracks then run in parallel; the output is the same for any number of threads. The device must be stopped.
 
 Parameters:
 

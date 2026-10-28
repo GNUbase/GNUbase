@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -229,8 +230,17 @@ TEST_CASE("audio.setProcessing chooses the number of processing threads", "[unit
 	const Json changed = run(client, "audio.setProcessing", {{"threads", 3}});
 	CHECK(changed.at("processing").at("threads") == 3);
 	CHECK(run(client, "audio.get").at("processing").at("threads") == 3);
+	CHECK(changed.at("processing").at("activeThreads") == std::min<size_t>(3, gnubase::rt::hardwareThreads()));
 	run(client, "audio.setProcessing", {{"multiProcessing", false}});
-	CHECK(run(client, "audio.get").at("processing") == Json{{"multiProcessing", false}, {"threads", 3}});
+	CHECK(run(client, "audio.get").at("processing") ==
+		Json{{"multiProcessing", false}, {"threads", 3}, {"activeThreads", 1}});
+
+	// More threads than the hardware has would only make them wait for each other: the setting stays, but at most
+	// one thread per hardware thread processes.
+	run(client, "audio.setProcessing", {{"multiProcessing", true}, {"threads", 64}});
+	const Json many = run(client, "audio.get").at("processing");
+	CHECK(many.at("threads") == 64);
+	CHECK(many.at("activeThreads") == std::min<size_t>(64, gnubase::rt::hardwareThreads()));
 
 	CHECK_THAT(reject(client, "audio.setProcessing", {{"threads", 0}}), ContainsSubstring("threads"));
 	CHECK_THAT(reject(client, "audio.setProcessing", {{"threads", 65}}), ContainsSubstring("threads"));
