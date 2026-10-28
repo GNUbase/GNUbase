@@ -80,6 +80,7 @@ flowchart TD
 | Engine command thread | Every command: document changes, undo, building render snapshots | The only thread that writes the document |
 | Audio thread | The device callback, one processing cycle at a time | Real-time rules |
 | Audio workers | Track chains in parallel (#212) | Real-time rules, real-time priority |
+| Prefetch threads | Nodes without live input, ahead of the device in larger blocks (#23) | Real-time rules, real-time priority below the audio workers |
 | Disk threads | Streaming audio files in and recordings out (#17) | Work ahead of the audio thread |
 | Background threads | Peak files, analysis, saving projects, plugin scan coordination | Low priority |
 | Log writer | Writes what audio threads logged, every 10 ms (#8) | Low priority |
@@ -160,7 +161,7 @@ The **processing graph** (`src/engine/graph`) is what the audio thread runs:
 - Events are MIDI 2.0 resolution: 16-bit velocities and 32-bit controller values (`src/engine/midi/midivalues.h`). Converting to and from MIDI 1.0 follows the MIDI 2.0 min-center-max rule: scaling up repeats bits so the center and the maximum stay exact, scaling down shifts.
 - GNUbase's built-in processors (`src/engine/processors`) are `graph::Processor`s that run in the engine: for now signal generators (sine, noise, impulse), a position probe for transport tests, a note probe that outputs how many notes sound and the sum of their pitches, gain and pan, and a polyphonic test synth, so MIDI-to-audio paths are tested before plugin hosting. Each one handles parameter changes and notes at their sample offset. `processor.list` returns them with their parameters' ids, ranges, defaults and units, and `processors::createBuiltin` creates one by id.
 
-Time is kept in samples and in musical time (PPQ ticks), with tempo and time signature maps (#13). Tracks that are not monitored live can be processed ahead with larger buffers; how is **decided in #23**.
+Time is kept in samples and in musical time (PPQ ticks), with tempo and time signature maps (#13). Tracks that are not monitored live are processed ahead with larger buffers on lower-priority threads; [anticipative-processing.md](anticipative-processing.md) describes how (#23).
 
 ## Audio files and disk streaming
 
@@ -224,7 +225,6 @@ flowchart LR
 
 | Topic | Ticket |
 |---|---|
-| Anticipative processing | #23 |
 | UI render backend | #47 |
 | Plugin API details | #61 |
 | IPC wake-up details, default hosting mode | #62, #76 |
