@@ -293,7 +293,7 @@ TEST_CASE("Semaphore wakes a waiting thread once per release", "[unit]")
 namespace
 {
 	// Hands out tasks 0 to count - 1 to whichever thread asks, and records which thread ran each.
-	class Tasks : public ParallelJob
+	class Tasks final : public ParallelJob
 	{
 	public:
 		explicit Tasks(size_t count) : m_ranBy(count) {}
@@ -361,7 +361,7 @@ TEST_CASE("WorkerPool runs a job on the calling thread and its workers until it 
 
 TEST_CASE("WorkerPool never runs a job after run returned", "[unit]")
 {
-	class Probe : public ParallelJob
+	class Probe final : public ParallelJob
 	{
 	public:
 		void work(size_t /*thread*/) noexcept override

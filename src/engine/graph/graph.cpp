@@ -105,7 +105,7 @@ namespace gnubase::engine::graph
 	}
 
 	// One parallel cycle: which nodes are ready, how many senders each still waits for, and what nodes cost.
-	class CompiledGraph::Scheduler : public rt::ParallelJob
+	class CompiledGraph::Scheduler final : public rt::ParallelJob
 	{
 	public:
 		explicit Scheduler(const CompiledGraph& graph)
