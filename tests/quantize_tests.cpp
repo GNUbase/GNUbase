@@ -745,3 +745,15 @@ TEST_CASE("a groove extracted from a part quantizes another one", "[integration]
 		CHECK_THAT(reject(f.client, "quantize.extractGroove", {{"part", empty}}), ContainsSubstring("no notes"));
 	}
 }
+
+TEST_CASE("reset quantize leaves notes moved with note.set since", "[integration]")
+{
+	Fixture f;
+	const ObjectId part = f.addPart(0);
+	const std::vector<ObjectId> notes = f.addNotes(part, {quarters(3, 10), quarters(13, 10)});
+	run(f.client, "quantize.apply", {{"part", part}, {"settings", {{"grid", "1/4"}}}});
+	run(f.client, "note.set", {{"part", part}, {"notes", {{{"id", notes[1]}, {"position", quarters(17, 10)}}}}});
+	const Json reset = run(f.client, "quantize.reset", {{"part", part}});
+	CHECK(reset.at("notes").size() == 1);
+	CHECK(f.positions(part) == std::vector<Ticks>{quarters(3, 10), quarters(17, 10)});
+}
