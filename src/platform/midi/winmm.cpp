@@ -120,6 +120,7 @@ namespace gnubase::midi
 				midi.size = static_cast<uint8_t>(size);
 				for (size_t i = midi.size; i < midi.bytes.size(); ++i)
 					midi.bytes[i] = 0;
+				// NOLINTNEXTLINE(performance-no-int-to-ptr): WinMM hands the instance back as an integer
 				reinterpret_cast<WinmmInput*>(instance)->m_receiver(midi, time);
 			}
 
