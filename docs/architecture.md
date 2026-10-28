@@ -51,8 +51,8 @@ flowchart TD
   ui --> engine & scripting
   mcp --> engine
   scripting --> engine
-  engine --> ipc & platform
-  pluginhost --> ipc & platform
+  engine --> plugin & ipc & platform
+  pluginhost --> plugin & ipc & platform
   ipc --> platform
 ```
 
@@ -60,11 +60,12 @@ flowchart TD
 |---|---|---|---|
 | platform | `src/platform` | OS abstractions: audio and MIDI backends, threads and priorities, shared memory, child processes, clocks. Real-time primitives (lock-free queues, RT checker), logging, assertions, crash reports | OS libraries |
 | ipc | `src/ipc` | Shared-memory buffers and rings, wake-up primitives, message protocol | platform |
-| engine | `src/engine` | Command registry, document model, undo, time, audio graph, transport, file I/O, plugin slots | ipc, platform |
+| plugin | `src/plugin` | The GNUbase plugin API: the plugin wrapper's interface, events and extensions ([plugin-api.md](plugin-api.md)), header-only; later the remote plugin proxy and stub | nothing; the proxy and stub: ipc |
+| engine | `src/engine` | Command registry, document model, undo, time, audio graph, transport, file I/O, plugin slots | plugin, ipc, platform |
 | scripting | `src/scripting` | Lua runtime and the bindings generated from the command registry | engine API |
 | mcp | `src/mcp` | MCP protocol and transports, tools generated from the command registry | engine API, UI automation interface |
 | ui | `src/ui` | SDL3 windows, RmlUi documents, docking, widgets, UI automation | engine API, scripting, SDL3, RmlUi |
-| pluginhost | `src/pluginhost` | Host process, scanner, format adapters (VST3, CLAP, AU, LV2, FST) | ipc, platform, plugin SDKs |
+| pluginhost | `src/pluginhost` | Host process, scanner, format adapters (VST3, CLAP, AU, LV2, FST) | plugin, ipc, platform, plugin SDKs |
 | app | `src/app` | `main` and the wiring between modules | all of the above |
 
 - The engine never depends on UI code, SDL or RmlUi. CMake checks this when configuring (`gnubase_require_no_ui`).
@@ -82,6 +83,7 @@ flowchart TD
 | Audio workers | Track chains in parallel (#212) | Real-time rules, real-time priority |
 | Prefetch threads | Nodes without live input, ahead of the device in larger blocks (#23) | Real-time rules, real-time priority below the audio workers |
 | Disk threads | Streaming audio files in and recordings out (#17) | Work ahead of the audio thread |
+| Plugin control | Main-thread calls to the plugins of one host process: loading, state, presets, editors ([plugin-api.md](plugin-api.md#threading-rules)) | One per host process connection; the command thread waits for it only briefly |
 | Background threads | Peak files, analysis, saving projects, plugin scan coordination | Low priority |
 | Log writer | Writes what audio threads logged, every 10 ms (#8) | Low priority |
 | MCP I/O thread | The MCP server's HTTP or stdio transport | Only forwards to the command thread |
@@ -215,7 +217,8 @@ The **IPC transport** (`src/ipc`, #62) is a `Connection` between the engine and 
 - A test runs a helper host process (`tests/ipcpeer.cpp`) and checks round trips, the control channel, a killed and a hung host and an orderly close. It also measures the round-trip latency: around 10 µs for 128 frames on a desktop PC.
 - A watchdog gives every host process a deadline per cycle (#65).
 - Plugin editors are windows of the host process, kept in front of and positioned relative to GNUbase's windows (#69).
-- Inside the host, every format is adapted to the **GNUbase plugin API** (#61), modeled on CLAP's extension mechanism. GNUbase's own built-in processors implement the same API but run inside the engine (#114).
+- Inside the host, every format is adapted to the **GNUbase plugin API**, modeled on CLAP: a core interface (`plugin::Plugin`, `plugin::Host`) plus extensions looked up by id, in `src/plugin`. [plugin-api.md](plugin-api.md) describes it, how each format maps onto it, and how it is split between the processes. GNUbase's own built-in plugins implement the same API but run inside the engine (#114).
+- In the engine, a plugin slot is a `graph::Processor` that hosts a `plugin::Plugin`: a built-in plugin, or a proxy that forwards to an adapter in a host process. Events (`plugin::Event`) and the transport are fixed-layout records, so the IPC copies them as they are. The engine mirrors every parameter value, so reading one never waits for a host process.
 
 ## Scripting, MCP and tests
 
@@ -246,5 +249,6 @@ The **IPC transport** (`src/ipc`, #62) is a `Connection` between the engine and 
 | Topic | Ticket |
 |---|---|
 | UI render backend | #47 |
-| Plugin API details | #61 |
+| Plugin editor windows and their header | #69 |
+| Remaining plugin API questions ([plugin-api.md](plugin-api.md#open-questions)) | #64, #70, #72 |
 | Default hosting mode | #76 |

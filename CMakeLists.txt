@@ -83,6 +83,7 @@ endfunction()
 
 add_subdirectory(src/platform)
 add_subdirectory(src/ipc)
+add_subdirectory(src/plugin)
 add_subdirectory(src/engine)
 add_subdirectory(src/mcp)
 add_subdirectory(src/scripting)
