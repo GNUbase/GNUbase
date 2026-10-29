@@ -36,19 +36,21 @@ namespace gnubase::app
 		}
 	}
 
+	bool setUpEngine(engine::Engine& engine, const Options& options, std::ostream& err)
+	{
+		engine::Client client(engine);
+		return setUp(client, "audio.setDevice",
+				   {{"backend", options.audio}, {"sampleRate", options.sampleRate}, {"blockSize", options.blockSize}},
+				   "cannot set up the audio device", err) &&
+			(options.project.empty() ||
+				setUp(client, "project.load", {{"path", options.project}}, "cannot load " + options.project, err));
+	}
+
 	int runHeadless(const Options& options, std::istream& in, std::ostream& out, std::ostream& err)
 	{
 		engine::Engine engine(audio::makeBackends(), std::filesystem::u8path(options.settings));
-		{
-			engine::Client client(engine);
-			if (!setUp(client, "audio.setDevice",
-					{{"backend", options.audio}, {"sampleRate", options.sampleRate}, {"blockSize", options.blockSize}},
-					"cannot set up the audio device", err))
-				return g_exitSetup;
-			if (!options.project.empty() &&
-				!setUp(client, "project.load", {{"path", options.project}}, "cannot load " + options.project, err))
-				return g_exitSetup;
-		}
+		if (!setUpEngine(engine, options, err))
+			return g_exitSetup;
 
 		if (!options.script.empty())
 		{

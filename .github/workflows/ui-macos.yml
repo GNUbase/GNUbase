@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The window tests (ctest label ui) on Apple Silicon, where SDL_GPU draws through Metal. CI's macOS job runs on an Intel
+# runner, whose virtual GPU SDL_GPU can't use, because hosted Apple Silicon runners often never pick jobs up. This
+# workflow is separate from CI so that a missing runner never blocks a merge.
+name: UI tests (macOS)
+
+on:
+  pull_request:
+    paths:
+      - src/ui/**
+      - src/app/**
+      - tests/CMakeLists.txt
+      - tests/window_tests.cpp
+      - tests/data/ui/**
+      - CMakeLists.txt
+      - CMakePresets.json
+      - ext/SDL
+      - ext/RmlUi
+      - .github/workflows/ui-macos.yml
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ui-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ui-macos-arm64:
+    timeout-minutes: 60
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install packages
+        timeout-minutes: 15
+        run: brew install ninja
+
+      # Only the arm64 slice, and no test plugins, which need the VST3 SDK and aren't part of the window tests.
+      - name: Configure
+        run: cmake --preset macos -DCMAKE_OSX_ARCHITECTURES=arm64 -DGNUBASE_TEST_PLUGINS=OFF
+
+      - name: Build
+        run: cmake --build --preset macos --config Release --target gnubase-tests
+
+      - name: Test
+        env:
+          GNUBASE_REQUIRE_GPU: 1
+        run: ctest --preset macos -C Release -L ui

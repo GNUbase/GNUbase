@@ -7,7 +7,8 @@ add_library(gnubase-app STATIC
 target_link_libraries(gnubase-app PUBLIC gnubase-engine gnubase-mcp gnubase-scripting PRIVATE $<$<PLATFORM_ID:Windows>:shell32>)
 gnubase_target_defaults(gnubase-app)
 
-add_executable(gnubase main.cpp)
+# The executable adds the UI, which the library leaves out.
+add_executable(gnubase main.cpp windowed.cpp windowed.h)
 target_link_libraries(gnubase PRIVATE gnubase-app gnubase-ui)
 gnubase_target_defaults(gnubase)
 # The engine starts plugin host processes from the program next to its own (src/pluginhost).
