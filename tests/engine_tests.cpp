@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <mutex>
 #include <numeric>
 #include <optional>
 #include <stdexcept>
@@ -99,6 +100,39 @@ TEST_CASE("every client receives events, the sender gets the result after them",
 
 	CHECK(expect<Event>(listener.wait(g_timeout)).request == id);
 	CHECK_FALSE(listener.poll().has_value()); // results go to the sender only
+}
+
+TEST_CASE("a listener gets every event before the command's result, until it is destroyed", "[unit]")
+{
+	Engine engine;
+	int stored = 0;
+	registerSetValue(engine, stored);
+	Client sender(engine);
+	std::mutex mutex;
+	std::vector<Event> heard;
+	std::optional<Listener> listener;
+	listener.emplace(engine,
+		[&](const Event& event)
+		{
+			const std::scoped_lock lock(mutex);
+			heard.push_back(event);
+		});
+
+	const Result result = sender.call("test.setValue", {{"value", 7}});
+	REQUIRE(result.ok());
+	{
+		const std::scoped_lock lock(mutex);
+		REQUIRE(heard.size() == 1); // already there when the result arrives
+		CHECK(heard[0].name == "test.changed");
+		CHECK(heard[0].data.at("value") == 7);
+		CHECK(heard[0].request == result.request);
+	}
+	CHECK(expect<Event>(sender.poll()).request == result.request); // clients still get it
+
+	listener.reset();
+	REQUIRE(sender.call("test.setValue", {{"value", 8}}).ok());
+	const std::scoped_lock lock(mutex);
+	CHECK(heard.size() == 1);
 }
 
 TEST_CASE("failed commands report why and change nothing", "[unit]")
