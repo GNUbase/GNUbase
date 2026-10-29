@@ -15,7 +15,7 @@ namespace gnubase::test
 	void FakeWindowSystem::setDisplays(std::vector<ui::Display> displays)
 	{
 		m_displays = std::move(displays);
-		m_events.push_back({ui::WindowEventKind::DisplaysChanged, 0});
+		m_events.emplace_back(ui::WindowEventKind::DisplaysChanged);
 		for (auto& [id, window] : m_windows)
 			move(id, window.bounds); // a monitor's scale may have changed under the window
 	}
@@ -25,7 +25,7 @@ namespace gnubase::test
 		move(window, bounds);
 	}
 
-	void FakeWindowSystem::push(ui::WindowEvent event)
+	void FakeWindowSystem::push(const ui::WindowEvent& event)
 	{
 		m_events.push_back(event);
 	}
@@ -67,11 +67,11 @@ namespace gnubase::test
 		if (const ui::Display* display = ui::displayOf(bounds, m_displays))
 			fake.scale = display->scale;
 		if (moved)
-			m_events.push_back({ui::WindowEventKind::Moved, window});
+			m_events.emplace_back(ui::WindowEventKind::Moved, window);
 		if (fake.scale != scale)
-			m_events.push_back({ui::WindowEventKind::ScaleChanged, window});
+			m_events.emplace_back(ui::WindowEventKind::ScaleChanged, window);
 		if (!(pixelSize(window) == pixels))
-			m_events.push_back({ui::WindowEventKind::Resized, window});
+			m_events.emplace_back(ui::WindowEventKind::Resized, window);
 	}
 
 	ui::Size FakeWindowSystem::pixelSize(ui::WindowId window) const
@@ -86,11 +86,37 @@ namespace gnubase::test
 		m_windows.at(window).input = context;
 	}
 
+	Rml::TextInputHandler* FakeWindowSystem::textInputHandler(ui::WindowId window)
+	{
+		return m_windows.at(window).textInput.get();
+	}
+
+	bool FakeWindowSystem::textInputActive(ui::WindowId window) const
+	{
+		return m_windows.at(window).textInput->active != nullptr;
+	}
+
+	void FakeWindowSystem::TextInput::OnDeactivate(Rml::TextInputContext* input)
+	{
+		if (input == active)
+			active = nullptr;
+	}
+
+	void FakeWindowSystem::answerFileDialog(uint64_t id, std::vector<std::filesystem::path> files, std::string error)
+	{
+		m_dialogs.erase(id);
+		ui::WindowEvent event{ui::WindowEventKind::FileDialogClosed};
+		event.dialog = id;
+		event.files = std::move(files);
+		event.error = std::move(error);
+		m_events.push_back(std::move(event));
+	}
+
 	std::optional<ui::WindowEvent> FakeWindowSystem::nextEvent(std::optional<std::chrono::milliseconds> /*timeout*/)
 	{
 		if (m_events.empty())
 			return std::nullopt; // nothing else will happen, so don't wait
-		const ui::WindowEvent event = m_events.front();
+		ui::WindowEvent event = std::move(m_events.front());
 		m_events.pop_front();
 		return event;
 	}

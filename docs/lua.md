@@ -1098,6 +1098,255 @@ Returns:
 
 - `media`: object, required
 
+### midi
+
+#### `gnubase.midi.bounce`
+
+Bounces MIDI parts on one track into a single part from the first one's start to the last one's end, named after the first. Events keep their time; notes are cut where their part ended. Returns the tracks it added, the parts it added (parts), changed and removed.
+
+Parameters:
+
+- `parts`: array of integer, required
+
+Returns:
+
+- `changedParts`: array of integer, required
+- `parts`: array of integer, required
+- `removedParts`: array of integer, required
+- `tracks`: array of integer, required
+
+#### `gnubase.midi.deleteContinuousControllers`
+
+Removes the control changes of continuous controllers. Bank select, data entry, the switches 64-69 (such as the sustain pedal), data increment and decrement, NRPN, RPN and channel mode messages stay. Works on the MIDI parts in parts. Returns the parts it changed.
+
+Parameters:
+
+- `parts`: array of integer, required
+
+Returns:
+
+- `parts`: array of integer, required
+
+#### `gnubase.midi.deleteControllers`
+
+Removes control changes, pitch bend, channel and poly pressure; program changes and SysEx stay. Works on the MIDI parts in parts. Returns the parts it changed.
+
+Parameters:
+
+- `parts`: array of integer, required
+
+Returns:
+
+- `parts`: array of integer, required
+
+#### `gnubase.midi.deleteDoubles`
+
+Of notes with the same pitch, channel and position, keeps the longest (the first added on a tie). Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
+
+Parameters:
+
+- `notes`: array of integer
+- `parts`: array of integer, required
+
+Returns:
+
+- `parts`: array of integer, required
+
+#### `gnubase.midi.deleteNotes`
+
+Deletes notes shorter than minimumLength (ticks) or softer than minimumVelocity (0-1); at least one is required. removeWhen both deletes only notes below both minimums (default: either). Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
+
+Parameters:
+
+- `minimumLength`: integer
+- `minimumVelocity`: number
+- `notes`: array of integer
+- `parts`: array of integer, required
+- `removeWhen`: one of "either" | "both"
+
+Returns:
+
+- `parts`: array of integer, required
+
+#### `gnubase.midi.deleteOverlaps`
+
+Shortens notes so that none still sounds when the next one on its channel starts: in mode mono the next one of the same pitch, in mode poly of any pitch. Notes that start together don't overlap. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
+
+Parameters:
+
+- `mode`: one of "mono" | "poly", required
+- `notes`: array of integer
+- `parts`: array of integer, required
+
+Returns:
+
+- `parts`: array of integer, required
+
+#### `gnubase.midi.dissolve`
+
+Dissolves MIDI parts by MIDI channel or by pitch (by: channel or pitch): for each channel or pitch found in the parts of a track, a new MIDI track after it, named after the track and the channel or pitch (middle C, 60, is C3), routed to the same instrument, gets the events of that channel or pitch in parts at the same place. By channel SysEx stays, by pitch everything but notes and poly pressure; parts left empty are removed. optimize shortens the new parts to the bars their events play in. Returns the tracks it added, the parts it added (parts), changed and removed.
+
+Parameters:
+
+- `by`: one of "channel" | "pitch", required
+- `optimize`: boolean
+- `parts`: array of integer, required
+
+Returns:
+
+- `changedParts`: array of integer, required
+- `parts`: array of integer, required
+- `removedParts`: array of integer, required
+- `tracks`: array of integer, required
+
+#### `gnubase.midi.fixLengths`
+
+Sets the length of notes, in ticks. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
+
+Parameters:
+
+- `length`: integer, required
+- `notes`: array of integer
+- `parts`: array of integer, required
+
+Returns:
+
+- `parts`: array of integer, required
+
+#### `gnubase.midi.fixVelocities`
+
+Sets the velocity of notes, 0-1. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
+
+Parameters:
+
+- `notes`: array of integer
+- `parts`: array of integer, required
+- `velocity`: number, required
+
+Returns:
+
+- `parts`: array of integer, required
+
+#### `gnubase.midi.invert`
+
+Mirrors notes in time: each one starts where its mirror image ends. Without notes, controllers with a value that holds (continuous controllers, the switches 64-69, pitch bend and pressure) play their values backwards, each held as long as before, and return to their last value where the range ends, or on the part's last tick if the range reaches its end; program changes, SysEx, bank select, data entry, NRPN, RPN and channel mode messages stay in place. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
+
+Parameters:
+
+- `notes`: array of integer
+- `parts`: array of integer, required
+
+Returns:
+
+- `parts`: array of integer, required
+
+#### `gnubase.midi.legato`
+
+Extends notes to the start of the next note on their MIDI channel, plus overlap in ticks (negative: a gap; default 0). With betweenSelected, to the next of the given notes. The last notes keep their length. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
+
+Parameters:
+
+- `betweenSelected`: boolean
+- `notes`: array of integer
+- `overlap`: integer
+- `parts`: array of integer, required
+
+Returns:
+
+- `parts`: array of integer, required
+
+#### `gnubase.midi.merge`
+
+Merges the notes and controllers that start between start and end (project samples, like the locators, compared in samples as playback does) on the MIDI and instrument tracks in tracks (default: all of them) into a new part on the destination track from start, or from the first merged event if that is earlier, to end, named name (default: the track's name). Notes keep their length, cut where their part ends. Without destination a new MIDI track is added at the end, routed to the instrument of the first track merged. eraseDestination first removes the destination's parts that lie between start and end, and the events of its other parts that start there. includeChase adds the last value of every controller and program before start at the new part's start. Returns the tracks it added, the parts it added (parts), changed and removed.
+
+Parameters:
+
+- `destination`: integer
+- `end`: integer, required
+- `eraseDestination`: boolean
+- `includeChase`: boolean
+- `name`: string
+- `start`: integer, required
+- `tracks`: array of integer
+
+Returns:
+
+- `changedParts`: array of integer, required
+- `parts`: array of integer, required
+- `removedParts`: array of integer, required
+- `tracks`: array of integer, required
+
+#### `gnubase.midi.pedalToNoteLength`
+
+Extends notes that end while the sustain pedal (controller 64) on their channel is down to where it is released (the part's end if never), but not past the next note of the same pitch, and removes the sustain pedal events of their channels. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
+
+Parameters:
+
+- `notes`: array of integer
+- `parts`: array of integer, required
+
+Returns:
+
+- `parts`: array of integer, required
+
+#### `gnubase.midi.restrictPolyphony`
+
+Shortens notes so that at most voices (1 or more) sound at once on each MIDI channel: a new note ends the one that started first, the lowest of notes that started together. A note that would lose its whole length is deleted. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
+
+Parameters:
+
+- `notes`: array of integer
+- `parts`: array of integer, required
+- `voices`: integer, required
+
+Returns:
+
+- `parts`: array of integer, required
+
+#### `gnubase.midi.reverse`
+
+Reverses the order in which notes start, keeping their lengths: the last one starts where the first one started. Without notes, controllers with a value that holds (continuous controllers, the switches 64-69, pitch bend and pressure) play their values backwards, each held as long as before, and return to their last value where the range ends, or on the part's last tick if the range reaches its end; program changes, SysEx, bank select, data entry, NRPN, RPN and channel mode messages stay in place. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
+
+Parameters:
+
+- `notes`: array of integer
+- `parts`: array of integer, required
+
+Returns:
+
+- `parts`: array of integer, required
+
+#### `gnubase.midi.thinOut`
+
+Thins out continuous controllers, pitch bend and pressure, per controller and channel: removes events that repeat the value before them, and events closer than minimumDistance ticks (default a 64th note) to the event kept before them, unless the curve turns there, the next event is at least minimumDistance away or it is the last one. Bank select, data entry, the switches 64-69, NRPN, RPN and channel mode messages stay, like program changes and SysEx. Works on the MIDI parts in parts. Returns the parts it changed.
+
+Parameters:
+
+- `minimumDistance`: integer
+- `parts`: array of integer, required
+
+Returns:
+
+- `parts`: array of integer, required
+
+#### `gnubase.midi.transpose`
+
+Transposes the notes of MIDI parts by semitones (-127 to 127). fromScale and toScale (a root 0-11, 0 is C, and a scale type) correct the notes from one scale to another: a note moves from its degree in fromScale to the same degree in toScale, and notes outside fromScale, or all of them when the scales have a different number of degrees, go to the closest note of toScale. lowest and highest (0-127) keep notes in range: a note that leaves it moves by octaves into it, or to the limit it crossed if no octave fits. Notes stay within 0-127 by octaves. Poly pressure follows when no notes are given. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
+
+Parameters:
+
+- `fromScale`: object
+- `highest`: integer
+- `lowest`: integer
+- `notes`: array of integer
+- `parts`: array of integer, required
+- `semitones`: integer
+- `toScale`: object
+
+Returns:
+
+- `parts`: array of integer, required
+
 ### midiFile
 
 #### `gnubase.midiFile.export`
