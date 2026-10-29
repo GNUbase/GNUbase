@@ -178,7 +178,7 @@ namespace gnubase::plugin::remote
 		void release(Binding& binding);
 		void publish(Binding* binding);
 		void notified(Notification notification, uint32_t detail);
-		void applyInfo(PluginInfo info, bool keepDirtyValues);
+		void applyInfo(PluginInfo info, bool keepValues);
 		void setParams(const PluginInfo& info);
 		void mirror(const Event& event, bool markDirty = false) noexcept;
 		bool has(std::string_view extension) const;

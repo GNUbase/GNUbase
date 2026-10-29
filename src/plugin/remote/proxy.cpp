@@ -449,7 +449,7 @@ namespace gnubase::plugin::remote
 			m_values[i].store(i < info.values.size() ? info.values[i] : m_info.params[i].defaultValue);
 	}
 
-	void RemotePlugin::applyInfo(PluginInfo info, bool keepDirtyValues)
+	void RemotePlugin::applyInfo(PluginInfo info, bool keepValues)
 	{
 		const std::scoped_lock lock(m_mutex);
 		const bool active = m_binding->active;
@@ -470,8 +470,10 @@ namespace gnubase::plugin::remote
 			for (size_t i = 0; i < info.params.size(); ++i)
 			{
 				m_info.params[i] = info.params[i];
-				// A move keeps the mirror's newer values: they reach the new instance with its first block.
-				if (i < info.values.size() && !(keepDirtyValues && m_dirty[i].load()))
+				// A move keeps the mirror: it holds the old instance's values, and those that changed since the state
+				// was saved reach the new instance with its first block. That block may have run already, so the values
+				// the new instance reported before it can be older than the mirror's.
+				if (i < info.values.size() && !keepValues)
 					m_values[i].store(info.values[i], std::memory_order_relaxed);
 			}
 		}
