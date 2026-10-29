@@ -51,8 +51,8 @@ flowchart TD
   ui --> engine & scripting
   mcp --> engine
   scripting --> engine
-  engine --> ipc & platform
-  pluginhost --> ipc & platform
+  engine --> plugin & ipc & platform
+  pluginhost --> plugin & ipc & platform
   ipc --> platform
 ```
 
@@ -60,11 +60,12 @@ flowchart TD
 |---|---|---|---|
 | platform | `src/platform` | OS abstractions: audio and MIDI backends, threads and priorities, shared memory, clocks. Real-time primitives (lock-free queues, RT checker), logging, assertions, crash reports, per-user folders and atomic file writes | OS libraries |
 | ipc | `src/ipc` | Shared-memory buffers and rings, wake-up primitives, message protocol | platform |
-| engine | `src/engine` | Command registry, document model, undo, time, audio graph, transport, file I/O, plugin slots, user settings | ipc, platform |
+| plugin | `src/plugin` | The GNUbase plugin API: the plugin wrapper's interface, events and extensions ([plugin-api.md](plugin-api.md)), header-only; the remote plugin proxy and stub, their messages and the engine's connection to a host process in `src/plugin/remote` | nothing; `src/plugin/remote`: ipc, platform |
+| engine | `src/engine` | Command registry, document model, undo, time, audio graph, transport, file I/O, plugin slots, user settings | plugin, ipc, platform |
 | scripting | `src/scripting` | Lua runtime and the bindings generated from the command registry | engine API |
 | mcp | `src/mcp` | MCP protocol and transports, tools generated from the command registry | engine API, UI automation interface |
 | ui | `src/ui` | SDL3 windows, RmlUi documents, docking, widgets, UI automation | engine API, scripting, SDL3, RmlUi |
-| pluginhost | `src/pluginhost` | Host process, scanner, format adapters (VST3, CLAP, AU, LV2, FST) | ipc, platform, plugin SDKs |
+| pluginhost | `src/pluginhost` | Host process, scanner, format adapters (VST3, CLAP, AU, LV2, FST) | plugin, ipc, platform, plugin SDKs |
 | app | `src/app` | `main` and the wiring between modules | all of the above |
 
 - The engine never depends on UI code, SDL or RmlUi. CMake checks this when configuring (`gnubase_require_no_ui`).
@@ -82,6 +83,7 @@ flowchart TD
 | Audio workers | Track chains in parallel (#212) | Real-time rules, real-time priority |
 | Prefetch threads | Nodes without live input, ahead of the device in larger blocks (#23) | Real-time rules, real-time priority below the audio workers |
 | Disk threads | Streaming audio files in and recordings out (#17) | Work ahead of the audio thread |
+| Plugin control | Reads the replies and notifications of one host process and watches the process; main-thread calls to its plugins (loading, state, presets, editors, [plugin-api.md](plugin-api.md#threading-rules)) wait for their replies with a timeout | One per host process connection |
 | Background threads | Peak files (the peak cache's worker), analysis, saving projects, plugin scan coordination | Low priority |
 | Job threads | Background jobs such as backups, one thread each (`src/engine/jobs`) | Normal priority, never wait for the command thread |
 | Log writer | Writes what audio threads logged, every 10 ms (#8) | Low priority |
@@ -236,7 +238,8 @@ flowchart LR
 - The binary layout is fixed (no pointers, explicit sizes and alignment), so 32-bit and emulated host processes use the same protocol.
 - A watchdog gives every host process a deadline per cycle (#65).
 - Plugin editors are windows of the host process, kept in front of and positioned relative to GNUbase's windows (#69).
-- Inside the host, every format is adapted to the **GNUbase plugin API** (#61), modeled on CLAP's extension mechanism. GNUbase's own built-in processors implement the same API but run inside the engine (#114).
+- Inside the host, every format is adapted to the **GNUbase plugin API**, modeled on CLAP: a core interface (`plugin::Plugin`, `plugin::Host`) plus extensions looked up by id, in `src/plugin`. [plugin-api.md](plugin-api.md) describes it, how each format maps onto it, and how it is split between the processes. GNUbase's own built-in plugins implement the same API but run inside the engine (#114).
+- In the engine, a plugin slot is a `graph::Processor` that hosts a `plugin::Plugin`: a built-in plugin, or a proxy that forwards to an adapter in a host process. Events (`plugin::Event`) and the transport are fixed-layout records, so the IPC copies them as they are. The engine mirrors every parameter value, so reading one never waits for a host process.
 - **Test plugins** (`tests/plugins`, #63) are GNUbase's own minimal plugins for hosting tests: gain, a synth, a latency reporter, a parameter stress plugin, crash and hang on demand, and a state blob round trip. They are built as CLAP and VST3 plugins with each platform's file layout (CMake option `GNUBASE_TEST_PLUGINS`, on by default), and loader smoke tests load them through the format's own entry points. Crash and hang are only ever triggered in a plugin host process. [tests/plugins/README.md](../tests/plugins/README.md) describes each plugin and how tests use them.
 
 ## Scripting, MCP and tests
@@ -340,5 +343,6 @@ Adding a setting only needs a definition. Renaming one, or changing what its val
 | Topic | Ticket |
 |---|---|
 | UI render backend | #47 |
-| Plugin API details | #61 |
+| Plugin editor windows and their header | #69 |
+| Remaining plugin API questions ([plugin-api.md](plugin-api.md#open-questions)) | #64, #70, #72 |
 | IPC wake-up details, default hosting mode | #62, #76 |
