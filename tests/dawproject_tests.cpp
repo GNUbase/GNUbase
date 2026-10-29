@@ -590,6 +590,45 @@ TEST_CASE("unsafe and broken DAWproject files are refused", "[integration]")
 		ContainsSubstring("missing.dawproject"));
 }
 
+TEST_CASE("instruments this build doesn't have are left out when a project loads", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"inputChannels", 0}, {"captureSeconds", 1}});
+	const Json synth = run(client, "track.add", {{"type", "instrument"}, {"name", "Synth"}});
+	const Json probe = run(client, "track.add", {{"type", "instrument"}, {"name", "Probe"}});
+	const Json midi = run(client, "track.add", {{"type", "midi"}, {"name", "Lead"}});
+	run(client, "channel.set", {{"channel", synth.at("channel").at("id")}, {"instrument", "testSynth"}});
+	run(client, "channel.set", {{"channel", probe.at("channel").at("id")}, {"instrument", "noteProbe"}});
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+
+	// As if from a newer build or edited by hand: an unknown instrument, a generator that isn't one, and an
+	// instrument on a MIDI track.
+	std::map<std::string, std::string> entries = readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	const std::map<ObjectId, std::string> instruments = {{idOf(synth, "channel"), "futureSynth"},
+		{idOf(probe, "channel"), "sine"}, {idOf(midi, "channel"), "testSynth"}};
+	for (Json& channel : extension.at("project").at("channels"))
+		channel["instrument"] = instruments.at(channel.at("id").get<ObjectId>());
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+
+	run(client, "project.load", {{"path", file}});
+	const Json loaded = run(client, "project.get");
+	REQUIRE(loaded.at("channels").size() == 3);
+	for (const Json& channel : loaded.at("channels"))
+		CHECK(channel.at("instrument").get<std::string>().empty());
+	CHECK(withId(loaded.at("tracks"), "name", "Synth").at("type") == "instrument");
+
+	// The engine plays the project, and later commands change it.
+	run(client, "track.add", {{"type", "audio"}});
+	run(client, "transport.play");
+	run(client, "audio.render", {{"frames", 256}});
+	CHECK(run(client, "project.get").at("tracks").size() == 4);
+}
+
 TEST_CASE("saving keeps the history, loading starts a new one", "[integration]")
 {
 	const test::TempDir dir;

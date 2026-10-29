@@ -14,6 +14,11 @@
 
 namespace gnubase::engine
 {
+	// A controller event from controller.add or controller.set, checked against its type: what the type uses must be
+	// there and valid, the rest is left zero (controllerFromJson). Its id is left to the caller. Throws CommandError
+	// with messages that start with name, e.g. "controllers[0]".
+	Controller controllerFrom(const Json& item, const std::string& name);
+
 	// The project document, its commands, its undo history and its render snapshots. The commands run on the engine's
 	// command thread, the only thread that touches the document; every command that changes it records an undo step
 	// and publishes a new render snapshot for the audio thread.

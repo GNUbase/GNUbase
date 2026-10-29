@@ -83,7 +83,19 @@ namespace
 						"part"));
 		}
 
-		// Adds a note to the instrument track's part (0) or the MIDI track's (1).
+		// Adds another MIDI track routed to the instrument track, with a part from 0; returns the part's index for
+		// add and the track's id.
+		std::pair<int, ObjectId> addMidiTrack()
+		{
+			const ObjectId track = idOf(run(client, "track.add", {{"type", "midi"}}), "track");
+			run(client, "channel.set",
+				{{"channel", channelOf(client, track)}, {"output", channelOf(client, instrument)}});
+			m_parts.push_back(idOf(
+				run(client, "midiPart.add", {{"track", track}, {"position", 0}, {"length", ticks(48000)}}), "part"));
+			return {static_cast<int>(m_parts.size()) - 1, track};
+		}
+
+		// Adds a note to the instrument track's part (0), the MIDI track's (1) or another MIDI track's.
 		void add(int part, const TestNote& note)
 		{
 			run(client, "note.add",
@@ -208,6 +220,49 @@ TEST_CASE("MIDI parts hold pitch bend, pressure, program changes and SysEx as co
 	CHECK_THAT(bad({{"position", 0}, {"type", "sysEx"}, {"data", {0xF0, 0x80, 0xF7}}}), ContainsSubstring("data"));
 }
 
+TEST_CASE("controller events keep only what their type uses, so saving and loading gives them back", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = idOf(run(client, "track.add", {{"type", "instrument"}}), "track");
+	const ObjectId part =
+		idOf(run(client, "midiPart.add", {{"track", track}, {"position", 0}, {"length", 960}}), "part");
+	run(client, "controller.add",
+		{{"part", part},
+			{"controllers",
+				{{{"position", 1}, {"type", "pitchBend"}, {"number", 5}, {"value", 0.75}, {"channel", 2}},
+					{{"position", 2}, {"type", "channelPressure"}, {"number", 9}, {"value", 0.5}},
+					{{"position", 3}, {"type", "sysEx"}, {"number", 4}, {"value", 0.5}, {"channel", 3}, {"bank", 7},
+						{"data", {0xF0, 0x01, 0xF7}}},
+					{{"position", 4}, {"number", 7}, {"value", 0.5}, {"bank", 7}, {"data", {0xF0, 0xF7}}}}}});
+	const auto controllers = [&engine] { return engine.renderSnapshots().acquire().channels[0].controllers; };
+	const std::vector<RenderController> before = controllers();
+	REQUIRE(before.size() == 4);
+	CHECK(before[0].number == 0);
+	CHECK(before[0].channel == 2);
+	CHECK(before[1].number == 0);
+	CHECK(before[2].number == 0);
+	CHECK(before[2].value == 0);
+	CHECK(before[2].channel == 0);
+	CHECK(before[3].data.empty());
+
+	const std::string file = (dir.path() / "song.dawproject").u8string();
+	run(client, "project.save", {{"path", file}});
+	run(client, "project.load", {{"path", file}});
+	const std::vector<RenderController> after = controllers();
+	REQUIRE(after.size() == before.size());
+	for (size_t i = 0; i < before.size(); ++i)
+	{
+		INFO("controller " << i);
+		CHECK(after[i].type == before[i].type);
+		CHECK(after[i].number == before[i].number);
+		CHECK(after[i].value == before[i].value);
+		CHECK(after[i].channel == before[i].channel);
+		CHECK(after[i].data == before[i].data);
+	}
+}
+
 TEST_CASE("instrument channels play a built-in instrument", "[unit]")
 {
 	Engine engine;
@@ -242,6 +297,53 @@ TEST_CASE("notes reach the instrument at their exact sample, from instrument and
 	run(song.client, "transport.play");
 	run(song.client, "audio.render", {{"frames", 1500}});
 	song.check(positions(0, 1500));
+}
+
+TEST_CASE("a note that starts where another track's note of the same pitch ends sounds", "[integration]")
+{
+	const int blockSize = GENERATE(1, 64, 333);
+	INFO("block size " << blockSize);
+	Song song(blockSize);
+	const int other = song.addMidiTrack().first;
+	song.add(0, {100, 400, 60}); // the instrument track's own note, then a MIDI track's
+	song.add(1, {400, 700, 60});
+	song.add(1, {800, 1000, 62}); // a MIDI track's, then the instrument track's
+	song.add(0, {1000, 1200, 62});
+	song.add(1, {1300, 1500, 64}); // from one MIDI track to the other and back
+	song.add(other, {1500, 1700, 64});
+	song.add(1, {1700, 1900, 64});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 2000}});
+	song.check(positions(0, 2000));
+}
+
+TEST_CASE("when a MIDI track leaves its instrument, only the notes it alone holds end", "[integration]")
+{
+	Song song(64);
+	const auto [staying, stayingTrack] = song.addMidiTrack();
+	song.add(0, {0, 20000, 60}); // the instrument track's own note
+	song.add(1, {0, 20000, 64}); // both MIDI tracks hold 64
+	song.add(1, {0, 20000, 67});
+	song.add(staying, {0, 20000, 64});
+	song.add(staying, {0, 20000, 69});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 500}});
+	run(song.client, "channel.set", {{"channel", channelOf(song.client, song.midi)}, {"output", 0}}); // rerouted
+	run(song.client, "audio.render", {{"frames", 500}});
+	run(song.client, "track.remove", {{"track", stayingTrack}});
+	run(song.client, "audio.render", {{"frames", 500}});
+	run(song.client, "transport.stop");
+	run(song.client, "audio.render", {{"frames", 100}});
+
+	const std::vector<float> count = song.capture(0, 1600);
+	const std::vector<float> pitches = song.capture(1, 1600);
+	const auto heard = [&](size_t frame) { return std::make_pair(count[frame], pitches[frame]); };
+	CHECK(heard(499) == std::make_pair(4.0f, 60.0f + 64 + 67 + 69));
+	CHECK(heard(500) == std::make_pair(3.0f, 60.0f + 64 + 69));
+	CHECK(heard(999) == std::make_pair(3.0f, 60.0f + 64 + 69));
+	CHECK(heard(1000) == std::make_pair(1.0f, 60.0f));
+	CHECK(heard(1499) == std::make_pair(1.0f, 60.0f));
+	CHECK(heard(1500) == std::make_pair(0.0f, 0.0f));
 }
 
 TEST_CASE("stopping and locating end the sounding notes at once", "[integration]")

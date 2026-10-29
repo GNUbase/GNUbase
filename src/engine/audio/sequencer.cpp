@@ -12,6 +12,7 @@ namespace gnubase::engine
 	namespace
 	{
 		constexpr int64_t g_never = std::numeric_limits<int64_t>::max();
+		constexpr int64_t g_now = std::numeric_limits<int64_t>::min(); // the end of a note to end at once
 
 		graph::ProcessEvent noteEvent(graph::ProcessEvent::Type type, uint16_t index, uint32_t offset)
 		{
@@ -106,7 +107,8 @@ namespace gnubase::engine
 		auto controller = std::lower_bound(sequence.controllers.begin(), sequence.controllers.end(), begin,
 			[](const RenderController& c, int64_t at) { return c.position < at; });
 
-		// Event by event in time order; at one sample note-offs, then controller events, then note-ons.
+		// Event by event in time order; at one sample note-offs, then controller events, then note-ons. When the
+		// buffer is full, the rest of the segment is skipped.
 		for (;;)
 		{
 			int64_t ending = g_never;
@@ -116,72 +118,84 @@ namespace gnubase::engine
 			const int64_t changing = controller != sequence.controllers.end() ? controller->position : g_never;
 			const int64_t at = std::min({ending, starting, changing});
 			if (at >= end)
-				break;
+				return;
 			const auto offset = segment.offset + static_cast<uint32_t>(at - begin);
 			if (ending == at)
 			{
 				for (size_t i = 0; i < m_soundingCount;)
 				{
 					const uint16_t index = m_sounding[i];
-					if (m_ends[index] <= at)
-						noteOff(index, offset, out); // removes it from m_sounding
-					else
+					if (m_ends[index] > at)
 						++i;
+					else if (!noteOff(index, offset, out)) // removes it from m_sounding
+						return;
 				}
 			}
 			else if (changing == at)
 			{
-				out.add(controllerEvent(*controller, offset));
+				if (!out.add(controllerEvent(*controller, offset)))
+					return;
 				++controller;
 			}
 			else
 			{
-				if (note->end > note->start)
-					noteOn(*note, offset, out);
+				if (note->end > note->start && !noteOn(*note, offset, out))
+					return;
 				++note;
 			}
 		}
 	}
 
-	void MidiSequencer::noteOn(const RenderNote& note, uint32_t offset, graph::EventBuffer& out) noexcept
+	bool MidiSequencer::sounds(uint16_t index) const noexcept
+	{
+		return std::binary_search(soundingBegin(), soundingEnd(), index);
+	}
+
+	bool MidiSequencer::noteOn(const RenderNote& note, uint32_t offset, graph::EventBuffer& out) noexcept
 	{
 		const auto index = static_cast<uint16_t>(((note.channel % 16) * 128) + (note.pitch % 128));
+		if (!noteOff(index, offset, out)) // if it sounds, it ends first
+			return false;
+		graph::ProcessEvent event = noteEvent(graph::ProcessEvent::Type::NoteOn, index, offset);
+		event.velocity = note.velocity;
+		if (!out.add(event))
+			return false;
 		uint16_t* const first = m_sounding.data();
 		uint16_t* const last = first + m_soundingCount;
 		uint16_t* const position = std::lower_bound(first, last, index);
-		if (position != last && *position == index)
-		{
-			out.add(noteEvent(graph::ProcessEvent::Type::NoteOff, index, offset)); // it sounds: end it first
-		}
-		else
-		{
-			std::move_backward(position, last, last + 1);
-			*position = index;
-			++m_soundingCount;
-		}
+		std::move_backward(position, last, last + 1);
+		*position = index;
+		++m_soundingCount;
 		m_ends[index] = note.end;
-		graph::ProcessEvent event = noteEvent(graph::ProcessEvent::Type::NoteOn, index, offset);
-		event.velocity = note.velocity;
-		out.add(event);
+		return true;
 	}
 
-	void MidiSequencer::noteOff(uint16_t index, uint32_t offset, graph::EventBuffer& out) noexcept
+	bool MidiSequencer::noteOff(uint16_t index, uint32_t offset, graph::EventBuffer& out) noexcept
 	{
 		uint16_t* const first = m_sounding.data();
 		uint16_t* const last = first + m_soundingCount;
 		uint16_t* const position = std::lower_bound(first, last, index);
 		if (position == last || *position != index)
-			return;
+			return true;
+		if (!out.add(noteEvent(graph::ProcessEvent::Type::NoteOff, index, offset)))
+			return false;
 		std::move(position + 1, last, position);
 		--m_soundingCount;
-		out.add(noteEvent(graph::ProcessEvent::Type::NoteOff, index, offset));
+		return true;
 	}
 
 	void MidiSequencer::endAll(uint32_t offset, graph::EventBuffer& out) noexcept
 	{
+		size_t kept = 0;
 		for (size_t i = 0; i < m_soundingCount; ++i)
-			out.add(noteEvent(graph::ProcessEvent::Type::NoteOff, m_sounding[i], offset));
-		m_soundingCount = 0;
+		{
+			const uint16_t index = m_sounding[i];
+			if (out.add(noteEvent(graph::ProcessEvent::Type::NoteOff, index, offset)))
+				continue;
+			m_ends[index] = g_now; // wherever playback goes on
+			m_sounding[kept++] = index;
+		}
+		m_soundingCount = kept;
 	}
 
 	InstrumentChannel::InstrumentChannel(
@@ -197,24 +211,61 @@ namespace gnubase::engine
 			m_instrument->prepareFor(sampleRate, maxFrames);
 	}
 
+	void InstrumentChannel::releaseNotesOf(
+		MidiSequencer& departed, const std::vector<std::shared_ptr<MidiSequencer>>& staying) noexcept
+	{
+		for (const uint16_t* note = departed.soundingBegin(); note != departed.soundingEnd(); ++note)
+		{
+			const uint16_t index = *note;
+			if (!m_held[index] || m_ending[index] || m_sequencer->sounds(index) ||
+				std::any_of(staying.begin(), staying.end(),
+					[index](const std::shared_ptr<MidiSequencer>& source) { return source->sounds(index); }))
+				continue;
+			m_ending[index] = true;
+			++m_endingCount;
+		}
+		departed.forget();
+	}
+
 	void InstrumentChannel::process(const graph::ProcessContext& context) noexcept
 	{
 		m_events.clear();
-		if (m_release.exchange(false, std::memory_order_acq_rel))
-			for (size_t index = 0; index < m_held.size(); ++index)
-				if (m_held[index])
-					m_events.add(noteEvent(graph::ProcessEvent::Type::NoteOff, static_cast<uint16_t>(index), 0));
 		m_sequencer->process(
 			{context.audio, context.channels, context.frames, context.eventsIn, m_events, context.transport});
 
+		// At a stop every note ends, also those whose source can't end them any more.
+		if (m_playing && !context.transport.playing)
+			for (size_t index = 0; index < m_held.size(); ++index)
+				if (m_held[index] && !m_ending[index])
+				{
+					m_ending[index] = true;
+					++m_endingCount;
+				}
+		m_playing = context.transport.playing;
+
 		for (const graph::ProcessEvent& event : m_events)
 		{
+			if (event.type != graph::ProcessEvent::Type::NoteOn && event.type != graph::ProcessEvent::Type::NoteOff)
+				continue;
 			const size_t index = ((event.channel % 16) * 128) + (event.key % 128);
-			if (event.type == graph::ProcessEvent::Type::NoteOn)
-				m_held[index] = true;
-			else if (event.type == graph::ProcessEvent::Type::NoteOff)
-				m_held[index] = false;
+			m_held[index] = event.type == graph::ProcessEvent::Type::NoteOn;
+			if (m_ending[index]) // ended here, or started again
+			{
+				m_ending[index] = false;
+				--m_endingCount;
+			}
 		}
+		for (size_t index = 0; m_endingCount > 0 && index < m_ending.size(); ++index)
+		{
+			if (!m_ending[index])
+				continue;
+			if (!m_events.add(noteEvent(graph::ProcessEvent::Type::NoteOff, static_cast<uint16_t>(index), 0)))
+				break; // the next block
+			m_held[index] = false;
+			m_ending[index] = false;
+			--m_endingCount;
+		}
+
 		if (m_instrument)
 			m_instrument->process(
 				{context.audio, context.channels, context.frames, m_events, context.eventsOut, context.transport});
