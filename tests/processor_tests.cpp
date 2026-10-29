@@ -304,9 +304,10 @@ TEST_CASE("processor.list describes every built-in processor and its parameters"
 	for (const Json& processor : list)
 		ids.push_back(processor.at("id").get<std::string>());
 	CHECK(ids ==
-		std::vector<std::string>{"gainPan", "impulse", "noise", "noteProbe", "positionProbe", "sine", "testSynth"});
+		std::vector<std::string>{"compressor", "delay", "dither", "eq", "gainPan", "gate", "impulse", "limiter",
+			"noise", "noteProbe", "positionProbe", "reverb", "sine", "testSynth"});
 
-	const Json& synth = list[6];
+	const Json& synth = list[13];
 	CHECK(synth.at("instrument") == true);
 	CHECK(list[0].at("instrument") == false);
 	const Json& release = synth.at("parameters")[TestSynth::Release];
@@ -314,11 +315,26 @@ TEST_CASE("processor.list describes every built-in processor and its parameters"
 	CHECK(release.at("name") == "Release");
 	CHECK(release.at("unit") == "s");
 	CHECK(release.at("default") == 0.05);
+	CHECK(release.at("stepped") == false);
+	CHECK(release.at("options").empty());
+
+	// Stepped parameters, with names for their values or without.
+	const Json& eq = list[3];
+	CHECK(eq.at("name") == "Parametric EQ");
+	const Json& type = eq.at("parameters")[2];
+	CHECK(type.at("name") == "Band 1 type");
+	CHECK(type.at("stepped") == true);
+	CHECK(type.at("options") == Json{"Bell", "Low shelf", "High shelf", "Low cut", "High cut"});
+	CHECK(type.at("default") == 3); // a low cut
+	const Json& bits = list[2].at("parameters")[0];
+	CHECK(bits.at("name") == "Bits");
+	CHECK(bits.at("stepped") == true);
+	CHECK(bits.at("options").empty());
 }
 
 TEST_CASE("every built-in processor can be created, and unknown ones can't", "[unit]")
 {
 	for (const BuiltinInfo& info : builtins())
 		CHECK(createBuiltin(info.id) != nullptr);
-	CHECK_THROWS_WITH(createBuiltin("reverb"), ContainsSubstring("no built-in processor reverb"));
+	CHECK_THROWS_WITH(createBuiltin("chorus"), ContainsSubstring("no built-in processor chorus"));
 }

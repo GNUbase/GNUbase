@@ -283,14 +283,18 @@ namespace gnubase::engine::midifile
 
 				if (m_options.markers)
 				{
-					std::vector<const Marker*> markers;
+					// The markers of every marker track, cycle markers at their start, as in DAWproject.
+					std::vector<std::pair<Ticks, const Marker*>> markers;
 					for (const auto& [id, marker] : m_project.markers)
-						if (inRange(marker.position))
-							markers.push_back(&marker);
-					std::stable_sort(markers.begin(), markers.end(),
-						[](const Marker* a, const Marker* b) { return a->position < b->position; });
-					for (const Marker* marker : markers)
-						events.push_back({Rank::Meta, metaText(toFile(marker->position), g_metaMarker, marker->name)});
+					{
+						const Ticks at = time::toTicks(marker.position, m_project.tempo, m_project.sampleRate);
+						if (inRange(at))
+							markers.emplace_back(at, &marker);
+					}
+					std::stable_sort(
+						markers.begin(), markers.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+					for (const auto& [at, marker] : markers)
+						events.push_back({Rank::Meta, metaText(toFile(at), g_metaMarker, marker->name)});
 				}
 				return events;
 			}
@@ -881,7 +885,8 @@ namespace gnubase::engine::midifile
 				else if (event.status == g_statusMeta && event.meta == g_metaMarker)
 				{
 					Marker marker;
-					marker.position = at;
+					marker.position = {time::TimeBase::Musical, at};
+					marker.end = marker.position;
 					marker.name = fileText(event.data);
 					result.markers.push_back(std::move(marker));
 				}
@@ -891,7 +896,7 @@ namespace gnubase::engine::midifile
 		std::stable_sort(tempo.begin(), tempo.end(), byPosition);
 		std::stable_sort(signatures.begin(), signatures.end(), byPosition);
 		std::stable_sort(result.markers.begin(), result.markers.end(),
-			[](const Marker& a, const Marker& b) { return a.position < b.position; });
+			[](const Marker& a, const Marker& b) { return a.position.value < b.position.value; });
 
 		std::vector<time::TempoPoint> points{{0, g_defaultBpm, false}};
 		for (const auto& [at, bpm] : tempo)
