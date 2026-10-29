@@ -1,3 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 .claude/settings.local.json
 /build/
+# Waveform peak files, written next to audio files (#83)
+*.gbpeaks

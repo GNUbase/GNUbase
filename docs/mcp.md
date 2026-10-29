@@ -795,6 +795,43 @@ Result:
 
 - `media`: object, required
 
+#### `media_peakStatus`
+
+Engine command `media.peakStatus`. Read-only.
+
+The state of the waveform overviews of a media file, or of every media file: pending, generating (with progress from 0 to 1), ready, failed (with the error) or recording; the frames that have peaks; the peak file they were loaded from or written to; whether they were generated from the audio file rather than loaded. Peak files are kept next to their audio file as <file name>.gbpeaks, or in fallbackFolder where that can't be written.
+
+Arguments:
+
+- `media`: integer
+
+Result:
+
+- `fallbackFolder`: string, required
+- `media`: array of object, required
+
+#### `media_peaks`
+
+Engine command `media.peaks`. Read-only.
+
+The waveform overview of a media file for drawing: frames sample frames of the file from start (default: the rest of the file), in pixels columns (up to 65536). Per channel (default: all of them; channels picks some, numbered from 0), the smallest and largest sample of each column, from -32767 to 32767 (full scale). Pixels times channels can be up to 262144. The columns come from the coarsest level of the file's peaks (level: 256, 4096 or 65536 frames per peak) that has a peak per column, so they cost the same at any length. status says whether the peaks are ready; while they are generated, only the first available frames have columns and the rest are 0. A file that changed since its peaks were made gets new ones; media.peaksProgress and media.peaksReady report how that goes.
+
+Arguments:
+
+- `channels`: array of integer
+- `frames`: integer
+- `media`: integer, required
+- `pixels`: integer, required
+- `start`: integer
+
+Result:
+
+- `available`: integer, required
+- `channels`: array of object, required
+- `level`: integer, required
+- `media`: integer, required
+- `status`: one of "pending" | "generating" | "ready" | "failed" | "recording", required
+
 #### `media_prepareArchive`
 
 Engine command `media.prepareArchive`.
@@ -1299,6 +1336,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://graph.get`: The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes they receive audio and events from, and the order they are processed in.
 - `gnubase://history.get`: The undo history: every step with its action, time (UTC) and details, the position (steps before it are done, the ones after it can be redone) and the maximum number of steps (0: no limit).
 - `gnubase://job.list`: Every background job since the engine started, such as backups: id, kind, state (running, done, failed or cancelled), progress from 0 to 1, what it is doing, and its result or error once it ended.
+- `gnubase://media.peakStatus`: The state of the waveform overviews of a media file, or of every media file: pending, generating (with progress from 0 to 1), ready, failed (with the error) or recording; the frames that have peaks; the peak file they were loaded from or written to; whether they were generated from the audio file rather than loaded. Peak files are kept next to their audio file as <file name>.gbpeaks, or in fallbackFolder where that can't be written.
 - `gnubase://processor.list`: Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units.
 - `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts.
 - `gnubase://project.location`: Where the project is: its project file (set by project.save and project.load), the folder of that file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. All null for a project that has no file yet.

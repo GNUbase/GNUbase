@@ -28,6 +28,11 @@ namespace gnubase::engine
 	class ProjectModel;
 	struct RenderSnapshot;
 
+	namespace peaks
+	{
+		class PeakCache;
+	}
+
 	namespace settings
 	{
 		class Store;
@@ -186,6 +191,7 @@ namespace gnubase::engine
 		std::unique_ptr<ProjectModel> m_project;     // only the command thread touches the document
 		std::unique_ptr<AudioEngine> m_audio;        // plays the project; only the command thread changes it
 		std::unique_ptr<settings::Store> m_settings; // the user settings; only the command thread uses them
+		std::unique_ptr<peaks::PeakCache> m_peaks;   // waveform overviews of the project's media files
 		std::thread m_thread;
 	};
 

@@ -4,6 +4,7 @@
 #include "engine/audio/audioengine.h"
 #include "engine/document/projectmodel.h"
 #include "engine/jobs/jobs.h"
+#include "engine/peaks/peakcache.h"
 #include "engine/processors/builtin.h"
 #include "engine/settings/usersettings.h"
 #include "platform/log.h"
@@ -101,6 +102,9 @@ namespace gnubase::engine
 		m_project->registerCommands(*this, *m_jobs);
 		m_audio = std::make_unique<AudioEngine>(m_project->snapshots(), std::move(backends));
 		m_audio->registerCommands(*this);
+		m_peaks = std::make_unique<peaks::PeakCache>(
+			[this](const std::string& name, const Json& data) { broadcast(name, data); });
+		m_peaks->registerCommands(*this);
 		m_settings = std::make_unique<settings::Store>(settings::userFormat(), settingsDirectory);
 		settings::registerCommands(*this, *m_settings);
 		m_thread = std::thread([this] { run(); });
@@ -115,6 +119,7 @@ namespace gnubase::engine
 		}
 		m_wake.notify_all();
 		m_thread.join(); // fails the commands that didn't run, which jobs may wait for
+		m_peaks.reset(); // stops its worker while the clients can still be reached
 		m_jobs.reset();  // no command starts a job anymore; cancels the running ones and waits for them
 	}
 
@@ -255,6 +260,15 @@ namespace gnubase::engine
 			event.request = request.id;
 			for (const auto& client : clients)
 				client->post(event);
+		}
+		// After the command's own events, so media.added reaches clients before the peak worker's media.peaksReady.
+		try
+		{
+			m_peaks->sync(m_project->snapshots().latest().media);
+		}
+		catch (const std::exception& error)
+		{
+			logging::error("The peaks of the media files are not updated: {}", error.what());
 		}
 		if (request.sender)
 			request.sender->post(std::move(result));

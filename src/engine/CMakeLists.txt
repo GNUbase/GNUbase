@@ -37,6 +37,8 @@ add_library(gnubase-engine STATIC
 	graph/processor.h
 	jobs/jobs.cpp jobs/jobs.h
 	media/backup.cpp media/backup.h
+	peaks/peakcache.cpp peaks/peakcache.h
+	peaks/peaks.cpp peaks/peaks.h
 	processors/builtin.cpp processors/builtin.h
 	processors/gainpan.cpp processors/gainpan.h
 	processors/generators.cpp processors/generators.h
