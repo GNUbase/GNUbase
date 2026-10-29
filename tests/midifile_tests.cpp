@@ -163,6 +163,30 @@ namespace
 		return project;
 	}
 
+	// A project with one empty MIDI track, id 2.
+	Project midiProject()
+	{
+		Project project = newProject();
+		Track track;
+		track.id = 2;
+		track.type = TrackType::Midi;
+		track.name = "Keys";
+		project.trackById[track.id] = track;
+		project.tracks.push_back(track.id);
+		project.nextId = 100;
+		return project;
+	}
+
+	MidiPart& addPart(Project& project, ObjectId id, Ticks position, Ticks length)
+	{
+		MidiPart part;
+		part.id = id;
+		part.track = 2;
+		part.position = {gnubase::time::TimeBase::Musical, position};
+		part.length = length;
+		return project.midiParts[id] = part;
+	}
+
 	// exampleProject() at 96 ticks per quarter note: the tempo track, then the piano track.
 	Bytes exampleTempoTrack()
 	{
@@ -571,6 +595,170 @@ TEST_CASE("MIDI file import places signatures at bars and keeps tempo in range",
 	CHECK(imported.tracks.empty());
 }
 
+TEST_CASE("MIDI file import reads many signature changes", "[unit]")
+{
+	// A change at every bar, 3/4 and 4/4 in turn, at one tick per quarter note.
+	constexpr int count = 20000;
+	Bytes track;
+	track.reserve((count * 8) + 32);
+	std::vector<gnubase::time::SignatureChange> expected;
+	expected.reserve(count + 1);
+	for (int i = 0; i < count; ++i)
+	{
+		const auto numerator = static_cast<uint8_t>(i % 2 == 0 ? 3 : 4);
+		const auto delta = static_cast<uint8_t>(i == 0 ? 0 : 7 - numerator); // the previous bar's length
+		const Bytes event = {delta, 0xFF, 0x58, 0x04, numerator, 0x02, 0x18, 0x08};
+		track.insert(track.end(), event.begin(), event.end());
+		expected.push_back({i, {numerator, 4}});
+	}
+	// 5/8 a tick into the last bar moves to the next bar start, and 7/8 a tick later, still before it, replaces it.
+	const Bytes rest = join({{0x01, 0xFF, 0x58, 0x04, 0x05, 0x03, 0x0C, 0x08},
+		{0x01, 0xFF, 0x58, 0x04, 0x07, 0x03, 0x0C, 0x08}, {0x00}, endOfTrack()});
+	track.insert(track.end(), rest.begin(), rest.end());
+	expected.push_back({count, {7, 8}});
+
+	const midifile::Import imported =
+		midifile::importFile(midifile::read(join({header(1, 1, 1), chunk("MTrk", track)})));
+	CHECK(imported.signatures == SignatureMap(expected));
+}
+
+TEST_CASE("MIDI file import keeps UTF-8 text and reads other text as Windows-1252", "[unit]")
+{
+	const auto named = [](const Bytes& name, uint8_t pitch)
+	{
+		const Bytes start = {0x00, 0xFF, 0x03, static_cast<uint8_t>(name.size())};
+		return chunk(
+			"MTrk", join({start, name, {0x00, 0x90, pitch, 0x64}, {0x60, 0x80, pitch, 0x40}, {0x00}, endOfTrack()}));
+	};
+	const Bytes marker = join({{0x00, 0xFF, 0x06, 0x06}, {'B', 'r', 0xFC, 'c', 'k', 'e'}, {0x00}, endOfTrack()});
+	const midifile::File file =
+		midifile::read(join({header(1, 6, 96), chunk("MTrk", marker), named({'B', 0xE4, 's', 's', 'e'}, 40), // Latin-1
+			named({'B', 0xC3, 0xA4, 's', 's', 'e'}, 41),                                                     // UTF-8
+			named({0x93, 'H', 'i', 0x94, 0x81}, 42), // quotes, and a byte Windows-1252 has no character for
+			named({'a', 0xC0, 0xAF}, 43),            // an overlong UTF-8 sequence
+			named({0xE2, 0x82}, 44)}));              // a UTF-8 sequence cut short
+	const midifile::Import imported = midifile::importFile(file);
+	REQUIRE(imported.markers.size() == 1);
+	CHECK(imported.markers[0].name ==
+		"Br\xC3\xBC"
+		"cke");
+	REQUIRE(imported.tracks.size() == 5);
+	CHECK(imported.tracks[0].name == "B\xC3\xA4sse");
+	CHECK(imported.tracks[1].name == "B\xC3\xA4sse");
+	CHECK(imported.tracks[2].name == "\xE2\x80\x9CHi\xE2\x80\x9D\xEF\xBF\xBD");
+	CHECK(imported.tracks[3].name == "a\xC3\x80\xC2\xAF");
+	CHECK(imported.tracks[4].name == "\xC3\xA2\xE2\x80\x9A");
+}
+
+TEST_CASE("the MIDI file reader ends a track before tick 2^32", "[unit]")
+{
+	// A note-on after each of 17 maximal delta times: the 17th would be past 2^32.
+	constexpr int64_t maxDelta = 0x0FFFFFFF;
+	Bytes track = {0x00, 0x90, 0x3C, 0x64};
+	for (int i = 0; i < 17; ++i)
+	{
+		const Bytes event = {0xFF, 0xFF, 0xFF, 0x7F, 0x3C, 0x64};
+		track.insert(track.end(), event.begin(), event.end());
+	}
+	const Bytes rest = join({{0x00}, endOfTrack()});
+	track.insert(track.end(), rest.begin(), rest.end());
+	const midifile::File file = midifile::read(join({header(1, 1, 1), chunk("MTrk", track)}));
+	REQUIRE(file.tracks.size() == 1);
+	CHECK(file.tracks[0].events.size() == 17);
+	CHECK(file.tracks[0].events.back().tick == 16 * maxDelta);
+	CHECK(file.tracks[0].end == 16 * maxDelta);
+	CHECK(file.tracks[0].end < midifile::g_maxTick);
+
+	// At one tick per quarter note, project ticks are far larger, and still exact.
+	const midifile::Import imported = midifile::importFile(file);
+	REQUIRE(imported.tracks.size() == 1);
+	REQUIRE(imported.tracks[0].notes.size() == 17);
+	CHECK(imported.tracks[0].notes.back().position == 16 * maxDelta * g_quarter);
+}
+
+TEST_CASE("MIDI file export rescales positions far into the project exactly", "[unit]")
+{
+	Project project = midiProject();
+	constexpr Ticks far = Ticks{1} << 34; // quarter notes: far * g_quarter * 480 doesn't fit 64 bits
+	MidiPart& part = addPart(project, 3, far * g_quarter, g_quarter);
+	part.notes[4] = Note{4, 0, g_quarter / 2, 60, midi::velocityFromMidi1(100), 0, g_defaultReleaseVelocity};
+	const midifile::File file = midifile::exportProject(project, {});
+	REQUIRE(file.tracks.size() == 2);
+	std::vector<int64_t> noteTicks;
+	for (const midifile::Event& event : file.tracks[1].events)
+		if ((event.status & 0xE0) == 0x80)
+			noteTicks.push_back(event.tick);
+	CHECK(noteTicks == std::vector<int64_t>{far * 480, (far * 480) + 240});
+	CHECK(file.tracks[1].end == (far + 1) * 480);
+}
+
+TEST_CASE("MIDI file export ends a note where the next one of its pitch and channel starts", "[unit]")
+{
+	Project project = midiProject();
+	const uint16_t velocity = midi::velocityFromMidi1(100);
+	const auto note = [velocity](
+						  MidiPart& part, ObjectId id, Ticks position, Ticks length, uint8_t pitch, uint8_t channel)
+	{ part.notes[id] = Note{id, position, length, pitch, velocity, channel, g_defaultReleaseVelocity}; };
+	MidiPart& first = addPart(project, 3, 0, 8 * g_quarter);
+	note(first, 10, 0, 2 * g_quarter, 60, 0);                     // B inside it: ends where B starts
+	note(first, 11, g_quarter / 2, g_quarter / 2, 60, 0);         // B
+	note(first, 12, 0, 2 * g_quarter, 60, 1);                     // another channel: as it is
+	note(first, 13, 3 * g_quarter, g_quarter, 62, 0);             // overlaps the next: ends where it starts
+	note(first, 14, 7 * g_quarter / 2, 3 * g_quarter / 2, 62, 0); //
+	note(first, 15, 11 * g_quarter / 2, 2 * g_quarter, 64, 0);    // a note in the next part starts inside it
+	note(addPart(project, 4, 6 * g_quarter, 2 * g_quarter), 16, 0, g_quarter, 64, 0);
+
+	const auto key = [velocity](Ticks position, Ticks length, int pitch, int channel)
+	{ return NoteKey{position, length, pitch, velocity, g_defaultReleaseVelocity, channel}; };
+	std::vector<NoteKey> expected = {key(0, g_quarter / 2, 60, 0), key(g_quarter / 2, g_quarter / 2, 60, 0),
+		key(0, 2 * g_quarter, 60, 1), key(3 * g_quarter, g_quarter / 2, 62, 0),
+		key(7 * g_quarter / 2, 3 * g_quarter / 2, 62, 0), key(11 * g_quarter / 2, g_quarter / 2, 64, 0),
+		key(6 * g_quarter, g_quarter, 64, 0)};
+	std::sort(expected.begin(), expected.end());
+
+	for (const int format : {0, 1})
+	{
+		CAPTURE(format);
+		midifile::ExportOptions options;
+		options.format = format;
+		const midifile::Import imported =
+			midifile::importFile(midifile::read(midifile::write(midifile::exportProject(project, options))));
+		midifile::ImportedTrack all;
+		for (const midifile::ImportedTrack& track : imported.tracks)
+			all.notes.insert(all.notes.end(), track.notes.begin(), track.notes.end());
+		CHECK(absoluteNotes(all) == expected);
+	}
+}
+
+TEST_CASE("MIDI file import lays a type 2 file's sequences out one after another", "[unit]")
+{
+	const Bytes first = join({{0x00, 0xFF, 0x51, 0x03, 0x09, 0x27, 0xC0},           // 100 BPM
+		{0x00, 0xFF, 0x58, 0x04, 0x03, 0x02, 0x18, 0x08},                           // 3/4
+		{0x00, 0x90, 0x3C, 0x64}, {0x60, 0x80, 0x3C, 0x40}, {0x60}, endOfTrack()}); // two quarters
+	const Bytes second =
+		join({{0x00, 0x90, 0x3E, 0x64}, {0x60, 0x80, 0x3E, 0x40}, {0x82, 0x20}, endOfTrack()}); // a bar
+	const Bytes third = join({{0x00, 0xFF, 0x51, 0x03, 0x06, 0x1A, 0x80},                       // 150 BPM
+		{0x00, 0xFF, 0x58, 0x04, 0x06, 0x03, 0x0C, 0x08},                                       // 6/8
+		{0x00, 0xFF, 0x06, 0x01, 'C'}, {0x30, 0x90, 0x40, 0x64}, {0x30, 0x80, 0x40, 0x40}, {0x00}, endOfTrack()});
+	const midifile::Import imported = midifile::importFile(
+		midifile::read(join({header(2, 3, 96), chunk("MTrk", first), chunk("MTrk", second), chunk("MTrk", third)})));
+
+	// Each sequence starts at the bar start after the previous one's end, at 120 BPM in 4/4 unless it sets its own.
+	CHECK(imported.signatures == SignatureMap({{0, {3, 4}}, {1, {4, 4}}, {2, {6, 8}}}));
+	const std::vector<gnubase::time::TempoPoint>& tempo = imported.tempo.points();
+	REQUIRE(tempo.size() == 3);
+	CHECK(std::make_tuple(tempo[0].position, tempo[0].bpm) == std::make_tuple(Ticks{0}, 100.0));
+	CHECK(std::make_tuple(tempo[1].position, tempo[1].bpm) == std::make_tuple(3 * g_quarter, 120.0));
+	CHECK(std::make_tuple(tempo[2].position, tempo[2].bpm) == std::make_tuple(7 * g_quarter, 150.0));
+	REQUIRE(imported.markers.size() == 1);
+	CHECK(imported.markers[0].position == 7 * g_quarter);
+	REQUIRE(imported.tracks.size() == 3);
+	CHECK(imported.tracks[0].notes.at(0).position == 0);
+	CHECK(imported.tracks[1].notes.at(0).position == 3 * g_quarter);
+	CHECK(imported.tracks[2].notes.at(0).position == 15 * g_quarter / 2);
+	CHECK(imported.tracks[2].notes.at(0).length == g_quarter / 2);
+}
+
 TEST_CASE("midiFile.import and midiFile.export round-trip a file through the engine", "[integration]")
 {
 	const test::TempDir dir;
@@ -656,6 +844,32 @@ TEST_CASE("midiFile.import splits a type 0 file by channel", "[integration]")
 	REQUIRE(file.tracks.size() == 1);
 	CHECK(std::count_if(file.tracks[0].events.begin(), file.tracks[0].events.end(),
 			  [](const midifile::Event& event) { return (event.status & 0xF0) == 0x90; }) == 2);
+}
+
+TEST_CASE("midiFile.import reads names that aren't UTF-8 and the project still saves", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const std::filesystem::path path = dir.path() / "latin1.mid";
+	writeBytes(path,
+		join({header(1, 1, 96),
+			chunk("MTrk",
+				join({{0x00, 0xFF, 0x03, 0x05}, {'B', 0xE4, 's', 's', 'e'}, {0x00, 0xFF, 0x06, 0x06},
+					{'B', 'r', 0xFC, 'c', 'k', 'e'}, {0x00, 0x90, 0x3C, 0x64}, {0x60, 0x80, 0x3C, 0x40}, {0x00},
+					endOfTrack()}))}));
+	run(client, "midiFile.import", {{"path", utf8(path)}});
+	const Json project = run(client, "project.get");
+	REQUIRE(project.at("tracks").size() == 1);
+	CHECK(project.at("tracks")[0].at("name") == "B\xC3\xA4sse");
+	REQUIRE(project.at("markers").size() == 1);
+	CHECK(project.at("markers")[0].at("name") ==
+		"Br\xC3\xBC"
+		"cke");
+
+	const std::filesystem::path saved = dir.path() / "song.dawproject";
+	run(client, "project.save", {{"path", utf8(saved)}});
+	CHECK(std::filesystem::exists(saved));
 }
 
 TEST_CASE("midiFile commands reject what they can't do", "[integration]")

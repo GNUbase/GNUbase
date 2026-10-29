@@ -24,6 +24,9 @@ namespace gnubase::engine::midifile
 	inline constexpr uint8_t g_statusSysExContinue = 0xF7; // a continued or escaped SysEx packet
 	inline constexpr uint8_t g_statusMeta = 0xFF;
 
+	// Tracks end before this tick: at any resolution, every position then fits in 64 bits as project ticks.
+	inline constexpr int64_t g_maxTick = int64_t{1} << 32;
+
 	struct Event
 	{
 		int64_t tick = 0;          // from the start of the file
@@ -60,8 +63,9 @@ namespace gnubase::engine::midifile
 	std::vector<uint8_t> write(const File& file);
 
 	// Reads a file's bytes, also inside a RIFF (RMID) container. Tolerates what common files get wrong: running
-	// status across meta events, unknown chunks, a missing end-of-track event and a last chunk that is cut short.
-	// Throws std::runtime_error for what isn't a readable MIDI file, such as SMPTE time division.
+	// status across meta events, unknown chunks, a missing end-of-track event and a last chunk that is cut short. A
+	// track that runs to g_maxTick ends at its last event before. Throws std::runtime_error for what isn't a readable
+	// MIDI file, such as SMPTE time division.
 	File read(const uint8_t* data, size_t size);
 	File read(const std::vector<uint8_t>& bytes);
 

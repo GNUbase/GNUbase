@@ -102,8 +102,9 @@ namespace gnubase::engine
 				"(one track with every MIDI channel) or 1 (default: a tempo track, then a track per exported track), "
 				"with ppq ticks per quarter note (24-960, default 480). The file has the notes and controllers as they "
 				"play, converted to MIDI 1.0, the track names, tempo and time signatures, and the markers unless "
-				"markers is false. range {start, end} in ticks exports only what starts in it, moved to the file's "
-				"start. Returns the number of tracks in the file.",
+				"markers is false. A note ends where the next note of its pitch and channel starts, so that "
+				"overlapping notes read back the same. range {start, end} in ticks exports only what starts in it, "
+				"moved to the file's start. Returns the number of tracks in the file.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties",
 						{{"path", string}, {"type", {{"type", "integer"}, {"enum", {0, 1}}}}, {"ppq", integer},
@@ -117,10 +118,10 @@ namespace gnubase::engine
 			{"midiFile.import", 1,
 				"Imports a standard MIDI file (type 0, 1 or 2) into new MIDI tracks (trackType midi, the default) or "
 				"instrument tracks, one part per track from the bar of its first event to the bar after its last. A "
-				"type 0 file gets a track per MIDI channel. Unless tempo is false, the file's tempo and time "
-				"signatures "
-				"replace the project's; unless markers is false, its markers are added. One undo step. Returns the new "
-				"tracks and parts.",
+				"type 0 file gets a track per MIDI channel; the sequences of a type 2 file are laid out one after "
+				"another, each from a bar start. Names that aren't UTF-8 are read as Windows-1252. Unless tempo is "
+				"false, the file's tempo and time signatures replace the project's; unless markers is false, its "
+				"markers are added. One undo step. Returns the new tracks and parts.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties",
 						{{"path", string}, {"trackType", {{"type", "string"}, {"enum", {"midi", "instrument"}}}},

@@ -28,11 +28,13 @@ namespace gnubase::engine::midifile
 		constexpr uint8_t g_bankSelect = 0;
 		constexpr uint8_t g_bankSelectLsb = 32;
 
-		// Rounds to the nearest tick of the other resolution.
+		// Rounds to the nearest tick of the other resolution, halves away from zero. Whole multiples of from and the
+		// rest are scaled apart, so that value * to, which can exceed 64 bits, is never formed.
 		Ticks rescale(Ticks value, Ticks from, Ticks to)
 		{
-			const Ticks product = value * to;
-			return product >= 0 ? (product + (from / 2)) / from : -((-product + (from / 2)) / from);
+			const Ticks rest = (value % from) * to; // the same sign as value, and below from * to in magnitude
+			const Ticks rounded = rest >= 0 ? (rest + (from / 2)) / from : -((-rest + (from / 2)) / from);
+			return ((value / from) * to) + rounded;
 		}
 
 		// The order of events at one tick.
@@ -56,12 +58,61 @@ namespace gnubase::engine::midifile
 				{ return std::tie(a.event.tick, a.rank) < std::tie(b.event.tick, b.rank); });
 		}
 
-		Track toTrack(std::vector<Ranked> events, int64_t end)
+		// A note in file ticks, before it becomes a note-on and a note-off.
+		struct FileNote
 		{
-			sortEvents(events);
+			int64_t on = 0;
+			int64_t off = 0;
+			uint8_t channel = 0;
+			uint8_t pitch = 0;
+			uint8_t velocity = 0;
+			uint8_t releaseVelocity = 0;
+		};
+
+		// What goes into one file track.
+		struct Content
+		{
+			std::vector<Ranked> events;
+			std::vector<FileNote> notes;
+		};
+
+		// The notes as note-on and note-off events. A note ends where the next one of its pitch and channel starts,
+		// at least a tick after its own start: a note-off ends the oldest sounding note of its key, so notes of one
+		// key that overlap would otherwise be read back paired differently.
+		void addNotes(std::vector<FileNote>& notes, std::vector<Ranked>& events)
+		{
+			std::stable_sort(
+				notes.begin(), notes.end(), [](const FileNote& a, const FileNote& b) { return a.on < b.on; });
+			constexpr size_t none = std::numeric_limits<size_t>::max();
+			std::vector<size_t> previous(size_t{16} * 256, none); // by channel and pitch
+			for (size_t i = 0; i < notes.size(); ++i)
+			{
+				size_t& last = previous[(size_t{notes[i].channel} * 256) + notes[i].pitch];
+				if (last != none)
+				{
+					FileNote& earlier = notes[last];
+					earlier.off = std::max(std::min(earlier.off, notes[i].on), earlier.on + 1);
+				}
+				last = i;
+			}
+			events.reserve(events.size() + (2 * notes.size()));
+			for (const FileNote& note : notes)
+			{
+				events.push_back({Rank::NoteOn,
+					channelEvent(note.on, static_cast<uint8_t>(0x90U | note.channel), note.pitch, note.velocity)});
+				events.push_back({Rank::NoteOff,
+					channelEvent(
+						note.off, static_cast<uint8_t>(0x80U | note.channel), note.pitch, note.releaseVelocity)});
+			}
+		}
+
+		Track toTrack(Content content, int64_t end)
+		{
+			addNotes(content.notes, content.events);
+			sortEvents(content.events);
 			Track track;
-			track.events.reserve(events.size());
-			for (Ranked& ranked : events)
+			track.events.reserve(content.events.size());
+			for (Ranked& ranked : content.events)
 				track.events.push_back(std::move(ranked.event));
 			track.end = std::max(end, track.events.empty() ? int64_t{0} : track.events.back().tick);
 			return track;
@@ -101,10 +152,10 @@ namespace gnubase::engine::midifile
 					tracks = std::move(sorted);
 				}
 
-				std::vector<std::vector<Ranked>> trackEvents;
-				trackEvents.reserve(tracks.size());
+				std::vector<Content> contents;
+				contents.reserve(tracks.size());
 				for (const ObjectId id : tracks)
-					trackEvents.push_back(trackContent(m_project.trackById.at(id)));
+					contents.push_back(trackContent(m_project.trackById.at(id)));
 				const int64_t end = m_options.end == std::numeric_limits<Ticks>::max()
 					? toFile(std::max(m_lastPartEnd, m_options.start))
 					: toFile(m_options.end);
@@ -112,19 +163,22 @@ namespace gnubase::engine::midifile
 				File file;
 				file.format = m_options.format;
 				file.ticksPerQuarter = m_options.ticksPerQuarter;
-				std::vector<Ranked> conductor = conductorEvents();
+				Content conductor{conductorEvents(), {}};
 				if (m_options.format == 0)
 				{
-					for (std::vector<Ranked>& events : trackEvents)
-						for (Ranked& ranked : events)
+					for (Content& content : contents)
+					{
+						for (Ranked& ranked : content.events)
 							if (ranked.rank != Rank::Meta) // the track name: the file has the project's only
-								conductor.push_back(std::move(ranked));
+								conductor.events.push_back(std::move(ranked));
+						conductor.notes.insert(conductor.notes.end(), content.notes.begin(), content.notes.end());
+					}
 					file.tracks.push_back(toTrack(std::move(conductor), end));
 					return file;
 				}
 				file.tracks.push_back(toTrack(std::move(conductor), end));
-				for (std::vector<Ranked>& events : trackEvents)
-					file.tracks.push_back(toTrack(std::move(events), end));
+				for (Content& content : contents)
+					file.tracks.push_back(toTrack(std::move(content), end));
 				return file;
 			}
 
@@ -241,10 +295,10 @@ namespace gnubase::engine::midifile
 				return events;
 			}
 
-			std::vector<Ranked> trackContent(const engine::Track& track)
+			Content trackContent(const engine::Track& track)
 			{
-				std::vector<Ranked> events;
-				events.push_back({Rank::Meta, metaText(0, g_metaTrackName, track.name)});
+				Content content;
+				content.events.push_back({Rank::Meta, metaText(0, g_metaTrackName, track.name)});
 				std::vector<const MidiPart*> parts;
 				for (const auto& [id, part] : m_project.midiParts)
 					if (part.track == track.id)
@@ -254,11 +308,11 @@ namespace gnubase::engine::midifile
 				std::stable_sort(parts.begin(), parts.end(),
 					[&start](const MidiPart* a, const MidiPart* b) { return start(a) < start(b); });
 				for (const MidiPart* part : parts)
-					addPart(*part, events);
-				return events;
+					addPart(*part, content);
+				return content;
 			}
 
-			void addPart(const MidiPart& part, std::vector<Ranked>& events)
+			void addPart(const MidiPart& part, Content& content)
 			{
 				const time::TempoMap& tempo = m_project.tempo;
 				const Ticks partStart = time::toTicks(part.position, tempo, m_project.sampleRate);
@@ -280,12 +334,9 @@ namespace gnubase::engine::midifile
 						continue;
 					const Ticks ends = std::min({at + note->length, partEnd, m_options.end});
 					const int64_t on = toFile(at);
-					const int64_t off = std::max(toFile(ends), on + 1);
-					const auto channelBits = static_cast<uint8_t>(note->channel & 0x0FU);
-					events.push_back(channel(on, Rank::NoteOn, static_cast<uint8_t>(0x90U | channelBits), note->pitch,
-						midi::noteOnVelocityToMidi1(note->velocity)));
-					events.push_back(channel(off, Rank::NoteOff, static_cast<uint8_t>(0x80U | channelBits), note->pitch,
-						midi::velocityToMidi1(note->releaseVelocity)));
+					content.notes.push_back(
+						{on, std::max(toFile(ends), on + 1), static_cast<uint8_t>(note->channel & 0x0FU), note->pitch,
+							midi::noteOnVelocityToMidi1(note->velocity), midi::velocityToMidi1(note->releaseVelocity)});
 				}
 
 				for (const auto& [id, controller] : part.controllers)
@@ -293,7 +344,7 @@ namespace gnubase::engine::midifile
 					const Ticks at = partStart + controller.position;
 					if (at >= partEnd || !inRange(at))
 						continue;
-					addController(controller, toFile(at), events);
+					addController(controller, toFile(at), content.events);
 				}
 			}
 
@@ -350,12 +401,121 @@ namespace gnubase::engine::midifile
 			Ticks m_lastPartEnd = 0;
 		};
 
-		// Reads one file track's channel events into tracks: one, or one per channel for type 0.
+		// The length of the UTF-8 sequence at bytes[at], or 0 where it isn't valid UTF-8: cut short, overlong, a
+		// surrogate or above U+10FFFF.
+		size_t utf8Length(const std::vector<uint8_t>& bytes, size_t at)
+		{
+			const uint8_t first = bytes[at];
+			if (first < 0x80)
+				return 1;
+			size_t length = 4;
+			uint32_t codePoint = first & 0x07U;
+			uint32_t smallest = 0x10000;
+			if ((first & 0xE0U) == 0xC0)
+			{
+				length = 2;
+				codePoint = first & 0x1FU;
+				smallest = 0x80;
+			}
+			else if ((first & 0xF0U) == 0xE0)
+			{
+				length = 3;
+				codePoint = first & 0x0FU;
+				smallest = 0x800;
+			}
+			else if ((first & 0xF8U) != 0xF0)
+			{
+				return 0;
+			}
+			if (length > bytes.size() - at)
+				return 0;
+			for (size_t i = 1; i < length; ++i)
+			{
+				const uint8_t next = bytes[at + i];
+				if ((next & 0xC0U) != 0x80)
+					return 0;
+				codePoint = (codePoint << 6) | (next & 0x3FU);
+			}
+			const bool surrogate = codePoint >= 0xD800 && codePoint <= 0xDFFF;
+			return codePoint < smallest || codePoint > 0x10FFFF || surrogate ? 0 : length;
+		}
+
+		bool isUtf8(const std::vector<uint8_t>& bytes)
+		{
+			for (size_t at = 0; at < bytes.size();)
+			{
+				const size_t length = utf8Length(bytes, at);
+				if (length == 0)
+					return false;
+				at += length;
+			}
+			return true;
+		}
+
+		// Appends a code point below U+10000.
+		void appendUtf8(std::string& text, uint32_t codePoint)
+		{
+			const auto add = [&text](uint32_t byte) { text += static_cast<char>(static_cast<uint8_t>(byte)); };
+			if (codePoint < 0x80)
+			{
+				add(codePoint);
+			}
+			else if (codePoint < 0x800)
+			{
+				add(0xC0U | (codePoint >> 6));
+				add(0x80U | (codePoint & 0x3FU));
+			}
+			else
+			{
+				add(0xE0U | (codePoint >> 12));
+				add(0x80U | ((codePoint >> 6) & 0x3FU));
+				add(0x80U | (codePoint & 0x3FU));
+			}
+		}
+
+		// Windows-1252's characters for bytes 0x80-0x9F; 0 where it has none. From 0xA0 on, it is Latin-1, whose
+		// bytes are their code points.
+		constexpr std::array<uint16_t, 32> g_windows1252 = {0x20AC, 0, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+			0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0, 0x017D, 0, 0, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013,
+			0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0, 0x017E, 0x0178};
+		constexpr uint32_t g_replacementCharacter = 0xFFFD;
+
+		// A text meta event's text as UTF-8. The standard leaves the encoding open: text that is valid UTF-8 stays as
+		// it is, anything else is read as Windows-1252, the superset of Latin-1 that most such files use.
+		std::string fileText(const std::vector<uint8_t>& bytes)
+		{
+			if (isUtf8(bytes))
+				return {bytes.begin(), bytes.end()};
+			std::string text;
+			text.reserve(bytes.size() * 2);
+			for (const uint8_t byte : bytes)
+			{
+				if (byte >= 0x80 && byte < 0xA0)
+				{
+					const uint16_t mapped = g_windows1252.at(byte - 0x80U);
+					appendUtf8(text, mapped != 0 ? mapped : g_replacementCharacter);
+				}
+				else
+				{
+					appendUtf8(text, byte);
+				}
+			}
+			return text;
+		}
+
+		// The tick of a file track's end-of-track event, at least its last event's.
+		int64_t trackEnd(const midifile::Track& track)
+		{
+			return std::max(track.end, track.events.empty() ? int64_t{0} : track.events.back().tick);
+		}
+
+		// Reads one file track's channel events into tracks: one, or one per channel for type 0. Positions start at
+		// offset, in project ticks.
 		class TrackReader
 		{
 		public:
-			TrackReader(int ticksPerQuarter, bool byChannel)
-				: m_ticksPerQuarter(ticksPerQuarter), m_byChannel(byChannel)
+			TrackReader(int ticksPerQuarter, bool byChannel, Ticks offset)
+				: m_ticksPerQuarter(ticksPerQuarter), m_byChannel(byChannel), m_offset(offset)
 			{
 			}
 
@@ -365,7 +525,7 @@ namespace gnubase::engine::midifile
 				{
 					if (event.status == g_statusMeta && event.meta == g_metaTrackName && !m_hasName)
 					{
-						m_name.assign(event.data.begin(), event.data.end());
+						m_name = fileText(event.data);
 						m_hasName = true;
 					}
 					else if (event.status == g_statusSysEx || event.status == g_statusSysExContinue)
@@ -377,7 +537,7 @@ namespace gnubase::engine::midifile
 						channelMessage(event);
 					}
 				}
-				const int64_t end = std::max(track.end, track.events.empty() ? int64_t{0} : track.events.back().tick);
+				const int64_t end = trackEnd(track);
 				for (uint8_t c = 0; c < 16; ++c)
 					flushBank(c);
 				for (const auto& [key, open] : m_open)
@@ -422,7 +582,10 @@ namespace gnubase::engine::midifile
 				std::optional<uint8_t> lsb;
 			};
 
-			Ticks toProject(int64_t tick) const { return rescale(tick, m_ticksPerQuarter, g_ticksPerQuarter); }
+			Ticks toProject(int64_t tick) const
+			{
+				return m_offset + rescale(tick, m_ticksPerQuarter, g_ticksPerQuarter);
+			}
 
 			ImportedTrack& target(uint8_t channel) { return m_tracks[m_byChannel ? channel : 0]; }
 
@@ -570,6 +733,7 @@ namespace gnubase::engine::midifile
 
 			int m_ticksPerQuarter;
 			bool m_byChannel;
+			Ticks m_offset;
 			std::string m_name;
 			bool m_hasName = false;
 			std::map<int, ImportedTrack> m_tracks;
@@ -579,66 +743,83 @@ namespace gnubase::engine::midifile
 			int64_t m_sysExTick = 0;
 		};
 
-		struct TimedMeta
+		constexpr double g_defaultBpm = 120.0;
+
+		// Type 2 sequences that would start later are left out, so that positions stay far inside 64 bits: a track
+		// is shorter than g_maxTick file ticks, which is less than 2^53 project ticks at any resolution.
+		constexpr Ticks g_lastSequenceStart = Ticks{1} << 53;
+
+		// A tempo meta event's tempo, kept in the project's range; none for other events and invalid tempos.
+		std::optional<double> tempoOf(const Event& event)
 		{
-			int64_t tick = 0;
-			const Event* event = nullptr;
+			const std::vector<uint8_t>& data = event.data;
+			if (event.status != g_statusMeta || event.meta != g_metaTempo || data.size() < 3)
+				return std::nullopt;
+			const uint32_t microseconds = (uint32_t{data[0]} << 16) | (uint32_t{data[1]} << 8) | data[2];
+			if (microseconds == 0)
+				return std::nullopt;
+			return std::clamp(g_microsecondsPerMinute / microseconds, time::g_minBpm, time::g_maxBpm);
+		}
+
+		// A time signature meta event's signature; none for other events and signatures the project can't hold.
+		std::optional<time::TimeSignature> signatureOf(const Event& event)
+		{
+			const std::vector<uint8_t>& data = event.data;
+			if (event.status != g_statusMeta || event.meta != g_metaTimeSignature || data.size() < 2 || data[0] == 0 ||
+				data[1] > 4)
+				return std::nullopt;
+			return time::TimeSignature{data[0], 1 << data[1]};
+		}
+
+		// Signature changes, added by position, each moved to the first bar start at or after it. Each bar is worked
+		// out from the last change, so this takes linear time.
+		class SignatureBuilder
+		{
+		public:
+			void add(Ticks at, const time::TimeSignature& signature)
+			{
+				const int64_t bar = barFrom(at);
+				time::SignatureChange& last = m_changes.back();
+				if (bar == last.bar)
+				{
+					last.signature = signature;
+					return;
+				}
+				if (last.signature == signature)
+					return;
+				m_start += (bar - last.bar) * barLength(last.signature);
+				m_changes.push_back({bar, signature});
+			}
+
+			// The first bar start at or after at, which is at least the position of the last change added.
+			Ticks nextBarStart(Ticks at) const
+			{
+				const time::SignatureChange& last = m_changes.back();
+				return m_start + ((barFrom(at) - last.bar) * barLength(last.signature));
+			}
+
+			time::SignatureMap map() const { return time::SignatureMap(m_changes); }
+
+		private:
+			static Ticks barLength(const time::TimeSignature& signature)
+			{
+				return Ticks{signature.numerator} * 4 * g_ticksPerQuarter / signature.denominator;
+			}
+
+			// The first bar at or after at. A position before the last change's bar start goes to that bar: it is
+			// after the bar start before, since that change was moved there from a position at or before at.
+			int64_t barFrom(Ticks at) const
+			{
+				const time::SignatureChange& last = m_changes.back();
+				if (at <= m_start)
+					return last.bar;
+				const Ticks length = barLength(last.signature);
+				return last.bar + ((at - m_start + length - 1) / length);
+			}
+
+			std::vector<time::SignatureChange> m_changes{{0, {}}};
+			Ticks m_start = 0; // where the last change's bar starts
 		};
-
-		// The meta events of one type in every track, by tick.
-		std::vector<TimedMeta> metaEvents(const File& file, uint8_t type)
-		{
-			std::vector<TimedMeta> found;
-			for (const midifile::Track& track : file.tracks)
-				for (const Event& event : track.events)
-					if (event.status == g_statusMeta && event.meta == type)
-						found.push_back({event.tick, &event});
-			std::stable_sort(
-				found.begin(), found.end(), [](const TimedMeta& a, const TimedMeta& b) { return a.tick < b.tick; });
-			return found;
-		}
-
-		time::TempoMap importTempo(const File& file)
-		{
-			std::vector<time::TempoPoint> points{{0, 120.0, false}};
-			for (const TimedMeta& meta : metaEvents(file, g_metaTempo))
-			{
-				const std::vector<uint8_t>& data = meta.event->data;
-				if (data.size() < 3)
-					continue;
-				const uint32_t microseconds = (uint32_t{data[0]} << 16) | (uint32_t{data[1]} << 8) | data[2];
-				if (microseconds == 0)
-					continue;
-				const double bpm = std::clamp(g_microsecondsPerMinute / microseconds, time::g_minBpm, time::g_maxBpm);
-				const Ticks at = rescale(meta.tick, file.ticksPerQuarter, g_ticksPerQuarter);
-				if (at == points.back().position)
-					points.back().bpm = bpm;
-				else if (bpm != points.back().bpm)
-					points.push_back({at, bpm, false});
-			}
-			return time::TempoMap(points);
-		}
-
-		time::SignatureMap importSignatures(const File& file)
-		{
-			std::vector<time::SignatureChange> changes{{0, {}}};
-			for (const TimedMeta& meta : metaEvents(file, g_metaTimeSignature))
-			{
-				const std::vector<uint8_t>& data = meta.event->data;
-				if (data.size() < 2 || data[0] == 0 || data[1] > 4)
-					continue;
-				const time::TimeSignature signature{data[0], 1 << data[1]};
-				const time::SignatureMap bars(changes);
-				const Ticks at = rescale(meta.tick, file.ticksPerQuarter, g_ticksPerQuarter);
-				const int64_t bar = bars.toBarsBeats(at).bar;
-				const int64_t changeBar = bars.barStart(bar) == at ? bar : bar + 1;
-				if (changeBar == changes.back().bar)
-					changes.back().signature = signature;
-				else if (!(changes.back().signature == signature))
-					changes.push_back({changeBar, signature});
-			}
-			return time::SignatureMap(changes);
-		}
 	}
 
 	File exportProject(const Project& project, const ExportOptions& options)
@@ -648,20 +829,88 @@ namespace gnubase::engine::midifile
 
 	Import importFile(const File& file)
 	{
-		Import result;
-		result.tempo = importTempo(file);
-		result.signatures = importSignatures(file);
-		for (const TimedMeta& meta : metaEvents(file, g_metaMarker))
+		const auto toProject = [&file](int64_t tick) { return rescale(tick, file.ticksPerQuarter, g_ticksPerQuarter); };
+
+		// Where each file track starts. The tracks of a type 2 file are independent sequences: they go one after
+		// another, each from the first bar start after the previous one's end.
+		const bool sequences = file.format == 2;
+		std::vector<Ticks> offsets(file.tracks.size(), 0);
+		if (sequences)
 		{
-			Marker marker;
-			marker.position = rescale(meta.tick, file.ticksPerQuarter, g_ticksPerQuarter);
-			marker.name.assign(meta.event->data.begin(), meta.event->data.end());
-			result.markers.push_back(std::move(marker));
+			SignatureBuilder bars;
+			Ticks start = 0;
+			for (size_t i = 0; i < file.tracks.size(); ++i)
+			{
+				if (start > g_lastSequenceStart)
+				{
+					offsets.resize(i);
+					break;
+				}
+				offsets[i] = start;
+				bars.add(start, time::TimeSignature{});
+				for (const Event& event : file.tracks[i].events)
+					if (const std::optional<time::TimeSignature> signature = signatureOf(event))
+						bars.add(start + toProject(event.tick), *signature);
+				start = bars.nextBarStart(start + toProject(trackEnd(file.tracks[i])));
+			}
 		}
-		for (const midifile::Track& track : file.tracks)
+
+		// Tempo, signatures and markers from every track, by position. A sequence starts at 120 BPM in 4/4 unless it
+		// sets its own.
+		Import result;
+		std::vector<std::pair<Ticks, double>> tempo;
+		std::vector<std::pair<Ticks, time::TimeSignature>> signatures;
+		for (size_t i = 0; i < offsets.size(); ++i)
 		{
-			TrackReader reader(file.ticksPerQuarter, file.format == 0);
-			reader.read(track);
+			if (sequences)
+			{
+				tempo.emplace_back(offsets[i], g_defaultBpm);
+				signatures.emplace_back(offsets[i], time::TimeSignature{});
+			}
+			for (const Event& event : file.tracks[i].events)
+			{
+				const Ticks at = offsets[i] + toProject(event.tick);
+				if (const std::optional<double> bpm = tempoOf(event))
+				{
+					tempo.emplace_back(at, *bpm);
+				}
+				else if (const std::optional<time::TimeSignature> signature = signatureOf(event))
+				{
+					signatures.emplace_back(at, *signature);
+				}
+				else if (event.status == g_statusMeta && event.meta == g_metaMarker)
+				{
+					Marker marker;
+					marker.position = at;
+					marker.name = fileText(event.data);
+					result.markers.push_back(std::move(marker));
+				}
+			}
+		}
+		const auto byPosition = [](const auto& a, const auto& b) { return a.first < b.first; };
+		std::stable_sort(tempo.begin(), tempo.end(), byPosition);
+		std::stable_sort(signatures.begin(), signatures.end(), byPosition);
+		std::stable_sort(result.markers.begin(), result.markers.end(),
+			[](const Marker& a, const Marker& b) { return a.position < b.position; });
+
+		std::vector<time::TempoPoint> points{{0, g_defaultBpm, false}};
+		for (const auto& [at, bpm] : tempo)
+		{
+			if (at == points.back().position)
+				points.back().bpm = bpm;
+			else if (bpm != points.back().bpm)
+				points.push_back({at, bpm, false});
+		}
+		result.tempo = time::TempoMap(points);
+		SignatureBuilder bars;
+		for (const auto& [at, signature] : signatures)
+			bars.add(at, signature);
+		result.signatures = bars.map();
+
+		for (size_t i = 0; i < offsets.size(); ++i)
+		{
+			TrackReader reader(file.ticksPerQuarter, file.format == 0, offsets[i]);
+			reader.read(file.tracks[i]);
 			for (ImportedTrack& imported : reader.take())
 				result.tracks.push_back(std::move(imported));
 		}

@@ -28,8 +28,10 @@ namespace gnubase::engine::midifile
 	// The project's MIDI and instrument tracks as a MIDI file: notes and controllers as they play (cut at the end of
 	// their parts), track names, the project's name, tempo (ramps in sixteenth-note steps), time signatures and
 	// markers. At one tick, meta events come first, then note-offs, then controllers, then note-ons. Program changes
-	// with a bank are preceded by bank select (controllers 0 and 32). Every track ends with the last part or the
-	// range. Throws std::invalid_argument for a track that isn't a MIDI or instrument track.
+	// with a bank are preceded by bank select (controllers 0 and 32). A note ends where the next note of its pitch and
+	// channel in the same file track starts, at least a tick after its own start: a note-off ends the oldest sounding
+	// note of its key, so overlapping notes of one key would otherwise come back paired differently. Every track ends
+	// with the last part or the range. Throws std::invalid_argument for a track that isn't a MIDI or instrument track.
 	File exportProject(const Project& project, const ExportOptions& options);
 
 	// A track read from a MIDI file. Positions are from the file's start, in project ticks.
@@ -49,11 +51,14 @@ namespace gnubase::engine::midifile
 	};
 
 	// What a MIDI file holds. A type 1 or 2 file gives a track per file track with events, a type 0 file a track
-	// per MIDI channel. Notes end at their note-off (the first note-on of a pitch and channel ends first) or, if
-	// they have none, at the track's end. Bank select directly before a program change at the same tick becomes
-	// the program change's bank. Tempo and time signatures that the project can't hold are adjusted: tempo to
-	// 1-999 BPM, signature changes to the next bar start; signatures with a beat other than 1, 2, 4, 8 or 16 are
-	// left out. Ids are left at 0.
+	// per MIDI channel. The tracks of a type 2 file are independent sequences: they are laid out one after another,
+	// each from the first bar start after the previous one's end, and each starts at 120 BPM in 4/4 unless it sets
+	// its own tempo and signature at its start; sequences that would start after 2^53 ticks are left out. Notes end
+	// at their note-off (the first note-on of a pitch and channel ends first) or, if they have none, at the track's
+	// end. Bank select directly before a program change at the same tick becomes the program change's bank. Tempo
+	// and time signatures that the project can't hold are adjusted: tempo to 1-999 BPM, signature changes to the
+	// next bar start; signatures with a beat other than 1, 2, 4, 8 or 16 are left out. Track and marker names that
+	// aren't valid UTF-8 are read as Windows-1252 (Latin-1 with more characters in 0x80-0x9F). Ids are left at 0.
 	Import importFile(const File& file);
 
 	// The part a track's events go into: from the start of the bar of its first event to the end of the bar of its

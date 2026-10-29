@@ -119,7 +119,8 @@ namespace gnubase::engine::midifile
 			out.patchLength(lengthAt);
 		}
 
-		// Reads bytes; running past the end throws Truncated, which the track reader takes as the track's end.
+		// Reads bytes; running past the end throws Truncated, which the track reader takes as the track's end. So
+		// does an event at g_maxTick or later.
 		struct Truncated
 		{
 		};
@@ -197,7 +198,10 @@ namespace gnubase::engine::midifile
 		// Reads the next event into the track; false at the end-of-track event.
 		bool readEvent(Input& in, Track& track, int64_t& tick, uint8_t& running)
 		{
-			tick += in.variableLength();
+			const int64_t next = tick + in.variableLength();
+			if (next >= g_maxTick)
+				throw Truncated(); // the track ends at its last event before
+			tick = next;
 			uint8_t status = in.peek();
 			if (status < 0x80)
 			{
