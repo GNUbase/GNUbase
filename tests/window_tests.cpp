@@ -278,6 +278,26 @@ TEST_CASE("a sample document looks the same on every platform", "[ui]")
 	}
 }
 
+TEST_CASE("effects at a window's edges draw as in a context of the window's size", "[ui]")
+{
+	// A context can be larger than the frame it draws, e.g. for a frame while its window shrinks. A box shadow wider
+	// than the frame then comes out as with a context of the frame's size, and a blur outside the frame draws nothing.
+	// Each drawing has its own RmlUi, which would otherwise share the shadow's texture between the two.
+	const auto draw = [](bool larger)
+	{
+		Gpu gpu;
+		const ui::Window& window = gpu.open("edges.rml", 200, 150);
+		const ui::Size pixels = window.pixelSize();
+		if (larger)
+			window.context().SetDimensions({pixels.width + 100, pixels.height + 100});
+		return gpu.screenshot(window, larger ? "edges-larger" : "edges");
+	};
+	const ui::Image expected = draw(false);
+	const test::ImageDiff diff = test::compareImages(draw(true), expected, {2});
+	INFO(diff.report);
+	CHECK(diff.equal);
+}
+
 TEST_CASE("RmlUi's effects look as RmlUi's OpenGL 3 renderer draws them", "[ui]")
 {
 	// The render spike's features document (#47): one tile per thing a renderer draws. Each tile is compared with what
