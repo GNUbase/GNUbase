@@ -24,11 +24,14 @@ gnubase_target_defaults(gnubase-platform)
 add_library(gnubase-rtcheck OBJECT rt/allocationcheck.cpp)
 target_link_libraries(gnubase-rtcheck PUBLIC gnubase-platform)
 gnubase_target_defaults(gnubase-rtcheck)
-# On Linux it checks the C heap too (malloc, free, posix_memalign and so on, which third-party code calls): the linker
-# sends the executable's calls through wrappers in allocationcheck.cpp. Not in sanitizer builds, which replace the C
-# heap themselves. On Windows, debug builds hook the C runtime's heap instead; macOS has no such hook.
+# On Linux it checks the C heap too (malloc, free, posix_memalign and so on, which third-party code calls): the
+# executable defines those functions in allocationcheck.cpp and hands them on to glibc's allocator. That file is kept
+# out of link-time optimization and builtin handling, so the definitions stay plain functions the dynamic linker binds
+# every library's calls to. Not in sanitizer builds, which replace the C heap themselves. On Windows, debug builds hook
+# the C runtime's heap instead; macOS has no such hook.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT GNUBASE_SANITIZERS)
 	target_compile_definitions(gnubase-rtcheck PUBLIC GNUBASE_RTCHECK_MALLOC)
-	target_link_options(gnubase-rtcheck INTERFACE
-		"LINKER:--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free,--wrap=posix_memalign,--wrap=aligned_alloc")
+	target_compile_options(gnubase-rtcheck PRIVATE -fno-builtin)
+	set_target_properties(gnubase-rtcheck PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF
+		INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
 endif()

@@ -3,15 +3,16 @@
 // Linked only into test and debug executables (gnubase-rtcheck). The C heap is checked too where possible, so malloc,
 // realloc, free and their aligned variants in third-party code are reported:
 // - MSVC debug builds hook the C runtime's heap.
-// - Linux links the executable with GNU ld's --wrap for the C heap functions (GNUBASE_RTCHECK_MALLOC, set in
-//   src/platform/CMakeLists.txt), so every call from code linked into it goes through the __wrap_ functions below.
-//   Sanitizer builds leave the C heap alone, as the sanitizers replace it themselves.
-// ponytail: macOS and MSVC release builds see C++ allocations only: macOS's linker has no --wrap, and its SDK may
-// turn malloc calls into typed-allocation calls, so replacing malloc there is unreliable. Rubber Band runs the same
-// code on every platform, so Linux CI covers it. None of these see locks or system calls in third-party code;
+// - On Linux the executable replaces malloc, free and the other C heap functions with the ones at the end of this file
+//   (GNUBASE_RTCHECK_MALLOC, set in src/platform/CMakeLists.txt), so every call in the process goes through them,
+//   from the C and C++ libraries too. Sanitizer builds leave the C heap alone, as the sanitizers replace it themselves.
+// ponytail: macOS and MSVC release builds see C++ allocations only: macOS has no exported allocator to hand on to, and
+// its SDK may turn malloc calls into typed-allocation calls, so replacing malloc there is unreliable. Rubber Band runs
+// the same code on every platform, so Linux CI covers it. None of these see locks or system calls in third-party code;
 // RealtimeSanitizer (Clang 20+, -fsanitize=realtime, Linux and macOS) catches those if we need it.
 #include "platform/rt/realtime.h"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdlib>
 #include <new>
@@ -243,61 +244,70 @@ void operator delete[](void* memory, std::align_val_t /*alignment*/, const std::
 // NOLINTEND(readability-inconsistent-declaration-parameter-name)
 
 #ifdef GNUBASE_RTCHECK_MALLOC
-// GNU ld's --wrap=malloc sends the executable's calls to malloc to __wrap_malloc, and __real_malloc to the C library's.
-// NOLINTBEGIN(bugprone-reserved-identifier,readability-identifier-naming,misc-use-internal-linkage): --wrap needs
-// exactly these names, with external linkage.
+// The executable defines the C heap functions itself, so every caller in the process gets these: the code linked into
+// it, and the C and C++ libraries too, as the dynamic linker binds their calls to the executable's definitions. They
+// hand the work to the C library's allocator under the names glibc exports for allocators that replace malloc. The
+// linker's --wrap is no use here: it only redirects calls in the objects being linked, and in link-time optimized
+// builds it missed malloc and free entirely, which the compiler treats as builtins.
+// NOLINTBEGIN(bugprone-reserved-identifier,readability-identifier-naming,misc-use-internal-linkage,
+// readability-inconsistent-declaration-parameter-name): replacing malloc needs exactly the C library's names, with
+// external linkage.
 extern "C"
 {
-	void* __real_malloc(std::size_t size);
-	void* __real_calloc(std::size_t count, std::size_t size);
-	void* __real_realloc(void* memory, std::size_t size);
-	void __real_free(void* memory);
-	int __real_posix_memalign(void** memory, std::size_t alignment, std::size_t size);
-	void* __real_aligned_alloc(std::size_t alignment, std::size_t size);
+	void* __libc_malloc(std::size_t size) noexcept;
+	void* __libc_calloc(std::size_t count, std::size_t size) noexcept;
+	void* __libc_realloc(void* memory, std::size_t size) noexcept;
+	void __libc_free(void* memory) noexcept;
+	void* __libc_memalign(std::size_t alignment, std::size_t size) noexcept;
 
-	void* __wrap_malloc(std::size_t size);
-	void* __wrap_calloc(std::size_t count, std::size_t size);
-	void* __wrap_realloc(void* memory, std::size_t size);
-	void __wrap_free(void* memory);
-	int __wrap_posix_memalign(void** memory, std::size_t alignment, std::size_t size);
-	void* __wrap_aligned_alloc(std::size_t alignment, std::size_t size);
-
-	void* __wrap_malloc(std::size_t size)
+	void* malloc(std::size_t size) noexcept
 	{
 		checkCHeap(g_allocation);
-		return __real_malloc(size);
+		return __libc_malloc(size);
 	}
 
-	void* __wrap_calloc(std::size_t count, std::size_t size)
+	void* calloc(std::size_t count, std::size_t size) noexcept
 	{
 		checkCHeap(g_allocation);
-		return __real_calloc(count, size);
+		return __libc_calloc(count, size);
 	}
 
-	void* __wrap_realloc(void* memory, std::size_t size)
+	void* realloc(void* memory, std::size_t size) noexcept
 	{
 		checkCHeap(g_allocation);
-		return __real_realloc(memory, size);
+		return __libc_realloc(memory, size);
 	}
 
-	void __wrap_free(void* memory)
+	void free(void* memory) noexcept
 	{
 		if (memory != nullptr)
 			checkCHeap(g_deallocation);
-		__real_free(memory);
+		__libc_free(memory);
 	}
 
-	int __wrap_posix_memalign(void** memory, std::size_t alignment, std::size_t size)
+	int posix_memalign(void** memory, std::size_t alignment, std::size_t size) noexcept
 	{
 		checkCHeap(g_allocation);
-		return __real_posix_memalign(memory, alignment, size);
+		if (alignment == 0 || (alignment & (alignment - 1)) != 0 || alignment % sizeof(void*) != 0)
+			return EINVAL;
+		void* const block = __libc_memalign(alignment, size);
+		if (block == nullptr)
+			return ENOMEM;
+		*memory = block;
+		return 0;
 	}
 
-	void* __wrap_aligned_alloc(std::size_t alignment, std::size_t size)
+	void* aligned_alloc(std::size_t alignment, std::size_t size) noexcept
 	{
 		checkCHeap(g_allocation);
-		return __real_aligned_alloc(alignment, size);
+		if (alignment == 0 || (alignment & (alignment - 1)) != 0)
+		{
+			errno = EINVAL;
+			return nullptr;
+		}
+		return __libc_memalign(alignment, size);
 	}
 }
-// NOLINTEND(bugprone-reserved-identifier,readability-identifier-naming,misc-use-internal-linkage)
+// NOLINTEND(bugprone-reserved-identifier,readability-identifier-naming,misc-use-internal-linkage,
+// readability-inconsistent-declaration-parameter-name)
 #endif
