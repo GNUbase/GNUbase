@@ -2,6 +2,7 @@
 #include "engine/media/backup.h"
 
 #include "engine/audiofile/audiofile.h"
+#include "engine/audiofile/file.h"
 #include "engine/dawproject/dawproject.h"
 #include "engine/jobs/jobs.h"
 
@@ -13,6 +14,7 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <numeric>
 #include <set>
 #include <stdexcept>
 #include <string_view>
@@ -46,16 +48,32 @@ namespace gnubase::engine
 			return text;
 		}
 
-		// A name in folder that is neither taken nor there yet: name, then "<stem>-2<extension>" and so on.
-		fs::path freePath(const fs::path& folder, const fs::path& name, std::set<std::string>& taken)
+		fs::path numbered(const fs::path& name, int number)
+		{
+			if (number == 1)
+				return name;
+			return fs::u8path(name.stem().u8string() + "-" + std::to_string(number) + name.extension().u8string());
+		}
+
+		// Creates the file if it isn't there; false if it is. Throws std::runtime_error.
+		bool createExclusively(const fs::path& file)
+		{
+			if (detail::openFile(file.u8string(), "wbx"))
+				return true;
+			const std::string problem = detail::lastError();
+			std::error_code error;
+			if (fs::exists(file, error))
+				return false;
+			throw std::runtime_error("can't create " + file.u8string() + ": " + problem);
+		}
+
+		// createFreeFile, skipping names that differ only in case from the ones in taken, and adding the new one.
+		fs::path createFreeFile(const fs::path& folder, const fs::path& name, std::set<std::string>& taken)
 		{
 			for (int number = 1;; ++number)
 			{
-				const fs::path candidate = number == 1
-					? name
-					: fs::u8path(name.stem().u8string() + "-" + std::to_string(number) + name.extension().u8string());
-				std::error_code error;
-				if (taken.count(folded(candidate)) == 0 && !fs::exists(folder / candidate, error))
+				const fs::path candidate = numbered(name, number);
+				if (taken.count(folded(candidate)) == 0 && createExclusively(folder / candidate))
 				{
 					taken.insert(folded(candidate));
 					return folder / candidate;
@@ -69,7 +87,7 @@ namespace gnubase::engine
 			std::ifstream input(from, std::ios::binary);
 			if (!input)
 				throw std::runtime_error("can't read " + from.u8string());
-			std::ofstream output(to, std::ios::binary | std::ios::trunc);
+			std::ofstream output(to, std::ios::binary | std::ios::trunc); // made for this copy by createFreeFile
 			if (!output)
 				throw std::runtime_error("can't create " + to.u8string());
 			std::vector<char> buffer(g_copyChunk);
@@ -98,10 +116,25 @@ namespace gnubase::engine
 			time::Samples target = 0;
 		};
 
+		// Playback resamples a file at another rate than the project's on a grid that starts at the file's first
+		// frame: every step frames of the file fall on a whole frame of the project. A file moved by a multiple of
+		// step plays the same samples; moved by anything else, it plays them a different fraction of a frame later.
+		time::Samples resamplingStep(double fileRate, double projectRate)
+		{
+			const auto from = std::llround(fileRate);
+			const auto to = std::llround(projectRate);
+			if (from <= 0 || to <= 0 || from == to || static_cast<double>(from) != fileRate ||
+				static_cast<double>(to) != projectRate)
+				return 1;
+			return from / std::gcd(from, to);
+		}
+
 		// The ranges of a media file that its audio events play, each with handles before and after, merged where
-		// they overlap or touch. Empty if an event starts beyond the end of the file, which can't be mapped.
+		// they overlap or touch. Every range starts, and every one but the last ends, on a multiple of step, so that
+		// the frames keep their place on the resampling grid. Empty if an event starts beyond the end of the file,
+		// which can't be mapped.
 		std::vector<Range> usedRanges(
-			const Project& project, ObjectId media, time::Samples frames, time::Samples handle)
+			const Project& project, ObjectId media, time::Samples frames, time::Samples handle, time::Samples step)
 		{
 			std::vector<Range> ranges;
 			for (const auto& [id, event] : project.audioEvents)
@@ -110,8 +143,9 @@ namespace gnubase::engine
 					continue;
 				if (event.offset >= frames)
 					return {};
-				ranges.push_back({std::max<time::Samples>(0, event.offset - handle),
-					std::min(frames, event.offset + event.length + handle), 0});
+				const time::Samples start = std::max<time::Samples>(0, event.offset - handle);
+				const time::Samples end = event.offset + event.length + handle;
+				ranges.push_back({start - (start % step), std::min(frames, (end + step - 1) / step * step), 0});
 			}
 			std::sort(ranges.begin(), ranges.end(), [](const Range& a, const Range& b) { return a.start < b.start; });
 			std::vector<Range> merged;
@@ -127,6 +161,14 @@ namespace gnubase::engine
 				target += range.end - range.start;
 			}
 			return merged;
+		}
+
+		// Whether a minimized file keeps what matters of the source: every sample, read as 32-bit float, and the
+		// metadata that refers to its frames. 32-bit integers don't fit into a float, and a Broadcast Wave time
+		// reference counts from the first frame, which minimizing moves; such files are copied whole.
+		bool canMinimize(const AudioFileInfo& info)
+		{
+			return info.sampleFormat != SampleFormat::Int32 && !info.broadcast;
 		}
 
 		// The format of a minimized file: the source's where GNUbase writes it and the samples survive unchanged
@@ -266,24 +308,76 @@ namespace gnubase::engine
 		return !relative.empty() && *relative.begin() != fs::path("..") && relative != fs::path(".");
 	}
 
-	std::string copyIntoFolder(const std::string& file, const fs::path& folder)
+	fs::path createFreeFile(const fs::path& folder, const fs::path& name)
 	{
-		std::error_code error;
-		fs::create_directories(folder, error);
-		if (error)
-			throw std::runtime_error("can't create " + folder.u8string() + ": " + error.message());
 		std::set<std::string> taken;
-		const fs::path target = freePath(folder, pathOf(file).filename(), taken);
+		return createFreeFile(folder, name, taken);
+	}
+
+	void removeFiles(const std::vector<std::string>& files)
+	{
+		std::error_code ignored;
+		for (const std::string& file : files)
+			fs::remove(pathOf(file), ignored);
+	}
+
+	void copyMedia(std::vector<MediaCopy>& files, const fs::path& folder, JobContext& job)
+	{
+		// How much there is to do, in bytes; 0 for a file that can't be read.
+		std::vector<std::uintmax_t> sizes;
+		sizes.reserve(files.size());
+		std::vector<bool> readable;
+		readable.reserve(files.size());
+		std::uintmax_t total = 1;
+		for (MediaCopy& file : files)
+		{
+			file.to.clear();
+			const fs::path source = pathOf(file.from);
+			std::error_code error;
+			std::ifstream input(source, std::ios::binary | std::ios::ate);
+			readable.push_back(fs::is_regular_file(source, error) && input.good());
+			const std::streamoff size = readable.back() ? static_cast<std::streamoff>(input.tellg()) : 0;
+			sizes.push_back(size > 0 ? static_cast<std::uintmax_t>(size) : 0);
+			total += sizes.back();
+		}
+
+		std::vector<std::string> made;
 		try
 		{
-			copyFile(pathOf(file), target, [](size_t) {});
+			std::error_code error;
+			fs::create_directories(folder, error);
+			if (error)
+				throw std::runtime_error("can't create " + folder.u8string() + ": " + error.message());
+			std::uintmax_t finished = 0; // bytes of the files done
+			for (size_t i = 0; i < files.size(); ++i)
+			{
+				job.checkCancelled();
+				MediaCopy& file = files[i];
+				if (readable[i])
+				{
+					const fs::path source = pathOf(file.from);
+					const std::string detail = source.filename().u8string();
+					job.progress(static_cast<double>(finished) / static_cast<double>(total), detail);
+					const fs::path target = createFreeFile(folder, source.filename());
+					made.push_back(target.u8string());
+					std::uintmax_t done = finished;
+					copyFile(source, target,
+						[&](size_t bytes)
+						{
+							done += bytes;
+							job.checkCancelled();
+							job.progress(static_cast<double>(done) / static_cast<double>(total), detail);
+						});
+					file.to = target.u8string();
+				}
+				finished += sizes[i];
+			}
 		}
 		catch (...)
 		{
-			fs::remove(target, error);
+			removeFiles(made);
 			throw;
 		}
-		return target.u8string();
 	}
 
 	std::string fileNameProblem(const std::string& name)
@@ -339,7 +433,8 @@ namespace gnubase::engine
 			if (plan.minimize)
 			{
 				const auto handle = static_cast<time::Samples>(std::llround(options.handles * media.sampleRate));
-				for (const Range& range : usedRanges(project, id, media.length, handle))
+				const time::Samples step = resamplingStep(media.sampleRate, project.sampleRate);
+				for (const Range& range : usedRanges(project, id, media.length, handle, step))
 					plan.bytes += static_cast<std::uintmax_t>(range.end - range.start) *
 						static_cast<std::uintmax_t>(media.channels) * sizeof(float);
 			}
@@ -389,9 +484,12 @@ namespace gnubase::engine
 				}
 				const AudioFileInfo& info = reader->info();
 				const auto handle = static_cast<time::Samples>(std::llround(options.handles * info.sampleRate));
-				ranges = usedRanges(project, media.id, info.frames, handle);
-				// Nothing to leave out, or events that can't be mapped: the file goes along as it is.
-				if (ranges.empty() || (ranges.size() == 1 && ranges[0].start == 0 && ranges[0].end == info.frames))
+				ranges = usedRanges(
+					project, media.id, info.frames, handle, resamplingStep(info.sampleRate, project.sampleRate));
+				// Nothing to leave out, events that can't be mapped, or a file that minimizing would change: the file
+				// goes along as it is.
+				if (ranges.empty() || (ranges.size() == 1 && ranges[0].start == 0 && ranges[0].end == info.frames) ||
+					!canMinimize(info))
 					reader.reset();
 			}
 			else
@@ -411,7 +509,7 @@ namespace gnubase::engine
 			if (reader)
 			{
 				const WriteOptions format = minimizedFormat(reader->info());
-				const fs::path target = freePath(audio, minimizedName(source, reader->info(), format), taken);
+				const fs::path target = createFreeFile(audio, minimizedName(source, reader->info(), format), taken);
 				cleanup.add(target);
 				writeRanges(*reader, ranges, target, format, advance);
 				for (auto& entry : project.audioEvents)
@@ -430,7 +528,7 @@ namespace gnubase::engine
 			}
 			else
 			{
-				const fs::path target = freePath(audio, source.filename(), taken);
+				const fs::path target = createFreeFile(audio, source.filename(), taken);
 				cleanup.add(target);
 				copyFile(source, target, advance);
 				media.path = target.u8string();
@@ -439,7 +537,8 @@ namespace gnubase::engine
 		}
 
 		job.checkCancelled();
-		const fs::path file = folder / fs::u8path(options.name + ".dawproject");
+		std::set<std::string> projectFiles;
+		const fs::path file = createFreeFile(folder, fs::u8path(options.name + ".dawproject"), projectFiles);
 		cleanup.add(file);
 		DawProjectSaveOptions save;
 		save.embedMedia = false;

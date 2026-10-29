@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
@@ -48,6 +49,11 @@ namespace gnubase::engine
 		// How far the work is, from 0 to 1, and what it is doing, e.g. the file it copies. Announced with a
 		// job.progress event when it moved on by a percent or the detail changed.
 		virtual void progress(double fraction, const std::string& detail) = 0;
+
+		// Runs a command on the command thread, after the ones already waiting, and returns its result: how a job
+		// changes the project. Its events reach every client before job.finished. Throws CommandError if it fails or
+		// the engine stops first. It waits for the command even if the job is cancelled meanwhile.
+		virtual Json command(std::string name, Json parameters) = 0;
 	};
 
 	// The engine's jobs. Each runs on a thread of its own at normal priority, never on an audio thread.
@@ -65,8 +71,16 @@ namespace gnubase::engine
 		// job as cancelled, any other exception as failed with the exception's message.
 		using Work = std::function<Json(JobContext& context)>;
 
-		// Starts work as a job of the given kind, e.g. "project.backup", and returns the job as job.get shows it.
-		Json start(std::string kind, Work work);
+		// Starts work as a job of the given kind, e.g. "project.backup", announces it with job.started and returns
+		// the job as job.get shows it. folder, if given, is where the job writes; see writesInto. Only the command
+		// thread starts jobs.
+		Json start(std::string kind, Work work, const std::filesystem::path& folder = {});
+
+		// Whether a running job writes into folder, a folder inside it or a folder around it.
+		bool writesInto(const std::filesystem::path& folder) const;
+
+		// The JSON schema of a job as job.get shows it, for the results of commands that start one.
+		static Json schema();
 
 		// job.get, job.list and job.cancel.
 		void registerCommands(Engine& engine);
@@ -79,7 +93,7 @@ namespace gnubase::engine
 		void finish(Job& job, const char* state, Json result, std::string error);
 
 		Engine& m_engine;
-		std::mutex m_mutex; // guards the jobs and their states
+		mutable std::mutex m_mutex; // guards the jobs and their states
 		std::map<JobId, std::shared_ptr<Job>> m_jobs;
 		JobId m_nextId = 1;
 	};

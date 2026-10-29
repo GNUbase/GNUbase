@@ -2,6 +2,8 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "engine/jobs/jobs.h"
+#include "engine/media/backup.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -13,6 +15,9 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <map>
 #include <memory>
 #include <optional>
 #include <random>
@@ -53,15 +58,11 @@ namespace
 		return path.u8string();
 	}
 
-	// Noise, so that every frame differs and a misplaced range shows. Int24 by default, as most recordings.
-	void writeNoise(const fs::path& path, int64_t frames, int channels = 2, unsigned seed = 1,
-		SampleFormat format = SampleFormat::Int24)
+	// Noise, so that every frame differs and a misplaced range shows.
+	void writeNoise(const fs::path& path, int64_t frames, const WriteOptions& options, unsigned seed)
 	{
 		fs::create_directories(path.parent_path());
-		WriteOptions options;
-		options.sampleFormat = format;
-		options.sampleRate = 48000.0;
-		options.channels = channels;
+		const int channels = options.channels;
 		const auto writer = AudioFileWriter::create(utf8(path), options);
 		std::mt19937 random(seed);
 		std::uniform_real_distribution<float> sample(-0.5f, 0.5f);
@@ -70,6 +71,29 @@ namespace
 			value = sample(random);
 		writer->write(samples.data(), static_cast<size_t>(frames));
 		writer->close();
+	}
+
+	// 48 kHz noise, Int24 by default, as most recordings.
+	void writeNoise(const fs::path& path, int64_t frames, int channels = 2, unsigned seed = 1,
+		SampleFormat format = SampleFormat::Int24)
+	{
+		WriteOptions options;
+		options.sampleFormat = format;
+		options.sampleRate = 48000.0;
+		options.channels = channels;
+		writeNoise(path, frames, options, seed);
+	}
+
+	std::string bytesOf(const fs::path& path)
+	{
+		std::ifstream file(path, std::ios::binary);
+		return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+	}
+
+	// Compared here, so that a failure doesn't print binary files.
+	bool sameFiles(const fs::path& a, const fs::path& b)
+	{
+		return bytesOf(a) == bytesOf(b);
 	}
 
 	// Frames [start, start + frames) of a file as the engine reads it.
@@ -130,15 +154,44 @@ namespace
 		return finished;
 	}
 
-	// Starts a backup and waits for it; requires it to succeed and returns its result.
-	Json backup(Client& client, Json parameters)
+	// Runs a command that starts a job and waits for the job; requires it to succeed and returns its result.
+	Json runJob(Client& client, const std::string& command, Json parameters)
 	{
-		const uint64_t job = run(client, "project.backup", std::move(parameters)).at("job").at("id").get<uint64_t>();
+		const uint64_t job = run(client, command, std::move(parameters)).at("job").at("id").get<uint64_t>();
 		const Json finished = waitForJob(client, job);
 		INFO(finished.dump());
 		REQUIRE(finished.at("state") == "done");
 		CHECK(run(client, "job.get", {{"job", job}}).at("job") == finished);
 		return finished.at("result");
+	}
+
+	// Starts a backup and waits for it; requires it to succeed and returns its result.
+	Json backup(Client& client, Json parameters)
+	{
+		return runJob(client, "project.backup", std::move(parameters));
+	}
+
+	// The result of the command with the given request id, from the messages that came; null if it isn't there.
+	// Events go to events, if given.
+	Result resultOf(Client& client, RequestId request, std::vector<Event>* events = nullptr)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		while (std::chrono::steady_clock::now() < deadline)
+		{
+			const std::optional<Message> message = client.wait(std::chrono::milliseconds(100));
+			if (!message)
+				continue;
+			if (const auto* event = std::get_if<Event>(&*message))
+			{
+				if (events != nullptr)
+					events->push_back(*event);
+				continue;
+			}
+			const auto& result = std::get<Result>(*message);
+			if (result.request == request)
+				return result;
+		}
+		return {request, nullptr, "no result"};
 	}
 
 	// Plays the first frames of the project through the dummy device and returns both output channels.
@@ -473,18 +526,40 @@ TEST_CASE("media can be copied into the project folder when they are added", "[i
 	run(song.client, "project.save", {{"path", file}, {"embedMedia", false}});
 	CHECK(run(song.client, "project.location") ==
 		Json{{"file", file}, {"folder", utf8(project)}, {"mediaFolder", utf8(project / "Audio")}});
-	const Json copied = run(song.client, "media.add", {{"path", utf8(elsewhere / "take.wav")}, {"copy", true}});
-	CHECK(copied.at("media").at("path") == utf8(project / "Audio" / "take.wav"));
-	CHECK(copied.at("media").at("length") == 4800);
-	CHECK(fs::exists(project / "Audio" / "take.wav"));
-	// A second copy gets a name of its own; a file already in the project folder stays where it is.
-	CHECK(run(song.client, "media.add", {{"path", utf8(elsewhere / "take.wav")}, {"copy", true}})
-			  .at("media")
-			  .at("path") == utf8(project / "Audio" / "take-2.wav"));
-	CHECK(run(song.client, "media.add", {{"path", utf8(project / "Audio" / "take.wav")}, {"copy", true}})
-			  .at("media")
-			  .at("path") == utf8(project / "Audio" / "take.wav"));
-	// A file that isn't audio is refused and not copied.
+	// The file is added at once where it is, and copied by a job, which then points the media file at the copy.
+	const Json added = run(song.client, "media.add", {{"path", utf8(elsewhere / "take.wav")}, {"copy", true}});
+	const ObjectId media = idOf(added, "media");
+	CHECK(added.at("media").at("path") == utf8(elsewhere / "take.wav"));
+	CHECK(added.at("media").at("length") == 4800);
+	REQUIRE(added.at("job").is_object());
+	CHECK(added.at("job").at("kind") == "media.add");
+	const Json copied = waitForJob(song.client, added.at("job").at("id").get<uint64_t>());
+	REQUIRE(copied.at("state") == "done");
+	const std::string copy = utf8(project / "Audio" / "take.wav");
+	CHECK(copied.at("result") ==
+		Json{{"copied", Json::array({{{"media", media}, {"from", utf8(elsewhere / "take.wav")}, {"to", copy}}})},
+			{"missing", Json::array()}, {"changed", Json::array()}});
+	CHECK(run(song.client, "project.get").at("media")[0].at("path") == copy);
+	CHECK(sameFiles(project / "Audio" / "take.wav", elsewhere / "take.wav"));
+	// Pointing it at the copy is an undo step of its own.
+	CHECK(run(song.client, "history.get").at("steps").back().at("action") == "Copy media file into the project");
+	run(song.client, "history.undo");
+	CHECK(run(song.client, "project.get").at("media")[0].at("path") == utf8(elsewhere / "take.wav"));
+	run(song.client, "history.redo");
+
+	// A second copy gets a name of its own; a file already in the project folder stays where it is, without a job.
+	const Json second = run(song.client, "media.add", {{"path", utf8(elsewhere / "take.wav")}, {"copy", true}});
+	CHECK(waitForJob(song.client, second.at("job").at("id").get<uint64_t>()).at("result").at("copied")[0].at("to") ==
+		utf8(project / "Audio" / "take-2.wav"));
+	const Json inside = run(song.client, "media.add", {{"path", copy}, {"copy", true}});
+	CHECK(inside.at("media").at("path") == copy);
+	CHECK(inside.at("job").is_null());
+	CHECK(run(song.client, "media.add", {{"path", copy}}).at("job").is_null());
+	// A file that isn't there or isn't audio is refused and not copied.
+	CHECK_THAT(reject(song.client, "media.add",
+				   {{"path", utf8(elsewhere / "gone.wav")}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 10},
+					   {"copy", true}}),
+		ContainsSubstring("gone.wav"));
 	test::writeWav(elsewhere / "fine.wav", {{0.0f}, 1, 48000});
 	fs::copy_file(elsewhere / "fine.wav", elsewhere / "broken.wav");
 	fs::resize_file(elsewhere / "broken.wav", 10);
@@ -522,8 +597,9 @@ TEST_CASE("preparing an archive gathers the media in the project folder", "[inte
 	run(song.client, "project.save", {{"path", file}, {"embedMedia", false}});
 	const std::vector<std::vector<float>> played = render(song.client, 15000);
 
-	const Json result = run(song.client, "media.prepareArchive");
+	const Json result = runJob(song.client, "media.prepareArchive", Json::object());
 	REQUIRE(result.at("copied").size() == 2);
+	CHECK(result.at("changed").empty());
 	CHECK(result.at("copied")[0] ==
 		Json{{"media", a}, {"from", utf8(elsewhere / "a.wav")}, {"to", utf8(project / "Audio" / "a.wav")}});
 	CHECK(result.at("missing") == Json::array({{{"media", missing}, {"path", gone}}}));
@@ -534,6 +610,7 @@ TEST_CASE("preparing an archive gathers the media in the project folder", "[inte
 	CHECK(media[3].at("path") == gone);
 
 	// One undo step, which puts the paths back.
+	CHECK(run(song.client, "history.get").at("steps").back().at("action") == "Prepare archive");
 	run(song.client, "history.undo");
 	CHECK(run(song.client, "project.get").at("media")[0].at("path") == utf8(elsewhere / "a.wav"));
 	run(song.client, "history.redo");
@@ -551,4 +628,294 @@ TEST_CASE("preparing an archive gathers the media in the project folder", "[inte
 	CHECK(media[0].at("path") == utf8(moved / "Audio" / "a.wav"));
 	CHECK(media[2].at("path") == utf8(moved / "Audio" / "inside.wav"));
 	CHECK(render(client, 15000) == played);
+}
+
+TEST_CASE("a job announces job.started before its progress and its end", "[integration]")
+{
+	const test::TempDir dir;
+	writeNoise(dir.path() / "take.wav", 480);
+	Song song;
+	song.addEvent(song.addClip(song.addMedia(dir.path() / "take.wav")), 0, 0, 480);
+
+	// A small backup can end before the command that started it returns; job.started still comes first.
+	for (int i = 0; i < 20; ++i)
+	{
+		const RequestId request =
+			song.client.send("project.backup", {{"folder", utf8(dir.path() / ("backup " + std::to_string(i)))}});
+		std::vector<Message> messages;
+		uint64_t job = 0;
+		bool finished = false;
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		while (!finished && std::chrono::steady_clock::now() < deadline)
+		{
+			const std::optional<Message> message = song.client.wait(std::chrono::milliseconds(100));
+			if (!message)
+				continue;
+			messages.push_back(*message);
+			if (const auto* result = std::get_if<Result>(&*message); result != nullptr && result->request == request)
+			{
+				REQUIRE(result->ok());
+				job = result->value.at("job").at("id").get<uint64_t>();
+			}
+			for (const Message& earlier : messages)
+				if (const auto* event = std::get_if<Event>(&earlier); job != 0 && event != nullptr &&
+					event->name == "job.finished" && event->data.at("job").at("id") == job)
+					finished = true;
+		}
+		REQUIRE(finished);
+
+		std::vector<std::string> names;
+		for (const Message& message : messages)
+		{
+			const auto* event = std::get_if<Event>(&message);
+			if (event == nullptr || event->name.rfind("job.", 0) != 0)
+				continue;
+			const Json& data = event->data;
+			const Json id = event->name == "job.progress" ? data.at("job") : data.at("job").at("id");
+			if (id == job)
+				names.push_back(event->name);
+			if (event->name != "job.progress")
+				CHECK(validate(data.at("job"), Jobs::schema(), "job").empty());
+		}
+		REQUIRE(!names.empty());
+		CHECK(names.front() == "job.started");
+		CHECK(names.back() == "job.finished");
+	}
+}
+
+TEST_CASE("a backup is opened when it's done only if the project didn't change meanwhile", "[integration]")
+{
+	const test::TempDir dir;
+	writeNoise(dir.path() / "take.wav", 480000); // 10 s, so the backup takes a moment
+	Song song;
+	run(song.client, "project.set", {{"name", "Song"}});
+	song.addEvent(song.addClip(song.addMedia(dir.path() / "take.wav")), 0, 0, 4800);
+
+	// Without activate, the project stays open.
+	const Json kept = backup(song.client, {{"folder", utf8(dir.path() / "kept")}});
+	CHECK(kept.at("activated") == false);
+	CHECK(kept.at("activationError").is_null());
+	CHECK(run(song.client, "project.location").at("file").is_null());
+
+	// Unchanged, the backup takes the project's place.
+	const Json opened = backup(song.client, {{"folder", utf8(dir.path() / "opened")}, {"activate", true}});
+	CHECK(opened.at("activated") == true);
+	CHECK(opened.at("activationError").is_null());
+	CHECK(run(song.client, "project.location").at("file") == opened.at("file"));
+	CHECK(run(song.client, "history.get").at("steps").empty());
+
+	// An edit while the backup runs stays, with its undo history; the result says why the backup wasn't opened.
+	const uint64_t revision = run(song.client, "project.revision").at("revision").get<uint64_t>();
+	const RequestId request =
+		song.client.send("project.backup", {{"folder", utf8(dir.path() / "edited")}, {"activate", true}});
+	run(song.client, "project.set", {{"name", "Edited"}}); // queued before the job can ask to open the backup
+	const Result started = resultOf(song.client, request);
+	REQUIRE(started.ok());
+	const Json finished = waitForJob(song.client, started.value.at("job").at("id").get<uint64_t>());
+	REQUIRE(finished.at("state") == "done");
+	CHECK(finished.at("result").at("activated") == false);
+	CHECK_THAT(finished.at("result").at("activationError").get<std::string>(), ContainsSubstring("changed"));
+	CHECK(fs::exists(fs::u8path(finished.at("result").at("file").get<std::string>())));
+	CHECK(run(song.client, "project.get").at("name") == "Edited");
+	CHECK(run(song.client, "project.location").at("file") == opened.at("file"));
+	CHECK(run(song.client, "history.get").at("steps").size() == 1);
+	CHECK(run(song.client, "project.revision").at("revision").get<uint64_t>() > revision);
+
+	// project.load with an old revision fails and changes nothing.
+	CHECK_THAT(reject(song.client, "project.load", {{"path", opened.at("file")}, {"revision", revision}}),
+		ContainsSubstring("changed"));
+	CHECK(run(song.client, "project.get").at("name") == "Edited");
+}
+
+TEST_CASE("a folder that a running job writes into takes no other backup", "[integration][slow]")
+{
+	const test::TempDir dir;
+	const fs::path big = dir.path() / "big.wav";
+	writeNoise(big, int64_t{48000} * 30, 2, 1, SampleFormat::Float32); // 11.5 MB
+	Song song;
+	for (int i = 0; i < 8; ++i)
+		song.addEvent(song.addClip(song.addMedia(big)), 0, 0, 1000);
+
+	const fs::path folder = dir.path() / "backup";
+	const RequestId first = song.client.send("project.backup", {{"folder", utf8(folder)}});
+	// Queued right behind it, so they run while it copies.
+	const RequestId same = song.client.send("project.backup", {{"folder", utf8(folder)}});
+	const RequestId inside = song.client.send("project.backup", {{"folder", utf8(folder / "inner")}});
+	const RequestId around = song.client.send("project.backup", {{"folder", utf8(dir.path())}});
+	const Result started = resultOf(song.client, first);
+	REQUIRE(started.ok());
+	for (const RequestId request : {same, inside})
+		CHECK_THAT(resultOf(song.client, request).error, ContainsSubstring("running job"));
+	CHECK_THAT(resultOf(song.client, around).error, ContainsSubstring("running job"));
+
+	const uint64_t job = started.value.at("job").at("id").get<uint64_t>();
+	run(song.client, "job.cancel", {{"job", job}});
+	CHECK(waitForJob(song.client, job).at("state") == "cancelled");
+	CHECK(!fs::exists(folder));
+	// Once the job has ended, only the usual checks apply.
+	CHECK_THAT(reject(song.client, "project.backup", {{"folder", utf8(dir.path())}}), ContainsSubstring("empty"));
+}
+
+TEST_CASE("files made at the same time get names of their own", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path folder = dir.path() / "folder";
+	fs::create_directories(folder);
+	std::ofstream(folder / "a.wav") << "there";
+	CHECK(createFreeFile(folder, "a.wav") == folder / "a-2.wav");
+	CHECK(createFreeFile(folder, "a.wav") == folder / "a-3.wav");
+	CHECK(createFreeFile(folder, "b.wav") == folder / "b.wav");
+	CHECK(bytesOf(folder / "a.wav") == "there");
+	CHECK(bytesOf(folder / "a-2.wav").empty());
+
+	// Two copies of files with the same name, made by jobs that run at once.
+	writeNoise(dir.path() / "one" / "take.wav", 480000, 2, 1);
+	writeNoise(dir.path() / "two" / "take.wav", 480000, 2, 2);
+	Song song;
+	const fs::path project = dir.path() / "project";
+	fs::create_directories(project);
+	run(song.client, "project.save", {{"path", utf8(project / "Song.dawproject")}, {"embedMedia", false}});
+	std::vector<uint64_t> jobs;
+	for (const char* from : {"one", "two"})
+		jobs.push_back(run(song.client, "media.add", {{"path", utf8(dir.path() / from / "take.wav")}, {"copy", true}})
+				.at("job")
+				.at("id")
+				.get<uint64_t>());
+	std::set<std::string> copies;
+	for (const uint64_t job : jobs)
+	{
+		const Json finished = waitForJob(song.client, job);
+		REQUIRE(finished.at("state") == "done");
+		const Json& copy = finished.at("result").at("copied").at(0);
+		copies.insert(copy.at("to").get<std::string>());
+		CHECK(sameFiles(fs::u8path(copy.at("to").get<std::string>()), fs::u8path(copy.at("from").get<std::string>())));
+	}
+	CHECK(
+		copies == std::set<std::string>{utf8(project / "Audio" / "take.wav"), utf8(project / "Audio" / "take-2.wav")});
+}
+
+TEST_CASE("a copy whose media file changed meanwhile isn't used", "[integration]")
+{
+	const test::TempDir dir;
+	writeNoise(dir.path() / "library" / "take.wav", 480000);
+	writeNoise(dir.path() / "library" / "other.wav", 4800, 2, 2);
+	Song song;
+	const fs::path project = dir.path() / "project";
+	fs::create_directories(project);
+	run(song.client, "project.save", {{"path", utf8(project / "Song.dawproject")}, {"embedMedia", false}});
+	const ObjectId media = song.addMedia(dir.path() / "library" / "take.wav");
+
+	// Relinked by hand while the job copies: the hand-made link stays, and the copy goes.
+	const RequestId request = song.client.send("media.prepareArchive");
+	run(song.client, "media.relink",
+		{{"files", Json::array({{{"media", media}, {"path", utf8(dir.path() / "library" / "other.wav")}}})}});
+	const Result started = resultOf(song.client, request);
+	REQUIRE(started.ok());
+	const Json finished = waitForJob(song.client, started.value.at("job").at("id").get<uint64_t>());
+	REQUIRE(finished.at("state") == "done");
+	CHECK(finished.at("result").at("copied").empty());
+	CHECK(finished.at("result").at("changed") == Json::array({media}));
+	CHECK(run(song.client, "project.get").at("media")[0].at("path") == utf8(dir.path() / "library" / "other.wav"));
+	CHECK(filesIn(project / "Audio").empty());
+}
+
+TEST_CASE("media files can be pointed at other files", "[integration]")
+{
+	const test::TempDir dir;
+	writeNoise(dir.path() / "a.wav", 4800);
+	fs::copy_file(dir.path() / "a.wav", dir.path() / "b.wav");
+	WriteOptions other;
+	other.sampleRate = 44100.0;
+	writeNoise(dir.path() / "44k.wav", 4800, other, 3);
+	Song song;
+	const ObjectId media = song.addMedia(dir.path() / "a.wav");
+
+	const Json relinked = run(song.client, "media.relink",
+		{{"files", Json::array({{{"media", media}, {"path", utf8(dir.path() / "b.wav")}}})}});
+	CHECK(relinked == Json{{"relinked", Json::array({media})}, {"skipped", Json::array()}});
+	CHECK(run(song.client, "project.get").at("media")[0].at("path") == utf8(dir.path() / "b.wav"));
+	CHECK(run(song.client, "history.get").at("steps").back().at("action") == "Relink media files");
+
+	// With from, only if the media file still points there.
+	CHECK(run(song.client, "media.relink",
+			  {{"files",
+				  Json::array(
+					  {{{"media", media}, {"from", utf8(dir.path() / "a.wav")}, {"path", utf8(dir.path() / "a.wav")}},
+						  {{"media", 999}, {"from", "x"}, {"path", "y"}}})}}) ==
+		Json{{"relinked", Json::array()}, {"skipped", Json::array({media, 999})}});
+	CHECK_THAT(reject(song.client, "media.relink",
+				   {{"files", Json::array({{{"media", media}, {"path", utf8(dir.path() / "44k.wav")}}})}}),
+		ContainsSubstring("44100 Hz"));
+	CHECK_THAT(reject(song.client, "media.relink", {{"files", Json::array({{{"media", 999}, {"path", "y"}}})}}),
+		ContainsSubstring("999"));
+	CHECK(run(song.client, "project.get").at("media")[0].at("path") == utf8(dir.path() / "b.wav"));
+}
+
+TEST_CASE("a save that fails leaves no file behind", "[integration]")
+{
+	const test::TempDir dir;
+	Song song;
+	run(song.client, "media.add",
+		{{"path", utf8(dir.path() / "gone.wav")}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 10}});
+	// Embedding a media file that isn't there fails after the file was begun.
+	const fs::path file = dir.path() / "Song.dawproject";
+	reject(song.client, "project.save", {{"path", utf8(file)}});
+	CHECK(filesIn(dir.path()).empty());
+}
+
+TEST_CASE("minimized files at another sample rate play sample for sample the same", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path take = dir.path() / "take.wav";
+	WriteOptions options;
+	options.sampleRate = 44100.0;
+	writeNoise(take, 441000, options, 5); // 10 s at 44.1 kHz, in a 48 kHz project
+	Song song;
+	REQUIRE(run(song.client, "project.get").at("sampleRate") == 48000.0);
+	const ObjectId clip = song.addClip(song.addMedia(take));
+	// Ranges that don't start on the resampling grid (147 frames of 44.1 kHz are 160 of 48 kHz) unless moved there.
+	song.addEvent(clip, 0, 50000, 20000);
+	song.addEvent(clip, 30000, 200000, 20000);
+	const int64_t frames = 60000;
+	const std::vector<std::vector<float>> played = render(song.client, frames);
+
+	const Json result = backup(song.client, {{"folder", utf8(dir.path() / "backup")}, {"minimize", true}});
+	Engine engine;
+	Client client(engine);
+	run(client, "project.load", {{"path", result.at("file").get<std::string>()}});
+	const Json events = run(client, "project.get").at("audioEvents");
+	REQUIRE(events.size() == 2);
+	CHECK((50000 - events[0].at("offset").get<int64_t>()) % 147 == 0);
+	CHECK((200000 - events[1].at("offset").get<int64_t>()) % 147 == 0);
+	CHECK(framesOf(utf8(dir.path() / "backup" / "Audio" / "take.wav")) < 441000);
+	CHECK(render(client, frames) == played);
+}
+
+TEST_CASE("minimizing copies 32-bit integer and Broadcast Wave files whole", "[integration]")
+{
+	const test::TempDir dir;
+	writeNoise(dir.path() / "int32.wav", 96000, 2, 1, SampleFormat::Int32);
+	WriteOptions broadcast;
+	broadcast.broadcast = BroadcastInfo{};
+	broadcast.broadcast->description = "Take 1";
+	broadcast.broadcast->timeReference = uint64_t{48000} * 3600;
+	writeNoise(dir.path() / "bwf.wav", 96000, broadcast, 2);
+	writeNoise(dir.path() / "plain.wav", 96000, 2, 3);
+	Song song;
+	for (const char* name : {"int32.wav", "bwf.wav", "plain.wav"})
+		song.addEvent(song.addClip(song.addMedia(dir.path() / name)), 0, 50000, 1000);
+
+	const fs::path folder = dir.path() / "backup";
+	const Json result = backup(song.client, {{"folder", utf8(folder)}, {"minimize", true}, {"handles", 0.01}});
+	CHECK(sameFiles(folder / "Audio" / "int32.wav", dir.path() / "int32.wav"));
+	CHECK(sameFiles(folder / "Audio" / "bwf.wav", dir.path() / "bwf.wav"));
+	CHECK(framesOf(utf8(folder / "Audio" / "plain.wav")) == 1960);
+	Engine engine;
+	Client client(engine);
+	run(client, "project.load", {{"path", result.at("file").get<std::string>()}});
+	const Json events = run(client, "project.get").at("audioEvents");
+	REQUIRE(events.size() == 3);
+	CHECK(events[0].at("offset") == 50000);
+	CHECK(events[1].at("offset") == 50000);
+	CHECK(events[2].at("offset") == 480);
 }

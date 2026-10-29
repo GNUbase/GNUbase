@@ -18,7 +18,9 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -110,6 +112,13 @@ namespace gnubase::engine
 		Json arraySchema(Json items)
 		{
 			return {{"type", "array"}, {"items", std::move(items)}};
+		}
+
+		// An object schema that also allows null.
+		Json nullable(Json schema)
+		{
+			schema["type"] = {"object", "null"};
+			return schema;
 		}
 
 		// Lookups and checks. They throw CommandError, which fails the command with the message.
@@ -551,22 +560,123 @@ namespace gnubase::engine
 			require(media.sampleRate > 0.0, "sampleRate must be positive");
 			requireRange(media.channels, 1, g_maxAudioChannels, "channels");
 			require(media.length >= 0, "length must not be negative");
-			if (copy && !isInside(media.path, mediaFolder.parent_path()))
+			if (copy)
 			{
-				try
-				{
-					media.path = copyIntoFolder(media.path, mediaFolder);
-				}
-				catch (const std::exception& error)
-				{
-					throw CommandError(error.what());
-				}
+				std::error_code error;
+				require(std::filesystem::is_regular_file(std::filesystem::u8path(media.path), error),
+					"can't copy " + media.path + ": there is no such file");
 			}
 			media.id = project.newId();
 			project.media[media.id] = media;
 			Json result = {{"media", toJson(media)}};
 			context.emit("media.added", result);
 			return result;
+		}
+
+		// Copies media files into the media folder as a job, then points the media at their copies with one
+		// command, a transaction named action, so that it is one undo step. Media whose path changed while the job
+		// copied, or that were removed, keep their path, and their copies are removed. The job's result is
+		// {copied: [{media, from, to}], missing: [{media, path}], changed: [media]}. Returns the job.
+		Json startMediaCopy(Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder,
+			std::string action)
+		{
+			return jobs.start(std::move(kind),
+				[files = std::move(files), folder = std::move(folder), action = std::move(action)](
+					JobContext& job) mutable
+				{
+					copyMedia(files, folder, job);
+					Json relink = Json::array();
+					Json missing = Json::array();
+					std::vector<std::string> made;
+					for (const MediaCopy& file : files)
+					{
+						if (file.to.empty())
+						{
+							missing.push_back({{"media", file.media}, {"path", file.from}});
+							continue;
+						}
+						relink.push_back({{"media", file.media}, {"from", file.from}, {"path", file.to}});
+						made.push_back(file.to);
+					}
+
+					std::set<ObjectId> skipped;
+					try
+					{
+						job.checkCancelled();
+						if (!relink.empty())
+						{
+							const Json command = {{"command", "media.relink"}, {"parameters", {{"files", relink}}}};
+							const Json result = job.command(
+								"history.transaction", {{"description", action}, {"commands", Json::array({command})}});
+							for (const Json& media : result.at("results").at(0).at("skipped"))
+								skipped.insert(media.get<ObjectId>());
+						}
+					}
+					catch (...)
+					{
+						removeFiles(made);
+						throw;
+					}
+
+					Json copied = Json::array();
+					Json changed = Json::array();
+					std::vector<std::string> unused;
+					for (const MediaCopy& file : files)
+					{
+						if (file.to.empty())
+							continue;
+						if (skipped.count(file.media) != 0)
+						{
+							changed.push_back(file.media);
+							unused.push_back(file.to);
+							continue;
+						}
+						copied.push_back({{"media", file.media}, {"from", file.from}, {"to", file.to}});
+					}
+					removeFiles(unused);
+					return Json{{"copied", std::move(copied)}, {"missing", std::move(missing)},
+						{"changed", std::move(changed)}};
+				});
+		}
+
+		Json relinkMedia(Project& project, CommandContext& context)
+		{
+			Json relinked = Json::array();
+			Json skipped = Json::array();
+			for (const Json& entry : context.parameters().at("files"))
+			{
+				const ObjectId id = entry.at("media").get<ObjectId>();
+				const std::string path = entry.at("path").get<std::string>();
+				require(!path.empty(), "path must not be empty");
+				if (entry.contains("from"))
+				{
+					const auto found = project.media.find(id);
+					if (found == project.media.end() || found->second.path != entry.at("from").get<std::string>())
+					{
+						skipped.push_back(id);
+						continue;
+					}
+				}
+				MediaFile& media = find(project.media, id, "media file");
+				AudioFileInfo info;
+				try
+				{
+					info = AudioFileReader::open(path)->info();
+				}
+				catch (const AudioFileError& error)
+				{
+					throw CommandError(error.what());
+				}
+				require(info.sampleRate == media.sampleRate && info.channels == media.channels,
+					path + " has " + std::to_string(info.channels) + " channels at " +
+						std::to_string(std::llround(info.sampleRate)) + " Hz, media file " + idText(id) + " " +
+						std::to_string(media.channels) + " at " + std::to_string(std::llround(media.sampleRate)) +
+						" Hz");
+				media.path = path;
+				context.emit("media.changed", {{"media", toJson(media)}});
+				relinked.push_back(id);
+			}
+			return {{"relinked", std::move(relinked)}, {"skipped", std::move(skipped)}};
 		}
 
 		Json convertMedia(Project& project, CommandContext& context)
@@ -868,7 +978,7 @@ namespace gnubase::engine
 			{"media.add", "Add media file"},
 			{"media.convert", "Convert media file"},
 			{"media.remove", "Remove media file"},
-			{"media.prepareArchive", "Prepare archive"},
+			{"media.relink", "Relink media files"},
 			{"clip.add", "Add clip"},
 			{"clip.remove", "Remove clip"},
 			{"audioEvent.add", "Add audio event"},
@@ -1222,11 +1332,19 @@ namespace gnubase::engine
 		addControl(engine,
 			{"project.load", 1,
 				"Replaces the project with a DAWproject file and clears the undo history. Media files embedded in "
-				"it are extracted to mediaFolder, by default a folder named after the file next to it.",
-				objectSchema({{"path", stringSchema}, {"mediaFolder", stringSchema}}, {"path"}), noResult, false},
+				"it are extracted to mediaFolder, by default a folder named after the file next to it. With "
+				"revision, it loads only if the project is still at that revision (see project.revision), and fails "
+				"otherwise, so that no change made meanwhile is lost.",
+				objectSchema(
+					{{"path", stringSchema}, {"mediaFolder", stringSchema}, {"revision", integerSchema}}, {"path"}),
+				noResult, false},
 			[this](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
+				if (parameters.contains("revision"))
+					require(parameters.at("revision").get<uint64_t>() == m_revision,
+						"the project changed after revision " +
+							std::to_string(parameters.at("revision").get<uint64_t>()));
 				const std::string path = parameters.at("path").get<std::string>();
 				const std::filesystem::path file = std::filesystem::u8path(path);
 				const std::string folder = parameters.value("mediaFolder",
@@ -1332,17 +1450,45 @@ namespace gnubase::engine
 			{"media.add", 1,
 				"Adds an audio file. Its sample rate, channel count and length in sample frames are read from the "
 				"file, or taken as given, for a file that is still being recorded. With copy, a file from outside the "
-				"project folder is copied into its media folder (see project.location) and added from there; the "
-				"project must have been saved.",
+				"project folder is also copied into its media folder (see project.location); the project must have "
+				"been saved. The copy runs as a job, returned as job (null without one), with the result that "
+				"media.prepareArchive's job has: the media file is added at once where it is, and when the copy is "
+				"done it is pointed at the copy as an undo step of its own.",
 				objectSchema({{"path", stringSchema}, {"sampleRate", numberSchema}, {"channels", integerSchema},
 								 {"length", integerSchema}, {"copy", booleanSchema}},
 					{"path"}),
-				resultSchema({"media"}), false},
-			[this](Project& project, CommandContext& context)
+				{{"type", "object"},
+					{"properties", {{"media", {{"type", "object"}}}, {"job", nullable(Jobs::schema())}}},
+					{"required", {"media", "job"}}},
+				false},
+			[this, &jobs](Project& project, CommandContext& context)
 			{
-				return addMedia(project, context,
-					m_file.empty() ? std::filesystem::path() : mediaFolderFor(std::filesystem::u8path(m_file)));
+				const std::filesystem::path mediaFolder =
+					m_file.empty() ? std::filesystem::path() : mediaFolderFor(std::filesystem::u8path(m_file));
+				Json result = addMedia(project, context, mediaFolder);
+				result["job"] = nullptr;
+				const MediaFile& media = project.media.at(result.at("media").at("id").get<ObjectId>());
+				if (context.parameters().value("copy", false) && !isInside(media.path, mediaFolder.parent_path()))
+					result["job"] = startMediaCopy(jobs, "media.add", {MediaCopy{media.id, media.path, {}}},
+						mediaFolder, "Copy media file into the project");
+				return result;
 			});
+		add(engine,
+			{"media.relink", 1,
+				"Points media files at other files, such as copies, as one undo step. Each new file must be an audio "
+				"file with the media file's sample rate and channel count. An entry with from applies only if the "
+				"media file is still there and still points at from; otherwise it is skipped. Returns the media "
+				"files it relinked and the ones it skipped.",
+				objectSchema(
+					{{"files",
+						arraySchema(objectSchema({{"media", idSchema}, {"path", stringSchema}, {"from", stringSchema}},
+							{"media", "path"}))}},
+					{"files"}),
+				{{"type", "object"},
+					{"properties", {{"relinked", arraySchema(idSchema)}, {"skipped", arraySchema(idSchema)}}},
+					{"required", {"relinked", "skipped"}}},
+				false},
+			relinkMedia);
 		add(engine,
 			{"media.convert", 1,
 				"Converts a media file to another sample rate (by default the project's), writes the result to path as "
@@ -1479,53 +1625,36 @@ namespace gnubase::engine
 		const Json integerSchema = {{"type", "integer"}};
 		const Json copied = objectSchema({{"media", integerSchema}, {"from", stringSchema}, {"to", stringSchema}});
 		const Json missing = objectSchema({{"media", integerSchema}, {"path", stringSchema}});
-		add(engine,
+		addControl(engine,
 			{"media.prepareArchive", 1,
 				"Makes the project self-contained, so that its folder can be archived or moved: copies every media "
-				"file from outside the project folder into its media folder and uses the copies, as one undo step. "
-				"Media files that can't be found are left as they are and listed as missing. The project must have "
-				"been saved; save it again without embedding media to keep the new paths.",
-				objectSchema({}),
-				{{"type", "object"},
-					{"properties", {{"copied", arraySchema(copied)}, {"missing", arraySchema(missing)}}},
-					{"required", {"copied", "missing"}}},
-				false},
-			[this](Project& project, CommandContext& context)
+				"file from outside the project folder into its media folder and points the media at the copies. The "
+				"copies run as a job: this returns at once, job.progress and job.finished events follow, and "
+				"job.cancel stops it and removes the copies. Once they are done, the media are pointed at them as one "
+				"undo step. The job's result lists the copies as copied, media files that couldn't be read as "
+				"missing (they keep their paths), and media whose path changed while the job ran as changed (they "
+				"keep the new path). The project must have been saved; save it again without embedding media to keep "
+				"the new paths.",
+				objectSchema({}), objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
+			[this, &jobs](CommandContext&)
 			{
 				require(
 					!m_file.empty(), "save the project first: media are copied into the folder of its project file");
 				const std::filesystem::path file = std::filesystem::u8path(m_file);
-				Json copiedFiles = Json::array();
-				Json missingFiles = Json::array();
-				std::vector<std::string> made;
-				try
-				{
-					for (auto& [id, media] : project.media)
-					{
-						if (isInside(media.path, file.parent_path()))
-							continue;
-						std::error_code error;
-						if (!std::filesystem::is_regular_file(std::filesystem::u8path(media.path), error))
-						{
-							missingFiles.push_back({{"media", id}, {"path", media.path}});
-							continue;
-						}
-						const std::string copy = copyIntoFolder(media.path, mediaFolderFor(file));
-						made.push_back(copy);
-						copiedFiles.push_back({{"media", id}, {"from", media.path}, {"to", copy}});
-						media.path = copy;
-						context.emit("media.changed", {{"media", toJson(media)}});
-					}
-				}
-				catch (const std::exception& error)
-				{
-					std::error_code ignored;
-					for (const std::string& copy : made)
-						std::filesystem::remove(std::filesystem::u8path(copy), ignored);
-					throw CommandError(error.what());
-				}
-				return Json{{"copied", std::move(copiedFiles)}, {"missing", std::move(missingFiles)}};
+				std::vector<MediaCopy> files;
+				for (const auto& [id, media] : m_project.media)
+					if (!isInside(media.path, file.parent_path()))
+						files.push_back({id, media.path, {}});
+				return Json{{"job",
+					startMediaCopy(
+						jobs, "media.prepareArchive", std::move(files), mediaFolderFor(file), "Prepare archive")}};
 			});
+		addControl(engine,
+			{"project.revision", 1,
+				"A number that grows with every change of the project: every edit, undo and redo, and loading or "
+				"starting a project. project.load with revision loads only if it hasn't changed.",
+				objectSchema({}), objectSchema({{"revision", integerSchema}}, {"revision"}), true},
+			[this](CommandContext&) { return Json{{"revision", m_revision}}; });
 
 		engine.registerCommand(
 			{"project.backup", 1,
@@ -1536,22 +1665,27 @@ namespace gnubase::engine
 				"that audio events play, with handles seconds (default 1) before and after; removeUnused leaves out "
 				"clips that no audio event uses and media that no clip uses. currentVersionsOnly and skipVideo have "
 				"no effect until clips have versions and projects have video. activate opens the backup once it is "
-				"done. The backup runs as a job: this returns at once, job.progress and job.finished events follow, "
-				"and job.cancel stops it and removes what it wrote. The job's result is {file, files, missing}, "
-				"missing listing the media files that couldn't be read and keep their old paths.",
+				"done, unless the project changed meanwhile. The backup runs as a job: this returns at once, "
+				"job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. A "
+				"folder that a running job writes into can't be used. The job's result is {file, files, missing, "
+				"activated, activationError}: missing lists the media files that couldn't be read and keep their old "
+				"paths; activated says whether the backup was opened, and activationError why not, if it was asked "
+				"to be.",
 				objectSchema({{"folder", stringSchema}, {"name", stringSchema}, {"minimize", booleanSchema},
 								 {"handles", numberSchema}, {"removeUnused", booleanSchema},
 								 {"currentVersionsOnly", booleanSchema}, {"skipVideo", booleanSchema},
 								 {"activate", booleanSchema}},
 					{"folder"}),
-				objectSchema({{"job", {{"type", "object"}}}}, {"job"}), false},
-			[this, &jobs, &engine](CommandContext& context)
+				objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
+			[this, &jobs](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				BackupOptions options;
 				options.folder = parameters.at("folder").get<std::string>();
 				require(!options.folder.empty(), "folder must not be empty");
 				const std::filesystem::path folder = std::filesystem::u8path(options.folder);
+				require(!jobs.writesInto(folder),
+					"a running job writes into " + options.folder + ": choose another folder or wait for it");
 				std::error_code error;
 				if (std::filesystem::exists(folder, error))
 				{
@@ -1580,17 +1714,33 @@ namespace gnubase::engine
 				options.skipVideo = parameters.value("skipVideo", false);
 				const bool activate = parameters.value("activate", false);
 
-				Json started = jobs.start("project.backup",
-					[project = std::shared_ptr<const Project>(std::move(project)), options, activate, &engine](
-						JobContext& job)
-					{
-						Json result = backupProject(*project, options, job);
-						if (activate)
-							engine.post("project.load", {{"path", result.at("file")}});
-						return result;
-					});
-				context.emit("job.started", {{"job", started}});
-				return Json{{"job", std::move(started)}};
+				// Opening the backup replaces the project, so only if it is still as it was backed up.
+				const uint64_t revision = m_revision;
+				return Json{{"job",
+					jobs.start(
+						"project.backup",
+						[project = std::shared_ptr<const Project>(std::move(project)), options, activate, revision](
+							JobContext& job)
+						{
+							Json result = backupProject(*project, options, job);
+							result["activated"] = false;
+							result["activationError"] = nullptr;
+							if (activate)
+							{
+								try
+								{
+									job.command("project.load", {{"path", result.at("file")}, {"revision", revision}});
+									result["activated"] = true;
+								}
+								catch (const CommandError& error)
+								{
+									result["activationError"] =
+										std::string("the backup wasn't opened: ") + error.what();
+								}
+							}
+							return result;
+						},
+						folder)}};
 			});
 	}
 

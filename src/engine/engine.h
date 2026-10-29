@@ -128,6 +128,11 @@ namespace gnubase::engine
 		// reach every client; its result goes nowhere, and a failure is logged. Not for audio threads.
 		void post(std::string command, Json parameters = Json::object());
 
+		// The same, and done gets the command's result on the command thread, such as when a background job changes
+		// the project with a command. Once the engine stops, done gets an error instead, for commands that didn't run.
+		// done must be quick and must not call the engine.
+		void post(std::string command, Json parameters, std::function<void(Result result)> done);
+
 		// Announces an event from one of the engine's own threads, such as a background job's progress. Every client
 		// receives it. Not for audio threads.
 		void broadcast(std::string name, Json data = Json::object());
@@ -155,6 +160,7 @@ namespace gnubase::engine
 			std::string command;
 			Json parameters;
 			std::shared_ptr<detail::Mailbox> sender;
+			std::function<void(Result result)> done; // for a posted command that wants its result
 		};
 
 		void run();

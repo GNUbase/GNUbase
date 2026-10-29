@@ -988,6 +988,7 @@ namespace gnubase::engine
 
 		// Written next to the file and then moved over it, so a failed save leaves the old file as it was.
 		const std::string temporary = path + ".saving";
+		try
 		{
 			ZipWriter zip(temporary);
 			zip.add("project.xml", xml);
@@ -1001,11 +1002,19 @@ namespace gnubase::engine
 				}
 			zip.finish();
 		}
+		catch (...)
+		{
+			// The writer is closed by now; a full disk or a media file that can't be read leaves nothing behind.
+			std::error_code ignored;
+			std::filesystem::remove(pathOf(temporary), ignored);
+			throw;
+		}
 		std::error_code error;
 		std::filesystem::rename(pathOf(temporary), pathOf(path), error);
 		if (error)
 		{
-			std::filesystem::remove(pathOf(temporary), error);
+			std::error_code ignored;
+			std::filesystem::remove(pathOf(temporary), ignored);
 			throw DawProjectError("can't save " + path + ": " + error.message());
 		}
 	}

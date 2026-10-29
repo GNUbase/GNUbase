@@ -5,18 +5,45 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <future>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
 
 namespace gnubase::engine
 {
+	namespace
+	{
+		// An absolute, normalized path in lower case, so that folders that differ only in case count as the same:
+		// they are on some file systems, and a false match only refuses a second job.
+		std::string comparable(const std::filesystem::path& folder)
+		{
+			std::error_code error;
+			std::string text = std::filesystem::absolute(folder, error).lexically_normal().generic_u8string();
+			while (text.size() > 1 && text.back() == '/')
+				text.pop_back();
+			std::transform(text.begin(), text.end(), text.begin(),
+				[](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+			return text;
+		}
+
+		// Whether inner is outer or inside it; both comparable.
+		bool within(const std::string& inner, const std::string& outer)
+		{
+			return inner.compare(0, outer.size(), outer) == 0 &&
+				(inner.size() == outer.size() || inner[outer.size()] == '/' || outer.back() == '/');
+		}
+	}
+
 	struct Jobs::Job
 	{
 		JobId id = 0;
 		std::string kind;
 		std::atomic<bool> cancel{false};
 		std::thread thread;
+		std::string folder; // where it writes, as comparable() makes it; empty for nowhere in particular
 
 		// Guarded by Jobs::m_mutex.
 		std::string state = "running"; // then "done", "failed" or "cancelled"
@@ -48,6 +75,18 @@ namespace gnubase::engine
 					{"job", m_job.id}, {"kind", m_job.kind}, {"progress", m_job.progress}, {"detail", m_job.detail}};
 			}
 			m_jobs.m_engine.broadcast("job.progress", std::move(event));
+		}
+
+		Json command(std::string name, Json parameters) override
+		{
+			auto promise = std::make_shared<std::promise<Result>>();
+			std::future<Result> future = promise->get_future();
+			m_jobs.m_engine.post(std::move(name), std::move(parameters),
+				[promise](Result result) { promise->set_value(std::move(result)); });
+			Result result = future.get();
+			if (!result.ok())
+				throw CommandError(result.error);
+			return std::move(result.value);
 		}
 
 	private:
@@ -95,7 +134,32 @@ namespace gnubase::engine
 		m_engine.broadcast("job.finished", std::move(event));
 	}
 
-	Json Jobs::start(std::string kind, Work work)
+	Json Jobs::schema()
+	{
+		return {{"type", "object"},
+			{"properties",
+				{{"id", {{"type", "integer"}}}, {"kind", {{"type", "string"}}},
+					{"state", {{"type", "string"}, {"enum", {"running", "done", "failed", "cancelled"}}}},
+					{"progress", {{"type", "number"}}}, {"detail", {{"type", "string"}}},
+					{"result", {{"type", {"object", "null"}}}}, {"error", {{"type", {"string", "null"}}}}}},
+			{"required", {"id", "kind", "state", "progress", "detail", "result", "error"}}};
+	}
+
+	bool Jobs::writesInto(const std::filesystem::path& folder) const
+	{
+		const std::string wanted = comparable(folder);
+		const std::scoped_lock lock(m_mutex);
+		return std::any_of(m_jobs.begin(), m_jobs.end(),
+			[&wanted](const auto& entry)
+			{
+				const Job& job = *entry.second;
+				if (job.state != "running" || job.folder.empty())
+					return false;
+				return within(wanted, job.folder) || within(job.folder, wanted);
+			});
+	}
+
+	Json Jobs::start(std::string kind, Work work, const std::filesystem::path& folder)
 	{
 		// Threads of finished jobs end right after announcing it; joined here, they don't pile up.
 		std::vector<std::shared_ptr<Job>> finished;
@@ -108,36 +172,47 @@ namespace gnubase::engine
 					finished.push_back(entry.second);
 			job->id = m_nextId++;
 			job->kind = std::move(kind);
+			if (!folder.empty())
+				job->folder = comparable(folder);
 			m_jobs[job->id] = job;
 			started = toJson(*job);
 		}
 		for (const auto& done : finished)
 			done->thread.join();
 
-		job->thread = std::thread(
-			[this, job, work = std::move(work)]
-			{
-				Context context(*this, *job);
-				try
+		// Announced before the thread starts, so that no job.progress or job.finished can come first.
+		m_engine.broadcast("job.started", {{"job", started}});
+		try
+		{
+			job->thread = std::thread(
+				[this, job, work = std::move(work)]
 				{
-					Json result = work(context);
-					finish(*job, "done", std::move(result), {});
-				}
-				catch (const JobCancelled&)
-				{
-					finish(*job, "cancelled", nullptr, {});
-				}
-				catch (const std::exception& error)
-				{
-					finish(*job, "failed", nullptr, error.what());
-				}
-			});
+					Context context(*this, *job);
+					try
+					{
+						Json result = work(context);
+						finish(*job, "done", std::move(result), {});
+					}
+					catch (const JobCancelled&)
+					{
+						finish(*job, "cancelled", nullptr, {});
+					}
+					catch (const std::exception& error)
+					{
+						finish(*job, "failed", nullptr, error.what());
+					}
+				});
+		}
+		catch (const std::system_error& error)
+		{
+			finish(*job, "failed", nullptr, error.what());
+		}
 		return started;
 	}
 
 	void Jobs::registerCommands(Engine& engine)
 	{
-		const Json jobSchema = {{"type", "object"}};
+		const Json jobSchema = schema();
 		const auto jobParameter = []
 		{
 			return Json{{"type", "object"}, {"properties", {{"job", {{"type", "integer"}}}}}, {"required", {"job"}},

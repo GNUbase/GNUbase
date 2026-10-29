@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 // Self-contained projects: the project folder with its media folder, copying media into it, and backups of a project
 // into a folder of its own that opens on another machine. Everything here does file I/O, so it runs on the command
@@ -21,9 +22,28 @@ namespace gnubase::engine
 	// links.
 	bool isInside(const std::string& file, const std::filesystem::path& folder);
 
-	// Copies a file into folder, which it creates if needed, under its own name or, if a file of that name is
-	// there, as "<name>-2", "<name>-3" and so on. Returns the copy's path. Throws std::runtime_error.
-	std::string copyIntoFolder(const std::string& file, const std::filesystem::path& folder);
+	// Creates an empty file in folder, which must exist, and returns its path: name, or if a file of that name is
+	// there, "<stem>-2<extension>", "<stem>-3<extension>" and so on. Creating fails if the file is there, even if
+	// another job or program creates it at the same moment, so two writers never get the same file. Throws
+	// std::runtime_error.
+	std::filesystem::path createFreeFile(const std::filesystem::path& folder, const std::filesystem::path& name);
+
+	// A media file and its copy.
+	struct MediaCopy
+	{
+		ObjectId media = 0;
+		std::string from; // the media file's path
+		std::string to;   // the copy's path; empty if from couldn't be read
+	};
+
+	// Copies media files into folder, which it creates if needed, each under its own name or a free one (see
+	// createFreeFile), in chunks, reporting progress to the job and stopping when it is cancelled. Sets each copy's
+	// to, or leaves it empty for a file that can't be read. If it doesn't complete, it removes the copies it made.
+	// Throws JobCancelled or std::runtime_error.
+	void copyMedia(std::vector<MediaCopy>& files, const std::filesystem::path& folder, JobContext& job);
+
+	// Removes files, ignoring errors, e.g. copies that a job made and doesn't need.
+	void removeFiles(const std::vector<std::string>& files);
 
 	// Why name can't be the name of a project file on every platform, or an empty string if it can.
 	std::string fileNameProblem(const std::string& name);
@@ -47,5 +67,11 @@ namespace gnubase::engine
 	// path. Reports progress to the job and stops when it is cancelled. If it doesn't complete, it removes what it
 	// wrote. Returns {file, files, missing: [{media, path}]}. Throws JobCancelled, DawProjectError, AudioFileError or
 	// std::runtime_error.
+	//
+	// Minimized files start their ranges on the resampling grid of their sample rate in the project's, so that
+	// they play sample for sample as the originals do. They keep every sample: files whose samples GNUbase can't
+	// write unchanged (32-bit integer) and files whose metadata would no longer fit (Broadcast Wave, whose time
+	// reference counts from the first sample) are copied whole. Other metadata, such as tags or cue points, isn't
+	// kept in minimized files.
 	Json backupProject(Project project, const BackupOptions& options, JobContext& job);
 }

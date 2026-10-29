@@ -582,7 +582,7 @@ Returns:
 
 #### `gnubase.media.add`
 
-Adds an audio file. Its sample rate, channel count and length in sample frames are read from the file, or taken as given, for a file that is still being recorded. With copy, a file from outside the project folder is copied into its media folder (see project.location) and added from there; the project must have been saved.
+Adds an audio file. Its sample rate, channel count and length in sample frames are read from the file, or taken as given, for a file that is still being recorded. With copy, a file from outside the project folder is also copied into its media folder (see project.location); the project must have been saved. The copy runs as a job, returned as job (null without one), with the result that media.prepareArchive's job has: the media file is added at once where it is, and when the copy is done it is pointed at the copy as an undo step of its own.
 
 Parameters:
 
@@ -594,6 +594,7 @@ Parameters:
 
 Returns:
 
+- `job`: object or null, required
 - `media`: object, required
 
 #### `gnubase.media.convert`
@@ -612,12 +613,24 @@ Returns:
 
 #### `gnubase.media.prepareArchive`
 
-Makes the project self-contained, so that its folder can be archived or moved: copies every media file from outside the project folder into its media folder and uses the copies, as one undo step. Media files that can't be found are left as they are and listed as missing. The project must have been saved; save it again without embedding media to keep the new paths.
+Makes the project self-contained, so that its folder can be archived or moved: copies every media file from outside the project folder into its media folder and points the media at the copies. The copies run as a job: this returns at once, job.progress and job.finished events follow, and job.cancel stops it and removes the copies. Once they are done, the media are pointed at them as one undo step. The job's result lists the copies as copied, media files that couldn't be read as missing (they keep their paths), and media whose path changed while the job ran as changed (they keep the new path). The project must have been saved; save it again without embedding media to keep the new paths.
 
 Returns:
 
-- `copied`: array of object, required
-- `missing`: array of object, required
+- `job`: object, required
+
+#### `gnubase.media.relink`
+
+Points media files at other files, such as copies, as one undo step. Each new file must be an audio file with the media file's sample rate and channel count. An entry with from applies only if the media file is still there and still points at from; otherwise it is skipped. Returns the media files it relinked and the ones it skipped.
+
+Parameters:
+
+- `files`: array of object, required
+
+Returns:
+
+- `relinked`: array of integer, required
+- `skipped`: array of integer, required
 
 #### `gnubase.media.remove`
 
@@ -720,7 +733,7 @@ Returns:
 
 #### `gnubase.project.backup`
 
-Backs the project up as it is now into folder, which must be empty or new: the project file, named name (by default after the project file, or else the project), and copies of its media in the folder Audio, which the project file refers to relative to itself, so that the folder opens on another machine. The project itself stays as it is. minimize keeps only the ranges of audio files that audio events play, with handles seconds (default 1) before and after; removeUnused leaves out clips that no audio event uses and media that no clip uses. currentVersionsOnly and skipVideo have no effect until clips have versions and projects have video. activate opens the backup once it is done. The backup runs as a job: this returns at once, job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. The job's result is {file, files, missing}, missing listing the media files that couldn't be read and keep their old paths.
+Backs the project up as it is now into folder, which must be empty or new: the project file, named name (by default after the project file, or else the project), and copies of its media in the folder Audio, which the project file refers to relative to itself, so that the folder opens on another machine. The project itself stays as it is. minimize keeps only the ranges of audio files that audio events play, with handles seconds (default 1) before and after; removeUnused leaves out clips that no audio event uses and media that no clip uses. currentVersionsOnly and skipVideo have no effect until clips have versions and projects have video. activate opens the backup once it is done, unless the project changed meanwhile. The backup runs as a job: this returns at once, job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. A folder that a running job writes into can't be used. The job's result is {file, files, missing, activated, activationError}: missing lists the media files that couldn't be read and keep their old paths; activated says whether the backup was opened, and activationError why not, if it was asked to be.
 
 Parameters:
 
@@ -745,12 +758,13 @@ Only reads; changes nothing.
 
 #### `gnubase.project.load`
 
-Replaces the project with a DAWproject file and clears the undo history. Media files embedded in it are extracted to mediaFolder, by default a folder named after the file next to it.
+Replaces the project with a DAWproject file and clears the undo history. Media files embedded in it are extracted to mediaFolder, by default a folder named after the file next to it. With revision, it loads only if the project is still at that revision (see project.revision), and fails otherwise, so that no change made meanwhile is lost.
 
 Parameters:
 
 - `mediaFolder`: string
 - `path`: string, required
+- `revision`: integer
 
 #### `gnubase.project.location`
 
@@ -767,6 +781,16 @@ Returns:
 #### `gnubase.project.new`
 
 Replaces the project with an empty one that has a stereo input and output bus, and clears the undo history.
+
+#### `gnubase.project.revision`
+
+A number that grows with every change of the project: every edit, undo and redo, and loading or starting a project. project.load with revision loads only if it hasn't changed.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `revision`: integer, required
 
 #### `gnubase.project.save`
 
