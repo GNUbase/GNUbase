@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -226,6 +227,52 @@ namespace
 		}
 		return nullptr;
 	}
+
+	// Makes the peak worker wait before it reads a chunk of an audio file while a Hold lives, so a test sees peaks
+	// being generated however fast the worker would be done with a small file.
+	class WorkerGate
+	{
+	public:
+		// Holds the worker until it goes, also when a check fails meanwhile. It must go before the cache, whose
+		// destructor waits for the worker.
+		class Hold
+		{
+		public:
+			explicit Hold(WorkerGate& gate) : m_gate(gate) { m_gate.set(true); }
+			~Hold() { m_gate.set(false); }
+			Hold(const Hold&) = delete;
+			Hold& operator=(const Hold&) = delete;
+			Hold(Hold&&) = delete;
+			Hold& operator=(Hold&&) = delete;
+
+		private:
+			WorkerGate& m_gate;
+		};
+
+		// For CacheSettings::beforeChunk.
+		std::function<void()> hook()
+		{
+			return [this]
+			{
+				std::unique_lock lock(m_mutex);
+				m_released.wait(lock, [this] { return !m_held; });
+			};
+		}
+
+	private:
+		void set(bool held)
+		{
+			{
+				const std::scoped_lock lock(m_mutex);
+				m_held = held;
+			}
+			m_released.notify_all();
+		}
+
+		std::mutex m_mutex;
+		std::condition_variable m_released;
+		bool m_held = false;
+	};
 
 	peaks::Status statusOf(const peaks::PeakCache& cache, ObjectId media)
 	{
@@ -718,8 +765,10 @@ TEST_CASE("a query notices a changed audio file and generates its peaks again", 
 	const test::TempDir dir;
 	const std::filesystem::path file = dir.path() / "take.wav";
 	writeAudio(file, testSignal(1, 30000, 1), 1);
+	WorkerGate gate;
 	peaks::CacheSettings settings;
 	settings.fallbackFolder = dir.path() / "cache";
+	settings.beforeChunk = gate.hook();
 	Announcements events;
 	peaks::PeakCache cache(events.notify(), settings);
 	cache.sync({mediaFile(1, file)});
@@ -728,8 +777,12 @@ TEST_CASE("a query notices a changed audio file and generates its peaks again", 
 	const std::vector<float> louder(30000, 0.75f);
 	writeAudio(file, louder, 1);
 	std::filesystem::last_write_time(file, std::filesystem::last_write_time(file) + std::chrono::seconds(3));
-	const peaks::PeakCache::Query stale = queryOf(cache, 1, 0, 30000, 10);
-	CHECK(stale.status.state != peaks::State::Ready);
+	{
+		// Without the hold, the worker could finish the new peaks before the query reads their state (#289).
+		const WorkerGate::Hold hold(gate);
+		const peaks::PeakCache::Query stale = queryOf(cache, 1, 0, 30000, 10);
+		CHECK(stale.status.state != peaks::State::Ready);
+	}
 	const Json ready = events.waitFor("media.peaksReady");
 	REQUIRE_FALSE(ready.is_null());
 	CHECK(ready.at("generated") == true);
