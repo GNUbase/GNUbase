@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -293,10 +294,10 @@ TEST_CASE("every kind of MIDI event reaches the instrument with its values", "[u
 	incoming.offset = 1;
 	incoming.type = Type::NoteOn;
 	incoming.key = 40;
-	player.send(incoming); // from a MIDI track routed here: passed on in offset order
+	player.send(incoming); // from a MIDI track routed here: passed on in offset order, note-ons after controllers
 	player.play(8);
 
-	const std::vector<Heard> expected = {on(1, 40), {1, Type::Controller, 0, 74, 0x12345678, {}},
+	const std::vector<Heard> expected = {{1, Type::Controller, 0, 74, 0x12345678, {}}, on(1, 40),
 		{2, Type::PitchBend, 2, 0, midi::g_pitchBendCenter + 5, {}}, {3, Type::ChannelPressure, 0, 0, 77, {}},
 		{4, Type::PolyPressure, 0, 61, 88, {}}, {5, Type::Program, 0, 12, 300, {}},
 		{6, Type::SysEx, 0, 0, 0, {0xF0, 0x7E, 0x7F, 0x09, 0x01, 0xF7}}};
@@ -317,22 +318,135 @@ namespace
 	};
 }
 
-TEST_CASE(
-	"an instrument channel plays its own parts and its MIDI tracks, and ends their notes when they leave", "[unit]")
+namespace
+{
+	ProcessEvent noteOnEvent(uint32_t offset, int key)
+	{
+		ProcessEvent event;
+		event.offset = offset;
+		event.type = Type::NoteOn;
+		event.key = static_cast<uint8_t>(key);
+		return event;
+	}
+
+	// Fills the processor's input for the next block, as many MIDI tracks with dense controller lanes would.
+	void fillInput(Player& player)
+	{
+		ProcessEvent event;
+		event.type = Type::Controller;
+		for (size_t i = 0; i < graph::g_maxEventsPerBlock; ++i)
+			player.send(event);
+	}
+
+	std::vector<Heard> notesIn(const std::vector<Heard>& heard)
+	{
+		std::vector<Heard> notes;
+		std::copy_if(heard.begin(), heard.end(), std::back_inserter(notes),
+			[](const Heard& h) { return h.type == Type::NoteOn || h.type == Type::NoteOff; });
+		return notes;
+	}
+}
+
+TEST_CASE("an instrument channel plays its own parts and its MIDI tracks", "[unit]")
 {
 	auto channel = std::make_shared<InstrumentChannel>(sequencer({note(4, 100, 70)}), std::make_shared<Echo>());
 	Player player(channel, 8);
-	ProcessEvent incoming;
-	incoming.offset = 2;
-	incoming.type = Type::NoteOn;
-	incoming.key = 30;
-	player.send(incoming);
+	player.send(noteOnEvent(2, 30)); // from a MIDI track routed here
 	player.play(8);
 	CHECK(player.heard == std::vector<Heard>{on(2, 30), on(4, 70)});
+}
 
-	// A MIDI track routed here was removed or rerouted: the notes the instrument holds end at the next block.
-	player.heard.clear();
-	channel->releaseNotes();
+TEST_CASE("a note that starts where another source's note of the same pitch ends sounds", "[unit]")
+{
+	// The instrument track's own note ends at 8, where a MIDI track routed to it starts the same pitch.
+	auto channel = std::make_shared<InstrumentChannel>(sequencer({note(0, 8, 60)}), std::make_shared<Echo>());
+	Player player(channel, 8);
 	player.play(8);
-	CHECK(player.heard == std::vector<Heard>{off(8, 30), off(8, 70)});
+	player.send(noteOnEvent(0, 60));
+	player.play(8);
+	CHECK(player.heard == std::vector<Heard>{on(0, 60), off(8, 60), on(8, 60)});
+}
+
+TEST_CASE("when a MIDI track leaves, its instrument ends the notes only that track holds", "[unit]")
+{
+	// Two MIDI tracks routed to the instrument track: one stays, one is removed or rerouted.
+	auto staying = sequencer({note(0, 100, 31)});
+	auto departed = sequencer({note(0, 100, 30), note(0, 100, 31), note(0, 100, 40)});
+	Player stayingPlayer(staying, 8);
+	Player departedPlayer(departed, 8);
+	stayingPlayer.play(8);
+	departedPlayer.play(8);
+
+	auto channel = std::make_shared<InstrumentChannel>(sequencer({note(4, 100, 70)}), std::make_shared<Echo>());
+	Player player(channel, 8);
+	for (const int key : {30, 31, 31, 40})
+		player.send(noteOnEvent(0, key)); // what the two tracks sent
+	player.play(8);
+	REQUIRE(player.heard == std::vector<Heard>{on(0, 30), on(0, 31), on(0, 31), on(0, 40), on(4, 70)});
+
+	// The audio thread does this when it starts the program without the departed track. The staying track still
+	// holds 31 and the instrument track its own 70.
+	player.heard.clear();
+	channel->releaseNotesOf(*departed, {staying});
+	player.play(8);
+	CHECK(player.heard == std::vector<Heard>{off(8, 30), off(8, 40)});
+
+	// The departed track forgot its notes: wherever it goes now, it doesn't end them again.
+	departedPlayer.heard.clear();
+	departedPlayer.stop();
+	CHECK(departedPlayer.heard.empty());
+}
+
+TEST_CASE("an instrument channel ends every note it holds when the transport stops", "[unit]")
+{
+	auto channel = std::make_shared<InstrumentChannel>(sequencer({note(4, 100, 70)}), std::make_shared<Echo>());
+	Player player(channel, 8);
+	player.send(noteOnEvent(2, 30)); // from a MIDI track that is gone by now, so nothing else ends it
+	player.play(8);
+	player.stop();
+	player.stop(); // nothing more
+	CHECK(player.heard == std::vector<Heard>{on(2, 30), on(4, 70), off(8, 70), off(8, 30)});
+}
+
+TEST_CASE("a full event buffer delays note-offs to a later block instead of dropping them", "[unit]")
+{
+	SECTION("the sequencer's own controller events fill the block")
+	{
+		const std::vector<RenderController> dense(graph::g_maxEventsPerBlock + 100, control(2, 1, 0));
+		Player player(sequencer({note(0, 10, 60), note(5, 70, 62)}, dense), 64);
+		player.play(128);
+		// The block holds the first note-on and controllers up to its capacity; the rest of the block is skipped,
+		// and the note that ended in it ends where the next block starts.
+		CHECK(player.heard.size() == graph::g_maxEventsPerBlock + 1);
+		CHECK(notesIn(player.heard) == std::vector<Heard>{on(0, 60), off(64, 60)});
+	}
+	SECTION("a note ends in a block that incoming events fill")
+	{
+		Player player(sequencer({note(0, 20, 60)}), 16);
+		player.play(16);
+		fillInput(player);
+		player.play(16); // the note ends at 20 but there is no room
+		player.play(16);
+		CHECK(notesIn(player.heard) == std::vector<Heard>{on(0, 60), off(32, 60)});
+	}
+	SECTION("the transport stops in a full block")
+	{
+		Player player(sequencer({note(0, 1000, 60)}), 16);
+		player.play(16);
+		fillInput(player);
+		player.stop();
+		player.stop();
+		CHECK(notesIn(player.heard) == std::vector<Heard>{on(0, 60), off(32, 60)});
+	}
+	SECTION("playback jumps in a full block")
+	{
+		// Cycle 0 to 100: the note doesn't end before the jump, and after it its end is never reached.
+		Player player(sequencer({note(90, 300, 60)}), 16);
+		player.setCycle(0, 100);
+		player.locate(80);
+		player.play(16);
+		fillInput(player);
+		player.play(32); // jumps at frame 20, in the full block
+		CHECK(notesIn(player.heard) == std::vector<Heard>{on(10, 60), off(32, 60)});
+	}
 }

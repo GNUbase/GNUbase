@@ -97,6 +97,10 @@ namespace gnubase::engine::graph
 		size_t size() const { return m_nodes.size(); }
 		const std::vector<int>& order() const { return m_order; }
 
+		// The most nodes that can be processed at the same time, measured as the most nodes at one depth: process
+		// uses at most this many threads.
+		size_t width() const { return m_width; }
+
 		// The index of the node for a bus or channel, or -1.
 		int find(ObjectId object) const;
 
@@ -111,10 +115,11 @@ namespace gnubase::engine::graph
 		// up.
 		EventBuffer& events(int node) const;
 
-		// Audio thread. Processes a block of up to maxFrames frames, which plays where transport says. With workers,
-		// the nodes are tasks on the pool: a node starts once the nodes it receives from are done, and of the nodes
-		// that are ready at the start, those with the most work ahead of them go first, measured in earlier blocks.
-		// Without workers, or with none, this thread processes the nodes in order.
+		// Audio thread. Processes a block of up to maxFrames frames, which plays where transport says, with subnormal
+		// numbers flushed to zero on every thread. With workers, the nodes are tasks on the pool, which lends at most
+		// width() - 1 workers: a node starts once the nodes it receives from are done, and of the nodes that are ready
+		// at the start, those with the most work ahead of them go first, measured in earlier blocks. Without workers,
+		// with none, or for a graph of width 1, this thread processes the nodes in order.
 		void process(uint32_t frames, const TransportBlock& transport = TransportBlock{},
 			rt::WorkerPool* workers = nullptr) const noexcept;
 
@@ -147,6 +152,7 @@ namespace gnubase::engine::graph
 		uint32_t m_maxFrames;
 		std::vector<Node> m_nodes;
 		std::vector<int> m_order;
+		size_t m_width = 0;
 		std::vector<std::shared_ptr<Processor>> m_processors; // kept alive while the graph exists
 
 		// The audio thread's scratch memory: sized here, never resized.

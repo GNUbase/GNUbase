@@ -6,7 +6,6 @@
 #include "platform/rt/snapshotpublisher.h"
 
 #include <array>
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -27,9 +26,14 @@ namespace gnubase::engine
 	// It remembers which notes sound, and ends them where they end, where the transport stops and where playback
 	// jumps: a locate or a cycle jump. After a jump only notes that start from there on play. The engine keeps one
 	// sequencer per channel across graph rebuilds, so a note removed while it sounds still ends.
+	//
+	// When the block's event buffer is full, the sequencer skips the rest of the segment: notes that should have
+	// ended in it end at the start of the next block that has room, notes that should have started don't play.
 	class MidiSequencer : public graph::Processor
 	{
 	public:
+		static constexpr size_t g_notes = size_t{16} * 128; // a note per MIDI channel and pitch
+
 		MidiSequencer();
 
 		// Command thread: what to play from the next block on.
@@ -37,13 +41,25 @@ namespace gnubase::engine
 
 		void process(const graph::ProcessContext& context) noexcept override;
 
-	private:
-		static constexpr size_t g_notes = size_t{16} * 128; // a note per MIDI channel and pitch
+		// Audio thread: whether the note, channel * 128 + pitch, sounds.
+		bool sounds(uint16_t index) const noexcept;
 
+		// Audio thread: the sounding notes, as channel * 128 + pitch, ascending.
+		const uint16_t* soundingBegin() const noexcept { return m_sounding.data(); }
+		const uint16_t* soundingEnd() const noexcept { return m_sounding.data() + m_soundingCount; }
+
+		// Audio thread: forgets the sounding notes without ending them, after the instrument they sounded on ended
+		// them (InstrumentChannel::releaseNotesOf).
+		void forget() noexcept { m_soundingCount = 0; }
+
+	private:
 		void play(
 			const MidiSequence& sequence, const graph::TransportSegment& segment, graph::EventBuffer& out) noexcept;
-		void noteOn(const RenderNote& note, uint32_t offset, graph::EventBuffer& out) noexcept;
-		void noteOff(uint16_t index, uint32_t offset, graph::EventBuffer& out) noexcept;
+		// Each returns false if the event buffer was full; then the note didn't start or end (though noteOn may have
+		// ended the same pitch first).
+		bool noteOn(const RenderNote& note, uint32_t offset, graph::EventBuffer& out) noexcept;
+		bool noteOff(uint16_t index, uint32_t offset, graph::EventBuffer& out) noexcept;
+		// Notes it can't end for a full buffer end as soon as there is room.
 		void endAll(uint32_t offset, graph::EventBuffer& out) noexcept;
 
 		rt::SnapshotPublisher<MidiSequence> m_sequence;
@@ -54,7 +70,7 @@ namespace gnubase::engine
 	};
 
 	// An instrument track's channel: its own parts' events and those of the MIDI tracks routed to it, played by its
-	// instrument (none: silence).
+	// instrument (none: silence). When the transport stops, it ends every note the instrument still holds.
 	class InstrumentChannel : public graph::Processor
 	{
 	public:
@@ -62,9 +78,11 @@ namespace gnubase::engine
 
 		void process(const graph::ProcessContext& context) noexcept override;
 
-		// Any thread: ends every note the instrument holds at the next block, e.g. when a MIDI track routed here was
-		// removed or rerouted while its notes sounded.
-		void releaseNotes() { m_release.store(true, std::memory_order_release); }
+		// Audio thread, before the first block of the graph without a MIDI track that was routed here (removed or
+		// rerouted): ends the notes that track's sequencer started here at the next block, except those this
+		// channel's own sequencer or one of the staying tracks' also holds. The departed sequencer forgets them.
+		void releaseNotesOf(
+			MidiSequencer& departed, const std::vector<std::shared_ptr<MidiSequencer>>& staying) noexcept;
 
 	protected:
 		void prepare(double sampleRate, uint32_t maxFrames) override;
@@ -73,7 +91,9 @@ namespace gnubase::engine
 		std::shared_ptr<MidiSequencer> m_sequencer;
 		std::shared_ptr<graph::Processor> m_instrument;
 		graph::EventBuffer m_events;
-		std::array<bool, size_t{16} * 128> m_held{}; // notes the instrument got a note-on for and no note-off yet
-		std::atomic<bool> m_release{false};
+		std::array<bool, MidiSequencer::g_notes> m_held{};   // notes the instrument got a note-on for and no note-off
+		std::array<bool, MidiSequencer::g_notes> m_ending{}; // held notes to end as soon as the buffer has room
+		size_t m_endingCount = 0;                            // how many m_ending are set
+		bool m_playing = false;                              // in the last block
 	};
 }

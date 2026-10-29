@@ -16,6 +16,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <system_error>
 #include <utility>
 
 namespace gnubase::engine
@@ -37,8 +38,10 @@ namespace gnubase::engine
 				"position": {"type": "integer"}, "capturedFrames": {"type": "integer"},
 				"droppedFrames": {"type": "integer"}, "playbackDropouts": {"type": "integer"},
 				"processing": {"type": "object", "properties": {"multiProcessing": {"type": "boolean"},
-					"threads": {"type": "integer"}, "activeThreads": {"type": "integer"}},
-					"required": ["multiProcessing", "threads", "activeThreads"]}},
+					"threads": {"type": "integer"}, "activeThreads": {"type": "integer"},
+					"limitedBy": {"type": ["string", "null"],
+						"enum": [null, "multiProcessing", "hardware", "realtime", "system"]}},
+					"required": ["multiProcessing", "threads", "activeThreads", "limitedBy"]}},
 			"required": ["device", "running", "position", "capturedFrames", "droppedFrames", "playbackDropouts",
 				"processing"]})");
 		}
@@ -189,9 +192,12 @@ namespace gnubase::engine
 			tracks.push_back({channel.id, std::move(playlist)});
 		}
 		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate);
-		attachMidi(snapshot, desc);
+		const uint64_t generation = ++m_generation;
+		attachMidi(snapshot, desc, generation);
 
 		auto program = std::make_unique<Program>(desc, format.sampleRate, format.blockSize);
+		program->generation = generation;
+		program->releases = releases();
 		int input = 0;
 		int output = 0;
 		for (size_t i = 0; i < desc.nodes.size(); ++i)
@@ -215,7 +221,7 @@ namespace gnubase::engine
 			m_programs = std::make_unique<rt::SnapshotPublisher<Program>>(std::move(program));
 	}
 
-	void AudioEngine::attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc)
+	void AudioEngine::attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc, uint64_t generation)
 	{
 		std::map<ObjectId, std::set<ObjectId>> sources; // per instrument channel, the MIDI channels routed to it
 		for (const RenderChannel& channel : snapshot.channels)
@@ -246,15 +252,20 @@ namespace gnubase::engine
 				if (old != m_instruments.end() && old->second.id == channel.instrument)
 				{
 					instrument = old->second;
-					// A MIDI track that left can't end its notes any more.
-					if (!std::includes(from.begin(), from.end(), instrument.sources.begin(), instrument.sources.end()))
-						instrument.channel->releaseNotes();
+					// A MIDI track that left can't end its notes here any more: the audio thread ends them when it
+					// starts the new program, after the last block in which the track could still start notes.
+					for (const ObjectId source : instrument.sources)
+						if (from.count(source) == 0)
+							m_releases.push_back(
+								{channel.id, source, instrument.channel, m_sequencers.at(source), generation});
 				}
 				else
 				{
+					// Unknown ids play nothing; projects are checked when they load (projectFromJson).
 					instrument.id = channel.instrument;
 					instrument.channel = std::make_shared<InstrumentChannel>(sequencer,
-						channel.instrument.empty() ? nullptr : processors::createBuiltin(channel.instrument));
+						processors::isInstrument(channel.instrument) ? processors::createBuiltin(channel.instrument)
+																	 : nullptr);
 				}
 				instrument.sources = from;
 				processor = instrument.channel;
@@ -268,12 +279,44 @@ namespace gnubase::engine
 		m_instruments = std::move(instruments);
 	}
 
+	std::vector<AudioEngine::Release> AudioEngine::releases()
+	{
+		// Done once the audio thread started a program that has them; not needed if the instrument is gone or
+		// replaced, or the MIDI track came back.
+		const uint64_t started = m_started.load(std::memory_order_acquire);
+		const auto done = [this, started](const PendingRelease& pending)
+		{
+			const auto instrument = m_instruments.find(pending.instrument);
+			return pending.generation <= started || instrument == m_instruments.end() ||
+				instrument->second.channel != pending.channel || instrument->second.sources.count(pending.source) != 0;
+		};
+		m_releases.erase(std::remove_if(m_releases.begin(), m_releases.end(), done), m_releases.end());
+
+		std::vector<Release> result;
+		result.reserve(m_releases.size());
+		for (const PendingRelease& pending : m_releases)
+		{
+			Release release{pending.channel, pending.departed, {}};
+			for (const ObjectId source : m_instruments.at(pending.instrument).sources)
+				release.staying.push_back(m_sequencers.at(source));
+			result.push_back(std::move(release));
+		}
+		return result;
+	}
+
 	void AudioEngine::process(const audio::DeviceBlock& block) noexcept
 	{
 		const auto start = std::chrono::steady_clock::now();
 		if (m_resetPerformance.exchange(false, std::memory_order_acq_rel))
 			m_meter.reset();
 		const Program& program = m_programs->acquire();
+		if (program.generation != m_running)
+		{
+			m_running = program.generation;
+			for (const Release& release : program.releases)
+				release.channel->releaseNotesOf(*release.departed, release.staying);
+			m_started.store(program.generation, std::memory_order_release);
+		}
 		const audio::DeviceFormat& format = m_device->format();
 		const size_t bytes = block.frames * sizeof(float);
 		for (const BusLink& link : program.inputs)
@@ -368,7 +411,7 @@ namespace gnubase::engine
 				if (engine != nullptr)
 					engine->post("audio.reset");
 			});
-		startWorkers();
+		startWorkersOrFallBack();
 		rebuild();
 	}
 
@@ -478,31 +521,104 @@ namespace gnubase::engine
 		const auto threads = parameters.value("threads", static_cast<int64_t>(m_threads));
 		require(threads >= 1 && threads <= g_maxThreads, "threads must be from 1 to 64");
 		require(!m_device || !m_device->running(), "the audio device is running");
+		const bool previousMultiProcessing = m_multiProcessing;
+		const size_t previousThreads = m_threads;
 		m_multiProcessing = multiProcessing;
 		m_threads = static_cast<size_t>(threads);
-		m_workers.reset();
-		if (m_device)
+		if (!m_device)
+			return;
+		try
+		{
 			startWorkers();
+		}
+		catch (const std::system_error& error)
+		{
+			// Back to the settings that worked, as far as the system still lets them.
+			m_multiProcessing = previousMultiProcessing;
+			m_threads = previousThreads;
+			startWorkersOrFallBack();
+			throw CommandError(std::string("could not start the processing threads: ") + error.what());
+		}
 	}
 
 	void AudioEngine::startWorkers()
 	{
+		m_workers.reset();
+		m_limitedBy = Limit::None;
+		const size_t wanted = plannedThreads() - 1;
+		if (wanted == 0)
+			return;
 		const audio::DeviceFormat& format = m_device->format();
-		if (activeThreads() > 1)
-			m_workers = std::make_unique<rt::WorkerPool>(activeThreads() - 1, format.blockSize / format.sampleRate);
+		const double period = format.blockSize / format.sampleRate;
+		auto workers = std::make_unique<rt::WorkerPool>(wanted, period);
+		if (!workers->realtime())
+		{
+			// The audio thread waits for nodes that workers hold: a worker without real-time priority that the OS
+			// preempts would make it miss its deadline. Only workers that got it help, if any.
+			const size_t realtime = workers->realtimeWorkers();
+			workers.reset();
+			if (realtime > 0)
+				workers = std::make_unique<rt::WorkerPool>(realtime, period);
+			if (workers && !workers->realtime())
+				workers.reset();
+			m_limitedBy = Limit::Realtime;
+			logging::warning("{} of {} processing threads got real-time priority; processing with {}", realtime, wanted,
+				workers ? workers->workers() + 1 : 1);
+		}
+		m_workers = std::move(workers);
 	}
 
-	size_t AudioEngine::activeThreads() const
+	void AudioEngine::startWorkersOrFallBack()
+	{
+		try
+		{
+			startWorkers();
+		}
+		catch (const std::system_error& error)
+		{
+			m_workers.reset();
+			m_limitedBy = Limit::System;
+			logging::warning(
+				"Could not start the processing threads ({}); processing on the audio thread only", error.what());
+		}
+	}
+
+	size_t AudioEngine::plannedThreads() const
 	{
 		// More threads than cores only wait for each other: a worker that holds a node loses its core to the ones
 		// spinning for the next.
 		return m_multiProcessing ? std::min(m_threads, rt::hardwareThreads()) : 1;
 	}
 
+	size_t AudioEngine::defaultThreads()
+	{
+		// About one per physical core: the second hardware thread of a core adds little to DSP code, and the disk
+		// streams, the command thread, the UI and the plugin host processes need cores too.
+		return std::max<size_t>(rt::hardwareThreads() / 2, 1);
+	}
+
+	Json AudioEngine::processingStatus() const
+	{
+		const size_t active = m_device ? 1 + (m_workers ? m_workers->workers() : 0) : plannedThreads();
+		Json limitedBy = nullptr;
+		if (active < m_threads)
+		{
+			if (!m_multiProcessing)
+				limitedBy = "multiProcessing";
+			else if (m_device && m_limitedBy == Limit::Realtime)
+				limitedBy = "realtime";
+			else if (m_device && m_limitedBy == Limit::System)
+				limitedBy = "system";
+			else
+				limitedBy = "hardware";
+		}
+		return {{"multiProcessing", m_multiProcessing}, {"threads", m_threads}, {"activeThreads", active},
+			{"limitedBy", std::move(limitedBy)}};
+	}
+
 	Json AudioEngine::status() const
 	{
-		const Json processing = {
-			{"multiProcessing", m_multiProcessing}, {"threads", m_threads}, {"activeThreads", activeThreads()}};
+		const Json processing = processingStatus();
 		if (!m_device)
 			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"capturedFrames", 0},
 				{"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()}, {"processing", processing}};
@@ -572,9 +688,12 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"audio.setProcessing", 1,
 				"Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; "
-				"default: the number of hardware threads). At most one thread per hardware thread processes: "
-				"activeThreads in the result. With multiProcessing off only the audio thread does. Independent tracks "
-				"then run in parallel; the output is the same for any number of threads. The device must be stopped.",
+				"default: half the hardware threads, about one per core). Independent tracks then run in parallel; "
+				"the output is the same for any number of threads. The device must be stopped. activeThreads in the "
+				"result is how many process, and limitedBy why that is fewer: multiProcessing is off, the hardware has "
+				"fewer threads, worker threads didn't get real-time priority (on Linux: no real-time privileges), or "
+				"the system refused to start them (system). Fails, keeping the previous settings, if threads can't be "
+				"started.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
 					"multiProcessing": {"type": "boolean"}, "threads": {"type": "integer"}}})"),
 				statusSchema(), false},
@@ -608,7 +727,7 @@ namespace gnubase::engine
 				"The audio device (its backend, id, name, format, channel names, latencies in frames, clock source "
 				"and whether it has a control panel), whether it runs, how many frames it has processed and, if it is "
 				"the dummy device, captured, how many frames of audio track playback were silent because a disk stream "
-				"was late, and the processing threads.",
+				"was late, and the processing threads (see audio.setProcessing).",
 				noParameters(), statusSchema(), true},
 			[this](CommandContext&) { return status(); });
 		engine.registerCommand(

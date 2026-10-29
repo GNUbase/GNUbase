@@ -88,6 +88,14 @@ namespace gnubase::engine::processors
 		throw std::invalid_argument("no built-in processor " + id);
 	}
 
+	bool isInstrument(const std::string& id)
+	{
+		for (const Builtin& builtin : registry())
+			if (builtin.info.id == id)
+				return builtin.info.instrument;
+		return false;
+	}
+
 	void registerCommands(Engine& engine)
 	{
 		engine.registerCommand(

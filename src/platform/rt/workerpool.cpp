@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <chrono>
 #include <climits>
+#include <string>
+#include <system_error>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -144,7 +146,7 @@ namespace gnubase::rt
 			return;
 		m_previous.priority = previous.sched_priority;
 		sched_param param{};
-		param.sched_priority = std::min(sched_get_priority_min(SCHED_FIFO) + 70, sched_get_priority_max(SCHED_FIFO));
+		param.sched_priority = sched_get_priority_min(SCHED_FIFO);
 		m_active = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param) == 0;
 #endif
 	}
@@ -180,38 +182,103 @@ namespace gnubase::rt
 		return std::max<size_t>(std::thread::hardware_concurrency(), 1);
 	}
 
+	namespace
+	{
+		std::atomic<size_t> g_threadLimit{SIZE_MAX};
+		std::atomic<bool> g_refuseRealtime{false};
+
+		// Spinning between jobs only catches the next one when the load is close to the full period; otherwise the
+		// worker sleeps.
+		constexpr auto g_minSpin = std::chrono::microseconds(20);
+		constexpr auto g_maxSpin = std::chrono::microseconds(200);
+
+		// Linux: the workers' priority for the calling thread; 0 for their initial one if it has no real-time priority.
+		int prioritySuitingCaller() noexcept
+		{
+#ifdef __linux__
+			// Once per thread that runs jobs: these are short system calls that never block.
+			sched_param param{};
+			const int policy = sched_getscheduler(0);
+			if ((policy == SCHED_FIFO || policy == SCHED_RR) && sched_getparam(0, &param) == 0)
+				return workerPriority(param.sched_priority, sched_get_priority_min(SCHED_FIFO));
+#endif
+			return 0;
+		}
+	}
+
+	void setWorkerPoolFaults(const WorkerPoolFaults& faults) noexcept
+	{
+		g_threadLimit.store(faults.threadLimit);
+		g_refuseRealtime.store(faults.refuseRealtime);
+	}
+
 	WorkerPool::WorkerPool(size_t workers, double periodSeconds)
-		: m_spin(std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-			  std::chrono::duration<double>(std::clamp(periodSeconds / 2.0, 50e-6, 2e-3))))
+		: m_spin(std::clamp(std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+								std::chrono::duration<double>(periodSeconds / 16.0)),
+			  std::chrono::duration_cast<std::chrono::steady_clock::duration>(g_minSpin),
+			  std::chrono::duration_cast<std::chrono::steady_clock::duration>(g_maxSpin)))
 	{
 		assertNotRealtime("starting a worker pool");
 		m_threads.reserve(workers);
+		try
+		{
+			for (size_t i = 0; i < workers; ++i)
+			{
+				if (i >= g_threadLimit.load())
+					throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again),
+						"starting worker thread " + std::to_string(i + 1));
+				m_threads.emplace_back([this, i, periodSeconds] { loop(i + 1, periodSeconds); });
+			}
+		}
+		catch (...)
+		{
+			stopWorkers(); // or the threads' destructors would terminate the program
+			throw;
+		}
+		// Each worker tries to get real-time priority before it waits for jobs: afterwards realtime() is final.
 		for (size_t i = 0; i < workers; ++i)
-			m_threads.emplace_back([this, i, periodSeconds] { loop(i + 1, periodSeconds); });
+			m_started.wait();
 	}
 
 	WorkerPool::~WorkerPool()
+	{
+		stopWorkers();
+	}
+
+	void WorkerPool::stopWorkers() noexcept
 	{
 		m_stop.store(true, std::memory_order_seq_cst);
 		m_generation.fetch_add(1, std::memory_order_seq_cst);
 		m_wake.release(static_cast<int>(m_threads.size()));
 		for (std::thread& thread : m_threads)
 			thread.join();
+		m_threads.clear();
 	}
 
-	void WorkerPool::run(ParallelJob& job) noexcept
+	void WorkerPool::run(ParallelJob& job, size_t helpers) noexcept
 	{
-		if (m_threads.empty())
+		helpers = std::min(helpers, m_threads.size());
+		if (helpers == 0)
 		{
 			job.work(0);
 			return;
 		}
+		followCaller();
+		m_floatMode.store(floatMode(), std::memory_order_relaxed); // published by the store of m_job
+		m_helpers.store(helpers, std::memory_order_relaxed);       // published by the change of the generation
+		m_admitted.store(0, std::memory_order_relaxed);
 		m_job.store(&job, std::memory_order_seq_cst);
 		m_generation.fetch_add(1, std::memory_order_seq_cst);
 		// A worker counts itself as a sleeper before it checks the generation one last time, and this thread counts
-		// the sleepers after it changed the generation: a worker either sees the new job or is woken.
+		// the sleepers after it changed the generation: a worker either sees the new job or is woken. Sleepers this
+		// job doesn't need stay counted for the next one.
 		if (const size_t sleepers = m_sleepers.exchange(0, std::memory_order_seq_cst); sleepers > 0)
-			m_wake.release(static_cast<int>(sleepers));
+		{
+			const size_t woken = std::min(sleepers, helpers);
+			if (sleepers > woken)
+				m_sleepers.fetch_add(sleepers - woken, std::memory_order_seq_cst);
+			m_wake.release(static_cast<int>(woken));
+		}
 		job.work(0);
 		// A worker increments m_inside before it reads m_job, and this thread clears m_job before it reads m_inside:
 		// with sequentially consistent order a worker either sees no job or is counted here.
@@ -220,32 +287,70 @@ namespace gnubase::rt
 			cpuPause();
 	}
 
+	void WorkerPool::followCaller() noexcept
+	{
+		const std::thread::id caller = std::this_thread::get_id();
+		if (caller == m_caller)
+			return;
+		m_caller = caller;
+		m_priority.store(prioritySuitingCaller(), std::memory_order_relaxed); // published by the new generation
+	}
+
 	void WorkerPool::loop(size_t thread, double periodSeconds)
 	{
 		const ScopedRealtimePriority priority(periodSeconds);
-		if (priority.active())
+		const bool realtime = priority.active() && !g_refuseRealtime.load();
+		if (realtime)
 			m_realtime.fetch_add(1, std::memory_order_release);
-		const ScopedDenormalsDisabled denormals;
+		m_started.release();
+
+		const uint64_t initialMode = floatMode();
+		uint64_t mode = initialMode;
+#ifdef __linux__
+		int ownPriority = 0;
+#endif
 		uint64_t seen = 0;
+		bool tookPart = false;
 		for (;;)
 		{
-			seen = waitForJob(seen);
+			seen = waitForJob(seen, tookPart);
+			tookPart = false;
 			if (m_stop.load(std::memory_order_seq_cst))
-				return;
+				break;
 			m_inside.fetch_add(1, std::memory_order_seq_cst);
-			if (ParallelJob* job = m_job.load(std::memory_order_seq_cst))
-			{
-				const ScopedRealtimeContext realtime;
-				job->work(thread);
-			}
+			if (m_admitted.fetch_add(1, std::memory_order_relaxed) < m_helpers.load(std::memory_order_relaxed))
+				if (ParallelJob* job = m_job.load(std::memory_order_seq_cst))
+				{
+					if (const uint64_t callerMode = m_floatMode.load(std::memory_order_relaxed); callerMode != mode)
+					{
+						setFloatMode(callerMode);
+						mode = callerMode;
+					}
+#ifdef __linux__
+					if (const int wanted = m_priority.load(std::memory_order_relaxed);
+						realtime && wanted != ownPriority)
+					{
+						// Rarely: when another real-time thread starts running jobs.
+						sched_param param{};
+						param.sched_priority = wanted != 0 ? wanted : sched_get_priority_min(SCHED_FIFO);
+						sched_setscheduler(0, SCHED_FIFO, &param);
+						ownPriority = wanted;
+					}
+#endif
+					const ScopedRealtimeContext realtimeContext;
+					job->work(thread);
+					tookPart = true;
+				}
 			m_inside.fetch_sub(1, std::memory_order_seq_cst);
 		}
+		setFloatMode(initialMode);
 	}
 
-	uint64_t WorkerPool::waitForJob(uint64_t seen) noexcept
+	uint64_t WorkerPool::waitForJob(uint64_t seen, bool spin) noexcept
 	{
-		// Jobs come once per audio block: spinning a little catches the next one without the latency of a wake-up.
-		auto spinUntil = std::chrono::steady_clock::now() + m_spin;
+		// Jobs come once per audio block: spinning a little after taking part in one catches the next one without the
+		// latency of a wake-up when the load is high.
+		auto spinUntil = std::chrono::steady_clock::now() + (spin ? m_spin : std::chrono::steady_clock::duration{});
 		for (;;)
 		{
 			uint64_t generation = m_generation.load(std::memory_order_seq_cst);

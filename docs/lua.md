@@ -173,7 +173,7 @@ Returns:
 
 #### `gnubase.audio.get`
 
-The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads.
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing).
 
 Only reads; changes nothing.
 
@@ -289,7 +289,7 @@ Returns:
 
 #### `gnubase.audio.setProcessing`
 
-Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; default: the number of hardware threads). At most one thread per hardware thread processes: activeThreads in the result. With multiProcessing off only the audio thread does. Independent tracks then run in parallel; the output is the same for any number of threads. The device must be stopped.
+Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; default: half the hardware threads, about one per core). Independent tracks then run in parallel; the output is the same for any number of threads. The device must be stopped. activeThreads in the result is how many process, and limitedBy why that is fewer: multiProcessing is off, the hardware has fewer threads, worker threads didn't get real-time priority (on Linux: no real-time privileges), or the system refused to start them (system). Fails, keeping the previous settings, if threads can't be started.
 
 Parameters:
 
@@ -484,7 +484,7 @@ Parameters:
 
 #### `gnubase.controller.set`
 
-Changes controller events of a MIDI part: each change names a controller event by id and gives what changes, position in ticks, controller number 0-127, value 0-1 or MIDI channel 0-15. Returns the changed controller events.
+Changes controller events of a MIDI part: each change names a controller event by id and gives what changes: position in ticks, type, and the fields of the type as controller.add takes them (number, value, channel, bank, data). A field the type doesn't have is an error, such as value on a program change; a null bank removes it. A new type keeps the fields it shares with the old one and needs the others. Returns the changed controller events.
 
 Parameters:
 
