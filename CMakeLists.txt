@@ -13,6 +13,7 @@ option(GNUBASE_WARNINGS_AS_ERRORS "Treat compiler warnings in GNUbase code as er
 set(GNUBASE_SANITIZERS "" CACHE STRING "Sanitizers for GNUbase code (GCC/Clang), e.g. address,undefined or thread")
 option(GNUBASE_CLANG_TIDY "Run clang-tidy on GNUbase code while compiling" OFF)
 option(GNUBASE_TEST_PLUGINS "Build the test plugins (tests/plugins) and the tests that load them" ON)
+option(GNUBASE_RENDER_SPIKE "Build the render backend spike (spikes/render-backend, #47)" OFF)
 
 if(GNUBASE_SANITIZERS AND MSVC)
 	message(FATAL_ERROR "GNUBASE_SANITIZERS is only supported with GCC and Clang")
@@ -89,6 +90,9 @@ add_subdirectory(src/scripting)
 add_subdirectory(src/ui)
 add_subdirectory(src/app)
 add_subdirectory(src/pluginhost)
+if(GNUBASE_RENDER_SPIKE)
+	add_subdirectory(spikes/render-backend)
+endif()
 
 enable_testing()
 add_subdirectory(tests)
