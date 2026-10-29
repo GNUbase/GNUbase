@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <deque>
 #include <filesystem>
@@ -47,6 +48,9 @@ namespace
 	constexpr int32 g_maxFrames = 512;
 	const std::array<const char*, 7> g_pluginNames = {
 		"gain", "synth", "latency", "paramstress", "crash", "hang", "stateblob"};
+	// The plugins that tests may instantiate in a loop: setting a parameter of crash or hang would take the test
+	// process down, so loops over every plugin that do more than read the factory use this list.
+	const std::array<const char*, 5> g_safePluginNames = {"gain", "synth", "latency", "paramstress", "stateblob"};
 
 	// The plugin as a host finds it: a <name>.vst3 bundle folder on every platform.
 	std::filesystem::path pluginPath(const std::string& name)
@@ -260,7 +264,8 @@ namespace
 		std::vector<vst::Vst::Event> events;
 	};
 
-	// A memory stream that moves at most maxChunk bytes per call, as hosts may.
+	// A memory stream that moves at most maxChunk bytes per call, as hosts may. Like a file stream, it can report a
+	// read that returns fewer bytes than asked for as kResultFalse, with the bytes it did read.
 	class Stream final : public TestObject<vst::IBStream>
 	{
 	public:
@@ -276,7 +281,8 @@ namespace
 			at += count;
 			if (numBytesRead != nullptr)
 				*numBytesRead = static_cast<int32>(count);
-			return vst::kResultOk;
+			return falseOnShortRead && count < static_cast<size_t>(std::max(numBytes, 0)) ? vst::kResultFalse
+																						  : vst::kResultOk;
 		}
 
 		tresult PLUGIN_API write(void* buffer, int32 numBytes, int32* numBytesWritten) override
@@ -314,6 +320,7 @@ namespace
 		std::vector<uint8_t> bytes;
 		size_t maxChunk;
 		size_t at = 0;
+		bool falseOnShortRead = false;
 	};
 
 	// A loaded plugin module: entered through the platform's entry point, its factory taken from GetPluginFactory.
@@ -546,9 +553,10 @@ namespace
 		return stream.bytes;
 	}
 
-	bool loadState(const Instance& plugin, const std::vector<uint8_t>& bytes, size_t chunk)
+	bool loadState(const Instance& plugin, const std::vector<uint8_t>& bytes, size_t chunk, bool fileLike = false)
 	{
 		Stream stream(chunk, bytes);
+		stream.falseOnShortRead = fileLike;
 		return plugin.component().setState(&stream) == vst::kResultOk;
 	}
 
@@ -565,8 +573,9 @@ namespace
 	}
 }
 
-TEST_CASE("every VST3 test plugin loads through GetPluginFactory and processes a block", "[integration]")
+TEST_CASE("every VST3 test plugin has the platform's bundle layout and a factory with one class", "[integration]")
 {
+	// Only the factory is used here, so this may include crash and hang.
 	std::set<std::string> classIds;
 	for (const char* name : g_pluginNames)
 	{
@@ -603,7 +612,16 @@ TEST_CASE("every VST3 test plugin loads through GetPluginFactory and processes a
 		void* nothing = nullptr;
 		CHECK(module.factory().createInstance(unknown, vst::Vst::IComponent_iid, &nothing) != vst::kResultOk);
 		CHECK(nothing == nullptr);
+	}
+	CHECK(classIds.size() == g_pluginNames.size());
+}
 
+TEST_CASE("every safe VST3 test plugin creates an instance and processes a block", "[integration]")
+{
+	for (const char* name : g_safePluginNames)
+	{
+		INFO("plugin " << name);
+		const Module module(name);
 		Instance plugin(module);
 		TUID controllerClass = {};
 		CHECK(plugin.component().getControllerClassId(controllerClass) != vst::kResultOk); // a single component
@@ -627,7 +645,6 @@ TEST_CASE("every VST3 test plugin loads through GetPluginFactory and processes a
 			CHECK(silent(channel));
 		plugin.deactivate();
 	}
-	CHECK(classIds.size() == g_pluginNames.size());
 }
 
 TEST_CASE("the VST3 gain test plugin applies its gain from the change's sample offset on", "[integration]")
@@ -662,6 +679,35 @@ TEST_CASE("the VST3 gain test plugin applies its gain from the change's sample o
 	CHECK(plugin.controller().normalizedParamToPlain(gain, normalized) == -12.0);
 }
 
+TEST_CASE("the VST3 gain test plugin applies the points of a queue in order", "[integration]")
+{
+	const Module module("gain");
+	Instance plugin(module);
+	const ParamID gain = plugin.paramId("Gain");
+	plugin.activate();
+
+	Block block(256);
+	for (auto& channel : block.in)
+		std::fill(channel.begin(), channel.end(), 0.5f);
+	BlockEvents events;
+	vst::Vst::IEditController& controller = plugin.controller();
+	events.params.add(gain, 32, controller.plainParamToNormalized(gain, -6.0));
+	events.params.add(gain, 96, controller.plainParamToNormalized(gain, -12.0));
+	events.params.add(gain, 96, controller.plainParamToNormalized(gain, -20.0)); // the later of two at one offset wins
+	process(plugin, block, events);
+
+	const auto level = [](double db) { return static_cast<float>(0.5 * std::pow(10.0, db / 20.0)); };
+	for (const auto& channel : block.out)
+	{
+		CHECK(channel[31] == 0.5f);
+		CHECK_THAT(channel[32], WithinRel(level(-6.0), 1e-6f));
+		CHECK_THAT(channel[95], WithinRel(level(-6.0), 1e-6f));
+		CHECK_THAT(channel[96], WithinRel(level(-20.0), 1e-6f));
+		CHECK_THAT(channel[255], WithinRel(level(-20.0), 1e-6f));
+	}
+	CHECK(plugin.plainValue(gain) == -20.0);
+}
+
 TEST_CASE("the VST3 synth test plugin plays notes and fades out after the note off", "[integration]")
 {
 	const Module module("synth");
@@ -694,6 +740,46 @@ TEST_CASE("the VST3 synth test plugin plays notes and fades out after the note o
 	CHECK(events.outNotes.events.empty());
 }
 
+TEST_CASE("the VST3 synth test plugin reports its longest release as its tail", "[integration]")
+{
+	const Module module("synth");
+	const Instance plugin(module);
+	// The release lasts at most 2 s, at the 48 kHz the instance is set up for.
+	CHECK(plugin.processor().getTailSamples() == 96000);
+
+	const Module gainModule("gain");
+	const Instance gain(gainModule);
+	CHECK(gain.processor().getTailSamples() == vst::Vst::kNoTail);
+}
+
+TEST_CASE("the VST3 synth test plugin silences its voices on activation and when processing stops", "[integration]")
+{
+	const Module module("synth");
+	Instance plugin(module);
+	setPlain(plugin, plugin.paramId("Release"), 2000.0);
+	plugin.activate();
+	Block block(256);
+	BlockEvents events;
+	events.notes.note(true, 0, 69, 1.0f);
+	process(plugin, block, events);
+	events.clear();
+	REQUIRE(!silent(block.out[0]));
+
+	SECTION("deactivated and activated again, e.g. for a new latency or sample rate")
+	{
+		plugin.deactivate();
+		plugin.activate();
+	}
+	SECTION("processing stopped and started again")
+	{
+		REQUIRE(plugin.processor().setProcessing(0) == vst::kResultOk);
+		REQUIRE(plugin.processor().setProcessing(1) == vst::kResultOk);
+	}
+	// The note is still held, but its voice is gone.
+	process(plugin, block, events);
+	CHECK(silent(block.out[0]));
+}
+
 TEST_CASE("the VST3 latency test plugin reports its latency and delays by it", "[integration]")
 {
 	const Module module("latency");
@@ -724,6 +810,39 @@ TEST_CASE("the VST3 latency test plugin reports its latency and delays by it", "
 	plugin.deactivate();
 	plugin.activate();
 	CHECK(plugin.processor().getLatencySamples() == 128);
+}
+
+TEST_CASE("the VST3 latency test plugin tells the host about a state load on the main thread", "[integration]")
+{
+	const Module module("latency");
+	const Instance source(module);
+	setPlain(source, source.paramId("Latency"), 128.0);
+	const std::vector<uint8_t> state = saveState(source, 1 << 20);
+
+	SECTION("inactive: the parameter values changed")
+	{
+		const Instance plugin(module);
+		REQUIRE(loadState(plugin, state, 1 << 20));
+		REQUIRE(plugin.handler.restarts.size() == 1);
+		CHECK(plugin.handler.restarts[0] == vst::Vst::kParamValuesChanged);
+	}
+	SECTION("active: the parameter values and, as the state has another latency, the latency changed")
+	{
+		Instance plugin(module);
+		plugin.activate();
+		REQUIRE(loadState(plugin, state, 1 << 20));
+		REQUIRE(plugin.handler.restarts.size() == 1);
+		CHECK(plugin.handler.restarts[0] == (vst::Vst::kParamValuesChanged | vst::Vst::kLatencyChanged));
+		CHECK(plugin.processor().getLatencySamples() == 64);
+		// The restart was passed on, so the host's next change doesn't repeat it.
+		const ParamID id = plugin.paramId("Latency");
+		REQUIRE(
+			plugin.controller().setParamNormalized(id, plugin.controller().getParamNormalized(id)) == vst::kResultOk);
+		CHECK(plugin.handler.restarts.size() == 1);
+		plugin.deactivate();
+		plugin.activate();
+		CHECK(plugin.processor().getLatencySamples() == 128);
+	}
 }
 
 TEST_CASE("the VST3 parameter stress test plugin has 1024 parameters and sends automation", "[integration]")
@@ -776,6 +895,67 @@ TEST_CASE("the VST3 parameter stress test plugin has 1024 parameters and sends a
 	CHECK(block.out[0] == block.in[0]);
 }
 
+TEST_CASE("the VST3 parameter stress test plugin maps list values the way VST3 hosts do", "[integration]")
+{
+	const Module module("paramstress");
+	Instance plugin(module);
+	vst::Vst::IEditController& controller = plugin.controller();
+	// "Parameter 3" is a list of four shapes: step k of 3 covers the normalized values from k/4 up to (k+1)/4.
+	const ParamID shape = plugin.paramId("Parameter 3");
+	REQUIRE(plugin.paramInfo(3).stepCount == 3);
+	CHECK(plugin.paramText(shape, 0.2) == "Sine");
+	CHECK(plugin.paramText(shape, 0.25) == "Triangle");
+	CHECK(plugin.paramText(shape, 0.49) == "Triangle");
+	CHECK(plugin.paramText(shape, 0.5) == "Saw");
+	CHECK(plugin.paramText(shape, 0.74) == "Saw");
+	CHECK(plugin.paramText(shape, 0.75) == "Square");
+	CHECK(plugin.paramText(shape, 1.0) == "Square");
+	for (int step = 0; step <= 3; ++step)
+	{
+		const ParamValue normalized = controller.plainParamToNormalized(shape, step);
+		CHECK(normalized == step / 3.0);
+		CHECK(controller.normalizedParamToPlain(shape, normalized) == step);
+	}
+
+	// The processor follows the same rule.
+	plugin.activate();
+	Block block(64);
+	BlockEvents events;
+	events.params.add(shape, 0, 0.2);
+	process(plugin, block, events);
+	CHECK(controller.getParamNormalized(shape) == 0.0);
+}
+
+TEST_CASE("the VST3 parameter stress test plugin takes eight points on each of its parameters", "[integration]")
+{
+	const Module module("paramstress");
+	Instance plugin(module);
+	vst::Vst::IEditController& controller = plugin.controller();
+	plugin.activate();
+	Block block(512);
+	BlockEvents events;
+	std::vector<std::pair<ParamID, ParamValue>> last;
+	last.reserve(1023);
+	for (int32 i = 1; i < 1024; ++i) // all but "Emit automation", which would change parameters itself
+	{
+		const ParamID id = plugin.paramInfo(i).id;
+		ParamValue value = 0.0;
+		for (int32 point = 0; point < 8; ++point)
+		{
+			value = std::fmod((i * 0.37) + (point * 0.11), 1.0);
+			events.params.add(id, point * 64, value);
+		}
+		last.emplace_back(id, value);
+	}
+	process(plugin, block, events);
+	for (const auto& [id, value] : last)
+	{
+		INFO("parameter " << id);
+		CHECK(controller.getParamNormalized(id) ==
+			controller.plainParamToNormalized(id, controller.normalizedParamToPlain(id, value)));
+	}
+}
+
 TEST_CASE("the VST3 state blob test plugin round-trips its state byte for byte", "[integration]")
 {
 	const Module module("stateblob");
@@ -790,6 +970,10 @@ TEST_CASE("the VST3 state blob test plugin round-trips its state byte for byte",
 	REQUIRE(loadState(copy, state, 777));
 	CHECK(copy.plainValue(copy.paramId("Seed")) == 1234.0);
 	CHECK(saveState(copy, 1 << 20) == state);
+	// A file stream reports its last, short read as kResultFalse, with the bytes it read.
+	const Instance fromFile(module);
+	REQUIRE(loadState(fromFile, state, SIZE_MAX, true));
+	CHECK(saveState(fromFile, 1 << 20) == state);
 	// The controller of a single component already has the state.
 	Stream stream(1 << 20, state);
 	CHECK(copy.controller().setComponentState(&stream) == vst::kResultOk);
@@ -815,5 +999,27 @@ TEST_CASE("the VST3 crash and hang test plugins have their trigger parameters, o
 		CHECK(plugin.paramText(id, 1.0) == "On");
 		CHECK(plugin.paramInfo(0).stepCount == 1);
 		CHECK(!saveState(plugin, 1 << 20).empty());
+	}
+}
+
+TEST_CASE("the VST3 crash and hang test plugins save a state that misbehaves on load", "[integration]")
+{
+	// Setting "Crash on load" or "Hang on load" is harmless; only loading a state saved with it On misbehaves, which
+	// host tests do in a plugin host process.
+	for (const std::string name : {"crash", "hang"})
+	{
+		INFO("plugin " << name);
+		const Module module(name);
+		const Instance plugin(module);
+		const ParamID id = plugin.paramId(name == "crash" ? "Crash on load" : "Hang on load");
+		CHECK(plugin.controller().getParamNormalized(id) == 0.0);
+		const std::vector<uint8_t> off = saveState(plugin, 1 << 20);
+		setPlain(plugin, id, 1.0);
+		CHECK(plugin.controller().getParamNormalized(id) == 1.0);
+		const std::vector<uint8_t> on = saveState(plugin, 1 << 20);
+		CHECK(on.size() == off.size());
+		CHECK(on != off);
+		REQUIRE(loadState(plugin, off, 1 << 20)); // a state with it Off loads normally
+		CHECK(plugin.controller().getParamNormalized(id) == 0.0);
 	}
 }

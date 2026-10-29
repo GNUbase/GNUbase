@@ -26,8 +26,9 @@ namespace
 {
 	constexpr double g_sampleRate = 48000.0;
 	constexpr uint32_t g_maxFrames = 512;
-	const std::array<const char*, 7> g_pluginNames = {
-		"gain", "synth", "latency", "paramstress", "crash", "hang", "stateblob"};
+	// The plugins that tests may instantiate in a loop: setting a parameter of crash or hang would take the test
+	// process down, so they are left out and tested on their own.
+	const std::array<const char*, 5> g_safePluginNames = {"gain", "synth", "latency", "paramstress", "stateblob"};
 
 	// The plugin as a host finds it: a bundle folder on macOS, a library file elsewhere.
 	std::filesystem::path pluginPath(const std::string& name)
@@ -456,9 +457,9 @@ namespace
 	}
 }
 
-TEST_CASE("every CLAP test plugin loads through clap_entry and its factory and processes a block", "[integration]")
+TEST_CASE("every safe CLAP test plugin loads through clap_entry and its factory and processes a block", "[integration]")
 {
-	for (const char* name : g_pluginNames)
+	for (const char* name : g_safePluginNames)
 	{
 		INFO("plugin " << name);
 #ifdef __APPLE__
@@ -560,6 +561,26 @@ TEST_CASE("the CLAP synth test plugin plays notes and ends its voices", "[integr
 	CHECK(ended);
 	process(plugin, block, in, out);
 	CHECK(std::all_of(block.out[0].begin(), block.out[0].end(), [](float s) { return s == 0.0f; }));
+}
+
+TEST_CASE("the CLAP synth test plugin ends the voice it steals", "[integration]")
+{
+	const ClapLibrary library("synth");
+	TestHost host;
+	ClapInstance plugin(library, host);
+	plugin.activate();
+
+	// Seventeen notes for sixteen voices: the last one takes the first one's voice.
+	Block block(64);
+	InputEvents in;
+	OutputEvents out;
+	for (int16_t i = 0; i < 17; ++i)
+		in.note(CLAP_EVENT_NOTE_ON, static_cast<uint32_t>(i), static_cast<int16_t>(60 + i), 1.0);
+	process(plugin, block, in, out);
+	REQUIRE(out.events().size() == 1);
+	CHECK(out.events()[0].type == CLAP_EVENT_NOTE_END);
+	CHECK(out.events()[0].key == 60);
+	CHECK(out.events()[0].time == 16);
 }
 
 TEST_CASE("the CLAP latency test plugin reports its latency and delays by it", "[integration]")
@@ -692,5 +713,28 @@ TEST_CASE("the CLAP crash and hang test plugins have their trigger parameters, o
 		REQUIRE(params.value_to_text(plugin.get(), id, 1.0, text, sizeof(text)));
 		CHECK(std::string(text) == "On");
 		CHECK(!saveState(plugin, 1 << 20).empty());
+	}
+}
+
+TEST_CASE("the CLAP crash and hang test plugins save a state that misbehaves on load", "[integration]")
+{
+	// Setting "Crash on load" or "Hang on load" is harmless; only loading a state saved with it On misbehaves, which
+	// host tests do in a plugin host process.
+	for (const std::string name : {"crash", "hang"})
+	{
+		INFO("plugin " << name);
+		const ClapLibrary library(name);
+		TestHost host;
+		const ClapInstance plugin(library, host);
+		const clap_id id = plugin.paramId(name == "crash" ? "Crash on load" : "Hang on load");
+		CHECK(plugin.paramValue(id) == 0.0);
+		const std::vector<uint8_t> off = saveState(plugin, 1 << 20);
+		flushParam(plugin, id, 1.0);
+		CHECK(plugin.paramValue(id) == 1.0);
+		const std::vector<uint8_t> on = saveState(plugin, 1 << 20);
+		CHECK(on.size() == off.size());
+		CHECK(on != off);
+		REQUIRE(loadState(plugin, off, 1 << 20)); // a state with it Off loads normally
+		CHECK(plugin.paramValue(id) == 0.0);
 	}
 }

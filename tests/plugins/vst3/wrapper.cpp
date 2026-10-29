@@ -100,16 +100,26 @@ namespace gnubase::testplugins
 			return range > 0.0 ? std::clamp((plain - info.minValue) / range, 0.0, 1.0) : 0.0;
 		}
 
+		// Stepped parameters follow VST3's rule for discrete values: of n steps, step k covers the normalized values
+		// from k/(n+1) up to (k+1)/(n+1), and step k is k/n normalized.
 		double toPlain(const ParamInfo& info, double normalized)
 		{
-			const double plain = info.minValue + (std::clamp(normalized, 0.0, 1.0) * (info.maxValue - info.minValue));
-			return info.stepped ? std::round(plain) : plain;
+			const double value = std::clamp(normalized, 0.0, 1.0);
+			if (!info.stepped)
+				return info.minValue + (value * (info.maxValue - info.minValue));
+			const double steps = std::round(info.maxValue - info.minValue);
+			return info.minValue + std::min(steps, std::floor(value * (steps + 1.0)));
 		}
 
+		// The block's events in time order: order holds one sort key per event, its time in the upper and its index in
+		// events in the lower 32 bits.
 		class Vst3EventInput : public EventInput
 		{
 		public:
-			Vst3EventInput(const Event* events, uint32_t count) : m_events(events), m_count(count) {}
+			Vst3EventInput(const Event* events, const uint64_t* order, uint32_t count)
+				: m_events(events), m_order(order), m_count(count)
+			{
+			}
 
 			uint32_t size() const override { return m_count; }
 
@@ -117,12 +127,13 @@ namespace gnubase::testplugins
 			{
 				if (index >= m_count)
 					return false;
-				event = m_events[index];
+				event = m_events[m_order[index] & 0xffffffffu];
 				return true;
 			}
 
 		private:
 			const Event* m_events;
+			const uint64_t* m_order;
 			uint32_t m_count;
 		};
 
@@ -287,7 +298,9 @@ namespace gnubase::testplugins
 				if (state != 0 && !m_active)
 				{
 					m_events.assign(g_maxEvents, Event{});
+					m_order.assign(g_maxEvents, 0);
 					m_core->activate(m_sampleRate, m_maxFrames);
+					m_core->resetState(); // e.g. no voice survives a restart for a new latency or sample rate
 					m_active = true;
 				}
 				else if (state == 0 && m_active)
@@ -299,7 +312,8 @@ namespace gnubase::testplugins
 			}
 
 			// The component's state. A single component has no separate controller state, so the host's calls of the
-			// controller's setState and getState, which have the same signatures, end up here too.
+			// controller's setState and getState, which have the same signatures, end up here too. Called on the main
+			// thread, so the host hears about the new values right away, and about a new latency the state asked for.
 			tresult PLUGIN_API setState(vst::IBStream* state) override
 			{
 				if (state == nullptr)
@@ -312,13 +326,18 @@ namespace gnubase::testplugins
 					bytes.resize(at + chunk);
 					int32 count = 0;
 					const tresult result = state->read(bytes.data() + at, chunk, &count);
-					if (count < 0 || count > chunk || (result != vst::kResultOk && count > 0))
+					if (count < 0 || count > chunk)
 						return vst::kResultFalse;
 					bytes.resize(at + static_cast<size_t>(count));
-					if (count == 0)
+					// Streams may return fewer bytes than asked for at any time. A file stream reports its last, short
+					// read as kResultFalse, with the bytes it did read; loadState checks that the state is complete.
+					if (count == 0 || result != vst::kResultOk)
 						break;
 				}
-				return m_core->loadState(bytes.data(), bytes.size()) ? vst::kResultOk : vst::kResultFalse;
+				if (!m_core->loadState(bytes.data(), bytes.size()))
+					return vst::kResultFalse;
+				notifyHost(vst::Vst::kParamValuesChanged);
+				return vst::kResultOk;
 			}
 
 			tresult PLUGIN_API getState(vst::IBStream* state) override
@@ -375,13 +394,18 @@ namespace gnubase::testplugins
 				return vst::kResultOk;
 			}
 
-			tresult PLUGIN_API setProcessing(vst::TBool /*state*/) override { return vst::kResultOk; }
+			tresult PLUGIN_API setProcessing(vst::TBool state) override
+			{
+				if (state == 0)
+					m_core->resetState(); // voices and delay lines don't carry over to the next start
+				return vst::kResultOk;
+			}
 
 			tresult PLUGIN_API process(vst::Vst::ProcessData& data) override
 			{
 				if (!m_active || data.symbolicSampleSize != vst::Vst::kSample32 || data.numSamples < 0)
 					return vst::kResultFalse;
-				const Vst3EventInput in(m_events.data(), gatherEvents(data));
+				const Vst3EventInput in(m_events.data(), m_order.data(), gatherEvents(data));
 				Vst3EventOutput out(*m_core, data);
 				ProcessBlock block;
 				if (data.numInputs > 0 && data.inputs != nullptr && data.inputs[0].channelBuffers32 != nullptr)
@@ -402,7 +426,11 @@ namespace gnubase::testplugins
 				return vst::kResultOk;
 			}
 
-			uint32 PLUGIN_API getTailSamples() override { return vst::Vst::kNoTail; }
+			uint32 PLUGIN_API getTailSamples() override
+			{
+				const double seconds = m_core->tailSeconds();
+				return seconds > 0.0 ? static_cast<uint32>(std::ceil(seconds * m_sampleRate)) : vst::Vst::kNoTail;
+			}
 
 			// IProcessContextRequirements: the test plugins need no transport or tempo information.
 			uint32 PLUGIN_API getProcessContextRequirements() override { return 0; }
@@ -484,8 +512,7 @@ namespace gnubase::testplugins
 					return vst::kInvalidArgument;
 				if (!m_active)
 					m_core->setParam(id, toPlain(*info, value));
-				if (m_restartPending.exchange(false) && m_handler != nullptr)
-					m_handler->restartComponent(vst::Vst::kLatencyChanged);
+				notifyHost(0);
 				return vst::kResultOk;
 			}
 
@@ -497,10 +524,20 @@ namespace gnubase::testplugins
 
 			vst::IPlugView* PLUGIN_API createView(FIDString /*name*/) override { return nullptr; }
 
-			// Host: the latency plugin asks for a restart on the audio thread; it is passed on in setParamNormalized.
+			// Host: the latency plugin asks for a restart on the audio thread, or on the main thread while a state
+			// loads. It is passed on from the main thread, in setParamNormalized or setState.
 			void requestRestart() override { m_restartPending.store(true); }
 
 		private:
+			// Main thread: calls restartComponent with these flags, plus kLatencyChanged if a restart is pending.
+			void notifyHost(int32 flags)
+			{
+				if (m_restartPending.exchange(false))
+					flags |= vst::Vst::kLatencyChanged;
+				if (flags != 0 && m_handler != nullptr)
+					m_handler->restartComponent(flags);
+			}
+
 			void setHandler(vst::Vst::IComponentHandler* handler)
 			{
 				if (handler != nullptr)
@@ -517,7 +554,9 @@ namespace gnubase::testplugins
 				return vst::kResultOk;
 			}
 
-			// Collects the block's parameter changes and note events into m_events, sorted by time. No allocations.
+			// Collects the block's parameter changes and note events into m_events and sorts them by time into
+			// m_order: events at the same time keep the order of the queues, their points and the note list. No
+			// allocations, and O(n log n) for the thousands of points a block can bring.
 			uint32_t gatherEvents(vst::Vst::ProcessData& data)
 			{
 				uint32_t count = 0;
@@ -573,15 +612,9 @@ namespace gnubase::testplugins
 					}
 					add(event);
 				}
-				// Insertion sort: stable and allocation-free, and the lists are short and mostly sorted already.
-				for (uint32_t i = 1; i < count; ++i)
-				{
-					const Event event = m_events[i];
-					uint32_t j = i;
-					for (; j > 0 && m_events[j - 1].time > event.time; --j)
-						m_events[j] = m_events[j - 1];
-					m_events[j] = event;
-				}
+				for (uint32_t i = 0; i < count; ++i)
+					m_order[i] = (static_cast<uint64_t>(m_events[i].time) << 32) | i;
+				std::sort(m_order.begin(), m_order.begin() + count);
 				return count;
 			}
 
@@ -590,6 +623,7 @@ namespace gnubase::testplugins
 			vst::Vst::IComponentHandler* m_handler = nullptr;
 			std::atomic<bool> m_restartPending{false};
 			std::vector<Event> m_events;
+			std::vector<uint64_t> m_order; // see Vst3EventInput
 			double m_sampleRate = 48000.0;
 			uint32_t m_maxFrames = 4096;
 			bool m_active = false;
@@ -703,43 +737,50 @@ namespace gnubase::testplugins
 	}
 }
 
-// The module entry points. VST3 fixes their names, and hosts call them with the platform's signature.
+// The module entry points, the only symbols a plugin exports (tests/plugins/CMakeLists.txt). VST3 fixes their names,
+// and hosts call them with the platform's signature.
+#ifdef _WIN32
+#define GNUBASE_PLUGIN_EXPORT __declspec(dllexport)
+#else
+#define GNUBASE_PLUGIN_EXPORT __attribute__((visibility("default")))
+#endif
+
 // NOLINTBEGIN(readability-identifier-naming)
 extern "C"
 {
-	SMTG_EXPORT_SYMBOL vst::IPluginFactory* PLUGIN_API GetPluginFactory()
+	GNUBASE_PLUGIN_EXPORT vst::IPluginFactory* PLUGIN_API GetPluginFactory()
 	{
 		gnubase::testplugins::g_factory.addRef(); // the host releases it
 		return &gnubase::testplugins::g_factory;
 	}
 
 #ifdef _WIN32
-	SMTG_EXPORT_SYMBOL bool InitDll()
+	GNUBASE_PLUGIN_EXPORT bool InitDll()
 	{
 		return true;
 	}
 
-	SMTG_EXPORT_SYMBOL bool ExitDll()
+	GNUBASE_PLUGIN_EXPORT bool ExitDll()
 	{
 		return true;
 	}
 #elif defined(__APPLE__)
-	SMTG_EXPORT_SYMBOL bool bundleEntry(void* /*bundle*/)
+	GNUBASE_PLUGIN_EXPORT bool bundleEntry(void* /*bundle*/)
 	{
 		return true;
 	}
 
-	SMTG_EXPORT_SYMBOL bool bundleExit()
+	GNUBASE_PLUGIN_EXPORT bool bundleExit()
 	{
 		return true;
 	}
 #else
-	SMTG_EXPORT_SYMBOL bool ModuleEntry(void* /*sharedLibraryHandle*/)
+	GNUBASE_PLUGIN_EXPORT bool ModuleEntry(void* /*sharedLibraryHandle*/)
 	{
 		return true;
 	}
 
-	SMTG_EXPORT_SYMBOL bool ModuleExit()
+	GNUBASE_PLUGIN_EXPORT bool ModuleExit()
 	{
 		return true;
 	}

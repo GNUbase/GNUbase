@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.25)
 project(GNUbase VERSION 0.1.0 LANGUAGES C CXX)
+# The VST3 SDK's module loader on macOS is Objective-C++. Enabled before any subdirectory, so every generated
+# project has the language's compile and archive rules.
+if(APPLE)
+	enable_language(OBJCXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -64,7 +69,7 @@ find_package(Threads REQUIRED)
 target_link_libraries(cpp-httplib INTERFACE Threads::Threads $<$<PLATFORM_ID:Windows>:ws2_32>)
 # The VST3 SDK's interfaces, header-only: GNUbase implements and calls the interfaces itself. The SDK's C++ namespace
 # is read from its header and passed as GNUBASE_VST3_NS, so GNUbase code refers to it only through the alias in
-# src/pluginhost/vst3/vst3ns.h (docs/dependencies.md).
+# src/pluginhost/vst3/vst3ns.h (docs/dependencies.md). The plugin host's VST3 adapter needs it in every build.
 set(vst3Header "${PROJECT_SOURCE_DIR}/ext/vst3sdk/pluginterfaces/base/funknown.h")
 if(NOT EXISTS "${vst3Header}")
 	message(FATAL_ERROR "The VST3 SDK is missing. Fetch it with\n"
@@ -89,7 +94,6 @@ target_link_libraries(vst3-interfaces PUBLIC vst3-sdk)
 # Linked into plugin modules too: position-independent, and exporting nothing.
 set_target_properties(vst3-interfaces PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden)
 if(APPLE)
-	enable_language(OBJCXX)
 	set(vst3ModuleLoader ${vst3sdk}/public.sdk/source/vst/hosting/module_mac.mm)
 	set_source_files_properties(${vst3ModuleLoader} PROPERTIES COMPILE_OPTIONS -fobjc-arc)
 elseif(WIN32)

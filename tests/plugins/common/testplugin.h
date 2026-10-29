@@ -123,6 +123,8 @@ namespace gnubase::testplugins
 		// Handles the events at their sample offsets and renders the audio between them.
 		virtual void process(const ProcessBlock& block);
 		virtual uint32_t latency() const { return 0; }
+		// How long the output can go on after the input ends, at most: 0 for none.
+		virtual double tailSeconds() const { return 0.0; }
 
 		// State as bytes. The default saves every parameter value; loading sets them through setParam.
 		virtual std::vector<uint8_t> saveState() const;
