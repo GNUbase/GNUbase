@@ -22,6 +22,7 @@ namespace gnubase::engine
 			block.samples.resize(settings.blockFrames * static_cast<size_t>(m_channels));
 			m_spare.push_back(&block);
 		}
+		m_spareCount.store(m_spare.size(), std::memory_order_release);
 		if (m_reader->info().sampleRate != sampleRate)
 			m_resampler =
 				std::make_unique<Resampler>(m_reader->info().sampleRate, sampleRate, m_channels, settings.blockFrames);
@@ -46,6 +47,18 @@ namespace gnubase::engine
 		return m_readyGeneration.load(std::memory_order_acquire) == generation &&
 			(m_returned.load(std::memory_order_acquire) == 0 ||
 				m_endGeneration.load(std::memory_order_acquire) == generation);
+	}
+
+	double DiskStream::load() const
+	{
+		const uint64_t generation = m_generation.load(std::memory_order_acquire);
+		if (m_endGeneration.load(std::memory_order_acquire) == generation)
+			return 0.0;
+		// Until the disk thread takes a seek's old blocks back, they all wait to be filled again.
+		if (m_takenGeneration.load(std::memory_order_acquire) != generation)
+			return 1.0;
+		const size_t empty = m_returned.load(std::memory_order_acquire) + m_spareCount.load(std::memory_order_acquire);
+		return std::min(1.0, static_cast<double>(empty) / static_cast<double>(std::max<size_t>(m_blocks.size(), 1)));
 	}
 
 	void DiskStream::giveBack(Block* block)
@@ -144,6 +157,8 @@ namespace gnubase::engine
 			Block* block = nullptr;
 			while (m_filled.tryPop(block))
 				m_spare.push_back(block);
+			m_spareCount.store(m_spare.size(), std::memory_order_release);
+			m_takenGeneration.store(generation, std::memory_order_release);
 			try
 			{
 				reposition(m_seekTarget.load(std::memory_order_acquire));
@@ -162,7 +177,7 @@ namespace gnubase::engine
 		}
 
 		Block* block = nullptr;
-		bool returned = false; // counted in m_returned until it is filled again
+		bool returned = false; // counted in m_returned or m_spareCount until it is filled again
 		if (!m_spare.empty())
 		{
 			block = m_spare.back();
@@ -195,6 +210,8 @@ namespace gnubase::engine
 		m_filled.tryPush(block);
 		if (returned)
 			m_returned.fetch_sub(1, std::memory_order_acq_rel);
+		else
+			m_spareCount.store(m_spare.size(), std::memory_order_release);
 		if (m_fillEnded)
 		{
 			m_endGeneration.store(generation, std::memory_order_release);

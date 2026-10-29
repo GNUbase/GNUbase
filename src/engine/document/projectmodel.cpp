@@ -966,6 +966,9 @@ namespace gnubase::engine
 				note.pitch = item.at("pitch").get<uint8_t>();
 				note.channel = item.value("channel", uint8_t{0});
 				note.velocity = static_cast<uint16_t>(std::lround(unitValue(item, "velocity", name) * g_maxVelocity));
+				if (item.contains("releaseVelocity"))
+					note.releaseVelocity =
+						static_cast<uint16_t>(std::lround(unitValue(item, "releaseVelocity", name) * g_maxVelocity));
 				notes.push_back(note);
 			}
 			Json added = Json::array();
@@ -1112,6 +1115,7 @@ namespace gnubase::engine
 			{"controller.add", "Add controllers"},
 			{"controller.remove", "Remove controllers"},
 			{"controller.set", "Change controllers"},
+			{"midiFile.import", "Import MIDI file"},
 		};
 
 		// Empty for commands without a fixed name, such as transactions.
@@ -1702,12 +1706,12 @@ namespace gnubase::engine
 
 		const Json note =
 			objectSchema({{"position", integerSchema}, {"length", integerSchema}, {"pitch", integerSchema},
-							 {"velocity", numberSchema}, {"channel", integerSchema}},
+							 {"velocity", numberSchema}, {"releaseVelocity", numberSchema}, {"channel", integerSchema}},
 				{"position", "length", "pitch", "velocity"});
 		add(engine,
 			{"note.add", 1,
 				"Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity "
-				"0-1, MIDI channel 0-15 (default 0).",
+				"0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0).",
 				objectSchema({{"part", idSchema}, {"notes", arraySchema(note)}}, {"part", "notes"}),
 				{{"type", "object"}, {"properties", {{"notes", {{"type", "array"}}}}}, {"required", {"notes"}}}, false},
 			addNotes);
@@ -1746,6 +1750,7 @@ namespace gnubase::engine
 
 		registerMidiEditCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
+		registerMidiFileCommands(engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 	}

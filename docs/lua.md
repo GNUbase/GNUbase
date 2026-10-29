@@ -158,6 +158,7 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `gnubase.audio.devices`
@@ -172,7 +173,7 @@ Returns:
 
 #### `gnubase.audio.get`
 
-The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, and how many frames of audio track playback were silent because a disk stream was late.
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing).
 
 Only reads; changes nothing.
 
@@ -183,7 +184,24 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
+
+#### `gnubase.audio.performance`
+
+Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1; cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `cycles`: integer, required
+- `diskDropouts`: integer, required
+- `diskLoad`: number, required
+- `load`: number, required
+- `overloads`: integer, required
+- `peak`: number, required
+- `threads`: array of number, required
 
 #### `gnubase.audio.record`
 
@@ -221,6 +239,7 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `gnubase.audio.reset`
@@ -234,7 +253,22 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
+
+#### `gnubase.audio.resetPerformance`
+
+Starts a new performance measurement, like clicking the overload indicator: clears the peak, the overloads and the cycles; the averaged loads go on. Immediately while the device is stopped, otherwise with its next block. Returns the measurement that ended, as audio.performance does, and sends it as the event audio.performanceReset.
+
+Returns:
+
+- `cycles`: integer, required
+- `diskDropouts`: integer, required
+- `diskLoad`: number, required
+- `load`: number, required
+- `overloads`: integer, required
+- `peak`: number, required
+- `threads`: array of number, required
 
 #### `gnubase.audio.setDevice`
 
@@ -260,6 +294,26 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
+- `running`: boolean, required
+
+#### `gnubase.audio.setProcessing`
+
+Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; default: half the hardware threads, about one per core). Independent tracks then run in parallel; the output is the same for any number of threads. The device must be stopped. activeThreads in the result is how many process, and limitedBy why that is fewer: multiProcessing is off, the hardware has fewer threads, worker threads didn't get real-time priority (on Linux: no real-time privileges), or the system refused to start them (system). Fails, keeping the previous settings, if threads can't be started.
+
+Parameters:
+
+- `multiProcessing`: boolean
+- `threads`: integer
+
+Returns:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `playbackDropouts`: integer, required
+- `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `gnubase.audio.start`
@@ -273,6 +327,7 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `gnubase.audio.stop`
@@ -286,6 +341,7 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 ### audioEvent
@@ -697,6 +753,43 @@ Returns:
 
 - `media`: object, required
 
+### midiFile
+
+#### `gnubase.midiFile.export`
+
+Exports MIDI and instrument tracks (tracks, default all of them) as a standard MIDI file of type 0 (one track with every MIDI channel) or 1 (default: a tempo track, then a track per exported track), with ppq ticks per quarter note (24-960, default 480). The file has the notes and controllers as they play, converted to MIDI 1.0, the track names, tempo and time signatures, and the markers unless markers is false. A note ends where the next note of its pitch and channel starts, so that overlapping notes read back the same. range {start, end} in ticks exports only what starts in it, moved to the file's start. Returns the number of tracks in the file.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `markers`: boolean
+- `path`: string, required
+- `ppq`: integer
+- `range`: object
+- `tracks`: array of integer
+- `type`: one of 0 | 1
+
+Returns:
+
+- `tracks`: integer, required
+
+#### `gnubase.midiFile.import`
+
+Imports a standard MIDI file (type 0, 1 or 2) into new MIDI tracks (trackType midi, the default) or instrument tracks, one part per track from the bar of its first event to the bar after its last. A type 0 file gets a track per MIDI channel; the sequences of a type 2 file are laid out one after another, each from a bar start. Names that aren't UTF-8 are read as Windows-1252. Unless tempo is false, the file's tempo and time signatures replace the project's; unless markers is false, its markers are added. One undo step. Returns the new tracks and parts.
+
+Parameters:
+
+- `markers`: boolean
+- `path`: string, required
+- `tempo`: boolean
+- `trackType`: one of "midi" | "instrument"
+
+Returns:
+
+- `parts`: array, required
+- `tracks`: array, required
+
 ### midiPart
 
 #### `gnubase.midiPart.add`
@@ -741,7 +834,7 @@ Returns:
 
 #### `gnubase.note.add`
 
-Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity 0-1, MIDI channel 0-15 (default 0).
+Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity 0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0).
 
 Parameters:
 
@@ -763,7 +856,7 @@ Parameters:
 
 #### `gnubase.note.set`
 
-Changes notes of a MIDI part: each change names a note by id and gives what changes, position and length in ticks, pitch 0-127, velocity 0-1 or MIDI channel 0-15. Returns the changed notes.
+Changes notes of a MIDI part: each change names a note by id and gives what changes, position and length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1 or MIDI channel 0-15. Returns the changed notes.
 
 Parameters:
 
@@ -868,6 +961,165 @@ Parameters:
 
 - `name`: string
 - `sampleRate`: number
+
+### quantize
+
+#### `gnubase.quantize.apply`
+
+Quantizes note starts: moves them toward the nearest position of the grid, or of the groove, and keeps their lengths. Takes the notes of part (only notes, if given) or of every part in parts. The settings are the project's (see quantize.set), or preset's, changed by settings. Quantizing starts from the notes' original timing unless settings.soft is true, and keeps it, so quantize.reset puts it back. Notes moved by other means since they were quantized start from where they are; velocities and lengths changed by other means stay. Returns the notes that changed. Grids are in project time and start again at every bar; notes don't move before their part's start or to or past its end.
+
+Parameters:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+- `preset`: string
+- `settings`: object
+
+Returns:
+
+- `notes`: array, required
+
+#### `gnubase.quantize.ends`
+
+Quantizes note ends: moves them toward the nearest grid position and keeps the starts. Takes the notes of part (only notes, if given) or of every part in parts. The settings are the project's (see quantize.set), or preset's, changed by settings. Quantizing starts from the notes' original timing unless settings.soft is true, and keeps it, so quantize.reset puts it back. Notes moved by other means since they were quantized start from where they are; velocities and lengths changed by other means stay. Returns the notes that changed.
+
+Parameters:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+- `preset`: string
+- `settings`: object
+
+Returns:
+
+- `notes`: array, required
+
+#### `gnubase.quantize.extractGroove`
+
+Makes a groove preset from a MIDI part's rhythm: a groove position at every note start, with the highest velocity and the longest length of the notes there. The groove is length ticks long, by default the part's length, and the preset is named name, by default after the part. The groove's origin is the part's start, so it repeats in phase with the part.
+
+Parameters:
+
+- `length`: integer
+- `name`: string
+- `part`: integer, required
+
+Returns:
+
+- `preset`: object, required
+
+#### `gnubase.quantize.freeze`
+
+Makes quantized notes' timing permanent: quantizing starts from it from now on, and quantize.reset no longer goes back. Takes the notes of part (only notes, if given) or of every part in parts and returns the notes that changed.
+
+Parameters:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+
+Returns:
+
+- `notes`: array, required
+
+#### `gnubase.quantize.get`
+
+The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).
+
+Only reads; changes nothing.
+
+Returns:
+
+- `autoQuantize`: boolean, required
+- `settings`: object, required
+
+#### `gnubase.quantize.lengths`
+
+Sets note lengths and keeps the starts: to length, a note value ("1/8", "1/8T", "1/8.") or ticks, or without length to the step of the grid at each note's start, so tuplets and swing count and notes outside the catch range keep their length. Takes the notes of part (only notes, if given) or of every part in parts. The settings are the project's (see quantize.set), or preset's, changed by settings. quantize.reset puts the lengths back. Returns the notes that changed.
+
+Parameters:
+
+- `length`: string or integer
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+- `preset`: string
+- `settings`: object
+
+Returns:
+
+- `notes`: array, required
+
+#### `gnubase.quantize.presets`
+
+The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `presets`: array, required
+
+#### `gnubase.quantize.removePreset`
+
+Removes one of the user's quantize presets.
+
+Parameters:
+
+- `name`: string, required
+
+#### `gnubase.quantize.renamePreset`
+
+Renames one of the user's quantize presets.
+
+Parameters:
+
+- `name`: string, required
+- `newName`: string, required
+
+#### `gnubase.quantize.reset`
+
+Puts quantized notes back to their timing before quantizing: starts, lengths and velocities. Notes moved by other means since keep their timing, and velocities and lengths changed by other means stay. Takes the notes of part (only notes, if given) or of every part in parts and returns the notes that changed.
+
+Parameters:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+
+Returns:
+
+- `notes`: array, required
+
+#### `gnubase.quantize.savePreset`
+
+Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset of that name. Factory presets can't be replaced. Presets belong to GNUbase, not to the project.
+
+Parameters:
+
+- `name`: string, required
+- `settings`: object
+
+Returns:
+
+- `preset`: object, required
+
+#### `gnubase.quantize.set`
+
+Changes the project's quantize settings: to preset's, if given, then changed by settings. Settings: grid, a note value from "1/1" to "1/128", "T" for a triplet and "." for dotted; tuplet, 0 (off) or 3 to 15 notes in the time of the largest power of two below it; swing 0-1, moving every second grid position later, at 1 by a third of a step (straight grids without tuplets only); catchRange, ticks from a grid position within which notes are quantized (0: all); safeRange, ticks within which they stay; randomize, ticks by which quantized notes move at random, by seed; soft, starting from the current positions instead of the original ones; strength 0-1, the part of the way notes move. groove {length, points: [{position, velocity 0-1, length}]} quantizes to a groove instead of the grid, with preQuantize (a note value), maxMove (ticks), velocityStrength, lengthStrength and origin (where it starts repeating, in project ticks). autoQuantize is whether recording quantizes. Settings are not undo steps; they are saved with the project.
+
+Parameters:
+
+- `autoQuantize`: boolean
+- `preset`: string
+- `settings`: object
+
+Returns:
+
+- `autoQuantize`: boolean, required
+- `settings`: object, required
 
 ### settings
 

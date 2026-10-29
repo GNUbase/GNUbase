@@ -161,7 +161,8 @@ namespace gnubase::engine
 	Json toJson(const Note& note)
 	{
 		Json json = {{"id", note.id}, {"position", note.position}, {"length", note.length}, {"pitch", note.pitch},
-			{"velocity", note.velocity / g_maxVelocity}, {"channel", note.channel}};
+			{"velocity", note.velocity / g_maxVelocity}, {"releaseVelocity", note.releaseVelocity / g_maxVelocity},
+			{"channel", note.channel}};
 		if (note.origin)
 			json["origin"] = {
 				{"original", timingJson(note.origin->original)}, {"quantized", timingJson(note.origin->quantized)}};
@@ -346,6 +347,9 @@ namespace gnubase::engine
 				note.pitch = n.at("pitch").get<uint8_t>();
 				note.velocity = velocityFrom(n.at("velocity"));
 				note.channel = n.at("channel").get<uint8_t>();
+				if (n.contains("releaseVelocity")) // projects saved before #137 don't have it
+					note.releaseVelocity =
+						static_cast<uint16_t>(std::lround(n.at("releaseVelocity").get<double>() * g_maxVelocity));
 				if (n.contains("origin"))
 					note.origin = QuantizeOrigin{
 						timingFrom(n.at("origin").at("original")), timingFrom(n.at("origin").at("quantized"))};
