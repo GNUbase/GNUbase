@@ -450,3 +450,101 @@ TEST_CASE("a full event buffer delays note-offs to a later block instead of drop
 		CHECK(notesIn(player.heard) == std::vector<Heard>{on(10, 60), off(32, 60)});
 	}
 }
+
+namespace
+{
+	// An instrument in a graph that notes what reaches it and which keys it holds.
+	class Recorder : public graph::Processor
+	{
+	public:
+		void process(const graph::ProcessContext& context) noexcept override
+		{
+			for (const ProcessEvent& event : context.eventsIn)
+			{
+				const bool note = event.type == Type::NoteOn || event.type == Type::NoteOff;
+				heard.push_back(
+					{m_frame + event.offset, event.type, event.channel, event.key, note ? 0 : event.value, {}});
+				if (note)
+					held[((event.channel % 16) * 128) + (event.key % 128)] = event.type == Type::NoteOn;
+			}
+			m_frame += context.frames;
+		}
+
+		std::vector<Heard> heard;
+		std::array<bool, size_t{16} * 128> held{};
+
+	private:
+		int64_t m_frame = 0;
+	};
+
+	// Plays a graph from frame 0, block by block.
+	void play(const graph::CompiledGraph& compiled, uint32_t blockSize, int64_t frames)
+	{
+		for (int64_t position = 0; position < frames; position += blockSize)
+		{
+			const graph::TransportSegment segment{0, blockSize, position};
+			compiled.process(blockSize, {true, position, &segment, 1});
+		}
+	}
+
+	graph::NodeDesc instrumentNode(std::shared_ptr<graph::Processor> instrument)
+	{
+		return {
+			graph::NodeKind::Channel, 0, 2, std::make_shared<InstrumentChannel>(sequencer({}), std::move(instrument))};
+	}
+}
+
+TEST_CASE("every note ends when several MIDI tracks fill an instrument's input in one block", "[unit]")
+{
+	// Four MIDI tracks start 256 notes each together, and at frame 400 end them where as many new notes on other
+	// channels start: twice the events an instrument's input holds.
+	const uint32_t blockSize = GENERATE(1u, 64u, 333u);
+	CAPTURE(blockSize);
+	auto recorder = std::make_shared<Recorder>();
+	graph::GraphDesc desc;
+	for (int track = 0; track < 4; ++track)
+	{
+		std::vector<RenderNote> notes;
+		for (const auto& [start, end] : {std::pair{0, 400}, std::pair{400, 800}})
+			for (int n = 0; n < 256; ++n)
+				notes.push_back(note(start, end, n % 128, (start / 50) + (track * 2) + (n / 128)));
+		desc.nodes.push_back({graph::NodeKind::Channel, 0, 0, sequencer(std::move(notes))});
+		desc.events.push_back({track, 4});
+	}
+	desc.nodes.push_back(instrumentNode(recorder));
+	const graph::CompiledGraph compiled(desc, 48000.0, blockSize);
+	play(compiled, blockSize, 1200);
+	CHECK(std::count_if(recorder->heard.begin(), recorder->heard.end(),
+			  [](const Heard& h) { return h.type == Type::NoteOn; }) >= 1024);
+	CHECK(std::count(recorder->held.begin(), recorder->held.end(), true) == 0);
+}
+
+TEST_CASE("one source's events at one offset reach the instrument in their order", "[unit]")
+{
+	// Live MIDI input or a plugin on one MIDI track plays a note of no length, and a note-on followed by pressure.
+	// Another MIDI track's note of the same pitch ends there, and its note-off still comes before the note-ons.
+	auto recorder = std::make_shared<Recorder>();
+	graph::GraphDesc desc;
+	desc.nodes.push_back({graph::NodeKind::Channel, 0, 0, nullptr});
+	desc.nodes.push_back({graph::NodeKind::Channel, 0, 0, nullptr});
+	desc.nodes.push_back(instrumentNode(recorder));
+	desc.events = {{0, 2}, {1, 2}};
+	const graph::CompiledGraph compiled(desc, 48000.0, 8);
+	const auto noteOffEvent = [](uint32_t offset, int key)
+	{
+		ProcessEvent event = noteOnEvent(offset, key);
+		event.type = Type::NoteOff;
+		return event;
+	};
+	ProcessEvent pressure;
+	pressure.offset = 3;
+	pressure.type = Type::ChannelPressure;
+	pressure.value = 77;
+	for (const ProcessEvent& event : {noteOnEvent(3, 60), noteOffEvent(3, 60), noteOnEvent(3, 62), pressure})
+		REQUIRE(compiled.events(0).add(event));
+	REQUIRE(compiled.events(1).add(noteOffEvent(3, 62)));
+	play(compiled, 8, 8);
+	CHECK(recorder->heard ==
+		std::vector<Heard>{off(3, 62), on(3, 60), off(3, 60), on(3, 62), {3, Type::ChannelPressure, 0, 0, 77, {}}});
+	CHECK(recorder->held[62]);
+}

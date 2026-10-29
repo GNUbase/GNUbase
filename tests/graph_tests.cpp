@@ -289,33 +289,77 @@ TEST_CASE("an event buffer keeps events in offset order and drops what doesn't f
 	CHECK(events.capacity() == 3);
 }
 
-TEST_CASE("at one offset an event buffer puts note-offs first, then other events, then note-ons", "[unit]")
+namespace
 {
-	// Whichever source adds its events first, e.g. a MIDI track whose note starts where the instrument track's own
-	// note of the same pitch ends: the note-off must not end the new note.
-	using Type = ProcessEvent::Type;
-	const auto event = [](uint32_t offset, Type type, uint8_t key)
+	ProcessEvent event(uint32_t offset, ProcessEvent::Type type, uint8_t key)
 	{
 		ProcessEvent result;
 		result.offset = offset;
 		result.type = type;
 		result.key = key;
 		return result;
-	};
-	EventBuffer events(8);
-	CHECK(events.add(event(4, Type::NoteOn, 1)));
-	CHECK(events.add(event(4, Type::Controller, 2)));
-	CHECK(events.add(event(4, Type::NoteOff, 3)));
-	CHECK(events.add(event(2, Type::NoteOn, 4)));
-	CHECK(events.add(event(4, Type::NoteOff, 5)));
-	CHECK(events.add(event(4, Type::Parameter, 6)));
-	CHECK(events.add(event(4, Type::NoteOn, 7)));
-	CHECK(events.add(event(6, Type::NoteOff, 8)));
+	}
 
-	std::vector<int> keys;
-	for (const ProcessEvent& e : events)
-		keys.push_back(e.key);
-	CHECK(keys == std::vector<int>{4, 3, 5, 2, 6, 1, 7, 8});
+	std::vector<int> keys(const EventBuffer& events)
+	{
+		std::vector<int> result;
+		for (const ProcessEvent& e : events)
+			result.push_back(e.key);
+		return result;
+	}
+}
+
+TEST_CASE("at one offset an event buffer puts note-offs first, then other events, then note-ons", "[unit]")
+{
+	// Whichever source adds its events first, e.g. a MIDI track whose note starts where the instrument track's own
+	// note of the same pitch ends: the note-off must not end the new note. Here every event comes from a source of
+	// its own.
+	using Type = ProcessEvent::Type;
+	EventBuffer events(8);
+	for (const ProcessEvent& e : {event(4, Type::NoteOn, 1), event(4, Type::Controller, 2), event(4, Type::NoteOff, 3),
+			 event(2, Type::NoteOn, 4), event(4, Type::NoteOff, 5), event(4, Type::Parameter, 6),
+			 event(4, Type::NoteOn, 7), event(6, Type::NoteOff, 8)})
+	{
+		events.nextSource();
+		CHECK(events.add(e));
+	}
+	CHECK(keys(events) == std::vector<int>{4, 3, 5, 2, 6, 1, 7, 8});
+}
+
+TEST_CASE("an event buffer keeps the order of one source's events at one offset", "[unit]")
+{
+	// A note of no length, a note-on followed by pressure on it, from live MIDI input or a plugin. Another source's
+	// note-off still goes before the note-ons.
+	using Type = ProcessEvent::Type;
+	EventBuffer events(8);
+	for (const ProcessEvent& e : {event(4, Type::NoteOn, 1), event(4, Type::NoteOff, 1), event(4, Type::NoteOn, 2),
+			 event(4, Type::PolyPressure, 2), event(6, Type::NoteOn, 3), event(6, Type::NoteOff, 3)})
+		CHECK(events.add(e));
+	events.nextSource();
+	CHECK(events.add(event(4, Type::NoteOff, 2)));
+	CHECK(keys(events) == std::vector<int>{2, 1, 1, 2, 2, 3, 3});
+	CHECK(events[0].type == Type::NoteOff);
+	CHECK(events[1].type == Type::NoteOn);
+	CHECK(events[2].type == Type::NoteOff);
+}
+
+TEST_CASE("merging into a full event buffer drops other events before note-offs", "[unit]")
+{
+	using Type = ProcessEvent::Type;
+	EventBuffer events(3);
+	for (const ProcessEvent& e : {event(1, Type::NoteOn, 1), event(2, Type::Controller, 2), event(3, Type::NoteOff, 3)})
+		REQUIRE(events.add(e));
+	EventBuffer source(3);
+	for (const ProcessEvent& e : {event(0, Type::NoteOff, 4), event(0, Type::NoteOn, 5), event(4, Type::NoteOff, 6)})
+		REQUIRE(source.add(e));
+	// The note-offs take the places of the latest other events; the note-on finds no room.
+	events.merge(source);
+	CHECK(keys(events) == std::vector<int>{4, 3, 6});
+	// A buffer of note-offs keeps them.
+	source.clear();
+	REQUIRE(source.add(event(0, Type::NoteOff, 7)));
+	events.merge(source);
+	CHECK(keys(events) == std::vector<int>{4, 3, 6});
 }
 
 TEST_CASE("processors keep their state when the graph is rebuilt", "[unit]")
