@@ -141,7 +141,14 @@ namespace
 		while (finished.is_null() && std::chrono::steady_clock::now() < deadline)
 		{
 			const std::optional<Message> message = client.wait(std::chrono::milliseconds(100));
-			const auto* event = message ? std::get_if<Event>(&*message) : nullptr;
+			if (!message)
+			{
+				// A wait for another job may have taken this job's events: once none are left, job.get tells.
+				if (Json state = run(client, "job.get", {{"job", job}}).at("job"); state.at("state") != "running")
+					finished = std::move(state);
+				continue;
+			}
+			const auto* event = std::get_if<Event>(&*message);
 			if (event == nullptr)
 				continue;
 			if (event->name == "job.progress" && event->data.at("job") == job && progress != nullptr)
