@@ -4,7 +4,7 @@ add_library(gnubase-app STATIC
 	headless.cpp headless.h
 	options.cpp options.h
 	scripttool.cpp scripttool.h)
-target_link_libraries(gnubase-app PUBLIC gnubase-engine gnubase-mcp gnubase-scripting)
+target_link_libraries(gnubase-app PUBLIC gnubase-engine gnubase-mcp gnubase-scripting PRIVATE $<$<PLATFORM_ID:Windows>:shell32>)
 gnubase_target_defaults(gnubase-app)
 
 add_executable(gnubase main.cpp)

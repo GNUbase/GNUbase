@@ -242,3 +242,13 @@ TEST_CASE("values are checked against their JSON schema", "[unit]")
 	CHECK(validate(Json::parse(R"({"name": "a", "level": 3})"), schema) == "parameters.level is not allowed");
 	CHECK(validate(Json::parse("[]"), schema, "result") == "result must be object");
 }
+
+TEST_CASE("numbers are checked against the schema's minimum and maximum", "[unit]")
+{
+	const Json schema = Json::parse(R"({"type": "number", "minimum": 0.5, "maximum": 4})");
+	CHECK(validate(0.5, schema, "scale").empty());
+	CHECK(validate(4, schema, "scale").empty());
+	CHECK(validate(0.25, schema, "scale") == "scale must be at least 0.5");
+	CHECK(validate(5, schema, "scale") == "scale must be at most 4");
+	CHECK(validate("big", Json::parse(R"({"minimum": 1})"), "name").empty()); // only numbers have a minimum
+}
