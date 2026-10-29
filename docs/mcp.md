@@ -1180,6 +1180,185 @@ Arguments:
 - `name`: string
 - `sampleRate`: number
 
+### quantize
+
+#### `quantize_apply`
+
+Engine command `quantize.apply`.
+
+Quantizes note starts: moves them toward the nearest position of the grid, or of the groove, and keeps their lengths. Takes the notes of part (only notes, if given) or of every part in parts. The settings are the project's (see quantize.set), or preset's, changed by settings. Quantizing starts from the notes' original timing unless settings.soft is true, and keeps it, so quantize.reset puts it back. Notes moved by other means since they were quantized start from where they are; velocities and lengths changed by other means stay. Returns the notes that changed. Grids are in project time and start again at every bar; notes don't move before their part's start or to or past its end.
+
+Arguments:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+- `preset`: string
+- `settings`: object
+
+Result:
+
+- `notes`: array, required
+
+#### `quantize_ends`
+
+Engine command `quantize.ends`.
+
+Quantizes note ends: moves them toward the nearest grid position and keeps the starts. Takes the notes of part (only notes, if given) or of every part in parts. The settings are the project's (see quantize.set), or preset's, changed by settings. Quantizing starts from the notes' original timing unless settings.soft is true, and keeps it, so quantize.reset puts it back. Notes moved by other means since they were quantized start from where they are; velocities and lengths changed by other means stay. Returns the notes that changed.
+
+Arguments:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+- `preset`: string
+- `settings`: object
+
+Result:
+
+- `notes`: array, required
+
+#### `quantize_extractGroove`
+
+Engine command `quantize.extractGroove`.
+
+Makes a groove preset from a MIDI part's rhythm: a groove position at every note start, with the highest velocity and the longest length of the notes there. The groove is length ticks long, by default the part's length, and the preset is named name, by default after the part. The groove's origin is the part's start, so it repeats in phase with the part.
+
+Arguments:
+
+- `length`: integer
+- `name`: string
+- `part`: integer, required
+
+Result:
+
+- `preset`: object, required
+
+#### `quantize_freeze`
+
+Engine command `quantize.freeze`.
+
+Makes quantized notes' timing permanent: quantizing starts from it from now on, and quantize.reset no longer goes back. Takes the notes of part (only notes, if given) or of every part in parts and returns the notes that changed.
+
+Arguments:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+
+Result:
+
+- `notes`: array, required
+
+#### `quantize_get`
+
+Engine command `quantize.get`. Read-only.
+
+The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).
+
+Result:
+
+- `autoQuantize`: boolean, required
+- `settings`: object, required
+
+#### `quantize_lengths`
+
+Engine command `quantize.lengths`.
+
+Sets note lengths and keeps the starts: to length, a note value ("1/8", "1/8T", "1/8.") or ticks, or without length to the step of the grid at each note's start, so tuplets and swing count and notes outside the catch range keep their length. Takes the notes of part (only notes, if given) or of every part in parts. The settings are the project's (see quantize.set), or preset's, changed by settings. quantize.reset puts the lengths back. Returns the notes that changed.
+
+Arguments:
+
+- `length`: string or integer
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+- `preset`: string
+- `settings`: object
+
+Result:
+
+- `notes`: array, required
+
+#### `quantize_presets`
+
+Engine command `quantize.presets`. Read-only.
+
+The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings.
+
+Result:
+
+- `presets`: array, required
+
+#### `quantize_removePreset`
+
+Engine command `quantize.removePreset`.
+
+Removes one of the user's quantize presets.
+
+Arguments:
+
+- `name`: string, required
+
+#### `quantize_renamePreset`
+
+Engine command `quantize.renamePreset`.
+
+Renames one of the user's quantize presets.
+
+Arguments:
+
+- `name`: string, required
+- `newName`: string, required
+
+#### `quantize_reset`
+
+Engine command `quantize.reset`.
+
+Puts quantized notes back to their timing before quantizing: starts, lengths and velocities. Notes moved by other means since keep their timing, and velocities and lengths changed by other means stay. Takes the notes of part (only notes, if given) or of every part in parts and returns the notes that changed.
+
+Arguments:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+
+Result:
+
+- `notes`: array, required
+
+#### `quantize_savePreset`
+
+Engine command `quantize.savePreset`.
+
+Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset of that name. Factory presets can't be replaced. Presets belong to GNUbase, not to the project.
+
+Arguments:
+
+- `name`: string, required
+- `settings`: object
+
+Result:
+
+- `preset`: object, required
+
+#### `quantize_set`
+
+Engine command `quantize.set`.
+
+Changes the project's quantize settings: to preset's, if given, then changed by settings. Settings: grid, a note value from "1/1" to "1/128", "T" for a triplet and "." for dotted; tuplet, 0 (off) or 3 to 15 notes in the time of the largest power of two below it; swing 0-1, moving every second grid position later, at 1 by a third of a step (straight grids without tuplets only); catchRange, ticks from a grid position within which notes are quantized (0: all); safeRange, ticks within which they stay; randomize, ticks by which quantized notes move at random, by seed; soft, starting from the current positions instead of the original ones; strength 0-1, the part of the way notes move. groove {length, points: [{position, velocity 0-1, length}]} quantizes to a groove instead of the grid, with preQuantize (a note value), maxMove (ticks), velocityStrength, lengthStrength and origin (where it starts repeating, in project ticks). autoQuantize is whether recording quantizes. Settings are not undo steps; they are saved with the project.
+
+Arguments:
+
+- `autoQuantize`: boolean
+- `preset`: string
+- `settings`: object
+
+Result:
+
+- `autoQuantize`: boolean, required
+- `settings`: object, required
+
 ### script
 
 #### `script_run`
@@ -1463,6 +1642,8 @@ Queries without required arguments can also be read as resources:
 - `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts.
 - `gnubase://project.location`: Where the project is: its project file (set by project.save and project.load), the folder of that file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. All null for a project that has no file yet.
 - `gnubase://project.revision`: A number that grows with every change of the project: every edit, undo and redo, and loading or starting a project. project.load with revision loads only if it hasn't changed.
+- `gnubase://quantize.get`: The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).
+- `gnubase://quantize.presets`: The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings.
 - `gnubase://settings.list`: Every user setting with its key, description, JSON schema, default and value; the settings file, null when settings are kept in memory only; its version; and what happened when it was loaded: the status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the problems found, where the original file was kept, and whether the file is read-only for this session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be backed up or locked).
 - `gnubase://transport.get`: Whether playback runs, the project cursor in samples, the locators and the modes.
 

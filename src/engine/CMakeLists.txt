@@ -112,6 +112,9 @@ add_library(gnubase-engine STATIC
 	jobs/jobs.cpp jobs/jobs.h
 	media/backup.cpp media/backup.h
 	midi/midivalues.cpp midi/midivalues.h
+	midi/quantize.cpp midi/quantize.h
+	midi/quantizecommands.cpp midi/quantizecommands.h
+	midi/quantizesettings.cpp midi/quantizesettings.h
 	midifile/midiconvert.cpp midifile/midiconvert.h
 	midifile/smf.cpp midifile/smf.h
 	peaks/peakcache.cpp peaks/peakcache.h

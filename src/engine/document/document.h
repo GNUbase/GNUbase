@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/midi/quantizesettings.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -91,6 +93,23 @@ namespace gnubase::engine
 	inline constexpr double g_minEventVolume = -144.0;
 	inline constexpr double g_maxEventVolume = 6.0;
 
+	// What quantizing changes in a note.
+	struct NoteTiming
+	{
+		time::Ticks position = 0;
+		time::Ticks length = 0;
+		uint16_t velocity = 0;
+	};
+
+	// A quantized note's timing before it was first quantized, and what quantizing made of it (#132). Resetting puts
+	// the original back. A note whose position no longer is the quantized one was moved by other means, such as by
+	// hand: its original no longer counts. A velocity or length changed by other means stays (midi/quantize.h).
+	struct QuantizeOrigin
+	{
+		NoteTiming original;
+		NoteTiming quantized;
+	};
+
 	// A note's release velocity unless it has one of its own: MIDI 1.0's 64, the center.
 	inline constexpr uint16_t g_defaultReleaseVelocity = 0x8000;
 
@@ -104,6 +123,7 @@ namespace gnubase::engine
 		uint16_t velocity = 0;                               // 0-65535
 		uint8_t channel = 0;                                 // 0-15
 		uint16_t releaseVelocity = g_defaultReleaseVelocity; // 0-65535, the note-off velocity
+		std::optional<QuantizeOrigin> origin;                // set while the note is quantized
 	};
 
 	// The MIDI events besides notes, all held as controller events.
@@ -183,6 +203,11 @@ namespace gnubase::engine
 		std::map<ObjectId, MidiPart> midiParts;
 		std::map<ObjectId, Marker> markers;
 
+		// The quantize settings that apply when none are given, and whether recording quantizes (#132). Settings,
+		// not part of undo.
+		midi::QuantizeSettings quantize;
+		bool autoQuantize = false;
+
 		ObjectId newId() { return nextId++; }
 
 		// Every track id from top to bottom, folders before the tracks they contain.
@@ -221,10 +246,20 @@ namespace gnubase::engine
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute);
 	}
 
+	inline bool operator==(const NoteTiming& a, const NoteTiming& b)
+	{
+		return std::tie(a.position, a.length, a.velocity) == std::tie(b.position, b.length, b.velocity);
+	}
+
+	inline bool operator==(const QuantizeOrigin& a, const QuantizeOrigin& b)
+	{
+		return a.original == b.original && a.quantized == b.quantized;
+	}
+
 	inline bool operator==(const Note& a, const Note& b)
 	{
-		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel, a.releaseVelocity) ==
-			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel, b.releaseVelocity);
+		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel, a.releaseVelocity, a.origin) ==
+			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel, b.releaseVelocity, b.origin);
 	}
 
 	inline bool operator==(const Controller& a, const Controller& b)

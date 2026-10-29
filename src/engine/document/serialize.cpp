@@ -49,6 +49,23 @@ namespace gnubase::engine
 			return json.is_null() ? std::string() : json.get<std::string>();
 		}
 
+		Json timingJson(const NoteTiming& timing)
+		{
+			return {{"position", timing.position}, {"length", timing.length},
+				{"velocity", timing.velocity / g_maxVelocity}};
+		}
+
+		uint16_t velocityFrom(const Json& json)
+		{
+			return static_cast<uint16_t>(std::lround(json.get<double>() * g_maxVelocity));
+		}
+
+		NoteTiming timingFrom(const Json& json)
+		{
+			return {json.at("position").get<time::Ticks>(), json.at("length").get<time::Ticks>(),
+				velocityFrom(json.at("velocity"))};
+		}
+
 		template <typename Map> Json toJsonArray(const Map& objects)
 		{
 			Json array = Json::array();
@@ -143,9 +160,13 @@ namespace gnubase::engine
 
 	Json toJson(const Note& note)
 	{
-		return {{"id", note.id}, {"position", note.position}, {"length", note.length}, {"pitch", note.pitch},
+		Json json = {{"id", note.id}, {"position", note.position}, {"length", note.length}, {"pitch", note.pitch},
 			{"velocity", note.velocity / g_maxVelocity}, {"releaseVelocity", note.releaseVelocity / g_maxVelocity},
 			{"channel", note.channel}};
+		if (note.origin)
+			json["origin"] = {
+				{"original", timingJson(note.origin->original)}, {"quantized", timingJson(note.origin->quantized)}};
+		return json;
 	}
 
 	Json toJson(const Controller& controller)
@@ -229,7 +250,8 @@ namespace gnubase::engine
 			{"signatures", signatures}, {"busses", busses}, {"tracks", tracks},
 			{"channels", toJsonArray(project.channels)}, {"media", toJsonArray(project.media)},
 			{"clips", toJsonArray(project.clips)}, {"audioEvents", toJsonArray(project.audioEvents)},
-			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)}};
+			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
+			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize}};
 	}
 
 	Project projectFromJson(const Json& json)
@@ -323,11 +345,14 @@ namespace gnubase::engine
 				note.position = n.at("position").get<time::Ticks>();
 				note.length = n.at("length").get<time::Ticks>();
 				note.pitch = n.at("pitch").get<uint8_t>();
-				note.velocity = static_cast<uint16_t>(std::lround(n.at("velocity").get<double>() * g_maxVelocity));
+				note.velocity = velocityFrom(n.at("velocity"));
 				note.channel = n.at("channel").get<uint8_t>();
 				if (n.contains("releaseVelocity")) // projects saved before #137 don't have it
 					note.releaseVelocity =
 						static_cast<uint16_t>(std::lround(n.at("releaseVelocity").get<double>() * g_maxVelocity));
+				if (n.contains("origin"))
+					note.origin = QuantizeOrigin{
+						timingFrom(n.at("origin").at("original")), timingFrom(n.at("origin").at("quantized"))};
 				part.notes[note.id] = note;
 			}
 			for (const Json& c : item.at("controllers"))
@@ -345,6 +370,11 @@ namespace gnubase::engine
 			project.markers[id] = {id, item.at("position").get<time::Ticks>(), item.at("name").get<std::string>(),
 				colorFrom(item.at("color"))};
 		}
+		// Files from before quantizing have neither.
+		if (json.contains("quantize"))
+			project.quantize = midi::quantizeSettingsFromJson(json.at("quantize"));
+		project.autoQuantize = json.value("autoQuantize", false);
+
 		// Without a counter, ids continue after the highest one.
 		ObjectId highest = 0;
 		const auto see = [&highest](ObjectId id) { highest = std::max(highest, id); };
