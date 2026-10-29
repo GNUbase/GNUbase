@@ -9,7 +9,8 @@
 # Usage: tools/ci-local.sh [job...]    default: every job this machine can run
 # Environment: GNUBASE_WSL names the WSL distribution (default Ubuntu), GNUBASE_CI_JOBS the compile jobs per build.
 # Setup: Windows needs Visual Studio 2026; Linux (or WSL, Ubuntu 24.04) needs the packages in .github/workflows/ci.yml
-# plus clang, ccache, git-lfs and, through pipx, clang-tidy==22.1.8 and clang-format==22.1.3.
+# plus clang with its sanitizer runtimes (libclang-rt-18-dev), ccache, git-lfs and, through pipx, clang-tidy==22.1.8
+# and clang-format==22.1.3.
 # Logs: build/ci-local/<job>.log. Exit status: 0 every job passed, 1 a job failed, 2 error.
 set -u
 
@@ -176,6 +177,10 @@ done
 if $here || [ $os != windows ]; then
 	[ $os = linux ] && [ "$(id -u)" = 0 ] && sysctl -qw vm.mmap_rnd_bits=28 2>/dev/null # as in CI, for ASan and TSan
 	export CCACHE_MAXSIZE=${CCACHE_MAXSIZE:-20G}
+	# Vulkan only through Mesa's software rasterizer, as on CI's runners, which have no GPU: a real GPU's driver makes
+	# the window tests depend on the machine, and AMD's leaks under ASan.
+	lavapipe=$(ls /usr/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -n 1)
+	[ -n "$lavapipe" ] && export VK_DRIVER_FILES=$lavapipe
 	runJobs "${jobs[@]}"
 	exit
 fi
