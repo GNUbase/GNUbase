@@ -36,21 +36,24 @@ namespace gnubase::engine::graph
 		uint32_t size = 0;
 	};
 
-	// The events of one block, sorted by offset. Memory is allocated in the constructor only, so adding, reading and
-	// clearing are real-time safe.
+	// The events of one block, sorted by offset. At one offset note-offs come first, then the other events, then
+	// note-ons, whatever order they were added in, so a note that starts where a note of the same pitch from another
+	// source ends still sounds. Memory is allocated in the constructor only, so adding, reading and clearing are
+	// real-time safe.
 	class EventBuffer
 	{
 	public:
 		explicit EventBuffer(size_t capacity = 0) : m_events(capacity) {}
 
-		// Inserts the event by its offset, after the events with the same offset. Returns false and drops the event
-		// if the buffer is full.
+		// Inserts the event by its offset and rank, after the events of the same offset and rank. Returns false and
+		// drops the event if the buffer is full.
 		bool add(const ProcessEvent& event) noexcept
 		{
 			if (m_size == m_events.size())
 				return false;
+			const int rank = rankOf(event.type);
 			size_t i = m_size;
-			for (; i > 0 && m_events[i - 1].offset > event.offset; --i)
+			for (; i > 0 && comesAfter(m_events[i - 1], event.offset, rank); --i)
 				m_events[i] = m_events[i - 1];
 			m_events[i] = event;
 			++m_size;
@@ -68,6 +71,18 @@ namespace gnubase::engine::graph
 		const ProcessEvent* end() const { return m_events.data() + m_size; }
 
 	private:
+		static int rankOf(ProcessEvent::Type type) noexcept
+		{
+			if (type == ProcessEvent::Type::NoteOff)
+				return 0;
+			return type == ProcessEvent::Type::NoteOn ? 2 : 1;
+		}
+
+		static bool comesAfter(const ProcessEvent& existing, uint32_t offset, int rank) noexcept
+		{
+			return existing.offset > offset || (existing.offset == offset && rankOf(existing.type) > rank);
+		}
+
 		std::vector<ProcessEvent> m_events; // sized to the capacity; the first m_size are in use
 		size_t m_size = 0;
 	};

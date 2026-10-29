@@ -48,7 +48,7 @@ namespace
 	// Responses by request id.
 	std::vector<Json> responses(const std::string& output)
 	{
-		std::vector<Json> result(8);
+		std::vector<Json> result(16);
 		std::istringstream lines(output);
 		for (std::string line; std::getline(lines, line);)
 		{
@@ -272,6 +272,40 @@ TEST_CASE("the gnubase executable serves MCP on stdio in headless mode", "[integ
 	CHECK(runApp("--no-such-option", in, out) == g_exitUsage);
 	CHECK(runApp("--headless --project \"" + (dir.path() / "missing.dawproject").u8string() + "\"", in, out) ==
 		g_exitSetup);
+}
+
+TEST_CASE("the gnubase executable reports engine events to MCP clients on stdio", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const auto in = dir.path() / "in.jsonl";
+	const auto out = dir.path() / "out.jsonl";
+	const Json trackAdded = {{"names", {"track.added"}}};
+	std::ofstream(in) << message(1, "initialize", {{"protocolVersion", "2025-06-18"}}) +
+			callTool(2, "track_add", {{"type", "audio"}}) + callTool(3, "events_take", trackAdded) +
+			callTool(4, "script_run", {{"code", "gnubase.track.add{type = 'instrument'}"}}) +
+			callTool(5, "events_take", trackAdded) +
+			callTool(6, "script_run", {{"code", "for i = 1, 1100 do gnubase.transport.locate{position = i} end"}}) +
+			callTool(7, "events_take") + callTool(8, "events_take", {{"seconds", 0.2}});
+
+	CHECK(runApp("--headless", in, out) == g_exitOk);
+	const std::vector<Json> results = responses(gnubase::test::readText(out));
+	const auto taken = [&results](size_t id) { return results.at(id).at("result").at("structuredContent"); };
+
+	const Json own = taken(3).at("events"); // the session's own command
+	REQUIRE(own.size() == 1);
+	CHECK(own[0].at("data").at("track") == results[2].at("result").at("structuredContent").at("track"));
+	const Json lua = taken(5).at("events"); // a command of another client, the Lua script
+	REQUIRE(lua.size() == 1);
+	CHECK(lua[0].at("data").at("track").at("type") == "instrument");
+
+	// The queue keeps the newest 1000 events and counts the others.
+	const Json full = taken(7);
+	REQUIRE(full.at("events").size() == 1000);
+	CHECK(full.at("dropped").get<int>() >= 100);
+	CHECK(full.at("events").back().at("name") == "transport.changed");
+	CHECK(full.at("events").back().at("data").at("position") == 1100);
+	CHECK(taken(8).at("events").empty()); // after waiting 0.2 s
+	CHECK(taken(8).at("dropped") == 0);
 }
 
 TEST_CASE("the gnubase executable runs a Lua test file and exits with code 4 when an assertion fails", "[integration]")
