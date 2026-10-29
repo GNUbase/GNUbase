@@ -37,6 +37,12 @@ jobs:
         with:
           submodules: recursive
 
+      # As in ci.yml: the recursive checkout skips the VST3 SDK (update = none in .gitmodules).
+      - name: Fetch the VST3 SDK
+        run: |
+          git submodule update --init --checkout ext/vst3sdk
+          git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
+
       - name: Install packages (Linux)
         timeout-minutes: 15
         if: runner.os == 'Linux'
