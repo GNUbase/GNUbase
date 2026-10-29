@@ -100,11 +100,19 @@ add_library(gnubase-engine STATIC
 	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/document.cpp document/document.h
 	document/history.cpp document/history.h
+	document/markers.cpp
 	document/midiedits.cpp
 	document/midifilecommands.cpp
 	document/projectmodel.cpp document/projectmodel.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/serialize.cpp document/serialize.h
+	dsp/biquad.cpp dsp/biquad.h
+	dsp/delay.cpp dsp/delay.h
+	dsp/dither.cpp dsp/dither.h
+	dsp/dsp.h
+	dsp/dynamics.cpp dsp/dynamics.h
+	dsp/equalizer.cpp dsp/equalizer.h
+	dsp/reverb.cpp dsp/reverb.h
 	dsp/timestretch.cpp dsp/timestretch.h
 	engine.cpp engine.h
 	graph/events.h
@@ -121,6 +129,8 @@ add_library(gnubase-engine STATIC
 	peaks/peakcache.cpp peaks/peakcache.h
 	peaks/peaks.cpp peaks/peaks.h
 	processors/builtin.cpp processors/builtin.h
+	processors/builtinplugin.cpp processors/builtinplugin.h
+	processors/effects.h
 	processors/gainpan.cpp processors/gainpan.h
 	processors/generators.cpp processors/generators.h
 	processors/testsynth.cpp processors/testsynth.h
@@ -133,5 +143,5 @@ add_library(gnubase-engine STATIC
 	time/timecode.cpp time/timecode.h)
 target_include_directories(gnubase-engine PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-engine PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}")
-target_link_libraries(gnubase-engine PUBLIC gnubase-platform nlohmann_json::nlohmann_json PRIVATE gnubase-decoders gnubase-r8brain gnubase-rubberband FLAC::FLAC pugixml::pugixml miniz)
+target_link_libraries(gnubase-engine PUBLIC gnubase-platform gnubase-plugin nlohmann_json::nlohmann_json PRIVATE gnubase-decoders gnubase-r8brain gnubase-rubberband FLAC::FLAC pugixml::pugixml miniz)
 gnubase_target_defaults(gnubase-engine)

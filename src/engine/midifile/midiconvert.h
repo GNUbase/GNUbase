@@ -27,11 +27,12 @@ namespace gnubase::engine::midifile
 
 	// The project's MIDI and instrument tracks as a MIDI file: notes and controllers as they play (cut at the end of
 	// their parts), track names, the project's name, tempo (ramps in sixteenth-note steps), time signatures and
-	// markers. At one tick, meta events come first, then note-offs, then controllers, then note-ons. Program changes
-	// with a bank are preceded by bank select (controllers 0 and 32). A note ends where the next note of its pitch and
-	// channel in the same file track starts, at least a tick after its own start: a note-off ends the oldest sounding
-	// note of its key, so overlapping notes of one key would otherwise come back paired differently. Every track ends
-	// with the last part or the range. Throws std::invalid_argument for a track that isn't a MIDI or instrument track.
+	// markers (of every marker track, cycle markers at their start). At one tick, meta events come first, then
+	// note-offs, then controllers, then note-ons. Program changes with a bank are preceded by bank select (controllers
+	// 0 and 32). A note ends where the next note of its pitch and channel in the same file track starts, at least a
+	// tick after its own start: a note-off ends the oldest sounding note of its key, so overlapping notes of one key
+	// would otherwise come back paired differently. Every track ends with the last part or the range. Throws
+	// std::invalid_argument for a track that isn't a MIDI or instrument track.
 	File exportProject(const Project& project, const ExportOptions& options);
 
 	// A track read from a MIDI file. Positions are from the file's start, in project ticks.
@@ -46,7 +47,7 @@ namespace gnubase::engine::midifile
 	{
 		time::TempoMap tempo{120.0};
 		time::SignatureMap signatures;
-		std::vector<Marker> markers;
+		std::vector<Marker> markers;       // position markers in ticks, without a marker track or number
 		std::vector<ImportedTrack> tracks; // those with notes or controllers, in file order
 	};
 

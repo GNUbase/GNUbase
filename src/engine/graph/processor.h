@@ -24,6 +24,7 @@ namespace gnubase::engine::graph
 		int64_t position = 0; // the project position of the block's first frame: the cursor while stopped
 		const TransportSegment* segments = nullptr;
 		size_t segmentCount = 0;
+		double tempo = 120.0; // quarter notes per minute at the block's first frame, from the project's tempo map
 	};
 
 	// What a processor gets for one block.
@@ -53,9 +54,17 @@ namespace gnubase::engine::graph
 		// Audio thread. Real-time rules apply: no allocations, locks, blocking calls, I/O or exceptions.
 		virtual void process(const ProcessContext& context) noexcept = 0;
 
-		// The samples of delay this processor adds to its output. Read when a graph is compiled; latency
-		// compensation (#71) uses it.
+		// The samples of delay this processor adds to its output. Read when a graph is compiled, after prepareFor;
+		// latency compensation (#71) uses it.
 		virtual uint32_t latency() const { return 0; }
+
+		// How many frames this processor keeps sounding after its input went quiet, after prepareFor: the echoes of a
+		// delay, a reverb's decay. UINT32_MAX for endless. Read off the audio thread, like latency.
+		virtual uint32_t tail() const { return 0; }
+
+		// Audio thread. Forgets the past without reallocating: clears delay lines, filter states and voices. The
+		// parameters keep their values. For hosts that must not let earlier audio ring on, e.g. after a locate.
+		virtual void reset() noexcept {}
 
 		// Compiling a graph calls this off the audio thread. It prepares the processor the first time and when the
 		// sample rate or the maximum block size changes, which may only happen while no graph is processing.
