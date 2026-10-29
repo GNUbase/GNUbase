@@ -22,6 +22,21 @@ namespace gnubase::engine
 	struct RenderSnapshot;
 	struct RenderChannel;
 
+	// A fade on a stretch of the timeline, in the project's samples: a fade in is silent before start and at full
+	// volume from end on, a fade out at full volume before start and silent from end on.
+	struct GainRamp
+	{
+		time::Samples start = 0;
+		time::Samples end = 0;
+		FadeShape shape = FadeShape::Linear;
+		bool out = false;
+
+		// The gain at a position (fades.h): a fade in at start + n has fadeGain(shape, n / (end - start)), a fade
+		// out at end - n has fadeGain(shape, n / (end - start)). So a fade in and a fade out over the same range,
+		// with mirrored shapes, add up to 1 at every sample.
+		double gainAt(time::Samples position) const noexcept;
+	};
+
 	// A stretch of an audio track's playback: a section of one event's clip.
 	struct PlaylistEntry
 	{
@@ -31,12 +46,28 @@ namespace gnubase::engine
 		time::Samples frame = 0; // the clip's frame at start, at the project's sample rate
 		float gain = 1.0f;
 		int channels = 1; // the clip's
+		ObjectId event = 0;
+		// Its event's fades and its clip's, and behind the front those of the transitions that join it to the event
+		// in front. Filled when the playlist is built; the audio thread only reads them.
+		std::vector<GainRamp> ramps;
+
+		// The gain at a position: the event volume times every fade.
+		float gainAt(time::Samples position) const noexcept;
+		// Whether a fade changes the gain anywhere from position to position + frames.
+		bool fades(time::Samples position, time::Samples frames) const noexcept;
 	};
 
-	// What an audio track plays, sorted by start and never overlapping. A track plays one event at a time: where
-	// events overlap, the one added last (the highest id) is in front and plays. Muted events don't play and hide
-	// nothing.
-	using Playlist = std::vector<PlaylistEntry>;
+	// Entries sorted by start that never overlap.
+	using PlaylistLayer = std::vector<PlaylistEntry>;
+
+	// What an audio track plays. The first layer is the front: where events overlap, the one added last (the highest
+	// id) is in front and plays. Muted events don't play and hide nothing. The layers after it hold what plays along
+	// with the front where events crossfade: the event that fades out under the one that fades in, or the one that
+	// fades in under the end of the one in front, and events joined to those by crossfades of their own.
+	struct Playlist
+	{
+		std::vector<PlaylistLayer> layers;
+	};
 
 	Playlist makePlaylist(const RenderSnapshot& snapshot, const RenderChannel& channel);
 
@@ -64,8 +95,8 @@ namespace gnubase::engine
 			std::shared_ptr<const Playlist> playlist;
 		};
 
-		// Voices per track, and the disk stream buffer of each.
-		explicit Playback(size_t voicesPerTrack = 8, const DiskStreamSettings& streams = {4096, 8});
+		// Voices per track, and the disk stream buffer of each. Where events crossfade, two entries play at once.
+		explicit Playback(size_t voicesPerTrack = 16, const DiskStreamSettings& streams = {4096, 8});
 		virtual ~Playback();
 		Playback(const Playback&) = delete;
 		Playback& operator=(const Playback&) = delete;
@@ -110,7 +141,7 @@ namespace gnubase::engine
 		void endBlock() noexcept;
 
 		// Audio thread, between beginBlock and endBlock: a voice of the channel's that reads media from frame, or
-		// one that will within the next frames (lead says after how many), or none.
+		// else the one that will soonest within the next frames (lead says after how many), or none.
 		Voice* take(
 			ObjectId channel, ObjectId media, time::Samples frame, time::Samples frames, time::Samples& lead) noexcept;
 		void missed(time::Samples frames) noexcept; // frames played as silence for want of a voice
@@ -133,7 +164,7 @@ namespace gnubase::engine
 			time::Samples frame = 0;
 		};
 
-		// Where the playback path ahead of the cursor enters entries: entry starts and cycle jumps.
+		// Where the playback path ahead of the cursor enters entries in any layer: entry starts and cycle jumps.
 		std::vector<Point> points(const Playlist& playlist, const Cue& cue) const;
 		// The position frames of playback after the cursor.
 		static time::Samples ahead(const Cue& cue, time::Samples frames);
@@ -143,6 +174,8 @@ namespace gnubase::engine
 		static bool claim(Voice& voice, uint64_t seen);
 		// Positions a claimed or new voice at frame, waiting there for the audio thread.
 		static void place(Voice& voice, time::Samples frame);
+		// Audio thread: takes the voice to read from next on, unless its state is no longer seen.
+		bool startReading(Voice& voice, uint64_t seen, time::Samples next) const noexcept;
 
 		size_t m_voicesPerTrack;
 		DiskStreamSettings m_streamSettings;
@@ -175,13 +208,22 @@ namespace gnubase::engine
 		void prepare(double sampleRate, uint32_t maxFrames) override;
 
 	private:
-		void play(const graph::ProcessContext& context, const PlaylistEntry& entry, time::Samples position,
-			time::Samples frames, uint32_t offset) noexcept;
+		// Plays an entry into its layer's frames.
+		void play(const PlaylistEntry& entry, size_t layer, time::Samples position, time::Samples frames,
+			uint32_t offset) noexcept;
 
 		std::shared_ptr<const Playlist> m_playlist;
 		ObjectId m_channel;
 		Playback& m_playback;
-		std::vector<float> m_buffer; // one block of interleaved frames of the clip with the most channels
 		size_t m_bufferFrames = 0;
+		size_t m_clipChannels = 1;   // of the clip with the most channels
+		std::vector<float> m_buffer; // one block of interleaved frames of a clip
+		std::vector<float> m_gains;  // one block of gains, where an entry fades
+		std::vector<size_t> m_next;  // per layer, the next entry to play in a segment
+		// Per layer, one block of what it plays, with the gains applied: frames of m_clipChannels samples, and the
+		// number of the clip's channels in each frame (0 where the layer plays nothing).
+		std::vector<float> m_layerAudio;
+		std::vector<uint8_t> m_layerChannels;
+		std::vector<uint8_t> m_layerUsed; // per layer, whether it plays in this block
 	};
 }
