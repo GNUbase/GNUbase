@@ -261,6 +261,7 @@ TEST_CASE("a 5.1 track plays its downmix on the stereo output, through the engin
 		}
 		run(client, "audio.render", {{"frames", 1000}});
 		std::vector<std::vector<float>> sides;
+		sides.reserve(2);
 		for (int channel = 0; channel < 2; ++channel)
 			sides.push_back(run(client, "audio.capture", {{"channel", channel}, {"start", 0}, {"frames", 1000}})
 					.at("samples")
