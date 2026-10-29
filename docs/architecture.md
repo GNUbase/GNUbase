@@ -236,6 +236,6 @@ flowchart LR
 
 | Topic | Ticket |
 |---|---|
-| UI render backend | #47 |
+| UI render backend | #47, proposal in [render-backend.md](render-backend.md) |
 | Plugin API details | #61 |
 | IPC wake-up details, default hosting mode | #62, #76 |
