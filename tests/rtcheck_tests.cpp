@@ -78,20 +78,30 @@ TEST_CASE("the RT checker reports a deallocation in real-time code", "[unit]")
 #if (defined(_MSC_VER) && defined(_DEBUG)) || defined(GNUBASE_RTCHECK_MALLOC)
 // The RT checker sees the C heap too, for malloc in third-party code such as Rubber Band Library: MSVC debug builds,
 // and Linux (not with sanitizers).
+// Called through volatile pointers: compilers know the C heap functions touch no memory of the program, so they may
+// move direct calls out of a real-time scope.
+namespace
+{
+	void* (*volatile g_malloc)(std::size_t) = std::malloc;
+	void* (*volatile g_realloc)(void*, std::size_t) = std::realloc;
+	void* (*volatile g_calloc)(std::size_t, std::size_t) = std::calloc;
+	void (*volatile g_free)(void*) = std::free;
+}
+
 TEST_CASE("the RT checker reports malloc and free in real-time code", "[unit]")
 {
 	const RecordViolations record;
 	void* memory = nullptr;
 	{
 		const ScopedRealtimeContext realtime;
-		memory = std::malloc(64);
+		memory = g_malloc(64);
 		g_keepAlive = memory;
 	}
 	CHECK(g_violations == 1);
 	void* grown = nullptr;
 	{
 		const ScopedRealtimeContext realtime;
-		grown = std::realloc(memory, 128);
+		grown = g_realloc(memory, 128);
 		g_keepAlive = grown;
 	}
 	CHECK(g_violations == 2);
@@ -99,17 +109,17 @@ TEST_CASE("the RT checker reports malloc and free in real-time code", "[unit]")
 	memory = grown;
 	{
 		const ScopedRealtimeContext realtime;
-		std::free(memory);
-		std::free(nullptr); // frees nothing
+		g_free(memory);
+		g_free(nullptr); // frees nothing
 	}
 	CHECK(g_violations == 3);
 	{
 		const ScopedRealtimeContext realtime;
-		memory = std::calloc(4, 16);
+		memory = g_calloc(4, 16);
 		g_keepAlive = memory;
 	}
 	CHECK(g_violations == 4);
-	std::free(memory);
+	g_free(memory);
 	// operator new reports once, not again for the malloc inside it.
 	{
 		const ScopedRealtimeContext realtime;
@@ -118,9 +128,9 @@ TEST_CASE("the RT checker reports malloc and free in real-time code", "[unit]")
 	}
 	CHECK(g_violations == 6);
 	// Outside real-time code, all of them are fine.
-	memory = std::malloc(64);
+	memory = g_malloc(64);
 	g_keepAlive = memory;
-	std::free(memory);
+	g_free(memory);
 	CHECK(g_violations == 6);
 }
 #endif
