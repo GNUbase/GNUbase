@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.25)
 project(GNUbase VERSION 0.1.0 LANGUAGES C CXX)
+# The VST3 SDK's module loader on macOS is Objective-C++. Enabled before any subdirectory, so every generated
+# project has the language's compile and archive rules.
+if(APPLE)
+	enable_language(OBJCXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -73,22 +78,50 @@ find_package(Threads REQUIRED)
 target_link_libraries(cpp-httplib INTERFACE Threads::Threads $<$<PLATFORM_ID:Windows>:ws2_32>)
 # The VST3 SDK's interfaces, header-only: GNUbase implements and calls the interfaces itself. The SDK's C++ namespace
 # is read from its header and passed as GNUBASE_VST3_NS, so GNUbase code refers to it only through the alias in
-# src/pluginhost/vst3/vst3ns.h (docs/dependencies.md). Only the test plugins use it so far, so a build without them
-# doesn't need the SDK.
-if(GNUBASE_TEST_PLUGINS)
-	set(vst3Header "${PROJECT_SOURCE_DIR}/ext/vst3sdk/pluginterfaces/base/funknown.h")
-	if(NOT EXISTS "${vst3Header}")
-		message(FATAL_ERROR "The VST3 SDK is missing. Fetch it with\n"
-			"  git submodule update --init --checkout ext/vst3sdk\n"
-			"  git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk\n"
-			"or configure with -DGNUBASE_TEST_PLUGINS=OFF.")
-	endif()
-	file(STRINGS "${vst3Header}" vst3Namespace REGEX "^namespace [A-Za-z_][A-Za-z0-9_]* *{")
-	list(GET vst3Namespace 0 vst3Namespace)
-	string(REGEX REPLACE "^namespace ([A-Za-z0-9_]+).*" "\\1" vst3Namespace "${vst3Namespace}")
-	add_library(vst3-sdk INTERFACE)
-	target_include_directories(vst3-sdk SYSTEM INTERFACE ${PROJECT_SOURCE_DIR}/ext/vst3sdk)
-	target_compile_definitions(vst3-sdk INTERFACE GNUBASE_VST3_NS=${vst3Namespace})
+# src/pluginhost/vst3/vst3ns.h (docs/dependencies.md). The plugin host's VST3 adapter needs it in every build.
+set(vst3Header "${PROJECT_SOURCE_DIR}/ext/vst3sdk/pluginterfaces/base/funknown.h")
+if(NOT EXISTS "${vst3Header}")
+	message(FATAL_ERROR "The VST3 SDK is missing. Fetch it with\n"
+		"  git submodule update --init --checkout ext/vst3sdk\n"
+		"  git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk")
+endif()
+file(STRINGS "${vst3Header}" vst3Namespace REGEX "^namespace [A-Za-z_][A-Za-z0-9_]* *{")
+list(GET vst3Namespace 0 vst3Namespace)
+string(REGEX REPLACE "^namespace ([A-Za-z0-9_]+).*" "\\1" vst3Namespace "${vst3Namespace}")
+add_library(vst3-sdk INTERFACE)
+target_include_directories(vst3-sdk SYSTEM INTERFACE ${PROJECT_SOURCE_DIR}/ext/vst3sdk)
+target_compile_definitions(vst3-sdk INTERFACE GNUBASE_VST3_NS=${vst3Namespace})
+# The parts of the SDK the VST3 adapter of the plugin host builds: the interface ids, and the module loader and host
+# classes. Test plugins built against the interfaces alone link vst3-interfaces too.
+set(vst3sdk ${PROJECT_SOURCE_DIR}/ext/vst3sdk)
+add_library(vst3-interfaces STATIC
+	${vst3sdk}/pluginterfaces/base/coreiids.cpp
+	${vst3sdk}/pluginterfaces/base/funknown.cpp
+	${vst3sdk}/public.sdk/source/common/commoniids.cpp
+	${vst3sdk}/public.sdk/source/vst/vstinitiids.cpp)
+target_link_libraries(vst3-interfaces PUBLIC vst3-sdk)
+# Linked into plugin modules too: position-independent, and exporting nothing.
+set_target_properties(vst3-interfaces PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden)
+if(APPLE)
+	set(vst3ModuleLoader ${vst3sdk}/public.sdk/source/vst/hosting/module_mac.mm)
+	set_source_files_properties(${vst3ModuleLoader} PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+elseif(WIN32)
+	set(vst3ModuleLoader ${vst3sdk}/public.sdk/source/vst/hosting/module_win32.cpp)
+else()
+	set(vst3ModuleLoader ${vst3sdk}/public.sdk/source/vst/hosting/module_linux.cpp)
+endif()
+add_library(vst3-hosting STATIC
+	${vst3ModuleLoader}
+	${vst3sdk}/public.sdk/source/vst/hosting/hostclasses.cpp
+	${vst3sdk}/public.sdk/source/vst/hosting/module.cpp
+	${vst3sdk}/public.sdk/source/vst/hosting/pluginterfacesupport.cpp
+	${vst3sdk}/public.sdk/source/common/commonstringconvert.cpp
+	${vst3sdk}/public.sdk/source/vst/utility/stringconvert.cpp)
+target_link_libraries(vst3-hosting PUBLIC vst3-interfaces ${CMAKE_DL_LIBS})
+if(APPLE)
+	target_link_libraries(vst3-hosting PUBLIC "-framework Cocoa")
+elseif(WIN32)
+	target_link_libraries(vst3-hosting PUBLIC ole32 shell32)
 endif()
 
 # Settings for every GNUbase target; third-party code is not affected.

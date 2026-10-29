@@ -348,7 +348,7 @@ Returns:
 
 #### `gnubase.audioEvent.add`
 
-Adds an audio event that plays a section of a clip on an audio track. position is in the track's time base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track plays one event at a time: where events overlap, the one added last plays.
+Adds an audio event that plays a section of a clip on an audio track. position is in the track's time base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track plays one event at a time: where events overlap, the one added last plays, unless they crossfade.
 
 Parameters:
 
@@ -389,6 +389,43 @@ Parameters:
 Returns:
 
 - `event`: object, required
+
+#### `gnubase.audioEvent.setFades`
+
+Changes an audio event's fade in (from its start) or fade out (up to its end): length in the clip's sample frames (0: none) and shape: linear, exponential (slow, then fast), logarithmic (fast, then slow), sCurve (half a cosine) or equalPower (a quarter sine). Together they fit into the event. A crossfade replaces the fades at the ends it joins while it plays.
+
+Parameters:
+
+- `event`: integer, required
+- `fadeIn`: object
+- `fadeOut`: object
+
+Returns:
+
+- `event`: object, required
+
+### autoFades
+
+#### `gnubase.autoFades.set`
+
+Changes the auto fades and crossfades of the project, or of an audio track: fadeIn and fadeOut where an event has no fade of its own at that end (they never stack), crossfades where an event starts on top of another one or ends above one that goes on, unless they crossfade already; there an event's own fade is the crossfade's, mirrored by the event behind. length is 1 to 500 ms; shapes as for audioEvent.setFades; crossfadeMode equalGain or equalPower, with crossfadeShape the fade in as for crossfade.set. A track uses the project's settings until it gets its own; useProject: true goes back to them. Returns the settings that apply.
+
+Parameters:
+
+- `crossfadeMode`: one of "equalGain" | "equalPower" | "custom"
+- `crossfadeShape`: one of "linear" | "exponential" | "logarithmic" | "sCurve" | "equalPower"
+- `crossfades`: boolean
+- `fadeIn`: boolean
+- `fadeInShape`: one of "linear" | "exponential" | "logarithmic" | "sCurve" | "equalPower"
+- `fadeOut`: boolean
+- `fadeOutShape`: one of "linear" | "exponential" | "logarithmic" | "sCurve" | "equalPower"
+- `length`: number
+- `track`: integer
+- `useProject`: boolean
+
+Returns:
+
+- `autoFades`: object, required
 
 ### automation
 
@@ -582,6 +619,20 @@ Parameters:
 
 - `clip`: integer, required
 
+#### `gnubase.clip.setFades`
+
+Changes a clip's fade in or fade out, at its media file's start and end: length in sample frames (0: none) and shape, as for audioEvent.setFades. Every event that plays the clip gets them.
+
+Parameters:
+
+- `clip`: integer, required
+- `fadeIn`: object
+- `fadeOut`: object
+
+Returns:
+
+- `clip`: object, required
+
 ### controller
 
 #### `gnubase.controller.add`
@@ -618,6 +669,34 @@ Parameters:
 Returns:
 
 - `controllers`: array, required
+
+### crossfade
+
+#### `gnubase.crossfade.remove`
+
+Removes the crossfades into and out of an audio event.
+
+Parameters:
+
+- `event`: integer, required
+
+#### `gnubase.crossfade.set`
+
+Crossfades from an audio event into the next one on its track, where they overlap: to must start inside from and end after it. Both play there; from fades out up to its end over outLength (from's clip frames), to fades in from its start over length (to's clip frames); 0, the default, is the whole overlap, so the crossfade is symmetric. mode equalGain (default): the fade out mirrors the fade in (shape linear, exponential, logarithmic or sCurve), so their gains add up to 1; equalPower: quarter sines whose power adds up to 1; custom: shape and outShape of their own. An event fades out into one event only. Changing a crossfade keeps what isn't given. After an edit that moves the events apart, the crossfade rests and both play their own fades until they overlap like that again. Returns to.
+
+Parameters:
+
+- `from`: integer, required
+- `length`: integer
+- `mode`: one of "equalGain" | "equalPower" | "custom"
+- `outLength`: integer
+- `outShape`: one of "linear" | "exponential" | "logarithmic" | "sCurve" | "equalPower"
+- `shape`: one of "linear" | "exponential" | "logarithmic" | "sCurve" | "equalPower"
+- `to`: integer, required
+
+Returns:
+
+- `event`: object, required
 
 ### engine
 
@@ -1132,6 +1211,63 @@ Parameters:
 Returns:
 
 - `notes`: array, required
+
+### pluginhost
+
+#### `gnubase.pluginhost.check`
+
+Reports the plugins that failed since the last check because their host process crashed, missed a processing deadline (reason "hung") or broke the protocol, and emits plugin.failed for each with its instance, plugin id, process and reason. A failed plugin is bypassed and outputs silence. Also emits pluginhost.changed for each hosting mode change whose moves are done. The engine runs this on its own as soon as a failure is detected or the moves are done.
+
+Returns:
+
+- `failures`: array of object, required
+
+#### `gnubase.pluginhost.get`
+
+How plugins are grouped into plugin host processes, and the processes. mode: the hosting mode, "shared" (one process for every plugin), "perVendor", "perPlugin" or "perInstance"; defaultMode: the mode GNUbase starts with; overrides: plugin ids with a mode of their own. hosts: each process with its id (process), its group ("shared", "vendor:<vendor>", "plugin:<id>" or "instance:<instance>"), its state ("running", "hung" or "exited") and its plugin instances, whether they failed.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `defaultMode`: string, required
+- `errors`: array of string
+- `hosts`: array of object, required
+- `mode`: string, required
+- `overrides`: object, required
+
+#### `gnubase.pluginhost.setMode`
+
+Sets the hosting mode (see pluginhost.get) and returns at once. Plugins whose process changes then move to their new process in the background, with their state, between two blocks, so they keep sounding the same. When they did, pluginhost.changed is emitted with the new status, and with the plugins that could not move and stay where they are in errors.
+
+Parameters:
+
+- `mode`: one of "shared" | "perVendor" | "perPlugin" | "perInstance", required
+
+Returns:
+
+- `defaultMode`: string, required
+- `errors`: array of string
+- `hosts`: array of object, required
+- `mode`: string, required
+- `overrides`: object, required
+
+#### `gnubase.pluginhost.setOverride`
+
+Gives a plugin (its id, e.g. "clap:com.example.synth") a hosting mode of its own, e.g. "perInstance" to isolate an unstable plugin, or removes its override with null. Moves the plugin's instances like pluginhost.setMode, which emits pluginhost.changed when they moved.
+
+Parameters:
+
+- `mode`: one of "shared" | "perVendor" | "perPlugin" | "perInstance" | null, required
+- `plugin`: string, required
+
+Returns:
+
+- `defaultMode`: string, required
+- `errors`: array of string
+- `hosts`: array of object, required
+- `mode`: string, required
+- `overrides`: object, required
 
 ### processor
 

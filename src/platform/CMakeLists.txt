@@ -18,7 +18,8 @@ add_library(gnubase-platform STATIC
 	rt/spscqueue.h
 	rt/triplebuffer.h
 	rt/workerpool.cpp rt/workerpool.h
-	sharedmemory.cpp sharedmemory.h)
+	sharedmemory.cpp sharedmemory.h
+	thread.cpp thread.h)
 target_include_directories(gnubase-platform PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-platform PRIVATE $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 # shm_open is in librt on glibc before 2.34.

@@ -26,6 +26,11 @@ namespace gnubase::engine
 	class AudioEngine;
 	class Jobs;
 	class ProjectModel;
+
+	namespace plugins
+	{
+		class HostManager;
+	}
 	struct RenderSnapshot;
 
 	namespace peaks
@@ -167,6 +172,9 @@ namespace gnubase::engine
 		// is their only reader.
 		rt::SnapshotPublisher<RenderSnapshot>& renderSnapshots();
 
+		// The plugin host processes and the plugins that run in them.
+		plugins::HostManager& pluginHosts();
+
 	private:
 		friend class Client;
 		friend class CommandContext;
@@ -199,11 +207,12 @@ namespace gnubase::engine
 		RequestId m_nextRequest = 1;
 		bool m_stopping = false;
 		std::condition_variable m_wake;
-		std::unique_ptr<Jobs> m_jobs;                // background work such as backups
-		std::unique_ptr<ProjectModel> m_project;     // only the command thread touches the document
-		std::unique_ptr<AudioEngine> m_audio;        // plays the project; only the command thread changes it
-		std::unique_ptr<settings::Store> m_settings; // the user settings; only the command thread uses them
-		std::unique_ptr<peaks::PeakCache> m_peaks;   // waveform overviews of the project's media files
+		std::unique_ptr<Jobs> m_jobs;                    // background work such as backups
+		std::unique_ptr<plugins::HostManager> m_plugins; // outlives the audio engine, whose graphs may hold plugins
+		std::unique_ptr<ProjectModel> m_project;         // only the command thread touches the document
+		std::unique_ptr<AudioEngine> m_audio;            // plays the project; only the command thread changes it
+		std::unique_ptr<settings::Store> m_settings;     // the user settings; only the command thread uses them
+		std::unique_ptr<peaks::PeakCache> m_peaks;       // waveform overviews of the project's media files
 		std::thread m_thread;
 	};
 

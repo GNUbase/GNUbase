@@ -87,6 +87,7 @@ add_library(gnubase-engine STATIC
 	audio/analysiscommands.cpp
 	audio/audioengine.cpp audio/audioengine.h
 	audio/automation.cpp audio/automation.h
+	audio/fades.cpp audio/fades.h
 	audio/performance.cpp audio/performance.h
 	audio/playback.cpp audio/playback.h
 	audio/sequencer.cpp audio/sequencer.h
@@ -99,6 +100,7 @@ add_library(gnubase-engine STATIC
 	audiofile/writer.cpp
 	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/document.cpp document/document.h
+	document/fadeedits.cpp
 	document/history.cpp document/history.h
 	document/markers.cpp
 	document/midiedits.cpp
@@ -128,6 +130,8 @@ add_library(gnubase-engine STATIC
 	midifile/smf.cpp midifile/smf.h
 	peaks/peakcache.cpp peaks/peakcache.h
 	peaks/peaks.cpp peaks/peaks.h
+	plugins/hostmanager.cpp plugins/hostmanager.h
+	plugins/pluginslot.cpp plugins/pluginslot.h
 	processors/builtin.cpp processors/builtin.h
 	processors/builtinplugin.cpp processors/builtinplugin.h
 	processors/effects.h
@@ -143,5 +147,5 @@ add_library(gnubase-engine STATIC
 	time/timecode.cpp time/timecode.h)
 target_include_directories(gnubase-engine PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-engine PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}")
-target_link_libraries(gnubase-engine PUBLIC gnubase-platform gnubase-plugin nlohmann_json::nlohmann_json PRIVATE gnubase-decoders gnubase-r8brain gnubase-rubberband FLAC::FLAC pugixml::pugixml miniz)
+target_link_libraries(gnubase-engine PUBLIC gnubase-platform gnubase-plugin gnubase-plugin-remote nlohmann_json::nlohmann_json PRIVATE gnubase-decoders gnubase-r8brain gnubase-rubberband FLAC::FLAC pugixml::pugixml miniz)
 gnubase_target_defaults(gnubase-engine)
