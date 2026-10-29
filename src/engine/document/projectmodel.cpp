@@ -187,10 +187,11 @@ namespace gnubase::engine
 			{
 				const int channels = parameters.at("channels").get<int>();
 				requireRange(channels, 1, g_maxFormatChannels, "channels");
-				require(!format || channelCount(*format) == channels,
+				if (!format)
+					return defaultFormat(channels);
+				require(channelCount(*format) == channels,
 					std::string("format ") + formatName(*format) + " doesn't have " + std::to_string(channels) +
 						" channels");
-				format = format.value_or(defaultFormat(channels));
 			}
 			return format.value_or(fallback);
 		}
