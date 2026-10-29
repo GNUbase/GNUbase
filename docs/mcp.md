@@ -961,7 +961,7 @@ Result:
 
 Engine command `midi.invert`.
 
-Mirrors notes in time: each one starts where its mirror image ends. Without notes the controllers are mirrored too. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
+Mirrors notes in time: each one starts where its mirror image ends. Without notes, controllers with a value that holds (continuous controllers, the switches 64-69, pitch bend and pressure) play their values backwards, each held as long as before, and return to their last value where the range ends; program changes, SysEx, bank select, data entry, NRPN, RPN and channel mode messages stay in place. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
 
 Arguments:
 
@@ -993,7 +993,7 @@ Result:
 
 Engine command `midi.merge`.
 
-Merges the notes and controllers that start between start and end (project samples, like the locators) on the MIDI and instrument tracks in tracks (default: all of them) into a new part from start to end on the destination track, named name (default: the track's name). Notes keep their length, cut where their part ends. Without destination a new MIDI track is added at the end, routed to the instrument of the first track merged. eraseDestination first removes the destination's parts that lie between start and end, and the events of its other parts that start there. includeChase adds the last value of every controller and program before start at the new part's start. Returns the tracks it added, the parts it added (parts), changed and removed.
+Merges the notes and controllers that start between start and end (project samples, like the locators, compared in samples as playback does) on the MIDI and instrument tracks in tracks (default: all of them) into a new part from start to end on the destination track, named name (default: the track's name). Notes keep their length, cut where their part ends. Without destination a new MIDI track is added at the end, routed to the instrument of the first track merged. eraseDestination first removes the destination's parts that lie between start and end, and the events of its other parts that start there. includeChase adds the last value of every controller and program before start at the new part's start. Returns the tracks it added, the parts it added (parts), changed and removed.
 
 Arguments:
 
@@ -1047,7 +1047,7 @@ Result:
 
 Engine command `midi.reverse`.
 
-Reverses the order in which notes start, keeping their lengths: the last one starts where the first one started. Without notes the controllers are reversed too. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
+Reverses the order in which notes start, keeping their lengths: the last one starts where the first one started. Without notes, controllers with a value that holds (continuous controllers, the switches 64-69, pitch bend and pressure) play their values backwards, each held as long as before, and return to their last value where the range ends; program changes, SysEx, bank select, data entry, NRPN, RPN and channel mode messages stay in place. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
 
 Arguments:
 
@@ -1062,7 +1062,7 @@ Result:
 
 Engine command `midi.thinOut`.
 
-Thins out control changes, pitch bend and pressure, per controller and channel: removes events that repeat the value before them, and events closer than minimumDistance ticks (default a 64th note) to the event kept before them, unless the curve turns there or it is the last one. Works on the MIDI parts in parts. Returns the parts it changed.
+Thins out continuous controllers, pitch bend and pressure, per controller and channel: removes events that repeat the value before them, and events closer than minimumDistance ticks (default a 64th note) to the event kept before them, unless the curve turns there, the next event is at least minimumDistance away or it is the last one. Bank select, data entry, the switches 64-69, NRPN, RPN and channel mode messages stay, like program changes and SysEx. Works on the MIDI parts in parts. Returns the parts it changed.
 
 Arguments:
 

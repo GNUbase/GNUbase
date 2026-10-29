@@ -19,7 +19,9 @@ using namespace gnubase::engine;
 using namespace gnubase::engine::midi;
 using Catch::Matchers::ContainsSubstring;
 using gnubase::time::g_ticksPerQuarter;
+using gnubase::time::Samples;
 using gnubase::time::Ticks;
+using gnubase::time::TimeBase;
 
 namespace
 {
@@ -107,13 +109,14 @@ namespace
 		return track.id;
 	}
 
-	ObjectId addPart(Project& project, ObjectId track, Ticks position, Ticks length, const MidiPart& content = {})
+	// position and length are in the track's time base: ticks, or samples on a linear track.
+	ObjectId addPart(Project& project, ObjectId track, int64_t position, int64_t length, const MidiPart& content = {})
 	{
 		MidiPart part = content;
 		part.id = project.newId();
 		part.track = track;
 		part.name = project.trackById.at(track).name;
-		part.position = {gnubase::time::TimeBase::Musical, position};
+		part.position = {project.trackById.at(track).timeBase, position};
 		part.length = length;
 		std::map<ObjectId, Note> notes;
 		for (auto& [id, note] : part.notes)
@@ -143,6 +146,27 @@ namespace
 		std::sort(notes.begin(), notes.end());
 		return notes;
 	}
+
+	// The events of a controller on channel 1 as (position, MIDI 1.0 value), in order.
+	std::vector<std::pair<Ticks, int>> laneOf(const MidiPart& part, int number)
+	{
+		std::vector<std::pair<Ticks, int>> lane;
+		for (const auto& [id, controller] : part.controllers)
+			if (controller.type == ControllerType::Control && controller.number == number && controller.channel == 0)
+				lane.emplace_back(controller.position, controllerToMidi1(controller.value));
+		std::sort(lane.begin(), lane.end());
+		return lane;
+	}
+
+	// New ids for the events a function adds, above the ids the tests give.
+	struct NewIds
+	{
+		ObjectId next = 1000;
+		NewId function()
+		{
+			return [this] { return next++; };
+		}
+	};
 
 	const MidiPart& onlyPartOn(const Project& project, ObjectId track)
 	{
@@ -320,7 +344,7 @@ TEST_CASE("sustain pedal to note length extends notes to the pedal's release and
 						.note(5, 0, g_quarter / 4, 60, 1)          // channel 2
 						.note(6, 0, g_quarter / 4, 62, 2)          // channel 3 has no pedal
 						.part;
-	pedalToNoteLength(part, NoteSelection());
+	pedalToNoteLength(part, NoteSelection(), part.length);
 	CHECK(length(part, 1) == 3 * g_quarter); // up to the next C
 	CHECK(length(part, 2) == 2 * g_quarter); // up to the release
 	CHECK(length(part, 3) == g_quarter);     // up to the release
@@ -333,7 +357,7 @@ TEST_CASE("sustain pedal to note length extends notes to the pedal's release and
 	{
 		MidiPart edge =
 			PartBuilder().cc(1, g_quarter, 64, 127).cc(2, 2 * g_quarter, 64, 0).note(3, 0, g_quarter, 60).part;
-		pedalToNoteLength(edge, NoteSelection());
+		pedalToNoteLength(edge, NoteSelection(), edge.length);
 		CHECK(length(edge, 3) == g_quarter);
 	}
 }
@@ -539,6 +563,35 @@ TEST_CASE("thin out removes dense and repeated controller events but keeps the c
 	CHECK(part.controllers.count(601) == 1);
 }
 
+TEST_CASE("thin out keeps a step where it happens", "[unit]")
+{
+	// Controller 1 steps to 64 shortly after the start and holds it: the repeat a bar later must not take its place.
+	MidiPart part =
+		PartBuilder().cc(1, 0, 1, 0).cc(2, 50000, 1, 64).cc(3, 4 * g_quarter, 1, 64).cc(4, 8 * g_quarter, 1, 127).part;
+	thinOut(part, g_quarter / 16);
+	CHECK(laneOf(part, 1) == std::vector<std::pair<Ticks, int>>{{0, 0}, {50000, 64}, {8 * g_quarter, 127}});
+}
+
+TEST_CASE("thin out leaves switches, bank select and parameter numbers alone", "[unit]")
+{
+	// NRPN 1 = 64, then NRPN 2 = 64: the second data entry repeats the first one's value but sets another parameter.
+	MidiPart part = PartBuilder()
+						.cc(1, 0, 99, 0)
+						.cc(2, 0, 98, 1)
+						.cc(3, 0, 6, 64)
+						.cc(4, 10, 99, 0)
+						.cc(5, 10, 98, 2)
+						.cc(6, 10, 6, 64)
+						.cc(7, 20, 64, 127) // the sustain pedal, pressed again and again
+						.cc(8, 30, 64, 127)
+						.cc(9, 40, 0, 1) // bank select
+						.cc(10, 50, 0, 1)
+						.part;
+	const MidiPart original = part;
+	thinOut(part, 100);
+	CHECK(part.controllers == original.controllers);
+}
+
 TEST_CASE("reverse plays the notes' starts in reverse order and keeps their lengths", "[unit]")
 {
 	MidiPart part = PartBuilder()
@@ -549,21 +602,23 @@ TEST_CASE("reverse plays the notes' starts in reverse order and keeps their leng
 						.cc(5, 3 * g_quarter, 7, 20)
 						.part;
 	MidiPart selected = part;
-	reverse(selected, NoteSelection({1, 2}));
+	reverse(selected, NoteSelection({1, 2}), NewIds().function());
 	CHECK(start(selected, 1) == 2 * g_quarter);
 	CHECK(start(selected, 2) == g_quarter);
 	CHECK(start(selected, 3) == 4 * g_quarter);
 	CHECK(selected.controllers == part.controllers);
 
-	reverse(part, NoteSelection());
+	reverse(part, NoteSelection(), NewIds().function());
 	// Every event from 0 to 4 quarters: positions mirror around 2 quarters.
 	CHECK(start(part, 1) == 3 * g_quarter);
 	CHECK(start(part, 2) == 2 * g_quarter);
 	CHECK(start(part, 3) == 0);
 	CHECK(length(part, 1) == 10);
 	CHECK(length(part, 3) == 30);
-	CHECK(part.controllers.at(4).position == 4 * g_quarter);
-	CHECK(part.controllers.at(5).position == g_quarter);
+	// The volume was 10 for 3 quarters, then 20 for one: now 20 for one, then 10 for 3, and 20 again after them.
+	CHECK(laneOf(part, 7) == std::vector<std::pair<Ticks, int>>{{0, 20}, {g_quarter, 10}, {4 * g_quarter, 20}});
+	CHECK(part.controllers.at(5).position == 0);
+	CHECK(part.controllers.at(4).position == g_quarter);
 }
 
 TEST_CASE("invert mirrors the notes in time: a note starts where its mirror image ended", "[unit]")
@@ -574,17 +629,63 @@ TEST_CASE("invert mirrors the notes in time: a note starts where its mirror imag
 						.cc(3, 2 * g_quarter, 7, 10)
 						.part;
 	MidiPart selected = part;
-	invert(selected, NoteSelection({1, 2}));
+	invert(selected, NoteSelection({1, 2}), NewIds().function());
 	// The notes span 1 to 3.5 quarters.
 	CHECK(start(selected, 1) == 5 * g_quarter / 2);
 	CHECK(start(selected, 2) == g_quarter);
 	CHECK(selected.controllers == part.controllers);
 
-	invert(part, NoteSelection());
+	invert(part, NoteSelection(), NewIds().function());
 	CHECK(start(part, 1) == 5 * g_quarter / 2);
 	CHECK(start(part, 2) == g_quarter);
-	CHECK(part.controllers.at(3).position == 5 * g_quarter / 2);
+	// The volume held from 2 to 3.5 quarters, now from 1 to 2.5 and on.
+	CHECK(laneOf(part, 7) == std::vector<std::pair<Ticks, int>>{{g_quarter, 10}});
 	CHECK(length(part, 1) == g_quarter);
+}
+
+TEST_CASE("reverse and invert play controller values backwards and leave program changes in place", "[unit]")
+{
+	const MidiPart original = PartBuilder()
+								  .note(1, 0, g_quarter, 60)
+								  .note(2, 3 * g_quarter, g_quarter, 62)
+								  .cc(3, 0, 64, 127)           // the sustain pedal down
+								  .cc(4, 2 * g_quarter, 64, 0) // and up
+								  .cc(5, 0, 7, 100)            // the volume, set once
+								  .cc(6, g_quarter / 2, 0, 1)  // bank select and program change
+								  .controller(7, g_quarter / 2, ControllerType::Program, 4, 1)
+								  .controller(8, g_quarter, ControllerType::SysEx, 0, 0)
+								  .part;
+	SECTION("invert")
+	{
+		MidiPart part = original;
+		invert(part, NoteSelection(), NewIds().function());
+		// From 0 to 4 quarters: the pedal held the first 2, now the last 2, and is released at the end.
+		CHECK(start(part, 1) == 3 * g_quarter);
+		CHECK(start(part, 2) == 0);
+		CHECK(laneOf(part, 64) == std::vector<std::pair<Ticks, int>>{{0, 0}, {2 * g_quarter, 127}, {4 * g_quarter, 0}});
+		CHECK(laneOf(part, 7) == std::vector<std::pair<Ticks, int>>{{0, 100}});
+		CHECK(laneOf(part, 0) == std::vector<std::pair<Ticks, int>>{{g_quarter / 2, 1}});
+		CHECK(part.controllers.at(7) == original.controllers.at(7));
+		CHECK(part.controllers.at(8) == original.controllers.at(8));
+	}
+	SECTION("reverse")
+	{
+		MidiPart part = original;
+		reverse(part, NoteSelection(), NewIds().function());
+		// The starts span 0 to 3 quarters.
+		CHECK(start(part, 1) == 3 * g_quarter);
+		CHECK(start(part, 2) == 0);
+		CHECK(laneOf(part, 64) == std::vector<std::pair<Ticks, int>>{{0, 0}, {g_quarter, 127}, {3 * g_quarter, 0}});
+		CHECK(laneOf(part, 7) == std::vector<std::pair<Ticks, int>>{{0, 100}});
+		CHECK(part.controllers.at(7) == original.controllers.at(7));
+		CHECK(part.controllers.at(8) == original.controllers.at(8));
+	}
+	SECTION("values overwritten at the same tick go")
+	{
+		MidiPart part = PartBuilder().cc(1, 0, 1, 10).cc(2, g_quarter, 1, 20).cc(3, g_quarter, 1, 30).part;
+		invert(part, NoteSelection(), NewIds().function());
+		CHECK(laneOf(part, 1) == std::vector<std::pair<Ticks, int>>{{0, 10}, {g_quarter, 30}});
+	}
 }
 
 TEST_CASE("MIDI functions leave empty parts alone", "[unit]")
@@ -598,7 +699,7 @@ TEST_CASE("MIDI functions leave empty parts alone", "[unit]")
 	legato(part, NoteSelection(), 0, true);
 	fixLengths(part, NoteSelection(), 10);
 	fixVelocities(part, NoteSelection(), 10);
-	pedalToNoteLength(part, NoteSelection());
+	pedalToNoteLength(part, NoteSelection(), part.length);
 	deleteOverlaps(part, NoteSelection(), OverlapMode::Poly);
 	deleteDoubles(part, NoteSelection());
 	deleteControllers(part);
@@ -606,8 +707,9 @@ TEST_CASE("MIDI functions leave empty parts alone", "[unit]")
 	deleteNotes(part, NoteSelection(), DeleteNotesSettings{10, 10, false});
 	restrictPolyphony(part, NoteSelection(), 1);
 	thinOut(part, 100);
-	reverse(part, NoteSelection());
-	invert(part, NoteSelection());
+	NewIds ids;
+	reverse(part, NoteSelection(), ids.function());
+	invert(part, NoteSelection(), ids.function());
 	CHECK(part.notes.empty());
 	CHECK(part.controllers.empty());
 	CHECK(sameProperties(part, empty));
@@ -684,6 +786,78 @@ TEST_CASE("merge copies the events in a range into a new part", "[unit]")
 		REQUIRE(result.addedParts.size() == 1);
 		CHECK(notesOf(into.midiParts.at(result.addedParts[0])) ==
 			std::vector<std::vector<int64_t>>{{2 * g_quarter, 72, g_quarter, 0}});
+	}
+}
+
+TEST_CASE("merge compares positions with the locators in samples", "[unit]")
+{
+	Project project = newProject();
+	project.sampleRate = 44100.0;
+	project.tempo = gnubase::time::TempoMap(130.0);
+	const ObjectId track = addTrack(project, TrackType::Instrument, "Keys");
+	const ObjectId source = addPart(project, track, 0, 32 * g_quarter,
+		PartBuilder()
+			.note(1, 7 * g_quarter, 10, 59)
+			.note(2, 8 * g_quarter, 10, 60)  // on bar 3, the left locator
+			.note(3, 16 * g_quarter, 10, 62) // on bar 5, the right locator
+			.part);
+	MergeSettings settings;
+	settings.start = project.tempo.toSamples(8 * g_quarter, project.sampleRate);
+	settings.end = project.tempo.toSamples(16 * g_quarter, project.sampleRate);
+	// Converted back to ticks, the left locator lies after the downbeat of bar 3.
+	REQUIRE(project.tempo.toTicks(settings.start, project.sampleRate) > 8 * g_quarter);
+	settings.tracks = {track};
+	settings.destination = track;
+	settings.eraseDestination = true;
+	const PartChanges changes = merge(project, settings);
+	REQUIRE(changes.addedParts.size() == 1);
+	const MidiPart& merged = project.midiParts.at(changes.addedParts[0]);
+	CHECK(merged.position.value == 8 * g_quarter);
+	CHECK(notesOf(merged) == std::vector<std::vector<int64_t>>{{0, 60, 10, 0}});
+	CHECK(notesOf(project.midiParts.at(source)) ==
+		std::vector<std::vector<int64_t>>{{7 * g_quarter, 59, 10, 0}, {16 * g_quarter, 62, 10, 0}});
+}
+
+TEST_CASE("merge and bounce keep the events of parts on linear tracks", "[unit]")
+{
+	Project project = newProject();
+	const ObjectId track = addTrack(project, TrackType::Instrument, "Keys");
+	project.trackById.at(track).timeBase = TimeBase::Linear;
+	const auto samples = [&project](Ticks tick) { return project.tempo.toSamples(tick, project.sampleRate); };
+	// Parts of 2 bars and 1 bar, in samples: far fewer than the ticks of the events in them.
+	const ObjectId first = addPart(project, track, 0, samples(8 * g_quarter),
+		PartBuilder()
+			.note(1, 0, g_quarter, 60)
+			.note(2, 6 * g_quarter, 4 * g_quarter, 62) // cut at the part's end
+			.note(3, 9 * g_quarter, g_quarter, 63)     // after the part's end
+			.cc(4, 7 * g_quarter, 1, 5)
+			.part);
+	const ObjectId second = addPart(project, track, samples(12 * g_quarter), samples(4 * g_quarter),
+		PartBuilder().note(1, 3 * g_quarter, g_quarter, 64).part);
+	const std::vector<std::vector<int64_t>> expected = {
+		{0, 60, g_quarter, 0}, {6 * g_quarter, 62, 2 * g_quarter, 0}, {15 * g_quarter, 64, g_quarter, 0}};
+
+	SECTION("bounce")
+	{
+		const PartChanges changes = bounce(project, {first, second});
+		REQUIRE(changes.addedParts.size() == 1);
+		const MidiPart& part = project.midiParts.at(changes.addedParts[0]);
+		CHECK(part.position == gnubase::time::Position{TimeBase::Linear, 0});
+		CHECK(part.length == samples(16 * g_quarter));
+		CHECK(notesOf(part) == expected);
+		REQUIRE(part.controllers.size() == 1);
+		CHECK(part.controllers.begin()->second.position == 7 * g_quarter);
+	}
+	SECTION("merge")
+	{
+		MergeSettings settings;
+		settings.end = samples(16 * g_quarter);
+		const PartChanges changes = merge(project, settings);
+		REQUIRE(changes.addedParts.size() == 1);
+		const MidiPart& part = project.midiParts.at(changes.addedParts[0]);
+		CHECK(part.length == 16 * g_quarter);
+		CHECK(notesOf(part) == expected);
+		CHECK(part.controllers.size() == 1);
 	}
 }
 
@@ -974,4 +1148,27 @@ TEST_CASE("merge, dissolve and bounce commands return and announce the parts and
 			CHECK(part.at("controllers").size() == 4); // the pedal's release is at the range's end
 		}
 	CHECK(found);
+}
+
+TEST_CASE("sustain pedal to note length holds notes to the end of a part on a linear track", "[integration]")
+{
+	Engine engine;
+	Client client{engine};
+	const auto track =
+		run(client, "track.add", {{"type", "instrument"}, {"timeBase", "linear"}}).at("track").at("id").get<ObjectId>();
+	const Json project = run(client, "project.get");
+	const gnubase::time::TempoMap tempo(project.at("tempo")[0].at("bpm").get<double>());
+	const Samples bar = tempo.toSamples(4 * g_quarter, project.at("sampleRate").get<double>());
+	const auto part = run(client, "midiPart.add", {{"track", track}, {"position", 0}, {"length", bar}})
+						  .at("part")
+						  .at("id")
+						  .get<ObjectId>();
+	run(client, "note.add",
+		{{"part", part}, {"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	run(client, "controller.add",
+		{{"part", part}, {"controllers", {{{"position", g_quarter / 2}, {"number", 64}, {"value", 1.0}}}}});
+	run(client, "midi.pedalToNoteLength", {{"parts", {part}}});
+	const Json notes = run(client, "project.get").at("midiParts")[0].at("notes");
+	REQUIRE(notes.size() == 1);
+	CHECK(notes[0].at("length") == 4 * g_quarter); // the pedal is never released: to the part's end, a bar
 }

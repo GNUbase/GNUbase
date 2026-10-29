@@ -95,7 +95,8 @@ namespace gnubase::engine::midi
 			return value;
 		}
 
-		using PartFunction = std::function<void(MidiPart& part, const NoteSelection& selection)>;
+		// The project gives a function the tempo and new ids.
+		using PartFunction = std::function<void(Project& project, MidiPart& part, const NoteSelection& selection)>;
 		using Prepare = std::function<PartFunction(const Json& parameters)>;
 
 		// Checks the parameters, runs the function on every part and announces the parts it changed.
@@ -109,7 +110,7 @@ namespace gnubase::engine::midi
 			for (MidiPart* part : parts)
 			{
 				const MidiPart before = *part;
-				function(*part, selection);
+				function(project, *part, selection);
 				if (part->notes != before.notes || part->controllers != before.controllers)
 				{
 					changed.push_back(part->id);
@@ -178,7 +179,8 @@ namespace gnubase::engine::midi
 				requireRange(settings.highest, 0, 127, "highest");
 				require(settings.lowest <= settings.highest, "lowest must not be above highest");
 			}
-			return [settings](MidiPart& part, const NoteSelection& selection) { transpose(part, selection, settings); };
+			return [settings](Project&, MidiPart& part, const NoteSelection& selection)
+			{ transpose(part, selection, settings); };
 		}
 
 		PartFunction prepareDeleteNotes(const Json& parameters)
@@ -191,7 +193,7 @@ namespace gnubase::engine::midi
 			if (parameters.contains("minimumVelocity"))
 				settings.minimumVelocity = velocity(parameters, "minimumVelocity");
 			settings.both = parameters.value("removeWhen", std::string("either")) == "both";
-			return [settings](MidiPart& part, const NoteSelection& selection)
+			return [settings](Project&, MidiPart& part, const NoteSelection& selection)
 			{ deleteNotes(part, selection, settings); };
 		}
 
@@ -286,27 +288,35 @@ namespace gnubase::engine::midi
 				{
 					const Ticks overlap = parameters.value("overlap", Ticks{0});
 					const bool between = parameters.value("betweenSelected", false);
-					return [=](MidiPart& part, const NoteSelection& notes) { legato(part, notes, overlap, between); };
+					return [=](Project&, MidiPart& part, const NoteSelection& notes)
+					{ legato(part, notes, overlap, between); };
 				}},
 			{"midi.fixLengths", "Fixed lengths", "Sets the length of notes, in ticks.", {{"length", integerSchema}},
 				{"length"}, true,
 				[](const Json& parameters) -> PartFunction
 				{
 					const Ticks length = positiveTicks(parameters, "length");
-					return [=](MidiPart& part, const NoteSelection& notes) { fixLengths(part, notes, length); };
+					return [=](Project&, MidiPart& part, const NoteSelection& notes)
+					{ fixLengths(part, notes, length); };
 				}},
 			{"midi.fixVelocities", "Fixed velocities", "Sets the velocity of notes, 0-1.", {{"velocity", numberSchema}},
 				{"velocity"}, true,
 				[](const Json& parameters) -> PartFunction
 				{
 					const uint16_t value = velocity(parameters, "velocity");
-					return [=](MidiPart& part, const NoteSelection& notes) { fixVelocities(part, notes, value); };
+					return [=](Project&, MidiPart& part, const NoteSelection& notes)
+					{ fixVelocities(part, notes, value); };
 				}},
 			{"midi.pedalToNoteLength", "Sustain pedal to note length",
 				"Extends notes that end while the sustain pedal (controller 64) on their channel is down to where it "
 				"is released (the part's end if never), but not past the next note of the same pitch, and removes "
 				"the sustain pedal events of their channels.",
-				Json::object(), {}, true, [](const Json&) -> PartFunction { return pedalToNoteLength; }},
+				Json::object(), {}, true,
+				[](const Json&) -> PartFunction
+				{
+					return [](Project& project, MidiPart& part, const NoteSelection& notes)
+					{ pedalToNoteLength(part, notes, lengthInTicks(project, part)); };
+				}},
 			{"midi.deleteOverlaps", "Delete overlaps",
 				"Shortens notes so that none still sounds when the next one on its channel starts: in mode mono the "
 				"next one of the same pitch, in mode poly of any pitch. Notes that start together don't overlap.",
@@ -315,21 +325,23 @@ namespace gnubase::engine::midi
 				{
 					const OverlapMode mode =
 						parameters.at("mode").get<std::string>() == "poly" ? OverlapMode::Poly : OverlapMode::Mono;
-					return [=](MidiPart& part, const NoteSelection& notes) { deleteOverlaps(part, notes, mode); };
+					return [=](Project&, MidiPart& part, const NoteSelection& notes)
+					{ deleteOverlaps(part, notes, mode); };
 				}},
 			{"midi.deleteDoubles", "Delete doubles",
 				"Of notes with the same pitch, channel and position, keeps the longest (the first added on a tie).",
-				Json::object(), {}, true, [](const Json&) -> PartFunction { return deleteDoubles; }},
+				Json::object(), {}, true, [](const Json&) -> PartFunction
+				{ return [](Project&, MidiPart& part, const NoteSelection& notes) { deleteDoubles(part, notes); }; }},
 			{"midi.deleteControllers", "Delete controllers",
 				"Removes control changes, pitch bend, channel and poly pressure; program changes and SysEx stay.",
 				Json::object(), {}, false, [](const Json&) -> PartFunction
-				{ return [](MidiPart& part, const NoteSelection&) { deleteControllers(part); }; }},
+				{ return [](Project&, MidiPart& part, const NoteSelection&) { deleteControllers(part); }; }},
 			{"midi.deleteContinuousControllers", "Delete continuous controllers",
 				"Removes the control changes of continuous controllers. Bank select, data entry, the switches 64-69 "
 				"(such as the sustain pedal), data increment and decrement, NRPN, RPN and channel mode messages "
 				"stay.",
 				Json::object(), {}, false, [](const Json&) -> PartFunction
-				{ return [](MidiPart& part, const NoteSelection&) { deleteContinuousControllers(part); }; }},
+				{ return [](Project&, MidiPart& part, const NoteSelection&) { deleteContinuousControllers(part); }; }},
 			{"midi.deleteNotes", "Delete notes",
 				"Deletes notes shorter than minimumLength (ticks) or softer than minimumVelocity (0-1); at least one "
 				"is required. removeWhen both deletes only notes below both minimums (default: either).",
@@ -345,28 +357,46 @@ namespace gnubase::engine::midi
 				{
 					const int voices = parameters.at("voices").get<int>();
 					require(voices >= 1, "voices must be at least 1");
-					return [=](MidiPart& part, const NoteSelection& notes) { restrictPolyphony(part, notes, voices); };
+					return [=](Project&, MidiPart& part, const NoteSelection& notes)
+					{ restrictPolyphony(part, notes, voices); };
 				}},
 			{"midi.thinOut", "Thin out data",
-				"Thins out control changes, pitch bend and pressure, per controller and channel: removes events that "
-				"repeat the value before them, and events closer than minimumDistance ticks (default a 64th note) to "
-				"the event kept before them, unless the curve turns there or it is the last one.",
+				"Thins out continuous controllers, pitch bend and pressure, per controller and channel: removes events "
+				"that repeat the value before them, and events closer than minimumDistance ticks (default a 64th note) "
+				"to the event kept before them, unless the curve turns there, the next event is at least "
+				"minimumDistance away or it is the last one. Bank select, data entry, the switches 64-69, NRPN, RPN "
+				"and channel mode messages stay, like program changes and SysEx.",
 				{{"minimumDistance", integerSchema}}, {}, false,
 				[](const Json& parameters) -> PartFunction
 				{
 					const Ticks distance = parameters.contains("minimumDistance")
 						? positiveTicks(parameters, "minimumDistance")
 						: time::g_ticksPerQuarter / 16;
-					return [=](MidiPart& part, const NoteSelection&) { thinOut(part, distance); };
+					return [=](Project&, MidiPart& part, const NoteSelection&) { thinOut(part, distance); };
 				}},
 			{"midi.reverse", "Reverse",
 				"Reverses the order in which notes start, keeping their lengths: the last one starts where the first "
-				"one started. Without notes the controllers are reversed too.",
-				Json::object(), {}, true, [](const Json&) -> PartFunction { return reverse; }},
+				"one started. Without notes, controllers with a value that holds (continuous controllers, the "
+				"switches 64-69, pitch bend and pressure) play their values backwards, each held as long as before, "
+				"and return to their last value where the range ends; program changes, SysEx, bank select, data "
+				"entry, NRPN, RPN and channel mode messages stay in place.",
+				Json::object(), {}, true,
+				[](const Json&) -> PartFunction
+				{
+					return [](Project& project, MidiPart& part, const NoteSelection& notes)
+					{ reverse(part, notes, [&project] { return project.newId(); }); };
+				}},
 			{"midi.invert", "Invert",
-				"Mirrors notes in time: each one starts where its mirror image ends. Without notes the controllers "
-				"are mirrored too.",
-				Json::object(), {}, true, [](const Json&) -> PartFunction { return invert; }},
+				"Mirrors notes in time: each one starts where its mirror image ends. Without notes, controllers with a "
+				"value that holds (continuous controllers, the switches 64-69, pitch bend and pressure) play their "
+				"values backwards, each held as long as before, and return to their last value where the range ends; "
+				"program changes, SysEx, bank select, data entry, NRPN, RPN and channel mode messages stay in place.",
+				Json::object(), {}, true,
+				[](const Json&) -> PartFunction
+				{
+					return [](Project& project, MidiPart& part, const NoteSelection& notes)
+					{ invert(part, notes, [&project] { return project.newId(); }); };
+				}},
 		};
 
 		for (const PartCommand& command : commands)
@@ -395,7 +425,8 @@ namespace gnubase::engine::midi
 		model.addEdit(engine,
 			{"midi.merge", 1,
 				"Merges the notes and controllers that start between start and end (project samples, like the "
-				"locators) on the MIDI and instrument tracks in tracks (default: all of them) into a new part from "
+				"locators, compared in samples as playback does) on the MIDI and instrument tracks in tracks (default: "
+				"all of them) into a new part from "
 				"start to end on the destination track, named name (default: the track's name). Notes keep their "
 				"length, cut where their part ends. Without destination a new MIDI track is added at the end, routed "
 				"to the instrument of the first track merged. eraseDestination first removes the destination's parts "

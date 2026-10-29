@@ -4,6 +4,7 @@
 #include "engine/document/document.h"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <set>
 #include <string>
@@ -30,6 +31,12 @@ namespace gnubase::engine::midi
 		bool m_all = true;
 		std::set<ObjectId> m_notes;
 	};
+
+	// Makes the id of an event a function adds.
+	using NewId = std::function<ObjectId()>;
+
+	// A part's length in ticks, also on a linear track, whose parts are measured in samples.
+	time::Ticks lengthInTicks(const Project& project, const MidiPart& part);
 
 	// Transpose.
 
@@ -90,9 +97,9 @@ namespace gnubase::engine::midi
 	void fixVelocities(MidiPart& part, const NoteSelection& selection, uint16_t velocity);
 
 	// Extends each selected note that ends while the sustain pedal (controller 64) on its channel is down to where the
-	// pedal is released, or the part's end if it never is, but no further than the next note of the same pitch.
-	// Then removes the sustain pedal events of the channels the selection plays on.
-	void pedalToNoteLength(MidiPart& part, const NoteSelection& selection);
+	// pedal is released, or the part's end (partLength ticks, see lengthInTicks) if it never is, but no further than
+	// the next note of the same pitch. Then removes the sustain pedal events of the channels the selection plays on.
+	void pedalToNoteLength(MidiPart& part, const NoteSelection& selection, time::Ticks partLength);
 
 	// Deleting.
 
@@ -130,19 +137,26 @@ namespace gnubase::engine::midi
 	// deleted.
 	void restrictPolyphony(MidiPart& part, const NoteSelection& selection, int voices);
 
-	// Thins out control changes, pitch bend and pressure, per controller and channel: removes events that repeat the
-	// value before them, and events closer than minimumDistance to the event kept before them, unless the curve turns
-	// there or it is the last one.
+	// Thins out continuous controllers, pitch bend and pressure, per controller and channel: removes events that
+	// repeat the value before them, and events closer than minimumDistance to the event kept before them, unless the
+	// curve turns there, the next event is at least minimumDistance away or it is the last one. Switches, bank select,
+	// data entry and the other controllers isContinuousController excludes stay, like program changes and SysEx.
 	void thinOut(MidiPart& part, time::Ticks minimumDistance);
 
 	// Order.
 
+	// Reverse and invert mirror a range in time. With every note selected, each lane of a controller that holds a
+	// value (continuous controllers, the switches 64 to 69, pitch bend and pressure) plays its values backwards: the
+	// value that held from one event to the next, or to the range's end, holds as long in the mirror image. Values
+	// overwritten at the same tick go, and where the range ends the lane returns to the value it had there, with a
+	// new event (newId) if needed. Program changes, SysEx, bank select, data entry, the parameter numbers and channel
+	// mode messages stay in place.
+
 	// Reverses the order in which the selected notes start, keeping their lengths: the last one starts where the
-	// first one started. With every note selected the controllers are reversed too.
-	void reverse(MidiPart& part, const NoteSelection& selection);
-	// Mirrors the selected notes in time: where a note ended, its mirror image starts. With every note selected the
-	// controllers are mirrored too.
-	void invert(MidiPart& part, const NoteSelection& selection);
+	// first one started.
+	void reverse(MidiPart& part, const NoteSelection& selection, const NewId& newId);
+	// Mirrors the selected notes in time: where a note ended, its mirror image starts.
+	void invert(MidiPart& part, const NoteSelection& selection, const NewId& newId);
 
 	// Functions that make parts. They report what they changed, so the commands can announce it.
 
@@ -166,11 +180,12 @@ namespace gnubase::engine::midi
 	};
 
 	// Copies the notes and controllers that start in the range on the tracks into a new part between start and end
-	// on the destination track. Notes keep their lengths, cut where their part ends. eraseDestination first removes
-	// the destination track's parts that lie in the range and the events of other parts that start in it.
-	// includeChase adds the last controller value of every controller, program and channel before start at the
-	// new part's start. A new destination track goes to the end of the track list, routed to the instrument of the
-	// first track merged.
+	// on the destination track. Events are in the range when their position in samples is, as in playback; the new
+	// part starts at the first of them if that is earlier than start in ticks. Notes keep their lengths, cut where
+	// their part ends. eraseDestination first removes the destination track's parts that lie in the range and the
+	// events of other parts that start in it. includeChase adds the last controller value of every controller, program
+	// and channel before start at the new part's start. A new destination track goes to the end of the track list,
+	// routed to the instrument of the first track merged.
 	PartChanges merge(Project& project, const MergeSettings& settings);
 
 	enum class DissolveBy : uint8_t

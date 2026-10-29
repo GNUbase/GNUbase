@@ -18,6 +18,7 @@ namespace gnubase::engine::midi
 	namespace
 	{
 		constexpr int g_sustainPedal = 64;
+		constexpr int g_lastSwitch = 69;
 		constexpr int g_pedalDown = 64; // MIDI 1.0 values from 64 on press a switch
 
 		int floorDiv(int value, int divisor)
@@ -183,6 +184,70 @@ namespace gnubase::engine::midi
 			return controller.type == ControllerType::Control && controller.number == g_sustainPedal;
 		}
 
+		// Continuous controllers, pitch bend and pressure.
+		bool isContinuous(const Controller& controller)
+		{
+			return controller.type == ControllerType::Control ? isContinuousController(controller.number)
+															  : isCurve(controller.type);
+		}
+
+		// Controllers whose value holds until the next event of their lane: the continuous ones and the switches 64
+		// (sustain) to 69.
+		bool holdsValue(const Controller& controller)
+		{
+			const bool isSwitch = controller.type == ControllerType::Control && controller.number >= g_sustainPedal &&
+				controller.number <= g_lastSwitch;
+			return isSwitch || isContinuous(controller);
+		}
+
+		bool comesBefore(const Controller* a, const Controller* b)
+		{
+			return std::tie(a->position, a->id) < std::tie(b->position, b->id);
+		}
+
+		// Plays the values of every lane that holds a value backwards between from and to: the value that held from
+		// an event to the next one (or to the range's end) holds from the next one's mirror image to its own. Values
+		// overwritten at the same tick go, and at the range's end the lane returns to the value it had there.
+		void mirrorControllers(MidiPart& part, Ticks from, Ticks to, const NewId& newId)
+		{
+			std::map<LaneKey, std::vector<Controller*>> lanes;
+			for (auto& [id, controller] : part.controllers)
+				if (holdsValue(controller))
+					lanes[laneOf(controller)].push_back(&controller);
+			const Ticks mirror = from + to;
+			std::vector<ObjectId> overwritten;
+			std::vector<Controller> restored;
+			for (auto& [key, events] : lanes)
+			{
+				std::sort(events.begin(), events.end(), comesBefore);
+				Controller restore = *events.back(); // the value after the range
+				const Controller* latest = nullptr;  // the event that plays last in the mirror image
+				for (size_t i = 0; i < events.size(); ++i)
+				{
+					Controller& event = *events[i];
+					const Ticks next = i + 1 < events.size() ? events[i + 1]->position : to;
+					if (next == event.position)
+					{
+						overwritten.push_back(event.id);
+						continue;
+					}
+					event.position = mirror - next;
+					if (latest == nullptr)
+						latest = &event;
+				}
+				if (latest == nullptr || latest->value != restore.value)
+				{
+					restore.id = newId();
+					restore.position = to;
+					restored.push_back(restore);
+				}
+			}
+			for (const ObjectId id : overwritten)
+				part.controllers.erase(id);
+			for (const Controller& controller : restored)
+				part.controllers[controller.id] = controller;
+		}
+
 		template <typename Predicate> void eraseControllers(MidiPart& part, Predicate predicate)
 		{
 			for (auto it = part.controllers.begin(); it != part.controllers.end();)
@@ -274,6 +339,11 @@ namespace gnubase::engine::midi
 		}
 	}
 
+	time::Ticks lengthInTicks(const Project& project, const MidiPart& part)
+	{
+		return partEnd(project, part) - partStart(project, part);
+	}
+
 	const char* scaleTypeName(ScaleType type)
 	{
 		return scaleEntry(type).name;
@@ -344,7 +414,7 @@ namespace gnubase::engine::midi
 				note.velocity = velocity;
 	}
 
-	void pedalToNoteLength(MidiPart& part, const NoteSelection& selection)
+	void pedalToNoteLength(MidiPart& part, const NoteSelection& selection, time::Ticks partLength)
 	{
 		// Each channel's pedal events in order.
 		std::map<uint8_t, std::vector<const Controller*>> pedals;
@@ -374,7 +444,7 @@ namespace gnubase::engine::midi
 				if (after == events.begin() || !down(*std::prev(after)))
 					continue;
 				const auto release = std::find_if_not(after, events.end(), down);
-				Ticks newEnd = release == events.end() ? std::max(part.length, noteEnd(note)) : (*release)->position;
+				Ticks newEnd = release == events.end() ? std::max(partLength, noteEnd(note)) : (*release)->position;
 				const Note* again = nextLater(notes, i, [&](const Note& other) { return other.pitch == note.pitch; });
 				if (again != nullptr)
 					newEnd = std::min(newEnd, again->position);
@@ -494,13 +564,12 @@ namespace gnubase::engine::midi
 	{
 		std::map<LaneKey, std::vector<const Controller*>> lanes;
 		for (const auto& [id, controller] : part.controllers)
-			if (isCurve(controller.type))
+			if (isContinuous(controller))
 				lanes[laneOf(controller)].push_back(&controller);
 		std::vector<ObjectId> removed;
 		for (auto& [key, events] : lanes)
 		{
-			std::sort(events.begin(), events.end(), [](const Controller* a, const Controller* b)
-				{ return std::tie(a->position, a->id) < std::tie(b->position, b->id); });
+			std::sort(events.begin(), events.end(), comesBefore);
 			// For each event, the next one with another value, or none.
 			std::vector<const Controller*> nextChange(events.size(), nullptr);
 			for (size_t i = events.size() - 1; i > 0; --i)
@@ -516,7 +585,9 @@ namespace gnubase::engine::midi
 					next != nullptr && direction(kept->value, event.value) * direction(event.value, next->value) < 0;
 				const bool repeated = event.value == kept->value;
 				const bool close = event.position - kept->position < minimumDistance;
-				if (repeated || (close && !turns && !last))
+				// A value that holds a while is kept where it starts, not only where it repeats.
+				const bool holds = !last && events[i + 1]->position - event.position >= minimumDistance;
+				if (repeated || (close && !turns && !last && !holds))
 					removed.push_back(event.id);
 				else
 					kept = &event;
@@ -526,7 +597,7 @@ namespace gnubase::engine::midi
 			part.controllers.erase(id);
 	}
 
-	void reverse(MidiPart& part, const NoteSelection& selection)
+	void reverse(MidiPart& part, const NoteSelection& selection, const NewId& newId)
 	{
 		std::vector<Ticks> positions;
 		for (const auto& [id, note] : part.notes)
@@ -534,20 +605,22 @@ namespace gnubase::engine::midi
 				positions.push_back(note.position);
 		if (selection.all())
 			for (const auto& [id, controller] : part.controllers)
-				positions.push_back(controller.position);
+				if (holdsValue(controller))
+					positions.push_back(controller.position);
 		if (positions.empty())
 			return;
 		const auto [first, last] = std::minmax_element(positions.begin(), positions.end());
+		if (*first == *last)
+			return;
 		const Ticks mirror = *first + *last;
 		for (auto& [id, note] : part.notes)
 			if (selection.contains(id))
 				note.position = mirror - note.position;
 		if (selection.all())
-			for (auto& [id, controller] : part.controllers)
-				controller.position = mirror - controller.position;
+			mirrorControllers(part, *first, *last, newId);
 	}
 
-	void invert(MidiPart& part, const NoteSelection& selection)
+	void invert(MidiPart& part, const NoteSelection& selection, const NewId& newId)
 	{
 		std::vector<Ticks> positions;
 		for (const auto& [id, note] : part.notes)
@@ -558,22 +631,32 @@ namespace gnubase::engine::midi
 			}
 		if (selection.all())
 			for (const auto& [id, controller] : part.controllers)
-				positions.push_back(controller.position);
+				if (holdsValue(controller))
+					positions.push_back(controller.position);
 		if (positions.empty())
 			return;
 		const auto [first, last] = std::minmax_element(positions.begin(), positions.end());
+		if (*first == *last)
+			return;
 		const Ticks mirror = *first + *last;
 		for (auto& [id, note] : part.notes)
 			if (selection.contains(id))
 				note.position = mirror - noteEnd(note);
 		if (selection.all())
-			for (auto& [id, controller] : part.controllers)
-				controller.position = mirror - controller.position;
+			mirrorControllers(part, *first, *last, newId);
 	}
 
 	PartChanges merge(Project& project, const MergeSettings& settings)
 	{
-		const Ticks start = project.tempo.toTicks(settings.start, project.sampleRate);
+		// Positions are compared with the locators in samples, as playback does: ticks are finer than samples, so a
+		// locator in ticks can lie a little after an event that plays on it.
+		const auto sampleOf = [&project](Ticks tick) { return project.tempo.toSamples(tick, project.sampleRate); };
+		const auto inRange = [&](Ticks tick)
+		{
+			const time::Samples sample = sampleOf(tick);
+			return sample >= settings.start && sample < settings.end;
+		};
+		Ticks start = project.tempo.toTicks(settings.start, project.sampleRate); // or the first event's, if earlier
 		const Ticks end = project.tempo.toTicks(settings.end, project.sampleRate);
 		std::vector<ObjectId> tracks = settings.tracks;
 		if (tracks.empty())
@@ -595,7 +678,7 @@ namespace gnubase::engine::midi
 			for (const auto& [noteId, note] : part.notes)
 			{
 				const Ticks at = partFrom + note.position;
-				if (note.position < part.length && at >= start && at < end)
+				if (at < partTo && inRange(at))
 				{
 					Note copy = note;
 					copy.position = at;
@@ -606,15 +689,16 @@ namespace gnubase::engine::midi
 			for (const auto& [controllerId, controller] : part.controllers)
 			{
 				const Ticks at = partFrom + controller.position;
-				if (controller.position >= part.length)
+				if (at >= partTo)
 					continue;
 				Controller copy = controller;
 				copy.position = at;
-				if (at >= start && at < end)
+				if (inRange(at))
 				{
 					controllers.push_back(copy);
 				}
-				else if (at < start && settings.includeChase && controller.type != ControllerType::SysEx)
+				else if (sampleOf(at) < settings.start && settings.includeChase &&
+					controller.type != ControllerType::SysEx)
 				{
 					const LaneKey key = controller.type == ControllerType::Program
 						? LaneKey{ControllerType::Program, controller.channel, 0}
@@ -623,7 +707,6 @@ namespace gnubase::engine::midi
 					if (previous == chasedAt.end() || previous->second <= at)
 					{
 						chasedAt[key] = at;
-						copy.position = start;
 						chased[key] = copy;
 					}
 				}
@@ -650,31 +733,37 @@ namespace gnubase::engine::midi
 					++it;
 					continue;
 				}
-				if (partFrom >= start && partEnd(project, part) <= end)
+				if (sampleOf(partFrom) >= settings.start && sampleOf(partEnd(project, part)) <= settings.end)
 				{
 					changes.removedParts.push_back(part.id);
 					it = project.midiParts.erase(it);
 					continue;
 				}
-				const auto inRange = [&](Ticks position)
-				{ return partFrom + position >= start && partFrom + position < end; };
 				const size_t before = part.notes.size() + part.controllers.size();
 				for (auto note = part.notes.begin(); note != part.notes.end();)
-					note = inRange(note->second.position) ? part.notes.erase(note) : std::next(note);
-				eraseControllers(part, [&](const Controller& controller) { return inRange(controller.position); });
+					note = inRange(partFrom + note->second.position) ? part.notes.erase(note) : std::next(note);
+				eraseControllers(
+					part, [&](const Controller& controller) { return inRange(partFrom + controller.position); });
 				if (part.notes.size() + part.controllers.size() != before)
 					changes.changedParts.push_back(part.id);
 				++it;
 			}
 		}
 
+		for (const Note& note : notes)
+			start = std::min(start, note.position);
+		for (const Controller& controller : controllers)
+			start = std::min(start, controller.position);
 		MidiPart part;
 		part.id = project.newId();
 		part.track = destination;
 		part.name = settings.name.empty() ? project.trackById.at(destination).name : settings.name;
 		place(project, part, start, end);
 		for (auto& [key, controller] : chased)
+		{
+			controller.position = start;
 			controllers.insert(controllers.begin(), controller);
+		}
 		for (Note& note : notes)
 		{
 			note.id = project.newId();
@@ -844,8 +933,9 @@ namespace gnubase::engine::midi
 			const MidiPart& part = project.midiParts.at(id);
 			const Ticks shift = partStart(project, part) - combinedStart;
 			const Ticks partTo = partEnd(project, part);
+			const Ticks length = partTo - partStart(project, part);
 			for (const auto& [noteId, note] : part.notes)
-				if (note.position < part.length)
+				if (note.position < length)
 				{
 					Note copy = note;
 					copy.position += shift;
@@ -854,7 +944,7 @@ namespace gnubase::engine::midi
 					combined.notes[copy.id] = copy;
 				}
 			for (const auto& [controllerId, controller] : part.controllers)
-				if (controller.position < part.length)
+				if (controller.position < length)
 				{
 					Controller copy = controller;
 					copy.position += shift;
