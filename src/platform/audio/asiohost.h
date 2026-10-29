@@ -25,7 +25,9 @@ namespace gnubase::audio
 	// its id the driver's name. Only one driver can be open at a time, as ASIO's callbacks have no context. Every call
 	// into a driver runs on a thread of its own in a COM single-threaded apartment that handles window messages, since
 	// drivers expect the thread that created them and some show their control panel there. Inputs and outputs use all
-	// of the driver's channels; block sizes are those the driver allows, the preferred one by default. Reset, resync
-	// and buffer size change requests and sample rate changes ask the engine for a reset.
+	// of the driver's channels; block sizes are those the driver allows at the sample rate, the preferred one by
+	// default. Sample rates are those the driver says it runs at, or only the current one if it doesn't switch when
+	// asked (tried once per driver and backend). A driver that doesn't call back within two seconds of starting fails
+	// to start. Reset, resync and buffer size change requests and sample rate changes ask the engine for a reset.
 	std::unique_ptr<Backend> makeAsioBackend(AsioDrivers drivers = {});
 }

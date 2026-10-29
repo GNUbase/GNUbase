@@ -612,7 +612,11 @@ namespace gnubase::audio
 					m_midiIn.clear();
 					m_midiOut.clear();
 					const uint64_t position = m_position.load(std::memory_order_relaxed);
-					const auto time = started + static_cast<HostTime>(std::llround(done * 1e9 / m_format.sampleRate));
+					// Never before the previous block, which reaches past this wake-up when the last one had more
+					// than a period to fill: some endpoints wake irregularly.
+					const HostTime time = std::max(
+						started + static_cast<HostTime>(std::llround(done * 1e9 / m_format.sampleRate)), m_lastTime);
+					m_lastTime = time;
 					callback.process({m_inputs.data(), m_outputs.data(), block, position, time, m_midiIn, m_midiOut});
 					fromFloat(m_outputs.data(), m_format.outputChannels, block, m_output.format,
 						data + (static_cast<size_t>(done) * frameBytes));
@@ -644,6 +648,7 @@ namespace gnubase::audio
 			std::optional<InputFifo> m_fifo;
 			MidiBuffer m_midiIn;
 			MidiBuffer m_midiOut;
+			HostTime m_lastTime = 0; // of the last block
 
 			std::atomic<uint64_t> m_position{0};
 			Event m_stop{true};
