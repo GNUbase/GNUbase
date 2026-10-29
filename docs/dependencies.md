@@ -30,6 +30,16 @@ Rubber Band Library needs changes for real-time safety (see [time-stretch.md](ti
 - When updating Rubber Band, check that the patch still applies, and drop the parts upstream has fixed.
 - The rules above want a fork. Once a maintainer creates GNUbase/rubberband, the patch becomes commits on its `gnubase` branch, the submodule points at the fork, and the patch file and the copy step go.
 
+## VST3 SDK
+
+The VST3 SDK is used unchanged, from mirrors in the GNUbase account: the SDK's own repository names its vendor, which GNUbase never writes (CLAUDE.md, "Source of truth and naming"). `ext/vst3sdk` is [GNUbase/vst3sdk](https://github.com/GNUbase/vst3sdk), pinned at `v3.8.1_build_84`. The SDK is under the MIT license since `v3.8.0_build_66`. Its own submodules have relative URLs, so they resolve to the GNUbase mirrors too (`vst3_base`, `vst3_cmake`, `vst3_pluginterfaces`, `vst3_public_sdk`, ...).
+
+GNUbase needs only `base`, `cmake`, `pluginterfaces` and `public.sdk`, not the SDK's documentation, tutorials or GUI library. So `.gitmodules` sets `update = none` for `ext/vst3sdk`, which a recursive update skips, and the SDK is fetched with two extra commands (see [Cloning](#cloning)). CMake stops with these commands if the SDK is missing, unless `GNUBASE_TEST_PLUGINS` is off: only the test plugins use it so far.
+
+GNUbase uses only the interface headers in `pluginterfaces`, header-only, and implements the interfaces itself. The SDK's C++ namespace also names the vendor, so GNUbase code never writes it either: CMake reads it from `pluginterfaces/base/funknown.h` and passes it as the compile definition `GNUBASE_VST3_NS` (the `vst3-sdk` target), and `src/pluginhost/vst3/vst3ns.h` makes it available as `namespace vst`. Code includes that header and writes `vst::FUnknown`, `vst::Vst::IComponent` and so on.
+
+To update the SDK, the maintainers update the mirrors first; then check out the new tag in `ext/vst3sdk`, update its four submodules and commit `ext/vst3sdk`.
+
 ## Other dependencies
 
 Used unchanged, pinned to an upstream release tag.
@@ -71,13 +81,20 @@ What installers and packages have to ship or depend on, beyond the C++ runtime:
 
 ```bash
 git clone --recursive https://github.com/GNUbase/GNUbase.git
+cd GNUbase
+git submodule update --init --checkout ext/vst3sdk
+git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
 ```
 
 In an existing clone:
 
 ```bash
 git submodule update --init --recursive
+git submodule update --init --checkout ext/vst3sdk
+git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
 ```
+
+The recursive update skips the VST3 SDK, so the last two commands fetch only the parts of it GNUbase needs (see [VST3 SDK](#vst3-sdk)).
 
 ## Changing a fork
 
