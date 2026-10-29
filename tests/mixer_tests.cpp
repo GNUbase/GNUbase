@@ -126,16 +126,17 @@ TEST_CASE("pan laws attenuate the center and keep the sides at 0 dB", "[unit]")
 		CHECK(panGains(law, -1.0) == std::pair<double, double>{1.0, 0.0});
 		CHECK(panGains(law, 1.0).first == Approx(0.0).margin(1e-12));
 		CHECK(panGains(law, 1.0).second == 1.0);
-		// The side panned toward never gets louder, the other one only quieter.
-		for (double pan = -1.0; pan < 1.0; pan += 0.125)
+		// Panning to the right, the left side only gets quieter and the right side only louder.
+		for (int step = 0; step < 16; ++step)
 		{
+			const double pan = -1.0 + (step / 8.0);
 			CHECK(panGains(law, pan + 0.125).first <= panGains(law, pan).first);
 			CHECK(panGains(law, pan + 0.125).second >= panGains(law, pan).second);
 		}
 	}
-	for (double pan = -1.0; pan <= 1.0; pan += 0.25)
+	for (int step = 0; step <= 8; ++step)
 	{
-		const auto [left, right] = panGains(PanLaw::EqualPower, pan);
+		const auto [left, right] = panGains(PanLaw::EqualPower, -1.0 + (step / 4.0));
 		CHECK((left * left) + (right * right) == Approx(1.0));
 	}
 	CHECK(panLawFromName("-2dB") == std::nullopt);
