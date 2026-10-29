@@ -138,10 +138,15 @@ namespace gnubase::engine::processors
 		if (index >= paramCount())
 			return false;
 		const ParameterInfo& parameter = m_info.parameters[index];
+		info = {}; // the host may pass one it used before
 		info.id = parameter.id;
 		info.flags = plugin::ParamInfo::Automatable;
 		if (parameter.stepped)
+		{
+			// One step for each whole number from the minimum to the maximum.
 			info.flags |= plugin::ParamInfo::Stepped;
+			info.stepCount = static_cast<uint32_t>(std::lround(parameter.maximum - parameter.minimum));
+		}
 		if (!parameter.options.empty())
 			info.flags |= plugin::ParamInfo::Enum;
 		info.name = parameter.name;

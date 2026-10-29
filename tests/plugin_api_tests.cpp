@@ -572,6 +572,7 @@ TEST_CASE("the mixing effects are built-in plugins with their latency, tail and 
 		CHECK((info.flags & ParamInfo::Stepped) != 0);
 		CHECK((info.flags & ParamInfo::Enum) != 0);
 		CHECK(info.maximum == 4.0);
+		CHECK(info.stepCount == 4); // the values 0 to 4
 		std::string text;
 		REQUIRE(params->paramValueToText(info.id, 3.0, text));
 		CHECK(text == "Low cut");
@@ -580,6 +581,9 @@ TEST_CASE("the mixing effects are built-in plugins with their latency, tail and 
 		CHECK(value == 4.0);
 		REQUIRE(params->paramValueToText(Equalizer::parameter(0, Equalizer::Frequency), 1000.0, text));
 		CHECK(text == "1000.00 Hz");
+		REQUIRE(params->paramInfo(Equalizer::parameter(0, Equalizer::Frequency), info));
+		CHECK((info.flags & ParamInfo::Stepped) == 0);
+		CHECK(info.stepCount == 0);
 
 		const std::unique_ptr<Plugin> dither = factory.create("builtin:dither", host);
 		REQUIRE(dither->init());
@@ -587,6 +591,7 @@ TEST_CASE("the mixing effects are built-in plugins with their latency, tail and 
 		CHECK(info.id == engine::dsp::Dither::Bits);
 		CHECK((info.flags & ParamInfo::Stepped) != 0);
 		CHECK((info.flags & ParamInfo::Enum) == 0);
+		CHECK(info.stepCount == 16); // 8 to 24 bits
 		REQUIRE(extension<Params>(*dither)->paramValueToText(info.id, 16.0, text));
 		CHECK(text == "16");
 	}
@@ -637,5 +642,33 @@ TEST_CASE("the mixing effects are built-in plugins with their latency, tail and 
 		(*plugin).reset();
 		runner.fill(0.0f);
 		CHECK(runner.process() == silence);
+	}
+}
+
+TEST_CASE("every built-in plugin's stepped parameters have a step for each whole number, and only they", "[unit]")
+{
+	BuiltinFactory factory;
+	TestHost host;
+	for (size_t i = 0; i < factory.count(); ++i)
+	{
+		const std::string& id = factory.descriptor(i).id;
+		const std::unique_ptr<Plugin> plugin = factory.create(id, host);
+		REQUIRE(plugin);
+		REQUIRE(plugin->init());
+		const Params* params = extension<Params>(*plugin);
+		REQUIRE(params != nullptr);
+		for (uint32_t index = 0; index < params->paramCount(); ++index)
+		{
+			ParamInfo info;
+			REQUIRE(params->paramInfo(index, info));
+			INFO(id << ", " << info.name);
+			const bool stepped = (info.flags & ParamInfo::Stepped) != 0;
+			// The host computes a stepped parameter's values as minimum + k * (maximum - minimum) / stepCount.
+			CHECK(stepped == (info.stepCount > 0));
+			if ((info.flags & ParamInfo::Enum) != 0)
+				CHECK(stepped);
+			if (stepped)
+				CHECK(info.minimum + info.stepCount == info.maximum);
+		}
 	}
 }
