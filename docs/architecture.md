@@ -58,9 +58,9 @@ flowchart TD
 
 | Module | Folder | Contents | May depend on |
 |---|---|---|---|
-| platform | `src/platform` | OS abstractions: audio and MIDI backends, threads and priorities, shared memory, clocks. Real-time primitives (lock-free queues, RT checker), logging, assertions, crash reports | OS libraries |
+| platform | `src/platform` | OS abstractions: audio and MIDI backends, threads and priorities, shared memory, clocks. Real-time primitives (lock-free queues, RT checker), logging, assertions, crash reports, per-user folders and atomic file writes | OS libraries |
 | ipc | `src/ipc` | Shared-memory buffers and rings, wake-up primitives, message protocol | platform |
-| engine | `src/engine` | Command registry, document model, undo, time, audio graph, transport, file I/O, plugin slots | ipc, platform |
+| engine | `src/engine` | Command registry, document model, undo, time, audio graph, transport, file I/O, plugin slots, user settings | ipc, platform |
 | scripting | `src/scripting` | Lua runtime and the bindings generated from the command registry | engine API |
 | mcp | `src/mcp` | MCP protocol and transports, tools generated from the command registry | engine API, UI automation interface |
 | ui | `src/ui` | SDL3 windows, RmlUi documents, docking, widgets, UI automation | engine API, scripting, SDL3, RmlUi |
@@ -77,12 +77,13 @@ flowchart TD
 | Thread | Runs | Rules |
 |---|---|---|
 | UI (main thread) | SDL event loop, RmlUi layout and rendering, Lua UI scripts | Sends commands, renders from events, never blocks on the engine |
-| Engine command thread | Every command: document changes, undo, building render snapshots | The only thread that writes the document |
+| Engine command thread | Every command: document changes, undo, building render snapshots, user settings | The only thread that writes the document and the user settings |
 | Audio thread | The device callback, one processing cycle at a time | Real-time rules |
 | Audio workers | Track chains in parallel (#212) | Real-time rules, real-time priority |
 | Prefetch threads | Nodes without live input, ahead of the device in larger blocks (#23) | Real-time rules, real-time priority below the audio workers |
 | Disk threads | Streaming audio files in and recordings out (#17) | Work ahead of the audio thread |
-| Background threads | Peak files, analysis, saving projects, plugin scan coordination | Low priority |
+| Background threads | Peak files (the peak cache's worker), analysis, saving projects, plugin scan coordination | Low priority |
+| Job threads | Background jobs such as backups, one thread each (`src/engine/jobs`) | Normal priority, never wait for the command thread |
 | Log writer | Writes what audio threads logged, every 10 ms (#8) | Low priority |
 | MCP I/O thread | The MCP server's HTTP or stdio transport | Only forwards to the command thread |
 | Script thread | Lua in headless mode; with a UI, Lua runs on the UI thread | Never an audio thread |
@@ -122,6 +123,9 @@ sequenceDiagram
 - **Events** name what changed (object ids and properties), so a client updates only what it shows.
 - **Meters and the playback position** are not events and never JSON. The audio thread writes them into lock-free buffers, holding each meter's peak until it is read so none is lost between frames, and the UI reads all of them at once per frame (#111). MCP and Lua get them through a query when they need them.
 - **Queries** are read-only commands. They also run on the command thread, so they always see a consistent document.
+- **Jobs** are long work that would hold up the command thread, such as `project.backup` and copying media (`Jobs` in `src/engine/jobs/jobs.h`). The command checks its parameters, copies what the job needs (the project as it is then) and starts the job on a thread of its own; it returns the job at once. `job.started` is announced before the thread starts, so it always comes first. The job announces `job.progress` (0 to 1, at most once per percent, and what it is working on) and ends with `job.finished`: done with a result, failed with an error, or cancelled. These events go out through `Engine::broadcast`, so they have no request id. `job.get` and `job.list` report jobs, for MCP clients that poll; `job.cancel` asks one to stop, and the job checks between chunks of work and cleans up what it made.
+- Jobs never touch the document. One that changes it runs a command on the command thread and waits for its result (`JobContext::command`, through `Engine::post` with a callback): copies of media are put in place with one `media.relink` in a transaction, a single undo step that skips media changed meanwhile, and a backup is opened with `project.load` only if the project is still at the revision it was backed up from (`project.revision`), so no edit made meanwhile is lost. Their events reach clients before `job.finished`. The engine cancels and waits for running jobs when it shuts down; commands they posted that didn't run fail.
+- Jobs that write files create each one exclusively, taking the next free name if one is there, so two jobs never write the same file and a cancelled job only removes its own. A backup claims its folder: another backup into it, or into a folder inside or around it, is refused while the job runs.
 - Because commands, results and events are serializable, the same API works in-process (UI, tests), over MCP and from Lua, and could later run across processes.
 
 ## Document model and undo
@@ -181,6 +185,19 @@ Audio devices are OS abstractions in `src/platform/audio` (`device.h`); the engi
 - The audio thread never touches files. A `DiskStream` holds blocks of frames, allocated once, that pass between the disk thread (`DiskStreamer`) and the audio thread through lock-free queues; the disk thread keeps them filled ahead of playback. `read()` never waits: missing frames are silence and count as dropouts, and later frames stay at their time.
 - A seek starts a new generation of blocks: the disk thread takes back the older ones and reads from the new position, and the audio thread ignores blocks of older generations. `ready()` says when the buffer is full again, and `full()` when it also holds again every block the audio thread gave back since; offline rendering waits for `full()` before every block.
 - Files at another sample rate are converted by the disk thread with r8brain-free-src (`Resampler`). After a seek, reading starts early enough for the filters and on the same frame grid as from the start, so the output is the same as when playing through. `media.convert` writes a converted copy, for importing at the project's sample rate.
+- Time-stretching and pitch-shifting use Rubber Band Library behind a thin wrapper (`dsp::TimeStretcher` in `src/engine/dsp/timestretch.h`): offline mode for the best quality, real-time mode with a real-time safe process path and latency reporting, and algorithm presets. `media.stretch` writes a stretched and shifted copy. [time-stretch.md](time-stretch.md) has the evaluation and how audio tracks will warp events (#142).
+
+## Waveform overviews
+
+Waveforms draw from **peaks**, not from the audio file (#83). The code is in `src/engine/peaks`.
+
+- A file's peaks are the smallest and largest sample per channel over blocks of 256, 4096 and 65536 frames: three levels, each built from the one before (`PeakBuilder`). They are 16-bit, with full scale at 32767; minimums round down and maximums up, so a peak always contains its samples. A one-hour stereo file at 48 kHz has about 5.7 MB of peaks.
+- **Peak files** (`<audio file name>.gbpeaks`) are stored **next to their audio file**, so they move with the project folder and need no clean-up. Where that folder can't be written (a read-only sample library), they go to the per-user cache folder (`%LOCALAPPDATA%\GNUbase\peaks`, `~/Library/Caches/GNUbase/peaks` or `~/.cache/gnubase/peaks`), named after the file plus a hash of its path. Peak files are never committed (`.gitignore`).
+- The binary format is versioned and little-endian: a header (magic, version, channels, sample rate, frames, the audio file's stamp and path), a level table and the levels' values. It is written to a temporary file and renamed, so no reader sees half a file; temporary files a crash left behind (older than ten minutes) are removed by the cache's worker, in the cache folder and in each audio file's folder. The reader checks the file's size against the header before it reads the values, so a file of another version or with a wrong size, however large, is ignored and generated again.
+- A peak file is valid only for the audio file it was made from: its **stamp** is the file's size, its modification time (nanoseconds since 1970 on every system, so a folder shared between systems keeps its peak files) and an FNV-1a hash of its first 64 KiB. Loading compares all three. Every `media.peaks` query compares the size and time (one `stat`), so a file changed while the project is open gets new peaks.
+- The **peak cache** (`PeakCache`) belongs to the engine. After every command, once the command's own events are sent (so `media.added` comes before `media.peaksReady`), it compares the render snapshot's media files with its own: for a new file, its background worker loads the peak file, or generates the peaks from the audio file in chunks and writes the peak file. A removed file's generation stops at the next chunk. It reports `media.peaksProgress` (at most every 5 %), `media.peaksReady` and `media.peaksFailed` to every client (`Engine::broadcast`). A file that failed is tried again once it changes or appears: one that exists but can't be read keeps its size and time, so it isn't tried on every query.
+- `media.peaks {media, start, frames, pixels, channels}` returns min and max columns from the coarsest level that still has a peak per column, so a view costs a few peaks per column at any zoom and any length: a few milliseconds for a one-hour file (`[slow]` test in `tests/peaks_tests.cpp`). Positions are in the file's sample frames, like audio event offsets. `frames` defaults to the rest of the file from `start`, `channels` to all of them; pixels times channels is at most 262144, so a file with many channels can't make a huge result. The query copies only the peaks its columns read while it holds the peaks' lock, and computes the columns after, so a recorder's `append` never waits for it. While peaks are generated, the frames done so far have columns. `media.peakStatus` reports each file's state.
+- **Recording** appends to peaks as the file grows: `PeakCache::record` returns a `PeakRecorder`, whose `append` the disk thread calls with each block it writes, and whose `finish`, once the file is closed, makes the peaks ready and leaves hashing the file and writing its peak file to the cache's worker. Queries read the growing peaks meanwhile. Peaks never touch audio threads.
 
 ## Plugin hosting and IPC
 
@@ -209,7 +226,7 @@ flowchart LR
 - A watchdog gives every host process a deadline per cycle (#65).
 - Plugin editors are windows of the host process, kept in front of and positioned relative to GNUbase's windows (#69).
 - Inside the host, every format is adapted to the **GNUbase plugin API** (#61), modeled on CLAP's extension mechanism. GNUbase's own built-in processors implement the same API but run inside the engine (#114).
-- **Test plugins** (`tests/plugins`, #63) are GNUbase's own minimal plugins for hosting tests: gain, a synth, a latency reporter, a parameter stress plugin, crash and hang on demand, and a state blob round trip. They are built as CLAP plugins with each platform's file layout (CMake option `GNUBASE_TEST_PLUGINS`, on by default), and loader smoke tests load them through the format's own entry points. Crash and hang are only ever triggered in a plugin host process. [tests/plugins/README.md](../tests/plugins/README.md) describes each plugin and how tests use them.
+- **Test plugins** (`tests/plugins`, #63) are GNUbase's own minimal plugins for hosting tests: gain, a synth, a latency reporter, a parameter stress plugin, crash and hang on demand, and a state blob round trip. They are built as CLAP and VST3 plugins with each platform's file layout (CMake option `GNUBASE_TEST_PLUGINS`, on by default), and loader smoke tests load them through the format's own entry points. Crash and hang are only ever triggered in a plugin host process. [tests/plugins/README.md](../tests/plugins/README.md) describes each plugin and how tests use them.
 
 ## Scripting, MCP and tests
 
@@ -232,9 +249,25 @@ flowchart LR
 ## Project format
 
 - Projects are `.dawproject` files: a zip container with XML and media (#22). `project.save` and `project.load` write and read them (`src/engine/dawproject`), with miniz for the container and pugixml for the XML.
-- `project.xml` gets everything DAWproject can describe: tracks with their folders, channels with their routing (groups as `submix`, output busses as `master` channels), audio events and MIDI parts as clips, notes, MIDI controllers as `Points`, markers, and tempo and time signature with their changes. Media files are embedded under `audio/` or referenced where they are. GNUbase's output validates against the format's `Project.xsd`.
+- `project.xml` gets everything DAWproject can describe: tracks with their folders, channels with their routing (groups as `submix`, output busses as `master` channels), audio events and MIDI parts as clips, notes, MIDI controllers as `Points`, markers, and tempo and time signature with their changes. Media files are embedded under `audio/` or referenced: relative to the project file if they are in its folder, so the folder can move, otherwise by their absolute path. GNUbase's output validates against the format's `Project.xsd`.
 - GNUbase data that DAWproject cannot express goes into an extra entry in the same container, so other applications can still open the file. The entry is **`gnubase.json`**: the whole document as `project.get` returns it, the id counter, the media paths, and a checksum of `project.xml`. If the checksum matches, loading restores the project exactly (ids, input busses, time bases, MIDI tracks, exact sample positions); if another application changed `project.xml`, the entry is ignored and the project is built from `project.xml`, so stale GNUbase data never overrides someone else's edits.
 - Plugin states are stored as DAWproject specifies (#72).
+
+### Self-contained projects and backups
+
+A project that is moved or archived needs its media with it (#170). `src/engine/media/backup.h` has the file work; the commands are in the project model.
+
+- The **project folder** is the folder of the file the project was last saved as or loaded from (`project.location`; `project.save` announces it with `project.saved`); its **media folder** is `Audio` in it. A project without a file has neither. Project folder layout beyond that comes with project handling (#77).
+- `media.add` with `copy` adds a file from outside the project folder where it is and copies it into the media folder as a job, which then points the media file at the copy (the engine part of the import option, #92). Names stay unique: `take.wav`, `take-2.wav`.
+- `media.prepareArchive` copies every media file from outside the project folder into the media folder as a job, then points the media at the copies as one undo step; missing files are listed and left alone. Saved without embedding, the project then refers to its media relative to itself, and the folder can move.
+- `media.relink` points media files at other files with the same sample rate and channel count, as one undo step.
+- `project.backup` writes a copy of the project as it is into an empty or new folder: `<name>.dawproject` and its media in `Audio`, referred to relatively, so the backup opens on another machine. The open project and its files stay as they are. It runs as a job (see "Engine API"): it copies in 1 MB chunks, reports progress, and if it is cancelled or fails it removes what it wrote. Options:
+  - `minimize` writes only the ranges of each audio file that its audio events play, plus `handles` seconds on each side, merged where they overlap and joined one after the other; the events' offsets move with them. Ranges of a file at another sample rate than the project's start on the resampling grid, which counts from the file's first frame (a multiple of 147 frames for 44.1 kHz in a 48 kHz project), so every file plays sample for sample the same. A minimized file keeps its format where GNUbase writes it without changing a sample (16- and 24-bit WAV, AIFF and FLAC, float WAV) and is a 32-bit float WAV otherwise, which holds every sample as it is read. 32-bit integer files, whose samples don't fit into a float, and Broadcast Wave files, whose time reference counts from the first frame, are copied whole, as is a file that no range leaves out. Other metadata, such as tags or cue points, isn't kept in minimized files.
+  - `removeUnused` leaves out clips that no audio event uses and media that no clip uses.
+  - `name` names the file and the backed-up project.
+  - `activate` opens the backup once it's done, unless the project changed meanwhile; the result says whether it was opened, and why not.
+  - `currentVersionsOnly` (offline processing #141, track versions #165) and `skipVideo` (#198) are accepted and do nothing until those exist.
+  - A media file that can't be read doesn't stop the backup: the result lists it under `missing`, and the backup keeps its old path.
 
 ## MIDI files
 
@@ -244,6 +277,52 @@ Standard MIDI files (SMF) are exported and imported in `src/engine/midifile` (#1
 - `midiconvert.h` converts between the file and the project. **Export** (`midiFile.export`): type 0 puts everything in one track, type 1 a tempo track (the project's name, tempo, time signatures and markers) and then a track per MIDI or instrument track, named after it. Notes and controllers are written as they play, cut at the end of their parts, at a chosen resolution (24-960 ticks per quarter note). Values go from MIDI 2.0 resolution to MIDI 1.0 by the MIDI 2.0 rules (`midivalues.h`); a note-on's velocity is at least 1, the note-off carries the release velocity, and a program change with a bank is preceded by bank select (controllers 0 and 32). Tempo ramps become a jump per sixteenth note, each taking as long as the ramp does there. At one tick, meta events come first, then note-offs, controllers and note-ons, as the sequencer plays them. A note ends where the next note of its pitch and channel starts: a note-off ends the oldest sounding note of its key, so overlapping notes of one key would otherwise be read back paired differently. A range exports what starts in it, moved to the file's start, with the tempo and signature in effect at its start.
 - **Import** (`midiFile.import`) gives a MIDI or instrument track per file track with events, or per MIDI channel for type 0, with one part from the bar of its first event to the end of the bar of its last. The first note-on of a pitch and channel is the first one a note-off ends; notes without one end with their track. Bank select at the tick of a program change becomes its bank. The file's tempo and time signatures replace the project's unless `tempo` is false: tempo is kept to 1-999 BPM, signatures move to the next bar start and those with a beat the project can't hold are left out. Markers are added unless `markers` is false. The tracks of a type 2 file are independent sequences: they are laid out one after another, each from the first bar start after the previous one's end and at 120 BPM in 4/4 unless it sets its own. Track and marker names stay as they are if they are valid UTF-8 and are otherwise read as Windows-1252, the superset of Latin-1 most such files use. The import is one undo step, made of the same `track.add`, `midiPart.add`, `note.add` and `controller.add` a client would send, so it emits their events.
 - MIDI 1.0 data survives a round trip unchanged: export and import give back the notes, controllers, tempo, time signatures and markers, and importing a file GNUbase wrote and exporting it again gives the same bytes.
+
+## Settings
+
+GNUbase keeps two kinds of settings apart (#51):
+
+- **User settings** belong to the user and apply to every project: the UI scale and theme, the audio device, and later key commands, workspaces, profiles and the preferences (#162, #163). They are files in the user's settings folder, changed with `settings.*` commands, and not part of undo.
+- **Project settings** belong to one project: sample rate, tempo, tracks, channels and everything else `project.*` and the other document commands change. They live in the document, so they are saved in the `.dawproject` file and undone like any other change.
+
+A setting is one or the other, never both: no user setting is saved in a project, and no project setting in the settings folder. Where a feature needs a user's preference as a project's starting point (say, the sample rate of new projects), the user setting is copied into the project when the project is made, and from then on the project's own value counts.
+
+**Where.** The settings folder is per user (`files::settingsDirectory()` in `src/platform/files.h`):
+
+| OS | Folder |
+|---|---|
+| Windows | `%APPDATA%\GNUbase`, the roaming application data, so settings follow the user in a domain |
+| macOS | `~/Library/Application Support/GNUbase` |
+| Linux | `$XDG_CONFIG_HOME/gnubase` if that is an absolute path, otherwise `~/.config/gnubase` |
+
+- On macOS, `~/Library/Preferences` belongs to the system's preferences service: it holds the property lists that `cfprefsd` reads and caches for an application's user defaults, and Apple's guidelines put files that an application writes itself into Application Support. GNUbase writes its own JSON files, so they go there.
+- Without `APPDATA`, `HOME` and the like, GNUbase asks the OS for the folder: `SHGetKnownFolderPath` on Windows, the user database (`getpwuid_r`) elsewhere. If the user has none, the settings are kept in memory only, never in a folder that other users share, such as the temporary one.
+- `GNUBASE_SETTINGS_DIR` overrides the folder on every OS, and `gnubase --settings DIR` overrides both, for portable installs and tests. On Windows the app reads its command line as UTF-16, so `--settings`, `--script` and `--project` take paths with any characters. ctest sets the variable to the build's test output folder, so tests never touch the user's settings. An `Engine` constructed without a folder, as in tests, keeps its settings in memory only.
+- Copying the folder to another computer takes every user setting along.
+
+**Files.** A `settings::Store` (`src/engine/settings/store.h`) holds the settings of one file, `<name>.json`, described by a `settings::Format`: a version, and for each setting a key (`area.name`), a description, a JSON schema and a default. `settings.json` holds the user settings (`settings::userFormat()`); later kinds of settings, such as key commands or workspaces, get formats and files of their own.
+
+- The file is `{"version": N, "values": {...}}` with only the values that differ from their defaults, so a default that changes in a later version reaches every user who didn't change the setting.
+- Values are checked against the setting's schema when they are set and when they are read. C++ code reads them typed: `store.get(settings::g_uiScale)` is a `double`.
+- Every change writes the file at once and atomically (`files::writeAtomically`): a temporary file next to it, flushed to the disk, then renamed over it. A crash or a full disk leaves the old file or the new one, never half of one; a temporary file that a crash left behind is removed the next time the file is locked. If `settings.json` is a symbolic link, as dotfile managers make them, the file it points to is replaced and the link stays. If writing fails, the setting keeps its old value and the command fails.
+- Several GNUbase processes can run at once. A change takes the lock file `<name>.lock` (`files::FileLock`), reads the file again, changes only its own setting in it and writes it, so that no process loses another one's changes. Each process keeps using the values it read until it starts again.
+- Values the file has that this GNUbase doesn't know, or doesn't accept, stay in the file: a newer release may have added the setting or a value (a new theme, say), and the setting doesn't change the file's version. This GNUbase uses the default instead, and only a change of that very setting replaces the value.
+
+**Loading.** The store reads its file when it is created and never discards anything without keeping it:
+
+- A file that can't be read, isn't JSON or isn't a settings file is moved to `<name>.corrupt.json`, and the settings start from their defaults.
+- A file of an older version runs through the format's **migrations**, one per version step: each one turns the values of version n into those of version n + 1 (renaming keys, converting values). The original is copied to `<name>.v<n>.json`, so an older GNUbase can still be used, and the migrated file is saved at the current version.
+- A file older than the oldest migration, or a migration that fails, is moved to `<name>.v<n>.json`, and the settings start from their defaults.
+- A file of a newer GNUbase stays where it is, untouched, so the newer GNUbase finds it again; this one starts from the defaults and saves nothing.
+- A single value that is unknown or doesn't fit its schema falls back to its default and stays in the file (see above).
+- **Read-only.** If the file belongs to a newer GNUbase, or a backup can't be made before the file is moved or rewritten, or the file can't be locked, the store is read-only until GNUbase quits: changes apply, but nothing is written, so nothing is lost.
+- `settings.list` reports what happened (`missing`, `loaded`, `migrated`, `reset`, `newer`), the problems found, where the backup is and whether the store is read-only; the log has the same.
+
+Adding a setting only needs a definition. Renaming one, or changing what its values mean, raises the format's version and adds a migration; `tests/data/settings` gets an example file of every version, and a test checks that all of them still load.
+
+**Commands.** `settings.get` reads one setting, `settings.set` changes one, `settings.reset` puts one or all back to their defaults, and `settings.list` describes every setting with its schema, default and value, the file and how it was loaded. Changes emit `settings.changed` with the changed values. The keys are an enum in the parameter schemas, and the description of `settings.set` lists every setting, so MCP clients and [lua.md](lua.md) show them all.
+
+**Threads.** The engine loads the settings in its constructor; after that only the command thread reads and writes them. Audio threads never do: the store's functions assert it (`rt::assertNotRealtime`), and a feature that needs a setting on an audio thread gets it like everything else there, copied by the command thread into a render snapshot or a lock-free message.
 
 ## Open decisions
 

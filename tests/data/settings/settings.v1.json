@@ -1,0 +1,9 @@
+{
+	"version": 1,
+	"values": {
+		"audio.backend": "dummy",
+		"audio.blockSize": 512,
+		"ui.scale": 1.25,
+		"ui.theme": "dark"
+	}
+}

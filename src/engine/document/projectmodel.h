@@ -22,12 +22,15 @@ namespace gnubase::engine
 	// The project document, its commands, its undo history and its render snapshots. The commands run on the engine's
 	// command thread, the only thread that touches the document; every command that changes it records an undo step
 	// and publishes a new render snapshot for the audio thread.
+	class Jobs;
+
 	class ProjectModel
 	{
 	public:
 		ProjectModel();
 
-		void registerCommands(Engine& engine);
+		// Backups run as jobs.
+		void registerCommands(Engine& engine, Jobs& jobs);
 
 		rt::SnapshotPublisher<RenderSnapshot>& snapshots() { return m_snapshots; }
 
@@ -44,7 +47,8 @@ namespace gnubase::engine
 		static void addControl(Engine& engine, CommandInfo info, std::function<Json(CommandContext& context)> handler);
 
 		void registerHistoryCommands(Engine& engine);
-		void registerMidiEditCommands(Engine& engine); // midiedits.cpp: note.set and controller.set
+		void registerMediaFolderCommands(Engine& engine, Jobs& jobs); // project.backup, media.prepareArchive and more
+		void registerMidiEditCommands(Engine& engine);                // midiedits.cpp: note.set and controller.set
 		void registerMidiFileCommands(Engine& engine); // midifilecommands.cpp: midiFile.export and midiFile.import
 		Json importMidiFile(Project& project, CommandContext& context);
 		void record(std::string action, const Project& before, CommandContext& context);
@@ -60,6 +64,7 @@ namespace gnubase::engine
 		};
 
 		Project m_project;
+		std::string m_file; // the project file it was last saved as or loaded from, absolute; empty for none
 		History m_history;
 		std::map<std::string, Edit> m_edits; // the commands a transaction can run
 		uint64_t m_revision = 0;
