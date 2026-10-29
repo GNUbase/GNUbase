@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "engine/audio/playback.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "engine/graph/events.h"
+#include "engine/graph/processor.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -8,12 +11,16 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace gnubase::engine;
@@ -389,4 +396,120 @@ TEST_CASE("real-time playback renders the same as offline", "[integration]")
 		INFO("channel " << channel << ", first difference at frame " << (difference.first - actual.begin()));
 		CHECK(difference.first == actual.end());
 	}
+}
+
+namespace
+{
+	// Playback that runs audio blocks while a cue is under way: after the cue has read where the voices are and
+	// before it acts on that, as when the audio thread runs on while the cue thread is between the two.
+	class RacingPlayback : public Playback
+	{
+	public:
+		using Playback::Playback;
+
+		std::function<void()> whileCueing; // runs once, in the next cue
+
+	protected:
+		void voicesRead() override
+		{
+			if (whileCueing)
+				std::exchange(whileCueing, nullptr)();
+		}
+	};
+
+	// Plays a playlist block by block through a TrackPlayer, as the audio thread does, and counts the frames that
+	// differ from the ramp it plays.
+	class Blocks
+	{
+	public:
+		Blocks(std::shared_ptr<const Playlist> playlist, ObjectId channel, Playback& playback, uint32_t size)
+			: m_player(std::move(playlist), channel, playback), m_playback(playback), m_output(size)
+		{
+			m_player.prepareFor(48000.0, size);
+		}
+
+		void play()
+		{
+			std::fill(m_output.begin(), m_output.end(), 0.0f);
+			const std::array<float*, 1> channels{m_output.data()};
+			const auto size = static_cast<uint32_t>(m_output.size());
+			const graph::TransportSegment segment{0, size, position};
+			const graph::TransportBlock transport{true, position, &segment, 1};
+			const graph::ProcessContext context{channels.data(), 1, size, m_in, m_out, transport};
+			m_playback.beginBlock();
+			m_player.process(context);
+			m_playback.endBlock();
+			for (size_t i = 0; i < m_output.size(); ++i)
+				if (m_output[i] != ramp(position + static_cast<int64_t>(i), 0))
+					++wrong;
+			position += size;
+		}
+
+		int64_t position = 0;
+		size_t wrong = 0;
+
+	private:
+		TrackPlayer m_player;
+		Playback& m_playback;
+		std::vector<float> m_output;
+		graph::EventBuffer m_in;
+		graph::EventBuffer m_out;
+	};
+}
+
+TEST_CASE("a cue leaves a voice alone that the audio thread starts reading meanwhile", "[integration]")
+{
+	// Playback stops in a long event and starts again where it stopped, from the voice that stopped there. The cue
+	// thread reads where the voices are before the first block, sees that voice idle for a while, and would cue it
+	// ahead; meanwhile the audio thread reads on from it. The cue must not pull the stream away from under it.
+	const gnubase::test::TempDir dir;
+	const std::string path = writeRamp(dir, "mono", 1, 48000);
+	constexpr ObjectId channel = 1;
+	constexpr ObjectId media = 2;
+	const auto section = [](gnubase::time::Samples start, gnubase::time::Samples end, gnubase::time::Samples frame)
+	{
+		PlaylistEntry entry;
+		entry.start = start;
+		entry.end = end;
+		entry.media = media;
+		entry.frame = frame;
+		return entry;
+	};
+	Playlist sections;
+	sections.layers.push_back({section(0, 30000, 0), section(30000, 31000, 40000)});
+	const auto playlist = std::make_shared<const Playlist>(std::move(sections));
+	RacingPlayback playback(1);
+	playback.setTracks({{channel, playlist}}, {{media, path}}, 48000.0);
+	constexpr uint32_t blockSize = 4000;
+	Blocks blocks(playlist, channel, playback, blockSize);
+	constexpr auto timeout = std::chrono::seconds(5);
+
+	Playback::Cue cue;
+	cue.window = blockSize;
+	playback.cue(cue);
+	for (int i = 0; i < 5; ++i)
+	{
+		REQUIRE(playback.waitUntilBuffered(timeout));
+		blocks.play();
+	}
+	for (int i = 0; i < 3; ++i) // stopped
+	{
+		playback.beginBlock();
+		playback.endBlock();
+	}
+
+	// Starting again: cued at the cursor first, then by the cue thread while the audio thread plays.
+	cue.position = blocks.position;
+	playback.cue(cue);
+	REQUIRE(playback.waitUntilBuffered(timeout));
+	cue.playing = true;
+	cue.window = 48000;
+	playback.whileCueing = [&blocks] { blocks.play(); };
+	playback.cue(cue);
+	REQUIRE(playback.waitUntilBuffered(timeout));
+	blocks.play();
+
+	CHECK(blocks.position == 28000);
+	CHECK(blocks.wrong == 0);
+	CHECK(playback.dropouts() == 0);
 }

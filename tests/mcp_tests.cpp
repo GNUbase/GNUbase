@@ -83,7 +83,7 @@ TEST_CASE("every engine command is a tool with its schemas", "[unit]")
 	registerTestCommands(engine);
 	Server server(engine);
 	const Json tools = respond(server, request(1, "tools/list")).at("result").at("tools");
-	CHECK(tools.size() == engine.commands().size());
+	CHECK(tools.size() == engine.commands().size() + 1); // and events_take
 
 	const Json* echo = findTool(tools, "test_echo"); // MCP clients accept letters, digits, '_' and '-' only
 	REQUIRE(echo != nullptr);

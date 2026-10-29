@@ -100,7 +100,7 @@ namespace gnubase::engine
 
 		// Voices per track, and the disk stream buffer of each. Where events crossfade, two entries play at once.
 		explicit Playback(size_t voicesPerTrack = 16, const DiskStreamSettings& streams = {4096, 8});
-		~Playback();
+		virtual ~Playback();
 		Playback(const Playback&) = delete;
 		Playback& operator=(const Playback&) = delete;
 
@@ -119,19 +119,21 @@ namespace gnubase::engine
 		uint64_t dropouts() const;
 
 		// A voice: one of a track's disk streams, and where it is.
+		//
+		// Its state says who has it. A cue sets it to waiting (with the number of the cue, so no two cues look the
+		// same), the audio thread to the block it last read the voice in, and a cue that repositions or retires the
+		// voice first to cueing, which the audio thread leaves alone. Both change it only by compare-and-swap from
+		// the state they decided on: a cue never pulls a voice away that the audio thread has started reading since,
+		// and the audio thread never reads a voice that a cue has started to reposition.
 		struct Voice
 		{
 			ObjectId channel = 0;
 			ObjectId media = 0;
 			std::shared_ptr<DiskStream> stream;
-			std::atomic<time::Samples> cueFrame{0}; // where the last cue sent it, written before cueGeneration
-			std::atomic<uint64_t> cueGeneration{0};
-
-			// Written by the audio thread.
-			std::atomic<time::Samples> next{-1}; // the frame its next read returns
-			std::atomic<bool> started{false};    // read since its last cue
-			std::atomic<uint64_t> lastBlock{0};  // the block it was last read in
-			uint64_t seenGeneration = 0;
+			std::atomic<uint64_t> state{0};
+			std::atomic<time::Samples> cueFrame{0}; // where the last cue sent it, written before state
+			std::atomic<time::Samples> next{-1};    // written by the audio thread: the frame its next read returns
+			uint64_t cues = 0;                      // command side
 		};
 
 		// Audio thread, around every block.
@@ -144,6 +146,11 @@ namespace gnubase::engine
 			ObjectId channel, ObjectId media, time::Samples frame, time::Samples frames, time::Samples& lead) noexcept;
 		void missed(time::Samples frames) noexcept; // frames played as silence for want of a voice
 		uint64_t block() const noexcept { return m_block.load(std::memory_order_relaxed); }
+
+	protected:
+		// cue() calls this after reading where every voice is and before acting on it. The audio thread goes on
+		// meanwhile; tests override it to play blocks at that moment.
+		virtual void voicesRead() {}
 
 	private:
 		struct VoiceTable
@@ -163,7 +170,12 @@ namespace gnubase::engine
 		static time::Samples ahead(const Cue& cue, time::Samples frames);
 		std::shared_ptr<Voice> open(ObjectId channel, ObjectId media, time::Samples frame);
 		void retire(const std::shared_ptr<Voice>& voice);
-		static void send(Voice& voice, time::Samples frame);
+		// Takes the voice from the audio thread to reposition or retire it, unless its state is no longer seen.
+		static bool claim(Voice& voice, uint64_t seen);
+		// Positions a claimed or new voice at frame, waiting there for the audio thread.
+		static void place(Voice& voice, time::Samples frame);
+		// Audio thread: takes the voice to read from next on, unless its state is no longer seen.
+		bool startReading(Voice& voice, uint64_t seen, time::Samples next) noexcept;
 
 		size_t m_voicesPerTrack;
 		DiskStreamSettings m_streamSettings;
