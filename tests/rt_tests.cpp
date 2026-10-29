@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -430,8 +431,7 @@ namespace
 	}
 
 	// Records, per thread that came, whether the job ran with subnormal numbers kept (-1: didn't come). Thread 0 holds
-	// the job open until every worker came or two seconds passed: a worker may still miss it, for example under a
-	// sanitizer's slowdown.
+	// the job open until every worker came, or for two seconds if one doesn't.
 	class ModeProbe final : public ParallelJob
 	{
 	public:
@@ -439,8 +439,8 @@ namespace
 
 		void work(size_t thread) noexcept override
 		{
-			m_keeps[thread] = keepsSubnormals() ? 1 : 0;
-			++m_came;
+			if (m_keeps[thread].exchange(keepsSubnormals() ? 1 : 0) == -1)
+				++m_came;
 			const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
 			while (thread == 0 && m_came < m_keeps.size() && std::chrono::steady_clock::now() < until)
 				std::this_thread::yield();
@@ -488,23 +488,16 @@ TEST_CASE("WorkerPool runs a job in its caller's floating-point mode on every th
 {
 	WorkerPool pool(3);
 	ModeProbe probe(3);
-	// Every thread that ran the job had the caller's mode; the caller and at least one worker ran it.
+	// Every thread ran the job, in the caller's mode.
 	const auto checkEveryThread = [&](int keeps)
 	{
 		probe.reset();
 		pool.run(probe);
-		CHECK(probe.keeps(0) == keeps);
-		size_t workers = 0;
-		for (size_t thread = 1; thread <= 3; ++thread)
+		for (size_t thread = 0; thread <= 3; ++thread)
 		{
 			CAPTURE(thread);
-			if (probe.keeps(thread) != -1)
-			{
-				CHECK(probe.keeps(thread) == keeps);
-				++workers;
-			}
+			CHECK(probe.keeps(thread) == keeps);
 		}
-		CHECK(workers >= 1);
 	};
 	REQUIRE(keepsSubnormals());
 	checkEveryThread(1);
@@ -513,6 +506,35 @@ TEST_CASE("WorkerPool runs a job in its caller's floating-point mode on every th
 		checkEveryThread(0);
 	}
 	checkEveryThread(1);
+}
+
+TEST_CASE("every worker joins the job it was woken for, many times in a row", "[unit]")
+{
+	// Workers that slept, and workers that came late for the short job before, all join a job that takes them. A
+	// short period makes them spin only briefly after a job and go back to sleep while others are still waking up.
+	WorkerPool pool(4, 0.0001);
+	ModeProbe probe(4);
+	Tasks tasks(50);
+	for (int run = 0; run < 300; ++run)
+	{
+		CAPTURE(run);
+		if (run % 2 == 0)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(1)); // every worker sleeps by now
+		}
+		else
+		{
+			tasks.reset();
+			pool.run(tasks);
+		}
+		probe.reset();
+		pool.run(probe);
+		for (size_t thread = 0; thread <= 4; ++thread)
+		{
+			CAPTURE(thread);
+			REQUIRE(probe.keeps(thread) != -1);
+		}
+	}
 }
 
 TEST_CASE("floatMode reads and sets the thread's floating-point mode", "[unit]")
@@ -544,6 +566,8 @@ TEST_CASE("WorkerPool knows when its constructor returns which workers got real-
 	CHECK(pool.realtimeWorkers() == 0);
 	CHECK(!pool.realtime());
 	CHECK(WorkerPool(0).realtime()); // no workers, none without
+	const Faults pretending({SIZE_MAX, true, true});
+	CHECK(WorkerPool(2).realtime()); // counted as real-time all the same
 }
 
 TEST_CASE("WorkerPool wakes no more workers than a job takes", "[unit]")
@@ -571,6 +595,7 @@ TEST_CASE("WorkerPool ends the threads it started when it can't start them all",
 		const WorkerPool two(2); // within the limit
 		CHECK(two.workers() == 2);
 	}
+	CHECK_THROWS_AS(WorkerPool(WorkerPool::g_maxWorkers + 1), std::invalid_argument);
 	WorkerPool pool(5);
 	Tasks tasks(100);
 	tasks.reset();
