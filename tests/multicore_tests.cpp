@@ -299,7 +299,7 @@ namespace
 				if (item.at("id").get<ObjectId>() == id)
 					channel = item.at("channel").get<ObjectId>();
 			// Mono, stereo and 5.1 instruments, converted where they reach the stereo group.
-			const char* formats[] = {"stereo", "mono", "5.1"};
+			const char* const formats[] = {"stereo", "mono", "5.1"};
 			run(client, "channel.set",
 				{{"channel", channel}, {"instrument", "testSynth"}, {"output", groupChannel},
 					{"format", formats[t % 3]}});
