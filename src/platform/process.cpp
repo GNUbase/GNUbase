@@ -26,6 +26,7 @@
 #include <unistd.h>
 #ifdef __APPLE__
 #include <crt_externs.h>
+#include <mach-o/dyld.h>
 #endif
 #ifdef __linux__
 #include <sys/prctl.h>
@@ -283,6 +284,35 @@ namespace gnubase::platform
 		return running;
 #else
 		return ::kill(static_cast<pid_t>(id), 0) == 0 || errno == EPERM;
+#endif
+	}
+
+	std::filesystem::path currentExecutablePath()
+	{
+#ifdef _WIN32
+		std::wstring path(MAX_PATH, L'\0');
+		for (;;)
+		{
+			const DWORD length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+			if (length == 0)
+				throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "GetModuleFileName");
+			if (length < path.size())
+			{
+				path.resize(length);
+				return path;
+			}
+			path.resize(path.size() * 2);
+		}
+#elif defined(__APPLE__)
+		uint32_t size = 0;
+		_NSGetExecutablePath(nullptr, &size);
+		std::string path(size, '\0');
+		if (_NSGetExecutablePath(path.data(), &size) != 0)
+			throw std::system_error(ENAMETOOLONG, std::generic_category(), "_NSGetExecutablePath");
+		path.resize(std::char_traits<char>::length(path.c_str()));
+		return std::filesystem::canonical(path);
+#else
+		return std::filesystem::read_symlink("/proc/self/exe");
 #endif
 	}
 
