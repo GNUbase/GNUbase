@@ -155,11 +155,12 @@ namespace gnubase::pluginhost::vst3
 			double value = 0.0; // normalized
 		};
 
-		// A value for the controller, from the audio thread.
-		struct Update
+		// The latest value of a parameter for the controller, from the audio thread. Pending while its index waits in
+		// m_toController, so a parameter is queued once however often it changes.
+		struct ControllerValue
 		{
-			vst::Vst::ParamID id = 0;
-			double value = 0.0;
+			std::atomic<double> value{0.0}; // normalized
+			std::atomic<bool> pending{false};
 		};
 
 		// A component handler call from another thread than the main thread, for the main thread.
@@ -231,6 +232,11 @@ namespace gnubase::pluginhost::vst3
 		bool isMainThread() const noexcept { return std::this_thread::get_id() == m_mainThread; }
 		bool defer(const Deferred& call) noexcept;
 		void runDeferred(const Deferred& call);
+		// [main] What the component handler's calls do on the main thread.
+		bool queueEdit(Edit::Kind kind, uint32_t id, double normalized);
+		void restartNow(int32_t flags);
+		void stateDirtyNow();
+		void programListChangedNow();
 		void terminate();
 		// Deactivates the component; what a pending change still had to tell the processor waits for the next start.
 		void stopComponent() noexcept;
@@ -250,6 +256,8 @@ namespace gnubase::pluginhost::vst3
 
 		// [audio] Building a block.
 		void hostParamChange(vst::Vst::ParamID id, double normalized, vst::int32 offset) noexcept;
+		// Gives the controller the value with the next main-thread callback. True if that needs a new callback.
+		bool controllerLearns(vst::Vst::ParamID id, double normalized) noexcept;
 		void inputEvent(const plugin::Event& event, const plugin::EventList& list, vst::int32 offset) noexcept;
 		void midi1(const plugin::Event& event, const uint8_t* bytes, vst::int32 offset) noexcept;
 		void midi2(const plugin::Event& event, vst::int32 offset) noexcept;
@@ -339,10 +347,12 @@ namespace gnubase::pluginhost::vst3
 		bool m_hasPendingEdit = false;
 
 		rt::SpscQueue<Edit> m_edits{4096}; // main -> audio: editor edits
-		// main -> audio: values the processor has to learn; audio -> main: values for the controller. Sized for the
-		// parameter count in init.
+		// main -> audio: values the processor has to learn. Sized for the parameter count in init.
 		std::unique_ptr<rt::SpscQueue<Edit>> m_toProcessor = std::make_unique<rt::SpscQueue<Edit>>(4096);
-		std::unique_ptr<rt::SpscQueue<Update>> m_toController = std::make_unique<rt::SpscQueue<Update>>(4096);
+		// audio -> main: values for the controller, the latest per parameter (by index into m_params), and the
+		// indices of those pending. Sized for the parameter count in init.
+		std::vector<ControllerValue> m_controllerValues;
+		std::unique_ptr<rt::SpscQueue<uint32_t>> m_toController;
 		rt::MpmcQueue<Deferred> m_deferred{4096}; // any thread -> main: component handler calls
 	};
 }

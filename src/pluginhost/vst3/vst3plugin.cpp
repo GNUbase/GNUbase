@@ -395,7 +395,9 @@ namespace gnubase::pluginhost::vst3
 		// Room for a change of every parameter, several times over, between the threads.
 		const size_t queue = std::max(g_minQueue, 4 * m_params.size());
 		m_toProcessor = std::make_unique<rt::SpscQueue<Edit>>(queue);
-		m_toController = std::make_unique<rt::SpscQueue<Update>>(queue);
+		// The controller's values coalesce per parameter, so their queue never holds a parameter twice.
+		m_controllerValues = std::vector<ControllerValue>(m_params.size());
+		m_toController = std::make_unique<rt::SpscQueue<uint32_t>>(std::max<size_t>(m_params.size(), 1));
 		m_initialized = true;
 		return true;
 	}
@@ -693,11 +695,15 @@ namespace gnubase::pluginhost::vst3
 		while (m_deferred.tryPop(call))
 			runDeferred(call);
 		// The controller learns the values the processor got or reported.
-		Update update;
-		while (m_toController->tryPop(update))
+		uint32_t index = 0;
+		while (m_toController != nullptr && m_toController->tryPop(index))
 		{
+			// Taken before the value is read: a newer value queues the parameter again.
+			ControllerValue& pending = m_controllerValues[index];
+			pending.pending.exchange(false, std::memory_order_acq_rel);
+			const double value = pending.value.load(std::memory_order_relaxed);
 			if (m_controller != nullptr)
-				m_controller->setParamNormalized(update.id, update.value);
+				m_controller->setParamNormalized(m_params[index].info.id, value);
 		}
 	}
 
@@ -957,8 +963,24 @@ namespace gnubase::pluginhost::vst3
 	void Vst3Plugin::hostParamChange(vst::Vst::ParamID id, double normalized, vst::int32 offset) noexcept
 	{
 		m_inChanges.add(id, offset, normalized);
-		if (m_toController->tryPush(Update{id, normalized}))
+		if (controllerLearns(id, normalized))
 			m_host.requestCallback();
+	}
+
+	bool Vst3Plugin::controllerLearns(vst::Vst::ParamID id, double normalized) noexcept
+	{
+		const Param* param = findParam(id);
+		if (param == nullptr || m_toController == nullptr)
+			return false; // the controller doesn't know the parameter
+		const auto index = static_cast<size_t>(param - m_params.data());
+		ControllerValue& pending = m_controllerValues[index];
+		pending.value.store(normalized, std::memory_order_relaxed);
+		if (pending.pending.exchange(true, std::memory_order_acq_rel))
+			return false; // already queued: the controller gets this value
+		if (m_toController->tryPush(static_cast<uint32_t>(index)))
+			return true;
+		pending.pending.store(false, std::memory_order_relaxed); // can't happen: the queue holds every parameter
+		return false;
 	}
 
 	void Vst3Plugin::inputEvent(const plugin::Event& event, const plugin::EventList& list, vst::int32 offset) noexcept
@@ -1310,7 +1332,7 @@ namespace gnubase::pluginhost::vst3
 				event.param = id;
 				event.value = param != nullptr ? fromNormalized(*param, value) : value;
 				add(event, -1);
-				changed = m_toController->tryPush(Update{id, value}) || changed;
+				changed = controllerLearns(id, value) || changed;
 			}
 		}
 		if (changed)
@@ -1683,54 +1705,50 @@ namespace gnubase::pluginhost::vst3
 
 	void Vst3Plugin::runDeferred(const Deferred& call)
 	{
+		// The main-thread bodies, not the public calls: the host may call back on another thread than the one that
+		// created the plugin, where the public calls would defer them again.
 		switch (call.kind)
 		{
 		case Deferred::Begin:
-			editBegin(call.id);
+			queueEdit(Edit::Begin, call.id, 0.0);
 			break;
 		case Deferred::Value:
-			editValue(call.id, call.value);
+			queueEdit(Edit::Value, call.id, call.value);
 			break;
 		case Deferred::End:
-			editEnd(call.id);
+			queueEdit(Edit::End, call.id, 0.0);
 			break;
 		case Deferred::Restart:
-			restart(call.flags);
+			restartNow(call.flags);
 			break;
 		case Deferred::Dirty:
-			stateDirty();
+			stateDirtyNow();
 			break;
 		case Deferred::ProgramList:
-			programListChanged();
+			programListChangedNow();
 			break;
 		}
 	}
 
 	bool Vst3Plugin::editBegin(uint32_t id)
 	{
-		if (!isMainThread())
-			return defer(Deferred{Deferred::Begin, id, 0.0, 0});
-		const bool queued = m_edits.tryPush(Edit{Edit::Begin, id, 0.0});
-		if (m_hostParams != nullptr)
-			m_hostParams->requestParamFlush();
-		return queued;
+		return isMainThread() ? queueEdit(Edit::Begin, id, 0.0) : defer(Deferred{Deferred::Begin, id, 0.0, 0});
 	}
 
 	bool Vst3Plugin::editValue(uint32_t id, double normalized)
 	{
-		if (!isMainThread())
-			return defer(Deferred{Deferred::Value, id, normalized, 0});
-		const bool queued = m_edits.tryPush(Edit{Edit::Value, id, normalized});
-		if (m_hostParams != nullptr)
-			m_hostParams->requestParamFlush();
-		return queued;
+		return isMainThread() ? queueEdit(Edit::Value, id, normalized)
+							  : defer(Deferred{Deferred::Value, id, normalized, 0});
 	}
 
 	bool Vst3Plugin::editEnd(uint32_t id)
 	{
-		if (!isMainThread())
-			return defer(Deferred{Deferred::End, id, 0.0, 0});
-		const bool queued = m_edits.tryPush(Edit{Edit::End, id, 0.0});
+		return isMainThread() ? queueEdit(Edit::End, id, 0.0) : defer(Deferred{Deferred::End, id, 0.0, 0});
+	}
+
+	bool Vst3Plugin::queueEdit(Edit::Kind kind, uint32_t id, double normalized)
+	{
+		const bool queued = m_edits.tryPush(Edit{kind, id, normalized});
 		if (m_hostParams != nullptr)
 			m_hostParams->requestParamFlush();
 		return queued;
@@ -1740,6 +1758,12 @@ namespace gnubase::pluginhost::vst3
 	{
 		if (!isMainThread())
 			return defer(Deferred{Deferred::Restart, 0, 0.0, flags});
+		restartNow(flags);
+		return true;
+	}
+
+	void Vst3Plugin::restartNow(int32_t flags)
+	{
 		if ((flags & (vst::Vst::kReloadComponent | vst::Vst::kIoChanged)) != 0)
 		{
 			if (m_active)
@@ -1793,16 +1817,18 @@ namespace gnubase::pluginhost::vst3
 				m_host.requestRestart();
 			}
 		}
-		return true;
 	}
 
 	void Vst3Plugin::stateDirty()
 	{
 		if (!isMainThread())
-		{
 			defer(Deferred{Deferred::Dirty, 0, 0.0, 0});
-			return;
-		}
+		else
+			stateDirtyNow();
+	}
+
+	void Vst3Plugin::stateDirtyNow()
+	{
 		if (m_hostState != nullptr)
 			m_hostState->markStateDirty();
 	}
@@ -1810,10 +1836,13 @@ namespace gnubase::pluginhost::vst3
 	void Vst3Plugin::programListChanged()
 	{
 		if (!isMainThread())
-		{
 			defer(Deferred{Deferred::ProgramList, 0, 0.0, 0});
-			return;
-		}
+		else
+			programListChangedNow();
+	}
+
+	void Vst3Plugin::programListChangedNow()
+	{
 		if (m_hostParams != nullptr)
 			m_hostParams->rescanParams(plugin::HostParams::Values | plugin::HostParams::Text);
 	}

@@ -901,33 +901,40 @@ namespace
 }
 
 // The module's entry points. Windows needs only GetPluginFactory; Linux and macOS also call an entry and an exit
-// function when they load and unload the module.
+// function when they load and unload the module. Marked for export with the plain attribute, as the shared test
+// plugins do (tests/plugins/vst3/wrapper.cpp).
+#ifdef _WIN32
+#define GNUBASE_PLUGIN_EXPORT __declspec(dllexport)
+#else
+#define GNUBASE_PLUGIN_EXPORT __attribute__((visibility("default")))
+#endif
+
 extern "C"
 {
 	// NOLINTNEXTLINE(readability-identifier-naming): VST3's name for the entry point
-	SMTG_EXPORT_SYMBOL vst::IPluginFactory* PLUGIN_API GetPluginFactory()
+	GNUBASE_PLUGIN_EXPORT vst::IPluginFactory* PLUGIN_API GetPluginFactory()
 	{
 		static Factory factory;
 		return &factory;
 	}
 
 #ifdef __APPLE__
-	SMTG_EXPORT_SYMBOL bool bundleEntry(void* /*bundle*/)
+	GNUBASE_PLUGIN_EXPORT bool bundleEntry(void* /*bundle*/)
 	{
 		return true;
 	}
-	SMTG_EXPORT_SYMBOL bool bundleExit()
+	GNUBASE_PLUGIN_EXPORT bool bundleExit()
 	{
 		return true;
 	}
 #elif !defined(_WIN32)
 	// NOLINTNEXTLINE(readability-identifier-naming): VST3's name for the entry point
-	SMTG_EXPORT_SYMBOL bool ModuleEntry(void* /*library*/)
+	GNUBASE_PLUGIN_EXPORT bool ModuleEntry(void* /*library*/)
 	{
 		return true;
 	}
 	// NOLINTNEXTLINE(readability-identifier-naming): VST3's name for the exit point
-	SMTG_EXPORT_SYMBOL bool ModuleExit()
+	GNUBASE_PLUGIN_EXPORT bool ModuleExit()
 	{
 		return true;
 	}

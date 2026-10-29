@@ -1511,6 +1511,62 @@ TEST_CASE("component handler calls from a VST3 plugin's audio thread wait for it
 	stop(*plugin);
 }
 
+TEST_CASE("deferred component handler calls run on whatever thread the host calls back on", "[integration]")
+{
+	Vst3Fixture fixture;
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	start(*plugin);
+	Runner runner(*plugin);
+	const std::vector<float> input = ramp(64);
+	runner.prepare(input, {paramEvent(0, AudioEdit, 1.0)});
+	plugin::ProcessStatus status = plugin::ProcessStatus::Error;
+	std::thread audio([&] { status = runner.process(); });
+	audio.join();
+	REQUIRE(status == plugin::ProcessStatus::Continue);
+
+	// The callback comes on another thread than the one that created the plugin: the deferred calls run there once,
+	// instead of being deferred again.
+	std::thread callback([&] { plugin->onMainThread(); });
+	callback.join();
+	CHECK((fixture.host.rescans & plugin::HostParams::Values) != 0);
+	CHECK(fixture.host.flushRequests > 0);
+	runner.run(input);
+	REQUIRE(runner.out.size() >= 3);
+	CHECK(isParam(runner.out[0], plugin::EventType::ParamGestureBegin, Gain));
+	CHECK(isParam(runner.out[1], plugin::EventType::ParamValue, Gain));
+	CHECK(isParam(runner.out[2], plugin::EventType::ParamGestureEnd, Gain));
+	stop(*plugin);
+}
+
+TEST_CASE(
+	"a VST3 plugin's controller learns the last value of every parameter, however many changes came", "[integration]")
+{
+	Vst3Fixture fixture;
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	start(*plugin);
+	Runner runner(*plugin);
+	const std::vector<float> input = ramp(128);
+	// Far more changes than parameters before the main thread runs: 100 blocks of 64 changes of Gain, and Bend once.
+	constexpr int blocks = 100;
+	constexpr uint32_t points = 64;
+	for (int block = 0; block < blocks; ++block)
+	{
+		std::vector<plugin::Event> changes;
+		changes.reserve(points + 1);
+		for (uint32_t p = 0; p < points; ++p)
+			changes.push_back(paramEvent(p * 2, Gain, static_cast<double>((block * points) + p) / (blocks * points)));
+		if (block == 0)
+			changes.push_back(paramEvent(127, Bend, 0.25));
+		if (block == blocks - 1)
+			changes.back().value = 0.123;
+		runner.run(input, changes);
+	}
+	plugin->onMainThread();
+	CHECK(valueOf(*plugin, Gain) == 0.123);
+	CHECK(valueOf(*plugin, Bend) == 0.25);
+	stop(*plugin);
+}
+
 TEST_CASE("a VST3 plugin is set up in the process mode the host chose", "[integration]")
 {
 	Vst3Fixture fixture;
