@@ -627,8 +627,10 @@ TEST_CASE("media.stretch never writes over a file of the project", "[integration
 	INFO(replaced.error);
 	REQUIRE(replaced.ok());
 	CHECK(AudioFileReader::open(other)->info().frames == 2400);
+	// The peak cache keeps its peak files next to the audio files, and writes them in the background.
 	int files = 0;
 	for (const auto& entry : std::filesystem::directory_iterator(folder))
-		files += entry.is_regular_file() ? 1 : 0;
+		files +=
+			entry.is_regular_file() && entry.path().filename().u8string().find(".gbpeaks") == std::string::npos ? 1 : 0;
 	CHECK(files == 3); // take, take stretched, other
 }
