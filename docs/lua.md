@@ -158,6 +158,7 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `gnubase.audio.devices`
@@ -172,7 +173,7 @@ Returns:
 
 #### `gnubase.audio.get`
 
-The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, and how many frames of audio track playback were silent because a disk stream was late.
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing).
 
 Only reads; changes nothing.
 
@@ -183,7 +184,24 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
+
+#### `gnubase.audio.performance`
+
+Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1; cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `cycles`: integer, required
+- `diskDropouts`: integer, required
+- `diskLoad`: number, required
+- `load`: number, required
+- `overloads`: integer, required
+- `peak`: number, required
+- `threads`: array of number, required
 
 #### `gnubase.audio.record`
 
@@ -221,6 +239,7 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `gnubase.audio.reset`
@@ -234,7 +253,22 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
+
+#### `gnubase.audio.resetPerformance`
+
+Starts a new performance measurement, like clicking the overload indicator: clears the peak, the overloads and the cycles; the averaged loads go on. Immediately while the device is stopped, otherwise with its next block. Returns the measurement that ended, as audio.performance does, and sends it as the event audio.performanceReset.
+
+Returns:
+
+- `cycles`: integer, required
+- `diskDropouts`: integer, required
+- `diskLoad`: number, required
+- `load`: number, required
+- `overloads`: integer, required
+- `peak`: number, required
+- `threads`: array of number, required
 
 #### `gnubase.audio.setDevice`
 
@@ -260,6 +294,26 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
+- `running`: boolean, required
+
+#### `gnubase.audio.setProcessing`
+
+Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; default: half the hardware threads, about one per core). Independent tracks then run in parallel; the output is the same for any number of threads. The device must be stopped. activeThreads in the result is how many process, and limitedBy why that is fewer: multiProcessing is off, the hardware has fewer threads, worker threads didn't get real-time priority (on Linux: no real-time privileges), or the system refused to start them (system). Fails, keeping the previous settings, if threads can't be started.
+
+Parameters:
+
+- `multiProcessing`: boolean
+- `threads`: integer
+
+Returns:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `playbackDropouts`: integer, required
+- `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `gnubase.audio.start`
@@ -273,6 +327,7 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `gnubase.audio.stop`
@@ -286,6 +341,7 @@ Returns:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 ### audioEvent
@@ -334,6 +390,118 @@ Returns:
 
 - `event`: object, required
 
+### automation
+
+#### `gnubase.automation.get`
+
+The automation settings. followsEvents (default false): when an audio event or MIDI part moves, the automation of its track in its range moves with it and replaces the points where it lands.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `followsEvents`: boolean, required
+
+#### `gnubase.automation.set`
+
+Changes the automation settings (see automation.get). A setting, so it stays when a new project starts.
+
+Parameters:
+
+- `followsEvents`: boolean
+
+Returns:
+
+- `followsEvents`: boolean, required
+
+### automationLane
+
+#### `gnubase.automationLane.add`
+
+Adds an automation lane to a track: the curve of one parameter. target.type says which: volume (the channel's fader, in dB) and pan (-1 to 1) on tracks with audio channels; instrument, a parameter of an instrument track's built-in instrument (target.parameter, an id from processor.list, in its range); controller (target.number 0-127), pitchBend (0.5 is no bend) and channelPressure, all 0 to 1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). A track has one lane per target. read (default true): the curve plays; without it, or without points, the parameter keeps its static value.
+
+Parameters:
+
+- `read`: boolean
+- `target`: object, required
+- `track`: integer, required
+
+Returns:
+
+- `lane`: object, required
+
+#### `gnubase.automationLane.list`
+
+The automation lanes of a track, or of every track in track order, with their points sorted by position.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `track`: integer
+
+Returns:
+
+- `lanes`: array, required
+
+#### `gnubase.automationLane.remove`
+
+Removes an automation lane with its points.
+
+Parameters:
+
+- `lane`: integer, required
+
+#### `gnubase.automationLane.set`
+
+Turns reading an automation lane on or off.
+
+Parameters:
+
+- `lane`: integer, required
+- `read`: boolean
+
+Returns:
+
+- `lane`: object, required
+
+### automationPoint
+
+#### `gnubase.automationPoint.add`
+
+Adds points to an automation lane: position in the track's time base (ticks on musical tracks, so automation follows tempo changes; samples on linear ones, so it keeps its time), value in the target's unit, shape of the curve to the next point (step, linear or curve; default linear) and for curves the bend, curve, from -1 to 1 (above 0 the value moves fast at first). Before the first point the curve has its value, after the last point the last one's; points at one position make a jump. A ramp of volume moves the gain in a straight line.
+
+Parameters:
+
+- `lane`: integer, required
+- `points`: array of object, required
+
+Returns:
+
+- `points`: array, required
+
+#### `gnubase.automationPoint.remove`
+
+Removes points from an automation lane.
+
+Parameters:
+
+- `lane`: integer, required
+- `points`: array of integer, required
+
+#### `gnubase.automationPoint.set`
+
+Changes points of an automation lane: their position, value, shape or curve.
+
+Parameters:
+
+- `lane`: integer, required
+- `points`: array of object, required
+
+Returns:
+
+- `points`: array, required
+
 ### bus
 
 #### `gnubase.bus.add`
@@ -375,14 +543,17 @@ Returns:
 
 #### `gnubase.channel.set`
 
-Changes a channel's audio channels, input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects.
+Changes a channel's audio channels, input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 to 6 (default 0); pan is a stereo channel's balance from -1 (left) to 1 (right). Automation of volume and pan overrides them while it plays.
 
 Parameters:
 
 - `channel`: integer, required
 - `channels`: integer
 - `input`: integer
+- `instrument`: string
 - `output`: integer
+- `pan`: number
+- `volume`: number
 
 Returns:
 
@@ -415,7 +586,7 @@ Parameters:
 
 #### `gnubase.controller.add`
 
-Adds controller events to a MIDI part: position from the part's start in ticks, controller number 0-127, value 0-1, MIDI channel 0-15 (default 0).
+Adds controller events to a MIDI part: position from the part's start in ticks, MIDI channel 0-15 (default 0). type (default controller) says what else an event has: controller: number 0-127 and value 0-1; pitchBend: value 0-1, 0.5 is no bend; channelPressure: value; polyPressure: number (the pitch) and value; program: number (the program) and optionally bank 0-16383; sysEx: data, the message's bytes from 0xF0 to 0xF7.
 
 Parameters:
 
@@ -437,7 +608,7 @@ Parameters:
 
 #### `gnubase.controller.set`
 
-Changes controller events of a MIDI part: each change names a controller event by id and gives what changes, position in ticks, controller number 0-127, value 0-1 or MIDI channel 0-15. Returns the changed controller events.
+Changes controller events of a MIDI part: each change names a controller event by id and gives what changes: position in ticks, type, and the fields of the type as controller.add takes them (number, value, channel, bank, data). A field the type doesn't have is an error, such as value on a program change; a null bank removes it. A new type keeps the fields it shares with the old one and needs the others. Returns the changed controller events.
 
 Parameters:
 
@@ -540,26 +711,66 @@ Returns:
 
 - `position`: integer, required
 
+### job
+
+#### `gnubase.job.cancel`
+
+Asks a running job to stop. It ends soon after as cancelled, with a job.finished event, and cleans up what it made; a job that has ended stays as it is.
+
+Parameters:
+
+- `job`: integer, required
+
+Returns:
+
+- `job`: object, required
+
+#### `gnubase.job.get`
+
+A background job, as job.list shows it.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `job`: integer, required
+
+Returns:
+
+- `job`: object, required
+
+#### `gnubase.job.list`
+
+Every background job since the engine started, such as backups: id, kind, state (running, done, failed or cancelled), progress from 0 to 1, what it is doing, and its result or error once it ended.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `jobs`: array of object, required
+
 ### media
 
 #### `gnubase.media.add`
 
-Adds an audio file. Its sample rate, channel count and length in sample frames are read from the file, or taken as given, for a file that is still being recorded.
+Adds an audio file. Its sample rate, channel count and length in sample frames are read from the file, or taken as given, for a file that is still being recorded. With copy, a file from outside the project folder is also copied into its media folder (see project.location); the project must have been saved. The copy runs as a job, returned as job (null without one), with the result that media.prepareArchive's job has: the media file is added at once where it is, and when the copy is done it is pointed at the copy as an undo step of its own.
 
 Parameters:
 
 - `channels`: integer
+- `copy`: boolean
 - `length`: integer
 - `path`: string, required
 - `sampleRate`: number
 
 Returns:
 
+- `job`: object or null, required
 - `media`: object, required
 
 #### `gnubase.media.convert`
 
-Converts a media file to another sample rate (by default the project's), writes the result to path as a 32-bit float WAV file and adds it as a new media file.
+Converts a media file to another sample rate (by default the project's), writes the result to path as a 32-bit float WAV file and adds it as a new media file. path must not be one of the project's media files.
 
 Parameters:
 
@@ -570,6 +781,64 @@ Parameters:
 Returns:
 
 - `media`: object, required
+
+#### `gnubase.media.peakStatus`
+
+The state of the waveform overviews of a media file, or of every media file: pending, generating (with progress from 0 to 1), ready, failed (with the error) or recording; the frames that have peaks; the peak file they were loaded from or written to; whether they were generated from the audio file rather than loaded. Peak files are kept next to their audio file as <file name>.gbpeaks, or in fallbackFolder where that can't be written.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `media`: integer
+
+Returns:
+
+- `fallbackFolder`: string, required
+- `media`: array of object, required
+
+#### `gnubase.media.peaks`
+
+The waveform overview of a media file for drawing: frames sample frames of the file from start (default: the rest of the file), in pixels columns (up to 65536). Per channel (default: all of them; channels picks some, numbered from 0), the smallest and largest sample of each column, from -32767 to 32767 (full scale). Pixels times channels can be up to 262144. The columns come from the coarsest level of the file's peaks (level: 256, 4096 or 65536 frames per peak) that has a peak per column, so they cost the same at any length. status says whether the peaks are ready; while they are generated, only the first available frames have columns and the rest are 0. A file that changed since its peaks were made gets new ones; media.peaksProgress and media.peaksReady report how that goes.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `channels`: array of integer
+- `frames`: integer
+- `media`: integer, required
+- `pixels`: integer, required
+- `start`: integer
+
+Returns:
+
+- `available`: integer, required
+- `channels`: array of object, required
+- `level`: integer, required
+- `media`: integer, required
+- `status`: one of "pending" | "generating" | "ready" | "failed" | "recording", required
+
+#### `gnubase.media.prepareArchive`
+
+Makes the project self-contained, so that its folder can be archived or moved: copies every media file from outside the project folder into its media folder and points the media at the copies. The copies run as a job: this returns at once, job.progress and job.finished events follow, and job.cancel stops it and removes the copies. Once they are done, the media are pointed at them as one undo step. The job's result lists the copies as copied, media files that couldn't be read as missing (they keep their paths), and media whose path changed while the job ran as changed (they keep the new path). The project must have been saved; save it again without embedding media to keep the new paths.
+
+Returns:
+
+- `job`: object, required
+
+#### `gnubase.media.relink`
+
+Points media files at other files, such as copies, as one undo step. Each new file must be an audio file with the media file's sample rate and channel count. An entry with from applies only if the media file is still there and still points at from; otherwise it is skipped. Returns the media files it relinked and the ones it skipped.
+
+Parameters:
+
+- `files`: array of object, required
+
+Returns:
+
+- `relinked`: array of integer, required
+- `skipped`: array of integer, required
 
 #### `gnubase.media.remove`
 
@@ -578,6 +847,62 @@ Removes an audio file that no clip uses.
 Parameters:
 
 - `media`: integer, required
+
+#### `gnubase.media.stretch`
+
+Time-stretches and pitch-shifts a media file, writes the result to path as a 32-bit float WAV file and adds it as a new media file; path must not be one of the project's media files. ratio is the new length over the old one, from 0.1 to 10 (default 1: unchanged); semitones and cents shift the pitch, together within 48 semitones either way (default 0). preset picks the algorithm: quality (default) and efficient for any material, drums, plucked, pads, vocals, mix and solo tuned for kinds of material at a lower CPU cost. formants keeps the spectral envelope when the pitch shifts, e.g. for voices. mode offline (default) analyzes the whole file first for the best result; realtime processes it the way playback does, with ratios from 0.25 to 4 and pitch shifts within 24 semitones.
+
+Parameters:
+
+- `cents`: number
+- `formants`: boolean
+- `media`: integer, required
+- `mode`: one of "realtime" | "offline"
+- `path`: string, required
+- `preset`: one of "quality" | "efficient" | "drums" | "plucked" | "pads" | "vocals" | "mix" | "solo"
+- `ratio`: number
+- `semitones`: number
+
+Returns:
+
+- `media`: object, required
+
+### midiFile
+
+#### `gnubase.midiFile.export`
+
+Exports MIDI and instrument tracks (tracks, default all of them) as a standard MIDI file of type 0 (one track with every MIDI channel) or 1 (default: a tempo track, then a track per exported track), with ppq ticks per quarter note (24-960, default 480). The file has the notes and controllers as they play, converted to MIDI 1.0, the track names, tempo and time signatures, and the markers unless markers is false. A note ends where the next note of its pitch and channel starts, so that overlapping notes read back the same. range {start, end} in ticks exports only what starts in it, moved to the file's start. Returns the number of tracks in the file.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `markers`: boolean
+- `path`: string, required
+- `ppq`: integer
+- `range`: object
+- `tracks`: array of integer
+- `type`: one of 0 | 1
+
+Returns:
+
+- `tracks`: integer, required
+
+#### `gnubase.midiFile.import`
+
+Imports a standard MIDI file (type 0, 1 or 2) into new MIDI tracks (trackType midi, the default) or instrument tracks, one part per track from the bar of its first event to the bar after its last. A type 0 file gets a track per MIDI channel; the sequences of a type 2 file are laid out one after another, each from a bar start. Names that aren't UTF-8 are read as Windows-1252. Unless tempo is false, the file's tempo and time signatures replace the project's; unless markers is false, its markers are added. One undo step. Returns the new tracks and parts.
+
+Parameters:
+
+- `markers`: boolean
+- `path`: string, required
+- `tempo`: boolean
+- `trackType`: one of "midi" | "instrument"
+
+Returns:
+
+- `parts`: array, required
+- `tracks`: array, required
 
 ### midiPart
 
@@ -623,7 +948,7 @@ Returns:
 
 #### `gnubase.note.add`
 
-Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity 0-1, MIDI channel 0-15 (default 0).
+Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity 0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0).
 
 Parameters:
 
@@ -645,7 +970,7 @@ Parameters:
 
 #### `gnubase.note.set`
 
-Changes notes of a MIDI part: each change names a note by id and gives what changes, position and length in ticks, pitch 0-127, velocity 0-1 or MIDI channel 0-15. Returns the changed notes.
+Changes notes of a MIDI part: each change names a note by id and gives what changes, position and length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1 or MIDI channel 0-15. Returns the changed notes.
 
 Parameters:
 
@@ -670,6 +995,25 @@ Returns:
 
 ### project
 
+#### `gnubase.project.backup`
+
+Backs the project up as it is now into folder, which must be empty or new: the project file, named name (by default after the project file, or else the project), and copies of its media in the folder Audio, which the project file refers to relative to itself, so that the folder opens on another machine. The project itself stays as it is. minimize keeps only the ranges of audio files that audio events play, with handles seconds (default 1) before and after; removeUnused leaves out clips that no audio event uses and media that no clip uses. currentVersionsOnly and skipVideo have no effect until clips have versions and projects have video. activate opens the backup once it is done, unless the project changed meanwhile. The backup runs as a job: this returns at once, job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. A folder that a running job writes into can't be used. The job's result is {file, files, missing, activated, activationError}: missing lists the media files that couldn't be read and keep their old paths; activated says whether the backup was opened, and activationError why not, if it was asked to be.
+
+Parameters:
+
+- `activate`: boolean
+- `currentVersionsOnly`: boolean
+- `folder`: string, required
+- `handles`: number
+- `minimize`: boolean
+- `name`: string
+- `removeUnused`: boolean
+- `skipVideo`: boolean
+
+Returns:
+
+- `job`: object, required
+
 #### `gnubase.project.get`
 
 The whole project: busses, tracks in order, channels, media, clips, events and parts.
@@ -678,16 +1022,39 @@ Only reads; changes nothing.
 
 #### `gnubase.project.load`
 
-Replaces the project with a DAWproject file and clears the undo history. Media files embedded in it are extracted to mediaFolder, by default a folder named after the file next to it.
+Replaces the project with a DAWproject file and clears the undo history. Media files embedded in it are extracted to mediaFolder, by default a folder named after the file next to it. With revision, it loads only if the project is still at that revision (see project.revision), and fails otherwise, so that no change made meanwhile is lost.
 
 Parameters:
 
 - `mediaFolder`: string
 - `path`: string, required
+- `revision`: integer
+
+#### `gnubase.project.location`
+
+Where the project is: its project file (set by project.save and project.load), the folder of that file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. All null for a project that has no file yet.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `file`: string or null, required
+- `folder`: string or null, required
+- `mediaFolder`: string or null, required
 
 #### `gnubase.project.new`
 
 Replaces the project with an empty one that has a stereo input and output bus, and clears the undo history.
+
+#### `gnubase.project.revision`
+
+A number that grows with every change of the project: every edit, undo and redo, and loading or starting a project. project.load with revision loads only if it hasn't changed.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `revision`: integer, required
 
 #### `gnubase.project.save`
 
@@ -708,6 +1075,165 @@ Parameters:
 
 - `name`: string
 - `sampleRate`: number
+
+### quantize
+
+#### `gnubase.quantize.apply`
+
+Quantizes note starts: moves them toward the nearest position of the grid, or of the groove, and keeps their lengths. Takes the notes of part (only notes, if given) or of every part in parts. The settings are the project's (see quantize.set), or preset's, changed by settings. Quantizing starts from the notes' original timing unless settings.soft is true, and keeps it, so quantize.reset puts it back. Notes moved by other means since they were quantized start from where they are; velocities and lengths changed by other means stay. Returns the notes that changed. Grids are in project time and start again at every bar; notes don't move before their part's start or to or past its end.
+
+Parameters:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+- `preset`: string
+- `settings`: object
+
+Returns:
+
+- `notes`: array, required
+
+#### `gnubase.quantize.ends`
+
+Quantizes note ends: moves them toward the nearest grid position and keeps the starts. Takes the notes of part (only notes, if given) or of every part in parts. The settings are the project's (see quantize.set), or preset's, changed by settings. Quantizing starts from the notes' original timing unless settings.soft is true, and keeps it, so quantize.reset puts it back. Notes moved by other means since they were quantized start from where they are; velocities and lengths changed by other means stay. Returns the notes that changed.
+
+Parameters:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+- `preset`: string
+- `settings`: object
+
+Returns:
+
+- `notes`: array, required
+
+#### `gnubase.quantize.extractGroove`
+
+Makes a groove preset from a MIDI part's rhythm: a groove position at every note start, with the highest velocity and the longest length of the notes there. The groove is length ticks long, by default the part's length, and the preset is named name, by default after the part. The groove's origin is the part's start, so it repeats in phase with the part.
+
+Parameters:
+
+- `length`: integer
+- `name`: string
+- `part`: integer, required
+
+Returns:
+
+- `preset`: object, required
+
+#### `gnubase.quantize.freeze`
+
+Makes quantized notes' timing permanent: quantizing starts from it from now on, and quantize.reset no longer goes back. Takes the notes of part (only notes, if given) or of every part in parts and returns the notes that changed.
+
+Parameters:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+
+Returns:
+
+- `notes`: array, required
+
+#### `gnubase.quantize.get`
+
+The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).
+
+Only reads; changes nothing.
+
+Returns:
+
+- `autoQuantize`: boolean, required
+- `settings`: object, required
+
+#### `gnubase.quantize.lengths`
+
+Sets note lengths and keeps the starts: to length, a note value ("1/8", "1/8T", "1/8.") or ticks, or without length to the step of the grid at each note's start, so tuplets and swing count and notes outside the catch range keep their length. Takes the notes of part (only notes, if given) or of every part in parts. The settings are the project's (see quantize.set), or preset's, changed by settings. quantize.reset puts the lengths back. Returns the notes that changed.
+
+Parameters:
+
+- `length`: string or integer
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+- `preset`: string
+- `settings`: object
+
+Returns:
+
+- `notes`: array, required
+
+#### `gnubase.quantize.presets`
+
+The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `presets`: array, required
+
+#### `gnubase.quantize.removePreset`
+
+Removes one of the user's quantize presets.
+
+Parameters:
+
+- `name`: string, required
+
+#### `gnubase.quantize.renamePreset`
+
+Renames one of the user's quantize presets.
+
+Parameters:
+
+- `name`: string, required
+- `newName`: string, required
+
+#### `gnubase.quantize.reset`
+
+Puts quantized notes back to their timing before quantizing: starts, lengths and velocities. Notes moved by other means since keep their timing, and velocities and lengths changed by other means stay. Takes the notes of part (only notes, if given) or of every part in parts and returns the notes that changed.
+
+Parameters:
+
+- `notes`: array of integer
+- `part`: integer
+- `parts`: array of integer
+
+Returns:
+
+- `notes`: array, required
+
+#### `gnubase.quantize.savePreset`
+
+Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset of that name. Factory presets can't be replaced. Presets belong to GNUbase, not to the project.
+
+Parameters:
+
+- `name`: string, required
+- `settings`: object
+
+Returns:
+
+- `preset`: object, required
+
+#### `gnubase.quantize.set`
+
+Changes the project's quantize settings: to preset's, if given, then changed by settings. Settings: grid, a note value from "1/1" to "1/128", "T" for a triplet and "." for dotted; tuplet, 0 (off) or 3 to 15 notes in the time of the largest power of two below it; swing 0-1, moving every second grid position later, at 1 by a third of a step (straight grids without tuplets only); catchRange, ticks from a grid position within which notes are quantized (0: all); safeRange, ticks within which they stay; randomize, ticks by which quantized notes move at random, by seed; soft, starting from the current positions instead of the original ones; strength 0-1, the part of the way notes move. groove {length, points: [{position, velocity 0-1, length}]} quantizes to a groove instead of the grid, with preQuantize (a note value), maxMove (ticks), velocityStrength, lengthStrength and origin (where it starts repeating, in project ticks). autoQuantize is whether recording quantizes. Settings are not undo steps; they are saved with the project.
+
+Parameters:
+
+- `autoQuantize`: boolean
+- `preset`: string
+- `settings`: object
+
+Returns:
+
+- `autoQuantize`: boolean, required
+- `settings`: object, required
 
 ### settings
 

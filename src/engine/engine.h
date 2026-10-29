@@ -24,8 +24,14 @@
 namespace gnubase::engine
 {
 	class AudioEngine;
+	class Jobs;
 	class ProjectModel;
 	struct RenderSnapshot;
+
+	namespace peaks
+	{
+		class PeakCache;
+	}
 
 	namespace settings
 	{
@@ -136,6 +142,15 @@ namespace gnubase::engine
 		// reach every client; its result goes nowhere, and a failure is logged. Not for audio threads.
 		void post(std::string command, Json parameters = Json::object());
 
+		// The same, and done gets the command's result on the command thread, such as when a background job changes
+		// the project with a command. Once the engine stops, done gets an error instead, for commands that didn't run.
+		// done must be quick and must not call the engine.
+		void post(std::string command, Json parameters, std::function<void(Result result)> done);
+
+		// Announces an event from one of the engine's own threads, such as a background job's progress. Every client
+		// receives it. Not for audio threads.
+		void broadcast(std::string name, Json data = Json::object());
+
 		// Every registered command, sorted by name. The engine.commands query returns the same as JSON.
 		std::vector<CommandInfo> commands() const;
 
@@ -159,6 +174,7 @@ namespace gnubase::engine
 			std::string command;
 			Json parameters;
 			std::shared_ptr<detail::Mailbox> sender;
+			std::function<void(Result result)> done; // for a posted command that wants its result
 		};
 
 		void run();
@@ -171,9 +187,11 @@ namespace gnubase::engine
 		RequestId m_nextRequest = 1;
 		bool m_stopping = false;
 		std::condition_variable m_wake;
+		std::unique_ptr<Jobs> m_jobs;                // background work such as backups
 		std::unique_ptr<ProjectModel> m_project;     // only the command thread touches the document
 		std::unique_ptr<AudioEngine> m_audio;        // plays the project; only the command thread changes it
 		std::unique_ptr<settings::Store> m_settings; // the user settings; only the command thread uses them
+		std::unique_ptr<peaks::PeakCache> m_peaks;   // waveform overviews of the project's media files
 		std::thread m_thread;
 	};
 

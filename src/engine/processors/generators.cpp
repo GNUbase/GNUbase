@@ -119,6 +119,34 @@ namespace gnubase::engine::processors
 			});
 	}
 
+	void NoteProbe::process(const graph::ProcessContext& context) noexcept
+	{
+		const graph::EventBuffer& events = context.eventsIn;
+		size_t next = 0;
+		for (uint32_t i = 0; i < context.frames; ++i)
+		{
+			for (; next < events.size() && events[next].offset <= i; ++next)
+			{
+				const graph::ProcessEvent& event = events[next];
+				const size_t index = ((event.channel % 16) * 128) + (event.key % 128);
+				if (event.type == graph::ProcessEvent::Type::NoteOn && !m_on[index])
+				{
+					m_on[index] = true;
+					++m_count;
+					m_pitches += event.key;
+				}
+				else if (event.type == graph::ProcessEvent::Type::NoteOff && m_on[index])
+				{
+					m_on[index] = false;
+					--m_count;
+					m_pitches -= event.key;
+				}
+			}
+			for (int c = 0; c < context.channels; ++c)
+				context.audio[c][i] = static_cast<float>(c == 1 ? m_pitches : m_count);
+		}
+	}
+
 	void PositionProbe::process(const graph::ProcessContext& context) noexcept
 	{
 		const graph::TransportBlock& transport = context.transport;
