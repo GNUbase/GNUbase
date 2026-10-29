@@ -114,6 +114,16 @@ jobs:
           GNUBASE_REQUIRE_GPU: ${{ runner.os != 'macOS' && '1' || '0' }}
         run: ctest --preset ${{ matrix.preset }} -C Release
 
+      # What failing tests wrote for a look, such as a screenshot that differs from its golden image.
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-output-${{ matrix.name }}
+          path: build/${{ matrix.preset }}/tests/output/
+          if-no-files-found: ignore
+          retention-days: 14
+
       # Non-blocking (#24): shared runners vary too much to fail on numbers, so the results are only kept.
       - name: Benchmarks
         continue-on-error: true
@@ -150,7 +160,7 @@ jobs:
     env:
       ASAN_OPTIONS: detect_leaks=1
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1:suppressions=${{ github.workspace }}/tools/tsan-suppressions.txt
     steps:
       - uses: actions/checkout@v7
         with:

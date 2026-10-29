@@ -43,7 +43,7 @@ Details and reasoning (processes, modules, threads, engine API, IPC) are in [doc
 - Catch2 v3 for C++ tests, Lua tests in `tests/lua/`, all run with `ctest`. Engine tests render offline through the dummy device and compare against golden files with tolerance.
 - UI tests, in C++ or Lua, drive the real app through the same automation API the MCP server exposes.
 - Tag every Catch2 test case with `[unit]`, `[integration]` or `[ui]`, plus `[slow]` for long ones. Tags become ctest labels: `ctest --preset <platform> -L unit`.
-- Shared helpers live in `tests/testutils/`: `TempDir`, `compareAudio`, float WAV read/write and `compareWithGolden`. Golden files are `tests/golden/<name>.wav` (Git LFS). On a mismatch the actual and difference WAVs are written to the build's test output folder; run with `GNUBASE_UPDATE_GOLDEN=1` to accept new audio.
+- Shared helpers live in `tests/testutils/`: `TempDir`, `compareAudio`, float WAV read/write and `compareWithGolden`, for audio and for screenshots (`goldenimage.h`). Golden files are `tests/golden/<name>.wav` and `.png` (Git LFS). On a mismatch the actual and difference files are written to the build's test output folder; run with `GNUBASE_UPDATE_GOLDEN=1` to accept new audio or images.
 - A new or changed engine command needs a description and parameter and result schemas: MCP tools, Lua functions, `docs/lua.md` and the tool catalogue in `docs/mcp.md` are generated from them. Tests fail until both docs are regenerated: run the tests with `GNUBASE_UPDATE_DOCS=1` and commit them.
 - Definition of done for every ticket: tests first and green in CI on all platforms, reachable through the engine API and MCP, UI only through the engine API, real-time rules respected, docs updated.
 

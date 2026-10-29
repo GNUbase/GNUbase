@@ -9,8 +9,7 @@
 #include <RmlUi/Core/Element.h>
 
 #include <algorithm>
-#include <cmath>
-#include <limits>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -19,6 +18,15 @@ namespace gnubase::ui
 	namespace
 	{
 		using Clock = std::chrono::steady_clock;
+
+		// RmlUi's delay in seconds as a duration; empty if it's infinite, i.e. no update is needed.
+		std::optional<Clock::duration> durationOf(double seconds)
+		{
+			constexpr double longest = 24.0 * 60.0 * 60.0; // a day; longer delays are as good as none
+			if (!(seconds <= longest))
+				return std::nullopt;
+			return std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(std::max(seconds, 0.0)));
+		}
 
 		// 80 % of the primary monitor's usable area, for a window opened without a size.
 		Size defaultSize(const std::vector<Display>& displays)
@@ -240,10 +248,14 @@ namespace gnubase::ui
 			logging::warning("Window {} couldn't be drawn", window.m_id);
 		++window.m_frames;
 		window.m_renderRequested = false;
-		const double delay = window.m_context->GetNextUpdateDelay();
-		window.m_nextUpdate = std::isfinite(delay)
-			? Clock::now() + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(delay))
-			: Clock::time_point::max();
+		const std::optional<Clock::duration> delay = durationOf(window.m_context->GetNextUpdateDelay());
+		window.m_nextUpdate = delay ? Clock::now() + *delay : Clock::time_point::max();
+	}
+
+	Shell::Clock::time_point Shell::nextUpdate(const Window& window, Clock::time_point now)
+	{
+		const std::optional<Clock::duration> delay = durationOf(window.m_context->GetNextUpdateDelay());
+		return delay ? std::min(window.m_nextUpdate, now + *delay) : window.m_nextUpdate;
 	}
 
 	void Shell::step(std::optional<std::chrono::milliseconds> timeout)
@@ -255,24 +267,42 @@ namespace gnubase::ui
 			event = m_windows.nextEvent(std::chrono::milliseconds(0));
 		}
 
-		const Clock::time_point now = Clock::now();
+		Clock::time_point now = Clock::now();
+		for (size_t i = 0; i < m_tasks.size() && m_running; ++i) // a task may add tasks
+		{
+			if (m_tasks[i].next > now)
+				continue;
+			m_tasks[i].next = now + m_tasks[i].interval;
+			const std::function<void()> task = m_tasks[i].run;
+			task();
+		}
+
+		now = Clock::now();
 		for (auto& [id, window] : m_open)
-			if (window->m_renderRequested || window->m_nextUpdate <= now)
+			if (window->m_renderRequested || nextUpdate(*window, now) <= now)
 				draw(*window);
+	}
+
+	void Shell::every(std::chrono::milliseconds interval, std::function<void()> task)
+	{
+		m_tasks.push_back({interval, std::move(task), Clock::now() + interval});
 	}
 
 	std::optional<std::chrono::milliseconds> Shell::idleTimeout() const
 	{
+		const Clock::time_point now = Clock::now();
 		Clock::time_point next = Clock::time_point::max();
 		for (const auto& [id, window] : m_open)
 		{
 			if (window->m_renderRequested)
 				return std::chrono::milliseconds(0);
-			next = std::min(next, window->m_nextUpdate);
+			next = std::min(next, nextUpdate(*window, now));
 		}
+		for (const Task& task : m_tasks)
+			next = std::min(next, task.next);
 		if (next == Clock::time_point::max())
 			return std::nullopt;
-		const auto wait = std::chrono::ceil<std::chrono::milliseconds>(next - Clock::now());
+		const auto wait = std::chrono::ceil<std::chrono::milliseconds>(next - now);
 		return std::max(wait, std::chrono::milliseconds(0));
 	}
 
