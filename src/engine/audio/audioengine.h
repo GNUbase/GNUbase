@@ -37,8 +37,8 @@ namespace gnubase::engine
 	// Bus channels beyond the device's are silent, device outputs no bus reaches stay silent. Choosing device ports
 	// per bus comes with #43.
 	//
-	// The graph runs on the audio thread and a pool of real-time workers (audio.setProcessing): by default one thread
-	// per hardware thread, the audio thread included.
+	// The graph runs on the audio thread and a pool of real-time workers (audio.setProcessing): by default half the
+	// hardware threads, the audio thread included, and only workers that got real-time priority.
 	//
 	// The device comes from one of the audio backends (audio.devices, audio.setDevice). When its driver asks for a
 	// reset, the engine opens it again with the same settings and restarts it if it ran (audio.reset). The dummy
@@ -115,8 +115,13 @@ namespace gnubase::engine
 		void reset();
 		Json devices() const;
 		void setProcessing(const Json& parameters);
-		void startWorkers();          // for the device's format and the processing settings
-		size_t activeThreads() const; // the threads that process: the setting, at most one per hardware thread
+		// Workers for the device's format and the processing settings, as many as get real-time priority. Throws
+		// std::system_error if threads can't be started; the fallback processes on the audio thread only.
+		void startWorkers();
+		void startWorkersOrFallBack();
+		size_t plannedThreads() const; // the setting, at most one per hardware thread
+		static size_t defaultThreads();
+		Json processingStatus() const;
 		Json status() const;
 		audio::DummyDevice& requireDummy();
 		void registerTransportCommands(Engine& engine);
@@ -166,9 +171,16 @@ namespace gnubase::engine
 		Transport m_transport;              // advanced by the audio thread
 
 		// Changed only while the device is stopped.
+		enum class Limit : uint8_t
+		{
+			None,
+			Realtime, // workers didn't get real-time priority
+			System,   // threads couldn't be started
+		};
 		bool m_multiProcessing = true;
-		size_t m_threads = rt::hardwareThreads(); // processing threads, the audio thread included
+		size_t m_threads = defaultThreads(); // processing threads, the audio thread included
 		std::unique_ptr<rt::WorkerPool> m_workers;
+		Limit m_limitedBy = Limit::None; // why m_workers has fewer than planned
 
 		// The cue thread, while the device runs in real time. It reads the transport's settings and play state from
 		// m_cueState, which the command thread updates.

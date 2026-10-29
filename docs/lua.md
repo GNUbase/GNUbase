@@ -173,7 +173,7 @@ Returns:
 
 #### `gnubase.audio.get`
 
-The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads.
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing).
 
 Only reads; changes nothing.
 
@@ -269,7 +269,7 @@ Returns:
 
 #### `gnubase.audio.setProcessing`
 
-Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; default: the number of hardware threads). At most one thread per hardware thread processes: activeThreads in the result. With multiProcessing off only the audio thread does. Independent tracks then run in parallel; the output is the same for any number of threads. The device must be stopped.
+Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; default: half the hardware threads, about one per core). Independent tracks then run in parallel; the output is the same for any number of threads. The device must be stopped. activeThreads in the result is how many process, and limitedBy why that is fewer: multiProcessing is off, the hardware has fewer threads, worker threads didn't get real-time priority (on Linux: no real-time privileges), or the system refused to start them (system). Fails, keeping the previous settings, if threads can't be started.
 
 Parameters:
 

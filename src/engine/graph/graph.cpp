@@ -3,6 +3,7 @@
 
 #include "engine/document/rendersnapshot.h"
 #include "platform/log.h"
+#include "platform/rt/denormals.h"
 #include "platform/rt/mpmcqueue.h"
 #include "platform/rt/realtime.h"
 #include "platform/rt/workerpool.h"
@@ -104,6 +105,13 @@ namespace gnubase::engine::graph
 		return order;
 	}
 
+	namespace
+	{
+		// A worker that finds no ready node for this long leaves the cycle, so it doesn't spin at real-time priority
+		// while the last nodes of a narrow part of the graph run. The audio thread stays until every node is done.
+		constexpr auto g_idleSpin = std::chrono::microseconds(50);
+	}
+
 	// One parallel cycle: which nodes are ready, how many senders each still waits for, and what nodes cost.
 	class CompiledGraph::Scheduler final : public rt::ParallelJob
 	{
@@ -117,7 +125,7 @@ namespace gnubase::engine::graph
 					m_roots.push_back(static_cast<int>(i));
 		}
 
-		void run(uint32_t frames, const TransportBlock& transport, rt::WorkerPool& workers) noexcept
+		void run(uint32_t frames, const TransportBlock& transport, rt::WorkerPool& workers, size_t helpers) noexcept
 		{
 			const std::vector<Node>& nodes = m_graph.m_nodes;
 			m_frames = frames;
@@ -144,20 +152,30 @@ namespace gnubase::engine::graph
 				});
 			for (const int root : m_roots)
 				m_ready.tryPush(root); // never full: it holds every node
-			workers.run(*this);
+			workers.run(*this, helpers);
 		}
 
-		void work(size_t /*thread*/) noexcept override
+		void work(size_t thread) noexcept override
 		{
 			const std::vector<Node>& nodes = m_graph.m_nodes;
+			auto idleSince = std::chrono::steady_clock::time_point::max();
 			while (m_done.load(std::memory_order_acquire) < nodes.size())
 			{
 				int index = 0;
 				if (!m_ready.tryPop(index))
 				{
+					if (thread != 0)
+					{
+						const auto now = std::chrono::steady_clock::now();
+						if (idleSince == std::chrono::steady_clock::time_point::max())
+							idleSince = now;
+						else if (now - idleSince > g_idleSpin)
+							return;
+					}
 					rt::cpuPause();
 					continue;
 				}
+				idleSince = std::chrono::steady_clock::time_point::max();
 				const auto i = static_cast<size_t>(index);
 				const auto start = std::chrono::steady_clock::now();
 				m_graph.processNode(i, m_frames, *m_transport);
@@ -241,6 +259,17 @@ namespace gnubase::engine::graph
 			node.pathLatency = latency + (node.processor != nullptr ? node.processor->latency() : 0);
 		}
 
+		// The most nodes at one depth: they are independent, so that many threads can work at once.
+		std::vector<size_t> depth(m_nodes.size(), 0);
+		std::vector<size_t> atDepth(m_nodes.size() + 1, 0);
+		for (const int index : m_order)
+		{
+			const auto i = static_cast<size_t>(index);
+			for (const int receiver : m_nodes[i].receivers)
+				depth[static_cast<size_t>(receiver)] = std::max(depth[static_cast<size_t>(receiver)], depth[i] + 1);
+			m_width = std::max(m_width, ++atDepth[depth[i]]);
+		}
+
 		m_samples.assign(channels * maxFrames, 0.0f);
 		m_channels.resize(channels);
 		for (size_t c = 0; c < channels; ++c)
@@ -276,9 +305,13 @@ namespace gnubase::engine::graph
 	{
 		GNUBASE_ASSERT(frames <= m_maxFrames);
 		frames = std::min(frames, m_maxFrames);
-		if (workers != nullptr && workers->workers() > 0)
+		// The same mode on every thread, whichever processes a node: subnormal numbers become zero.
+		const rt::ScopedDenormalsDisabled denormals;
+		const size_t usable = m_width > 1 ? m_width - 1 : 0; // workers besides this thread
+		const size_t helpers = workers != nullptr ? std::min(workers->workers(), usable) : 0;
+		if (helpers > 0)
 		{
-			m_scheduler->run(frames, transport, *workers);
+			m_scheduler->run(frames, transport, *workers, helpers);
 			return;
 		}
 		for (const int index : m_order)
