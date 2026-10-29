@@ -44,15 +44,30 @@ namespace gnubase::testformat
 			std::unique_ptr<testplugins::TestPlugin> (*create)(testplugins::Host& host);
 		};
 
-		constexpr uint32_t g_stallId = 1;
+		// test:stall's parameters.
+		constexpr uint32_t g_stallId = 1;  // Stall, in ms
+		constexpr uint32_t g_valueId = 2;  // Value, which does nothing
+		constexpr uint32_t g_resetsId = 3; // Resets, which counts the plugin's resets
 
 		// test:stall, only in this format: passes its input through, and setting Stall to more than 0 ms makes the
 		// plugin take that long once, on the thread that sets it. A parameter event while processing makes that block
-		// late, like a transient overrun.
+		// late, like a transient overrun. Value and Resets show in its state which parameter changes and resets
+		// reached it.
 		class Stall final : public testplugins::TestPlugin
 		{
 		public:
-			Stall() : TestPlugin({stallParam()}) {}
+			Stall()
+				: TestPlugin({param(g_stallId, "Stall", 10000.0, "ms"), param(g_valueId, "Value", 1.0, ""),
+					  param(g_resetsId, "Resets", 1.0e9, "")})
+			{
+			}
+
+			void resetState() override
+			{
+				double resets = 0.0;
+				paramValue(g_resetsId, resets);
+				setParam(g_resetsId, resets + 1.0);
+			}
 
 		protected:
 			void paramChanged(uint32_t id, double value) override
@@ -62,13 +77,13 @@ namespace gnubase::testformat
 			}
 
 		private:
-			static testplugins::ParamInfo stallParam()
+			static testplugins::ParamInfo param(uint32_t id, const char* name, double maximum, const char* unit)
 			{
 				testplugins::ParamInfo info;
-				info.id = g_stallId;
-				info.name = "Stall";
-				info.maxValue = 10000.0;
-				info.unit = "ms";
+				info.id = id;
+				info.name = name;
+				info.maxValue = maximum;
+				info.unit = unit;
 				return info;
 			}
 		};

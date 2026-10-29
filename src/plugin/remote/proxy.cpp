@@ -526,13 +526,16 @@ namespace gnubase::plugin::remote
 		m_busy.store(true);
 		if (Binding* live = m_live.load(); live != nullptr)
 		{
+			// Only a plugin that refused to start isn't started. If Start came too late, or the host couldn't take
+			// it yet, the next block sends it again first; the host ignores a Start while it processes.
+			bool refused = false;
 			if (!live->started)
 			{
-				// A late answer still started it: the host handles Start before the blocks that follow.
 				const Exchanged start = exchange(*live, nullptr, Start, m_noEvents, nullptr);
-				live->started = start.status != ProcessStatus::Error || start.late;
+				live->started = start.status != ProcessStatus::Error;
+				refused = start.sent && !start.late && !live->started;
 			}
-			started = live->started && failure() == Failure::None;
+			started = !refused && failure() == Failure::None;
 		}
 		m_busy.store(false, std::memory_order_release);
 		m_processing.store(started, std::memory_order_release);
@@ -542,7 +545,9 @@ namespace gnubase::plugin::remote
 	void RemotePlugin::stopProcessing() noexcept
 	{
 		m_busy.store(true);
-		if (Binding* live = m_live.load(); live != nullptr && live->started)
+		// A Start that came too late may still have started it.
+		if (Binding* live = m_live.load();
+			live != nullptr && (live->started || m_processing.load(std::memory_order_relaxed)))
 		{
 			if (failure() == Failure::None)
 				exchange(*live, nullptr, Stop, m_noEvents, nullptr);
@@ -565,12 +570,10 @@ namespace gnubase::plugin::remote
 			m_busy.store(true);
 			if (Binding* live = m_live.load(); live != nullptr)
 			{
-				// After a move, the new instance starts with its first block.
+				// After a move, the new instance starts with its first block. A Start that isn't answered in time is
+				// sent again with the next block, and this one is silence, so a callback waits one deadline at most.
 				if (!live->started)
-				{
-					const Exchanged start = exchange(*live, nullptr, Start, m_noEvents, nullptr);
-					live->started = start.status != ProcessStatus::Error || start.late;
-				}
+					live->started = exchange(*live, nullptr, Start, m_noEvents, nullptr).status != ProcessStatus::Error;
 				if (live->started && process.frames <= m_maxFrames)
 				{
 					const Exchanged block = exchange(*live, &process, m_flags, process.eventsIn, &process.eventsOut);
@@ -706,12 +709,12 @@ namespace gnubase::plugin::remote
 	void RemotePlugin::missed(Binding& binding, std::chrono::steady_clock::time_point sent) noexcept
 	{
 		// A late block is silence for this plugin only. A plugin late for longer than Deadlines::hang hangs: no new
-		// plugins go to its host, and the host's other plugins fail at their next block.
-		if (!m_late)
-		{
-			m_late = true;
+		// plugins go to its host, and the host's other plugins fail at their next block. A pause in processing that
+		// long, e.g. while stopped, starts a new run of late blocks.
+		if (!m_late || sent - m_lastSent >= m_deadlines.hang)
 			m_lateSince = sent;
-		}
+		m_late = true;
+		m_lastSent = sent;
 		if (std::chrono::steady_clock::now() - m_lateSince >= m_deadlines.hang)
 		{
 			fail(Failure::Deadline);
@@ -745,6 +748,22 @@ namespace gnubase::plugin::remote
 		}
 		const auto sentAt = std::chrono::steady_clock::now();
 		ipc::Connection& audio = binding.audio;
+		if (m_late)
+		{
+			// Answers that came too late are dropped before the next block goes out: the host can't answer a block
+			// while the answer ring is full of them, and would drop it unprocessed.
+			const ipc::WaitResult drained = audio.waitForAnswer(m_sequence + 1, std::chrono::nanoseconds::zero());
+			if (drained == ipc::WaitResult::PeerClosed)
+			{
+				fail(Failure::HostGone);
+				return result;
+			}
+			if (drained == ipc::WaitResult::Ready) // an answer to a block that was never sent
+			{
+				fail(Failure::Protocol);
+				return result;
+			}
+		}
 		ipc::AudioBlock block;
 		if (!audio.beginBlock(block)) // the host still has the two blocks before: it is far behind, or hangs
 		{
@@ -843,6 +862,7 @@ namespace gnubase::plugin::remote
 			}
 		}
 		m_late = false;
+		m_lastSent = sentAt;
 		ipc::AudioBlock reply;
 		if (audio.receiveBlock(reply) != ipc::ReadStatus::Ok)
 		{

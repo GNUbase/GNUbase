@@ -52,6 +52,9 @@ namespace
 	constexpr uint32_t g_latency = 1;   // test:latency, samples
 	constexpr uint32_t g_seed = 1;      // test:stateblob
 	constexpr uint32_t g_stateSize = 2; // test:stateblob, bytes
+	constexpr uint32_t g_stall = 1;     // test:stall, ms
+	constexpr uint32_t g_value = 2;     // test:stall
+	constexpr uint32_t g_resets = 3;    // test:stall
 
 	plugins::HostManager::Options testOptions()
 	{
@@ -222,6 +225,19 @@ namespace
 		double value = std::numeric_limits<double>::quiet_NaN();
 		CHECK(plugin::extension<plugin::Params>(plugin)->paramValue(param, value));
 		return value;
+	}
+
+	// A parameter's value in the plugin's state, as its host saved it.
+	double savedValue(plugin::Plugin& plugin, const std::string& id, uint32_t param)
+	{
+		const std::vector<uint8_t> state = stateOf(plugin);
+		LocalHost host;
+		std::unique_ptr<plugin::Plugin> local = testformat::createTestPlugin(id, host);
+		REQUIRE(local);
+		REQUIRE(local->init());
+		REQUIRE(plugin::extension<plugin::State>(*local)->loadState(
+			state.data(), state.size(), plugin::StateContext::Project));
+		return valueOf(*local, param);
 	}
 
 	// Waits until the condition holds, for up to `timeout`.
@@ -844,6 +860,92 @@ TEST_CASE("a late block is silence for that plugin and that block only", "[integ
 	CHECK(other.render(inputs[0]) == otherReference.render(inputs[0]));
 	CHECK(manager.hosts().at(0).state == "running");
 	CHECK(manager.takeFailures().empty());
+}
+
+TEST_CASE("a block its host can't take yet passes its parameter changes on, and resets the plugin", "[integration]")
+{
+	plugins::HostManager::Options options = testOptions();
+	options.deadlines.realtimeMinimum = 20ms;
+	options.deadlines.realtimeMaximum = 20ms;
+	options.deadlines.hang = 10s;
+	plugins::HostManager manager(options);
+	std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager, {"test:stall", "", "GNUbase"});
+	plugin::remote::RemotePlugin& plugin = *remote;
+	SlotGraph stalling(std::move(remote), plugin::ProcessMode::Realtime);
+	LocalHost host;
+	SlotGraph reference(localPlugin("test:stall", host), plugin::ProcessMode::Realtime);
+	Noise noise;
+	const std::vector<float> input = noise.block(128);
+	REQUIRE(stalling.render(input) == reference.render(input));
+	const double resets = savedValue(plugin, "test:stall", g_resets);
+
+	// The plugin takes 300 ms: that block and the next are late, and the one after doesn't fit.
+	CHECK(silent(stalling.render(input, {parameter(0, g_stall, 300.0)})));
+	CHECK(silent(stalling.render(input)));
+	CHECK(silent(stalling.render(input, {parameter(0, g_value, 0.75)})));
+	CHECK(eventually(
+		[&]
+		{
+			std::this_thread::sleep_for(5ms);
+			return stalling.render(input) == reference.render(input);
+		}));
+
+	// The change reached the plugin, which was reset since.
+	CHECK(plugin.failure() == plugin::remote::Failure::None);
+	CHECK(savedValue(plugin, "test:stall", g_value) == 0.75);
+	CHECK(savedValue(plugin, "test:stall", g_resets) > resets);
+}
+
+TEST_CASE("late blocks before a pause or a new start don't count towards the hang timeout", "[integration]")
+{
+	plugins::HostManager::Options options = testOptions();
+	options.deadlines.realtimeMinimum = 100ms;
+	options.deadlines.realtimeMaximum = 100ms;
+	options.deadlines.hang = 400ms;
+	plugins::HostManager manager(options);
+	std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager, {"test:stall", "", "GNUbase"});
+	plugin::remote::RemotePlugin& plugin = *remote;
+	SlotGraph stalling(std::move(remote), plugin::ProcessMode::Realtime);
+	SlotGraph other(createRemote(manager), plugin::ProcessMode::Realtime);
+	LocalHost host;
+	SlotGraph reference(localPlugin("test:stall", host), plugin::ProcessMode::Realtime);
+	Noise noise;
+	const std::vector<float> input = noise.block(128);
+	REQUIRE(stalling.render(input) == reference.render(input));
+
+	// A late block, then processing stops and starts again while the host is still busy with it: Stop and Start
+	// are late too, or don't fit.
+	CHECK(silent(stalling.render(input, {parameter(0, g_stall, 300.0)})));
+	plugin.stopProcessing();
+	CHECK(plugin.startProcessing());
+	CHECK(plugin.failure() == plugin::remote::Failure::None);
+
+	// Long after, another single late block is only silence.
+	std::this_thread::sleep_for(600ms);
+	CHECK(silent(stalling.render(input, {parameter(0, g_stall, 300.0)})));
+	CHECK(plugin.failure() == plugin::remote::Failure::None);
+	CHECK(eventually(
+		[&]
+		{
+			std::this_thread::sleep_for(5ms);
+			return stalling.render(input) == reference.render(input);
+		}));
+	CHECK(plugin.failure() == plugin::remote::Failure::None);
+
+	// The same without stopping: a late block, a pause longer than the hang timeout, another late block.
+	CHECK(silent(stalling.render(input, {parameter(0, g_stall, 300.0)})));
+	std::this_thread::sleep_for(600ms);
+	CHECK(silent(stalling.render(input, {parameter(0, g_stall, 300.0)})));
+	CHECK(plugin.failure() == plugin::remote::Failure::None);
+	CHECK(eventually(
+		[&]
+		{
+			std::this_thread::sleep_for(5ms);
+			return stalling.render(input) == reference.render(input);
+		}));
+	CHECK(plugin.failure() == plugin::remote::Failure::None);
+	CHECK(!silent(other.render(input)));
+	CHECK(manager.hosts().at(0).state == "running");
 }
 
 TEST_CASE("a plugin that answers no block for the hang timeout fails, and so do the other plugins of its host",
