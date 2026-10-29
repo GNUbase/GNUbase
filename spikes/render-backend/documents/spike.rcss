@@ -1,0 +1,171 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* The spike's look. Every tile shows one thing a render backend has to draw; there is no text until FreeType (#207). */
+/* RmlUi has no default stylesheet: everything is inline until a stylesheet says otherwise. */
+body, div {
+	display: block;
+}
+
+body {
+	width: 100%;
+	height: 100%;
+	box-sizing: border-box;
+	padding: 12dp;
+	background-color: #1c1f25;
+}
+
+.grid {
+	display: flex;
+	flex-wrap: wrap;
+}
+
+.tile {
+	width: 200dp;
+	height: 130dp;
+	margin: 8dp;
+	padding: 14dp;
+	box-sizing: border-box;
+	background-color: #2a2e37;
+	border-radius: 6dp;
+}
+
+.fill {
+	width: 100%;
+	height: 100%;
+}
+
+/* Geometry only: solid colours, borders and rounded corners. */
+.shapes {
+	background-color: #3b82c4;
+	border: 3dp #e8b44a;
+	border-radius: 18dp 4dp;
+}
+
+/* Shaders: gradients. */
+.linear {
+	decorator: linear-gradient(120deg, #2fbf71 0%, #2b6cb0 55%, #8e44ad 100%);
+	border-radius: 8dp;
+}
+
+.radial {
+	decorator: radial-gradient(circle, #f6d365 0%, #fda085 45%, #2a2e37 75%);
+}
+
+/* Layers and filters: shadows and blur. */
+.shadow {
+	margin: 12dp;
+	width: 130dp;
+	height: 70dp;
+	background-color: #d9dde5;
+	border-radius: 10dp;
+	box-shadow: #000c 4dp 8dp 14dp 2dp, #3b82c4 0dp 0dp 0dp 3dp inset;
+}
+
+.blur {
+	background-color: #e8b44a;
+	border: 8dp #c0392b;
+	filter: blur(4dp);
+}
+
+.drop {
+	margin: 10dp;
+	width: 100dp;
+	height: 70dp;
+	background-color: #2fbf71;
+	border-radius: 35dp;
+	filter: drop-shadow(#000d 6dp 6dp 6dp) brightness(1.2);
+}
+
+/* Clip masks: children cut by the parent's rounded corners. */
+.clip {
+	overflow: hidden;
+	border-radius: 40dp;
+	background-color: #3b82c4;
+}
+
+.clip div {
+	width: 200%;
+	height: 22dp;
+	margin-left: -30dp;
+	margin-bottom: 10dp;
+	background-color: #e8b44a;
+	transform: rotate(-20deg);
+}
+
+/* Masks: a gradient fades the element out. */
+.mask {
+	background-color: #8e44ad;
+	mask-image: linear-gradient(to right, #fff 30%, #fff0 100%);
+}
+
+/* Transforms. */
+.transform {
+	width: 80dp;
+	height: 80dp;
+	margin: 10dp 40dp;
+	background-color: #c0392b;
+	border-radius: 8dp;
+	transform: rotate(30deg) scale(0.9, 1.1);
+}
+
+/* Meters: many small rectangles whose height follows the level. */
+.meters {
+	display: flex;
+	align-items: flex-end;
+}
+
+.meter {
+	position: relative;
+	width: 6dp;
+	height: 100%;
+	margin-right: 2dp;
+	background-color: #14161a;
+}
+
+.level {
+	position: absolute;
+	bottom: 0;
+	width: 100%;
+	height: 50%;
+	decorator: linear-gradient(to top, #2fbf71 0%, #e8b44a 75%, #c0392b 100%);
+}
+
+.l15 { height: 15%; }
+.l40 { height: 40%; }
+.l65 { height: 65%; }
+.l80 { height: 80%; }
+.l95 { height: 95%; }
+
+/* Waveforms: geometry built from data, and a texture made once. */
+waveform, waveform-image {
+	display: block;
+	width: 100%;
+	height: 100%;
+	color: #9ad0ff;
+}
+
+waveform-image {
+	color: #ffb26b;
+}
+
+/* The benchmark: a mixer's meters above an arrangement's waveforms. */
+#meters {
+	height: 120dp;
+	margin-bottom: 8dp;
+}
+
+#meters .meter {
+	width: 3dp;
+	margin-right: 1dp;
+}
+
+/* Solid levels, so both backends draw the same: SDL_GPU's renderer has no gradients. */
+#meters .level {
+	decorator: none;
+	background-color: #2fbf71;
+}
+
+#waveforms waveform {
+	height: 9dp;
+	margin-bottom: 1dp;
+	background-color: #23262d;
+}
