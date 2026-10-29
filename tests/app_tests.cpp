@@ -4,6 +4,7 @@
 #include "app/scripttool.h"
 #include "engine/engine.h"
 #include "mcp/server.h"
+#include "platform/files.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -110,6 +111,16 @@ TEST_CASE("the command line selects headless mode, the MCP transport, the audio 
 	CHECK_THROWS_AS(parseOptions({"--script"}), UsageError);
 	CHECK_THROWS_AS(parseOptions({"--headless", "--script", "a.lua", "--mcp-http"}), UsageError); // one or the other
 	CHECK_THAT(usage(), ContainsSubstring("--headless"));
+}
+
+TEST_CASE("the command line chooses the settings folder, by default the user's", "[unit]")
+{
+	CHECK(parseOptions({}).settings.empty());
+	CHECK(parseOptions({"--settings", "portable/settings"}).settings == "portable/settings");
+	CHECK_THROWS_AS(parseOptions({"--settings"}), UsageError);
+	CHECK(settingsDirectory(parseOptions({"--settings", "portable"})) == std::filesystem::u8path("portable"));
+	CHECK(settingsDirectory(parseOptions({})) == gnubase::files::settingsDirectory());
+	CHECK_THAT(usage(), ContainsSubstring("--settings"));
 }
 
 TEST_CASE("MCP clients run Lua scripts in a sandbox with script_run", "[unit]")
@@ -232,6 +243,22 @@ TEST_CASE("headless GNUbase runs a Lua script that renders a project and checks 
 	CHECK_THAT(err.str(), ContainsSubstring("fail.lua:2: too quiet"));
 }
 
+TEST_CASE("headless GNUbase keeps the settings in the folder it is given", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Options options;
+	options.headless = true;
+	options.settings = (dir.path() / "settings").u8string();
+	options.script = writeScript(dir, "scale.lua", "gnubase.settings.set{key = 'ui.scale', value = 2}\n").u8string();
+	std::istringstream in;
+	std::ostringstream out;
+	std::ostringstream err;
+	CHECK(runHeadless(options, in, out, err) == g_exitOk);
+	CHECK(err.str().empty());
+	CHECK(Json::parse(gnubase::test::readText(dir.path() / "settings" / "settings.json")).at("values") ==
+		Json{{"ui.scale", 2}});
+}
+
 #ifdef GNUBASE_APP
 #ifndef _WIN32
 #include <sys/wait.h>
@@ -245,8 +272,9 @@ namespace
 		const std::string command = "\"" + std::string(GNUBASE_APP) + "\" " + arguments + " < \"" + in.u8string() +
 			"\" > \"" + out.u8string() + "\"";
 #ifdef _WIN32
-		// cmd.exe removes the outer quotes.
-		return std::system(("\"" + command + "\"").c_str()); // NOLINT(bugprone-command-processor): fixed test command
+		// cmd.exe removes the outer quotes. As UTF-16, so that paths with any characters come through.
+		// NOLINTNEXTLINE(bugprone-command-processor): fixed test command
+		return _wsystem(std::filesystem::u8path("\"" + command + "\"").wstring().c_str());
 #else
 		const int status = std::system(command.c_str()); // NOLINT(bugprone-command-processor): fixed test command
 		return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
@@ -269,9 +297,33 @@ TEST_CASE("the gnubase executable serves MCP on stdio in headless mode", "[integ
 	CHECK(runApp("--headless --script \"" + script.u8string() + "\"", in, out) == g_exitOk);
 	CHECK_THAT(gnubase::test::readText(out), ContainsSubstring("peak 0.50"));
 
+	const auto settings = dir.path() / "portable settings";
+	const auto theme = writeScript(dir, "theme.lua", "gnubase.settings.set{key = 'ui.theme', value = 'dark'}\n");
+	CHECK(runApp("--headless --settings \"" + settings.u8string() + "\" --script \"" + theme.u8string() + "\"", in,
+			  out) == g_exitOk);
+	CHECK(Json::parse(gnubase::test::readText(settings / "settings.json")).at("values").at("ui.theme") == "dark");
+
 	CHECK(runApp("--no-such-option", in, out) == g_exitUsage);
 	CHECK(runApp("--headless --project \"" + (dir.path() / "missing.dawproject").u8string() + "\"", in, out) ==
 		g_exitSetup);
+}
+
+TEST_CASE("the gnubase executable takes paths with any characters for --settings and --script", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	// The u with diaeresis is in the Western code pages, the two CJK characters in none of them.
+	const auto folder = dir.path() / std::filesystem::u8path("Einstellungen \xc3\xbc \xe8\xa8\xad\xe5\xae\x9a");
+	std::filesystem::create_directories(folder);
+	const auto script = folder / "theme.lua";
+	std::ofstream(script) << "gnubase.settings.set{key = 'ui.theme', value = 'dark'}\n";
+	const auto in = dir.path() / "in.jsonl";
+	const auto out = dir.path() / "out.jsonl";
+	std::ofstream(in).flush();
+	CHECK(runApp("--headless --settings \"" + (folder / "settings").u8string() + "\" --script \"" + script.u8string() +
+				  "\"",
+			  in, out) == g_exitOk);
+	CHECK(Json::parse(gnubase::test::readText(folder / "settings" / "settings.json")).at("values").at("ui.theme") ==
+		"dark");
 }
 
 TEST_CASE("the gnubase executable reports engine events to MCP clients on stdio", "[integration]")

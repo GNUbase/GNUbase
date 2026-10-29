@@ -19,6 +19,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -192,11 +193,27 @@ namespace gnubase::engine
 					[](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; });
 		}
 
+		// How project.xml refers to a media file it doesn't contain: relative to the project file if the media file
+		// is in the project file's folder, so that the folder can move to another place or machine; otherwise where
+		// it is.
+		std::string referencePath(const std::string& media, const std::filesystem::path& fileFolder)
+		{
+			std::error_code error;
+			const std::filesystem::path file = std::filesystem::absolute(pathOf(media), error).lexically_normal();
+			if (error)
+				return media;
+			const std::filesystem::path relative = file.lexically_relative(fileFolder);
+			if (relative.empty() || *relative.begin() == std::filesystem::path(".."))
+				return media;
+			return relative.generic_u8string();
+		}
+
 		// Writing project.xml.
 		class Exporter
 		{
 		public:
-			Exporter(const Project& project, bool embed) : m_project(project), m_embed(embed)
+			Exporter(const Project& project, bool embed, const std::filesystem::path& fileFolder)
+				: m_project(project), m_embed(embed)
 			{
 				// Embedded files keep their names, made unique where two would collide.
 				std::set<std::string> taken;
@@ -204,7 +221,7 @@ namespace gnubase::engine
 				{
 					if (!embed)
 					{
-						m_mediaPaths[id] = media.path;
+						m_mediaPaths[id] = referencePath(media.path, fileFolder);
 						continue;
 					}
 					std::string name = "audio/" + pathOf(media.path).filename().u8string();
@@ -526,7 +543,7 @@ namespace gnubase::engine
 				{
 					target = pathOf(xmlPath);
 					if (target.is_relative())
-						target = m_fileFolder / target;
+						target = (m_fileFolder / target).lexically_normal();
 				}
 				else
 				{
@@ -953,7 +970,8 @@ namespace gnubase::engine
 
 	void saveDawProject(const Project& project, const std::string& path, const DawProjectSaveOptions& options)
 	{
-		Exporter exporter(project, options.embedMedia);
+		Exporter exporter(
+			project, options.embedMedia, std::filesystem::absolute(pathOf(path)).parent_path().lexically_normal());
 		const std::string xml = exporter.projectXml();
 		Json document = toJson(project);
 		document["nextId"] = project.nextId;
@@ -970,6 +988,7 @@ namespace gnubase::engine
 
 		// Written next to the file and then moved over it, so a failed save leaves the old file as it was.
 		const std::string temporary = path + ".saving";
+		try
 		{
 			ZipWriter zip(temporary);
 			zip.add("project.xml", xml);
@@ -983,11 +1002,19 @@ namespace gnubase::engine
 				}
 			zip.finish();
 		}
+		catch (...)
+		{
+			// The writer is closed by now; a full disk or a media file that can't be read leaves nothing behind.
+			std::error_code ignored;
+			std::filesystem::remove(pathOf(temporary), ignored);
+			throw;
+		}
 		std::error_code error;
 		std::filesystem::rename(pathOf(temporary), pathOf(path), error);
 		if (error)
 		{
-			std::filesystem::remove(pathOf(temporary), error);
+			std::error_code ignored;
+			std::filesystem::remove(pathOf(temporary), ignored);
 			throw DawProjectError("can't save " + path + ": " + error.message());
 		}
 	}
@@ -1004,7 +1031,7 @@ namespace gnubase::engine
 		if (!root)
 			throw DawProjectError(path + " has no DAWproject project");
 
-		Importer importer(zip, pathOf(path).parent_path(), pathOf(mediaFolder));
+		Importer importer(zip, std::filesystem::absolute(pathOf(path)).parent_path(), pathOf(mediaFolder));
 		Project fromXml = importer.load(root);
 		if (!zip.contains(g_extensionEntry))
 			return fromXml;

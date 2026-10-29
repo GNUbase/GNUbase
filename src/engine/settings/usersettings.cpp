@@ -1,0 +1,168 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "engine/settings/usersettings.h"
+
+#include "engine/engine.h"
+
+#include <utility>
+
+namespace gnubase::engine::settings
+{
+	namespace
+	{
+		Json pathOrNull(const std::filesystem::path& path)
+		{
+			return path.empty() ? Json(nullptr) : Json(path.u8string());
+		}
+
+		// The setting as text for command descriptions: "`ui.scale` (number, 0.5 to 4, default 1.0): The UI scale".
+		std::string summary(const Definition& definition)
+		{
+			const Json& schema = definition.schema;
+			std::string text = "`" + definition.key + "` (";
+			if (const auto choices = schema.find("enum"); choices != schema.end())
+				text += "one of " + choices->dump();
+			else
+				text += schema.value("type", "any");
+			if (schema.contains("minimum") || schema.contains("maximum"))
+				text +=
+					", " + schema.value("minimum", Json("")).dump() + " to " + schema.value("maximum", Json("")).dump();
+			std::string description = definition.description;
+			if (!description.empty() && description.back() == '.')
+				description.pop_back(); // the settings are separated by semicolons
+			return text + ", default " + definition.defaultValue.dump() + "): " + description;
+		}
+	}
+
+	const Format& userFormat()
+	{
+		static const Format format = []
+		{
+			Format result;
+			result.name = "settings";
+			result.version = 1;
+			result.definitions = {
+				{"audio.backend", "The audio backend, such as wasapi or coreaudio, or empty for the preferred one.",
+					Json{{"type", "string"}}, ""},
+				{"audio.blockSize", "Frames per audio block.",
+					Json{{"type", "integer"}, {"minimum", 16}, {"maximum", 8192}}, 256},
+				{"audio.device", "The audio device's id, or empty for the backend's default device.",
+					Json{{"type", "string"}}, ""},
+				{"audio.sampleRate", "The audio device's sample rate in Hz.",
+					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
+				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
+					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
+				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
+			};
+			return result;
+		}();
+		return format;
+	}
+
+	void registerCommands(Engine& engine, Store& store)
+	{
+		Json keys = Json::array();
+		std::string list;
+		for (const Definition& definition : store.format().definitions)
+		{
+			keys.push_back(definition.key);
+			list += (list.empty() ? "" : "; ") + summary(definition);
+		}
+		const Json key = {{"type", "string"}, {"enum", keys}, {"description", "The setting."}};
+		const Json keyAndValue = {{"type", "object"},
+			{"properties", {{"key", {{"type", "string"}}}, {"value", {{"description", "The setting's value."}}}}},
+			{"required", Json::array({"key", "value"})}};
+
+		engine.registerCommand({"settings.get", 1, "The value of a user setting; settings.list describes them all.",
+								   {{"type", "object"}, {"properties", {{"key", key}}},
+									   {"required", Json::array({"key"})}, {"additionalProperties", false}},
+								   keyAndValue, true},
+			[&store](CommandContext& context)
+			{
+				const std::string name = context.parameters().at("key").get<std::string>();
+				return Json{{"key", name}, {"value", store.value(name)}};
+			});
+
+		engine.registerCommand(
+			{"settings.set", 1,
+				"Changes a user setting and saves the settings file, unless settings.list reports it read-only. User "
+				"settings belong to the user, not to a project. Emits settings.changed with the changed value, "
+				"unless it had that value already. The settings: " +
+					list + ".",
+				{{"type", "object"},
+					{"properties",
+						{{"key", key},
+							{"value", {{"description", "The new value; it must fit the setting's schema."}}}}},
+					{"required", Json::array({"key", "value"})}, {"additionalProperties", false}},
+				keyAndValue, false},
+			[&store](CommandContext& context)
+			{
+				const std::string name = context.parameters().at("key").get<std::string>();
+				const Json& value = context.parameters().at("value");
+				if (store.set(name, value))
+					context.emit("settings.changed", {{"values", {{name, value}}}});
+				return Json{{"key", name}, {"value", store.value(name)}};
+			});
+
+		engine.registerCommand(
+			{"settings.reset", 1,
+				"Puts a user setting back to its default, or every one without key, and saves the settings file. "
+				"Returns the settings that were reset with their values; emits settings.changed with those that "
+				"changed.",
+				{{"type", "object"}, {"properties", {{"key", key}}}, {"additionalProperties", false}},
+				{{"type", "object"}, {"properties", {{"values", {{"type", "object"}}}}},
+					{"required", Json::array({"values"})}},
+				false},
+			[&store](CommandContext& context)
+			{
+				Json changed = Json::object();
+				Json values = Json::object();
+				if (const auto name = context.parameters().find("key"); name != context.parameters().end())
+				{
+					const std::string setting = name->get<std::string>();
+					if (store.reset(setting))
+						changed[setting] = store.value(setting);
+					values[setting] = store.value(setting);
+				}
+				else
+				{
+					for (const std::string& setting : store.reset())
+						changed[setting] = store.value(setting);
+					values = store.values();
+				}
+				if (!changed.empty())
+					context.emit("settings.changed", {{"values", std::move(changed)}});
+				return Json{{"values", std::move(values)}};
+			});
+
+		engine.registerCommand(
+			{"settings.list", 1,
+				"Every user setting with its key, description, JSON schema, default and value; the settings file, "
+				"null when settings are kept in memory only; its version; and what happened when it was loaded: the "
+				"status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the "
+				"problems found, where the original file was kept, and whether the file is read-only for this "
+				"session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be "
+				"backed up or locked).",
+				CommandInfo{}.parameters,
+				{{"type", "object"},
+					{"properties",
+						{{"file", {{"type", Json::array({"string", "null"})}}}, {"version", {{"type", "integer"}}},
+							{"load", {{"type", "object"}}}, {"settings", {{"type", "array"}}}}},
+					{"required", Json::array({"file", "version", "load", "settings"})}},
+				true},
+			[&store](CommandContext&)
+			{
+				Json settings = Json::array();
+				for (const Definition& definition : store.format().definitions)
+					settings.push_back({{"key", definition.key}, {"description", definition.description},
+						{"schema", definition.schema}, {"default", definition.defaultValue},
+						{"value", store.value(definition.key)}});
+				const LoadReport& report = store.loadReport();
+				return Json{{"file", pathOrNull(store.file())}, {"version", store.format().version},
+					{"load",
+						{{"status", toString(report.status)}, {"fileVersion", report.fileVersion},
+							{"problems", report.problems}, {"backup", pathOrNull(report.backup)},
+							{"readOnly", report.readOnly}}},
+					{"settings", std::move(settings)}};
+			});
+	}
+}

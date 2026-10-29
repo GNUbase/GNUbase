@@ -35,6 +35,8 @@ add_library(gnubase-engine STATIC
 	graph/events.h
 	graph/graph.cpp graph/graph.h
 	graph/processor.h
+	jobs/jobs.cpp jobs/jobs.h
+	media/backup.cpp media/backup.h
 	peaks/peakcache.cpp peaks/peakcache.h
 	peaks/peaks.cpp peaks/peaks.h
 	processors/builtin.cpp processors/builtin.h
@@ -43,6 +45,8 @@ add_library(gnubase-engine STATIC
 	processors/testsynth.cpp processors/testsynth.h
 	schema.cpp schema.h
 	schematext.cpp schematext.h
+	settings/store.cpp settings/store.h
+	settings/usersettings.cpp settings/usersettings.h
 	time/signaturemap.cpp time/signaturemap.h
 	time/tempomap.cpp time/tempomap.h
 	time/timecode.cpp time/timecode.h)
