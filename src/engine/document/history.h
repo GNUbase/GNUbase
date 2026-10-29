@@ -44,13 +44,14 @@ namespace gnubase::engine
 	};
 
 	// The parts of a project that are not objects with ids, or keep their order: name, sample rate, tempo, time
-	// signatures, busses, the top-level tracks and the active marker track.
+	// signatures, auto fades, busses, the top-level tracks and the active marker track.
 	struct ProjectSettings
 	{
 		std::string name;
 		double sampleRate = 48000.0;
 		time::TempoMap tempo{120.0};
 		time::SignatureMap signatures;
+		AutoFades autoFades;
 		std::vector<Bus> busses;
 		std::vector<ObjectId> tracks;
 		ObjectId activeMarkerTrack = 0;
