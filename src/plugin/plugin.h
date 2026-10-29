@@ -23,7 +23,9 @@
 // - [any]: any thread, real-time safe.
 namespace gnubase::plugin
 {
-	// The version of this API. The plugin IPC (#62) checks it when a host process connects.
+	// The version of this API. The engine sends it in the handshake with a plugin host process, and a host built
+	// against another version refuses the connection (docs/plugin-api.md, "Split across the engine and the host
+	// process").
 	inline constexpr uint32_t g_apiVersion = 1;
 
 	// What a plugin is, from its format's metadata. Main thread, available without creating an instance.
@@ -38,7 +40,9 @@ namespace gnubase::plugin
 		std::vector<std::string> features; // CLAP's feature names: "instrument", "audio-effect", "note-effect", ...
 	};
 
-	// How a block is processed (docs/anticipative-processing.md).
+	// How a plugin's blocks are processed (docs/anticipative-processing.md). The host sets it on the main thread with
+	// Plugin::setProcessMode while the plugin is inactive, so changing it means a restart; Process::mode says what a
+	// block is, for information.
 	enum class ProcessMode : uint8_t
 	{
 		Realtime, // for the audio device, now
@@ -96,6 +100,8 @@ namespace gnubase::plugin
 	{
 		uint32_t frames = 0;
 		int64_t steadyTime = -1; // stream frame of the block's first frame: counts on while the device runs; -1 unknown
+		// What this block is, for information. The plugin behaves as setProcessMode() told it: a slot that moves from
+		// the prefetch to the live path during playback gets Realtime blocks before it is restarted with that mode.
 		ProcessMode mode = ProcessMode::Realtime;
 		const AudioBuffer* audioInputs = nullptr; // one per input port, in port order
 		uint32_t audioInputCount = 0;
@@ -152,6 +158,12 @@ namespace gnubase::plugin
 
 		// [main] Once, before every other call except descriptor().
 		virtual bool init() = 0;
+
+		// [main, inactive] How the following blocks will be processed, until the next call: CLAP's render mode, VST3's
+		// process mode (setupProcessing), AU's offline render property, LV2's free-wheeling port. To change it on an
+		// active plugin, the host deactivates it, sets the mode and activates it again. A plugin that processes every
+		// mode the same keeps this implementation.
+		virtual bool setProcessMode(ProcessMode /*mode*/) { return true; }
 
 		// [main] Allocate what processing needs. Every block has from minFrames to maxFrames frames.
 		virtual bool activate(double sampleRate, uint32_t minFrames, uint32_t maxFrames) = 0;

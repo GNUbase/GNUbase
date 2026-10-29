@@ -59,7 +59,9 @@ namespace gnubase::ipc
 		uint64_t segmentSize = 0; // bytes the layout takes (layoutFor)
 		Config config;
 		uint32_t enginePid = 0;
-		uint32_t hostPid = 0;          // written by the host when it attaches
+		// The host claims the segment by swapping in its process id, before it writes anything else. Reported by the
+		// host itself, so never a process id to kill.
+		std::atomic<uint32_t> hostPid{0};
 		uint16_t hostVersionMajor = 0; // written by the host when it attaches
 		uint16_t hostVersionMinor = 0;
 		std::atomic<uint32_t> engineState{0}; // PeerState
@@ -120,7 +122,8 @@ namespace gnubase::ipc
 
 	static_assert(std::is_standard_layout_v<SegmentHeader> && sizeof(SegmentHeader) == 128);
 	static_assert(offsetof(SegmentHeader, segmentSize) == 16 && offsetof(SegmentHeader, config) == 24);
-	static_assert(offsetof(SegmentHeader, enginePid) == 48 && offsetof(SegmentHeader, hostVersionMajor) == 56);
+	static_assert(offsetof(SegmentHeader, enginePid) == 48 && offsetof(SegmentHeader, hostPid) == 52);
+	static_assert(offsetof(SegmentHeader, hostVersionMajor) == 56);
 	static_assert(offsetof(SegmentHeader, engineState) == 60 && offsetof(SegmentHeader, hostState) == 64);
 	static_assert(sizeof(Config) == 24 && sizeof(RingIndices) == 128 && sizeof(WakeWord) == 64);
 	static_assert(sizeof(AudioLane) == 320 && sizeof(ControlLane) == 192);

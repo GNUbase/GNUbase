@@ -11,12 +11,11 @@ target_include_directories(gnubase-pluginhost-vst3 PUBLIC ${PROJECT_SOURCE_DIR}/
 target_link_libraries(gnubase-pluginhost-vst3 PUBLIC gnubase-plugin gnubase-platform PRIVATE vst3-hosting)
 gnubase_target_defaults(gnubase-pluginhost-vst3)
 
-# Everything of the plugin host process except main: the control loop, the format adapters and the built-in test
-# plugins. Tests link it to run the test plugins in-process.
+# Everything of the plugin host process except main: the control loop and the format adapters. The tests build a
+# host of their own from it with a test format added (tests/pluginhost).
 add_library(gnubase-pluginhost-core STATIC
 	formats.cpp formats.h
-	host.cpp host.h
-	testplugins.cpp testplugins.h)
+	host.cpp host.h)
 target_link_libraries(gnubase-pluginhost-core PUBLIC gnubase-plugin-remote gnubase-platform gnubase-pluginhost-vst3)
 gnubase_target_defaults(gnubase-pluginhost-core)
 

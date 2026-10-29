@@ -5,8 +5,10 @@
 #include "platform/process.h"
 
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <string_view>
 #include <utility>
 
 namespace gnubase::pluginhost
@@ -17,35 +19,56 @@ namespace gnubase::pluginhost
 		using namespace plugin::remote;
 
 		constexpr auto g_poll = 20ms;
-		constexpr auto g_engineCheck = 200ms;
+		constexpr auto g_watch = 50ms;
 		constexpr auto g_sendTimeout = 10s;
 		constexpr auto g_stopTimeout = 2000ms;
 	}
 
 	PluginHost::PluginHost(ipc::Connection control, Formats formats)
-		: m_control(std::move(control)), m_formats(std::move(formats))
+		: m_control(std::move(control)), m_writer(m_control), m_formats(std::move(formats))
 	{
+		m_watchdog = std::thread([this, engine = m_control.peerProcessId()] { watchEngine(engine); });
 	}
 
 	PluginHost::~PluginHost()
 	{
 		releaseStubs();
+		{
+			const std::scoped_lock lock(m_watchMutex);
+			m_watchStop = true;
+		}
+		m_watchWake.notify_all();
+		m_watchdog.join();
+	}
+
+	void PluginHost::watchEngine(uint32_t engine)
+	{
+		// The main loop notices the engine's end too, but a plugin may block the main thread for good: then only
+		// this thread can end the process. Linux has the kernel end it (Connection::open), Windows the engine's job
+		// object; macOS has neither.
+		const platform::ProcessWatch watch(engine);
+		std::unique_lock lock(m_watchMutex);
+		while (!m_watchWake.wait_for(lock, g_watch, [this] { return m_watchStop; }))
+		{
+			if (watch.gone())
+			{
+				logging::warning("The engine is gone; exiting");
+				logging::flush();
+				std::_Exit(0);
+			}
+		}
 	}
 
 	int PluginHost::run()
 	{
 		MessageReader reader(m_control);
-		const uint32_t engine = m_control.peerProcessId();
-		auto lastCheck = std::chrono::steady_clock::now();
-		Message type = Message::Hello;
-		ControlHeader header;
-		std::vector<uint8_t> body;
+		ControlMessage message;
 		while (m_exitCode < 0)
 		{
 			const ipc::WaitResult wait = m_control.waitForControl(g_poll);
 			ipc::ReadStatus status = ipc::ReadStatus::Empty;
-			while (m_exitCode < 0 && (status = reader.read(type, header, body)) == ipc::ReadStatus::Ok)
-				handle(type, header, body);
+			while (m_exitCode < 0 && (status = reader.read(message)) == ipc::ReadStatus::Ok)
+				handle(message);
 			if (status == ipc::ReadStatus::Corrupt)
 			{
 				logging::error("The engine broke the protocol");
@@ -56,30 +79,20 @@ namespace gnubase::pluginhost
 			// What the plugins asked of the engine.
 			for (auto& [instance, stub] : m_stubs)
 			{
-				const uint32_t bits = stub->idle();
-				for (uint32_t bit = 0; bit < 32; ++bit)
+				for (const auto& [notification, detail] : stub->idle())
 				{
-					if ((bits & (uint32_t{1} << bit)) == 0)
-						continue;
-					Writer notification;
-					notification.u32(bit);
-					send(Message::Notify, ControlHeader{0, instance}, notification.data());
+					Writer body;
+					body.u32(static_cast<uint32_t>(notification));
+					body.u32(detail);
+					send(Message::Notify, ControlHeader{0, instance}, body.data());
 				}
 			}
 
+			// The connection reports PeerClosed when the engine closed it and when the engine's process is gone.
 			if (wait == ipc::WaitResult::PeerClosed)
 			{
-				logging::info("The engine closed the connection");
+				logging::info("The engine closed the connection or is gone");
 				m_exitCode = 0;
-			}
-			else if (std::chrono::steady_clock::now() - lastCheck >= g_engineCheck)
-			{
-				lastCheck = std::chrono::steady_clock::now();
-				if (!platform::processExists(engine))
-				{
-					logging::warning("The engine is gone");
-					m_exitCode = 0;
-				}
 			}
 		}
 		if (!releaseStubs())
@@ -111,14 +124,43 @@ namespace gnubase::pluginhost
 
 	void PluginHost::send(Message type, const ControlHeader& header, const std::vector<uint8_t>& body)
 	{
-		if (!sendMessage(m_control, type, header, body, g_sendTimeout))
+		if (m_writer.send(type, header, body, g_sendTimeout) != SendResult::Sent)
 			logging::warning("Cannot send a message to the engine");
 	}
 
-	void PluginHost::handle(Message type, const ControlHeader& header, const std::vector<uint8_t>& body)
+	void PluginHost::reply(
+		const ControlHeader& header, bool ok, const std::string& error, const std::vector<uint8_t>& body)
 	{
-		Reader request(body);
-		Writer reply;
+		Writer message;
+		message.u8(ok ? 1 : 0);
+		message.string(ok ? std::string() : error);
+		message.raw(body.data(), ok ? body.size() : 0);
+		const SendResult result = m_writer.send(Message::Reply, header, message.data(), g_sendTimeout);
+		if (result == SendResult::TooLarge)
+		{
+			// E.g. a plugin state over the limit: the engine gets an error instead of waiting for nothing.
+			logging::error("A reply of {} bytes is too large", message.data().size());
+			reply(header, false,
+				"the reply is too large: " + std::to_string(message.data().size()) + " bytes, at most " +
+					std::to_string(m_writer.maxMessage() - sizeof(ControlHeader)),
+				{});
+		}
+		else if (result != SendResult::Sent)
+		{
+			logging::warning("Cannot send a reply to the engine");
+		}
+	}
+
+	void PluginHost::handle(const ControlMessage& message)
+	{
+		const ControlHeader& header = message.header;
+		if (message.tooLarge)
+		{
+			reply(header, false, "the request is too large", {});
+			return;
+		}
+		Reader request(message.body);
+		Writer body;
 		std::string error;
 		bool ok = false;
 		try
@@ -128,7 +170,7 @@ namespace gnubase::pluginhost
 				// The handshake comes first: the versions of the messages and of the plugin API.
 				const uint32_t protocol = request.u32();
 				const uint32_t api = request.u32();
-				if (type != Message::Hello || !request.ok())
+				if (message.type != Message::Hello || !request.ok())
 				{
 					error = "expected the handshake";
 				}
@@ -140,9 +182,9 @@ namespace gnubase::pluginhost
 				}
 				else
 				{
-					reply.u32(g_protocolVersion);
-					reply.u32(plugin::g_apiVersion);
-					reply.u32(platform::currentProcessId());
+					body.u32(g_protocolVersion);
+					body.u32(plugin::g_apiVersion);
+					body.u32(platform::currentProcessId());
 					ok = true;
 					m_greeted = true;
 				}
@@ -152,17 +194,17 @@ namespace gnubase::pluginhost
 					m_exitCode = 4;
 				}
 			}
-			else if (type == Message::Create)
+			else if (message.type == Message::Create)
 			{
-				ok = create(header.instance, request, reply, error);
+				ok = create(header.instance, request, body, error);
 			}
-			else if (type == Message::Destroy)
+			else if (message.type == Message::Destroy)
 			{
 				ok = destroy(header.instance, error);
 			}
 			else if (const auto found = m_stubs.find(header.instance); found != m_stubs.end())
 			{
-				ok = found->second->handle(type, request, reply, error);
+				ok = found->second->handle(message.type, request, body, error);
 			}
 			else
 			{
@@ -174,12 +216,7 @@ namespace gnubase::pluginhost
 			ok = false;
 			error = exception.what();
 		}
-
-		Writer message;
-		message.u8(ok ? 1 : 0);
-		message.string(ok ? std::string() : error);
-		message.raw(reply.data().data(), ok ? reply.data().size() : 0);
-		send(Message::Reply, header, message.data());
+		reply(header, ok, error, body.data());
 	}
 
 	bool PluginHost::create(uint32_t instance, Reader& request, Writer& reply, std::string& error)
@@ -209,13 +246,55 @@ namespace gnubase::pluginhost
 	{
 		const auto found = m_stubs.find(instance);
 		if (found == m_stubs.end())
-			return true;
+			return true; // e.g. one whose Create failed or came after the engine gave up on it
 		if (!found->second->stopAudio(g_stopTimeout))
 		{
 			error = "the plugin hangs in process()";
 			return false;
 		}
 		m_stubs.erase(found);
+		logging::info("Destroyed instance {}", instance);
 		return true;
+	}
+
+	int runPluginHost(int argc, char** argv, Formats formats)
+	{
+		std::string connection;
+		std::string logFile = "gnubase-pluginhost.log";
+		for (int i = 1; i + 1 < argc; i += 2)
+		{
+			const std::string_view option = argv[i];
+			if (option == "--connect")
+				connection = argv[i + 1];
+			else if (option == "--log")
+				logFile = argv[i + 1];
+		}
+		if (connection.empty())
+		{
+			std::fprintf(stderr, "usage: gnubase-pluginhost --connect <connection> [--log <file name>]\n");
+			return 2;
+		}
+
+		try
+		{
+			const logging::Session logSession(logging::defaultDirectory() / logFile);
+			ipc::Connection control;
+			try
+			{
+				control = ipc::Connection::open(connection);
+			}
+			catch (const ipc::Error& error)
+			{
+				logging::error("{}", std::string_view(error.what()));
+				return 3;
+			}
+			PluginHost host(std::move(control), std::move(formats));
+			return host.run();
+		}
+		catch (const std::exception& error)
+		{
+			std::fprintf(stderr, "GNUbase plugin host: %s\n", error.what());
+			return 1;
+		}
 	}
 }

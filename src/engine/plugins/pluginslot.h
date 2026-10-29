@@ -28,7 +28,8 @@ namespace gnubase::engine::plugins
 
 		plugin::Plugin& plugin() const { return *m_plugin; }
 
-		// How blocks are processed from now on; offline blocks get a longer deadline in a host process.
+		// How blocks are processed: from now on for Process::mode, and for the plugin's own setProcessMode() from the
+		// next prepare on, which activates it again. Offline blocks get a longer deadline in a host process.
 		void setProcessMode(plugin::ProcessMode mode) noexcept { m_mode.store(mode, std::memory_order_relaxed); }
 
 		// [any] True while the plugin fails its blocks, so the slot outputs silence.

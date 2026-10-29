@@ -44,6 +44,14 @@ namespace
 #endif
 	}
 
+	void countLatencyChange(const clap_host_t* host);
+	void countRescan(const clap_host_t* host, clap_param_rescan_flags flags);
+
+	// The host extensions TestHost offers: they count the plugin's calls.
+	const clap_host_latency_t g_hostLatency = {countLatencyChange};
+	const clap_host_params_t g_hostParams = {
+		countRescan, [](const clap_host_t*, clap_id, clap_param_clear_flags) {}, [](const clap_host_t*) {}};
+
 	// A minimal host that counts the plugin's requests.
 	struct TestHost
 	{
@@ -55,7 +63,14 @@ namespace
 			host.vendor = "GNUbase";
 			host.url = "https://github.com/GNUbase/GNUbase";
 			host.version = "0.1.0";
-			host.get_extension = [](const clap_host_t*, const char*) -> const void* { return nullptr; };
+			host.get_extension = [](const clap_host_t*, const char* id) -> const void*
+			{
+				if (std::strcmp(id, CLAP_EXT_LATENCY) == 0)
+					return &g_hostLatency;
+				if (std::strcmp(id, CLAP_EXT_PARAMS) == 0)
+					return &g_hostParams;
+				return nullptr;
+			};
 			host.request_restart = [](const clap_host_t* h) { ++static_cast<TestHost*>(h->host_data)->restarts; };
 			host.request_process = [](const clap_host_t*) {};
 			host.request_callback = [](const clap_host_t*) {};
@@ -68,7 +83,20 @@ namespace
 
 		clap_host_t host{};
 		int restarts = 0;
+		int latencyChanges = 0; // host_latency->changed()
+		int valueRescans = 0;   // host_params->rescan(CLAP_PARAM_RESCAN_VALUES)
 	};
+
+	void countLatencyChange(const clap_host_t* host)
+	{
+		++static_cast<TestHost*>(host->host_data)->latencyChanges;
+	}
+
+	void countRescan(const clap_host_t* host, clap_param_rescan_flags flags)
+	{
+		if ((flags & CLAP_PARAM_RESCAN_VALUES) != 0)
+			++static_cast<TestHost*>(host->host_data)->valueRescans;
+	}
 
 	// A loaded plugin file: clap_entry initialized, the plugin factory found.
 	class ClapLibrary
@@ -542,6 +570,7 @@ TEST_CASE("the CLAP latency test plugin reports its latency and delays by it", "
 	const auto& latency = plugin.extension<clap_plugin_latency_t>(CLAP_EXT_LATENCY);
 	plugin.activate();
 	REQUIRE(latency.get(plugin.get()) == 64);
+	CHECK(host.latencyChanges == 1); // from the 0 a CLAP host assumes
 
 	Block block(256);
 	block.in[0][10] = 1.0f;
@@ -561,6 +590,11 @@ TEST_CASE("the CLAP latency test plugin reports its latency and delays by it", "
 	plugin.deactivate();
 	plugin.activate();
 	CHECK(latency.get(plugin.get()) == 128);
+	CHECK(host.latencyChanges == 2);
+	// The same latency again: nothing to tell.
+	plugin.deactivate();
+	plugin.activate();
+	CHECK(host.latencyChanges == 2);
 }
 
 TEST_CASE("the CLAP parameter stress test plugin has 1024 parameters and sends automation", "[integration]")
@@ -629,6 +663,7 @@ TEST_CASE("the CLAP state blob test plugin round-trips its state byte for byte",
 	const ClapInstance copy(library, host);
 	CHECK(saveState(copy, 1 << 20) != state);
 	REQUIRE(loadState(copy, state, 777));
+	CHECK(host.valueRescans == 1); // the host reads the loaded values
 	CHECK(copy.paramValue(copy.paramId("Seed")) == 1234.0);
 	CHECK(saveState(copy, 1 << 20) == state);
 

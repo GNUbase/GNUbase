@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # GNUbase's test plugins (README.md): every plugin as a CLAP plugin in <build>/plugins/<config>/clap and as a VST3
 # plugin in <build>/plugins/<config>/vst3, with each platform's layout.
+# All of them are also linked into one static library for the test format of the tests' plugin host
+# (tests/pluginhost/testformat.h).
 
 # The CLAP SDK is header-only.
 add_library(clap-sdk INTERFACE)
@@ -80,3 +82,18 @@ foreach(target IN LISTS pluginTargets ITEMS gnubase-testplugin-clap gnubase-test
 endforeach()
 
 add_custom_target(gnubase-test-plugins DEPENDS ${pluginTargets})
+
+# The static library: each plugin's pluginDescriptor() and createPlugin() get the plugin's name as a prefix, e.g.
+# gainPluginDescriptor(), so they don't collide in one program.
+set(staticObjects "")
+foreach(name IN LISTS GNUBASE_TEST_PLUGINS)
+	set(target gnubase-test-${name}-static)
+	add_library(${target} OBJECT common/${name}.cpp)
+	target_compile_definitions(${target} PRIVATE pluginDescriptor=${name}PluginDescriptor
+		createPlugin=${name}CreatePlugin)
+	gnubase_target_defaults(${target})
+	list(APPEND staticObjects $<TARGET_OBJECTS:${target}>)
+endforeach()
+add_library(gnubase-test-plugins-static STATIC common/testplugin.cpp common/testplugin.h ${staticObjects})
+target_include_directories(gnubase-test-plugins-static PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/common)
+gnubase_target_defaults(gnubase-test-plugins-static)

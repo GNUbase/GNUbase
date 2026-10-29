@@ -660,7 +660,7 @@ Returns:
 
 #### `gnubase.pluginhost.check`
 
-Reports the plugins that failed since the last check because their host process crashed, missed a processing deadline (reason "hung") or broke the protocol, and emits plugin.failed for each with its instance, plugin id, process and reason. A failed plugin is bypassed and outputs silence. The engine runs this on its own as soon as a failure is detected.
+Reports the plugins that failed since the last check because their host process crashed, missed a processing deadline (reason "hung") or broke the protocol, and emits plugin.failed for each with its instance, plugin id, process and reason. A failed plugin is bypassed and outputs silence. Also emits pluginhost.changed for each hosting mode change whose moves are done. The engine runs this on its own as soon as a failure is detected or the moves are done.
 
 Returns:
 
@@ -682,7 +682,7 @@ Returns:
 
 #### `gnubase.pluginhost.setMode`
 
-Sets the hosting mode (see pluginhost.get). Plugins whose process changes are moved to their new process with their state, between two blocks, so they keep sounding the same; plugins that can't move stay where they are and are listed in errors. Emits pluginhost.changed.
+Sets the hosting mode (see pluginhost.get) and returns at once. Plugins whose process changes then move to their new process in the background, with their state, between two blocks, so they keep sounding the same. When they did, pluginhost.changed is emitted with the new status, and with the plugins that could not move and stay where they are in errors.
 
 Parameters:
 
@@ -698,7 +698,7 @@ Returns:
 
 #### `gnubase.pluginhost.setOverride`
 
-Gives a plugin (its id, e.g. "clap:com.example.synth") a hosting mode of its own, e.g. "perInstance" to isolate an unstable plugin, or removes its override with null. Moves the plugin's instances like pluginhost.setMode. Emits pluginhost.changed.
+Gives a plugin (its id, e.g. "clap:com.example.synth") a hosting mode of its own, e.g. "perInstance" to isolate an unstable plugin, or removes its override with null. Moves the plugin's instances like pluginhost.setMode, which emits pluginhost.changed when they moved.
 
 Parameters:
 

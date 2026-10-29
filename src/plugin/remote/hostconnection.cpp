@@ -5,6 +5,8 @@
 #include "platform/rt/realtime.h"
 
 #include <exception>
+#include <optional>
+#include <string>
 #include <utility>
 
 namespace gnubase::plugin::remote
@@ -13,8 +15,9 @@ namespace gnubase::plugin::remote
 	{
 		using namespace std::chrono_literals;
 
-		constexpr auto g_poll = 20ms;
+		constexpr auto g_poll = 5ms;
 		constexpr auto g_exitWait = 2000ms;
+		constexpr auto g_killWait = 2000ms;
 	}
 
 	std::shared_ptr<HostConnection> HostConnection::launch(const LaunchOptions& options)
@@ -27,17 +30,18 @@ namespace gnubase::plugin::remote
 			std::vector<std::string> arguments{"--connect", host->m_control.name()};
 			if (!options.logFile.empty())
 				arguments.insert(arguments.end(), {"--log", options.logFile});
-			host->m_process = platform::ChildProcess::start(options.executable, arguments);
+			host->m_process = platform::ChildProcess::start(options.executable, arguments, options.errorOutput);
 		}
 		catch (const std::exception& error)
 		{
 			throw LaunchError(std::string("Cannot start the plugin host: ") + error.what());
 		}
 		host->m_processId = host->m_process.id();
+		host->m_writer = std::make_unique<MessageWriter>(host->m_control);
 
 		// Wait for the host to open the connection, unless it exits first, e.g. because its IPC version differs.
 		const auto deadline = std::chrono::steady_clock::now() + options.timeout;
-		while (!host->m_control.waitForPeer(g_poll))
+		while (!host->m_control.waitForPeer(20ms))
 		{
 			if (!host->m_process.running())
 				throw LaunchError("The plugin host exited before it connected (exit code " +
@@ -68,34 +72,60 @@ namespace gnubase::plugin::remote
 		m_control.close(); // the host exits when it sees this
 		if (m_thread.joinable())
 			m_thread.join();
-		const std::scoped_lock lock(m_processMutex);
+		// The plugin control thread is gone: the process is this thread's now.
 		if (!m_process.wait(g_exitWait))
 			logging::warning("Plugin host {} did not exit; ending it", m_processId);
-		// ChildProcess kills a process that still runs.
-	}
-
-	bool HostConnection::checkExited()
-	{
-		rt::assertNotRealtime("HostConnection::checkExited");
-		{
-			const std::scoped_lock lock(m_processMutex);
-			if (!m_process.running())
-				m_exited = true;
-		}
-		return exited();
+		// ChildProcess kills a process that still runs, waiting a bounded time.
 	}
 
 	void HostConnection::kill()
 	{
-		const std::scoped_lock lock(m_processMutex);
-		m_process.kill();
-		m_exited = true;
+		rt::assertNotRealtime("HostConnection::kill");
+		m_killRequested = true;
+		if (!m_thread.joinable())
+			return;
+		const auto deadline = std::chrono::steady_clock::now() + g_killWait;
+		while (!exited() && std::chrono::steady_clock::now() < deadline)
+			std::this_thread::sleep_for(1ms);
 	}
 
-	void HostConnection::onNotification(std::function<void(uint32_t instance, Notification notification)> handler)
+	void HostConnection::listen(uint32_t instance, Listener listener)
 	{
-		const std::scoped_lock lock(m_mutex);
-		m_notify = std::move(handler);
+		rt::assertNotRealtime("HostConnection::listen");
+		const std::scoped_lock lock(m_dispatchMutex);
+		if (listener)
+			m_listeners[instance] = std::move(listener);
+		else
+			m_listeners.erase(instance);
+	}
+
+	bool HostConnection::send(Message type, uint32_t instance, uint32_t request, const std::vector<uint8_t>& body,
+		std::chrono::milliseconds timeout, std::string& error)
+	{
+		ControlHeader header;
+		header.request = request;
+		header.instance = instance;
+		SendResult result = SendResult::Sent;
+		{
+			const std::scoped_lock lock(m_sendMutex);
+			result = m_writer->send(type, header, body, timeout);
+		}
+		switch (result)
+		{
+		case SendResult::Sent:
+			return true;
+		case SendResult::TooLarge:
+			error = "the request is too large: " + std::to_string(body.size()) + " bytes, at most " +
+				std::to_string(m_writer->maxMessage() - sizeof(ControlHeader));
+			return false;
+		case SendResult::Timeout:
+			error = "the plugin host does not read requests";
+			return false;
+		case SendResult::Closed:
+			error = "the plugin host is gone";
+			return false;
+		}
+		return false;
 	}
 
 	HostConnection::Reply HostConnection::request(
@@ -103,84 +133,112 @@ namespace gnubase::plugin::remote
 	{
 		rt::assertNotRealtime("HostConnection::request");
 		Pending pending;
-		ControlHeader header;
-		header.instance = instance;
+		uint32_t id = 0;
 		{
 			const std::scoped_lock lock(m_mutex);
 			if (exited())
-				return {false, "the plugin host is gone", {}};
-			header.request = m_nextRequest++;
-			if (header.request == 0)
-				header.request = m_nextRequest++;
-			m_pending[header.request] = &pending;
+				return {false, "the plugin host is gone", {}, false};
+			id = m_nextRequest++;
+			if (id == 0)
+				id = m_nextRequest++;
+			m_pending[id] = &pending;
 		}
-		bool sent = false;
-		{
-			const std::scoped_lock lock(m_sendMutex);
-			sent = sendMessage(m_control, type, header, body, timeout);
-		}
+		std::string error;
+		const bool sent = send(type, instance, id, body, timeout, error);
 
 		std::unique_lock lock(m_mutex);
 		if (sent)
 			m_replied.wait_for(lock, timeout, [&] { return pending.done; });
-		m_pending.erase(header.request);
+		m_pending.erase(id);
 		if (pending.done)
 			return std::move(pending.reply);
-		return {false, sent ? "the plugin host did not answer in time" : "the plugin host does not read requests", {}};
+		// A reply that comes later finds no request and is dropped.
+		if (sent)
+			return {false, "the plugin host did not answer in time", {}, true};
+		return {false, error, {}, false};
+	}
+
+	bool HostConnection::post(
+		Message type, uint32_t instance, const std::vector<uint8_t>& body, std::chrono::milliseconds timeout)
+	{
+		rt::assertNotRealtime("HostConnection::post");
+		uint32_t id = 0;
+		{
+			const std::scoped_lock lock(m_mutex);
+			if (exited())
+				return false;
+			id = m_nextRequest++;
+			if (id == 0)
+				id = m_nextRequest++;
+		}
+		std::string error;
+		return send(type, instance, id, body, timeout, error);
+	}
+
+	void HostConnection::received(const ControlMessage& message)
+	{
+		if (message.type == Message::Reply)
+		{
+			Reply reply;
+			if (message.tooLarge)
+			{
+				reply.error = "the reply of the plugin host is too large";
+			}
+			else
+			{
+				Reader replyReader(message.body);
+				reply.ok = replyReader.u8() != 0;
+				reply.error = replyReader.string();
+				if (!replyReader.ok())
+					reply = {false, "the plugin host sent an invalid reply", {}, false};
+				else
+					reply.body.assign(
+						message.body.end() - static_cast<std::ptrdiff_t>(replyReader.remaining()), message.body.end());
+			}
+			const std::scoped_lock lock(m_mutex);
+			if (const auto found = m_pending.find(message.header.request); found != m_pending.end())
+			{
+				found->second->reply = std::move(reply);
+				found->second->done = true;
+				m_replied.notify_all();
+			}
+		}
+		else if (message.type == Message::Notify && !message.tooLarge)
+		{
+			Reader notifyReader(message.body);
+			const uint32_t notification = notifyReader.u32();
+			const uint32_t detail = notifyReader.u32();
+			// Notifications of a newer minor version are ignored.
+			if (!notifyReader.ok() || notification < 1 || notification > g_lastNotification)
+				return;
+			const std::scoped_lock lock(m_dispatchMutex);
+			if (const auto found = m_listeners.find(message.header.instance); found != m_listeners.end())
+				found->second(static_cast<Notification>(notification), detail);
+		}
+		// Other types are from a newer minor version: ignored.
 	}
 
 	void HostConnection::run()
 	{
 		MessageReader reader(m_control);
-		Message type = Message::Reply;
-		ControlHeader header;
-		std::vector<uint8_t> body;
+		ControlMessage message;
 		while (!m_stopping)
 		{
 			const ipc::WaitResult wait = m_control.waitForControl(g_poll);
 			ipc::ReadStatus status = ipc::ReadStatus::Empty;
-			while ((status = reader.read(type, header, body)) == ipc::ReadStatus::Ok)
-			{
-				if (type == Message::Reply)
-				{
-					Reader replyReader(body);
-					Reply reply;
-					reply.ok = replyReader.u8() != 0;
-					reply.error = replyReader.string();
-					if (!replyReader.ok())
-						reply = {false, "the plugin host sent an invalid reply", {}};
-					else
-						reply.body.assign(
-							body.end() - static_cast<std::ptrdiff_t>(replyReader.remaining()), body.end());
-					const std::scoped_lock lock(m_mutex);
-					if (const auto found = m_pending.find(header.request); found != m_pending.end())
-					{
-						found->second->reply = std::move(reply);
-						found->second->done = true;
-						m_replied.notify_all();
-					}
-				}
-				else if (type == Message::Notify)
-				{
-					Reader notifyReader(body);
-					const uint32_t bit = notifyReader.u32();
-					std::function<void(uint32_t, Notification)> notify;
-					{
-						const std::scoped_lock lock(m_mutex);
-						notify = m_notify;
-					}
-					// Notifications of a newer minor version are ignored.
-					if (notifyReader.ok() && bit <= static_cast<uint32_t>(Notification::LatencyChanged) && notify)
-						notify(header.instance, static_cast<Notification>(bit));
-				}
-				// Other types are from a newer minor version: ignored.
-			}
+			while ((status = reader.read(message)) == ipc::ReadStatus::Ok)
+				received(message);
 			if (status == ipc::ReadStatus::Corrupt)
 			{
 				logging::error("Plugin host {} broke the protocol; ending it", m_processId);
-				kill();
+				m_killRequested = true;
 			}
-			if (wait == ipc::WaitResult::PeerClosed || checkExited())
+			if (m_killRequested)
+			{
+				m_process.kill();
+				break;
+			}
+			if (wait == ipc::WaitResult::PeerClosed || !m_process.running())
 				break;
 		}
 		finish();
@@ -190,17 +248,14 @@ namespace gnubase::plugin::remote
 	{
 		if (!m_stopping)
 		{
-			{
-				const std::scoped_lock lock(m_processMutex);
-				m_process.wait(0ms);
-			}
-			logging::warning("Plugin host {} is gone", m_processId);
+			const std::optional<int> code = m_process.wait(0ms);
+			logging::warning("Plugin host {} is gone (exit code {})", m_processId, code.value_or(-1));
 		}
 		m_exited = true;
 		const std::scoped_lock lock(m_mutex);
 		for (auto& [id, pending] : m_pending)
 		{
-			pending->reply = {false, "the plugin host is gone", {}};
+			pending->reply = {false, "the plugin host is gone", {}, false};
 			pending->done = true;
 		}
 		m_replied.notify_all();

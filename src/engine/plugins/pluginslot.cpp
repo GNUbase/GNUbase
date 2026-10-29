@@ -77,9 +77,11 @@ namespace gnubase::engine::plugins
 			m_plugin->deactivate();
 		}
 		m_started = false;
+		m_plugin->setProcessMode(m_mode.load(std::memory_order_relaxed));
+		m_active = m_plugin->activate(sampleRate, 1, maxFrames);
+		// The ports as activate left them: a plugin may change them while inactive, and a remote one reads them again.
 		allocate(true, maxFrames);
 		allocate(false, maxFrames);
-		m_active = m_plugin->activate(sampleRate, 1, maxFrames);
 	}
 
 	uint32_t PluginSlot::latency() const

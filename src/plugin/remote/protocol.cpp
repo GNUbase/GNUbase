@@ -46,6 +46,7 @@ namespace gnubase::plugin::remote
 			writer.f64(param.minimum);
 			writer.f64(param.maximum);
 			writer.f64(param.defaultValue);
+			writer.u32(param.stepCount);
 		}
 
 		void read(Reader& reader, ParamInfo& param)
@@ -57,6 +58,7 @@ namespace gnubase::plugin::remote
 			param.minimum = reader.f64();
 			param.maximum = reader.f64();
 			param.defaultValue = reader.f64();
+			param.stepCount = reader.u32();
 		}
 
 		void writeStrings(Writer& writer, const std::vector<std::string>& strings)
@@ -82,11 +84,16 @@ namespace gnubase::plugin::remote
 			return channels;
 		}
 
-		// Payload bytes per control ring message, a multiple of 8 so fragments stay aligned.
-		uint32_t maxPayload(const ipc::Connection& connection)
+		// Bytes per control ring message, PartHeader included: a multiple of 8, so parts stay aligned.
+		uint32_t maxPart(const ipc::Connection& connection)
 		{
 			return ((connection.config().controlRingSize / 2) - static_cast<uint32_t>(sizeof(ipc::MessageHeader))) &
 				~uint32_t{7};
+		}
+
+		bool isCoreEvent(const Event& event)
+		{
+			return event.space == g_coreEventSpace;
 		}
 	}
 
@@ -310,7 +317,7 @@ namespace gnubase::plugin::remote
 			for (AudioPortInfo& port : *ports)
 				read(reader, port);
 		}
-		const uint32_t params = reader.count(48);
+		const uint32_t params = reader.count(56);
 		info.params.resize(params);
 		info.values.resize(params);
 		for (uint32_t i = 0; i < params; ++i)
@@ -329,7 +336,7 @@ namespace gnubase::plugin::remote
 		for (const Event& event : events)
 		{
 			writer.raw(&event, sizeof(event));
-			if (event.type == EventType::Sysex)
+			if (isCoreEvent(event) && event.type == EventType::Sysex)
 				writer.bytes(events.bytes(event), event.data[1]);
 		}
 	}
@@ -342,56 +349,86 @@ namespace gnubase::plugin::remote
 			Event event;
 			if (!reader.raw(&event, sizeof(event)))
 				return false;
-			if (event.type == EventType::Sysex)
+			if (isCoreEvent(event) && event.type == EventType::Sysex)
 			{
 				const std::vector<uint8_t> bytes = reader.bytes();
 				if (!reader.ok() ||
 					!events.pushSysex(event.offset, event.port, bytes.data(), static_cast<uint32_t>(bytes.size())))
 					return false;
 			}
-			else if (static_cast<uint8_t>(event.type) > static_cast<uint8_t>(EventType::Sysex) || !events.push(event))
+			else if ((isCoreEvent(event) &&
+						 static_cast<uint8_t>(event.type) > static_cast<uint8_t>(EventType::Sysex)) ||
+				!events.push(event))
 			{
-				return false;
+				return false; // events of other namespaces pass as they are
 			}
 		}
 		return reader.ok();
 	}
 
-	bool sendMessage(ipc::Connection& connection, Message type, const ControlHeader& header,
-		const std::vector<uint8_t>& body, std::chrono::nanoseconds timeout)
+	MessageWriter::MessageWriter(ipc::Connection& connection, size_t maxMessage)
+		: m_connection(&connection), m_maxMessage(maxMessage)
 	{
-		std::vector<uint8_t> payload(sizeof(header) + body.size());
-		std::memcpy(payload.data(), &header, sizeof(header));
-		if (!body.empty())
-			std::memcpy(payload.data() + sizeof(header), body.data(), body.size());
+	}
+
+	SendResult MessageWriter::send(
+		Message type, const ControlHeader& header, const std::vector<uint8_t>& body, std::chrono::nanoseconds timeout)
+	{
+		const size_t size = sizeof(header) + body.size();
+		if (size > m_maxMessage)
+			return SendResult::TooLarge;
+		const uint32_t partSize = maxPart(*m_connection);
+		const size_t payloadPerPart = partSize - sizeof(PartHeader);
+		std::vector<uint8_t> part(std::min<size_t>(partSize, sizeof(PartHeader) + size));
+		PartHeader partHeader;
+		partHeader.message = m_nextMessage++;
+		if (m_nextMessage == 0)
+			m_nextMessage = 1;
 
 		const auto deadline = std::chrono::steady_clock::now() + timeout;
-		const uint32_t chunk = maxPayload(connection);
-		size_t sent = 0;
+		size_t sent = 0; // bytes of the ControlHeader and the body
 		do
 		{
-			const size_t size = std::min<size_t>(chunk, payload.size() - sent);
-			const bool last = sent + size == payload.size();
+			const size_t count = std::min(payloadPerPart, size - sent);
+			const bool last = sent + count == size;
+			// The part: its header, then the next bytes of the ControlHeader and the body.
+			std::memcpy(part.data(), &partHeader, sizeof(partHeader));
+			size_t at = sizeof(partHeader);
+			size_t from = sent;
+			if (from < sizeof(header))
+			{
+				const size_t headerBytes = std::min(sizeof(header) - from, count);
+				std::memcpy(part.data() + at, reinterpret_cast<const uint8_t*>(&header) + from, headerBytes);
+				at += headerBytes;
+				from += headerBytes;
+			}
+			const size_t bodyBytes = sizeof(partHeader) + count - at;
+			if (bodyBytes > 0)
+				std::memcpy(part.data() + at, body.data() + (from - sizeof(header)), bodyBytes);
+
 			const Message partType = last ? type : Message::Fragment;
 			// The ring is full until the peer reads; the control path may wait for that.
-			while (!connection.sendControl(
-				static_cast<uint16_t>(partType), g_messageVersion, payload.data() + sent, static_cast<uint32_t>(size)))
+			while (!m_connection->sendControl(static_cast<uint16_t>(partType), g_messageVersion, part.data(),
+				static_cast<uint32_t>(sizeof(partHeader) + count)))
 			{
-				if (connection.peerState() == ipc::PeerState::Closed || std::chrono::steady_clock::now() >= deadline)
-					return false;
+				if (m_connection->peerState() == ipc::PeerState::Closed)
+					return SendResult::Closed;
+				if (std::chrono::steady_clock::now() >= deadline)
+					return SendResult::Timeout;
 				std::this_thread::sleep_for(std::chrono::milliseconds(1));
 			}
-			sent += size;
-		} while (sent < payload.size());
-		return true;
+			sent += count;
+			++partHeader.index;
+		} while (sent < size);
+		return SendResult::Sent;
 	}
 
-	MessageReader::MessageReader(ipc::Connection& connection)
-		: m_connection(&connection), m_buffer(connection.config().controlRingSize / 2)
+	MessageReader::MessageReader(ipc::Connection& connection, size_t maxMessage)
+		: m_connection(&connection), m_maxMessage(maxMessage), m_buffer(connection.config().controlRingSize / 2)
 	{
 	}
 
-	ipc::ReadStatus MessageReader::read(Message& type, ControlHeader& header, std::vector<uint8_t>& body)
+	ipc::ReadStatus MessageReader::read(ControlMessage& message)
 	{
 		if (m_corrupt)
 			return ipc::ReadStatus::Corrupt;
@@ -404,23 +441,61 @@ namespace gnubase::plugin::remote
 				m_corrupt = status == ipc::ReadStatus::Corrupt;
 				return status;
 			}
-			if (m_pending.size() + part.size > g_maxControlMessage)
+			if (part.size < sizeof(PartHeader))
 			{
 				m_corrupt = true;
 				return ipc::ReadStatus::Corrupt;
 			}
-			const auto* bytes = reinterpret_cast<const uint8_t*>(m_buffer.data());
-			m_pending.insert(m_pending.end(), bytes, bytes + part.size);
+			PartHeader partHeader;
+			std::memcpy(&partHeader, m_buffer.data(), sizeof(partHeader));
+			if (partHeader.index == 0)
+			{
+				// A new message. The parts of one whose sender gave up are dropped.
+				if (m_inMessage)
+					m_droppedParts += m_nextIndex;
+				m_inMessage = true;
+				m_message = partHeader.message;
+				m_nextIndex = 0;
+				m_tooLarge = false;
+				m_pending.clear();
+			}
+			else if (!m_inMessage || partHeader.message != m_message || partHeader.index != m_nextIndex)
+			{
+				// The rest of a message whose start was dropped.
+				++m_droppedParts;
+				continue;
+			}
+			++m_nextIndex;
+
+			const auto* bytes = reinterpret_cast<const uint8_t*>(m_buffer.data()) + sizeof(partHeader);
+			const size_t size = part.size - sizeof(partHeader);
+			if (!m_tooLarge && m_pending.size() + size > m_maxMessage)
+			{
+				// Too large: only the ControlHeader is kept, so the receiver can answer it.
+				m_tooLarge = true;
+				m_pending.resize(std::min(m_pending.size(), sizeof(ControlHeader)));
+			}
+			if (!m_tooLarge)
+				m_pending.insert(m_pending.end(), bytes, bytes + size);
+			else if (m_pending.size() < sizeof(ControlHeader))
+				m_pending.insert(
+					m_pending.end(), bytes, bytes + std::min(size, sizeof(ControlHeader) - m_pending.size()));
 			if (part.type == static_cast<uint16_t>(Message::Fragment))
 				continue;
+
+			m_inMessage = false;
 			if (m_pending.size() < sizeof(ControlHeader))
 			{
 				m_corrupt = true;
 				return ipc::ReadStatus::Corrupt;
 			}
-			type = static_cast<Message>(part.type);
-			std::memcpy(&header, m_pending.data(), sizeof(header));
-			body.assign(m_pending.begin() + sizeof(header), m_pending.end());
+			message.type = static_cast<Message>(part.type);
+			std::memcpy(&message.header, m_pending.data(), sizeof(message.header));
+			message.tooLarge = m_tooLarge;
+			if (m_tooLarge)
+				message.body.clear();
+			else
+				message.body.assign(m_pending.begin() + sizeof(ControlHeader), m_pending.end());
 			m_pending.clear();
 			return ipc::ReadStatus::Ok;
 		}

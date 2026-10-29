@@ -23,7 +23,9 @@ namespace gnubase::platform
 		SharedMemory& operator=(const SharedMemory&) = delete;
 
 		// Creates a region of at least `size` bytes, filled with zeros. Names are 1 to g_maxNameLength letters, digits,
-		// '-' and '_'. Throws std::system_error if the name is taken or invalid, or the system refuses.
+		// '-' and '_'. Throws std::system_error if the name is taken or invalid, or the system refuses, also when it
+		// cannot back every page now (Linux and Windows reserve them up front). Creating and opening touch every page,
+		// so that audio threads take no page faults on the memory.
 		static SharedMemory create(const std::string& name, size_t size);
 
 		// Maps a region another process created. Throws std::system_error if there is none under the name.

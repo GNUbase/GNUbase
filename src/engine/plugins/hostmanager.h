@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "plugin/plugin.h"
 #include "plugin/remote/hostconnection.h"
 #include "plugin/remote/proxy.h"
 
-#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -67,8 +69,14 @@ namespace gnubase::engine::plugins
 
 	// The engine's host connection manager. It starts plugin host processes and decides which process runs a plugin,
 	// by the hosting mode; when the mode changes, it moves the affected plugins to their new process with their
-	// state. A monitor thread watches the remote plugins and their processes and reports failures (onFailure), which
-	// the engine announces as plugin.failed events. Plugins are created and moved on the command thread.
+	// state.
+	//
+	// Threads: everything that waits for a host process runs on the manager's job thread, one job after the other, so
+	// the command thread never waits for a plugin: starting processes, creating plugins, moving them, and fetching
+	// what their notifications say changed. Callers run their own slow plugin calls (activate, states) there with
+	// run(). Host processes are started from the job thread only, which lives as long as the manager: on Linux a
+	// process ends with the thread that started it. A monitor thread watches the remote plugins and their processes
+	// and reports failures; the engine announces them as plugin.failed events.
 	class HostManager
 	{
 	public:
@@ -82,21 +90,40 @@ namespace gnubase::engine::plugins
 
 		HostManager();
 		explicit HostManager(Options options);
+		// Ends the job and monitor threads; queued jobs are dropped, their futures report broken promises. Remote
+		// plugins that outlive the manager fail (Failure::HostGone).
 		~HostManager();
 		HostManager(const HostManager&) = delete;
 		HostManager& operator=(const HostManager&) = delete;
+		HostManager(HostManager&&) = delete;
+		HostManager& operator=(HostManager&&) = delete;
 
-		// A remote plugin in the host process the hosting mode picks for it, started if needed; init() creates the
-		// instance there. Throws plugin::remote::LaunchError if the process can't be started.
-		std::unique_ptr<plugin::remote::RemotePlugin> create(const PluginRef& plugin);
+		// [any] The plugin host program for processes started from now on; empty: the one next to the running
+		// program. Tests use one with test plugins.
+		void setExecutable(std::filesystem::path executable);
+
+		// [any] Runs `job` on the job thread after the jobs before it. The future reports its exception, if any.
+		std::future<void> run(std::function<void()> job);
+
+		// [any] Creates a remote plugin on the job thread: in the host process the hosting mode picks, started if
+		// needed, and initialized there. `engineHost` gets what the plugin asks of the engine; it must outlive the
+		// plugin. The future throws plugin::remote::LaunchError if the process can't be started, and std::runtime_error
+		// if the plugin can't be created.
+		std::future<std::unique_ptr<plugin::remote::RemotePlugin>> load(
+			const PluginRef& plugin, plugin::Host* engineHost = nullptr);
+
+		// [not the job thread] A remote plugin as load() makes it, but not initialized, and waits for it. For tests.
+		std::unique_ptr<plugin::remote::RemotePlugin> create(
+			const PluginRef& plugin, plugin::Host* engineHost = nullptr);
 
 		HostingMode mode() const;
 		std::map<std::string, HostingMode> overrides() const;
 
-		// Change the hosting mode, or a plugin's override (nothing: none), and move the plugins whose process changes,
-		// with their state. Returns the plugins that could not move, with the reason; they stay where they are.
-		std::vector<std::string> setMode(HostingMode mode);
-		std::vector<std::string> setOverride(const std::string& plugin, std::optional<HostingMode> mode);
+		// [any] Change the hosting mode, or a plugin's override (nothing: none), at once, and move the plugins whose
+		// process changes with their state on the job thread. The future has the plugins that could not move, with the
+		// reason; they stay where they are. When the moves are done, onReport is called.
+		std::future<std::vector<std::string>> setMode(HostingMode mode);
+		std::future<std::vector<std::string>> setOverride(const std::string& plugin, std::optional<HostingMode> mode);
 
 		struct InstanceStatus
 		{
@@ -121,11 +148,14 @@ namespace gnubase::engine::plugins
 
 		// Failures that were not taken yet, oldest first.
 		std::vector<PluginFailure> takeFailures();
+		// The results of hosting mode changes whose moves are done and that were not taken yet, oldest first: the
+		// plugins that could not move.
+		std::vector<std::vector<std::string>> takeMoves();
 
-		// Called on the monitor thread when there are new failures to take.
-		void onFailure(std::function<void()> callback);
+		// Called on the monitor or the job thread when there are failures or moves to take. Must not wait for jobs.
+		void onReport(std::function<void()> callback);
 
-		// Ends a host process at once, as a crash would. For tests.
+		// [not the job thread] Ends a host process at once, as a crash would. For tests.
 		bool kill(uint32_t process);
 
 		// Registers pluginhost.get, pluginhost.setMode, pluginhost.setOverride and pluginhost.check.
@@ -139,6 +169,7 @@ namespace gnubase::engine::plugins
 			std::string group;
 			std::shared_ptr<plugin::remote::HostConnection> host;
 			bool reported = false;
+			bool busy = false; // a job uses the plugin: it isn't destroyed meanwhile
 		};
 
 		struct Host
@@ -151,27 +182,44 @@ namespace gnubase::engine::plugins
 		struct Shared
 		{
 			mutable std::mutex mutex;
+			std::condition_variable idle; // an instance is no longer busy
 			std::map<uint64_t, Instance> instances;
 			std::map<std::string, Host> hosts; // by group
 			std::vector<PluginFailure> failures;
+			std::vector<std::vector<std::string>> moves;
 			HostingMode mode = g_defaultHostingMode;
 			std::map<std::string, HostingMode> overrides;
 			uint64_t nextInstance = 1;
+			std::filesystem::path executable;
+			bool closed = false; // the manager is gone
+
+			// The job queue.
+			std::mutex jobMutex;
+			std::condition_variable jobWake;
+			std::deque<std::function<void()>> jobs;
+			bool stopping = false;
 		};
 
 		static std::string groupOf(const Shared& shared, uint64_t instance, const PluginRef& plugin);
-		std::shared_ptr<plugin::remote::HostConnection> hostFor(Shared& shared, const std::string& group) const;
+		std::shared_ptr<plugin::remote::HostConnection> hostFor(const std::string& group);
+		static void post(Shared& shared, std::function<void()> job);
 		static std::vector<std::shared_ptr<plugin::remote::HostConnection>> dropUnused(Shared& shared);
-		std::vector<std::string> reload();
+		static void refresh(Shared& shared, uint64_t id);
+		std::unique_ptr<plugin::remote::RemotePlugin> make(const PluginRef& plugin, plugin::Host* engineHost);
+		std::future<std::vector<std::string>> reload();
+		std::vector<std::string> moveAll();
+		void jobs();
 		void monitor();
-		void startMonitor();
+		void report();
 
 		Options m_options;
 		std::shared_ptr<Shared> m_shared;
+		std::thread::id m_jobThreadId;
+		std::thread m_jobThread;
 
-		std::mutex m_monitorMutex; // guards the callback and the monitor's start and stop
+		std::mutex m_monitorMutex; // guards the callback and the monitor's stop
 		std::condition_variable m_monitorWake;
-		std::function<void()> m_onFailure;
+		std::function<void()> m_onReport;
 		bool m_stopping = false;
 		std::thread m_monitor;
 	};

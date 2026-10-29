@@ -40,6 +40,24 @@ namespace gnubase::platform
 				throw std::system_error(EINVAL, std::generic_category(), "Invalid shared memory name '" + name + "'");
 		}
 
+#ifndef __linux__
+		// Touches every page, so that audio threads take no page faults on the memory later; Linux maps them with
+		// MAP_POPULATE instead. Only the creator writes: it is the only one using the memory yet. Reading is enough to
+		// map a page of shared memory.
+		void prefault(void* data, size_t size, bool write) noexcept
+		{
+			constexpr size_t smallestPage = 4096;
+			auto* bytes = static_cast<volatile unsigned char*>(data);
+			for (size_t offset = 0; offset < size; offset += smallestPage)
+			{
+				if (write)
+					bytes[offset] = 0;
+				else
+					static_cast<void>(bytes[offset]);
+			}
+		}
+#endif
+
 #ifdef _WIN32
 		std::wstring objectName(const std::string& name)
 		{
@@ -52,6 +70,13 @@ namespace gnubase::platform
 			throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), what);
 		}
 #else
+#ifdef __linux__
+		// MAP_POPULATE maps every page at once.
+		constexpr int g_mapFlags = MAP_SHARED | MAP_POPULATE;
+#else
+		constexpr int g_mapFlags = MAP_SHARED;
+#endif
+
 		std::string objectName(const std::string& name)
 		{
 			return "/" + name;
@@ -112,6 +137,8 @@ namespace gnubase::platform
 		memory.m_data = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, size);
 		if (memory.m_data == nullptr)
 			throwLastError("Cannot map shared memory '" + name + "'");
+		// The pages are committed already: a full page file makes creating fail, not the first touch.
+		prefault(memory.m_data, size, true);
 #else
 		const int file = shm_open(objectName(name).c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
 		if (file < 0)
@@ -123,12 +150,28 @@ namespace gnubase::platform
 			close(file);
 			throw std::system_error(error, std::generic_category(), "Cannot size shared memory '" + name + "'");
 		}
-		void* data = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, file, 0);
+#ifdef __linux__
+		// ftruncate reserves no pages on tmpfs. Without them, a full /dev/shm (64 MiB in a default Docker container)
+		// would be a SIGBUS on first touch, on an audio thread, instead of an error here.
+		int reserved = 0;
+		do
+			reserved = posix_fallocate(file, 0, static_cast<off_t>(size));
+		while (reserved == EINTR);
+		if (reserved != 0)
+		{
+			close(file);
+			throw std::system_error(reserved, std::generic_category(), "Cannot reserve shared memory '" + name + "'");
+		}
+#endif
+		void* data = mmap(nullptr, size, PROT_READ | PROT_WRITE, g_mapFlags, file, 0);
 		const int error = errno;
 		close(file);
 		if (data == MAP_FAILED) // NOLINT(performance-no-int-to-ptr): MAP_FAILED is defined as ((void*)-1)
 			throw std::system_error(error, std::generic_category(), "Cannot map shared memory '" + name + "'");
 		memory.m_data = data;
+#ifndef __linux__
+		prefault(data, size, true);
+#endif
 #endif
 		return memory;
 	}
@@ -151,6 +194,7 @@ namespace gnubase::platform
 		if (VirtualQuery(memory.m_data, &info, sizeof(info)) == 0)
 			throwLastError("Cannot query shared memory '" + name + "'");
 		memory.m_size = info.RegionSize;
+		prefault(memory.m_data, memory.m_size, false);
 #else
 		const int file = shm_open(objectName(name).c_str(), O_RDWR, 0);
 		if (file < 0)
@@ -163,13 +207,16 @@ namespace gnubase::platform
 			throw std::system_error(error, std::generic_category(), "Cannot size shared memory '" + name + "'");
 		}
 		const auto size = static_cast<size_t>(status.st_size);
-		void* data = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, file, 0);
+		void* data = mmap(nullptr, size, PROT_READ | PROT_WRITE, g_mapFlags, file, 0);
 		const int error = errno;
 		close(file);
 		if (data == MAP_FAILED) // NOLINT(performance-no-int-to-ptr): MAP_FAILED is defined as ((void*)-1)
 			throw std::system_error(error, std::generic_category(), "Cannot map shared memory '" + name + "'");
 		memory.m_data = data;
 		memory.m_size = size;
+#ifndef __linux__
+		prefault(data, size, false);
+#endif
 #endif
 		return memory;
 	}

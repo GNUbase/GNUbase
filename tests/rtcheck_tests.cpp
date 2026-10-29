@@ -405,7 +405,7 @@ TEST_CASE("sending blocks to a plugin host and waiting for its answers passes th
 				break;
 			engine.sendBlock(block);
 			AudioBlock answer;
-			if (engine.waitForBlock(std::chrono::seconds(10)) != WaitResult::Ready ||
+			if (engine.waitForAnswer(static_cast<uint64_t>(i), std::chrono::seconds(10)) != WaitResult::Ready ||
 				engine.receiveBlock(answer) != ReadStatus::Ok)
 				break;
 			if (answer.channel(0)[0] == static_cast<float>(i))
@@ -418,6 +418,7 @@ TEST_CASE("sending blocks to a plugin host and waiting for its answers passes th
 	CHECK(g_violations == 0);
 }
 
+#ifndef GNUBASE_NO_TEST_PLUGINS
 TEST_CASE("a plugin in a plugin host process processes blocks without allocating or locking", "[integration]")
 {
 	using namespace gnubase;
@@ -439,6 +440,7 @@ TEST_CASE("a plugin in a plugin host process processes blocks without allocating
 	engine::graph::ProcessEvent change;
 	change.type = engine::graph::ProcessEvent::Type::Parameter;
 	change.offset = 10;
+	change.parameter = 1; // test:gain's Gain
 	change.parameterValue = -6.0;
 	eventsIn.add(change);
 
@@ -455,3 +457,4 @@ TEST_CASE("a plugin in a plugin host process processes blocks without allocating
 	CHECK(!slot.failed());
 	CHECK(left[0] != 0.0f);
 }
+#endif

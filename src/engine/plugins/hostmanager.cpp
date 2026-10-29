@@ -7,7 +7,11 @@
 #include "platform/rt/realtime.h"
 
 #include <algorithm>
+#include <exception>
+#include <fstream>
 #include <set>
+#include <stdexcept>
+#include <system_error>
 #include <utility>
 
 namespace gnubase::engine::plugins
@@ -92,24 +96,102 @@ namespace gnubase::engine::plugins
 
 	HostManager::HostManager(Options options) : m_options(std::move(options)), m_shared(std::make_shared<Shared>())
 	{
+		m_shared->executable = m_options.executable;
+		m_jobThread = std::thread([this] { jobs(); });
+		m_jobThreadId = m_jobThread.get_id();
+		m_monitor = std::thread([this] { monitor(); });
 	}
 
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when constructed; only out of memory throws
 	HostManager::~HostManager()
 	{
+		std::deque<std::function<void()>> dropped;
+		{
+			const std::scoped_lock lock(m_shared->jobMutex);
+			m_shared->stopping = true;
+			dropped.swap(m_shared->jobs);
+		}
+		m_shared->jobWake.notify_all();
+		m_jobThread.join();
+		dropped.clear(); // their futures report broken promises
 		{
 			const std::scoped_lock lock(m_monitorMutex);
 			m_stopping = true;
 		}
 		m_monitorWake.notify_all();
-		if (m_monitor.joinable())
-			m_monitor.join();
-		// Remote plugins that outlive the manager keep their host processes; the rest end now, without the lock.
+		m_monitor.join();
+
+		// Remote plugins that outlive the manager fail: on Linux their processes ended with the job thread. The rest of
+		// the processes end now, without the lock.
 		std::map<std::string, Host> hosts;
 		{
 			const std::scoped_lock lock(m_shared->mutex);
+			m_shared->closed = true;
+			for (auto& [id, instance] : m_shared->instances)
+				instance.plugin->fail(Failure::HostGone);
 			hosts.swap(m_shared->hosts);
 		}
+	}
+
+	void HostManager::setExecutable(std::filesystem::path executable)
+	{
+		const std::scoped_lock lock(m_shared->mutex);
+		m_shared->executable = std::move(executable);
+	}
+
+	void HostManager::post(Shared& shared, std::function<void()> job)
+	{
+		{
+			const std::scoped_lock lock(shared.jobMutex);
+			if (shared.stopping)
+				return; // dropped: its promise breaks
+			shared.jobs.push_back(std::move(job));
+		}
+		shared.jobWake.notify_one();
+	}
+
+	void HostManager::jobs()
+	{
+		for (;;)
+		{
+			std::function<void()> job;
+			{
+				std::unique_lock lock(m_shared->jobMutex);
+				m_shared->jobWake.wait(lock, [this] { return m_shared->stopping || !m_shared->jobs.empty(); });
+				if (m_shared->stopping)
+					return;
+				job = std::move(m_shared->jobs.front());
+				m_shared->jobs.pop_front();
+			}
+			try
+			{
+				job();
+			}
+			catch (const std::exception& error)
+			{
+				logging::error("A plugin job failed: {}", std::string_view(error.what()));
+			}
+		}
+	}
+
+	std::future<void> HostManager::run(std::function<void()> job)
+	{
+		auto promise = std::make_shared<std::promise<void>>();
+		std::future<void> result = promise->get_future();
+		post(*m_shared,
+			[promise, job = std::move(job)]
+			{
+				try
+				{
+					job();
+					promise->set_value();
+				}
+				catch (...)
+				{
+					promise->set_exception(std::current_exception());
+				}
+			});
+		return result;
 	}
 
 	std::string HostManager::groupOf(const Shared& shared, uint64_t instance, const PluginRef& plugin)
@@ -129,35 +211,46 @@ namespace gnubase::engine::plugins
 		return "shared";
 	}
 
-	std::shared_ptr<HostConnection> HostManager::hostFor(Shared& shared, const std::string& group) const
+	std::shared_ptr<HostConnection> HostManager::hostFor(const std::string& group)
 	{
-		Host& host = shared.hosts[group];
-		if (host.connection && !host.connection->exited() && !host.connection->hung())
-			return host.connection;
-
-		// A new process, with the lowest log file number no other process of this manager uses.
-		std::set<int> used;
-		for (const auto& [name, other] : shared.hosts)
-			used.insert(other.log);
+		// [job thread] Only this thread starts processes, so none of a group starts meanwhile.
 		int log = 1;
-		while (used.count(log) != 0)
-			++log;
 		plugin::remote::LaunchOptions options;
-		options.executable = m_options.executable.empty() ? defaultExecutable() : m_options.executable;
+		{
+			const std::scoped_lock lock(m_shared->mutex);
+			options.executable = m_shared->executable.empty() ? defaultExecutable() : m_shared->executable;
+			if (const auto found = m_shared->hosts.find(group); found != m_shared->hosts.end())
+			{
+				const std::shared_ptr<HostConnection>& connection = found->second.connection;
+				if (connection && !connection->exited() && !connection->hung())
+					return connection;
+			}
+			// A new process, with the lowest log file number no other process of this manager uses.
+			std::set<int> used;
+			for (const auto& [name, other] : m_shared->hosts)
+				used.insert(other.log);
+			while (used.count(log) != 0)
+				++log;
+		}
 		options.logFile = "gnubase-pluginhost-" + std::to_string(log) + ".log";
+		// What a plugin writes to standard error, e.g. a crash message, goes next to the log, from this launch on.
+		std::error_code error;
+		const std::filesystem::path directory = logging::defaultDirectory();
+		std::filesystem::create_directories(directory, error);
+		options.errorOutput = directory / ("gnubase-pluginhost-" + std::to_string(log) + "-stderr.log");
+		std::ofstream(options.errorOutput, std::ios::trunc).close();
 		options.timeout = m_options.launchTimeout;
-		try
+		std::shared_ptr<HostConnection> connection = HostConnection::launch(options);
+		std::shared_ptr<HostConnection> replaced; // a hung or exited one: its failed plugins keep it
 		{
-			host.connection = HostConnection::launch(options);
+			const std::scoped_lock lock(m_shared->mutex);
+			Host& host = m_shared->hosts[group];
+			replaced = std::move(host.connection);
+			host.connection = connection;
+			host.log = log;
 		}
-		catch (...)
-		{
-			shared.hosts.erase(group);
-			throw;
-		}
-		host.log = log;
-		logging::info("Plugin host {} runs the group {}", host.connection->processId(), group);
-		return host.connection;
+		logging::info("Plugin host {} runs the group {}", connection->processId(), group);
+		return connection;
 	}
 
 	std::vector<std::shared_ptr<HostConnection>> HostManager::dropUnused(Shared& shared)
@@ -180,31 +273,131 @@ namespace gnubase::engine::plugins
 		return dropped; // the caller destroys them without the lock: closing waits for the process
 	}
 
-	std::unique_ptr<RemotePlugin> HostManager::create(const PluginRef& plugin)
+	std::unique_ptr<RemotePlugin> HostManager::make(const PluginRef& plugin, plugin::Host* engineHost)
 	{
-		rt::assertNotRealtime("HostManager::create");
-		startMonitor();
-		std::unique_ptr<RemotePlugin> remote;
-		const std::scoped_lock lock(m_shared->mutex);
-		const uint64_t id = m_shared->nextInstance++;
-		const std::string group = groupOf(*m_shared, id, plugin);
-		const std::shared_ptr<HostConnection> host = hostFor(*m_shared, group);
-		remote = std::make_unique<RemotePlugin>(plugin.id, plugin.path, host, m_options.deadlines);
-		m_shared->instances[id] = Instance{remote.get(), plugin, group, host, false};
+		// [job thread]
+		uint64_t id = 0;
+		std::string group;
+		{
+			const std::scoped_lock lock(m_shared->mutex);
+			id = m_shared->nextInstance++;
+			group = groupOf(*m_shared, id, plugin);
+		}
+		const std::shared_ptr<HostConnection> host = hostFor(group);
+		auto remote = std::make_unique<RemotePlugin>(plugin.id, plugin.path, host, m_options.deadlines, engineHost);
+		{
+			const std::scoped_lock lock(m_shared->mutex);
+			m_shared->instances[id] = Instance{remote.get(), plugin, group, host, false, false};
+		}
+		const std::weak_ptr<Shared> weak = m_shared;
 		remote->onDestroy(
-			[weak = std::weak_ptr<Shared>(m_shared), id]
+			[weak, id]
 			{
 				const std::shared_ptr<Shared> shared = weak.lock();
 				if (!shared)
 					return;
 				std::vector<std::shared_ptr<HostConnection>> dropped;
 				{
-					const std::scoped_lock unregister(shared->mutex);
+					// A job that uses the plugin finishes first.
+					std::unique_lock lock(shared->mutex);
+					shared->idle.wait(lock,
+						[&]
+						{
+							const auto found = shared->instances.find(id);
+							return found == shared->instances.end() || !found->second.busy;
+						});
 					shared->instances.erase(id);
-					dropped = dropUnused(*shared);
+					if (!shared->closed)
+						dropped = dropUnused(*shared);
+				}
+			});
+		// What the plugin's notifications say changed is fetched on the job thread.
+		remote->onNotification(
+			[weak, id]
+			{
+				if (const std::shared_ptr<Shared> shared = weak.lock())
+				{
+					post(*shared,
+						[weak, id]
+						{
+							if (const std::shared_ptr<Shared> current = weak.lock())
+								refresh(*current, id);
+						});
 				}
 			});
 		return remote;
+	}
+
+	void HostManager::refresh(Shared& shared, uint64_t id)
+	{
+		RemotePlugin* plugin = nullptr;
+		{
+			const std::scoped_lock lock(shared.mutex);
+			const auto found = shared.instances.find(id);
+			if (found == shared.instances.end())
+				return;
+			found->second.busy = true;
+			plugin = found->second.plugin;
+		}
+		try
+		{
+			plugin->refresh();
+		}
+		catch (const std::exception& error)
+		{
+			logging::error("Plugin instance {} could not refresh: {}", id, std::string_view(error.what()));
+		}
+		{
+			const std::scoped_lock lock(shared.mutex);
+			shared.instances.at(id).busy = false;
+		}
+		shared.idle.notify_all();
+	}
+
+	std::future<std::unique_ptr<RemotePlugin>> HostManager::load(const PluginRef& plugin, plugin::Host* engineHost)
+	{
+		auto promise = std::make_shared<std::promise<std::unique_ptr<RemotePlugin>>>();
+		std::future<std::unique_ptr<RemotePlugin>> result = promise->get_future();
+		auto ref = std::make_shared<const PluginRef>(plugin); // so copying the job never throws
+		post(*m_shared,
+			[this, promise, ref, engineHost]
+			{
+				try
+				{
+					std::unique_ptr<RemotePlugin> remote = make(*ref, engineHost);
+					if (!remote->init())
+						throw std::runtime_error("cannot create the plugin " + ref->id);
+					promise->set_value(std::move(remote));
+				}
+				catch (...)
+				{
+					promise->set_exception(std::current_exception());
+				}
+			});
+		return result;
+	}
+
+	std::unique_ptr<RemotePlugin> HostManager::create(const PluginRef& plugin, plugin::Host* engineHost)
+	{
+		rt::assertNotRealtime("HostManager::create");
+		if (std::this_thread::get_id() == m_jobThreadId)
+			throw std::logic_error("HostManager::create waits for the job thread: use make there");
+		auto promise = std::make_shared<std::promise<std::unique_ptr<RemotePlugin>>>();
+		std::future<std::unique_ptr<RemotePlugin>> result = promise->get_future();
+		auto ref = std::make_shared<const PluginRef>(plugin); // so copying the job never throws
+		post(*m_shared,
+			[this, promise, ref, engineHost]
+			{
+				try
+				{
+					promise->set_value(make(*ref, engineHost));
+				}
+				catch (...)
+				{
+					promise->set_exception(std::current_exception());
+				}
+			});
+		return result.get();
 	}
 
 	HostingMode HostManager::mode() const
@@ -219,7 +412,7 @@ namespace gnubase::engine::plugins
 		return m_shared->overrides;
 	}
 
-	std::vector<std::string> HostManager::setMode(HostingMode mode)
+	std::future<std::vector<std::string>> HostManager::setMode(HostingMode mode)
 	{
 		{
 			const std::scoped_lock lock(m_shared->mutex);
@@ -228,7 +421,8 @@ namespace gnubase::engine::plugins
 		return reload();
 	}
 
-	std::vector<std::string> HostManager::setOverride(const std::string& plugin, std::optional<HostingMode> mode)
+	std::future<std::vector<std::string>> HostManager::setOverride(
+		const std::string& plugin, std::optional<HostingMode> mode)
 	{
 		{
 			const std::scoped_lock lock(m_shared->mutex);
@@ -240,9 +434,34 @@ namespace gnubase::engine::plugins
 		return reload();
 	}
 
-	std::vector<std::string> HostManager::reload()
+	std::future<std::vector<std::string>> HostManager::reload()
 	{
-		rt::assertNotRealtime("HostManager::reload");
+		auto promise = std::make_shared<std::promise<std::vector<std::string>>>();
+		std::future<std::vector<std::string>> result = promise->get_future();
+		post(*m_shared,
+			[this, promise]
+			{
+				try
+				{
+					std::vector<std::string> errors = moveAll();
+					{
+						const std::scoped_lock lock(m_shared->mutex);
+						m_shared->moves.push_back(errors);
+					}
+					report();
+					promise->set_value(std::move(errors));
+				}
+				catch (...)
+				{
+					promise->set_exception(std::current_exception());
+				}
+			});
+		return result;
+	}
+
+	std::vector<std::string> HostManager::moveAll()
+	{
+		// [job thread]
 		std::vector<std::string> errors;
 		std::vector<uint64_t> ids;
 		{
@@ -250,13 +469,10 @@ namespace gnubase::engine::plugins
 			for (const auto& [id, instance] : m_shared->instances)
 				ids.push_back(id);
 		}
-		// Plugins are created, moved and destroyed on this thread only, so the entries stay while the lock is free.
 		for (const uint64_t id : ids)
 		{
 			RemotePlugin* plugin = nullptr;
 			std::string group;
-			std::shared_ptr<HostConnection> host;
-			try
 			{
 				const std::scoped_lock lock(m_shared->mutex);
 				const auto found = m_shared->instances.find(id);
@@ -265,25 +481,38 @@ namespace gnubase::engine::plugins
 				group = groupOf(*m_shared, id, found->second.ref);
 				if (group == found->second.group)
 					continue;
+				// The plugin stays while it moves: its destruction waits.
+				found->second.busy = true;
 				plugin = found->second.plugin;
-				host = hostFor(*m_shared, group);
 			}
-			catch (const std::exception& error)
-			{
-				errors.push_back(std::to_string(id) + ": " + error.what());
-				continue;
-			}
+			std::shared_ptr<HostConnection> host;
 			std::string error;
-			if (!plugin->moveTo(host, error))
+			bool moved = false;
+			try
+			{
+				host = hostFor(group);
+				moved = plugin->moveTo(host, error);
+			}
+			catch (const std::exception& exception)
+			{
+				error = exception.what();
+			}
+			if (!moved)
 			{
 				errors.push_back(std::to_string(id) + ": " + error);
 				logging::warning("Cannot move plugin instance {} to the group {}: {}", id, group, error);
-				continue;
 			}
-			const std::scoped_lock lock(m_shared->mutex);
-			Instance& instance = m_shared->instances.at(id);
-			instance.group = group;
-			instance.host = std::move(host);
+			{
+				const std::scoped_lock lock(m_shared->mutex);
+				Instance& instance = m_shared->instances.at(id);
+				if (moved)
+				{
+					instance.group = group;
+					instance.host = std::move(host);
+				}
+				instance.busy = false;
+			}
+			m_shared->idle.notify_all();
 		}
 		std::vector<std::shared_ptr<HostConnection>> dropped;
 		{
@@ -337,10 +566,27 @@ namespace gnubase::engine::plugins
 		return std::exchange(m_shared->failures, {});
 	}
 
-	void HostManager::onFailure(std::function<void()> callback)
+	std::vector<std::vector<std::string>> HostManager::takeMoves()
+	{
+		const std::scoped_lock lock(m_shared->mutex);
+		return std::exchange(m_shared->moves, {});
+	}
+
+	void HostManager::onReport(std::function<void()> callback)
 	{
 		const std::scoped_lock lock(m_monitorMutex);
-		m_onFailure = std::move(callback);
+		m_onReport = std::move(callback);
+	}
+
+	void HostManager::report()
+	{
+		std::function<void()> callback;
+		{
+			const std::scoped_lock lock(m_monitorMutex);
+			callback = m_onReport;
+		}
+		if (callback)
+			callback();
 	}
 
 	bool HostManager::kill(uint32_t process)
@@ -361,15 +607,8 @@ namespace gnubase::engine::plugins
 		}
 		if (!host)
 			return false;
-		host->kill();
+		host->kill(); // without a lock: the monitor and the plugin control thread go on meanwhile
 		return true;
-	}
-
-	void HostManager::startMonitor()
-	{
-		const std::scoped_lock lock(m_monitorMutex);
-		if (!m_monitor.joinable() && !m_stopping)
-			m_monitor = std::thread([this] { monitor(); });
 	}
 
 	void HostManager::monitor()
@@ -391,11 +630,7 @@ namespace gnubase::engine::plugins
 					// A plugin whose host is gone fails at once, without waiting for its next deadline.
 					instance.plugin->fail(Failure::HostGone);
 					PluginFailure report{id, instance.ref.id, instance.host->processId(), "crashed"};
-					if (instance.host->checkExited())
-					{
-						report.reason = "crashed";
-					}
-					else if (failure == Failure::Deadline)
+					if (failure == Failure::Deadline)
 					{
 						report.reason = "hung";
 						instance.host->markHung();
@@ -411,9 +646,9 @@ namespace gnubase::engine::plugins
 					found = true;
 				}
 			}
-			if (found && m_onFailure)
+			if (found && m_onReport)
 			{
-				const std::function<void()> callback = m_onFailure;
+				const std::function<void()> callback = m_onReport;
 				monitorLock.unlock();
 				callback();
 				monitorLock.lock();
@@ -457,25 +692,24 @@ namespace gnubase::engine::plugins
 			[status](CommandContext&) { return status({}); });
 		engine.registerCommand(
 			{"pluginhost.setMode", 1,
-				"Sets the hosting mode (see pluginhost.get). Plugins whose process changes are moved to their new "
-				"process with their state, between two blocks, so they keep sounding the same; plugins that can't "
-				"move stay where they are and are listed in errors. Emits pluginhost.changed.",
+				"Sets the hosting mode (see pluginhost.get) and returns at once. Plugins whose process changes then "
+				"move "
+				"to their new process in the background, with their state, between two blocks, so they keep sounding "
+				"the same. When they did, pluginhost.changed is emitted with the new status, and with the plugins "
+				"that could not move and stay where they are in errors.",
 				Json{{"type", "object"}, {"additionalProperties", false}, {"required", Json::array({"mode"})},
 					{"properties", {{"mode", modeSchema(false)}}}},
 				statusSchema(), false},
 			[this, status](CommandContext& context)
 			{
-				const std::vector<std::string> errors =
-					setMode(*parseHostingMode(context.parameters().at("mode").get<std::string>()));
-				Json result = status(errors);
-				context.emit("pluginhost.changed", result);
-				return result;
+				setMode(*parseHostingMode(context.parameters().at("mode").get<std::string>()));
+				return status({});
 			});
 		engine.registerCommand(
 			{"pluginhost.setOverride", 1,
 				"Gives a plugin (its id, e.g. \"clap:com.example.synth\") a hosting mode of its own, e.g. "
 				"\"perInstance\" to isolate an unstable plugin, or removes its override with null. Moves the "
-				"plugin's instances like pluginhost.setMode. Emits pluginhost.changed.",
+				"plugin's instances like pluginhost.setMode, which emits pluginhost.changed when they moved.",
 				Json{{"type", "object"}, {"additionalProperties", false}, {"required", Json::array({"plugin", "mode"})},
 					{"properties", {{"plugin", {{"type", "string"}}}, {"mode", modeSchema(true)}}}},
 				statusSchema(), false},
@@ -483,23 +717,22 @@ namespace gnubase::engine::plugins
 			{
 				const Json& parameters = context.parameters();
 				const Json& mode = parameters.at("mode");
-				const std::vector<std::string> errors = setOverride(parameters.at("plugin").get<std::string>(),
+				setOverride(parameters.at("plugin").get<std::string>(),
 					mode.is_null() ? std::nullopt : parseHostingMode(mode.get<std::string>()));
-				Json result = status(errors);
-				context.emit("pluginhost.changed", result);
-				return result;
+				return status({});
 			});
 		engine.registerCommand(
 			{"pluginhost.check", 1,
 				"Reports the plugins that failed since the last check because their host process crashed, missed a "
 				"processing deadline (reason \"hung\") or broke the protocol, and emits plugin.failed for each with "
-				"its instance, plugin id, process and reason. A failed plugin is bypassed and outputs silence. The "
-				"engine runs this on its own as soon as a failure is detected.",
+				"its instance, plugin id, process and reason. A failed plugin is bypassed and outputs silence. Also "
+				"emits pluginhost.changed for each hosting mode change whose moves are done. The engine runs this on "
+				"its own as soon as a failure is detected or the moves are done.",
 				Json{{"type", "object"}, {"additionalProperties", false}},
 				Json::parse(R"({"type": "object", "required": ["failures"], "properties": {
 					"failures": {"type": "array", "items": {"type": "object"}}}})"),
 				false},
-			[this](CommandContext& context)
+			[this, status](CommandContext& context)
 			{
 				Json failures = Json::array();
 				for (const PluginFailure& failure : takeFailures())
@@ -509,6 +742,8 @@ namespace gnubase::engine::plugins
 					context.emit("plugin.failed", entry);
 					failures.push_back(std::move(entry));
 				}
+				for (const std::vector<std::string>& errors : takeMoves())
+					context.emit("pluginhost.changed", status(errors));
 				return Json{{"failures", std::move(failures)}};
 			});
 	}
