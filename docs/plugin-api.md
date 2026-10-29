@@ -122,7 +122,7 @@ The extensions of the draft (`src/plugin/extensions.h`):
 
 Every method in the headers is tagged with the thread it may be called on:
 
-- **[main]**: the instance's main thread. In the host process it is the thread that runs the OS event loop, which is what CLAP's main thread, the VST3 UI thread, AU's main thread and LV2's UI thread all expect. For a built-in plugin it is the engine's command thread. For a remote plugin, the engine side's main thread is the **plugin control thread** of its host process connection (below).
+- **[main]**: the instance's main thread. In the host process it is the thread that runs the OS event loop, which is what CLAP's main thread, the VST3 UI thread, AU's main thread and LV2's UI thread all expect. For a built-in plugin it is the engine's command thread. For a remote plugin, the engine side's main-thread calls come from the host manager's **job thread** (slow calls) and the command thread (quick queries), never at once for one instance; what the plugin asks of the engine arrives on the **plugin control thread** of its host process connection (below).
 - **[audio]**: the thread that processes the instance: the audio thread, a worker (#212) or a prefetch thread (#23). It can change from block to block, but only one thread processes an instance at a time, as for every `graph::Processor`. Real-time rules apply (rule 5).
 - **[any]**: any thread, real-time safe.
 - A state after the thread, as in **[main, inactive]** or **[main, active]**, says when in the lifecycle a call is allowed.
@@ -133,7 +133,7 @@ Further rules:
 - A plugin's own threads are its business, but everything it calls on its host follows the tags. The adapters check this with `ThreadCheck` in debug builds.
 - The tags are checked, not only documented: in debug builds the engine wraps every plugin of a slot, and the stub every adapter, in a `CheckedPlugin` (`src/plugin/checkedplugin.h`). It asks the host's `ThreadCheck` which thread a call is on and keeps the lifecycle state, and it reports every call on the wrong thread or in the wrong state (`activate` before `init`, `process` while not processing, `setProcessMode` while active, destroying an active plugin) through a real-time safe handler, which the engine points at `GNUBASE_ASSERT`. A reported call isn't passed on: it fails with `false`, `ProcessStatus::Error` or `nullptr`. Wrappers for the extensions' tags follow with the proxy and stub.
 - In the host process, the stub serializes main-thread calls on the main thread and runs `process` on a real-time thread that waits for IPC requests (#64). Timers, file descriptor watches (CLAP, VST3's run loop on Linux), LV2's worker and FST's editor idle calls are served by the host process itself and never cross to the engine.
-- On the engine side, the command thread never waits for a host process for long. Main-thread calls to remote plugins go through the host process's control connection, which one **plugin control thread** per host process serves (see "Split across the engine and the host process"). Quick queries (value texts, port and parameter info) have a short timeout; slow operations (creating an instance, loading state or a preset, opening an editor) run as jobs whose completion the engine reports as an event. A host process that doesn't answer in time is treated as hung (#65).
+- On the engine side, the command thread never waits for a host process for long. Main-thread calls to remote plugins go through the host process's control connection, which one **plugin control thread** per host process serves (see "Split across the engine and the host process"). Quick queries (value texts, flushing parameters, the process mode) have a short timeout (`Deadlines::query`, 2 s); slow operations (starting a host process, creating, activating and moving an instance, loading state or a preset, fetching what a notification changed, opening an editor) run as jobs on the host manager's job thread (`HostManager::load`, `run`, `setMode`), with a long timeout (`Deadlines::job`, 30 s), and the engine reports their completion as an event. A reply that comes after its timeout is dropped; a late create is undone with a destroy, a late activate with a deactivate. A host process that doesn't answer a block in time is treated as hung (#65).
 
 ## Audio ports and side-chains
 
@@ -252,18 +252,18 @@ What the proxy does with each call, and what crosses the process boundary:
 
 | Call | Path | Notes |
 |---|---|---|
-| `process`, `flushParams` while active, `startProcessing`, `stopProcessing`, `reset` | the instance's audio connection | per block, real-time, under the watchdog (#65); start, stop, reset and flush are flags of the next block |
-| `requestProcess` | audio connection | a flag in the block's result |
+| `process`, `flushParams` while active, `startProcessing`, `stopProcessing`, `reset` | the instance's audio connection | per block, real-time, under the watchdog (#65); start, stop and flush are blocks without frames of their own, sent at once and answered with their status; reset is a flag of the next block |
+| `requestProcess`, `requestParamFlush` | audio connection | flags in the block's result |
 | `setAudioPortActiveWhileProcessing` | audio connection | a message before the block |
 | `init` | control connection | creates the instance; returns the descriptor, the supported extension ids, the audio ports, the note ports and the parameter infos with their values, which the proxy caches |
-| `setProcessMode`, `activate`, `deactivate` | control connection | `activate` names the new audio connection and returns latency and tail |
+| `setProcessMode`, `activate`, `deactivate` | control connection | `activate` first fetches the ports as they are (`Describe`), sizes the new audio connection for them, names it in the request and returns latency and tail |
 | `paramValue` | none | from the engine's mirror |
 | `paramValueToText`, `paramTextToValue` | control connection | cached by the proxy |
 | `flushParams` while inactive | control connection | |
-| ports, note ports and parameter infos after a rescan | control connection | fetched again when the plugin asks for a rescan; the cache is replaced |
-| `saveState`, `loadState`, presets, context menus | control connection | jobs on the plugin control thread |
+| ports, note ports and parameter infos after a rescan | control connection | fetched again (`Describe`) when the plugin asks for a rescan, by `RemotePlugin::refresh` as a job; the cache is replaced: parameter infos when their ids stay the same or the plugin is inactive, ports while inactive |
+| `saveState`, `loadState`, presets, context menus | control connection | jobs on the host manager's job thread; a message larger than a ring message goes in parts, up to 256 MiB |
 | `gui*` | control connection | the windows live in the host process |
-| `requestRestart`, `rescan*`, `latencyChanged`, `tailChanged`, `voiceInfoChanged`, `markStateDirty`, `guiRequestResize`, `guiClosed`, `guiKeyUnhandled`, host context menus | control connection, host process to engine | notifications, or requests the engine answers |
+| `requestRestart`, `rescan*`, `latencyChanged`, `tailChanged`, `voiceInfoChanged`, `markStateDirty`, `guiRequestResize`, `guiClosed`, `guiKeyUnhandled`, host context menus | control connection, host process to engine | notifications, or requests the engine answers; a restart request reaches the engine's `Host` at once, the others with `RemotePlugin::refresh` (#64 has restart, rescans, latency, tail and state dirty) |
 | `trackInfoChanged` | control connection, engine to host process | |
 | `requestCallback`, timers, file descriptors, LV2 workers | none | served in the host process |
 | output events (values, gestures, MIDI, note ends) | audio connection | with the block's stream frame |
