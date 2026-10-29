@@ -1137,7 +1137,7 @@ Returns:
 
 #### `gnubase.processor.list`
 
-Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units.
+Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units. A stepped parameter takes whole numbers only; its options, if any, name its values from the minimum on.
 
 Only reads; changes nothing.
 

@@ -386,6 +386,14 @@ TEST_CASE("the snapshot follows the sample rate and the track's time base", "[un
 	CHECK(renderChannel(engine.renderSnapshots().acquire(), audio).audioEvents[0].start == 48000);
 }
 
+TEST_CASE("the snapshot carries the project's tempo map, for processors that follow the tempo", "[unit]")
+{
+	Project project;
+	project.tempo = gnubase::time::TempoMap({{0, 90.0, false}, {4 * g_ticksPerQuarter, 150.0, true}});
+	const std::unique_ptr<const RenderSnapshot> snapshot = compile(project, 1);
+	CHECK(snapshot->tempo == project.tempo);
+}
+
 TEST_CASE("failed commands leave the project and its snapshot unchanged", "[unit]")
 {
 	Engine engine;

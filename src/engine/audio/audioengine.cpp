@@ -234,6 +234,8 @@ namespace gnubase::engine
 		attachStrips(snapshot, desc);
 
 		auto program = std::make_unique<Program>(desc, format.sampleRate, format.blockSize);
+		program->tempo = snapshot.tempo;
+		program->sampleRate = snapshot.sampleRate;
 		program->generation = generation;
 		program->releases = releases();
 		int input = 0;
@@ -389,7 +391,9 @@ namespace gnubase::engine
 			}
 		}
 		m_playback.beginBlock();
-		program.graph.process(block.frames, m_transport.advance(block.frames), m_workers.get());
+		graph::TransportBlock transport = m_transport.advance(block.frames);
+		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
+		program.graph.process(block.frames, transport, m_workers.get());
 		m_playback.endBlock();
 		for (const BusLink& link : program.outputs)
 		{
@@ -456,7 +460,7 @@ namespace gnubase::engine
 
 			// Drivers often allow one open device at a time: close the old one first.
 			closeDevice();
-			m_generator.reset();
+			m_generator = nullptr;
 			m_device = (*backend)->open(config);
 		}
 		m_backend = name;
