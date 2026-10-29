@@ -52,6 +52,8 @@ namespace gnubase::engine
 		time::TempoMap tempo{120.0};
 		time::SignatureMap signatures;
 		AutoFades autoFades;
+		PanLaw panLaw = PanLaw::Minus3;
+		double maxVolume = 6.0;
 		std::vector<Bus> busses;
 		std::vector<ObjectId> tracks;
 		ObjectId activeMarkerTrack = 0;

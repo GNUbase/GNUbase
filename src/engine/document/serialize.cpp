@@ -64,6 +64,8 @@ namespace gnubase::engine
 		} g_automationTargetNames[] = {
 			{AutomationTargetType::Volume, "volume"},
 			{AutomationTargetType::Pan, "pan"},
+			{AutomationTargetType::PanLeft, "panLeft"},
+			{AutomationTargetType::PanRight, "panRight"},
 			{AutomationTargetType::Instrument, "instrument"},
 			{AutomationTargetType::Controller, "controller"},
 			{AutomationTargetType::PitchBend, "pitchBend"},
@@ -365,7 +367,9 @@ namespace gnubase::engine
 	{
 		return {{"id", channel.id}, {"track", channel.track}, {"format", formatName(channel.format)},
 			{"channels", channelCount(channel.format)}, {"input", channel.input}, {"output", channel.output},
-			{"instrument", channel.instrument}, {"volume", channel.volume}, {"pan", channel.pan}};
+			{"instrument", channel.instrument}, {"volume", channel.volume}, {"pan", channel.pan},
+			{"panner", channel.panner == StereoPanner::Combined ? "combined" : "balance"}, {"panLeft", channel.panLeft},
+			{"panRight", channel.panRight}, {"panBypass", channel.panBypass}};
 	}
 
 	Json toJson(const MediaFile& media)
@@ -470,6 +474,8 @@ namespace gnubase::engine
 		{
 		case AutomationTargetType::Volume:
 		case AutomationTargetType::Pan:
+		case AutomationTargetType::PanLeft:
+		case AutomationTargetType::PanRight:
 			break;
 		case AutomationTargetType::Instrument:
 			json["parameter"] = target.parameter;
@@ -526,7 +532,8 @@ namespace gnubase::engine
 			signatures.push_back({{"bar", change.bar}, {"numerator", change.signature.numerator},
 				{"denominator", change.signature.denominator}});
 		return {{"name", project.name}, {"sampleRate", project.sampleRate}, {"tempo", tempo},
-			{"signatures", signatures}, {"autoFades", toJson(project.autoFades)}, {"busses", busses},
+			{"signatures", signatures}, {"autoFades", toJson(project.autoFades)},
+			{"panLaw", panLawName(project.panLaw)}, {"maxVolume", project.maxVolume}, {"busses", busses},
 			{"tracks", tracks}, {"channels", toJsonArray(project.channels)}, {"media", toJsonArray(project.media)},
 			{"clips", toJsonArray(project.clips)}, {"audioEvents", toJsonArray(project.audioEvents)},
 			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
@@ -662,9 +669,11 @@ namespace gnubase::engine
 			{
 			case AutomationTargetType::Volume:
 			case AutomationTargetType::Pan:
+			case AutomationTargetType::PanLeft:
+			case AutomationTargetType::PanRight:
 				fits = project.channels.at(track.channel).format != ChannelFormat::None;
 				minimum = lane.target.type == AutomationTargetType::Volume ? g_minChannelVolume : -1.0;
-				maximum = lane.target.type == AutomationTargetType::Volume ? g_maxChannelVolume : 1.0;
+				maximum = lane.target.type == AutomationTargetType::Volume ? project.maxVolume : 1.0;
 				break;
 			case AutomationTargetType::Instrument:
 				// The instrument's range applies when it plays; the instrument may have changed since.
@@ -718,6 +727,15 @@ namespace gnubase::engine
 		project.signatures = time::SignatureMap(signatures);
 		// Files from before fades have none of them.
 		project.autoFades = autoFadesFromJson(json.value("autoFades", Json::object()));
+		// Files from before pan laws and maximum volumes have the defaults.
+		const std::string panLaw = json.value("panLaw", panLawName(PanLaw::Minus3));
+		if (const std::optional<PanLaw> law = panLawFromName(panLaw))
+			project.panLaw = *law;
+		else
+			throw std::invalid_argument("unknown pan law " + panLaw);
+		project.maxVolume = json.value("maxVolume", 6.0);
+		if (project.maxVolume != 6.0 && project.maxVolume != 12.0)
+			throw std::invalid_argument("maxVolume must be 6 or 12");
 
 		for (const Json& bus : json.at("busses"))
 			project.busses.push_back({bus.at("id").get<ObjectId>(), bus.at("name").get<std::string>(),
@@ -749,9 +767,14 @@ namespace gnubase::engine
 			Channel channel{id, item.at("track").get<ObjectId>(), formatFromJson(item),
 				item.at("input").get<ObjectId>(), item.at("output").get<ObjectId>(),
 				item.value("instrument", std::string()),
-				checkedNumber(
-					item.value("volume", Json(0.0)), g_minChannelVolume, g_maxChannelVolume, name + " volume"),
+				checkedNumber(item.value("volume", Json(0.0)), g_minChannelVolume, project.maxVolume, name + " volume"),
 				checkedNumber(item.value("pan", Json(0.0)), -1.0, 1.0, name + " pan")};
+			// Files from before the combined panner and pan bypass have the defaults.
+			channel.panner =
+				item.value("panner", "balance") == "combined" ? StereoPanner::Combined : StereoPanner::Balance;
+			channel.panLeft = checkedNumber(item.value("panLeft", Json(-1.0)), -1.0, 1.0, name + " panLeft");
+			channel.panRight = checkedNumber(item.value("panRight", Json(1.0)), -1.0, 1.0, name + " panRight");
+			channel.panBypass = item.value("panBypass", false);
 			// An instrument this build doesn't have, e.g. in a file from a newer one, or one on a track that doesn't
 			// play instruments: the channel plays none.
 			const auto track = project.trackById.find(channel.track);

@@ -21,6 +21,51 @@ namespace gnubase::engine
 			return pan < 0.0 ? 1.0 + pan : 1.0;
 		}
 
+		// Applies the fader's gain and panner to frames begin to end.
+		void applyGains(const graph::ProcessContext& context, const Panning& panning, uint32_t begin, uint32_t end,
+			double gain, double pan, double panLeft, double panRight) noexcept
+		{
+			float* const* audio = context.audio;
+			if (panning.panner == Panner::Mono)
+			{
+				const auto [left, right] = panGains(panning.law, panning.bypass ? 0.0 : pan);
+				const auto toLeft = static_cast<float>(gain * left);
+				const auto toRight = static_cast<float>(gain * right);
+				for (uint32_t i = begin; i < end; ++i)
+				{
+					audio[1][i] = audio[0][i] * toRight;
+					audio[0][i] *= toLeft;
+				}
+				return;
+			}
+			const bool stereo = panning.panner == Panner::Stereo && !panning.bypass;
+			if (stereo && panning.stereo == StereoPanner::Combined)
+			{
+				const auto [leftToLeft, leftToRight] = panGains(panning.law, panLeft);
+				const auto [rightToLeft, rightToRight] = panGains(panning.law, panRight);
+				const auto ll = static_cast<float>(gain * leftToLeft);
+				const auto rl = static_cast<float>(gain * rightToLeft);
+				const auto lr = static_cast<float>(gain * leftToRight);
+				const auto rr = static_cast<float>(gain * rightToRight);
+				for (uint32_t i = begin; i < end; ++i)
+				{
+					const float left = audio[0][i];
+					const float right = audio[1][i];
+					audio[0][i] = (left * ll) + (right * rl);
+					audio[1][i] = (left * lr) + (right * rr);
+				}
+				return;
+			}
+			if (gain == 1.0 && (pan == 0.0 || !stereo))
+				return;
+			for (int c = 0; c < context.channels; ++c)
+			{
+				const auto factor = static_cast<float>(stereo ? gain * balance(c, pan) : gain);
+				for (uint32_t i = begin; i < end; ++i)
+					audio[c][i] *= factor;
+			}
+		}
+
 		using Points = std::vector<RenderAutomationPoint>;
 		using Kind = PlayedLane::Kind;
 
@@ -139,9 +184,10 @@ namespace gnubase::engine
 		}
 
 		// Plays a lane's curve over one transport segment. With jump, playback didn't arrive here from the frame
-		// before, so the value at the segment's start is set first.
+		// before, so the value at the segment's start is set first; a lane without points glides there over smoothing
+		// frames.
 		void playLane(const PlayedLane& lane, const graph::TransportSegment& segment, bool jump,
-			graph::EventBuffer& source, graph::EventBuffer& fader) noexcept
+			graph::EventBuffer& source, graph::EventBuffer& fader, uint32_t smoothing) noexcept
 		{
 			const Points& points = lane.points;
 			const int64_t begin = segment.position;
@@ -150,7 +196,7 @@ namespace gnubase::engine
 			if (points.empty())
 			{
 				if (jump)
-					emit(lane, segment.offset, lane.staticValue, 0, source, fader);
+					emit(lane, segment.offset, lane.staticValue, smoothing, source, fader);
 				return;
 			}
 			if (jump)
@@ -255,12 +301,16 @@ namespace gnubase::engine
 	}
 
 	void AutomationPlayer::play(const graph::TransportBlock& transport, const void* processor,
-		graph::EventBuffer& source, graph::EventBuffer& fader) noexcept
+		graph::EventBuffer& source, graph::EventBuffer& fader, uint32_t smoothing) noexcept
 	{
 		const ChannelAutomation& automation = m_automation.acquire();
 		// New automation, or a new source processor (e.g. another instrument) that hasn't had the values yet: the
 		// automation may have reached the audio thread before the graph with the new source.
 		bool changed = automation.revision != m_played || processor != m_processor;
+		// New static values glide, unless they are the first ones.
+		const bool revised = automation.revision != m_played && m_played != 0;
+		const auto glide = [revised, smoothing](const PlayedLane& lane)
+		{ return revised && lane.smooth ? smoothing : 0; };
 		m_played = automation.revision;
 		m_processor = processor;
 
@@ -269,8 +319,8 @@ namespace gnubase::engine
 			if (changed || m_next >= 0 || transport.position != m_stoppedAt)
 				for (const PlayedLane& lane : automation.lanes)
 					emit(lane, 0,
-						lane.points.empty() ? lane.staticValue : automationValue(lane.points, transport.position), 0,
-						source, fader);
+						lane.points.empty() ? lane.staticValue : automationValue(lane.points, transport.position),
+						glide(lane), source, fader);
 			m_stoppedAt = transport.position;
 			m_next = -1;
 			return;
@@ -281,7 +331,7 @@ namespace gnubase::engine
 			const graph::TransportSegment& segment = transport.segments[s];
 			const bool jump = changed || segment.position != m_next;
 			for (const PlayedLane& lane : automation.lanes)
-				playLane(lane, segment, jump, source, fader);
+				playLane(lane, segment, jump, source, fader, changed ? glide(lane) : 0);
 			changed = false;
 			m_next = segment.position + segment.frames;
 		}
@@ -290,6 +340,8 @@ namespace gnubase::engine
 	ChannelFader::ChannelFader()
 	{
 		m_volume.set(1.0, 0);
+		m_panLeft.set(-1.0, 0);
+		m_panRight.set(1.0, 0);
 	}
 
 	void ChannelFader::Ramp::set(double newValue, uint32_t ramp) noexcept
@@ -324,7 +376,7 @@ namespace gnubase::engine
 		return current;
 	}
 
-	void ChannelFader::process(const graph::ProcessContext& context) noexcept
+	void ChannelFader::process(const graph::ProcessContext& context, const Panning& panning) noexcept
 	{
 		uint32_t position = 0;
 		for (const graph::ProcessEvent& event : context.eventsIn)
@@ -332,58 +384,44 @@ namespace gnubase::engine
 			const uint32_t offset = std::min(event.offset, context.frames);
 			if (offset > position)
 			{
-				render(context, position, offset);
+				render(context, panning, position, offset);
 				position = offset;
 			}
 			if (event.type != graph::ProcessEvent::Type::Parameter)
 				continue;
-			if (event.parameter == Volume)
-				m_volume.set(event.parameterValue, event.ramp);
-			else if (event.parameter == Pan)
-				m_pan.set(std::clamp(event.parameterValue, -1.0, 1.0), event.ramp);
+			Ramp* const ramps[] = {&m_volume, &m_pan, &m_panLeft, &m_panRight};
+			if (event.parameter < std::size(ramps))
+				ramps[event.parameter]->set(
+					event.parameter == Volume ? event.parameterValue : std::clamp(event.parameterValue, -1.0, 1.0),
+					event.ramp);
 		}
 		if (position < context.frames)
-			render(context, position, context.frames);
+			render(context, panning, position, context.frames);
 	}
 
-	void ChannelFader::render(const graph::ProcessContext& context, uint32_t begin, uint32_t end) noexcept
+	void ChannelFader::render(
+		const graph::ProcessContext& context, const Panning& panning, uint32_t begin, uint32_t end) noexcept
 	{
-		const bool stereo = context.channels == 2;
-		if (m_volume.length == 0 && m_pan.length == 0)
+		// While nothing glides, one set of gains serves every frame; otherwise each frame gets its own.
+		const bool gliding =
+			m_volume.length != 0 || m_pan.length != 0 || m_panLeft.length != 0 || m_panRight.length != 0;
+		for (uint32_t i = begin; i < end;)
 		{
-			const double gain = m_volume.value;
-			const double pan = m_pan.value;
-			if (gain == 1.0 && (pan == 0.0 || !stereo))
-				return;
-			for (int c = 0; c < context.channels; ++c)
-			{
-				double factor = gain;
-				if (stereo)
-					factor *= balance(c, pan);
-				const auto single = static_cast<float>(factor);
-				float* samples = context.audio[c];
-				for (uint32_t i = begin; i < end; ++i)
-					samples[i] *= single;
-			}
-			return;
-		}
-		for (uint32_t i = begin; i < end; ++i)
-		{
-			const double gain = m_volume.next();
-			const double pan = m_pan.next();
-			for (int c = 0; c < context.channels; ++c)
-			{
-				double factor = gain;
-				if (stereo)
-					factor *= balance(c, pan);
-				context.audio[c][i] *= static_cast<float>(factor);
-			}
+			const uint32_t until = gliding ? i + 1 : end;
+			const double gain = gliding ? m_volume.next() : m_volume.value;
+			const double pan = gliding ? m_pan.next() : m_pan.value;
+			const double panLeft = gliding ? m_panLeft.next() : m_panLeft.value;
+			const double panRight = gliding ? m_panRight.next() : m_panRight.value;
+			applyGains(context, panning, i, until, gain, pan, panLeft, panRight);
+			i = until;
 		}
 	}
 
-	ChannelStrip::ChannelStrip(std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source)
-		: m_state(std::move(state)), m_source(std::move(source)), m_sourceEvents(graph::g_maxEventsPerBlock),
-		  m_faderEvents(graph::g_maxEventsPerBlock), m_faderOut(graph::g_maxEventsPerBlock)
+	ChannelStrip::ChannelStrip(
+		std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source, Panning panning)
+		: m_state(std::move(state)), m_source(std::move(source)), m_panning(panning),
+		  m_sourceEvents(graph::g_maxEventsPerBlock), m_faderEvents(graph::g_maxEventsPerBlock),
+		  m_faderOut(graph::g_maxEventsPerBlock)
 	{
 	}
 
@@ -391,7 +429,7 @@ namespace gnubase::engine
 	{
 		if (m_source)
 			m_source->prepareFor(sampleRate, maxFrames);
-		m_state->fader->prepareFor(sampleRate, maxFrames);
+		m_smoothing = static_cast<uint32_t>(std::llround(sampleRate * g_faderSmoothing));
 	}
 
 	void ChannelStrip::process(const graph::ProcessContext& context) noexcept
@@ -401,7 +439,7 @@ namespace gnubase::engine
 		for (const graph::ProcessEvent& event : context.eventsIn)
 			m_sourceEvents.add(event);
 		m_sourceEvents.nextSource();
-		m_state->automation.play(context.transport, m_source.get(), m_sourceEvents, m_faderEvents);
+		m_state->automation.play(context.transport, m_source.get(), m_sourceEvents, m_faderEvents, m_smoothing);
 
 		if (m_source)
 			m_source->process({context.audio, context.channels, context.frames, m_sourceEvents, context.eventsOut,
@@ -414,7 +452,8 @@ namespace gnubase::engine
 		{
 			m_faderOut.clear();
 			m_state->fader->process(
-				{context.audio, context.channels, context.frames, m_faderEvents, m_faderOut, context.transport});
+				{context.audio, context.channels, context.frames, m_faderEvents, m_faderOut, context.transport},
+				m_panning);
 		}
 	}
 }

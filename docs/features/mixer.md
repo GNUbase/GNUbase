@@ -1,5 +1,17 @@
 # Mixer
 
-The channels' faders and pans (#107).
+The channels' faders and panners (#269); the channel strip UI comes with #107.
 
-- A channel has a fader: a volume in dB (-144 to +6) and, on audio channels, a pan from -1 (left) to 1 (right); MIDI channels have neither (#107 builds the mixer on them).
+- **Fader.** Every audio channel has a volume in dB, from -144 (silence, -∞ dB) to the project's maximum volume, default 0 dB. `channel.set` stops values beyond the ends there instead of refusing them. The maximum is a project setting, `maxVolume` in `project.set`: +6 dB (the default) or +12 dB; lowering it brings faders above it down, in the same undo step. MIDI channels have neither fader nor panner yet (MIDI volume and pan follow).
+- **Panner by routing.** Which panner a channel gets depends on its format and its destination's (`pannerFor` in `src/engine/document/channelformat.h`), worked out when the project compiles:
+  - A mono channel on a stereo destination has a position, `pan` from -1 (left) to 1 (right), placed with the project's stereo pan law. Its channel node outputs stereo: the graph gives it a second buffer (`NodeDesc::output`) that the panner writes.
+  - A stereo channel on a stereo or a mono destination has the **balance panner** (`panner` `balance`, the default): `pan` turns down the side panned away from, the center leaves both at 0 dB, as the built-in `gainPan` does. On a mono destination its balance decides how much of each side goes into the mono mix. The **combined panner** (`panner` `combined`, stereo channels only) places the left and the right channel each on its own with the pan law, at `panLeft` and `panRight` (default -1 and 1, which leaves the channel as it is). Both at the same position sum the channel to mono there, which is louder, as in the reference. Linking the two positions while they move is the UI's job (#107): the engine keeps both.
+  - **Pan bypass** (`panBypass`): a mono channel plays at the center, a stereo one hard left and right.
+  - Destinations wider than stereo have no panner until the surround panner (#188): the format conversion places mono in C (or in L and R at the pan law's center) and stereo in L and R ([channel-formats.md](channel-formats.md)). Wider channels have no panner either.
+- **Pan law** (`panLaw` in `project.set`): how much a mono signal panned to the center is turned down on each side, so it doesn't sound louder there than panned to one side. The side panned toward is at 0 dB with every law (`panGains`):
+  - `0dB` doesn't turn the center down: the side panned away from goes down in a straight line, like the balance panner.
+  - `equalPower` keeps the power of both sides together: the sine of (1 - pan) π/4 on the left and of (1 + pan) π/4 on the right, -3.01 dB at the center.
+  - `-3dB` (the default), `-4.5dB` and `-6dB` raise those to the power that turns the center down by exactly that much.
+  The pan law also sets where the format conversion puts mono on destinations without C.
+- **Parameters and smoothing.** Volume, pan, panLeft and panRight are the fader's parameters (`ChannelFader` in `src/engine/audio/automation.h`), automatable like volume and pan ([automation.md](automation.md)). When `channel.set` gives one of them a new value, the fader glides there in a straight line over 5 ms (`g_faderSmoothing`) instead of jumping, while playing and while stopped; a new lane, a locate or a cycle jump still takes the value at once. The panner mode, bypass and pan law are fixed for a graph, which a change rebuilds.
+- **DAWproject** stores the volume as a linear gain in `Volume` (its `max` the project's maximum volume) and `pan` normalized in `Pan` (0.5 is the center). The panner mode, its positions, pan bypass, the pan law and the maximum volume go into GNUbase's extra entry; a project read from `project.xml` alone gets the defaults, with volumes above +6 dB brought down to it.

@@ -69,7 +69,8 @@ namespace gnubase::engine
 		// GNUbase's entry until plugin slots are written as devices (#72).
 		bool exportable(const AutomationTarget& target)
 		{
-			return target.type != AutomationTargetType::Instrument;
+			return target.type != AutomationTargetType::Instrument && target.type != AutomationTargetType::PanLeft &&
+				target.type != AutomationTargetType::PanRight;
 		}
 
 		// DAWproject has only a channel count: the format for it, the widest one for more than 8 channels.
@@ -84,11 +85,12 @@ namespace gnubase::engine
 			return volumeGain(decibels);
 		}
 
-		double gainToVolume(double gain)
+		// A gain as a volume up to the project's maximum.
+		double gainToVolume(double gain, double maximum)
 		{
 			if (gain <= 0.0)
 				return g_minChannelVolume;
-			return std::clamp(20.0 * std::log10(gain), g_minChannelVolume, g_maxChannelVolume);
+			return std::clamp(20.0 * std::log10(gain), g_minChannelVolume, maximum);
 		}
 
 		double panToNormalized(double pan)
@@ -443,7 +445,7 @@ namespace gnubase::engine
 						volume.append_attribute("name") = "Volume";
 						volume.append_attribute("unit") = "linear";
 						volume.append_attribute("min") = 0.0;
-						volume.append_attribute("max") = volumeToGain(g_maxChannelVolume);
+						volume.append_attribute("max") = volumeToGain(m_project.maxVolume);
 						volume.append_attribute("value") = volumeToGain(channel.volume);
 					}
 				}
@@ -522,6 +524,8 @@ namespace gnubase::engine
 					element.append_attribute("channel") = target.channel;
 					break;
 				case AutomationTargetType::Instrument:
+				case AutomationTargetType::PanLeft:
+				case AutomationTargetType::PanRight:
 					break;
 				}
 				const auto value = [&target](double v)
@@ -1014,8 +1018,8 @@ namespace gnubase::engine
 						{
 							const double value = finiteNumber(volume.attribute("value"), 1.0);
 							channel.volume = std::string(volume.attribute("unit").as_string("linear")) == "decibel"
-								? std::clamp(value, g_minChannelVolume, g_maxChannelVolume)
-								: gainToVolume(value);
+								? std::clamp(value, g_minChannelVolume, m_project.maxVolume)
+								: gainToVolume(value, m_project.maxVolume);
 							m_parameters[volume.attribute("id").as_string()] = {track.id, AutomationTargetType::Volume};
 						}
 						if (!pan.empty())
@@ -1149,10 +1153,12 @@ namespace gnubase::engine
 					switch (automated.type)
 					{
 					case AutomationTargetType::Volume:
-						point.value = unit == "decibel" ? std::clamp(value, g_minChannelVolume, g_maxChannelVolume)
-														: gainToVolume(value);
+						point.value = unit == "decibel" ? std::clamp(value, g_minChannelVolume, m_project.maxVolume)
+														: gainToVolume(value, m_project.maxVolume);
 						break;
 					case AutomationTargetType::Pan:
+					case AutomationTargetType::PanLeft:
+					case AutomationTargetType::PanRight:
 						point.value = normalizedToPan(value);
 						break;
 					case AutomationTargetType::Instrument:

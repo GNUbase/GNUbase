@@ -320,8 +320,10 @@ TEST_CASE("automation lanes hold points on tracks, with checks, events and undo"
 		ContainsSubstring("no automation point 12345"));
 	CHECK_THAT(reject(client, "channel.set", {{"channel", channelOf(client, midi)}, {"volume", -3.0}}),
 		ContainsSubstring("no volume or pan"));
-	CHECK_THAT(reject(client, "channel.set", {{"channel", channelOf(client, audio)}, {"volume", 6.5}}),
-		ContainsSubstring("volume must be"));
+	// The fader stops at the project's maximum volume.
+	CHECK(run(client, "channel.set", {{"channel", channelOf(client, audio)}, {"volume", 6.5}})
+			  .at("channel")
+			  .at("volume") == 6.0);
 }
 
 TEST_CASE("automation points are compiled to the project's samples, following the tempo map", "[unit]")

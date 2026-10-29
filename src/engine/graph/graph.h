@@ -43,6 +43,9 @@ namespace gnubase::engine::graph
 		ObjectId object = 0;                          // the bus or channel in the document, or 0
 		ChannelFormat format = ChannelFormat::Stereo; // its audio channels; None for nodes that only pass events
 		std::shared_ptr<Processor> processor; // or none: the node outputs the sum of its inputs and passes events on
+		// What the processor outputs if it is another format, e.g. stereo from a mono channel's panner; None: the
+		// same. The processor writes every channel of it, after the node's own ones.
+		ChannelFormat output = ChannelFormat::None;
 	};
 
 	// From the node at index from to the node at index to.
@@ -57,8 +60,9 @@ namespace gnubase::engine::graph
 	struct GraphDesc
 	{
 		std::vector<NodeDesc> nodes;
-		std::vector<Connection> audio;  // audio from one node is added to another's input
-		std::vector<Connection> events; // events one node outputs reach another
+		std::vector<Connection> audio;           // audio from one node is added to another's input
+		std::vector<Connection> events;          // events one node outputs reach another
+		double centerGain = 0.70794578438413791; // where mono reaches L and R without C: -3 dB, or the pan law's
 	};
 
 	// The graph of a render snapshot: a node per bus in bus order, then a node per channel in track order. Channels
@@ -79,7 +83,7 @@ namespace gnubase::engine::graph
 	// A node's input is the sum of its audio inputs, added in the order of their node indices once all of them are
 	// done, so the output is bit-identical for the same graph and input, however many threads process it. Each input
 	// is converted to the node's format with conversionGains: speakers that both formats have connect one to one, the
-	// others are mixed down or up; mono reaches L and R at -3 dB where there is no C.
+	// others are mixed down or up; mono reaches L and R at the graph's centerGain where there is no C.
 	class CompiledGraph
 	{
 	public:
@@ -144,6 +148,7 @@ namespace gnubase::engine::graph
 			NodeKind kind = NodeKind::Channel;
 			ObjectId object = 0;
 			int channels = 0;
+			int outputChannels = 0;             // what it sends to its receivers; its buffers are the wider of both
 			Processor* processor = nullptr;     // owned by m_processors
 			std::vector<int> audioInputs;       // node indices, ascending
 			std::vector<std::vector<Tap>> taps; // per audio input, how its channels reach this node's

@@ -80,6 +80,7 @@ namespace gnubase::engine
 			for (const graph::NodeDesc& node : graph.nodes)
 				nodes.push_back({{"kind", graph::toString(node.kind)}, {"object", node.object},
 					{"format", formatName(node.format)}, {"channels", channelCount(node.format)},
+					{"output", formatName(node.output == ChannelFormat::None ? node.format : node.output)},
 					{"audioInputs", Json::array()}, {"eventInputs", Json::array()}});
 			// Inputs in ascending order, the order a node sums them in.
 			for (const auto& [connections, key] :
@@ -405,7 +406,8 @@ namespace gnubase::engine
 				automationTargetTypeFromName(json.at("type").get<std::string>());
 			if (!parsed.has_value())
 				throw CommandError(
-					"target.type must be volume, pan, instrument, controller, pitchBend or channelPressure");
+					"target.type must be volume, pan, panLeft, panRight, instrument, controller, pitchBend or "
+					"channelPressure");
 			const AutomationTargetType type = *parsed;
 			AutomationTarget target;
 			target.type = type;
@@ -430,6 +432,8 @@ namespace gnubase::engine
 			{
 			case AutomationTargetType::Volume:
 			case AutomationTargetType::Pan:
+			case AutomationTargetType::PanLeft:
+			case AutomationTargetType::PanRight:
 				only({});
 				require(channel.format != ChannelFormat::None, "a MIDI track has no volume or pan");
 				break;
@@ -474,8 +478,10 @@ namespace gnubase::engine
 			switch (lane.target.type)
 			{
 			case AutomationTargetType::Volume:
-				return {g_minChannelVolume, g_maxChannelVolume};
+				return {g_minChannelVolume, project.maxVolume};
 			case AutomationTargetType::Pan:
+			case AutomationTargetType::PanLeft:
+			case AutomationTargetType::PanRight:
 				return {-1.0, 1.0};
 			case AutomationTargetType::Instrument:
 			{
@@ -903,13 +909,24 @@ namespace gnubase::engine
 					require(info->instrument, changed.instrument + " is not an instrument");
 				}
 			}
-			if (parameters.contains("volume") || parameters.contains("pan"))
-				require(changed.format != ChannelFormat::None, "a MIDI channel has no volume or pan");
-			changed.volume = parameters.value("volume", channel.volume);
-			require(changed.volume >= g_minChannelVolume && changed.volume <= g_maxChannelVolume,
-				"volume must be from -144 to 6 dB");
-			changed.pan = parameters.value("pan", channel.pan);
-			require(changed.pan >= -1.0 && changed.pan <= 1.0, "pan must be from -1 to 1");
+			for (const char* key : {"volume", "pan", "panner", "panLeft", "panRight", "panBypass"})
+				if (parameters.contains(key))
+					require(changed.format != ChannelFormat::None, "a MIDI channel has no volume or pan");
+			// The fader stops at its ends.
+			if (parameters.contains("volume"))
+				changed.volume =
+					std::clamp(parameters.at("volume").get<double>(), g_minChannelVolume, project.maxVolume);
+			for (const auto& [key, value] : {std::pair{"pan", &changed.pan}, std::pair{"panLeft", &changed.panLeft},
+					 std::pair{"panRight", &changed.panRight}})
+			{
+				*value = parameters.value(key, *value);
+				require(*value >= -1.0 && *value <= 1.0, std::string(key) + " must be from -1 to 1");
+			}
+			if (parameters.contains("panner"))
+				changed.panner = parameters.at("panner") == "combined" ? StereoPanner::Combined : StereoPanner::Balance;
+			require(changed.panner == StereoPanner::Balance || changed.format == ChannelFormat::Stereo,
+				"the combined panner is for stereo channels");
+			changed.panBypass = parameters.value("panBypass", changed.panBypass);
 			channel = changed;
 			Json result = {{"channel", toJson(channel)}};
 			context.emit("channel.changed", result);
@@ -1486,16 +1503,37 @@ namespace gnubase::engine
 			return Json::object();
 		}
 
+		// What project.changed announces.
+		Json projectSettingsJson(
+			const std::string& name, double sampleRate, const AutoFades& autoFades, PanLaw panLaw, double maxVolume)
+		{
+			return {{"name", name}, {"sampleRate", sampleRate}, {"autoFades", toJson(autoFades)},
+				{"panLaw", panLawName(panLaw)}, {"maxVolume", maxVolume}};
+		}
+
 		Json setProject(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
 			const double sampleRate = parameters.value("sampleRate", project.sampleRate);
 			require(sampleRate > 0.0, "sampleRate must be positive");
+			const double maxVolume = parameters.value("maxVolume", project.maxVolume);
+			require(maxVolume == 6.0 || maxVolume == 12.0, "maxVolume must be 6 or 12 dB");
 			project.name = parameters.value("name", project.name);
+			if (parameters.contains("panLaw"))
+				project.panLaw = panLawFromName(parameters.at("panLaw").get<std::string>()).value_or(project.panLaw);
+			project.maxVolume = maxVolume;
+			// Faders above a lower maximum come down to it.
+			for (auto& [id, channel] : project.channels)
+				if (channel.volume > maxVolume)
+				{
+					channel.volume = maxVolume;
+					context.emit("channel.changed", {{"channel", toJson(channel)}});
+				}
 			if (sampleRate != project.sampleRate)
 				changeSampleRate(project, sampleRate, context);
 			context.emit("project.changed",
-				{{"name", project.name}, {"sampleRate", project.sampleRate}, {"autoFades", toJson(project.autoFades)}});
+				projectSettingsJson(
+					project.name, project.sampleRate, project.autoFades, project.panLaw, project.maxVolume));
 			return Json::object();
 		}
 	}
@@ -1626,10 +1664,11 @@ namespace gnubase::engine
 				const ProjectSettings& previous = redo ? *change.settingsBefore : *change.settingsAfter;
 				if (current.name != previous.name || current.sampleRate != previous.sampleRate ||
 					current.tempo != previous.tempo || current.signatures != previous.signatures ||
-					!(current.autoFades == previous.autoFades))
+					!(current.autoFades == previous.autoFades) || current.panLaw != previous.panLaw ||
+					current.maxVolume != previous.maxVolume)
 					context.emit("project.changed",
-						{{"name", current.name}, {"sampleRate", current.sampleRate},
-							{"autoFades", toJson(current.autoFades)}});
+						projectSettingsJson(
+							current.name, current.sampleRate, current.autoFades, current.panLaw, current.maxVolume));
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
 				activated = current.activeMarkerTrack != previous.activeMarkerTrack;
@@ -1967,8 +2006,15 @@ namespace gnubase::engine
 			});
 		add(engine,
 			{"project.set", 1,
-				"Changes the project's name or sample rate. Linear positions keep their time at a new sample rate.",
-				objectSchema({{"name", stringSchema}, {"sampleRate", numberSchema}}), noResult, false},
+				"Changes the project's name, sample rate, stereo pan law or maximum volume. Linear positions keep "
+				"their "
+				"time at a new sample rate. panLaw is how much a mono channel panned to the center is turned down on "
+				"each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same "
+				"wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the "
+				"faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it.",
+				objectSchema({{"name", stringSchema}, {"sampleRate", numberSchema},
+					{"panLaw", enumSchema(panLawNames())}, {"maxVolume", numberSchema}}),
+				noResult, false},
 			setProject);
 
 		add(engine,
@@ -2037,13 +2083,21 @@ namespace gnubase::engine
 				"between formats where a channel feeds a destination of another one: speakers both formats have "
 				"connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs "
 				"into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, "
-				"or to L and R at -3 dB). instrument is the built-in "
+				"or to L and R at the pan law's center). instrument is the built-in "
 				"instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in "
-				"dB, from -144 to 6 (default 0); pan is a stereo channel's balance from -1 (left) to 1 (right). "
-				"Automation of volume and pan overrides them while it plays.",
+				"dB, from -144 (silence) to the project's maxVolume (default 0); values beyond them stop there. The "
+				"panner depends on the routing: a mono channel on a stereo destination has its position pan, -1 "
+				"(left) to 1 (right), placed with the project's pan law; a stereo channel on a stereo or mono "
+				"destination has the balance panner (panner balance, the default: pan turns down the other side) or "
+				"the combined panner (panner combined: panLeft and panRight place its left and right channel, by "
+				"default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. "
+				"Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight "
+				"overrides them while it plays; changes glide over 5 ms.",
 				objectSchema({{"channel", idSchema}, {"format", formats}, {"channels", integerSchema},
 								 {"input", idSchema}, {"output", idSchema}, {"instrument", stringSchema},
-								 {"volume", numberSchema}, {"pan", numberSchema}},
+								 {"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
+								 {"panRight", numberSchema}, {"panBypass", booleanSchema}, {"volume", numberSchema},
+								 {"pan", numberSchema}},
 					{"channel"}),
 				resultSchema({"channel"}), false},
 			setChannel);
@@ -2240,9 +2294,10 @@ namespace gnubase::engine
 		const Json numberSchema = {{"type", "number"}};
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json noResult = Json::object();
-		const Json target = objectSchema(
-			{{"type", enumSchema({"volume", "pan", "instrument", "controller", "pitchBend", "channelPressure"})},
-				{"parameter", idSchema}, {"number", idSchema}, {"channel", idSchema}},
+		const Json target = objectSchema({{"type",
+											  enumSchema({"volume", "pan", "panLeft", "panRight", "instrument",
+												  "controller", "pitchBend", "channelPressure"})},
+											 {"parameter", idSchema}, {"number", idSchema}, {"channel", idSchema}},
 			{"type"});
 		const Json shape = enumSchema({"step", "linear", "curve"});
 		const Json pointsResult = {
@@ -2251,7 +2306,8 @@ namespace gnubase::engine
 		add(engine,
 			{"automationLane.add", 1,
 				"Adds an automation lane to a track: the curve of one parameter. target.type says which: volume (the "
-				"channel's fader, in dB) and pan (-1 to 1) on tracks with audio channels; instrument, a parameter of "
+				"channel's fader, in dB), pan, panLeft and panRight (-1 to 1, see channel.set) on tracks with audio "
+				"channels; instrument, a parameter of "
 				"an instrument track's built-in instrument (target.parameter, an id from processor.list, in its "
 				"range); controller (target.number 0-127), pitchBend (0.5 is no bend) and channelPressure, all 0 to "
 				"1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). A track has one lane per "
