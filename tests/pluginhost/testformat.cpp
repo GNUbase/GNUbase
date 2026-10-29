@@ -2,7 +2,7 @@
 #include "pluginhost/testformat.h"
 
 #include "plugin/extensions.h"
-#include "testplugin.h"
+#include "plugins/common/testplugin.h"
 
 #include <array>
 #include <cmath>
