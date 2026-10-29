@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -74,8 +75,9 @@ TEST_CASE("the RT checker reports a deallocation in real-time code", "[unit]")
 	CHECK(g_violations == 1);
 }
 
-#if defined(_MSC_VER) && defined(_DEBUG)
-// MSVC debug builds hook the C runtime's heap too, for malloc in third-party code such as Rubber Band Library.
+#if (defined(_MSC_VER) && defined(_DEBUG)) || defined(GNUBASE_RTCHECK_MALLOC)
+// The RT checker sees the C heap too, for malloc in third-party code such as Rubber Band Library: MSVC debug builds,
+// and Linux (not with sanitizers).
 TEST_CASE("the RT checker reports malloc and free in real-time code", "[unit]")
 {
 	const RecordViolations record;
@@ -86,18 +88,62 @@ TEST_CASE("the RT checker reports malloc and free in real-time code", "[unit]")
 		g_keepAlive = memory;
 	}
 	CHECK(g_violations == 1);
+	void* grown = nullptr;
+	{
+		const ScopedRealtimeContext realtime;
+		grown = std::realloc(memory, 128);
+		g_keepAlive = grown;
+	}
+	CHECK(g_violations == 2);
+	REQUIRE(grown != nullptr);
+	memory = grown;
 	{
 		const ScopedRealtimeContext realtime;
 		std::free(memory);
+		std::free(nullptr); // frees nothing
 	}
-	CHECK(g_violations == 2);
+	CHECK(g_violations == 3);
+	{
+		const ScopedRealtimeContext realtime;
+		memory = std::calloc(4, 16);
+		g_keepAlive = memory;
+	}
+	CHECK(g_violations == 4);
+	std::free(memory);
 	// operator new reports once, not again for the malloc inside it.
 	{
 		const ScopedRealtimeContext realtime;
 		const auto value = std::make_unique<int>(42);
 		g_keepAlive = value.get();
 	}
-	CHECK(g_violations == 4);
+	CHECK(g_violations == 6);
+	// Outside real-time code, all of them are fine.
+	memory = std::malloc(64);
+	g_keepAlive = memory;
+	std::free(memory);
+	CHECK(g_violations == 6);
+}
+#endif
+
+#ifdef GNUBASE_RTCHECK_MALLOC
+TEST_CASE("the RT checker reports aligned C allocations in real-time code", "[unit]")
+{
+	const RecordViolations record;
+	void* memory = nullptr;
+	int result = -1;
+	{
+		const ScopedRealtimeContext realtime;
+		result = posix_memalign(&memory, 64, 256); // Rubber Band Library allocates this way on Linux
+		g_keepAlive = memory;
+	}
+	REQUIRE(result == 0);
+	CHECK(g_violations == 1);
+	CHECK(reinterpret_cast<std::uintptr_t>(memory) % 64 == 0);
+	{
+		const ScopedRealtimeContext realtime;
+		std::free(memory);
+	}
+	CHECK(g_violations == 2);
 }
 #endif
 
