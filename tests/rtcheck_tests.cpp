@@ -357,8 +357,16 @@ TEST_CASE("the built-in plugins process, flush parameters and reset without allo
 				}
 			const AudioBuffer input{inputs, 2, 0};
 			AudioBuffer output{outputs, 2, 0};
-			const Process process{frames, int64_t{block} * frames, ProcessMode::Realtime, &input, instrument ? 0U : 1U,
-				&output, 1, eventsIn, eventsOut, &segment, 1};
+			// The event lists are references, so they come first; the rest is set by name.
+			Process process{0, -1, ProcessMode::Realtime, nullptr, 0, nullptr, 0, eventsIn, eventsOut, nullptr, 0};
+			process.frames = frames;
+			process.steadyTime = int64_t{block} * frames;
+			process.audioInputs = &input;
+			process.audioInputCount = instrument ? 0U : 1U;
+			process.audioOutputs = &output;
+			process.audioOutputCount = 1;
+			process.transport = &segment;
+			process.transportCount = 1;
 			const ScopedRealtimeContext realtime;
 			CHECK(instance->process(process) == ProcessStatus::Continue);
 			eventsOut.clear();

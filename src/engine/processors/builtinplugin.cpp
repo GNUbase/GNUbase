@@ -23,6 +23,19 @@ namespace gnubase::engine::processors
 			descriptor.features = {info.instrument ? "instrument" : "audio-effect"};
 			return descriptor;
 		}
+
+		plugin::ChannelLayout layoutOf(uint32_t channels)
+		{
+			switch (channels)
+			{
+			case 1:
+				return plugin::ChannelLayout::Mono;
+			case 2:
+				return plugin::ChannelLayout::Stereo;
+			default:
+				return plugin::ChannelLayout::Other; // more channels, in no particular order
+			}
+		}
 	}
 
 	BuiltinPlugin::BuiltinPlugin(const BuiltinInfo& info, plugin::Host& host, uint32_t channels)
@@ -110,7 +123,7 @@ namespace gnubase::engine::processors
 		info.id = 0;
 		info.name = input ? "Input" : "Output";
 		info.channelCount = m_channels;
-		info.layout = m_channels == 2 ? plugin::ChannelLayout::Stereo : plugin::ChannelLayout::Mono;
+		info.layout = layoutOf(m_channels);
 		info.flags = plugin::AudioPortInfo::Main;
 		return true;
 	}
@@ -189,7 +202,7 @@ namespace gnubase::engine::processors
 	void BuiltinPlugin::flushParams(const plugin::EventList& in, plugin::EventList& /*out*/) noexcept
 	{
 		for (const plugin::Event& event : in)
-			if (event.type == plugin::EventType::ParamValue)
+			if (event.space == plugin::g_coreEventSpace && event.type == plugin::EventType::ParamValue)
 				setValue(event.param, event.value);
 	}
 
@@ -273,6 +286,9 @@ namespace gnubase::engine::processors
 
 	void BuiltinPlugin::translate(const plugin::Event& event) noexcept
 	{
+		// Types are numbered per namespace: an extension's event can have the number of a core type.
+		if (event.space != plugin::g_coreEventSpace)
+			return;
 		if (event.type == plugin::EventType::ParamValue)
 		{
 			const int index = indexOf(event.param);

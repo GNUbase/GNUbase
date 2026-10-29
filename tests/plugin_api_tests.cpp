@@ -57,6 +57,13 @@ namespace
 		std::vector<uint32_t> rescans;
 	};
 
+	// A block with nothing in it but the event lists, which as references have to be there from the start; callers
+	// set the other fields by name, so a change to Process's fields can't shift a value into the wrong one.
+	Process blockWith(const EventList& in, EventList& out)
+	{
+		return {0, -1, ProcessMode::Realtime, nullptr, 0, nullptr, 0, in, out, nullptr, 0};
+	}
+
 	// Processes a plugin with one stereo input and output, the way the engine's plugin slot will.
 	class Runner
 	{
@@ -80,8 +87,15 @@ namespace
 		{
 			const AudioBuffer input{m_inPointers.data(), 2, 0};
 			AudioBuffer output{m_outPointers.data(), 2, 0};
-			const Process process{g_frames, m_steadyTime, ProcessMode::Realtime, &input, m_inputs, &output, 1, m_events,
-				m_eventsOut, &m_transport, 1};
+			Process process = blockWith(m_events, m_eventsOut);
+			process.frames = g_frames;
+			process.steadyTime = m_steadyTime;
+			process.audioInputs = &input;
+			process.audioInputCount = m_inputs;
+			process.audioOutputs = &output;
+			process.audioOutputCount = 1;
+			process.transport = &m_transport;
+			process.transportCount = 1;
 			CHECK(m_plugin.process(process) == expected);
 			m_events.clear();
 			m_steadyTime += g_frames;
@@ -166,6 +180,22 @@ TEST_CASE("the plugin API describes a built-in processor through its factory and
 		CHECK(!ports->audioPortInfo(false, 1, info));
 	}
 
+	SECTION("the layout follows the channel count: one is mono, more than two have no defined order")
+	{
+		for (const auto& [channels, layout] : {std::pair<uint32_t, ChannelLayout>{1, ChannelLayout::Mono},
+				 {2, ChannelLayout::Stereo}, {6, ChannelLayout::Other}})
+		{
+			BuiltinFactory sized(channels);
+			const std::unique_ptr<Plugin> eq = sized.create("builtin:eq", host);
+			REQUIRE(eq->init());
+			AudioPortInfo info;
+			REQUIRE(extension<AudioPorts>(*eq)->audioPortInfo(true, 0, info));
+			INFO(channels << " channels");
+			CHECK(info.channelCount == channels);
+			CHECK(info.layout == layout);
+		}
+	}
+
 	SECTION("parameters with their ranges, values and texts")
 	{
 		const Params* params = extension<Params>(*plugin);
@@ -226,6 +256,48 @@ TEST_CASE("the plugin API processes a built-in processor with sample-accurate pa
 
 	plugin->stopProcessing();
 	plugin->deactivate();
+}
+
+TEST_CASE("built-in plugins ignore events of namespaces they don't know", "[unit]")
+{
+	BuiltinFactory factory;
+	TestHost host;
+	const std::unique_ptr<Plugin> plugin = createActive(factory, "builtin:gainPan", host);
+	Runner runner(*plugin);
+	runner.fill(1.0f);
+	// The core namespace's ParamValue type, in another namespace: some other event that happens to share the number.
+	Event foreign = paramValue(0, engine::processors::GainPan::Gain, -12.0);
+	foreign.space = g_coreEventSpace + 1;
+	runner.add(foreign);
+	const std::vector<float> out = runner.process();
+	CHECK_THAT(out[0], WithinAbs(1.0, 1e-6));
+	double value = 1.0;
+	REQUIRE(extension<Params>(*plugin)->paramValue(engine::processors::GainPan::Gain, value));
+	CHECK(value == 0.0);
+
+	// Nor does a flush outside processing take them.
+	EventList in(4);
+	EventList flushed(4);
+	REQUIRE(in.push(foreign));
+	extension<Params>(*plugin)->flushParams(in, flushed);
+	REQUIRE(extension<Params>(*plugin)->paramValue(engine::processors::GainPan::Gain, value));
+	CHECK(value == 0.0);
+
+	// A note-on in another namespace doesn't start a note.
+	const std::unique_ptr<Plugin> synth = createActive(factory, "builtin:testSynth", host);
+	Runner synthRunner(*synth, 0);
+	Event note;
+	note.space = g_coreEventSpace + 1;
+	note.type = EventType::NoteOn;
+	note.key = 60;
+	note.value = 1.0;
+	synthRunner.add(note);
+	const std::vector<float> silent = synthRunner.process();
+	CHECK(std::all_of(silent.begin(), silent.end(), [](float x) { return x == 0.0f; }));
+	note.space = g_coreEventSpace;
+	synthRunner.add(note);
+	const std::vector<float> sounding = synthRunner.process();
+	CHECK(std::any_of(sounding.begin(), sounding.end(), [](float x) { return x != 0.0f; }));
 }
 
 TEST_CASE("the plugin API restores a plugin's state in another instance", "[unit]")
