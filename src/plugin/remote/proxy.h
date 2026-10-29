@@ -180,6 +180,7 @@ namespace gnubase::plugin::remote
 		void notified(Notification notification, uint32_t detail);
 		void applyInfo(PluginInfo info, bool keepValues);
 		void setParams(const PluginInfo& info);
+		void rescanValues(const std::vector<double>& values);
 		void mirror(const Event& event, bool markDirty = false) noexcept;
 		bool has(std::string_view extension) const;
 		bool resync(Binding& binding, const EventList* in, uint32_t& count) noexcept;
@@ -233,6 +234,10 @@ namespace gnubase::plugin::remote
 		std::unique_ptr<std::atomic<double>[]> m_values;
 		std::unique_ptr<std::atomic<bool>[]> m_dirty;
 		std::atomic<bool> m_tracking{false};
+		// While a rescan runs, every parameter that changes is marked, so the values it fetched don't replace newer
+		// ones.
+		std::unique_ptr<std::atomic<bool>[]> m_changed;
+		std::atomic<bool> m_rescanning{false};
 
 		// Notifications that wait for refresh(): a bit per Notification, and the rescans' flags.
 		std::atomic<uint32_t> m_notifications{0};

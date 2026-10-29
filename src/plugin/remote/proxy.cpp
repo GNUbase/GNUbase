@@ -62,7 +62,7 @@ namespace gnubase::plugin::remote
 				[](const ParamInfo& x, const ParamInfo& y) { return x.id == y.id; });
 		}
 
-		// Clears the dirty marks of a move when it ends, however it ends.
+		// Ends the marking of the parameters that change during a move or a rescan, however it ends.
 		class Tracking
 		{
 		public:
@@ -414,11 +414,26 @@ namespace gnubase::plugin::remote
 			const std::shared_ptr<Binding> current = binding();
 			PluginInfo info;
 			std::string error;
+			// The blocks under way when the rescan begins reach the plugin before it reports its values.
+			{
+				const std::scoped_lock lock(m_mutex);
+				for (size_t i = 0; i < m_paramIndex.size(); ++i)
+					m_changed[i] = false;
+			}
+			const Tracking rescanning(m_rescanning);
+			while (m_busy.load())
+				std::this_thread::sleep_for(std::chrono::microseconds(50));
 			ok = current->created && describeIn(*current, info, error);
 			if (ok)
-				applyInfo(info, false);
+			{
+				const std::vector<double> values = info.values;
+				applyInfo(std::move(info), true);
+				rescanValues(values);
+			}
 			else
+			{
 				logging::warning("Cannot fetch what the plugin {} changed: {}", m_id, error);
+			}
 		}
 		// On to the engine.
 		if (has(Notification::RescanParams) && m_hostParams != nullptr)
@@ -445,6 +460,7 @@ namespace gnubase::plugin::remote
 		std::sort(m_paramIndex.begin(), m_paramIndex.end());
 		m_values = std::make_unique<std::atomic<double>[]>(m_info.params.size());
 		m_dirty = std::make_unique<std::atomic<bool>[]>(m_info.params.size());
+		m_changed = std::make_unique<std::atomic<bool>[]>(m_info.params.size());
 		for (size_t i = 0; i < m_info.params.size(); ++i)
 			m_values[i].store(i < info.values.size() ? info.values[i] : m_info.params[i].defaultValue);
 	}
@@ -472,7 +488,7 @@ namespace gnubase::plugin::remote
 				m_info.params[i] = info.params[i];
 				// A move keeps the mirror: it holds the old instance's values, and those that changed since the state
 				// was saved reach the new instance with its first block. That block may have run already, so the values
-				// the new instance reported before it can be older than the mirror's.
+				// the new instance reported before it can be older than the mirror's. A rescan takes them over itself.
 				if (i < info.values.size() && !keepValues)
 					m_values[i].store(info.values[i], std::memory_order_relaxed);
 			}
@@ -496,9 +512,27 @@ namespace gnubase::plugin::remote
 			std::lower_bound(m_paramIndex.begin(), m_paramIndex.end(), std::pair<uint32_t, uint32_t>(event.param, 0));
 		if (found == m_paramIndex.end() || found->first != event.param)
 			return;
-		m_values[found->second].store(event.value, std::memory_order_relaxed);
+		if (m_rescanning.load())
+			m_changed[found->second].store(true);
+		m_values[found->second].store(event.value, std::memory_order_release);
 		if (markDirty || m_tracking.load(std::memory_order_relaxed))
 			m_dirty[found->second].store(true, std::memory_order_relaxed);
+	}
+
+	void RemotePlugin::rescanValues(const std::vector<double>& values)
+	{
+		// The audio thread may mirror a newer value at any time: it marks a value before it stores it, so one that
+		// changed since the rescan began is either marked or no longer the one replaced, and stays. Only an equal
+		// value sent again at that moment can lose.
+		const std::scoped_lock lock(m_mutex);
+		if (values.size() != m_paramIndex.size())
+			return;
+		for (size_t i = 0; i < values.size(); ++i)
+		{
+			double seen = m_values[i].load(std::memory_order_acquire);
+			if (!m_changed[i].load())
+				m_values[i].compare_exchange_strong(seen, values[i]);
+		}
 	}
 
 	bool RemotePlugin::has(std::string_view extension) const
