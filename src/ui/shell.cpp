@@ -2,9 +2,11 @@
 #include "ui/shell.h"
 
 #include "platform/log.h"
+#include "ui/rmlui.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
+#include <RmlUi/Core/Element.h>
 
 #include <algorithm>
 #include <cmath>
@@ -25,6 +27,26 @@ namespace gnubase::ui
 				return {1280, 800};
 			const Rect& area = displays.front().usable;
 			return {area.width * 4 / 5, area.height * 4 / 5};
+		}
+
+		// Tells the element under the drop's position that files were dropped on it.
+		void drop(Window& window, const WindowEvent& event)
+		{
+			Rml::Element* target = window.context().GetElementAtPoint(
+				{static_cast<float>(event.position.x), static_cast<float>(event.position.y)});
+			if (target == nullptr || event.files.empty())
+				return; // no document there
+			std::string files;
+			for (const std::filesystem::path& file : event.files)
+			{
+				if (!files.empty())
+					files += '\n';
+				files += file.u8string();
+			}
+			target->DispatchEvent(g_fileDropEvent,
+				{{"files", Rml::Variant(files)}, {"count", Rml::Variant(static_cast<int>(event.files.size()))},
+					{"mouse_x", Rml::Variant(event.position.x)}, {"mouse_y", Rml::Variant(event.position.y)}});
+			window.requestRender();
 		}
 	}
 
@@ -59,8 +81,9 @@ namespace gnubase::ui
 		{
 			m_renderer.attach(window->m_id);
 			window->m_pixelSize = m_windows.pixelSize(window->m_id);
-			window->m_context = Rml::CreateContext(window->m_contextName,
-				{window->m_pixelSize.width, window->m_pixelSize.height}, &m_renderer.renderInterface());
+			window->m_context =
+				Rml::CreateContext(window->m_contextName, {window->m_pixelSize.width, window->m_pixelSize.height},
+					&m_renderer.renderInterface(), m_windows.textInputHandler(window->m_id));
 			if (window->m_context == nullptr)
 				throw std::runtime_error("RmlUi cannot create a context for the window");
 		}
@@ -150,6 +173,18 @@ namespace gnubase::ui
 		case WindowEventKind::Quit:
 			quit();
 			return;
+		case WindowEventKind::FileDialogClosed:
+		{
+			const auto it = m_dialogs.find(event.dialog);
+			if (it == m_dialogs.end())
+				return;
+			const std::function<void(const FileDialogResult&)> done = std::move(it->second);
+			m_dialogs.erase(it);
+			if (!event.error.empty())
+				logging::warning("File dialog failed: {}", event.error);
+			done(FileDialogResult{event.files, event.error});
+			return;
+		}
 		case WindowEventKind::DisplaysChanged:
 		{
 			const std::vector<Display> displays = m_windows.displays();
@@ -189,6 +224,9 @@ namespace gnubase::ui
 		case WindowEventKind::Exposed:
 		case WindowEventKind::Input:
 			window->m_renderRequested = true;
+			break;
+		case WindowEventKind::FilesDropped:
+			drop(*window, event);
 			break;
 		default:
 			break;
@@ -243,6 +281,13 @@ namespace gnubase::ui
 		while (m_running && !m_open.empty())
 			step(idleTimeout());
 		return 0;
+	}
+
+	void Shell::showFileDialog(const FileDialog& dialog, std::function<void(const FileDialogResult&)> done)
+	{
+		const uint64_t id = m_nextDialog++;
+		m_dialogs.emplace(id, std::move(done));
+		m_windows.showFileDialog(id, dialog);
 	}
 
 	std::optional<Image> Shell::screenshot(WindowId id)

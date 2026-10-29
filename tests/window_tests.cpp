@@ -11,6 +11,9 @@
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlInput.h>
+#include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/SystemInterface.h>
 #include <SDL3/SDL.h>
 #include <catch2/catch_test_macros.hpp>
 
@@ -85,7 +88,7 @@ namespace
 #if defined(__linux__) && defined(GNUBASE_SANITIZED)
 			keepVulkanDriversLoaded();
 #endif
-			rmlui = std::make_unique<ui::RmlUi>();
+			rmlui = std::make_unique<ui::RmlUi>(*windows);
 			shell = std::make_unique<ui::Shell>(*windows, *renderer);
 		}
 
@@ -155,6 +158,49 @@ namespace
 	void push(SDL_Event event)
 	{
 		REQUIRE(SDL_PushEvent(&event));
+	}
+
+	// An SDL event of the given type for the window, without data.
+	SDL_Event windowEvent(Uint32 type, const ui::Window& window)
+	{
+		SDL_Event event{};
+		event.type = type;
+		event.window.windowID = window.id();
+		return event;
+	}
+
+	// SDL reports positions in window coordinates, which are points on a Retina display.
+	float toWindowCoordinates(const ui::Window& window, float pixels)
+	{
+		return pixels / SDL_GetWindowPixelDensity(ui::SdlWindowSystem::sdlWindow(window.id()));
+	}
+
+	// An event parameter of the type it was given, read without RmlUi's type conversion.
+	template <typename T> T parameter(const Rml::Event& event, const char* name)
+	{
+		const Rml::Dictionary& parameters = event.GetParameters();
+		const auto it = parameters.find(name);
+		REQUIRE(it != parameters.end());
+		return it->second.GetReference<T>();
+	}
+
+	struct DropListener final : Rml::EventListener
+	{
+		void ProcessEvent(Rml::Event& event) override
+		{
+			target = event.GetTargetElement()->GetId();
+			files = parameter<Rml::String>(event, "files");
+		}
+
+		std::string target;
+		std::string files;
+	};
+
+	Rml::ElementFormControlInput& field(const ui::Window& window, const char* id)
+	{
+		auto* input = dynamic_cast<Rml::ElementFormControlInput*>(window.context().GetDocument(0)->GetElementById(id));
+		REQUIRE(input != nullptr);
+		return *input;
 	}
 }
 
@@ -264,4 +310,129 @@ TEST_CASE("closing the main window or a quit request ends the shell", "[ui]")
 	CHECK_FALSE(gpu.shell->running());
 	CHECK(gpu.shell->windows().empty());
 	CHECK(ui::SdlWindowSystem::sdlWindow(main) == nullptr);
+}
+
+TEST_CASE("files dropped on a window reach the element under the mouse", "[ui]")
+{
+	DropListener listener; // outlives the documents it listens to
+	Gpu gpu;
+	const ui::Window& window = gpu.open("drop.rml");
+	gpu.shell->step(milliseconds(0));
+	window.context().GetDocument(0)->AddEventListener(ui::g_fileDropEvent, &listener);
+
+	// SDL reports a drop as its beginning, one event per file, and its end.
+	const float x = toWindowCoordinates(window, 150.0F * window.dpRatio());
+	const float y = toWindowCoordinates(window, 20.0F * window.dpRatio());
+	push(windowEvent(SDL_EVENT_DROP_BEGIN, window));
+	for (const char* file : {"/music/kick.wav", "/music/snare.flac"})
+	{
+		SDL_Event drop{};
+		drop.type = SDL_EVENT_DROP_FILE;
+		drop.drop.windowID = window.id();
+		drop.drop.x = x;
+		drop.drop.y = y;
+		drop.drop.data = file;
+		push(drop);
+	}
+	SDL_Event complete{};
+	complete.type = SDL_EVENT_DROP_COMPLETE;
+	complete.drop.windowID = window.id();
+	complete.drop.x = x;
+	complete.drop.y = y;
+	push(complete);
+	gpu.shell->step(milliseconds(0));
+	CHECK(listener.target == "right");
+	CHECK(listener.files == "/music/kick.wav\n/music/snare.flac");
+}
+
+TEST_CASE("a text field turns SDL's text input and IME on for its window", "[ui]")
+{
+	Gpu gpu;
+	const ui::Window& window = gpu.open("input.rml");
+	const ui::Window& other = gpu.open("input.rml");
+	gpu.shell->step(milliseconds(0));
+	SDL_Window* sdl = ui::SdlWindowSystem::sdlWindow(window.id());
+	CHECK_FALSE(SDL_TextInputActive(sdl));
+
+	Rml::ElementFormControlInput& name = field(window, "name");
+	name.SetValue("");
+	name.Focus();
+	CHECK(SDL_TextInputActive(sdl));
+	CHECK_FALSE(SDL_TextInputActive(ui::SdlWindowSystem::sdlWindow(other.id())));
+
+	SDL_Event typed{};
+	typed.type = SDL_EVENT_TEXT_INPUT;
+	typed.text.windowID = window.id();
+	typed.text.text = "ab";
+	push(typed);
+	gpu.shell->step(milliseconds(0));
+	CHECK(name.GetValue() == "ab");
+
+	// An input method composes text before the user commits it.
+	SDL_Event editing{};
+	editing.type = SDL_EVENT_TEXT_EDITING;
+	editing.edit.windowID = window.id();
+	editing.edit.text = "ka";
+	editing.edit.start = 2;
+	editing.edit.length = 0;
+	push(editing);
+	gpu.shell->step(milliseconds(0));
+	CHECK(name.GetValue() == "abka");
+	editing.edit.text = "";
+	editing.edit.start = 0;
+	push(editing);
+	typed.text.text = "x";
+	push(typed);
+	gpu.shell->step(milliseconds(0));
+	CHECK(name.GetValue() == "abx");
+
+	name.Blur();
+	CHECK_FALSE(SDL_TextInputActive(sdl));
+}
+
+TEST_CASE("text fields copy to and paste from SDL's clipboard", "[ui]")
+{
+	const Gpu gpu;
+	gpu.open("input.rml");
+	char* saved = SDL_GetClipboardText(); // the clipboard of whoever runs the tests
+	Rml::SystemInterface* system = Rml::GetSystemInterface();
+	REQUIRE(system != nullptr);
+
+	system->SetClipboardText("copied in GNUbase");
+	char* text = SDL_GetClipboardText();
+	CHECK(std::string(text) == "copied in GNUbase");
+	SDL_free(text);
+	REQUIRE(SDL_SetClipboardText("copied elsewhere"));
+	Rml::String pasted;
+	system->GetClipboardText(pasted);
+	CHECK(pasted == "copied elsewhere");
+
+	SDL_SetClipboardText(saved);
+	SDL_free(saved);
+}
+
+TEST_CASE("a file dialog's answer reaches its caller on the UI thread", "[ui]")
+{
+	Gpu gpu;
+	const ui::Window& window = gpu.open("boxes.rml");
+	// An unknown dialog driver makes SDL answer with an error at once, so no dialog opens during the tests.
+	REQUIRE(SDL_SetHint(SDL_HINT_FILE_DIALOG_DRIVER, "none"));
+	int answers = 0;
+	ui::FileDialogResult answer;
+	ui::FileDialog dialog;
+	dialog.parent = window.id();
+	dialog.filters = {{"Audio files", "wav;flac"}};
+	gpu.shell->showFileDialog(dialog,
+		[&](const ui::FileDialogResult& result)
+		{
+			++answers;
+			answer = result;
+		});
+	CHECK(answers == 0); // only in a step
+	for (int step = 0; step < 100 && answers == 0; ++step)
+		gpu.shell->step(milliseconds(10));
+	SDL_ResetHint(SDL_HINT_FILE_DIALOG_DRIVER);
+	CHECK(answers == 1);
+	CHECK(answer.files.empty());
+	CHECK_FALSE(answer.error.empty());
 }

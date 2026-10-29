@@ -1,0 +1,14 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Two drop targets side by side: "left" from 0 to 100 dp, "right" from 100 to 200 dp, both 100 dp high. -->
+<rml>
+<head>
+	<title>Drop</title>
+	<style>
+		body { display: block; position: absolute; left: 0; top: 0; right: 0; bottom: 0; margin: 0; }
+		div { display: block; position: absolute; top: 0; width: 100dp; height: 100dp; }
+		#left { left: 0; }
+		#right { left: 100dp; }
+	</style>
+</head>
+<body><div id="left"/><div id="right"/></body>
+</rml>
