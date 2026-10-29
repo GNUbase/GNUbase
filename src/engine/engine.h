@@ -195,7 +195,7 @@ namespace gnubase::engine
 		RequestId m_nextRequest = 1;
 		bool m_stopping = false;
 		std::condition_variable m_wake;
-		std::unique_ptr<Jobs> m_jobs;                     // background work such as backups
+		std::unique_ptr<Jobs> m_jobs;                    // background work such as backups
 		std::unique_ptr<plugins::HostManager> m_plugins; // outlives the audio engine, whose graphs may hold plugins
 		std::unique_ptr<ProjectModel> m_project;         // only the command thread touches the document
 		std::unique_ptr<AudioEngine> m_audio;            // plays the project; only the command thread changes it
