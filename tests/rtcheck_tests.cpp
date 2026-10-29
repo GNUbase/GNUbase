@@ -4,22 +4,28 @@
 #include "engine/engine.h"
 #include "engine/graph/graph.h"
 #include "engine/processors/builtin.h"
+#include "ipc/connection.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 #include "platform/rt/snapshotpublisher.h"
+#include "platform/rt/workerpool.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // gnubase-tests links the RT checker (gnubase-rtcheck), which reports allocations made in real-time code.
@@ -269,6 +275,35 @@ TEST_CASE("processing a processing graph and swapping in a new one never allocat
 	CHECK(g_violations == 0);
 }
 
+TEST_CASE("processing a graph on a worker pool never allocates or frees, on any thread", "[unit]")
+{
+	using namespace gnubase::engine::graph;
+	using namespace gnubase::engine::processors;
+	GraphDesc desc;
+	for (int i = 0; i < 16; ++i)
+		desc.nodes.push_back({NodeKind::Builtin, 0, 2, createBuiltin(i % 2 == 0 ? "testSynth" : "noise")});
+	desc.nodes.push_back({NodeKind::Channel, 0, 2, nullptr});
+	desc.nodes.push_back({NodeKind::OutputBus, 0, 2, nullptr});
+	for (int i = 0; i < 16; ++i)
+		desc.audio.push_back({i, i < 8 ? 16 : 17});
+	desc.audio.push_back({16, 17});
+	WorkerPool pool(3);
+	const CompiledGraph graph(desc, 48000.0, 256);
+
+	const RecordViolations record;
+	for (int block = 0; block < 50; ++block)
+	{
+		ProcessEvent note;
+		note.type = ProcessEvent::Type::NoteOn;
+		note.key = static_cast<uint8_t>(40 + block);
+		note.velocity = 0x8000;
+		graph.events(0).add(note);
+		const ScopedRealtimeContext realtime;
+		graph.process(256, TransportBlock{}, &pool);
+	}
+	CHECK(g_violations == 0);
+}
+
 TEST_CASE("the transport applies requests and computes cycle segments without allocating", "[unit]")
 {
 	using namespace gnubase::engine;
@@ -487,5 +522,132 @@ TEST_CASE("playing MIDI parts through an instrument, with edits, stops and cycle
 	run("audio.render", {{"frames", 4800}});
 	run("transport.stop", Json::object());
 	run("audio.render", {{"frames", 960}});
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE(
+	"playing automation of volume, pan, instrument parameters and controllers passes the RT checker", "[integration]")
+{
+	using gnubase::engine::Json;
+	gnubase::engine::Engine engine;
+	gnubase::engine::Client client(engine);
+	const auto run = [&client](const std::string& command, const Json& parameters)
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	const auto points = [](std::initializer_list<std::pair<int64_t, double>> list, const char* shape)
+	{
+		Json result = Json::array();
+		for (const auto& [position, value] : list) // samples, in ticks at 120 BPM and 48 kHz
+			result.push_back({{"position", position * 1792 / 25}, {"value", value}, {"shape", shape}});
+		return result;
+	};
+	const auto lane = [&run](const Json& track, const Json& target)
+	{
+		return run("automationLane.add", {{"track", track.at("track").at("id")}, {"target", target}})
+			.at("lane")
+			.at("id");
+	};
+	run("audio.setDevice",
+		{{"blockSize", 64}, {"captureSeconds", 1},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 441.0}, {"Level", 0.5}}}}}});
+	const Json audio = run("track.add", {{"type", "audio"}});
+	const Json instrument = run("track.add", {{"type", "instrument"}});
+	run("channel.set", {{"channel", instrument.at("channel").at("id")}, {"instrument", "testSynth"}});
+	run("automationPoint.add",
+		{{"lane", lane(audio, {{"type", "volume"}})},
+			{"points", points({{0, -30.0}, {2000, 0.0}, {5000, -6.0}, {9000, -60.0}}, "linear")}});
+	run("automationPoint.add",
+		{{"lane", lane(audio, {{"type", "pan"}})}, {"points", points({{0, -1.0}, {4000, 1.0}, {8000, 0.0}}, "curve")}});
+	run("automationPoint.add",
+		{{"lane", lane(instrument, {{"type", "instrument"}, {"parameter", 0}})},
+			{"points", points({{0, 0.0}, {3000, 1.0}, {6000, 0.5}}, "linear")}});
+	const Json controller = lane(instrument, {{"type", "controller"}, {"number", 7}, {"channel", 0}});
+	run("automationPoint.add",
+		{{"lane", controller}, {"points", points({{0, 0.0}, {1000, 1.0}, {7000, 0.25}}, "curve")}});
+	run("transport.set", {{"left", 1000}, {"right", 9000}, {"cycle", true}});
+	run("transport.play", Json::object());
+
+	const RecordViolations record;
+	run("audio.render", {{"frames", 9600}});
+	run("automationPoint.add", // new curves, swapped in between blocks
+		{{"lane", controller}, {"points", points({{1500, 0.5}, {2500, 0.0}}, "step")}});
+	run("audio.render", {{"frames", 4800}});
+	run("transport.locate", {{"position", 3000}}); // mid-ramp
+	run("audio.render", {{"frames", 4800}});
+	run("transport.stop", Json::object());
+	run("audio.render", {{"frames", 960}});
+	run("transport.locate", {{"position", 5000}}); // while stopped
+	run("audio.render", {{"frames", 960}});
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("sending blocks to a plugin host and waiting for its answers passes the RT checker", "[unit]")
+{
+	using namespace gnubase::ipc;
+	Config config;
+	config.maxChannels = 2;
+	config.maxFrames = 64;
+	config.eventRingSize = 1024;
+	config.controlRingSize = 1024;
+	Connection engine = Connection::create(config);
+	Connection host = Connection::open(engine.name());
+	static constexpr int blocks = 200;
+
+	const RecordViolations record;
+	// The host's audio thread answers every block, as a plugin host process would.
+	std::thread hostThread(
+		[&host]
+		{
+			const ScopedRealtimeContext realtime;
+			std::array<std::byte, 64> event{};
+			MessageHeader header;
+			for (int i = 0; i < blocks; ++i)
+			{
+				AudioBlock input;
+				AudioBlock output;
+				if (host.waitForBlock(std::chrono::seconds(10)) != WaitResult::Ready ||
+					host.receiveBlock(input) != ReadStatus::Ok ||
+					host.receiveEvent(header, event.data(), event.size()) != ReadStatus::Ok || !host.beginBlock(output))
+					return;
+				output.sequence = input.sequence;
+				output.frames = input.frames;
+				output.channels = 1;
+				output.channel(0)[0] = input.channel(0)[0];
+				host.releaseBlock();
+				host.sendBlock(output);
+			}
+		});
+	int answered = 0;
+	{
+		const ScopedRealtimeContext realtime;
+		for (int i = 0; i < blocks; ++i)
+		{
+			// No Catch2 assertions in here: they may allocate.
+			AudioBlock block;
+			if (!engine.beginBlock(block))
+				break;
+			block.sequence = static_cast<uint64_t>(i);
+			block.frames = 64;
+			block.channels = 2;
+			block.channel(0)[0] = static_cast<float>(i);
+			block.eventCount = 1;
+			if (!engine.sendEvent(1, 1, &i, sizeof(i)))
+				break;
+			engine.sendBlock(block);
+			AudioBlock answer;
+			if (engine.waitForAnswer(static_cast<uint64_t>(i), std::chrono::seconds(10)) != WaitResult::Ready ||
+				engine.receiveBlock(answer) != ReadStatus::Ok)
+				break;
+			if (answer.channel(0)[0] == static_cast<float>(i))
+				++answered;
+			engine.releaseBlock();
+		}
+	}
+	hostThread.join();
+	CHECK(answered == blocks);
 	CHECK(g_violations == 0);
 }

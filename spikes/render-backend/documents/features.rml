@@ -1,0 +1,32 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<rml>
+<head>
+	<title>Render backend spike: features</title>
+	<link type="text/rcss" href="spike.rcss"/>
+</head>
+<body>
+	<div class="grid">
+		<div class="tile"><div class="fill shapes"/></div>
+		<div class="tile"><div class="fill linear"/></div>
+		<div class="tile"><div class="fill radial"/></div>
+		<div class="tile"><div class="shadow"/></div>
+		<div class="tile"><div class="fill blur"/></div>
+		<div class="tile"><div class="drop"/></div>
+		<div class="tile"><div class="fill clip"><div/><div/><div/><div/></div></div>
+		<div class="tile"><div class="fill mask"/></div>
+		<div class="tile"><div class="transform"/></div>
+		<div class="tile"><div class="fill meters">
+			<div class="meter"><div class="level l15"/></div>
+			<div class="meter"><div class="level l40"/></div>
+			<div class="meter"><div class="level l65"/></div>
+			<div class="meter"><div class="level l80"/></div>
+			<div class="meter"><div class="level l95"/></div>
+			<div class="meter"><div class="level l65"/></div>
+			<div class="meter"><div class="level l40"/></div>
+			<div class="meter"><div class="level l15"/></div>
+		</div></div>
+		<div class="tile"><waveform/></div>
+		<div class="tile"><waveform-image/></div>
+	</div>
+</body>
+</rml>

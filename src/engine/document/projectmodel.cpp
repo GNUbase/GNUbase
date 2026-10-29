@@ -10,6 +10,7 @@
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
 #include "engine/midi/functioncommands.h"
+#include "engine/midi/quantizecommands.h"
 #include "engine/processors/builtin.h"
 
 #include <algorithm>
@@ -19,9 +20,11 @@
 #include <cmath>
 #include <ctime>
 #include <filesystem>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -289,6 +292,13 @@ namespace gnubase::engine
 					part.length = end.value - part.position.value;
 					context.emit("midiPart.changed", {{"part", toJson(part)}});
 				}
+			for (auto& [id, lane] : project.automation)
+				if (lane.track == track.id && !lane.points.empty())
+				{
+					for (auto& [pointId, point] : lane.points)
+						point.position = time::rebase(point.position, base, project.tempo, project.sampleRate);
+					context.emit("automationLane.changed", {{"lane", toJson(lane)}});
+				}
 			track.timeBase = base;
 		}
 
@@ -309,6 +319,18 @@ namespace gnubase::engine
 					part.length = rescale(part.length, factor);
 					context.emit("midiPart.changed", {{"part", toJson(part)}});
 				}
+			for (auto& [id, lane] : project.automation)
+			{
+				bool changed = false;
+				for (auto& [pointId, point] : lane.points)
+					if (point.position.base == time::TimeBase::Linear)
+					{
+						point.position.value = rescale(point.position.value, factor);
+						changed = true;
+					}
+				if (changed)
+					context.emit("automationLane.changed", {{"lane", toJson(lane)}});
+			}
 			project.sampleRate = sampleRate;
 		}
 
@@ -318,6 +340,313 @@ namespace gnubase::engine
 				[type](const auto& entry) { return entry.second.type == type; });
 			const std::string number = std::to_string(count + 1);
 			return trackTypeEntry(type).defaultName + std::string(number.size() < 2 ? " 0" : " ") + number;
+		}
+
+		// Automation.
+
+		// A lane's target from a command, checked against the track it automates.
+		AutomationTarget automationTarget(const Project& project, const Track& track, const Json& json)
+		{
+			const std::optional<AutomationTargetType> parsed =
+				automationTargetTypeFromName(json.at("type").get<std::string>());
+			if (!parsed.has_value())
+				throw CommandError(
+					"target.type must be volume, pan, instrument, controller, pitchBend or channelPressure");
+			const AutomationTargetType type = *parsed;
+			AutomationTarget target;
+			target.type = type;
+			require(track.channel != 0, "track " + idText(track.id) + " has no channel to automate");
+			const Channel& channel = project.channels.at(track.channel);
+			const bool midi = track.type == TrackType::Midi || track.type == TrackType::Instrument;
+			const auto only = [&json, type](std::initializer_list<const char*> keys)
+			{
+				for (const auto& [key, value] : json.items())
+					require(key == "type" ||
+							std::any_of(keys.begin(), keys.end(), [&key = key](const char* k) { return key == k; }),
+						std::string("target.") + key + " doesn't belong to a " + automationTargetTypeName(type) +
+							" target");
+			};
+			const auto midiChannel = [&json]()
+			{
+				const auto value = json.value("channel", int64_t{0});
+				requireRange(value, 0, 15, "target.channel");
+				return static_cast<uint8_t>(value);
+			};
+			switch (target.type)
+			{
+			case AutomationTargetType::Volume:
+			case AutomationTargetType::Pan:
+				only({});
+				require(channel.channels > 0 && track.type != TrackType::Midi, "a MIDI track has no volume or pan");
+				break;
+			case AutomationTargetType::Instrument:
+			{
+				only({"parameter"});
+				require(track.type == TrackType::Instrument, "only instrument tracks have an instrument");
+				require(!channel.instrument.empty(), "track " + idText(track.id) + " plays no instrument");
+				require(json.contains("parameter"), "target.parameter is required");
+				const auto parameter = json.at("parameter").get<int64_t>();
+				const auto& builtins = processors::builtins();
+				const auto info = std::find_if(builtins.begin(), builtins.end(),
+					[&channel](const processors::BuiltinInfo& b) { return b.id == channel.instrument; });
+				require(info != builtins.end() &&
+						std::any_of(info->parameters.begin(), info->parameters.end(),
+							[parameter](const processors::ParameterInfo& p) { return p.id == parameter; }),
+					channel.instrument + " has no parameter " + std::to_string(parameter));
+				target.parameter = static_cast<uint32_t>(parameter);
+				break;
+			}
+			case AutomationTargetType::Controller:
+				only({"number", "channel"});
+				require(midi, "MIDI controllers are automated on MIDI and instrument tracks");
+				require(json.contains("number"), "target.number is required");
+				requireRange(json.at("number").get<int64_t>(), 0, 127, "target.number");
+				target.number = json.at("number").get<uint8_t>();
+				target.channel = midiChannel();
+				break;
+			case AutomationTargetType::PitchBend:
+			case AutomationTargetType::ChannelPressure:
+				only({"channel"});
+				require(midi, "MIDI controllers are automated on MIDI and instrument tracks");
+				target.channel = midiChannel();
+				break;
+			}
+			return target;
+		}
+
+		// The values a lane's points can have, in its target's unit.
+		std::pair<double, double> automationRange(const Project& project, const AutomationLane& lane)
+		{
+			switch (lane.target.type)
+			{
+			case AutomationTargetType::Volume:
+				return {g_minChannelVolume, g_maxChannelVolume};
+			case AutomationTargetType::Pan:
+				return {-1.0, 1.0};
+			case AutomationTargetType::Instrument:
+			{
+				const Channel& channel = project.channels.at(project.trackById.at(lane.track).channel);
+				for (const processors::BuiltinInfo& info : processors::builtins())
+					if (info.id == channel.instrument)
+						for (const processors::ParameterInfo& parameter : info.parameters)
+							if (parameter.id == lane.target.parameter)
+								return {parameter.minimum, parameter.maximum};
+				throw CommandError("the instrument of automation lane " + idText(lane.id) + " has no parameter " +
+					std::to_string(lane.target.parameter) + " any more");
+			}
+			case AutomationTargetType::Controller:
+			case AutomationTargetType::PitchBend:
+			case AutomationTargetType::ChannelPressure:
+				return {0.0, 1.0};
+			}
+			return {0.0, 1.0};
+		}
+
+		std::string numberText(double value)
+		{
+			std::ostringstream text;
+			text << value;
+			return text.str();
+		}
+
+		// Changes a point by what a command gives for it, checked. Positions are in the time base of the lane's track.
+		void changePoint(AutomationPoint& point, const Json& item, const std::string& name, const Track& track,
+			const std::pair<double, double>& range)
+		{
+			if (item.contains("position"))
+				point.position = position(track, item.at("position"), name + ".position");
+			if (item.contains("value"))
+			{
+				point.value = item.at("value").get<double>();
+				require(point.value >= range.first && point.value <= range.second,
+					name + ".value must be from " + numberText(range.first) + " to " + numberText(range.second));
+			}
+			if (item.contains("shape"))
+			{
+				const std::optional<AutomationShape> shape =
+					automationShapeFromName(item.at("shape").get<std::string>());
+				if (!shape.has_value())
+					throw CommandError(name + ".shape must be step, linear or curve");
+				point.shape = *shape;
+			}
+			if (item.contains("curve"))
+			{
+				point.curve = item.at("curve").get<double>();
+				require(point.curve >= -1.0 && point.curve <= 1.0, name + ".curve must be from -1 to 1");
+			}
+			if (point.shape != AutomationShape::Curve)
+				point.curve = 0.0;
+		}
+
+		Json pointsJson(const std::vector<AutomationPoint>& points)
+		{
+			Json list = Json::array();
+			for (const AutomationPoint& point : points)
+				list.push_back(toJson(point));
+			return list;
+		}
+
+		Json addAutomationLane(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			AutomationLane lane;
+			lane.track = parameters.at("track").get<ObjectId>();
+			const Track& track = find(project.trackById, lane.track, "track");
+			lane.target = automationTarget(project, track, parameters.at("target"));
+			lane.read = parameters.value("read", true);
+			for (const auto& [id, other] : project.automation)
+				require(other.track != lane.track || !(other.target == lane.target),
+					"track " + idText(lane.track) + " already has this automation lane: " + idText(id));
+			lane.id = project.newId();
+			Json result = {{"lane", toJson(lane)}};
+			project.automation[lane.id] = std::move(lane);
+			context.emit("automationLane.added", result);
+			return result;
+		}
+
+		Json setAutomationLane(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			AutomationLane& lane = find(project.automation, parameters.at("lane").get<ObjectId>(), "automation lane");
+			lane.read = parameters.value("read", lane.read);
+			Json result = {{"lane", toJson(lane)}};
+			context.emit("automationLane.changed", result);
+			return result;
+		}
+
+		Json removeAutomationLane(Project& project, CommandContext& context)
+		{
+			const ObjectId id = context.parameters().at("lane").get<ObjectId>();
+			find(project.automation, id, "automation lane");
+			project.automation.erase(id);
+			context.emit("automationLane.removed", {{"lane", id}});
+			return Json::object();
+		}
+
+		Json listAutomationLanes(const Project& project, CommandContext& context)
+		{
+			const auto track = context.parameters().value("track", ObjectId{0});
+			if (track != 0)
+				require(project.trackById.count(track) != 0, "no track " + idText(track));
+			Json lanes = Json::array();
+			for (const ObjectId id : project.trackOrder())
+				if (track == 0 || id == track)
+					for (const auto& [laneId, lane] : project.automation)
+						if (lane.track == id)
+							lanes.push_back(toJson(lane));
+			return {{"lanes", std::move(lanes)}};
+		}
+
+		Json addAutomationPoints(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			AutomationLane& lane = find(project.automation, parameters.at("lane").get<ObjectId>(), "automation lane");
+			const Json& items = parameters.at("points");
+			const std::pair<double, double> range = automationRange(project, lane);
+			const Track& track = project.trackById.at(lane.track);
+			std::vector<AutomationPoint> points;
+			for (size_t i = 0; i < items.size(); ++i)
+			{
+				AutomationPoint point;
+				point.position.base = track.timeBase;
+				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range);
+				points.push_back(point);
+			}
+			for (AutomationPoint& point : points)
+			{
+				point.id = project.newId();
+				lane.points[point.id] = point;
+			}
+			Json added = pointsJson(points);
+			context.emit("automationPoint.added", {{"lane", lane.id}, {"points", added}});
+			return {{"points", added}};
+		}
+
+		Json setAutomationPoints(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			AutomationLane& lane = find(project.automation, parameters.at("lane").get<ObjectId>(), "automation lane");
+			const Json& items = parameters.at("points");
+			const std::pair<double, double> range = automationRange(project, lane);
+			const Track& track = project.trackById.at(lane.track);
+			std::vector<AutomationPoint> points;
+			for (size_t i = 0; i < items.size(); ++i)
+			{
+				const auto id = items[i].at("id").get<ObjectId>();
+				const auto found = lane.points.find(id);
+				require(found != lane.points.end(),
+					"no automation point " + idText(id) + " in automation lane " + idText(lane.id));
+				AutomationPoint point = found->second;
+				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range);
+				points.push_back(point);
+			}
+			for (const AutomationPoint& point : points)
+				lane.points[point.id] = point;
+			Json changed = pointsJson(points);
+			context.emit("automationPoint.changed", {{"lane", lane.id}, {"points", changed}});
+			return {{"points", changed}};
+		}
+
+		Json removeAutomationPoints(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			AutomationLane& lane = find(project.automation, parameters.at("lane").get<ObjectId>(), "automation lane");
+			const auto ids = parameters.at("points").get<std::vector<ObjectId>>();
+			for (const ObjectId id : ids)
+				require(lane.points.count(id) != 0,
+					"no automation point " + idText(id) + " in automation lane " + idText(lane.id));
+			for (const ObjectId id : ids)
+				lane.points.erase(id);
+			context.emit("automationPoint.removed", {{"lane", lane.id}, {"points", ids}});
+			return Json::object();
+		}
+
+		// Automation follows events: when an event or part moves, the automation of its track in the range it covered
+		// moves with it and replaces the points where it lands. The points are in the track's time base, like the
+		// event's positions.
+		void followEvent(Project& project, ObjectId track, const time::Position& fromPosition,
+			const time::Position& endPosition, const time::Position& toPosition, CommandContext& context)
+		{
+			const time::TimeBase base = project.trackById.at(track).timeBase;
+			const auto inBase = [&project, base](const time::Position& position)
+			{ return time::rebase(position, base, project.tempo, project.sampleRate).value; };
+			const int64_t from = inBase(fromPosition);
+			const int64_t end = inBase(endPosition);
+			const int64_t to = inBase(toPosition);
+			if (to == from || end <= from)
+				return;
+			const int64_t landing = to + (end - from);
+			for (auto& [id, lane] : project.automation)
+			{
+				if (lane.track != track)
+					continue;
+				std::vector<AutomationPoint> moving;
+				for (const auto& [pointId, point] : lane.points)
+					if (point.position.value >= from && point.position.value < end)
+						moving.push_back(point);
+				if (moving.empty())
+					continue;
+				for (auto point = lane.points.begin(); point != lane.points.end();)
+				{
+					const int64_t at = point->second.position.value;
+					const bool moves = at >= from && at < end;
+					const bool covered = at >= to && at < landing;
+					point = covered && !moves ? lane.points.erase(point) : std::next(point);
+				}
+				for (const AutomationPoint& point : moving)
+					lane.points[point.id].position.value = point.position.value + (to - from);
+				context.emit("automationLane.changed", {{"lane", toJson(lane)}});
+			}
+		}
+
+		// Where an audio event ends, in the time base of its position.
+		time::Position eventEnd(const Project& project, const AudioEvent& event)
+		{
+			const MediaFile& media = project.media.at(project.clips.at(event.clip).media);
+			const time::Samples start = time::toSamples(event.position, project.tempo, project.sampleRate);
+			const auto length = std::llround(static_cast<double>(event.length) * project.sampleRate / media.sampleRate);
+			return time::rebase(
+				{time::TimeBase::Linear, start + length}, event.position.base, project.tempo, project.sampleRate);
 		}
 
 		// Commands.
@@ -347,7 +676,7 @@ namespace gnubase::engine
 			std::optional<Channel> channel;
 			if (hasChannel)
 			{
-				channel = Channel{project.newId(), track.id, channels, 0, 0, {}};
+				channel = Channel{project.newId(), track.id, channels, 0, 0, {}, 0.0, 0.0};
 				const auto mainOutput = std::find_if(project.busses.begin(), project.busses.end(),
 					[](const Bus& bus) { return bus.direction == BusDirection::Output; });
 				if (hasAudio && mainOutput != project.busses.end())
@@ -452,6 +781,8 @@ namespace gnubase::engine
 					event = event->second.track == removed ? project.audioEvents.erase(event) : std::next(event);
 				for (auto part = project.midiParts.begin(); part != project.midiParts.end();)
 					part = part->second.track == removed ? project.midiParts.erase(part) : std::next(part);
+				for (auto lane = project.automation.begin(); lane != project.automation.end();)
+					lane = lane->second.track == removed ? project.automation.erase(lane) : std::next(lane);
 				project.channels.erase(gone.channel);
 				project.trackById.erase(removed);
 				context.emit("track.removed", {{"track", removed}});
@@ -498,6 +829,13 @@ namespace gnubase::engine
 					require(info->instrument, changed.instrument + " is not an instrument");
 				}
 			}
+			if (parameters.contains("volume") || parameters.contains("pan"))
+				require(changed.channels > 0 && type != TrackType::Midi, "a MIDI channel has no volume or pan");
+			changed.volume = parameters.value("volume", channel.volume);
+			require(changed.volume >= g_minChannelVolume && changed.volume <= g_maxChannelVolume,
+				"volume must be from -144 to 6 dB");
+			changed.pan = parameters.value("pan", channel.pan);
+			require(changed.pan >= -1.0 && changed.pan <= 1.0, "pan must be from -1 to 1");
 			channel = changed;
 			Json result = {{"channel", toJson(channel)}};
 			context.emit("channel.changed", result);
@@ -865,7 +1203,7 @@ namespace gnubase::engine
 			return result;
 		}
 
-		Json setAudioEvent(Project& project, CommandContext& context)
+		Json setAudioEvent(Project& project, CommandContext& context, bool follow)
 		{
 			const Json& parameters = context.parameters();
 			AudioEvent& event = find(project.audioEvents, parameters.at("event").get<ObjectId>(), "audio event");
@@ -879,6 +1217,8 @@ namespace gnubase::engine
 			changed.mute = parameters.value("mute", event.mute);
 			require(changed.length > 0, "length must be positive");
 			checkAudioEvent(project, changed);
+			if (follow && changed.position != event.position)
+				followEvent(project, event.track, event.position, eventEnd(project, event), changed.position, context);
 			event = changed;
 			Json result = {{"event", toJson(event)}};
 			context.emit("audioEvent.changed", result);
@@ -913,7 +1253,7 @@ namespace gnubase::engine
 			return result;
 		}
 
-		Json setMidiPart(Project& project, CommandContext& context)
+		Json setMidiPart(Project& project, CommandContext& context, bool follow)
 		{
 			const Json& parameters = context.parameters();
 			MidiPart& part = find(project.midiParts, parameters.at("part").get<ObjectId>(), "MIDI part");
@@ -922,6 +1262,8 @@ namespace gnubase::engine
 				: part.position;
 			const int64_t length = parameters.value("length", part.length);
 			require(length > 0, "length must be positive");
+			if (follow && newPosition != part.position)
+				followEvent(project, part.track, part.position, partEnd(part), newPosition, context);
 			part.position = newPosition;
 			part.length = length;
 			part.name = parameters.value("name", part.name);
@@ -966,6 +1308,9 @@ namespace gnubase::engine
 				note.pitch = item.at("pitch").get<uint8_t>();
 				note.channel = item.value("channel", uint8_t{0});
 				note.velocity = static_cast<uint16_t>(std::lround(unitValue(item, "velocity", name) * g_maxVelocity));
+				if (item.contains("releaseVelocity"))
+					note.releaseVelocity =
+						static_cast<uint16_t>(std::lround(unitValue(item, "releaseVelocity", name) * g_maxVelocity));
 				notes.push_back(note);
 			}
 			Json added = Json::array();
@@ -1112,6 +1457,13 @@ namespace gnubase::engine
 			{"controller.add", "Add controllers"},
 			{"controller.remove", "Remove controllers"},
 			{"controller.set", "Change controllers"},
+			{"automationLane.add", "Add automation lane"},
+			{"automationLane.set", "Change automation lane"},
+			{"automationLane.remove", "Remove automation lane"},
+			{"automationPoint.add", "Add automation points"},
+			{"automationPoint.set", "Change automation points"},
+			{"automationPoint.remove", "Remove automation points"},
+			{"midiFile.import", "Import MIDI file"},
 		};
 
 		// Empty for commands without a fixed name, such as transactions.
@@ -1204,6 +1556,16 @@ namespace gnubase::engine
 				else
 					context.emit(existed ? "midiPart.changed" : "midiPart.added", {{"part", toJson(current->second)}});
 			}
+			for (const AutomationLaneChange& lane : change.automation)
+			{
+				const auto current = project.automation.find(lane.id);
+				const bool existed = direction == Direction::Redo ? lane.before.has_value() : lane.after.has_value();
+				if (current == project.automation.end())
+					context.emit("automationLane.removed", {{"lane", lane.id}});
+				else
+					context.emit(existed ? "automationLane.changed" : "automationLane.added",
+						{{"lane", toJson(current->second)}});
+			}
 			if (reordered)
 				context.emit("track.reordered", {{"tracks", project.trackOrder()}});
 		}
@@ -1215,18 +1577,18 @@ namespace gnubase::engine
 
 	void ProjectModel::add(Engine& engine, CommandInfo info, Handler handler)
 	{
-		if (info.query)
-		{
-			engine.registerCommand(std::move(info),
-				[this, handler = std::move(handler)](CommandContext& context) { return handler(m_project, context); });
-			return;
-		}
 		std::string action = actionName(info.name);
 		addEdit(engine, std::move(info), std::move(action), std::move(handler));
 	}
 
 	void ProjectModel::addEdit(Engine& engine, CommandInfo info, std::string action, Handler handler)
 	{
+		if (info.query)
+		{
+			engine.registerCommand(std::move(info),
+				[this, handler = std::move(handler)](CommandContext& context) { return handler(m_project, context); });
+			return;
+		}
 		if (!action.empty())
 			m_edits[info.name] = {info, handler};
 		engine.registerCommand(std::move(info),
@@ -1564,9 +1926,12 @@ namespace gnubase::engine
 			{"channel.set", 1,
 				"Changes a channel's audio channels, input (an input bus) or output (an output bus or a group "
 				"channel; for MIDI tracks an instrument channel). 0 disconnects. instrument is the built-in "
-				"instrument an instrument track plays (see processor.list), or empty for none.",
-				objectSchema({{"channel", idSchema}, {"channels", integerSchema}, {"input", idSchema},
-								 {"output", idSchema}, {"instrument", stringSchema}},
+				"instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in "
+				"dB, from -144 to 6 (default 0); pan is a stereo channel's balance from -1 (left) to 1 (right). "
+				"Automation of volume and pan overrides them while it plays.",
+				objectSchema(
+					{{"channel", idSchema}, {"channels", integerSchema}, {"input", idSchema}, {"output", idSchema},
+						{"instrument", stringSchema}, {"volume", numberSchema}, {"pan", numberSchema}},
 					{"channel"}),
 				resultSchema({"channel"}), false},
 			setChannel);
@@ -1674,7 +2039,8 @@ namespace gnubase::engine
 						{"length", integerSchema}, {"volume", numberSchema}, {"mute", booleanSchema}},
 					{"event"}),
 				resultSchema({"event"}), false},
-			setAudioEvent);
+			[this](Project& project, CommandContext& context)
+			{ return setAudioEvent(project, context, m_automationFollowsEvents); });
 		add(engine,
 			{"audioEvent.remove", 1, "Removes an audio event.", objectSchema({{"event", idSchema}}, {"event"}),
 				noResult, false},
@@ -1694,7 +2060,8 @@ namespace gnubase::engine
 								 {"length", integerSchema}},
 					{"part"}),
 				resultSchema({"part"}), false},
-			setMidiPart);
+			[this](Project& project, CommandContext& context)
+			{ return setMidiPart(project, context, m_automationFollowsEvents); });
 		add(engine,
 			{"midiPart.remove", 1, "Removes a MIDI part with its notes and controllers.",
 				objectSchema({{"part", idSchema}}, {"part"}), noResult, false},
@@ -1702,12 +2069,12 @@ namespace gnubase::engine
 
 		const Json note =
 			objectSchema({{"position", integerSchema}, {"length", integerSchema}, {"pitch", integerSchema},
-							 {"velocity", numberSchema}, {"channel", integerSchema}},
+							 {"velocity", numberSchema}, {"releaseVelocity", numberSchema}, {"channel", integerSchema}},
 				{"position", "length", "pitch", "velocity"});
 		add(engine,
 			{"note.add", 1,
 				"Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity "
-				"0-1, MIDI channel 0-15 (default 0).",
+				"0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0).",
 				objectSchema({{"part", idSchema}, {"notes", arraySchema(note)}}, {"part", "notes"}),
 				{{"type", "object"}, {"properties", {{"notes", {{"type", "array"}}}}}, {"required", {"notes"}}}, false},
 			addNotes);
@@ -1745,9 +2112,104 @@ namespace gnubase::engine
 			{ return removeFromPart(project, context, &MidiPart::controllers, "controllers", "controller"); });
 
 		registerMidiEditCommands(engine);
+		registerAutomationCommands(engine);
+		midi::registerQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
+		registerMidiFileCommands(engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
+	}
+
+	void ProjectModel::registerAutomationCommands(Engine& engine)
+	{
+		const Json idSchema = {{"type", "integer"}};
+		const Json numberSchema = {{"type", "number"}};
+		const Json booleanSchema = {{"type", "boolean"}};
+		const Json noResult = Json::object();
+		const Json target = objectSchema(
+			{{"type", enumSchema({"volume", "pan", "instrument", "controller", "pitchBend", "channelPressure"})},
+				{"parameter", idSchema}, {"number", idSchema}, {"channel", idSchema}},
+			{"type"});
+		const Json shape = enumSchema({"step", "linear", "curve"});
+		const Json pointsResult = {
+			{"type", "object"}, {"properties", {{"points", {{"type", "array"}}}}}, {"required", {"points"}}};
+
+		add(engine,
+			{"automationLane.add", 1,
+				"Adds an automation lane to a track: the curve of one parameter. target.type says which: volume (the "
+				"channel's fader, in dB) and pan (-1 to 1) on tracks with audio channels; instrument, a parameter of "
+				"an instrument track's built-in instrument (target.parameter, an id from processor.list, in its "
+				"range); controller (target.number 0-127), pitchBend (0.5 is no bend) and channelPressure, all 0 to "
+				"1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). A track has one lane per "
+				"target. read (default true): the curve plays; without it, or without points, the parameter keeps its "
+				"static value.",
+				objectSchema({{"track", idSchema}, {"target", target}, {"read", booleanSchema}}, {"track", "target"}),
+				resultSchema({"lane"}), false},
+			addAutomationLane);
+		add(engine,
+			{"automationLane.set", 1, "Turns reading an automation lane on or off.",
+				objectSchema({{"lane", idSchema}, {"read", booleanSchema}}, {"lane"}), resultSchema({"lane"}), false},
+			setAutomationLane);
+		add(engine,
+			{"automationLane.remove", 1, "Removes an automation lane with its points.",
+				objectSchema({{"lane", idSchema}}, {"lane"}), noResult, false},
+			removeAutomationLane);
+		add(engine,
+			{"automationLane.list", 1,
+				"The automation lanes of a track, or of every track in track order, with their points sorted by "
+				"position.",
+				objectSchema({{"track", idSchema}}),
+				{{"type", "object"}, {"properties", {{"lanes", {{"type", "array"}}}}}, {"required", {"lanes"}}}, true},
+			[](Project& project, CommandContext& context) { return listAutomationLanes(project, context); });
+
+		const Json point =
+			objectSchema({{"position", idSchema}, {"value", numberSchema}, {"shape", shape}, {"curve", numberSchema}},
+				{"position", "value"});
+		add(engine,
+			{"automationPoint.add", 1,
+				"Adds points to an automation lane: position in the track's time base (ticks on musical tracks, so "
+				"automation follows tempo changes; samples on linear ones, so it keeps its time), value in the "
+				"target's unit, shape of the curve to the next point (step, linear or curve; "
+				"default linear) and for curves the bend, curve, from -1 to 1 (above 0 the value moves fast at first). "
+				"Before the first point the curve has its value, after the last point the last one's; points at one "
+				"position make a jump. A ramp of volume moves the gain in a straight line.",
+				objectSchema({{"lane", idSchema}, {"points", arraySchema(point)}}, {"lane", "points"}), pointsResult,
+				false},
+			addAutomationPoints);
+		const Json change = objectSchema({{"id", idSchema}, {"position", idSchema}, {"value", numberSchema},
+											 {"shape", shape}, {"curve", numberSchema}},
+			{"id"});
+		add(engine,
+			{"automationPoint.set", 1, "Changes points of an automation lane: their position, value, shape or curve.",
+				objectSchema({{"lane", idSchema}, {"points", arraySchema(change)}}, {"lane", "points"}), pointsResult,
+				false},
+			setAutomationPoints);
+		add(engine,
+			{"automationPoint.remove", 1, "Removes points from an automation lane.",
+				objectSchema({{"lane", idSchema}, {"points", arraySchema(idSchema)}}, {"lane", "points"}), noResult,
+				false},
+			removeAutomationPoints);
+
+		const Json settings = {
+			{"type", "object"}, {"properties", {{"followsEvents", booleanSchema}}}, {"required", {"followsEvents"}}};
+		addControl(engine,
+			{"automation.get", 1,
+				"The automation settings. followsEvents (default false): when an audio event or MIDI part moves, the "
+				"automation of its track in its range moves with it and replaces the points where it lands.",
+				objectSchema({}), settings, true},
+			[this](CommandContext&) { return Json{{"followsEvents", m_automationFollowsEvents}}; });
+		addControl(engine,
+			{"automation.set", 1,
+				"Changes the automation settings (see automation.get). A setting, so it stays when a new project "
+				"starts.",
+				objectSchema({{"followsEvents", booleanSchema}}), settings, false},
+			[this](CommandContext& context)
+			{
+				m_automationFollowsEvents = context.parameters().value("followsEvents", m_automationFollowsEvents);
+				Json result = {{"followsEvents", m_automationFollowsEvents}};
+				context.emit("automation.changed", result);
+				return result;
+			});
 	}
 
 	void ProjectModel::registerMediaFolderCommands(Engine& engine, Jobs& jobs)

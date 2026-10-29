@@ -5,7 +5,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <limits>
+#include <optional>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -39,6 +44,29 @@ namespace gnubase::engine
 			{ControllerType::SysEx, "sysEx"},
 		};
 
+		constexpr struct
+		{
+			AutomationTargetType type;
+			const char* name;
+		} g_automationTargetNames[] = {
+			{AutomationTargetType::Volume, "volume"},
+			{AutomationTargetType::Pan, "pan"},
+			{AutomationTargetType::Instrument, "instrument"},
+			{AutomationTargetType::Controller, "controller"},
+			{AutomationTargetType::PitchBend, "pitchBend"},
+			{AutomationTargetType::ChannelPressure, "channelPressure"},
+		};
+
+		constexpr struct
+		{
+			AutomationShape shape;
+			const char* name;
+		} g_automationShapeNames[] = {
+			{AutomationShape::Step, "step"},
+			{AutomationShape::Linear, "linear"},
+			{AutomationShape::Curve, "curve"},
+		};
+
 		Json colorJson(const std::string& color)
 		{
 			return color.empty() ? Json(nullptr) : Json(color);
@@ -47,6 +75,23 @@ namespace gnubase::engine
 		std::string colorFrom(const Json& json)
 		{
 			return json.is_null() ? std::string() : json.get<std::string>();
+		}
+
+		Json timingJson(const NoteTiming& timing)
+		{
+			return {{"position", timing.position}, {"length", timing.length},
+				{"velocity", timing.velocity / g_maxVelocity}};
+		}
+
+		uint16_t velocityFrom(const Json& json)
+		{
+			return static_cast<uint16_t>(std::lround(json.get<double>() * g_maxVelocity));
+		}
+
+		NoteTiming timingFrom(const Json& json)
+		{
+			return {json.at("position").get<time::Ticks>(), json.at("length").get<time::Ticks>(),
+				velocityFrom(json.at("velocity"))};
 		}
 
 		template <typename Map> Json toJsonArray(const Map& objects)
@@ -90,6 +135,38 @@ namespace gnubase::engine
 		return std::nullopt;
 	}
 
+	const char* automationTargetTypeName(AutomationTargetType type)
+	{
+		for (const auto& entry : g_automationTargetNames)
+			if (entry.type == type)
+				return entry.name;
+		return "volume"; // not reached: every type is in the table
+	}
+
+	std::optional<AutomationTargetType> automationTargetTypeFromName(const std::string& name)
+	{
+		for (const auto& entry : g_automationTargetNames)
+			if (name == entry.name)
+				return entry.type;
+		return std::nullopt;
+	}
+
+	const char* automationShapeName(AutomationShape shape)
+	{
+		for (const auto& entry : g_automationShapeNames)
+			if (entry.shape == shape)
+				return entry.name;
+		return "linear"; // not reached: every shape is in the table
+	}
+
+	std::optional<AutomationShape> automationShapeFromName(const std::string& name)
+	{
+		for (const auto& entry : g_automationShapeNames)
+			if (name == entry.name)
+				return entry.shape;
+		return std::nullopt;
+	}
+
 	const char* timeBaseName(time::TimeBase base)
 	{
 		return base == time::TimeBase::Musical ? "musical" : "linear";
@@ -121,7 +198,8 @@ namespace gnubase::engine
 	Json toJson(const Channel& channel)
 	{
 		return {{"id", channel.id}, {"track", channel.track}, {"channels", channel.channels}, {"input", channel.input},
-			{"output", channel.output}, {"instrument", channel.instrument}};
+			{"output", channel.output}, {"instrument", channel.instrument}, {"volume", channel.volume},
+			{"pan", channel.pan}};
 	}
 
 	Json toJson(const MediaFile& media)
@@ -143,8 +221,13 @@ namespace gnubase::engine
 
 	Json toJson(const Note& note)
 	{
-		return {{"id", note.id}, {"position", note.position}, {"length", note.length}, {"pitch", note.pitch},
-			{"velocity", note.velocity / g_maxVelocity}, {"channel", note.channel}};
+		Json json = {{"id", note.id}, {"position", note.position}, {"length", note.length}, {"pitch", note.pitch},
+			{"velocity", note.velocity / g_maxVelocity}, {"releaseVelocity", note.releaseVelocity / g_maxVelocity},
+			{"channel", note.channel}};
+		if (note.origin)
+			json["origin"] = {
+				{"original", timingJson(note.origin->original)}, {"quantized", timingJson(note.origin->quantized)}};
+		return json;
 	}
 
 	Json toJson(const Controller& controller)
@@ -209,6 +292,53 @@ namespace gnubase::engine
 			{"color", colorJson(marker.color)}};
 	}
 
+	Json toJson(const AutomationTarget& target)
+	{
+		Json json = {{"type", automationTargetTypeName(target.type)}};
+		switch (target.type)
+		{
+		case AutomationTargetType::Volume:
+		case AutomationTargetType::Pan:
+			break;
+		case AutomationTargetType::Instrument:
+			json["parameter"] = target.parameter;
+			break;
+		case AutomationTargetType::Controller:
+			json["number"] = target.number;
+			json["channel"] = target.channel;
+			break;
+		case AutomationTargetType::PitchBend:
+		case AutomationTargetType::ChannelPressure:
+			json["channel"] = target.channel;
+			break;
+		}
+		return json;
+	}
+
+	Json toJson(const AutomationPoint& point)
+	{
+		Json json = {{"id", point.id}, {"position", point.position.value}, {"value", point.value},
+			{"shape", automationShapeName(point.shape)}};
+		if (point.shape == AutomationShape::Curve)
+			json["curve"] = point.curve;
+		return json;
+	}
+
+	Json toJson(const AutomationLane& lane)
+	{
+		std::vector<const AutomationPoint*> points;
+		points.reserve(lane.points.size());
+		for (const auto& [id, point] : lane.points)
+			points.push_back(&point);
+		std::stable_sort(points.begin(), points.end(),
+			[](const AutomationPoint* a, const AutomationPoint* b) { return a->position.value < b->position.value; });
+		Json list = Json::array();
+		for (const AutomationPoint* point : points)
+			list.push_back(toJson(*point));
+		return {{"id", lane.id}, {"track", lane.track}, {"target", toJson(lane.target)}, {"read", lane.read},
+			{"points", std::move(list)}};
+	}
+
 	Json toJson(const Project& project)
 	{
 		Json busses = Json::array();
@@ -228,7 +358,109 @@ namespace gnubase::engine
 			{"signatures", signatures}, {"busses", busses}, {"tracks", tracks},
 			{"channels", toJsonArray(project.channels)}, {"media", toJsonArray(project.media)},
 			{"clips", toJsonArray(project.clips)}, {"audioEvents", toJsonArray(project.audioEvents)},
-			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)}};
+			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
+			{"automation", toJsonArray(project.automation)}, {"quantize", midi::toJson(project.quantize)},
+			{"autoQuantize", project.autoQuantize}};
+	}
+
+	namespace
+	{
+		std::string numberText(double value)
+		{
+			std::ostringstream text;
+			text << value;
+			return text.str();
+		}
+
+		// A number from a file: finite and from minimum to maximum.
+		double checkedNumber(const Json& value, double minimum, double maximum, const std::string& name)
+		{
+			const auto number = value.get<double>();
+			if (!std::isfinite(number) || number < minimum || number > maximum)
+				throw std::invalid_argument(
+					name + " must be a number from " + numberText(minimum) + " to " + numberText(maximum));
+			return number;
+		}
+
+		// An optional whole number from a file, 0 if it is missing.
+		int64_t checkedInteger(const Json& json, const char* key, int64_t maximum, const std::string& name)
+		{
+			const auto value = json.value(key, int64_t{0});
+			if (value < 0 || value > maximum)
+				throw std::invalid_argument(name + "." + key + " must be from 0 to " + std::to_string(maximum));
+			return value;
+		}
+
+		// An automation lane from a file, checked as far as the automation commands check what they get without
+		// the instrument (whose parameters may have changed): the track it fits, the target's numbers and its
+		// points. NaN or a curve that overflows exp() would otherwise reach the audio.
+		AutomationLane automationLaneFromJson(const Project& project, const Json& item)
+		{
+			AutomationLane lane;
+			lane.id = item.at("id").get<ObjectId>();
+			lane.track = item.at("track").get<ObjectId>();
+			lane.read = item.at("read").get<bool>();
+			const std::string name = "automation lane " + std::to_string(lane.id);
+			const auto found = project.trackById.find(lane.track);
+			if (found == project.trackById.end() || project.channels.count(found->second.channel) == 0)
+				throw std::invalid_argument(name + " is on no track with a channel");
+			const Track& track = found->second;
+
+			const Json& target = item.at("target");
+			const std::optional<AutomationTargetType> type =
+				automationTargetTypeFromName(target.at("type").get<std::string>());
+			if (!type.has_value())
+				throw std::invalid_argument(name + " has an unknown target type " + target.at("type").dump());
+			lane.target.type = *type;
+			lane.target.parameter =
+				static_cast<uint32_t>(checkedInteger(target, "parameter", UINT32_MAX, name + " target"));
+			lane.target.number = static_cast<uint8_t>(checkedInteger(target, "number", 127, name + " target"));
+			lane.target.channel = static_cast<uint8_t>(checkedInteger(target, "channel", 15, name + " target"));
+			const bool midi = track.type == TrackType::Midi || track.type == TrackType::Instrument;
+			bool fits = midi;
+			double minimum = 0.0;
+			double maximum = 1.0;
+			switch (lane.target.type)
+			{
+			case AutomationTargetType::Volume:
+			case AutomationTargetType::Pan:
+				fits = track.type != TrackType::Midi && project.channels.at(track.channel).channels > 0;
+				minimum = lane.target.type == AutomationTargetType::Volume ? g_minChannelVolume : -1.0;
+				maximum = lane.target.type == AutomationTargetType::Volume ? g_maxChannelVolume : 1.0;
+				break;
+			case AutomationTargetType::Instrument:
+				// The instrument's range applies when it plays; the instrument may have changed since.
+				fits = track.type == TrackType::Instrument;
+				minimum = std::numeric_limits<double>::lowest();
+				maximum = std::numeric_limits<double>::max();
+				break;
+			case AutomationTargetType::Controller:
+			case AutomationTargetType::PitchBend:
+			case AutomationTargetType::ChannelPressure:
+				break;
+			}
+			if (!fits)
+				throw std::invalid_argument(name + " has a target that track " + std::to_string(track.id) + " lacks");
+
+			for (const Json& p : item.at("points"))
+			{
+				AutomationPoint point;
+				point.id = p.at("id").get<ObjectId>();
+				const std::string pointName = name + " point " + std::to_string(point.id);
+				point.position = {track.timeBase, p.at("position").get<int64_t>()};
+				if (point.position.value < 0)
+					throw std::invalid_argument(pointName + " has a negative position");
+				point.value = checkedNumber(p.at("value"), minimum, maximum, pointName + " value");
+				const std::optional<AutomationShape> shape = automationShapeFromName(p.at("shape").get<std::string>());
+				if (!shape.has_value())
+					throw std::invalid_argument(pointName + " has an unknown shape " + p.at("shape").dump());
+				point.shape = *shape;
+				if (point.shape == AutomationShape::Curve)
+					point.curve = checkedNumber(p.value("curve", Json(0.0)), -1.0, 1.0, pointName + " curve");
+				lane.points[point.id] = point;
+			}
+			return lane;
+		}
 	}
 
 	Project projectFromJson(const Json& json)
@@ -271,9 +503,14 @@ namespace gnubase::engine
 		for (const Json& item : json.at("channels"))
 		{
 			const auto id = item.at("id").get<ObjectId>();
+			const std::string name = "channel " + std::to_string(id);
+			// Files from before instruments and channel volume have none.
 			Channel channel{id, item.at("track").get<ObjectId>(), item.at("channels").get<int>(),
 				item.at("input").get<ObjectId>(), item.at("output").get<ObjectId>(),
-				item.value("instrument", std::string())};
+				item.value("instrument", std::string()),
+				checkedNumber(
+					item.value("volume", Json(0.0)), g_minChannelVolume, g_maxChannelVolume, name + " volume"),
+				checkedNumber(item.value("pan", Json(0.0)), -1.0, 1.0, name + " pan")};
 			// An instrument this build doesn't have, e.g. in a file from a newer one, or one on a track that doesn't
 			// play instruments: the channel plays none.
 			const auto track = project.trackById.find(channel.track);
@@ -322,8 +559,14 @@ namespace gnubase::engine
 				note.position = n.at("position").get<time::Ticks>();
 				note.length = n.at("length").get<time::Ticks>();
 				note.pitch = n.at("pitch").get<uint8_t>();
-				note.velocity = static_cast<uint16_t>(std::lround(n.at("velocity").get<double>() * g_maxVelocity));
+				note.velocity = velocityFrom(n.at("velocity"));
 				note.channel = n.at("channel").get<uint8_t>();
+				if (n.contains("releaseVelocity")) // projects saved before #137 don't have it
+					note.releaseVelocity =
+						static_cast<uint16_t>(std::lround(n.at("releaseVelocity").get<double>() * g_maxVelocity));
+				if (n.contains("origin"))
+					note.origin = QuantizeOrigin{
+						timingFrom(n.at("origin").at("original")), timingFrom(n.at("origin").at("quantized"))};
 				part.notes[note.id] = note;
 			}
 			for (const Json& c : item.at("controllers"))
@@ -341,6 +584,17 @@ namespace gnubase::engine
 			project.markers[id] = {id, item.at("position").get<time::Ticks>(), item.at("name").get<std::string>(),
 				colorFrom(item.at("color"))};
 		}
+		for (const Json& item : json.value("automation", Json::array()))
+		{
+			AutomationLane lane = automationLaneFromJson(project, item);
+			const ObjectId id = lane.id;
+			project.automation[id] = std::move(lane);
+		}
+		// Files from before quantizing have neither.
+		if (json.contains("quantize"))
+			project.quantize = midi::quantizeSettingsFromJson(json.at("quantize"));
+		project.autoQuantize = json.value("autoQuantize", false);
+
 		// Without a counter, ids continue after the highest one.
 		ObjectId highest = 0;
 		const auto see = [&highest](ObjectId id) { highest = std::max(highest, id); };
@@ -366,6 +620,12 @@ namespace gnubase::engine
 		}
 		for (const auto& [id, marker] : project.markers)
 			see(id);
+		for (const auto& [id, lane] : project.automation)
+		{
+			see(id);
+			for (const auto& [pointId, point] : lane.points)
+				see(pointId);
+		}
 		project.nextId = std::max(json.value("nextId", ObjectId{0}), highest + 1);
 		return project;
 	}

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/dawproject/dawproject.h"
+#include "engine/audio/automation.h"
 
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/file.h"
+#include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
 
@@ -62,6 +64,46 @@ namespace gnubase::engine
 				}
 			return false;
 		}
+
+		// Automation lanes DAWproject can describe: the fader and MIDI controllers. Instrument parameters stay in
+		// GNUbase's entry until plugin slots are written as devices (#72).
+		bool exportable(const AutomationTarget& target)
+		{
+			return target.type != AutomationTargetType::Instrument;
+		}
+
+		// Channel volume and pan in DAWproject's units: a linear gain and 0 to 1 with the center at 0.5.
+		double volumeToGain(double decibels)
+		{
+			return volumeGain(decibels);
+		}
+
+		double gainToVolume(double gain)
+		{
+			if (gain <= 0.0)
+				return g_minChannelVolume;
+			return std::clamp(20.0 * std::log10(gain), g_minChannelVolume, g_maxChannelVolume);
+		}
+
+		double panToNormalized(double pan)
+		{
+			return (pan + 1.0) / 2.0;
+		}
+
+		double normalizedToPan(double value)
+		{
+			return std::clamp((value * 2.0) - 1.0, -1.0, 1.0);
+		}
+
+		// A number attribute, or fallback if it is missing or not a finite number such as "nan" or "inf".
+		double finiteNumber(const pugi::xml_attribute& attribute, double fallback)
+		{
+			const double value = attribute.as_double(fallback);
+			return std::isfinite(value) ? value : fallback;
+		}
+
+		// Curved segments become this many straight pieces in project.xml.
+		constexpr int g_curvePieces = 8;
 
 		// Whether a controller's number means something: the controller, or the pitch of poly pressure.
 		bool usesNumber(ControllerType type)
@@ -380,6 +422,23 @@ namespace gnubase::engine
 					if (channel.channels > 0 && channel.output != 0)
 						element.append_attribute("destination") =
 							xmlId(isBus(channel.output) ? "o" : "c", channel.output).c_str();
+					if (channel.channels > 0 && track.type != TrackType::Midi)
+					{
+						pugi::xml_node pan = element.append_child("Pan");
+						pan.append_attribute("id") = xmlId("cp", channel.id).c_str();
+						pan.append_attribute("name") = "Pan";
+						pan.append_attribute("unit") = "normalized";
+						pan.append_attribute("min") = 0.0;
+						pan.append_attribute("max") = 1.0;
+						pan.append_attribute("value") = panToNormalized(channel.pan);
+						pugi::xml_node volume = element.append_child("Volume");
+						volume.append_attribute("id") = xmlId("cv", channel.id).c_str();
+						volume.append_attribute("name") = "Volume";
+						volume.append_attribute("unit") = "linear";
+						volume.append_attribute("min") = 0.0;
+						volume.append_attribute("max") = volumeToGain(g_maxChannelVolume);
+						volume.append_attribute("value") = volumeToGain(channel.volume);
+					}
 				}
 				for (const ObjectId child : track.children)
 					writeTrack(node, m_project.trackById.at(child));
@@ -394,22 +453,109 @@ namespace gnubase::engine
 
 			void writeLanes(pugi::xml_node lanes, const Track& track)
 			{
-				if (track.type != TrackType::Audio && track.type != TrackType::Instrument &&
-					track.type != TrackType::Midi)
+				const bool events = track.type == TrackType::Audio || track.type == TrackType::Instrument ||
+					track.type == TrackType::Midi;
+				std::vector<const AutomationLane*> automation;
+				for (const auto& [id, lane] : m_project.automation)
+					if (lane.track == track.id && exportable(lane.target))
+						automation.push_back(&lane);
+				if (!events && automation.empty())
 					return;
 				pugi::xml_node trackLanes = lanes.append_child("Lanes");
 				trackLanes.append_attribute("id") = xmlId("l", track.id).c_str();
 				trackLanes.append_attribute("track") = xmlId("t", track.id).c_str();
 				trackLanes.append_attribute("timeUnit") =
 					track.timeBase == time::TimeBase::Musical ? "beats" : "seconds";
-				pugi::xml_node clips = trackLanes.append_child("Clips");
-				clips.append_attribute("id") = xmlId("cl", track.id).c_str();
-				for (const auto& [id, event] : m_project.audioEvents)
-					if (event.track == track.id)
-						writeAudioClip(clips, track, event);
-				for (const auto& [id, part] : m_project.midiParts)
-					if (part.track == track.id)
-						writeMidiClip(clips, track, part);
+				if (events)
+				{
+					pugi::xml_node clips = trackLanes.append_child("Clips");
+					clips.append_attribute("id") = xmlId("cl", track.id).c_str();
+					for (const auto& [id, event] : m_project.audioEvents)
+						if (event.track == track.id)
+							writeAudioClip(clips, track, event);
+					for (const auto& [id, part] : m_project.midiParts)
+						if (part.track == track.id)
+							writeMidiClip(clips, track, part);
+				}
+				for (const AutomationLane* lane : automation)
+					writeAutomation(trackLanes, track, *lane);
+			}
+
+			// A lane's points in the lane's time unit and the parameter's unit; curves as straight pieces.
+			void writeAutomation(pugi::xml_node trackLanes, const Track& track, const AutomationLane& lane) const
+			{
+				const AutomationTarget& target = lane.target;
+				pugi::xml_node points = trackLanes.append_child("Points");
+				points.append_attribute("id") = xmlId("al", lane.id).c_str();
+				const char* unit = "normalized";
+				if (target.type == AutomationTargetType::Volume)
+					unit = "linear";
+				points.append_attribute("unit") = unit;
+				pugi::xml_node element = points.append_child("Target");
+				const ObjectId channel = track.channel;
+				switch (target.type)
+				{
+				case AutomationTargetType::Volume:
+					element.append_attribute("parameter") = xmlId("cv", channel).c_str();
+					break;
+				case AutomationTargetType::Pan:
+					element.append_attribute("parameter") = xmlId("cp", channel).c_str();
+					break;
+				case AutomationTargetType::Controller:
+					element.append_attribute("expression") = "channelController";
+					element.append_attribute("channel") = target.channel;
+					element.append_attribute("controller") = target.number;
+					break;
+				case AutomationTargetType::PitchBend:
+					element.append_attribute("expression") = "pitchBend";
+					element.append_attribute("channel") = target.channel;
+					break;
+				case AutomationTargetType::ChannelPressure:
+					element.append_attribute("expression") = "channelPressure";
+					element.append_attribute("channel") = target.channel;
+					break;
+				case AutomationTargetType::Instrument:
+					break;
+				}
+				const auto value = [&target](double v)
+				{
+					if (target.type == AutomationTargetType::Volume)
+						return volumeToGain(v);
+					return target.type == AutomationTargetType::Pan ? panToNormalized(v) : v;
+				};
+				// Values in DAWproject's units, which curves bend in like playback does (volume as gain).
+				const auto write = [&](int64_t position, double v, bool hold)
+				{
+					pugi::xml_node point = points.append_child("RealPoint");
+					point.append_attribute("time") = laneTime(track, position); // in the track's time base
+					point.append_attribute("value") = v;
+					point.append_attribute("interpolation") = hold ? "hold" : "linear";
+				};
+				std::vector<const AutomationPoint*> sorted;
+				sorted.reserve(lane.points.size());
+				for (const auto& [id, point] : lane.points)
+					sorted.push_back(&point);
+				std::stable_sort(sorted.begin(), sorted.end(), [](const AutomationPoint* a, const AutomationPoint* b)
+					{ return a->position.value < b->position.value; });
+				for (size_t i = 0; i < sorted.size(); ++i)
+				{
+					const AutomationPoint& point = *sorted[i];
+					const int64_t at = point.position.value;
+					write(at, value(point.value), point.shape == AutomationShape::Step);
+					if (point.shape != AutomationShape::Curve || i + 1 == sorted.size())
+						continue;
+					// The curve's own shape, in straight pieces between the two points.
+					const AutomationPoint& next = *sorted[i + 1];
+					const int64_t nextAt = next.position.value;
+					const std::vector<RenderAutomationPoint> curve{{at, value(point.value), point.shape, point.curve},
+						{nextAt, value(next.value), next.shape, next.curve}};
+					for (int piece = 1; piece < g_curvePieces; ++piece)
+					{
+						const int64_t pieceAt = at + ((nextAt - at) * piece / g_curvePieces);
+						if (pieceAt > at && pieceAt < nextAt)
+							write(pieceAt, automationValue(curve, pieceAt), false);
+					}
+				}
 			}
 
 			void writeAudioClip(pugi::xml_node clips, const Track& track, const AudioEvent& event)
@@ -467,6 +613,7 @@ namespace gnubase::engine
 					noteNode.append_attribute("channel") = note.channel;
 					noteNode.append_attribute("key") = note.pitch;
 					noteNode.append_attribute("vel") = note.velocity / g_maxVelocity;
+					noteNode.append_attribute("rel") = note.releaseVelocity / g_maxVelocity;
 				}
 				// A lane of points per expression, channel and controller or key. Program changes with banks and SysEx
 				// have no DAWproject expression; the extension entry keeps them.
@@ -738,6 +885,24 @@ namespace gnubase::engine
 								channel.input = bus.id;
 								break;
 							}
+					if (type != TrackType::Midi)
+					{
+						const pugi::xml_node volume = channelNode.child("Volume");
+						const pugi::xml_node pan = channelNode.child("Pan");
+						if (!volume.empty())
+						{
+							const double value = finiteNumber(volume.attribute("value"), 1.0);
+							channel.volume = std::string(volume.attribute("unit").as_string("linear")) == "decibel"
+								? std::clamp(value, g_minChannelVolume, g_maxChannelVolume)
+								: gainToVolume(value);
+							m_parameters[volume.attribute("id").as_string()] = {track.id, AutomationTargetType::Volume};
+						}
+						if (!pan.empty())
+						{
+							channel.pan = normalizedToPan(finiteNumber(pan.attribute("value"), 0.5));
+							m_parameters[pan.attribute("id").as_string()] = {track.id, AutomationTargetType::Pan};
+						}
+					}
 					track.channel = channel.id;
 					m_project.channels[channel.id] = channel;
 					m_channels[channelNode.attribute("id").as_string()] = channel.id;
@@ -799,6 +964,87 @@ namespace gnubase::engine
 					else if (name == "Clips")
 						for (const pugi::xml_node clip : child.children("Clip"))
 							readClip(clip, context);
+					else if (name == "Points")
+						readAutomation(child, context);
+				}
+			}
+
+			// A lane of automation points on a track: the fader's volume or pan, or a MIDI controller.
+			void readAutomation(const pugi::xml_node& points, const Context& context)
+			{
+				const pugi::xml_node target = points.child("Target");
+				AutomationTarget automated;
+				ObjectId track = context.track;
+				if (const pugi::xml_attribute parameter = target.attribute("parameter"))
+				{
+					const auto found = m_parameters.find(parameter.as_string());
+					if (found == m_parameters.end())
+						return;
+					track = found->second.first;
+					automated.type = found->second.second;
+				}
+				else
+				{
+					ControllerType type = ControllerType::Control;
+					if (!controllerTypeOf(target.attribute("expression").as_string(""), type) ||
+						type == ControllerType::PolyPressure || track == 0)
+						return;
+					const TrackType trackType = m_project.trackById.at(track).type;
+					if (trackType != TrackType::Midi && trackType != TrackType::Instrument)
+						return;
+					automated.type = AutomationTargetType::ChannelPressure;
+					if (type == ControllerType::Control)
+						automated.type = AutomationTargetType::Controller;
+					else if (type == ControllerType::PitchBend)
+						automated.type = AutomationTargetType::PitchBend;
+					automated.channel = static_cast<uint8_t>(std::clamp(target.attribute("channel").as_int(0), 0, 15));
+					if (automated.type == AutomationTargetType::Controller)
+						automated.number =
+							static_cast<uint8_t>(std::clamp(target.attribute("controller").as_int(0), 0, 127));
+				}
+				AutomationLane* lane = nullptr;
+				for (auto& [id, existing] : m_project.automation)
+					if (existing.track == track && existing.target == automated)
+						lane = &existing;
+				if (lane == nullptr)
+				{
+					AutomationLane added;
+					added.id = m_project.newId();
+					added.track = track;
+					added.target = automated;
+					lane = &(m_project.automation[added.id] = added);
+				}
+				const std::string unit = points.attribute("unit").as_string("");
+				for (const pugi::xml_node element : points.children("RealPoint"))
+				{
+					// Points without a finite time and value are left out: NaN would reach the audio.
+					const double at = element.attribute("time").as_double(0.0);
+					const double value = element.attribute("value").as_double(0.0);
+					if (!std::isfinite(at) || !std::isfinite(value))
+						continue;
+					AutomationPoint point;
+					point.id = m_project.newId();
+					point.position = {time::TimeBase::Musical, toTicks(at, context.seconds)};
+					switch (automated.type)
+					{
+					case AutomationTargetType::Volume:
+						point.value = unit == "decibel" ? std::clamp(value, g_minChannelVolume, g_maxChannelVolume)
+														: gainToVolume(value);
+						break;
+					case AutomationTargetType::Pan:
+						point.value = normalizedToPan(value);
+						break;
+					case AutomationTargetType::Instrument:
+					case AutomationTargetType::Controller:
+					case AutomationTargetType::PitchBend:
+					case AutomationTargetType::ChannelPressure:
+						point.value = std::clamp(value, 0.0, 1.0);
+						break;
+					}
+					point.shape = std::string(element.attribute("interpolation").as_string("linear")) == "hold"
+						? AutomationShape::Step
+						: AutomationShape::Linear;
+					lane->points[point.id] = point;
 				}
 			}
 
@@ -908,6 +1154,9 @@ namespace gnubase::engine
 					note.channel = static_cast<uint8_t>(std::clamp(element.attribute("channel").as_int(0), 0, 15));
 					const double velocity = std::clamp(element.attribute("vel").as_double(0.8), 0.0, 1.0);
 					note.velocity = static_cast<uint16_t>(std::lround(velocity * g_maxVelocity));
+					const double release = std::clamp(
+						element.attribute("rel").as_double(g_defaultReleaseVelocity / g_maxVelocity), 0.0, 1.0);
+					note.releaseVelocity = static_cast<uint16_t>(std::lround(release * g_maxVelocity));
 					part.notes[note.id] = note;
 				}
 			}
@@ -1016,7 +1265,9 @@ namespace gnubase::engine
 			std::map<std::string, ObjectId> m_tracks;   // project.xml track id -> track
 			std::map<std::string, ObjectId> m_channels; // project.xml channel id -> channel or bus
 			std::vector<std::pair<ObjectId, std::string>> m_destinations;
-			std::map<std::string, ObjectId> m_clips;       // media path in project.xml -> clip
+			std::map<std::string, ObjectId> m_clips; // media path in project.xml -> clip
+			// project.xml parameter id -> the track whose channel has it, and which one it is
+			std::map<std::string, std::pair<ObjectId, AutomationTargetType>> m_parameters;
 			std::map<std::string, std::string> m_resolved; // media path in project.xml -> path on disk
 		};
 	}

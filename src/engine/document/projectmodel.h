@@ -27,18 +27,21 @@ namespace gnubase::engine
 	class ProjectModel
 	{
 	public:
+		using Handler = std::function<Json(Project& project, CommandContext& context)>;
+
 		ProjectModel();
 
 		// Backups run as jobs.
 		void registerCommands(Engine& engine, Jobs& jobs);
 
-		rt::SnapshotPublisher<RenderSnapshot>& snapshots() { return m_snapshots; }
-
-		using Handler = std::function<Json(Project& project, CommandContext& context)>;
-
-		// Registers a command that changes the project and records an undo step named action. Transactions can run
-		// it. Command groups in their own files, such as the MIDI functions, register through it.
+		// Registers a command defined in another file, such as quantize.* (#132). A command that changes the project
+		// is one undo step named action, like the commands here, and transactions can run it.
 		void addEdit(Engine& engine, CommandInfo info, std::string action, Handler handler);
+
+		// The project, for commands defined in other files that read it. Only on the command thread.
+		const Project& project() const { return m_project; }
+
+		rt::SnapshotPublisher<RenderSnapshot>& snapshots() { return m_snapshots; }
 
 	private:
 		// Registers a query, or a command that changes the project. Such a command runs on the project, and if it
@@ -50,9 +53,12 @@ namespace gnubase::engine
 		// Registers a command that manages the project or its history and records no undo step.
 		static void addControl(Engine& engine, CommandInfo info, std::function<Json(CommandContext& context)> handler);
 
+		void registerAutomationCommands(Engine& engine);
 		void registerHistoryCommands(Engine& engine);
 		void registerMediaFolderCommands(Engine& engine, Jobs& jobs); // project.backup, media.prepareArchive and more
 		void registerMidiEditCommands(Engine& engine);                // midiedits.cpp: note.set and controller.set
+		void registerMidiFileCommands(Engine& engine); // midifilecommands.cpp: midiFile.export and midiFile.import
+		Json importMidiFile(Project& project, CommandContext& context);
 		void record(std::string action, const Project& before, CommandContext& context);
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);
@@ -70,6 +76,7 @@ namespace gnubase::engine
 		History m_history;
 		std::map<std::string, Edit> m_edits; // the commands a transaction can run
 		uint64_t m_revision = 0;
+		bool m_automationFollowsEvents = false; // a setting, not part of the project
 		rt::SnapshotPublisher<RenderSnapshot> m_snapshots;
 	};
 }

@@ -1,0 +1,115 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The render backend spike (#47): renders RmlUi documents through OpenGL 3 and SDL_GPU on every platform and uploads
+# the screenshots, timings and a summary. A backend that can't run on a runner is a result, so only build errors fail.
+name: Render spike
+
+on:
+  pull_request:
+    paths:
+      - spikes/render-backend/**
+      - .github/workflows/render-spike.yml
+  workflow_dispatch:
+
+concurrency:
+  group: render-spike-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  spike:
+    timeout-minutes: 60
+    name: render-spike-${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x64, runner: ubuntu-24.04, preset: linux-gcc }
+          - { name: linux-arm64, runner: ubuntu-24.04-arm, preset: linux-gcc }
+          - { name: windows-x64, runner: windows-2025, preset: windows-x64, mesa: x64 }
+          - { name: windows-arm64, runner: windows-11-arm, preset: windows-arm64, mesa: arm64 }
+          - { name: macos-x64, runner: macos-15-intel, preset: macos }
+          - { name: macos-arm64, runner: macos-15, preset: macos }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # As in ci.yml: the recursive checkout skips the VST3 SDK (update = none in .gitmodules).
+      - name: Fetch the VST3 SDK
+        run: |
+          git submodule update --init --checkout ext/vst3sdk
+          git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
+
+      - name: Install packages (Linux)
+        timeout-minutes: 15
+        if: runner.os == 'Linux'
+        # The build's packages (ci.yml), plus a virtual display and Mesa's software OpenGL and Vulkan.
+        run: >-
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev
+          libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libdrm-dev libgbm-dev libgl1-mesa-dev
+          libgles2-mesa-dev libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev
+          xvfb libgl1-mesa-dri mesa-vulkan-drivers libvulkan1
+
+      - name: Install packages (macOS)
+        timeout-minutes: 15
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Configure
+        shell: bash
+        run: cmake --preset ${{ matrix.preset }} -DGNUBASE_RENDER_SPIKE=ON -DGNUBASE_TEST_PLUGINS=OFF
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} --config Release --target gnubase-render-spike
+
+      - name: Mesa's software OpenGL (Windows)
+        # Windows runners have no GPU driver, so OpenGL is 1.1 there; Mesa's llvmpipe shows that the GL3 path works.
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo pal1000/mesa-dist-win --pattern 'mesa3d-*-release-msvc.7z' --dir mesa
+          7z x -omesa mesa/*.7z > /dev/null
+          bin=build/${{ matrix.preset }}/bin/Release
+          mkdir -p "$bin/mesa"
+          cp "$bin/gnubase-render-spike.exe" mesa/${{ matrix.mesa }}/*.dll "$bin/mesa/"
+
+      - name: Render
+        shell: bash
+        run: |
+          bin=build/${{ matrix.preset }}/bin/Release
+          exe=$bin/gnubase-render-spike
+          set -- "gl3:--backend gl3" "gpu:--backend gpu"
+          case "$RUNNER_OS" in
+          Linux)
+            Xvfb :99 -screen 0 1920x1080x24 &
+            export DISPLAY=:99
+            sleep 2
+            ;;
+          Windows)
+            set -- "$@" "vulkan:--backend gpu --gpu-driver vulkan"
+            ;;
+          esac
+          spikes/render-backend/run-all.sh "$exe" out "$@"
+          if [ -f "$bin/mesa/gnubase-render-spike.exe" ]; then
+            spikes/render-backend/run-all.sh "$bin/mesa/gnubase-render-spike" out/mesa "gl3-mesa:--backend gl3"
+          fi
+          {
+            echo "### ${{ matrix.name }}"
+            cat out/summary.md
+            if [ -f out/mesa/summary.md ]; then tail -n 1 out/mesa/summary.md; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload screenshots and timings
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: render-spike-${{ matrix.name }}
+          path: out/
+          retention-days: 30

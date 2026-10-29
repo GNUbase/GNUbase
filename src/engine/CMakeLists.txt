@@ -86,6 +86,8 @@ add_library(gnubase-engine STATIC
 	analysis/analysis.cpp analysis/analysis.h
 	audio/analysiscommands.cpp
 	audio/audioengine.cpp audio/audioengine.h
+	audio/automation.cpp audio/automation.h
+	audio/performance.cpp audio/performance.h
 	audio/playback.cpp audio/playback.h
 	audio/sequencer.cpp audio/sequencer.h
 	audio/transport.cpp audio/transport.h
@@ -99,6 +101,7 @@ add_library(gnubase-engine STATIC
 	document/document.cpp document/document.h
 	document/history.cpp document/history.h
 	document/midiedits.cpp
+	document/midifilecommands.cpp
 	document/projectmodel.cpp document/projectmodel.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/serialize.cpp document/serialize.h
@@ -112,6 +115,11 @@ add_library(gnubase-engine STATIC
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
 	midi/midivalues.cpp midi/midivalues.h
+	midi/quantize.cpp midi/quantize.h
+	midi/quantizecommands.cpp midi/quantizecommands.h
+	midi/quantizesettings.cpp midi/quantizesettings.h
+	midifile/midiconvert.cpp midifile/midiconvert.h
+	midifile/smf.cpp midifile/smf.h
 	peaks/peakcache.cpp peaks/peakcache.h
 	peaks/peaks.cpp peaks/peaks.h
 	processors/builtin.cpp processors/builtin.h

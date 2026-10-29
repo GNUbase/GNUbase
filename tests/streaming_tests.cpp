@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -44,6 +45,9 @@ namespace
 			return channel == 0 ? ramp : -ramp;
 		}
 
+		// Seeks wait while hold is set, so a test can look at a stream whose disk thread hasn't refilled it yet.
+		void holdSeeksWhile(const std::atomic<bool>* hold) { m_hold = hold; }
+
 		size_t read(float* buffer, size_t frames) override
 		{
 			if (m_delay.count() > 0)
@@ -61,6 +65,8 @@ namespace
 	protected:
 		bool seekTo(gnubase::time::Samples frame) override
 		{
+			while (m_hold != nullptr && m_hold->load())
+				std::this_thread::sleep_for(1ms);
 			m_position = frame;
 			return true;
 		}
@@ -68,6 +74,7 @@ namespace
 	private:
 		std::chrono::microseconds m_delay;
 		gnubase::time::Samples m_position = 0;
+		const std::atomic<bool>* m_hold = nullptr;
 	};
 
 	// Waits until the disk thread has filled the stream's buffer, as the transport will before playing.
@@ -221,6 +228,36 @@ TEST_CASE("a stream delivers its file to the audio thread, then silence", "[inte
 	CHECK(stream->read(after.data(), 32) == 0); // the end: silence, and no dropouts
 	CHECK(std::all_of(after.begin(), after.end(), [](float value) { return value == 0.0f; }));
 	CHECK(stream->dropouts() == 0);
+}
+
+TEST_CASE("a stream's load counts every block the disk thread still has to fill", "[integration]")
+{
+	DiskStreamSettings settings;
+	settings.blockFrames = 1024;
+	settings.blocks = 8;
+
+	// A new stream hasn't read anything yet: its whole buffer is still to fill.
+	const DiskStream fresh(std::make_unique<SignalReader>(1, 48000.0, 100000), 48000.0, settings);
+	CHECK(fresh.load() == 1.0);
+
+	DiskStreamer streamer;
+	auto reader = std::make_unique<SignalReader>(1, 48000.0, 100000);
+	std::atomic<bool> hold{false};
+	reader->holdSeeksWhile(&hold);
+	const auto stream = streamer.open(std::move(reader), 48000.0, settings);
+	REQUIRE(waitUntilReady(*stream));
+	CHECK(stream->load() == 0.0);
+
+	// After a seek every block holds audio from before it: the buffer is empty until the disk thread refills it,
+	// whether it has taken the seek yet or not.
+	hold = true;
+	stream->seek(50000);
+	CHECK(stream->load() == 1.0);
+	std::this_thread::sleep_for(20ms); // the disk thread takes the old blocks back and waits in the seek
+	CHECK(stream->load() == 1.0);
+	hold = false;
+	REQUIRE(waitUntilReady(*stream));
+	CHECK(stream->load() == 0.0);
 }
 
 TEST_CASE("tiny buffers and a slow disk cause no dropouts", "[integration][slow]")
