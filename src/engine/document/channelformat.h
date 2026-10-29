@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Channel formats (#269): which speaker each audio channel of a bus or mixer channel feeds, and how audio converts
@@ -71,4 +72,36 @@ namespace gnubase::engine
 	// -3.01 dB. L and R merge into mono at -3.01 dB each, and mono goes to C, or to L and R at centerGain where there
 	// is no C, the gain of the pan law at the center. Same formats give the identity; None gives no gains.
 	std::vector<float> conversionGains(ChannelFormat from, ChannelFormat to, double centerGain);
+
+	// The project's stereo pan law: how much a mono signal panned to the center is turned down on each side, so it
+	// doesn't sound louder there than panned to one side. The side panned toward is at 0 dB with every law.
+	enum class PanLaw : uint8_t
+	{
+		Off,        // "0dB": the center isn't turned down; the side panned away from goes down in a straight line
+		Minus3,     // "-3dB", the default
+		Minus4_5,   // "-4.5dB"
+		Minus6,     // "-6dB"
+		EqualPower, // "equalPower": the power of both sides together stays the same, -3.01 dB at the center
+	};
+
+	const char* panLawName(PanLaw law);
+	std::optional<PanLaw> panLawFromName(const std::string& name);
+	std::vector<std::string> panLawNames();
+
+	// The gains of the left and right side for a mono signal at pan, from -1 (left) to 1 (right). Equal power gives
+	// the sine of (1 - pan) pi / 4 on the left and of (1 + pan) pi / 4 on the right; -3, -4.5 and -6 dB raise them
+	// to the power that turns the center down by exactly that much.
+	std::pair<double, double> panGains(PanLaw law, double pan);
+
+	// The panner a channel gets from its format and its destination's. Mono and stereo channels on a stereo
+	// destination pan, and a stereo channel's balance still applies on a mono one; channels on wider destinations
+	// wait for the surround panner (#188), and wider channels have none.
+	enum class Panner : uint8_t
+	{
+		None,
+		Mono,   // a mono channel panned onto a stereo destination: its output is stereo
+		Stereo, // the balance or the combined panner of a stereo channel
+	};
+
+	Panner pannerFor(ChannelFormat channel, ChannelFormat destination);
 }

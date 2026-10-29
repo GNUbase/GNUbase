@@ -47,6 +47,17 @@ namespace gnubase::engine
 			return formats()[static_cast<size_t>(format)];
 		}
 
+		struct PanLawInfo
+		{
+			PanLaw law;
+			const char* name;
+			double center; // dB
+		};
+
+		constexpr PanLawInfo g_panLaws[] = {{PanLaw::Off, "0dB", 0.0}, {PanLaw::Minus3, "-3dB", -3.0},
+			{PanLaw::Minus4_5, "-4.5dB", -4.5}, {PanLaw::Minus6, "-6dB", -6.0},
+			{PanLaw::EqualPower, "equalPower", 0.0}};
+
 		bool has(const std::vector<Speaker>& speakers, Speaker speaker)
 		{
 			return std::find(speakers.begin(), speakers.end(), speaker) != speakers.end();
@@ -152,5 +163,54 @@ namespace gnubase::engine
 				for (size_t c = 0; c < source.size(); ++c)
 					gains[(t * source.size()) + c] = static_cast<float>(found->second[c]);
 		return gains;
+	}
+
+	const char* panLawName(PanLaw law)
+	{
+		return g_panLaws[static_cast<size_t>(law)].name;
+	}
+
+	std::optional<PanLaw> panLawFromName(const std::string& name)
+	{
+		for (const PanLawInfo& entry : g_panLaws)
+			if (name == entry.name)
+				return entry.law;
+		return std::nullopt;
+	}
+
+	std::vector<std::string> panLawNames()
+	{
+		std::vector<std::string> names;
+		for (const PanLawInfo& entry : g_panLaws)
+			names.emplace_back(entry.name);
+		return names;
+	}
+
+	std::pair<double, double> panGains(PanLaw law, double pan)
+	{
+		pan = std::clamp(pan, -1.0, 1.0);
+		if (law == PanLaw::Off)
+			return {std::min(1.0, 1.0 - pan), std::min(1.0, 1.0 + pan)};
+		constexpr double quarterPi = 0.78539816339744830962;
+		double left = std::sin((1.0 - pan) * quarterPi);
+		double right = std::sin((1.0 + pan) * quarterPi);
+		if (law != PanLaw::EqualPower)
+		{
+			// sin(pi / 4) is -3.0103 dB: the power that makes it the law's attenuation.
+			const double power = g_panLaws[static_cast<size_t>(law)].center / (20.0 * std::log10(std::sqrt(0.5)));
+			left = std::pow(left, power);
+			right = std::pow(right, power);
+		}
+		return {left, right};
+	}
+
+	Panner pannerFor(ChannelFormat channel, ChannelFormat destination)
+	{
+		if (channel == ChannelFormat::Mono && destination == ChannelFormat::Stereo)
+			return Panner::Mono;
+		if (channel == ChannelFormat::Stereo &&
+			(destination == ChannelFormat::Stereo || destination == ChannelFormat::Mono))
+			return Panner::Stereo;
+		return Panner::None;
 	}
 }

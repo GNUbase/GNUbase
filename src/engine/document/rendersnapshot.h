@@ -103,9 +103,14 @@ namespace gnubase::engine
 		ChannelFormat format = ChannelFormat::Stereo;
 		int input = -1; // index into RenderSnapshot::busses, or -1
 		RenderTarget output;
-		std::string instrument;                       // instrument tracks: a built-in instrument's id, or empty
-		double volume = 1.0;                          // the fader's static value, a linear gain
-		double pan = 0.0;                             // the static balance, -1 to 1
+		std::string instrument;       // instrument tracks: a built-in instrument's id, or empty
+		double volume = 1.0;          // the fader's static value, a linear gain
+		double pan = 0.0;             // the static pan, -1 to 1
+		Panner panner = Panner::None; // by its format and its destination's
+		StereoPanner stereoPanner = StereoPanner::Balance;
+		double panLeft = -1.0; // the combined panner's static positions
+		double panRight = 1.0;
+		bool panBypass = false;
 		AutoFades autoFades;                          // audio tracks: their own settings or the project's
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
 		std::vector<RenderNote> notes;                // sorted by start, then pitch
@@ -113,7 +118,7 @@ namespace gnubase::engine
 		std::vector<RenderAutomationLane> automation; // in the order of the lanes' ids
 	};
 
-	// A channel volume in dB as a linear gain.
+	// A channel volume in dB as a linear gain; the fader's bottom, g_minChannelVolume, is silence.
 	double volumeGain(double decibels);
 
 	// What the audio thread needs from the project, compiled by the command thread after every change and handed
@@ -124,6 +129,8 @@ namespace gnubase::engine
 		uint64_t revision = 0; // counts the snapshots compiled for an engine
 		double sampleRate = 48000.0;
 		time::TempoMap tempo{120.0}; // for processors that follow the tempo, e.g. a synced delay
+		PanLaw panLaw = PanLaw::Minus3;
+		double maxVolume = 6.0; // dB
 		std::vector<RenderBus> busses;
 		std::vector<RenderMedia> media;
 		std::vector<RenderChannel> channels; // in track order
