@@ -3,6 +3,7 @@
 
 #include "engine/schema.h"
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -50,10 +51,11 @@ namespace gnubase::engine::settings
 		Missing,  // no file yet: the defaults
 		Loaded,   // a file of the current version
 		Migrated, // a file of an older version, migrated and saved at the current one
-		Reset,    // a file that was unreadable, corrupt, too old or too new: the defaults
+		Reset,    // a file that was unreadable, corrupt or too old: the defaults
+		Newer,    // a file of a newer GNUbase: left as it is, the defaults, and nothing is saved
 	};
 
-	// "inMemory", "missing", "loaded", "migrated" or "reset".
+	// "inMemory", "missing", "loaded", "migrated", "reset" or "newer".
 	const char* toString(LoadStatus status);
 
 	// What happened when the file was read.
@@ -61,11 +63,15 @@ namespace gnubase::engine::settings
 	{
 		LoadStatus status = LoadStatus::InMemory;
 		int fileVersion = 0; // the version the file had, 0 if none could be read
-		// Everything that was discarded, and why: the whole file or single values, which then have their defaults.
+		// What was wrong with the file, and what was done about it: the whole file was replaced by the defaults,
+		// single values that this GNUbase doesn't know or doesn't accept were left in the file, or nothing is saved.
 		std::vector<std::string> problems;
-		// Where the file was kept as it was, if loading discarded or migrated something: <name>.corrupt.json for a
-		// file that couldn't be read, <name>.v<version>.json for a file of another version or with invalid values.
+		// Where the file was kept as it was: <name>.corrupt.json for a file that couldn't be read,
+		// <name>.v<version>.json for a file that was migrated or was too old.
 		std::filesystem::path backup;
+		// Nothing is saved until the store is destroyed, so that nothing gets lost: the file is a newer GNUbase's, or
+		// it couldn't be kept as a backup or locked. Changes still apply in memory.
+		bool readOnly = false;
 	};
 
 	// A setting that doesn't exist, a value that doesn't fit its schema, a file that can't be written.
@@ -83,7 +89,9 @@ namespace gnubase::engine::settings
 
 	// The settings of one file. Reads the file when constructed and writes it after every change, keeping only the
 	// values that differ from their defaults, so a default that changes in a later version reaches every user who
-	// didn't change it. Belongs to one thread at a time (the engine's command thread), never to an audio thread.
+	// didn't change it. Values the file has that this GNUbase doesn't know or accept, as written by a newer one, stay
+	// in the file. Several processes can share the file: a change locks it, reads it again and changes only its own
+	// setting. Belongs to one thread at a time (the engine's command thread), never to an audio thread.
 	class Store
 	{
 	public:
@@ -101,16 +109,20 @@ namespace gnubase::engine::settings
 		// Every setting's value, by key.
 		Json values() const;
 
-		// Changes a setting and writes the file; returns false if it had that value already. Throws SettingsError
-		// if the setting doesn't exist, the value doesn't fit its schema or the file can't be written; then nothing
-		// changes.
+		// Changes a setting and writes the file, unless the store is read-only; returns false if it had that value
+		// already. Throws SettingsError if the setting doesn't exist, the value doesn't fit its schema or the file
+		// can't be written; then nothing changes.
 		bool set(std::string_view key, Json value);
 
 		// Puts a setting back to its default; returns false if it had its default already.
 		bool reset(std::string_view key);
 
-		// Puts every setting back to its default; returns the keys of those that changed, sorted.
+		// Puts every setting back to its default; returns the keys of those that changed, sorted. Values in the file
+		// that this GNUbase doesn't know stay.
 		std::vector<std::string> reset();
+
+		// How long set and reset wait for another process that has the file locked. Five seconds by default.
+		void setLockTimeout(std::chrono::milliseconds timeout) { m_lockTimeout = timeout; }
 
 		template <typename T> T get(Key<T> key) const { return value(key.name).template get<T>(); }
 		template <typename T> bool set(Key<T> key, const T& value) { return set(key.name, Json(value)); }
@@ -120,13 +132,18 @@ namespace gnubase::engine::settings
 		void load();
 		Json readValues(const std::string& text);
 		void loadValues(const Json& values);
-		void keepBackup(const std::filesystem::path& backup, bool move);
-		void save(const std::map<std::string, Json, std::less<>>& values) const;
+		std::string keepBackup(const std::filesystem::path& backup, bool move);
+		void makeReadOnly(const std::string& reason);
+		bool update(const std::function<void(Json& fileValues)>& change);
+		void write(const Json& fileValues) const;
 		std::filesystem::path sibling(const std::string& suffix) const;
+		std::filesystem::path lockFile() const;
 
 		Format m_format;
 		std::filesystem::path m_file;
-		std::map<std::string, Json, std::less<>> m_values;
+		std::map<std::string, Json, std::less<>> m_values; // what this process uses
+		Json m_fileValues = Json::object();                // the file's values as last read or written
 		LoadReport m_report;
+		std::chrono::milliseconds m_lockTimeout{5000};
 	};
 }

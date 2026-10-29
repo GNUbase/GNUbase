@@ -5,6 +5,7 @@
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 
+#include <optional>
 #include <set>
 #include <system_error>
 #include <utility>
@@ -15,17 +16,44 @@ namespace gnubase::engine::settings
 
 	namespace
 	{
-		// A file that can't be used at all: why, and the suffix of the backup it is moved to.
+		// A file that can't be used at all: why, and the suffix of the backup it is moved to. A newer GNUbase's file
+		// is left as it is instead.
 		class Unusable : public std::runtime_error
 		{
 		public:
-			Unusable(const std::string& problem, std::string suffix)
-				: std::runtime_error(problem), backupSuffix(std::move(suffix))
+			Unusable(const std::string& problem, std::string suffix, bool isNewer = false)
+				: std::runtime_error(problem), backupSuffix(std::move(suffix)), newer(isNewer)
 			{
 			}
 
 			std::string backupSuffix;
+			bool newer;
 		};
+
+		// A settings file's version and values.
+		struct Document
+		{
+			int version = 0;
+			Json values;
+		};
+
+		Document parseDocument(const std::string& text)
+		{
+			Json document = Json::parse(text, nullptr, false);
+			if (document.is_discarded())
+				throw Unusable("is not valid JSON", ".corrupt");
+			const auto version = document.find("version");
+			const auto values = document.find("values");
+			if (!document.is_object() || version == document.end() || !version->is_number_integer() || *version < 1 ||
+				values == document.end() || !values->is_object())
+				throw Unusable("is no settings file: it needs a version from 1 and an object of values", ".corrupt");
+			return {version->get<int>(), std::move(*values)};
+		}
+
+		std::string backupSuffix(int version)
+		{
+			return ".v" + std::to_string(version);
+		}
 
 		void checkFormat(const Format& format)
 		{
@@ -67,6 +95,8 @@ namespace gnubase::engine::settings
 			return "migrated";
 		case LoadStatus::Reset:
 			return "reset";
+		case LoadStatus::Newer:
+			return "newer";
 		}
 		return "";
 	}
@@ -111,13 +141,22 @@ namespace gnubase::engine::settings
 		const Definition& setting = definition(key);
 		if (const std::string problem = validate(value, setting.schema, setting.key); !problem.empty())
 			throw SettingsError(problem);
-		if (m_values.find(setting.key)->second == value)
-			return false;
-		auto values = m_values;
-		values[setting.key] = std::move(value);
-		save(values);
-		m_values = std::move(values);
-		return true;
+		const bool changed = m_values.find(setting.key)->second != value;
+		if (!m_file.empty() && !m_report.readOnly)
+		{
+			// Only this setting changes in the file: what other processes saved meanwhile stays, and so does a value
+			// that this GNUbase doesn't accept, unless it is this setting's.
+			update(
+				[&setting, &value](Json& fileValues)
+				{
+					if (value == setting.defaultValue)
+						fileValues.erase(setting.key);
+					else
+						fileValues[setting.key] = value;
+				});
+		}
+		m_values[setting.key] = std::move(value);
+		return changed;
 	}
 
 	bool Store::reset(std::string_view key)
@@ -135,9 +174,15 @@ namespace gnubase::engine::settings
 		for (const auto& [key, value] : defaults)
 			if (m_values.find(key)->second != value)
 				changed.push_back(key);
-		if (changed.empty())
-			return changed;
-		save(defaults);
+		if (!m_file.empty() && !m_report.readOnly)
+		{
+			update(
+				[this](Json& fileValues)
+				{
+					for (const Definition& definition : m_format.definitions)
+						fileValues.erase(definition.key);
+				});
+		}
 		m_values = std::move(defaults);
 		return changed;
 	}
@@ -147,17 +192,14 @@ namespace gnubase::engine::settings
 		return m_file.parent_path() / fs::u8path(m_format.name + suffix + ".json");
 	}
 
-	void Store::save(const std::map<std::string, Json, std::less<>>& values) const
+	fs::path Store::lockFile() const
 	{
-		if (m_file.empty())
-			return;
-		Json changed = Json::object();
-		for (const Definition& definition : m_format.definitions)
-		{
-			if (const Json& value = values.find(definition.key)->second; value != definition.defaultValue)
-				changed[definition.key] = value;
-		}
-		const Json document = {{"version", m_format.version}, {"values", std::move(changed)}};
+		return m_file.parent_path() / fs::u8path(m_format.name + ".lock");
+	}
+
+	void Store::write(const Json& fileValues) const
+	{
+		const Json document = {{"version", m_format.version}, {"values", fileValues}};
 		try
 		{
 			files::writeAtomically(m_file, document.dump(1, '\t') + "\n");
@@ -168,46 +210,99 @@ namespace gnubase::engine::settings
 		}
 	}
 
-	void Store::keepBackup(const fs::path& backup, bool move)
+	bool Store::update(const std::function<void(Json& fileValues)>& change)
+	{
+		std::optional<files::FileLock> lock;
+		try
+		{
+			lock.emplace(lockFile(), m_lockTimeout);
+		}
+		catch (const std::system_error& failure)
+		{
+			throw SettingsError(std::string(failure.what()) + "; is another GNUbase writing the settings?");
+		}
+		files::removeStaleTemporaries(m_file);
+
+		// The file as it is now: another process may have changed it since this one read it.
+		Json current = Json::object();
+		bool rewrite = false; // the file isn't usable as it is, so it is written even if nothing changes
+		std::error_code error;
+		if (fs::status(m_file, error).type() != fs::file_type::not_found)
+		{
+			try
+			{
+				const std::optional<std::string> text = files::readFile(m_file);
+				if (!text)
+					throw Unusable("cannot read the file", ".corrupt");
+				Document document = parseDocument(*text);
+				if (document.version > m_format.version)
+					throw Unusable(
+						"was replaced by a newer GNUbase's settings file", backupSuffix(document.version), true);
+				if (document.version < m_format.version)
+					throw Unusable("has an older version", backupSuffix(document.version));
+				current = std::move(document.values);
+			}
+			catch (const Unusable& unusable)
+			{
+				if (unusable.newer)
+				{
+					makeReadOnly(m_file.u8string() + " " + unusable.what());
+					return false;
+				}
+				if (const std::string failure = keepBackup(sibling(unusable.backupSuffix), false); !failure.empty())
+					throw SettingsError(failure + "; the file is left as it is");
+				current = m_fileValues;
+				rewrite = true;
+			}
+		}
+		Json changed = current;
+		change(changed);
+		if (rewrite || changed != current)
+			write(changed);
+		m_fileValues = std::move(changed);
+		return true;
+	}
+
+	std::string Store::keepBackup(const fs::path& backup, bool move)
 	{
 		std::error_code error;
 		fs::remove(backup, error); // the backup of an earlier start, if there is one
+		error.clear();
 		if (move)
 			fs::rename(m_file, backup, error);
 		else
 			fs::copy_file(m_file, backup, fs::copy_options::overwrite_existing, error);
 		if (error)
-			logging::warning(
-				"Cannot keep a backup of {} as {}: {}", m_file.u8string(), backup.u8string(), error.message());
-		else
-			m_report.backup = backup;
+			return "cannot keep a backup of " + m_file.u8string() + " as " + backup.u8string() + ": " + error.message();
+		m_report.backup = backup;
+		return {};
+	}
+
+	void Store::makeReadOnly(const std::string& reason)
+	{
+		if (m_report.readOnly)
+			return;
+		m_report.readOnly = true;
+		m_report.problems.push_back(reason + "; changes apply until GNUbase quits but aren't saved");
+		logging::warning("Settings: {}", m_report.problems.back());
 	}
 
 	Json Store::readValues(const std::string& text)
 	{
-		const Json document = Json::parse(text, nullptr, false);
-		if (document.is_discarded())
-			throw Unusable("is not valid JSON", ".corrupt");
-		const auto version = document.find("version");
-		const auto values = document.find("values");
-		if (!document.is_object() || version == document.end() || !version->is_number_integer() || *version < 1 ||
-			values == document.end() || !values->is_object())
-			throw Unusable("is no settings file: it needs a version from 1 and an object of values", ".corrupt");
-
-		const int fileVersion = version->get<int>();
-		const std::string backupSuffix = ".v" + std::to_string(fileVersion);
+		Document document = parseDocument(text);
+		const int fileVersion = document.version;
 		m_report.fileVersion = fileVersion;
 		if (fileVersion > m_format.version)
 			throw Unusable("was written by a newer GNUbase: version " + std::to_string(fileVersion) +
 					", this one reads up to version " + std::to_string(m_format.version),
-				backupSuffix);
+				backupSuffix(fileVersion), true);
 		const int oldest = m_format.version - static_cast<int>(m_format.migrations.size());
 		if (fileVersion < oldest)
 			throw Unusable("is too old: version " + std::to_string(fileVersion) +
 					", this GNUbase migrates from version " + std::to_string(oldest),
-				backupSuffix);
+				backupSuffix(fileVersion));
 
-		Json migrated = *values;
+		Json migrated = std::move(document.values);
 		for (const Migration& migration : m_format.migrations)
 		{
 			if (migration.from < fileVersion)
@@ -219,10 +314,10 @@ namespace gnubase::engine::settings
 			}
 			catch (const std::exception& failure)
 			{
-				throw Unusable(step + ": " + failure.what(), backupSuffix);
+				throw Unusable(step + ": " + failure.what(), backupSuffix(fileVersion));
 			}
 			if (!migrated.is_object())
-				throw Unusable(step, backupSuffix);
+				throw Unusable(step, backupSuffix(fileVersion));
 		}
 		return migrated;
 	}
@@ -237,6 +332,19 @@ namespace gnubase::engine::settings
 			m_report.status = LoadStatus::Missing;
 			return;
 		}
+		// Locked while it is read and, after a migration or for a corrupt file, written or moved, so that no other
+		// process writes it meanwhile.
+		std::optional<files::FileLock> lock;
+		try
+		{
+			lock.emplace(lockFile(), m_lockTimeout);
+			files::removeStaleTemporaries(m_file);
+		}
+		catch (const std::system_error& failure)
+		{
+			makeReadOnly(failure.what());
+		}
+
 		Json values;
 		try
 		{
@@ -247,10 +355,22 @@ namespace gnubase::engine::settings
 		}
 		catch (const Unusable& unusable)
 		{
-			m_report.status = LoadStatus::Reset;
 			m_report.problems.push_back(name + " " + unusable.what() + "; using the defaults");
-			keepBackup(sibling(unusable.backupSuffix), true);
-			logging::warning("Settings: {}, kept as {}", m_report.problems.back(), m_report.backup.u8string());
+			logging::warning("Settings: {}", m_report.problems.back());
+			if (unusable.newer)
+			{
+				// Left where it is, so that the newer GNUbase finds it again, and never overwritten from here.
+				m_report.status = LoadStatus::Newer;
+				makeReadOnly(name + " belongs to a newer GNUbase");
+				return;
+			}
+			m_report.status = LoadStatus::Reset;
+			if (m_report.readOnly)
+				return;
+			if (const std::string failure = keepBackup(sibling(unusable.backupSuffix), true); !failure.empty())
+				makeReadOnly(failure); // a later change would overwrite the file without a copy
+			else
+				logging::info("Settings: kept {} as {}", name, m_report.backup.u8string());
 			return;
 		}
 
@@ -258,17 +378,20 @@ namespace gnubase::engine::settings
 		const int fileVersion = m_report.fileVersion;
 		const bool wasMigrated = fileVersion < m_format.version;
 		m_report.status = wasMigrated ? LoadStatus::Migrated : LoadStatus::Loaded;
-		if (!wasMigrated && m_report.problems.empty())
-			return;
-		// Keep the file as it was, then save what was read at the current version.
-		keepBackup(sibling(".v" + std::to_string(fileVersion)), false);
 		for (const std::string& problem : m_report.problems)
 			logging::warning("Settings: {}", problem);
-		if (wasMigrated)
-			logging::info("Settings: migrated {} from version {} to {}", name, fileVersion, m_format.version);
+		if (!wasMigrated || m_report.readOnly)
+			return;
+		// Keep the file as it was, for going back to an older GNUbase, then save it at the current version.
+		if (const std::string failure = keepBackup(sibling(backupSuffix(fileVersion)), false); !failure.empty())
+		{
+			makeReadOnly(failure);
+			return;
+		}
+		logging::info("Settings: migrated {} from version {} to {}", name, fileVersion, m_format.version);
 		try
 		{
-			save(m_values);
+			write(m_fileValues);
 		}
 		catch (const SettingsError& failure)
 		{
@@ -278,6 +401,7 @@ namespace gnubase::engine::settings
 
 	void Store::loadValues(const Json& values)
 	{
+		// What this GNUbase doesn't know or accept stays in the file, for the GNUbase that wrote it.
 		const std::string prefix = m_file.u8string() + ": ";
 		for (const auto& [key, value] : values.items())
 		{
@@ -285,16 +409,21 @@ namespace gnubase::engine::settings
 			if (found == m_values.end())
 			{
 				m_report.problems.push_back(prefix);
-				m_report.problems.back().append("there is no setting ").append(key).append("; dropped");
+				m_report.problems.back().append("there is no setting ").append(key).append("; left in the file");
+				m_fileValues[key] = value;
 				continue;
 			}
-			if (const std::string problem = validate(value, definition(key).schema, key); !problem.empty())
+			const Definition& setting = definition(key);
+			if (const std::string problem = validate(value, setting.schema, key); !problem.empty())
 			{
 				m_report.problems.push_back(prefix);
-				m_report.problems.back().append(problem).append("; using the default");
+				m_report.problems.back().append(problem).append("; using the default, the value is left in the file");
+				m_fileValues[key] = value;
 				continue;
 			}
 			found->second = value;
+			if (value != setting.defaultValue)
+				m_fileValues[key] = value;
 		}
 	}
 }

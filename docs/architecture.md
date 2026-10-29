@@ -250,22 +250,27 @@ A setting is one or the other, never both: no user setting is saved in a project
 | Linux | `$XDG_CONFIG_HOME/gnubase` if that is an absolute path, otherwise `~/.config/gnubase` |
 
 - On macOS, `~/Library/Preferences` belongs to the system's preferences service: it holds the property lists that `cfprefsd` reads and caches for an application's user defaults, and Apple's guidelines put files that an application writes itself into Application Support. GNUbase writes its own JSON files, so they go there.
-- `GNUBASE_SETTINGS_DIR` overrides the folder on every OS, and `gnubase --settings DIR` overrides both, for portable installs and tests. ctest sets the variable to the build's test output folder, so tests never touch the user's settings. An `Engine` constructed without a folder, as in tests, keeps its settings in memory only.
+- Without `APPDATA`, `HOME` and the like, GNUbase asks the OS for the folder: `SHGetKnownFolderPath` on Windows, the user database (`getpwuid_r`) elsewhere. If the user has none, the settings are kept in memory only, never in a folder that other users share, such as the temporary one.
+- `GNUBASE_SETTINGS_DIR` overrides the folder on every OS, and `gnubase --settings DIR` overrides both, for portable installs and tests. On Windows the app reads its command line as UTF-16, so `--settings`, `--script` and `--project` take paths with any characters. ctest sets the variable to the build's test output folder, so tests never touch the user's settings. An `Engine` constructed without a folder, as in tests, keeps its settings in memory only.
 - Copying the folder to another computer takes every user setting along.
 
 **Files.** A `settings::Store` (`src/engine/settings/store.h`) holds the settings of one file, `<name>.json`, described by a `settings::Format`: a version, and for each setting a key (`area.name`), a description, a JSON schema and a default. `settings.json` holds the user settings (`settings::userFormat()`); later kinds of settings, such as key commands or workspaces, get formats and files of their own.
 
 - The file is `{"version": N, "values": {...}}` with only the values that differ from their defaults, so a default that changes in a later version reaches every user who didn't change the setting.
 - Values are checked against the setting's schema when they are set and when they are read. C++ code reads them typed: `store.get(settings::g_uiScale)` is a `double`.
-- Every change writes the file at once and atomically (`files::writeAtomically`): a temporary file next to it, flushed to the disk, then renamed over it. A crash or a full disk leaves the old file or the new one, never half of one. If writing fails, the setting keeps its old value and the command fails.
+- Every change writes the file at once and atomically (`files::writeAtomically`): a temporary file next to it, flushed to the disk, then renamed over it. A crash or a full disk leaves the old file or the new one, never half of one; a temporary file that a crash left behind is removed the next time the file is locked. If `settings.json` is a symbolic link, as dotfile managers make them, the file it points to is replaced and the link stays. If writing fails, the setting keeps its old value and the command fails.
+- Several GNUbase processes can run at once. A change takes the lock file `<name>.lock` (`files::FileLock`), reads the file again, changes only its own setting in it and writes it, so that no process loses another one's changes. Each process keeps using the values it read until it starts again.
+- Values the file has that this GNUbase doesn't know, or doesn't accept, stay in the file: a newer release may have added the setting or a value (a new theme, say), and the setting doesn't change the file's version. This GNUbase uses the default instead, and only a change of that very setting replaces the value.
 
 **Loading.** The store reads its file when it is created and never discards anything without keeping it:
 
 - A file that can't be read, isn't JSON or isn't a settings file is moved to `<name>.corrupt.json`, and the settings start from their defaults.
 - A file of an older version runs through the format's **migrations**, one per version step: each one turns the values of version n into those of version n + 1 (renaming keys, converting values). The original is copied to `<name>.v<n>.json`, so an older GNUbase can still be used, and the migrated file is saved at the current version.
-- A file older than the oldest migration, a migration that fails, or a file of a newer GNUbase is moved to `<name>.v<n>.json`, and the settings start from their defaults. A newer file is not overwritten with an older format.
-- A single value that is unknown or doesn't fit its schema falls back to its default; the file as it was is copied to `<name>.v<n>.json`.
-- `settings.list` reports what happened (`missing`, `loaded`, `migrated`, `reset`), what was discarded and where the backup is; the log has the same.
+- A file older than the oldest migration, or a migration that fails, is moved to `<name>.v<n>.json`, and the settings start from their defaults.
+- A file of a newer GNUbase stays where it is, untouched, so the newer GNUbase finds it again; this one starts from the defaults and saves nothing.
+- A single value that is unknown or doesn't fit its schema falls back to its default and stays in the file (see above).
+- **Read-only.** If the file belongs to a newer GNUbase, or a backup can't be made before the file is moved or rewritten, or the file can't be locked, the store is read-only until GNUbase quits: changes apply, but nothing is written, so nothing is lost.
+- `settings.list` reports what happened (`missing`, `loaded`, `migrated`, `reset`, `newer`), the problems found, where the backup is and whether the store is read-only; the log has the same.
 
 Adding a setting only needs a definition. Renaming one, or changing what its values mean, raises the format's version and adds a migration; `tests/data/settings` gets an example file of every version, and a test checks that all of them still load.
 

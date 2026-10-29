@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -23,6 +24,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -120,7 +122,9 @@ namespace
 TEST_CASE("the settings folder is per user and per OS, and GNUBASE_SETTINGS_DIR overrides it", "[unit]")
 {
 	using files::Os;
-	using files::settingsDirectory;
+	const files::UserFolder noUserFolder;
+	const auto settingsDirectory = [&noUserFolder](Os os, const files::Environment& variables)
+	{ return files::settingsDirectory(os, variables, noUserFolder); };
 
 	SECTION("Windows keeps them in the roaming application data")
 	{
@@ -155,18 +159,37 @@ TEST_CASE("the settings folder is per user and per OS, and GNUBASE_SETTINGS_DIR 
 					  environment({{"GNUBASE_SETTINGS_DIR", "portable/settings"}, {"APPDATA", "C:\\Roaming"},
 						  {"HOME", "/home/ann"}, {"XDG_CONFIG_HOME", "/home/ann/conf"}})) ==
 				fs::path("portable/settings"));
-			CHECK(settingsDirectory(os, environment({{"GNUBASE_SETTINGS_DIR", ""}, {"HOME", "/home/ann"}})) !=
+			CHECK(settingsDirectory(os,
+					  environment({{"GNUBASE_SETTINGS_DIR", ""}, {"HOME", "/home/ann"}, {"APPDATA", "C:\\Roaming"}})) !=
 				fs::path()); // empty means not set
 		}
 	}
-	SECTION("without any of the variables, a temporary folder")
+	SECTION("without any of the variables, the folder the OS has for the user")
 	{
+		const files::UserFolder roaming = [] { return std::optional<fs::path>(R"(C:\Users\ann\AppData\Roaming)"); };
+		CHECK(files::settingsDirectory(Os::Windows, environment({}), roaming) ==
+			fs::path(R"(C:\Users\ann\AppData\Roaming)") / "GNUbase");
+		const files::UserFolder home = [] { return std::optional<fs::path>("/home/ann"); };
+		CHECK(files::settingsDirectory(Os::MacOs, environment({}), home) ==
+			fs::path("/home/ann") / "Library" / "Application Support" / "GNUbase");
+		CHECK(files::settingsDirectory(Os::Linux, environment({}), home) ==
+			fs::path("/home/ann") / ".config" / "gnubase");
+		CHECK(files::settingsDirectory(Os::Linux, environment({{"HOME", "/home/bob"}}), home) ==
+			fs::path("/home/bob") / ".config" / "gnubase"); // the variable comes first
+	}
+	SECTION("without any folder for the user, none: the settings stay in memory, never in a shared folder")
+	{
+		const files::UserFolder none = [] { return std::optional<fs::path>(); };
 		for (const Os os : {Os::Windows, Os::MacOs, Os::Linux})
-			CHECK(settingsDirectory(os, environment({})) == fs::temp_directory_path() / "gnubase" / "settings");
+		{
+			CHECK(settingsDirectory(os, environment({})).empty());
+			CHECK(files::settingsDirectory(os, environment({}), none).empty());
+		}
 	}
 	SECTION("this process uses its own OS and environment")
 	{
-		CHECK_FALSE(settingsDirectory().empty());
+		CHECK_FALSE(files::settingsDirectory().empty());
+		CHECK(files::osUserFolder().has_value());
 #ifdef _WIN32
 		CHECK(files::currentOs() == Os::Windows);
 #elif defined(__APPLE__)
@@ -196,6 +219,54 @@ TEST_CASE("files are written atomically: a failed write leaves the old file as i
 
 	CHECK(files::readFile(file) == std::optional<std::string>("second"));
 	CHECK_FALSE(files::readFile(dir.path() / "missing.json").has_value());
+}
+
+TEST_CASE("an atomic write through a symbolic link replaces the file it points to and keeps the link", "[unit]")
+{
+	const TempDir dir;
+	const fs::path real = dir.path() / "dotfiles" / "settings.json";
+	const fs::path link = dir.path() / "settings.json";
+	files::writeAtomically(real, "first");
+	std::error_code error;
+	fs::create_symlink(real, link, error);
+	if (error)
+		SKIP("this account can't make symbolic links: " + error.message()); // Windows without developer mode
+	files::writeAtomically(link, "second");
+	CHECK(fs::is_symlink(link));
+	CHECK(readText(real) == "second");
+	CHECK(readText(link) == "second");
+	CHECK(std::distance(fs::directory_iterator(real.parent_path()), fs::directory_iterator()) == 1); // no temporary
+}
+
+TEST_CASE("temporary files that a crash left behind are removed, and only those", "[unit]")
+{
+	const TempDir dir;
+	const fs::path file = dir.path() / "settings.json";
+	files::writeAtomically(file, "data");
+	const fs::path stale = dir.path() / "settings.json.0123456789abcdef.tmp"; // the name writeAtomically uses
+	const std::vector<fs::path> others = {dir.path() / "settings.json.notes.tmp",
+		dir.path() / "settings.json.0123456789abcdeg.tmp", dir.path() / "other.json.0123456789abcdef.tmp"};
+	writeText(stale, "dat");
+	for (const fs::path& other : others)
+		writeText(other, "mine");
+	files::removeStaleTemporaries(file);
+	CHECK_FALSE(fs::exists(stale));
+	for (const fs::path& other : others)
+		CHECK(fs::exists(other));
+	CHECK(readText(file) == "data");
+}
+
+TEST_CASE("a file lock excludes other holders until it is released", "[unit]")
+{
+	const TempDir dir;
+	const fs::path lockFile = dir.path() / "new folder" / "settings.lock";
+	{
+		const files::FileLock lock(lockFile, std::chrono::milliseconds(0));
+		CHECK(fs::exists(lockFile));
+		CHECK_THROWS_AS(files::FileLock(lockFile, std::chrono::milliseconds(50)), std::system_error);
+	}
+	const files::FileLock again(lockFile, std::chrono::milliseconds(0)); // released with the first one
+	CHECK(fs::exists(lockFile));
 }
 
 TEST_CASE("settings start with their defaults and the file keeps only what differs from them", "[unit]")
@@ -327,32 +398,57 @@ TEST_CASE("a corrupt or unreadable settings file falls back to the defaults and 
 		CHECK(fs::is_directory(backup));
 		CHECK(store.value("width") == 800);
 	}
-	SECTION("single values that are invalid or unknown fall back to their defaults; the rest is kept")
+	SECTION("single values that are invalid or unknown fall back to their defaults and stay in the file")
 	{
 		const std::string text =
 			R"({"version": 3, "values": {"width": 1024, "height": 5, "title": 7, "colour": "red"}})";
 		writeText(file, text);
-		const settings::Store store = load();
+		settings::Store store = load();
 		CHECK(store.loadReport().status == settings::LoadStatus::Loaded);
 		REQUIRE(store.loadReport().problems.size() == 3);
-		CHECK_THAT(store.loadReport().problems[0], ContainsSubstring("colour"));
+		CHECK_THAT(store.loadReport().problems[0], ContainsSubstring("colour; left in the file"));
 		CHECK_THAT(store.loadReport().problems[1], ContainsSubstring("height must be at least 100"));
 		CHECK_THAT(store.loadReport().problems[2], ContainsSubstring("title must be string"));
 		CHECK(store.value("width") == 1024);
 		CHECK(store.value("height") == 600);
 		CHECK(store.value("title") == "GNUbase");
-		CHECK(readText(store.loadReport().backup) == text); // the original, with what was dropped
-		CHECK(readJson(file) == Json::parse(R"({"version": 3, "values": {"width": 1024}})"));
+		CHECK(readText(file) == text); // nothing was discarded, so nothing was written
+		CHECK(store.loadReport().backup.empty());
+
+		// A change writes only its own setting; the values this GNUbase doesn't take stay for the one that wrote them.
+		CHECK(store.set("width", 900));
+		CHECK(
+			readJson(file).at("values") == Json::parse(R"({"width": 900, "height": 5, "title": 7, "colour": "red"})"));
+		CHECK_FALSE(store.set("height", 600)); // the value it has, but the user chose it: the invalid one goes
+		CHECK(readJson(file).at("values") == Json::parse(R"({"width": 900, "title": 7, "colour": "red"})"));
+		CHECK(store.reset() == std::vector<std::string>{"width"});
+		CHECK(readJson(file).at("values") == Json::parse(R"({"colour": "red"})")); // unknown: not this one's to reset
 	}
-	SECTION("a stale temporary file from a crash during a write doesn't matter")
+	SECTION("a stale temporary file from a crash during a write is removed")
 	{
 		writeText(file, R"({"version": 3, "values": {"width": 1024}})");
-		writeText(dir.path() / "window.json.tmp", R"({"version": 3, "val)");
+		const fs::path stale = dir.path() / "window.json.00c0ffee00c0ffee.tmp";
+		writeText(stale, R"({"version": 3, "val)");
 		settings::Store store = load();
 		CHECK(store.loadReport().status == settings::LoadStatus::Loaded);
 		CHECK(store.value("width") == 1024);
+		CHECK_FALSE(fs::exists(stale));
 		CHECK(store.set("width", 900));
 		CHECK(readJson(file).at("values").at("width") == 900);
+	}
+	SECTION("a corrupt file that can't be moved away is left as it is, and nothing overwrites it")
+	{
+		const std::string text = "{ not JSON";
+		writeText(file, text);
+		fs::create_directories(backup);
+		writeText(backup / "keep", "a folder in the backup's place, so that the move fails");
+		settings::Store store = load();
+		CHECK(store.loadReport().status == settings::LoadStatus::Reset);
+		CHECK(store.loadReport().readOnly);
+		CHECK_THAT(store.loadReport().problems.back(), ContainsSubstring("aren't saved"));
+		CHECK(store.set("width", 1024)); // applies until GNUbase quits
+		CHECK(store.value("width") == 1024);
+		CHECK(readText(file) == text);
 	}
 }
 
@@ -404,6 +500,19 @@ TEST_CASE("older settings files migrate to the current version through the chain
 		CHECK(store.value("width") == 800);
 		CHECK(store.value("height") == 700);
 	}
+	SECTION("a file that can't be kept as a backup isn't migrated on disk: the store is read-only")
+	{
+		const std::string text = R"({"version": 1, "values": {"volume": 0.8}})";
+		writeText(file, text);
+		fs::create_directories(dir.path() / "window.v1.json" / "folder"); // the copy fails
+		settings::Store store = load();
+		CHECK(store.loadReport().status == settings::LoadStatus::Migrated);
+		CHECK(store.loadReport().readOnly);
+		CHECK_THAT(store.loadReport().problems.back(), ContainsSubstring("cannot keep a backup"));
+		CHECK(store.value("level") == 0.8); // migrated in memory
+		CHECK(store.set("width", 1024));
+		CHECK(readText(file) == text); // the only copy of the original
+	}
 	SECTION("a migration that fails resets the file and keeps it as a backup")
 	{
 		const std::string text = R"({"version": 1, "values": {"size": "large", "title": "Mix"}})";
@@ -426,15 +535,27 @@ TEST_CASE("older settings files migrate to the current version through the chain
 		CHECK(store.value("title") == "GNUbase");
 		CHECK(fs::exists(dir.path() / "window.v1.json"));
 	}
-	SECTION("a file of a newer GNUbase is kept and not overwritten with an older version")
+	SECTION("a file of a newer GNUbase is left where it is, and nothing is saved over it")
 	{
 		const std::string text = R"({"version": 4, "values": {"title": "Mix"}})";
 		writeText(file, text);
-		const settings::Store store = load();
-		CHECK(store.loadReport().status == settings::LoadStatus::Reset);
+		settings::Store store = load();
+		CHECK(store.loadReport().status == settings::LoadStatus::Newer);
+		CHECK(store.loadReport().fileVersion == 4);
+		CHECK(store.loadReport().readOnly);
 		CHECK_THAT(store.loadReport().problems.at(0), ContainsSubstring("newer"));
-		CHECK(readText(dir.path() / "window.v4.json") == text);
 		CHECK(store.value("title") == "GNUbase");
+		CHECK(store.set("title", "Older")); // applies until GNUbase quits, but isn't saved
+		CHECK(store.value("title") == "Older");
+		CHECK(store.reset() == std::vector<std::string>{"title"});
+		CHECK(readText(file) == text);
+		CHECK_FALSE(fs::exists(dir.path() / "window.v4.json"));
+		// Started again, the older GNUbase still finds the newer file, and so does the newer one.
+		CHECK(load().loadReport().status == settings::LoadStatus::Newer);
+		settings::Format newer = windowFormat();
+		newer.version = 4;
+		newer.migrations.push_back({3, [](Json&) {}});
+		CHECK(settings::Store(newer, dir.path()).value("title") == "Mix");
 	}
 	SECTION("the chain must lead from its first version to the current one without gaps")
 	{
@@ -445,6 +566,57 @@ TEST_CASE("older settings files migrate to the current version through the chain
 		std::swap(unordered.migrations[0], unordered.migrations[1]);
 		CHECK_THROWS_AS(settings::Store(unordered), std::logic_error);
 	}
+}
+
+TEST_CASE("an older GNUbase keeps the settings and values that only a newer one knows", "[unit]")
+{
+	const TempDir dir;
+	// The newer release added a setting and a display mode at the same version: no migration needed.
+	settings::Format newer = windowFormat();
+	newer.definitions.push_back({"dock", "Dock the window.", Json::parse(R"({"type": "boolean"})"), false});
+	newer.definitions[4].schema = Json::parse(R"({"enum": ["window", "fullscreen", "kiosk"]})");
+	{
+		settings::Store store(newer, dir.path());
+		store.set("dock", true);
+		store.set("mode", "kiosk");
+	}
+	{
+		settings::Store older(windowFormat(), dir.path());
+		CHECK(older.loadReport().status == settings::LoadStatus::Loaded);
+		CHECK(older.value("mode") == "window"); // a value it doesn't take: the default
+		CHECK(older.loadReport().problems.size() == 2);
+		CHECK(older.set("width", 1024));
+		CHECK(older.set("title", "Mix"));
+		CHECK(older.reset("title"));
+	}
+	const settings::Store store(newer, dir.path());
+	CHECK(store.loadReport().problems.empty());
+	CHECK(store.value("dock") == true);
+	CHECK(store.value("mode") == "kiosk");
+	CHECK(store.value("width") == 1024);
+}
+
+TEST_CASE("several GNUbase processes share the settings file without losing each other's changes", "[unit]")
+{
+	const TempDir dir;
+	settings::Store first(windowFormat(), dir.path());
+	settings::Store second(windowFormat(), dir.path()); // started before the first one changed anything
+	CHECK(first.set("width", 1024));
+	CHECK(second.set("height", 700));
+	CHECK(second.value("width") == 800); // each one uses what it read until it starts again
+	CHECK(readJson(dir.path() / "window.json").at("values") == Json::parse(R"({"width": 1024, "height": 700})"));
+	CHECK(first.reset("width"));
+	CHECK(readJson(dir.path() / "window.json").at("values") == Json::parse(R"({"height": 700})"));
+
+	// A change waits for the lock of another process, and fails if it doesn't get it.
+	{
+		const files::FileLock other(dir.path() / "window.lock", std::chrono::milliseconds(0));
+		first.setLockTimeout(std::chrono::milliseconds(50));
+		CHECK_THROWS_AS(first.set("title", "Mix"), settings::SettingsError);
+		CHECK(first.value("title") == "GNUbase"); // nothing changed
+	}
+	CHECK(first.set("title", "Mix"));
+	CHECK(settings::Store(windowFormat(), dir.path()).values().at("title") == "Mix");
 }
 
 // Every version of the user settings file that a GNUbase release wrote is in tests/data/settings, as
@@ -540,6 +712,7 @@ TEST_CASE("settings.get, settings.set and settings.reset change the user setting
 		CHECK(list.at("file") == file.u8string());
 		CHECK(list.at("version") == 1);
 		CHECK(list.at("load").at("status") == "missing");
+		CHECK(list.at("load").at("readOnly") == false);
 		const Json& entries = list.at("settings");
 		REQUIRE(entries.size() == settings::userFormat().definitions.size());
 		const auto scale = std::find_if(

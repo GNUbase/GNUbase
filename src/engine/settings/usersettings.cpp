@@ -84,9 +84,9 @@ namespace gnubase::engine::settings
 
 		engine.registerCommand(
 			{"settings.set", 1,
-				"Changes a user setting and saves the settings file. User settings belong to the user, not to a "
-				"project. Emits settings.changed with the changed value, unless it had that value already. The "
-				"settings: " +
+				"Changes a user setting and saves the settings file, unless settings.list reports it read-only. User "
+				"settings belong to the user, not to a project. Emits settings.changed with the changed value, "
+				"unless it had that value already. The settings: " +
 					list + ".",
 				{{"type", "object"},
 					{"properties",
@@ -138,8 +138,10 @@ namespace gnubase::engine::settings
 			{"settings.list", 1,
 				"Every user setting with its key, description, JSON schema, default and value; the settings file, "
 				"null when settings are kept in memory only; its version; and what happened when it was loaded: the "
-				"status (inMemory, missing, loaded, migrated or reset), the version the file had, what was discarded "
-				"and where the original file was kept.",
+				"status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the "
+				"problems found, where the original file was kept, and whether the file is read-only for this "
+				"session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be "
+				"backed up or locked).",
 				CommandInfo{}.parameters,
 				{{"type", "object"},
 					{"properties",
@@ -158,7 +160,8 @@ namespace gnubase::engine::settings
 				return Json{{"file", pathOrNull(store.file())}, {"version", store.format().version},
 					{"load",
 						{{"status", toString(report.status)}, {"fileVersion", report.fileVersion},
-							{"problems", report.problems}, {"backup", pathOrNull(report.backup)}}},
+							{"problems", report.problems}, {"backup", pathOrNull(report.backup)},
+							{"readOnly", report.readOnly}}},
 					{"settings", std::move(settings)}};
 			});
 	}

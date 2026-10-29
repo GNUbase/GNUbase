@@ -17,7 +17,7 @@ add_library(gnubase-platform STATIC
 	rt/triplebuffer.h)
 target_include_directories(gnubase-platform PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-platform PRIVATE $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
-target_link_libraries(gnubase-platform PUBLIC Threads::Threads PRIVATE $<$<PLATFORM_ID:Windows>:dbghelp>)
+target_link_libraries(gnubase-platform PUBLIC Threads::Threads PRIVATE $<$<PLATFORM_ID:Windows>:dbghelp ole32 shell32>)
 gnubase_target_defaults(gnubase-platform)
 
 # RT checker: replaces the global operator new/delete to report allocations in real-time code.
