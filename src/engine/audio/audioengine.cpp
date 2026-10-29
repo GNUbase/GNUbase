@@ -13,6 +13,7 @@
 #include <cstring>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -182,8 +183,12 @@ namespace gnubase::engine
 			tracks.push_back({channel.id, std::move(playlist)});
 		}
 		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate);
+		const uint64_t generation = ++m_generation;
+		attachMidi(snapshot, desc, generation);
 
 		auto program = std::make_unique<Program>(desc, format.sampleRate, format.blockSize);
+		program->generation = generation;
+		program->releases = releases();
 		int input = 0;
 		int output = 0;
 		for (size_t i = 0; i < desc.nodes.size(); ++i)
@@ -207,9 +212,99 @@ namespace gnubase::engine
 			m_programs = std::make_unique<rt::SnapshotPublisher<Program>>(std::move(program));
 	}
 
+	void AudioEngine::attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc, uint64_t generation)
+	{
+		std::map<ObjectId, std::set<ObjectId>> sources; // per instrument channel, the MIDI channels routed to it
+		for (const RenderChannel& channel : snapshot.channels)
+			if (channel.type == TrackType::Midi && channel.output.kind == RenderTarget::Kind::Channel)
+				sources[snapshot.channels[static_cast<size_t>(channel.output.index)].id].insert(channel.id);
+
+		std::map<ObjectId, std::shared_ptr<MidiSequencer>> sequencers;
+		std::map<ObjectId, Instrument> instruments;
+		for (const RenderChannel& channel : snapshot.channels)
+		{
+			if (channel.type != TrackType::Midi && channel.type != TrackType::Instrument)
+				continue;
+			const auto kept = m_sequencers.find(channel.id);
+			const std::shared_ptr<MidiSequencer> sequencer =
+				kept != m_sequencers.end() ? kept->second : std::make_shared<MidiSequencer>();
+			auto sequence = std::make_unique<MidiSequence>();
+			sequence->notes = channel.notes;
+			sequence->controllers = channel.controllers;
+			sequencer->setSequence(std::move(sequence));
+			sequencers[channel.id] = sequencer;
+
+			std::shared_ptr<graph::Processor> processor = sequencer;
+			if (channel.type == TrackType::Instrument)
+			{
+				const std::set<ObjectId>& from = sources[channel.id];
+				Instrument instrument;
+				const auto old = m_instruments.find(channel.id);
+				if (old != m_instruments.end() && old->second.id == channel.instrument)
+				{
+					instrument = old->second;
+					// A MIDI track that left can't end its notes here any more: the audio thread ends them when it
+					// starts the new program, after the last block in which the track could still start notes.
+					for (const ObjectId source : instrument.sources)
+						if (from.count(source) == 0)
+							m_releases.push_back(
+								{channel.id, source, instrument.channel, m_sequencers.at(source), generation});
+				}
+				else
+				{
+					// Unknown ids play nothing; projects are checked when they load (projectFromJson).
+					instrument.id = channel.instrument;
+					instrument.channel = std::make_shared<InstrumentChannel>(sequencer,
+						processors::isInstrument(channel.instrument) ? processors::createBuiltin(channel.instrument)
+																	 : nullptr);
+				}
+				instrument.sources = from;
+				processor = instrument.channel;
+				instruments[channel.id] = instrument;
+			}
+			for (graph::NodeDesc& node : desc.nodes)
+				if (node.kind == graph::NodeKind::Channel && node.object == channel.id)
+					node.processor = processor;
+		}
+		m_sequencers = std::move(sequencers);
+		m_instruments = std::move(instruments);
+	}
+
+	std::vector<AudioEngine::Release> AudioEngine::releases()
+	{
+		// Done once the audio thread started a program that has them; not needed if the instrument is gone or
+		// replaced, or the MIDI track came back.
+		const uint64_t started = m_started.load(std::memory_order_acquire);
+		const auto done = [this, started](const PendingRelease& pending)
+		{
+			const auto instrument = m_instruments.find(pending.instrument);
+			return pending.generation <= started || instrument == m_instruments.end() ||
+				instrument->second.channel != pending.channel || instrument->second.sources.count(pending.source) != 0;
+		};
+		m_releases.erase(std::remove_if(m_releases.begin(), m_releases.end(), done), m_releases.end());
+
+		std::vector<Release> result;
+		result.reserve(m_releases.size());
+		for (const PendingRelease& pending : m_releases)
+		{
+			Release release{pending.channel, pending.departed, {}};
+			for (const ObjectId source : m_instruments.at(pending.instrument).sources)
+				release.staying.push_back(m_sequencers.at(source));
+			result.push_back(std::move(release));
+		}
+		return result;
+	}
+
 	void AudioEngine::process(const audio::DeviceBlock& block) noexcept
 	{
 		const Program& program = m_programs->acquire();
+		if (program.generation != m_running)
+		{
+			m_running = program.generation;
+			for (const Release& release : program.releases)
+				release.channel->releaseNotesOf(*release.departed, release.staying);
+			m_started.store(program.generation, std::memory_order_release);
+		}
 		const audio::DeviceFormat& format = m_device->format();
 		const size_t bytes = block.frames * sizeof(float);
 		for (const BusLink& link : program.inputs)

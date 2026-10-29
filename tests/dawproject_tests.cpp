@@ -140,7 +140,12 @@ namespace
 			{{"part", part},
 				{"controllers",
 					{{{"position", 0}, {"number", 7}, {"value", 0.9}},
-						{{"position", g_ticksPerQuarter}, {"number", 1}, {"value", 0.333333}, {"channel", 2}}}}});
+						{{"position", g_ticksPerQuarter}, {"number", 1}, {"value", 0.333333}, {"channel", 2}},
+						{{"position", 10}, {"type", "pitchBend"}, {"value", 0.75}, {"channel", 1}},
+						{{"position", 20}, {"type", "channelPressure"}, {"value", 0.5}},
+						{{"position", 30}, {"type", "polyPressure"}, {"number", 61}, {"value", 0.25}},
+						{{"position", 40}, {"type", "program"}, {"number", 5}, {"bank", 129}},
+						{{"position", 50}, {"type", "sysEx"}, {"data", {0xF0, 0x43, 0x10, 0x4C, 0xF7}}}}}});
 		run(client, "midiPart.add", {{"track", idOf(midi, "track")}, {"position", 0}, {"length", g_ticksPerQuarter}});
 	}
 
@@ -326,7 +331,7 @@ namespace
 	Json withId(const Json& list, const std::string& key, const Json& value)
 	{
 		const auto found =
-			std::find_if(list.begin(), list.end(), [&](const Json& item) { return item.at(key) == value; });
+			std::find_if(list.begin(), list.end(), [&](const Json& item) { return item.value(key, Json()) == value; });
 		REQUIRE(found != list.end());
 		return *found;
 	}
@@ -414,8 +419,15 @@ TEST_CASE("without GNUbase's entry, a project is read from project.xml", "[integ
 	CHECK(second.at("position") == g_ticksPerQuarter / 3);
 	CHECK(second.at("channel") == 3);
 	CHECK(std::abs(second.at("velocity").get<double>() - 0.123456) < 1e-4);
-	REQUIRE(part.at("controllers").size() == 2);
+	// Pitch bend and pressure too; DAWproject has no program changes with banks or SysEx.
+	REQUIRE(part.at("controllers").size() == 5);
 	CHECK(std::abs(withId(part.at("controllers"), "number", 1).at("value").get<double>() - 0.333333) < 1e-6);
+	const Json bend = withId(part.at("controllers"), "type", "pitchBend");
+	CHECK(bend.at("position") == 10);
+	CHECK(bend.at("channel") == 1);
+	CHECK(std::abs(bend.at("value").get<double>() - 0.75) < 1e-9);
+	CHECK(std::abs(withId(part.at("controllers"), "type", "channelPressure").at("value").get<double>() - 0.5) < 1e-9);
+	CHECK(withId(part.at("controllers"), "type", "polyPressure").at("number") == 61);
 }
 
 TEST_CASE("a project exported from Bitwig Studio loads", "[integration]")
@@ -576,6 +588,45 @@ TEST_CASE("unsafe and broken DAWproject files are refused", "[integration]")
 		ContainsSubstring("project.xml"));
 	CHECK_THAT(reject(client, "project.load", {{"path", utf8(dir.path() / "missing.dawproject")}}),
 		ContainsSubstring("missing.dawproject"));
+}
+
+TEST_CASE("instruments this build doesn't have are left out when a project loads", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"inputChannels", 0}, {"captureSeconds", 1}});
+	const Json synth = run(client, "track.add", {{"type", "instrument"}, {"name", "Synth"}});
+	const Json probe = run(client, "track.add", {{"type", "instrument"}, {"name", "Probe"}});
+	const Json midi = run(client, "track.add", {{"type", "midi"}, {"name", "Lead"}});
+	run(client, "channel.set", {{"channel", synth.at("channel").at("id")}, {"instrument", "testSynth"}});
+	run(client, "channel.set", {{"channel", probe.at("channel").at("id")}, {"instrument", "noteProbe"}});
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+
+	// As if from a newer build or edited by hand: an unknown instrument, a generator that isn't one, and an
+	// instrument on a MIDI track.
+	std::map<std::string, std::string> entries = readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	const std::map<ObjectId, std::string> instruments = {{idOf(synth, "channel"), "futureSynth"},
+		{idOf(probe, "channel"), "sine"}, {idOf(midi, "channel"), "testSynth"}};
+	for (Json& channel : extension.at("project").at("channels"))
+		channel["instrument"] = instruments.at(channel.at("id").get<ObjectId>());
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+
+	run(client, "project.load", {{"path", file}});
+	const Json loaded = run(client, "project.get");
+	REQUIRE(loaded.at("channels").size() == 3);
+	for (const Json& channel : loaded.at("channels"))
+		CHECK(channel.at("instrument").get<std::string>().empty());
+	CHECK(withId(loaded.at("tracks"), "name", "Synth").at("type") == "instrument");
+
+	// The engine plays the project, and later commands change it.
+	run(client, "track.add", {{"type", "audio"}});
+	run(client, "transport.play");
+	run(client, "audio.render", {{"frames", 256}});
+	CHECK(run(client, "project.get").at("tracks").size() == 4);
 }
 
 TEST_CASE("saving keeps the history, loading starts a new one", "[integration]")

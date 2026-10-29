@@ -63,9 +63,11 @@ namespace gnubase::engine
 	struct RenderController
 	{
 		time::Samples position = 0;
+		ControllerType type = ControllerType::Control;
 		uint8_t number = 0;
 		uint32_t value = 0;
 		uint8_t channel = 0;
+		std::vector<uint8_t> data; // SysEx
 	};
 
 	struct RenderChannel
@@ -76,6 +78,7 @@ namespace gnubase::engine
 		int channels = 2;
 		int input = -1; // index into RenderSnapshot::busses, or -1
 		RenderTarget output;
+		std::string instrument;                    // instrument tracks: a built-in instrument's id, or empty
 		std::vector<RenderAudioEvent> audioEvents; // sorted by start
 		std::vector<RenderNote> notes;             // sorted by start, then pitch
 		std::vector<RenderController> controllers; // sorted by position

@@ -20,6 +20,7 @@
 #include <set>
 #include <sstream>
 #include <system_error>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -29,6 +30,44 @@ namespace gnubase::engine
 	{
 		constexpr const char* g_extensionEntry = "gnubase.json";
 		constexpr int g_extensionFormat = 1;
+
+		// The DAWproject expression of a controller type, or null for types it has none for.
+		const char* expressionOf(ControllerType type)
+		{
+			switch (type)
+			{
+			case ControllerType::Control:
+				return "channelController";
+			case ControllerType::PitchBend:
+				return "pitchBend";
+			case ControllerType::ChannelPressure:
+				return "channelPressure";
+			case ControllerType::PolyPressure:
+				return "polyPressure";
+			case ControllerType::Program:
+			case ControllerType::SysEx:
+				return nullptr;
+			}
+			return nullptr;
+		}
+
+		bool controllerTypeOf(const std::string& expression, ControllerType& type)
+		{
+			for (const ControllerType candidate : {ControllerType::Control, ControllerType::PitchBend,
+					 ControllerType::ChannelPressure, ControllerType::PolyPressure})
+				if (expression == expressionOf(candidate))
+				{
+					type = candidate;
+					return true;
+				}
+			return false;
+		}
+
+		// Whether a controller's number means something: the controller, or the pitch of poly pressure.
+		bool usesNumber(ControllerType type)
+		{
+			return type == ControllerType::Control || type == ControllerType::PolyPressure;
+		}
 
 		// FNV-1a of project.xml: tells whether another application changed it since GNUbase wrote it.
 		std::string checksum(const std::string& text)
@@ -429,20 +468,30 @@ namespace gnubase::engine
 					noteNode.append_attribute("key") = note.pitch;
 					noteNode.append_attribute("vel") = note.velocity / g_maxVelocity;
 				}
-				std::map<std::pair<int, int>, std::vector<const Controller*>> byController;
+				// A lane of points per expression, channel and controller or key. Program changes with banks and SysEx
+				// have no DAWproject expression; the extension entry keeps them.
+				std::map<std::tuple<int, int, int>, std::vector<const Controller*>> byLane;
 				for (const auto& [id, controller] : part.controllers)
-					byController[{controller.channel, controller.number}].push_back(&controller);
-				for (const auto& [key, controllers] : byController)
+					if (expressionOf(controller.type) != nullptr)
+						byLane[{static_cast<int>(controller.type), controller.channel,
+								   usesNumber(controller.type) ? controller.number : 0}]
+							.push_back(&controller);
+				for (const auto& [lane, controllers] : byLane)
 				{
+					const auto [typeIndex, channel, number] = lane;
+					const auto type = static_cast<ControllerType>(typeIndex);
 					pugi::xml_node points = content.append_child("Points");
-					points.append_attribute("id") =
-						(xmlId("p", part.id) + "-" + std::to_string(key.first) + "-" + std::to_string(key.second))
-							.c_str();
+					points.append_attribute("id") = (xmlId("p", part.id) + "-" + std::to_string(typeIndex) + "-" +
+						std::to_string(channel) + "-" + std::to_string(number))
+														.c_str();
 					points.append_attribute("unit") = "normalized";
 					pugi::xml_node target = points.append_child("Target");
-					target.append_attribute("expression") = "channelController";
-					target.append_attribute("channel") = key.first;
-					target.append_attribute("controller") = key.second;
+					target.append_attribute("expression") = expressionOf(type);
+					target.append_attribute("channel") = channel;
+					if (type == ControllerType::Control)
+						target.append_attribute("controller") = number;
+					else if (type == ControllerType::PolyPressure)
+						target.append_attribute("key") = number;
 					for (const Controller* controller : controllers)
 					{
 						pugi::xml_node point = points.append_child("RealPoint");
@@ -866,17 +915,21 @@ namespace gnubase::engine
 			void readPoints(const pugi::xml_node& points, MidiPart& part, const ClipTiming& timing)
 			{
 				const pugi::xml_node target = points.child("Target");
-				if (std::string(target.attribute("expression").as_string("")) != "channelController")
+				const std::string expression = target.attribute("expression").as_string("");
+				ControllerType type = ControllerType::Control;
+				if (!controllerTypeOf(expression, type))
 					return;
-				const int number = std::clamp(target.attribute("controller").as_int(0), 0, 127);
+				const int number = std::clamp(
+					target.attribute(type == ControllerType::PolyPressure ? "key" : "controller").as_int(0), 0, 127);
 				const int channel = std::clamp(target.attribute("channel").as_int(0), 0, 15);
 				for (const pugi::xml_node point : points.children("RealPoint"))
 				{
 					Controller controller;
 					controller.id = m_project.newId();
+					controller.type = type;
 					controller.position =
 						std::max<time::Ticks>(0, partTicks(part, timing, point.attribute("time").as_double()));
-					controller.number = static_cast<uint8_t>(number);
+					controller.number = static_cast<uint8_t>(usesNumber(type) ? number : 0);
 					controller.channel = static_cast<uint8_t>(channel);
 					const double value = std::clamp(point.attribute("value").as_double(0.0), 0.0, 1.0);
 					controller.value = static_cast<uint32_t>(std::llround(value * g_maxControllerValue));

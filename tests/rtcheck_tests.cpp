@@ -423,3 +423,69 @@ TEST_CASE("the audio thread reads disk streams without allocating or locking", "
 	}
 	CHECK(g_violations == 0);
 }
+
+TEST_CASE("playing MIDI parts through an instrument, with edits, stops and cycle jumps, passes the RT checker",
+	"[integration]")
+{
+	using gnubase::engine::Json;
+	gnubase::engine::Engine engine;
+	gnubase::engine::Client client(engine);
+	const auto run = [&client](const std::string& command, const Json& parameters)
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	const auto channelOf = [&](const Json& track)
+	{
+		const Json project = run("project.get", Json::object());
+		for (const Json& t : project.at("tracks"))
+			if (t.at("id") == track.at("track").at("id"))
+				return t.at("channel");
+		return Json();
+	};
+	constexpr int64_t quarter = 1720320; // ticks per 24000 samples at 120 BPM and 48 kHz
+	const Json instrument = run("track.add", {{"type", "instrument"}});
+	const Json midi = run("track.add", {{"type", "midi"}});
+	run("channel.set", {{"channel", channelOf(instrument)}, {"instrument", "testSynth"}});
+	run("channel.set", {{"channel", channelOf(midi)}, {"output", channelOf(instrument)}});
+	std::vector<Json> parts;
+	for (const Json& track : {instrument, midi})
+		parts.push_back(
+			run("midiPart.add", {{"track", track.at("track").at("id")}, {"position", 0}, {"length", quarter}})
+				.at("part")
+				.at("id"));
+	for (const Json& part : parts)
+	{
+		Json notes = Json::array();
+		for (int i = 0; i < 16; ++i)
+			notes.push_back(
+				{{"position", i * quarter / 32}, {"length", quarter / 8}, {"pitch", 48 + i}, {"velocity", 0.5}});
+		run("note.add", {{"part", part}, {"notes", notes}});
+		run("controller.add",
+			{{"part", part},
+				{"controllers",
+					{{{"position", 100}, {"number", 7}, {"value", 0.5}},
+						{{"position", 200}, {"type", "pitchBend"}, {"value", 0.75}},
+						{{"position", 300}, {"type", "channelPressure"}, {"value", 0.25}},
+						{{"position", 400}, {"type", "polyPressure"}, {"number", 50}, {"value", 1.0}},
+						{{"position", 500}, {"type", "program"}, {"number", 3}},
+						{{"position", 600}, {"type", "sysEx"}, {"data", {0xF0, 0x7E, 0x7F, 0x09, 0x01, 0xF7}}}}}});
+	}
+	run("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	run("transport.set", {{"left", 1000}, {"right", 9000}, {"cycle", true}});
+	run("transport.play", Json::object());
+
+	const RecordViolations record;
+	run("audio.render", {{"frames", 9600}});
+	run("note.add", // a new sequence, swapped in between blocks
+		{{"part", parts[1]},
+			{"notes", {{{"position", 0}, {"length", quarter / 2}, {"pitch", 72}, {"velocity", 1.0}}}}});
+	run("audio.render", {{"frames", 4800}});
+	run("transport.locate", {{"position", 3000}}); // a locate ends the sounding notes
+	run("audio.render", {{"frames", 4800}});
+	run("transport.stop", Json::object());
+	run("audio.render", {{"frames", 960}});
+	CHECK(g_violations == 0);
+}

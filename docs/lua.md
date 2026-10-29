@@ -375,13 +375,14 @@ Returns:
 
 #### `gnubase.channel.set`
 
-Changes a channel's audio channels, input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects.
+Changes a channel's audio channels, input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none.
 
 Parameters:
 
 - `channel`: integer, required
 - `channels`: integer
 - `input`: integer
+- `instrument`: string
 - `output`: integer
 
 Returns:
@@ -415,7 +416,7 @@ Parameters:
 
 #### `gnubase.controller.add`
 
-Adds controller events to a MIDI part: position from the part's start in ticks, controller number 0-127, value 0-1, MIDI channel 0-15 (default 0).
+Adds controller events to a MIDI part: position from the part's start in ticks, MIDI channel 0-15 (default 0). type (default controller) says what else an event has: controller: number 0-127 and value 0-1; pitchBend: value 0-1, 0.5 is no bend; channelPressure: value; polyPressure: number (the pitch) and value; program: number (the program) and optionally bank 0-16383; sysEx: data, the message's bytes from 0xF0 to 0xF7.
 
 Parameters:
 
@@ -437,7 +438,7 @@ Parameters:
 
 #### `gnubase.controller.set`
 
-Changes controller events of a MIDI part: each change names a controller event by id and gives what changes, position in ticks, controller number 0-127, value 0-1 or MIDI channel 0-15. Returns the changed controller events.
+Changes controller events of a MIDI part: each change names a controller event by id and gives what changes: position in ticks, type, and the fields of the type as controller.add takes them (number, value, channel, bank, data). A field the type doesn't have is an error, such as value on a program change; a null bank removes it. A new type keeps the fields it shares with the old one and needs the others. Returns the changed controller events.
 
 Parameters:
 

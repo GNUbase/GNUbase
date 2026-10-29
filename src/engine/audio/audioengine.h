@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/audio/playback.h"
+#include "engine/audio/sequencer.h"
 #include "engine/audio/transport.h"
 #include "engine/graph/graph.h"
 #include "engine/schema.h"
@@ -11,8 +12,10 @@
 
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -26,7 +29,8 @@ namespace gnubase::engine
 	// device's format whenever the project's render snapshot changes, and hands it to the audio thread. On the audio
 	// thread it copies the device inputs into the input busses, processes the graph where the transport plays and
 	// copies the output busses to the device outputs. Audio tracks play their events from disk streams (Playback):
-	// offline rendering waits for the streams before every block; in real time a cue thread keeps them ahead.
+	// offline rendering waits for the streams before every block; in real time a cue thread keeps them ahead. MIDI
+	// and instrument tracks play their parts through sequencers, which last across rebuilds, as do instruments.
 	//
 	// Busses take consecutive device channels in bus order: the first input bus the first input channels, and so on.
 	// Bus channels beyond the device's are silent, device outputs no bus reaches stay silent. Choosing device ports
@@ -63,7 +67,18 @@ namespace gnubase::engine
 			int channels = 0;
 		};
 
-		// What the audio thread runs: the graph and its links to the device.
+		// The notes of a MIDI track that left an instrument track, for the audio thread to end
+		// (InstrumentChannel::releaseNotesOf).
+		struct Release
+		{
+			std::shared_ptr<InstrumentChannel> channel;
+			std::shared_ptr<MidiSequencer> departed;
+			std::vector<std::shared_ptr<MidiSequencer>> staying; // the MIDI tracks still routed to the instrument
+		};
+
+		// What the audio thread runs: the graph and its links to the device, and the releases to do before its first
+		// block. A program carries the releases of the programs before it until the audio thread started one of them,
+		// as it may skip programs that follow each other quickly.
 		struct Program
 		{
 			Program(const graph::GraphDesc& desc, double sampleRate, uint32_t maxFrames)
@@ -74,6 +89,18 @@ namespace gnubase::engine
 			graph::CompiledGraph graph;
 			std::vector<BusLink> inputs;
 			std::vector<BusLink> outputs;
+			uint64_t generation = 0; // counts up from 1
+			std::vector<Release> releases;
+		};
+
+		// A release waiting for the audio thread to start a program that has it.
+		struct PendingRelease
+		{
+			ObjectId instrument = 0; // the instrument channel
+			ObjectId source = 0;     // the MIDI channel that left it
+			std::shared_ptr<InstrumentChannel> channel;
+			std::shared_ptr<MidiSequencer> departed;
+			uint64_t generation = 0; // the first program that has it
 		};
 
 		void rebuild();
@@ -97,6 +124,11 @@ namespace gnubase::engine
 		void startCueing();
 		void stopCueing();
 		void stopDevice();
+		// Gives MIDI and instrument channels their sequencers and instruments, and notes the MIDI tracks that left an
+		// instrument track for the program of the generation.
+		void attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc, uint64_t generation);
+		// The releases for a new program: those pending that the audio thread hasn't done yet.
+		std::vector<Release> releases();
 
 		rt::SnapshotPublisher<RenderSnapshot>& m_snapshots;
 		uint64_t m_revision = 0;
@@ -108,8 +140,22 @@ namespace gnubase::engine
 		std::unique_ptr<audio::Device> m_device;
 		audio::DummyDevice* m_dummy = nullptr; // m_device, if it is the dummy device
 		Playback m_playback;                   // before m_programs: their track players use it
+
+		struct Instrument
+		{
+			std::string id;             // the built-in instrument, or empty
+			std::set<ObjectId> sources; // the MIDI channels routed to it
+			std::shared_ptr<InstrumentChannel> channel;
+		};
+		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers; // per MIDI and instrument channel
+		std::map<ObjectId, Instrument> m_instruments;                    // per instrument channel
+		std::vector<PendingRelease> m_releases;
+
 		std::unique_ptr<rt::SnapshotPublisher<Program>> m_programs;
-		Transport m_transport; // advanced by the audio thread
+		uint64_t m_generation = 0;          // the newest program's
+		std::atomic<uint64_t> m_started{0}; // the newest program the audio thread started
+		uint64_t m_running = 0;             // audio thread: the program it runs
+		Transport m_transport;              // advanced by the audio thread
 
 		// The cue thread, while the device runs in real time. It reads the transport's settings and play state from
 		// m_cueState, which the command thread updates.

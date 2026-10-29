@@ -9,6 +9,7 @@
 #include "engine/graph/graph.h"
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
+#include "engine/processors/builtin.h"
 
 #include <algorithm>
 #include <array>
@@ -345,7 +346,7 @@ namespace gnubase::engine
 			std::optional<Channel> channel;
 			if (hasChannel)
 			{
-				channel = Channel{project.newId(), track.id, channels, 0, 0};
+				channel = Channel{project.newId(), track.id, channels, 0, 0, {}};
 				const auto mainOutput = std::find_if(project.busses.begin(), project.busses.end(),
 					[](const Bus& bus) { return bus.direction == BusDirection::Output; });
 				if (hasAudio && mainOutput != project.busses.end())
@@ -481,6 +482,20 @@ namespace gnubase::engine
 			{
 				changed.output = parameters.at("output").get<ObjectId>();
 				checkOutput(project, changed, changed.output);
+			}
+			if (parameters.contains("instrument"))
+			{
+				changed.instrument = parameters.at("instrument").get<std::string>();
+				require(type == TrackType::Instrument || changed.instrument.empty(),
+					"only an instrument track's channel plays an instrument");
+				if (!changed.instrument.empty())
+				{
+					const auto& builtins = processors::builtins();
+					const auto info = std::find_if(builtins.begin(), builtins.end(),
+						[&](const processors::BuiltinInfo& b) { return b.id == changed.instrument; });
+					require(info != builtins.end(), "no built-in processor " + changed.instrument);
+					require(info->instrument, changed.instrument + " is not an instrument");
+				}
 			}
 			channel = changed;
 			Json result = {{"channel", toJson(channel)}};
@@ -962,27 +977,60 @@ namespace gnubase::engine
 			context.emit("note.added", {{"part", part.id}, {"notes", added}});
 			return {{"notes", added}};
 		}
+	}
 
+	Controller controllerFrom(const Json& item, const std::string& name)
+	{
+		const std::optional<ControllerType> parsed =
+			controllerTypeFromName(item.value("type", std::string("controller")));
+		if (!parsed.has_value())
+			throw CommandError(
+				name + ".type must be controller, pitchBend, channelPressure, polyPressure, program or sysEx");
+		const ControllerType type = *parsed;
+		const auto needs = [&](const char* key) { require(item.contains(key), name + "." + key + " is required"); };
+		const bool numbered =
+			type == ControllerType::Control || type == ControllerType::PolyPressure || type == ControllerType::Program;
+		if (numbered)
+		{
+			needs("number");
+			requireRange(item.at("number").get<int64_t>(), 0, 127, name + ".number");
+		}
+		if (type != ControllerType::Program && type != ControllerType::SysEx)
+		{
+			needs("value");
+			unitValue(item, "value", name);
+		}
+		if (type == ControllerType::Program && item.contains("bank"))
+			requireRange(item.at("bank").get<int64_t>(), 0, g_maxBank, name + ".bank");
+		if (type == ControllerType::SysEx)
+		{
+			needs("data");
+			const auto data = item.at("data").get<std::vector<int64_t>>();
+			require(data.size() >= 2 && data.front() == 0xF0 && data.back() == 0xF7,
+				name + ".data must start with 0xF0 and end with 0xF7");
+			require(
+				std::all_of(data.begin() + 1, data.end() - 1, [](int64_t byte) { return byte >= 0 && byte < 0x80; }),
+				name + ".data bytes between 0xF0 and 0xF7 must be 0 to 127");
+		}
+		requireRange(item.value("channel", int64_t{0}), 0, 15, name + ".channel");
+		Controller controller = controllerFromJson(item);
+		controller.position = item.at("position").get<time::Ticks>();
+		require(controller.position >= 0, name + ".position must not be negative");
+		return controller;
+	}
+
+	namespace
+	{
 		Json addControllers(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
 			MidiPart& part = find(project.midiParts, parameters.at("part").get<ObjectId>(), "MIDI part");
 			std::vector<Controller> controllers;
 			const Json& items = parameters.at("controllers");
+			controllers.reserve(items.size());
 			for (size_t i = 0; i < items.size(); ++i)
 			{
-				const Json& item = items[i];
-				const std::string name = "controllers[" + std::to_string(i) + "]";
-				Controller controller;
-				controller.position = item.at("position").get<time::Ticks>();
-				require(controller.position >= 0, name + ".position must not be negative");
-				requireRange(item.at("number").get<int64_t>(), 0, 127, name + ".number");
-				requireRange(item.value("channel", int64_t{0}), 0, 15, name + ".channel");
-				controller.number = item.at("number").get<uint8_t>();
-				controller.channel = item.value("channel", uint8_t{0});
-				controller.value =
-					static_cast<uint32_t>(std::llround(unitValue(item, "value", name) * g_maxControllerValue));
-				controllers.push_back(controller);
+				controllers.push_back(controllerFrom(items[i], "controllers[" + std::to_string(i) + "]"));
 			}
 			Json added = Json::array();
 			for (Controller& controller : controllers)
@@ -1509,9 +1557,10 @@ namespace gnubase::engine
 		add(engine,
 			{"channel.set", 1,
 				"Changes a channel's audio channels, input (an input bus) or output (an output bus or a group "
-				"channel; for MIDI tracks an instrument channel). 0 disconnects.",
-				objectSchema(
-					{{"channel", idSchema}, {"channels", integerSchema}, {"input", idSchema}, {"output", idSchema}},
+				"channel; for MIDI tracks an instrument channel). 0 disconnects. instrument is the built-in "
+				"instrument an instrument track plays (see processor.list), or empty for none.",
+				objectSchema({{"channel", idSchema}, {"channels", integerSchema}, {"input", idSchema},
+								 {"output", idSchema}, {"instrument", stringSchema}},
 					{"channel"}),
 				resultSchema({"channel"}), false},
 			setChannel);
@@ -1663,13 +1712,20 @@ namespace gnubase::engine
 			[](Project& project, CommandContext& context)
 			{ return removeFromPart(project, context, &MidiPart::notes, "notes", "note"); });
 
-		const Json controller = objectSchema({{"position", integerSchema}, {"number", integerSchema},
-												 {"value", numberSchema}, {"channel", integerSchema}},
-			{"position", "number", "value"});
+		const Json controller = objectSchema(
+			{{"position", integerSchema},
+				{"type",
+					enumSchema({"controller", "pitchBend", "channelPressure", "polyPressure", "program", "sysEx"})},
+				{"number", integerSchema}, {"value", numberSchema}, {"channel", integerSchema}, {"bank", integerSchema},
+				{"data", arraySchema(integerSchema)}},
+			{"position"});
 		add(engine,
 			{"controller.add", 1,
-				"Adds controller events to a MIDI part: position from the part's start in ticks, controller number "
-				"0-127, value 0-1, MIDI channel 0-15 (default 0).",
+				"Adds controller events to a MIDI part: position from the part's start in ticks, MIDI channel 0-15 "
+				"(default 0). type (default controller) says what else an event has: controller: number 0-127 and "
+				"value 0-1; pitchBend: value 0-1, 0.5 is no bend; channelPressure: value; polyPressure: number (the "
+				"pitch) and value; program: number (the program) and optionally bank 0-16383; sysEx: data, the "
+				"message's bytes from 0xF0 to 0xF7.",
 				objectSchema({{"part", idSchema}, {"controllers", arraySchema(controller)}}, {"part", "controllers"}),
 				{{"type", "object"}, {"properties", {{"controllers", {{"type", "array"}}}}},
 					{"required", {"controllers"}}},

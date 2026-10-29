@@ -36,8 +36,8 @@ namespace gnubase::engine
 			}
 			for (const auto& [id, controller] : part.controllers)
 				if (controller.position < end - start)
-					channel.controllers.push_back({toSamples(project, start + controller.position), controller.number,
-						controller.value, controller.channel});
+					channel.controllers.push_back({toSamples(project, start + controller.position), controller.type,
+						controller.number, controller.value, controller.channel, controller.data});
 		}
 	}
 
@@ -75,6 +75,7 @@ namespace gnubase::engine
 			render.track = trackId;
 			render.type = track.type;
 			render.channels = channel.channels;
+			render.instrument = channel.instrument;
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;
 			snapshot->channels.push_back(std::move(render));

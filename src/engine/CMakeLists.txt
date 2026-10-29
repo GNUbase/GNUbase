@@ -87,6 +87,7 @@ add_library(gnubase-engine STATIC
 	audio/analysiscommands.cpp
 	audio/audioengine.cpp audio/audioengine.h
 	audio/playback.cpp audio/playback.h
+	audio/sequencer.cpp audio/sequencer.h
 	audio/transport.cpp audio/transport.h
 	audiofile/audiofile.h
 	audiofile/diskstream.cpp audiofile/diskstream.h
@@ -108,6 +109,7 @@ add_library(gnubase-engine STATIC
 	graph/processor.h
 	jobs/jobs.cpp jobs/jobs.h
 	media/backup.cpp media/backup.h
+	midi/midivalues.cpp midi/midivalues.h
 	peaks/peakcache.cpp peaks/peakcache.h
 	peaks/peaks.cpp peaks/peaks.h
 	processors/builtin.cpp processors/builtin.h
