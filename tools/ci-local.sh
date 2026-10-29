@@ -189,9 +189,10 @@ if $here || [ $os != windows ]; then
 fi
 
 # Windows: the Linux jobs go to WSL (see --wsl above). The Windows jobs build this folder, so its submodules move to
-# the commits HEAD records, as in CI's checkout; after a merge they often lag behind. The test audio comes from Git
-# LFS, which a new worktree has only as pointers; WSL's clone then takes it from this repository.
-if git submodule status --recursive | grep -q '^+'; then
+# the commits HEAD records, as in CI's checkout; after a merge they often lag behind, and a new worktree has none. The
+# test audio comes from Git LFS, which a new worktree has only as pointers; WSL's clone then takes it from this
+# repository.
+if git submodule status --recursive | grep -q '^+' || git submodule status | grep -q '^-'; then
 	echo "Moving submodules to the commits HEAD records."
 	git submodule update -q --init --recursive && git submodule update -q --init --checkout ext/vst3sdk &&
 		git -C ext/vst3sdk submodule update -q --init base cmake pluginterfaces public.sdk || exit 2
