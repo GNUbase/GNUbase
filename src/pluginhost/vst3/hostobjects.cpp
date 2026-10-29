@@ -80,17 +80,18 @@ namespace gnubase::pluginhost::vst3
 	vst::tresult PLUGIN_API ParamValueQueue::addPoint(
 		vst::int32 sampleOffset, vst::Vst::ParamValue value, vst::int32& index)
 	{
-		if (m_count == m_points.size())
+		if (m_points.empty())
 			return vst::kOutOfMemory;
-		// Points are kept in order of their offsets; a point at the offset of the last one replaces it.
-		if (m_count > 0 && m_points[m_count - 1].offset == sampleOffset)
+		// Points are kept in order of their offsets. A point at the offset of the last one replaces it, and so does
+		// any later point once the queue is full: the last value of a block is the one that must not get lost.
+		if (m_count > 0 && m_points[m_count - 1].offset > sampleOffset)
+			return vst::kInvalidArgument;
+		if (m_count > 0 && (m_points[m_count - 1].offset == sampleOffset || m_count == m_points.size()))
 		{
-			m_points[m_count - 1].value = value;
+			m_points[m_count - 1] = {sampleOffset, value};
 			index = static_cast<vst::int32>(m_count - 1);
 			return vst::kResultOk;
 		}
-		if (m_count > 0 && m_points[m_count - 1].offset > sampleOffset)
-			return vst::kInvalidArgument;
 		m_points[m_count] = {sampleOffset, value};
 		index = static_cast<vst::int32>(m_count++);
 		return vst::kResultOk;
@@ -98,8 +99,10 @@ namespace gnubase::pluginhost::vst3
 
 	// ---- ParameterChanges ----
 
-	ParameterChanges::ParameterChanges(size_t queues, size_t points)
+	void ParameterChanges::resize(size_t queues, size_t points)
 	{
+		m_count = 0;
+		m_queues.clear();
 		m_queues.reserve(queues);
 		for (size_t i = 0; i < queues; ++i)
 			m_queues.emplace_back(points);

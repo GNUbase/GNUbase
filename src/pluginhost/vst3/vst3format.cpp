@@ -63,7 +63,7 @@ namespace gnubase::pluginhost
 					if (info.category() != kVstAudioEffectClass)
 						continue;
 					plugin::Descriptor descriptor;
-					descriptor.formatId = info.ID().toString();
+					descriptor.formatId = vst3::classIdText(info.ID());
 					descriptor.id = "vst3:" + descriptor.formatId;
 					descriptor.format = "vst3";
 					descriptor.name = info.name();
@@ -82,15 +82,21 @@ namespace gnubase::pluginhost
 			{
 				for (size_t i = 0; i < m_descriptors.size(); ++i)
 				{
-					if (m_descriptors[i].id == id)
+					// "vst3:" and the class id, whose hex digits other programs may write in lower case.
+					const std::string_view wanted = id;
+					const std::string& have = m_descriptors[i].id;
+					if (wanted.size() == have.size() && wanted.substr(0, 5) == have.substr(0, 5) &&
+						vst3::sameClassId(wanted.substr(5), std::string_view(have).substr(5)))
 						return std::make_unique<vst3::Vst3Plugin>(m_module, m_classIds[i], m_descriptors[i], host);
 				}
 				return nullptr;
 			}
 
 		private:
-			VST3::Hosting::Module::Ptr m_module;
+			// The factory holds the host application as its context until the module exits, when m_module goes: so
+			// it is destroyed after the module.
 			vst3::HostApplication m_application;
+			VST3::Hosting::Module::Ptr m_module;
 			std::vector<plugin::Descriptor> m_descriptors;
 			std::vector<VST3::UID> m_classIds;
 		};

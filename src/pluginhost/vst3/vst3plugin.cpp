@@ -9,12 +9,14 @@
 #include "public.sdk/source/vst/utility/stringconvert.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <exception>
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <stdexcept>
 #include <string>
 
 namespace gnubase::pluginhost::vst3
@@ -25,20 +27,95 @@ namespace gnubase::pluginhost::vst3
 		using vst::Vst::BusDirections;
 		using vst::Vst::MediaTypes;
 
-		constexpr size_t g_maxQueues = 512;         // parameters changed in one block
+		constexpr size_t g_extraQueues = 64;        // parameter queues beyond the parameter count, for unknown ids
 		constexpr size_t g_maxInPoints = 64;        // changes of one parameter in one block
 		constexpr size_t g_maxOutPoints = 32;       // changes of one parameter the plugin reports per block
 		constexpr size_t g_maxEvents = 1024;        // VST3 events per block, in and out
 		constexpr size_t g_maxOutputs = 4096;       // GNUbase output events per sub-block
+		constexpr size_t g_minQueue = 4096;         // values queued between the threads, at least
 		constexpr size_t g_channels = 16;           // MIDI channels per event bus
+		constexpr size_t g_maxText = 128;           // characters of a String128
 		constexpr double g_perNoteBendRange = 48.0; // semitones of a MIDI 2.0 per-note pitch bend, as MPE's default
 		constexpr double g_maxUint32 = 4294967295.0;
 		constexpr vst::TBool g_true = 1;
 		constexpr vst::TBool g_false = 0;
+		constexpr bool g_comFormat = COM_COMPATIBLE != 0;
 
-		std::string toUtf8(const vst::Vst::TChar* text)
+		void appendUtf8(std::string& text, uint32_t code)
 		{
-			return vst::Vst::StringConvert::convert(text);
+			if (code < 0x80)
+			{
+				text += static_cast<char>(code);
+			}
+			else if (code < 0x800)
+			{
+				text += static_cast<char>(0xc0 | (code >> 6));
+				text += static_cast<char>(0x80 | (code & 0x3f));
+			}
+			else if (code < 0x10000)
+			{
+				text += static_cast<char>(0xe0 | (code >> 12));
+				text += static_cast<char>(0x80 | ((code >> 6) & 0x3f));
+				text += static_cast<char>(0x80 | (code & 0x3f));
+			}
+			else
+			{
+				text += static_cast<char>(0xf0 | (code >> 18));
+				text += static_cast<char>(0x80 | ((code >> 12) & 0x3f));
+				text += static_cast<char>(0x80 | ((code >> 6) & 0x3f));
+				text += static_cast<char>(0x80 | (code & 0x3f));
+			}
+		}
+
+		// A plugin's UTF-16 text as UTF-8: up to the terminator, but never more than `max` characters, as plugins fill
+		// String128 to the last character. Invalid UTF-16 (an unpaired surrogate) becomes U+FFFD; it never throws.
+		std::string toUtf8(const vst::Vst::TChar* text, size_t max = g_maxText)
+		{
+			std::string result;
+			for (size_t i = 0; i < max && text[i] != 0; ++i)
+			{
+				uint32_t code = static_cast<uint16_t>(text[i]);
+				if (code >= 0xd800 && code < 0xdc00 && i + 1 < max)
+				{
+					const auto low = static_cast<uint16_t>(text[i + 1]);
+					if (low >= 0xdc00 && low < 0xe000)
+					{
+						code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+						++i;
+					}
+				}
+				if (code >= 0xd800 && code < 0xe000)
+					code = 0xfffd;
+				appendUtf8(result, code);
+			}
+			return result;
+		}
+
+		// UTF-8 as a String128; false if it isn't valid UTF-8 or too long.
+		bool toString128(const std::string& text, vst::Vst::String128 string)
+		{
+			try
+			{
+				return vst::Vst::StringConvert::convert(text, string);
+			}
+			catch (const std::range_error&)
+			{
+				return false;
+			}
+		}
+
+		vst::int32 vstProcessMode(plugin::ProcessMode mode)
+		{
+			switch (mode)
+			{
+			case plugin::ProcessMode::Offline:
+				return vst::Vst::kOffline;
+			case plugin::ProcessMode::Prefetch:
+				return vst::Vst::kPrefetch;
+			case plugin::ProcessMode::Realtime:
+				break;
+			}
+			return vst::Vst::kRealtime;
 		}
 
 		bool succeeded(vst::tresult result)
@@ -98,38 +175,47 @@ namespace gnubase::pluginhost::vst3
 			return false;
 		}
 
-		// A per-note expression as a VST3 note expression type and its normalized value. False for pressure, which is
-		// a poly pressure event in VST3.
-		bool expressionToVst(plugin::NoteExpression expression, double value, vst::Vst::NoteExpressionTypeID& type,
-			double& normalized) noexcept
+		constexpr uint32_t g_pressure = plugin::expressionId(plugin::NoteExpression::Pressure);
+
+		// A per-note expression id as a VST3 note expression type and its normalized value. The plugin's own
+		// expressions (from g_firstPluginExpression on) are its VST3 types, with normalized values. False for
+		// pressure, which is a poly pressure event in VST3, and for ids VST3 has no type for.
+		bool expressionToVst(
+			uint32_t expression, double value, vst::Vst::NoteExpressionTypeID& type, double& normalized) noexcept
 		{
+			if (expression >= plugin::g_firstPluginExpression)
+			{
+				type = expression - plugin::g_firstPluginExpression;
+				normalized = std::clamp(value, 0.0, 1.0);
+				return true;
+			}
 			switch (expression)
 			{
-			case plugin::NoteExpression::Volume:
+			case plugin::expressionId(plugin::NoteExpression::Volume):
 				type = vst::Vst::kVolumeTypeID;
 				normalized = value / 4.0;
 				break;
-			case plugin::NoteExpression::Pan:
+			case plugin::expressionId(plugin::NoteExpression::Pan):
 				type = vst::Vst::kPanTypeID;
 				normalized = value;
 				break;
-			case plugin::NoteExpression::Tuning:
+			case plugin::expressionId(plugin::NoteExpression::Tuning):
 				type = vst::Vst::kTuningTypeID;
 				normalized = (value / 240.0) + 0.5;
 				break;
-			case plugin::NoteExpression::Vibrato:
+			case plugin::expressionId(plugin::NoteExpression::Vibrato):
 				type = vst::Vst::kVibratoTypeID;
 				normalized = value;
 				break;
-			case plugin::NoteExpression::Expression:
+			case plugin::expressionId(plugin::NoteExpression::Expression):
 				type = vst::Vst::kExpressionTypeID;
 				normalized = value;
 				break;
-			case plugin::NoteExpression::Brightness:
+			case plugin::expressionId(plugin::NoteExpression::Brightness):
 				type = vst::Vst::kBrightnessTypeID;
 				normalized = value;
 				break;
-			case plugin::NoteExpression::Pressure:
+			default:
 				return false;
 			}
 			normalized = std::clamp(normalized, 0.0, 1.0);
@@ -137,36 +223,40 @@ namespace gnubase::pluginhost::vst3
 		}
 
 		bool expressionFromVst(
-			vst::Vst::NoteExpressionTypeID type, double normalized, plugin::NoteExpression& expression, double& value)
+			vst::Vst::NoteExpressionTypeID type, double normalized, uint32_t& expression, double& value)
 		{
+			value = normalized;
 			switch (type)
 			{
 			case vst::Vst::kVolumeTypeID:
-				expression = plugin::NoteExpression::Volume;
+				expression = plugin::expressionId(plugin::NoteExpression::Volume);
 				value = normalized * 4.0;
 				return true;
 			case vst::Vst::kPanTypeID:
-				expression = plugin::NoteExpression::Pan;
-				value = normalized;
+				expression = plugin::expressionId(plugin::NoteExpression::Pan);
 				return true;
 			case vst::Vst::kTuningTypeID:
-				expression = plugin::NoteExpression::Tuning;
+				expression = plugin::expressionId(plugin::NoteExpression::Tuning);
 				value = (normalized - 0.5) * 240.0;
 				return true;
 			case vst::Vst::kVibratoTypeID:
-				expression = plugin::NoteExpression::Vibrato;
-				value = normalized;
+				expression = plugin::expressionId(plugin::NoteExpression::Vibrato);
 				return true;
 			case vst::Vst::kExpressionTypeID:
-				expression = plugin::NoteExpression::Expression;
-				value = normalized;
+				expression = plugin::expressionId(plugin::NoteExpression::Expression);
 				return true;
 			case vst::Vst::kBrightnessTypeID:
-				expression = plugin::NoteExpression::Brightness;
-				value = normalized;
+				expression = plugin::expressionId(plugin::NoteExpression::Brightness);
 				return true;
-			default:
+			case vst::Vst::kTextTypeID: // text events, not values
+			case vst::Vst::kPhonemeTypeID:
 				return false;
+			default:
+				// The plugin's own expressions.
+				if (type > UINT32_MAX - plugin::g_firstPluginExpression)
+					return false;
+				expression = plugin::g_firstPluginExpression + type;
+				return true;
 			}
 		}
 
@@ -181,11 +271,22 @@ namespace gnubase::pluginhost::vst3
 		}
 	}
 
+	std::string classIdText(const VST3::UID& id)
+	{
+		return id.toString(g_comFormat);
+	}
+
+	bool sameClassId(std::string_view a, std::string_view b)
+	{
+		return a.size() == b.size() &&
+			std::equal(a.begin(), a.end(), b.begin(), [](char x, char y)
+				{ return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y)); });
+	}
+
 	Vst3Plugin::Vst3Plugin(
 		VST3::Hosting::Module::Ptr module, const VST3::UID& classId, plugin::Descriptor descriptor, plugin::Host& host)
 		: m_module(std::move(module)), m_classId(classId), m_descriptor(std::move(descriptor)), m_host(host),
-		  m_inChanges(g_maxQueues, g_maxInPoints), m_outChanges(g_maxQueues, g_maxOutPoints), m_inEvents(g_maxEvents),
-		  m_outEvents(g_maxEvents), m_outputs(g_maxOutputs)
+		  m_inEvents(g_maxEvents), m_outEvents(g_maxEvents), m_outputs(g_maxOutputs)
 	{
 	}
 
@@ -197,7 +298,7 @@ namespace gnubase::pluginhost::vst3
 	void Vst3Plugin::terminate()
 	{
 		if (m_active)
-			deactivate();
+			stopComponent(); // without reading buses the plugin asked to change: it goes now
 		if (m_componentConnection != nullptr && m_controllerConnection != nullptr)
 		{
 			m_componentConnection->disconnect(m_controllerConnection);
@@ -230,6 +331,7 @@ namespace gnubase::pluginhost::vst3
 		m_hostParams = plugin::extension<plugin::HostParams>(m_host);
 		m_hostLatency = plugin::extension<plugin::HostLatency>(m_host);
 		m_hostAudioPorts = plugin::extension<plugin::HostAudioPorts>(m_host);
+		m_hostNotePorts = plugin::extension<plugin::HostNotePorts>(m_host);
 		m_hostState = plugin::extension<plugin::HostState>(m_host);
 
 		vst::FUnknown* context = static_cast<vst::Vst::IHostApplication*>(&m_application);
@@ -288,7 +390,19 @@ namespace gnubase::pluginhost::vst3
 		readBuses();
 		readParams();
 		readMidiMapping();
+		// Room for a change of every parameter, several times over, between the threads.
+		const size_t queue = std::max(g_minQueue, 4 * m_params.size());
+		m_toProcessor = std::make_unique<rt::SpscQueue<Edit>>(queue);
+		m_toController = std::make_unique<rt::SpscQueue<Update>>(queue);
 		m_initialized = true;
+		return true;
+	}
+
+	bool Vst3Plugin::setProcessMode(plugin::ProcessMode mode)
+	{
+		if (m_active)
+			return false; // VST3 sets the mode in setupProcessing, before activation
+		m_mode = mode;
 		return true;
 	}
 
@@ -348,7 +462,8 @@ namespace gnubase::pluginhost::vst3
 			out.name = toUtf8(info.title);
 			out.module = unitPath(info.unitId);
 			out.minimum = 0.0;
-			out.maximum = param.stepCount > 0 ? static_cast<double>(param.stepCount) : 1.0;
+			out.maximum = 1.0;
+			out.stepCount = static_cast<uint32_t>(param.stepCount);
 			out.defaultValue = fromNormalized(param, info.defaultNormalizedValue);
 			using Flags = vst::Vst::ParameterInfo::ParameterFlags;
 			const auto has = [&info](Flags flag) { return (info.flags & flag) != 0; };
@@ -402,12 +517,10 @@ namespace gnubase::pluginhost::vst3
 		if (m_active)
 			return true;
 		vst::Vst::ProcessSetup setup{
-			vst::Vst::kRealtime, vst::Vst::kSample32, static_cast<vst::int32>(maxFrames), sampleRate};
+			vstProcessMode(m_mode), vst::Vst::kSample32, static_cast<vst::int32>(maxFrames), sampleRate};
 		if (!succeeded(m_processor->setupProcessing(setup)))
 			return false;
-		// The buses may have changed while inactive (kIoChanged); the mapping too (kMidiCCAssignmentChanged).
 		readBuses();
-		readMidiMapping();
 		for (size_t i = 0; i < m_audioInputs.size(); ++i)
 			m_component->activateBus(MediaTypes::kAudio, BusDirections::kInput, static_cast<vst::int32>(i),
 				static_cast<vst::TBool>(m_audioInputs[i].active));
@@ -447,6 +560,11 @@ namespace gnubase::pluginhost::vst3
 		};
 		setUp(m_audioInputs, m_inputChannels, m_inputBuffers);
 		setUp(m_audioOutputs, m_outputChannels, m_outputBuffers);
+		// A queue for every parameter, so a block takes a change of each.
+		m_inChanges.resize(m_params.size() + g_extraQueues, g_maxInPoints);
+		m_outChanges.resize(m_params.size() + g_extraQueues, g_maxOutPoints);
+		m_hasPendingValue = false;
+		m_hasPendingEdit = false;
 		m_voiceCount = 0;
 		m_active = true;
 		return true;
@@ -456,10 +574,47 @@ namespace gnubase::pluginhost::vst3
 	{
 		if (!m_active)
 			return;
+		stopComponent();
+		// The restart the plugin asked for while active: now its buses and MIDI mapping can be read again.
+		if (m_busesChanged)
+			busesChanged();
+		else if (m_mappingChanged)
+			readMidiMapping();
+		m_busesChanged = false;
+		m_mappingChanged = false;
+	}
+
+	void Vst3Plugin::stopComponent() noexcept
+	{
 		if (m_processing.load(std::memory_order_acquire))
 			stopProcessing();
 		m_component->setActive(g_false);
 		m_active = false;
+		// What a pending value or edit still had to tell the processor goes with the next activation's first block.
+		if (m_hasPendingValue)
+			m_toProcessor->tryPush(m_pendingValue);
+		if (m_hasPendingEdit && m_pendingEdit.kind == Edit::Value)
+			m_toProcessor->tryPush(Edit{Edit::Silent, m_pendingEdit.id, m_pendingEdit.value});
+		m_hasPendingValue = false;
+		m_hasPendingEdit = false;
+	}
+
+	void Vst3Plugin::busesChanged()
+	{
+		const auto sameNotePorts = [](const std::vector<Bus>& a, const std::vector<Bus>& b)
+		{
+			return std::equal(a.begin(), a.end(), b.begin(), b.end(),
+				[](const Bus& x, const Bus& y) { return x.name == y.name && x.channelCount == y.channelCount; });
+		};
+		const std::vector<Bus> eventInputs = m_eventInputs;
+		const std::vector<Bus> eventOutputs = m_eventOutputs;
+		readBuses();
+		readMidiMapping();
+		if (m_hostAudioPorts != nullptr)
+			m_hostAudioPorts->rescanAudioPorts();
+		if (m_hostNotePorts != nullptr &&
+			(!sameNotePorts(eventInputs, m_eventInputs) || !sameNotePorts(eventOutputs, m_eventOutputs)))
+			m_hostNotePorts->rescanNotePorts(plugin::HostNotePorts::All);
 	}
 
 	bool Vst3Plugin::startProcessing() noexcept
@@ -503,9 +658,13 @@ namespace gnubase::pluginhost::vst3
 
 	void Vst3Plugin::onMainThread()
 	{
+		// What the plugin called from other threads, now on the main thread, in order.
+		Deferred call;
+		while (m_deferred.tryPop(call))
+			runDeferred(call);
 		// The controller learns the values the processor got or reported.
 		Update update;
-		while (m_toController.tryPop(update))
+		while (m_toController->tryPop(update))
 		{
 			if (m_controller != nullptr)
 				m_controller->setParamNormalized(update.id, update.value);
@@ -524,11 +683,8 @@ namespace gnubase::pluginhost::vst3
 		const plugin::TransportSegment* segments = process.transportCount > 0 ? process.transport : &fallback;
 		const uint32_t segmentCount = std::max(process.transportCount, 1U);
 		const uint32_t frames = std::min(process.frames, m_maxFrames);
-		vst::int32 mode = vst::Vst::kRealtime;
-		if (process.mode == plugin::ProcessMode::Offline)
-			mode = vst::Vst::kOffline;
-		else if (process.mode == plugin::ProcessMode::Prefetch)
-			mode = vst::Vst::kPrefetch;
+		// The mode of setupProcessing: Process::mode only informs, and VST3 wants both the same.
+		const vst::int32 mode = vstProcessMode(m_mode);
 
 		// Silence flags of the inputs: constant channels that are zero.
 		for (size_t bus = 0; bus < m_inputBuffers.size(); ++bus)
@@ -565,13 +721,7 @@ namespace gnubase::pluginhost::vst3
 			m_outputs.clear();
 			m_subBlockStart = start;
 			if (first)
-			{
-				// Values and edits from the main thread go in at the start of the block.
-				Edit edit;
-				while (m_toProcessor.tryPop(edit))
-					m_inChanges.add(edit.id, 0, edit.value);
-				drainEdits(nullptr, true);
-			}
+				takeMainThreadChanges(); // at the start of the block
 			while (next < process.eventsIn.size() && (last || process.eventsIn[next].offset < end))
 			{
 				const plugin::Event& event = process.eventsIn[next++];
@@ -655,6 +805,29 @@ namespace gnubase::pluginhost::vst3
 		return result;
 	}
 
+	void Vst3Plugin::takeMainThreadChanges() noexcept
+	{
+		// Values from the main thread, in order: one that didn't fit into the last block first. What doesn't fit stays
+		// queued for the next block, so nothing is lost.
+		if (m_hasPendingValue)
+		{
+			if (!m_inChanges.add(m_pendingValue.id, 0, m_pendingValue.value))
+				return;
+			m_hasPendingValue = false;
+		}
+		Edit edit;
+		while (m_toProcessor->tryPop(edit))
+		{
+			if (!m_inChanges.add(edit.id, 0, edit.value))
+			{
+				m_pendingValue = edit;
+				m_hasPendingValue = true;
+				return;
+			}
+		}
+		drainEdits(nullptr, true);
+	}
+
 	void Vst3Plugin::drainEdits(plugin::EventList* out, bool toProcessor) noexcept
 	{
 		// While processing, the edits go to the processor at offset 0 and become output events of the first
@@ -662,6 +835,12 @@ namespace gnubase::pluginhost::vst3
 		// processor learns the values at its next block.
 		if (!toProcessor && out == nullptr)
 			return; // process() takes the edits when it builds the first sub-block
+		if (toProcessor && m_hasPendingEdit)
+		{
+			if (!m_inChanges.add(m_pendingEdit.id, 0, m_pendingEdit.value))
+				return;
+			m_hasPendingEdit = false;
+		}
 		Edit edit;
 		while (m_edits.tryPop(edit))
 		{
@@ -680,15 +859,23 @@ namespace gnubase::pluginhost::vst3
 			{
 				event.type = plugin::EventType::ParamValue;
 				event.value = param != nullptr ? fromNormalized(*param, edit.value) : edit.value;
-				if (toProcessor)
-					m_inChanges.add(edit.id, 0, edit.value);
-				else
-					m_toProcessor.tryPush(Edit{Edit::Silent, edit.id, edit.value});
+				if (!toProcessor)
+				{
+					m_toProcessor->tryPush(Edit{Edit::Silent, edit.id, edit.value});
+				}
+				else if (!m_inChanges.add(edit.id, 0, edit.value))
+				{
+					// The value goes to the processor with the next block, and the later edits after it.
+					m_pendingEdit = edit;
+					m_hasPendingEdit = true;
+				}
 			}
 			if (out != nullptr)
 				out->push(event);
 			else
 				m_outputs.push(Output{event, -1});
+			if (m_hasPendingEdit)
+				return;
 		}
 	}
 
@@ -740,12 +927,14 @@ namespace gnubase::pluginhost::vst3
 	void Vst3Plugin::hostParamChange(vst::Vst::ParamID id, double normalized, vst::int32 offset) noexcept
 	{
 		m_inChanges.add(id, offset, normalized);
-		if (m_toController.tryPush(Update{id, normalized}))
+		if (m_toController->tryPush(Update{id, normalized}))
 			m_host.requestCallback();
 	}
 
 	void Vst3Plugin::inputEvent(const plugin::Event& event, const plugin::EventList& list, vst::int32 offset) noexcept
 	{
+		if (event.space != plugin::g_coreEventSpace)
+			return; // no other namespace has a meaning in VST3 yet
 		switch (event.type)
 		{
 		case plugin::EventType::NoteOn:
@@ -871,7 +1060,9 @@ namespace gnubase::pluginhost::vst3
 	{
 		vst::Vst::NoteExpressionTypeID type = 0;
 		double normalized = 0.0;
-		const bool pressure = !expressionToVst(event.expression, event.value, type, normalized);
+		const bool pressure = event.expression == g_pressure;
+		if (!pressure && !expressionToVst(event.expression, event.value, type, normalized))
+			return;
 		auto send = [&](const Voice& voice)
 		{
 			vst::Vst::Event out{};
@@ -956,7 +1147,7 @@ namespace gnubase::pluginhost::vst3
 		{
 			plugin::Event pressure = event;
 			pressure.type = plugin::EventType::NoteExpression;
-			pressure.expression = plugin::NoteExpression::Pressure;
+			pressure.expression = g_pressure;
 			pressure.channel = channel;
 			pressure.key = data1;
 			pressure.noteId = -1;
@@ -1013,12 +1204,12 @@ namespace gnubase::pluginhost::vst3
 			expression.noteId = -1;
 			if ((status & 0xf0) == 0xa0)
 			{
-				expression.expression = plugin::NoteExpression::Pressure;
+				expression.expression = g_pressure;
 				expression.value = value;
 			}
 			else
 			{
-				expression.expression = plugin::NoteExpression::Tuning;
+				expression.expression = plugin::expressionId(plugin::NoteExpression::Tuning);
 				expression.value = (value - 0.5) * 2.0 * g_perNoteBendRange;
 			}
 			noteExpression(expression, offset);
@@ -1060,7 +1251,7 @@ namespace gnubase::pluginhost::vst3
 				event.param = id;
 				event.value = param != nullptr ? fromNormalized(*param, value) : value;
 				add(event, -1);
-				changed = m_toController.tryPush(Update{id, value}) || changed;
+				changed = m_toController->tryPush(Update{id, value}) || changed;
 			}
 		}
 		if (changed)
@@ -1099,7 +1290,7 @@ namespace gnubase::pluginhost::vst3
 				break;
 			case vst::Vst::Event::kPolyPressureEvent:
 				event.type = plugin::EventType::NoteExpression;
-				event.expression = plugin::NoteExpression::Pressure;
+				event.expression = g_pressure;
 				event.channel = in.polyPressure.channel;
 				event.key = in.polyPressure.pitch;
 				event.noteId = in.polyPressure.noteId;
@@ -1276,16 +1467,25 @@ namespace gnubase::pluginhost::vst3
 		return it != m_paramIndex.end() && it->first == id ? &m_params[it->second] : nullptr;
 	}
 
+	int32_t Vst3Plugin::stepOf(const Param& param, double normalized) noexcept
+	{
+		// VST3's rule for discrete values: of n steps, step k covers the normalized values from k / (n + 1) to
+		// (k + 1) / (n + 1).
+		const double steps = param.stepCount;
+		return static_cast<int32_t>(std::min(steps, std::floor(std::clamp(normalized, 0.0, 1.0) * (steps + 1.0))));
+	}
+
 	double Vst3Plugin::toNormalized(const Param& param, double value) noexcept
 	{
-		const double normalized = param.stepCount > 0 ? value / param.stepCount : value;
-		return std::clamp(normalized, 0.0, 1.0);
+		// The range is 0 to 1 as VST3's, so a value is its normalized value: a stepped one the step it falls on.
+		return fromNormalized(param, value);
 	}
 
 	double Vst3Plugin::fromNormalized(const Param& param, double normalized) noexcept
 	{
-		normalized = std::clamp(normalized, 0.0, 1.0);
-		return param.stepCount > 0 ? std::round(normalized * param.stepCount) : normalized;
+		if (param.stepCount <= 0)
+			return std::clamp(normalized, 0.0, 1.0);
+		return static_cast<double>(stepOf(param, normalized)) / param.stepCount;
 	}
 
 	std::string Vst3Plugin::unitPath(vst::Vst::UnitID unit) const
@@ -1354,7 +1554,7 @@ namespace gnubase::pluginhost::vst3
 		if (found == nullptr || m_controller == nullptr)
 			return false;
 		vst::Vst::String128 string{};
-		if (!vst::Vst::StringConvert::convert(std::string(text), string))
+		if (!toString128(std::string(text), string))
 			return false;
 		vst::Vst::ParamValue normalized = 0.0;
 		if (!succeeded(m_controller->getParamValueByString(param, string, normalized)))
@@ -1372,14 +1572,15 @@ namespace gnubase::pluginhost::vst3
 			// Main thread: the controller learns the values now, the processor with its next block.
 			for (const plugin::Event& event : in)
 			{
-				if (event.type != plugin::EventType::ParamValue || event.noteId != -1 || event.key != -1)
+				if (event.space != plugin::g_coreEventSpace || event.type != plugin::EventType::ParamValue ||
+					event.noteId != -1 || event.key != -1)
 					continue;
 				if (const Param* param = findParam(event.param))
 				{
 					const double normalized = toNormalized(*param, event.value);
 					if (m_controller != nullptr)
 						m_controller->setParamNormalized(event.param, normalized);
-					m_toProcessor.tryPush(Edit{Edit::Silent, event.param, normalized});
+					m_toProcessor->tryPush(Edit{Edit::Silent, event.param, normalized});
 				}
 			}
 			drainEdits(&out, false);
@@ -1393,17 +1594,14 @@ namespace gnubase::pluginhost::vst3
 		m_outEvents.clear();
 		m_outputs.clear();
 		m_subBlockStart = 0;
-		Edit edit;
-		while (m_toProcessor.tryPop(edit))
-			m_inChanges.add(edit.id, 0, edit.value);
-		drainEdits(nullptr, true);
+		takeMainThreadChanges();
 		for (const plugin::Event& event : in)
 		{
-			if (event.type == plugin::EventType::ParamValue)
+			if (event.space == plugin::g_coreEventSpace && event.type == plugin::EventType::ParamValue)
 				inputEvent(event, in, 0);
 		}
 		vst::Vst::ProcessData data;
-		data.processMode = vst::Vst::kRealtime;
+		data.processMode = vstProcessMode(m_mode);
 		data.symbolicSampleSize = vst::Vst::kSample32;
 		data.inputParameterChanges = &m_inChanges;
 		data.outputParameterChanges = &m_outChanges;
@@ -1416,8 +1614,43 @@ namespace gnubase::pluginhost::vst3
 
 	// ---- Edits, restarts and other notifications from the controller ----
 
+	bool Vst3Plugin::defer(const Deferred& call) noexcept
+	{
+		// Real-time safe: the plugin may call from its audio thread.
+		const bool queued = m_deferred.tryPush(call);
+		m_host.requestCallback();
+		return queued;
+	}
+
+	void Vst3Plugin::runDeferred(const Deferred& call)
+	{
+		switch (call.kind)
+		{
+		case Deferred::Begin:
+			editBegin(call.id);
+			break;
+		case Deferred::Value:
+			editValue(call.id, call.value);
+			break;
+		case Deferred::End:
+			editEnd(call.id);
+			break;
+		case Deferred::Restart:
+			restart(call.flags);
+			break;
+		case Deferred::Dirty:
+			stateDirty();
+			break;
+		case Deferred::ProgramList:
+			programListChanged();
+			break;
+		}
+	}
+
 	bool Vst3Plugin::editBegin(uint32_t id)
 	{
+		if (!isMainThread())
+			return defer(Deferred{Deferred::Begin, id, 0.0, 0});
 		const bool queued = m_edits.tryPush(Edit{Edit::Begin, id, 0.0});
 		if (m_hostParams != nullptr)
 			m_hostParams->requestParamFlush();
@@ -1426,6 +1659,8 @@ namespace gnubase::pluginhost::vst3
 
 	bool Vst3Plugin::editValue(uint32_t id, double normalized)
 	{
+		if (!isMainThread())
+			return defer(Deferred{Deferred::Value, id, normalized, 0});
 		const bool queued = m_edits.tryPush(Edit{Edit::Value, id, normalized});
 		if (m_hostParams != nullptr)
 			m_hostParams->requestParamFlush();
@@ -1434,6 +1669,8 @@ namespace gnubase::pluginhost::vst3
 
 	bool Vst3Plugin::editEnd(uint32_t id)
 	{
+		if (!isMainThread())
+			return defer(Deferred{Deferred::End, id, 0.0, 0});
 		const bool queued = m_edits.tryPush(Edit{Edit::End, id, 0.0});
 		if (m_hostParams != nullptr)
 			m_hostParams->requestParamFlush();
@@ -1442,14 +1679,20 @@ namespace gnubase::pluginhost::vst3
 
 	bool Vst3Plugin::restart(int32_t flags)
 	{
+		if (!isMainThread())
+			return defer(Deferred{Deferred::Restart, 0, 0.0, flags});
 		if ((flags & (vst::Vst::kReloadComponent | vst::Vst::kIoChanged)) != 0)
 		{
-			// The buses are read again at the next activation.
-			if (!m_active)
-				readBuses();
-			if (m_hostAudioPorts != nullptr && !m_active)
-				m_hostAudioPorts->rescanAudioPorts();
-			m_host.requestRestart();
+			if (m_active)
+			{
+				// The buses change with the restart: read again, and the host told, once it deactivated the plugin.
+				m_busesChanged = true;
+				m_host.requestRestart();
+			}
+			else
+			{
+				busesChanged();
+			}
 		}
 		if ((flags & vst::Vst::kLatencyChanged) != 0)
 		{
@@ -1482,21 +1725,36 @@ namespace gnubase::pluginhost::vst3
 		if ((flags & vst::Vst::kMidiCCAssignmentChanged) != 0)
 		{
 			if (!m_active)
+			{
 				readMidiMapping();
+			}
 			else
-				m_host.requestRestart(); // read again at the next activation
+			{
+				m_mappingChanged = true; // read again once it is deactivated
+				m_host.requestRestart();
+			}
 		}
 		return true;
 	}
 
 	void Vst3Plugin::stateDirty()
 	{
+		if (!isMainThread())
+		{
+			defer(Deferred{Deferred::Dirty, 0, 0.0, 0});
+			return;
+		}
 		if (m_hostState != nullptr)
 			m_hostState->markStateDirty();
 	}
 
 	void Vst3Plugin::programListChanged()
 	{
+		if (!isMainThread())
+		{
+			defer(Deferred{Deferred::ProgramList, 0, 0.0, 0});
+			return;
+		}
 		if (m_hostParams != nullptr)
 			m_hostParams->rescanParams(plugin::HostParams::Values | plugin::HostParams::Text);
 	}
@@ -1511,7 +1769,7 @@ namespace gnubase::pluginhost::vst3
 		if (!succeeded(m_component->getState(&component)))
 			return false;
 		PresetFile preset;
-		preset.classId = m_classId.toString();
+		preset.classId = classIdText(m_classId);
 		preset.component = component.data();
 		if (m_controller != nullptr)
 		{
@@ -1529,7 +1787,8 @@ namespace gnubase::pluginhost::vst3
 	bool Vst3Plugin::loadState(const uint8_t* data, size_t size, plugin::StateContext /*context*/)
 	{
 		PresetFile preset;
-		if (!m_initialized || !readPresetFile(data, size, preset) || preset.classId != m_classId.toString())
+		if (!m_initialized || !readPresetFile(data, size, preset) ||
+			!sameClassId(preset.classId, classIdText(m_classId)))
 			return false;
 		MemoryStream component(preset.component.data(), preset.component.size());
 		if (!succeeded(m_component->setState(&component)))
@@ -1632,7 +1891,7 @@ namespace gnubase::pluginhost::vst3
 		// A program change is a parameter change: the controller and the processor both take it.
 		const double normalized = static_cast<double>(index) / param->stepCount;
 		m_controller->setParamNormalized(param->info.id, normalized);
-		m_toProcessor.tryPush(Edit{Edit::Silent, param->info.id, normalized});
+		m_toProcessor->tryPush(Edit{Edit::Silent, param->info.id, normalized});
 		if (m_hostParams != nullptr)
 			m_hostParams->rescanParams(plugin::HostParams::Values);
 		return true;
@@ -1655,7 +1914,7 @@ namespace gnubase::pluginhost::vst3
 			return names;
 		int32_t program = 0;
 		if (const Param* param = programParam(list))
-			program = static_cast<int32_t>(fromNormalized(*param, m_controller->getParamNormalized(param->info.id)));
+			program = stepOf(*param, m_controller->getParamNormalized(param->info.id));
 		if (m_units->hasProgramPitchNames(list, program) != vst::kResultTrue)
 			return names;
 		for (int16_t key = 0; key < 128; ++key)

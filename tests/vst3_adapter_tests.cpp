@@ -48,17 +48,22 @@ namespace
 	constexpr double g_sampleRate = 48000.0;
 	constexpr uint32_t g_maxFrames = 256;
 	constexpr uint32_t g_defaultLatency = 64;
+	// A plugin's own note expression: VST3's first custom note expression type.
+	constexpr uint32_t g_customExpression = plugin::g_firstPluginExpression + 100000;
 
 	std::string pluginId()
 	{
 		return std::string("vst3:") + g_classId;
 	}
 
-	// The host side of an in-process plugin, recording what the plugin asks for.
+	// The host side of a plugin, in-process or the engine's side of a remote one, recording what the plugin asks for.
+	// The counts are atomic: a remote plugin's notifications arrive on the host manager's job thread.
 	class RecordingHost final : public plugin::Host,
 								public plugin::HostParams,
 								public plugin::HostLatency,
-								public plugin::HostState
+								public plugin::HostState,
+								public plugin::HostAudioPorts,
+								public plugin::HostNotePorts
 	{
 	public:
 		void requestRestart() override { ++restarts; }
@@ -66,19 +71,25 @@ namespace
 		void requestCallback() override { ++callbacks; }
 		void* extension(std::string_view id) override
 		{
-			return plugin::provide<plugin::HostParams, plugin::HostLatency, plugin::HostState>(this, id);
+			return plugin::provide<plugin::HostParams, plugin::HostLatency, plugin::HostState, plugin::HostAudioPorts,
+				plugin::HostNotePorts>(this, id);
 		}
 
 		void rescanParams(uint32_t what) override { rescans |= what; }
 		void requestParamFlush() override { ++flushRequests; }
 		void latencyChanged() override { ++latencyChanges; }
-		void markStateDirty() override {}
+		void markStateDirty() override { ++dirty; }
+		void rescanAudioPorts() override { ++audioPortRescans; }
+		void rescanNotePorts(uint32_t /*what*/) override { ++notePortRescans; }
 
-		int restarts = 0;
-		int callbacks = 0;
-		uint32_t rescans = 0;
-		int flushRequests = 0;
-		int latencyChanges = 0;
+		std::atomic<int> restarts{0};
+		std::atomic<int> callbacks{0};
+		std::atomic<uint32_t> rescans{0};
+		std::atomic<int> flushRequests{0};
+		std::atomic<int> latencyChanges{0};
+		std::atomic<int> dirty{0};
+		std::atomic<int> audioPortRescans{0};
+		std::atomic<int> notePortRescans{0};
 	};
 
 	// The adapter's format, the test module loaded, and instances of its plugin.
@@ -441,25 +452,40 @@ TEST_CASE("a VST3 plugin's buses, parameters and units become ports and paramete
 	REQUIRE(params.paramInfo(Bypass, info));
 	CHECK(info.flags == (plugin::ParamInfo::Automatable | plugin::ParamInfo::Bypass | plugin::ParamInfo::Stepped));
 	CHECK(info.maximum == 1.0);
+	CHECK(info.stepCount == 1);
 	REQUIRE(params.paramInfo(Mode, info));
 	CHECK(info.flags == (plugin::ParamInfo::Automatable | plugin::ParamInfo::Enum | plugin::ParamInfo::Stepped));
-	CHECK(info.maximum == 2.0); // stepped parameters count steps, as the API wants
+	CHECK(info.maximum == 1.0); // VST3 parameters are normalized, stepped ones too, with the step count
+	CHECK(info.stepCount == 2);
+	CHECK(info.defaultValue == 0.0);
 	CHECK(info.module == "Amp");
+	REQUIRE(params.paramInfo(Program, info));
+	CHECK(info.defaultValue == 1.0); // 0.7 lies between two steps: the last of three, by VST3's rule
 	REQUIRE(params.paramInfo(NoteCount, info));
 	CHECK(info.flags == plugin::ParamInfo::ReadOnly);
 	CHECK(info.module.empty());
 	REQUIRE(params.paramInfo(EditTrigger, info));
 	CHECK((info.flags & plugin::ParamInfo::Hidden) != 0);
+	// A title without a terminator is read up to its 128th character; an unpaired surrogate becomes U+FFFD.
+	REQUIRE(params.paramInfo(Odd, info));
+	CHECK(info.name ==
+		"\xEF\xBF\xBD"
+		"Odd" +
+			std::string(124, 'x'));
 
-	// Texts come from the controller.
+	// Texts come from the controller, for the step a value falls on.
 	std::string text;
 	REQUIRE(params.paramValueToText(Gain, 0.25, text));
 	CHECK(text == "0.50");
-	REQUIRE(params.paramValueToText(Mode, 2.0, text));
+	REQUIRE(params.paramValueToText(Mode, 1.0, text));
+	CHECK(text == "Mute");
+	REQUIRE(params.paramValueToText(Mode, 0.6, text));
+	CHECK(text == "Invert");
+	REQUIRE(params.paramValueToText(Mode, 0.7, text));
 	CHECK(text == "Mute");
 	double value = 0.0;
 	REQUIRE(params.paramTextToValue(Mode, "Invert", value));
-	CHECK(value == 1.0);
+	CHECK(value == 0.5);
 	REQUIRE(params.paramTextToValue(Gain, "1.5", value));
 	CHECK(value == 0.75);
 	CHECK(!params.paramTextToValue(Mode, "Loud", value));
@@ -484,7 +510,7 @@ TEST_CASE("a VST3 plugin processes audio with sample-accurate parameter changes 
 	const std::vector<float> first = ramp(128);
 	const std::vector<float> second = ramp(128, 0.2f);
 	std::vector<float> output = runner.run(first, {paramEvent(100, Gain, 1.0)});
-	std::vector<float> more = runner.run(second, {paramEvent(30, Mode, 1.0)});
+	std::vector<float> more = runner.run(second, {paramEvent(30, Mode, 0.5)});
 	output.insert(output.end(), more.begin(), more.end());
 
 	std::vector<float> input = first;
@@ -508,7 +534,7 @@ TEST_CASE("a VST3 plugin processes audio with sample-accurate parameter changes 
 	CHECK(fixture.host.callbacks > 0);
 	plugin->onMainThread();
 	CHECK(valueOf(*plugin, Gain) == 1.0);
-	CHECK(valueOf(*plugin, Mode) == 1.0);
+	CHECK(valueOf(*plugin, Mode) == 0.5);
 	stop(*plugin);
 }
 
@@ -522,9 +548,16 @@ TEST_CASE("notes, expressions, MIDI 1.0, MIDI 2.0 and sysex reach a VST3 plugin 
 	std::vector<plugin::Event> events;
 	events.push_back(noteEvent(plugin::EventType::NoteOn, 10, 60, 0.5));
 	plugin::Event tuning = noteEvent(plugin::EventType::NoteExpression, 20, 60, 0.0);
-	tuning.expression = plugin::NoteExpression::Tuning;
+	tuning.expression = plugin::expressionId(plugin::NoteExpression::Tuning);
 	tuning.value = 12.0;
 	events.push_back(tuning);
+	// The plugin's own expressions are its VST3 note expression types, from g_firstPluginExpression on.
+	plugin::Event custom = noteEvent(plugin::EventType::NoteExpression, 25, 60, 0.3);
+	custom.expression = g_customExpression;
+	events.push_back(custom);
+	plugin::Event foreign = noteEvent(plugin::EventType::NoteOn, 26, 70, 1.0);
+	foreign.space = 7; // an extension's namespace, which means nothing to VST3
+	events.push_back(foreign);
 	plugin::Event midi;
 	midi.offset = 30;
 	midi.type = plugin::EventType::Midi;
@@ -558,9 +591,16 @@ TEST_CASE("notes, expressions, MIDI 1.0, MIDI 2.0 and sysex reach a VST3 plugin 
 		find(out, [](const plugin::Event& e) { return e.type == plugin::EventType::NoteExpression; });
 	REQUIRE(expression != nullptr);
 	CHECK(expression->offset == 20);
-	CHECK(expression->expression == plugin::NoteExpression::Tuning);
+	CHECK(expression->expression == plugin::expressionId(plugin::NoteExpression::Tuning));
 	CHECK(expression->noteId == noteId);
 	CHECK(expression->value == Approx(12.0));
+	const plugin::Event* customOut = find(out, [](const plugin::Event& e)
+		{ return e.type == plugin::EventType::NoteExpression && e.expression == g_customExpression; });
+	REQUIRE(customOut != nullptr);
+	CHECK(customOut->offset == 25);
+	CHECK(customOut->noteId == noteId);
+	CHECK(customOut->value == Approx(0.3));
+	CHECK(find(out, [](const plugin::Event& e) { return e.key == 70; }) == nullptr);
 	const plugin::Event* lastTuning =
 		find(out, [](const plugin::Event& e) { return isParam(e, plugin::EventType::ParamValue, LastTuning); });
 	REQUIRE(lastTuning != nullptr);
@@ -704,7 +744,7 @@ TEST_CASE("a VST3 plugin's state is a preset file with both states", "[integrati
 	plugin::EventList in(4);
 	plugin::EventList out(16);
 	REQUIRE(in.push(paramEvent(0, Gain, 0.8)));
-	REQUIRE(in.push(paramEvent(0, Mode, 2.0)));
+	REQUIRE(in.push(paramEvent(0, Mode, 1.0)));
 	ext<plugin::Params>(*plugin).flushParams(in, out);
 	in.clear();
 	REQUIRE(in.push(paramEvent(0, EditTrigger, 1.0))); // counted in the controller's state, sets Gain to 0.25
@@ -730,7 +770,7 @@ TEST_CASE("a VST3 plugin's state is a preset file with both states", "[integrati
 	REQUIRE(ext<plugin::State>(*other).loadState(state.data(), state.size(), plugin::StateContext::Project));
 	CHECK(fixture.host.rescans == plugin::HostParams::Values);
 	CHECK(valueOf(*other, Gain) == Approx(0.8));
-	CHECK(valueOf(*other, Mode) == 2.0);
+	CHECK(valueOf(*other, Mode) == 1.0);
 	std::vector<uint8_t> again;
 	REQUIRE(ext<plugin::State>(*other).saveState(again, plugin::StateContext::Project));
 	CHECK(again == state);
@@ -775,7 +815,7 @@ TEST_CASE("a VST3 plugin's program list gives presets and note names", "[integra
 	CHECK(list[1].location.empty());
 
 	REQUIRE(presets.loadPreset(list[1]));
-	CHECK(valueOf(*plugin, Program) == 1.0);
+	CHECK(valueOf(*plugin, Program) == 0.5);
 	CHECK(valueOf(*plugin, Gain) == 1.0); // the controller follows its program
 	CHECK((fixture.host.rescans & plugin::HostParams::Values) != 0);
 	// The processor gets the program change with its next block: Loud is x2.
@@ -901,7 +941,7 @@ TEST_CASE("a VST3 plugin processes notes, MIDI, parameters and transport changes
 	Runner runner(*plugin);
 	plugin::EventList flushIn(4);
 	plugin::EventList flushOut(64);
-	REQUIRE(flushIn.push(paramEvent(0, Mode, 1.0)));
+	REQUIRE(flushIn.push(paramEvent(0, Mode, 0.5)));
 
 	plugin::Event midi;
 	midi.offset = 50;
@@ -909,7 +949,7 @@ TEST_CASE("a VST3 plugin processes notes, MIDI, parameters and transport changes
 	midi.port = 0;
 	midi.data[0] = 0xb0 | (uint32_t{g_gainController} << 8) | (64 << 16);
 	plugin::Event tuning = noteEvent(plugin::EventType::NoteExpression, 40, 60, 0.0);
-	tuning.expression = plugin::NoteExpression::Tuning;
+	tuning.expression = plugin::expressionId(plugin::NoteExpression::Tuning);
 	tuning.value = -3.0;
 	const std::vector<plugin::Event> events{noteEvent(plugin::EventType::NoteOn, 0, 60, 0.8), paramEvent(10, Gain, 0.3),
 		tuning, midi, noteEvent(plugin::EventType::NoteOff, 90, 60, 0.0)};
@@ -932,7 +972,7 @@ TEST_CASE("a VST3 plugin processes notes, MIDI, parameters and transport changes
 			const rt::ScopedRealtimeContext realtime;
 			status = runner.process();
 			flushIn.clear();
-			REQUIRE(flushIn.push(paramEvent(0, Mode, block % 2 == 0 ? 0.0 : 1.0)));
+			REQUIRE(flushIn.push(paramEvent(0, Mode, block % 2 == 0 ? 0.0 : 0.5)));
 		}
 		REQUIRE(status == plugin::ProcessStatus::Continue);
 		REQUIRE(!runner.out.empty());
@@ -1042,13 +1082,14 @@ TEST_CASE("the VST3 latency test plugin's latency change restarts it through the
 	for (size_t i = 0; i < output.size(); ++i)
 		REQUIRE(output[i] == (i < 64 ? 0.0f : input[i - 64]));
 
-	// A stepped parameter: its plain values are samples.
+	// A stepped parameter of 48000 steps, one per sample, with VST3's normalized values from 0 to 1.
 	constexpr uint32_t latencyParam = 1;
 	plugin::ParamInfo info;
 	REQUIRE(ext<plugin::Params>(*plugin).paramInfo(0, info));
 	CHECK(info.id == latencyParam);
-	CHECK(info.maximum == 48000.0);
-	runner.run(input, {paramEvent(0, latencyParam, 100.0)});
+	CHECK(info.maximum == 1.0);
+	CHECK(info.stepCount == 48000);
+	runner.run(input, {paramEvent(0, latencyParam, 100.0 / 48000.0)});
 	CHECK(fixture.host.restarts == 0);
 	plugin->onMainThread(); // the controller learns the value and passes the plugin's restart on
 	CHECK(fixture.host.latencyChanges == 1);
@@ -1115,17 +1156,20 @@ TEST_CASE("the VST3 state blob test plugin's state survives the adapter's preset
 	constexpr uint32_t sizeParam = 2;
 	plugin::EventList in(4);
 	plugin::EventList out(16);
-	REQUIRE(in.push(paramEvent(0, seedParam, 7.0)));
-	REQUIRE(in.push(paramEvent(0, sizeParam, 100000.0)));
+	// Both are stepped, one step per value, with VST3's normalized values from 0 to 1.
+	constexpr double seed = 7.0 / 65535.0;
+	constexpr double size = 100000.0 / (16.0 * 1024 * 1024);
+	REQUIRE(in.push(paramEvent(0, seedParam, seed)));
+	REQUIRE(in.push(paramEvent(0, sizeParam, size)));
 	ext<plugin::Params>(*plugin).flushParams(in, out);
-	CHECK(valueOf(*plugin, sizeParam) == 100000.0);
+	CHECK(valueOf(*plugin, sizeParam) == Approx(size));
 
 	std::vector<uint8_t> state;
 	REQUIRE(ext<plugin::State>(*plugin).saveState(state, plugin::StateContext::Project));
 	CHECK(state.size() > 100000);
 	const std::unique_ptr<plugin::Plugin> other = fixture.create();
 	REQUIRE(ext<plugin::State>(*other).loadState(state.data(), state.size(), plugin::StateContext::Project));
-	CHECK(valueOf(*other, seedParam) == 7.0);
+	CHECK(valueOf(*other, seedParam) == Approx(seed));
 	std::vector<uint8_t> again;
 	REQUIRE(ext<plugin::State>(*other).saveState(again, plugin::StateContext::Project));
 	CHECK(again == state);
@@ -1170,7 +1214,8 @@ TEST_CASE("a hanging VST3 plugin is detected within the deadline", "[integration
 	const Vst3Fixture fixture(testPlugin("hang"));
 	const std::string id = fixture.factory().descriptor(0).id;
 	engine::plugins::HostManager::Options options = hostOptions();
-	options.deadlines.realtime = 300ms;
+	options.deadlines.realtimeMinimum = 300ms;
+	options.deadlines.realtimeMaximum = 300ms;
 	engine::plugins::HostManager manager(options);
 	std::unique_ptr<plugin::remote::RemotePlugin> remote = manager.create({id, testPlugin("hang"), "GNUbase"});
 	REQUIRE(remote->init());
@@ -1193,4 +1238,268 @@ TEST_CASE("a hanging VST3 plugin is detected within the deadline", "[integration
 	REQUIRE(failures.size() == 1);
 	CHECK(failures[0].plugin == id);
 	CHECK(failures[0].reason == "hung");
+}
+
+// ---- Stepped values, full queues, bus changes, threads, process mode and class ids ----
+
+TEST_CASE("a VST3 plugin's stepped values follow VST3's rule for steps", "[integration]")
+{
+	Vst3Fixture fixture;
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	start(*plugin);
+	Runner runner(*plugin);
+
+	// Of Mode's three steps, 0.6 is the second (Invert) and 0.7 the third (Mute), as the plugin counts them, and the
+	// mirror's value is the step's.
+	const std::vector<float> input = ramp(128);
+	std::vector<float> output = runner.run(input, {paramEvent(0, Mode, 0.6)});
+	CHECK(output[g_defaultLatency + 5] == -input[5]);
+	plugin->onMainThread();
+	CHECK(valueOf(*plugin, Mode) == 0.5);
+	output = runner.run(input, {paramEvent(0, Mode, 0.7)});
+	CHECK(output[g_defaultLatency + 5] == 0.0f);
+	plugin->onMainThread();
+	CHECK(valueOf(*plugin, Mode) == 1.0);
+	stop(*plugin);
+}
+
+TEST_CASE(
+	"a VST3 plugin's processor gets a change of each of 600 parameters set while it doesn't process", "[integration]")
+{
+	Vst3Fixture fixture(testPlugin("paramstress"));
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	auto& params = ext<plugin::Params>(*plugin);
+	REQUIRE(params.paramCount() > 600);
+
+	// Active but not processing: the processor learns the values with its next block. While it is active, the test
+	// plugin's values are the processor's, so paramValue shows what the processor got.
+	REQUIRE(plugin->activate(g_sampleRate, 1, g_maxFrames));
+	plugin::EventList in(1024);
+	plugin::EventList out(1024);
+	std::vector<std::pair<uint32_t, double>> expected;
+	for (uint32_t i = 1; i <= 600; ++i)
+	{
+		plugin::ParamInfo info;
+		REQUIRE(params.paramInfo(i, info));
+		// Away from the defaults: the second step of a stepped parameter, 0.25 otherwise.
+		const double value = info.stepCount > 0 ? 1.0 / info.stepCount : 0.25;
+		REQUIRE(in.push(paramEvent(0, info.id, value)));
+		expected.emplace_back(info.id, value);
+	}
+	params.flushParams(in, out);
+	REQUIRE(plugin->startProcessing());
+	Runner runner(*plugin);
+	runner.run(ramp(64));
+	size_t learned = 0;
+	for (const auto& change : expected)
+		learned += valueOf(*plugin, change.first) == Approx(change.second) ? 1 : 0;
+	CHECK(learned == expected.size());
+	stop(*plugin);
+}
+
+TEST_CASE("a full VST3 parameter queue keeps the last value of a block", "[integration]")
+{
+	Vst3Fixture fixture;
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	start(*plugin);
+	Runner runner(*plugin);
+
+	// 100 changes of Gain in one block, more than a queue's 64 points: the last one, x2 from frame 99, arrives.
+	std::vector<plugin::Event> events;
+	events.reserve(100);
+	for (uint32_t i = 0; i < 100; ++i)
+		events.push_back(paramEvent(i, Gain, i == 99 ? 1.0 : 0.25));
+	const std::vector<float> input = ramp(256);
+	const std::vector<float> output = runner.run(input, events);
+	CHECK(output[g_defaultLatency + 10] == input[10] * 0.5f);
+	CHECK(output[g_defaultLatency + 150] == input[150] * 2.0f);
+	stop(*plugin);
+}
+
+TEST_CASE("a VST3 plugin that changes its buses while active has the host read its ports again", "[integration]")
+{
+	Vst3Fixture fixture;
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	start(*plugin);
+	{
+		Runner runner(*plugin);
+		runner.run(ramp(64), {paramEvent(0, Layout, 1.0)});
+	}
+	plugin->onMainThread(); // the controller learns the value and restarts the component: kIoChanged
+	CHECK(fixture.host.restarts == 1);
+	CHECK(fixture.host.audioPortRescans == 0); // not while the ports are in use
+
+	// Deactivated for the restart, the plugin has its new buses, and the host reads them.
+	stop(*plugin);
+	CHECK(fixture.host.audioPortRescans == 1);
+	CHECK(fixture.host.notePortRescans == 0); // the event buses stay as they were
+	auto& ports = ext<plugin::AudioPorts>(*plugin);
+	plugin::AudioPortInfo info;
+	REQUIRE(ports.audioPortInfo(false, 0, info));
+	CHECK(info.channelCount == 1);
+	CHECK(info.layout == plugin::ChannelLayout::Mono);
+	REQUIRE(ports.audioPortInfo(true, 0, info));
+	CHECK(info.channelCount == 1);
+
+	// Activated again, it processes in mono.
+	start(*plugin);
+	Runner runner(*plugin);
+	const std::vector<float> input = ramp(128);
+	const std::vector<float> output = runner.run(input);
+	CHECK(output[g_defaultLatency + 3] == input[3]);
+	stop(*plugin);
+}
+
+TEST_CASE("component handler calls from a VST3 plugin's audio thread wait for its main thread", "[integration]")
+{
+	Vst3Fixture fixture;
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	start(*plugin);
+	Runner runner(*plugin);
+	const std::vector<float> input = ramp(64);
+
+	// The component edits Gain and asks for a values rescan from the audio thread: here a thread of its own.
+	runner.prepare(input, {paramEvent(0, AudioEdit, 1.0)});
+	plugin::ProcessStatus status = plugin::ProcessStatus::Error;
+	std::thread audio([&] { status = runner.process(); });
+	audio.join();
+	REQUIRE(status == plugin::ProcessStatus::Continue);
+	CHECK(fixture.host.rescans == 0);
+	CHECK(fixture.host.flushRequests == 0);
+	CHECK(fixture.host.callbacks > 0); // the main thread is asked to run them
+
+	// Until the main thread runs, neither the host nor the processor sees them.
+	runner.run(input);
+	const auto isGesture = [](const plugin::Event& e)
+	{ return isParam(e, plugin::EventType::ParamGestureBegin, Gain); };
+	CHECK(find(runner.out, isGesture) == nullptr);
+	plugin->onMainThread();
+	CHECK((fixture.host.rescans & plugin::HostParams::Values) != 0);
+	CHECK(fixture.host.flushRequests > 0);
+	runner.run(input);
+	REQUIRE(runner.out.size() >= 3);
+	CHECK(isParam(runner.out[0], plugin::EventType::ParamGestureBegin, Gain));
+	CHECK(isParam(runner.out[1], plugin::EventType::ParamValue, Gain));
+	CHECK(runner.out[1].value == 0.75);
+	CHECK(isParam(runner.out[2], plugin::EventType::ParamGestureEnd, Gain));
+	stop(*plugin);
+}
+
+TEST_CASE("a VST3 plugin is set up in the process mode the host chose", "[integration]")
+{
+	Vst3Fixture fixture;
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	const auto modeOf = [](const plugin::EventList& out)
+	{
+		const plugin::Event* mode =
+			find(out, [](const plugin::Event& e) { return isParam(e, plugin::EventType::ParamValue, ProcessMode); });
+		return mode != nullptr ? mode->value : -1.0;
+	};
+
+	start(*plugin);
+	{
+		Runner runner(*plugin);
+		runner.run(ramp(16));
+		CHECK(modeOf(runner.out) == 0.25); // real time, in setupProcessing and in process
+	}
+	CHECK(!plugin->setProcessMode(plugin::ProcessMode::Offline)); // only while inactive
+	stop(*plugin);
+
+	REQUIRE(plugin->setProcessMode(plugin::ProcessMode::Offline));
+	start(*plugin);
+	Runner runner(*plugin);
+	runner.run(ramp(16)); // Process::mode says real time, which only informs
+	CHECK(modeOf(runner.out) == 0.75);
+	stop(*plugin);
+}
+
+TEST_CASE("VST3 class ids are written as other hosts write them and compared without case", "[integration]")
+{
+	// The test plugin's class id, INLINE_UID(0x6E7A2B11, 0x4C3D4E5F, 0x8A9B0C1D, 0x2E3F4051), as VST3 preset files
+	// write it on every OS: in COM order on Windows.
+	const std::string known = "6E7A2B114C3D4E5F8A9B0C1D2E3F4051";
+	Vst3Fixture fixture;
+	CHECK(fixture.factory().descriptor(0).formatId == known);
+	CHECK(fixture.factory().descriptor(0).id == "vst3:" + known);
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	std::vector<uint8_t> state;
+	REQUIRE(ext<plugin::State>(*plugin).saveState(state, plugin::StateContext::Project));
+	pluginhost::vst3::PresetFile preset;
+	REQUIRE(pluginhost::vst3::readPresetFile(state.data(), state.size(), preset));
+	CHECK(preset.classId == known);
+
+	// Another host's preset with the id in lower case loads, and a plugin id in lower case finds the class.
+	preset.classId = "6e7a2b114c3d4e5f8a9b0c1d2e3f4051";
+	const std::vector<uint8_t> lower = pluginhost::vst3::writePresetFile(preset);
+	CHECK(ext<plugin::State>(*plugin).loadState(lower.data(), lower.size(), plugin::StateContext::Preset));
+	CHECK(fixture.factory().create("vst3:6e7a2b114c3d4e5f8a9b0c1d2e3f4051", fixture.host) != nullptr);
+}
+
+TEST_CASE("a VST3 plugin in a plugin host process tells the engine about edits, rescans, latency, its state and buses",
+	"[integration]")
+{
+	RecordingHost engineHost;
+	engine::plugins::HostManager manager(hostOptions());
+	std::unique_ptr<plugin::remote::RemotePlugin> remote =
+		manager.create({pluginId(), GNUBASE_VST3_ADAPTERTEST, "GNUbase"}, &engineHost);
+	REQUIRE(remote->init());
+	auto& params = ext<plugin::Params>(*remote);
+	plugin::EventList in(8);
+	plugin::EventList out(64);
+
+	// An edit in the controller: its gesture and value come back from flushParams, and the state is dirty.
+	REQUIRE(in.push(paramEvent(0, EditTrigger, 1.0)));
+	params.flushParams(in, out);
+	REQUIRE(out.size() >= 3);
+	CHECK(isParam(out[0], plugin::EventType::ParamGestureBegin, Gain));
+	CHECK(isParam(out[1], plugin::EventType::ParamValue, Gain));
+	CHECK(out[1].value == 0.25);
+	CHECK(isParam(out[2], plugin::EventType::ParamGestureEnd, Gain));
+	CHECK(valueOf(*remote, Gain) == 0.25);
+	CHECK(eventually([&] { return engineHost.dirty > 0; }));
+
+	// A program change: the controller asks for a values rescan, and the engine's mirror follows the program.
+	in.clear();
+	out.clear();
+	REQUIRE(in.push(paramEvent(0, Program, 0.5)));
+	params.flushParams(in, out);
+	CHECK(eventually([&] { return (engineHost.rescans & plugin::HostParams::Values) != 0; }));
+	CHECK(eventually([&] { return valueOf(*remote, Gain) == 1.0; }));
+
+	// A latency change while inactive: a notice, no restart.
+	in.clear();
+	out.clear();
+	REQUIRE(in.push(paramEvent(0, Latency, 0.1)));
+	params.flushParams(in, out);
+	CHECK(eventually([&] { return engineHost.latencyChanges > 0; }));
+	CHECK(engineHost.restarts == 0);
+
+	// A change of buses while active asks for a restart; deactivated, the plugin has the engine read its new ports.
+	REQUIRE(remote->activate(g_sampleRate, 1, g_maxFrames));
+	REQUIRE(remote->startProcessing());
+	{
+		Runner runner(*remote);
+		runner.run(ramp(64), {paramEvent(0, Layout, 1.0)});
+	}
+	CHECK(eventually([&] { return engineHost.restarts > 0; }));
+	CHECK(engineHost.audioPortRescans == 0);
+	remote->stopProcessing();
+	remote->deactivate();
+	CHECK(eventually([&] { return engineHost.audioPortRescans > 0; }));
+	plugin::AudioPortInfo info;
+	REQUIRE(remote->audioPortInfo(false, 0, info));
+	CHECK(info.channelCount == 1);
+
+	// The process mode reaches setupProcessing in the host process, and the processor applied the latency.
+	REQUIRE(remote->setProcessMode(plugin::ProcessMode::Offline));
+	REQUIRE(remote->activate(g_sampleRate, 1, g_maxFrames));
+	CHECK(remote->latency() == 100);
+	REQUIRE(remote->startProcessing());
+	{
+		Runner runner(*remote);
+		runner.run(ramp(64));
+	}
+	CHECK(valueOf(*remote, ProcessMode) == 0.75);
+	remote->stopProcessing();
+	remote->deactivate();
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "platform/rt/mpmcqueue.h"
 #include "platform/rt/spscqueue.h"
 #include "plugin/extensions.h"
 #include "plugin/plugin.h"
@@ -22,18 +23,28 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
 namespace gnubase::pluginhost::vst3
 {
+	// Class ids as text: in COM order on Windows, as VST3 preset files and other hosts write them there, and as their
+	// bytes elsewhere, so a class has the same 32 hex digits on every OS.
+	std::string classIdText(const VST3::UID& id);
+	// Whether two class ids as text are the same, ignoring case.
+	bool sameClassId(std::string_view a, std::string_view b);
+
 	// One VST3 audio module class as a GNUbase plugin (docs/plugin-api.md, "Format mapping"):
 	// - init creates the component and its controller (a separate class, or the component itself), connects them and
-	//   gives the controller the component's state; activate sets up processing, activates the buses and the component.
-	// - Values are normalized, as VST3's: 0 to 1, or 0 to the step count for stepped parameters. Host changes become
+	//   gives the controller the component's state; activate sets up processing in the process mode, activates the
+	//   buses and the component.
+	// - Values are normalized, as VST3's: 0 to 1 for every parameter. Stepped parameters have VST3's step count, and
+	//   their values are quantized by VST3's rule, so the mirror holds the step the plugin uses. Host changes become
 	//   points of the parameter queues at their offsets; the controller learns them on the main thread.
 	// - The editor's edits (beginEdit, performEdit, endEdit) become output events and go to the processor in the
-	//   next block, or with flushParams while it doesn't process.
+	//   next block, or with flushParams while it doesn't process. Calls from other threads than the main thread are
+	//   deferred to it.
 	// - Notes, expressions, MIDI 1.0 and MIDI 2.0 become VST3 events; controllers, pitch bend and channel pressure
 	//   become parameter changes through the plugin's MIDI mapping.
 	// - Blocks are split where the transport changes, so every sub-block gets its own process context.
@@ -52,6 +63,7 @@ namespace gnubase::pluginhost::vst3
 							 private ComponentHandlerListener
 	{
 	public:
+		// [main] The thread it is created on is its main thread.
 		Vst3Plugin(VST3::Hosting::Module::Ptr module, const VST3::UID& classId, plugin::Descriptor descriptor,
 			plugin::Host& host);
 		~Vst3Plugin() override;
@@ -61,6 +73,7 @@ namespace gnubase::pluginhost::vst3
 		// Plugin
 		const plugin::Descriptor& descriptor() const override { return m_descriptor; }
 		bool init() override;
+		bool setProcessMode(plugin::ProcessMode mode) override;
 		bool activate(double sampleRate, uint32_t minFrames, uint32_t maxFrames) override;
 		void deactivate() override;
 		bool startProcessing() noexcept override;
@@ -75,8 +88,13 @@ namespace gnubase::pluginhost::vst3
 		bool audioPortInfo(bool input, uint32_t index, plugin::AudioPortInfo& info) const override;
 		// ConfigurableAudioPorts
 		bool applyAudioPortRequests(const std::vector<plugin::AudioPortRequest>& requests) override;
-		// AudioPortsActivation
+		// AudioPortsActivation: VST3 activates buses in the setup state only.
+		bool audioPortsActivatableWhileProcessing() const override { return false; }
 		bool setAudioPortActive(bool input, uint32_t index, bool active) override;
+		bool setAudioPortActiveWhileProcessing(bool /*input*/, uint32_t /*index*/, bool /*active*/) noexcept override
+		{
+			return false;
+		}
 		// NotePorts
 		uint32_t notePortCount(bool input) const override;
 		bool notePortInfo(bool input, uint32_t index, plugin::NotePortInfo& info) const override;
@@ -144,6 +162,25 @@ namespace gnubase::pluginhost::vst3
 			double value = 0.0;
 		};
 
+		// A component handler call from another thread than the main thread, for the main thread.
+		struct Deferred
+		{
+			enum Kind : uint8_t
+			{
+				Begin,
+				Value,
+				End,
+				Restart,
+				Dirty,
+				ProgramList,
+			};
+
+			Kind kind = Value;
+			uint32_t id = 0;
+			double value = 0.0;
+			int32_t flags = 0; // Restart: VST3's RestartFlags
+		};
+
 		// A note the plugin plays, so expressions and note offs without a note id find its id.
 		struct Voice
 		{
@@ -183,7 +220,7 @@ namespace gnubase::pluginhost::vst3
 			size_t m_size = 0;
 		};
 
-		// ComponentHandlerListener
+		// ComponentHandlerListener: calls from other threads are deferred to the main thread.
 		bool editBegin(uint32_t id) override;
 		bool editValue(uint32_t id, double normalized) override;
 		bool editEnd(uint32_t id) override;
@@ -191,13 +228,20 @@ namespace gnubase::pluginhost::vst3
 		void stateDirty() override;
 		void programListChanged() override;
 
+		bool isMainThread() const noexcept { return std::this_thread::get_id() == m_mainThread; }
+		bool defer(const Deferred& call) noexcept;
+		void runDeferred(const Deferred& call);
 		void terminate();
+		// Deactivates the component; what a pending change still had to tell the processor waits for the next start.
+		void stopComponent() noexcept;
 		void readBuses();
 		void readParams();
 		void readMidiMapping();
+		void busesChanged();
 		const Param* findParam(uint32_t id) const noexcept;
 		static double toNormalized(const Param& param, double value) noexcept;
 		static double fromNormalized(const Param& param, double normalized) noexcept;
+		static int32_t stepOf(const Param& param, double normalized) noexcept;
 		std::string unitPath(vst::Vst::UnitID unit) const;
 		const Param* programParam(vst::Vst::ProgramListID list) const;
 		vst::Vst::ProgramListID rootProgramList() const;
@@ -215,6 +259,7 @@ namespace gnubase::pluginhost::vst3
 		void noteExpression(const plugin::Event& event, vst::int32 offset) noexcept;
 		void controller(int16_t port, int16_t channel, int32_t control, double normalized, vst::int32 offset) noexcept;
 		void addEvent(vst::Vst::Event& event) noexcept;
+		void takeMainThreadChanges() noexcept;
 		void drainEdits(plugin::EventList* out, bool toProcessor) noexcept;
 		void setContext(
 			const plugin::Process& process, const plugin::TransportSegment& segment, uint32_t start) noexcept;
@@ -222,16 +267,19 @@ namespace gnubase::pluginhost::vst3
 		void emitOutputs(plugin::EventList& out) noexcept;
 		vst::tresult runProcess(vst::Vst::ProcessData& data) noexcept;
 
+		// The host application outlives the module's factory, which holds it as its context until the module exits.
+		HostApplication m_application;
 		VST3::Hosting::Module::Ptr m_module; // keeps the module's code loaded
 		VST3::UID m_classId;
 		plugin::Descriptor m_descriptor;
 		plugin::Host& m_host;
+		const std::thread::id m_mainThread = std::this_thread::get_id();
 		plugin::HostParams* m_hostParams = nullptr;
 		plugin::HostLatency* m_hostLatency = nullptr;
 		plugin::HostAudioPorts* m_hostAudioPorts = nullptr;
+		plugin::HostNotePorts* m_hostNotePorts = nullptr;
 		plugin::HostState* m_hostState = nullptr;
 
-		HostApplication m_application;
 		ComponentHandler m_handler{*this};
 		vst::IPtr<vst::Vst::IComponent> m_component;
 		vst::IPtr<vst::Vst::IAudioProcessor> m_processor;
@@ -242,6 +290,7 @@ namespace gnubase::pluginhost::vst3
 		vst::IPtr<vst::Vst::IMidiMapping> m_midiMapping;
 		bool m_separateController = false;
 		bool m_initialized = false;
+		plugin::ProcessMode m_mode = plugin::ProcessMode::Realtime;
 
 		std::vector<Bus> m_audioInputs;
 		std::vector<Bus> m_audioOutputs;
@@ -251,6 +300,9 @@ namespace gnubase::pluginhost::vst3
 		std::vector<std::pair<vst::Vst::ParamID, size_t>> m_paramIndex; // sorted by id
 		// For each event input bus, channel and controller (vst::Vst::kCountCtrlNumber): the mapped parameter.
 		std::vector<vst::Vst::ParamID> m_midiMap;
+		// Changes the plugin reported while active, applied when it is deactivated for the restart it asked for.
+		bool m_busesChanged = false;
+		bool m_mappingChanged = false;
 
 		// While active.
 		bool m_active = false;
@@ -263,7 +315,7 @@ namespace gnubase::pluginhost::vst3
 		std::vector<std::vector<float*>> m_outputChannels;
 		std::vector<vst::Vst::AudioBusBuffers> m_inputBuffers;
 		std::vector<vst::Vst::AudioBusBuffers> m_outputBuffers;
-		ParameterChanges m_inChanges;
+		ParameterChanges m_inChanges; // a queue per parameter, allocated at activation
 		ParameterChanges m_outChanges;
 		EventList m_inEvents;
 		EventList m_outEvents;
@@ -273,9 +325,18 @@ namespace gnubase::pluginhost::vst3
 		std::array<Voice, 256> m_voices{};
 		size_t m_voiceCount = 0;
 		int32_t m_nextNoteId = 0;
+		// Values and edits from the main thread that didn't fit into a block's parameter changes: the first of the
+		// next block.
+		Edit m_pendingValue;
+		bool m_hasPendingValue = false;
+		Edit m_pendingEdit;
+		bool m_hasPendingEdit = false;
 
-		rt::SpscQueue<Edit> m_edits{4096};          // main -> audio: editor edits
-		rt::SpscQueue<Edit> m_toProcessor{4096};    // main -> audio: values the processor has to learn
-		rt::SpscQueue<Update> m_toController{4096}; // audio -> main
+		rt::SpscQueue<Edit> m_edits{4096}; // main -> audio: editor edits
+		// main -> audio: values the processor has to learn; audio -> main: values for the controller. Sized for the
+		// parameter count in init.
+		std::unique_ptr<rt::SpscQueue<Edit>> m_toProcessor = std::make_unique<rt::SpscQueue<Edit>>(4096);
+		std::unique_ptr<rt::SpscQueue<Update>> m_toController = std::make_unique<rt::SpscQueue<Update>>(4096);
+		rt::MpmcQueue<Deferred> m_deferred{4096}; // any thread -> main: component handler calls
 	};
 }

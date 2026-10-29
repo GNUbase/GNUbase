@@ -27,9 +27,11 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <string>
 #include <vector>
@@ -77,15 +79,23 @@ namespace
 		return std::memcmp(a, b, sizeof(vst::TUID)) == 0;
 	}
 
+	// VST3's rule for the steps of a parameter with the step count 2: each step covers a third of the range.
 	int programIndex(double normalized)
 	{
-		return std::clamp(static_cast<int>(std::lround(normalized * 2.0)), 0, 2);
+		return std::min(2, static_cast<int>(std::floor(std::clamp(normalized, 0.0, 1.0) * 3.0)));
 	}
 
 	uint32_t latencyOf(double normalized)
 	{
 		return static_cast<uint32_t>(std::lround(std::clamp(normalized, 0.0, 1.0) * g_maxLatency));
 	}
+
+	// The controller's message to the component with its component handler: the bytes of this struct, which only
+	// mean something in the same process.
+	struct HandlerMessage
+	{
+		sv::IComponentHandler* handler = nullptr;
+	};
 
 	// The component state: the magic number and the normalized values of Gain to Program.
 	struct ComponentState
@@ -198,6 +208,13 @@ namespace
 					line.assign(g_maxLatency + 1, 0.0f);
 				m_position = 0;
 			}
+			else
+			{
+				// The layout the Layout parameter asked for, now that the component is in the setup state again.
+				const sv::SpeakerArrangement main = m_wantMono ? sv::SpeakerArr::kMono : sv::SpeakerArr::kStereo;
+				m_inputs[0] = main;
+				m_output = main;
+			}
 			return kResultOk;
 		}
 
@@ -245,7 +262,11 @@ namespace
 		}
 
 		vst::uint32 PLUGIN_API getLatencySamples() override { return latencyOf(m_state.values[Latency]); }
-		tresult PLUGIN_API setupProcessing(sv::ProcessSetup& /*setup*/) override { return kResultOk; }
+		tresult PLUGIN_API setupProcessing(sv::ProcessSetup& setup) override
+		{
+			m_setupMode = setup.processMode;
+			return kResultOk;
+		}
 		tresult PLUGIN_API setProcessing(vst::TBool /*state*/) override { return kResultOk; }
 		vst::uint32 PLUGIN_API getTailSamples() override { return g_tail; }
 
@@ -255,6 +276,7 @@ namespace
 			handleEvents(data);
 			if (data.processContext != nullptr && (data.processContext->state & sv::ProcessContext::kTempoValid) != 0)
 				output(data, Tempo, 0, data.processContext->tempo / 1000.0);
+			output(data, ProcessMode, 0, data.processMode == m_setupMode ? (m_setupMode + 1) / 4.0 : 0.0);
 			if (data.numSamples > 0 && data.numOutputs > 0)
 				render(data);
 			else
@@ -282,7 +304,22 @@ namespace
 			return kResultOk;
 		}
 		tresult PLUGIN_API disconnect(sv::IConnectionPoint* /*other*/) override { return kResultOk; }
-		tresult PLUGIN_API notify(sv::IMessage* /*message*/) override { return kResultOk; }
+		// The controller hands over its component handler, so the component can call it from the audio thread.
+		tresult PLUGIN_API notify(sv::IMessage* message) override
+		{
+			const void* data = nullptr;
+			vst::uint32 size = 0;
+			if (message != nullptr && std::strcmp(message->getMessageID(), "handler") == 0 &&
+				message->getAttributes() != nullptr &&
+				message->getAttributes()->getBinary("pointer", data, size) == kResultOk && data != nullptr &&
+				size == sizeof(HandlerMessage))
+			{
+				HandlerMessage received;
+				std::memcpy(static_cast<void*>(&received), data, sizeof(HandlerMessage));
+				m_handler = received.handler;
+			}
+			return kResultOk;
+		}
 
 	private:
 		struct Change
@@ -332,6 +369,16 @@ namespace
 					m_state.values[change.id] = change.value;
 				if (change.id == Program)
 					m_state.values[Gain] = g_programGains[static_cast<size_t>(programIndex(change.value))];
+				if (change.id == Layout)
+					m_wantMono = change.value >= 0.5;
+				if (change.id == AudioEdit && change.value >= 0.5 && m_handler != nullptr)
+				{
+					// An edit and a restart request from the audio thread, which the host must not handle here.
+					m_handler->beginEdit(Gain);
+					m_handler->performEdit(Gain, 0.75);
+					m_handler->endEdit(Gain);
+					m_handler->restartComponent(sv::kParamValuesChanged);
+				}
 			}
 		}
 
@@ -400,6 +447,9 @@ namespace
 		}
 
 		vst::IPtr<sv::IHostApplication> m_host;
+		sv::IComponentHandler* m_handler = nullptr; // the controller's, which outlives processing
+		vst::int32 m_setupMode = -1;
+		bool m_wantMono = false;
 		ComponentState m_state;
 		std::array<sv::SpeakerArrangement, 2> m_inputs{sv::SpeakerArr::kStereo, sv::SpeakerArr::kStereo};
 		sv::SpeakerArrangement m_output = sv::SpeakerArr::kStereo;
@@ -430,7 +480,8 @@ namespace
 				info.id = static_cast<sv::ParamID>(i);
 				info.flags = sv::ParameterInfo::kCanAutomate;
 				static constexpr std::array<const char*, ParamCount> titles{"Gain", "Bypass", "Mode", "Latency",
-					"Program", "Note count", "Last tuning", "Tempo", "Edit trigger"};
+					"Program", "Note count", "Last tuning", "Tempo", "Edit trigger", "Layout", "Audio edit",
+					"Process mode", ""};
 				copy(info.title, titles[static_cast<size_t>(i)]);
 				switch (i)
 				{
@@ -453,13 +504,25 @@ namespace
 				case Program:
 					info.stepCount = 2;
 					info.flags = sv::ParameterInfo::kIsProgramChange | sv::ParameterInfo::kIsList;
+					info.defaultNormalizedValue = 0.7;
+					break;
+				case Odd:
+					// An unpaired surrogate, then characters up to the last one of String128, without a terminator.
+					info.title[0] = static_cast<sv::TChar>(0xd800);
+					info.title[1] = 'O';
+					info.title[2] = 'd';
+					info.title[3] = 'd';
+					for (size_t c = 4; c < std::size(info.title); ++c)
+						info.title[c] = 'x';
+					info.flags = sv::ParameterInfo::kIsReadOnly;
 					break;
 				case NoteCount:
 				case LastTuning:
 				case Tempo:
+				case ProcessMode:
 					info.flags = sv::ParameterInfo::kIsReadOnly;
 					break;
-				default:
+				default: // EditTrigger, Layout, AudioEdit
 					info.stepCount = 1;
 					info.flags = sv::ParameterInfo::kIsHidden;
 					break;
@@ -470,10 +533,15 @@ namespace
 		}
 
 		// IPluginBase
-		tresult PLUGIN_API initialize(vst::FUnknown* /*context*/) override { return kResultOk; }
+		tresult PLUGIN_API initialize(vst::FUnknown* context) override
+		{
+			m_host = vst::U::cast<sv::IHostApplication>(context);
+			return kResultOk;
+		}
 		tresult PLUGIN_API terminate() override
 		{
 			m_handler = nullptr;
+			m_host = nullptr;
 			return kResultOk;
 		}
 
@@ -595,13 +663,39 @@ namespace
 				m_values[Gain] = 0.25;
 				m_handler->performEdit(Gain, 0.25);
 				m_handler->endEdit(Gain);
+				if (const auto handler2 = vst::U::cast<sv::IComponentHandler2>(m_handler))
+					handler2->setDirty(1);
 			}
+			if (id == Layout && value != old)
+				m_handler->restartComponent(sv::kIoChanged);
 			return kResultOk;
 		}
 
 		tresult PLUGIN_API setComponentHandler(sv::IComponentHandler* handler) override
 		{
 			m_handler = handler;
+			// The component gets it too, through a message, for its edits on the audio thread.
+			if (m_peer != nullptr && m_host != nullptr)
+			{
+				sv::IMessage* message = nullptr;
+				vst::TUID classId{};
+				vst::TUID interfaceId{};
+				sv::IMessage::iid.toTUID(classId);
+				sv::IMessage::iid.toTUID(interfaceId);
+				if (m_host->createInstance(classId, interfaceId, reinterpret_cast<void**>(&message)) == kResultOk &&
+					message != nullptr)
+				{
+					message->setMessageID("handler");
+					if (message->getAttributes() != nullptr)
+					{
+						const HandlerMessage sent{handler};
+						message->getAttributes()->setBinary("pointer", static_cast<const void*>(&sent),
+							static_cast<vst::uint32>(sizeof(HandlerMessage)));
+					}
+					m_peer->notify(message);
+					message->release();
+				}
+			}
 			return kResultOk;
 		}
 
@@ -697,8 +791,16 @@ namespace
 		}
 
 		// IConnectionPoint
-		tresult PLUGIN_API connect(sv::IConnectionPoint* /*other*/) override { return kResultOk; }
-		tresult PLUGIN_API disconnect(sv::IConnectionPoint* /*other*/) override { return kResultOk; }
+		tresult PLUGIN_API connect(sv::IConnectionPoint* other) override
+		{
+			m_peer = other;
+			return kResultOk;
+		}
+		tresult PLUGIN_API disconnect(sv::IConnectionPoint* /*other*/) override
+		{
+			m_peer = nullptr;
+			return kResultOk;
+		}
 		tresult PLUGIN_API notify(sv::IMessage* message) override
 		{
 			if (message != nullptr && std::strcmp(message->getMessageID(), "hello") == 0)
@@ -710,6 +812,8 @@ namespace
 		std::array<sv::ParameterInfo, ParamCount> m_infos{};
 		std::array<double, ParamCount> m_values{};
 		vst::IPtr<sv::IComponentHandler> m_handler;
+		vst::IPtr<sv::IHostApplication> m_host;
+		sv::IConnectionPoint* m_peer = nullptr; // the component, while connected
 		bool m_connected = false;
 		int32_t m_edits = 0;
 	};

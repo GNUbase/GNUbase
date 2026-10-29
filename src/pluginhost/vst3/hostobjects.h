@@ -41,7 +41,8 @@ namespace gnubase::pluginhost::vst3
 		size_t m_position = 0;
 	};
 
-	// The points of one parameter in one block.
+	// The points of one parameter in one block. A full queue takes a later point in place of its last one, so the last
+	// value of a block always arrives.
 	class ParamValueQueue final : public vst::U::ImplementsNonDestroyable<vst::U::Directly<vst::Vst::IParamValueQueue>>
 	{
 	public:
@@ -77,10 +78,13 @@ namespace gnubase::pluginhost::vst3
 		: public vst::U::ImplementsNonDestroyable<vst::U::Directly<vst::Vst::IParameterChanges>>
 	{
 	public:
-		ParameterChanges(size_t queues, size_t points);
+		ParameterChanges() = default;
+		ParameterChanges(size_t queues, size_t points) { resize(queues, points); }
 
+		// [main] Allocates the queues, e.g. for the parameter count at activation, and drops the changes.
+		void resize(size_t queues, size_t points);
 		void clear() { m_count = 0; }
-		// [audio] Appends a point to the parameter's queue, creating it. False if there is no room.
+		// [audio] Appends a point to the parameter's queue, creating it. False if no queue is left for it.
 		bool add(vst::Vst::ParamID id, vst::int32 offset, vst::Vst::ParamValue value);
 
 		vst::int32 PLUGIN_API getParameterCount() override { return static_cast<vst::int32>(m_count); }
@@ -112,7 +116,9 @@ namespace gnubase::pluginhost::vst3
 		size_t m_count = 0;
 	};
 
-	// What the component handler passes on to the adapter, in GNUbase's types.
+	// What the component handler passes on to the adapter, in GNUbase's types. VST3 wants these calls on the main
+	// thread, but plugins also make them from their audio thread or threads of their own: the adapter defers those to
+	// its main thread.
 	class ComponentHandlerListener
 	{
 	public:
@@ -120,11 +126,11 @@ namespace gnubase::pluginhost::vst3
 		ComponentHandlerListener(const ComponentHandlerListener&) = delete;
 		ComponentHandlerListener& operator=(const ComponentHandlerListener&) = delete;
 
-		// [main] An edit in the plugin's editor: a gesture begins or ends, or the value changes.
+		// [any] An edit in the plugin's editor: a gesture begins or ends, or the value changes.
 		virtual bool editBegin(uint32_t id) = 0;
 		virtual bool editValue(uint32_t id, double normalized) = 0;
 		virtual bool editEnd(uint32_t id) = 0;
-		// [main] VST3's RestartFlags.
+		// [any] VST3's RestartFlags.
 		virtual bool restart(int32_t flags) = 0;
 		virtual void stateDirty() = 0;
 		virtual void programListChanged() = 0;
