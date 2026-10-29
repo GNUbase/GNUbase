@@ -97,7 +97,7 @@ namespace gnubase::engine
 			snapshot->channels[trackChannel.at(event.track)].audioEvents.push_back(
 				{id, toSamples(project, event.position), mediaIndex.at(clip.media), event.offset, event.length,
 					static_cast<float>(std::pow(10.0, event.volume / 20.0)), event.mute, event.fadeIn, event.fadeOut,
-					clip.fadeIn, clip.fadeOut, event.crossfade});
+					clip.fadeIn, clip.fadeOut, crossfadeApplies(project, event) ? event.crossfade : Crossfade()});
 		}
 		for (const auto& [id, part] : project.midiParts)
 			compilePart(project, part, snapshot->channels[trackChannel.at(part.track)]);

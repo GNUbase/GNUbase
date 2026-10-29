@@ -109,8 +109,10 @@ namespace gnubase::engine
 	inline constexpr double g_maxAutoFadeLength = 500.0;
 
 	// Short fades and crossfades applied automatically to the events of audio tracks, against clicks. Auto fades go
-	// where an event has no fade of its own; auto crossfades where an event starts on top of another or ends above
-	// one that goes on, unless the two have a crossfade of their own.
+	// where an event has no fade of its own at that end, never on top of one; auto crossfades where an event starts on
+	// top of another or ends above one that goes on, unless the two have a crossfade of their own. Where the event in
+	// front has a fade of its own at that end, its fade is the auto crossfade's, and the one behind fades with the
+	// mirror image over the same stretch.
 	struct AutoFades
 	{
 		bool fadeIn = false;
@@ -317,4 +319,18 @@ namespace gnubase::engine
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades);
 	}
+	// Where an audio event plays, in the project's samples (fadeedits.cpp).
+	struct EventSpan
+	{
+		time::Samples start = 0;
+		time::Samples end = 0;
+		double ratio = 1.0; // project samples per clip frame
+	};
+
+	EventSpan eventSpan(const Project& project, const AudioEvent& event);
+
+	// Whether an event's crossfade plays: the event it comes from is on the same track, neither is muted, and this
+	// one starts inside it and ends after it. Otherwise the crossfade rests, and both play their own fades at those
+	// ends. Playback (through the render snapshot) and the DAWproject export decide by this.
+	bool crossfadeApplies(const Project& project, const AudioEvent& to);
 }

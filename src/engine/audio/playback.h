@@ -38,8 +38,9 @@ namespace gnubase::engine
 		double gainAt(time::Samples position) const noexcept;
 	};
 
-	// The most fades on an entry: its event's fade in and out, its clip's, and one of a crossfade.
-	inline constexpr size_t g_maxRamps = 5;
+	// The most fades on an entry: its event's fade in and out, its clip's, and those of the auto crossfades it plays
+	// behind the front in: one where the event in front starts, one where it ends.
+	inline constexpr size_t g_maxRamps = 6;
 
 	// A stretch of an audio track's playback: a section of one event's clip.
 	struct PlaylistEntry
@@ -175,7 +176,7 @@ namespace gnubase::engine
 		// Positions a claimed or new voice at frame, waiting there for the audio thread.
 		static void place(Voice& voice, time::Samples frame);
 		// Audio thread: takes the voice to read from next on, unless its state is no longer seen.
-		bool startReading(Voice& voice, uint64_t seen, time::Samples next) noexcept;
+		bool startReading(Voice& voice, uint64_t seen, time::Samples next) const noexcept;
 
 		size_t m_voicesPerTrack;
 		DiskStreamSettings m_streamSettings;
@@ -208,15 +209,22 @@ namespace gnubase::engine
 		void prepare(double sampleRate, uint32_t maxFrames) override;
 
 	private:
-		void play(const graph::ProcessContext& context, const PlaylistEntry& entry, time::Samples position,
-			time::Samples frames, uint32_t offset) noexcept;
+		// Plays an entry into its layer's frames.
+		void play(const PlaylistEntry& entry, size_t layer, time::Samples position, time::Samples frames,
+			uint32_t offset) noexcept;
 
 		std::shared_ptr<const Playlist> m_playlist;
 		ObjectId m_channel;
 		Playback& m_playback;
-		std::vector<float> m_buffer; // one block of interleaved frames of the clip with the most channels
+		size_t m_bufferFrames = 0;
+		size_t m_clipChannels = 1;   // of the clip with the most channels
+		std::vector<float> m_buffer; // one block of interleaved frames of a clip
 		std::vector<float> m_gains;  // one block of gains, where an entry fades
 		std::vector<size_t> m_next;  // per layer, the next entry to play in a segment
-		size_t m_bufferFrames = 0;
+		// Per layer, one block of what it plays, with the gains applied: frames of m_clipChannels samples, and the
+		// number of the clip's channels in each frame (0 where the layer plays nothing).
+		std::vector<float> m_layerAudio;
+		std::vector<uint8_t> m_layerChannels;
+		std::vector<uint8_t> m_layerUsed; // per layer, whether it plays in this block
 	};
 }

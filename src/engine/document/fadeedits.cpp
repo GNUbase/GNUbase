@@ -99,23 +99,6 @@ namespace gnubase::engine
 			return result;
 		}
 
-		// An event's start and end in the project's samples.
-		struct Span
-		{
-			time::Samples start = 0;
-			time::Samples end = 0;
-			double ratio = 1.0; // project samples per clip frame
-		};
-
-		Span span(const Project& project, const AudioEvent& event)
-		{
-			Span result;
-			result.ratio = project.sampleRate / project.media.at(project.clips.at(event.clip).media).sampleRate;
-			result.start = time::toSamples(event.position, project.tempo, project.sampleRate);
-			result.end = result.start + std::llround(static_cast<double>(event.length) * result.ratio);
-			return result;
-		}
-
 		// Clears the crossfades into and out of an event.
 		void clearCrossfades(Project& project, ObjectId id, CommandContext& context)
 		{
@@ -134,8 +117,8 @@ namespace gnubase::engine
 			AudioEvent& to = find(project.audioEvents, parameters, "to", "audio event");
 			require(from.id != to.id, "an event can't crossfade with itself");
 			require(from.track == to.track, "crossfades are between events on the same track");
-			const Span out = span(project, from);
-			const Span in = span(project, to);
+			const EventSpan out = eventSpan(project, from);
+			const EventSpan in = eventSpan(project, to);
 			require(out.start < in.start && in.start < out.end && out.end <= in.end,
 				"event " + idText(to.id) + " must start inside event " + idText(from.id) + " and end after it");
 
@@ -270,6 +253,28 @@ namespace gnubase::engine
 		}
 	}
 
+	EventSpan eventSpan(const Project& project, const AudioEvent& event)
+	{
+		EventSpan result;
+		result.ratio = project.sampleRate / project.media.at(project.clips.at(event.clip).media).sampleRate;
+		result.start = time::toSamples(event.position, project.tempo, project.sampleRate);
+		result.end = result.start + std::llround(static_cast<double>(event.length) * result.ratio);
+		return result;
+	}
+
+	bool crossfadeApplies(const Project& project, const AudioEvent& to)
+	{
+		const auto from = project.audioEvents.find(to.crossfade.from);
+		if (to.crossfade.from == 0 || from == project.audioEvents.end())
+			return false;
+		const AudioEvent& out = from->second;
+		if (out.track != to.track || out.mute || to.mute)
+			return false;
+		const EventSpan a = eventSpan(project, out);
+		const EventSpan b = eventSpan(project, to);
+		return a.start < b.start && b.start < a.end && a.end <= b.end;
+	}
+
 	void ProjectModel::registerFadeCommands(Engine& engine)
 	{
 		const Json id = {{"type", "integer"}};
@@ -292,7 +297,7 @@ namespace gnubase::engine
 				"Changes an audio event's fade in (from its start) or fade out (up to its end): length in the clip's "
 				"sample frames (0: none) and shape: linear, exponential (slow, then fast), logarithmic (fast, then "
 				"slow), sCurve (half a cosine) or equalPower (a quarter sine). Together they fit into the event. A "
-				"crossfade replaces the fades at the ends it joins.",
+				"crossfade replaces the fades at the ends it joins while it plays.",
 				object({{"event", id}, {"fadeIn", fade}, {"fadeOut", fade}}, {"event"}), result("event"), false},
 			setEventFades);
 		add(engine,
@@ -309,7 +314,8 @@ namespace gnubase::engine
 				"overlap, so the crossfade is symmetric. mode equalGain (default): the fade out mirrors the fade in "
 				"(shape linear, exponential, logarithmic or sCurve), so their gains add up to 1; equalPower: quarter "
 				"sines whose power adds up to 1; custom: shape and outShape of their own. An event fades out into one "
-				"event only. Changing a crossfade keeps what isn't given. Returns to.",
+				"event only. Changing a crossfade keeps what isn't given. After an edit that moves the events apart, "
+				"the crossfade rests and both play their own fades until they overlap like that again. Returns to.",
 				object({{"from", id}, {"to", id}, {"mode", modes}, {"shape", shapes}, {"outShape", shapes},
 						   {"length", integer}, {"outLength", integer}},
 					{"from", "to"}),
@@ -322,8 +328,9 @@ namespace gnubase::engine
 		add(engine,
 			{"autoFades.set", 1,
 				"Changes the auto fades and crossfades of the project, or of an audio track: fadeIn and fadeOut where "
-				"an event has no fade of its own, crossfades where an event starts on top of another one or ends "
-				"above one that goes on, unless they crossfade already. length is 1 to 500 ms; shapes as for "
+				"an event has no fade of its own at that end (they never stack), crossfades where an event starts on "
+				"top of another one or ends above one that goes on, unless they crossfade already; there an event's "
+				"own fade is the crossfade's, mirrored by the event behind. length is 1 to 500 ms; shapes as for "
 				"audioEvent.setFades; crossfadeMode equalGain or equalPower, with crossfadeShape the fade in as for "
 				"crossfade.set. A track uses the project's settings until it gets its own; useProject: true goes back "
 				"to them. Returns the settings that apply.",

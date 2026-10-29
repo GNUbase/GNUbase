@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <limits>
 #include <map>
 #include <optional>
 #include <thread>
@@ -134,9 +136,9 @@ namespace gnubase::engine
 				if (crossfade.from == 0 || from == index.end())
 					continue;
 				Placed& out = events[from->second];
-				// Only between consecutive events that overlap; after an edit that ends this, the crossfade rests.
-				const bool consecutive = out.start < in.start && in.start < out.end && out.end <= in.end;
-				if (out.crossfadeOut || !consecutive)
+				// The snapshot only has crossfades that apply (crossfadeApplies): between events that overlap, the
+				// second one starting inside the first and ending after it. An edit that ends this rests a crossfade.
+				if (out.crossfadeOut || out.end <= in.start)
 					continue;
 				const time::Samples overlap = out.end - in.start;
 				const auto length = [overlap](time::Samples frames, double ratio)
@@ -150,9 +152,31 @@ namespace gnubase::engine
 			}
 		}
 
+		// An event's own fade in or out, shortened to the event, if it has one.
+		std::optional<GainRamp> ownFade(const Placed& placed, bool out)
+		{
+			const Fade& fade = out ? placed.event->fadeOut : placed.event->fadeIn;
+			const time::Samples n = std::min(placed.end - placed.start, scaled(fade.length, placed.ratio));
+			if (n <= 0)
+				return std::nullopt;
+			return out ? GainRamp{placed.end - n, placed.end, fade.shape, true}
+					   : GainRamp{placed.start, placed.start + n, fade.shape, false};
+		}
+
+		// The mirror image of a fade's shape, which keeps the sum of the two gains at 1; an equal power fade's is
+		// one too, which keeps the sum of their power at 1.
+		FadeShape mirrored(FadeShape shape)
+		{
+			return crossfadeOut(CrossfadeMode::EqualGain, shape);
+		}
+
 		// Auto crossfades where the front passes from one event to another one that goes on behind it. Where an
 		// event starts on top of one that goes on, the one behind plays on for the auto fade length, fading out;
 		// where an event ends on top of one that goes on, the one behind fades in during its last stretch.
+		//
+		// Auto fades don't stack with an event's own fades. Where the event in front has a fade of its own at that
+		// end, that fade is the crossfade's: the event behind fades with its mirror image over the same stretch, as
+		// far as it reaches.
 		void autoCrossfades(const PlaylistLayer& front, std::vector<Placed>& events, const AutoFades& settings,
 			time::Samples length, std::vector<Transition>& transitions)
 		{
@@ -173,43 +197,55 @@ namespace gnubase::engine
 				const time::Samples at = after.start;
 				if (in.start == at && out.end > at && !in.crossfadeIn)
 				{
+					in.crossfadeIn = true;
+					if (const std::optional<GainRamp> own = ownFade(in, false))
+					{
+						in.fadeIn = own;
+						const time::Samples end = std::min(own->end, out.end);
+						transitions.push_back(
+							{a, b, at, end, GainRamp{at, end, mirrored(own->shape), true}, std::nullopt});
+						continue;
+					}
 					const time::Samples n = std::min({length, out.end - at, in.end - at});
 					in.fadeIn = GainRamp{at, at + n, inShape, false};
-					in.crossfadeIn = true;
 					transitions.push_back({a, b, at, at + n, GainRamp{at, at + n, outShape, true}, std::nullopt});
 				}
 				else if (out.end == at && in.start < at && !out.crossfadeOut)
 				{
+					out.crossfadeOut = true;
+					if (const std::optional<GainRamp> own = ownFade(out, true))
+					{
+						out.fadeOut = own;
+						const time::Samples start = std::max(own->start, in.start);
+						transitions.push_back(
+							{a, b, start, at, std::nullopt, GainRamp{start, at, mirrored(own->shape), false}});
+						continue;
+					}
 					const time::Samples n = std::min({length, at - in.start, at - out.start});
 					out.fadeOut = GainRamp{at - n, at, outShape, true};
-					out.crossfadeOut = true;
 					transitions.push_back({a, b, at - n, at, std::nullopt, GainRamp{at - n, at, inShape, false}});
 				}
 			}
 		}
 
-		// Fades of the events' own, or else auto fades.
+		// Fades of the events' own, or else auto fades: an auto fade only goes where an event has no fade of its own
+		// at that end, never on top of one.
 		void fades(std::vector<Placed>& events, const AutoFades& settings, time::Samples autoLength)
 		{
 			for (Placed& placed : events)
 			{
 				const time::Samples length = placed.end - placed.start;
-				const RenderAudioEvent& event = *placed.event;
 				if (!placed.fadeIn)
 				{
-					const time::Samples n = std::min(length, scaled(event.fadeIn.length, placed.ratio));
-					if (n > 0)
-						placed.fadeIn = GainRamp{placed.start, placed.start + n, event.fadeIn.shape, false};
-					else if (settings.fadeIn)
+					placed.fadeIn = ownFade(placed, false);
+					if (!placed.fadeIn && settings.fadeIn)
 						placed.fadeIn = GainRamp{
 							placed.start, placed.start + std::min(length, autoLength), settings.fadeInShape, false};
 				}
 				if (!placed.fadeOut)
 				{
-					const time::Samples n = std::min(length, scaled(event.fadeOut.length, placed.ratio));
-					if (n > 0)
-						placed.fadeOut = GainRamp{placed.end - n, placed.end, event.fadeOut.shape, true};
-					else if (settings.fadeOut)
+					placed.fadeOut = ownFade(placed, true);
+					if (!placed.fadeOut && settings.fadeOut)
 						placed.fadeOut = GainRamp{
 							placed.end - std::min(length, autoLength), placed.end, settings.fadeOutShape, true};
 				}
@@ -252,6 +288,87 @@ namespace gnubase::engine
 				layer = std::move(covered);
 			}
 			return layer;
+		}
+
+		// What plays behind the front during transitions, sorted by start: the stretches of each event's transitions
+		// where it isn't in front, each with the fades that apply to it there behind the front. Where transitions of
+		// an event overlap, it plays once, with the fades of all of them.
+		std::vector<PlaylistEntry> hidden(
+			const std::vector<Placed>& events, const std::vector<Transition>& transitions, const PlaylistLayer& front)
+		{
+			struct Part
+			{
+				time::Samples start = 0;
+				time::Samples end = 0;
+				const std::optional<GainRamp>* ramp = nullptr;
+			};
+			std::vector<std::vector<Part>> parts(events.size());
+			for (const Transition& transition : transitions)
+			{
+				const auto add = [&](size_t event, const std::optional<GainRamp>& ramp)
+				{
+					const time::Samples start = std::max(transition.start, events[event].start);
+					const time::Samples end = std::min(transition.end, events[event].end);
+					if (start < end)
+						parts[event].push_back({start, end, &ramp});
+				};
+				add(transition.out, transition.outBehind);
+				add(transition.in, transition.inBehind);
+			}
+
+			std::vector<PlaylistEntry> result;
+			for (size_t e = 0; e < events.size(); ++e)
+			{
+				if (parts[e].empty())
+					continue;
+				const ObjectId id = events[e].event->id;
+				// Cut where a part or a front entry starts or ends, so each piece has one set of parts and one event
+				// in front.
+				std::vector<time::Samples> cuts;
+				for (const Part& part : parts[e])
+				{
+					cuts.push_back(part.start);
+					cuts.push_back(part.end);
+				}
+				for (const PlaylistEntry& entry : front)
+					if (entry.end > events[e].start && entry.start < events[e].end)
+					{
+						cuts.push_back(entry.start);
+						cuts.push_back(entry.end);
+					}
+				std::sort(cuts.begin(), cuts.end());
+				cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
+
+				std::vector<size_t> previous; // the parts of the piece before, while it goes on
+				for (size_t k = 0; k + 1 < cuts.size(); ++k)
+				{
+					const time::Samples start = cuts[k];
+					const time::Samples end = cuts[k + 1];
+					std::vector<size_t> covering;
+					for (size_t p = 0; p < parts[e].size(); ++p)
+						if (parts[e][p].start <= start && parts[e][p].end >= end)
+							covering.push_back(p);
+					const PlaylistEntry* inFront = entryAt(front, start);
+					if (covering.empty() || (inFront != nullptr && inFront->event == id))
+					{
+						previous.clear();
+						continue;
+					}
+					if (!previous.empty() && covering == previous && result.back().end == start)
+					{
+						result.back().end = end;
+						continue;
+					}
+					PlaylistEntry piece = section(events[e], start, end);
+					for (const size_t p : covering)
+						addRamp(piece, *parts[e][p].ramp);
+					result.push_back(piece);
+					previous = std::move(covering);
+				}
+			}
+			std::stable_sort(result.begin(), result.end(),
+				[](const PlaylistEntry& a, const PlaylistEntry& b) { return a.start < b.start; });
+			return result;
 		}
 
 		// A voice's state (Playback::Voice): waiting after its nth cue, read in a block (blocks count from 1), or
@@ -342,30 +459,10 @@ namespace gnubase::engine
 
 		Playlist playlist;
 		playlist.layers.push_back(front(events));
-		const PlaylistLayer& first = playlist.layers.front();
 
-		// Where a transition's events play together, the one that isn't in front plays in a layer behind.
-		std::vector<PlaylistEntry> behind;
-		for (const Transition& transition : transitions)
-		{
-			const Placed& out = events[transition.out];
-			const Placed& in = events[transition.in];
-			for (const PlaylistEntry& entry : first)
-			{
-				const bool outInFront = entry.event == out.event->id;
-				if (!outInFront && entry.event != in.event->id)
-					continue;
-				const time::Samples start = std::max(entry.start, transition.start);
-				const time::Samples end = std::min(entry.end, transition.end);
-				if (start >= end)
-					continue;
-				PlaylistEntry hidden = section(outInFront ? in : out, start, end);
-				addRamp(hidden, outInFront ? transition.inBehind : transition.outBehind);
-				behind.push_back(hidden);
-			}
-		}
-		std::sort(behind.begin(), behind.end(),
-			[](const PlaylistEntry& a, const PlaylistEntry& b) { return a.start < b.start; });
+		// Where a transition's events play together, each of them plays in a layer behind wherever it isn't in front,
+		// over the whole transition: also where a third event has taken the front.
+		const std::vector<PlaylistEntry> behind = hidden(events, transitions, playlist.layers.front());
 		for (const PlaylistEntry& entry : behind)
 		{
 			auto layer = std::find_if(playlist.layers.begin() + 1, playlist.layers.end(),
@@ -768,7 +865,7 @@ namespace gnubase::engine
 			Voice& v = **voice;
 			if (v.media != media)
 				continue;
-			uint64_t state = v.state.load(std::memory_order_acquire);
+			const uint64_t state = v.state.load(std::memory_order_acquire);
 			if (state == g_cueing)
 				continue;
 			time::Samples next = 0;
@@ -805,7 +902,7 @@ namespace gnubase::engine
 		return soonest;
 	}
 
-	bool Playback::startReading(Voice& voice, uint64_t seen, time::Samples next) noexcept
+	bool Playback::startReading(Voice& voice, uint64_t seen, time::Samples next) const noexcept
 	{
 		// Read from it, unless a cue has just claimed it.
 		voice.next.store(next, std::memory_order_relaxed);
@@ -828,10 +925,15 @@ namespace gnubase::engine
 		for (const PlaylistLayer& layer : m_playlist->layers)
 			for (const PlaylistEntry& entry : layer)
 				channels = std::max(channels, entry.channels);
+		const size_t layers = m_playlist->layers.size();
 		m_bufferFrames = maxFrames;
-		m_buffer.assign(static_cast<size_t>(maxFrames) * static_cast<size_t>(channels), 0.0f);
+		m_clipChannels = static_cast<size_t>(channels);
+		m_buffer.assign(static_cast<size_t>(maxFrames) * m_clipChannels, 0.0f);
 		m_gains.assign(maxFrames, 0.0f);
-		m_next.assign(m_playlist->layers.size(), 0);
+		m_next.assign(layers, 0);
+		m_layerAudio.assign(layers * static_cast<size_t>(maxFrames) * m_clipChannels, 0.0f);
+		m_layerChannels.assign(layers * static_cast<size_t>(maxFrames), 0);
+		m_layerUsed.assign(layers, 0);
 	}
 
 	void TrackPlayer::process(const graph::ProcessContext& context) noexcept
@@ -840,12 +942,15 @@ namespace gnubase::engine
 		if (!transport.playing)
 			return;
 		const std::vector<PlaylistLayer>& layers = m_playlist->layers;
+		const size_t layerCount = std::min(layers.size(), m_next.size());
+		const size_t blockFrames = std::min<size_t>(context.frames, m_bufferFrames);
+		std::fill(m_layerUsed.begin(), m_layerUsed.end(), 0);
 		for (size_t s = 0; s < transport.segmentCount; ++s)
 		{
 			const graph::TransportSegment& segment = transport.segments[s];
 			const time::Samples begin = segment.position;
 			const time::Samples end = begin + segment.frames;
-			for (size_t l = 0; l < layers.size() && l < m_next.size(); ++l)
+			for (size_t l = 0; l < layerCount; ++l)
 				m_next[l] =
 					static_cast<size_t>(std::upper_bound(layers[l].begin(), layers[l].end(), begin,
 											[](time::Samples at, const PlaylistEntry& e) { return at < e.end; }) -
@@ -856,7 +961,7 @@ namespace gnubase::engine
 			{
 				const PlaylistEntry* entry = nullptr;
 				size_t next = 0;
-				for (size_t l = 0; l < layers.size() && l < m_next.size(); ++l)
+				for (size_t l = 0; l < layerCount; ++l)
 				{
 					if (m_next[l] >= layers[l].size() || layers[l][m_next[l]].start >= end)
 						continue;
@@ -871,13 +976,42 @@ namespace gnubase::engine
 				++m_next[next];
 				const time::Samples start = std::max(begin, entry->start);
 				const time::Samples stop = std::min(end, entry->end);
-				play(context, *entry, start, stop - start, segment.offset + static_cast<uint32_t>(start - begin));
+				if (m_layerUsed[next] == 0)
+				{
+					// The layer's first entry in this block: nothing of it plays in the block yet.
+					m_layerUsed[next] = 1;
+					std::fill_n(m_layerChannels.begin() + static_cast<std::ptrdiff_t>(next * m_bufferFrames), blockFrames,
+						uint8_t{0});
+				}
+				play(*entry, next, start, stop - start, segment.offset + static_cast<uint32_t>(start - begin));
+			}
+		}
+
+		// The layers add up in a fixed order, the front first, so a sum of floats is the same wherever a block starts.
+		// One to one, a mono clip on every channel, extra clip channels unused.
+		for (size_t l = 0; l < layerCount; ++l)
+		{
+			if (m_layerUsed[l] == 0)
+				continue;
+			const float* audio = m_layerAudio.data() + (l * m_bufferFrames * m_clipChannels);
+			const uint8_t* channels = m_layerChannels.data() + (l * m_bufferFrames);
+			for (int c = 0; c < context.channels; ++c)
+			{
+				float* out = context.audio[c];
+				const auto channel = static_cast<size_t>(c);
+				for (size_t i = 0; i < blockFrames; ++i)
+				{
+					const size_t clipChannels = channels[i];
+					const size_t source = clipChannels == 1 ? 0 : channel;
+					if (source < clipChannels)
+						out[i] += audio[(i * m_clipChannels) + source];
+				}
 			}
 		}
 	}
 
-	void TrackPlayer::play(const graph::ProcessContext& context, const PlaylistEntry& entry, time::Samples position,
-		time::Samples frames, uint32_t offset) noexcept
+	void TrackPlayer::play(const PlaylistEntry& entry, size_t layer, time::Samples position, time::Samples frames,
+		uint32_t offset) noexcept
 	{
 		const time::Samples frame = entry.frame + (position - entry.start);
 		time::Samples lead = 0;
@@ -889,9 +1023,12 @@ namespace gnubase::engine
 		}
 		if (lead > 0)
 			m_playback.missed(lead);
-		const auto count = static_cast<size_t>(std::min(frames - lead, static_cast<time::Samples>(m_bufferFrames)));
-		const int channels = voice->stream->channels();
-		if (static_cast<size_t>(channels) * count > m_buffer.size())
+		const auto start = static_cast<size_t>(offset) + static_cast<size_t>(lead);
+		if (start >= m_bufferFrames)
+			return;
+		const auto count = std::min(static_cast<size_t>(frames - lead), m_bufferFrames - start);
+		const auto channels = static_cast<size_t>(voice->stream->channels());
+		if (channels > m_clipChannels || channels > std::numeric_limits<uint8_t>::max())
 			return; // a clip with more channels than prepared for; the next graph has room
 		voice->stream->read(m_buffer.data(), count);
 		voice->next.store(frame + lead + static_cast<time::Samples>(count), std::memory_order_relaxed);
@@ -904,22 +1041,15 @@ namespace gnubase::engine
 			for (size_t i = 0; i < count; ++i)
 				m_gains[i] = entry.gainAt(first + static_cast<time::Samples>(i));
 
-		// One to one, a mono clip on every channel, extra clip channels unused.
-		const auto start = offset + static_cast<uint32_t>(lead);
-		for (int c = 0; c < context.channels; ++c)
+		// Into the layer's frames, as the clip's channels.
+		float* audio = m_layerAudio.data() + (((layer * m_bufferFrames) + start) * m_clipChannels);
+		uint8_t* layerChannels = m_layerChannels.data() + (layer * m_bufferFrames) + start;
+		for (size_t i = 0; i < count; ++i)
 		{
-			const int source = channels == 1 ? 0 : c;
-			if (source >= channels)
-				continue;
-			float* out = context.audio[c] + start;
-			const float* in = m_buffer.data() + source;
-			const auto stride = static_cast<size_t>(channels);
-			if (fading)
-				for (size_t i = 0; i < count; ++i)
-					out[i] += in[i * stride] * m_gains[i];
-			else
-				for (size_t i = 0; i < count; ++i)
-					out[i] += in[i * stride] * gain;
+			const float frameGain = fading ? m_gains[i] : gain;
+			for (size_t c = 0; c < channels; ++c)
+				audio[(i * m_clipChannels) + c] = m_buffer[(i * channels) + c] * frameGain;
+			layerChannels[i] = static_cast<uint8_t>(channels);
 		}
 	}
 }

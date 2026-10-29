@@ -579,6 +579,148 @@ TEST_CASE("auto fades and crossfades apply where events have none of their own",
 	}
 }
 
+TEST_CASE("an event fading out plays on behind every event in front of it until its fade ends", "[integration]")
+{
+	const int blockSize = GENERATE(1, 64, 333);
+	INFO("block size " << blockSize);
+	const gnubase::test::TempDir dir;
+	Session session(blockSize);
+	Client& client = session.client;
+	const ObjectId track = session.addTrack(1);
+	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 10000, one));
+
+	SECTION("crossfades into an event that crossfades on into a third one")
+	{
+		// a fades out under b until 1000, but c takes the front from b at 800.
+		const ObjectId a = session.addEvent(track, clip, 0, 1000);
+		const ObjectId b = session.addEvent(track, clip, 500, 700);
+		const ObjectId c = session.addEvent(track, clip, 800, 1200);
+		run(client, "crossfade.set", {{"from", a}, {"to", b}});
+		run(client, "crossfade.set", {{"from", b}, {"to", c}});
+		const auto output = session.render(2500);
+		const auto gainA = [](int64_t at) { return at < 1000 ? fadeOut("linear", at, 1000, 500) : 0.0; };
+		const auto gainB = [](int64_t at)
+		{ return at >= 500 && at < 1200 ? fadeIn("linear", at, 500, 500) * fadeOut("linear", at, 1200, 400) : 0.0; };
+		const auto gainC = [](int64_t at) { return at < 2000 ? fadeIn("linear", at, 800, 400) : 0.0; };
+		checkSamples(output[0], [&](int64_t at) { return gainA(at) + gainB(at) + gainC(at); });
+		// Where two of them play, their gains add up to 1; where all three do, the third one comes on top of that,
+		// rising from 0 and falling back to 0 without a jump.
+		for (int64_t at = 0; at < 2000; ++at)
+			if (at < 800 || at >= 1000)
+				REQUIRE_THAT(output[0][static_cast<size_t>(at)], WithinAbs(1.0, 1e-6));
+		for (size_t i = 1; i < 2000; ++i)
+			REQUIRE(std::abs(output[0][i] - output[0][i - 1]) < 0.01f);
+	}
+	SECTION("auto crossfades of events that start within the auto fade length")
+	{
+		constexpr int64_t n = 480; // 10 ms at 48 kHz
+		run(client, "autoFades.set", {{"crossfades", true}});
+		session.addEvent(track, clip, 0, 3000);
+		session.addEvent(track, clip, 1000, 3000);
+		session.addEvent(track, clip, 1200, 3800);
+		const auto output = session.render(5500);
+		checkSamples(output[0],
+			[&](int64_t at)
+			{
+				if (at >= 5000)
+					return 0.0;
+				const double x = at < 1000 + n ? fadeOut("linear", at, 1000 + n, n) : 0.0;
+				const double y = at >= 1000 && at < 1200 + n
+					? fadeIn("linear", at, 1000, n) * (at < 1200 ? 1.0 : fadeOut("linear", at, 1200 + n, n))
+					: 0.0;
+				const double z = at >= 1200 ? fadeIn("linear", at, 1200, n) : 0.0;
+				return x + y + z;
+			});
+	}
+}
+
+TEST_CASE("an event's own fade where it starts or ends on top of another is the auto crossfade's", "[integration]")
+{
+	// Auto fades don't stack with an event's own fades: where an event has a fade of its own, it replaces the auto
+	// fade or the auto crossfade's fade at that end, and the event behind fades with its mirror image.
+	const gnubase::test::TempDir dir;
+	Session session(64);
+	Client& client = session.client;
+	const ObjectId track = session.addTrack();
+	const ObjectId left =
+		session.addClip(writeClip(dir, "left", 2, 9000, [](int64_t, int c) { return c == 0 ? 1.0f : 0.0f; }));
+	const ObjectId right =
+		session.addClip(writeClip(dir, "right", 2, 9000, [](int64_t, int c) { return c == 1 ? 1.0f : 0.0f; }));
+	run(client, "autoFades.set", {{"crossfades", true}, {"crossfadeMode", "equalPower"}});
+	session.addEvent(track, left, 0, 3000);
+	const ObjectId starts = session.addEvent(track, right, 1000, 2500); // a long fade in on top of the first
+	run(client, "audioEvent.setFades", {{"event", starts}, {"fadeIn", {{"length", 1000}, {"shape", "exponential"}}}});
+	session.addEvent(track, right, 5000, 4000);
+	const ObjectId ends = session.addEvent(track, left, 6000, 1000); // ends on top of the one before, fading out
+	run(client, "audioEvent.setFades", {{"event", ends}, {"fadeOut", {{"length", 300}, {"shape", "sCurve"}}}});
+	const auto output = session.render(9000);
+	checkSamples(output[0],
+		[&](int64_t at)
+		{
+			if (at < 1000)
+				return 1.0;
+			if (at < 3000)
+				return fadeOut("logarithmic", at, 2000, 1000);
+			if (at < 6000 || at >= 7000)
+				return 0.0;
+			return fadeIn("equalPower", at, 6000, 480) * fadeOut("sCurve", at, 7000, 300);
+		});
+	checkSamples(output[1],
+		[&](int64_t at)
+		{
+			if (at < 1000)
+				return 0.0;
+			if (at < 3500)
+				return fadeIn("exponential", at, 1000, 1000);
+			if (at < 5000)
+				return 0.0;
+			if (at < 6000)
+				return 1.0;
+			if (at < 6700)
+				return fadeOut("equalPower", at, 6000 + 480, 480);
+			return at < 7000 ? fadeIn("sCurve", at, 6700, 300) : 1.0;
+		});
+}
+
+TEST_CASE("renders are bit for bit the same for every block size where several events play at once", "[integration]")
+{
+	// The layers of a track add up in a fixed order, so the float sums don't depend on where blocks start.
+	const auto render = [](int blockSize)
+	{
+		const gnubase::test::TempDir dir;
+		Session session(blockSize);
+		Client& client = session.client;
+		const ObjectId track = session.addTrack(1);
+		const ObjectId low =
+			session.addClip(writeClip(dir, "low", 1, 30000, [](int64_t f, int) { return sine(331.0, f); }));
+		const ObjectId high =
+			session.addClip(writeClip(dir, "high", 1, 30000, [](int64_t f, int) { return sine(557.0, f) * 0.7f; }));
+		// Crossfades into an event that crossfades on.
+		const ObjectId a = session.addEvent(track, low, 0, 3000);
+		const ObjectId b = session.addEvent(track, high, 1000, 2600, 100);
+		const ObjectId c = session.addEvent(track, low, 2000, 3000, 1234);
+		run(client, "crossfade.set", {{"from", a}, {"to", b}, {"mode", "equalPower"}});
+		run(client, "crossfade.set", {{"from", b}, {"to", c}, {"mode", "custom"}, {"shape", "sCurve"}});
+		// Events that each start on top of the one before within the auto crossfade length, so that up to four
+		// play at once.
+		run(client, "autoFades.set", {{"track", track}, {"crossfades", true}, {"length", 100.0}});
+		for (int64_t i = 0; i < 4; ++i)
+			session.addEvent(track, i % 2 == 0 ? low : high, 6000 + (1000 * i), 14000 - (1000 * i), 10 * i);
+		return session.render(21000)[0];
+	};
+	const std::vector<float> reference = render(1);
+	for (const int blockSize : {7, 64, 100, 333, 1024})
+	{
+		INFO("block size " << blockSize);
+		const std::vector<float> output = render(blockSize);
+		REQUIRE(output.size() == reference.size());
+		size_t different = 0;
+		for (size_t i = 0; i < output.size(); ++i)
+			different += output[i] != reference[i] ? 1 : 0;
+		CHECK(different == 0);
+	}
+}
+
 TEST_CASE("clip fades apply to every event of the clip, at the clip's start and end", "[integration]")
 {
 	const gnubase::test::TempDir dir;

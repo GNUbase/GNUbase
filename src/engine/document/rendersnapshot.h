@@ -53,7 +53,7 @@ namespace gnubase::engine
 		Fade fadeOut;
 		Fade clipFadeIn; // at the media file's start and end
 		Fade clipFadeOut;
-		Crossfade crossfade; // with outShape resolved for its mode
+		Crossfade crossfade; // only one that applies (crossfadeApplies)
 	};
 
 	struct RenderNote
