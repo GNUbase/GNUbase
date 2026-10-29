@@ -173,7 +173,7 @@ namespace gnubase::files
 			passwd entry{};
 			passwd* found = nullptr;
 			const int error = getpwuid_r(getuid(), &entry, buffer.data(), buffer.size(), &found);
-			if (error == ERANGE && buffer.size() < 1024 * 1024)
+			if (error == ERANGE && buffer.size() < std::size_t{1024} * 1024)
 			{
 				buffer.resize(buffer.size() * 2);
 				continue;
