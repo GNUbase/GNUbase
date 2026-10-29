@@ -1,0 +1,6 @@
+# Performance data and benchmarks
+
+Measuring the engine's load while it plays, and benchmarks (#24).
+
+- **Performance data** (#24): the audio engine times every block (`PerformanceMeter`). The load is the share of the block's duration spent processing it, averaged over about 0.3 s, with the peak block and the overloads (blocks above 1) since the last reset, and each processing thread's load from the time it spent on nodes. The audio thread publishes them through a triple buffer; `audio.performance` returns them with the disk streams' load (how far the stream furthest behind has run empty) and the playback dropouts. `audio.resetPerformance` starts a new measurement, like clicking the overload indicator in the performance monitor (#45), and tells every client with an event; a new device or new processing threads start over from nothing. A disk stream's load counts the blocks it still has to fill, so a new stream and one just located read as empty.
+- `gnubase-bench` (`tests/bench`) measures the engine by rendering instrument tracks offline: `workers` with 1, 2, 4 ... threads up to the hardware's, `tracks` with 8 to 128 tracks and `blockSizes` with blocks of 32 to 2048 frames. CI runs it with `--quick` after the tests of every platform's Release build, without failing on its numbers, and keeps the JSON results as artifacts.

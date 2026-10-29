@@ -63,6 +63,9 @@ add_subdirectory(ext/flac EXCLUDE_FROM_ALL SYSTEM)
 set(PUGIXML_INSTALL OFF CACHE BOOL "Set by GNUbase for pugixml")
 add_subdirectory(ext/pugixml EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/miniz EXCLUDE_FROM_ALL SYSTEM)
+# miniz adds /Zi: its files share one .pdb, which compiles through sccache can't write in parallel. Four small files,
+# so they skip the compiler cache.
+set_target_properties(miniz PROPERTIES C_COMPILER_LAUNCHER "")
 # Lua 5.4 for scripting. Compiled as C++, so a Lua error unwinds C++ code with an exception instead of longjmp and
 # destructors run. Everything else is the official build: the library without the lua program and the test library.
 file(GLOB luaSources ${PROJECT_SOURCE_DIR}/ext/lua/l*.c)

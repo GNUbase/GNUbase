@@ -49,7 +49,7 @@ tools/install-git-hooks.sh      # on Windows, run it in Git Bash
 
 The install script sets up the repository's Git hooks; [CONTRIBUTING.md](CONTRIBUTING.md) explains them.
 
-**Windows:** install Visual Studio 2026 with the "Desktop development with C++" workload, which includes CMake. Use the preset `windows-x64` or `windows-arm64`.
+**Windows:** install Visual Studio 2026 with the "Desktop development with C++" workload, which includes CMake. Use the preset `windows-x64` or `windows-arm64`. From a developer prompt of the same architecture, `windows-x64-ninja` and `windows-arm64-ninja` build with Ninja instead, as CI does, and take a compiler cache such as sccache (`-DCMAKE_CXX_COMPILER_LAUNCHER=sccache`).
 
 **macOS:** install Xcode or its command line tools, plus CMake and Ninja (`brew install cmake ninja`). Use the preset `macos`.
 

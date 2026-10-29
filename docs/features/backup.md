@@ -1,0 +1,15 @@
+# Self-contained projects and backups
+
+A project that is moved or archived needs its media with it (#170). `src/engine/media/backup.h` has the file work; the commands are in the project model.
+
+- The **project folder** is the folder of the file the project was last saved as or loaded from (`project.location`; `project.save` announces it with `project.saved`); its **media folder** is `Audio` in it. A project without a file has neither. Project folder layout beyond that comes with project handling (#77).
+- `media.add` with `copy` adds a file from outside the project folder where it is and copies it into the media folder as a job, which then points the media file at the copy (the engine part of the import option, #92). Names stay unique: `take.wav`, `take-2.wav`.
+- `media.prepareArchive` copies every media file from outside the project folder into the media folder as a job, then points the media at the copies as one undo step; missing files are listed and left alone. Saved without embedding, the project then refers to its media relative to itself, and the folder can move.
+- `media.relink` points media files at other files with the same sample rate and channel count, as one undo step.
+- `project.backup` writes a copy of the project as it is into an empty or new folder: `<name>.dawproject` and its media in `Audio`, referred to relatively, so the backup opens on another machine. The open project and its files stay as they are. It runs as a job (see [architecture.md](../architecture.md#engine-api)): it copies in 1 MB chunks, reports progress, and if it is cancelled or fails it removes what it wrote. Options:
+  - `minimize` writes only the ranges of each audio file that its audio events play, plus `handles` seconds on each side, merged where they overlap and joined one after the other; the events' offsets move with them. Ranges of a file at another sample rate than the project's start on the resampling grid, which counts from the file's first frame (a multiple of 147 frames for 44.1 kHz in a 48 kHz project), so every file plays sample for sample the same. A minimized file keeps its format where GNUbase writes it without changing a sample (16- and 24-bit WAV, AIFF and FLAC, float WAV) and is a 32-bit float WAV otherwise, which holds every sample as it is read. 32-bit integer files, whose samples don't fit into a float, and Broadcast Wave files, whose time reference counts from the first frame, are copied whole, as is a file that no range leaves out. Other metadata, such as tags or cue points, isn't kept in minimized files.
+  - `removeUnused` leaves out clips that no audio event uses and media that no clip uses.
+  - `name` names the file and the backed-up project.
+  - `activate` opens the backup once it's done, unless the project changed meanwhile; the result says whether it was opened, and why not.
+  - `currentVersionsOnly` (offline processing #141, track versions #165) and `skipVideo` (#198) are accepted and do nothing until those exist.
+  - A media file that can't be read doesn't stop the backup: the result lists it under `missing`, and the backup keeps its old path.
