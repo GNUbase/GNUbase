@@ -53,7 +53,7 @@ The install script sets up the repository's Git hooks; [CONTRIBUTING.md](CONTRIB
 
 **macOS:** install Xcode or its command line tools, plus CMake and Ninja (`brew install cmake ninja`). Use the preset `macos`.
 
-**Linux:** install Ninja and the libraries SDL needs for audio, video and input. On Ubuntu 24.04 that is the `LINUX_PACKAGES` list in [`.github/workflows/ci.yml`](.github/workflows/ci.yml), plus `pkg-config`:
+**Linux:** install Ninja and the libraries SDL needs for audio, video and input, and a Vulkan driver, which the UI draws through. On Ubuntu 24.04 that is the `LINUX_PACKAGES` list in [`.github/workflows/ci.yml`](.github/workflows/ci.yml), plus `pkg-config`; `mesa-vulkan-drivers` includes a software driver, so the window tests also run on machines without a GPU:
 
 ```bash
 sudo apt-get install pkg-config ninja-build ccache \
@@ -61,7 +61,8 @@ sudo apt-get install pkg-config ninja-build ccache \
   libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
   libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev \
   libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev \
-  libdbus-1-dev libibus-1.0-dev libudev-dev libfribidi-dev libthai-dev
+  libdbus-1-dev libibus-1.0-dev libudev-dev libfribidi-dev libthai-dev \
+  libvulkan1 mesa-vulkan-drivers
 ```
 
 Use the preset `linux-gcc` or `linux-clang`.
@@ -74,7 +75,9 @@ cmake --build --preset linux-gcc --config Release
 ctest --preset linux-gcc -C Release
 ```
 
-The programs end up in `build/<preset>/bin/<configuration>/`. Add `-L unit` to the `ctest` command to run only the unit tests; the other labels are `integration`, `ui`, `slow` and `lua` (the Lua tests in `tests/lua`, see [docs/lua.md](docs/lua.md#tests)).
+The programs end up in `build/<preset>/bin/<configuration>/`. Add `-L unit` to the `ctest` command to run only the unit tests; the other labels are `integration`, `ui`, `slow` and `lua` (the Lua tests in `tests/lua`, see [docs/lua.md](docs/lua.md#tests)). The `ui` tests open hidden windows and draw them through SDL_GPU (Metal, Direct3D 12 or Vulkan); on Linux they use SDL's offscreen video driver, so they need no display. A machine without SDL_GPU skips them.
+
+`gnubase` opens the main window, which stays empty until the UI takes shape in milestone M04.
 
 ## Headless mode and MCP
 

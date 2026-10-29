@@ -15,7 +15,8 @@ permissions:
   contents: read
 
 env:
-  # SDL's documented Ubuntu build dependencies (ext/SDL/docs/README-linux.md) without the optional extras.
+  # SDL's documented Ubuntu build dependencies (ext/SDL/docs/README-linux.md) without the optional extras, and Mesa's
+  # software Vulkan driver (lavapipe), which the window tests draw through (tests/window_tests.cpp).
   LINUX_PACKAGES: >-
     ninja-build ccache
     libasound2-dev libpulse-dev libpipewire-0.3-dev libjack-dev
@@ -23,6 +24,7 @@ env:
     libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev
     libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev
     libdbus-1-dev libibus-1.0-dev libudev-dev libfribidi-dev libthai-dev
+    libvulkan1 mesa-vulkan-drivers
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_LAUNCHER: -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
   # Windows caches with sccache, in the same folder and cache entry as ccache elsewhere.
@@ -41,8 +43,9 @@ jobs:
           # Ninja instead of the Visual Studio generator, which ignores compiler launchers, so sccache can cache.
           - { name: windows-x64, runner: windows-2025, preset: windows-x64-ninja, arch: x64 }
           - { name: windows-arm64, runner: windows-11-arm, preset: windows-arm64-ninja, arch: arm64 }
-          # ponytail: Intel runner because hosted macOS arm64 runners had no capacity (jobs were never picked up).
-          # Builds both slices, tests the x86_64 one. Move back to macos-15 (arm64) before Intel images retire in 2027.
+          # ponytail: Intel runner because hosted macOS arm64 runners often never pick jobs up (they are cancelled after
+          # 15 minutes). Builds both slices, tests the x86_64 one; the window tests run on Apple Silicon in ui-macos.yml.
+          # Move back to macos-15 (arm64) before Intel images retire in 2027.
           - { name: macos-universal, runner: macos-15-intel, preset: macos }
           - { name: linux-x64-gcc, runner: ubuntu-24.04, preset: linux-gcc }
           - { name: linux-x64-clang, runner: ubuntu-24.04, preset: linux-clang }
@@ -105,6 +108,10 @@ jobs:
         run: sccache --stop-server
 
       - name: Test
+        # The window tests need SDL_GPU. Every runner has it except the macOS Intel one, whose virtual GPU doesn't meet
+        # SDL_GPU's requirements (docs/render-backend.md): there they are skipped, everywhere else a missing GPU fails.
+        env:
+          GNUBASE_REQUIRE_GPU: ${{ runner.os != 'macOS' && '1' || '0' }}
         run: ctest --preset ${{ matrix.preset }} -C Release
 
       # Non-blocking (#24): shared runners vary too much to fail on numbers, so the results are only kept.
@@ -178,6 +185,8 @@ jobs:
         run: cmake --build --preset linux-clang --target gnubase-tests
 
       - name: Test
+        env:
+          GNUBASE_REQUIRE_GPU: 1
         run: ctest --preset linux-clang
 
   clang-tidy:

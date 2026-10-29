@@ -1,0 +1,14 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- A box whose opacity animates without end, so its window keeps drawing. -->
+<rml>
+<head>
+	<title>Pulse</title>
+	<style>
+		@keyframes pulse { from { opacity: 0.5; } to { opacity: 1; } }
+		body { display: block; position: absolute; left: 0; top: 0; right: 0; bottom: 0; margin: 0; }
+		div { display: block; }
+		#box { width: 50dp; height: 50dp; background-color: #ffffff; animation: 1s linear infinite alternate pulse; }
+	</style>
+</head>
+<body><div id="box"/></body>
+</rml>

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/headless.h"
 #include "app/options.h"
+#include "app/windowed.h"
 #include "engine/engine.h"
 #include "platform/log.h"
 #include "ui/ui.h"
 
 #include <csignal>
-#include <cstdio>
 #include <exception>
 #include <iostream>
 #include <string>
@@ -53,9 +53,7 @@ namespace
 				return app::runHeadless(options, std::cin, std::cout, std::cerr);
 			}
 
-			// ponytail: no windows yet; the UI arrives with M04.
-			std::printf("GNUbase %s (%s)\n", gnubase::engine::version(), gnubase::ui::libraryVersions().c_str());
-			return app::g_exitOk;
+			return app::runWindowed(options, std::cerr);
 		}
 		catch (const app::UsageError& error)
 		{

@@ -6,8 +6,17 @@
 #include <csignal>
 #include <iosfwd>
 
+namespace gnubase::engine
+{
+	class Engine;
+}
+
 namespace gnubase::app
 {
+	// Sets up the engine as the options say: the audio device, then the project if there is one. Problems go to err.
+	// False if either failed.
+	bool setUpEngine(engine::Engine& engine, const Options& options, std::ostream& err);
+
 	// Stops a headless run that serves MCP over HTTP. Set by main's signal handler (Ctrl+C, SIGTERM).
 	extern volatile std::sig_atomic_t g_stopRequested;
 

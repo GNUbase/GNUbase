@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-add_library(gnubase-testutils STATIC testutils/testutils.cpp testutils/testutils.h)
+add_library(gnubase-testutils STATIC
+	testutils/fakeui.cpp testutils/fakeui.h
+	testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
 target_compile_definitions(gnubase-testutils PRIVATE
 	GNUBASE_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden"
 	GNUBASE_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/output"
@@ -49,13 +52,15 @@ add_executable(gnubase-tests
 	scripting_tests.cpp
 	sequencing_tests.cpp
 	settings_tests.cpp
+	shell_tests.cpp
 	streaming_tests.cpp
 	testing_tests.cpp
 	testutils_tests.cpp
 	theme_tests.cpp
 	time_tests.cpp
 	timestretch_tests.cpp
-	transport_tests.cpp)
+	transport_tests.cpp
+	window_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE
 	Catch2::Catch2WithMain
 	cpp-httplib
@@ -69,6 +74,9 @@ target_link_libraries(gnubase-tests PRIVATE
 	gnubase-testutils
 	miniz
 	pugixml::pugixml)
+
+# The UI's tests (#48) use SDL directly.
+target_link_libraries(gnubase-tests PRIVATE gnubase-ui SDL3::SDL3)
 
 # IPC tests run a helper process that plays a plugin host (tests/ipcpeer.cpp).
 add_executable(gnubase-ipcpeer ipcpeer.cpp)
