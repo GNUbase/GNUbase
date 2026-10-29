@@ -541,26 +541,66 @@ Returns:
 
 - `position`: integer, required
 
+### job
+
+#### `gnubase.job.cancel`
+
+Asks a running job to stop. It ends soon after as cancelled, with a job.finished event, and cleans up what it made; a job that has ended stays as it is.
+
+Parameters:
+
+- `job`: integer, required
+
+Returns:
+
+- `job`: object, required
+
+#### `gnubase.job.get`
+
+A background job, as job.list shows it.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `job`: integer, required
+
+Returns:
+
+- `job`: object, required
+
+#### `gnubase.job.list`
+
+Every background job since the engine started, such as backups: id, kind, state (running, done, failed or cancelled), progress from 0 to 1, what it is doing, and its result or error once it ended.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `jobs`: array of object, required
+
 ### media
 
 #### `gnubase.media.add`
 
-Adds an audio file. Its sample rate, channel count and length in sample frames are read from the file, or taken as given, for a file that is still being recorded.
+Adds an audio file. Its sample rate, channel count and length in sample frames are read from the file, or taken as given, for a file that is still being recorded. With copy, a file from outside the project folder is also copied into its media folder (see project.location); the project must have been saved. The copy runs as a job, returned as job (null without one), with the result that media.prepareArchive's job has: the media file is added at once where it is, and when the copy is done it is pointed at the copy as an undo step of its own.
 
 Parameters:
 
 - `channels`: integer
+- `copy`: boolean
 - `length`: integer
 - `path`: string, required
 - `sampleRate`: number
 
 Returns:
 
+- `job`: object or null, required
 - `media`: object, required
 
 #### `gnubase.media.convert`
 
-Converts a media file to another sample rate (by default the project's), writes the result to path as a 32-bit float WAV file and adds it as a new media file.
+Converts a media file to another sample rate (by default the project's), writes the result to path as a 32-bit float WAV file and adds it as a new media file. path must not be one of the project's media files.
 
 Parameters:
 
@@ -571,6 +611,64 @@ Parameters:
 Returns:
 
 - `media`: object, required
+
+#### `gnubase.media.peakStatus`
+
+The state of the waveform overviews of a media file, or of every media file: pending, generating (with progress from 0 to 1), ready, failed (with the error) or recording; the frames that have peaks; the peak file they were loaded from or written to; whether they were generated from the audio file rather than loaded. Peak files are kept next to their audio file as <file name>.gbpeaks, or in fallbackFolder where that can't be written.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `media`: integer
+
+Returns:
+
+- `fallbackFolder`: string, required
+- `media`: array of object, required
+
+#### `gnubase.media.peaks`
+
+The waveform overview of a media file for drawing: frames sample frames of the file from start (default: the rest of the file), in pixels columns (up to 65536). Per channel (default: all of them; channels picks some, numbered from 0), the smallest and largest sample of each column, from -32767 to 32767 (full scale). Pixels times channels can be up to 262144. The columns come from the coarsest level of the file's peaks (level: 256, 4096 or 65536 frames per peak) that has a peak per column, so they cost the same at any length. status says whether the peaks are ready; while they are generated, only the first available frames have columns and the rest are 0. A file that changed since its peaks were made gets new ones; media.peaksProgress and media.peaksReady report how that goes.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `channels`: array of integer
+- `frames`: integer
+- `media`: integer, required
+- `pixels`: integer, required
+- `start`: integer
+
+Returns:
+
+- `available`: integer, required
+- `channels`: array of object, required
+- `level`: integer, required
+- `media`: integer, required
+- `status`: one of "pending" | "generating" | "ready" | "failed" | "recording", required
+
+#### `gnubase.media.prepareArchive`
+
+Makes the project self-contained, so that its folder can be archived or moved: copies every media file from outside the project folder into its media folder and points the media at the copies. The copies run as a job: this returns at once, job.progress and job.finished events follow, and job.cancel stops it and removes the copies. Once they are done, the media are pointed at them as one undo step. The job's result lists the copies as copied, media files that couldn't be read as missing (they keep their paths), and media whose path changed while the job ran as changed (they keep the new path). The project must have been saved; save it again without embedding media to keep the new paths.
+
+Returns:
+
+- `job`: object, required
+
+#### `gnubase.media.relink`
+
+Points media files at other files, such as copies, as one undo step. Each new file must be an audio file with the media file's sample rate and channel count. An entry with from applies only if the media file is still there and still points at from; otherwise it is skipped. Returns the media files it relinked and the ones it skipped.
+
+Parameters:
+
+- `files`: array of object, required
+
+Returns:
+
+- `relinked`: array of integer, required
+- `skipped`: array of integer, required
 
 #### `gnubase.media.remove`
 
@@ -580,254 +678,24 @@ Parameters:
 
 - `media`: integer, required
 
-### midi
+#### `gnubase.media.stretch`
 
-#### `gnubase.midi.bounce`
-
-Bounces MIDI parts on one track into a single part from the first one's start to the last one's end, named after the first. Events keep their time; notes are cut where their part ended. Returns the tracks it added, the parts it added (parts), changed and removed.
+Time-stretches and pitch-shifts a media file, writes the result to path as a 32-bit float WAV file and adds it as a new media file; path must not be one of the project's media files. ratio is the new length over the old one, from 0.1 to 10 (default 1: unchanged); semitones and cents shift the pitch, together within 48 semitones either way (default 0). preset picks the algorithm: quality (default) and efficient for any material, drums, plucked, pads, vocals, mix and solo tuned for kinds of material at a lower CPU cost. formants keeps the spectral envelope when the pitch shifts, e.g. for voices. mode offline (default) analyzes the whole file first for the best result; realtime processes it the way playback does, with ratios from 0.25 to 4 and pitch shifts within 24 semitones.
 
 Parameters:
 
-- `parts`: array of integer, required
+- `cents`: number
+- `formants`: boolean
+- `media`: integer, required
+- `mode`: one of "realtime" | "offline"
+- `path`: string, required
+- `preset`: one of "quality" | "efficient" | "drums" | "plucked" | "pads" | "vocals" | "mix" | "solo"
+- `ratio`: number
+- `semitones`: number
 
 Returns:
 
-- `changedParts`: array of integer, required
-- `parts`: array of integer, required
-- `removedParts`: array of integer, required
-- `tracks`: array of integer, required
-
-#### `gnubase.midi.deleteContinuousControllers`
-
-Removes the control changes of continuous controllers. Bank select, data entry, the switches 64-69 (such as the sustain pedal), data increment and decrement, NRPN, RPN and channel mode messages stay. Works on the MIDI parts in parts. Returns the parts it changed.
-
-Parameters:
-
-- `parts`: array of integer, required
-
-Returns:
-
-- `parts`: array of integer, required
-
-#### `gnubase.midi.deleteControllers`
-
-Removes control changes, pitch bend, channel and poly pressure; program changes and SysEx stay. Works on the MIDI parts in parts. Returns the parts it changed.
-
-Parameters:
-
-- `parts`: array of integer, required
-
-Returns:
-
-- `parts`: array of integer, required
-
-#### `gnubase.midi.deleteDoubles`
-
-Of notes with the same pitch, channel and position, keeps the longest (the first added on a tie). Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
-
-Parameters:
-
-- `notes`: array of integer
-- `parts`: array of integer, required
-
-Returns:
-
-- `parts`: array of integer, required
-
-#### `gnubase.midi.deleteNotes`
-
-Deletes notes shorter than minimumLength (ticks) or softer than minimumVelocity (0-1); at least one is required. removeWhen both deletes only notes below both minimums (default: either). Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
-
-Parameters:
-
-- `minimumLength`: integer
-- `minimumVelocity`: number
-- `notes`: array of integer
-- `parts`: array of integer, required
-- `removeWhen`: one of "either" | "both"
-
-Returns:
-
-- `parts`: array of integer, required
-
-#### `gnubase.midi.deleteOverlaps`
-
-Shortens notes so that none still sounds when the next one on its channel starts: in mode mono the next one of the same pitch, in mode poly of any pitch. Notes that start together don't overlap. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
-
-Parameters:
-
-- `mode`: one of "mono" | "poly", required
-- `notes`: array of integer
-- `parts`: array of integer, required
-
-Returns:
-
-- `parts`: array of integer, required
-
-#### `gnubase.midi.dissolve`
-
-Dissolves MIDI parts by MIDI channel or by pitch (by: channel or pitch): for each channel or pitch found in the parts of a track, a new MIDI track after it, named after the track and the channel or pitch (middle C, 60, is C3), routed to the same instrument, gets the events of that channel or pitch in parts at the same place. By channel SysEx stays, by pitch everything but notes and poly pressure; parts left empty are removed. optimize shortens the new parts to the bars their events play in. Returns the tracks it added, the parts it added (parts), changed and removed.
-
-Parameters:
-
-- `by`: one of "channel" | "pitch", required
-- `optimize`: boolean
-- `parts`: array of integer, required
-
-Returns:
-
-- `changedParts`: array of integer, required
-- `parts`: array of integer, required
-- `removedParts`: array of integer, required
-- `tracks`: array of integer, required
-
-#### `gnubase.midi.fixLengths`
-
-Sets the length of notes, in ticks. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
-
-Parameters:
-
-- `length`: integer, required
-- `notes`: array of integer
-- `parts`: array of integer, required
-
-Returns:
-
-- `parts`: array of integer, required
-
-#### `gnubase.midi.fixVelocities`
-
-Sets the velocity of notes, 0-1. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
-
-Parameters:
-
-- `notes`: array of integer
-- `parts`: array of integer, required
-- `velocity`: number, required
-
-Returns:
-
-- `parts`: array of integer, required
-
-#### `gnubase.midi.invert`
-
-Mirrors notes in time: each one starts where its mirror image ends. Without notes, controllers with a value that holds (continuous controllers, the switches 64-69, pitch bend and pressure) play their values backwards, each held as long as before, and return to their last value where the range ends; program changes, SysEx, bank select, data entry, NRPN, RPN and channel mode messages stay in place. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
-
-Parameters:
-
-- `notes`: array of integer
-- `parts`: array of integer, required
-
-Returns:
-
-- `parts`: array of integer, required
-
-#### `gnubase.midi.legato`
-
-Extends notes to the start of the next note on their MIDI channel, plus overlap in ticks (negative: a gap; default 0). With betweenSelected, to the next of the given notes. The last notes keep their length. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
-
-Parameters:
-
-- `betweenSelected`: boolean
-- `notes`: array of integer
-- `overlap`: integer
-- `parts`: array of integer, required
-
-Returns:
-
-- `parts`: array of integer, required
-
-#### `gnubase.midi.merge`
-
-Merges the notes and controllers that start between start and end (project samples, like the locators, compared in samples as playback does) on the MIDI and instrument tracks in tracks (default: all of them) into a new part from start to end on the destination track, named name (default: the track's name). Notes keep their length, cut where their part ends. Without destination a new MIDI track is added at the end, routed to the instrument of the first track merged. eraseDestination first removes the destination's parts that lie between start and end, and the events of its other parts that start there. includeChase adds the last value of every controller and program before start at the new part's start. Returns the tracks it added, the parts it added (parts), changed and removed.
-
-Parameters:
-
-- `destination`: integer
-- `end`: integer, required
-- `eraseDestination`: boolean
-- `includeChase`: boolean
-- `name`: string
-- `start`: integer, required
-- `tracks`: array of integer
-
-Returns:
-
-- `changedParts`: array of integer, required
-- `parts`: array of integer, required
-- `removedParts`: array of integer, required
-- `tracks`: array of integer, required
-
-#### `gnubase.midi.pedalToNoteLength`
-
-Extends notes that end while the sustain pedal (controller 64) on their channel is down to where it is released (the part's end if never), but not past the next note of the same pitch, and removes the sustain pedal events of their channels. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
-
-Parameters:
-
-- `notes`: array of integer
-- `parts`: array of integer, required
-
-Returns:
-
-- `parts`: array of integer, required
-
-#### `gnubase.midi.restrictPolyphony`
-
-Shortens notes so that at most voices (1 or more) sound at once on each MIDI channel: a new note ends the one that started first, the lowest of notes that started together. A note that would lose its whole length is deleted. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
-
-Parameters:
-
-- `notes`: array of integer
-- `parts`: array of integer, required
-- `voices`: integer, required
-
-Returns:
-
-- `parts`: array of integer, required
-
-#### `gnubase.midi.reverse`
-
-Reverses the order in which notes start, keeping their lengths: the last one starts where the first one started. Without notes, controllers with a value that holds (continuous controllers, the switches 64-69, pitch bend and pressure) play their values backwards, each held as long as before, and return to their last value where the range ends; program changes, SysEx, bank select, data entry, NRPN, RPN and channel mode messages stay in place. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
-
-Parameters:
-
-- `notes`: array of integer
-- `parts`: array of integer, required
-
-Returns:
-
-- `parts`: array of integer, required
-
-#### `gnubase.midi.thinOut`
-
-Thins out continuous controllers, pitch bend and pressure, per controller and channel: removes events that repeat the value before them, and events closer than minimumDistance ticks (default a 64th note) to the event kept before them, unless the curve turns there, the next event is at least minimumDistance away or it is the last one. Bank select, data entry, the switches 64-69, NRPN, RPN and channel mode messages stay, like program changes and SysEx. Works on the MIDI parts in parts. Returns the parts it changed.
-
-Parameters:
-
-- `minimumDistance`: integer
-- `parts`: array of integer, required
-
-Returns:
-
-- `parts`: array of integer, required
-
-#### `gnubase.midi.transpose`
-
-Transposes the notes of MIDI parts by semitones (-127 to 127). fromScale and toScale (a root 0-11, 0 is C, and a scale type) correct the notes from one scale to another: a note moves from its degree in fromScale to the same degree in toScale, and notes outside fromScale, or all of them when the scales have a different number of degrees, go to the closest note of toScale. lowest and highest (0-127) keep notes in range: a note that leaves it moves by octaves into it, or to the limit it crossed if no octave fits. Notes stay within 0-127 by octaves. Poly pressure follows when no notes are given. Works on the MIDI parts in parts; notes limits it to these notes of the parts. Returns the parts it changed.
-
-Parameters:
-
-- `fromScale`: object
-- `highest`: integer
-- `lowest`: integer
-- `notes`: array of integer
-- `parts`: array of integer, required
-- `semitones`: integer
-- `toScale`: object
-
-Returns:
-
-- `parts`: array of integer, required
+- `media`: object, required
 
 ### midiPart
 
@@ -920,6 +788,25 @@ Returns:
 
 ### project
 
+#### `gnubase.project.backup`
+
+Backs the project up as it is now into folder, which must be empty or new: the project file, named name (by default after the project file, or else the project), and copies of its media in the folder Audio, which the project file refers to relative to itself, so that the folder opens on another machine. The project itself stays as it is. minimize keeps only the ranges of audio files that audio events play, with handles seconds (default 1) before and after; removeUnused leaves out clips that no audio event uses and media that no clip uses. currentVersionsOnly and skipVideo have no effect until clips have versions and projects have video. activate opens the backup once it is done, unless the project changed meanwhile. The backup runs as a job: this returns at once, job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. A folder that a running job writes into can't be used. The job's result is {file, files, missing, activated, activationError}: missing lists the media files that couldn't be read and keep their old paths; activated says whether the backup was opened, and activationError why not, if it was asked to be.
+
+Parameters:
+
+- `activate`: boolean
+- `currentVersionsOnly`: boolean
+- `folder`: string, required
+- `handles`: number
+- `minimize`: boolean
+- `name`: string
+- `removeUnused`: boolean
+- `skipVideo`: boolean
+
+Returns:
+
+- `job`: object, required
+
 #### `gnubase.project.get`
 
 The whole project: busses, tracks in order, channels, media, clips, events and parts.
@@ -928,16 +815,39 @@ Only reads; changes nothing.
 
 #### `gnubase.project.load`
 
-Replaces the project with a DAWproject file and clears the undo history. Media files embedded in it are extracted to mediaFolder, by default a folder named after the file next to it.
+Replaces the project with a DAWproject file and clears the undo history. Media files embedded in it are extracted to mediaFolder, by default a folder named after the file next to it. With revision, it loads only if the project is still at that revision (see project.revision), and fails otherwise, so that no change made meanwhile is lost.
 
 Parameters:
 
 - `mediaFolder`: string
 - `path`: string, required
+- `revision`: integer
+
+#### `gnubase.project.location`
+
+Where the project is: its project file (set by project.save and project.load), the folder of that file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. All null for a project that has no file yet.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `file`: string or null, required
+- `folder`: string or null, required
+- `mediaFolder`: string or null, required
 
 #### `gnubase.project.new`
 
 Replaces the project with an empty one that has a stereo input and output bus, and clears the undo history.
+
+#### `gnubase.project.revision`
+
+A number that grows with every change of the project: every edit, undo and redo, and loading or starting a project. project.load with revision loads only if it hasn't changed.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `revision`: integer, required
 
 #### `gnubase.project.save`
 
@@ -958,6 +868,62 @@ Parameters:
 
 - `name`: string
 - `sampleRate`: number
+
+### settings
+
+#### `gnubase.settings.get`
+
+The value of a user setting; settings.list describes them all.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
+
+Returns:
+
+- `key`: string, required
+- `value`: any, required. The setting's value.
+
+#### `gnubase.settings.list`
+
+Every user setting with its key, description, JSON schema, default and value; the settings file, null when settings are kept in memory only; its version; and what happened when it was loaded: the status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the problems found, where the original file was kept, and whether the file is read-only for this session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be backed up or locked).
+
+Only reads; changes nothing.
+
+Returns:
+
+- `file`: string or null, required
+- `load`: object, required
+- `settings`: array, required
+- `version`: integer, required
+
+#### `gnubase.settings.reset`
+
+Puts a user setting back to its default, or every one without key, and saves the settings file. Returns the settings that were reset with their values; emits settings.changed with those that changed.
+
+Parameters:
+
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme". The setting.
+
+Returns:
+
+- `values`: object, required
+
+#### `gnubase.settings.set`
+
+Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes.
+
+Parameters:
+
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
+- `value`: any, required. The new value; it must fit the setting's schema.
+
+Returns:
+
+- `key`: string, required
+- `value`: any, required. The setting's value.
 
 ### track
 
