@@ -9,6 +9,7 @@
 #include "platform/audio/device.h"
 #include "platform/audio/dummydevice.h"
 #include "platform/rt/snapshotpublisher.h"
+#include "platform/rt/workerpool.h"
 
 #include <atomic>
 #include <cstdint>
@@ -36,6 +37,9 @@ namespace gnubase::engine
 	// Bus channels beyond the device's are silent, device outputs no bus reaches stay silent. Choosing device ports
 	// per bus comes with #43.
 	//
+	// The graph runs on the audio thread and a pool of real-time workers (audio.setProcessing): by default half the
+	// hardware threads, the audio thread included, and only workers that got real-time priority.
+	//
 	// The device comes from one of the audio backends (audio.devices, audio.setDevice). When its driver asks for a
 	// reset, the engine opens it again with the same settings and restarts it if it ran (audio.reset). The dummy
 	// device also renders offline and captures its output; its input can be one of the built-in generators.
@@ -46,9 +50,10 @@ namespace gnubase::engine
 			rt::SnapshotPublisher<RenderSnapshot>& snapshots, std::vector<std::unique_ptr<audio::Backend>> backends);
 		~AudioEngine() override; // stops the device
 
-		// Registers audio.devices, audio.setDevice, audio.get, audio.reset, audio.controlPanel, audio.render,
-		// audio.start, audio.stop and audio.capture, and the transport commands transport.play, transport.stop,
-		// transport.toggle, transport.locate, transport.set, transport.exchangeLocators and transport.get.
+		// Registers audio.devices, audio.setDevice, audio.setProcessing, audio.get, audio.reset, audio.controlPanel,
+		// audio.render, audio.start, audio.stop and audio.capture, and the transport commands transport.play,
+		// transport.stop, transport.toggle, transport.locate, transport.set, transport.exchangeLocators and
+		// transport.get.
 		// audio.analyze, audio.compare and audio.record are in analysiscommands.cpp.
 		void registerCommands(Engine& engine);
 
@@ -109,6 +114,14 @@ namespace gnubase::engine
 		void closeDevice();
 		void reset();
 		Json devices() const;
+		void setProcessing(const Json& parameters);
+		// Workers for the device's format and the processing settings, as many as get real-time priority. Throws
+		// std::system_error if threads can't be started; the fallback processes on the audio thread only.
+		void startWorkers();
+		void startWorkersOrFallBack();
+		size_t plannedThreads() const; // the setting, at most one per hardware thread
+		static size_t defaultThreads();
+		Json processingStatus() const;
 		Json status() const;
 		audio::DummyDevice& requireDummy();
 		void registerTransportCommands(Engine& engine);
@@ -156,6 +169,18 @@ namespace gnubase::engine
 		std::atomic<uint64_t> m_started{0}; // the newest program the audio thread started
 		uint64_t m_running = 0;             // audio thread: the program it runs
 		Transport m_transport;              // advanced by the audio thread
+
+		// Changed only while the device is stopped.
+		enum class Limit : uint8_t
+		{
+			None,
+			Realtime, // workers didn't get real-time priority
+			System,   // threads couldn't be started
+		};
+		bool m_multiProcessing = true;
+		size_t m_threads = defaultThreads(); // processing threads, the audio thread included
+		std::unique_ptr<rt::WorkerPool> m_workers;
+		Limit m_limitedBy = Limit::None; // why m_workers has fewer than planned
 
 		// The cue thread, while the device runs in real time. It reads the transport's settings and play state from
 		// m_cueState, which the command thread updates.
