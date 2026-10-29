@@ -3,6 +3,8 @@
 #include "engine/audiofile/diskstream.h"
 #include "engine/engine.h"
 #include "engine/graph/graph.h"
+#include "engine/plugins/hostmanager.h"
+#include "engine/plugins/pluginslot.h"
 #include "engine/processors/builtin.h"
 #include "engine/processors/builtinplugin.h"
 #include "ipc/connection.h"
@@ -12,11 +14,13 @@
 #include "platform/rt/workerpool.h"
 #include "plugin/extensions.h"
 #include "plugin/plugin.h"
+#include "plugin/remote/proxy.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -30,6 +34,10 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+#ifndef GNUBASE_PLUGINHOST
+#define GNUBASE_PLUGINHOST "gnubase-pluginhost"
+#endif
 
 // gnubase-tests links the RT checker (gnubase-rtcheck), which reports allocations made in real-time code.
 using namespace gnubase::rt;
@@ -817,3 +825,95 @@ TEST_CASE("sending blocks to a plugin host and waiting for its answers passes th
 	CHECK(answered == blocks);
 	CHECK(g_violations == 0);
 }
+
+#ifndef GNUBASE_NO_TEST_PLUGINS
+TEST_CASE("a plugin in a plugin host process processes blocks without allocating or locking", "[integration]")
+{
+	using namespace gnubase;
+	engine::plugins::HostManager::Options options;
+	options.executable = GNUBASE_PLUGINHOST;
+	engine::plugins::HostManager manager(options);
+	std::unique_ptr<plugin::remote::RemotePlugin> remote = manager.create({"test:gain", "", "GNUbase"});
+	REQUIRE(remote->init());
+	engine::plugins::PluginSlot slot(std::move(remote));
+	slot.setProcessMode(plugin::ProcessMode::Offline);
+	slot.prepareFor(48000.0, 128);
+
+	std::vector<float> left(128, 0.5f);
+	std::vector<float> right(128, -0.5f);
+	const std::array<float*, 2> audio{left.data(), right.data()};
+	engine::graph::EventBuffer eventsIn(4);
+	engine::graph::EventBuffer eventsOut(4);
+	const engine::graph::TransportBlock transport;
+	engine::graph::ProcessEvent change;
+	change.type = engine::graph::ProcessEvent::Type::Parameter;
+	change.offset = 10;
+	change.parameter = 1; // test:gain's Gain
+	change.parameterValue = -6.0;
+	eventsIn.add(change);
+
+	const RecordViolations record;
+	{
+		const ScopedRealtimeContext realtime;
+		for (int i = 0; i < 100; ++i)
+		{
+			slot.process({audio.data(), 2, 128, eventsIn, eventsOut, transport});
+			eventsOut.clear();
+		}
+	}
+	CHECK(g_violations == 0);
+	CHECK(!slot.failed());
+	CHECK(left[0] != 0.0f);
+}
+
+TEST_CASE("late blocks to a plugin host, and blocks it can't take yet, neither allocate nor lock", "[integration]")
+{
+	using namespace gnubase;
+	engine::plugins::HostManager::Options options;
+	options.executable = GNUBASE_PLUGINHOST;
+	options.deadlines.realtimeMinimum = std::chrono::milliseconds(5);
+	options.deadlines.realtimeMaximum = std::chrono::milliseconds(5);
+	options.deadlines.hang = std::chrono::seconds(10);
+	engine::plugins::HostManager manager(options);
+	std::unique_ptr<plugin::remote::RemotePlugin> remote = manager.create({"test:stall", "", "GNUbase"});
+	REQUIRE(remote->init());
+	const plugin::remote::RemotePlugin& plugin = *remote;
+	engine::plugins::PluginSlot slot(std::move(remote));
+	slot.setProcessMode(plugin::ProcessMode::Realtime);
+	slot.prepareFor(48000.0, 128);
+
+	std::vector<float> left(128, 0.5f);
+	std::vector<float> right(128, -0.5f);
+	const std::array<float*, 2> audio{left.data(), right.data()};
+	engine::graph::EventBuffer eventsIn(4);
+	engine::graph::EventBuffer eventsOut(4);
+	const engine::graph::TransportBlock transport;
+	engine::graph::ProcessEvent stall;
+	stall.type = engine::graph::ProcessEvent::Type::Parameter;
+	stall.parameter = 1; // test:stall's Stall, in ms
+	stall.parameterValue = 100.0;
+
+	// The block that sets Stall is late, the next one too, and the ones after don't fit until it catches up.
+	int failed = 0;
+	const auto start = std::chrono::steady_clock::now();
+	const RecordViolations record;
+	{
+		const ScopedRealtimeContext realtime;
+		eventsIn.add(stall);
+		while (std::chrono::steady_clock::now() - start < std::chrono::milliseconds(400))
+		{
+			std::fill(left.begin(), left.end(), 0.5f);
+			std::fill(right.begin(), right.end(), -0.5f);
+			slot.process({audio.data(), 2, 128, eventsIn, eventsOut, transport});
+			failed += slot.failed() ? 1 : 0;
+			eventsIn.clear();
+			eventsOut.clear();
+		}
+	}
+	CHECK(g_violations == 0);
+	CHECK(failed >= 2);
+	CHECK(!slot.failed());
+	CHECK(left[0] == 0.5f);
+	CHECK(plugin.failure() == plugin::remote::Failure::None);
+}
+#endif

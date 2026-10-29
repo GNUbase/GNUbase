@@ -5,6 +5,7 @@
 #include "engine/document/projectmodel.h"
 #include "engine/jobs/jobs.h"
 #include "engine/peaks/peakcache.h"
+#include "engine/plugins/hostmanager.h"
 #include "engine/processors/builtin.h"
 #include "engine/settings/usersettings.h"
 #include "platform/log.h"
@@ -96,6 +97,9 @@ namespace gnubase::engine
 				return Json{{"commands", list}};
 			});
 		processors::registerCommands(*this);
+		m_plugins = std::make_unique<plugins::HostManager>();
+		m_plugins->registerCommands(*this);
+		m_plugins->onReport([this] { post("pluginhost.check"); });
 		m_jobs = std::make_unique<Jobs>(*this);
 		m_jobs->registerCommands(*this);
 		m_project = std::make_unique<ProjectModel>();
@@ -176,6 +180,11 @@ namespace gnubase::engine
 	rt::SnapshotPublisher<RenderSnapshot>& Engine::renderSnapshots()
 	{
 		return m_project->snapshots();
+	}
+
+	plugins::HostManager& Engine::pluginHosts()
+	{
+		return *m_plugins;
 	}
 
 	std::vector<CommandInfo> Engine::commands() const

@@ -1461,6 +1461,63 @@ Returns:
 
 - `notes`: array, required
 
+### pluginhost
+
+#### `gnubase.pluginhost.check`
+
+Reports the plugins that failed since the last check because their host process crashed, missed a processing deadline (reason "hung") or broke the protocol, and emits plugin.failed for each with its instance, plugin id, process and reason. A failed plugin is bypassed and outputs silence. Also emits pluginhost.changed for each hosting mode change whose moves are done. The engine runs this on its own as soon as a failure is detected or the moves are done.
+
+Returns:
+
+- `failures`: array of object, required
+
+#### `gnubase.pluginhost.get`
+
+How plugins are grouped into plugin host processes, and the processes. mode: the hosting mode, "shared" (one process for every plugin), "perVendor", "perPlugin" or "perInstance"; defaultMode: the mode GNUbase starts with; overrides: plugin ids with a mode of their own. hosts: each process with its id (process), its group ("shared", "vendor:<vendor>", "plugin:<id>" or "instance:<instance>"), its state ("running", "hung" or "exited") and its plugin instances, whether they failed.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `defaultMode`: string, required
+- `errors`: array of string
+- `hosts`: array of object, required
+- `mode`: string, required
+- `overrides`: object, required
+
+#### `gnubase.pluginhost.setMode`
+
+Sets the hosting mode (see pluginhost.get) and returns at once. Plugins whose process changes then move to their new process in the background, with their state, between two blocks, so they keep sounding the same. When they did, pluginhost.changed is emitted with the new status, and with the plugins that could not move and stay where they are in errors.
+
+Parameters:
+
+- `mode`: one of "shared" | "perVendor" | "perPlugin" | "perInstance", required
+
+Returns:
+
+- `defaultMode`: string, required
+- `errors`: array of string
+- `hosts`: array of object, required
+- `mode`: string, required
+- `overrides`: object, required
+
+#### `gnubase.pluginhost.setOverride`
+
+Gives a plugin (its id, e.g. "clap:com.example.synth") a hosting mode of its own, e.g. "perInstance" to isolate an unstable plugin, or removes its override with null. Moves the plugin's instances like pluginhost.setMode, which emits pluginhost.changed when they moved.
+
+Parameters:
+
+- `mode`: one of "shared" | "perVendor" | "perPlugin" | "perInstance" | null, required
+- `plugin`: string, required
+
+Returns:
+
+- `defaultMode`: string, required
+- `errors`: array of string
+- `hosts`: array of object, required
+- `mode`: string, required
+- `overrides`: object, required
+
 ### processor
 
 #### `gnubase.processor.list`

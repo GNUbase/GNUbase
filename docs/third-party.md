@@ -19,7 +19,7 @@ GNUbase is licensed under the GPL-3.0-or-later, so everything that goes into it 
 | [Lua](https://www.lua.org) | `ext/lua` | scripting | yes, linked statically | MIT | the end of `ext/lua/lua.h` |
 | [cpp-httplib](https://github.com/yhirose/cpp-httplib) | `ext/cpp-httplib` | the MCP server's HTTP transport | yes, header-only | MIT | `ext/cpp-httplib/LICENSE` |
 | [CLAP](https://github.com/free-audio/clap) | `ext/clap` | the CLAP plugin interface: test plugins now, the CLAP adapter of the plugin host later | no, only test plugins so far; header-only | MIT | `ext/clap/LICENSE` |
-| [VST3 SDK](https://github.com/GNUbase/vst3sdk) | `ext/vst3sdk` (GNUbase mirror, [dependencies.md](dependencies.md#vst3-sdk)) | the VST3 plugin interfaces: test plugins now, the VST3 adapter of the plugin host later | no, only test plugins so far; header-only (`pluginterfaces`) | MIT | `ext/vst3sdk/LICENSE.txt` |
+| [VST3 SDK](https://github.com/GNUbase/vst3sdk) | `ext/vst3sdk` (GNUbase mirror, [dependencies.md](dependencies.md#vst3-sdk)) | the VST3 plugin interfaces, for the VST3 adapter of the plugin host and the test plugins; the module loader and host classes, for the adapter | yes, in `gnubase-pluginhost`, linked statically (the interfaces and parts of `public.sdk`) | MIT | `ext/vst3sdk/LICENSE.txt` |
 | [Catch2](https://github.com/catchorg/Catch2) | `ext/Catch2` | tests | no, only test programs | BSL-1.0 | `ext/Catch2/LICENSE.txt` |
 
 Some of these bundle code from other projects under its own license:
@@ -33,7 +33,7 @@ Some of these bundle code from other projects under its own license:
 | Rubber Band Library | Speex resampler, KissFFT, SSE and NEON math functions, getopt, float_cast | `ext/rubberband/src/ext` | permissive licenses, in each folder; GNUbase's build compiles none of them (it uses Rubber Band's built-in FFT and resampler) |
 | r8brain-free-src | Takuya Ooura's FFT | `ext/r8brain/fft4g.h` | free to use, copy, modify and distribute for any purpose; see the file's header |
 
-The JSON library's repository also contains files under Apache-2.0, BSD-3-Clause and GPL-3.0 (its `LICENSES` folder). The headers GNUbase includes are all MIT. The FLAC repository also contains programs under GPL-2.0-or-later and documentation under GFDL; GNUbase builds only libFLAC. Of stb, GNUbase uses only `stb_vorbis.c`. r8brain-free-src also contains PFFFT (FFTPACK license), which GNUbase doesn't build: it uses the built-in Ooura FFT. Of the VST3 SDK, GNUbase fetches only `base`, `cmake`, `pluginterfaces` and `public.sdk`, each MIT with its own `LICENSE.txt`, and uses only the headers in `pluginterfaces`; the SDK's GUI library, documentation and tutorials are not fetched.
+The JSON library's repository also contains files under Apache-2.0, BSD-3-Clause and GPL-3.0 (its `LICENSES` folder). The headers GNUbase includes are all MIT. The FLAC repository also contains programs under GPL-2.0-or-later and documentation under GFDL; GNUbase builds only libFLAC. Of stb, GNUbase uses only `stb_vorbis.c`. r8brain-free-src also contains PFFFT (FFTPACK license), which GNUbase doesn't build: it uses the built-in Ooura FFT. Of the VST3 SDK, GNUbase fetches only `base`, `cmake`, `pluginterfaces` and `public.sdk`, each MIT with its own `LICENSE.txt`. It builds the interfaces in `pluginterfaces` and, from `public.sdk`, the module loader, the host classes and the string conversion ([dependencies.md](dependencies.md#vst3-sdk)); the SDK's GUI library, documentation and tutorials are not fetched.
 
 ## Why these licenses are compatible
 

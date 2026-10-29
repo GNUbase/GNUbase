@@ -1747,6 +1747,69 @@ Result:
 
 - `notes`: array, required
 
+### pluginhost
+
+#### `pluginhost_check`
+
+Engine command `pluginhost.check`.
+
+Reports the plugins that failed since the last check because their host process crashed, missed a processing deadline (reason "hung") or broke the protocol, and emits plugin.failed for each with its instance, plugin id, process and reason. A failed plugin is bypassed and outputs silence. Also emits pluginhost.changed for each hosting mode change whose moves are done. The engine runs this on its own as soon as a failure is detected or the moves are done.
+
+Result:
+
+- `failures`: array of object, required
+
+#### `pluginhost_get`
+
+Engine command `pluginhost.get`. Read-only.
+
+How plugins are grouped into plugin host processes, and the processes. mode: the hosting mode, "shared" (one process for every plugin), "perVendor", "perPlugin" or "perInstance"; defaultMode: the mode GNUbase starts with; overrides: plugin ids with a mode of their own. hosts: each process with its id (process), its group ("shared", "vendor:<vendor>", "plugin:<id>" or "instance:<instance>"), its state ("running", "hung" or "exited") and its plugin instances, whether they failed.
+
+Result:
+
+- `defaultMode`: string, required
+- `errors`: array of string
+- `hosts`: array of object, required
+- `mode`: string, required
+- `overrides`: object, required
+
+#### `pluginhost_setMode`
+
+Engine command `pluginhost.setMode`.
+
+Sets the hosting mode (see pluginhost.get) and returns at once. Plugins whose process changes then move to their new process in the background, with their state, between two blocks, so they keep sounding the same. When they did, pluginhost.changed is emitted with the new status, and with the plugins that could not move and stay where they are in errors.
+
+Arguments:
+
+- `mode`: one of "shared" | "perVendor" | "perPlugin" | "perInstance", required
+
+Result:
+
+- `defaultMode`: string, required
+- `errors`: array of string
+- `hosts`: array of object, required
+- `mode`: string, required
+- `overrides`: object, required
+
+#### `pluginhost_setOverride`
+
+Engine command `pluginhost.setOverride`.
+
+Gives a plugin (its id, e.g. "clap:com.example.synth") a hosting mode of its own, e.g. "perInstance" to isolate an unstable plugin, or removes its override with null. Moves the plugin's instances like pluginhost.setMode, which emits pluginhost.changed when they moved.
+
+Arguments:
+
+- `mode`: one of "shared" | "perVendor" | "perPlugin" | "perInstance" | null, required
+- `plugin`: string, required
+
+Result:
+
+- `defaultMode`: string, required
+- `errors`: array of string
+- `hosts`: array of object, required
+- `mode`: string, required
+- `overrides`: object, required
+
 ### processor
 
 #### `processor_list`
@@ -2311,6 +2374,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://job.list`: Every background job since the engine started, such as backups: id, kind, state (running, done, failed or cancelled), progress from 0 to 1, what it is doing, and its result or error once it ended.
 - `gnubase://marker.list`: The markers of a marker track (default: the active one; track 0 if there is none) in timeline order, with their position and end also in the project's samples.
 - `gnubase://media.peakStatus`: The state of the waveform overviews of a media file, or of every media file: pending, generating (with progress from 0 to 1), ready, failed (with the error) or recording; the frames that have peaks; the peak file they were loaded from or written to; whether they were generated from the audio file rather than loaded. Peak files are kept next to their audio file as <file name>.gbpeaks, or in fallbackFolder where that can't be written.
+- `gnubase://pluginhost.get`: How plugins are grouped into plugin host processes, and the processes. mode: the hosting mode, "shared" (one process for every plugin), "perVendor", "perPlugin" or "perInstance"; defaultMode: the mode GNUbase starts with; overrides: plugin ids with a mode of their own. hosts: each process with its id (process), its group ("shared", "vendor:<vendor>", "plugin:<id>" or "instance:<instance>"), its state ("running", "hung" or "exited") and its plugin instances, whether they failed.
 - `gnubase://processor.list`: Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units. A stepped parameter takes whole numbers only; its options, if any, name its values from the minimum on.
 - `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts.
 - `gnubase://project.location`: Where the project is: its project file (set by project.save and project.load), the folder of that file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. All null for a project that has no file yet.

@@ -186,12 +186,12 @@ namespace gnubase::testplugins
 			{
 				m_plugin.desc = &clapDescriptor();
 				m_plugin.plugin_data = this;
-				m_plugin.init = [](const clap_plugin_t*) { return true; };
+				m_plugin.init = [](const clap_plugin_t* plugin) { return self(plugin)->init(); };
 				m_plugin.destroy = [](const clap_plugin_t* plugin)
 				{ const std::unique_ptr<ClapPlugin> owner(self(plugin)); };
 				m_plugin.activate = [](const clap_plugin_t* plugin, double sampleRate, uint32_t, uint32_t maxFrames)
 				{
-					self(plugin)->m_core->activate(sampleRate, maxFrames);
+					self(plugin)->activate(sampleRate, maxFrames);
 					return true;
 				};
 				m_plugin.deactivate = [](const clap_plugin_t* plugin) { self(plugin)->m_core->deactivate(); };
@@ -212,6 +212,32 @@ namespace gnubase::testplugins
 			static ClapPlugin* self(const clap_plugin_t* plugin)
 			{
 				return static_cast<ClapPlugin*>(plugin->plugin_data);
+			}
+
+			// The host's extensions are looked up in init, as CLAP requires.
+			bool init()
+			{
+				m_hostLatency =
+					static_cast<const clap_host_latency_t*>(m_host->get_extension(m_host, CLAP_EXT_LATENCY));
+				m_hostParams = static_cast<const clap_host_params_t*>(m_host->get_extension(m_host, CLAP_EXT_PARAMS));
+				return true;
+			}
+
+			// CLAP: a plugin whose latency changed tells the host during activate.
+			void activate(double sampleRate, uint32_t maxFrames)
+			{
+				m_core->activate(sampleRate, maxFrames);
+				const uint32_t latency = m_core->latency();
+				if (latency != m_reportedLatency && m_hostLatency != nullptr && m_hostLatency->changed != nullptr)
+					m_hostLatency->changed(m_host);
+				m_reportedLatency = latency;
+			}
+
+			// CLAP: after loading a state, the host reads the parameter values again.
+			void rescanValues()
+			{
+				if (m_hostParams != nullptr && m_hostParams->rescan != nullptr)
+					m_hostParams->rescan(m_host, CLAP_PARAM_RESCAN_VALUES);
 			}
 
 			clap_process_status process(const clap_process_t& process)
@@ -355,7 +381,10 @@ namespace gnubase::testplugins
 					if (count == 0)
 						break;
 				}
-				return self(plugin)->m_core->loadState(bytes.data(), bytes.size());
+				if (!self(plugin)->m_core->loadState(bytes.data(), bytes.size()))
+					return false;
+				self(plugin)->rescanValues();
+				return true;
 			}
 
 			static uint32_t latency(const clap_plugin_t* plugin) { return self(plugin)->m_core->latency(); }
@@ -363,6 +392,9 @@ namespace gnubase::testplugins
 		private:
 			clap_plugin_t m_plugin{};
 			const clap_host_t* m_host;
+			const clap_host_latency_t* m_hostLatency = nullptr;
+			const clap_host_params_t* m_hostParams = nullptr;
+			uint32_t m_reportedLatency = 0; // a CLAP host assumes no latency until it is told
 			std::unique_ptr<TestPlugin> m_core;
 		};
 
