@@ -1625,6 +1625,17 @@ Result:
 - `removedParts`: array of integer, required
 - `tracks`: array of integer, required
 
+#### `midi_monitor`
+
+Engine command `midi.monitor`. Read-only.
+
+The MIDI input received since the last call from every open input, at most 4096 messages, each with its port, its frame position on the audio device and its bytes. dropped counts what didn't fit. Input reaches the monitor while an audio device processes blocks, which places it in time.
+
+Result:
+
+- `dropped`: integer, required
+- `received`: array, required
+
 #### `midi_pedalToNoteLength`
 
 Engine command `midi.pedalToNoteLength`.
@@ -1639,6 +1650,26 @@ Arguments:
 Result:
 
 - `parts`: array of integer, required
+
+#### `midi_ports`
+
+Engine command `midi.ports`. Read-only.
+
+The MIDI ports of every MIDI backend, inputs and outputs: backend, id, system name, the name they are shown as (showAs), whether they are visible, whether an input belongs to all MIDI inputs, whether the port is present now and open, and whether the system speaks MIDI 2.0 with it. Ports that were unplugged stay listed with their settings, not present.
+
+Result:
+
+- `ports`: array, required
+
+#### `midi_refresh`
+
+Engine command `midi.refresh`.
+
+Lists the MIDI ports again: opens new and returning visible inputs and marks unplugged ports as not present. Runs on its own when a backend reports that its ports changed.
+
+Result:
+
+- `ports`: array, required
 
 #### `midi_restrictPolyphony`
 
@@ -1670,6 +1701,21 @@ Arguments:
 Result:
 
 - `parts`: array of integer, required
+
+#### `midi_setPort`
+
+Engine command `midi.setPort`.
+
+Changes a MIDI port's settings. The port is given by its id, whether it is an input, and its backend if ids repeat. showAs: the name it is shown as; empty shows the system name. visible: hidden inputs are closed. inAllInputs, for inputs: whether tracks set to all MIDI inputs receive it. Returns the port.
+
+Arguments:
+
+- `backend`: string
+- `id`: string, required
+- `inAllInputs`: boolean
+- `input`: boolean, required
+- `showAs`: string
+- `visible`: boolean
 
 #### `midi_thinOut`
 
@@ -2377,6 +2423,8 @@ Queries without required arguments can also be read as resources:
 - `gnubase://job.list`: Every background job since the engine started, such as backups: id, kind, state (running, done, failed or cancelled), progress from 0 to 1, what it is doing, and its result or error once it ended.
 - `gnubase://marker.list`: The markers of a marker track (default: the active one; track 0 if there is none) in timeline order, with their position and end also in the project's samples.
 - `gnubase://media.peakStatus`: The state of the waveform overviews of a media file, or of every media file: pending, generating (with progress from 0 to 1), ready, failed (with the error) or recording; the frames that have peaks; the peak file they were loaded from or written to; whether they were generated from the audio file rather than loaded. Peak files are kept next to their audio file as <file name>.gbpeaks, or in fallbackFolder where that can't be written.
+- `gnubase://midi.monitor`: The MIDI input received since the last call from every open input, at most 4096 messages, each with its port, its frame position on the audio device and its bytes. dropped counts what didn't fit. Input reaches the monitor while an audio device processes blocks, which places it in time.
+- `gnubase://midi.ports`: The MIDI ports of every MIDI backend, inputs and outputs: backend, id, system name, the name they are shown as (showAs), whether they are visible, whether an input belongs to all MIDI inputs, whether the port is present now and open, and whether the system speaks MIDI 2.0 with it. Ports that were unplugged stay listed with their settings, not present.
 - `gnubase://pluginhost.get`: How plugins are grouped into plugin host processes, and the processes. mode: the hosting mode, "shared" (one process for every plugin), "perVendor", "perPlugin" or "perInstance"; defaultMode: the mode GNUbase starts with; overrides: plugin ids with a mode of their own. hosts: each process with its id (process), its group ("shared", "vendor:<vendor>", "plugin:<id>" or "instance:<instance>"), its state ("running", "hung" or "exited") and its plugin instances, whether they failed.
 - `gnubase://processor.list`: Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units. A stepped parameter takes whole numbers only; its options, if any, name its values from the minimum on.
 - `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts.

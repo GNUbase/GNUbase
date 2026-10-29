@@ -172,6 +172,7 @@ namespace gnubase::engine::graph
 		std::unique_ptr<Scheduler> m_scheduler; // the parallel cycle's state
 	};
 
-	// The most events a node receives or sends in one block; the rest are dropped.
+	// The most events a node receives or sends in one block; the rest are dropped, a node's input dropping note-offs
+	// last.
 	inline constexpr size_t g_maxEventsPerBlock = 1024;
 }

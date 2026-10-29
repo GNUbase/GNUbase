@@ -381,8 +381,7 @@ namespace gnubase::engine::graph
 
 		EventBuffer& eventsIn = m_eventsIn[i];
 		for (const int input : node.eventInputs)
-			for (const ProcessEvent& event : m_eventsOut[static_cast<size_t>(input)])
-				eventsIn.add(event);
+			eventsIn.merge(m_eventsOut[static_cast<size_t>(input)]);
 
 		EventBuffer& eventsOut = m_eventsOut[i];
 		eventsOut.clear();

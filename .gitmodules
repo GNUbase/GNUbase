@@ -53,3 +53,6 @@
 [submodule "ext/freetype"]
 	path = ext/freetype
 	url = https://github.com/freetype/freetype.git
+[submodule "ext/asio"]
+	path = ext/asio
+	url = https://github.com/GNUbase/asio.git

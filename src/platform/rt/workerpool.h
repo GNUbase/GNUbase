@@ -87,8 +87,8 @@ namespace gnubase::rt
 	// can use, works on the job itself as thread 0 and returns once no worker is inside the job any more. A worker
 	// that wakes late finds the job done, so a slow worker never delays the audio thread by more than the job's own
 	// work, as long as the workers have real-time priority (realtime). After a job, a worker that took part spins
-	// briefly for the next one (a sixteenth of a period, 20 to 200 us), then sleeps on a semaphore; a worker the job
-	// didn't need sleeps at once.
+	// briefly for the next one (a sixteenth of a period, 20 to 200 us), then sleeps on a semaphore of its own; a worker
+	// the job didn't need sleeps at once. A woken worker joins the job it was woken for unless that job is done.
 	//
 	// Every job runs in its caller's floating-point mode on every thread (rounding, flush to zero, denormals are
 	// zero), so a job's results don't depend on which thread computed them. On Linux workers take SCHED_FIFO priority
@@ -96,9 +96,11 @@ namespace gnubase::rt
 	class WorkerPool
 	{
 	public:
-		// Starts workers threads with real-time priority for periods of about periodSeconds and waits until each has
-		// tried to get it. Throws std::system_error if a thread can't be started, after ending the ones that were.
+		// Starts workers threads, at most g_maxWorkers, with real-time priority for periods of about periodSeconds and
+		// waits until each has tried to get it. Throws std::invalid_argument for more workers, and std::system_error
+		// if a thread can't be started, after ending the ones that were.
 		explicit WorkerPool(size_t workers, double periodSeconds = 0.005);
+		static constexpr size_t g_maxWorkers = 64;
 		~WorkerPool(); // joins the workers
 		WorkerPool(const WorkerPool&) = delete;
 		WorkerPool& operator=(const WorkerPool&) = delete;
@@ -116,20 +118,21 @@ namespace gnubase::rt
 
 	private:
 		void loop(size_t thread, double periodSeconds);
-		uint64_t waitForJob(uint64_t seen, bool spin) noexcept; // returns the new generation
+		uint64_t waitForJob(size_t worker, uint64_t seen, bool spin) noexcept; // returns the new generation
+		bool admit(uint64_t generation) noexcept;
+		void wake(size_t count) noexcept;
 		void stopWorkers() noexcept;
 		void followCaller() noexcept; // Linux: publishes the worker priority for the calling thread
 
 		std::chrono::steady_clock::duration m_spin;
-		Semaphore m_wake;
-		Semaphore m_started; // released once by each worker after it tried to get real-time priority
+		std::unique_ptr<Semaphore[]> m_wakes; // one per worker, released once for each time run takes its sleeping bit
+		Semaphore m_started;                  // released once by each worker after it tried to get real-time priority
 		std::atomic<ParallelJob*> m_job{nullptr};
 		std::atomic<uint64_t> m_generation{0}; // counts jobs
-		std::atomic<size_t> m_helpers{0};      // how many workers the current job takes
-		std::atomic<size_t> m_admitted{0};     // workers that came for the current job
+		std::atomic<uint64_t> m_tickets{0};    // the job's generation << 8 | the workers it still takes; see admit
 		std::atomic<uint64_t> m_floatMode{0};  // the current job's caller's floating-point mode
 		std::atomic<int> m_priority{0};        // Linux: the workers' SCHED_FIFO priority; 0 for their initial one
-		std::atomic<size_t> m_sleepers{0};     // workers that sleep or are about to
+		std::atomic<uint64_t> m_sleeping{0};   // a bit per worker that sleeps or is about to
 		std::atomic<size_t> m_inside{0};       // workers inside the current job
 		std::atomic<size_t> m_realtime{0};
 		std::atomic<bool> m_stop{false};
@@ -138,11 +141,13 @@ namespace gnubase::rt
 	};
 
 	// For tests: the pools constructed from now on meet an OS that refuses them, as with a process limit or without
-	// real-time privileges. Call it while no pool is being constructed.
+	// real-time privileges, or count their workers as real-time where they aren't, so that machines without the
+	// privileges (CI's Linux runners) still process in parallel. Call it while no pool is being constructed.
 	struct WorkerPoolFaults
 	{
 		size_t threadLimit = SIZE_MAX; // starting more worker threads than this throws std::system_error
 		bool refuseRealtime = false;   // no worker gets real-time priority
+		bool pretendRealtime = false;  // every worker counts as real-time (realtime()), whatever priority it got
 	};
 	void setWorkerPoolFaults(const WorkerPoolFaults& faults) noexcept;
 }

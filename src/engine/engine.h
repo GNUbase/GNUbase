@@ -3,6 +3,7 @@
 
 #include "engine/schema.h"
 #include "platform/audio/device.h"
+#include "platform/midi/port.h"
 #include "platform/rt/snapshotpublisher.h"
 
 #include <chrono>
@@ -140,11 +141,12 @@ namespace gnubase::engine
 	class Engine
 	{
 	public:
-		// The audio engine plays through devices of these backends. The user settings are read from and saved to the
-		// settings folder (files::settingsDirectory() is the user's); without one, they are kept in memory only, as in
-		// tests.
+		// The audio engine plays through devices of these backends and takes MIDI from the ports of these MIDI
+		// backends. The user settings are read from and saved to the settings folder (files::settingsDirectory() is
+		// the user's); without one, they are kept in memory only, as in tests.
 		explicit Engine(std::vector<std::unique_ptr<audio::Backend>> backends = audio::makeBackends(),
-			const std::filesystem::path& settingsDirectory = {});
+			const std::filesystem::path& settingsDirectory = {},
+			std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends = gnubase::midi::makeBackends());
 		~Engine();
 		Engine(const Engine&) = delete;
 		Engine& operator=(const Engine&) = delete;

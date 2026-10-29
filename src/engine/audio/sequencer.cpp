@@ -79,6 +79,7 @@ namespace gnubase::engine
 		const MidiSequence& sequence = m_sequence.acquire();
 		for (const graph::ProcessEvent& event : context.eventsIn)
 			context.eventsOut.add(event);
+		context.eventsOut.nextSource();
 
 		const graph::TransportBlock& transport = context.transport;
 		if (!transport.playing)
@@ -255,6 +256,7 @@ namespace gnubase::engine
 				--m_endingCount;
 			}
 		}
+		m_events.nextSource();
 		for (size_t index = 0; m_endingCount > 0 && index < m_ending.size(); ++index)
 		{
 			if (!m_ending[index])

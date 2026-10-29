@@ -282,7 +282,8 @@ namespace
 		Engine engine;
 		Client client(engine);
 		run(client, "audio.setDevice", {{"blockSize", 96}, {"inputChannels", 0}, {"captureSeconds", 1}});
-		run(client, "audio.setProcessing", {{"threads", threads}});
+		const Json processing = run(client, "audio.setProcessing", {{"threads", threads}}).at("processing");
+		CHECK(processing.at("activeThreads") == std::min(static_cast<size_t>(threads), gnubase::rt::hardwareThreads()));
 		const Json group = run(client, "track.add", {{"type", "group"}});
 		const Json project = run(client, "project.get");
 		ObjectId groupChannel = 0;
@@ -422,6 +423,9 @@ TEST_CASE("processing threads the system refuses to start are a command error, n
 
 TEST_CASE("a project renders bit-identically with one or many processing threads", "[integration]")
 {
+	// Workers count as real-time also where they can't get it, as on CI's Linux runners, so they process in parallel
+	// there too and the sanitizer jobs check the engine's code on workers.
+	const Faults faults({SIZE_MAX, false, true});
 	const std::vector<float> one = renderSong(1);
 	bool sound = false;
 	for (const float sample : one)
