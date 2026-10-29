@@ -70,6 +70,26 @@ namespace gnubase::engine
 		std::vector<uint8_t> data; // SysEx
 	};
 
+	struct RenderAutomationPoint
+	{
+		time::Samples position = 0;
+		double value = 0.0; // in the target's unit; volume as a linear gain
+		AutomationShape shape = AutomationShape::Linear;
+		double curve = 0.0;
+
+		bool operator==(const RenderAutomationPoint& other) const
+		{
+			return position == other.position && value == other.value && shape == other.shape && curve == other.curve;
+		}
+	};
+
+	// A lane that plays: read-enabled and with points.
+	struct RenderAutomationLane
+	{
+		AutomationTarget target;
+		std::vector<RenderAutomationPoint> points; // sorted by position; points at one position in the order added
+	};
+
 	struct RenderChannel
 	{
 		ObjectId id = 0;
@@ -78,11 +98,17 @@ namespace gnubase::engine
 		int channels = 2;
 		int input = -1; // index into RenderSnapshot::busses, or -1
 		RenderTarget output;
-		std::string instrument;                    // instrument tracks: a built-in instrument's id, or empty
-		std::vector<RenderAudioEvent> audioEvents; // sorted by start
-		std::vector<RenderNote> notes;             // sorted by start, then pitch
-		std::vector<RenderController> controllers; // sorted by position
+		std::string instrument;                       // instrument tracks: a built-in instrument's id, or empty
+		double volume = 1.0;                          // the fader's static value, a linear gain
+		double pan = 0.0;                             // the static balance, -1 to 1
+		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
+		std::vector<RenderNote> notes;                // sorted by start, then pitch
+		std::vector<RenderController> controllers;    // sorted by position
+		std::vector<RenderAutomationLane> automation; // in the order of the lanes' ids
 	};
+
+	// A channel volume in dB as a linear gain.
+	double volumeGain(double decibels);
 
 	// What the audio thread needs from the project, compiled by the command thread after every change and handed
 	// over with rt::SnapshotPublisher. Objects refer to each other by index and every position is in the project's

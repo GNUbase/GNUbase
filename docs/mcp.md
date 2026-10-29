@@ -526,6 +526,132 @@ Result:
 - `processing`: object, required
 - `running`: boolean, required
 
+### automationLane
+
+#### `automationLane_add`
+
+Engine command `automationLane.add`.
+
+Adds an automation lane to a track: the curve of one parameter. target.type says which: volume (the channel's fader, in dB) and pan (-1 to 1) on tracks with audio channels; instrument, a parameter of an instrument track's built-in instrument (target.parameter, an id from processor.list, in its range); controller (target.number 0-127), pitchBend (0.5 is no bend) and channelPressure, all 0 to 1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). A track has one lane per target. read (default true): the curve plays; without it, or without points, the parameter keeps its static value.
+
+Arguments:
+
+- `read`: boolean
+- `target`: object, required
+- `track`: integer, required
+
+Result:
+
+- `lane`: object, required
+
+#### `automationLane_list`
+
+Engine command `automationLane.list`. Read-only.
+
+The automation lanes of a track, or of every track in track order, with their points sorted by position.
+
+Arguments:
+
+- `track`: integer
+
+Result:
+
+- `lanes`: array, required
+
+#### `automationLane_remove`
+
+Engine command `automationLane.remove`.
+
+Removes an automation lane with its points.
+
+Arguments:
+
+- `lane`: integer, required
+
+#### `automationLane_set`
+
+Engine command `automationLane.set`.
+
+Turns reading an automation lane on or off.
+
+Arguments:
+
+- `lane`: integer, required
+- `read`: boolean
+
+Result:
+
+- `lane`: object, required
+
+### automationPoint
+
+#### `automationPoint_add`
+
+Engine command `automationPoint.add`.
+
+Adds points to an automation lane: position in the track's time base (ticks on musical tracks, so automation follows tempo changes; samples on linear ones, so it keeps its time), value in the target's unit, shape of the curve to the next point (step, linear or curve; default linear) and for curves the bend, curve, from -1 to 1 (above 0 the value moves fast at first). Before the first point the curve has its value, after the last point the last one's; points at one position make a jump. A ramp of volume moves the gain in a straight line.
+
+Arguments:
+
+- `lane`: integer, required
+- `points`: array of object, required
+
+Result:
+
+- `points`: array, required
+
+#### `automationPoint_remove`
+
+Engine command `automationPoint.remove`.
+
+Removes points from an automation lane.
+
+Arguments:
+
+- `lane`: integer, required
+- `points`: array of integer, required
+
+#### `automationPoint_set`
+
+Engine command `automationPoint.set`.
+
+Changes points of an automation lane: their position, value, shape or curve.
+
+Arguments:
+
+- `lane`: integer, required
+- `points`: array of object, required
+
+Result:
+
+- `points`: array, required
+
+### automation
+
+#### `automation_get`
+
+Engine command `automation.get`. Read-only.
+
+The automation settings. followsEvents (default false): when an audio event or MIDI part moves, the automation of its track in its range moves with it and replaces the points where it lands.
+
+Result:
+
+- `followsEvents`: boolean, required
+
+#### `automation_set`
+
+Engine command `automation.set`.
+
+Changes the automation settings (see automation.get). A setting, so it stays when a new project starts.
+
+Arguments:
+
+- `followsEvents`: boolean
+
+Result:
+
+- `followsEvents`: boolean, required
+
 ### bus
 
 #### `bus_add`
@@ -575,7 +701,7 @@ Result:
 
 Engine command `channel.set`.
 
-Changes a channel's audio channels, input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none.
+Changes a channel's audio channels, input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 to 6 (default 0); pan is a stereo channel's balance from -1 (left) to 1 (right). Automation of volume and pan overrides them while it plays.
 
 Arguments:
 
@@ -584,6 +710,8 @@ Arguments:
 - `input`: integer
 - `instrument`: string
 - `output`: integer
+- `pan`: number
+- `volume`: number
 
 Result:
 
@@ -1632,6 +1760,8 @@ Queries without required arguments can also be read as resources:
 - `gnubase://audio.devices`: The audio backends of this build, the preferred one first, and the devices each has now: their ids, names, channel names, sample rates, block sizes, clock sources (and the current one), and whether the driver has a control panel. A backend that can't list its devices has an error instead.
 - `gnubase://audio.get`: The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing).
 - `gnubase://audio.performance`: Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1; cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late.
+- `gnubase://automation.get`: The automation settings. followsEvents (default false): when an audio event or MIDI part moves, the automation of its track in its range moves with it and replaces the points where it lands.
+- `gnubase://automationLane.list`: The automation lanes of a track, or of every track in track order, with their points sorted by position.
 - `gnubase://engine.commands`: Every command with its documentation, parameters and result.
 - `gnubase://engine.version`: The GNUbase version.
 - `gnubase://graph.get`: The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes they receive audio and events from, and the order they are processed in.

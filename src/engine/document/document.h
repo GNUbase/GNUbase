@@ -57,7 +57,12 @@ namespace gnubase::engine
 		ObjectId input = 0;     // audio tracks: an input bus, or 0
 		ObjectId output = 0;    // an output bus or a group channel; MIDI: an instrument channel; or 0
 		std::string instrument; // instrument tracks: the built-in instrument that plays, or empty (plugins: M05)
+		double volume = 0.0;    // the fader, in dB from g_minChannelVolume to g_maxChannelVolume
+		double pan = 0.0;       // stereo channels' balance: -1 left, 0 center, 1 right
 	};
+
+	inline constexpr double g_minChannelVolume = -144.0;
+	inline constexpr double g_maxChannelVolume = 6.0;
 
 	// An audio file on disk.
 	struct MediaFile
@@ -152,6 +157,7 @@ namespace gnubase::engine
 	};
 
 	// Holds notes and controllers on an instrument or MIDI track. Notes and controllers outside it are not played.
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct MidiPart
 	{
 		ObjectId id = 0;
@@ -184,6 +190,55 @@ namespace gnubase::engine
 		std::string color; // "#rrggbb", or empty for the default color
 	};
 
+	// What an automation lane changes.
+	enum class AutomationTargetType : uint8_t
+	{
+		Volume,          // the channel's fader, in dB
+		Pan,             // the channel's balance, -1 to 1
+		Instrument,      // a parameter of the channel's built-in instrument, in its range
+		Controller,      // a MIDI control change: number and channel; 0 to 1
+		PitchBend,       // channel; 0 to 1, 0.5 is no bend
+		ChannelPressure, // channel; 0 to 1
+	};
+
+	struct AutomationTarget
+	{
+		AutomationTargetType type = AutomationTargetType::Volume;
+		uint32_t parameter = 0; // Instrument: the parameter's id
+		uint8_t number = 0;     // Controller: 0-127
+		uint8_t channel = 0;    // the MIDI types: 0-15
+	};
+
+	// The shape of the curve from an automation point to the next one.
+	enum class AutomationShape : uint8_t
+	{
+		Step,   // keeps the point's value until the next point
+		Linear, // a straight ramp to the next point
+		Curve,  // a bent ramp: see AutomationPoint::curve
+	};
+
+	struct AutomationPoint
+	{
+		ObjectId id = 0;
+		time::Position position; // in the track's time base, like the track's events
+		double value = 0.0;      // in the target's unit
+		AutomationShape shape = AutomationShape::Linear;
+		double curve = 0.0; // Curve: -1 to 1; above 0 the value moves fast at first, below 0 slowly at first
+	};
+
+	// The automation of one parameter on a track. Points at the same position make a jump; before the first point the
+	// curve has its value, after the last point the last one's. read: the curve plays; without it, or without points,
+	// the parameter keeps its static value (write modes come with #122).
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
+	struct AutomationLane
+	{
+		ObjectId id = 0;
+		ObjectId track = 0;
+		AutomationTarget target;
+		bool read = true;
+		std::map<ObjectId, AutomationPoint> points;
+	};
+
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct Project
 	{
@@ -202,6 +257,7 @@ namespace gnubase::engine
 		std::map<ObjectId, AudioEvent> audioEvents;
 		std::map<ObjectId, MidiPart> midiParts;
 		std::map<ObjectId, Marker> markers;
+		std::map<ObjectId, AutomationLane> automation;
 
 		// The quantize settings that apply when none are given, and whether recording quantizes (#132). Settings,
 		// not part of undo.
@@ -225,8 +281,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
-		return std::tie(a.id, a.track, a.channels, a.input, a.output, a.instrument) ==
-			std::tie(b.id, b.track, b.channels, b.input, b.output, b.instrument);
+		return std::tie(a.id, a.track, a.channels, a.input, a.output, a.instrument, a.volume, a.pan) ==
+			std::tie(b.id, b.track, b.channels, b.input, b.output, b.instrument, b.volume, b.pan);
 	}
 
 	inline bool operator==(const MediaFile& a, const MediaFile& b)
@@ -278,6 +334,23 @@ namespace gnubase::engine
 	inline bool operator==(const Marker& a, const Marker& b)
 	{
 		return std::tie(a.id, a.position, a.name, a.color) == std::tie(b.id, b.position, b.name, b.color);
+	}
+
+	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)
+	{
+		return std::tie(a.type, a.parameter, a.number, a.channel) == std::tie(b.type, b.parameter, b.number, b.channel);
+	}
+
+	inline bool operator==(const AutomationPoint& a, const AutomationPoint& b)
+	{
+		return std::tie(a.id, a.position, a.value, a.shape, a.curve) ==
+			std::tie(b.id, b.position, b.value, b.shape, b.curve);
+	}
+
+	// An automation lane's own properties, without its points.
+	inline bool sameProperties(const AutomationLane& a, const AutomationLane& b)
+	{
+		return std::tie(a.id, a.track, a.target, a.read) == std::tie(b.id, b.track, b.target, b.read);
 	}
 
 	inline bool operator==(const Track& a, const Track& b)

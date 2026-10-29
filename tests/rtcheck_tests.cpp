@@ -17,10 +17,12 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // gnubase-tests links the RT checker (gnubase-rtcheck), which reports allocations made in real-time code.
@@ -516,6 +518,66 @@ TEST_CASE("playing MIDI parts through an instrument, with edits, stops and cycle
 	run("transport.locate", {{"position", 3000}}); // a locate ends the sounding notes
 	run("audio.render", {{"frames", 4800}});
 	run("transport.stop", Json::object());
+	run("audio.render", {{"frames", 960}});
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE(
+	"playing automation of volume, pan, instrument parameters and controllers passes the RT checker", "[integration]")
+{
+	using gnubase::engine::Json;
+	gnubase::engine::Engine engine;
+	gnubase::engine::Client client(engine);
+	const auto run = [&client](const std::string& command, const Json& parameters)
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	const auto points = [](std::initializer_list<std::pair<int64_t, double>> list, const char* shape)
+	{
+		Json result = Json::array();
+		for (const auto& [position, value] : list) // samples, in ticks at 120 BPM and 48 kHz
+			result.push_back({{"position", position * 1792 / 25}, {"value", value}, {"shape", shape}});
+		return result;
+	};
+	const auto lane = [&run](const Json& track, const Json& target)
+	{
+		return run("automationLane.add", {{"track", track.at("track").at("id")}, {"target", target}})
+			.at("lane")
+			.at("id");
+	};
+	run("audio.setDevice",
+		{{"blockSize", 64}, {"captureSeconds", 1},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 441.0}, {"Level", 0.5}}}}}});
+	const Json audio = run("track.add", {{"type", "audio"}});
+	const Json instrument = run("track.add", {{"type", "instrument"}});
+	run("channel.set", {{"channel", instrument.at("channel").at("id")}, {"instrument", "testSynth"}});
+	run("automationPoint.add",
+		{{"lane", lane(audio, {{"type", "volume"}})},
+			{"points", points({{0, -30.0}, {2000, 0.0}, {5000, -6.0}, {9000, -60.0}}, "linear")}});
+	run("automationPoint.add",
+		{{"lane", lane(audio, {{"type", "pan"}})}, {"points", points({{0, -1.0}, {4000, 1.0}, {8000, 0.0}}, "curve")}});
+	run("automationPoint.add",
+		{{"lane", lane(instrument, {{"type", "instrument"}, {"parameter", 0}})},
+			{"points", points({{0, 0.0}, {3000, 1.0}, {6000, 0.5}}, "linear")}});
+	const Json controller = lane(instrument, {{"type", "controller"}, {"number", 7}, {"channel", 0}});
+	run("automationPoint.add",
+		{{"lane", controller}, {"points", points({{0, 0.0}, {1000, 1.0}, {7000, 0.25}}, "curve")}});
+	run("transport.set", {{"left", 1000}, {"right", 9000}, {"cycle", true}});
+	run("transport.play", Json::object());
+
+	const RecordViolations record;
+	run("audio.render", {{"frames", 9600}});
+	run("automationPoint.add", // new curves, swapped in between blocks
+		{{"lane", controller}, {"points", points({{1500, 0.5}, {2500, 0.0}}, "step")}});
+	run("audio.render", {{"frames", 4800}});
+	run("transport.locate", {{"position", 3000}}); // mid-ramp
+	run("audio.render", {{"frames", 4800}});
+	run("transport.stop", Json::object());
+	run("audio.render", {{"frames", 960}});
+	run("transport.locate", {{"position", 5000}}); // while stopped
 	run("audio.render", {{"frames", 960}});
 	CHECK(g_violations == 0);
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/automation.h"
 #include "engine/audio/performance.h"
 #include "engine/audio/playback.h"
 #include "engine/audio/sequencer.h"
@@ -149,6 +150,8 @@ namespace gnubase::engine
 		void attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc, uint64_t generation);
 		// The releases for a new program: those pending that the audio thread hasn't done yet.
 		std::vector<Release> releases();
+		// Puts every channel's processor into a channel strip with the channel's fader and automation.
+		void attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
 
 		rt::SnapshotPublisher<RenderSnapshot>& m_snapshots;
 		uint64_t m_revision = 0;
@@ -167,8 +170,9 @@ namespace gnubase::engine
 			std::set<ObjectId> sources; // the MIDI channels routed to it
 			std::shared_ptr<InstrumentChannel> channel;
 		};
-		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers; // per MIDI and instrument channel
-		std::map<ObjectId, Instrument> m_instruments;                    // per instrument channel
+		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers;   // per MIDI and instrument channel
+		std::map<ObjectId, Instrument> m_instruments;                      // per instrument channel
+		std::map<ObjectId, std::shared_ptr<ChannelState>> m_channelStates; // per channel
 		std::vector<PendingRelease> m_releases;
 
 		std::unique_ptr<rt::SnapshotPublisher<Program>> m_programs;

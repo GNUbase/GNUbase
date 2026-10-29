@@ -86,6 +86,7 @@ add_library(gnubase-engine STATIC
 	analysis/analysis.cpp analysis/analysis.h
 	audio/analysiscommands.cpp
 	audio/audioengine.cpp audio/audioengine.h
+	audio/automation.cpp audio/automation.h
 	audio/performance.cpp audio/performance.h
 	audio/playback.cpp audio/playback.h
 	audio/sequencer.cpp audio/sequencer.h
