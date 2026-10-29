@@ -39,9 +39,8 @@ jobs:
         include:
           - { name: windows-x64, runner: windows-2025, preset: windows-x64 }
           - { name: windows-arm64, runner: windows-11-arm, preset: windows-arm64 }
-          # ponytail: Intel runner because hosted macOS arm64 runners had no capacity (jobs were never picked up).
-          # Builds both slices, tests the x86_64 one. Move back to macos-15 (arm64) before Intel images retire in 2027.
-          - { name: macos-universal, runner: macos-15-intel, preset: macos }
+          # Builds both slices and tests the arm64 one, which has Metal for the window tests.
+          - { name: macos-universal, runner: macos-15, preset: macos }
           - { name: linux-x64-gcc, runner: ubuntu-24.04, preset: linux-gcc }
           - { name: linux-x64-clang, runner: ubuntu-24.04, preset: linux-clang }
           - { name: linux-arm64-gcc, runner: ubuntu-24.04-arm, preset: linux-gcc }
@@ -89,10 +88,9 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }} --config Release
 
       - name: Test
-        # The window tests need SDL_GPU. Every runner has it except the macOS Intel one, whose virtual GPU doesn't meet
-        # SDL_GPU's requirements (docs/render-backend.md): there they are skipped, everywhere else a missing GPU fails.
+        # Every runner has SDL_GPU (Linux through Mesa's lavapipe), so the window tests fail instead of skipping.
         env:
-          GNUBASE_REQUIRE_GPU: ${{ runner.os != 'macOS' && '1' || '0' }}
+          GNUBASE_REQUIRE_GPU: 1
         run: ctest --preset ${{ matrix.preset }} -C Release
 
       # Non-blocking (#24): shared runners vary too much to fail on numbers, so the results are only kept.

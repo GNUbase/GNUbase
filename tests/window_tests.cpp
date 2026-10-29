@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Real windows (#48): SDL3 windows drawn through SDL_GPU, screenshots, input and SDL's events. On Linux the tests use
 // SDL's offscreen video driver unless SDL_VIDEO_DRIVER names another, so they need no display, only a Vulkan driver
-// (Mesa's lavapipe in CI). Where SDL_GPU has no device, such as CI's macOS Intel runner, they are skipped, unless
-// GNUBASE_REQUIRE_GPU=1 says this machine must have one.
+// (Mesa's lavapipe in CI). Where SDL_GPU has no device, such as an Intel Mac whose GPU doesn't meet SDL_GPU's
+// requirements, they are skipped, unless GNUBASE_REQUIRE_GPU=1 says this machine must have one, as in CI.
 #include "testutils/testutils.h"
 #include "ui/gpurenderer.h"
 #include "ui/rmlui.h"
