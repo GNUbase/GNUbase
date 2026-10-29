@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# ThreadSanitizer suppressions for CI's tsan job (TSAN_OPTIONS=suppressions=...). TSan only sees the locking of code
+# compiled with it, so it reports races inside Mesa's lavapipe Vulkan driver, and the LLVM it compiles shaders with,
+# which the window tests draw through. Nothing of GNUbase's own belongs here.
+race:libvulkan_lvp.so
+race:libLLVM

@@ -1,16 +1,33 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "testutils/goldenimage.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
+#include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <limits>
+#include <optional>
+#include <string>
 
 using namespace gnubase::test;
 
 namespace
 {
+	// A 4x3 image with a different color in every pixel.
+	gnubase::ui::Image gradient()
+	{
+		gnubase::ui::Image image{4, 3, {}};
+		for (int y = 0; y < image.height; ++y)
+			for (int x = 0; x < image.width; ++x)
+				image.pixels.insert(
+					image.pixels.end(), {static_cast<uint8_t>(x * 60), static_cast<uint8_t>(y * 100), 50, 255});
+		return image;
+	}
+
 	Audio ramp(int channels, size_t frames)
 	{
 		Audio audio;
@@ -130,4 +147,45 @@ TEST_CASE("compareWithGolden writes the golden file in update mode", "[unit]")
 	const TempDir output;
 	CHECK(compareWithGolden(golden.path(), output.path(), "ramp", ramp(1, 10), 0.0f, true).equal);
 	CHECK(readWav(golden.path() / "ramp.wav").samples == ramp(1, 10).samples);
+}
+
+TEST_CASE("images compare equal within the tolerance, allowing a number of pixels beyond it", "[unit]")
+{
+	const gnubase::ui::Image expected = gradient();
+	gnubase::ui::Image actual = expected;
+	actual.pixels[0] += 3;
+	CHECK(compareImages(actual, expected, 3).equal);
+	CHECK(compareImages(actual, expected, 2, 1).equal);
+
+	const ImageDiff diff = compareImages(actual, expected, 2);
+	CHECK_FALSE(diff.equal);
+	CHECK(diff.maxDifference == 3);
+	CHECK(diff.differentPixels == 1);
+	CHECK(diff.report.find("(0, 0)") != std::string::npos);
+
+	actual.width = 3;
+	CHECK_FALSE(compareImages(actual, expected, 255, 100).equal);
+}
+
+TEST_CASE("compareWithGolden saves the actual image and marks the differences", "[unit]")
+{
+	const TempDir golden;
+	const TempDir output;
+	const gnubase::ui::Image expected = gradient();
+	CHECK(compareWithGolden(golden.path(), output.path(), "ui/gradient", expected, 0, 0, true).equal);
+	CHECK(compareWithGolden(golden.path(), output.path(), "ui/gradient", expected, 0, 0).equal);
+
+	gnubase::ui::Image actual = expected;
+	actual.pixels[(5 * 4) + 1] = 255; // the pixel at (1, 1)
+	const ImageDiff diff = compareWithGolden(golden.path(), output.path(), "ui/gradient", actual, 0, 0);
+	CHECK_FALSE(diff.equal);
+	CHECK(gnubase::ui::readPng(output.path() / "ui/gradient.actual.png").value_or(gnubase::ui::Image{}).pixels ==
+		actual.pixels);
+	const std::optional<gnubase::ui::Image> marked = gnubase::ui::readPng(output.path() / "ui/gradient.diff.png");
+	REQUIRE(marked.has_value());
+	CHECK(marked.value_or(gnubase::ui::Image{}).pixel(1, 1) == std::array<uint8_t, 4>{255, 0, 255, 255});
+	CHECK(marked.value_or(gnubase::ui::Image{}).pixel(0, 0)[3] == 255);
+
+	CHECK_FALSE(compareWithGolden(golden.path(), output.path(), "missing", actual, 0, 0).equal);
+	CHECK(std::filesystem::exists(output.path() / "missing.actual.png"));
 }

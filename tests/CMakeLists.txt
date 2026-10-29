@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 add_library(gnubase-testutils STATIC
 	testutils/fakeui.cpp testutils/fakeui.h
+	testutils/goldenimage.cpp testutils/goldenimage.h
 	testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
@@ -49,6 +50,7 @@ add_executable(gnubase-tests
 	plugin_api_tests.cpp
 	processor_tests.cpp
 	quantize_tests.cpp
+	rmlui_tests.cpp
 	rt_tests.cpp
 	scripting_tests.cpp
 	sequencing_tests.cpp
@@ -76,7 +78,7 @@ target_link_libraries(gnubase-tests PRIVATE
 	miniz
 	pugixml::pugixml)
 
-# The UI's tests (#48) use SDL directly.
+# The UI's tests (#48, #49) use SDL directly.
 target_link_libraries(gnubase-tests PRIVATE gnubase-ui SDL3::SDL3)
 
 # IPC tests run a helper process that plays a plugin host (tests/ipcpeer.cpp).
@@ -153,6 +155,8 @@ endforeach()
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}"
 	GNUBASE_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs"
 	GNUBASE_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources"
+	# Lato (SIL OFL) from RmlUi's samples, for text in tests until GNUbase bundles its own fonts (#207).
+	GNUBASE_TEST_FONTS_DIR="${PROJECT_SOURCE_DIR}/ext/RmlUi/Samples/assets"
 	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>
 	GNUBASE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 gnubase_target_defaults(gnubase-tests)

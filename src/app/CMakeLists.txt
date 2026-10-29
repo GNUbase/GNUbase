@@ -10,6 +10,8 @@ gnubase_target_defaults(gnubase-app)
 # The executable adds the UI, which the library leaves out.
 add_executable(gnubase main.cpp windowed.cpp windowed.h)
 target_link_libraries(gnubase PRIVATE gnubase-app gnubase-ui)
+# Debug builds load documents again when their RML or RCSS files change (ui/livereload.h).
+target_compile_definitions(gnubase PRIVATE $<$<CONFIG:Debug>:GNUBASE_LIVE_RELOAD>)
 gnubase_target_defaults(gnubase)
 # The engine starts plugin host processes from the program next to its own (src/pluginhost).
 add_dependencies(gnubase gnubase-pluginhost)
