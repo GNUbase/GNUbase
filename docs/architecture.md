@@ -60,7 +60,7 @@ flowchart TD
 |---|---|---|---|
 | platform | `src/platform` | OS abstractions: audio and MIDI backends, threads and priorities, shared memory, clocks. Real-time primitives (lock-free queues, RT checker), logging, assertions, crash reports | OS libraries |
 | ipc | `src/ipc` | Shared-memory buffers and rings, wake-up primitives, message protocol | platform |
-| plugin | `src/plugin` | The GNUbase plugin API: the plugin wrapper's interface, events and extensions ([plugin-api.md](plugin-api.md)), header-only; later the remote plugin proxy and stub | nothing; the proxy and stub: ipc |
+| plugin | `src/plugin` | The GNUbase plugin API: the plugin wrapper's interface, events and extensions ([plugin-api.md](plugin-api.md)), header-only; the remote plugin proxy and stub, their messages and the engine's connection to a host process in `src/plugin/remote` | nothing; `src/plugin/remote`: ipc, platform |
 | engine | `src/engine` | Command registry, document model, undo, time, audio graph, transport, file I/O, plugin slots | plugin, ipc, platform |
 | scripting | `src/scripting` | Lua runtime and the bindings generated from the command registry | engine API |
 | mcp | `src/mcp` | MCP protocol and transports, tools generated from the command registry | engine API, UI automation interface |
@@ -83,7 +83,7 @@ flowchart TD
 | Audio workers | Track chains in parallel (#212) | Real-time rules, real-time priority |
 | Prefetch threads | Nodes without live input, ahead of the device in larger blocks (#23) | Real-time rules, real-time priority below the audio workers |
 | Disk threads | Streaming audio files in and recordings out (#17) | Work ahead of the audio thread |
-| Plugin control | Main-thread calls to the plugins of one host process: loading, state, presets, editors ([plugin-api.md](plugin-api.md#threading-rules)) | One per host process connection; the command thread waits for it only briefly |
+| Plugin control | Reads the replies and notifications of one host process and watches the process; main-thread calls to its plugins (loading, state, presets, editors, [plugin-api.md](plugin-api.md#threading-rules)) wait for their replies with a timeout | One per host process connection |
 | Background threads | Peak files, analysis, saving projects, plugin scan coordination | Low priority |
 | Log writer | Writes what audio threads logged, every 10 ms (#8) | Low priority |
 | MCP I/O thread | The MCP server's HTTP or stdio transport | Only forwards to the command thread |
