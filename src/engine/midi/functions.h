@@ -149,14 +149,15 @@ namespace gnubase::engine::midi
 	// value (continuous controllers, the switches 64 to 69, pitch bend and pressure) plays its values backwards: the
 	// value that held from one event to the next, or to the range's end, holds as long in the mirror image. Values
 	// overwritten at the same tick go, and where the range ends the lane returns to the value it had there, with a
-	// new event (newId) if needed. Program changes, SysEx, bank select, data entry, the parameter numbers and channel
-	// mode messages stay in place.
+	// new event (newId) if needed. That event goes on the part's last tick (partLength ticks, see lengthInTicks) if the
+	// range reaches the part's end, since playback drops events from there on. Program changes, SysEx, bank select,
+	// data entry, the parameter numbers and channel mode messages stay in place.
 
 	// Reverses the order in which the selected notes start, keeping their lengths: the last one starts where the
 	// first one started.
-	void reverse(MidiPart& part, const NoteSelection& selection, const NewId& newId);
+	void reverse(MidiPart& part, const NoteSelection& selection, time::Ticks partLength, const NewId& newId);
 	// Mirrors the selected notes in time: where a note ended, its mirror image starts.
-	void invert(MidiPart& part, const NoteSelection& selection, const NewId& newId);
+	void invert(MidiPart& part, const NoteSelection& selection, time::Ticks partLength, const NewId& newId);
 
 	// Functions that make parts. They report what they changed, so the commands can announce it.
 

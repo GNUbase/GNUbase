@@ -378,24 +378,26 @@ namespace gnubase::engine::midi
 				"Reverses the order in which notes start, keeping their lengths: the last one starts where the first "
 				"one started. Without notes, controllers with a value that holds (continuous controllers, the "
 				"switches 64-69, pitch bend and pressure) play their values backwards, each held as long as before, "
-				"and return to their last value where the range ends; program changes, SysEx, bank select, data "
+				"and return to their last value where the range ends, or on the part's last tick if the range "
+				"reaches its end; program changes, SysEx, bank select, data entry, NRPN, RPN and channel mode "
+				"messages stay in place.",
+				Json::object(), {}, true,
+				[](const Json&) -> PartFunction
+				{
+					return [](Project& project, MidiPart& part, const NoteSelection& notes)
+					{ reverse(part, notes, lengthInTicks(project, part), [&project] { return project.newId(); }); };
+				}},
+			{"midi.invert", "Invert",
+				"Mirrors notes in time: each one starts where its mirror image ends. Without notes, controllers with a "
+				"value that holds (continuous controllers, the switches 64-69, pitch bend and pressure) play their "
+				"values backwards, each held as long as before, and return to their last value where the range ends, "
+				"or on the part's last tick if the range reaches its end; program changes, SysEx, bank select, data "
 				"entry, NRPN, RPN and channel mode messages stay in place.",
 				Json::object(), {}, true,
 				[](const Json&) -> PartFunction
 				{
 					return [](Project& project, MidiPart& part, const NoteSelection& notes)
-					{ reverse(part, notes, [&project] { return project.newId(); }); };
-				}},
-			{"midi.invert", "Invert",
-				"Mirrors notes in time: each one starts where its mirror image ends. Without notes, controllers with a "
-				"value that holds (continuous controllers, the switches 64-69, pitch bend and pressure) play their "
-				"values backwards, each held as long as before, and return to their last value where the range ends; "
-				"program changes, SysEx, bank select, data entry, NRPN, RPN and channel mode messages stay in place.",
-				Json::object(), {}, true,
-				[](const Json&) -> PartFunction
-				{
-					return [](Project& project, MidiPart& part, const NoteSelection& notes)
-					{ invert(part, notes, [&project] { return project.newId(); }); };
+					{ invert(part, notes, lengthInTicks(project, part), [&project] { return project.newId(); }); };
 				}},
 		};
 
@@ -426,8 +428,9 @@ namespace gnubase::engine::midi
 			{"midi.merge", 1,
 				"Merges the notes and controllers that start between start and end (project samples, like the "
 				"locators, compared in samples as playback does) on the MIDI and instrument tracks in tracks (default: "
-				"all of them) into a new part from "
-				"start to end on the destination track, named name (default: the track's name). Notes keep their "
+				"all of them) into a new part on "
+				"the destination track from start, or from the first merged event if that is earlier, to end, named "
+				"name (default: the track's name). Notes keep their "
 				"length, cut where their part ends. Without destination a new MIDI track is added at the end, routed "
 				"to the instrument of the first track merged. eraseDestination first removes the destination's parts "
 				"that lie between start and end, and the events of its other parts that start there. includeChase "

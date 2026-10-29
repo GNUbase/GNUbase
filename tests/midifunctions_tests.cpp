@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -38,8 +39,8 @@ namespace
 		PartBuilder& note(
 			ObjectId id, Ticks position, Ticks length, int pitch, int channel = 0, uint16_t velocity = g_velocity)
 		{
-			part.notes[id] =
-				Note{id, position, length, static_cast<uint8_t>(pitch), velocity, static_cast<uint8_t>(channel)};
+			part.notes[id] = Note{id, position, length, static_cast<uint8_t>(pitch), velocity,
+				static_cast<uint8_t>(channel), g_defaultReleaseVelocity, std::nullopt};
 			return *this;
 		}
 
@@ -101,7 +102,7 @@ namespace
 		track.id = project.newId();
 		track.type = type;
 		track.name = name;
-		const Channel channel{project.newId(), track.id, type == TrackType::Midi ? 0 : 2, 0, 0, {}};
+		const Channel channel{project.newId(), track.id, type == TrackType::Midi ? 0 : 2, 0, 0, {}, 0.0, 0.0};
 		track.channel = channel.id;
 		project.channels[channel.id] = channel;
 		project.tracks.push_back(track.id);
@@ -602,13 +603,13 @@ TEST_CASE("reverse plays the notes' starts in reverse order and keeps their leng
 						.cc(5, 3 * g_quarter, 7, 20)
 						.part;
 	MidiPart selected = part;
-	reverse(selected, NoteSelection({1, 2}), NewIds().function());
+	reverse(selected, NoteSelection({1, 2}), selected.length, NewIds().function());
 	CHECK(start(selected, 1) == 2 * g_quarter);
 	CHECK(start(selected, 2) == g_quarter);
 	CHECK(start(selected, 3) == 4 * g_quarter);
 	CHECK(selected.controllers == part.controllers);
 
-	reverse(part, NoteSelection(), NewIds().function());
+	reverse(part, NoteSelection(), part.length, NewIds().function());
 	// Every event from 0 to 4 quarters: positions mirror around 2 quarters.
 	CHECK(start(part, 1) == 3 * g_quarter);
 	CHECK(start(part, 2) == 2 * g_quarter);
@@ -629,13 +630,13 @@ TEST_CASE("invert mirrors the notes in time: a note starts where its mirror imag
 						.cc(3, 2 * g_quarter, 7, 10)
 						.part;
 	MidiPart selected = part;
-	invert(selected, NoteSelection({1, 2}), NewIds().function());
+	invert(selected, NoteSelection({1, 2}), selected.length, NewIds().function());
 	// The notes span 1 to 3.5 quarters.
 	CHECK(start(selected, 1) == 5 * g_quarter / 2);
 	CHECK(start(selected, 2) == g_quarter);
 	CHECK(selected.controllers == part.controllers);
 
-	invert(part, NoteSelection(), NewIds().function());
+	invert(part, NoteSelection(), part.length, NewIds().function());
 	CHECK(start(part, 1) == 5 * g_quarter / 2);
 	CHECK(start(part, 2) == g_quarter);
 	// The volume held from 2 to 3.5 quarters, now from 1 to 2.5 and on.
@@ -658,7 +659,7 @@ TEST_CASE("reverse and invert play controller values backwards and leave program
 	SECTION("invert")
 	{
 		MidiPart part = original;
-		invert(part, NoteSelection(), NewIds().function());
+		invert(part, NoteSelection(), part.length, NewIds().function());
 		// From 0 to 4 quarters: the pedal held the first 2, now the last 2, and is released at the end.
 		CHECK(start(part, 1) == 3 * g_quarter);
 		CHECK(start(part, 2) == 0);
@@ -671,7 +672,7 @@ TEST_CASE("reverse and invert play controller values backwards and leave program
 	SECTION("reverse")
 	{
 		MidiPart part = original;
-		reverse(part, NoteSelection(), NewIds().function());
+		reverse(part, NoteSelection(), part.length, NewIds().function());
 		// The starts span 0 to 3 quarters.
 		CHECK(start(part, 1) == 3 * g_quarter);
 		CHECK(start(part, 2) == 0);
@@ -683,8 +684,65 @@ TEST_CASE("reverse and invert play controller values backwards and leave program
 	SECTION("values overwritten at the same tick go")
 	{
 		MidiPart part = PartBuilder().cc(1, 0, 1, 10).cc(2, g_quarter, 1, 20).cc(3, g_quarter, 1, 30).part;
-		invert(part, NoteSelection(), NewIds().function());
+		invert(part, NoteSelection(), part.length, NewIds().function());
 		CHECK(laneOf(part, 1) == std::vector<std::pair<Ticks, int>>{{0, 10}, {g_quarter, 30}});
+	}
+}
+
+TEST_CASE(
+	"reverse and invert return a lane to its value before the part's end, where playback still plays it", "[unit]")
+{
+	// A one-bar part: playback drops controllers at or after its end.
+	PartBuilder builder;
+	builder.note(1, 0, g_quarter, 60)
+		.note(2, 3 * g_quarter, g_quarter, 62) // the last note ends exactly at the part's end
+		.cc(3, 0, 64, 127)                     // the sustain pedal down
+		.cc(4, 2 * g_quarter, 64, 0)           // and up
+		.cc(5, 0, 7, 100)                      // the volume
+		.cc(6, 3 * g_quarter, 7, 50);
+	builder.part.length = 4 * g_quarter;
+	const MidiPart original = builder.part;
+	const Ticks lastTick = (4 * g_quarter) - 1;
+	SECTION("invert")
+	{
+		MidiPart part = original;
+		invert(part, NoteSelection(), part.length, NewIds().function());
+		CHECK(laneOf(part, 64) == std::vector<std::pair<Ticks, int>>{{0, 0}, {2 * g_quarter, 127}, {lastTick, 0}});
+		CHECK(laneOf(part, 7) == std::vector<std::pair<Ticks, int>>{{0, 50}, {g_quarter, 100}, {lastTick, 50}});
+	}
+	SECTION("invert with a note past the part's end")
+	{
+		MidiPart part = original;
+		part.length = 7 * g_quarter / 2;
+		invert(part, NoteSelection(), part.length, NewIds().function());
+		CHECK(
+			laneOf(part, 64) == std::vector<std::pair<Ticks, int>>{{0, 0}, {2 * g_quarter, 127}, {part.length - 1, 0}});
+	}
+	SECTION("reverse in a part shortened to end before its last events")
+	{
+		MidiPart part = PartBuilder()
+							.note(1, 0, g_quarter, 60)
+							.note(2, 2 * g_quarter, g_quarter, 62)
+							.cc(3, 0, 64, 127)
+							.cc(4, 3 * g_quarter, 64, 0) // past the part's end
+							.part;
+		part.length = 5 * g_quarter / 2;
+		reverse(part, NoteSelection(), part.length, NewIds().function());
+		// The starts span 0 to 3 quarters; the pedal is released on the part's last tick.
+		CHECK(laneOf(part, 64) == std::vector<std::pair<Ticks, int>>{{0, 127}, {part.length - 1, 0}});
+	}
+	SECTION("invert in a part that ends before the range")
+	{
+		MidiPart part = original;
+		for (auto& [id, note] : part.notes)
+			note.position += g_quarter;
+		for (auto& [id, controller] : part.controllers)
+			controller.position += g_quarter;
+		part.length = g_quarter / 2; // ends before the first event
+		invert(part, NoteSelection(), part.length, NewIds().function());
+		// The range is 1 to 5 quarters: the lane returns to its value where the range starts, not before it.
+		CHECK(laneOf(part, 64) ==
+			std::vector<std::pair<Ticks, int>>{{g_quarter, 0}, {g_quarter, 0}, {3 * g_quarter, 127}});
 	}
 }
 
@@ -708,8 +766,8 @@ TEST_CASE("MIDI functions leave empty parts alone", "[unit]")
 	restrictPolyphony(part, NoteSelection(), 1);
 	thinOut(part, 100);
 	NewIds ids;
-	reverse(part, NoteSelection(), ids.function());
-	invert(part, NoteSelection(), ids.function());
+	reverse(part, NoteSelection(), part.length, ids.function());
+	invert(part, NoteSelection(), part.length, ids.function());
 	CHECK(part.notes.empty());
 	CHECK(part.controllers.empty());
 	CHECK(sameProperties(part, empty));
@@ -1171,4 +1229,37 @@ TEST_CASE("sustain pedal to note length holds notes to the end of a part on a li
 	const Json notes = run(client, "project.get").at("midiParts")[0].at("notes");
 	REQUIRE(notes.size() == 1);
 	CHECK(notes[0].at("length") == 4 * g_quarter); // the pedal is never released: to the part's end, a bar
+}
+
+TEST_CASE("invert releases the sustain pedal within a part on a linear track", "[integration]")
+{
+	Engine engine;
+	Client client{engine};
+	const auto track =
+		run(client, "track.add", {{"type", "instrument"}, {"timeBase", "linear"}}).at("track").at("id").get<ObjectId>();
+	const Json project = run(client, "project.get");
+	const gnubase::time::TempoMap tempo(project.at("tempo")[0].at("bpm").get<double>());
+	const Samples bar = tempo.toSamples(4 * g_quarter, project.at("sampleRate").get<double>());
+	const auto part = run(client, "midiPart.add", {{"track", track}, {"position", 0}, {"length", bar}})
+						  .at("part")
+						  .at("id")
+						  .get<ObjectId>();
+	run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", 3 * g_quarter}, {"length", g_quarter}, {"pitch", 62}, {"velocity", 0.5}}}}});
+	run(client, "controller.add",
+		{{"part", part},
+			{"controllers",
+				{{{"position", 0}, {"number", 64}, {"value", 1.0}},
+					{{"position", 2 * g_quarter}, {"number", 64}, {"value", 0.0}}}}});
+	run(client, "midi.invert", {{"parts", {part}}});
+	const Json inverted = run(client, "project.get");
+	std::vector<std::pair<Ticks, double>> pedal;
+	for (const Json& controller : inverted.at("midiParts")[0].at("controllers"))
+		pedal.emplace_back(controller.at("position").get<Ticks>(), controller.at("value").get<double>());
+	std::sort(pedal.begin(), pedal.end());
+	// The part is a bar long in ticks: the pedal goes up on its last tick, not at its end, where playback drops it.
+	CHECK(pedal == std::vector<std::pair<Ticks, double>>{{0, 0.0}, {2 * g_quarter, 1.0}, {(4 * g_quarter) - 1, 0.0}});
 }

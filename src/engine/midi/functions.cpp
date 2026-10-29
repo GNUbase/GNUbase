@@ -207,9 +207,12 @@ namespace gnubase::engine::midi
 
 		// Plays the values of every lane that holds a value backwards between from and to: the value that held from
 		// an event to the next one (or to the range's end) holds from the next one's mirror image to its own. Values
-		// overwritten at the same tick go, and at the range's end the lane returns to the value it had there.
-		void mirrorControllers(MidiPart& part, Ticks from, Ticks to, const NewId& newId)
+		// overwritten at the same tick go, and at the range's end the lane returns to the value it had there: on the
+		// part's last tick if the range reaches the part's end, since playback drops events from there on.
+		void mirrorControllers(MidiPart& part, Ticks from, Ticks to, Ticks partLength, const NewId& newId)
 		{
+			// Not before the range, for a part that ends before it (where nothing in the range plays anyway).
+			const Ticks restoreAt = std::max(from, std::min(to, partLength - 1));
 			std::map<LaneKey, std::vector<Controller*>> lanes;
 			for (auto& [id, controller] : part.controllers)
 				if (holdsValue(controller))
@@ -238,7 +241,7 @@ namespace gnubase::engine::midi
 				if (latest == nullptr || latest->value != restore.value)
 				{
 					restore.id = newId();
-					restore.position = to;
+					restore.position = restoreAt;
 					restored.push_back(restore);
 				}
 			}
@@ -302,7 +305,7 @@ namespace gnubase::engine::midi
 			track.name = std::move(name);
 			track.timeBase = timeBase;
 			track.parent = parent;
-			const Channel channel{project.newId(), track.id, 0, 0, instrument, {}};
+			const Channel channel{project.newId(), track.id, 0, 0, instrument, {}, 0.0, 0.0};
 			track.channel = channel.id;
 			project.channels[channel.id] = channel;
 			std::vector<ObjectId>& siblings = parent == 0 ? project.tracks : project.trackById.at(parent).children;
@@ -597,7 +600,7 @@ namespace gnubase::engine::midi
 			part.controllers.erase(id);
 	}
 
-	void reverse(MidiPart& part, const NoteSelection& selection, const NewId& newId)
+	void reverse(MidiPart& part, const NoteSelection& selection, Ticks partLength, const NewId& newId)
 	{
 		std::vector<Ticks> positions;
 		for (const auto& [id, note] : part.notes)
@@ -617,10 +620,10 @@ namespace gnubase::engine::midi
 			if (selection.contains(id))
 				note.position = mirror - note.position;
 		if (selection.all())
-			mirrorControllers(part, *first, *last, newId);
+			mirrorControllers(part, *first, *last, partLength, newId);
 	}
 
-	void invert(MidiPart& part, const NoteSelection& selection, const NewId& newId)
+	void invert(MidiPart& part, const NoteSelection& selection, Ticks partLength, const NewId& newId)
 	{
 		std::vector<Ticks> positions;
 		for (const auto& [id, note] : part.notes)
@@ -643,7 +646,7 @@ namespace gnubase::engine::midi
 			if (selection.contains(id))
 				note.position = mirror - noteEnd(note);
 		if (selection.all())
-			mirrorControllers(part, *first, *last, newId);
+			mirrorControllers(part, *first, *last, partLength, newId);
 	}
 
 	PartChanges merge(Project& project, const MergeSettings& settings)
