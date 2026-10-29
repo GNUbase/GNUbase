@@ -49,7 +49,25 @@ Results on every platform: see [CI results](#ci-results).
 
 ## CI results
 
-Pending: the `Render spike` workflow's results from Windows, macOS and Linux arm64 go here.
+The `Render spike` workflow on GitHub's runners, which have no GPUs: Linux uses Mesa, Windows WARP (Direct3D 12's
+software rasterizer), macOS a virtual GPU. Timings are milliseconds per frame for the benchmark document, mean over 300
+frames without vsync; they show what runs where, not how fast real GPUs are.
+
+| Runner | OpenGL 3 | SDL_GPU |
+|---|---|---|
+| Linux x64 | llvmpipe, OpenGL 4.5: all tiles, 31 ms | Vulkan on lavapipe: 38 ms |
+| Linux arm64 | llvmpipe, OpenGL 4.5: all tiles, 53 ms | Vulkan on lavapipe: 44 ms |
+| Windows x64 | no OpenGL 3 on the runner; with Mesa's `opengl32.dll`: all tiles, 58 ms | Direct3D 12 on WARP: 41 ms; Vulkan: no driver |
+| Windows ARM64 | no OpenGL 3 on the runner, and Mesa's build didn't run | Direct3D 12 on WARP: 19 ms; Vulkan: no driver |
+| macOS Intel | Apple's software renderer, OpenGL 4.1: blur missing, shadows wrong, 79 ms | Metal refused: the virtual GPU doesn't meet SDL_GPU's requirements |
+| macOS Apple Silicon | Apple's software renderer, OpenGL 4.1: blur missing, shadows wrong, 58 ms | Metal: 10 ms |
+
+- SDL_GPU draws the same tiles on Direct3D 12, Metal and Vulkan, with the same gaps as on Linux: the renderer, not the
+  API, decides what is drawn.
+- On macOS, OpenGL doesn't use the virtual GPU at all, and Apple's software renderer gets RmlUi's layers and filters
+  wrong. Whether Apple's hardware OpenGL draws them right needs a real Mac.
+- On Windows, OpenGL exists only through the GPU vendor's driver; without one there is OpenGL 1.1, and the spike
+  crashes instead of reporting it (it doesn't check the version it got).
 
 ## Criteria
 
@@ -88,8 +106,9 @@ CI runners can't compare GPUs, so the numbers there compare CPU cost. Custom ele
 curves (#55) build their geometry from data on either backend; drawing them with their own shaders needs GLSL with
 OpenGL, and HLSL compiled to three formats with SDL_GPU.
 
-**Testing.** OpenGL runs on CI with Mesa on Linux and with the system's OpenGL on macOS; Windows runners have no OpenGL
-3, so their tests need Mesa's `opengl32.dll`. SDL_GPU runs with lavapipe on Linux, WARP on Windows and Metal on macOS.
+**Testing.** UI tests compare screenshots on every platform (#59). SDL_GPU runs on the Linux, Windows (x64 and ARM64)
+and Apple Silicon runners with what the runner has. OpenGL 3 needs Mesa downloaded on Windows, where no ARM64 build ran,
+and draws filters and shadows wrong on the macOS runners.
 
 **Future.** OpenGL gets no new features and Apple could remove it from macOS one day, though nothing is announced. SDL_GPU
 is maintained with SDL, which GNUbase depends on anyway, and is native on every platform.
@@ -98,8 +117,11 @@ is maintained with SDL, which GNUbase depends on anyway, and is native on every 
 
 1. **OpenGL 3 now.** Everything works today; M04 (#48, #49) can start at once. Risks: OpenGL's future on macOS, and
    Windows ARM64 devices without the compatibility pack.
-2. **SDL_GPU now.** Native everywhere and simplest for several windows and offscreen rendering, but M04 waits until the
-   missing features are written: weeks of renderer work and a shader toolchain before the first themed window.
+2. **SDL_GPU now.** Native everywhere, simplest for several windows and offscreen rendering, and testable on the CI
+   runners. The missing features (weeks of renderer work and a shader toolchain) become their own ticket. The first
+   M04 tickets don't need them: windows (#48), RmlUi with text (#49), the engine binding (#50) and the MCP UI tools (#58)
+   draw geometry and textures. The theme (#53) and the widgets (#54) need gradients, shadows and rounded clipping, so
+   they wait for that ticket.
 3. **OpenGL 3 now, SDL_GPU later.** Start with OpenGL 3 behind one GNUbase class that owns the RmlUi render interface,
    windows and screenshots, so nothing else knows which API draws. Port the missing features to SDL_GPU's renderer in
    GNUbase's RmlUi fork as a separate ticket (and offer them upstream), and switch once it passes the same screenshot
@@ -107,5 +129,9 @@ is maintained with SDL, which GNUbase depends on anyway, and is native on every 
 
 ## Recommendation
 
-Option 3. It starts M04 with a renderer that draws everything RmlUi can, keeps the choice of API in one place, and
-moves to the native APIs when that costs no features. The decision is the maintainers'.
+Option 2, with the render code behind one GNUbase class either way, so nothing else knows which API draws. The CI
+results tip it: SDL_GPU runs on the native API of every platform GNUbase supports, including Windows ARM64, and on five
+of the six CI runners as they are, while OpenGL 3 draws everything on CI only on Linux and, with Mesa, on Windows x64,
+and depends on an API Apple deprecated. Its one gap, RmlUi's effects, is work GNUbase can do once, in its RmlUi fork, while M04 starts with the
+windows and the RmlUi integration; the theme waits for it. If the effects are needed sooner than that work can be done,
+option 3 is the fallback. The decision is the maintainers'.
