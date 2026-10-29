@@ -1,7 +1,7 @@
 # UI render backend
 
-Decision note for #47. Status: proposed; the maintainers decide. The prototype is in `spikes/render-backend/` (its
-README says how to run it) and the `Render spike` workflow runs it on every platform.
+Decision note for #47. Status: decided, SDL_GPU (option 2); see [Decision](#decision). The prototype is in
+`spikes/render-backend/` (its README says how to run it) and the `Render spike` workflow runs it on every platform.
 
 ## Question
 
@@ -134,4 +134,15 @@ results tip it: SDL_GPU runs on the native API of every platform GNUbase support
 of the six CI runners as they are, while OpenGL 3 draws everything on CI only on Linux and, with Mesa, on Windows x64,
 and depends on an API Apple deprecated. Its one gap, RmlUi's effects, is work GNUbase can do once, in its RmlUi fork, while M04 starts with the
 windows and the RmlUi integration; the theme waits for it. If the effects are needed sooner than that work can be done,
-option 3 is the fallback. The decision is the maintainers'.
+option 3 is the fallback.
+
+## Decision
+
+SDL_GPU, option 2, decided by the maintainers on 2026-10-29:
+
+- GNUbase draws its UI through SDL_GPU: Metal on macOS, Direct3D 12 on Windows, Vulkan on Linux. One GNUbase class owns
+  the RmlUi render interface, the windows' swapchains and offscreen screenshots, so nothing else knows which API draws
+  (#48, #49).
+- RmlUi's effects (layers, filters, gradients, clip masks and masks) are ported to its SDL_GPU renderer in GNUbase's
+  RmlUi fork: #285. The theme (#53) and the widgets (#54) wait for it.
+- OpenGL 3 stays only in the spike.

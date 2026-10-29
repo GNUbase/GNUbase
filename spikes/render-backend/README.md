@@ -2,7 +2,7 @@
 
 A throwaway prototype for choosing how GNUbase's UI renders: it shows RmlUi documents through each candidate render
 backend, takes screenshots offscreen and times frames with many meters and waveforms. It is not part of GNUbase and is
-built only on request. The decision and its reasons will be in a decision note in `docs/`.
+built only on request. The decision, SDL_GPU, and its reasons are in [docs/render-backend.md](../../docs/render-backend.md).
 
 Backends, both from RmlUi's own `Backends` folder (`ext/RmlUi`, RmlUi 6.3):
 
