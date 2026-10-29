@@ -48,7 +48,7 @@ namespace gnubase::app
 			logging::error("Cannot show the UI: {}", error.what());
 			return g_exitSetup;
 		}
-		const ui::RmlUi rmlui;
+		const ui::RmlUi rmlui(*windows);
 		ui::Shell shell(*windows, *renderer);
 		shell.setUiScale(uiScale(engine));
 		ui::WindowSpec main;
