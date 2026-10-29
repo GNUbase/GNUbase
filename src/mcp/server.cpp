@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
@@ -23,6 +25,10 @@ namespace gnubase::mcp
 
 		// Long enough for an offline render, which runs as one command.
 		constexpr std::chrono::minutes g_callTimeout{10};
+
+		// events_take waits at most this long, less than clients wait for a tool.
+		constexpr double g_maxEventWait = 60.0;
+		constexpr const char* g_eventsTool = "events_take";
 
 		constexpr std::string_view g_resourceScheme = "gnubase://";
 
@@ -78,11 +84,63 @@ namespace gnubase::mcp
 		}
 	}
 
-	Server::Server(engine::Engine& engine) : m_engine(engine)
+	Server::Server(engine::Engine& engine, SessionLimits limits) : m_engine(engine), m_sessions(engine, limits)
 	{
+		// Runs in Server::takeEvents, which knows the session.
+		addTool({g_eventsTool,
+			"Takes the engine events of this session that haven't been taken yet, oldest first, each with name "
+			"(e.g. track.added), data (what changed) and request (the engine request that caused it). Events come "
+			"from every client: this one, other MCP clients, Lua scripts and the UI. names takes only events with "
+			"these names and leaves the others queued. seconds (0 to 60, default 0) waits up to that long for the "
+			"first event. A session keeps the newest " +
+				std::to_string(limits.queuedEvents) +
+				" events; dropped counts the older ones dropped since the last call. A session starts with "
+				"initialize; over HTTP it is the one of the Mcp-Session-Id header.",
+			Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
+				"names": {"type": "array", "items": {"type": "string"}}, "seconds": {"type": "number"}}})"),
+			Json::parse(R"({"type": "object", "required": ["events", "dropped"], "properties": {
+				"events": {"type": "array", "items": {"type": "object", "required": ["name", "data", "request"],
+					"properties": {"name": {"type": "string"}, "data": {}, "request": {"type": "integer"}}}},
+				"dropped": {"type": "integer"}}})"),
+			true, nullptr});
+	}
+
+	std::string Server::startSession(bool expires)
+	{
+		return m_sessions.start(expires);
+	}
+
+	bool Server::endSession(const std::string& id)
+	{
+		return m_sessions.end(id);
+	}
+
+	bool Server::hasSession(const std::string& id)
+	{
+		return m_sessions.find(id) != nullptr;
 	}
 
 	std::optional<Json> Server::handle(const Json& message)
+	{
+		return respond(message, nullptr);
+	}
+
+	std::optional<Json> Server::handle(const Json& message, std::string& session)
+	{
+		return respond(message, &session);
+	}
+
+	std::optional<std::string> Server::handle(std::string_view message)
+	{
+		return respond(message, nullptr);
+	}
+
+	std::optional<std::string> Server::handle(std::string_view message, std::string& session)
+	{
+		return respond(message, &session);
+	}
+
+	std::optional<Json> Server::respond(const Json& message, std::string* session)
 	{
 		if (!message.is_object())
 			return errorResponse(nullptr, g_invalidRequest,
@@ -98,7 +156,7 @@ namespace gnubase::mcp
 		const bool notification = !message.contains("id");
 		try
 		{
-			Json result = dispatch(method->get<std::string>(), message.value("params", Json::object()));
+			Json result = dispatch(method->get<std::string>(), message.value("params", Json::object()), session);
 			if (notification)
 				return std::nullopt;
 			return Json{{"jsonrpc", "2.0"}, {"id", id}, {"result", std::move(result)}};
@@ -117,21 +175,23 @@ namespace gnubase::mcp
 		}
 	}
 
-	std::optional<std::string> Server::handle(std::string_view message)
+	std::optional<std::string> Server::respond(std::string_view message, std::string* session)
 	{
 		const Json parsed = Json::parse(message, nullptr, false);
 		if (parsed.is_discarded())
 			return text(errorResponse(nullptr, g_parseError, "not valid JSON"));
-		const std::optional<Json> response = handle(parsed);
+		const std::optional<Json> response = respond(parsed, session);
 		if (!response)
 			return std::nullopt;
 		return text(*response);
 	}
 
-	Json Server::dispatch(const std::string& method, const Json& params)
+	Json Server::dispatch(const std::string& method, const Json& params, std::string* session)
 	{
 		if (method == "initialize")
 		{
+			if (session != nullptr && session->empty())
+				*session = m_sessions.start(true);
 			// One revision only: a client that asked for another decides whether it can use this one.
 			return {{"protocolVersion", g_protocolVersion},
 				{"capabilities",
@@ -148,7 +208,7 @@ namespace gnubase::mcp
 		if (method == "tools/list")
 			return listTools();
 		if (method == "tools/call")
-			return callTool(params);
+			return callTool(params, session != nullptr ? *session : std::string());
 		if (method == "resources/list")
 			return listResources();
 		if (method == "resources/read")
@@ -187,7 +247,7 @@ namespace gnubase::mcp
 		return {{"tools", std::move(tools)}};
 	}
 
-	Json Server::callTool(const Json& params)
+	Json Server::callTool(const Json& params, const std::string& session)
 	{
 		const std::string& name = stringParameter(params, "name", "tools/call");
 		const Json arguments = params.value("arguments", Json::object());
@@ -200,7 +260,7 @@ namespace gnubase::mcp
 				if (const std::string problem = engine::validate(arguments, extra->inputSchema, "arguments");
 					!problem.empty())
 					throw std::invalid_argument(problem);
-				Json value = extra->run(arguments);
+				Json value = extra->name == g_eventsTool ? takeEvents(arguments, session) : extra->run(arguments);
 				Json response = {{"content", textContent(text(value))}, {"isError", false}};
 				response["structuredContent"] = std::move(value);
 				return response;
@@ -224,6 +284,23 @@ namespace gnubase::mcp
 		if (result.value.is_object())
 			response["structuredContent"] = result.value;
 		return response;
+	}
+
+	Json Server::takeEvents(const Json& arguments, const std::string& session)
+	{
+		const std::shared_ptr<EventQueue> events = session.empty() ? nullptr : m_sessions.find(session);
+		if (!events)
+			throw std::runtime_error(session.empty() ? "events_take needs a session, which initialize starts"
+													 : "the session ended; initialize starts a new one");
+		const double seconds = arguments.value("seconds", 0.0);
+		if (seconds < 0.0 || seconds > g_maxEventWait)
+			throw std::invalid_argument("seconds must be 0 to 60");
+		const EventQueue::Taken taken = events->take(arguments.value("names", std::vector<std::string>()),
+			std::chrono::milliseconds(std::llround(seconds * 1000.0)));
+		Json list = Json::array();
+		for (const engine::Event& event : taken.events)
+			list.push_back({{"name", event.name}, {"data", event.data}, {"request", event.request}});
+		return {{"events", std::move(list)}, {"dropped", taken.dropped}};
 	}
 
 	Json Server::listResources() const
