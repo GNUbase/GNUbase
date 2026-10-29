@@ -59,4 +59,7 @@ namespace gnubase::test
 
 	// The whole file, or an empty string if it cannot be read.
 	std::string readText(const std::filesystem::path& file);
+
+	// The build's test output folder, for files a test writes to look at, such as screenshots.
+	std::filesystem::path outputDirectory();
 }

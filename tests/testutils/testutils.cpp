@@ -238,4 +238,9 @@ namespace gnubase::test
 		text << in.rdbuf();
 		return text.str();
 	}
+
+	std::filesystem::path outputDirectory()
+	{
+		return GNUBASE_TEST_OUTPUT_DIR;
+	}
 }
