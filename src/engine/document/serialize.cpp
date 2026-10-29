@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/serialize.h"
 
+#include "engine/processors/builtin.h"
+
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -198,14 +201,18 @@ namespace gnubase::engine
 		Controller controller;
 		controller.type =
 			controllerTypeFromName(json.value("type", std::string("controller"))).value_or(ControllerType::Control);
-		controller.number = json.value("number", uint8_t{0});
-		controller.channel = json.value("channel", uint8_t{0});
-		if (controller.type == ControllerType::Program)
+		// Only what the type uses; the rest stays zero, as toJson leaves it out.
+		const ControllerType type = controller.type;
+		if (type == ControllerType::Control || type == ControllerType::PolyPressure || type == ControllerType::Program)
+			controller.number = json.value("number", uint8_t{0});
+		if (type != ControllerType::SysEx)
+			controller.channel = json.value("channel", uint8_t{0});
+		if (type == ControllerType::Program)
 			controller.value = json.value("bank", g_noBank);
-		else if (json.contains("value"))
+		else if (type != ControllerType::SysEx && json.contains("value"))
 			controller.value =
 				static_cast<uint32_t>(std::llround(json.at("value").get<double>() * g_maxControllerValue));
-		if (controller.type == ControllerType::SysEx)
+		if (type == ControllerType::SysEx)
 			controller.data = json.at("data").get<std::vector<uint8_t>>();
 		return controller;
 	}
@@ -286,9 +293,16 @@ namespace gnubase::engine
 		for (const Json& item : json.at("channels"))
 		{
 			const auto id = item.at("id").get<ObjectId>();
-			project.channels[id] = {id, item.at("track").get<ObjectId>(), item.at("channels").get<int>(),
+			Channel channel{id, item.at("track").get<ObjectId>(), item.at("channels").get<int>(),
 				item.at("input").get<ObjectId>(), item.at("output").get<ObjectId>(),
 				item.value("instrument", std::string())};
+			// An instrument this build doesn't have, e.g. in a file from a newer one, or one on a track that doesn't
+			// play instruments: the channel plays none.
+			const auto track = project.trackById.find(channel.track);
+			if (!processors::isInstrument(channel.instrument) || track == project.trackById.end() ||
+				track->second.type != TrackType::Instrument)
+				channel.instrument.clear();
+			project.channels[id] = std::move(channel);
 		}
 		for (const Json& item : json.at("media"))
 		{

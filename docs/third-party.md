@@ -17,6 +17,7 @@ GNUbase is licensed under the GPL-3.0-or-later, so everything that goes into it 
 | [miniz](https://github.com/richgel999/miniz) | `ext/miniz` | reading and writing DAWproject's ZIP container | yes, linked statically | MIT | `ext/miniz/LICENSE` |
 | [Lua](https://www.lua.org) | `ext/lua` | scripting | yes, linked statically | MIT | the end of `ext/lua/lua.h` |
 | [cpp-httplib](https://github.com/yhirose/cpp-httplib) | `ext/cpp-httplib` | the MCP server's HTTP transport | yes, header-only | MIT | `ext/cpp-httplib/LICENSE` |
+| [CLAP](https://github.com/free-audio/clap) | `ext/clap` | the CLAP plugin interface: test plugins now, the CLAP adapter of the plugin host later | no, only test plugins so far; header-only | MIT | `ext/clap/LICENSE` |
 | [Catch2](https://github.com/catchorg/Catch2) | `ext/Catch2` | tests | no, only test programs | BSL-1.0 | `ext/Catch2/LICENSE.txt` |
 
 Some of these bundle code from other projects under its own license:
