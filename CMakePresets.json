@@ -25,6 +25,25 @@
 			"architecture": "ARM64"
 		},
 		{
+			"name": "windows-ninja",
+			"hidden": true,
+			"inherits": "windows",
+			"generator": "Ninja Multi-Config",
+			"cacheVariables": { "CMAKE_C_COMPILER": "cl", "CMAKE_CXX_COMPILER": "cl" }
+		},
+		{
+			"name": "windows-x64-ninja",
+			"displayName": "Windows x64 (MSVC with Ninja, from an x64 developer prompt)",
+			"inherits": "windows-ninja",
+			"architecture": { "value": "x64", "strategy": "external" }
+		},
+		{
+			"name": "windows-arm64-ninja",
+			"displayName": "Windows ARM64 (MSVC with Ninja, from an ARM64 developer prompt)",
+			"inherits": "windows-ninja",
+			"architecture": { "value": "arm64", "strategy": "external" }
+		},
+		{
 			"name": "macos",
 			"displayName": "macOS universal (arm64 + x86_64)",
 			"inherits": "base",
@@ -58,6 +77,8 @@
 	"buildPresets": [
 		{ "name": "windows-x64", "configurePreset": "windows-x64" },
 		{ "name": "windows-arm64", "configurePreset": "windows-arm64" },
+		{ "name": "windows-x64-ninja", "configurePreset": "windows-x64-ninja" },
+		{ "name": "windows-arm64-ninja", "configurePreset": "windows-arm64-ninja" },
 		{ "name": "macos", "configurePreset": "macos" },
 		{ "name": "linux-gcc", "configurePreset": "linux-gcc" },
 		{ "name": "linux-clang", "configurePreset": "linux-clang" }
@@ -72,6 +93,8 @@
 		},
 		{ "name": "windows-x64", "inherits": "test-base", "configurePreset": "windows-x64" },
 		{ "name": "windows-arm64", "inherits": "test-base", "configurePreset": "windows-arm64" },
+		{ "name": "windows-x64-ninja", "inherits": "test-base", "configurePreset": "windows-x64-ninja" },
+		{ "name": "windows-arm64-ninja", "inherits": "test-base", "configurePreset": "windows-arm64-ninja" },
 		{ "name": "macos", "inherits": "test-base", "configurePreset": "macos" },
 		{ "name": "linux-gcc", "inherits": "test-base", "configurePreset": "linux-gcc" },
 		{ "name": "linux-clang", "inherits": "test-base", "configurePreset": "linux-clang" }

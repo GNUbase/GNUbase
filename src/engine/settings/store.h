@@ -14,7 +14,7 @@
 #include <vector>
 
 // User settings: what the user chose for GNUbase as a whole, kept per user in versioned JSON files. Project settings
-// are not here: they belong to the project and are saved in it (see docs/architecture.md, "Settings").
+// are not here: they belong to the project and are saved in it (see docs/features/settings.md).
 namespace gnubase::engine::settings
 {
 	// One setting.

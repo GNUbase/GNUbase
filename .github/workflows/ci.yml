@@ -25,6 +25,9 @@ env:
     libdbus-1-dev libibus-1.0-dev libudev-dev libfribidi-dev libthai-dev
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_LAUNCHER: -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+  # Windows caches with sccache, in the same folder and cache entry as ccache elsewhere.
+  SCCACHE_DIR: ${{ github.workspace }}/.ccache
+  SCCACHE_LAUNCHER: -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 
 jobs:
   build:
@@ -35,8 +38,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: windows-x64, runner: windows-2025, preset: windows-x64 }
-          - { name: windows-arm64, runner: windows-11-arm, preset: windows-arm64 }
+          # Ninja instead of the Visual Studio generator, which ignores compiler launchers, so sccache can cache.
+          - { name: windows-x64, runner: windows-2025, preset: windows-x64-ninja, arch: x64 }
+          - { name: windows-arm64, runner: windows-11-arm, preset: windows-arm64-ninja, arch: arm64 }
           # ponytail: Intel runner because hosted macOS arm64 runners had no capacity (jobs were never picked up).
           # Builds both slices, tests the x86_64 one. Move back to macos-15 (arm64) before Intel images retire in 2027.
           - { name: macos-universal, runner: macos-15-intel, preset: macos }
@@ -69,10 +73,19 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ninja ccache
 
-      # ponytail: no compiler cache on Windows; the Visual Studio generator ignores compiler launchers.
-      # Switch Windows to Ninja + sccache if its builds get slow.
+      - name: Developer environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Install sccache (Windows)
+        if: runner.os == 'Windows'
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.19.0
+
       - name: Compiler cache
-        if: runner.os != 'Windows'
         uses: actions/cache@v6
         with:
           path: .ccache
@@ -81,10 +94,15 @@ jobs:
 
       - name: Configure
         shell: bash
-        run: cmake --preset ${{ matrix.preset }} ${{ runner.os != 'Windows' && env.CCACHE_LAUNCHER || '' }}
+        run: cmake --preset ${{ matrix.preset }} ${{ runner.os == 'Windows' && env.SCCACHE_LAUNCHER || env.CCACHE_LAUNCHER }}
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }} --config Release
+
+      # Stopping the server writes out what it still holds before the cache is saved, and prints its statistics.
+      - name: Stop sccache (Windows)
+        if: runner.os == 'Windows'
+        run: sccache --stop-server
 
       - name: Test
         run: ctest --preset ${{ matrix.preset }} -C Release
