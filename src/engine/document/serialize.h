@@ -19,6 +19,8 @@ namespace gnubase::engine
 
 	const char* trackTypeName(TrackType type);
 	std::optional<TrackType> trackTypeFromName(const std::string& name);
+	const char* controllerTypeName(ControllerType type);
+	std::optional<ControllerType> controllerTypeFromName(const std::string& name);
 	const char* timeBaseName(time::TimeBase base);
 	time::TimeBase timeBaseFromName(const std::string& name);
 	const char* directionName(BusDirection direction);
@@ -46,14 +48,28 @@ namespace gnubase::engine
 	Json toJson(const AudioEvent& event);
 	Json toJson(const Note& note);
 	Json toJson(const Controller& controller);
+	// A controller's type and the values the type uses, without checking them; the others are zero. Its id and
+	// position are left to the caller.
+	Controller controllerFromJson(const Json& json);
 	Json toJson(const MidiPart& part);
 	Json toJson(const Marker& marker);
+	const char* automationTargetTypeName(AutomationTargetType type);
+	std::optional<AutomationTargetType> automationTargetTypeFromName(const std::string& name);
+	const char* automationShapeName(AutomationShape shape);
+	std::optional<AutomationShape> automationShapeFromName(const std::string& name);
+	// {"type": ..., plus "parameter" for instrument, "number" and "channel" for controller, "channel" for pitchBend
+	// and channelPressure}.
+	Json toJson(const AutomationTarget& target);
+	Json toJson(const AutomationPoint& point);
+	Json toJson(const AutomationLane& lane); // with its points, sorted by position
 
 	// The whole project, with the tracks from top to bottom. The id counter is left out: undo doesn't restore it,
 	// so that ids stay unique.
 	Json toJson(const Project& project);
 
 	// The inverse of toJson(const Project&). Ids continue at nextId if the JSON has it, or else after the highest
-	// id. Throws std::exception for JSON that isn't such a project.
+	// id. Throws std::exception for JSON that isn't such a project, and std::invalid_argument for automation that
+	// the automation commands wouldn't make: on no track or a track it doesn't fit, with target numbers out of
+	// range, or with points whose position, value or curve isn't a finite number in its range.
 	Project projectFromJson(const Json& json);
 }

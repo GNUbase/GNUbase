@@ -1,0 +1,12 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<rml>
+<head>
+	<title>Render backend spike: benchmark</title>
+	<link type="text/rcss" href="spike.rcss"/>
+</head>
+<body>
+	<!-- gnubase-render-spike fills both with --meters and --waveforms. -->
+	<div id="meters" class="meters"/>
+	<div id="waveforms"/>
+</body>
+</rml>

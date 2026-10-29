@@ -68,7 +68,7 @@
 			"hidden": true,
 			"configuration": "Debug",
 			"output": { "outputOnFailure": true },
-			"execution": { "noTestsAction": "error" }
+			"execution": { "noTestsAction": "error", "timeout": 300 }
 		},
 		{ "name": "windows-x64", "inherits": "test-base", "configurePreset": "windows-x64" },
 		{ "name": "windows-arm64", "inherits": "test-base", "configurePreset": "windows-arm64" },

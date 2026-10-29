@@ -74,12 +74,14 @@ TEST_CASE("note.set changes notes of a MIDI part as one undo step", "[unit]")
 	const Json changed = call(client, "note.set",
 		{{"part", part},
 			{"notes",
-				{{{"id", c}, {"position", 960}, {"pitch", 72}, {"velocity", 0.0}, {"channel", 9}},
+				{{{"id", c}, {"position", 960}, {"pitch", 72}, {"velocity", 0.0}, {"releaseVelocity", 1.0},
+					 {"channel", 9}},
 					{{"id", e}, {"length", 240}}}}})
 							 .at("notes");
 	REQUIRE(changed.size() == 2);
 	CHECK(changed[0] ==
-		Json{{"id", c}, {"position", 960}, {"length", 480}, {"pitch", 72}, {"velocity", 0.0}, {"channel", 9}});
+		Json{{"id", c}, {"position", 960}, {"length", 480}, {"pitch", 72}, {"velocity", 0.0}, {"releaseVelocity", 1.0},
+			{"channel", 9}});
 	CHECK(changed[1].at("length") == 240);
 	CHECK(changed[1].at("position") == 480);
 	CHECK(changed[1].at("pitch") == 64);
@@ -139,8 +141,9 @@ TEST_CASE("controller.set changes controllers of a MIDI part as one undo step", 
 	const Json changed = call(client, "controller.set",
 		{{"part", part}, {"controllers", {{{"id", volume}, {"position", 240}, {"number", 11}, {"value", 0.0}}}}})
 							 .at("controllers");
-	CHECK(
-		changed == Json::array({{{"id", volume}, {"position", 240}, {"number", 11}, {"value", 0.0}, {"channel", 2}}}));
+	CHECK(changed ==
+		Json::array({{{"id", volume}, {"position", 240}, {"type", "controller"}, {"number", 11}, {"value", 0.0},
+			{"channel", 2}}}));
 	CHECK(takeEvent(client, "controller.changed") == Json{{"part", part}, {"controllers", changed}});
 	CHECK(call(client, "history.get").at("steps").back().at("action") == "Change controllers");
 	call(client, "history.undo");
@@ -155,4 +158,60 @@ TEST_CASE("controller.set changes controllers of a MIDI part as one undo step", 
 	CHECK_THAT(
 		fails({{"id", volume}, {"position", -1}}), ContainsSubstring("controllers[0].position must not be negative"));
 	CHECK(call(client, "project.get").at("midiParts").at(0).at("controllers") == added);
+}
+
+TEST_CASE("controller.set checks each change against the controller event's type", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const int64_t part = partWithNotes(client);
+	const Json added = call(client, "controller.add",
+		{{"part", part},
+			{"controllers",
+				{{{"position", 0}, {"type", "program"}, {"number", 5}, {"bank", 300}},
+					{{"position", 10}, {"type", "pitchBend"}, {"value", 1.0}},
+					{{"position", 20}, {"type", "sysEx"}, {"data", {0xF0, 0x01, 0xF7}}}}}})
+						   .at("controllers");
+	const Json program = added.at(0).at("id");
+	const Json bend = added.at(1).at("id");
+	const Json sysEx = added.at(2).at("id");
+	const auto stored = [&] { return call(client, "project.get").at("midiParts").at(0).at("controllers"); };
+
+	const auto fails = [&](const Json& controller)
+	{ return client.call("controller.set", {{"part", part}, {"controllers", {controller}}}).error; };
+	// A program change has a bank, not a value; what a type doesn't use can't be set.
+	CHECK_THAT(fails({{"id", program}, {"value", 0.5}}),
+		ContainsSubstring("controllers[0].value doesn't apply to program events"));
+	CHECK_THAT(fails({{"id", bend}, {"number", 3}}),
+		ContainsSubstring("controllers[0].number doesn't apply to pitchBend events"));
+	CHECK_THAT(fails({{"id", sysEx}, {"channel", 3}}),
+		ContainsSubstring("controllers[0].channel doesn't apply to sysEx events"));
+	CHECK_THAT(fails({{"id", bend}, {"bank", 1}}), ContainsSubstring("controllers[0].bank doesn't apply"));
+	CHECK_THAT(fails({{"id", program}, {"bank", 16384}}), ContainsSubstring("controllers[0].bank must be 0 to 16383"));
+	CHECK_THAT(fails({{"id", program}, {"number", 128}}), ContainsSubstring("controllers[0].number must be 0 to 127"));
+	CHECK_THAT(fails({{"id", sysEx}, {"data", {0xF0, 0x01}}}), ContainsSubstring("0xF7"));
+	CHECK_THAT(fails({{"id", bend}, {"type", "program"}}), ContainsSubstring("controllers[0].number is required"));
+	CHECK_THAT(fails({{"id", program}, {"type", "sysEx"}}), ContainsSubstring("controllers[0].data is required"));
+	CHECK(stored() == added);
+
+	// Types, banks and SysEx data change too. A new type keeps the fields it shares with the old one.
+	const Json changed = call(client, "controller.set",
+		{{"part", part},
+			{"controllers",
+				{{{"id", program}, {"number", 6}, {"bank", 2}}, {{"id", sysEx}, {"data", {0xF0, 0x02, 0x03, 0xF7}}},
+					{{"id", bend}, {"type", "controller"}, {"number", 1}, {"channel", 4}}}}})
+							 .at("controllers");
+	CHECK(changed ==
+		Json::array({{{"id", program}, {"position", 0}, {"type", "program"}, {"number", 6}, {"bank", 2},
+						 {"channel", 0}},
+			{{"id", sysEx}, {"position", 20}, {"type", "sysEx"}, {"data", {0xF0, 0x02, 0x03, 0xF7}}},
+			{{"id", bend}, {"position", 10}, {"type", "controller"}, {"number", 1}, {"value", 1.0}, {"channel", 4}}}));
+	CHECK(stored() == Json::array({changed[0], changed[2], changed[1]})); // by id: program, bend, sysEx
+
+	// A null bank removes it.
+	const Json noBank =
+		call(client, "controller.set", {{"part", part}, {"controllers", {{{"id", program}, {"bank", nullptr}}}}})
+			.at("controllers");
+	CHECK(!noBank.at(0).contains("bank"));
+	CHECK(noBank.at(0).at("number") == 6);
 }
