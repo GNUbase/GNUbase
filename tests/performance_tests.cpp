@@ -10,6 +10,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <variant>
@@ -70,6 +71,18 @@ namespace
 	}
 }
 
+namespace
+{
+	// Simulates a system that gives worker threads no real-time priority, for the lifetime of the object.
+	struct RefuseRealtime
+	{
+		RefuseRealtime() { gnubase::rt::setWorkerPoolFaults({SIZE_MAX, true}); }
+		~RefuseRealtime() { gnubase::rt::setWorkerPoolFaults({}); }
+		RefuseRealtime(const RefuseRealtime&) = delete;
+		RefuseRealtime& operator=(const RefuseRealtime&) = delete;
+	};
+}
+
 TEST_CASE("audio.performance reports the load per block and thread", "[integration]")
 {
 	Engine engine;
@@ -80,7 +93,11 @@ TEST_CASE("audio.performance reports the load per block and thread", "[integrati
 	CHECK(idle.at("threads").empty());
 
 	run(client, "audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}, {"input", {{"processor", "noise"}}}});
-	run(client, "audio.setProcessing", {{"threads", 3}});
+	// Without real-time priority for workers (Linux without the privilege) only the audio thread processes.
+	const size_t active =
+		run(client, "audio.setProcessing", {{"threads", 3}}).at("processing").at("activeThreads").get<size_t>();
+	CHECK(active >= 1);
+	CHECK(active <= std::min<size_t>(3, gnubase::rt::hardwareThreads()));
 	for (int i = 0; i < 8; ++i)
 		run(client, "track.add", {{"type", "audio"}});
 	run(client, "audio.render", {{"frames", 6400}});
@@ -90,7 +107,7 @@ TEST_CASE("audio.performance reports the load per block and thread", "[integrati
 	CHECK(measured.at("load").get<double>() > 0.0);
 	CHECK(measured.at("peak").get<double>() >= measured.at("load").get<double>());
 	CHECK(measured.at("overloads").get<uint64_t>() <= 100);
-	REQUIRE(measured.at("threads").size() == std::min<size_t>(3, gnubase::rt::hardwareThreads()));
+	REQUIRE(measured.at("threads").size() == active);
 	// A thread's time on nodes lies within the block's processing time. A thread can show 0: nodes this small can
 	// finish within one tick of the clock.
 	for (const Json& load : measured.at("threads"))
@@ -103,6 +120,13 @@ TEST_CASE("audio.performance reports the load per block and thread", "[integrati
 	CHECK(measured.at("diskDropouts") == 0);
 	// Reading changes nothing.
 	CHECK(run(client, "audio.performance").at("cycles") == 100);
+
+	// As on a system that gives workers no real-time priority: the audio thread is the only thread measured.
+	const RefuseRealtime refuse;
+	const Json serial = run(client, "audio.setProcessing", {{"threads", 3}}).at("processing");
+	run(client, "audio.render", {{"frames", 640}});
+	CHECK(serial.at("activeThreads") == 1);
+	CHECK(run(client, "audio.performance").at("threads").size() == 1);
 }
 
 namespace

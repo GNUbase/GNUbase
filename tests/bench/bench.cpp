@@ -53,14 +53,23 @@ namespace
 		int threads = 1;
 	};
 
-	// Renders the song and returns how many times faster than real time.
-	double render(const Song& song)
+	struct Rendered
+	{
+		double speed = 0.0;    // how many times faster than real time
+		int activeThreads = 1; // the threads that processed: fewer than asked without real-time priority
+		Json limitedBy;        // why they were fewer, as audio.setProcessing says
+	};
+
+	Rendered render(const Song& song)
 	{
 		Engine engine;
 		Client client(engine);
 		const auto frames = static_cast<int64_t>(song.seconds * 48000.0);
 		call(client, "audio.setDevice", {{"blockSize", song.blockSize}, {"inputChannels", 0}, {"captureSeconds", 1}});
-		call(client, "audio.setProcessing", {{"threads", song.threads}});
+		const Json processing = call(client, "audio.setProcessing", {{"threads", song.threads}}).at("processing");
+		Rendered rendered;
+		rendered.activeThreads = processing.at("activeThreads").get<int>();
+		rendered.limitedBy = processing.at("limitedBy");
 		const int64_t quarters = (frames / 24000) + 1;
 		for (int t = 0; t < song.tracks; ++t)
 		{
@@ -83,10 +92,13 @@ namespace
 		const auto start = std::chrono::steady_clock::now();
 		call(client, "audio.render", {{"frames", frames}});
 		const std::chrono::duration<double> took = std::chrono::steady_clock::now() - start;
-		return song.seconds / took.count();
+		rendered.speed = song.seconds / took.count();
+		return rendered;
 	}
 
-	// Speed with 1, 2, 4 ... threads up to the hardware's: independent tracks should scale close to linearly.
+	// Speed with 1, 2, 4 ... threads up to the hardware's: independent tracks should scale close to linearly. Where
+	// workers get no real-time priority (Linux without the privilege) only the audio thread processes, and the
+	// speedup stays flat: activeThreads and limitedBy say so.
 	Json workers(const Options& options)
 	{
 		Json results = Json::array();
@@ -102,13 +114,14 @@ namespace
 			song.tracks = 64;
 			song.seconds = options.quick ? 1.0 : 4.0;
 			song.threads = threads;
-			const double speed = render(song);
+			const Rendered rendered = render(song);
 			if (threads == 1)
-				single = speed;
-			const double speedup = speed / single;
-			std::printf("workers  threads %3d  %8.2fx real time  speedup %5.2f  efficiency %3.0f%%\n", threads, speed,
-				speedup, 100.0 * speedup / threads);
-			results.push_back({{"threads", threads}, {"realTimeFactor", speed}, {"speedup", speedup}});
+				single = rendered.speed;
+			const double speedup = rendered.speed / single;
+			std::printf("workers  threads %3d  active %3d  %8.2fx real time  speedup %5.2f  efficiency %3.0f%%\n",
+				threads, rendered.activeThreads, rendered.speed, speedup, 100.0 * speedup / rendered.activeThreads);
+			results.push_back({{"threads", threads}, {"activeThreads", rendered.activeThreads},
+				{"limitedBy", rendered.limitedBy}, {"realTimeFactor", rendered.speed}, {"speedup", speedup}});
 		}
 		return results;
 	}
@@ -123,7 +136,7 @@ namespace
 			song.tracks = count;
 			song.seconds = options.quick ? 1.0 : 4.0;
 			song.threads = static_cast<int>(gnubase::rt::hardwareThreads());
-			const double speed = render(song);
+			const double speed = render(song).speed;
 			const double perTrack = 1000.0 * song.blockSize / 48000.0 / speed / count; // ms of a block per track
 			std::printf(
 				"tracks   tracks %4d  %8.2fx real time  %7.4f ms per track and block\n", count, speed, perTrack);
@@ -143,7 +156,7 @@ namespace
 			song.blockSize = blockSize;
 			song.seconds = options.quick ? 1.0 : 4.0;
 			song.threads = static_cast<int>(gnubase::rt::hardwareThreads());
-			const double speed = render(song);
+			const double speed = render(song).speed;
 			std::printf("blocks   frames %4d  %8.2fx real time\n", blockSize, speed);
 			results.push_back({{"blockSize", blockSize}, {"realTimeFactor", speed}});
 		}
