@@ -100,6 +100,7 @@ add_library(gnubase-engine STATIC
 	document/document.cpp document/document.h
 	document/history.cpp document/history.h
 	document/midiedits.cpp
+	document/midifilecommands.cpp
 	document/projectmodel.cpp document/projectmodel.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/serialize.cpp document/serialize.h
@@ -111,6 +112,8 @@ add_library(gnubase-engine STATIC
 	jobs/jobs.cpp jobs/jobs.h
 	media/backup.cpp media/backup.h
 	midi/midivalues.cpp midi/midivalues.h
+	midifile/midiconvert.cpp midifile/midiconvert.h
+	midifile/smf.cpp midifile/smf.h
 	peaks/peakcache.cpp peaks/peakcache.h
 	peaks/peaks.cpp peaks/peaks.h
 	processors/builtin.cpp processors/builtin.h

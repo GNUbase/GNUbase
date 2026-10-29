@@ -144,7 +144,8 @@ namespace gnubase::engine
 	Json toJson(const Note& note)
 	{
 		return {{"id", note.id}, {"position", note.position}, {"length", note.length}, {"pitch", note.pitch},
-			{"velocity", note.velocity / g_maxVelocity}, {"channel", note.channel}};
+			{"velocity", note.velocity / g_maxVelocity}, {"releaseVelocity", note.releaseVelocity / g_maxVelocity},
+			{"channel", note.channel}};
 	}
 
 	Json toJson(const Controller& controller)
@@ -324,6 +325,9 @@ namespace gnubase::engine
 				note.pitch = n.at("pitch").get<uint8_t>();
 				note.velocity = static_cast<uint16_t>(std::lround(n.at("velocity").get<double>() * g_maxVelocity));
 				note.channel = n.at("channel").get<uint8_t>();
+				if (n.contains("releaseVelocity")) // projects saved before #137 don't have it
+					note.releaseVelocity =
+						static_cast<uint16_t>(std::lround(n.at("releaseVelocity").get<double>() * g_maxVelocity));
 				part.notes[note.id] = note;
 			}
 			for (const Json& c : item.at("controllers"))
