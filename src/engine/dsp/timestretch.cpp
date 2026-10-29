@@ -9,8 +9,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <filesystem>
 #include <functional>
 #include <stdexcept>
+#include <system_error>
 #include <utility>
 
 namespace gnubase::engine::dsp
@@ -220,9 +222,10 @@ namespace gnubase::engine::dsp
 		stretcher.setMaxProcessSize(settings.maxBlockFrames);
 		if (settings.mode == StretchMode::RealTime)
 		{
-			// The faster engine sizes its buffers, windows and FFTs for the current ratio and pitch, and grows them
-			// when those change, which would allocate while playing. Going through the whole range once allocates them
-			// all now.
+			// The faster engine grows some buffers, such as its output buffer, the first time ratio and pitch reach
+			// new extremes, which would allocate while playing. Going through the whole range once grows them now.
+			// Windows, FFTs and the buffers that depend on them are allocated for every size up front by GNUbase's
+			// patch (ext/patches/rubberband.patch), and never reallocated.
 			constexpr int steps = 12;
 			const double maxScale = pitchScale(range.maxSemitones, 0.0);
 			for (int r = 0; r <= steps; ++r)
@@ -505,6 +508,56 @@ namespace gnubase::engine::dsp
 		return output;
 	}
 
+	namespace
+	{
+		// Stretches the audio file at input, described by source, into a 32-bit float WAV file at output.
+		AudioFileInfo writeStretched(const std::string& input, const AudioFileInfo& source, const std::string& output,
+			const StretchSettings& settings)
+		{
+			WriteOptions options;
+			options.sampleFormat = SampleFormat::Float32;
+			options.sampleRate = source.sampleRate;
+			options.channels = source.channels;
+			const auto writer = AudioFileWriter::create(output, options);
+			const auto channels = static_cast<size_t>(source.channels);
+
+			std::vector<float> interleaved;
+			std::unique_ptr<AudioFileReader> reader;
+			const auto open = [&]
+			{
+				reader = AudioFileReader::open(input);
+				return Source(
+					[&](float* const* buffers, size_t frames)
+					{
+						interleaved.resize(frames * channels);
+						const size_t got = reader->read(interleaved.data(), frames);
+						for (size_t i = 0; i < got; ++i)
+							for (size_t channel = 0; channel < channels; ++channel)
+								buffers[channel][i] = interleaved[(i * channels) + channel];
+						return got;
+					});
+			};
+			AudioFileInfo written = source;
+			written.format = AudioFormat::Wav;
+			written.sampleFormat = SampleFormat::Float32;
+			written.frames = 0;
+			written.broadcast.reset();
+			std::vector<float> out;
+			run(settings, source.frames, open,
+				[&](const float* const* buffers, size_t frames)
+				{
+					out.resize(frames * channels);
+					for (size_t i = 0; i < frames; ++i)
+						for (size_t channel = 0; channel < channels; ++channel)
+							out[(i * channels) + channel] = buffers[channel][i];
+					writer->write(out.data(), frames);
+					written.frames += static_cast<time::Samples>(frames);
+				});
+			writer->close();
+			return written;
+		}
+	}
+
 	AudioFileInfo stretchFile(const std::string& input, const std::string& output, StretchSettings settings)
 	{
 		rt::assertNotRealtime("dsp::stretchFile");
@@ -515,46 +568,28 @@ namespace gnubase::engine::dsp
 		{
 			const TimeStretcher check(settings);
 		}
-		WriteOptions options;
-		options.sampleFormat = SampleFormat::Float32;
-		options.sampleRate = source.sampleRate;
-		options.channels = source.channels;
-		const auto writer = AudioFileWriter::create(output, options);
-		const auto channels = static_cast<size_t>(source.channels);
-
-		std::vector<float> interleaved;
-		std::unique_ptr<AudioFileReader> reader;
-		const auto open = [&]
+		// Written next to output under another name, then renamed when complete: a failure leaves output as it was,
+		// and output is never truncated while it is still read, should it be the input.
+		const std::filesystem::path target = std::filesystem::u8path(output);
+		const std::filesystem::path partial = std::filesystem::u8path(output + ".partial");
+		AudioFileInfo written;
+		try
 		{
-			reader = AudioFileReader::open(input);
-			return Source(
-				[&](float* const* buffers, size_t frames)
-				{
-					interleaved.resize(frames * channels);
-					const size_t got = reader->read(interleaved.data(), frames);
-					for (size_t i = 0; i < got; ++i)
-						for (size_t channel = 0; channel < channels; ++channel)
-							buffers[channel][i] = interleaved[(i * channels) + channel];
-					return got;
-				});
-		};
-		AudioFileInfo written = source;
-		written.format = AudioFormat::Wav;
-		written.sampleFormat = SampleFormat::Float32;
-		written.frames = 0;
-		written.broadcast.reset();
-		std::vector<float> out;
-		run(settings, source.frames, open,
-			[&](const float* const* buffers, size_t frames)
-			{
-				out.resize(frames * channels);
-				for (size_t i = 0; i < frames; ++i)
-					for (size_t channel = 0; channel < channels; ++channel)
-						out[(i * channels) + channel] = buffers[channel][i];
-				writer->write(out.data(), frames);
-				written.frames += static_cast<time::Samples>(frames);
-			});
-		writer->close();
+			written = writeStretched(input, source, partial.u8string(), settings);
+			std::filesystem::rename(partial, target);
+		}
+		catch (const std::filesystem::filesystem_error& error)
+		{
+			std::error_code ignored;
+			std::filesystem::remove(partial, ignored);
+			throw AudioFileError("can't write " + output + ": " + error.what());
+		}
+		catch (...)
+		{
+			std::error_code ignored;
+			std::filesystem::remove(partial, ignored);
+			throw;
+		}
 		return written;
 	}
 }

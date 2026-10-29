@@ -13,7 +13,7 @@ GNUbase is licensed under the GPL-3.0-or-later, so everything that goes into it 
 | [stb_vorbis](https://github.com/nothings/stb) | `ext/stb` | reading Ogg Vorbis files | yes, compiled in | MIT or Unlicense (public domain), at the user's choice | `ext/stb/LICENSE` |
 | [libFLAC](https://github.com/xiph/flac) | `ext/flac` | writing FLAC files | yes, linked statically | BSD-3-Clause | `ext/flac/COPYING.Xiph` |
 | [r8brain-free-src](https://github.com/avaneev/r8brain-free-src) | `ext/r8brain` | sample-rate conversion | yes, linked statically | MIT | `ext/r8brain/LICENSE` |
-| [Rubber Band Library](https://breakfastquay.com/rubberband/) | `ext/rubberband` | time-stretching and pitch-shifting ([time-stretch.md](time-stretch.md)) | yes, linked statically | GPL-2.0-or-later | `ext/rubberband/COPYING` |
+| [Rubber Band Library](https://breakfastquay.com/rubberband/) | `ext/rubberband` (patched with `ext/patches/rubberband.patch`, see [dependencies.md](dependencies.md)) | time-stretching and pitch-shifting ([time-stretch.md](time-stretch.md)) | yes, linked statically | GPL-2.0-or-later | `ext/rubberband/COPYING` |
 | [pugixml](https://github.com/zeux/pugixml) | `ext/pugixml` | reading and writing DAWproject's XML | yes, linked statically | MIT | `ext/pugixml/LICENSE.md` |
 | [miniz](https://github.com/richgel999/miniz) | `ext/miniz` | reading and writing DAWproject's ZIP container | yes, linked statically | MIT | `ext/miniz/LICENSE` |
 | [Lua](https://www.lua.org) | `ext/lua` | scripting | yes, linked statically | MIT | the end of `ext/lua/lua.h` |

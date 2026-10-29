@@ -40,7 +40,7 @@ What it measures, each in offline mode and in real-time mode (output pulled in b
 - **Unity null:** the pulse wave at ratio 1 and no shift, subtracted from the input at the best whole-sample lag; the residual in dB below the input.
 - **CPU:** 10 s of stereo (pulse wave and bursts), stretched by 1.25 and shifted by +3 semitones. Offline: total time as a multiple of real time. Real time: the same plus the slowest block as a share of its 10.7 ms.
 - **Latency:** in real-time mode, the output frames before the output lines up with the input. Rubber Band also wants a start pad of input frames before the first one; a player reads those from before the start, so they cost no time.
-- **Allocations:** heap allocations and frees in the real-time process path, counted by the RT checker (`gnubase-rtcheck`). In an MSVC Debug build it also sees `malloc` and `free`, so third-party code can't hide them.
+- **Allocations:** heap allocations and frees in the real-time process path, counted by the RT checker (`gnubase-rtcheck`). On Linux and in an MSVC Debug build, it also sees `malloc` and `free`, so third-party code can't hide them.
 
 ### Results
 
@@ -89,12 +89,21 @@ Signalsmith Stretch remains an option for a future cheap preview mode; the bench
 
 ## Real-time safety
 
-Rubber Band documents its real-time mode as free of allocations, locks and blocking calls once set up. Measuring found two exceptions, which GNUbase works around:
+Rubber Band documents its real-time mode as free of allocations, locks and blocking calls once set up. Reading its source and measuring found exceptions, all in the code that runs when the ratio or pitch changes. GNUbase patches Rubber Band (`ext/patches/rubberband.patch`, applied with Git to a copy of its sources in the build folder at configure time; configuring fails if it stops applying):
 
-- **The R2 engine** sizes its buffers, windows and FFTs for the current ratio and pitch and grows them when those change. The wrapper's constructor steps through the whole real-time range of ratio and pitch once, so everything is allocated before playback. That is why real-time mode has a narrower range than offline mode (ratio 0.25 to 4, pitch within 24 semitones, against 0.1 to 10 and 48 semitones): the buffers stay a reasonable size.
-- **The built-in resampler** (`BQResampler`, used for pitch in both engines) replaced its buffer with a new vector on its first use and whenever its ratio changed. `src/engine/CMakeLists.txt` patches one line in a copy of the file in the build folder, so the buffer is reassigned in place and keeps the memory reserved up front. The patch should go upstream, or into a GNUbase fork of Rubber Band like SDL and RmlUi; the configure step fails if it stops applying.
+- **R2 windows and FFTs.** The R2 engine (`R2Stretcher::reconfigure`) picks a window and FFT size from the ratio and pitch, between 512 frames and four times its base size, and created a window, a sinc filter and an FFT the first time it met a size. The patch creates them for every size up front (`R2Stretcher::configure`), and sizes the per-channel buffers for the largest (`ChannelData::construct`), so `ChannelData::setSizes` never grows them.
+- **R2 onset detector.** `PercussiveAudioCurve::setFftSize` freed and allocated its buffer on every FFT size change, so a ratio automated across a window size boundary allocated each time it crossed (the drums preset at a ratio of about 0.38, for example). The patch makes it grow only, and `configure` grows it to the largest size up front.
+- **The built-in resampler** (`BQResampler`, used for pitch in both engines) replaced its buffer with a new vector on its first use and whenever its ratio changed, and reserved room for fewer phases than some ratios need. The patch reassigns the buffer in place and reserves the most phases any ratio needs.
 
-`tests/timestretch_tests.cpp` plays every preset in real-time mode while it changes ratio, pitch and formant preservation every block, under the RT checker. GNUbase builds Rubber Band without threads, timing or thread checks; its log messages go to GNUbase's real-time safe log.
+What the patch leaves to the wrapper: the R2 output buffer, which only grows, and grows the first time ratio and pitch reach a new extreme. The wrapper's constructor steps through the whole real-time range once, so it reaches its largest size before playback. That is why real-time mode has a narrower range than offline mode (ratio 0.25 to 4, pitch within 24 semitones, against 0.1 to 10 and 48 semitones): the buffers stay a reasonable size. The R3 engine needs none of this.
+
+The patch should become a GNUbase fork of Rubber Band like SDL and RmlUi (and go upstream); see [dependencies.md](dependencies.md).
+
+`tests/timestretch_tests.cpp` plays every preset in real-time mode while ratio and pitch sweep the whole real-time range back and forth, crossing every window and FFT size change, under the RT checker. The RT checker sees the C heap too (`malloc`, `posix_memalign`, `free`) on Linux and in MSVC Debug builds, so the Linux CI jobs catch allocations in Rubber Band, which allocates with those. GNUbase builds Rubber Band without threads, timing or thread checks; its log messages go to GNUbase's real-time safe log.
+
+## Alignment
+
+Unchanged (ratio 1, no shift), the output is the input, to the sample, in both modes: offline mode compensates internally, real-time mode through `startPad()` and `latency()`. Stretched or shifted, events move by up to about 10 ms (20 ms with the pads preset), as in every phase vocoder: windows and phase resets fall on a grid of hops, not on the transient. One exception is measured but not yet fixed: in real time, the R2 presets other than drums lag by a constant 16 ms (pads 23 ms) when ratio times pitch scale reaches 4, because Rubber Band reports a latency that is too short there. `tests/timestretch_tests.cpp` checks where short tone bursts land, for every mode and preset.
 
 ## Presets
 
@@ -140,7 +149,8 @@ Warping audio events in real time (musical mode, tempo changes, warp markers, tr
 
 ## Follow-ups
 
-- Send the resampler patch upstream, or fork Rubber Band into the GNUbase organisation.
+- Fork Rubber Band into the GNUbase organisation with the patch, point `ext/rubberband` there, and send the patch upstream.
+- The real-time lag of the R2 presets when ratio times pitch scale reaches 4 (see [Alignment](#alignment)).
 - Warp settings on audio events and real-time warping in the disk streams (M11).
 - Tape mode (varispeed) through the existing resampler.
 - The UI for the offline processes and the sample editor's warp tools.

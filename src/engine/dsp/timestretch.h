@@ -131,6 +131,8 @@ namespace gnubase::engine::dsp
 	std::vector<std::vector<float>> stretch(const std::vector<std::vector<float>>& input, StretchSettings settings);
 
 	// Stretches the audio file at input into a 32-bit float WAV file at output and returns what was written; channels
-	// and sample rate come from the file. Throws AudioFileError, or std::invalid_argument for invalid settings.
+	// and sample rate come from the file. The file is written as output + ".partial" and renamed to output once
+	// complete, so a failure leaves output as it was. Throws AudioFileError, or std::invalid_argument for invalid
+	// settings.
 	AudioFileInfo stretchFile(const std::string& input, const std::string& output, StretchSettings settings);
 }

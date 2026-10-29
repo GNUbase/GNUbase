@@ -18,6 +18,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -553,13 +554,37 @@ namespace gnubase::engine
 			return result;
 		}
 
+		// The same file, by any path to it. Files that don't exist (yet) are compared by their absolute paths.
+		bool sameFile(const std::string& first, const std::string& second)
+		{
+			const std::filesystem::path a = std::filesystem::u8path(first);
+			const std::filesystem::path b = std::filesystem::u8path(second);
+			std::error_code error;
+			if (std::filesystem::equivalent(a, b, error))
+				return true;
+			std::error_code errorA;
+			std::error_code errorB;
+			const std::filesystem::path absoluteA = std::filesystem::absolute(a, errorA);
+			const std::filesystem::path absoluteB = std::filesystem::absolute(b, errorB);
+			return !errorA && !errorB && absoluteA.lexically_normal() == absoluteB.lexically_normal();
+		}
+
+		// A new file for media.convert and media.stretch: never one of the project's media files, the source among
+		// them, which writing would destroy beyond what undo can bring back.
+		void requireNewMediaPath(const Project& project, const std::string& path)
+		{
+			require(!path.empty(), "path must not be empty");
+			for (const auto& [id, media] : project.media)
+				require(!sameFile(path, media.path), "path is media file " + idText(id) + "; choose a new file");
+		}
+
 		Json convertMedia(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
 			const MediaFile& source = find(project.media, parameters.at("media").get<ObjectId>(), "media file");
 			MediaFile media;
 			media.path = parameters.at("path").get<std::string>();
-			require(!media.path.empty(), "path must not be empty");
+			requireNewMediaPath(project, media.path);
 			const double sampleRate = parameters.value("sampleRate", project.sampleRate);
 			require(sampleRate > 0.0, "sampleRate must be positive");
 			try
@@ -586,7 +611,7 @@ namespace gnubase::engine
 			const MediaFile& source = find(project.media, parameters.at("media").get<ObjectId>(), "media file");
 			MediaFile media;
 			media.path = parameters.at("path").get<std::string>();
-			require(!media.path.empty(), "path must not be empty");
+			requireNewMediaPath(project, media.path);
 			dsp::StretchSettings settings;
 			settings.ratio = parameters.value("ratio", 1.0);
 			settings.semitones = parameters.value("semitones", 0.0);
@@ -1363,7 +1388,8 @@ namespace gnubase::engine
 		add(engine,
 			{"media.convert", 1,
 				"Converts a media file to another sample rate (by default the project's), writes the result to path as "
-				"a 32-bit float WAV file and adds it as a new media file.",
+				"a 32-bit float WAV file and adds it as a new media file. path must not be one of the project's media "
+				"files.",
 				objectSchema(
 					{{"media", idSchema}, {"path", stringSchema}, {"sampleRate", numberSchema}}, {"media", "path"}),
 				resultSchema({"media"}), false},
@@ -1371,8 +1397,8 @@ namespace gnubase::engine
 		add(engine,
 			{"media.stretch", 1,
 				"Time-stretches and pitch-shifts a media file, writes the result to path as a 32-bit float WAV file "
-				"and "
-				"adds it as a new media file. ratio is the new length over the old one, from 0.1 to 10 (default 1: "
+				"and adds it as a new media file; path must not be one of the project's media files. ratio is the new "
+				"length over the old one, from 0.1 to 10 (default 1: "
 				"unchanged); semitones and cents shift the pitch, together within 48 semitones either way (default 0). "
 				"preset picks the algorithm: quality (default) and efficient for any material, drums, plucked, pads, "
 				"vocals, mix and solo tuned for kinds of material at a lower CPU cost. formants keeps the spectral "

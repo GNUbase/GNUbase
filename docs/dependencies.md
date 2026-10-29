@@ -17,6 +17,19 @@ Rules:
 - Never force-push `gnubase`. Older GNUbase commits must still be able to check out the submodule commit they pinned.
 - The GNUbase repository pins an exact submodule commit. `branch = gnubase` in `.gitmodules` only matters for `git submodule update --remote`.
 
+## Patched until forked
+
+Rubber Band Library needs changes for real-time safety (see [time-stretch.md](time-stretch.md#real-time-safety)), but has no GNUbase fork yet. Until it has, the submodule points at the official repository, and the changes are one patch file that the build applies.
+
+| Submodule | Upstream | Pinned at | Patch |
+|---|---|---|---|
+| `ext/rubberband` | [breakfastquay/rubberband](https://github.com/breakfastquay/rubberband) | `v4.0.0` | `ext/patches/rubberband.patch` |
+
+- At configure time, `src/engine/CMakeLists.txt` copies Rubber Band's sources into the build folder and applies the patch with `git apply`, again whenever the patch or a file it changes is new. Configuring fails if the patch stops applying.
+- To change the patch, apply it in `ext/rubberband` (`git apply ../patches/rubberband.patch`; add `--ignore-whitespace` where Git checks files out with CRLF line endings), edit, write the diff back (`git diff > ../patches/rubberband.patch`, keeping the header lines) and revert the submodule (`git apply -R ../patches/rubberband.patch`).
+- When updating Rubber Band, check that the patch still applies, and drop the parts upstream has fixed.
+- The rules above want a fork. Once a maintainer creates GNUbase/rubberband, the patch becomes commits on its `gnubase` branch, the submodule points at the fork, and the patch file and the copy step go.
+
 ## Other dependencies
 
 Used unchanged, pinned to an upstream release tag.
@@ -29,14 +42,13 @@ Used unchanged, pinned to an upstream release tag.
 | `ext/stb` | [nothings/stb](https://github.com/nothings/stb) | commit `003501f` (stb_vorbis 1.22); stb has no release tags |
 | `ext/flac` | [xiph/flac](https://github.com/xiph/flac) | `1.5.0` |
 | `ext/r8brain` | [avaneev/r8brain-free-src](https://github.com/avaneev/r8brain-free-src) | `version-6.5` |
-| `ext/rubberband` | [breakfastquay/rubberband](https://github.com/breakfastquay/rubberband) | `v4.0.0` |
 | `ext/pugixml` | [zeux/pugixml](https://github.com/zeux/pugixml) | `v1.16` |
 | `ext/miniz` | [richgel999/miniz](https://github.com/richgel999/miniz) | `3.1.2` |
 | `ext/cpp-httplib` | [yhirose/cpp-httplib](https://github.com/yhirose/cpp-httplib) | `v0.61.0` |
 | `ext/lua` | [lua/lua](https://github.com/lua/lua) (the Lua team's repository) | `v5.4.9` |
 | `ext/clap` | [free-audio/clap](https://github.com/free-audio/clap) | `1.2.10` |
 
-`ext/json`, `ext/flac`, `ext/cpp-httplib` and `ext/lua` are shallow submodules (`shallow = true` in `.gitmodules`): their full history is large and never needed. dr_libs tags each library separately, so the pin is the newest tag whose commit has the newest release of all three; stb has no tags, so it is pinned to a commit. Lua is compiled as C++ (see the top-level `CMakeLists.txt`), so a Lua error unwinds C++ code with an exception and destructors run; include its C headers (`lua.h`, `lauxlib.h`, `lualib.h`), not `lua.hpp`. Rubber Band Library is built from its single-file build with one patch that `src/engine/CMakeLists.txt` applies to a copy in the build folder (its resampler allocated on the audio thread, see [time-stretch.md](time-stretch.md)); when updating it, check that the patch still applies or is no longer needed. In the JSON library, implicit conversions are off (`JSON_ImplicitConversions`), so values are read with `get<T>()`.
+`ext/json`, `ext/flac`, `ext/cpp-httplib` and `ext/lua` are shallow submodules (`shallow = true` in `.gitmodules`): their full history is large and never needed. dr_libs tags each library separately, so the pin is the newest tag whose commit has the newest release of all three; stb has no tags, so it is pinned to a commit. Lua is compiled as C++ (see the top-level `CMakeLists.txt`), so a Lua error unwinds C++ code with an exception and destructors run; include its C headers (`lua.h`, `lauxlib.h`, `lualib.h`), not `lua.hpp`. In the JSON library, implicit conversions are off (`JSON_ImplicitConversions`), so values are read with `get<T>()`.
 
 To update one, check out the new tag inside the submodule and commit the new submodule commit:
 
@@ -48,6 +60,12 @@ cd ../..
 git add ext/Catch2
 git commit -m "Update Catch2 to v3.17.0"
 ```
+
+## Runtime dependencies
+
+What installers and packages have to ship or depend on, beyond the C++ runtime:
+
+- **Linux: `libatomic.so.1`** (GCC's atomic library). Rubber Band asks whether `std::atomic<double>` is lock-free, which links `libatomic` where the compiler can't answer that inline, as Clang on Linux can't. `src/engine/CMakeLists.txt` adds it only when needed. Distribution packages depend on `libatomic1` (Debian, Ubuntu) or `libatomic` (Fedora); a self-contained bundle (AppImage, tarball) ships the library.
 
 ## Cloning
 

@@ -16,6 +16,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <filesystem>
 #include <functional>
 #include <stdexcept>
 #include <string>
@@ -260,6 +261,112 @@ TEST_CASE("stretched audio has the stretched duration", "[unit]")
 	CHECK(std::abs(cents(frequency(output.front(), edge, expected - edge), 440.0)) < 2.0);
 }
 
+// Where events land in time: an input of short tone bursts ("clicks"), stretched, must have each burst where the ratio
+// puts it. Measured as the centre of the burst's energy, which the smearing of a phase vocoder spreads but doesn't
+// move.
+TEST_CASE("clicks land where the ratio puts them", "[unit][slow]")
+{
+	const StretchMode mode = GENERATE(StretchMode::Offline, StretchMode::RealTime);
+	const std::string name = GENERATE(from_range(stretchPresetNames()));
+	struct Change
+	{
+		double ratio;
+		double semitones;
+	};
+	const Change change = GENERATE(Change{1.0, 0.0}, Change{1.0, -7.0}, Change{1.0, 5.0}, Change{1.0, 12.0},
+		Change{0.8, 0.0}, Change{1.5, 0.0}, Change{1.25, -7.0}, Change{2.0, 12.0});
+	CAPTURE(toString(mode), name, change.ratio, change.semitones);
+	const StretchPreset preset = stretchPresetFromString(name).value_or(StretchPreset::Quality);
+	// 5 ms of 1.5 kHz under a Hann window, centred half a frame before each of these frames.
+	const std::vector<size_t> clicks{6000, 18000, 30001, 41999};
+	constexpr size_t burst = 240;
+	std::vector<float> input(48000);
+	for (const size_t click : clicks)
+		for (size_t i = 0; i < burst; ++i)
+		{
+			const double t = (static_cast<double>(i) + 0.5) / burst;
+			const double envelope = 0.5 - (0.5 * std::cos(2.0 * g_pi * t));
+			const double phase = 2.0 * g_pi * 1500.0 * (static_cast<double>(i) - ((burst - 1) / 2.0)) / g_rate;
+			input[click - (burst / 2) + i] = static_cast<float>(envelope * std::sin(phase));
+		}
+	StretchSettings settings = settingsFor(mode);
+	settings.preset = preset;
+	settings.ratio = change.ratio;
+	settings.semitones = change.semitones;
+	const Channels output = stretch({input}, settings);
+	REQUIRE(output.front().size() == static_cast<size_t>(stretchedLength(48000, change.ratio)));
+	// Unchanged, the output is the input, sample-aligned in both modes: the real-time start pad and latency are
+	// compensated exactly. A stretch or shift moves transients by up to 10 ms, as phase vocoders do: windows and phase
+	// resets fall on a grid of hops, not on the transient. The pads preset smooths its transients most. In real time,
+	// the faster engine's presets lag by a constant 16 ms (pads 23 ms) when ratio times pitch scale reaches 4: its
+	// reported latency is short there (docs/time-stretch.md).
+	const bool unchanged = change.ratio == 1.0 && change.semitones == 0.0;
+	const bool faster = preset != StretchPreset::Quality && preset != StretchPreset::Efficient;
+	const bool lagging =
+		faster && mode == StretchMode::RealTime && change.ratio * pitchScale(change.semitones, 0.0) >= 4.0;
+	double tolerance = 480.0;
+	if (unchanged)
+		tolerance = 2.0;
+	else if (lagging)
+		tolerance = 1200.0;
+	else if (preset == StretchPreset::Pads)
+		tolerance = 960.0;
+	for (const size_t click : clicks)
+	{
+		const double expected = (static_cast<double>(click) - 0.5) * change.ratio;
+		const auto centre = static_cast<size_t>(std::lround(expected));
+		constexpr size_t reach = 2400; // 50 ms either side
+		double energy = 0.0;
+		double moment = 0.0;
+		for (size_t i = centre - reach; i < centre + reach; ++i)
+		{
+			const double square = static_cast<double>(output.front()[i]) * output.front()[i];
+			energy += square;
+			moment += square * static_cast<double>(i);
+		}
+		REQUIRE(energy > 0.0);
+		const double offset = (moment / energy) - expected;
+		CAPTURE(click, offset);
+		CHECK(std::abs(offset) <= tolerance);
+	}
+}
+
+TEST_CASE("the limits of the ratio and the pitch shift work", "[unit]")
+{
+	const StretchMode mode = GENERATE(StretchMode::Offline, StretchMode::RealTime);
+	const bool realtime = mode == StretchMode::RealTime;
+	const double minRatio = realtime ? g_minRealtimeRatio : g_minStretchRatio;
+	const double maxRatio = realtime ? g_maxRealtimeRatio : g_maxStretchRatio;
+	const double maxSemitones = realtime ? g_maxRealtimePitchSemitones : g_maxPitchSemitones;
+	struct Limit
+	{
+		double ratio;
+		double semitones;
+	};
+	const Limit limit = GENERATE_COPY(Limit{minRatio, 0.0}, Limit{maxRatio, 0.0}, Limit{1.0, maxSemitones},
+		Limit{1.0, -maxSemitones}, Limit{minRatio, -maxSemitones}, Limit{maxRatio, maxSemitones});
+	CAPTURE(toString(mode), limit.ratio, limit.semitones);
+	// A tone whose shifted pitch stays well inside the audible range at either end.
+	const double pitch = 1000.0 * pitchScale(-limit.semitones / 2.0, 0.0);
+	// At least half a second of output.
+	const auto frames = static_cast<size_t>(std::lround(24000.0 / std::min(limit.ratio, 1.0)));
+	const std::vector<float> input = sine(pitch, frames);
+	StretchSettings settings = settingsFor(mode);
+	settings.ratio = limit.ratio;
+	settings.semitones = limit.semitones;
+	const Channels output = stretch({input}, settings);
+	const auto expected = static_cast<size_t>(stretchedLength(static_cast<int64_t>(frames), limit.ratio));
+	REQUIRE(output.front().size() == expected);
+	// The stretcher delivers the whole length itself: the last 10 % hold the tone, not silence padded on.
+	const double inputLevel = rms(input, 0, frames);
+	const size_t tail = expected / 10;
+	CAPTURE(decibels(rms(output.front(), expected - tail, expected) / inputLevel));
+	CHECK(decibels(rms(output.front(), expected - tail, expected) / inputLevel) > -6.0);
+	CHECK(std::abs(decibels(rms(output.front(), tail, expected - tail) / inputLevel)) < 3.0);
+	const double shifted = pitch * pitchScale(limit.semitones, 0.0);
+	CHECK(std::abs(cents(frequency(output.front(), tail, expected - tail), shifted)) < 5.0);
+}
+
 TEST_CASE("a pitch shift moves a sine by the interval", "[unit]")
 {
 	const StretchMode mode = GENERATE(StretchMode::Offline, StretchMode::RealTime);
@@ -359,7 +466,7 @@ TEST_CASE("stretching is deterministic in both modes", "[unit]")
 	CHECK(first == second);
 }
 
-TEST_CASE("the real-time process path neither allocates nor blocks", "[unit]")
+TEST_CASE("the real-time process path neither allocates nor blocks", "[unit][slow]")
 {
 	const std::string name = GENERATE(from_range(stretchPresetNames()));
 	CAPTURE(name);
@@ -367,20 +474,36 @@ TEST_CASE("the real-time process path neither allocates nor blocks", "[unit]")
 	settings.preset = stretchPresetFromString(name).value_or(StretchPreset::Quality);
 	settings.maxBlockFrames = 2048;
 	TimeStretcher stretcher(settings);
-	const std::vector<float> tone = harmonicTone(48000);
+	// Long enough for the whole sweep at the shortest ratio, so the stretcher never runs on silence.
+	static const std::vector<float> tone = harmonicTone(size_t{1} << 20);
 	const auto previous = gnubase::rt::setViolationHandler(&countViolation);
 	g_violations = 0;
-	// Ratio, pitch and formants change while it plays, as automation and tempo changes will.
-	const Channels output = playRealtime(stretcher, {tone, tone}, 48000, 512,
-		[](TimeStretcher& s, size_t block)
+	// Ratio and pitch sweep the whole real-time range while it plays, as automation and tempo changes will: first the
+	// ratio up and down every 24 blocks while the pitch rises slowly from the lowest to the highest, then the other way
+	// round. That crosses every change of the window and FFT sizes, in both directions and at many pitches; the
+	// formant option toggles too.
+	constexpr size_t sweepBlocks = 480;
+	const auto triangle = [](size_t block, size_t period)
+	{
+		const double phase = static_cast<double>(block % period) / static_cast<double>(period);
+		return phase < 0.5 ? 2.0 * phase : 2.0 - (2.0 * phase);
+	};
+	const auto ratioAt = [](double position)
+	{ return g_minRealtimeRatio * std::pow(g_maxRealtimeRatio / g_minRealtimeRatio, position); };
+	const auto semitonesAt = [](double position) { return g_maxRealtimePitchSemitones * ((2.0 * position) - 1.0); };
+	const Channels output = playRealtime(stretcher, {tone, tone}, 2 * sweepBlocks * 256, 256,
+		[&](TimeStretcher& s, size_t block)
 		{
-			s.setRatio(1.0 + (0.05 * static_cast<double>(block % 8)));
-			s.setPitch(static_cast<double>(block % 5) - 2.0, 25.0);
+			const double slow = static_cast<double>(block % sweepBlocks) / static_cast<double>(sweepBlocks - 1);
+			const double fast = triangle(block, 24);
+			const bool ratioFast = block < sweepBlocks;
+			s.setRatio(ratioAt(ratioFast ? fast : slow));
+			s.setPitch(semitonesAt(ratioFast ? slow : fast), 0.0);
 			s.setPreserveFormants(block % 2 == 0);
 		});
 	gnubase::rt::setViolationHandler(previous);
 	CHECK(g_violations == 0);
-	CHECK(output.front().size() == 48000);
+	CHECK(output.front().size() == 2 * sweepBlocks * 256);
 }
 
 TEST_CASE("real-time playback in blocks matches the latency-compensated whole", "[unit]")
@@ -453,4 +576,59 @@ TEST_CASE("media.stretch writes a stretched and shifted copy", "[integration]")
 	INFO(realtime.error);
 	REQUIRE(realtime.ok());
 	CHECK(realtime.value.at("media").at("length") == 24000);
+}
+
+TEST_CASE("media.stretch never writes over a file of the project", "[integration]")
+{
+	const test::TempDir dir;
+	const std::filesystem::path& folder = dir.path();
+	const std::string input = (folder / "take.wav").u8string();
+	const std::vector<float> samples = sine(440.0, 4800);
+	{
+		WriteOptions options;
+		options.sampleRate = g_rate;
+		options.channels = 1;
+		const auto writer = AudioFileWriter::create(input, options);
+		writer->write(samples.data(), samples.size());
+		writer->close();
+	}
+	Engine engine;
+	Client client(engine);
+	const Result added = client.call("media.add", {{"path", input}});
+	REQUIRE(added.ok());
+	const Json source = added.value.at("media").at("id");
+	const std::string stretched = (folder / "take stretched.wav").u8string();
+	REQUIRE(client.call("media.stretch", {{"media", source}, {"path", stretched}, {"ratio", 2}}).ok());
+
+	// The source itself, by its own path or another one, and any other media file of the project: undo couldn't bring
+	// them back.
+	std::filesystem::create_directory(folder / "sub");
+	for (const std::string& path :
+		{input, (folder / "sub" / ".." / "take.wav").u8string(), (folder / "." / "take.wav").u8string(), stretched})
+	{
+		CAPTURE(path);
+		const Result result = client.call("media.stretch", {{"media", source}, {"path", path}, {"ratio", 1.5}});
+		CHECK(!result.ok());
+	}
+	const auto reader = AudioFileReader::open(input);
+	REQUIRE(reader->info().frames == 4800);
+	std::vector<float> read(samples.size());
+	REQUIRE(reader->read(read.data(), read.size()) == read.size());
+	float difference = 0.0f; // written as integer samples, so rounded
+	for (size_t i = 0; i < samples.size(); ++i)
+		difference = std::max(difference, std::abs(read[i] - samples[i]));
+	CHECK(difference < 1e-4f);
+	CHECK(AudioFileReader::open(stretched)->info().frames == 9600);
+
+	// Another file is replaced, and only once the new one is complete: no partial file stays behind.
+	const std::string other = (folder / "other.wav").u8string();
+	std::filesystem::copy_file(std::filesystem::u8path(input), std::filesystem::u8path(other));
+	const Result replaced = client.call("media.stretch", {{"media", source}, {"path", other}, {"ratio", 0.5}});
+	INFO(replaced.error);
+	REQUIRE(replaced.ok());
+	CHECK(AudioFileReader::open(other)->info().frames == 2400);
+	int files = 0;
+	for (const auto& entry : std::filesystem::directory_iterator(folder))
+		files += entry.is_regular_file() ? 1 : 0;
+	CHECK(files == 3); // take, take stretched, other
 }

@@ -15,31 +15,51 @@ target_link_libraries(gnubase-r8brain PUBLIC Threads::Threads)
 # Rubber Band Library for time-stretching and pitch-shifting (docs/time-stretch.md): its single-file build, configured
 # the same on every platform (built-in FFT and resampler, no threads, no timing), so every platform runs the same code.
 # Third-party code, without GNUbase's warnings and clang-tidy checks; only dsp/timestretch.cpp includes it.
-# One patch, applied to a copy in the build folder: the built-in resampler (BQResampler) replaces its buffer with a new
-# vector whenever its ratio changes, which allocates on the audio thread; assigning to the buffer keeps the memory it
-# reserved up front. ponytail: send it upstream, or carry it in a GNUbase fork like SDL and RmlUi, then drop this.
+# GNUbase's changes, which make real-time mode allocate nothing when the ratio or pitch changes, are one patch:
+# ext/patches/rubberband.patch. Git applies it to a copy of the sources in the build folder whenever the patch or a
+# file it changes is new. ponytail: carry the changes in a GNUbase fork like SDL and RmlUi (or upstream), then build
+# ext/rubberband directly and drop this.
+find_package(Git REQUIRED)
 set(rubberband ${PROJECT_SOURCE_DIR}/ext/rubberband)
+set(rubberbandPatch ${PROJECT_SOURCE_DIR}/ext/patches/rubberband.patch)
 set(rubberbandPatched ${CMAKE_CURRENT_BINARY_DIR}/rubberband)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${rubberband}/src/common/BQResampler.cpp
-	${rubberband}/single/RubberBandSingle.cpp)
-file(READ ${rubberband}/src/common/BQResampler.cpp source)
-string(REPLACE "target_state.buffer = floatbuf(buffer_length, 0.0);" "target_state.buffer.assign(buffer_length, 0.0);"
-	patched "${source}")
-string(FIND "${patched}" "floatbuf(buffer_length" unpatched)
-if(patched STREQUAL source OR NOT unpatched EQUAL -1)
-	message(FATAL_ERROR "The Rubber Band resampler patch no longer applies; check ${rubberband}/src/common/BQResampler.cpp")
+file(READ ${rubberbandPatch} patch)
+string(REPLACE "\r\n" "\n" patch "${patch}") # Git may check text files out with CRLF line endings
+string(REGEX MATCHALL "\n\\+\\+\\+ b/[^\n]+" patchedFiles "${patch}")
+list(TRANSFORM patchedFiles REPLACE "^\n\\+\\+\\+ b/" "")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${rubberbandPatch})
+set(patchStamp "${patch}")
+foreach(file IN LISTS patchedFiles)
+	set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${rubberband}/${file})
+	file(SHA256 ${rubberband}/${file} hash)
+	string(APPEND patchStamp "${file} ${hash}\n")
+endforeach()
+string(SHA256 patchStamp "${patchStamp}")
+set(appliedStamp "")
+if(EXISTS ${rubberbandPatched}/patch.stamp)
+	file(READ ${rubberbandPatched}/patch.stamp appliedStamp)
 endif()
-file(WRITE ${rubberbandPatched}/BQResampler.cpp.new "${patched}")
-configure_file(${rubberbandPatched}/BQResampler.cpp.new ${rubberbandPatched}/BQResampler.cpp COPYONLY)
-file(READ ${rubberband}/single/RubberBandSingle.cpp source)
-string(REPLACE "#include \"../src/common/BQResampler.cpp\"" "#include \"${rubberbandPatched}/BQResampler.cpp\"" patched
-	"${source}")
-string(REPLACE "#include \"../src/" "#include \"${rubberband}/src/" patched "${patched}")
-file(WRITE ${rubberbandPatched}/RubberBandSingle.cpp.new "${patched}")
-configure_file(${rubberbandPatched}/RubberBandSingle.cpp.new ${rubberbandPatched}/RubberBandSingle.cpp COPYONLY)
-add_library(gnubase-rubberband STATIC ${rubberbandPatched}/RubberBandSingle.cpp)
-target_include_directories(gnubase-rubberband SYSTEM PUBLIC ${rubberband})
-target_include_directories(gnubase-rubberband SYSTEM PRIVATE ${rubberband}/src/common)
+if(NOT appliedStamp STREQUAL patchStamp)
+	file(REMOVE_RECURSE ${rubberbandPatched})
+	file(COPY ${rubberband}/rubberband ${rubberband}/single ${rubberband}/src DESTINATION ${rubberbandPatched})
+	foreach(file IN LISTS patchedFiles) # the patch has LF line endings
+		file(READ ${rubberbandPatched}/${file} source)
+		string(REPLACE "\r\n" "\n" source "${source}")
+		file(WRITE ${rubberbandPatched}/${file} "${source}")
+	endforeach()
+	file(WRITE ${rubberbandPatched}/rubberband.patch "${patch}")
+	# Outside a repository, as the build folder may be inside GNUbase's: Git would skip paths outside the current one.
+	execute_process(COMMAND ${CMAKE_COMMAND} -E env GIT_CEILING_DIRECTORIES=${CMAKE_CURRENT_BINARY_DIR}
+		${GIT_EXECUTABLE} apply --verbose --whitespace=nowarn rubberband.patch
+		WORKING_DIRECTORY ${rubberbandPatched} RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+	if(NOT result EQUAL 0 OR error MATCHES "Skipped" OR NOT error MATCHES "Applied patch")
+		message(FATAL_ERROR "ext/patches/rubberband.patch no longer applies to ${rubberband}: ${output}${error}")
+	endif()
+	file(WRITE ${rubberbandPatched}/patch.stamp "${patchStamp}")
+endif()
+add_library(gnubase-rubberband STATIC ${rubberbandPatched}/single/RubberBandSingle.cpp)
+target_include_directories(gnubase-rubberband SYSTEM PUBLIC ${rubberbandPatched})
+target_include_directories(gnubase-rubberband SYSTEM PRIVATE ${rubberbandPatched}/src/common)
 target_compile_definitions(gnubase-rubberband PRIVATE ALREADY_CONFIGURED USE_BUILTIN_FFT USE_BQRESAMPLER NO_TIMING
 	NO_THREADING NO_THREAD_CHECKS $<$<CXX_COMPILER_ID:MSVC>:__MSVC__ NOMINMAX _USE_MATH_DEFINES>
 	$<$<PLATFORM_ID:Darwin>:LACK_SINCOS>) # macOS's C library has no sincos; Rubber Band's own build sets this too
