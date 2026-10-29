@@ -213,7 +213,7 @@ namespace
 		for (int row = y; row < y + height; ++row)
 		{
 			const auto begin =
-				image.pixels.begin() + ((static_cast<ptrdiff_t>(row) * image.width + x) * static_cast<ptrdiff_t>(4));
+				image.pixels.begin() + (((static_cast<ptrdiff_t>(row) * image.width) + x) * static_cast<ptrdiff_t>(4));
 			cropped.pixels.insert(cropped.pixels.end(), begin, begin + (static_cast<ptrdiff_t>(width) * 4));
 		}
 		return cropped;
@@ -285,7 +285,7 @@ TEST_CASE("effects at a window's edges draw as in a context of the window's size
 	// Each drawing has its own RmlUi, which would otherwise share the shadow's texture between the two.
 	const auto draw = [](bool larger)
 	{
-		Gpu gpu;
+		const Gpu gpu;
 		const ui::Window& window = gpu.open("edges.rml", 200, 150);
 		const ui::Size pixels = window.pixelSize();
 		if (larger)
@@ -309,7 +309,7 @@ TEST_CASE("RmlUi's effects look as RmlUi's OpenGL 3 renderer draws them", "[ui]"
 	spec.title = "features";
 	spec.size = {960, 640}; // SDL's offscreen video driver has a 1024x768 monitor, which the shell fits windows into
 	spec.hidden = true;
-	ui::Window& window = gpu.shell->open(spec);
+	const ui::Window& window = gpu.shell->open(spec);
 	Rml::ElementDocument* document = window.context().LoadDocument(GNUBASE_SPIKE_DOCUMENTS "/features.rml");
 	REQUIRE(document != nullptr);
 	document->Show();
