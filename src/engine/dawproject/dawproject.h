@@ -18,7 +18,9 @@ namespace gnubase::engine
 
 	struct DawProjectSaveOptions
 	{
-		bool embedMedia = true; // copy the media files into the file; otherwise refer to them where they are
+		// Copy the media files into the file; otherwise refer to them where they are: relative to the file if they are
+		// in its folder, so that the folder can move, or else by their absolute path.
+		bool embedMedia = true;
 	};
 
 	// project.xml gets everything DAWproject can describe. gnubase.json gets the whole project and a checksum of
