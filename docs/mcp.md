@@ -208,7 +208,7 @@ Generated from what the MCP server lists, with `script_run`: every tool by area,
 
 Engine command `audioEvent.add`.
 
-Adds an audio event that plays a section of a clip on an audio track. position is in the track's time base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track plays one event at a time: where events overlap, the one added last plays.
+Adds an audio event that plays a section of a clip on an audio track. position is in the track's time base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track plays one event at a time: where events overlap, the one added last plays, unless they crossfade.
 
 Arguments:
 
@@ -249,6 +249,22 @@ Arguments:
 - `offset`: integer
 - `position`: integer
 - `volume`: number
+
+Result:
+
+- `event`: object, required
+
+#### `audioEvent_setFades`
+
+Engine command `audioEvent.setFades`.
+
+Changes an audio event's fade in (from its start) or fade out (up to its end): length in the clip's sample frames (0: none) and shape: linear, exponential (slow, then fast), logarithmic (fast, then slow), sCurve (half a cosine) or equalPower (a quarter sine). Together they fit into the event. A crossfade replaces the fades at the ends it joins while it plays.
+
+Arguments:
+
+- `event`: integer, required
+- `fadeIn`: object
+- `fadeOut`: object
 
 Result:
 
@@ -526,6 +542,31 @@ Result:
 - `processing`: object, required
 - `running`: boolean, required
 
+### autoFades
+
+#### `autoFades_set`
+
+Engine command `autoFades.set`.
+
+Changes the auto fades and crossfades of the project, or of an audio track: fadeIn and fadeOut where an event has no fade of its own at that end (they never stack), crossfades where an event starts on top of another one or ends above one that goes on, unless they crossfade already; there an event's own fade is the crossfade's, mirrored by the event behind. length is 1 to 500 ms; shapes as for audioEvent.setFades; crossfadeMode equalGain or equalPower, with crossfadeShape the fade in as for crossfade.set. A track uses the project's settings until it gets its own; useProject: true goes back to them. Returns the settings that apply.
+
+Arguments:
+
+- `crossfadeMode`: one of "equalGain" | "equalPower" | "custom"
+- `crossfadeShape`: one of "linear" | "exponential" | "logarithmic" | "sCurve" | "equalPower"
+- `crossfades`: boolean
+- `fadeIn`: boolean
+- `fadeInShape`: one of "linear" | "exponential" | "logarithmic" | "sCurve" | "equalPower"
+- `fadeOut`: boolean
+- `fadeOutShape`: one of "linear" | "exponential" | "logarithmic" | "sCurve" | "equalPower"
+- `length`: number
+- `track`: integer
+- `useProject`: boolean
+
+Result:
+
+- `autoFades`: object, required
+
 ### automationLane
 
 #### `automationLane_add`
@@ -744,6 +785,22 @@ Arguments:
 
 - `clip`: integer, required
 
+#### `clip_setFades`
+
+Engine command `clip.setFades`.
+
+Changes a clip's fade in or fade out, at its media file's start and end: length in sample frames (0: none) and shape, as for audioEvent.setFades. Every event that plays the clip gets them.
+
+Arguments:
+
+- `clip`: integer, required
+- `fadeIn`: object
+- `fadeOut`: object
+
+Result:
+
+- `clip`: object, required
+
 ### controller
 
 #### `controller_add`
@@ -786,6 +843,38 @@ Arguments:
 Result:
 
 - `controllers`: array, required
+
+### crossfade
+
+#### `crossfade_remove`
+
+Engine command `crossfade.remove`.
+
+Removes the crossfades into and out of an audio event.
+
+Arguments:
+
+- `event`: integer, required
+
+#### `crossfade_set`
+
+Engine command `crossfade.set`.
+
+Crossfades from an audio event into the next one on its track, where they overlap: to must start inside from and end after it. Both play there; from fades out up to its end over outLength (from's clip frames), to fades in from its start over length (to's clip frames); 0, the default, is the whole overlap, so the crossfade is symmetric. mode equalGain (default): the fade out mirrors the fade in (shape linear, exponential, logarithmic or sCurve), so their gains add up to 1; equalPower: quarter sines whose power adds up to 1; custom: shape and outShape of their own. An event fades out into one event only. Changing a crossfade keeps what isn't given. After an edit that moves the events apart, the crossfade rests and both play their own fades until they overlap like that again. Returns to.
+
+Arguments:
+
+- `from`: integer, required
+- `length`: integer
+- `mode`: one of "equalGain" | "equalPower" | "custom"
+- `outLength`: integer
+- `outShape`: one of "linear" | "exponential" | "logarithmic" | "sCurve" | "equalPower"
+- `shape`: one of "linear" | "exponential" | "logarithmic" | "sCurve" | "equalPower"
+- `to`: integer, required
+
+Result:
+
+- `event`: object, required
 
 ### engine
 
@@ -1375,6 +1464,69 @@ Result:
 
 - `notes`: array, required
 
+### pluginhost
+
+#### `pluginhost_check`
+
+Engine command `pluginhost.check`.
+
+Reports the plugins that failed since the last check because their host process crashed, missed a processing deadline (reason "hung") or broke the protocol, and emits plugin.failed for each with its instance, plugin id, process and reason. A failed plugin is bypassed and outputs silence. Also emits pluginhost.changed for each hosting mode change whose moves are done. The engine runs this on its own as soon as a failure is detected or the moves are done.
+
+Result:
+
+- `failures`: array of object, required
+
+#### `pluginhost_get`
+
+Engine command `pluginhost.get`. Read-only.
+
+How plugins are grouped into plugin host processes, and the processes. mode: the hosting mode, "shared" (one process for every plugin), "perVendor", "perPlugin" or "perInstance"; defaultMode: the mode GNUbase starts with; overrides: plugin ids with a mode of their own. hosts: each process with its id (process), its group ("shared", "vendor:<vendor>", "plugin:<id>" or "instance:<instance>"), its state ("running", "hung" or "exited") and its plugin instances, whether they failed.
+
+Result:
+
+- `defaultMode`: string, required
+- `errors`: array of string
+- `hosts`: array of object, required
+- `mode`: string, required
+- `overrides`: object, required
+
+#### `pluginhost_setMode`
+
+Engine command `pluginhost.setMode`.
+
+Sets the hosting mode (see pluginhost.get) and returns at once. Plugins whose process changes then move to their new process in the background, with their state, between two blocks, so they keep sounding the same. When they did, pluginhost.changed is emitted with the new status, and with the plugins that could not move and stay where they are in errors.
+
+Arguments:
+
+- `mode`: one of "shared" | "perVendor" | "perPlugin" | "perInstance", required
+
+Result:
+
+- `defaultMode`: string, required
+- `errors`: array of string
+- `hosts`: array of object, required
+- `mode`: string, required
+- `overrides`: object, required
+
+#### `pluginhost_setOverride`
+
+Engine command `pluginhost.setOverride`.
+
+Gives a plugin (its id, e.g. "clap:com.example.synth") a hosting mode of its own, e.g. "perInstance" to isolate an unstable plugin, or removes its override with null. Moves the plugin's instances like pluginhost.setMode, which emits pluginhost.changed when they moved.
+
+Arguments:
+
+- `mode`: one of "shared" | "perVendor" | "perPlugin" | "perInstance" | null, required
+- `plugin`: string, required
+
+Result:
+
+- `defaultMode`: string, required
+- `errors`: array of string
+- `hosts`: array of object, required
+- `mode`: string, required
+- `overrides`: object, required
+
 ### processor
 
 #### `processor_list`
@@ -1939,6 +2091,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://job.list`: Every background job since the engine started, such as backups: id, kind, state (running, done, failed or cancelled), progress from 0 to 1, what it is doing, and its result or error once it ended.
 - `gnubase://marker.list`: The markers of a marker track (default: the active one; track 0 if there is none) in timeline order, with their position and end also in the project's samples.
 - `gnubase://media.peakStatus`: The state of the waveform overviews of a media file, or of every media file: pending, generating (with progress from 0 to 1), ready, failed (with the error) or recording; the frames that have peaks; the peak file they were loaded from or written to; whether they were generated from the audio file rather than loaded. Peak files are kept next to their audio file as <file name>.gbpeaks, or in fallbackFolder where that can't be written.
+- `gnubase://pluginhost.get`: How plugins are grouped into plugin host processes, and the processes. mode: the hosting mode, "shared" (one process for every plugin), "perVendor", "perPlugin" or "perInstance"; defaultMode: the mode GNUbase starts with; overrides: plugin ids with a mode of their own. hosts: each process with its id (process), its group ("shared", "vendor:<vendor>", "plugin:<id>" or "instance:<instance>"), its state ("running", "hung" or "exited") and its plugin instances, whether they failed.
 - `gnubase://processor.list`: Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units. A stepped parameter takes whole numbers only; its options, if any, name its values from the minimum on.
 - `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts.
 - `gnubase://project.location`: Where the project is: its project file (set by project.save and project.load), the folder of that file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. All null for a project that has no file yet.

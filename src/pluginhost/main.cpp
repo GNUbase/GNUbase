@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "platform/log.h"
+#include "pluginhost/formats.h"
+#include "pluginhost/host.h"
 
-#include <cstdio>
-#include <exception>
-
-// Plugin host process: runs third-party plugins outside of GNUbase (#64). Not implemented yet.
-int main()
+// Plugin host process: runs third-party plugins outside of GNUbase (docs/architecture.md, "Plugin hosting and IPC").
+// The engine starts it:
+//   gnubase-pluginhost --connect <connection> [--log <file name>]
+// Exit codes: 0 the engine is gone, 1 unexpected error, 2 invalid command line, 3 the connection can't be opened or
+// broke, 4 the engine speaks another protocol version.
+int main(int argc, char** argv)
 {
 	try
 	{
-		// ponytail: one fixed file name; once the app launches several hosts (#64), it passes each its own log file.
-		const gnubase::logging::Session logSession(gnubase::logging::defaultDirectory() / "gnubase-pluginhost.log");
-		return 0;
+		return gnubase::pluginhost::runPluginHost(argc, argv, gnubase::pluginhost::builtinFormats());
 	}
-	catch (const std::exception& error)
+	catch (...)
 	{
-		std::fprintf(stderr, "GNUbase plugin host: %s\n", error.what());
-		return 1;
+		return 1; // even reporting the error failed
 	}
 }

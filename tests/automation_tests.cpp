@@ -330,7 +330,8 @@ TEST_CASE("automation points are compiled to the project's samples, following th
 	project.tempo = gnubase::time::TempoMap({{0, 120.0, false}, {ticks(48000), 60.0, false}});
 	const ObjectId track = project.newId();
 	const ObjectId channel = project.newId();
-	project.trackById[track] = {track, TrackType::Audio, "Audio", "", gnubase::time::TimeBase::Musical, 0, channel, {}};
+	project.trackById[track] = {
+		track, TrackType::Audio, "Audio", "", gnubase::time::TimeBase::Musical, 0, channel, {}, {}};
 	project.tracks.push_back(track);
 	project.channels[channel] = {channel, track, 2, 0, 0, {}, -6.0, 0.5};
 	AutomationLane volume;
@@ -376,7 +377,7 @@ TEST_CASE("automation points on linear tracks keep their time when the tempo cha
 	{
 		const ObjectId track = project.newId();
 		const ObjectId channel = project.newId();
-		project.trackById[track] = {track, TrackType::Audio, "Audio", "", base, 0, channel, {}};
+		project.trackById[track] = {track, TrackType::Audio, "Audio", "", base, 0, channel, {}, {}};
 		project.tracks.push_back(track);
 		project.channels[channel] = {channel, track, 2, 0, 0, {}, 0.0, 0.0};
 		AutomationLane lane;

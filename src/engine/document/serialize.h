@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 // The project document as JSON: what project.get returns and the events carry, and what the DAWproject extension
 // entry stores. projectFromJson(toJson(project)) gives back the same project.
@@ -23,6 +24,22 @@ namespace gnubase::engine
 	const char* timeBaseName(time::TimeBase base);
 	time::TimeBase timeBaseFromName(const std::string& name);
 	const char* directionName(BusDirection direction);
+	const char* fadeShapeName(FadeShape shape);
+	std::optional<FadeShape> fadeShapeFromName(const std::string& name);
+	const char* crossfadeModeName(CrossfadeMode mode);
+	std::optional<CrossfadeMode> crossfadeModeFromName(const std::string& name);
+
+	// The names of every fade shape and crossfade mode, for schemas.
+	std::vector<std::string> fadeShapeNames();
+	std::vector<std::string> crossfadeModeNames();
+
+	Json toJson(const Fade& fade);
+	Json toJson(const Crossfade& crossfade); // null without one
+	Json toJson(const AutoFades& settings);
+	// The inverses. Missing properties keep the value of fallback; unknown names throw std::invalid_argument.
+	Fade fadeFromJson(const Json& json, const Fade& fallback = {});
+	AutoFades autoFadesFromJson(const Json& json, const AutoFades& fallback = {});
+
 	const char* markerTypeName(MarkerType type);
 	std::optional<MarkerType> markerTypeFromName(const std::string& name);
 

@@ -17,6 +17,9 @@ namespace gnubase::platform
 	// to run again; plugin hosts use this to notice that the engine went away without closing its connections.
 	bool processExists(uint32_t id) noexcept;
 
+	// The running program's file, e.g. to find the programs installed next to it.
+	std::filesystem::path currentExecutablePath();
+
 	// Linux: has the kernel kill this process when its parent `parentId` ends (PR_SET_PDEATHSIG), if that is still
 	// its parent. A plugin host calls it through Connection::open. The kernel goes by the thread that started the
 	// process, not by the whole parent process, so start plugin hosts from a thread that lives as long as they do.
