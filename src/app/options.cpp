@@ -168,6 +168,8 @@ namespace gnubase::app
 	{
 		return R"(Usage: gnubase [options]
 
+Opens GNUbase's main window, or with --headless runs without UI.
+
   --headless            run without UI: the engine and its MCP server
   --mcp-stdio           MCP over stdin and stdout (the default with --headless)
   --mcp-http[=PORT]     MCP over HTTP on 127.0.0.1, on PORT or a free port; prints the URL and the access token

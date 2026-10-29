@@ -1,0 +1,14 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- A red box 100 by 50 dp at (10 dp, 20 dp), green while the mouse is over it. -->
+<rml>
+<head>
+	<title>Boxes</title>
+	<style>
+		body { display: block; position: absolute; left: 0; top: 0; right: 0; bottom: 0; margin: 0; }
+		div { display: block; }
+		#box { position: absolute; left: 10dp; top: 20dp; width: 100dp; height: 50dp; background-color: #ff0000; }
+		#box:hover { background-color: #00ff00; }
+	</style>
+</head>
+<body><div id="box"/></body>
+</rml>

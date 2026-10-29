@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-add_library(gnubase-testutils STATIC testutils/testutils.cpp testutils/testutils.h)
+add_library(gnubase-testutils STATIC testutils/fakeui.cpp testutils/fakeui.h testutils/testutils.cpp
+	testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
 target_compile_definitions(gnubase-testutils PRIVATE
 	GNUBASE_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden"
 	GNUBASE_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/output"
@@ -16,6 +18,10 @@ target_sources(gnubase-tests PRIVATE device_tests.cpp effects_tests.cpp ipc_test
 target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-ipc gnubase-mcp gnubase-plugin gnubase-pluginhost-core gnubase-scripting gnubase-testutils Catch2::Catch2WithMain miniz pugixml::pugixml
 	cpp-httplib)
 
+# The UI's tests (#48), apart from the lists above so that both can grow without conflicts.
+target_sources(gnubase-tests PRIVATE shell_tests.cpp window_tests.cpp)
+target_link_libraries(gnubase-tests PRIVATE gnubase-ui SDL3::SDL3)
+
 # IPC tests run a helper process that plays a plugin host (tests/ipcpeer.cpp).
 add_executable(gnubase-ipcpeer ipcpeer.cpp)
 target_link_libraries(gnubase-ipcpeer PRIVATE gnubase-ipc)
@@ -29,6 +35,12 @@ if(GNUBASE_TEST_PLUGINS)
 	target_link_libraries(gnubase-tests PRIVATE clap-sdk vst3-sdk ${CMAKE_DL_LIBS})
 	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_TEST_PLUGINS_DIR="${GNUBASE_TEST_PLUGINS_DIR}")
 	add_dependencies(gnubase-tests gnubase-test-plugins)
+	# The VST3 adapter's tests and their plugin (vst3adapter/README.md).
+	add_subdirectory(vst3adapter)
+	target_sources(gnubase-tests PRIVATE vst3_adapter_tests.cpp)
+	target_link_libraries(gnubase-tests PRIVATE gnubase-pluginhost-vst3)
+	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VST3_ADAPTERTEST="${GNUBASE_VST3_ADAPTERTEST}")
+	add_dependencies(gnubase-tests gnubase-vst3-adaptertest)
 
 	# Plugin hosting tests start the tests' plugin host: the shipped host's code plus the test format, which runs
 	# the same test plugins (pluginhost/testformat.h). The shipped host has no test plugins.

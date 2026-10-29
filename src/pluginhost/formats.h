@@ -14,8 +14,9 @@
 namespace gnubase::pluginhost
 {
 	// Adapts one plugin format to the GNUbase plugin API. An adapter loads plugin files of its format and returns their
-	// factory, whose plugins implement plugin::Plugin on top of the format. The CLAP (#67) and VST3 (#68) adapters,
-	// and later AU, LV2 and FST, plug in here. The tests' host adds a test format (tests/pluginhost/testformat.h).
+	// factory, whose plugins implement plugin::Plugin on top of the format. The host has the VST3 adapter (#68); the
+	// CLAP adapter (#67), and later AU, LV2 and FST, plug in here. The tests' host adds a test format
+	// (tests/pluginhost/testformat.h).
 	class Format
 	{
 	public:

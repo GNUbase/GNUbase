@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "pluginhost/formats.h"
 
+#include "pluginhost/vst3/vst3format.h"
+
 #include <stdexcept>
 
 namespace gnubase::pluginhost
@@ -33,7 +35,9 @@ namespace gnubase::pluginhost
 
 	Formats builtinFormats()
 	{
-		// The CLAP (#67) and VST3 (#68) adapters go here. Tests add a test format of their own (tests/pluginhost).
-		return {};
+		// The CLAP adapter (#67) goes here. Tests add a test format of their own (tests/pluginhost).
+		Formats formats;
+		formats.add(makeVst3Format());
+		return formats;
 	}
 }

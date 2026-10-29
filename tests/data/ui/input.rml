@@ -1,0 +1,15 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Two text fields, "name" with a value and "other" empty. -->
+<rml>
+<head>
+	<title>Input</title>
+	<style>
+		body { display: block; position: absolute; left: 0; top: 0; right: 0; bottom: 0; margin: 0; }
+		input { display: block; width: 200dp; height: 20dp; }
+	</style>
+</head>
+<body>
+	<input type="text" id="name" value="hello"/>
+	<input type="text" id="other"/>
+</body>
+</rml>
