@@ -418,6 +418,7 @@ TEST_CASE("sending blocks to a plugin host and waiting for its answers passes th
 	CHECK(g_violations == 0);
 }
 
+#ifndef GNUBASE_NO_TEST_PLUGINS
 TEST_CASE("a plugin in a plugin host process processes blocks without allocating or locking", "[integration]")
 {
 	using namespace gnubase;
@@ -439,6 +440,7 @@ TEST_CASE("a plugin in a plugin host process processes blocks without allocating
 	engine::graph::ProcessEvent change;
 	change.type = engine::graph::ProcessEvent::Type::Parameter;
 	change.offset = 10;
+	change.parameter = 1; // test:gain's Gain
 	change.parameterValue = -6.0;
 	eventsIn.add(change);
 
@@ -455,3 +457,4 @@ TEST_CASE("a plugin in a plugin host process processes blocks without allocating
 	CHECK(!slot.failed());
 	CHECK(left[0] != 0.0f);
 }
+#endif

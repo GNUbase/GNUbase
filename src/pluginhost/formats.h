@@ -15,7 +15,7 @@ namespace gnubase::pluginhost
 {
 	// Adapts one plugin format to the GNUbase plugin API. An adapter loads plugin files of its format and returns their
 	// factory, whose plugins implement plugin::Plugin on top of the format. The CLAP (#67) and VST3 (#68) adapters,
-	// and later AU, LV2 and FST, plug in here; for now the host has the test format of built-in test plugins.
+	// and later AU, LV2 and FST, plug in here. The tests' host adds a test format (tests/pluginhost/testformat.h).
 	class Format
 	{
 	public:
@@ -24,7 +24,7 @@ namespace gnubase::pluginhost
 		Format(const Format&) = delete;
 		Format& operator=(const Format&) = delete;
 
-		// The format's name, which is also the prefix of its plugins' ids: "test" for "test:gain", "clap", "vst3".
+		// The format's name, which is also the prefix of its plugins' ids: "clap" for "clap:<CLAP id>", "vst3".
 		virtual std::string_view name() const = 0;
 
 		// [main] The plugins of a plugin file, e.g. a .clap bundle or a .vst3 module. Formats without files ignore the
@@ -49,6 +49,6 @@ namespace gnubase::pluginhost
 		std::map<std::pair<std::string, std::string>, std::unique_ptr<plugin::Factory>> m_factories; // format, path
 	};
 
-	// The formats built into this host.
+	// The formats of the shipped host.
 	Formats builtinFormats();
 }

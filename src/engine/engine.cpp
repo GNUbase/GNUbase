@@ -95,7 +95,7 @@ namespace gnubase::engine
 		processors::registerCommands(*this);
 		m_plugins = std::make_unique<plugins::HostManager>();
 		m_plugins->registerCommands(*this);
-		m_plugins->onFailure([this] { post("pluginhost.check"); });
+		m_plugins->onReport([this] { post("pluginhost.check"); });
 		m_project = std::make_unique<ProjectModel>();
 		m_project->registerCommands(*this);
 		m_audio = std::make_unique<AudioEngine>(m_project->snapshots(), std::move(backends));
