@@ -466,8 +466,18 @@ TEST_CASE("a cue leaves a voice alone that the audio thread starts reading meanw
 	const std::string path = writeRamp(dir, "mono", 1, 48000);
 	constexpr ObjectId channel = 1;
 	constexpr ObjectId media = 2;
-	const auto playlist = std::make_shared<const Playlist>(
-		Playlist{{0, 30000, media, 0, 1.0f, 1}, {30000, 31000, media, 40000, 1.0f, 1}});
+	const auto section = [](gnubase::time::Samples start, gnubase::time::Samples end, gnubase::time::Samples frame)
+	{
+		PlaylistEntry entry;
+		entry.start = start;
+		entry.end = end;
+		entry.media = media;
+		entry.frame = frame;
+		return entry;
+	};
+	Playlist sections;
+	sections.layers.push_back({section(0, 30000, 0), section(30000, 31000, 40000)});
+	const auto playlist = std::make_shared<const Playlist>(std::move(sections));
 	RacingPlayback playback(1);
 	playback.setTracks({{channel, playlist}}, {{media, path}}, 48000.0);
 	constexpr uint32_t blockSize = 4000;
