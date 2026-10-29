@@ -62,7 +62,10 @@ namespace gnubase::files
 		void writeDurably(const fs::path& file, const std::string& contents)
 		{
 #ifdef _WIN32
-			std::unique_ptr<std::FILE, FileCloser> out(_wfopen(file.c_str(), L"wb"));
+			std::FILE* opened = nullptr;
+			if (_wfopen_s(&opened, file.c_str(), L"wb") != 0)
+				opened = nullptr;
+			std::unique_ptr<std::FILE, FileCloser> out(opened);
 #else
 			std::unique_ptr<std::FILE, FileCloser> out(std::fopen(file.c_str(), "wb"));
 #endif
@@ -139,7 +142,11 @@ namespace gnubase::files
 	{
 #ifdef _WIN32
 		const std::wstring wideName(name, name + std::char_traits<char>::length(name)); // names are ASCII
-		if (const wchar_t* value = _wgetenv(wideName.c_str()); value != nullptr)
+		wchar_t* value = nullptr;
+		std::size_t length = 0;
+		const errno_t error = _wdupenv_s(&value, &length, wideName.c_str());
+		const std::unique_ptr<wchar_t, decltype(&std::free)> owned(value, &std::free);
+		if (error == 0 && value != nullptr)
 			return fs::path(value);
 #else
 		if (const char* value = std::getenv(name); value != nullptr)
