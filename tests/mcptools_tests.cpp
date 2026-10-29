@@ -8,10 +8,13 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
@@ -334,4 +337,63 @@ TEST_CASE("MCP clients undo and redo, step by step and in transactions", "[integ
 	CHECK(mcp.call("history_get").at("steps").back().at("action") == "Change notes");
 	mcp.call("history_undo");
 	CHECK(mcp.project().at("midiParts").at(0).at("notes").at(0).at("pitch") == 60);
+}
+
+namespace
+{
+	constexpr int64_t g_quarter = 1720320; // ticks; at the default 120 BPM a quarter note is 0.5 s, 24000 frames
+
+	// The strongest frequencies of a captured channel's spectrum, lowest first.
+	std::vector<double> frequencies(const Json& channel)
+	{
+		std::vector<double> result;
+		for (const Json& peak : channel.at("spectrum").at("peaks"))
+			result.push_back(peak.at("frequency").get<double>());
+		std::sort(result.begin(), result.end());
+		return result;
+	}
+}
+
+// The goal of milestone M02: an MCP client creates a project, adds tracks, plays MIDI into an instrument and gets the
+// rendered audio back. tests/lua/instrument.lua does the same from Lua.
+TEST_CASE("MCP clients play MIDI into an instrument and get the rendered audio back", "[integration]")
+{
+	Engine engine;
+	McpClient mcp(engine);
+	mcp.call("project_new");
+	mcp.call("audio_setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
+
+	// An instrument track playing the test synth, and a MIDI track that plays into it.
+	const Json instrument = mcp.call("track_add", {{"type", "instrument"}});
+	mcp.call("channel_set", {{"channel", idOf(instrument.at("channel"))}, {"instrument", "testSynth"}});
+	const Json midi = mcp.call("track_add", {{"type", "midi"}});
+	mcp.call("channel_set", {{"channel", idOf(midi.at("channel"))}, {"output", idOf(instrument.at("channel"))}});
+
+	// A4 (440 Hz) on the instrument track and E5 (659.3 Hz) on the MIDI track, both for the first 0.25 s.
+	for (const auto& [track, pitch] : {std::pair{instrument, 69}, std::pair{midi, 76}})
+	{
+		const Json part =
+			mcp.call("midiPart_add", {{"track", idOf(track.at("track"))}, {"position", 0}, {"length", g_quarter}});
+		mcp.call("note_add",
+			{{"part", idOf(part.at("part"))},
+				{"notes", {{{"position", 0}, {"length", g_quarter / 2}, {"pitch", pitch}, {"velocity", 1.0}}}}});
+	}
+	mcp.call("transport_play");
+	mcp.call("audio_render", {{"frames", 24000}});
+
+	// The rendered audio comes back as samples, and the analysis finds both notes.
+	const std::vector<float> samples = mcp.call("audio_capture", {{"channel", 0}, {"start", 0}, {"frames", 12000}})
+										   .at("samples")
+										   .get<std::vector<float>>();
+	REQUIRE(samples.size() == 12000);
+	CHECK(*std::max_element(samples.begin(), samples.end()) > 0.1f);
+	const Json playing = mcp.call("audio_analyze", {{"channels", {0}}, {"start", 0}, {"frames", 12000}, {"peaks", 2}});
+	const std::vector<double> found = frequencies(playing.at("channels").at(0));
+	REQUIRE(found.size() == 2);
+	CHECK(std::abs(found[0] - 440.0) < 2.0);
+	CHECK(std::abs(found[1] - 659.26) < 2.0);
+
+	// The notes end at 0.25 s; after the synth's release the output is silent.
+	const Json after = mcp.call("audio_analyze", {{"channels", {0}}, {"start", 16000}, {"frames", 8000}});
+	CHECK(after.at("channels").at(0).at("peak").get<double>() < 1e-4);
 }
