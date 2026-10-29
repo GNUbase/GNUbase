@@ -234,6 +234,8 @@ namespace gnubase::engine
 		attachStrips(snapshot, desc);
 
 		auto program = std::make_unique<Program>(desc, format.sampleRate, format.blockSize);
+		program->tempo = snapshot.tempo;
+		program->sampleRate = snapshot.sampleRate;
 		program->generation = generation;
 		program->releases = releases();
 		int input = 0;
@@ -389,7 +391,9 @@ namespace gnubase::engine
 			}
 		}
 		m_playback.beginBlock();
-		program.graph.process(block.frames, m_transport.advance(block.frames), m_workers.get());
+		graph::TransportBlock transport = m_transport.advance(block.frames);
+		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
+		program.graph.process(block.frames, transport, m_workers.get());
 		m_playback.endBlock();
 		for (const BusLink& link : program.outputs)
 		{
@@ -456,7 +460,7 @@ namespace gnubase::engine
 
 			// Drivers often allow one open device at a time: close the old one first.
 			closeDevice();
-			m_generator.reset();
+			m_generator = nullptr;
 			m_device = (*backend)->open(config);
 		}
 		m_backend = name;
@@ -1037,7 +1041,8 @@ namespace gnubase::engine
 	void AudioEngine::registerTransportCommands(Engine& engine)
 	{
 		// Every transport command returns the transport's state and announces it with transport.changed. While the
-		// device runs, the audio thread applies the request at its next block, so the position may not show it yet.
+		// device runs, the audio thread applies the request at its next block; until then the position is where a
+		// locate goes.
 		const auto command = [this, &engine](const char* name, const char* description, const char* parameters,
 								 std::function<void(const Json&)> handle)
 		{
@@ -1091,7 +1096,9 @@ namespace gnubase::engine
 				sent(m_transport.set(settings));
 			});
 		engine.registerCommand(
-			{"transport.get", 1, "Whether playback runs, the project cursor in samples, the locators and the modes.",
+			{"transport.get", 1,
+				"Whether playback runs, the project cursor in samples, the locators and the modes. After a locate the "
+				"cursor is where it goes, even before the audio thread has applied it.",
 				noParameters(), transportSchema(), true},
 			[this](CommandContext&) { return transportStatus(); });
 	}

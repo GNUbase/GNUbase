@@ -121,7 +121,8 @@ namespace gnubase::engine
 				"type 0 file gets a track per MIDI channel; the sequences of a type 2 file are laid out one after "
 				"another, each from a bar start. Names that aren't UTF-8 are read as Windows-1252. Unless tempo is "
 				"false, the file's tempo and time signatures replace the project's; unless markers is false, its "
-				"markers are added. One undo step. Returns the new tracks and parts.",
+				"markers are added to the active marker track (one is added if there is none). One undo step. Returns "
+				"the new tracks and parts.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties",
 						{{"path", string}, {"trackType", {{"type", "string"}, {"enum", {"midi", "instrument"}}}},
@@ -146,26 +147,35 @@ namespace gnubase::engine
 			throw CommandError(error.what());
 		}
 
-		if (parameters.value("tempo", true))
-		{
-			project.tempo = imported.tempo;
-			project.signatures = imported.signatures;
-			context.emit("project.changed", {{"name", project.name}, {"sampleRate", project.sampleRate}});
-		}
-		if (parameters.value("markers", true))
-			for (Marker& marker : imported.markers)
-			{
-				marker.id = project.newId();
-				context.emit("marker.added", {{"marker", toJson(marker)}});
-				project.markers[marker.id] = std::move(marker);
-			}
-
-		// The new tracks, parts and events come from the commands that make them.
+		// The new tracks, parts, events and markers come from the commands that make them.
 		const auto run = [this, &project, &context](const char* command, const Json& commandParameters)
 		{
 			CommandContext inner(commandParameters, &context);
 			return m_edits.at(command).handler(project, inner);
 		};
+
+		if (parameters.value("tempo", true))
+		{
+			project.tempo = imported.tempo;
+			project.signatures = imported.signatures;
+			context.emit("project.changed", {{"name", project.name}, {"sampleRate", project.sampleRate}});
+			// A cycle marker in ticks can get shorter than a sample at a faster tempo.
+			for (auto& [id, marker] : project.markers)
+				if (keepMinimumLength(project, marker))
+					context.emit("marker.changed", {{"marker", toJson(marker)}});
+		}
+		if (parameters.value("markers", true) && !imported.markers.empty())
+		{
+			ObjectId markerTrack = project.activeMarkerTrack;
+			if (markerTrack == 0)
+				markerTrack = run("track.add", {{"type", "marker"}, {"index", 0}}).at("track").at("id").get<ObjectId>();
+			const time::TimeBase base = project.trackById.at(markerTrack).timeBase;
+			for (const Marker& marker : imported.markers)
+				run("marker.add",
+					{{"track", markerTrack},
+						{"position", time::rebase(marker.position, base, project.tempo, project.sampleRate).value},
+						{"name", marker.name}});
+		}
 		Json tracks = Json::array();
 		Json parts = Json::array();
 		for (const midifile::ImportedTrack& track : imported.tracks)
