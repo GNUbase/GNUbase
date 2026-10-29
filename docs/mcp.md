@@ -699,12 +699,13 @@ Result:
 
 Engine command `bus.add`.
 
-Adds an input or output bus with 1 to 16 audio channels.
+Adds an input or output bus. format is its speaker arrangement (default stereo): mono, stereo, or a surround format with a fixed speaker order, e.g. 5.1 as L R C LFE Ls Rs. channels (1 to 8) picks mono, stereo, LRC, quadro, 5.0, 5.1, 7.0 or 7.1 instead.
 
 Arguments:
 
 - `channels`: integer
 - `direction`: one of "input" | "output", required
+- `format`: one of "mono" | "stereo" | "LRC" | "LRS" | "LRC+LFE" | "LRS+LFE" | "LRCS" | "LRCS+LFE" | "quadro" | "quadro+LFE" | "5.0" | "5.1" | "6.0 cine" | "6.0 music" | "7.0" | "7.1"
 - `name`: string, required
 
 Result:
@@ -742,12 +743,13 @@ Result:
 
 Engine command `channel.set`.
 
-Changes a channel's audio channels, input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 to 6 (default 0); pan is a stereo channel's balance from -1 (left) to 1 (right). Automation of volume and pan overrides them while it plays.
+Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts between formats where a channel feeds a destination of another one: speakers both formats have connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, or to L and R at -3 dB). instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 to 6 (default 0); pan is a stereo channel's balance from -1 (left) to 1 (right). Automation of volume and pan overrides them while it plays.
 
 Arguments:
 
 - `channel`: integer, required
 - `channels`: integer
+- `format`: one of "mono" | "stereo" | "LRC" | "LRS" | "LRC+LFE" | "LRS+LFE" | "LRCS" | "LRCS+LFE" | "quadro" | "quadro+LFE" | "5.0" | "5.1" | "6.0 cine" | "6.0 music" | "7.0" | "7.1"
 - `input`: integer
 - `instrument`: string
 - `output`: integer
@@ -2173,12 +2175,13 @@ Result:
 
 Engine command `track.add`.
 
-Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; folders get a channel only with groupChannel. New channels play through the main output, or through the folder's group channel. Marker tracks have no channel and stay at the top level; a project has at most 10, and a new one becomes the active marker track.
+Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; format or channels set another format, as in bus.add. Folders get a channel only with groupChannel. New channels play through the main output, or through the folder's group channel. Marker tracks have no channel and stay at the top level; a project has at most 10, and a new one becomes the active marker track.
 
 Arguments:
 
 - `channels`: integer
 - `color`: string or null
+- `format`: one of "mono" | "stereo" | "LRC" | "LRS" | "LRC+LFE" | "LRS+LFE" | "LRCS" | "LRCS+LFE" | "quadro" | "quadro+LFE" | "5.0" | "5.1" | "6.0 cine" | "6.0 music" | "7.0" | "7.1"
 - `groupChannel`: boolean
 - `index`: integer
 - `name`: string

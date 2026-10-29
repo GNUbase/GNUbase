@@ -138,7 +138,7 @@ namespace
 		track.channel = 3;
 		project.trackById[track.id] = track;
 		project.tracks.push_back(track.id);
-		project.channels[3] = Channel{3, 2, 0, 0, 0, {}};
+		project.channels[3] = Channel{3, 2, ChannelFormat::None, 0, 0, {}};
 
 		MidiPart part;
 		part.id = 4;

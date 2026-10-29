@@ -3,9 +3,11 @@
 #include "engine/engine.h"
 #include "engine/graph/graph.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <utility>
@@ -13,6 +15,7 @@
 
 using namespace gnubase::engine;
 using namespace gnubase::engine::graph;
+using Catch::Approx;
 using Catch::Matchers::ContainsSubstring;
 
 namespace
@@ -132,9 +135,10 @@ namespace
 		return event;
 	}
 
+	// A node with mono, stereo or no audio channels.
 	NodeDesc node(NodeKind kind, int channels, std::shared_ptr<Processor> processor = nullptr, ObjectId object = 0)
 	{
-		return {kind, object, channels, std::move(processor)};
+		return {kind, object, defaultFormat(channels), std::move(processor)};
 	}
 
 	std::vector<float> channel(const CompiledGraph& graph, int node, int index, uint32_t frames)
@@ -191,13 +195,14 @@ TEST_CASE("a node sums its inputs in a fixed order, so the output is bit-identic
 	CHECK(channel(second, 3, 0, g_maxFrames) == channel(first, 3, 0, g_maxFrames));
 }
 
-TEST_CASE("a mono input feeds every channel of a node, other inputs map channel by channel", "[unit]")
+TEST_CASE("inputs are converted to a node's format: mono reaches L and R at -3 dB, stereo maps one to one", "[unit]")
 {
 	GraphDesc graph;
 	graph.nodes.push_back(node(NodeKind::InputBus, 1));
 	graph.nodes.push_back(node(NodeKind::InputBus, 2));
 	graph.nodes.push_back(node(NodeKind::OutputBus, 2));
-	graph.audio = {{0, 2}, {1, 2}};
+	graph.nodes.push_back(node(NodeKind::OutputBus, 1));
+	graph.audio = {{0, 2}, {1, 2}, {1, 3}};
 	const CompiledGraph compiled(graph, g_sampleRate, g_maxFrames);
 
 	constexpr uint32_t frames = 8;
@@ -208,8 +213,11 @@ TEST_CASE("a mono input feeds every channel of a node, other inputs map channel 
 		compiled.audio(1)[1][i] = 20.0f;
 	}
 	compiled.process(frames);
-	CHECK(channel(compiled, 2, 0, frames) == std::vector<float>(frames, 11.0f));
-	CHECK(channel(compiled, 2, 1, frames) == std::vector<float>(frames, 21.0f));
+	const auto center = static_cast<float>(std::pow(10.0, -3.0 / 20.0));
+	CHECK(channel(compiled, 2, 0, frames) == std::vector<float>(frames, 10.0f + center));
+	CHECK(channel(compiled, 2, 1, frames) == std::vector<float>(frames, 20.0f + center));
+	// Stereo to mono: L and R at -3.01 dB each.
+	CHECK(channel(compiled, 3, 0, 1)[0] == Approx(30.0 * std::sqrt(0.5)).epsilon(1e-6));
 }
 
 TEST_CASE("note events reach a processor at their sample offsets", "[unit]")
@@ -361,7 +369,8 @@ TEST_CASE("the graph of a render snapshot routes channels to busses, groups and 
 {
 	// Busses: stereo in, stereo out. Channels: audio track -> group -> out, MIDI track -> instrument -> out.
 	RenderSnapshot snapshot;
-	snapshot.busses = {{1, BusDirection::Input, 2}, {2, BusDirection::Output, 2}};
+	snapshot.busses = {
+		{1, BusDirection::Input, ChannelFormat::Stereo}, {2, BusDirection::Output, ChannelFormat::Stereo}};
 	RenderChannel audio;
 	audio.id = 10;
 	audio.input = 0;
@@ -373,7 +382,7 @@ TEST_CASE("the graph of a render snapshot routes channels to busses, groups and 
 	RenderChannel midi;
 	midi.id = 12;
 	midi.type = TrackType::Midi;
-	midi.channels = 0;
+	midi.format = ChannelFormat::None;
 	midi.output = {RenderTarget::Kind::Channel, 3};
 	RenderChannel instrument;
 	instrument.id = 13;
@@ -387,7 +396,7 @@ TEST_CASE("the graph of a render snapshot routes channels to busses, groups and 
 	CHECK(graph.nodes[1].kind == NodeKind::OutputBus);
 	CHECK(graph.nodes[2].kind == NodeKind::Channel);
 	CHECK(graph.nodes[2].object == 10);
-	CHECK(graph.nodes[4].channels == 0);
+	CHECK(graph.nodes[4].format == ChannelFormat::None);
 	CHECK(graph.audio == std::vector<Connection>{{0, 2}, {2, 3}, {3, 1}, {5, 1}});
 	CHECK(graph.events == std::vector<Connection>{{4, 5}});
 

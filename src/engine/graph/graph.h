@@ -40,8 +40,8 @@ namespace gnubase::engine::graph
 	struct NodeDesc
 	{
 		NodeKind kind = NodeKind::Channel;
-		ObjectId object = 0;                  // the bus or channel in the document, or 0
-		int channels = 2;                     // audio channels; 0 for nodes that only pass events, like MIDI channels
+		ObjectId object = 0;                          // the bus or channel in the document, or 0
+		ChannelFormat format = ChannelFormat::Stereo; // its audio channels; None for nodes that only pass events
 		std::shared_ptr<Processor> processor; // or none: the node outputs the sum of its inputs and passes events on
 	};
 
@@ -77,9 +77,9 @@ namespace gnubase::engine::graph
 	// rt::SnapshotPublisher hands it out.
 	//
 	// A node's input is the sum of its audio inputs, added in the order of their node indices once all of them are
-	// done, so the output is bit-identical for the same graph and input, however many threads process it. A mono
-	// input feeds every channel of the node it is connected to; otherwise channels are connected one by one and
-	// channels the other node lacks are left out.
+	// done, so the output is bit-identical for the same graph and input, however many threads process it. Each input
+	// is converted to the node's format with conversionGains: speakers that both formats have connect one to one, the
+	// others are mixed down or up; mono reaches L and R at -3 dB where there is no C.
 	class CompiledGraph
 	{
 	public:
@@ -131,22 +131,31 @@ namespace gnubase::engine::graph
 	private:
 		class Scheduler;
 
+		// A source channel's share of a destination channel.
+		struct Tap
+		{
+			int from = 0;
+			int to = 0;
+			float gain = 1.0f;
+		};
+
 		struct Node
 		{
 			NodeKind kind = NodeKind::Channel;
 			ObjectId object = 0;
 			int channels = 0;
-			Processor* processor = nullptr; // owned by m_processors
-			std::vector<int> audioInputs;   // node indices, ascending
-			std::vector<int> eventInputs;   // node indices, ascending
-			std::vector<int> receivers;     // the nodes that receive its audio or events, ascending, once each
-			int senders = 0;                // the nodes it receives from, once each
-			size_t firstChannel = 0;        // into m_channels
+			Processor* processor = nullptr;     // owned by m_processors
+			std::vector<int> audioInputs;       // node indices, ascending
+			std::vector<std::vector<Tap>> taps; // per audio input, how its channels reach this node's
+			std::vector<int> eventInputs;       // node indices, ascending
+			std::vector<int> receivers;         // the nodes that receive its audio or events, ascending, once each
+			int senders = 0;                    // the nodes it receives from, once each
+			size_t firstChannel = 0;            // into m_channels
 			uint32_t pathLatency = 0;
 		};
 
 		void processNode(size_t index, uint32_t frames, const TransportBlock& transport) const noexcept;
-		void mix(const Node& from, const Node& to, uint32_t frames) const noexcept;
+		void mix(const Node& from, const std::vector<Tap>& taps, const Node& to, uint32_t frames) const noexcept;
 
 		double m_sampleRate;
 		uint32_t m_maxFrames;

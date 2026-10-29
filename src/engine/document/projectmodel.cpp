@@ -79,7 +79,8 @@ namespace gnubase::engine
 			Json nodes = Json::array();
 			for (const graph::NodeDesc& node : graph.nodes)
 				nodes.push_back({{"kind", graph::toString(node.kind)}, {"object", node.object},
-					{"channels", node.channels}, {"audioInputs", Json::array()}, {"eventInputs", Json::array()}});
+					{"format", formatName(node.format)}, {"channels", channelCount(node.format)},
+					{"audioInputs", Json::array()}, {"eventInputs", Json::array()}});
 			// Inputs in ascending order, the order a node sums them in.
 			for (const auto& [connections, key] :
 				{std::pair{&graph.audio, "audioInputs"}, std::pair{&graph.events, "eventInputs"}})
@@ -172,11 +173,26 @@ namespace gnubase::engine
 				value >= min && value <= max, name + " must be " + std::to_string(min) + " to " + std::to_string(max));
 		}
 
-		int audioChannels(const Json& parameters, int fallback)
+		// The format a command gives by name, or by its number of channels (see defaultFormat); both must agree.
+		ChannelFormat channelFormat(const Json& parameters, ChannelFormat fallback)
 		{
-			const int channels = parameters.value("channels", fallback);
-			requireRange(channels, 1, g_maxAudioChannels, "channels");
-			return channels;
+			std::optional<ChannelFormat> format;
+			if (parameters.contains("format"))
+			{
+				const std::string name = parameters.at("format").get<std::string>();
+				format = formatFromName(name);
+				require(format.has_value() && *format != ChannelFormat::None, "unknown format " + name);
+			}
+			if (parameters.contains("channels"))
+			{
+				const int channels = parameters.at("channels").get<int>();
+				requireRange(channels, 1, g_maxFormatChannels, "channels");
+				require(!format || channelCount(*format) == channels,
+					std::string("format ") + formatName(*format) + " doesn't have " + std::to_string(channels) +
+						" channels");
+				format = format.value_or(defaultFormat(channels));
+			}
+			return format.value_or(fallback);
 		}
 
 		std::string color(const Json& parameters, const std::string& fallback)
@@ -414,7 +430,7 @@ namespace gnubase::engine
 			case AutomationTargetType::Volume:
 			case AutomationTargetType::Pan:
 				only({});
-				require(channel.channels > 0 && track.type != TrackType::Midi, "a MIDI track has no volume or pan");
+				require(channel.format != ChannelFormat::None, "a MIDI track has no volume or pan");
 				break;
 			case AutomationTargetType::Instrument:
 			{
@@ -704,8 +720,10 @@ namespace gnubase::engine
 			}
 			const bool hasChannel = (type != TrackType::Folder && type != TrackType::Marker) || groupChannel;
 			const bool hasAudio = hasChannel && type != TrackType::Midi;
-			require(hasAudio || !parameters.contains("channels"), "this track has no audio channels");
-			const int channels = hasAudio ? audioChannels(parameters, 2) : 0;
+			require(hasAudio || (!parameters.contains("channels") && !parameters.contains("format")),
+				"this track has no audio channels");
+			const ChannelFormat format =
+				hasAudio ? channelFormat(parameters, ChannelFormat::Stereo) : ChannelFormat::None;
 
 			Track track;
 			track.id = project.newId();
@@ -719,7 +737,7 @@ namespace gnubase::engine
 			std::optional<Channel> channel;
 			if (hasChannel)
 			{
-				channel = Channel{project.newId(), track.id, channels, 0, 0, {}, 0.0, 0.0};
+				channel = Channel{project.newId(), track.id, format, 0, 0, {}, 0.0, 0.0};
 				const auto mainOutput = std::find_if(project.busses.begin(), project.busses.end(),
 					[](const Bus& bus) { return bus.direction == BusDirection::Output; });
 				if (hasAudio && mainOutput != project.busses.end())
@@ -852,10 +870,10 @@ namespace gnubase::engine
 			Channel& channel = find(project.channels, parameters.at("channel").get<ObjectId>(), "channel");
 			const TrackType type = project.trackById.at(channel.track).type;
 			Channel changed = channel;
-			if (parameters.contains("channels"))
+			if (parameters.contains("channels") || parameters.contains("format"))
 			{
 				require(type != TrackType::Midi, "a MIDI channel has no audio channels");
-				changed.channels = audioChannels(parameters, channel.channels);
+				changed.format = channelFormat(parameters, channel.format);
 			}
 			if (parameters.contains("input"))
 			{
@@ -885,7 +903,7 @@ namespace gnubase::engine
 				}
 			}
 			if (parameters.contains("volume") || parameters.contains("pan"))
-				require(changed.channels > 0 && type != TrackType::Midi, "a MIDI channel has no volume or pan");
+				require(changed.format != ChannelFormat::None, "a MIDI channel has no volume or pan");
 			changed.volume = parameters.value("volume", channel.volume);
 			require(changed.volume >= g_minChannelVolume && changed.volume <= g_maxChannelVolume,
 				"volume must be from -144 to 6 dB");
@@ -904,7 +922,7 @@ namespace gnubase::engine
 			bus.direction =
 				parameters.at("direction").get<std::string>() == "input" ? BusDirection::Input : BusDirection::Output;
 			bus.name = parameters.at("name").get<std::string>();
-			bus.channels = audioChannels(parameters, 2);
+			bus.format = channelFormat(parameters, ChannelFormat::Stereo);
 			bus.id = project.newId();
 			project.busses.push_back(bus);
 			Json result = {{"bus", toJson(bus)}};
@@ -1860,6 +1878,7 @@ namespace gnubase::engine
 		const Json noResult = Json::object();
 		const Json trackTypes = enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker"});
 		const Json timeBases = enumSchema({"musical", "linear"});
+		const Json formats = enumSchema(formatNames());
 		const Json color = {{"type", {"string", "null"}}};
 
 		add(engine,
@@ -1952,9 +1971,12 @@ namespace gnubase::engine
 			setProject);
 
 		add(engine,
-			{"bus.add", 1, "Adds an input or output bus with 1 to 16 audio channels.",
+			{"bus.add", 1,
+				"Adds an input or output bus. format is its speaker arrangement (default stereo): mono, stereo, or a "
+				"surround format with a fixed speaker order, e.g. 5.1 as L R C LFE Ls Rs. channels (1 to 8) picks "
+				"mono, stereo, LRC, quadro, 5.0, 5.1, 7.0 or 7.1 instead.",
 				objectSchema({{"direction", enumSchema({"input", "output"})}, {"name", stringSchema},
-								 {"channels", integerSchema}},
+								 {"format", formats}, {"channels", integerSchema}},
 					{"direction", "name"}),
 				resultSchema({"bus"}), false},
 			addBus);
@@ -1971,12 +1993,14 @@ namespace gnubase::engine
 			{"track.add", 1,
 				"Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks "
 				"(default: "
-				"last). Audio channels default to stereo; folders get a channel only with groupChannel. New channels "
+				"last). Audio channels default to stereo; format or channels set another format, as in bus.add. "
+				"Folders "
+				"get a channel only with groupChannel. New channels "
 				"play through the main output, or through the folder's group channel. Marker tracks have no channel "
 				"and stay at the top level; a project has at most 10, and a new one becomes the active marker track.",
 				objectSchema({{"type", trackTypes}, {"name", stringSchema}, {"color", color}, {"parent", idSchema},
-								 {"index", integerSchema}, {"channels", integerSchema}, {"timeBase", timeBases},
-								 {"groupChannel", booleanSchema}},
+								 {"index", integerSchema}, {"format", formats}, {"channels", integerSchema},
+								 {"timeBase", timeBases}, {"groupChannel", booleanSchema}},
 					{"type"}),
 				{{"type", "object"},
 					{"properties", {{"track", {{"type", "object"}}}, {"channel", {{"type", {"object", "null"}}}}}},
@@ -2007,14 +2031,18 @@ namespace gnubase::engine
 
 		add(engine,
 			{"channel.set", 1,
-				"Changes a channel's audio channels, input (an input bus) or output (an output bus or a group "
-				"channel; for MIDI tracks an instrument channel). 0 disconnects. instrument is the built-in "
+				"Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output "
+				"bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts "
+				"between formats where a channel feeds a destination of another one: speakers both formats have "
+				"connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs "
+				"into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, "
+				"or to L and R at -3 dB). instrument is the built-in "
 				"instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in "
 				"dB, from -144 to 6 (default 0); pan is a stereo channel's balance from -1 (left) to 1 (right). "
 				"Automation of volume and pan overrides them while it plays.",
-				objectSchema(
-					{{"channel", idSchema}, {"channels", integerSchema}, {"input", idSchema}, {"output", idSchema},
-						{"instrument", stringSchema}, {"volume", numberSchema}, {"pan", numberSchema}},
+				objectSchema({{"channel", idSchema}, {"format", formats}, {"channels", integerSchema},
+								 {"input", idSchema}, {"output", idSchema}, {"instrument", stringSchema},
+								 {"volume", numberSchema}, {"pan", numberSchema}},
 					{"channel"}),
 				resultSchema({"channel"}), false},
 			setChannel);

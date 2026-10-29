@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/document/channelformat.h"
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
@@ -19,7 +20,7 @@ namespace gnubase::engine
 	// Identifies an object in a project. Ids are never reused within a project; 0 means none.
 	using ObjectId = uint64_t;
 
-	// The most audio channels a bus or channel can have: 9.1.6 surround.
+	// The most audio channels a media file can have: 9.1.6 surround. Busses and channels have a ChannelFormat.
 	inline constexpr int g_maxAudioChannels = 16;
 
 	enum class BusDirection : uint8_t
@@ -34,7 +35,7 @@ namespace gnubase::engine
 		ObjectId id = 0;
 		std::string name;
 		BusDirection direction = BusDirection::Output;
-		int channels = 2;
+		ChannelFormat format = ChannelFormat::Stereo;
 	};
 
 	enum class TrackType : uint8_t
@@ -57,8 +58,8 @@ namespace gnubase::engine
 	{
 		ObjectId id = 0;
 		ObjectId track = 0;
-		int channels = 2;       // audio channels: 1 mono, 2 stereo, more for surround; 0 for MIDI
-		ObjectId input = 0;     // audio tracks: an input bus, or 0
+		ChannelFormat format = ChannelFormat::Stereo; // the speaker arrangement; None for MIDI
+		ObjectId input = 0;                           // audio tracks: an input bus, or 0
 		ObjectId output = 0;    // an output bus or a group channel; MIDI: an instrument channel; or 0
 		std::string instrument; // instrument tracks: the built-in instrument that plays, or empty (plugins: M05)
 		double volume = 0.0;    // the fader, in dB from g_minChannelVolume to g_maxChannelVolume
@@ -365,13 +366,13 @@ namespace gnubase::engine
 	// Equality compares every member; the undo history uses it to find what a command changed.
 	inline bool operator==(const Bus& a, const Bus& b)
 	{
-		return std::tie(a.id, a.name, a.direction, a.channels) == std::tie(b.id, b.name, b.direction, b.channels);
+		return std::tie(a.id, a.name, a.direction, a.format) == std::tie(b.id, b.name, b.direction, b.format);
 	}
 
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
-		return std::tie(a.id, a.track, a.channels, a.input, a.output, a.instrument, a.volume, a.pan) ==
-			std::tie(b.id, b.track, b.channels, b.input, b.output, b.instrument, b.volume, b.pan);
+		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan) ==
+			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan);
 	}
 
 	inline bool operator==(const MediaFile& a, const MediaFile& b)

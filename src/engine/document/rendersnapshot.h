@@ -14,7 +14,7 @@ namespace gnubase::engine
 	{
 		ObjectId id = 0;
 		BusDirection direction = BusDirection::Output;
-		int channels = 2;
+		ChannelFormat format = ChannelFormat::Stereo;
 	};
 
 	struct RenderMedia
@@ -100,7 +100,7 @@ namespace gnubase::engine
 		ObjectId id = 0;
 		ObjectId track = 0;
 		TrackType type = TrackType::Audio;
-		int channels = 2;
+		ChannelFormat format = ChannelFormat::Stereo;
 		int input = -1; // index into RenderSnapshot::busses, or -1
 		RenderTarget output;
 		std::string instrument;                       // instrument tracks: a built-in instrument's id, or empty

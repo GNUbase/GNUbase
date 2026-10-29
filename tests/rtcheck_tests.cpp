@@ -258,9 +258,11 @@ TEST_CASE("processing a processing graph and swapping in a new one never allocat
 		}
 	};
 	GraphDesc desc;
-	desc.nodes = {{NodeKind::InputBus, 1, 2, nullptr}, {NodeKind::Channel, 2, 0, nullptr},
-		{NodeKind::PluginSlot, 0, 2, std::make_shared<Echo>()}, {NodeKind::Builtin, 0, 1, std::make_shared<Echo>()},
-		{NodeKind::OutputBus, 3, 2, nullptr}};
+	desc.nodes = {{NodeKind::InputBus, 1, gnubase::engine::ChannelFormat::Stereo, nullptr},
+		{NodeKind::Channel, 2, gnubase::engine::ChannelFormat::None, nullptr},
+		{NodeKind::PluginSlot, 0, gnubase::engine::ChannelFormat::Stereo, std::make_shared<Echo>()},
+		{NodeKind::Builtin, 0, gnubase::engine::ChannelFormat::Mono, std::make_shared<Echo>()},
+		{NodeKind::OutputBus, 3, gnubase::engine::ChannelFormat::Stereo, nullptr}};
 	desc.audio = {{0, 2}, {2, 3}, {2, 4}, {3, 4}};
 	desc.events = {{1, 2}, {2, 3}};
 	SnapshotPublisher<CompiledGraph> graphs(std::make_unique<CompiledGraph>(desc, 48000.0, 256));
@@ -292,9 +294,10 @@ TEST_CASE("processing a graph on a worker pool never allocates or frees, on any 
 	using namespace gnubase::engine::processors;
 	GraphDesc desc;
 	for (int i = 0; i < 16; ++i)
-		desc.nodes.push_back({NodeKind::Builtin, 0, 2, createBuiltin(i % 2 == 0 ? "testSynth" : "noise")});
-	desc.nodes.push_back({NodeKind::Channel, 0, 2, nullptr});
-	desc.nodes.push_back({NodeKind::OutputBus, 0, 2, nullptr});
+		desc.nodes.push_back({NodeKind::Builtin, 0, gnubase::engine::ChannelFormat::Stereo,
+			createBuiltin(i % 2 == 0 ? "testSynth" : "noise")});
+	desc.nodes.push_back({NodeKind::Channel, 0, gnubase::engine::ChannelFormat::Stereo, nullptr});
+	desc.nodes.push_back({NodeKind::OutputBus, 0, gnubase::engine::ChannelFormat::Stereo, nullptr});
 	for (int i = 0; i < 16; ++i)
 		desc.audio.push_back({i, i < 8 ? 16 : 17});
 	desc.audio.push_back({16, 17});
@@ -519,6 +522,8 @@ TEST_CASE("rendering a project through the dummy device passes the RT checker", 
 	};
 	run("track.add", {{"type", "group"}});
 	run("track.add", {{"type", "audio"}});
+	run("track.add", {{"type", "audio"}, {"format", "mono"}}); // formats converted where they reach the output
+	run("track.add", {{"type", "audio"}, {"format", "5.1"}});
 	run("audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}, {"input", {{"processor", "noise"}}}});
 
 	const RecordViolations record;

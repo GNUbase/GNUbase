@@ -76,7 +76,7 @@ namespace
 		{
 			NodeDesc node;
 			node.kind = i == size - 1 ? NodeKind::OutputBus : NodeKind::Channel;
-			node.channels = pick(0, 4) == 0 ? 1 : 2;
+			node.format = pick(0, 4) == 0 ? ChannelFormat::Mono : ChannelFormat::Stereo;
 			if (pick(0, 5) != 0)
 				node.processor = std::make_shared<Busy>(values[pick(0, 5)], pick(0, 3) == 0 ? 20000 : 0);
 			graph.nodes.push_back(node);
@@ -110,7 +110,7 @@ namespace
 			}
 			graph.process(frames, TransportBlock{}, pool);
 			for (int node = 0; node < static_cast<int>(graph.size()); ++node)
-				for (int c = 0; c < desc.nodes[static_cast<size_t>(node)].channels; ++c)
+				for (int c = 0; c < channelCount(desc.nodes[static_cast<size_t>(node)].format); ++c)
 					result.insert(result.end(), graph.audio(node)[c], graph.audio(node)[c] + frames);
 		}
 		return result;
@@ -141,8 +141,9 @@ TEST_CASE("a graph runs repeatedly on a pool without its threads getting in each
 	// One wide layer of busy nodes feeding one bus: many tasks become ready at once and finish together.
 	GraphDesc desc;
 	for (int i = 0; i < 32; ++i)
-		desc.nodes.push_back({NodeKind::Channel, 0, 2, std::make_shared<Busy>(static_cast<float>(i), 2000)});
-	desc.nodes.push_back({NodeKind::OutputBus, 0, 2, nullptr});
+		desc.nodes.push_back(
+			{NodeKind::Channel, 0, ChannelFormat::Stereo, std::make_shared<Busy>(static_cast<float>(i), 2000)});
+	desc.nodes.push_back({NodeKind::OutputBus, 0, ChannelFormat::Stereo, nullptr});
 	for (int i = 0; i < 32; ++i)
 		desc.audio.push_back({i, 32});
 	gnubase::rt::WorkerPool pool(4);
@@ -191,10 +192,11 @@ namespace
 	{
 		GraphDesc desc;
 		for (int i = 0; i < 24; ++i)
-			desc.nodes.push_back({NodeKind::Channel, 0, 2, std::make_shared<Tail>(1e-36f * static_cast<float>(i + 1))});
+			desc.nodes.push_back({NodeKind::Channel, 0, ChannelFormat::Stereo,
+				std::make_shared<Tail>(1e-36f * static_cast<float>(i + 1))});
 		for (int i = 0; i < 4; ++i)
-			desc.nodes.push_back({NodeKind::Channel, 0, 2, std::make_shared<Tail>(2e-38f)});
-		desc.nodes.push_back({NodeKind::OutputBus, 0, 2, nullptr});
+			desc.nodes.push_back({NodeKind::Channel, 0, ChannelFormat::Stereo, std::make_shared<Tail>(2e-38f)});
+		desc.nodes.push_back({NodeKind::OutputBus, 0, ChannelFormat::Stereo, nullptr});
 		for (int i = 0; i < 24; ++i)
 			desc.audio.push_back({i, 24 + (i % 4)});
 		for (int i = 0; i < 4; ++i)
@@ -234,7 +236,7 @@ TEST_CASE("subnormal numbers render the same with any number of threads", "[unit
 
 TEST_CASE("a graph's width is the most nodes it can process at once", "[unit]")
 {
-	const auto node = [] { return NodeDesc{NodeKind::Channel, 0, 2, nullptr}; };
+	const auto node = [] { return NodeDesc{NodeKind::Channel, 0, ChannelFormat::Stereo, nullptr}; };
 	GraphDesc chain;
 	for (int i = 0; i < 5; ++i)
 		chain.nodes.push_back(node());
@@ -296,7 +298,11 @@ namespace
 			for (const Json& item : tracks)
 				if (item.at("id").get<ObjectId>() == id)
 					channel = item.at("channel").get<ObjectId>();
-			run(client, "channel.set", {{"channel", channel}, {"instrument", "testSynth"}, {"output", groupChannel}});
+			// Mono, stereo and 5.1 instruments, converted where they reach the stereo group.
+			const char* formats[] = {"stereo", "mono", "5.1"};
+			run(client, "channel.set",
+				{{"channel", channel}, {"instrument", "testSynth"}, {"output", groupChannel},
+					{"format", formats[t % 3]}});
 			const Json part = run(client, "midiPart.add", {{"track", id}, {"position", 0}, {"length", 1720320 * 4}});
 			Json notes = Json::array();
 			for (int n = 0; n < 8; ++n)

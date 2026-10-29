@@ -307,7 +307,7 @@ namespace gnubase::engine::midi
 			track.name = std::move(name);
 			track.timeBase = timeBase;
 			track.parent = parent;
-			const Channel channel{project.newId(), track.id, 0, 0, instrument, {}, 0.0, 0.0};
+			const Channel channel{project.newId(), track.id, ChannelFormat::None, 0, instrument, {}, 0.0, 0.0};
 			track.channel = channel.id;
 			project.channels[channel.id] = channel;
 			std::vector<ObjectId>& siblings = parent == 0 ? project.tracks : project.trackById.at(parent).children;

@@ -72,6 +72,12 @@ namespace gnubase::engine
 			return target.type != AutomationTargetType::Instrument;
 		}
 
+		// DAWproject has only a channel count: the format for it, the widest one for more than 8 channels.
+		ChannelFormat importedFormat(int audioChannels)
+		{
+			return defaultFormat(std::clamp(audioChannels, 1, g_maxFormatChannels));
+		}
+
 		// Channel volume and pan in DAWproject's units: a linear gain and 0 to 1 with the center at 0.5.
 		double volumeToGain(double decibels)
 		{
@@ -356,7 +362,7 @@ namespace gnubase::engine
 						pugi::xml_node channel = track.append_child("Channel");
 						channel.append_attribute("id") = xmlId("o", bus.id).c_str();
 						channel.append_attribute("role") = "master";
-						channel.append_attribute("audioChannels") = bus.channels;
+						channel.append_attribute("audioChannels") = channelCount(bus.format);
 					}
 
 				pugi::xml_node arrangement = root.append_child("Arrangement");
@@ -418,12 +424,12 @@ namespace gnubase::engine
 					pugi::xml_node element = node.append_child("Channel");
 					element.append_attribute("id") = xmlId("c", channel.id).c_str();
 					element.append_attribute("role") = role(track.type);
-					element.append_attribute("audioChannels") = channel.channels;
+					element.append_attribute("audioChannels") = channelCount(channel.format);
 					// A MIDI track's output is an instrument, which DAWproject's audio routing can't describe.
-					if (channel.channels > 0 && channel.output != 0)
+					if (channel.format != ChannelFormat::None && channel.output != 0)
 						element.append_attribute("destination") =
 							xmlId(isBus(channel.output) ? "o" : "c", channel.output).c_str();
-					if (channel.channels > 0 && track.type != TrackType::Midi)
+					if (channel.format != ChannelFormat::None && track.type != TrackType::Midi)
 					{
 						pugi::xml_node pan = element.append_child("Pan");
 						pan.append_attribute("id") = xmlId("cp", channel.id).c_str();
@@ -956,9 +962,9 @@ namespace gnubase::engine
 				if (role == "master" && !hasChildren)
 				{
 					// The first master channel becomes the main output, any other one another output bus.
-					Bus bus = m_firstMaster ? mainOutput() : Bus{m_project.newId(), "", BusDirection::Output, 2};
+					Bus bus = m_firstMaster ? mainOutput() : Bus{m_project.newId(), "", BusDirection::Output};
 					bus.name = node.attribute("name").as_string("Stereo Out");
-					bus.channels = std::clamp(audioChannels, 1, g_maxAudioChannels);
+					bus.format = importedFormat(audioChannels);
 					if (m_firstMaster)
 						mainOutput() = bus;
 					else
@@ -990,7 +996,7 @@ namespace gnubase::engine
 					Channel channel;
 					channel.id = m_project.newId();
 					channel.track = track.id;
-					channel.channels = type == TrackType::Midi ? 0 : std::clamp(audioChannels, 1, g_maxAudioChannels);
+					channel.format = type == TrackType::Midi ? ChannelFormat::None : importedFormat(audioChannels);
 					if (type != TrackType::Midi)
 						channel.output = mainOutput().id;
 					if (type == TrackType::Audio)

@@ -310,7 +310,8 @@ TEST_CASE("the position probe outputs each frame's project position, sample-exac
 {
 	const uint32_t blockSize = GENERATE(32u, 100u, 257u);
 	graph::GraphDesc desc;
-	desc.nodes.push_back({graph::NodeKind::Builtin, 0, 1, processors::createBuiltin("positionProbe")});
+	desc.nodes.push_back(
+		{graph::NodeKind::Builtin, 0, ChannelFormat::Mono, processors::createBuiltin("positionProbe")});
 	const graph::CompiledGraph compiled(desc, 48000.0, blockSize);
 
 	const TransportSettings settings = cycle(2000, 2345);
