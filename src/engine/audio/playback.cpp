@@ -980,8 +980,8 @@ namespace gnubase::engine
 				{
 					// The layer's first entry in this block: nothing of it plays in the block yet.
 					m_layerUsed[next] = 1;
-					std::fill_n(m_layerChannels.begin() + static_cast<std::ptrdiff_t>(next * m_bufferFrames), blockFrames,
-						uint8_t{0});
+					std::fill_n(m_layerChannels.begin() + static_cast<std::ptrdiff_t>(next * m_bufferFrames),
+						blockFrames, uint8_t{0});
 				}
 				play(*entry, next, start, stop - start, segment.offset + static_cast<uint32_t>(start - begin));
 			}
