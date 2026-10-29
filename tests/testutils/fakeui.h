@@ -2,6 +2,8 @@
 #pragma once
 
 #include "ui/renderer.h"
+#include "ui/rmlui.h"
+#include "ui/shell.h"
 #include "ui/windowsystem.h"
 
 #include <RmlUi/Core/RenderInterface.h>
@@ -9,6 +11,8 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <utility>
+#include <vector>
 
 // A window system and a renderer without an OS or a GPU, for testing the UI shell (ui/shell.h) with any monitors.
 namespace gnubase::test
@@ -128,5 +132,16 @@ namespace gnubase::test
 		std::map<ui::WindowId, int> m_attached;
 		std::map<ui::WindowId, int> m_presents;
 		Rml::CompiledGeometryHandle m_nextGeometry = 1;
+	};
+
+	// The fake window system, the null renderer, RmlUi and the shell, made and destroyed in the app's order.
+	struct FakeUi
+	{
+		explicit FakeUi(std::vector<ui::Display> displays) : windows(std::move(displays)), renderer(windows) {}
+
+		FakeWindowSystem windows;
+		NullRenderer renderer;
+		ui::RmlUi rmlui{windows};
+		ui::Shell shell{windows, renderer};
 	};
 }

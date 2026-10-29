@@ -8,6 +8,7 @@ GNUbase is licensed under the GPL-3.0-or-later, so everything that goes into it 
 |---|---|---|---|---|---|
 | [SDL 3](https://github.com/libsdl-org/SDL) | `ext/SDL` (GNUbase fork) | windows, input, graphics | yes, linked statically | zlib | `ext/SDL/LICENSE.txt` |
 | [RmlUi](https://github.com/mikke89/RmlUi) | `ext/RmlUi` (GNUbase fork) | user interface (core and debugger), and from its `Backends` folder the SDL input code and the SDL_GPU renderer | yes, linked statically | MIT | `ext/RmlUi/LICENSE.txt` |
+| [FreeType](https://freetype.org) | `ext/freetype` (2.15.0) | rendering text for RmlUi's font engine | yes, linked statically | FreeType License or GPL-2.0-or-later, at the user's choice | `ext/freetype/LICENSE.TXT`, `ext/freetype/docs/FTL.TXT` and `ext/freetype/docs/GPLv2.TXT` |
 | [JSON for Modern C++](https://github.com/nlohmann/json) | `ext/json` | JSON in the engine API | yes, header-only | MIT | `ext/json/LICENSE.MIT` |
 | [dr_libs](https://github.com/mackron/dr_libs): dr_wav, dr_flac, dr_mp3 | `ext/dr_libs` | reading WAV, RF64, AIFF, FLAC and MP3 files | yes, compiled in | Unlicense (public domain) or MIT-0, at the user's choice | `ext/dr_libs/LICENSE` |
 | [stb](https://github.com/nothings/stb) | `ext/stb` | `stb_vorbis` reads Ogg Vorbis files; `stb_image` reads image files for UI textures and `stb_image_write` writes screenshots as PNG | yes, compiled in | MIT or Unlicense (public domain), at the user's choice | `ext/stb/LICENSE` |
@@ -30,6 +31,10 @@ Some of these bundle code from other projects under its own license:
 | SDL | yuv2rgb | `ext/SDL/src/video/yuv2rgb` | BSD-3-Clause |
 | RmlUi | itlib and robin_hood containers | `ext/RmlUi/Include/RmlUi/Core/Containers` | MIT |
 | RmlUi | Courier Prime Code font, embedded in the debugger | `ext/RmlUi/Source/Debugger` | SIL Open Font License 1.1 |
+| RmlUi | Lato and other fonts of its samples, which GNUbase's tests use (not the app) | `ext/RmlUi/Samples/assets` | SIL Open Font License 1.1, in `LICENSE.txt` there |
+| FreeType | zlib, for compressed fonts | `ext/freetype/src/gzip` | zlib |
+| FreeType | BDF and PCF drivers, and `fthash` | `ext/freetype/src/bdf`, `ext/freetype/src/pcf`, `ext/freetype/src/base/fthash.c` | X11-style permissive license, in each folder's README |
+| FreeType | code taken from HarfBuzz for the auto-hinter | `ext/freetype/src/autofit/ft-hb-*` | Old MIT |
 | Rubber Band Library | Speex resampler, KissFFT, SSE and NEON math functions, getopt, float_cast | `ext/rubberband/src/ext` | permissive licenses, in each folder; GNUbase's build compiles none of them (it uses Rubber Band's built-in FFT and resampler) |
 | r8brain-free-src | Takuya Ooura's FFT | `ext/r8brain/fft4g.h` | free to use, copy, modify and distribute for any purpose; see the file's header |
 
@@ -41,9 +46,10 @@ The JSON library's repository also contains files under Apache-2.0, BSD-3-Clause
 - **Unlicense and MIT-0** put the code in the public domain or allow everything without conditions, so they are compatible with any license.
 - **GPL-3.0** is GNUbase's own license; HIDAPI is used under it or under BSD-3-Clause.
 - **GPL-2.0-or-later** lets Rubber Band Library be used under the GPL-3.0, GNUbase's license. Its authors also sell it under a commercial license, which GNUbase doesn't need.
+- **FreeType** may be used under GPL-2.0-or-later, and so under the GPL-3.0, or under the FreeType License, a BSD-style license that its authors state is compatible with the GPLv3 (not with the GPLv2). Either way GNUbase credits the FreeType Project here, and in the About dialog once there is one (#207), as the FreeType License asks.
 - **SIL Open Font License 1.1** is for fonts. It explicitly allows fonts to be "bundled, embedded, redistributed and/or sold with any software". GNUbase's rules already allow fonts under this license (CLAUDE.md, "Platforms and dependencies").
 
-Binary releases must include the copyright notices and license texts of the MIT, BSD-3-Clause and SIL Open Font License components. zlib and BSL-1.0 only require them in source distributions, and the Unlicense and MIT-0 components need none, but shipping them too costs nothing.
+Binary releases must include the copyright notices and license texts of the MIT, BSD-3-Clause, FreeType License and SIL Open Font License components, and their documentation must credit the FreeType Project. zlib and BSL-1.0 only require them in source distributions, and the Unlicense and MIT-0 components need none, but shipping them too costs nothing.
 
 ## Not part of GNUbase
 
@@ -57,6 +63,5 @@ CLAUDE.md plans these components. Check the license of the exact release when on
 | Component | Used for | License |
 |---|---|---|
 | Lua 5.4 | scripting, UI scripts through RmlUi's Lua plugin | MIT |
-| FreeType | text rendering | FreeType License or GPLv2, at the user's choice; the FreeType License is GPLv3-compatible |
 | LunaSVG | SVG icons and graphics through RmlUi's SVG plugin | MIT |
 | Fonts | user interface text | SIL Open Font License 1.1 or Apache-2.0, with the license file next to each font |

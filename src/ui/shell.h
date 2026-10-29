@@ -33,7 +33,8 @@ namespace gnubase::ui
 		float dpRatio() const { return m_dpRatio; }
 		Size pixelSize() const { return m_pixelSize; }
 
-		// Makes the shell update and draw the window in its next step, e.g. after a document changed.
+		// Makes the shell update and draw the window in its next step, e.g. after a document changed. Elements and
+		// data models can ask the same through RmlUi: Rml::Context::RequestNextUpdate(0).
 		void requestRender() { m_renderRequested = true; }
 		bool renderRequested() const { return m_renderRequested; }
 
@@ -104,13 +105,29 @@ namespace gnubase::ui
 		// still open when the shell is destroyed never call done.
 		void showFileDialog(const FileDialog& dialog, std::function<void(const FileDialogResult&)> done);
 
-		// How long run() may wait for events before a window needs drawing; empty to wait for the next event.
+		// Runs task in the steps after each interval has passed, e.g. to look for changed files.
+		void every(std::chrono::milliseconds interval, std::function<void()> task);
+
+		// How long run() may wait for events before a window needs drawing or a task is due; empty to wait for the
+		// next event.
 		std::optional<std::chrono::milliseconds> idleTimeout() const;
 
 	private:
+		using Clock = std::chrono::steady_clock;
+
+		struct Task
+		{
+			std::chrono::milliseconds interval;
+			std::function<void()> run;
+			Clock::time_point next;
+		};
+
 		void handle(const WindowEvent& event);
 		void refresh(Window& window);
 		void draw(Window& window);
+		// When the window needs updating next, also for updates its context requested since it was drawn, e.g. by an
+		// element that changed (Rml::Context::RequestNextUpdate).
+		static Clock::time_point nextUpdate(const Window& window, Clock::time_point now);
 
 		WindowSystem& m_windows;
 		Renderer& m_renderer;
@@ -119,5 +136,6 @@ namespace gnubase::ui
 		bool m_running = true;
 		std::map<uint64_t, std::function<void(const FileDialogResult&)>> m_dialogs; // open file dialogs by id
 		uint64_t m_nextDialog = 1;
+		std::vector<Task> m_tasks;
 	};
 }

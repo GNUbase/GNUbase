@@ -11,11 +11,14 @@ on:
       - src/app/**
       - tests/CMakeLists.txt
       - tests/window_tests.cpp
+      - tests/testutils/**
       - tests/data/ui/**
+      - tests/golden/ui/**
       - CMakeLists.txt
       - CMakePresets.json
       - ext/SDL
       - ext/RmlUi
+      - ext/freetype
       - .github/workflows/ui-macos.yml
   push:
     branches: [main]
@@ -37,6 +40,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Fetch golden images
+        run: git lfs pull --include "tests/golden/ui/**"
+
       - name: Install packages
         timeout-minutes: 15
         run: brew install ninja
@@ -52,3 +58,12 @@ jobs:
         env:
           GNUBASE_REQUIRE_GPU: 1
         run: ctest --preset macos -C Release -L ui
+
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-output-ui-macos-arm64
+          path: build/macos/tests/output/
+          if-no-files-found: ignore
+          retention-days: 14

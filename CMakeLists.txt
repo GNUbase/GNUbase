@@ -33,10 +33,18 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries")
 set(SDL_SHARED OFF CACHE BOOL "Build a shared version of SDL")
 set(SDL_STATIC ON CACHE BOOL "Build a static version of SDL")
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "Build the SDL3_test library")
-# ponytail: no font engine yet; switch to "freetype" when FreeType lands (#207)
-set(RMLUI_FONT_ENGINE "none" CACHE STRING "RmlUi font engine")
 set(JSON_ImplicitConversions OFF CACHE BOOL "Enable implicit conversions") # use get<T>() explicitly
 add_subdirectory(ext/SDL EXCLUDE_FROM_ALL SYSTEM)
+# FreeType for RmlUi's font engine, the same version on every platform so text looks the same everywhere: TrueType and
+# OpenType fonts only, no system libraries (its own zlib for compressed fonts).
+foreach(freetypeOption FT_DISABLE_ZLIB FT_DISABLE_BZIP2 FT_DISABLE_PNG FT_DISABLE_HARFBUZZ FT_DISABLE_BROTLI
+		FT_DISABLE_HVF SKIP_INSTALL_ALL)
+	set(${freetypeOption} ON CACHE BOOL "Set by GNUbase for FreeType")
+endforeach()
+add_subdirectory(ext/freetype EXCLUDE_FROM_ALL SYSTEM)
+add_library(Freetype::Freetype ALIAS freetype)
+set(CMAKE_DISABLE_FIND_PACKAGE_Freetype ON) # RmlUi takes the target above, never a FreeType installed on the system
+set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "RmlUi font engine" FORCE) # also in build folders made before FreeType
 add_subdirectory(ext/RmlUi EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/Catch2 EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/json EXCLUDE_FROM_ALL SYSTEM)

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-add_library(gnubase-testutils STATIC testutils/fakeui.cpp testutils/fakeui.h testutils/testutils.cpp
-	testutils/testutils.h)
+add_library(gnubase-testutils STATIC testutils/fakeui.cpp testutils/fakeui.h testutils/goldenimage.cpp
+	testutils/goldenimage.h testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
 target_compile_definitions(gnubase-testutils PRIVATE
@@ -13,7 +13,7 @@ gnubase_target_defaults(gnubase-testutils)
 set(settingsEnvironment "GNUBASE_SETTINGS_DIR=${CMAKE_CURRENT_BINARY_DIR}/output/settings")
 
 add_executable(gnubase-tests analysis_tests.cpp app_tests.cpp audio_tests.cpp audiofile_tests.cpp automation_tests.cpp backup_tests.cpp coverage_tests.cpp dawproject_tests.cpp document_tests.cpp engine_tests.cpp graph_tests.cpp history_tests.cpp log_tests.cpp mcp_tests.cpp mcpevents_tests.cpp mcptools_tests.cpp midiedit_tests.cpp midifile_tests.cpp processor_tests.cpp rt_tests.cpp scripting_tests.cpp settings_tests.cpp shell_tests.cpp streaming_tests.cpp testing_tests.cpp testutils_tests.cpp theme_tests.cpp time_tests.cpp
-	debugreports.cpp midi_tests.cpp multicore_tests.cpp peaks_tests.cpp performance_tests.cpp playback_tests.cpp quantize_tests.cpp sequencing_tests.cpp timestretch_tests.cpp transport_tests.cpp window_tests.cpp)
+	debugreports.cpp midi_tests.cpp multicore_tests.cpp peaks_tests.cpp performance_tests.cpp playback_tests.cpp quantize_tests.cpp rmlui_tests.cpp sequencing_tests.cpp timestretch_tests.cpp transport_tests.cpp window_tests.cpp)
 target_sources(gnubase-tests PRIVATE device_tests.cpp ipc_tests.cpp ipc_process_tests.cpp plugin_api_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-ipc gnubase-mcp gnubase-plugin gnubase-scripting gnubase-testutils gnubase-ui Catch2::Catch2WithMain miniz pugixml::pugixml
 	cpp-httplib SDL3::SDL3)
@@ -71,6 +71,8 @@ endforeach()
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}"
 	GNUBASE_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs"
 	GNUBASE_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources"
+	# Lato (SIL OFL) from RmlUi's samples, for text in tests until GNUbase bundles its own fonts (#207).
+	GNUBASE_TEST_FONTS_DIR="${PROJECT_SOURCE_DIR}/ext/RmlUi/Samples/assets"
 	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>
 	GNUBASE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 gnubase_target_defaults(gnubase-tests)

@@ -43,16 +43,7 @@ namespace
 		return std::string(GNUBASE_TEST_DATA_DIR) + "/ui/" + name;
 	}
 
-	// The fake window system, the null renderer, RmlUi and the shell, made and destroyed in the app's order.
-	struct Ui
-	{
-		explicit Ui(std::vector<ui::Display> displays) : windows(std::move(displays)), renderer(windows) {}
-
-		test::FakeWindowSystem windows;
-		test::NullRenderer renderer;
-		ui::RmlUi rmlui{windows};
-		ui::Shell shell{windows, renderer};
-	};
+	using Ui = test::FakeUi;
 
 	// Loads the document from tests/data/ui into the window and shows it.
 	Rml::ElementDocument& show(ui::Window& window, const char* name)
