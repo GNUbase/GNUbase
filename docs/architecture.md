@@ -64,7 +64,7 @@ flowchart TD
 | engine | `src/engine` | Command registry, document model, undo, time, audio graph, transport, file I/O, plugin slots, user settings | plugin, ipc, platform |
 | scripting | `src/scripting` | Lua runtime and the bindings generated from the command registry | engine API |
 | mcp | `src/mcp` | MCP protocol and transports, tools generated from the command registry | engine API, UI automation interface |
-| ui | `src/ui` | SDL3 windows, RmlUi documents, docking, widgets, UI automation | engine API, scripting, SDL3, RmlUi |
+| ui | `src/ui` | SDL3 windows, RmlUi documents drawn through SDL_GPU ([render-backend.md](render-backend.md)), docking, widgets, UI automation | engine API, scripting, SDL3, RmlUi |
 | pluginhost | `src/pluginhost` | Host process, scanner, format adapters (VST3, CLAP, AU, LV2, FST) | plugin, ipc, platform, plugin SDKs |
 | app | `src/app` | `main` and the wiring between modules | all of the above |
 
@@ -357,7 +357,6 @@ Adding a setting only needs a definition. Renaming one, or changing what its val
 
 | Topic | Ticket |
 |---|---|
-| UI render backend | #47 |
 | Plugin editor windows and their header | #69 |
 | Remaining plugin API questions ([plugin-api.md](plugin-api.md#open-questions)) | #64, #70, #72 |
 | Default hosting mode | #76 |
