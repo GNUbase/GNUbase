@@ -112,8 +112,8 @@ namespace gnubase::engine
 		double panLeft = -1.0; // the combined panner's static positions
 		double panRight = 1.0;
 		bool panBypass = false;
-		std::optional<int> midiVolume{}; // MIDI channels: CC 7 and CC 10 to send, 0 to 127
-		std::optional<int> midiPan{};
+		std::optional<int> midiVolume; // MIDI channels: CC 7 and CC 10 to send, 0 to 127
+		std::optional<int> midiPan;
 		AutoFades autoFades;                          // audio tracks: their own settings or the project's
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
 		std::vector<RenderNote> notes;                // sorted by start, then pitch

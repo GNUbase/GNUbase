@@ -76,8 +76,8 @@ namespace gnubase::engine
 		bool panBypass = false; // mono channels play at the center, stereo ones hard left and right
 		// MIDI channels: the MIDI volume (CC 7) and pan (CC 10, 64 is the center) sent to the instrument, 0 to 127;
 		// none sends nothing, which leaves the instrument's own.
-		std::optional<int> midiVolume{};
-		std::optional<int> midiPan{};
+		std::optional<int> midiVolume = std::nullopt;
+		std::optional<int> midiPan = std::nullopt;
 	};
 
 	// The fader's range: its bottom is silence, its top the project's maximum volume, at most this.
