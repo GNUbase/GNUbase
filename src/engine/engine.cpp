@@ -76,8 +76,8 @@ namespace gnubase::engine
 		return GNUBASE_VERSION;
 	}
 
-	Engine::Engine(
-		std::vector<std::unique_ptr<audio::Backend>> backends, const std::filesystem::path& settingsDirectory,
+	Engine::Engine(std::vector<std::unique_ptr<audio::Backend>> backends,
+		const std::filesystem::path& settingsDirectory,
 		std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends)
 	{
 		registerCommand({"engine.version", 1, "The GNUbase version.", CommandInfo{}.parameters,

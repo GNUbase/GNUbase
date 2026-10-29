@@ -127,7 +127,8 @@ namespace gnubase::engine
 	}
 
 	AudioEngine::AudioEngine(rt::SnapshotPublisher<RenderSnapshot>& snapshots,
-		std::vector<std::unique_ptr<audio::Backend>> backends, std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends)
+		std::vector<std::unique_ptr<audio::Backend>> backends,
+		std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends)
 		: m_snapshots(snapshots), m_backends(std::move(backends)), m_midi(std::move(midiBackends)),
 		  m_midiInput(graph::g_maxEventsPerBlock), m_generatorEvents(graph::g_maxEventsPerBlock),
 		  m_generatorOut(graph::g_maxEventsPerBlock)
