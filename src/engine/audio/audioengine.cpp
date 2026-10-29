@@ -77,47 +77,6 @@ namespace gnubase::engine
 				{"clockSource", clockSource}, {"controlPanel", info.controlPanel}};
 		}
 
-		// What a channel's automation plays: the fader's and the instrument's parameters with their static values or
-		// curves, and the MIDI controllers that have curves.
-		std::unique_ptr<ChannelAutomation> channelAutomation(const RenderChannel& channel, double maxVolume)
-		{
-			using Kind = PlayedLane::Kind;
-			auto automation = std::make_unique<ChannelAutomation>();
-			automation->instrument = channel.instrument;
-			std::vector<PlayedLane>& lanes = automation->lanes;
-			if (channel.format != ChannelFormat::None)
-			{
-				lanes.push_back({{AutomationTargetType::Volume, 0, 0, 0}, Kind::Fader, ChannelFader::Volume,
-					channel.volume, 0.0, volumeGain(maxVolume), {}});
-				lanes.push_back(
-					{{AutomationTargetType::Pan, 0, 0, 0}, Kind::Fader, ChannelFader::Pan, channel.pan, -1.0, 1.0, {}});
-				lanes.push_back({{AutomationTargetType::PanLeft, 0, 0, 0}, Kind::Fader, ChannelFader::PanLeft,
-					channel.panLeft, -1.0, 1.0, {}});
-				lanes.push_back({{AutomationTargetType::PanRight, 0, 0, 0}, Kind::Fader, ChannelFader::PanRight,
-					channel.panRight, -1.0, 1.0, {}});
-			}
-			for (const processors::BuiltinInfo& info : processors::builtins())
-				if (info.id == channel.instrument)
-					for (const processors::ParameterInfo& parameter : info.parameters)
-						lanes.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0}, Kind::Instrument,
-							parameter.id, parameter.defaultValue, parameter.minimum, parameter.maximum, {}});
-			const bool midi = channel.type == TrackType::Midi || channel.type == TrackType::Instrument;
-			for (const RenderAutomationLane& lane : channel.automation)
-			{
-				const auto match = std::find_if(lanes.begin(), lanes.end(),
-					[&lane](const PlayedLane& played) { return played.target == lane.target; });
-				if (match != lanes.end())
-					match->points = lane.points;
-				else if (midi &&
-					(lane.target.type == AutomationTargetType::Controller ||
-						lane.target.type == AutomationTargetType::PitchBend ||
-						lane.target.type == AutomationTargetType::ChannelPressure))
-					lanes.push_back({lane.target, Kind::Midi, 0, 0.0, 0.0, 1.0, lane.points});
-				// Anything else, e.g. a parameter of an instrument the channel no longer plays, waits.
-			}
-			return automation;
-		}
-
 		const processors::BuiltinInfo& generatorInfo(const std::string& id)
 		{
 			for (const processors::BuiltinInfo& info : processors::builtins())
