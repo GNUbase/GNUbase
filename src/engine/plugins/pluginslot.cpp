@@ -2,6 +2,7 @@
 #include "engine/plugins/pluginslot.h"
 
 #include "engine/graph/graph.h"
+#include "engine/midi/midivalues.h"
 #include "platform/rt/realtime.h"
 
 #include <algorithm>
@@ -12,6 +13,9 @@ namespace gnubase::engine::plugins
 	namespace
 	{
 		constexpr size_t g_maxTransportSegments = 64;
+		constexpr uint32_t g_maxBank = 16383; // MIDI's bank select: 14 bits
+		constexpr uint32_t g_bankSelect = 0;
+		constexpr uint32_t g_bankSelectLsb = 32;
 
 		void silence(const graph::ProcessContext& context) noexcept
 		{
@@ -89,42 +93,73 @@ namespace gnubase::engine::plugins
 		return m_active && m_latency != nullptr ? m_latency->latency() : 0;
 	}
 
+	void convertEvent(const graph::ProcessEvent& event, uint32_t frames, plugin::EventList& out) noexcept
+	{
+		using Type = graph::ProcessEvent::Type;
+		plugin::Event converted;
+		converted.offset = std::min(event.offset, frames - 1);
+		converted.port = 0;
+		converted.channel = event.channel;
+		converted.key = event.key;
+		// A MIDI 1.0 message of up to three bytes, on the event's channel.
+		const auto midi1 = [&](uint32_t status, uint32_t data1, uint32_t data2 = 0)
+		{
+			converted.type = plugin::EventType::Midi;
+			converted.key = -1;
+			converted.data[0] = (status | (event.channel & 0x0FU)) | ((data1 & 0x7FU) << 8) | ((data2 & 0x7FU) << 16);
+			out.push(converted);
+		};
+		switch (event.type)
+		{
+		case Type::NoteOn:
+		case Type::NoteOff:
+			converted.type = event.type == Type::NoteOn ? plugin::EventType::NoteOn : plugin::EventType::NoteOff;
+			converted.value = event.velocity / 65535.0;
+			out.push(converted);
+			break;
+		case Type::Controller:
+			midi1(0xB0U, event.key, midi::controllerToMidi1(event.value));
+			break;
+		case Type::PitchBend:
+		{
+			const uint16_t bend = midi::pitchBendToMidi1(event.value);
+			midi1(0xE0U, bend & 0x7FU, bend >> 7U);
+			break;
+		}
+		case Type::ChannelPressure:
+			midi1(0xD0U, midi::controllerToMidi1(event.value));
+			break;
+		case Type::PolyPressure:
+			midi1(0xA0U, event.key, midi::controllerToMidi1(event.value));
+			break;
+		case Type::Program:
+			if (event.value <= g_maxBank)
+			{
+				midi1(0xB0U, g_bankSelect, event.value >> 7U);
+				midi1(0xB0U, g_bankSelectLsb, event.value);
+			}
+			midi1(0xC0U, event.key);
+			break;
+		case Type::SysEx:
+			out.pushSysex(converted.offset, 0, event.data, event.data != nullptr ? event.size : 0);
+			break;
+		case Type::Parameter:
+			converted.type = plugin::EventType::ParamValue;
+			converted.port = -1;
+			converted.channel = -1;
+			converted.key = -1;
+			converted.param = event.parameter;
+			converted.value = event.parameterValue;
+			out.push(converted);
+			break;
+		}
+	}
+
 	void PluginSlot::convertEvents(const graph::ProcessContext& context) noexcept
 	{
 		m_eventsIn.clear();
 		for (const graph::ProcessEvent& event : context.eventsIn)
-		{
-			plugin::Event converted;
-			converted.offset = std::min(event.offset, context.frames - 1);
-			converted.port = 0;
-			converted.channel = event.channel;
-			converted.key = event.key;
-			switch (event.type)
-			{
-			case graph::ProcessEvent::Type::NoteOn:
-			case graph::ProcessEvent::Type::NoteOff:
-				converted.type = event.type == graph::ProcessEvent::Type::NoteOn ? plugin::EventType::NoteOn
-																				 : plugin::EventType::NoteOff;
-				converted.value = event.velocity / 65535.0;
-				break;
-			case graph::ProcessEvent::Type::Controller:
-				// MIDI 1.0: a control change with the controller's top 7 bits.
-				converted.type = plugin::EventType::Midi;
-				converted.key = -1;
-				converted.data[0] =
-					(0xB0U | (event.channel & 0x0FU)) | (uint32_t{event.key} << 8) | ((event.value >> 25) << 16);
-				break;
-			case graph::ProcessEvent::Type::Parameter:
-				converted.type = plugin::EventType::ParamValue;
-				converted.port = -1;
-				converted.channel = -1;
-				converted.key = -1;
-				converted.param = event.parameter;
-				converted.value = event.parameterValue;
-				break;
-			}
-			m_eventsIn.push(converted);
-		}
+			convertEvent(event, context.frames, m_eventsIn);
 	}
 
 	uint32_t PluginSlot::convertTransport(const graph::TransportBlock& transport) noexcept

@@ -346,6 +346,93 @@ namespace
 			bytes[i] = static_cast<uint8_t>((i * 31) + seed);
 		return bytes;
 	}
+
+	graph::ProcessEvent midiEvent(graph::ProcessEvent::Type type, uint8_t channel, uint8_t key, uint32_t value)
+	{
+		graph::ProcessEvent event;
+		event.type = type;
+		event.channel = channel;
+		event.key = key;
+		event.value = value;
+		return event;
+	}
+
+	// The three bytes of a MIDI 1.0 message as a plugin::EventType::Midi event holds them.
+	uint32_t midi1(uint32_t status, uint32_t data1, uint32_t data2 = 0)
+	{
+		return status | (data1 << 8) | (data2 << 16);
+	}
+}
+
+TEST_CASE("plugin slots pass every kind of MIDI event on to the plugin", "[unit]")
+{
+	using Type = graph::ProcessEvent::Type;
+	plugin::EventList list(16, 64);
+	const auto convert = [&list](const graph::ProcessEvent& event)
+	{
+		list.clear();
+		plugins::convertEvent(event, 64, list);
+	};
+
+	SECTION("notes")
+	{
+		graph::ProcessEvent note = midiEvent(Type::NoteOn, 2, 60, 0);
+		note.velocity = 65535;
+		note.offset = 100; // past the block's end: the last frame
+		convert(note);
+		REQUIRE(list.size() == 1);
+		CHECK(list[0].type == plugin::EventType::NoteOn);
+		CHECK(list[0].offset == 63);
+		CHECK(list[0].channel == 2);
+		CHECK(list[0].key == 60);
+		CHECK(list[0].value == 1.0);
+	}
+
+	SECTION("channel messages")
+	{
+		const std::pair<graph::ProcessEvent, uint32_t> cases[] = {
+			{midiEvent(Type::Controller, 1, 7, 0xFFFFFFFF), midi1(0xB1, 7, 127)},
+			{midiEvent(Type::PitchBend, 0, 0, 0x80000000), midi1(0xE0, 0, 64)},
+			{midiEvent(Type::PitchBend, 15, 0, 0xFFFFFFFF), midi1(0xEF, 127, 127)},
+			{midiEvent(Type::ChannelPressure, 3, 0, 0xFFFFFFFF), midi1(0xD3, 127)},
+			{midiEvent(Type::PolyPressure, 0, 60, 0x80000000), midi1(0xA0, 60, 64)},
+		};
+		for (const auto& [event, bytes] : cases)
+		{
+			convert(event);
+			REQUIRE(list.size() == 1);
+			CHECK(list[0].type == plugin::EventType::Midi);
+			CHECK(list[0].data[0] == bytes);
+		}
+	}
+
+	SECTION("a program change selects its bank first")
+	{
+		convert(midiEvent(Type::Program, 4, 5, (3U << 7) | 9U));
+		REQUIRE(list.size() == 3);
+		CHECK(list[0].data[0] == midi1(0xB4, 0, 3));
+		CHECK(list[1].data[0] == midi1(0xB4, 32, 9));
+		CHECK(list[2].data[0] == midi1(0xC4, 5));
+
+		convert(midiEvent(Type::Program, 4, 5, 0xFFFFFFFF)); // no bank
+		REQUIRE(list.size() == 1);
+		CHECK(list[0].data[0] == midi1(0xC4, 5));
+	}
+
+	SECTION("system exclusive")
+	{
+		const uint8_t message[] = {0xF0, 0x7E, 0x7F, 0x09, 0x01, 0xF7};
+		graph::ProcessEvent sysex = midiEvent(Type::SysEx, 0, 0, 0);
+		sysex.offset = 10;
+		sysex.data = message;
+		sysex.size = static_cast<uint32_t>(std::size(message));
+		convert(sysex);
+		REQUIRE(list.size() == 1);
+		CHECK(list[0].type == plugin::EventType::Sysex);
+		CHECK(list[0].offset == 10);
+		REQUIRE(list[0].data[1] == std::size(message));
+		CHECK(std::memcmp(list.bytes(list[0]), message, std::size(message)) == 0);
+	}
 }
 
 TEST_CASE("a test plugin processes audio through the host process sample-exactly", "[integration]")
