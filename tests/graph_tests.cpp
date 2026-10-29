@@ -289,6 +289,35 @@ TEST_CASE("an event buffer keeps events in offset order and drops what doesn't f
 	CHECK(events.capacity() == 3);
 }
 
+TEST_CASE("at one offset an event buffer puts note-offs first, then other events, then note-ons", "[unit]")
+{
+	// Whichever source adds its events first, e.g. a MIDI track whose note starts where the instrument track's own
+	// note of the same pitch ends: the note-off must not end the new note.
+	using Type = ProcessEvent::Type;
+	const auto event = [](uint32_t offset, Type type, uint8_t key)
+	{
+		ProcessEvent result;
+		result.offset = offset;
+		result.type = type;
+		result.key = key;
+		return result;
+	};
+	EventBuffer events(8);
+	CHECK(events.add(event(4, Type::NoteOn, 1)));
+	CHECK(events.add(event(4, Type::Controller, 2)));
+	CHECK(events.add(event(4, Type::NoteOff, 3)));
+	CHECK(events.add(event(2, Type::NoteOn, 4)));
+	CHECK(events.add(event(4, Type::NoteOff, 5)));
+	CHECK(events.add(event(4, Type::Parameter, 6)));
+	CHECK(events.add(event(4, Type::NoteOn, 7)));
+	CHECK(events.add(event(6, Type::NoteOff, 8)));
+
+	std::vector<int> keys;
+	for (const ProcessEvent& e : events)
+		keys.push_back(e.key);
+	CHECK(keys == std::vector<int>{4, 3, 5, 2, 6, 1, 7, 8});
+}
+
 TEST_CASE("processors keep their state when the graph is rebuilt", "[unit]")
 {
 	auto ramp = std::make_shared<Ramp>();
