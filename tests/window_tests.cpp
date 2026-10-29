@@ -80,7 +80,9 @@ namespace
 			windows = std::make_unique<ui::SdlWindowSystem>();
 			try
 			{
-				renderer = std::make_unique<ui::GpuRenderer>(*windows);
+				// Four samples per pixel, which every platform has, at the same positions: Mesa's rasterizers, which
+				// made the golden images, have no two.
+				renderer = std::make_unique<ui::GpuRenderer>(*windows, 4);
 			}
 			catch (const ui::GpuUnavailable& error)
 			{
@@ -231,7 +233,9 @@ TEST_CASE("windows draw their RmlUi documents through SDL_GPU at their dp ratio"
 	const ui::Window& window = gpu.open("boxes.rml");
 	gpu.shell->step(milliseconds(0));
 	CHECK(window.frames() == 1);
-	INFO("SDL_GPU " << gpu.renderer->driver() << " on SDL's " << ui::SdlWindowSystem::driver() << " video driver");
+	CHECK(gpu.renderer->msaaSamples() == 4); // as the tests ask for
+	INFO("SDL_GPU " << gpu.renderer->driver() << " with " << gpu.renderer->msaaSamples() << "x MSAA on SDL's "
+					<< ui::SdlWindowSystem::driver() << " video driver");
 
 	for (const float uiScale : {1.0F, 2.0F})
 	{
@@ -258,7 +262,8 @@ TEST_CASE("a sample document looks the same on every platform", "[ui]")
 	for (const char* face : {"LatoLatin-Regular.ttf", "LatoLatin-Bold.ttf"})
 		REQUIRE(ui::RmlUi::loadFont(std::filesystem::path(GNUBASE_TEST_FONTS_DIR) / face));
 	const ui::Window& window = gpu.open("sample.rml", 640, 480);
-	INFO("SDL_GPU " << gpu.renderer->driver() << " on SDL's " << ui::SdlWindowSystem::driver() << " video driver");
+	INFO("SDL_GPU " << gpu.renderer->driver() << " with " << gpu.renderer->msaaSamples() << "x MSAA on SDL's "
+					<< ui::SdlWindowSystem::driver() << " video driver");
 	const float monitorScale = window.dpRatio() / gpu.shell->uiScale();
 	for (const int ratio : {1, 2})
 	{
@@ -267,7 +272,7 @@ TEST_CASE("a sample document looks the same on every platform", "[ui]")
 		const std::string name = "sample-" + std::to_string(ratio) + "x";
 		const ui::Image image = crop(gpu.screenshot(window, name), 0, 0, 320 * ratio, 240 * ratio);
 		// GPUs may round a few edge pixels differently: one in 500 may differ by more than 8 of 255.
-		const test::ImageDiff diff = test::compareWithGolden("ui/" + name, image, 8, image.pixels.size() / 4 / 500);
+		const test::ImageDiff diff = test::compareWithGolden("ui/" + name, image, {8, image.pixels.size() / 4 / 500});
 		INFO(diff.report);
 		CHECK(diff.equal);
 	}
@@ -282,7 +287,7 @@ TEST_CASE("RmlUi's effects look as RmlUi's OpenGL 3 renderer draws them", "[ui]"
 	spike::registerElements();
 	ui::WindowSpec spec;
 	spec.title = "features";
-	spec.size = {960, 640}; // four tiles a row, as in the references; the tiles don't depend on where they are
+	spec.size = {960, 640}; // SDL's offscreen video driver has a 1024x768 monitor, which the shell fits windows into
 	spec.hidden = true;
 	ui::Window& window = gpu.shell->open(spec);
 	Rml::ElementDocument* document = window.context().LoadDocument(GNUBASE_SPIKE_DOCUMENTS "/features.rml");
@@ -293,28 +298,44 @@ TEST_CASE("RmlUi's effects look as RmlUi's OpenGL 3 renderer draws them", "[ui]"
 	const std::array<const char*, 12> tiles{"shapes", "linear", "radial", "shadow", "blur", "drop", "clip", "mask",
 		"transform", "meters", "waveform", "waveform-image"};
 	REQUIRE(grid->GetNumChildren() == static_cast<int>(tiles.size()));
-	INFO("SDL_GPU " << gpu.renderer->driver() << " on SDL's " << ui::SdlWindowSystem::driver() << " video driver");
+	INFO("SDL_GPU " << gpu.renderer->driver() << " with " << gpu.renderer->msaaSamples() << "x MSAA on SDL's "
+					<< ui::SdlWindowSystem::driver() << " video driver");
 
 	const float monitorScale = window.dpRatio() / gpu.shell->uiScale();
 	for (const int ratio : {1, 2})
 	{
 		gpu.shell->setUiScale(static_cast<float>(ratio) / monitorScale);
-		const ui::Image image = gpu.screenshot(window, "features-" + std::to_string(ratio) + "x");
 		for (size_t i = 0; i < tiles.size(); ++i)
 		{
+			// One tile at a time, as far from the window's top left, modulo 64 pixels, as in the references: four
+			// columns 216 dp apart, rows 146 dp apart. Blurs downscale in steps that round to even pixels, so their
+			// pixels depend on where they are, modulo a power of two.
+			for (size_t other = 0; other < tiles.size(); ++other)
+				grid->GetChild(static_cast<int>(other))->SetProperty("display", other == i ? "block" : "none");
+			const int column = static_cast<int>(i % 4);
+			const int row = static_cast<int>(i / 4);
+			const int shiftX = ((ratio * 216 * column) % 64) / ratio; // dp beyond the first tile's place
+			const int shiftY = ((ratio * 146 * row) % 64) / ratio;
 			Rml::Element* tile = grid->GetChild(static_cast<int>(i));
+			tile->SetProperty("margin-left", std::to_string(8 + shiftX) + "dp");
+			tile->SetProperty("margin-top", std::to_string(8 + shiftY) + "dp");
+
+			const std::string name = std::string(tiles.at(i)) + "-" + std::to_string(ratio) + "x";
+			const ui::Image image = gpu.screenshot(window, "features-" + name);
 			const Rml::Vector2f offset = tile->GetAbsoluteOffset(Rml::BoxArea::Border);
 			const Rml::Vector2f size = tile->GetBox().GetSize(Rml::BoxArea::Border);
-			const std::string name = std::string(tiles.at(i)) + "-" + std::to_string(ratio) + "x";
 			const ui::Image actual =
 				crop(image, static_cast<int>(std::lround(offset.x)), static_cast<int>(std::lround(offset.y)),
 					static_cast<int>(std::lround(size.x)), static_cast<int>(std::lround(size.y)));
-			// Within 16 of 255, and one pixel in 50 beyond that: the GPUs and Mesa's OpenGL may round edges, blends
-			// and the blur's sampling a little differently.
+			// Averaged over 3x3 pixels within 16 of 255, and one pixel in 500 beyond that: OpenGL draws bottom-up, so
+			// its multisampling covers edges with mirrored sample positions, and GPUs round blends a little
+			// differently.
 			const test::ImageDiff diff =
-				test::compareWithGolden("ui/effects/" + name, actual, 16, actual.pixels.size() / 4 / 50);
+				test::compareWithGolden("ui/effects/" + name, actual, {16, actual.pixels.size() / 4 / 500, 1});
 			INFO(name << ": " << diff.report);
 			CHECK(diff.equal);
+			tile->RemoveProperty("margin-left");
+			tile->RemoveProperty("margin-top");
 		}
 	}
 }

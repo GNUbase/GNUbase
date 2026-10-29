@@ -85,7 +85,8 @@ jobs:
         run: |
           bin=build/${{ matrix.preset }}/bin/Release
           exe=$bin/gnubase-render-spike
-          set -- "gl3:--backend gl3" "gpu:--backend gpu"
+          # gpu-nomsaa draws as RmlUi 6.3's SDL_GPU renderer did, without multisampling, for comparing timings (#285).
+          set -- "gl3:--backend gl3" "gpu:--backend gpu" "gpu-nomsaa:--backend gpu --msaa 1"
           case "$RUNNER_OS" in
           Linux)
             Xvfb :99 -screen 0 1920x1080x24 &

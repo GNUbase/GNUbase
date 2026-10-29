@@ -36,7 +36,7 @@ namespace gnubase::ui
 		}
 	}
 
-	GpuRenderer::GpuRenderer(SdlWindowSystem& windows) : m_windows(windows)
+	GpuRenderer::GpuRenderer(SdlWindowSystem& windows, int msaaSamples) : m_windows(windows), m_msaaSamples(msaaSamples)
 	{
 		// RmlUi's renderer brings its shaders in all three formats; SDL_GPU picks the API this machine has.
 		const SDL_PropertiesID properties = SDL_CreateProperties();
@@ -69,6 +69,11 @@ namespace gnubase::ui
 		return name != nullptr ? name : "";
 	}
 
+	int GpuRenderer::msaaSamples() const
+	{
+		return m_interface ? m_interface->GetMsaaSamples() : 0;
+	}
+
 	void GpuRenderer::attach(WindowId window)
 	{
 		SDL_Window* sdl = SdlWindowSystem::sdlWindow(window);
@@ -80,7 +85,8 @@ namespace gnubase::ui
 		const auto format = static_cast<int>(SDL_GetGPUSwapchainTextureFormat(m_device, sdl));
 		if (!m_interface)
 		{
-			m_interface = std::make_unique<RenderInterface_SDL_GPU>(m_device, sdl); // its pipelines use this format
+			// Its pipelines use this format.
+			m_interface = std::make_unique<RenderInterface_SDL_GPU>(m_device, sdl, m_msaaSamples);
 			m_format = format;
 		}
 		else if (format != m_format)

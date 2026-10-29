@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// SDL_GPU (Metal, Direct3D 12 or Vulkan) through RmlUi's SDL_GPU renderer, which draws geometry and textures with
-// scissoring and transforms, but no clip masks, layers, filters or shaders (gradients).
+// SDL_GPU (Metal, Direct3D 12 or Vulkan) through RmlUi's SDL_GPU renderer, which draws everything the OpenGL 3 renderer
+// does: geometry and textures with scissoring and transforms, clip masks, layers with filters, and gradients (#285).
 #include "backend.h"
 
 #include <RmlUi_Renderer_SDL_GPU.h>
@@ -15,9 +15,9 @@ namespace gnubase::spike
 		class GpuBackend final : public Backend
 		{
 		public:
-			GpuBackend(SDL_Window* window, SDL_GPUDevice* device)
+			GpuBackend(SDL_Window* window, SDL_GPUDevice* device, int msaa)
 				: m_window(window), m_device(device),
-				  m_renderer(std::make_unique<RenderInterface_SDL_GPU>(device, window))
+				  m_renderer(std::make_unique<RenderInterface_SDL_GPU>(device, window, msaa))
 			{
 			}
 
@@ -37,7 +37,11 @@ namespace gnubase::spike
 			GpuBackend& operator=(const GpuBackend&) = delete;
 
 			const char* name() const override { return "gpu"; }
-			std::string driver() const override { return std::string("SDL_GPU ") + SDL_GetGPUDeviceDriver(m_device); }
+			std::string driver() const override
+			{
+				return std::string("SDL_GPU ") + SDL_GetGPUDeviceDriver(m_device) + ", " +
+					std::to_string(m_renderer->GetMsaaSamples()) + "x MSAA";
+			}
 			SDL_Window* window() const override { return m_window; }
 			Rml::RenderInterface& renderInterface() override { return *m_renderer; }
 
@@ -169,7 +173,8 @@ namespace gnubase::spike
 		};
 	}
 
-	std::unique_ptr<Backend> makeGpuBackend(const WindowOptions& options, const std::string& driver, std::string& error)
+	std::unique_ptr<Backend> makeGpuBackend(
+		const WindowOptions& options, const std::string& driver, int msaa, std::string& error)
 	{
 		SDL_Window* window = createWindow(options, 0, error);
 		if (window == nullptr)
@@ -195,7 +200,7 @@ namespace gnubase::spike
 			SDL_DestroyWindow(window);
 			return nullptr;
 		}
-		auto backend = std::make_unique<GpuBackend>(window, device);
+		auto backend = std::make_unique<GpuBackend>(window, device, msaa > 0 ? msaa : RMLUI_SDL_GPU_MSAA_SAMPLES);
 		backend->setVsync(options.vsync);
 		return backend;
 	}
