@@ -7,7 +7,6 @@
 #include "engine/graph/processor.h"
 #include "platform/rt/snapshotpublisher.h"
 
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -38,10 +37,6 @@ namespace gnubase::engine
 		double gainAt(time::Samples position) const noexcept;
 	};
 
-	// The most fades on an entry: its event's fade in and out, its clip's, and those of the auto crossfades it plays
-	// behind the front in: one where the event in front starts, one where it ends.
-	inline constexpr size_t g_maxRamps = 6;
-
 	// A stretch of an audio track's playback: a section of one event's clip.
 	struct PlaylistEntry
 	{
@@ -52,8 +47,9 @@ namespace gnubase::engine
 		float gain = 1.0f;
 		int channels = 1; // the clip's
 		ObjectId event = 0;
-		std::array<GainRamp, g_maxRamps> ramps{};
-		size_t rampCount = 0;
+		// Its event's fades and its clip's, and behind the front those of the transitions that join it to the event
+		// in front. Filled when the playlist is built; the audio thread only reads them.
+		std::vector<GainRamp> ramps;
 
 		// The gain at a position: the event volume times every fade.
 		float gainAt(time::Samples position) const noexcept;
@@ -67,7 +63,7 @@ namespace gnubase::engine
 	// What an audio track plays. The first layer is the front: where events overlap, the one added last (the highest
 	// id) is in front and plays. Muted events don't play and hide nothing. The layers after it hold what plays along
 	// with the front where events crossfade: the event that fades out under the one that fades in, or the one that
-	// fades in under the end of the one in front.
+	// fades in under the end of the one in front, and events joined to those by crossfades of their own.
 	struct Playlist
 	{
 		std::vector<PlaylistLayer> layers;

@@ -619,18 +619,97 @@ TEST_CASE("an event fading out plays on behind every event in front of it until 
 		session.addEvent(track, clip, 1000, 3000);
 		session.addEvent(track, clip, 1200, 3800);
 		const auto output = session.render(5500);
+		// The first one plays on behind the third one while the second one does, and fades out with it, so the
+		// gains add up to 1 throughout.
 		checkSamples(output[0],
 			[&](int64_t at)
 			{
 				if (at >= 5000)
 					return 0.0;
-				const double x = at < 1000 + n ? fadeOut("linear", at, 1000 + n, n) : 0.0;
-				const double y = at >= 1000 && at < 1200 + n
-					? fadeIn("linear", at, 1000, n) * (at < 1200 ? 1.0 : fadeOut("linear", at, 1200 + n, n))
-					: 0.0;
+				const double behindThird = at < 1200 ? 1.0 : fadeOut("linear", at, 1200 + n, n);
+				const double x = at < 1000 + n ? fadeOut("linear", at, 1000 + n, n) * behindThird : 0.0;
+				const double y = at >= 1000 && at < 1200 + n ? fadeIn("linear", at, 1000, n) * behindThird : 0.0;
 				const double z = at >= 1200 ? fadeIn("linear", at, 1200, n) : 0.0;
 				return x + y + z;
 			});
+		for (size_t i = 0; i < 5000; ++i)
+			REQUIRE_THAT(output[0][i], WithinAbs(1.0, 1e-6));
+	}
+}
+
+TEST_CASE("an event on top of a crossfade hides the events it joins", "[integration]")
+{
+	// A new take over a crossfaded join: where it is in front, the crossfaded events play behind it only as far as
+	// its own transitions reach.
+	const int blockSize = GENERATE(1, 64, 333);
+	INFO("block size " << blockSize);
+	const gnubase::test::TempDir dir;
+	Session session(blockSize);
+	Client& client = session.client;
+	const ObjectId track = session.addTrack(1);
+	// Each event plays a clip of its own level, so the output shows which ones play: exact in float.
+	const auto level = [&](const std::string& name, float value)
+	{ return session.addClip(writeClip(dir, name, 1, 3000, [value](int64_t, int) { return value; })); };
+	const ObjectId first = level("first", 0.125f);
+	const ObjectId second = level("second", 0.25f);
+	const ObjectId take = level("take", 0.5f);
+	const ObjectId a = session.addEvent(track, first, 0, 1000);
+	const ObjectId b = session.addEvent(track, second, 500, 1500);
+	run(client, "crossfade.set", {{"from", a}, {"to", b}});
+	// The crossfaded pair alone: the sum of the two where they play together.
+	const auto pair = [](int64_t at)
+	{
+		const double gainA = at < 1000 ? fadeOut("linear", at, 1000, 500) : 0.0;
+		const double gainB = at >= 500 && at < 2000 ? fadeIn("linear", at, 500, 500) : 0.0;
+		return (0.125 * gainA) + (0.25 * gainB);
+	};
+
+	SECTION("without auto crossfades")
+	{
+		session.addEvent(track, take, 400, 700); // over the whole crossfade
+		checkSamples(session.render(2100)[0], [&](int64_t at) { return at >= 400 && at < 1100 ? 0.5 : pair(at); });
+	}
+	SECTION("with auto crossfades, over the whole crossfade")
+	{
+		constexpr int64_t n = 48; // 1 ms at 48 kHz
+		run(client, "autoFades.set", {{"track", track}, {"crossfades", true}, {"length", 1.0}});
+		session.addEvent(track, take, 400, 700);
+		// The take crossfades with the first event where it starts and with the second one where it ends; neither
+		// plays under it in between.
+		checkSamples(session.render(2100)[0],
+			[&](int64_t at)
+			{
+				if (at < 400 || at >= 1100)
+					return pair(at);
+				const double gainTake = fadeIn("linear", at, 400, n) * fadeOut("linear", at, 1100, n);
+				const double gainA = at < 400 + n ? fadeOut("linear", at, 400 + n, n) : 0.0;
+				const double gainB = at >= 1100 - n ? fadeIn("linear", at, 1100 - n, n) : 0.0;
+				return (0.5 * gainTake) + (0.125 * gainA) + (0.25 * gainB);
+			});
+	}
+	SECTION("with auto crossfades, inside the crossfade")
+	{
+		constexpr int64_t n = 48;
+		run(client, "autoFades.set", {{"track", track}, {"crossfades", true}, {"length", 1.0}});
+		session.addEvent(track, take, 600, 300);
+		// Both crossfaded events fade out under the take where it starts, stay silent, and fade in again where it
+		// ends, so nothing jumps.
+		const auto output = session.render(2100);
+		checkSamples(output[0],
+			[&](int64_t at)
+			{
+				if (at < 600 || at >= 900)
+					return pair(at);
+				const double gainTake = fadeIn("linear", at, 600, n) * fadeOut("linear", at, 900, n);
+				double behind = 0.0;
+				if (at < 600 + n)
+					behind = fadeOut("linear", at, 600 + n, n);
+				else if (at >= 900 - n)
+					behind = fadeIn("linear", at, 900 - n, n);
+				return (0.5 * gainTake) + (pair(at) * behind);
+			});
+		for (size_t i = 1; i < 2000; ++i)
+			REQUIRE(std::abs(output[0][i] - output[0][i - 1]) < 0.02f);
 	}
 }
 

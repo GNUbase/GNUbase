@@ -77,8 +77,8 @@ namespace gnubase::engine
 
 		void addRamp(PlaylistEntry& entry, const std::optional<GainRamp>& ramp)
 		{
-			if (ramp && entry.rampCount < g_maxRamps)
-				entry.ramps[entry.rampCount++] = *ramp;
+			if (ramp)
+				entry.ramps.push_back(*ramp);
 		}
 
 		// A section of an event, with its fades and its clip's.
@@ -290,80 +290,126 @@ namespace gnubase::engine
 			return layer;
 		}
 
-		// What plays behind the front during transitions, sorted by start: the stretches of each event's transitions
-		// where it isn't in front, each with the fades that apply to it there behind the front. Where transitions of
-		// an event overlap, it plays once, with the fades of all of them.
+		// Whether transitions active from start to end join event e to event f, directly or through other events.
+		// If so, ramps gets the fades behind the front that apply to e on the way: at each link of the shortest chain,
+		// those of the transitions between its two events on the side away from f. So an event behind another one
+		// fades out and in with it.
+		bool joined(size_t e, size_t f, size_t count, const std::vector<Transition>& transitions, time::Samples start,
+			time::Samples end, std::vector<const GainRamp*>& ramps)
+		{
+			std::vector<const Transition*> active;
+			for (const Transition& transition : transitions)
+				if (transition.start <= start && transition.end >= end)
+					active.push_back(&transition);
+			// Breadth first from f: each event reached knows the next one on its way to f.
+			constexpr size_t none = std::numeric_limits<size_t>::max();
+			std::vector<size_t> towards(count, none);
+			towards[f] = f;
+			std::vector<size_t> queue{f};
+			for (size_t q = 0; q < queue.size() && towards[e] == none; ++q)
+				for (const Transition* transition : active)
+				{
+					const size_t at = queue[q];
+					const size_t other = transition->out == at ? transition->in : transition->out;
+					if ((transition->out == at || transition->in == at) && towards[other] == none)
+					{
+						towards[other] = at;
+						queue.push_back(other);
+					}
+				}
+			if (towards[e] == none)
+				return false;
+			ramps.clear();
+			for (size_t at = e; at != f; at = towards[at])
+				for (const Transition* transition : active)
+				{
+					if (transition->out == at && transition->in == towards[at] && transition->outBehind)
+						ramps.push_back(&*transition->outBehind);
+					else if (transition->in == at && transition->out == towards[at] && transition->inBehind)
+						ramps.push_back(&*transition->inBehind);
+				}
+			return true;
+		}
+
+		// What plays behind the front during transitions, sorted by start. An event plays behind the front only where
+		// transitions active there join it to the event in front: where that is its partner in a transition, or is
+		// joined to its partner by further transitions, as when a third event takes the front during a crossfade. It
+		// plays with its own fades and those behind the front along the way (joined()). Once those have faded it out,
+		// it stays silent until the event in front changes, unless one fades it in again from silence.
 		std::vector<PlaylistEntry> hidden(
 			const std::vector<Placed>& events, const std::vector<Transition>& transitions, const PlaylistLayer& front)
 		{
-			struct Part
-			{
-				time::Samples start = 0;
-				time::Samples end = 0;
-				const std::optional<GainRamp>* ramp = nullptr;
-			};
-			std::vector<std::vector<Part>> parts(events.size());
-			for (const Transition& transition : transitions)
-			{
-				const auto add = [&](size_t event, const std::optional<GainRamp>& ramp)
-				{
-					const time::Samples start = std::max(transition.start, events[event].start);
-					const time::Samples end = std::min(transition.end, events[event].end);
-					if (start < end)
-						parts[event].push_back({start, end, &ramp});
-				};
-				add(transition.out, transition.outBehind);
-				add(transition.in, transition.inBehind);
-			}
-
+			const std::map<ObjectId, size_t> index = indexById(events);
 			std::vector<PlaylistEntry> result;
 			for (size_t e = 0; e < events.size(); ++e)
 			{
-				if (parts[e].empty())
+				const Placed& placed = events[e];
+				if (std::none_of(transitions.begin(), transitions.end(),
+						[e](const Transition& transition) { return transition.out == e || transition.in == e; }))
 					continue;
-				const ObjectId id = events[e].event->id;
-				// Cut where a part or a front entry starts or ends, so each piece has one set of parts and one event
-				// in front.
-				std::vector<time::Samples> cuts;
-				for (const Part& part : parts[e])
+				// Cut where a transition or a front entry starts or ends, so each piece has one set of active
+				// transitions and one event in front.
+				std::vector<time::Samples> cuts{placed.start, placed.end};
+				const auto cut = [&](time::Samples at)
 				{
-					cuts.push_back(part.start);
-					cuts.push_back(part.end);
+					if (at > placed.start && at < placed.end)
+						cuts.push_back(at);
+				};
+				for (const Transition& transition : transitions)
+				{
+					cut(transition.start);
+					cut(transition.end);
 				}
 				for (const PlaylistEntry& entry : front)
-					if (entry.end > events[e].start && entry.start < events[e].end)
-					{
-						cuts.push_back(entry.start);
-						cuts.push_back(entry.end);
-					}
+				{
+					cut(entry.start);
+					cut(entry.end);
+				}
 				std::sort(cuts.begin(), cuts.end());
 				cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
 
-				std::vector<size_t> previous; // the parts of the piece before, while it goes on
+				std::vector<const GainRamp*> ramps;
+				std::vector<const GainRamp*> previous; // the ramps of the piece before, while it goes on
+				bool goesOn = false;
+				ObjectId silentUnder = 0; // the event in front when its fades behind the front faded it out
 				for (size_t k = 0; k + 1 < cuts.size(); ++k)
 				{
 					const time::Samples start = cuts[k];
 					const time::Samples end = cuts[k + 1];
-					std::vector<size_t> covering;
-					for (size_t p = 0; p < parts[e].size(); ++p)
-						if (parts[e][p].start <= start && parts[e][p].end >= end)
-							covering.push_back(p);
 					const PlaylistEntry* inFront = entryAt(front, start);
-					if (covering.empty() || (inFront != nullptr && inFront->event == id))
+					if (inFront == nullptr || inFront->event == placed.event->id)
 					{
-						previous.clear();
+						goesOn = false;
+						silentUnder = 0;
 						continue;
 					}
-					if (!previous.empty() && covering == previous && result.back().end == start)
+					if (inFront->event != silentUnder)
+						silentUnder = 0;
+					if (!joined(e, index.at(inFront->event), events.size(), transitions, start, end, ramps) ||
+						(silentUnder != 0 &&
+							std::all_of(ramps.begin(), ramps.end(),
+								[start](const GainRamp* ramp) { return ramp->gainAt(start) > 0.0; })))
+					{
+						goesOn = false;
+						continue;
+					}
+					silentUnder = 0;
+					if (goesOn && ramps == previous)
 					{
 						result.back().end = end;
-						continue;
 					}
-					PlaylistEntry piece = section(events[e], start, end);
-					for (const size_t p : covering)
-						addRamp(piece, *parts[e][p].ramp);
-					result.push_back(piece);
-					previous = std::move(covering);
+					else
+					{
+						PlaylistEntry piece = section(placed, start, end);
+						for (const GainRamp* ramp : ramps)
+							piece.ramps.push_back(*ramp);
+						result.push_back(std::move(piece));
+						previous = ramps;
+					}
+					goesOn = true;
+					if (std::any_of(ramps.begin(), ramps.end(),
+							[end](const GainRamp* ramp) { return ramp->out && ramp->end <= end; }))
+						silentUnder = inFront->event;
 				}
 			}
 			std::stable_sort(result.begin(), result.end(),
@@ -413,17 +459,15 @@ namespace gnubase::engine
 	float PlaylistEntry::gainAt(time::Samples position) const noexcept
 	{
 		double result = gain;
-		for (size_t i = 0; i < rampCount; ++i)
-			result *= ramps[i].gainAt(position);
+		for (const GainRamp& ramp : ramps)
+			result *= ramp.gainAt(position);
 		return static_cast<float>(result);
 	}
 
 	bool PlaylistEntry::fades(time::Samples position, time::Samples frames) const noexcept
 	{
-		for (size_t i = 0; i < rampCount; ++i)
-			if (ramps[i].start < position + frames && ramps[i].end > position)
-				return true;
-		return false;
+		return std::any_of(ramps.begin(), ramps.end(),
+			[&](const GainRamp& ramp) { return ramp.start < position + frames && ramp.end > position; });
 	}
 
 	Playlist makePlaylist(const RenderSnapshot& snapshot, const RenderChannel& channel)
@@ -460,8 +504,8 @@ namespace gnubase::engine
 		Playlist playlist;
 		playlist.layers.push_back(front(events));
 
-		// Where a transition's events play together, each of them plays in a layer behind wherever it isn't in front,
-		// over the whole transition: also where a third event has taken the front.
+		// Where a transition's events play together, the one that isn't in front plays in a layer behind, as long as
+		// transitions join it to the event in front: also where a third event has taken the front.
 		const std::vector<PlaylistEntry> behind = hidden(events, transitions, playlist.layers.front());
 		for (const PlaylistEntry& entry : behind)
 		{
