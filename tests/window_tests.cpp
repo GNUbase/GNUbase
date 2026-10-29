@@ -3,6 +3,7 @@
 // SDL's offscreen video driver unless SDL_VIDEO_DRIVER names another, so they need no display, only a Vulkan driver
 // (Mesa's lavapipe in CI). Where SDL_GPU has no device, such as CI's macOS Intel runner, they are skipped, unless
 // GNUBASE_REQUIRE_GPU=1 says this machine must have one. On Apple Silicon they run in .github/workflows/ui-macos.yml.
+#include "elements.h"
 #include "testutils/goldenimage.h"
 #include "testutils/testutils.h"
 #include "ui/gpurenderer.h"
@@ -10,6 +11,7 @@
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
 
+#include <RmlUi/Core/Box.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControlInput.h>
@@ -198,15 +200,18 @@ namespace
 		std::string files;
 	};
 
-	// The top left of the image.
-	ui::Image crop(const ui::Image& image, int width, int height)
+	// A rectangle of the image.
+	ui::Image crop(const ui::Image& image, int x, int y, int width, int height)
 	{
-		REQUIRE(image.width >= width);
-		REQUIRE(image.height >= height);
+		REQUIRE(x >= 0);
+		REQUIRE(y >= 0);
+		REQUIRE(image.width >= x + width);
+		REQUIRE(image.height >= y + height);
 		ui::Image cropped{width, height, {}};
-		for (int row = 0; row < height; ++row)
+		for (int row = y; row < y + height; ++row)
 		{
-			const auto begin = image.pixels.begin() + (static_cast<ptrdiff_t>(row) * image.width * 4);
+			const auto begin =
+				image.pixels.begin() + ((static_cast<ptrdiff_t>(row) * image.width + x) * static_cast<ptrdiff_t>(4));
 			cropped.pixels.insert(cropped.pixels.end(), begin, begin + (static_cast<ptrdiff_t>(width) * 4));
 		}
 		return cropped;
@@ -260,11 +265,57 @@ TEST_CASE("a sample document looks the same on every platform", "[ui]")
 		// The same dp ratio gives the same pixels, whatever the monitor's scale.
 		gpu.shell->setUiScale(static_cast<float>(ratio) / monitorScale);
 		const std::string name = "sample-" + std::to_string(ratio) + "x";
-		const ui::Image image = crop(gpu.screenshot(window, name), 320 * ratio, 240 * ratio);
+		const ui::Image image = crop(gpu.screenshot(window, name), 0, 0, 320 * ratio, 240 * ratio);
 		// GPUs may round a few edge pixels differently: one in 500 may differ by more than 8 of 255.
 		const test::ImageDiff diff = test::compareWithGolden("ui/" + name, image, 8, image.pixels.size() / 4 / 500);
 		INFO(diff.report);
 		CHECK(diff.equal);
+	}
+}
+
+TEST_CASE("RmlUi's effects look as RmlUi's OpenGL 3 renderer draws them", "[ui]")
+{
+	// The render spike's features document (#47): one tile per thing a renderer draws. Each tile is compared with what
+	// RmlUi's OpenGL 3 renderer drew in it (tests/golden/ui/effects, made with
+	// spikes/render-backend/reference-tiles.py).
+	Gpu gpu;
+	spike::registerElements();
+	ui::WindowSpec spec;
+	spec.title = "features";
+	spec.size = {960, 640}; // four tiles a row, as in the references; the tiles don't depend on where they are
+	spec.hidden = true;
+	ui::Window& window = gpu.shell->open(spec);
+	Rml::ElementDocument* document = window.context().LoadDocument(GNUBASE_SPIKE_DOCUMENTS "/features.rml");
+	REQUIRE(document != nullptr);
+	document->Show();
+	Rml::Element* grid = document->GetChild(0);
+	REQUIRE(grid != nullptr);
+	const std::array<const char*, 12> tiles{"shapes", "linear", "radial", "shadow", "blur", "drop", "clip", "mask",
+		"transform", "meters", "waveform", "waveform-image"};
+	REQUIRE(grid->GetNumChildren() == static_cast<int>(tiles.size()));
+	INFO("SDL_GPU " << gpu.renderer->driver() << " on SDL's " << ui::SdlWindowSystem::driver() << " video driver");
+
+	const float monitorScale = window.dpRatio() / gpu.shell->uiScale();
+	for (const int ratio : {1, 2})
+	{
+		gpu.shell->setUiScale(static_cast<float>(ratio) / monitorScale);
+		const ui::Image image = gpu.screenshot(window, "features-" + std::to_string(ratio) + "x");
+		for (size_t i = 0; i < tiles.size(); ++i)
+		{
+			Rml::Element* tile = grid->GetChild(static_cast<int>(i));
+			const Rml::Vector2f offset = tile->GetAbsoluteOffset(Rml::BoxArea::Border);
+			const Rml::Vector2f size = tile->GetBox().GetSize(Rml::BoxArea::Border);
+			const std::string name = std::string(tiles.at(i)) + "-" + std::to_string(ratio) + "x";
+			const ui::Image actual =
+				crop(image, static_cast<int>(std::lround(offset.x)), static_cast<int>(std::lround(offset.y)),
+					static_cast<int>(std::lround(size.x)), static_cast<int>(std::lround(size.y)));
+			// Within 16 of 255, and one pixel in 50 beyond that: the GPUs and Mesa's OpenGL may round edges, blends
+			// and the blur's sampling a little differently.
+			const test::ImageDiff diff =
+				test::compareWithGolden("ui/effects/" + name, actual, 16, actual.pixels.size() / 4 / 50);
+			INFO(name << ": " << diff.report);
+			CHECK(diff.equal);
+		}
 	}
 }
 

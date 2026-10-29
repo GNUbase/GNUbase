@@ -18,8 +18,13 @@ target_sources(gnubase-tests PRIVATE device_tests.cpp effects_tests.cpp ipc_test
 target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-ipc gnubase-mcp gnubase-plugin gnubase-pluginhost-core gnubase-scripting gnubase-testutils Catch2::Catch2WithMain miniz pugixml::pugixml
 	cpp-httplib)
 
-# The UI's tests (#48, #49), apart from the lists above so that both can grow without conflicts.
-target_sources(gnubase-tests PRIVATE rmlui_tests.cpp shell_tests.cpp window_tests.cpp)
+# The UI's tests (#48, #49, #285), apart from the lists above so that both can grow without conflicts. The window
+# tests draw the render spike's features document, with its waveform elements.
+target_sources(gnubase-tests PRIVATE rmlui_tests.cpp shell_tests.cpp window_tests.cpp
+	"${PROJECT_SOURCE_DIR}/spikes/render-backend/elements.cpp")
+target_include_directories(gnubase-tests PRIVATE "${PROJECT_SOURCE_DIR}/spikes/render-backend")
+target_compile_definitions(gnubase-tests PRIVATE
+	GNUBASE_SPIKE_DOCUMENTS="${PROJECT_SOURCE_DIR}/spikes/render-backend/documents")
 target_link_libraries(gnubase-tests PRIVATE gnubase-ui SDL3::SDL3)
 
 # IPC tests run a helper process that plays a plugin host (tests/ipcpeer.cpp).
