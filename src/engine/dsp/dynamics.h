@@ -104,12 +104,20 @@ namespace gnubase::engine::dsp
 
 		double m_meanSquare = 0.0;
 		double m_reduction = 0.0; // dB
+		Smoothed m_makeup;        // dB
+		bool m_fresh = true;      // nothing processed since the last reset: parameters apply at once
 	};
 
 	// A look-ahead peak limiter: no sample leaves it above the ceiling. It delays the signal by 1 ms and lowers the
 	// gain over that time before a peak arrives, so there is no overshoot and no clipping: the gain is the minimum of
 	// the required gains over the look-ahead window, released smoothly, and then averaged over the window, which keeps
 	// it at or below every required gain within reach. A final clamp catches the last rounding error.
+	//
+	// It limits sample peaks. The waveform between the samples, as a converter reconstructs it, can rise above them:
+	// by about 3 dB for a sine at a quarter of the sample rate whose samples miss its peaks, by less than 1 dB for
+	// most music. With the default ceiling of -0.3 dB such inter-sample peaks can still go over 0 dBFS. Where that
+	// matters (true-peak limits for delivery), set the ceiling lower; oversampled true-peak detection is a later
+	// addition.
 	class Limiter
 	{
 	public:
@@ -129,6 +137,8 @@ namespace gnubase::engine::dsp
 
 		// The delay in samples, from prepare on.
 		uint32_t latency() const { return m_lookahead; }
+		// The gain applied to the last frame, before the final clamp: for tests and meters.
+		double gain() const { return m_gain; }
 
 	private:
 		void update() noexcept;
@@ -137,7 +147,7 @@ namespace gnubase::engine::dsp
 		double m_inputDb = 0.0;
 		double m_ceilingDb = -0.3;
 		double m_releaseMs = 50.0;
-		double m_input = 1.0; // linear
+		Smoothed m_input{1.0}; // linear
 		double m_ceiling = 1.0;
 		double m_release = 0.0;
 
@@ -149,12 +159,15 @@ namespace gnubase::engine::dsp
 		std::vector<double> m_average; // the last L + 1 released gains, at frame % (L + 1)
 		double m_sum = 0.0;            // their sum
 		// The sliding minimum of the required gains over L + 1 samples: a ring of candidates, increasing from front
-		// to back, each with the sample index it leaves the window at.
+		// to back, each with the sample index it leaves the window at. Expired candidates leave before a new one
+		// comes in, so the ring never holds more than L + 1.
 		std::vector<double> m_minValues;
 		std::vector<uint64_t> m_minExpiry;
 		uint32_t m_minFront = 0;
 		uint32_t m_minSize = 0;
 		uint64_t m_frame = 0;
 		double m_released = 1.0;
+		double m_gain = 1.0;
+		bool m_fresh = true; // nothing processed since the last reset: parameters apply at once
 	};
 }

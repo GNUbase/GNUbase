@@ -30,12 +30,29 @@ namespace gnubase::engine::dsp
 		return values;
 	}
 
+	namespace
+	{
+		// Linear up to 1, then a tanh curve with the same slope there that never reaches g_loopLimit.
+		float saturate(float x) noexcept
+		{
+			const float magnitude = std::abs(x);
+			if (magnitude <= 1.0f)
+				return x;
+			constexpr float headroom = Delay::g_loopLimit - 1.0f;
+			const float above = headroom * std::tanh((magnitude - 1.0f) / headroom);
+			return std::copysign(1.0f + above, x);
+		}
+	}
+
 	void Delay::prepare(double sampleRate, uint32_t /*maxFrames*/)
 	{
 		m_sampleRate = sampleRate;
 		m_length = static_cast<size_t>(std::ceil(g_maxSeconds * sampleRate)) + 1;
 		for (std::vector<float>& line : m_lines)
 			line.assign(m_length, 0.0f);
+		m_delay.setTime(g_glideSeconds, sampleRate);
+		m_feedbackGain.setTime(g_smoothingSeconds, sampleRate);
+		m_wet.setTime(g_smoothingSeconds, sampleRate);
 		update();
 		reset();
 	}
@@ -45,6 +62,10 @@ namespace gnubase::engine::dsp
 		for (std::vector<float>& line : m_lines)
 			std::fill(line.begin(), line.end(), 0.0f);
 		m_write = 0;
+		m_delay.finish();
+		m_feedbackGain.finish();
+		m_wet.finish();
+		m_fresh = true;
 	}
 
 	void Delay::setParameter(uint32_t id, double value) noexcept
@@ -91,17 +112,35 @@ namespace gnubase::engine::dsp
 		const double frames = std::round(std::min(seconds, g_maxSeconds) * m_sampleRate);
 		const double longest = m_length > 1 ? static_cast<double>(m_length - 1) : 1.0;
 		m_frames = static_cast<uint32_t>(std::clamp(frames, 1.0, longest));
+		const bool glide = !m_fresh;
+		m_delay.set(m_frames, glide);
+		m_feedbackGain.set(m_feedback, glide);
+		m_wet.set(m_mix, glide);
+
+		constexpr auto endless = std::numeric_limits<uint32_t>::max();
+		uint32_t tail = endless;
+		if (m_feedback < 1.0)
+		{
+			double repeats = 1.0;
+			if (m_feedback > 0.0)
+				repeats += std::ceil(std::log(std::pow(10.0, -90.0 / 20.0)) / std::log(m_feedback));
+			tail = static_cast<uint32_t>(std::min(repeats * m_frames, static_cast<double>(endless - 1)));
+		}
+		m_tail.store(tail, std::memory_order_relaxed);
 	}
 
-	uint32_t Delay::tail() const
+	float Delay::read(const float* line, double delay) const noexcept
 	{
-		constexpr auto endless = std::numeric_limits<uint32_t>::max();
-		if (m_feedback >= 1.0)
-			return endless;
-		double repeats = 1.0;
-		if (m_feedback > 0.0)
-			repeats += std::ceil(std::log(std::pow(10.0, -90.0 / 20.0)) / std::log(m_feedback));
-		return static_cast<uint32_t>(std::min(repeats * m_frames, static_cast<double>(endless - 1)));
+		// 1 <= delay <= m_length - 1, and the sample at m_write is still the oldest one, so both taps are in the line.
+		const double whole = std::floor(delay);
+		const auto fraction = static_cast<float>(delay - whole);
+		const auto back = static_cast<size_t>(whole);
+		const size_t at = m_write >= back ? m_write - back : m_write + m_length - back;
+		const float newer = line[at];
+		if (fraction == 0.0f)
+			return newer;
+		const float older = line[at == 0 ? m_length - 1 : at - 1];
+		return newer + (fraction * (older - newer));
 	}
 
 	void Delay::process(float* const* audio, int channels, uint32_t begin, uint32_t end) noexcept
@@ -109,22 +148,24 @@ namespace gnubase::engine::dsp
 		if (m_length == 0) // not prepared
 			return;
 		const int count = std::min(channels, 2);
-		const auto feedback = static_cast<float>(m_feedback);
-		const auto wet = static_cast<float>(m_mix);
-		const auto dry = static_cast<float>(1.0 - m_mix);
 		float* const left = m_lines[0].data();
 		float* const right = m_lines[1].data();
+		m_fresh = m_fresh && begin == end;
 		for (uint32_t i = begin; i < end; ++i)
 		{
-			const size_t read = (m_write + m_length - m_frames) % m_length;
+			const double delay = m_delay.next();
+			const auto feedback = static_cast<float>(m_feedbackGain.next());
+			const double mix = m_wet.next();
+			const auto wet = static_cast<float>(mix);
+			const auto dry = static_cast<float>(1.0 - mix);
 			if (m_pingPong && count == 2)
 			{
 				const float l = audio[0][i];
 				const float r = audio[1][i];
-				const float echoLeft = left[read];
-				const float echoRight = right[read];
-				left[m_write] = flushDenormal((0.5f * (l + r)) + (feedback * echoRight));
-				right[m_write] = flushDenormal(feedback * echoLeft);
+				const float echoLeft = read(left, delay);
+				const float echoRight = read(right, delay);
+				left[m_write] = flushDenormal(saturate((0.5f * (l + r)) + (feedback * echoRight)));
+				right[m_write] = flushDenormal(saturate(feedback * echoLeft));
 				audio[0][i] = (dry * l) + (wet * echoLeft);
 				audio[1][i] = (dry * r) + (wet * echoRight);
 			}
@@ -134,8 +175,8 @@ namespace gnubase::engine::dsp
 				{
 					float* const line = m_lines[static_cast<size_t>(c)].data();
 					const float x = audio[c][i];
-					const float echo = line[read];
-					line[m_write] = flushDenormal(x + (feedback * echo));
+					const float echo = read(line, delay);
+					line[m_write] = flushDenormal(saturate(x + (feedback * echo)));
 					audio[c][i] = (dry * x) + (wet * echo);
 				}
 			}

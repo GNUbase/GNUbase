@@ -44,6 +44,68 @@ namespace gnubase::engine::dsp
 		return seconds <= 0.0 ? 0.0 : std::exp(-1.0 / (seconds * sampleRate));
 	}
 
+	// How long gains and mixes take to follow a change: a one-pole glide, so automation doesn't click.
+	inline constexpr double g_smoothingSeconds = 0.02;
+
+	// A value that glides to its target with a one-pole low-pass, one step per sample, so changes don't click. Close
+	// to the target it snaps onto it, so a settled value is exactly the target and costs nothing.
+	class Smoothed
+	{
+	public:
+		// tolerance: how close counts as there, in the value's unit.
+		explicit Smoothed(double value = 0.0, double tolerance = 1e-6)
+			: m_value(value), m_target(value), m_tolerance(tolerance)
+		{
+		}
+
+		void setTime(double seconds, double sampleRate) noexcept
+		{
+			m_coefficient = smoothingCoefficient(seconds, sampleRate);
+		}
+
+		// Glides there from the current value.
+		void setTarget(double target) noexcept { m_target = target; }
+
+		// Jumps there.
+		void jumpTo(double target) noexcept
+		{
+			m_target = target;
+			m_value = target;
+		}
+
+		void set(double target, bool glide) noexcept
+		{
+			if (glide)
+				setTarget(target);
+			else
+				jumpTo(target);
+		}
+
+		void finish() noexcept { m_value = m_target; }
+
+		bool settled() const { return m_value == m_target; }
+		double value() const { return m_value; }
+		double target() const { return m_target; }
+
+		// The value for the next sample.
+		double next() noexcept
+		{
+			if (m_value != m_target)
+			{
+				m_value = m_target + ((m_value - m_target) * m_coefficient);
+				if (std::abs(m_value - m_target) <= m_tolerance)
+					m_value = m_target;
+			}
+			return m_value;
+		}
+
+	private:
+		double m_value;
+		double m_target;
+		double m_tolerance;
+		double m_coefficient = 0.0; // 0 until setTime: jumps
+	};
+
 	// A parameter value clamped to its range, rounded for stepped parameters.
 	inline double clampParameter(double value, double minimum, double maximum, bool stepped = false)
 	{

@@ -127,6 +127,8 @@ namespace gnubase::engine::dsp
 	{
 		m_meanSquare = 0.0;
 		m_reduction = 0.0;
+		m_makeup.finish();
+		m_fresh = true;
 	}
 
 	void Compressor::setParameter(uint32_t id, double value) noexcept
@@ -165,11 +167,14 @@ namespace gnubase::engine::dsp
 		m_attack = smoothingCoefficient(m_attackMs / 1000.0, m_sampleRate);
 		m_release = smoothingCoefficient(m_releaseMs / 1000.0, m_sampleRate);
 		m_rmsCoefficient = smoothingCoefficient(0.01, m_sampleRate);
+		m_makeup.setTime(g_smoothingSeconds, m_sampleRate);
+		m_makeup.set(m_makeupDb, !m_fresh);
 	}
 
 	void Compressor::process(float* const* audio, int channels, uint32_t begin, uint32_t end) noexcept
 	{
 		const int count = std::min(channels, g_maxChannels);
+		m_fresh = m_fresh && begin == end;
 		for (uint32_t i = begin; i < end; ++i)
 		{
 			double square = peakSquare(audio, count, i);
@@ -181,7 +186,7 @@ namespace gnubase::engine::dsp
 			const double levelDb = 10.0 * std::log10(std::max(square, 1e-30));
 			const double target = curve(levelDb, m_thresholdDb, m_ratio, m_kneeDb) - levelDb;
 			m_reduction = flushDenormal(follow(m_reduction, target, target < m_reduction ? m_attack : m_release));
-			const auto gain = static_cast<float>(dbToGain(m_reduction + m_makeupDb));
+			const auto gain = static_cast<float>(dbToGain(m_reduction + m_makeup.next()));
 			for (int c = 0; c < count; ++c)
 				audio[c][i] = flushDenormal(audio[c][i] * gain);
 		}
@@ -207,6 +212,8 @@ namespace gnubase::engine::dsp
 		std::fill(m_delay.begin(), m_delay.end(), 0.0f);
 		std::fill(m_average.begin(), m_average.end(), 1.0);
 		m_sum = static_cast<double>(m_window);
+		m_input.finish();
+		m_fresh = true;
 		m_position = 0;
 		m_minFront = 0;
 		m_minSize = 0;
@@ -235,7 +242,8 @@ namespace gnubase::engine::dsp
 
 	void Limiter::update() noexcept
 	{
-		m_input = dbToGain(m_inputDb);
+		m_input.setTime(g_smoothingSeconds, m_sampleRate);
+		m_input.set(dbToGain(m_inputDb), !m_fresh);
 		m_ceiling = dbToGain(m_ceilingDb);
 		m_release = smoothingCoefficient(m_releaseMs / 1000.0, m_sampleRate);
 	}
@@ -245,29 +253,31 @@ namespace gnubase::engine::dsp
 		if (m_lookahead == 0) // not prepared
 			return;
 		const int count = std::min(channels, g_maxChannels);
-		const auto input = static_cast<float>(m_input);
 		const auto ceiling = static_cast<float>(m_ceiling);
 		const uint32_t window = m_window;
+		m_fresh = m_fresh && begin == end;
 		for (uint32_t i = begin; i < end; ++i)
 		{
+			const auto input = static_cast<float>(m_input.next());
 			// The gain this frame needs once it leaves the delay.
 			double peak = 0.0;
 			for (int c = 0; c < count; ++c)
 				peak = std::max(peak, static_cast<double>(std::abs(audio[c][i] * input)));
 			const double required = peak > m_ceiling ? m_ceiling / peak : 1.0;
 
-			// The minimum over the last L + 1 frames.
+			// The minimum over the last L + 1 frames. The candidates that leave the window go first, which makes room
+			// for the new one: the window holds L + 1 frames, this one included.
+			while (m_minSize > 0 && m_minExpiry[m_minFront] <= m_frame)
+			{
+				m_minFront = m_minFront + 1 == window ? 0 : m_minFront + 1;
+				--m_minSize;
+			}
 			while (m_minSize > 0 && m_minValues[(m_minFront + m_minSize - 1) % window] >= required)
 				--m_minSize;
 			const uint32_t back = (m_minFront + m_minSize) % window;
 			m_minValues[back] = required;
 			m_minExpiry[back] = m_frame + window;
 			++m_minSize;
-			while (m_minExpiry[m_minFront] <= m_frame)
-			{
-				m_minFront = (m_minFront + 1) % window;
-				--m_minSize;
-			}
 			const double minimum = m_minValues[m_minFront];
 
 			// Down at once, up with the release; then averaged over the window.
@@ -282,6 +292,7 @@ namespace gnubase::engine::dsp
 					m_sum += value;
 			}
 			const auto gain = static_cast<float>(m_sum / window);
+			m_gain = gain;
 
 			for (int c = 0; c < count; ++c)
 			{

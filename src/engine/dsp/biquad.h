@@ -27,6 +27,20 @@ namespace gnubase::engine::dsp
 		// First-order Butterworth sections: s / (s + 1) and 1 / (s + 1), bilinear with prewarping.
 		static Biquad highPass1(double sampleRate, double frequency);
 		static Biquad lowPass1(double sampleRate, double frequency);
+
+		// The coefficients a fraction t of the way from a to b. Every pair of stable second-order sections stays stable
+		// in between: the region of stable (a1, a2) is a triangle, which holds every line between two of its points.
+		static Biquad between(const Biquad& a, const Biquad& b, double t)
+		{
+			return {a.b0 + ((b.b0 - a.b0) * t), a.b1 + ((b.b1 - a.b1) * t), a.b2 + ((b.b2 - a.b2) * t),
+				a.a1 + ((b.a1 - a.a1) * t), a.a2 + ((b.a2 - a.a2) * t)};
+		}
+
+		bool operator==(const Biquad& other) const
+		{
+			return b0 == other.b0 && b1 == other.b1 && b2 == other.b2 && a1 == other.a1 && a2 == other.a2;
+		}
+		bool operator!=(const Biquad& other) const { return !(*this == other); }
 	};
 
 	// The state of one section on one channel: transposed direct form II, in double precision.
