@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/midi/quantizesettings.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -51,10 +53,16 @@ namespace gnubase::engine
 	{
 		ObjectId id = 0;
 		ObjectId track = 0;
-		int channels = 2;    // audio channels: 1 mono, 2 stereo, more for surround; 0 for MIDI
-		ObjectId input = 0;  // audio tracks: an input bus, or 0
-		ObjectId output = 0; // an output bus or a group channel; MIDI: an instrument channel; or 0
+		int channels = 2;       // audio channels: 1 mono, 2 stereo, more for surround; 0 for MIDI
+		ObjectId input = 0;     // audio tracks: an input bus, or 0
+		ObjectId output = 0;    // an output bus or a group channel; MIDI: an instrument channel; or 0
+		std::string instrument; // instrument tracks: the built-in instrument that plays, or empty (plugins: M05)
+		double volume = 0.0;    // the fader, in dB from g_minChannelVolume to g_maxChannelVolume
+		double pan = 0.0;       // stereo channels' balance: -1 left, 0 center, 1 right
 	};
+
+	inline constexpr double g_minChannelVolume = -144.0;
+	inline constexpr double g_maxChannelVolume = 6.0;
 
 	// An audio file on disk.
 	struct MediaFile
@@ -90,27 +98,66 @@ namespace gnubase::engine
 	inline constexpr double g_minEventVolume = -144.0;
 	inline constexpr double g_maxEventVolume = 6.0;
 
+	// What quantizing changes in a note.
+	struct NoteTiming
+	{
+		time::Ticks position = 0;
+		time::Ticks length = 0;
+		uint16_t velocity = 0;
+	};
+
+	// A quantized note's timing before it was first quantized, and what quantizing made of it (#132). Resetting puts
+	// the original back. A note whose position no longer is the quantized one was moved by other means, such as by
+	// hand: its original no longer counts. A velocity or length changed by other means stays (midi/quantize.h).
+	struct QuantizeOrigin
+	{
+		NoteTiming original;
+		NoteTiming quantized;
+	};
+
+	// A note's release velocity unless it has one of its own: MIDI 1.0's 64, the center.
+	inline constexpr uint16_t g_defaultReleaseVelocity = 0x8000;
+
 	// Note and controller values have the resolution of MIDI 2.0 (#19): MIDI 1.0 values fit without loss.
 	struct Note
 	{
 		ObjectId id = 0;
 		time::Ticks position = 0; // from the start of the part
 		time::Ticks length = 0;
-		uint8_t pitch = 60;    // 0-127
-		uint16_t velocity = 0; // 0-65535
-		uint8_t channel = 0;   // 0-15
+		uint8_t pitch = 60;                                  // 0-127
+		uint16_t velocity = 0;                               // 0-65535
+		uint8_t channel = 0;                                 // 0-15
+		uint16_t releaseVelocity = g_defaultReleaseVelocity; // 0-65535, the note-off velocity
+		std::optional<QuantizeOrigin> origin;                // set while the note is quantized
 	};
+
+	// The MIDI events besides notes, all held as controller events.
+	enum class ControllerType : uint8_t
+	{
+		Control,         // a control change: number is the controller
+		PitchBend,       // value: midi::g_pitchBendCenter is no bend
+		ChannelPressure, // value
+		PolyPressure,    // number is the pitch; value
+		Program,         // number is the program; value is the bank, or g_noBank
+		SysEx,           // data is the whole message, from 0xF0 to 0xF7
+	};
+
+	inline constexpr uint32_t g_noBank = 0xFFFFFFFFU;
+	inline constexpr uint32_t g_maxBank = 16383; // MIDI's bank select: 14 bits
 
 	struct Controller
 	{
 		ObjectId id = 0;
 		time::Ticks position = 0; // from the start of the part
-		uint8_t number = 0;       // 0-127
-		uint32_t value = 0;       // 0-4294967295
-		uint8_t channel = 0;      // 0-15
+		ControllerType type = ControllerType::Control;
+		uint8_t number = 0;        // 0-127
+		uint32_t value = 0;        // 0-4294967295
+		uint8_t channel = 0;       // 0-15
+		std::vector<uint8_t> data; // SysEx
 	};
 
 	// Holds notes and controllers on an instrument or MIDI track. Notes and controllers outside it are not played.
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct MidiPart
 	{
 		ObjectId id = 0;
@@ -143,6 +190,55 @@ namespace gnubase::engine
 		std::string color; // "#rrggbb", or empty for the default color
 	};
 
+	// What an automation lane changes.
+	enum class AutomationTargetType : uint8_t
+	{
+		Volume,          // the channel's fader, in dB
+		Pan,             // the channel's balance, -1 to 1
+		Instrument,      // a parameter of the channel's built-in instrument, in its range
+		Controller,      // a MIDI control change: number and channel; 0 to 1
+		PitchBend,       // channel; 0 to 1, 0.5 is no bend
+		ChannelPressure, // channel; 0 to 1
+	};
+
+	struct AutomationTarget
+	{
+		AutomationTargetType type = AutomationTargetType::Volume;
+		uint32_t parameter = 0; // Instrument: the parameter's id
+		uint8_t number = 0;     // Controller: 0-127
+		uint8_t channel = 0;    // the MIDI types: 0-15
+	};
+
+	// The shape of the curve from an automation point to the next one.
+	enum class AutomationShape : uint8_t
+	{
+		Step,   // keeps the point's value until the next point
+		Linear, // a straight ramp to the next point
+		Curve,  // a bent ramp: see AutomationPoint::curve
+	};
+
+	struct AutomationPoint
+	{
+		ObjectId id = 0;
+		time::Position position; // in the track's time base, like the track's events
+		double value = 0.0;      // in the target's unit
+		AutomationShape shape = AutomationShape::Linear;
+		double curve = 0.0; // Curve: -1 to 1; above 0 the value moves fast at first, below 0 slowly at first
+	};
+
+	// The automation of one parameter on a track. Points at the same position make a jump; before the first point the
+	// curve has its value, after the last point the last one's. read: the curve plays; without it, or without points,
+	// the parameter keeps its static value (write modes come with #122).
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
+	struct AutomationLane
+	{
+		ObjectId id = 0;
+		ObjectId track = 0;
+		AutomationTarget target;
+		bool read = true;
+		std::map<ObjectId, AutomationPoint> points;
+	};
+
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct Project
 	{
@@ -161,6 +257,12 @@ namespace gnubase::engine
 		std::map<ObjectId, AudioEvent> audioEvents;
 		std::map<ObjectId, MidiPart> midiParts;
 		std::map<ObjectId, Marker> markers;
+		std::map<ObjectId, AutomationLane> automation;
+
+		// The quantize settings that apply when none are given, and whether recording quantizes (#132). Settings,
+		// not part of undo.
+		midi::QuantizeSettings quantize;
+		bool autoQuantize = false;
 
 		ObjectId newId() { return nextId++; }
 
@@ -179,8 +281,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
-		return std::tie(a.id, a.track, a.channels, a.input, a.output) ==
-			std::tie(b.id, b.track, b.channels, b.input, b.output);
+		return std::tie(a.id, a.track, a.channels, a.input, a.output, a.instrument, a.volume, a.pan) ==
+			std::tie(b.id, b.track, b.channels, b.input, b.output, b.instrument, b.volume, b.pan);
 	}
 
 	inline bool operator==(const MediaFile& a, const MediaFile& b)
@@ -200,16 +302,26 @@ namespace gnubase::engine
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute);
 	}
 
+	inline bool operator==(const NoteTiming& a, const NoteTiming& b)
+	{
+		return std::tie(a.position, a.length, a.velocity) == std::tie(b.position, b.length, b.velocity);
+	}
+
+	inline bool operator==(const QuantizeOrigin& a, const QuantizeOrigin& b)
+	{
+		return a.original == b.original && a.quantized == b.quantized;
+	}
+
 	inline bool operator==(const Note& a, const Note& b)
 	{
-		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel) ==
-			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel);
+		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel, a.releaseVelocity, a.origin) ==
+			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel, b.releaseVelocity, b.origin);
 	}
 
 	inline bool operator==(const Controller& a, const Controller& b)
 	{
-		return std::tie(a.id, a.position, a.number, a.value, a.channel) ==
-			std::tie(b.id, b.position, b.number, b.value, b.channel);
+		return std::tie(a.id, a.position, a.type, a.number, a.value, a.channel, a.data) ==
+			std::tie(b.id, b.position, b.type, b.number, b.value, b.channel, b.data);
 	}
 
 	// A MIDI part's own properties, without its notes and controllers.
@@ -222,6 +334,23 @@ namespace gnubase::engine
 	inline bool operator==(const Marker& a, const Marker& b)
 	{
 		return std::tie(a.id, a.position, a.name, a.color) == std::tie(b.id, b.position, b.name, b.color);
+	}
+
+	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)
+	{
+		return std::tie(a.type, a.parameter, a.number, a.channel) == std::tie(b.type, b.parameter, b.number, b.channel);
+	}
+
+	inline bool operator==(const AutomationPoint& a, const AutomationPoint& b)
+	{
+		return std::tie(a.id, a.position, a.value, a.shape, a.curve) ==
+			std::tie(b.id, b.position, b.value, b.shape, b.curve);
+	}
+
+	// An automation lane's own properties, without its points.
+	inline bool sameProperties(const AutomationLane& a, const AutomationLane& b)
+	{
+		return std::tie(a.id, a.track, a.target, a.read) == std::tie(b.id, b.track, b.target, b.read);
 	}
 
 	inline bool operator==(const Track& a, const Track& b)

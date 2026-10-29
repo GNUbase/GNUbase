@@ -13,11 +13,13 @@ GNUbase is licensed under the GPL-3.0-or-later, so everything that goes into it 
 | [stb_vorbis](https://github.com/nothings/stb) | `ext/stb` | reading Ogg Vorbis files | yes, compiled in | MIT or Unlicense (public domain), at the user's choice | `ext/stb/LICENSE` |
 | [libFLAC](https://github.com/xiph/flac) | `ext/flac` | writing FLAC files | yes, linked statically | BSD-3-Clause | `ext/flac/COPYING.Xiph` |
 | [r8brain-free-src](https://github.com/avaneev/r8brain-free-src) | `ext/r8brain` | sample-rate conversion | yes, linked statically | MIT | `ext/r8brain/LICENSE` |
+| [Rubber Band Library](https://breakfastquay.com/rubberband/) | `ext/rubberband` (patched with `ext/patches/rubberband.patch`, see [dependencies.md](dependencies.md)) | time-stretching and pitch-shifting ([time-stretch.md](time-stretch.md)) | yes, linked statically | GPL-2.0-or-later | `ext/rubberband/COPYING` |
 | [pugixml](https://github.com/zeux/pugixml) | `ext/pugixml` | reading and writing DAWproject's XML | yes, linked statically | MIT | `ext/pugixml/LICENSE.md` |
 | [miniz](https://github.com/richgel999/miniz) | `ext/miniz` | reading and writing DAWproject's ZIP container | yes, linked statically | MIT | `ext/miniz/LICENSE` |
 | [Lua](https://www.lua.org) | `ext/lua` | scripting | yes, linked statically | MIT | the end of `ext/lua/lua.h` |
 | [cpp-httplib](https://github.com/yhirose/cpp-httplib) | `ext/cpp-httplib` | the MCP server's HTTP transport | yes, header-only | MIT | `ext/cpp-httplib/LICENSE` |
 | [CLAP](https://github.com/free-audio/clap) | `ext/clap` | the CLAP plugin interface: test plugins now, the CLAP adapter of the plugin host later | no, only test plugins so far; header-only | MIT | `ext/clap/LICENSE` |
+| [VST3 SDK](https://github.com/GNUbase/vst3sdk) | `ext/vst3sdk` (GNUbase mirror, [dependencies.md](dependencies.md#vst3-sdk)) | the VST3 plugin interfaces: test plugins now, the VST3 adapter of the plugin host later | no, only test plugins so far; header-only (`pluginterfaces`) | MIT | `ext/vst3sdk/LICENSE.txt` |
 | [Catch2](https://github.com/catchorg/Catch2) | `ext/Catch2` | tests | no, only test programs | BSL-1.0 | `ext/Catch2/LICENSE.txt` |
 
 Some of these bundle code from other projects under its own license:
@@ -28,15 +30,17 @@ Some of these bundle code from other projects under its own license:
 | SDL | yuv2rgb | `ext/SDL/src/video/yuv2rgb` | BSD-3-Clause |
 | RmlUi | itlib and robin_hood containers | `ext/RmlUi/Include/RmlUi/Core/Containers` | MIT |
 | RmlUi | Courier Prime Code font, embedded in the debugger | `ext/RmlUi/Source/Debugger` | SIL Open Font License 1.1 |
+| Rubber Band Library | Speex resampler, KissFFT, SSE and NEON math functions, getopt, float_cast | `ext/rubberband/src/ext` | permissive licenses, in each folder; GNUbase's build compiles none of them (it uses Rubber Band's built-in FFT and resampler) |
 | r8brain-free-src | Takuya Ooura's FFT | `ext/r8brain/fft4g.h` | free to use, copy, modify and distribute for any purpose; see the file's header |
 
-The JSON library's repository also contains files under Apache-2.0, BSD-3-Clause and GPL-3.0 (its `LICENSES` folder). The headers GNUbase includes are all MIT. The FLAC repository also contains programs under GPL-2.0-or-later and documentation under GFDL; GNUbase builds only libFLAC. Of stb, GNUbase uses only `stb_vorbis.c`. r8brain-free-src also contains PFFFT (FFTPACK license), which GNUbase doesn't build: it uses the built-in Ooura FFT.
+The JSON library's repository also contains files under Apache-2.0, BSD-3-Clause and GPL-3.0 (its `LICENSES` folder). The headers GNUbase includes are all MIT. The FLAC repository also contains programs under GPL-2.0-or-later and documentation under GFDL; GNUbase builds only libFLAC. Of stb, GNUbase uses only `stb_vorbis.c`. r8brain-free-src also contains PFFFT (FFTPACK license), which GNUbase doesn't build: it uses the built-in Ooura FFT. Of the VST3 SDK, GNUbase fetches only `base`, `cmake`, `pluginterfaces` and `public.sdk`, each MIT with its own `LICENSE.txt`, and uses only the headers in `pluginterfaces`; the SDK's GUI library, documentation and tutorials are not fetched.
 
 ## Why these licenses are compatible
 
 - **zlib, MIT, BSD-3-Clause and BSL-1.0** are permissive licenses that the Free Software Foundation lists as GPL-compatible.
 - **Unlicense and MIT-0** put the code in the public domain or allow everything without conditions, so they are compatible with any license.
 - **GPL-3.0** is GNUbase's own license; HIDAPI is used under it or under BSD-3-Clause.
+- **GPL-2.0-or-later** lets Rubber Band Library be used under the GPL-3.0, GNUbase's license. Its authors also sell it under a commercial license, which GNUbase doesn't need.
 - **SIL Open Font License 1.1** is for fonts. It explicitly allows fonts to be "bundled, embedded, redistributed and/or sold with any software". GNUbase's rules already allow fonts under this license (CLAUDE.md, "Platforms and dependencies").
 
 Binary releases must include the copyright notices and license texts of the MIT, BSD-3-Clause and SIL Open Font License components. zlib and BSL-1.0 only require them in source distributions, and the Unlicense and MIT-0 components need none, but shipping them too costs nothing.

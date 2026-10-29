@@ -141,6 +141,11 @@ namespace gnubase::engine::processors
 				{{"noise", "Noise generator", "White noise, the same samples every time.", false,
 					 {number(Noise::Level, "Level", 0.0, 1.0, 0.5)}},
 					make<Noise>()},
+				{{"noteProbe", "Note probe",
+					 "An instrument for tests: each frame, how many notes are on (channel 0 and from channel 2 on) and "
+					 "the sum of their pitches (channel 1).",
+					 true, {}},
+					make<NoteProbe>()},
 				{{"positionProbe", "Position probe",
 					 "Each frame's project position in samples while playing, -1 while stopped. For tests.", false, {}},
 					make<PositionProbe>()},
@@ -196,6 +201,14 @@ namespace gnubase::engine::processors
 			if (builtin.info.id == id)
 				return builtin.create();
 		throw std::invalid_argument("no built-in processor " + id);
+	}
+
+	bool isInstrument(const std::string& id)
+	{
+		for (const Builtin& builtin : registry())
+			if (builtin.info.id == id)
+				return builtin.info.instrument;
+		return false;
 	}
 
 	void registerCommands(Engine& engine)

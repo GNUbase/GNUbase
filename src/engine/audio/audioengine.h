@@ -1,18 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/automation.h"
+#include "engine/audio/performance.h"
 #include "engine/audio/playback.h"
+#include "engine/audio/sequencer.h"
 #include "engine/audio/transport.h"
 #include "engine/graph/graph.h"
 #include "engine/schema.h"
 #include "platform/audio/device.h"
 #include "platform/audio/dummydevice.h"
 #include "platform/rt/snapshotpublisher.h"
+#include "platform/rt/triplebuffer.h"
+#include "platform/rt/workerpool.h"
 
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -26,11 +33,15 @@ namespace gnubase::engine
 	// device's format whenever the project's render snapshot changes, and hands it to the audio thread. On the audio
 	// thread it copies the device inputs into the input busses, processes the graph where the transport plays and
 	// copies the output busses to the device outputs. Audio tracks play their events from disk streams (Playback):
-	// offline rendering waits for the streams before every block; in real time a cue thread keeps them ahead.
+	// offline rendering waits for the streams before every block; in real time a cue thread keeps them ahead. MIDI
+	// and instrument tracks play their parts through sequencers, which last across rebuilds, as do instruments.
 	//
 	// Busses take consecutive device channels in bus order: the first input bus the first input channels, and so on.
 	// Bus channels beyond the device's are silent, device outputs no bus reaches stay silent. Choosing device ports
 	// per bus comes with #43.
+	//
+	// The graph runs on the audio thread and a pool of real-time workers (audio.setProcessing): by default half the
+	// hardware threads, the audio thread included, and only workers that got real-time priority.
 	//
 	// The device comes from one of the audio backends (audio.devices, audio.setDevice). When its driver asks for a
 	// reset, the engine opens it again with the same settings and restarts it if it ran (audio.reset). The dummy
@@ -42,10 +53,11 @@ namespace gnubase::engine
 			rt::SnapshotPublisher<RenderSnapshot>& snapshots, std::vector<std::unique_ptr<audio::Backend>> backends);
 		~AudioEngine() override; // stops the device
 
-		// Registers audio.devices, audio.setDevice, audio.get, audio.reset, audio.controlPanel, audio.render,
-		// audio.start, audio.stop and audio.capture, and the transport commands transport.play, transport.stop,
-		// transport.toggle, transport.locate, transport.set, transport.exchangeLocators and transport.get.
-		// audio.analyze, audio.compare and audio.record are in analysiscommands.cpp.
+		// Registers audio.devices, audio.setDevice, audio.setProcessing, audio.get, audio.performance,
+		// audio.resetPerformance, audio.reset, audio.controlPanel, audio.render, audio.start, audio.stop and
+		// audio.capture, and the transport commands transport.play, transport.stop, transport.toggle, transport.locate,
+		// transport.set, transport.exchangeLocators and transport.get. audio.analyze, audio.compare and audio.record
+		// are in analysiscommands.cpp.
 		void registerCommands(Engine& engine);
 
 		// Command thread: compiles a new graph if the project changed since the last one.
@@ -63,7 +75,18 @@ namespace gnubase::engine
 			int channels = 0;
 		};
 
-		// What the audio thread runs: the graph and its links to the device.
+		// The notes of a MIDI track that left an instrument track, for the audio thread to end
+		// (InstrumentChannel::releaseNotesOf).
+		struct Release
+		{
+			std::shared_ptr<InstrumentChannel> channel;
+			std::shared_ptr<MidiSequencer> departed;
+			std::vector<std::shared_ptr<MidiSequencer>> staying; // the MIDI tracks still routed to the instrument
+		};
+
+		// What the audio thread runs: the graph and its links to the device, and the releases to do before its first
+		// block. A program carries the releases of the programs before it until the audio thread started one of them,
+		// as it may skip programs that follow each other quickly.
 		struct Program
 		{
 			Program(const graph::GraphDesc& desc, double sampleRate, uint32_t maxFrames)
@@ -76,6 +99,18 @@ namespace gnubase::engine
 			std::vector<BusLink> outputs;
 			time::TempoMap tempo{120.0}; // the project's, for the tempo in each transport block
 			double sampleRate = 48000.0; // the project's: transport positions are in its samples
+			uint64_t generation = 0; // counts up from 1
+			std::vector<Release> releases;
+		};
+
+		// A release waiting for the audio thread to start a program that has it.
+		struct PendingRelease
+		{
+			ObjectId instrument = 0; // the instrument channel
+			ObjectId source = 0;     // the MIDI channel that left it
+			std::shared_ptr<InstrumentChannel> channel;
+			std::shared_ptr<MidiSequencer> departed;
+			uint64_t generation = 0; // the first program that has it
 		};
 
 		void rebuild();
@@ -84,7 +119,20 @@ namespace gnubase::engine
 		void closeDevice();
 		void reset();
 		Json devices() const;
+		void setProcessing(const Json& parameters);
+		// Workers for the device's format and the processing settings, as many as get real-time priority. Throws
+		// std::system_error if threads can't be started; the fallback processes on the audio thread only.
+		void startWorkers();
+		void startWorkersOrFallBack();
+		size_t plannedThreads() const; // the setting, at most one per hardware thread
+		static size_t defaultThreads();
+		Json processingStatus() const;
 		Json status() const;
+		Json performance();
+		Json resetPerformance();
+		// Command thread, while no block runs: the next measurement starts from nothing.
+		void clearPerformance();
+		void publishPerformance(const PerformanceData& data);
 		audio::DummyDevice& requireDummy();
 		void registerTransportCommands(Engine& engine);
 		void registerAnalysisCommands(Engine& engine); // analysiscommands.cpp
@@ -99,6 +147,13 @@ namespace gnubase::engine
 		void startCueing();
 		void stopCueing();
 		void stopDevice();
+		// Gives MIDI and instrument channels their sequencers and instruments, and notes the MIDI tracks that left an
+		// instrument track for the program of the generation.
+		void attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc, uint64_t generation);
+		// The releases for a new program: those pending that the audio thread hasn't done yet.
+		std::vector<Release> releases();
+		// Puts every channel's processor into a channel strip with the channel's fader and automation.
+		void attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
 
 		rt::SnapshotPublisher<RenderSnapshot>& m_snapshots;
 		uint64_t m_revision = 0;
@@ -110,8 +165,40 @@ namespace gnubase::engine
 		std::unique_ptr<audio::Device> m_device;
 		audio::DummyDevice* m_dummy = nullptr; // m_device, if it is the dummy device
 		Playback m_playback;                   // before m_programs: their track players use it
+
+		struct Instrument
+		{
+			std::string id;             // the built-in instrument, or empty
+			std::set<ObjectId> sources; // the MIDI channels routed to it
+			std::shared_ptr<InstrumentChannel> channel;
+		};
+		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers;   // per MIDI and instrument channel
+		std::map<ObjectId, Instrument> m_instruments;                      // per instrument channel
+		std::map<ObjectId, std::shared_ptr<ChannelState>> m_channelStates; // per channel
+		std::vector<PendingRelease> m_releases;
+
 		std::unique_ptr<rt::SnapshotPublisher<Program>> m_programs;
-		Transport m_transport; // advanced by the audio thread
+		uint64_t m_generation = 0;          // the newest program's
+		std::atomic<uint64_t> m_started{0}; // the newest program the audio thread started
+		uint64_t m_running = 0;             // audio thread: the program it runs
+		Transport m_transport;              // advanced by the audio thread
+
+		// Changed only while the device is stopped.
+		enum class Limit : uint8_t
+		{
+			None,
+			Realtime, // workers didn't get real-time priority
+			System,   // threads couldn't be started
+		};
+		bool m_multiProcessing = true;
+		size_t m_threads = defaultThreads(); // processing threads, the audio thread included
+		std::unique_ptr<rt::WorkerPool> m_workers;
+		Limit m_limitedBy = Limit::None; // why m_workers has fewer than planned
+
+		// Performance data: measured by the audio thread, read by the command thread.
+		PerformanceMeter m_meter; // audio thread, or the command thread while the device is stopped
+		rt::TripleBuffer<PerformanceData> m_performance;
+		std::atomic<bool> m_resetPerformance{false};
 
 		// The cue thread, while the device runs in real time. It reads the transport's settings and play state from
 		// m_cueState, which the command thread updates.

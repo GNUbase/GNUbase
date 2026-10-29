@@ -2,11 +2,20 @@
 #include "app/options.h"
 
 #include "platform/audio/device.h"
+#include "platform/files.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <memory>
+
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+// shellapi.h needs windows.h first.
+#include <shellapi.h>
+#endif
 
 namespace gnubase::app
 {
@@ -38,6 +47,27 @@ namespace gnubase::app
 				names.append(names.empty() ? "" : ", ").append(backend->name());
 			return names;
 		}
+	}
+
+	std::vector<std::string> commandLineArguments(int argc, char** argv)
+	{
+#ifdef _WIN32
+		struct LocalFreer
+		{
+			void operator()(LPWSTR* arguments) const { LocalFree(static_cast<void*>(arguments)); }
+		};
+		int count = 0;
+		const std::unique_ptr<LPWSTR, LocalFreer> wide(CommandLineToArgvW(GetCommandLineW(), &count));
+		if (wide && count == argc)
+		{
+			std::vector<std::string> args;
+			args.reserve(static_cast<size_t>(count));
+			for (int i = 1; i < count; ++i)
+				args.push_back(std::filesystem::path(wide.get()[i]).u8string());
+			return args;
+		}
+#endif
+		return {argv + std::min(argc, 1), argv + argc};
 	}
 
 	Options parseOptions(const std::vector<std::string>& args)
@@ -111,6 +141,10 @@ namespace gnubase::app
 			{
 				options.blockSize = parseInteger(arg, value());
 			}
+			else if (arg == "--settings")
+			{
+				options.settings = value();
+			}
 			else
 			{
 				throw UsageError("unknown option " + arg);
@@ -121,6 +155,13 @@ namespace gnubase::app
 		if (mcp && !options.script.empty())
 			throw UsageError("--script runs a script and exits; it doesn't serve MCP");
 		return options;
+	}
+
+	std::filesystem::path settingsDirectory(const Options& options)
+	{
+		if (!options.settings.empty())
+			return std::filesystem::u8path(options.settings);
+		return files::settingsDirectory();
 	}
 
 	std::string usage()
@@ -137,6 +178,8 @@ namespace gnubase::app
 			backendNames() + R"(; by default dummy, which has no hardware
   --sample-rate HZ      the audio device's sample rate (default 48000)
   --block-size FRAMES   frames per audio block (default 256)
+  --settings DIR        keep the user settings in DIR, e.g. for a portable install; by default the folder in
+                        GNUBASE_SETTINGS_DIR or the user's settings folder
   --version             print the version
   -h, --help            print this help
 
