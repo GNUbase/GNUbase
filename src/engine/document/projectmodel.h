@@ -27,16 +27,23 @@ namespace gnubase::engine
 	class ProjectModel
 	{
 	public:
+		using Handler = std::function<Json(Project& project, CommandContext& context)>;
+
 		ProjectModel();
 
 		// Backups run as jobs.
 		void registerCommands(Engine& engine, Jobs& jobs);
 
+		// Registers a command defined in another file, such as quantize.* (#132). A command that changes the project
+		// is one undo step named action, like the commands here, and transactions can run it.
+		void addEdit(Engine& engine, CommandInfo info, std::string action, Handler handler);
+
+		// The project, for commands defined in other files that read it. Only on the command thread.
+		const Project& project() const { return m_project; }
+
 		rt::SnapshotPublisher<RenderSnapshot>& snapshots() { return m_snapshots; }
 
 	private:
-		using Handler = std::function<Json(Project& project, CommandContext& context)>;
-
 		// Registers a query, or a command that changes the project. Such a command runs on the project, and if it
 		// fails the project is restored from a copy, so a failed command changes nothing. If it succeeds, what it
 		// changed becomes an undo step, named after the command (see g_actions in the .cpp) or, for a
@@ -50,6 +57,8 @@ namespace gnubase::engine
 		void registerHistoryCommands(Engine& engine);
 		void registerMediaFolderCommands(Engine& engine, Jobs& jobs); // project.backup, media.prepareArchive and more
 		void registerMidiEditCommands(Engine& engine);                // midiedits.cpp: note.set and controller.set
+		void registerMidiFileCommands(Engine& engine); // midifilecommands.cpp: midiFile.export and midiFile.import
+		Json importMidiFile(Project& project, CommandContext& context);
 		void record(std::string action, const Project& before, CommandContext& context);
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);

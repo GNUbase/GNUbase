@@ -9,6 +9,7 @@ namespace
 	constexpr uint64_t g_flushToZero = 0x8000;    // MXCSR FTZ
 	constexpr uint64_t g_denormalsAreZero = 0x40; // MXCSR DAZ
 	constexpr uint64_t g_disableDenormals = g_flushToZero | g_denormalsAreZero;
+	constexpr uint64_t g_statusBits = 0x3F; // MXCSR IE, DE, ZE, OE, UE, PE: sticky exception flags, not control
 
 	uint64_t readMode() noexcept
 	{
@@ -26,6 +27,7 @@ namespace
 namespace
 {
 	constexpr uint64_t g_disableDenormals = uint64_t{1} << 24; // FPCR FZ
+	constexpr uint64_t g_statusBits = 0;                       // FPCR holds control bits only
 	constexpr int g_fpcr = 0x5A20;                             // FPCR system register, ARM64_SYSREG(3, 3, 4, 4, 0)
 
 	uint64_t readMode() noexcept
@@ -42,6 +44,7 @@ namespace
 namespace
 {
 	constexpr uint64_t g_disableDenormals = uint64_t{1} << 24; // FPCR FZ
+	constexpr uint64_t g_statusBits = 0;                       // FPCR holds control bits only
 
 	uint64_t readMode() noexcept
 	{
@@ -61,6 +64,16 @@ namespace
 
 namespace gnubase::rt
 {
+	uint64_t floatMode() noexcept
+	{
+		return readMode() & ~g_statusBits;
+	}
+
+	void setFloatMode(uint64_t mode) noexcept
+	{
+		writeMode(mode);
+	}
+
 	ScopedDenormalsDisabled::ScopedDenormalsDisabled() noexcept : m_previousMode(readMode())
 	{
 		writeMode(m_previousMode | g_disableDenormals);

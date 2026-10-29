@@ -613,6 +613,7 @@ namespace gnubase::engine
 					noteNode.append_attribute("channel") = note.channel;
 					noteNode.append_attribute("key") = note.pitch;
 					noteNode.append_attribute("vel") = note.velocity / g_maxVelocity;
+					noteNode.append_attribute("rel") = note.releaseVelocity / g_maxVelocity;
 				}
 				// A lane of points per expression, channel and controller or key. Program changes with banks and SysEx
 				// have no DAWproject expression; the extension entry keeps them.
@@ -1153,6 +1154,9 @@ namespace gnubase::engine
 					note.channel = static_cast<uint8_t>(std::clamp(element.attribute("channel").as_int(0), 0, 15));
 					const double velocity = std::clamp(element.attribute("vel").as_double(0.8), 0.0, 1.0);
 					note.velocity = static_cast<uint16_t>(std::lround(velocity * g_maxVelocity));
+					const double release = std::clamp(
+						element.attribute("rel").as_double(g_defaultReleaseVelocity / g_maxVelocity), 0.0, 1.0);
+					note.releaseVelocity = static_cast<uint16_t>(std::lround(release * g_maxVelocity));
 					part.notes[note.id] = note;
 				}
 			}
