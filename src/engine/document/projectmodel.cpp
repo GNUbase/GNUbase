@@ -927,6 +927,22 @@ namespace gnubase::engine
 			require(changed.panner == StereoPanner::Balance || changed.format == ChannelFormat::Stereo,
 				"the combined panner is for stereo channels");
 			changed.panBypass = parameters.value("panBypass", changed.panBypass);
+			for (const auto& [key, value] :
+				{std::pair{"midiVolume", &changed.midiVolume}, std::pair{"midiPan", &changed.midiPan}})
+			{
+				if (!parameters.contains(key))
+					continue;
+				require(type == TrackType::Midi, std::string("only MIDI channels have ") + key);
+				const Json& given = parameters.at(key);
+				if (given.is_null())
+				{
+					value->reset();
+					continue;
+				}
+				const auto number = given.get<int64_t>();
+				requireRange(number, 0, 127, key);
+				*value = static_cast<int>(number);
+			}
 			channel = changed;
 			Json result = {{"channel", toJson(channel)}};
 			context.emit("channel.changed", result);
@@ -2092,12 +2108,17 @@ namespace gnubase::engine
 				"the combined panner (panner combined: panLeft and panRight place its left and right channel, by "
 				"default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. "
 				"Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight "
-				"overrides them while it plays; changes glide over 5 ms.",
-				objectSchema({{"channel", idSchema}, {"format", formats}, {"channels", integerSchema},
-								 {"input", idSchema}, {"output", idSchema}, {"instrument", stringSchema},
-								 {"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
-								 {"panRight", numberSchema}, {"panBypass", booleanSchema}, {"volume", numberSchema},
-								 {"pan", numberSchema}},
+				"overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume "
+				"and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the "
+				"instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when "
+				"playback starts or jumps; automation of those controllers overrides them.",
+				objectSchema(
+					{{"channel", idSchema}, {"format", formats}, {"channels", integerSchema}, {"input", idSchema},
+						{"output", idSchema}, {"instrument", stringSchema},
+						{"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
+						{"panRight", numberSchema}, {"panBypass", booleanSchema},
+						{"midiVolume", {{"type", {"integer", "null"}}}}, {"midiPan", {{"type", {"integer", "null"}}}},
+						{"volume", numberSchema}, {"pan", numberSchema}},
 					{"channel"}),
 				resultSchema({"channel"}), false},
 			setChannel);

@@ -369,7 +369,9 @@ namespace gnubase::engine
 			{"channels", channelCount(channel.format)}, {"input", channel.input}, {"output", channel.output},
 			{"instrument", channel.instrument}, {"volume", channel.volume}, {"pan", channel.pan},
 			{"panner", channel.panner == StereoPanner::Combined ? "combined" : "balance"}, {"panLeft", channel.panLeft},
-			{"panRight", channel.panRight}, {"panBypass", channel.panBypass}};
+			{"panRight", channel.panRight}, {"panBypass", channel.panBypass},
+			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
+			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}};
 	}
 
 	Json toJson(const MediaFile& media)
@@ -775,6 +777,10 @@ namespace gnubase::engine
 			channel.panLeft = checkedNumber(item.value("panLeft", Json(-1.0)), -1.0, 1.0, name + " panLeft");
 			channel.panRight = checkedNumber(item.value("panRight", Json(1.0)), -1.0, 1.0, name + " panRight");
 			channel.panBypass = item.value("panBypass", false);
+			for (const auto& [key, value] :
+				{std::pair{"midiVolume", &channel.midiVolume}, std::pair{"midiPan", &channel.midiPan}})
+				if (const Json stored = item.value(key, Json()); !stored.is_null())
+					*value = static_cast<int>(checkedNumber(stored, 0.0, 127.0, name + " " + key));
 			// An instrument this build doesn't have, e.g. in a file from a newer one, or one on a track that doesn't
 			// play instruments: the channel plays none.
 			const auto track = project.trackById.find(channel.track);

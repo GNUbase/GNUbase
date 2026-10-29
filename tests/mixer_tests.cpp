@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "engine/audio/automation.h"
+#include "engine/audio/sequencer.h"
 #include "engine/document/document.h"
+#include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
+#include "engine/graph/graph.h"
+#include "engine/midi/midivalues.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_approx.hpp>
@@ -9,6 +14,7 @@
 
 #include <cmath>
 #include <functional>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -276,9 +282,11 @@ TEST_CASE("volume and pan changes during playback ramp instead of jumping", "[in
 		});
 }
 
-TEST_CASE("pan law, maximum volume and panner settings are saved and undone", "[integration]")
+TEST_CASE("pan law, maximum volume, panner settings and MIDI volume and pan are saved and undone", "[integration]")
 {
 	Mixer mixer;
+	const Json midi = run(mixer.client, "track.add", {{"type", "midi"}}).at("channel");
+	run(mixer.client, "channel.set", {{"channel", midi.at("id")}, {"midiVolume", 70}, {"midiPan", 100}});
 	run(mixer.client, "project.set", {{"panLaw", "-6dB"}, {"maxVolume", 12.0}});
 	mixer.set({{"panner", "combined"}, {"panLeft", -0.5}, {"panRight", 0.25}, {"panBypass", true}, {"volume", 9.0}});
 	const Json before = run(mixer.client, "project.get");
@@ -298,4 +306,64 @@ TEST_CASE("pan law, maximum volume and panner settings are saved and undone", "[
 	CHECK(run(mixer.client, "project.get").at("panLaw") == "-3dB");
 	run(mixer.client, "project.load", {{"path", file}});
 	CHECK(run(mixer.client, "project.get") == before);
+}
+
+TEST_CASE("a MIDI channel's volume and pan reach its instrument as CC 7 and CC 10", "[unit]")
+{
+	// Through channel.set into the render snapshot.
+	Engine engine;
+	Client client(engine);
+	const Json midi = run(client, "track.add", {{"type", "midi"}}).at("channel");
+	CHECK(midi.at("midiVolume").is_null());
+	const auto id = midi.at("id").get<ObjectId>();
+	const Json set = run(client, "channel.set", {{"channel", id}, {"midiVolume", 90}, {"midiPan", 32}}).at("channel");
+	CHECK(set.at("midiVolume") == 90);
+	CHECK(set.at("midiPan") == 32);
+	const ObjectId audio = run(client, "track.add", {{"type", "audio"}}).at("channel").at("id").get<ObjectId>();
+	CHECK_THAT(reject(client, "channel.set", {{"channel", audio}, {"midiVolume", 90}}),
+		ContainsSubstring("only MIDI channels"));
+	CHECK_THAT(reject(client, "channel.set", {{"channel", id}, {"midiPan", 128}}), ContainsSubstring("midiPan"));
+	CHECK_THAT(reject(client, "channel.set", {{"channel", id}, {"volume", -3.0}}), ContainsSubstring("no volume"));
+	RenderChannel render;
+	for (const RenderChannel& channel : engine.renderSnapshots().acquire().channels)
+		if (channel.id == id)
+			render = channel;
+	CHECK(render.midiVolume == 90);
+	CHECK(render.midiPan == 32);
+
+	// The channel's strip sends them when they are new or change, and again when playback starts.
+	auto state = std::make_shared<ChannelState>();
+	state->automation.setAutomation(channelAutomation(render, 6.0));
+	ChannelStrip strip(state, std::make_shared<MidiSequencer>());
+	strip.prepareFor(48000.0, 64);
+	const graph::EventBuffer in(graph::g_maxEventsPerBlock);
+	graph::EventBuffer out(graph::g_maxEventsPerBlock);
+	const graph::TransportSegment segment{0, 64, 0};
+	const auto controllers = [&](const graph::TransportBlock& transport)
+	{
+		out.clear();
+		strip.process({nullptr, 0, 64, in, out, transport});
+		std::vector<std::pair<int, int>> sent;
+		for (const graph::ProcessEvent& event : out)
+			if (event.type == graph::ProcessEvent::Type::Controller && event.channel == 0)
+				sent.emplace_back(event.key, midi::controllerToMidi1(event.value));
+		return sent;
+	};
+	using Sent = std::vector<std::pair<int, int>>;
+	const graph::TransportBlock stopped;
+	CHECK(controllers(stopped) == Sent{{7, 90}, {10, 32}});
+	CHECK(controllers(stopped).empty());
+	render.midiVolume = 100;
+	state->automation.setAutomation(channelAutomation(render, 6.0));
+	CHECK(controllers(stopped) == Sent{{7, 100}, {10, 32}});
+	CHECK(controllers({true, 0, &segment, 1}) == Sent{{7, 100}, {10, 32}});
+	render.midiVolume.reset();
+	render.midiPan.reset();
+	state->automation.setAutomation(channelAutomation(render, 6.0));
+	CHECK(controllers(stopped).empty());
+
+	// Undo takes them back.
+	run(client, "history.undo"); // the audio track
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("channels")[0].at("midiVolume").is_null());
 }

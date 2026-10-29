@@ -74,6 +74,10 @@ namespace gnubase::engine
 		double panLeft = -1.0; // the combined panner's positions of the left and the right channel, -1 to 1
 		double panRight = 1.0;
 		bool panBypass = false; // mono channels play at the center, stereo ones hard left and right
+		// MIDI channels: the MIDI volume (CC 7) and pan (CC 10, 64 is the center) sent to the instrument, 0 to 127;
+		// none sends nothing, which leaves the instrument's own.
+		std::optional<int> midiVolume = std::nullopt;
+		std::optional<int> midiPan = std::nullopt;
 	};
 
 	// The fader's range: its bottom is silence, its top the project's maximum volume, at most this.
@@ -387,9 +391,9 @@ namespace gnubase::engine
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
-				   a.panRight, a.panBypass) ==
+				   a.panRight, a.panBypass, a.midiVolume, a.midiPan) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
-				b.panRight, b.panBypass);
+				b.panRight, b.panBypass, b.midiVolume, b.midiPan);
 	}
 
 	inline bool operator==(const MediaFile& a, const MediaFile& b)
