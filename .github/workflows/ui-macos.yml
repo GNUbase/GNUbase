@@ -40,6 +40,13 @@ jobs:
         with:
           submodules: recursive
 
+      # Every build needs the VST3 SDK's interfaces (the plugin host's VST3 adapter), which the recursive checkout
+      # skips, as in ci.yml.
+      - name: Fetch the VST3 SDK
+        run: |
+          git submodule update --init --checkout ext/vst3sdk
+          git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
+
       - name: Fetch golden images
         run: git lfs pull --include "tests/golden/ui/**"
 
@@ -47,7 +54,7 @@ jobs:
         timeout-minutes: 15
         run: brew install ninja
 
-      # Only the arm64 slice, and no test plugins, which need the VST3 SDK and aren't part of the window tests.
+      # Only the arm64 slice, and no test plugins, which aren't part of the window tests.
       - name: Configure
         run: cmake --preset macos -DCMAKE_OSX_ARCHITECTURES=arm64 -DGNUBASE_TEST_PLUGINS=OFF
 
