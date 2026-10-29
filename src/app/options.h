@@ -23,8 +23,8 @@ namespace gnubase::app
 		bool headless = false;
 		Transport transport = Transport::Stdio;
 		int port = 0;                // HTTP: 0 picks a free port
-		std::string project;         // a DAWproject file to load, or none
-		std::string script;          // a Lua file to run instead of serving MCP, or none
+		std::string project;         // a DAWproject file to load (UTF-8), or none
+		std::string script;          // a Lua file to run instead of serving MCP (UTF-8), or none
 		std::string audio = "dummy"; // the audio device
 		double sampleRate = 48000.0;
 		int64_t blockSize = 256;
@@ -45,6 +45,10 @@ namespace gnubase::app
 	public:
 		using std::runtime_error::runtime_error;
 	};
+
+	// main's arguments after the program name, as UTF-8 like every path in GNUbase. On Windows main's argv has them
+	// in the legacy code page, which can't hold every file name, so they are read again from the UTF-16 command line.
+	std::vector<std::string> commandLineArguments(int argc, char** argv);
 
 	// The command-line arguments after the program name. Throws UsageError for invalid ones.
 	Options parseOptions(const std::vector<std::string>& args);

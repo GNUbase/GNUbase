@@ -9,6 +9,14 @@
 #include <cstdlib>
 #include <memory>
 
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+// shellapi.h needs windows.h first.
+#include <shellapi.h>
+#endif
+
 namespace gnubase::app
 {
 	namespace
@@ -39,6 +47,27 @@ namespace gnubase::app
 				names.append(names.empty() ? "" : ", ").append(backend->name());
 			return names;
 		}
+	}
+
+	std::vector<std::string> commandLineArguments(int argc, char** argv)
+	{
+#ifdef _WIN32
+		struct LocalFreer
+		{
+			void operator()(LPWSTR* arguments) const { LocalFree(static_cast<void*>(arguments)); }
+		};
+		int count = 0;
+		const std::unique_ptr<LPWSTR, LocalFreer> wide(CommandLineToArgvW(GetCommandLineW(), &count));
+		if (wide && count == argc)
+		{
+			std::vector<std::string> args;
+			args.reserve(static_cast<size_t>(count));
+			for (int i = 1; i < count; ++i)
+				args.push_back(std::filesystem::path(wide.get()[i]).u8string());
+			return args;
+		}
+#endif
+		return {argv + std::min(argc, 1), argv + argc};
 	}
 
 	Options parseOptions(const std::vector<std::string>& args)

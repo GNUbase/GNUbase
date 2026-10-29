@@ -272,8 +272,9 @@ namespace
 		const std::string command = "\"" + std::string(GNUBASE_APP) + "\" " + arguments + " < \"" + in.u8string() +
 			"\" > \"" + out.u8string() + "\"";
 #ifdef _WIN32
-		// cmd.exe removes the outer quotes.
-		return std::system(("\"" + command + "\"").c_str()); // NOLINT(bugprone-command-processor): fixed test command
+		// cmd.exe removes the outer quotes. As UTF-16, so that paths with any characters come through.
+		// NOLINTNEXTLINE(bugprone-command-processor): fixed test command
+		return _wsystem(std::filesystem::u8path("\"" + command + "\"").wstring().c_str());
 #else
 		const int status = std::system(command.c_str()); // NOLINT(bugprone-command-processor): fixed test command
 		return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
@@ -305,6 +306,24 @@ TEST_CASE("the gnubase executable serves MCP on stdio in headless mode", "[integ
 	CHECK(runApp("--no-such-option", in, out) == g_exitUsage);
 	CHECK(runApp("--headless --project \"" + (dir.path() / "missing.dawproject").u8string() + "\"", in, out) ==
 		g_exitSetup);
+}
+
+TEST_CASE("the gnubase executable takes paths with any characters for --settings and --script", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	// The u with diaeresis is in the Western code pages, the two CJK characters in none of them.
+	const auto folder = dir.path() / std::filesystem::u8path("Einstellungen \xc3\xbc \xe8\xa8\xad\xe5\xae\x9a");
+	std::filesystem::create_directories(folder);
+	const auto script = folder / "theme.lua";
+	std::ofstream(script) << "gnubase.settings.set{key = 'ui.theme', value = 'dark'}\n";
+	const auto in = dir.path() / "in.jsonl";
+	const auto out = dir.path() / "out.jsonl";
+	std::ofstream(in).flush();
+	CHECK(runApp("--headless --settings \"" + (folder / "settings").u8string() + "\" --script \"" + script.u8string() +
+				  "\"",
+			  in, out) == g_exitOk);
+	CHECK(Json::parse(gnubase::test::readText(folder / "settings" / "settings.json")).at("values").at("ui.theme") ==
+		"dark");
 }
 
 TEST_CASE("the gnubase executable reports engine events to MCP clients on stdio", "[integration]")
