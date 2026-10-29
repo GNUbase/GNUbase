@@ -126,9 +126,10 @@ namespace gnubase::engine
 		}
 	}
 
-	AudioEngine::AudioEngine(
-		rt::SnapshotPublisher<RenderSnapshot>& snapshots, std::vector<std::unique_ptr<audio::Backend>> backends)
-		: m_snapshots(snapshots), m_backends(std::move(backends)), m_generatorEvents(graph::g_maxEventsPerBlock),
+	AudioEngine::AudioEngine(rt::SnapshotPublisher<RenderSnapshot>& snapshots,
+		std::vector<std::unique_ptr<audio::Backend>> backends, std::vector<std::unique_ptr<midi::Backend>> midiBackends)
+		: m_snapshots(snapshots), m_backends(std::move(backends)), m_midi(std::move(midiBackends)),
+		  m_midiInput(graph::g_maxEventsPerBlock), m_generatorEvents(graph::g_maxEventsPerBlock),
 		  m_generatorOut(graph::g_maxEventsPerBlock)
 	{
 	}
@@ -377,6 +378,8 @@ namespace gnubase::engine
 			m_started.store(program.generation, std::memory_order_release);
 		}
 		const audio::DeviceFormat& format = m_device->format();
+		m_midiInput.clear();
+		m_midi.take(block, format.sampleRate, m_midiInput);
 		const size_t bytes = block.frames * sizeof(float);
 		for (const BusLink& link : program.inputs)
 		{
@@ -484,6 +487,7 @@ namespace gnubase::engine
 		setDevice(parameters);
 		if (running)
 		{
+			m_midi.clear();
 			startCueing();
 			m_device->start(*this);
 		}
@@ -877,6 +881,7 @@ namespace gnubase::engine
 			{
 				require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
 				require(!m_device->running(), "the audio device is already running");
+				m_midi.clear(); // input that waited while no device ran is stale
 				startCueing();
 				m_device->start(*this);
 				Json result = status();
@@ -921,6 +926,7 @@ namespace gnubase::engine
 			});
 		registerAnalysisCommands(engine);
 		registerTransportCommands(engine);
+		m_midi.registerCommands(engine);
 	}
 
 	void AudioEngine::sent(bool accepted)
