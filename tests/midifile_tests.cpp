@@ -143,7 +143,7 @@ namespace
 		part.length = 4 * g_quarter;
 		const auto note = [&part](ObjectId id, Ticks position, Ticks length, uint8_t pitch, uint16_t velocity,
 							  uint16_t release, uint8_t channel)
-		{ part.notes[id] = Note{id, position, length, pitch, velocity, channel, release}; };
+		{ part.notes[id] = Note{id, position, length, pitch, velocity, channel, release, {}}; };
 		note(10, 0, g_quarter, 60, midi::velocityFromMidi1(100), midi::velocityFromMidi1(30), 0);
 		note(11, g_quarter / 2, g_quarter / 2, 64, midi::velocityFromMidi1(80), g_defaultReleaseVelocity, 1);
 		// MIDI 2.0 velocity 0x0100 is 0 in MIDI 1.0, which a note-on can't have; the note is cut at the part's end.
@@ -681,7 +681,7 @@ TEST_CASE("MIDI file export rescales positions far into the project exactly", "[
 	Project project = midiProject();
 	constexpr Ticks far = Ticks{1} << 34; // quarter notes: far * g_quarter * 480 doesn't fit 64 bits
 	MidiPart& part = addPart(project, 3, far * g_quarter, g_quarter);
-	part.notes[4] = Note{4, 0, g_quarter / 2, 60, midi::velocityFromMidi1(100), 0, g_defaultReleaseVelocity};
+	part.notes[4] = Note{4, 0, g_quarter / 2, 60, midi::velocityFromMidi1(100), 0, g_defaultReleaseVelocity, {}};
 	const midifile::File file = midifile::exportProject(project, {});
 	REQUIRE(file.tracks.size() == 2);
 	std::vector<int64_t> noteTicks;
@@ -698,7 +698,7 @@ TEST_CASE("MIDI file export ends a note where the next one of its pitch and chan
 	const uint16_t velocity = midi::velocityFromMidi1(100);
 	const auto note = [velocity](
 						  MidiPart& part, ObjectId id, Ticks position, Ticks length, uint8_t pitch, uint8_t channel)
-	{ part.notes[id] = Note{id, position, length, pitch, velocity, channel, g_defaultReleaseVelocity}; };
+	{ part.notes[id] = Note{id, position, length, pitch, velocity, channel, g_defaultReleaseVelocity, {}}; };
 	MidiPart& first = addPart(project, 3, 0, 8 * g_quarter);
 	note(first, 10, 0, 2 * g_quarter, 60, 0);                     // B inside it: ends where B starts
 	note(first, 11, g_quarter / 2, g_quarter / 2, 60, 0);         // B
