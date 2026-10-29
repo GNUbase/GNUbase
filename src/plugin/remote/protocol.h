@@ -42,11 +42,12 @@ namespace gnubase::plugin::remote
 		FlushParams = 10,    // events; Reply: the output events. Refused while the instance processes
 		Describe = 11,       // Reply: PluginInfo as it is now, e.g. after the plugin asked for a rescan
 		SetProcessMode = 12, // ProcessMode; Reply: nothing. Only while inactive
-							 // Host to engine.
-		Reply = 100, // ok, error message, then what the request returns
-		Notify =
-			101, // Notification, then its detail
-				 // A part of a message larger than a ring message; the message's last part has the message's own type.
+
+		// Host to engine.
+		Reply = 100,  // ok, error message, then what the request returns
+		Notify = 101, // Notification, then its detail
+
+		// A part of a message larger than a ring message; the message's last part has the message's own type.
 		Fragment = 200,
 	};
 
