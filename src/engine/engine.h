@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
@@ -26,6 +27,11 @@ namespace gnubase::engine
 	class Jobs;
 	class ProjectModel;
 	struct RenderSnapshot;
+
+	namespace settings
+	{
+		class Store;
+	}
 
 	using RequestId = uint64_t;
 
@@ -115,8 +121,11 @@ namespace gnubase::engine
 	class Engine
 	{
 	public:
-		// The audio engine plays through devices of these backends.
-		explicit Engine(std::vector<std::unique_ptr<audio::Backend>> backends = audio::makeBackends());
+		// The audio engine plays through devices of these backends. The user settings are read from and saved to the
+		// settings folder (files::settingsDirectory() is the user's); without one, they are kept in memory only, as in
+		// tests.
+		explicit Engine(std::vector<std::unique_ptr<audio::Backend>> backends = audio::makeBackends(),
+			const std::filesystem::path& settingsDirectory = {});
 		~Engine();
 		Engine(const Engine&) = delete;
 		Engine& operator=(const Engine&) = delete;
@@ -173,9 +182,10 @@ namespace gnubase::engine
 		RequestId m_nextRequest = 1;
 		bool m_stopping = false;
 		std::condition_variable m_wake;
-		std::unique_ptr<Jobs> m_jobs;            // background work such as backups
-		std::unique_ptr<ProjectModel> m_project; // only the command thread touches the document
-		std::unique_ptr<AudioEngine> m_audio;    // plays the project; only the command thread changes it
+		std::unique_ptr<Jobs> m_jobs;                // background work such as backups
+		std::unique_ptr<ProjectModel> m_project;     // only the command thread touches the document
+		std::unique_ptr<AudioEngine> m_audio;        // plays the project; only the command thread changes it
+		std::unique_ptr<settings::Store> m_settings; // the user settings; only the command thread uses them
 		std::thread m_thread;
 	};
 

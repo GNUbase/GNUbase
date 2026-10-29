@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -22,11 +23,14 @@ namespace gnubase::app
 		bool headless = false;
 		Transport transport = Transport::Stdio;
 		int port = 0;                // HTTP: 0 picks a free port
-		std::string project;         // a DAWproject file to load, or none
-		std::string script;          // a Lua file to run instead of serving MCP, or none
+		std::string project;         // a DAWproject file to load (UTF-8), or none
+		std::string script;          // a Lua file to run instead of serving MCP (UTF-8), or none
 		std::string audio = "dummy"; // the audio device
 		double sampleRate = 48000.0;
 		int64_t blockSize = 256;
+		// The user settings folder (UTF-8). parseOptions leaves it empty unless --settings gives one; main then
+		// fills in settingsDirectory(options). runHeadless keeps the settings in memory if it is still empty.
+		std::string settings;
 	};
 
 	// Exit codes, for scripts and CI.
@@ -42,8 +46,15 @@ namespace gnubase::app
 		using std::runtime_error::runtime_error;
 	};
 
+	// main's arguments after the program name, as UTF-8 like every path in GNUbase. On Windows main's argv has them
+	// in the legacy code page, which can't hold every file name, so they are read again from the UTF-16 command line.
+	std::vector<std::string> commandLineArguments(int argc, char** argv);
+
 	// The command-line arguments after the program name. Throws UsageError for invalid ones.
 	Options parseOptions(const std::vector<std::string>& args);
+
+	// The settings folder: --settings if given, otherwise the user's (GNUBASE_SETTINGS_DIR or the OS's folder).
+	std::filesystem::path settingsDirectory(const Options& options);
 
 	// The text for --help.
 	std::string usage();

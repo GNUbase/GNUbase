@@ -5,6 +5,7 @@
 #include "engine/document/projectmodel.h"
 #include "engine/jobs/jobs.h"
 #include "engine/processors/builtin.h"
+#include "engine/settings/usersettings.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 
@@ -73,7 +74,8 @@ namespace gnubase::engine
 		return GNUBASE_VERSION;
 	}
 
-	Engine::Engine(std::vector<std::unique_ptr<audio::Backend>> backends)
+	Engine::Engine(
+		std::vector<std::unique_ptr<audio::Backend>> backends, const std::filesystem::path& settingsDirectory)
 	{
 		registerCommand({"engine.version", 1, "The GNUbase version.", CommandInfo{}.parameters,
 							Json::parse(R"({"type": "object", "properties": {"version": {"type": "string"}},
@@ -99,6 +101,8 @@ namespace gnubase::engine
 		m_project->registerCommands(*this, *m_jobs);
 		m_audio = std::make_unique<AudioEngine>(m_project->snapshots(), std::move(backends));
 		m_audio->registerCommands(*this);
+		m_settings = std::make_unique<settings::Store>(settings::userFormat(), settingsDirectory);
+		settings::registerCommands(*this, *m_settings);
 		m_thread = std::thread([this] { run(); });
 	}
 

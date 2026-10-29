@@ -193,7 +193,6 @@ The MCP server gives a client the same power over GNUbase as the person using it
 | `404 Not Found` over HTTP | The session ended: the client ended it, it had no requests for 30 minutes, or GNUbase started again. MCP clients start a new session with `initialize` on their own; the events of the old one are gone. |
 | `events_take` says it needs a session | The request had no `Mcp-Session-Id` header. Send `initialize` first, then its session id with every request. |
 | `405 Method Not Allowed` | The client opened `GET /mcp` for server-initiated messages, which GNUbase doesn't send yet. Clients fall back to POST. |
-| `project_backup` returned before the backup was written | Backups run as background jobs: the tool returns the job. Call `job_get` with its id until `state` is `done` (the result is there), `failed` or `cancelled`; `job_cancel` stops it. |
 | A tool result has `isError: true` | The command failed, and the text says why; nothing changed. `engine_commands` describes every command. |
 | This catalogue misses a tool | It's generated from the server; the tests fail when it's out of date. Run them with `GNUBASE_UPDATE_DOCS=1` and commit `docs/mcp.md`. |
 
@@ -1038,6 +1037,66 @@ Result:
 
 - `output`: string, required
 
+### settings
+
+#### `settings_get`
+
+Engine command `settings.get`. Read-only.
+
+The value of a user setting; settings.list describes them all.
+
+Arguments:
+
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
+
+Result:
+
+- `key`: string, required
+- `value`: any, required. The setting's value.
+
+#### `settings_list`
+
+Engine command `settings.list`. Read-only.
+
+Every user setting with its key, description, JSON schema, default and value; the settings file, null when settings are kept in memory only; its version; and what happened when it was loaded: the status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the problems found, where the original file was kept, and whether the file is read-only for this session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be backed up or locked).
+
+Result:
+
+- `file`: string or null, required
+- `load`: object, required
+- `settings`: array, required
+- `version`: integer, required
+
+#### `settings_reset`
+
+Engine command `settings.reset`.
+
+Puts a user setting back to its default, or every one without key, and saves the settings file. Returns the settings that were reset with their values; emits settings.changed with those that changed.
+
+Arguments:
+
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme". The setting.
+
+Result:
+
+- `values`: object, required
+
+#### `settings_set`
+
+Engine command `settings.set`.
+
+Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes.
+
+Arguments:
+
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
+- `value`: any, required. The new value; it must fit the setting's schema.
+
+Result:
+
+- `key`: string, required
+- `value`: any, required. The setting's value.
+
 ### track
 
 #### `track_add`
@@ -1244,6 +1303,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts.
 - `gnubase://project.location`: Where the project is: its project file (set by project.save and project.load), the folder of that file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. All null for a project that has no file yet.
 - `gnubase://project.revision`: A number that grows with every change of the project: every edit, undo and redo, and loading or starting a project. project.load with revision loads only if it hasn't changed.
+- `gnubase://settings.list`: Every user setting with its key, description, JSON schema, default and value; the settings file, null when settings are kept in memory only; its version; and what happened when it was loaded: the status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the problems found, where the original file was kept, and whether the file is read-only for this session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be backed up or locked).
 - `gnubase://transport.get`: Whether playback runs, the project cursor in samples, the locators and the modes.
 
 <!-- End of the generated tool catalogue -->
