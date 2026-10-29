@@ -25,7 +25,7 @@ namespace
 	{
 		try
 		{
-			const app::Options options = app::parseOptions(std::vector<std::string>(argv + 1, argv + argc));
+			app::Options options = app::parseOptions(app::commandLineArguments(argc, argv));
 			if (options.help)
 			{
 				std::cout << app::usage();
@@ -40,6 +40,11 @@ namespace
 			const gnubase::logging::Session logSession(
 				gnubase::logging::defaultDirectory() / (options.headless ? "gnubase-headless.log" : "gnubase.log"));
 			gnubase::logging::info("GNUbase {} ({})", gnubase::engine::version(), gnubase::ui::libraryVersions());
+			options.settings = app::settingsDirectory(options).u8string();
+			if (options.settings.empty())
+				gnubase::logging::warning("No settings folder: this user has no home folder; settings aren't saved");
+			else
+				gnubase::logging::info("Settings in {}", options.settings);
 			if (options.headless)
 			{
 				if (std::signal(SIGINT, gnubaseRequestStop) == SIG_ERR ||

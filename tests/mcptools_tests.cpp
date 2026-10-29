@@ -233,6 +233,40 @@ TEST_CASE("MCP clients add, change and remove audio events", "[integration]")
 	CHECK(project.at("media").empty());
 }
 
+TEST_CASE("MCP clients add, change and remove automation lanes and points", "[integration]")
+{
+	Engine engine;
+	McpClient mcp(engine);
+	const int64_t track = idOf(mcp.call("track_add", {{"type", "audio"}}).at("track"));
+	const Json lane = mcp.call("automationLane_add", {{"track", track}, {"target", {{"type", "volume"}}}}).at("lane");
+	CHECK(lane.at("read") == true);
+	const Json points =
+		mcp.call("automationPoint_add",
+			   {{"lane", idOf(lane)},
+				   {"points",
+					   {{{"position", 0}, {"value", -12.0}, {"shape", "step"}}, {{"position", 1920}, {"value", 0.0}}}}})
+			.at("points");
+	REQUIRE(points.size() == 2);
+	const Json changed =
+		mcp.call("automationPoint_set",
+			   {{"lane", idOf(lane)}, {"points", {{{"id", idOf(points[0])}, {"shape", "curve"}, {"curve", 0.5}}}}})
+			.at("points");
+	CHECK(changed.at(0).at("shape") == "curve");
+	CHECK(changed.at(0).at("curve") == 0.5);
+	CHECK(mcp.call("automationLane_set", {{"lane", idOf(lane)}, {"read", false}}).at("lane").at("read") == false);
+	CHECK_THAT(
+		mcp.fails("automationPoint_add", {{"lane", idOf(lane)}, {"points", {{{"position", 0}, {"value", 7.0}}}}}),
+		ContainsSubstring("value"));
+
+	mcp.call("automationPoint_remove", {{"lane", idOf(lane)}, {"points", {idOf(points[1])}}});
+	const Json lanes = mcp.call("automationLane_list", {{"track", track}}).at("lanes");
+	REQUIRE(lanes.size() == 1);
+	CHECK(lanes.at(0).at("points").size() == 1);
+	CHECK(mcp.call("automation_set", {{"followsEvents", true}}).at("followsEvents") == true);
+	mcp.call("automationLane_remove", {{"lane", idOf(lane)}});
+	CHECK(mcp.project().at("automation").empty());
+}
+
 TEST_CASE("MCP clients play, stop, locate and cycle the transport", "[integration]")
 {
 	Engine engine;

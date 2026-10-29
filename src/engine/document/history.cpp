@@ -95,12 +95,25 @@ namespace gnubase::engine
 			copy.length = part->length;
 			return copy;
 		}
+
+		// A lane without its points.
+		std::optional<AutomationLane> properties(const AutomationLane* lane)
+		{
+			if (lane == nullptr)
+				return std::nullopt;
+			AutomationLane copy;
+			copy.id = lane->id;
+			copy.track = lane->track;
+			copy.target = lane->target;
+			copy.read = lane->read;
+			return copy;
+		}
 	}
 
 	bool ProjectChange::empty() const
 	{
 		return !settingsBefore && tracks.empty() && channels.empty() && media.empty() && clips.empty() &&
-			audioEvents.empty() && midiParts.empty() && markers.empty();
+			audioEvents.empty() && midiParts.empty() && markers.empty() && automation.empty();
 	}
 
 	ProjectChange difference(const Project& before, const Project& after)
@@ -131,6 +144,17 @@ namespace gnubase::engine
 				const bool propertiesChanged = old == nullptr || now == nullptr || !sameProperties(*old, *now);
 				if (propertiesChanged || !part.notes.empty() || !part.controllers.empty())
 					change.midiParts.push_back(std::move(part));
+			});
+
+		const AutomationLane noLane;
+		compare(before.automation, after.automation,
+			[&change, &noLane](ObjectId id, const AutomationLane* old, const AutomationLane* now)
+			{
+				const AutomationLane& from = old != nullptr ? *old : noLane;
+				const AutomationLane& to = now != nullptr ? *now : noLane;
+				AutomationLaneChange lane{id, properties(old), properties(now), differences(from.points, to.points)};
+				if (old == nullptr || now == nullptr || !sameProperties(*old, *now) || !lane.points.empty())
+					change.automation.push_back(std::move(lane));
 			});
 		return change;
 	}
@@ -170,6 +194,22 @@ namespace gnubase::engine
 			part.length = target->length;
 			applyObjects(part.notes, partChange.notes, direction);
 			applyObjects(part.controllers, partChange.controllers, direction);
+		}
+		for (const AutomationLaneChange& laneChange : change.automation)
+		{
+			const std::optional<AutomationLane>& target =
+				direction == Direction::Redo ? laneChange.after : laneChange.before;
+			if (!target)
+			{
+				project.automation.erase(laneChange.id);
+				continue;
+			}
+			AutomationLane& lane = project.automation[laneChange.id];
+			lane.id = target->id;
+			lane.track = target->track;
+			lane.target = target->target;
+			lane.read = target->read;
+			applyObjects(lane.points, laneChange.points, direction);
 		}
 	}
 

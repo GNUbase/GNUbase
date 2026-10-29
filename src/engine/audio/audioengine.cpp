@@ -8,12 +8,15 @@
 #include "platform/rt/realtime.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
+#include <system_error>
 #include <utility>
 
 namespace gnubase::engine
@@ -26,14 +29,21 @@ namespace gnubase::engine
 		constexpr auto g_startWait = std::chrono::seconds(2);    // for the streams before playback starts or locates
 		constexpr auto g_offlineWait = std::chrono::seconds(30); // for the streams before an offline block
 		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20;   // frames one audio.capture returns at most
+		constexpr int64_t g_maxThreads = 64;
 
 		Json statusSchema()
 		{
 			return Json::parse(R"({"type": "object",
 			"properties": {"device": {"type": ["object", "null"]}, "running": {"type": "boolean"},
 				"position": {"type": "integer"}, "capturedFrames": {"type": "integer"},
-				"droppedFrames": {"type": "integer"}, "playbackDropouts": {"type": "integer"}},
-			"required": ["device", "running", "position", "capturedFrames", "droppedFrames", "playbackDropouts"]})");
+				"droppedFrames": {"type": "integer"}, "playbackDropouts": {"type": "integer"},
+				"processing": {"type": "object", "properties": {"multiProcessing": {"type": "boolean"},
+					"threads": {"type": "integer"}, "activeThreads": {"type": "integer"},
+					"limitedBy": {"type": ["string", "null"],
+						"enum": [null, "multiProcessing", "hardware", "realtime", "system"]}},
+					"required": ["multiProcessing", "threads", "activeThreads", "limitedBy"]}},
+			"required": ["device", "running", "position", "capturedFrames", "droppedFrames", "playbackDropouts",
+				"processing"]})");
 		}
 
 		Json transportSchema()
@@ -65,6 +75,43 @@ namespace gnubase::engine
 			return {{"id", info.id}, {"name", info.name}, {"inputs", info.inputs}, {"outputs", info.outputs},
 				{"sampleRates", info.sampleRates}, {"blockSizes", info.blockSizes}, {"clockSources", info.clockSources},
 				{"clockSource", clockSource}, {"controlPanel", info.controlPanel}};
+		}
+
+		// What a channel's automation plays: the fader's and the instrument's parameters with their static values or
+		// curves, and the MIDI controllers that have curves.
+		std::unique_ptr<ChannelAutomation> channelAutomation(const RenderChannel& channel)
+		{
+			using Kind = PlayedLane::Kind;
+			auto automation = std::make_unique<ChannelAutomation>();
+			automation->instrument = channel.instrument;
+			std::vector<PlayedLane>& lanes = automation->lanes;
+			if (channel.channels > 0 && channel.type != TrackType::Midi)
+			{
+				lanes.push_back({{AutomationTargetType::Volume, 0, 0, 0}, Kind::Fader, ChannelFader::Volume,
+					channel.volume, 0.0, volumeGain(g_maxChannelVolume), {}});
+				lanes.push_back(
+					{{AutomationTargetType::Pan, 0, 0, 0}, Kind::Fader, ChannelFader::Pan, channel.pan, -1.0, 1.0, {}});
+			}
+			for (const processors::BuiltinInfo& info : processors::builtins())
+				if (info.id == channel.instrument)
+					for (const processors::ParameterInfo& parameter : info.parameters)
+						lanes.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0}, Kind::Instrument,
+							parameter.id, parameter.defaultValue, parameter.minimum, parameter.maximum, {}});
+			const bool midi = channel.type == TrackType::Midi || channel.type == TrackType::Instrument;
+			for (const RenderAutomationLane& lane : channel.automation)
+			{
+				const auto match = std::find_if(lanes.begin(), lanes.end(),
+					[&lane](const PlayedLane& played) { return played.target == lane.target; });
+				if (match != lanes.end())
+					match->points = lane.points;
+				else if (midi &&
+					(lane.target.type == AutomationTargetType::Controller ||
+						lane.target.type == AutomationTargetType::PitchBend ||
+						lane.target.type == AutomationTargetType::ChannelPressure))
+					lanes.push_back({lane.target, Kind::Midi, 0, 0.0, 0.0, 1.0, lane.points});
+				// Anything else, e.g. a parameter of an instrument the channel no longer plays, waits.
+			}
+			return automation;
 		}
 
 		const processors::BuiltinInfo& generatorInfo(const std::string& id)
@@ -182,8 +229,13 @@ namespace gnubase::engine
 			tracks.push_back({channel.id, std::move(playlist)});
 		}
 		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate);
+		const uint64_t generation = ++m_generation;
+		attachMidi(snapshot, desc, generation);
+		attachStrips(snapshot, desc);
 
 		auto program = std::make_unique<Program>(desc, format.sampleRate, format.blockSize);
+		program->generation = generation;
+		program->releases = releases();
 		int input = 0;
 		int output = 0;
 		for (size_t i = 0; i < desc.nodes.size(); ++i)
@@ -207,9 +259,121 @@ namespace gnubase::engine
 			m_programs = std::make_unique<rt::SnapshotPublisher<Program>>(std::move(program));
 	}
 
+	void AudioEngine::attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc, uint64_t generation)
+	{
+		std::map<ObjectId, std::set<ObjectId>> sources; // per instrument channel, the MIDI channels routed to it
+		for (const RenderChannel& channel : snapshot.channels)
+			if (channel.type == TrackType::Midi && channel.output.kind == RenderTarget::Kind::Channel)
+				sources[snapshot.channels[static_cast<size_t>(channel.output.index)].id].insert(channel.id);
+
+		std::map<ObjectId, std::shared_ptr<MidiSequencer>> sequencers;
+		std::map<ObjectId, Instrument> instruments;
+		for (const RenderChannel& channel : snapshot.channels)
+		{
+			if (channel.type != TrackType::Midi && channel.type != TrackType::Instrument)
+				continue;
+			const auto kept = m_sequencers.find(channel.id);
+			const std::shared_ptr<MidiSequencer> sequencer =
+				kept != m_sequencers.end() ? kept->second : std::make_shared<MidiSequencer>();
+			auto sequence = std::make_unique<MidiSequence>();
+			sequence->notes = channel.notes;
+			sequence->controllers = channel.controllers;
+			sequencer->setSequence(std::move(sequence));
+			sequencers[channel.id] = sequencer;
+
+			std::shared_ptr<graph::Processor> processor = sequencer;
+			if (channel.type == TrackType::Instrument)
+			{
+				const std::set<ObjectId>& from = sources[channel.id];
+				Instrument instrument;
+				const auto old = m_instruments.find(channel.id);
+				if (old != m_instruments.end() && old->second.id == channel.instrument)
+				{
+					instrument = old->second;
+					// A MIDI track that left can't end its notes here any more: the audio thread ends them when it
+					// starts the new program, after the last block in which the track could still start notes.
+					for (const ObjectId source : instrument.sources)
+						if (from.count(source) == 0)
+							m_releases.push_back(
+								{channel.id, source, instrument.channel, m_sequencers.at(source), generation});
+				}
+				else
+				{
+					// Unknown ids play nothing; projects are checked when they load (projectFromJson).
+					instrument.id = channel.instrument;
+					instrument.channel = std::make_shared<InstrumentChannel>(sequencer,
+						processors::isInstrument(channel.instrument) ? processors::createBuiltin(channel.instrument)
+																	 : nullptr);
+				}
+				instrument.sources = from;
+				processor = instrument.channel;
+				instruments[channel.id] = instrument;
+			}
+			for (graph::NodeDesc& node : desc.nodes)
+				if (node.kind == graph::NodeKind::Channel && node.object == channel.id)
+					node.processor = processor;
+		}
+		m_sequencers = std::move(sequencers);
+		m_instruments = std::move(instruments);
+	}
+
+	void AudioEngine::attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc)
+	{
+		std::map<ObjectId, std::shared_ptr<ChannelState>> states;
+		for (const RenderChannel& channel : snapshot.channels)
+		{
+			const auto kept = m_channelStates.find(channel.id);
+			const std::shared_ptr<ChannelState> state =
+				kept != m_channelStates.end() ? kept->second : std::make_shared<ChannelState>();
+			std::unique_ptr<ChannelAutomation> automation = channelAutomation(channel);
+			if (kept == m_channelStates.end() || !automation->sameContent(state->automation.latest()))
+				state->automation.setAutomation(std::move(automation));
+			states[channel.id] = state;
+			for (graph::NodeDesc& node : desc.nodes)
+				if (node.kind == graph::NodeKind::Channel && node.object == channel.id)
+					node.processor = std::make_shared<ChannelStrip>(state, node.processor);
+		}
+		m_channelStates = std::move(states);
+	}
+
+	std::vector<AudioEngine::Release> AudioEngine::releases()
+	{
+		// Done once the audio thread started a program that has them; not needed if the instrument is gone or
+		// replaced, or the MIDI track came back.
+		const uint64_t started = m_started.load(std::memory_order_acquire);
+		const auto done = [this, started](const PendingRelease& pending)
+		{
+			const auto instrument = m_instruments.find(pending.instrument);
+			return pending.generation <= started || instrument == m_instruments.end() ||
+				instrument->second.channel != pending.channel || instrument->second.sources.count(pending.source) != 0;
+		};
+		m_releases.erase(std::remove_if(m_releases.begin(), m_releases.end(), done), m_releases.end());
+
+		std::vector<Release> result;
+		result.reserve(m_releases.size());
+		for (const PendingRelease& pending : m_releases)
+		{
+			Release release{pending.channel, pending.departed, {}};
+			for (const ObjectId source : m_instruments.at(pending.instrument).sources)
+				release.staying.push_back(m_sequencers.at(source));
+			result.push_back(std::move(release));
+		}
+		return result;
+	}
+
 	void AudioEngine::process(const audio::DeviceBlock& block) noexcept
 	{
+		const auto start = std::chrono::steady_clock::now();
+		if (m_resetPerformance.exchange(false, std::memory_order_acq_rel))
+			m_meter.reset();
 		const Program& program = m_programs->acquire();
+		if (program.generation != m_running)
+		{
+			m_running = program.generation;
+			for (const Release& release : program.releases)
+				release.channel->releaseNotesOf(*release.departed, release.staying);
+			m_started.store(program.generation, std::memory_order_release);
+		}
 		const audio::DeviceFormat& format = m_device->format();
 		const size_t bytes = block.frames * sizeof(float);
 		for (const BusLink& link : program.inputs)
@@ -225,7 +389,7 @@ namespace gnubase::engine
 			}
 		}
 		m_playback.beginBlock();
-		program.graph.process(block.frames, m_transport.advance(block.frames));
+		program.graph.process(block.frames, m_transport.advance(block.frames), m_workers.get());
 		m_playback.endBlock();
 		for (const BusLink& link : program.outputs)
 		{
@@ -233,6 +397,14 @@ namespace gnubase::engine
 			for (int c = 0; c < link.channels && link.firstChannel + c < format.outputChannels; ++c)
 				std::memcpy(block.outputs[link.firstChannel + c], bus[c], bytes);
 		}
+
+		const std::chrono::duration<double> busy = std::chrono::steady_clock::now() - start;
+		std::array<double, PerformanceData::g_maxThreads> threads{};
+		const size_t count = std::min(m_workers ? m_workers->workers() + 1 : size_t{1}, threads.size());
+		for (size_t t = 0; t < count; ++t)
+			threads[t] = static_cast<double>(program.graph.busyNanoseconds(t)) * 1e-9;
+		m_meter.cycle(busy.count(), block.frames / format.sampleRate, threads.data(), count);
+		publishPerformance(m_meter.data());
 		m_programs->release();
 	}
 
@@ -246,6 +418,8 @@ namespace gnubase::engine
 	void AudioEngine::closeDevice()
 	{
 		stopDevice();
+		m_workers.reset();
+		clearPerformance(); // the old device's numbers would stay up until the new one processes a block
 		m_device.reset();
 		m_dummy = nullptr;
 		m_programs.reset();
@@ -293,6 +467,7 @@ namespace gnubase::engine
 				if (engine != nullptr)
 					engine->post("audio.reset");
 			});
+		startWorkersOrFallBack();
 		rebuild();
 	}
 
@@ -396,11 +571,114 @@ namespace gnubase::engine
 				});
 	}
 
+	void AudioEngine::setProcessing(const Json& parameters)
+	{
+		const bool multiProcessing = parameters.value("multiProcessing", m_multiProcessing);
+		const auto threads = parameters.value("threads", static_cast<int64_t>(m_threads));
+		require(threads >= 1 && threads <= g_maxThreads, "threads must be from 1 to 64");
+		require(!m_device || !m_device->running(), "the audio device is running");
+		const bool previousMultiProcessing = m_multiProcessing;
+		const size_t previousThreads = m_threads;
+		m_multiProcessing = multiProcessing;
+		m_threads = static_cast<size_t>(threads);
+		clearPerformance(); // threads that are dropped and added again would resume their old averages
+		if (!m_device)
+			return;
+		try
+		{
+			startWorkers();
+		}
+		catch (const std::system_error& error)
+		{
+			// Back to the settings that worked, as far as the system still lets them.
+			m_multiProcessing = previousMultiProcessing;
+			m_threads = previousThreads;
+			startWorkersOrFallBack();
+			throw CommandError(std::string("could not start the processing threads: ") + error.what());
+		}
+	}
+
+	void AudioEngine::startWorkers()
+	{
+		m_workers.reset();
+		m_limitedBy = Limit::None;
+		const size_t wanted = plannedThreads() - 1;
+		if (wanted == 0)
+			return;
+		const audio::DeviceFormat& format = m_device->format();
+		const double period = format.blockSize / format.sampleRate;
+		auto workers = std::make_unique<rt::WorkerPool>(wanted, period);
+		if (!workers->realtime())
+		{
+			// The audio thread waits for nodes that workers hold: a worker without real-time priority that the OS
+			// preempts would make it miss its deadline. Only workers that got it help, if any.
+			const size_t realtime = workers->realtimeWorkers();
+			workers.reset();
+			if (realtime > 0)
+				workers = std::make_unique<rt::WorkerPool>(realtime, period);
+			if (workers && !workers->realtime())
+				workers.reset();
+			m_limitedBy = Limit::Realtime;
+			logging::warning("{} of {} processing threads got real-time priority; processing with {}", realtime, wanted,
+				workers ? workers->workers() + 1 : 1);
+		}
+		m_workers = std::move(workers);
+	}
+
+	void AudioEngine::startWorkersOrFallBack()
+	{
+		try
+		{
+			startWorkers();
+		}
+		catch (const std::system_error& error)
+		{
+			m_workers.reset();
+			m_limitedBy = Limit::System;
+			logging::warning(
+				"Could not start the processing threads ({}); processing on the audio thread only", error.what());
+		}
+	}
+
+	size_t AudioEngine::plannedThreads() const
+	{
+		// More threads than cores only wait for each other: a worker that holds a node loses its core to the ones
+		// spinning for the next.
+		return m_multiProcessing ? std::min(m_threads, rt::hardwareThreads()) : 1;
+	}
+
+	size_t AudioEngine::defaultThreads()
+	{
+		// About one per physical core: the second hardware thread of a core adds little to DSP code, and the disk
+		// streams, the command thread, the UI and the plugin host processes need cores too.
+		return std::max<size_t>(rt::hardwareThreads() / 2, 1);
+	}
+
+	Json AudioEngine::processingStatus() const
+	{
+		const size_t active = m_device ? 1 + (m_workers ? m_workers->workers() : 0) : plannedThreads();
+		Json limitedBy = nullptr;
+		if (active < m_threads)
+		{
+			if (!m_multiProcessing)
+				limitedBy = "multiProcessing";
+			else if (m_device && m_limitedBy == Limit::Realtime)
+				limitedBy = "realtime";
+			else if (m_device && m_limitedBy == Limit::System)
+				limitedBy = "system";
+			else
+				limitedBy = "hardware";
+		}
+		return {{"multiProcessing", m_multiProcessing}, {"threads", m_threads}, {"activeThreads", active},
+			{"limitedBy", std::move(limitedBy)}};
+	}
+
 	Json AudioEngine::status() const
 	{
+		const Json processing = processingStatus();
 		if (!m_device)
 			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"capturedFrames", 0},
-				{"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()}};
+				{"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()}, {"processing", processing}};
 		const audio::DeviceFormat& format = m_device->format();
 		const audio::DeviceLatency latency = m_device->latency();
 		Json device = toJson(m_device->info());
@@ -410,7 +688,47 @@ namespace gnubase::engine
 		return {{"device", std::move(device)}, {"running", m_device->running()}, {"position", m_device->position()},
 			{"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
 			{"droppedFrames", m_dummy != nullptr ? m_dummy->droppedFrames() : 0},
-			{"playbackDropouts", m_playback.dropouts()}};
+			{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}};
+	}
+
+	void AudioEngine::publishPerformance(const PerformanceData& data)
+	{
+		m_performance.writeBuffer() = data;
+		m_performance.publish();
+	}
+
+	void AudioEngine::clearPerformance()
+	{
+		m_meter = PerformanceMeter();
+		m_resetPerformance.store(false, std::memory_order_release);
+		publishPerformance(PerformanceData{});
+	}
+
+	Json AudioEngine::resetPerformance()
+	{
+		Json ended = performance();
+		if (m_device && m_device->running())
+		{
+			m_resetPerformance.store(true, std::memory_order_release); // the audio thread owns the meter
+		}
+		else
+		{
+			m_resetPerformance.store(false, std::memory_order_release);
+			m_meter.reset();
+			publishPerformance(m_meter.data());
+		}
+		return ended;
+	}
+
+	Json AudioEngine::performance()
+	{
+		m_performance.update();
+		const PerformanceData& data = m_performance.readBuffer();
+		Json threads = Json::array();
+		for (size_t t = 0; t < data.threads; ++t)
+			threads.push_back(data.threadLoad[t]);
+		return {{"load", data.load}, {"peak", data.peak}, {"overloads", data.overloads}, {"cycles", data.cycles},
+			{"threads", threads}, {"diskLoad", m_playback.diskLoad()}, {"diskDropouts", m_playback.dropouts()}};
 	}
 
 	void AudioEngine::registerCommands(Engine& engine)
@@ -452,11 +770,59 @@ namespace gnubase::engine
 				return result;
 			});
 		engine.registerCommand(
+			{"audio.setProcessing", 1,
+				"Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; "
+				"default: half the hardware threads, about one per core). Independent tracks then run in parallel; "
+				"the output is the same for any number of threads. The device must be stopped. activeThreads in the "
+				"result is how many process, and limitedBy why that is fewer: multiProcessing is off, the hardware has "
+				"fewer threads, worker threads didn't get real-time priority (on Linux: no real-time privileges), or "
+				"the system refused to start them (system). Fails, keeping the previous settings, if threads can't be "
+				"started.",
+				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
+					"multiProcessing": {"type": "boolean"}, "threads": {"type": "integer"}}})"),
+				statusSchema(), false},
+			[this](CommandContext& context)
+			{
+				setProcessing(context.parameters());
+				Json result = status();
+				context.emit("audio.changed", result);
+				return result;
+			});
+		const Json performanceSchema = Json::parse(R"({"type": "object", "properties": {"load": {"type": "number"},
+				"peak": {"type": "number"}, "overloads": {"type": "integer"}, "cycles": {"type": "integer"},
+				"threads": {"type": "array", "items": {"type": "number"}}, "diskLoad": {"type": "number"},
+				"diskDropouts": {"type": "integer"}},
+				"required": ["load", "peak", "overloads", "cycles", "threads", "diskLoad", "diskDropouts"]})");
+		engine.registerCommand(
+			{"audio.performance", 1,
+				"Performance data for the performance monitor. Loads are the share of a block's duration spent "
+				"processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest "
+				"block; overloads: blocks above 1; cycles: blocks measured; threads: the load of each processing "
+				"thread, the audio thread first. Peak, overloads and cycles count since the last "
+				"audio.resetPerformance; everything starts over with a new device or new processing threads. "
+				"diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of "
+				"audio track playback that were silent because a disk stream was late.",
+				noParameters(), performanceSchema, true},
+			[this](CommandContext&) { return performance(); });
+		engine.registerCommand(
+			{"audio.resetPerformance", 1,
+				"Starts a new performance measurement, like clicking the overload indicator: clears the peak, the "
+				"overloads and the cycles; the averaged loads go on. Immediately while the device is stopped, "
+				"otherwise with its next block. Returns the measurement that ended, as audio.performance does, and "
+				"sends it as the event audio.performanceReset.",
+				noParameters(), performanceSchema, false},
+			[this](CommandContext& context)
+			{
+				Json result = resetPerformance();
+				context.emit("audio.performanceReset", result);
+				return result;
+			});
+		engine.registerCommand(
 			{"audio.get", 1,
 				"The audio device (its backend, id, name, format, channel names, latencies in frames, clock source "
 				"and whether it has a control panel), whether it runs, how many frames it has processed and, if it is "
-				"the dummy device, captured, and how many frames of audio track playback were silent because a disk "
-				"stream was late.",
+				"the dummy device, captured, how many frames of audio track playback were silent because a disk stream "
+				"was late, and the processing threads (see audio.setProcessing).",
 				noParameters(), statusSchema(), true},
 			[this](CommandContext&) { return status(); });
 		engine.registerCommand(

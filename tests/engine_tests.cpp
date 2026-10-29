@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <future>
+#include <memory>
 #include <mutex>
 #include <numeric>
 #include <optional>
@@ -100,6 +102,37 @@ TEST_CASE("every client receives events, the sender gets the result after them",
 
 	CHECK(expect<Event>(listener.wait(g_timeout)).request == id);
 	CHECK_FALSE(listener.poll().has_value()); // results go to the sender only
+}
+
+TEST_CASE("a posted command hands its result to a callback; at shutdown the ones left get an error", "[unit]")
+{
+	auto engine = std::make_unique<Engine>();
+	int stored = 0;
+	registerSetValue(*engine, stored);
+	std::promise<Result> done;
+	engine->post("test.setValue", {{"value", 3}}, [&done](Result result) { done.set_value(std::move(result)); });
+	const Result result = done.get_future().get();
+	CHECK(result.ok());
+	CHECK(stored == 3);
+	std::promise<Result> failed;
+	engine->post("test.unknown", Json::object(), [&failed](Result result) { failed.set_value(std::move(result)); });
+	CHECK_THAT(failed.get_future().get().error, ContainsSubstring("unknown command"));
+
+	// A slow command holds up the command thread while the engine stops; the command after it never runs.
+	engine->registerCommand({"test.slow", 1, "Takes a while.", CommandInfo{}.parameters, Json::object(), false},
+		[](CommandContext&)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			return Json::object();
+		});
+	engine->post("test.slow");
+	std::promise<Result> left;
+	std::future<Result> leftResult = left.get_future();
+	engine->post("test.setValue", {{"value", 4}}, [&left](Result result) { left.set_value(std::move(result)); });
+	engine.reset();
+	REQUIRE(leftResult.wait_for(std::chrono::seconds(0)) == std::future_status::ready);
+	CHECK_THAT(leftResult.get().error, ContainsSubstring("stopped"));
+	CHECK(stored == 3);
 }
 
 TEST_CASE("a listener gets every event before the command's result, until it is destroyed", "[unit]")
@@ -241,4 +274,14 @@ TEST_CASE("values are checked against their JSON schema", "[unit]")
 	CHECK(validate(Json::parse(R"({"name": "a", "tags": ["x", 2]})"), schema) == "parameters.tags[1] must be string");
 	CHECK(validate(Json::parse(R"({"name": "a", "level": 3})"), schema) == "parameters.level is not allowed");
 	CHECK(validate(Json::parse("[]"), schema, "result") == "result must be object");
+}
+
+TEST_CASE("numbers are checked against the schema's minimum and maximum", "[unit]")
+{
+	const Json schema = Json::parse(R"({"type": "number", "minimum": 0.5, "maximum": 4})");
+	CHECK(validate(0.5, schema, "scale").empty());
+	CHECK(validate(4, schema, "scale").empty());
+	CHECK(validate(0.25, schema, "scale") == "scale must be at least 0.5");
+	CHECK(validate(5, schema, "scale") == "scale must be at most 4");
+	CHECK(validate("big", Json::parse(R"({"minimum": 1})"), "name").empty()); // only numbers have a minimum
 }

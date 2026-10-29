@@ -1,0 +1,131 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+GNUbase's changes to Rubber Band Library v4.0.0 (ext/rubberband), applied to a copy of its sources at configure time
+by src/engine/CMakeLists.txt; docs/dependencies.md explains why. Text before the first diff is ignored by git apply.
+
+diff --git a/src/common/BQResampler.cpp b/src/common/BQResampler.cpp
+index 153f9cc..320f744 100644
+--- a/src/common/BQResampler.cpp
++++ b/src/common/BQResampler.cpp
+@@ -72,6 +72,13 @@ BQResampler::BQResampler(Parameters parameters, int channels) :
+     }
+ 
+     int phase_reserve = 2 * int(round(m_initial_rate));
++    if (m_dynamism == RatioOftenChanging) {
++        // GNUbase: room for the most phases any ratio can need, so
++        // that changing the ratio never allocates. pick_params()
++        // limits the numerator, the number of phases, to rational_max
++        // plus the ratio plus one; 64 covers ratios up to 62.
++        phase_reserve = max(phase_reserve, m_qparams.rational_max + 64);
++    }
+     int buffer_reserve = 1000 * m_channels;
+     m_state_a.phase_info.reserve(phase_reserve);
+     m_state_a.buffer.reserve(buffer_reserve);
+@@ -556,7 +563,7 @@ BQResampler::state_for_ratio(BQResampler::state &target_state,
+             target_state.buffer = prev_state.buffer;
+             target_state.fill = prev_state.fill;
+         } else {
+-            target_state.buffer = floatbuf(buffer_length, 0.0);
++            target_state.buffer.assign(buffer_length, 0.0);
+             for (int i = 0; i < prev_state.fill; ++i) {
+                 int offset = i - prev_state.centre;
+                 int new_ix = offset + target_state.centre;
+@@ -575,7 +582,7 @@ BQResampler::state_for_ratio(BQResampler::state &target_state,
+             target_state.current_phase = n_phases - 1;
+         }
+     } else {
+-        target_state.buffer = floatbuf(buffer_length, 0.0);
++        target_state.buffer.assign(buffer_length, 0.0);
+     }
+ }
+ 
+diff --git a/src/faster/PercussiveAudioCurve.cpp b/src/faster/PercussiveAudioCurve.cpp
+index ce4bedf..48ac39a 100644
+--- a/src/faster/PercussiveAudioCurve.cpp
++++ b/src/faster/PercussiveAudioCurve.cpp
+@@ -35,7 +35,8 @@ namespace RubberBand
+ PercussiveAudioCurve::PercussiveAudioCurve(Parameters parameters) :
+     AudioCurveCalculator(parameters)
+ {
+-    m_prevMag = allocate_and_zero<double>(m_fftSize/2 + 1);
++    m_capacity = m_fftSize/2 + 1;
++    m_prevMag = allocate_and_zero<double>(m_capacity);
+ }
+ 
+ PercussiveAudioCurve::~PercussiveAudioCurve()
+@@ -52,7 +53,13 @@ PercussiveAudioCurve::reset()
+ void
+ PercussiveAudioCurve::setFftSize(int newSize)
+ {
+-    m_prevMag = reallocate(m_prevMag, m_fftSize/2 + 1, newSize/2 + 1);
++    // GNUbase: only ever grow the buffer, so that switching between
++    // FFT sizes, as real-time mode does when the ratio or pitch scale
++    // changes, allocates nothing once the largest size has been seen
++    if (newSize/2 + 1 > m_capacity) {
++        m_prevMag = reallocate(m_prevMag, m_capacity, newSize/2 + 1);
++        m_capacity = newSize/2 + 1;
++    }
+     AudioCurveCalculator::setFftSize(newSize);
+     reset();
+ }
+diff --git a/src/faster/PercussiveAudioCurve.h b/src/faster/PercussiveAudioCurve.h
+index 1f15295..6c1dca3 100644
+--- a/src/faster/PercussiveAudioCurve.h
++++ b/src/faster/PercussiveAudioCurve.h
+@@ -47,6 +47,7 @@ public:
+ 
+ protected:
+     double *R__ m_prevMag;
++    int m_capacity; // GNUbase: elements allocated in m_prevMag
+ };
+ 
+ }
+diff --git a/src/faster/R2Stretcher.cpp b/src/faster/R2Stretcher.cpp
+index 52737a4..5c623c6 100644
+--- a/src/faster/R2Stretcher.cpp
++++ b/src/faster/R2Stretcher.cpp
+@@ -600,6 +600,17 @@ R2Stretcher::configure()
+         windowSizes.insert(m_baseFftSize / 2);
+         windowSizes.insert(m_baseFftSize * 2);
+ //        windowSizes.insert(m_baseFftSize * 4);
++        // GNUbase: every size calculateSizes() can pick in real-time
++        // mode, from the smallest window after resampling (512) up to
++        // 4 * m_baseFftSize, so that reconfigure() never has to
++        // allocate a window or an FFT when the ratio or pitch changes
++        size_t factor =
++            (m_options & RubberBandStretcher::OptionSmoothingOn) ? 2 : 1;
++        for (size_t size = std::min(size_t(512), m_baseFftSize);
++             size <= m_baseFftSize * 4; size *= 2) {
++            windowSizes.insert(size);
++            windowSizes.insert(size * factor);
++        }
+     }
+     windowSizes.insert(m_fftSize);
+     windowSizes.insert(m_aWindowSize);
+@@ -687,6 +698,12 @@ R2Stretcher::configure()
+     m_phaseResetAudioCurve = new CompoundAudioCurve
+         (CompoundAudioCurve::Parameters(m_sampleRate, m_fftSize));
+     m_phaseResetAudioCurve->setType(m_detectorType);
++    if (m_realtime) {
++        // GNUbase: the curve allocates for the largest FFT size now,
++        // not in reconfigure() when the FFT size first gets there
++        m_phaseResetAudioCurve->setFftSize(int(*windowSizes.rbegin()));
++        m_phaseResetAudioCurve->setFftSize(int(m_fftSize));
++    }
+ 
+     delete m_silentAudioCurve;
+     m_silentAudioCurve = new SilentAudioCurve
+diff --git a/src/faster/StretcherChannelData.cpp b/src/faster/StretcherChannelData.cpp
+index 8d76f41..c3ff5e6 100644
+--- a/src/faster/StretcherChannelData.cpp
++++ b/src/faster/StretcherChannelData.cpp
+@@ -60,7 +60,9 @@ R2Stretcher::ChannelData::construct(const std::set<size_t> &sizes,
+     std::set<size_t>::const_iterator i = sizes.end();
+     if (i != sizes.begin()) {
+         --i;
+-        if (*i > maxSize) maxSize = *i;
++        // GNUbase: setSizes() needs twice the window size, so leave
++        // room for twice the largest one; it then never reallocates
++        if (*i * 2 > maxSize) maxSize = *i * 2;
+     }
+ 
+     // max possible size of the real "half" of freq data
