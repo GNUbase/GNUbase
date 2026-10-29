@@ -126,7 +126,7 @@ job()
 		local sanitizers=thread
 		[ "$1" = asan-ubsan ] && sanitizers=address,undefined
 		export ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
-		export TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1
+		export TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1:suppressions=$root/tools/tsan-suppressions.txt
 		cmake --preset linux-clang -B "build/$1" -DGNUBASE_SANITIZERS=$sanitizers -DCMAKE_C_COMPILER_LAUNCHER=ccache \
 			-DCMAKE_CXX_COMPILER_LAUNCHER=ccache && cmake --build "build/$1" --target gnubase-tests &&
 			runTests "build/$1" Debug
@@ -185,7 +185,13 @@ if $here || [ $os != windows ]; then
 	exit
 fi
 
-# Windows: the Linux jobs go to WSL (see --wsl above).
+# Windows: the Linux jobs go to WSL (see --wsl above). The Windows jobs build this folder, so its submodules move to
+# the commits HEAD records, as in CI's checkout; after a merge they often lag behind.
+if git submodule status --recursive | grep -q '^+'; then
+	echo "Moving submodules to the commits HEAD records."
+	git submodule update -q --init --recursive && git submodule update -q --init --checkout ext/vst3sdk &&
+		git -C ext/vst3sdk submodule update -q --init base cmake pluginterfaces public.sdk || exit 2
+fi
 [ -z "$(git status --porcelain --untracked-files=no)" ] ||
 	echo "Note: uncommitted changes are not checked, only HEAD $(git rev-parse --short HEAD)." >&2
 started=$SECONDS
