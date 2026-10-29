@@ -55,7 +55,7 @@ Details and reasoning (processes, modules, threads, engine API, IPC) are in [doc
 - `#pragma once`, RAII, no raw `new`/`delete`, no `using namespace` in headers.
 - Small, focused commits with tests green.
 - CMake lists source files one per line, sorted, so pull requests that add files rarely conflict.
-- Test locally before pushing; CI confirms the other platforms. Merge `main` into a branch only when it conflicts or you need something from it, since every push runs all of CI again. Resolve conflicts in `docs/lua.md` and `docs/mcp.md` by taking either side and running the tests with `GNUBASE_UPDATE_DOCS=1`.
+- Test locally before pushing: `tools/ci-local.sh` runs every CI job except macOS on this machine; CI confirms. Don't wait for CI to start the next piece of work: work that needs an unmerged pull request branches from it, and its pull request targets that branch until the first one is merged. Merge `main` into a branch only when it conflicts or you need something from it, since every push runs all of CI again. Resolve conflicts in `docs/lua.md` and `docs/mcp.md` by taking either side and running the tests with `GNUBASE_UPDATE_DOCS=1`.
 
 ## Repository layout (target)
 ```
