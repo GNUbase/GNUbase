@@ -489,8 +489,8 @@ namespace
 
 	graph::NodeDesc instrumentNode(std::shared_ptr<graph::Processor> instrument)
 	{
-		return {
-			graph::NodeKind::Channel, 0, 2, std::make_shared<InstrumentChannel>(sequencer({}), std::move(instrument))};
+		return {graph::NodeKind::Channel, 0, ChannelFormat::Stereo,
+			std::make_shared<InstrumentChannel>(sequencer({}), std::move(instrument))};
 	}
 }
 
@@ -508,7 +508,7 @@ TEST_CASE("every note ends when several MIDI tracks fill an instrument's input i
 		for (const auto& [start, end] : {std::pair{0, 400}, std::pair{400, 800}})
 			for (int n = 0; n < 256; ++n)
 				notes.push_back(note(start, end, n % 128, (start / 50) + (track * 2) + (n / 128)));
-		desc.nodes.push_back({graph::NodeKind::Channel, 0, 0, sequencer(std::move(notes))});
+		desc.nodes.push_back({graph::NodeKind::Channel, 0, ChannelFormat::None, sequencer(std::move(notes))});
 		desc.events.push_back({track, 4});
 	}
 	desc.nodes.push_back(instrumentNode(recorder));
@@ -525,8 +525,8 @@ TEST_CASE("one source's events at one offset reach the instrument in their order
 	// Another MIDI track's note of the same pitch ends there, and its note-off still comes before the note-ons.
 	auto recorder = std::make_shared<Recorder>();
 	graph::GraphDesc desc;
-	desc.nodes.push_back({graph::NodeKind::Channel, 0, 0, nullptr});
-	desc.nodes.push_back({graph::NodeKind::Channel, 0, 0, nullptr});
+	desc.nodes.push_back({graph::NodeKind::Channel, 0, ChannelFormat::None, nullptr});
+	desc.nodes.push_back({graph::NodeKind::Channel, 0, ChannelFormat::None, nullptr});
 	desc.nodes.push_back(instrumentNode(recorder));
 	desc.events = {{0, 2}, {1, 2}};
 	const graph::CompiledGraph compiled(desc, 48000.0, 8);
