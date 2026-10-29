@@ -422,10 +422,11 @@ namespace gnubase::engine
 
 			double fadeInSeconds(const AudioEvent& event) const
 			{
+				// Only a crossfade that plays; one that rests leaves the event's own fade.
 				const Seconds in = seconds(event);
-				const auto from = m_project.audioEvents.find(event.crossfade.from);
-				if (event.crossfade.from != 0 && from != m_project.audioEvents.end())
-					return crossfadeSeconds(event.crossfade.length, in.rate, seconds(from->second), in);
+				if (crossfadeApplies(m_project, event))
+					return crossfadeSeconds(
+						event.crossfade.length, in.rate, seconds(m_project.audioEvents.at(event.crossfade.from)), in);
 				return static_cast<double>(event.fadeIn.length) / in.rate;
 			}
 
@@ -433,7 +434,7 @@ namespace gnubase::engine
 			{
 				const Seconds out = seconds(event);
 				for (const auto& [id, to] : m_project.audioEvents)
-					if (to.crossfade.from == event.id)
+					if (to.crossfade.from == event.id && crossfadeApplies(m_project, to))
 						return crossfadeSeconds(to.crossfade.outLength, out.rate, out, seconds(to));
 				return static_cast<double>(event.fadeOut.length) / out.rate;
 			}
@@ -564,7 +565,55 @@ namespace gnubase::engine
 				for (const pugi::xml_node lanes : arrangement.children("Lanes"))
 					readLanes(lanes, {});
 				readMarkers(arrangement.child("Markers"));
+				joinCrossfades();
 				return std::move(m_project);
+			}
+
+			// DAWproject has no crossfades: applications write them as a fade out and a fade in where two events
+			// overlap. So where an event starts inside the one before it on its track and ends after it, and both
+			// fade at the ends that meet, the two fades become a crossfade between them, as long as the fades and
+			// at most over the whole overlap. Left as fades, the event in front would fade in from silence while the
+			// one behind it is cut off at full volume.
+			void joinCrossfades()
+			{
+				using Placed = std::pair<EventSpan, AudioEvent*>;
+				std::map<ObjectId, std::vector<Placed>> tracks;
+				for (auto& [id, event] : m_project.audioEvents)
+					if (!event.mute)
+						tracks[event.track].emplace_back(eventSpan(m_project, event), &event);
+				std::set<ObjectId> fadingOut; // an event fades out into one event only
+				for (auto& [track, events] : tracks)
+				{
+					std::stable_sort(events.begin(), events.end(),
+						[](const Placed& a, const Placed& b) { return a.first.start < b.first.start; });
+					for (size_t i = 0; i < events.size(); ++i)
+					{
+						const EventSpan& b = events[i].first;
+						AudioEvent& in = *events[i].second;
+						for (size_t j = i; j-- > 0 && in.fadeIn.length > 0;)
+						{
+							const EventSpan& a = events[j].first;
+							AudioEvent& out = *events[j].second;
+							const bool consecutive = a.start < b.start && b.start < a.end && a.end <= b.end;
+							if (!consecutive || out.fadeOut.length <= 0 || fadingOut.count(out.id) != 0)
+								continue;
+							// A fade over the whole overlap, give or take a frame of rounding, is the whole overlap.
+							const time::Samples overlap = a.end - b.start;
+							const auto length = [overlap](time::Samples fade, double ratio)
+							{
+								const auto most =
+									static_cast<time::Samples>(std::floor(static_cast<double>(overlap) / ratio));
+								return fade + 1 >= most ? 0 : fade;
+							};
+							in.crossfade.from = out.id;
+							in.crossfade.length = length(in.fadeIn.length, b.ratio);
+							in.crossfade.outLength = length(out.fadeOut.length, a.ratio);
+							in.fadeIn.length = 0;
+							out.fadeOut.length = 0;
+							fadingOut.insert(out.id);
+						}
+					}
+				}
 			}
 
 			// Where a media file named in project.xml is now: extracted, or where it was referenced.
@@ -798,6 +847,8 @@ namespace gnubase::engine
 				const double duration = clip.attribute("duration").as_double();
 				const double playStart = clip.attribute("playStart").as_double(0.0);
 				Context content = context;
+				content.fadeIn = 0.0; // a clip inside another one has only its own fades
+				content.fadeOut = 0.0;
 				if (const pugi::xml_attribute unit = clip.attribute("contentTimeUnit"))
 					content.seconds = std::string(unit.as_string()) == "seconds";
 				content.origin = content.seconds == context.seconds ? start - playStart : 0.0;

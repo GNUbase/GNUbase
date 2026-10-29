@@ -628,16 +628,19 @@ TEST_CASE(
 		INFO(value << " instead of about " << expected);
 		CHECK(std::abs(value.get<double>() - expected) <= 1.0);
 	};
-	const double overlap = ((20000.0 / 44100.0) - (15000.0 / 48000.0)) * 44100.0;
 	Json events = loaded(entries);
 	REQUIRE(events.size() == 3);
 	near(events[0].at("fadeIn").at("length"), 0.0);
-	near(events[0].at("fadeOut").at("length"), overlap);
-	near(events[1].at("fadeIn").at("length"), overlap);
 	near(events[2].at("fadeIn").at("length"), 4410.0);
 	near(events[2].at("fadeOut").at("length"), 2205.0);
 	CHECK(events[2].at("fadeIn").at("shape") == "linear");
-	CHECK(events[1].at("crossfade").is_null());
+	// The fade out and fade in over the overlap come back as a crossfade over all of it, not as fades that would
+	// leave the event behind cut off at full volume.
+	CHECK(events[1].at("crossfade") ==
+		Json{{"from", events[0].at("id")}, {"mode", "equalGain"}, {"shape", "linear"}, {"outShape", "linear"},
+			{"length", 0}, {"outLength", 0}});
+	CHECK(events[0].at("fadeOut").at("length") == 0);
+	CHECK(events[1].at("fadeIn").at("length") == 0);
 
 	// Fade times in beats, at 120 beats per minute.
 	std::string& xml = entries.at("project.xml");
@@ -647,6 +650,90 @@ TEST_CASE(
 	events = loaded(entries);
 	near(events[2].at("fadeIn").at("length"), 2205.0);
 	near(events[2].at("fadeOut").at("length"), 1102.5);
+}
+
+TEST_CASE("without GNUbase's entry, crossfades come back from the fade times of the events they join", "[integration]")
+{
+	const test::TempDir dir;
+	const std::string audio = utf8(dir.path() / "take.wav");
+	writeWav(audio, 48000.0, 1, 200000);
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = idOf(run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}), "track");
+	const ObjectId media = idOf(run(client, "media.add", {{"path", audio}}), "media");
+	const ObjectId clip = idOf(run(client, "clip.add", {{"media", media}}), "clip");
+	const auto add = [&](int64_t position, int64_t length)
+	{
+		return idOf(run(client, "audioEvent.add",
+						{{"track", track}, {"clip", clip}, {"position", position}, {"length", length}}),
+			"event");
+	};
+	// A crossfade over part of the overlap.
+	const ObjectId a = add(0, 20000);
+	const ObjectId b = add(15000, 20000);
+	run(client, "crossfade.set", {{"from", a}, {"to", b}, {"mode", "custom"}, {"length", 2000}, {"outLength", 3000}});
+	// A crossfade that rests since its events no longer overlap: they play their own fades.
+	const ObjectId c = add(50000, 20000);
+	const ObjectId d = add(60000, 20000);
+	run(client, "crossfade.set", {{"from", c}, {"to", d}});
+	run(client, "audioEvent.set", {{"event", d}, {"position", 75000}});
+	run(client, "audioEvent.setFades", {{"event", c}, {"fadeOut", {{"length", 500}}}});
+	run(client, "audioEvent.setFades", {{"event", d}, {"fadeIn", {{"length", 1000}}}});
+	// Overlapping events of which only one fades there.
+	const ObjectId e = add(100000, 20000);
+	add(110000, 20000);
+	run(client, "audioEvent.setFades", {{"event", e}, {"fadeOut", {{"length", 4000}}}});
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+
+	std::map<std::string, std::string> entries = readZip(file);
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	const std::string other = utf8(dir.path() / "other.dawproject");
+	writeZip(other, entries);
+	run(client, "project.load", {{"path", other}});
+	const Json events = run(client, "project.get").at("audioEvents");
+	REQUIRE(events.size() == 6);
+	const auto near = [](const Json& value, double expected)
+	{
+		INFO(value << " instead of about " << expected);
+		CHECK(std::abs(value.get<double>() - expected) <= 1.0);
+	};
+	const Json& crossfade = events[1].at("crossfade");
+	REQUIRE(!crossfade.is_null());
+	CHECK(crossfade.at("from") == events[0].at("id"));
+	near(crossfade.at("length"), 2000.0);
+	near(crossfade.at("outLength"), 3000.0);
+	CHECK(events[0].at("fadeOut").at("length") == 0);
+	CHECK(events[1].at("fadeIn").at("length") == 0);
+
+	CHECK(events[3].at("crossfade").is_null());
+	near(events[2].at("fadeOut").at("length"), 500.0);
+	near(events[3].at("fadeIn").at("length"), 1000.0);
+
+	CHECK(events[5].at("crossfade").is_null());
+	near(events[4].at("fadeOut").at("length"), 4000.0);
+}
+
+TEST_CASE("a clip inside another one has only its own fades", "[integration]")
+{
+	const test::TempDir dir;
+	const std::string kick = utf8(dir.path() / "kick.wav");
+	writeWav(kick, 48000.0, 1, 96000);
+	writeWav(utf8(dir.path() / "loop.wav"), 44100.0, 2, 44100);
+	std::string xml = g_richExample;
+	const std::string outer = R"(name="Outer")";
+	xml.replace(xml.find(outer), outer.size(), outer + R"( fadeTimeUnit="seconds" fadeInTime="0.1" fadeOutTime="0.2")");
+	const std::string file = utf8(dir.path() / "rich.dawproject");
+	writeZip(file, {{"project.xml", xml}, {"audio/kick.wav", fileText(kick)}});
+
+	Engine engine;
+	Client client(engine);
+	run(client, "project.load", {{"path", file}, {"mediaFolder", utf8(dir.path() / "media")}});
+	const Json project = run(client, "project.get");
+	const Json kickTrack = withId(project.at("tracks"), "name", "Kick");
+	const Json kickEvent = withId(project.at("audioEvents"), "track", kickTrack.at("id"));
+	CHECK(kickEvent.at("fadeIn").at("length") == 0);
+	CHECK(kickEvent.at("fadeOut").at("length") == 0);
 }
 
 TEST_CASE("saving keeps the history, loading starts a new one", "[integration]")
