@@ -486,7 +486,7 @@ namespace gnubase::plugin::remote
 		}
 	}
 
-	void RemotePlugin::mirror(const Event& event) noexcept
+	void RemotePlugin::mirror(const Event& event, bool markDirty) noexcept
 	{
 		if (!isCoreEvent(event) || event.type != EventType::ParamValue || isPerNote(event))
 			return;
@@ -495,7 +495,7 @@ namespace gnubase::plugin::remote
 		if (found == m_paramIndex.end() || found->first != event.param)
 			return;
 		m_values[found->second].store(event.value, std::memory_order_relaxed);
-		if (m_tracking.load(std::memory_order_relaxed))
+		if (markDirty || m_tracking.load(std::memory_order_relaxed))
 			m_dirty[found->second].store(true, std::memory_order_relaxed);
 	}
 
@@ -526,9 +526,16 @@ namespace gnubase::plugin::remote
 		m_busy.store(true);
 		if (Binding* live = m_live.load(); live != nullptr)
 		{
+			// Only a plugin that refused to start isn't started. If Start came too late, or the host couldn't take
+			// it yet, the next block sends it again first; the host ignores a Start while it processes.
+			bool refused = false;
 			if (!live->started)
-				live->started = exchange(*live, nullptr, Start, m_noEvents, nullptr) != ProcessStatus::Error;
-			started = live->started;
+			{
+				const Exchanged start = exchange(*live, nullptr, Start, m_noEvents, nullptr);
+				live->started = start.status != ProcessStatus::Error;
+				refused = start.sent && !start.late && !live->started;
+			}
+			started = !refused && failure() == Failure::None;
 		}
 		m_busy.store(false, std::memory_order_release);
 		m_processing.store(started, std::memory_order_release);
@@ -538,7 +545,9 @@ namespace gnubase::plugin::remote
 	void RemotePlugin::stopProcessing() noexcept
 	{
 		m_busy.store(true);
-		if (Binding* live = m_live.load(); live != nullptr && live->started)
+		// A Start that came too late may still have started it.
+		if (Binding* live = m_live.load();
+			live != nullptr && (live->started || m_processing.load(std::memory_order_relaxed)))
 		{
 			if (failure() == Failure::None)
 				exchange(*live, nullptr, Stop, m_noEvents, nullptr);
@@ -561,14 +570,17 @@ namespace gnubase::plugin::remote
 			m_busy.store(true);
 			if (Binding* live = m_live.load(); live != nullptr)
 			{
-				// After a move, the new instance starts with its first block.
+				// After a move, the new instance starts with its first block. A Start that isn't answered in time is
+				// sent again with the next block, and this one is silence, so a callback waits one deadline at most.
 				if (!live->started)
-					live->started = exchange(*live, nullptr, Start, m_noEvents, nullptr) != ProcessStatus::Error;
+					live->started = exchange(*live, nullptr, Start, m_noEvents, nullptr).status != ProcessStatus::Error;
 				if (live->started && process.frames <= m_maxFrames)
 				{
-					status = exchange(*live, &process, m_flags, process.eventsIn, &process.eventsOut);
-					if (status != ProcessStatus::Error)
-						m_flags = 0;
+					const Exchanged block = exchange(*live, &process, m_flags, process.eventsIn, &process.eventsOut);
+					status = block.status;
+					// A block the host never got lost its notes and audio: the next one resets the plugin, so no
+					// note hangs.
+					m_flags = block.sent ? 0 : m_flags | Reset;
 				}
 			}
 			m_busy.store(false, std::memory_order_release);
@@ -694,27 +706,70 @@ namespace gnubase::plugin::remote
 		return true;
 	}
 
-	ProcessStatus RemotePlugin::exchange(
+	void RemotePlugin::missed(Binding& binding, std::chrono::steady_clock::time_point sent) noexcept
+	{
+		// A late block is silence for this plugin only. A plugin late for longer than Deadlines::hang hangs: no new
+		// plugins go to its host, and the host's other plugins fail at their next block. A pause in processing that
+		// long, e.g. while stopped, starts a new run of late blocks.
+		if (!m_late || sent - m_lastSent >= m_deadlines.hang)
+			m_lateSince = sent;
+		m_late = true;
+		m_lastSent = sent;
+		if (std::chrono::steady_clock::now() - m_lateSince >= m_deadlines.hang)
+		{
+			fail(Failure::Deadline);
+			binding.host->markHung();
+		}
+	}
+
+	void RemotePlugin::keep(Binding& binding, const EventList& in) noexcept
+	{
+		// A block the host never got: its parameter changes go with the next block that it gets, with the mirror's
+		// values, and its other events are lost.
+		for (const Event& event : in)
+			mirror(event, true);
+		binding.resync.store(true, std::memory_order_release);
+	}
+
+	RemotePlugin::Exchanged RemotePlugin::exchange(
 		Binding& binding, const Process* process, uint32_t flags, const EventList& in, EventList* out) noexcept
 	{
+		Exchanged result;
 		// A host that is gone or hangs fails its plugins at once, without waiting for a deadline per plugin.
 		if (binding.host->exited())
 		{
 			fail(Failure::HostGone);
-			return ProcessStatus::Error;
+			return result;
 		}
 		if (binding.host->hung())
 		{
 			fail(Failure::Deadline);
-			return ProcessStatus::Error;
+			return result;
 		}
+		const auto sentAt = std::chrono::steady_clock::now();
 		ipc::Connection& audio = binding.audio;
-		ipc::AudioBlock block;
-		if (!audio.beginBlock(block)) // the host still holds every slot: it stopped answering
+		if (m_late)
 		{
-			fail(Failure::Deadline);
-			binding.host->markHung();
-			return ProcessStatus::Error;
+			// Answers that came too late are dropped before the next block goes out: the host can't answer a block
+			// while the answer ring is full of them, and would drop it unprocessed.
+			const ipc::WaitResult drained = audio.waitForAnswer(m_sequence + 1, std::chrono::nanoseconds::zero());
+			if (drained == ipc::WaitResult::PeerClosed)
+			{
+				fail(Failure::HostGone);
+				return result;
+			}
+			if (drained == ipc::WaitResult::Ready) // an answer to a block that was never sent
+			{
+				fail(Failure::Protocol);
+				return result;
+			}
+		}
+		ipc::AudioBlock block;
+		if (!audio.beginBlock(block)) // the host still has the two blocks before: it is far behind, or hangs
+		{
+			keep(binding, in);
+			missed(binding, sentAt);
+			return result;
 		}
 
 		// The block's messages: its info with the inputs' constant masks, the transport, the events.
@@ -746,7 +801,7 @@ namespace gnubase::plugin::remote
 		if (!sent) // the host doesn't read its event ring
 		{
 			fail(Failure::Protocol);
-			return ProcessStatus::Error;
+			return result;
 		}
 
 		// The inputs, port after port, each with the channels the instance was activated with.
@@ -772,12 +827,13 @@ namespace gnubase::plugin::remote
 		block.channels = binding.inputChannels;
 		block.eventCount = count;
 		audio.sendBlock(block);
+		result.sent = true;
 
 		// The answer, until the deadline: a number of block periods, or the offline deadline.
 		const bool offline =
 			m_mode == ProcessMode::Offline || (process != nullptr && process->mode == ProcessMode::Offline);
-		const auto deadline = std::chrono::steady_clock::now() +
-			m_deadlines.forBlock(process != nullptr ? frames : m_maxFrames, m_sampleRate, offline);
+		const auto deadline =
+			sentAt + m_deadlines.forBlock(process != nullptr ? frames : m_maxFrames, m_sampleRate, offline);
 		for (;;)
 		{
 			const auto remaining =
@@ -789,36 +845,38 @@ namespace gnubase::plugin::remote
 			if (wait == ipc::WaitResult::PeerClosed || binding.host->exited())
 			{
 				fail(Failure::HostGone);
-				return ProcessStatus::Error;
+				return result;
 			}
 			if (binding.host->hung())
 			{
 				fail(Failure::Deadline);
-				return ProcessStatus::Error;
+				return result;
 			}
 			if (remaining <= g_slice)
 			{
-				// No new plugins go to its host, and its other plugins fail at their next block.
-				fail(Failure::Deadline);
-				binding.host->markHung();
-				return ProcessStatus::Error;
+				// Silence for this block. Its answer, when it comes, is dropped by the next block's wait, so it never
+				// mixes into a later block; the output events it carries are lost.
+				result.late = true;
+				missed(binding, sentAt);
+				return result;
 			}
 		}
+		m_late = false;
+		m_lastSent = sentAt;
 		ipc::AudioBlock reply;
 		if (audio.receiveBlock(reply) != ipc::ReadStatus::Ok)
 		{
 			fail(Failure::Protocol);
-			return ProcessStatus::Error;
+			return result;
 		}
-		ProcessStatus status = ProcessStatus::Error;
-		const bool valid = readReply(binding, reply, process, out, status);
+		const bool valid = readReply(binding, reply, process, out, result.status);
 		audio.releaseBlock();
 		if (!valid)
 		{
 			fail(Failure::Protocol);
-			return ProcessStatus::Error;
+			result.status = ProcessStatus::Error;
 		}
-		return status;
+		return result;
 	}
 
 	bool RemotePlugin::readReply(Binding& binding, const ipc::AudioBlock& reply, const Process* process, EventList* out,
@@ -1122,7 +1180,8 @@ namespace gnubase::plugin::remote
 		}
 		if (old->active)
 			publish(fresh.get());
-		applyInfo(std::move(info), true);
+		// An active instance reports its latency only once activated.
+		applyInfo(old->active ? std::move(activeInfo) : std::move(info), true);
 		if (!m_processing.load(std::memory_order_acquire))
 			flushResync(*fresh);
 		release(*old);

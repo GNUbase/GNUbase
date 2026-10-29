@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # GNUbase's test plugins (README.md): every plugin as a CLAP plugin in <build>/plugins/<config>/clap and as a VST3
-# plugin in <build>/plugins/<config>/vst3, with each platform's layout.
-# All of them are also linked into one static library for the test format of the tests' plugin host
-# (tests/pluginhost/testformat.h).
+# plugin in <build>/plugins/<config>/vst3, with each platform's layout. All of them are also linked into one static
+# library for the test format of the tests' plugin host (tests/pluginhost/testformat.h).
 
 # The CLAP SDK is header-only.
 add_library(clap-sdk INTERFACE)

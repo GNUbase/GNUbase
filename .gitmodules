@@ -40,6 +40,9 @@
 	path = ext/lua
 	url = https://github.com/lua/lua.git
 	shallow = true
+[submodule "ext/rubberband"]
+	path = ext/rubberband
+	url = https://github.com/breakfastquay/rubberband.git
 [submodule "ext/clap"]
 	path = ext/clap
 	url = https://github.com/free-audio/clap.git

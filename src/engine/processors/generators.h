@@ -3,6 +3,7 @@
 
 #include "engine/graph/processor.h"
 
+#include <array>
 #include <cstdint>
 
 // Signal generators. They replace their node's input and write the same signal to every channel.
@@ -68,6 +69,19 @@ namespace gnubase::engine::processors
 		double m_level = 1.0;
 		uint64_t m_period = 48000; // samples between impulses
 		uint64_t m_untilNext = 0;  // samples until the next impulse
+	};
+
+	// An instrument for tests: each frame, how many notes are on (channel 0 and from channel 2 on) and the sum of their
+	// pitches (channel 1), after the events at that frame. A note is one pitch on one MIDI channel.
+	class NoteProbe : public graph::Processor
+	{
+	public:
+		void process(const graph::ProcessContext& context) noexcept override;
+
+	private:
+		std::array<bool, size_t{16} * 128> m_on{};
+		int m_count = 0;
+		int m_pitches = 0;
 	};
 
 	// Each frame's project position in samples while the transport plays, -1 while it is stopped, so tests can check

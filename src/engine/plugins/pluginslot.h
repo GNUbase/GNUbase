@@ -13,6 +13,11 @@
 
 namespace gnubase::engine::plugins
 {
+	// Appends a graph event to a plugin's events, at the offset clamped to the block of `frames`: notes and parameter
+	// changes as plugin events, the other MIDI messages as MIDI 1.0 bytes (a program change after its bank select)
+	// and SysEx with its bytes copied. Real-time safe.
+	void convertEvent(const graph::ProcessEvent& event, uint32_t frames, plugin::EventList& out) noexcept;
+
 	// The processor of a plugin slot node (graph::NodeKind::PluginSlot): hosts any plugin::Plugin, a built-in one or
 	// a remote plugin::remote::RemotePlugin, so the graph doesn't know the difference (docs/plugin-api.md). It
 	// activates the plugin when the graph is compiled, and per block passes the node's audio to the plugin's main
