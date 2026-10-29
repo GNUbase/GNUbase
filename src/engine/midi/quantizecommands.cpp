@@ -156,6 +156,13 @@ namespace gnubase::engine::midi
 			return settings;
 		}
 
+		PartSpan spanOf(const Project& project, const MidiPart& part)
+		{
+			const time::Position end{part.position.base, part.position.value + part.length};
+			return {time::toTicks(part.position, project.tempo, project.sampleRate),
+				time::toTicks(end, project.tempo, project.sampleRate)};
+		}
+
 		MidiPart& findPart(Project& project, ObjectId id)
 		{
 			const auto part = project.midiParts.find(id);
@@ -198,7 +205,7 @@ namespace gnubase::engine::midi
 			return targets;
 		}
 
-		using NoteFunction = std::function<bool(Note& note, time::Ticks partStart)>;
+		using NoteFunction = std::function<bool(Note& note, const PartSpan& part)>;
 
 		// Runs function on every target note and announces the notes it changed, per part.
 		Json forNotes(Project& project, CommandContext& context, const NoteFunction& function)
@@ -206,12 +213,12 @@ namespace gnubase::engine::midi
 			Json changed = Json::array();
 			for (const Target& target : targets(project, context.parameters()))
 			{
-				const time::Ticks partStart = time::toTicks(target.part->position, project.tempo, project.sampleRate);
+				const PartSpan span = spanOf(project, *target.part);
 				Json notes = Json::array();
 				for (const ObjectId id : target.notes)
 				{
 					Note& note = target.part->notes.at(id);
-					if (function(note, partStart))
+					if (function(note, span))
 						notes.push_back(toJson(note));
 				}
 				if (notes.empty())
@@ -274,7 +281,8 @@ namespace gnubase::engine::midi
 			"(see quantize.set), or preset's, changed by settings.";
 		const std::string originText =
 			"Quantizing starts from the notes' original timing unless settings.soft is true, and keeps it, so "
-			"quantize.reset puts it back. Returns the notes that changed.";
+			"quantize.reset puts it back. Notes moved by other means since they were quantized start from where they "
+			"are; velocities and lengths changed by other means stay. Returns the notes that changed.";
 
 		model.addEdit(engine,
 			{"quantize.apply", 1,
@@ -283,14 +291,14 @@ namespace gnubase::engine::midi
 				"their lengths. " +
 					targetText + " " + originText +
 					" Grids are in project time and start again at every bar; notes don't move before their part's "
-					"start.",
+					"start or to or past its end.",
 				objectSchema(withSettings), notesResult, false},
 			"Quantize",
 			[presets](Project& project, CommandContext& context)
 			{
 				const QuantizeGrid grid(settingsFor(project, *presets, context.parameters()), project.signatures);
 				return forNotes(project, context,
-					[&grid](Note& note, time::Ticks partStart) { return quantizeStart(note, partStart, grid); });
+					[&grid](Note& note, const PartSpan& part) { return quantizeStart(note, part, grid); });
 			});
 		model.addEdit(engine,
 			{"quantize.ends", 1,
@@ -302,7 +310,7 @@ namespace gnubase::engine::midi
 			{
 				const QuantizeGrid grid(settingsFor(project, *presets, context.parameters()), project.signatures);
 				return forNotes(project, context,
-					[&grid](Note& note, time::Ticks partStart) { return quantizeEnd(note, partStart, grid); });
+					[&grid](Note& note, const PartSpan& part) { return quantizeEnd(note, part, grid); });
 			});
 		model.addEdit(engine,
 			{"quantize.lengths", 1,
@@ -317,17 +325,18 @@ namespace gnubase::engine::midi
 			{
 				const std::optional<time::Ticks> length = lengthFrom(context.parameters());
 				const QuantizeGrid grid(settingsFor(project, *presets, context.parameters()), project.signatures);
-				return forNotes(project, context, [&grid, length](Note& note, time::Ticks partStart)
-					{ return quantizeLength(note, partStart, grid, length); });
+				return forNotes(project, context, [&grid, length](Note& note, const PartSpan& part)
+					{ return quantizeLength(note, part, grid, length); });
 			});
 		model.addEdit(engine,
 			{"quantize.reset", 1,
 				"Puts quantized notes back to their timing before quantizing: starts, lengths and velocities. Notes "
-				"changed by other means since keep their timing. Takes the notes of part (only notes, if given) or of "
+				"moved by other means since keep their timing, and velocities and lengths changed by other means stay. "
+				"Takes the notes of part (only notes, if given) or of "
 				"every part in parts and returns the notes that changed.",
 				objectSchema(targetProperties), notesResult, false},
 			"Reset quantize", [](Project& project, CommandContext& context)
-			{ return forNotes(project, context, [](Note& note, time::Ticks) { return resetQuantize(note); }); });
+			{ return forNotes(project, context, [](Note& note, const PartSpan&) { return resetQuantize(note); }); });
 		model.addEdit(engine,
 			{"quantize.freeze", 1,
 				"Makes quantized notes' timing permanent: quantizing starts from it from now on, and quantize.reset no "
@@ -336,7 +345,7 @@ namespace gnubase::engine::midi
 				"the notes that changed.",
 				objectSchema(targetProperties), notesResult, false},
 			"Freeze quantize", [](Project& project, CommandContext& context)
-			{ return forNotes(project, context, [](Note& note, time::Ticks) { return freezeQuantize(note); }); });
+			{ return forNotes(project, context, [](Note& note, const PartSpan&) { return freezeQuantize(note); }); });
 
 		engine.registerCommand(
 			{"quantize.get", 1,
@@ -417,7 +426,8 @@ namespace gnubase::engine::midi
 			{"quantize.extractGroove", 1,
 				"Makes a groove preset from a MIDI part's rhythm: a groove position at every note start, with the "
 				"highest velocity and the longest length of the notes there. The groove is length ticks long, by "
-				"default the part's length, and the preset is named name, by default after the part.",
+				"default the part's length, and the preset is named name, by default after the part. The groove's "
+				"origin is the part's start, so it repeats in phase with the part.",
 				objectSchema({{"part", idSchema}, {"name", stringSchema}, {"length", idSchema}}, {"part"}),
 				presetResult, false},
 			[presets, &model](CommandContext& context)
@@ -428,13 +438,13 @@ namespace gnubase::engine::midi
 				const auto found = project.midiParts.find(id);
 				require(found != project.midiParts.end(), "no MIDI part " + std::to_string(id));
 				const MidiPart& part = found->second;
-				const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate);
-				const time::Ticks end = time::toTicks(
-					{part.position.base, part.position.value + part.length}, project.tempo, project.sampleRate);
-				const auto length = parameters.value("length", end - start);
+				const PartSpan span = spanOf(project, part);
+				const auto length = parameters.value("length", span.end - span.start);
 				require(length > 0, "length must be positive");
 				QuantizePreset preset{parameters.value("name", part.name), {}};
 				preset.settings.groove = extractGroove(part, length);
+				// The points are relative to the part's start: the groove repeats from there, in phase with the part.
+				preset.settings.origin = span.start;
 				require(!preset.settings.groove->points.empty(),
 					"MIDI part " + std::to_string(id) + " has no notes to make a groove from");
 				presets->save(preset);

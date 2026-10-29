@@ -102,8 +102,8 @@ namespace gnubase::engine
 	};
 
 	// A quantized note's timing before it was first quantized, and what quantizing made of it (#132). Resetting puts
-	// the original back. A note whose timing no longer is the quantized one was changed by other means, such as
-	// moving it by hand: its original no longer counts.
+	// the original back. A note whose position no longer is the quantized one was moved by other means, such as by
+	// hand: its original no longer counts. A velocity or length changed by other means stays (midi/quantize.h).
 	struct QuantizeOrigin
 	{
 		NoteTiming original;

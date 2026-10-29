@@ -35,6 +35,9 @@ namespace
 		return g_quarter * numerator / denominator;
 	}
 
+	// A part from the project's start, long enough for the notes of every case.
+	constexpr PartSpan g_part{0, quarters(64)};
+
 	QuantizeSettings gridOf(const std::string& value)
 	{
 		QuantizeSettings settings;
@@ -160,7 +163,7 @@ TEST_CASE("quantizing note starts matches the reference cases", "[unit]")
 		INFO(c.what);
 		Note note = noteAt(c.before);
 		const QuantizeGrid grid(c.settings, time::SignatureMap{});
-		CHECK(quantizeStart(note, 0, grid) == (c.after != c.before));
+		CHECK(quantizeStart(note, g_part, grid) == (c.after != c.before));
 		CHECK(note.position == c.after);
 		CHECK(note.length == g_sixteenth); // the note lengths are maintained
 	}
@@ -182,12 +185,58 @@ TEST_CASE("notes don't move before their part's start", "[unit]")
 {
 	Note note = noteAt(100);
 	// The part starts 1000 ticks after a grid position: the note would move 1100 ticks back.
-	CHECK_FALSE(quantizeStart(note, 1000, QuantizeGrid(gridOf("1/16"), time::SignatureMap{})));
+	CHECK_FALSE(quantizeStart(note, PartSpan{1000, quarters(64)}, QuantizeGrid(gridOf("1/16"), time::SignatureMap{})));
 	CHECK(note.position == 100);
 	// From 300 ticks before the next grid position, it moves within the part.
 	Note late = noteAt(g_sixteenth - 1300);
-	CHECK(quantizeStart(late, 1000, QuantizeGrid(gridOf("1/16"), time::SignatureMap{})));
+	CHECK(quantizeStart(late, PartSpan{1000, quarters(64)}, QuantizeGrid(gridOf("1/16"), time::SignatureMap{})));
 	CHECK(late.position == g_sixteenth - 1000);
+}
+
+TEST_CASE("notes don't move to or past their part's end", "[unit]")
+{
+	// A one-bar part: a note at 3.8 quarters would move to the next bar's downbeat, where it no longer plays.
+	const PartSpan bar{0, quarters(4)};
+	Note note = noteAt(quarters(38, 10));
+	CHECK(!quantizeStart(note, bar, QuantizeGrid(gridOf("1/4"), time::SignatureMap{})));
+	CHECK(note.position == quarters(38, 10));
+	CHECK(!note.origin.has_value());
+
+	SECTION("randomizing doesn't take notes past the end either")
+	{
+		QuantizeSettings settings;
+		settings.groove = grooveAt({0, quarters(4) - 5});
+		settings.randomize = 1000;
+		const QuantizeGrid grid(settings, time::SignatureMap{});
+		size_t atLastTick = 0;
+		for (ObjectId id = 1; id <= 50; ++id)
+		{
+			INFO(id);
+			Note late = noteAt(quarters(39, 10), g_sixteenth, id);
+			CHECK(quantizeStart(late, bar, grid));
+			CHECK(late.position >= quarters(4) - 1005);
+			CHECK(late.position < quarters(4));
+			atLastTick += late.position == quarters(4) - 1 ? 1 : 0;
+		}
+		CHECK(atLastTick > 0);
+	}
+}
+
+TEST_CASE("randomizing doesn't keep notes at the part's start from being quantized", "[unit]")
+{
+	QuantizeSettings settings = gridOf("1/16");
+	settings.randomize = g_sixteenth / 8;
+	const QuantizeGrid grid(settings, time::SignatureMap{});
+	// Downbeats played 300 ticks late: the random offset would take about half of them before the part's start.
+	for (ObjectId id = 1; id <= 50; ++id)
+	{
+		INFO(id);
+		Note note = noteAt(300, g_sixteenth, id);
+		CHECK(quantizeStart(note, g_part, grid));
+		CHECK(note.position >= 0);
+		CHECK(note.position <= settings.randomize);
+		CHECK(note.origin.has_value());
+	}
 }
 
 TEST_CASE("quantizing starts from the original positions unless it is soft", "[unit]")
@@ -199,9 +248,9 @@ TEST_CASE("quantizing starts from the original positions unless it is soft", "[u
 	SECTION("again from the original: the same result")
 	{
 		Note note = noteAt(g_sixteenth * 4 / 10);
-		quantizeStart(note, 0, grid);
+		quantizeStart(note, g_part, grid);
 		CHECK(note.position == g_sixteenth * 2 / 10);
-		CHECK_FALSE(quantizeStart(note, 0, grid));
+		CHECK_FALSE(quantizeStart(note, g_part, grid));
 		CHECK(note.position == g_sixteenth * 2 / 10);
 	}
 	SECTION("soft (iterative) quantizing moves closer every time")
@@ -209,9 +258,9 @@ TEST_CASE("quantizing starts from the original positions unless it is soft", "[u
 		half.soft = true;
 		const QuantizeGrid soft(half, time::SignatureMap{});
 		Note note = noteAt(g_sixteenth * 4 / 10);
-		quantizeStart(note, 0, soft);
+		quantizeStart(note, g_part, soft);
 		CHECK(note.position == g_sixteenth * 2 / 10);
-		quantizeStart(note, 0, soft);
+		quantizeStart(note, g_part, soft);
 		CHECK(note.position == g_sixteenth / 10);
 		// Resetting goes back to before the first time.
 		CHECK(resetQuantize(note));
@@ -220,9 +269,9 @@ TEST_CASE("quantizing starts from the original positions unless it is soft", "[u
 	SECTION("other settings start from the original, not from the last result")
 	{
 		Note note = noteAt(quarters(6, 10));
-		quantizeStart(note, 0, QuantizeGrid(gridOf("1/4"), time::SignatureMap{}));
+		quantizeStart(note, g_part, QuantizeGrid(gridOf("1/4"), time::SignatureMap{}));
 		CHECK(note.position == quarters(1));
-		quantizeStart(note, 0, QuantizeGrid(gridOf("1/16"), time::SignatureMap{}));
+		quantizeStart(note, g_part, QuantizeGrid(gridOf("1/16"), time::SignatureMap{}));
 		CHECK(note.position == quarters(1, 2));
 	}
 }
@@ -236,8 +285,8 @@ TEST_CASE("reset quantize puts the original timing back, freezing makes the quan
 
 	SECTION("reset after quantizing starts and ends")
 	{
-		quantizeStart(note, 0, quarterGrid);
-		quantizeEnd(note, 0, quarterGrid);
+		quantizeStart(note, g_part, quarterGrid);
+		quantizeEnd(note, g_part, quarterGrid);
 		CHECK(note.position == quarters(1));
 		CHECK(note.length == quarters(1)); // the original end at 1.7 quarters goes to 2
 		REQUIRE(note.origin.has_value());
@@ -250,31 +299,63 @@ TEST_CASE("reset quantize puts the original timing back, freezing makes the quan
 	}
 	SECTION("freeze")
 	{
-		quantizeStart(note, 0, quarterGrid);
+		quantizeStart(note, g_part, quarterGrid);
 		CHECK(freezeQuantize(note));
 		CHECK_FALSE(note.origin.has_value());
 		CHECK_FALSE(resetQuantize(note));
 		CHECK(note.position == quarters(1));
 		// Quantizing now starts from the frozen position.
-		CHECK_FALSE(quantizeStart(note, 0, sixteenths));
+		CHECK_FALSE(quantizeStart(note, g_part, sixteenths));
 		CHECK(note.position == quarters(1));
 	}
 	SECTION("a note moved by hand after quantizing")
 	{
-		quantizeStart(note, 0, quarterGrid);
+		quantizeStart(note, g_part, quarterGrid);
 		note.position = quarters(13, 10); // as if moved by another command
 		CHECK_FALSE(resetQuantize(note));
 		CHECK(note.position == quarters(13, 10));
 		// Its new position is its original now.
-		quantizeStart(note, 0, sixteenths);
+		quantizeStart(note, g_part, sixteenths);
 		CHECK(note.position == quarters(5, 4));
 		REQUIRE(note.origin.has_value());
 		CHECK(note.origin.value_or(QuantizeOrigin{}).original.position == quarters(13, 10));
 	}
+	SECTION("a velocity changed after quantizing stays; the note still starts from and resets to its original")
+	{
+		quantizeStart(note, g_part, quarterGrid);
+		note.velocity = 1000; // as if changed by another command
+		CHECK(quantizeStart(note, g_part, sixteenths));
+		CHECK(note.position == quarters(1, 2)); // from the original 0.6 quarters, not from 1
+		CHECK(note.velocity == 1000);
+		CHECK(resetQuantize(note));
+		CHECK(note.position == quarters(6, 10));
+		CHECK(note.length == quarters(11, 10));
+		CHECK(note.velocity == 1000);
+		CHECK(!note.origin.has_value());
+	}
+	SECTION("a length changed after quantizing the start stays; resetting puts the start back")
+	{
+		quantizeStart(note, g_part, quarterGrid);
+		note.length = quarters(2);
+		CHECK(resetQuantize(note));
+		CHECK(note.position == quarters(6, 10));
+		CHECK(note.length == quarters(2));
+	}
+	SECTION("for the length functions, a length changed by hand is a move: they start from it")
+	{
+		quantizeStart(note, g_part, quarterGrid);
+		quantizeEnd(note, g_part, quarterGrid); // the original end at 1.7 quarters goes to 2
+		CHECK(note.length == quarters(1));
+		note.length = quarters(16, 10); // the end at 2.6 quarters, by hand
+		CHECK(quantizeEnd(note, g_part, quarterGrid));
+		CHECK(note.length == quarters(2)); // 2.6 goes to 3, not the original end to 2
+		REQUIRE(note.origin.has_value());
+		CHECK(note.origin.value_or(QuantizeOrigin{}).original.length == quarters(16, 10));
+	}
 	SECTION("a note that quantizing leaves where it was has no origin")
 	{
 		Note onGrid = noteAt(quarters(1));
-		CHECK_FALSE(quantizeStart(onGrid, 0, quarterGrid));
+		CHECK_FALSE(quantizeStart(onGrid, g_part, quarterGrid));
 		CHECK_FALSE(onGrid.origin.has_value());
 	}
 }
@@ -284,28 +365,28 @@ TEST_CASE("quantizing note ends and lengths", "[unit]")
 	SECTION("ends move to the nearest grid position, starts stay")
 	{
 		Note note = noteAt(0, quarters(11, 10));
-		CHECK(quantizeEnd(note, 0, QuantizeGrid(gridOf("1/4"), time::SignatureMap{})));
+		CHECK(quantizeEnd(note, g_part, QuantizeGrid(gridOf("1/4"), time::SignatureMap{})));
 		CHECK(note.position == 0);
 		CHECK(note.length == quarters(1));
 	}
 	SECTION("an end that would come before the start goes to the grid position after it")
 	{
 		Note note = noteAt(quarters(105, 100), quarters(1, 10));
-		quantizeEnd(note, 0, QuantizeGrid(gridOf("1/4"), time::SignatureMap{}));
+		quantizeEnd(note, g_part, QuantizeGrid(gridOf("1/4"), time::SignatureMap{}));
 		CHECK(note.position == quarters(105, 100));
 		CHECK(note.length == quarters(2) - quarters(105, 100));
 	}
 	SECTION("a fixed length")
 	{
 		Note note = noteAt(1234, quarters(3));
-		CHECK(quantizeLength(note, 0, QuantizeGrid(gridOf("1/16"), time::SignatureMap{}), quarters(1, 2)));
+		CHECK(quantizeLength(note, g_part, QuantizeGrid(gridOf("1/16"), time::SignatureMap{}), quarters(1, 2)));
 		CHECK(note.position == 1234);
 		CHECK(note.length == quarters(1, 2));
 	}
 	SECTION("linked to the grid")
 	{
 		Note note = noteAt(100, quarters(3));
-		quantizeLength(note, 0, QuantizeGrid(gridOf("1/16"), time::SignatureMap{}), std::nullopt);
+		quantizeLength(note, g_part, QuantizeGrid(gridOf("1/16"), time::SignatureMap{}), std::nullopt);
 		CHECK(note.length == g_sixteenth);
 	}
 	SECTION("linked to a swing grid: long and short steps")
@@ -315,8 +396,8 @@ TEST_CASE("quantizing note ends and lengths", "[unit]")
 		const QuantizeGrid grid(swing, time::SignatureMap{});
 		Note first = noteAt(0, quarters(3));
 		Note second = noteAt(quarters(1, 2), quarters(3));
-		quantizeLength(first, 0, grid, std::nullopt);
-		quantizeLength(second, 0, grid, std::nullopt);
+		quantizeLength(first, g_part, grid, std::nullopt);
+		quantizeLength(second, g_part, grid, std::nullopt);
 		CHECK(first.length == quarters(2, 3));
 		CHECK(second.length == quarters(1, 3));
 	}
@@ -325,13 +406,13 @@ TEST_CASE("quantizing note ends and lengths", "[unit]")
 		QuantizeSettings settings = gridOf("1/16");
 		settings.catchRange = g_sixteenth / 4;
 		Note note = noteAt(g_sixteenth * 3 / 10, quarters(3));
-		CHECK_FALSE(quantizeLength(note, 0, QuantizeGrid(settings, time::SignatureMap{}), std::nullopt));
+		CHECK_FALSE(quantizeLength(note, g_part, QuantizeGrid(settings, time::SignatureMap{}), std::nullopt));
 		CHECK(note.length == quarters(3));
 	}
 	SECTION("resetting undoes length changes too")
 	{
 		Note note = noteAt(100, quarters(3));
-		quantizeLength(note, 0, QuantizeGrid(gridOf("1/16"), time::SignatureMap{}), quarters(1));
+		quantizeLength(note, g_part, QuantizeGrid(gridOf("1/16"), time::SignatureMap{}), quarters(1));
 		CHECK(resetQuantize(note));
 		CHECK(note.length == quarters(3));
 	}
@@ -348,7 +429,7 @@ TEST_CASE("randomizing moves quantized notes within its range, the same way for 
 		for (ObjectId id = 1; id <= 50; ++id)
 		{
 			Note note = noteAt(g_sixteenth * 9 / 10, g_sixteenth, id);
-			quantizeStart(note, 0, grid);
+			quantizeStart(note, g_part, grid);
 			positions.push_back(note.position);
 		}
 		return positions;
@@ -368,7 +449,7 @@ TEST_CASE("randomizing moves quantized notes within its range, the same way for 
 	{
 		settings.catchRange = g_sixteenth / 20;
 		Note note = noteAt(g_sixteenth / 2);
-		CHECK_FALSE(quantizeStart(note, 0, QuantizeGrid(settings, time::SignatureMap{})));
+		CHECK_FALSE(quantizeStart(note, g_part, QuantizeGrid(settings, time::SignatureMap{})));
 	}
 }
 
@@ -382,13 +463,50 @@ TEST_CASE("a groove moves velocities and lengths toward its own by their strengt
 	settings.velocityStrength = 0.5;
 	settings.lengthStrength = 1.0;
 	Note note = noteAt(quarters(9, 10), quarters(1));
-	CHECK(quantizeStart(note, 0, QuantizeGrid(settings, time::SignatureMap{})));
+	CHECK(quantizeStart(note, g_part, QuantizeGrid(settings, time::SignatureMap{})));
 	CHECK(note.position == quarters(1));
 	CHECK(note.velocity == 50000);
 	CHECK(note.length == quarters(1, 2));
 	CHECK(resetQuantize(note));
 	CHECK(note.velocity == 40000);
 	CHECK(note.length == quarters(1));
+}
+
+TEST_CASE("a groove's velocity and length don't stick when quantizing again", "[unit]")
+{
+	QuantizeSettings settings;
+	Groove groove = grooveAt({0, quarters(1)});
+	groove.points[1].velocity = 60000;
+	groove.points[1].length = quarters(1, 2);
+	settings.groove = groove;
+	settings.velocityStrength = 1.0;
+	settings.lengthStrength = 1.0;
+	Note note = noteAt(quarters(9, 10), quarters(1));
+	quantizeStart(note, g_part, QuantizeGrid(settings, time::SignatureMap{}));
+	CHECK(note.velocity == 60000);
+	CHECK(note.length == quarters(1, 2));
+
+	SECTION("at 0%, the original velocity and length")
+	{
+		settings.velocityStrength = 0.0;
+		settings.lengthStrength = 0.0;
+		CHECK(quantizeStart(note, g_part, QuantizeGrid(settings, time::SignatureMap{})));
+		CHECK(note.position == quarters(1));
+		CHECK(note.velocity == 40000);
+		CHECK(note.length == quarters(1));
+	}
+	SECTION("with a grid, the original velocity")
+	{
+		CHECK(quantizeStart(note, g_part, QuantizeGrid(gridOf("1/4"), time::SignatureMap{})));
+		CHECK(note.position == quarters(1));
+		CHECK(note.velocity == 40000);
+	}
+	SECTION("resetting puts back the velocity and length the groove changed")
+	{
+		CHECK(resetQuantize(note));
+		CHECK(note.velocity == 40000);
+		CHECK(note.length == quarters(1));
+	}
 }
 
 TEST_CASE("a groove is extracted from a part's note starts", "[unit]")
@@ -753,7 +871,36 @@ TEST_CASE("reset quantize leaves notes moved with note.set since", "[integration
 	const std::vector<ObjectId> notes = f.addNotes(part, {quarters(3, 10), quarters(13, 10)});
 	run(f.client, "quantize.apply", {{"part", part}, {"settings", {{"grid", "1/4"}}}});
 	run(f.client, "note.set", {{"part", part}, {"notes", {{{"id", notes[1]}, {"position", quarters(17, 10)}}}}});
+	// A note whose velocity changed still resets, and keeps its new velocity.
+	run(f.client, "note.set", {{"part", part}, {"notes", {{{"id", notes[0]}, {"velocity", 1.0}}}}});
 	const Json reset = run(f.client, "quantize.reset", {{"part", part}});
 	CHECK(reset.at("notes").size() == 1);
 	CHECK(f.positions(part) == std::vector<Ticks>{quarters(3, 10), quarters(17, 10)});
+	CHECK(run(f.client, "project.get").at("midiParts")[0].at("notes")[0].at("velocity") == 1.0);
+}
+
+TEST_CASE("quantize.apply keeps notes inside their part", "[integration]")
+{
+	Fixture f;
+	// A one-bar part: the note at 3.8 quarters stays rather than move to the next bar, where it wouldn't play.
+	const ObjectId part = f.addPart(0, quarters(4));
+	f.addNotes(part, {quarters(38, 10)});
+	CHECK(run(f.client, "quantize.apply", {{"part", part}, {"settings", {{"grid", "1/4"}}}}).at("notes").empty());
+	CHECK(f.positions(part) == std::vector<Ticks>{quarters(38, 10)});
+}
+
+TEST_CASE("a groove extracted from a part that starts later is in phase with it", "[integration]")
+{
+	Fixture f;
+	// The part starts on beat 2, and its notes come a tenth of a quarter late: at 1.1 and 3.1 quarters.
+	const ObjectId drums = f.addPart(quarters(1));
+	f.addNotes(drums, {quarters(1, 10), quarters(21, 10)});
+	const Json preset = run(f.client, "quantize.extractGroove", {{"part", drums}, {"name", "Late"}}).at("preset");
+	CHECK(preset.at("settings").at("origin") == quarters(1));
+
+	// The groove repeats every bar from beat 2: at 5.1 and 7.1 quarters in a part from 4 quarters.
+	const ObjectId played = f.addPart(quarters(4));
+	f.addNotes(played, {quarters(9, 10), quarters(29, 10)});
+	run(f.client, "quantize.apply", {{"part", played}, {"preset", "Late"}});
+	CHECK(f.positions(played) == std::vector<Ticks>{quarters(11, 10), quarters(31, 10)});
 }

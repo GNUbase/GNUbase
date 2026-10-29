@@ -90,13 +90,37 @@ namespace gnubase::engine::midi
 			return {note.position, note.length, note.velocity};
 		}
 
-		// The timing quantizing starts from: the original while the note still has its quantized timing, otherwise
-		// the current one, since the note was changed by other means.
-		NoteTiming originalOf(const Note& note)
+		// What decides whether a note was moved by other means since it was quantized: its position, and for the
+		// length functions its length too.
+		enum class Moved : uint8_t
 		{
-			if (note.origin && note.origin->quantized == timingOf(note))
-				return note.origin->original;
-			return timingOf(note);
+			ByPosition,
+			ByPositionOrLength,
+		};
+
+		// Whether the note still is where quantizing put it.
+		bool stillQuantized(const Note& note, Moved moved)
+		{
+			if (!note.origin || note.origin->quantized.position != note.position)
+				return false;
+			return moved == Moved::ByPosition || note.origin->quantized.length == note.length;
+		}
+
+		// The timing quantizing starts from: the original while the note still is where quantizing put it,
+		// otherwise the current one, since the note was moved by other means. A length or velocity changed by other
+		// means since quantizing counts as the original.
+		NoteTiming originalOf(const Note& note, Moved moved)
+		{
+			const NoteTiming current = timingOf(note);
+			if (!note.origin || !stillQuantized(note, moved))
+				return current;
+			const QuantizeOrigin& origin = *note.origin;
+			NoteTiming original = origin.original;
+			if (current.length != origin.quantized.length)
+				original.length = current.length;
+			if (current.velocity != origin.quantized.velocity)
+				original.velocity = current.velocity;
+			return original;
 		}
 
 		// Gives the note its new timing and remembers the original, unless they are the same.
@@ -113,9 +137,9 @@ namespace gnubase::engine::midi
 			return !(note == before);
 		}
 
-		// Where quantizing moves a position, in project ticks, or nothing if it stays: outside the catch range or
-		// inside the safe range.
-		std::optional<GridPosition> target(const QuantizeGrid& grid, time::Ticks tick, ObjectId note, Edge edge)
+		// Where quantizing moves a position, in project ticks, before randomizing, or nothing if it stays: outside
+		// the catch range or inside the safe range.
+		std::optional<GridPosition> target(const QuantizeGrid& grid, time::Ticks tick)
 		{
 			const QuantizeSettings& settings = grid.settings();
 			const time::Ticks from = grid.preQuantized(tick);
@@ -127,8 +151,7 @@ namespace gnubase::engine::midi
 				return std::nullopt;
 			if (settings.groove && settings.maxMove > 0)
 				distance = std::clamp(distance, -settings.maxMove, settings.maxMove);
-			position.position = from + std::llround(settings.strength * static_cast<double>(distance)) +
-				randomOffset(settings, note, edge);
+			position.position = from + std::llround(settings.strength * static_cast<double>(distance));
 			return position;
 		}
 
@@ -199,43 +222,46 @@ namespace gnubase::engine::midi
 			.position;
 	}
 
-	bool quantizeStart(Note& note, time::Ticks partStart, const QuantizeGrid& grid)
+	bool quantizeStart(Note& note, const PartSpan& part, const QuantizeGrid& grid)
 	{
 		const QuantizeSettings& settings = grid.settings();
-		const NoteTiming original = originalOf(note);
+		const NoteTiming original = originalOf(note, Moved::ByPosition);
 		const NoteTiming from = settings.soft ? timingOf(note) : original;
 		NoteTiming result = timingOf(note);
 		result.position = from.position;
-		const std::optional<GridPosition> moved = target(grid, partStart + from.position, note.id, Edge::Start);
-		if (moved && moved->position >= partStart)
+		result.velocity = from.velocity;
+		const std::optional<GridPosition> moved = target(grid, part.start + from.position);
+		// The randomizing comes after the check, so notes near the part's edges are quantized like the others.
+		if (moved && moved->position >= part.start && moved->position < part.end)
 		{
-			result.position = moved->position - partStart;
-			if (moved->velocity && settings.velocityStrength > 0.0)
+			const time::Ticks position = moved->position + randomOffset(settings, note.id, Edge::Start);
+			result.position = std::clamp(position, part.start, part.end - 1) - part.start;
+			if (moved->velocity)
 				result.velocity = toward(from.velocity, *moved->velocity, settings.velocityStrength);
-			if (moved->length && settings.lengthStrength > 0.0)
+			if (moved->length)
 				result.length = std::max<time::Ticks>(toward(from.length, *moved->length, settings.lengthStrength), 1);
 		}
 		return assign(note, original, result);
 	}
 
-	bool quantizeEnd(Note& note, time::Ticks partStart, const QuantizeGrid& grid)
+	bool quantizeEnd(Note& note, const PartSpan& part, const QuantizeGrid& grid)
 	{
-		const NoteTiming original = originalOf(note);
+		const NoteTiming original = originalOf(note, Moved::ByPositionOrLength);
 		const NoteTiming current = timingOf(note);
 		const NoteTiming& from = grid.settings().soft ? current : original;
 		time::Ticks end = from.position + from.length;
-		if (const std::optional<GridPosition> moved = target(grid, partStart + end, note.id, Edge::End))
-			end = moved->position - partStart;
+		if (const std::optional<GridPosition> moved = target(grid, part.start + end))
+			end = moved->position + randomOffset(grid.settings(), note.id, Edge::End) - part.start;
 		if (end <= current.position)
-			end = grid.next(partStart + current.position) - partStart;
+			end = grid.next(part.start + current.position) - part.start;
 		NoteTiming result = current;
 		result.length = end - current.position;
 		return assign(note, original, result);
 	}
 
-	bool quantizeLength(Note& note, time::Ticks partStart, const QuantizeGrid& grid, std::optional<time::Ticks> length)
+	bool quantizeLength(Note& note, const PartSpan& part, const QuantizeGrid& grid, std::optional<time::Ticks> length)
 	{
-		const NoteTiming original = originalOf(note);
+		const NoteTiming original = originalOf(note, Moved::ByPositionOrLength);
 		NoteTiming result = timingOf(note);
 		if (length)
 		{
@@ -243,7 +269,7 @@ namespace gnubase::engine::midi
 		}
 		else
 		{
-			const time::Ticks start = partStart + result.position;
+			const time::Ticks start = part.start + result.position;
 			const GridPosition position = grid.nearest(start);
 			const time::Ticks catchRange = grid.settings().catchRange;
 			if (catchRange > 0 && std::llabs(position.position - start) > catchRange)
@@ -255,9 +281,9 @@ namespace gnubase::engine::midi
 
 	bool resetQuantize(Note& note)
 	{
-		if (!note.origin || !(note.origin->quantized == timingOf(note)))
+		if (!stillQuantized(note, Moved::ByPosition))
 			return false;
-		const NoteTiming original = note.origin->original;
+		const NoteTiming original = originalOf(note, Moved::ByPosition);
 		note.position = original.position;
 		note.length = original.length;
 		note.velocity = original.velocity;
