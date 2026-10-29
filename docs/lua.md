@@ -348,7 +348,7 @@ Returns:
 
 #### `gnubase.audioEvent.add`
 
-Adds an audio event that plays a section of a clip on an audio track. position is in the track's time base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track plays one event at a time: where events overlap, the one added last plays.
+Adds an audio event that plays a section of a clip on an audio track. position is in the track's time base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track plays one event at a time: where events overlap, the one added last plays, unless they crossfade.
 
 Parameters:
 
@@ -389,6 +389,43 @@ Parameters:
 Returns:
 
 - `event`: object, required
+
+#### `gnubase.audioEvent.setFades`
+
+Changes an audio event's fade in (from its start) or fade out (up to its end): length in the clip's sample frames (0: none) and shape: linear, exponential (slow, then fast), logarithmic (fast, then slow), sCurve (half a cosine) or equalPower (a quarter sine). Together they fit into the event. A crossfade replaces the fades at the ends it joins while it plays.
+
+Parameters:
+
+- `event`: integer, required
+- `fadeIn`: object
+- `fadeOut`: object
+
+Returns:
+
+- `event`: object, required
+
+### autoFades
+
+#### `gnubase.autoFades.set`
+
+Changes the auto fades and crossfades of the project, or of an audio track: fadeIn and fadeOut where an event has no fade of its own at that end (they never stack), crossfades where an event starts on top of another one or ends above one that goes on, unless they crossfade already; there an event's own fade is the crossfade's, mirrored by the event behind. length is 1 to 500 ms; shapes as for audioEvent.setFades; crossfadeMode equalGain or equalPower, with crossfadeShape the fade in as for crossfade.set. A track uses the project's settings until it gets its own; useProject: true goes back to them. Returns the settings that apply.
+
+Parameters:
+
+- `crossfadeMode`: one of "equalGain" | "equalPower" | "custom"
+- `crossfadeShape`: one of "linear" | "exponential" | "logarithmic" | "sCurve" | "equalPower"
+- `crossfades`: boolean
+- `fadeIn`: boolean
+- `fadeInShape`: one of "linear" | "exponential" | "logarithmic" | "sCurve" | "equalPower"
+- `fadeOut`: boolean
+- `fadeOutShape`: one of "linear" | "exponential" | "logarithmic" | "sCurve" | "equalPower"
+- `length`: number
+- `track`: integer
+- `useProject`: boolean
+
+Returns:
+
+- `autoFades`: object, required
 
 ### automation
 
@@ -582,6 +619,20 @@ Parameters:
 
 - `clip`: integer, required
 
+#### `gnubase.clip.setFades`
+
+Changes a clip's fade in or fade out, at its media file's start and end: length in sample frames (0: none) and shape, as for audioEvent.setFades. Every event that plays the clip gets them.
+
+Parameters:
+
+- `clip`: integer, required
+- `fadeIn`: object
+- `fadeOut`: object
+
+Returns:
+
+- `clip`: object, required
+
 ### controller
 
 #### `gnubase.controller.add`
@@ -618,6 +669,34 @@ Parameters:
 Returns:
 
 - `controllers`: array, required
+
+### crossfade
+
+#### `gnubase.crossfade.remove`
+
+Removes the crossfades into and out of an audio event.
+
+Parameters:
+
+- `event`: integer, required
+
+#### `gnubase.crossfade.set`
+
+Crossfades from an audio event into the next one on its track, where they overlap: to must start inside from and end after it. Both play there; from fades out up to its end over outLength (from's clip frames), to fades in from its start over length (to's clip frames); 0, the default, is the whole overlap, so the crossfade is symmetric. mode equalGain (default): the fade out mirrors the fade in (shape linear, exponential, logarithmic or sCurve), so their gains add up to 1; equalPower: quarter sines whose power adds up to 1; custom: shape and outShape of their own. An event fades out into one event only. Changing a crossfade keeps what isn't given. After an edit that moves the events apart, the crossfade rests and both play their own fades until they overlap like that again. Returns to.
+
+Parameters:
+
+- `from`: integer, required
+- `length`: integer
+- `mode`: one of "equalGain" | "equalPower" | "custom"
+- `outLength`: integer
+- `outShape`: one of "linear" | "exponential" | "logarithmic" | "sCurve" | "equalPower"
+- `shape`: one of "linear" | "exponential" | "logarithmic" | "sCurve" | "equalPower"
+- `to`: integer, required
+
+Returns:
+
+- `event`: object, required
 
 ### engine
 
@@ -748,6 +827,158 @@ Only reads; changes nothing.
 Returns:
 
 - `jobs`: array of object, required
+
+### marker
+
+#### `gnubase.marker.activateTrack`
+
+Makes a marker track the active one, which marker commands use when they are given no track.
+
+Parameters:
+
+- `track`: integer, required
+
+#### `gnubase.marker.add`
+
+Adds a position marker, or with type cycle a cycle marker, to a marker track (default: the active one; without a marker track one is added). position and end are in the track's time base (ticks or samples) or "cursor". A position marker defaults to the cursor, a cycle marker to the locators; a cycle marker ends at least one sample after its position. Position and cycle markers are numbered separately on each track; a new marker gets the first free number unless one is given.
+
+Parameters:
+
+- `color`: string or null
+- `end`: integer or string
+- `name`: string
+- `number`: integer
+- `position`: integer or string
+- `track`: integer
+- `type`: one of "position" | "cycle"
+
+Returns:
+
+- `marker`: object, required
+
+#### `gnubase.marker.list`
+
+The markers of a marker track (default: the active one; track 0 if there is none) in timeline order, with their position and end also in the project's samples.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `track`: integer
+
+Returns:
+
+- `markers`: array, required
+- `track`: integer, required
+
+#### `gnubase.marker.locate`
+
+Moves the project cursor to a marker, given by id (marker) or by its number on a marker track (default: the active one) and type (default: position). Cycle markers locate to their start.
+
+Parameters:
+
+- `marker`: integer
+- `number`: integer
+- `track`: integer
+- `type`: one of "position" | "cycle"
+
+Returns:
+
+- `marker`: object or null, required
+- `position`: integer, required
+
+#### `gnubase.marker.locateNext`
+
+Moves the project cursor to the next marker after it on a marker track (default: the active one): position markers and the start and end of cycle markers. Without one the cursor stays and marker is null. Returns the marker and the cursor in samples.
+
+Parameters:
+
+- `track`: integer
+
+Returns:
+
+- `marker`: object or null, required
+- `position`: integer, required
+
+#### `gnubase.marker.locatePrevious`
+
+Moves the project cursor to the previous marker before it on a marker track (default: the active one), like marker.locateNext.
+
+Parameters:
+
+- `track`: integer
+
+Returns:
+
+- `marker`: object or null, required
+- `position`: integer, required
+
+#### `gnubase.marker.range`
+
+The range between the markers around a position in samples, on a marker track (default: the active one): from the last marker at or before it to the next one, counting position markers and the start and end of cycle markers. A range selection between markers spans it.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `position`: integer, required
+- `track`: integer
+
+Returns:
+
+- `end`: integer, required
+- `start`: integer, required
+
+#### `gnubase.marker.remove`
+
+Removes markers.
+
+Parameters:
+
+- `markers`: array of integer, required
+
+#### `gnubase.marker.renumber`
+
+Numbers a marker track's position or cycle markers again from 1, in timeline order (default: the active track).
+
+Parameters:
+
+- `track`: integer
+- `type`: one of "position" | "cycle", required
+
+#### `gnubase.marker.set`
+
+Changes a marker: moves it (position, in the track's time base or "cursor"; a cycle marker keeps its length unless end is given), renames it, changes its color or number, or moves it to another marker track, where it takes the first free number if its own is taken.
+
+Parameters:
+
+- `color`: string or null
+- `end`: integer or string
+- `marker`: integer, required
+- `name`: string
+- `number`: integer
+- `position`: integer or string
+- `track`: integer
+
+Returns:
+
+- `marker`: object, required
+
+#### `gnubase.marker.setLocators`
+
+Sets the left and right locators to a cycle marker's start and end, given by id (marker) or by its number on a marker track (default: the active one).
+
+Parameters:
+
+- `marker`: integer
+- `number`: integer
+- `track`: integer
+
+Returns:
+
+- `left`: integer, required
+- `marker`: object, required
+- `right`: integer, required
 
 ### media
 
@@ -890,7 +1121,7 @@ Returns:
 
 #### `gnubase.midiFile.import`
 
-Imports a standard MIDI file (type 0, 1 or 2) into new MIDI tracks (trackType midi, the default) or instrument tracks, one part per track from the bar of its first event to the bar after its last. A type 0 file gets a track per MIDI channel; the sequences of a type 2 file are laid out one after another, each from a bar start. Names that aren't UTF-8 are read as Windows-1252. Unless tempo is false, the file's tempo and time signatures replace the project's; unless markers is false, its markers are added. One undo step. Returns the new tracks and parts.
+Imports a standard MIDI file (type 0, 1 or 2) into new MIDI tracks (trackType midi, the default) or instrument tracks, one part per track from the bar of its first event to the bar after its last. A type 0 file gets a track per MIDI channel; the sequences of a type 2 file are laid out one after another, each from a bar start. Names that aren't UTF-8 are read as Windows-1252. Unless tempo is false, the file's tempo and time signatures replace the project's; unless markers is false, its markers are added to the active marker track (one is added if there is none). One undo step. Returns the new tracks and parts.
 
 Parameters:
 
@@ -1042,7 +1273,7 @@ Returns:
 
 #### `gnubase.processor.list`
 
-Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units.
+Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units. A stepped parameter takes whole numbers only; its options, if any, name its values from the minimum on.
 
 Only reads; changes nothing.
 
@@ -1352,7 +1583,7 @@ Returns:
 
 #### `gnubase.track.add`
 
-Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; folders get a channel only with groupChannel. New channels play through the main output, or through the folder's group channel.
+Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; folders get a channel only with groupChannel. New channels play through the main output, or through the folder's group channel. Marker tracks have no channel and stay at the top level; a project has at most 10, and a new one becomes the active marker track.
 
 Parameters:
 
@@ -1363,7 +1594,7 @@ Parameters:
 - `name`: string
 - `parent`: integer
 - `timeBase`: one of "musical" | "linear"
-- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect", required
+- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect" | "marker", required
 
 Returns:
 
@@ -1382,7 +1613,7 @@ Parameters:
 
 #### `gnubase.track.remove`
 
-Removes a track with its channel, events and parts; a folder also removes the tracks inside it.
+Removes a track with its channel, events, parts or markers; a folder also removes the tracks inside it. Without the active marker track, the topmost marker track becomes the active one.
 
 Parameters:
 
@@ -1390,7 +1621,7 @@ Parameters:
 
 #### `gnubase.track.set`
 
-Changes a track's name, color (#rrggbb, or null for the default) or time base. A new time base keeps its events and parts at the same time.
+Changes a track's name, color (#rrggbb, or null for the default) or time base. A new time base keeps its events, parts and markers at the same time.
 
 Parameters:
 
@@ -1421,7 +1652,7 @@ Returns:
 
 #### `gnubase.transport.get`
 
-Whether playback runs, the project cursor in samples, the locators and the modes.
+Whether playback runs, the project cursor in samples, the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.
 
 Only reads; changes nothing.
 

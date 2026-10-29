@@ -343,7 +343,8 @@ namespace gnubase::engine
 
 				pugi::xml_node structure = root.append_child("Structure");
 				for (const ObjectId id : m_project.tracks)
-					writeTrack(structure, m_project.trackById.at(id));
+					if (m_project.trackById.at(id).type != TrackType::Marker) // markers go into the arrangement
+						writeTrack(structure, m_project.trackById.at(id));
 				for (const Bus& bus : m_project.busses)
 					if (bus.direction == BusDirection::Output)
 					{
@@ -576,6 +577,15 @@ namespace gnubase::engine
 				element.append_attribute("contentTimeUnit") = "seconds";
 				if (event.mute)
 					element.append_attribute("enable") = false;
+				// Fades and crossfades as fade times; their shapes are GNUbase-only.
+				const double fadeIn = fadeInSeconds(event);
+				const double fadeOut = fadeOutSeconds(event);
+				if (fadeIn > 0.0 || fadeOut > 0.0)
+				{
+					element.append_attribute("fadeTimeUnit") = "seconds";
+					element.append_attribute("fadeInTime") = fadeIn;
+					element.append_attribute("fadeOutTime") = fadeOut;
+				}
 				element.append_attribute("name") = clip.name.c_str();
 				pugi::xml_node audio = element.append_child("Audio");
 				audio.append_attribute("id") = xmlId("a", event.id).c_str();
@@ -586,6 +596,51 @@ namespace gnubase::engine
 				file.append_attribute("path") = m_mediaPaths.at(media.id).c_str();
 				if (!m_embed)
 					file.append_attribute("external") = true;
+			}
+
+			// An event's start and end in seconds, and its clip's sample rate.
+			struct Seconds
+			{
+				double start = 0.0;
+				double end = 0.0;
+				double rate = 48000.0;
+			};
+
+			Seconds seconds(const AudioEvent& event) const
+			{
+				Seconds result;
+				result.rate = m_project.media.at(m_project.clips.at(event.clip).media).sampleRate;
+				result.start =
+					static_cast<double>(time::toSamples(event.position, m_project.tempo, m_project.sampleRate)) /
+					m_project.sampleRate;
+				result.end = result.start + (static_cast<double>(event.length) / result.rate);
+				return result;
+			}
+
+			// A crossfade's length, or the whole overlap: never longer than the overlap, as it plays.
+			static double crossfadeSeconds(time::Samples length, double rate, const Seconds& out, const Seconds& in)
+			{
+				const double overlap = std::max(0.0, out.end - in.start);
+				return length > 0 ? std::min(static_cast<double>(length) / rate, overlap) : overlap;
+			}
+
+			double fadeInSeconds(const AudioEvent& event) const
+			{
+				// Only a crossfade that plays; one that rests leaves the event's own fade.
+				const Seconds in = seconds(event);
+				if (crossfadeApplies(m_project, event))
+					return crossfadeSeconds(
+						event.crossfade.length, in.rate, seconds(m_project.audioEvents.at(event.crossfade.from)), in);
+				return static_cast<double>(std::min(event.fadeIn.length, event.length)) / in.rate; // as it plays
+			}
+
+			double fadeOutSeconds(const AudioEvent& event) const
+			{
+				const Seconds out = seconds(event);
+				for (const auto& [id, to] : m_project.audioEvents)
+					if (to.crossfade.from == event.id && crossfadeApplies(m_project, to))
+						return crossfadeSeconds(to.crossfade.outLength, out.rate, out, seconds(to));
+				return static_cast<double>(std::min(event.fadeOut.length, event.length)) / out.rate;
 			}
 
 			void writeMidiClip(pugi::xml_node clips, const Track& track, const MidiPart& part)
@@ -648,16 +703,26 @@ namespace gnubase::engine
 				}
 			}
 
+			// DAWproject has one list of markers in the arrangement, without ranges: it gets the markers of every
+			// marker track in timeline order, cycle markers at their start. Marker tracks, cycle marker ends and the
+			// numbers are in GNUbase's entry.
 			void writeMarkers(pugi::xml_node arrangement) const
 			{
 				if (m_project.markers.empty())
 					return;
+				std::vector<std::pair<time::Ticks, const Marker*>> sorted;
+				sorted.reserve(m_project.markers.size());
+				for (const auto& [id, marker] : m_project.markers)
+					sorted.emplace_back(time::toTicks(marker.position, m_project.tempo, m_project.sampleRate), &marker);
+				std::stable_sort(
+					sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
 				pugi::xml_node markers = arrangement.append_child("Markers");
 				markers.append_attribute("id") = "markers";
-				for (const auto& [id, marker] : m_project.markers)
+				for (const auto& [ticks, entry] : sorted)
 				{
+					const Marker& marker = *entry;
 					pugi::xml_node element = markers.append_child("Marker");
-					element.append_attribute("time") = toBeats(marker.position);
+					element.append_attribute("time") = toBeats(ticks);
 					element.append_attribute("name") = marker.name.c_str();
 					if (!marker.color.empty())
 						element.append_attribute("color") = marker.color.c_str();
@@ -725,7 +790,55 @@ namespace gnubase::engine
 				for (const pugi::xml_node lanes : arrangement.children("Lanes"))
 					readLanes(lanes, {});
 				readMarkers(arrangement.child("Markers"));
+				joinCrossfades();
 				return std::move(m_project);
+			}
+
+			// DAWproject has no crossfades: applications write them as a fade out and a fade in where two events
+			// overlap. So where an event starts inside the one before it on its track and ends after it, and both
+			// fade at the ends that meet, the two fades become a crossfade between them, as long as the fades and
+			// at most over the whole overlap. Left as fades, the event in front would fade in from silence while the
+			// one behind it is cut off at full volume.
+			void joinCrossfades()
+			{
+				using Placed = std::pair<EventSpan, AudioEvent*>;
+				std::map<ObjectId, std::vector<Placed>> tracks;
+				for (auto& [id, event] : m_project.audioEvents)
+					if (!event.mute)
+						tracks[event.track].emplace_back(eventSpan(m_project, event), &event);
+				std::set<ObjectId> fadingOut; // an event fades out into one event only
+				for (auto& [track, events] : tracks)
+				{
+					std::stable_sort(events.begin(), events.end(),
+						[](const Placed& a, const Placed& b) { return a.first.start < b.first.start; });
+					for (size_t i = 0; i < events.size(); ++i)
+					{
+						const EventSpan& b = events[i].first;
+						AudioEvent& in = *events[i].second;
+						for (size_t j = i; j-- > 0 && in.fadeIn.length > 0;)
+						{
+							const EventSpan& a = events[j].first;
+							AudioEvent& out = *events[j].second;
+							const bool consecutive = a.start < b.start && b.start < a.end && a.end <= b.end;
+							if (!consecutive || out.fadeOut.length <= 0 || fadingOut.count(out.id) != 0)
+								continue;
+							// A fade over the whole overlap, give or take a frame of rounding, is the whole overlap.
+							const time::Samples overlap = a.end - b.start;
+							const auto length = [overlap](time::Samples fade, double ratio)
+							{
+								const auto most =
+									static_cast<time::Samples>(std::floor(static_cast<double>(overlap) / ratio));
+								return fade + 1 >= most ? 0 : fade;
+							};
+							in.crossfade.from = out.id;
+							in.crossfade.length = length(in.fadeIn.length, b.ratio);
+							in.crossfade.outLength = length(out.fadeOut.length, a.ratio);
+							in.fadeIn.length = 0;
+							out.fadeOut.length = 0;
+							fadingOut.insert(out.id);
+						}
+					}
+				}
 			}
 
 			// Where a media file named in project.xml is now: extracted, or where it was referenced.
@@ -763,6 +876,8 @@ namespace gnubase::engine
 				bool seconds = false; // the time unit is seconds rather than beats
 				double origin = 0.0;  // where the content's time 0 is on the lane
 				bool enabled = true;  // false inside a disabled (muted) clip
+				double fadeIn = 0.0;  // seconds, of the innermost clip with fades
+				double fadeOut = 0.0;
 			};
 
 			time::Ticks toTicks(double time, bool seconds) const
@@ -1056,10 +1171,14 @@ namespace gnubase::engine
 				const double duration = clip.attribute("duration").as_double();
 				const double playStart = clip.attribute("playStart").as_double(0.0);
 				Context content = context;
+				content.fadeIn = 0.0; // a clip inside another one has only its own fades
+				content.fadeOut = 0.0;
 				if (const pugi::xml_attribute unit = clip.attribute("contentTimeUnit"))
 					content.seconds = std::string(unit.as_string()) == "seconds";
 				content.origin = content.seconds == context.seconds ? start - playStart : 0.0;
 				content.enabled = context.enabled && clip.attribute("enable").as_bool(true);
+				if (!clip.attribute("fadeInTime").empty() || !clip.attribute("fadeOutTime").empty())
+					readFades(clip, context, start, duration, content);
 				const TrackType type = m_project.trackById.at(context.track).type;
 				MidiPart* part = nullptr;
 				const auto partFor = [&]() -> MidiPart&
@@ -1102,7 +1221,7 @@ namespace gnubase::engine
 					{
 						const pugi::xml_node audio = name == "Audio" ? child : child.child("Audio");
 						const double offset = content.seconds ? playStart : secondsBetween(0.0, playStart, false);
-						addAudioEvent(lane, start, duration, offset, audio, !content.enabled);
+						addAudioEvent(lane, start, duration, offset, audio, content);
 					}
 				}
 			}
@@ -1215,14 +1334,36 @@ namespace gnubase::engine
 				}
 				media.channels = std::clamp(media.channels, 1, g_maxAudioChannels);
 				m_project.media[media.id] = media;
-				const Clip clip{m_project.newId(), pathOf(xmlPath).stem().u8string(), media.id};
+				const Clip clip{m_project.newId(), pathOf(xmlPath).stem().u8string(), media.id, {}, {}};
 				m_project.clips[clip.id] = clip;
 				return m_clips[xmlPath] = clip.id;
 			}
 
-			void addAudioEvent(const Context& lane, double start, double duration, double offset,
-				const pugi::xml_node& audio, bool mute)
+			// Fade times in seconds. In beats they count from the clip's start and end.
+			void readFades(
+				const pugi::xml_node& clip, const Context& lane, double start, double duration, Context& content) const
 			{
+				const pugi::xml_attribute unit = clip.attribute("fadeTimeUnit");
+				const bool beats = !unit.empty() ? std::string(unit.as_string()) == "beats" : !lane.seconds;
+				const double fadeIn = std::max(0.0, clip.attribute("fadeInTime").as_double());
+				const double fadeOut = std::max(0.0, clip.attribute("fadeOutTime").as_double());
+				if (!beats)
+				{
+					content.fadeIn = fadeIn;
+					content.fadeOut = fadeOut;
+					return;
+				}
+				const double first = lane.seconds ? toBeats(m_project.tempo.toTicks(start)) : start;
+				const double last =
+					lane.seconds ? toBeats(m_project.tempo.toTicks(start + duration)) : start + duration;
+				content.fadeIn = secondsBetween(first, first + fadeIn, false);
+				content.fadeOut = secondsBetween(last - fadeOut, last, false);
+			}
+
+			void addAudioEvent(const Context& lane, double start, double duration, double offset,
+				const pugi::xml_node& audio, const Context& content)
+			{
+				const bool mute = !content.enabled;
 				const ObjectId clipId = clipFor(audio);
 				if (clipId == 0)
 					return;
@@ -1238,21 +1379,50 @@ namespace gnubase::engine
 				const double seconds = secondsBetween(start, start + duration, lane.seconds);
 				event.length =
 					std::min<time::Samples>(std::llround(seconds * media.sampleRate), media.length - event.offset);
+				// Linear fades, shortened to fit if they don't.
+				event.fadeIn.length = std::clamp<time::Samples>(
+					std::llround(content.fadeIn * media.sampleRate), 0, std::max<time::Samples>(0, event.length));
+				event.fadeOut.length = std::clamp<time::Samples>(std::llround(content.fadeOut * media.sampleRate), 0,
+					std::max<time::Samples>(0, event.length - event.fadeIn.length));
 				if (event.length > 0)
 					m_project.audioEvents[event.id] = event;
 			}
 
+			// The arrangement's markers become position markers on a marker track at the top, numbered in timeline
+			// order.
 			void readMarkers(const pugi::xml_node& markers)
 			{
+				if (!markers.child("Marker"))
+					return;
+				Track track;
+				track.id = m_project.newId();
+				track.type = TrackType::Marker;
+				track.name = "Markers";
+				m_project.trackById[track.id] = track;
+				m_project.tracks.insert(m_project.tracks.begin(), track.id);
+				m_project.activeMarkerTrack = track.id;
+
 				const bool seconds = std::string(markers.attribute("timeUnit").as_string("beats")) == "seconds";
+				std::vector<Marker> read;
 				for (const pugi::xml_node element : markers.children("Marker"))
 				{
 					Marker marker;
 					marker.id = m_project.newId();
-					marker.position = toTicks(element.attribute("time").as_double(), seconds);
+					marker.track = track.id;
+					marker.position = {
+						time::TimeBase::Musical, toTicks(element.attribute("time").as_double(), seconds)};
+					marker.end = marker.position;
 					marker.name = element.attribute("name").as_string("");
 					const std::string color = element.attribute("color").as_string("");
 					marker.color = validColor(color) ? color : std::string();
+					read.push_back(marker);
+				}
+				std::stable_sort(read.begin(), read.end(),
+					[](const Marker& a, const Marker& b) { return a.position.value < b.position.value; });
+				int number = 0;
+				for (Marker& marker : read)
+				{
+					marker.number = ++number;
 					m_project.markers[marker.id] = marker;
 				}
 			}

@@ -29,6 +29,7 @@ namespace gnubase::engine
 			{TrackType::Folder, "folder"},
 			{TrackType::Group, "group"},
 			{TrackType::Effect, "effect"},
+			{TrackType::Marker, "marker"},
 		};
 
 		constexpr struct
@@ -42,6 +43,18 @@ namespace gnubase::engine
 			{ControllerType::PolyPressure, "polyPressure"},
 			{ControllerType::Program, "program"},
 			{ControllerType::SysEx, "sysEx"},
+		};
+
+		constexpr struct
+		{
+			FadeShape shape;
+			const char* name;
+		} g_fadeShapeNames[] = {
+			{FadeShape::Linear, "linear"},
+			{FadeShape::Exponential, "exponential"},
+			{FadeShape::Logarithmic, "logarithmic"},
+			{FadeShape::SCurve, "sCurve"},
+			{FadeShape::EqualPower, "equalPower"},
 		};
 
 		constexpr struct
@@ -66,6 +79,46 @@ namespace gnubase::engine
 			{AutomationShape::Linear, "linear"},
 			{AutomationShape::Curve, "curve"},
 		};
+
+		constexpr struct
+		{
+			CrossfadeMode mode;
+			const char* name;
+		} g_crossfadeModeNames[] = {
+			{CrossfadeMode::EqualGain, "equalGain"},
+			{CrossfadeMode::EqualPower, "equalPower"},
+			{CrossfadeMode::Custom, "custom"},
+		};
+
+		FadeShape shapeFrom(const Json& json)
+		{
+			const auto shape = fadeShapeFromName(json.get<std::string>());
+			if (!shape)
+				throw std::invalid_argument("unknown fade shape " + json.dump());
+			return *shape;
+		}
+
+		CrossfadeMode modeFrom(const Json& json)
+		{
+			const auto mode = crossfadeModeFromName(json.get<std::string>());
+			if (!mode)
+				throw std::invalid_argument("unknown crossfade mode " + json.dump());
+			return *mode;
+		}
+
+		Crossfade crossfadeFrom(const Json& json)
+		{
+			Crossfade crossfade;
+			if (json.is_null())
+				return crossfade;
+			crossfade.from = json.at("from").get<ObjectId>();
+			crossfade.mode = modeFrom(json.at("mode"));
+			crossfade.shape = shapeFrom(json.at("shape"));
+			crossfade.outShape = shapeFrom(json.at("outShape"));
+			crossfade.length = json.at("length").get<time::Samples>();
+			crossfade.outLength = json.at("outLength").get<time::Samples>();
+			return crossfade;
+		}
 
 		Json colorJson(const std::string& color)
 		{
@@ -182,6 +235,119 @@ namespace gnubase::engine
 		return direction == BusDirection::Input ? "input" : "output";
 	}
 
+	const char* fadeShapeName(FadeShape shape)
+	{
+		for (const auto& entry : g_fadeShapeNames)
+			if (entry.shape == shape)
+				return entry.name;
+		return "linear"; // not reached: every shape is in the table
+	}
+
+	std::optional<FadeShape> fadeShapeFromName(const std::string& name)
+	{
+		for (const auto& entry : g_fadeShapeNames)
+			if (name == entry.name)
+				return entry.shape;
+		return std::nullopt;
+	}
+
+	const char* crossfadeModeName(CrossfadeMode mode)
+	{
+		for (const auto& entry : g_crossfadeModeNames)
+			if (entry.mode == mode)
+				return entry.name;
+		return "equalGain"; // not reached: every mode is in the table
+	}
+
+	std::optional<CrossfadeMode> crossfadeModeFromName(const std::string& name)
+	{
+		for (const auto& entry : g_crossfadeModeNames)
+			if (name == entry.name)
+				return entry.mode;
+		return std::nullopt;
+	}
+
+	std::vector<std::string> fadeShapeNames()
+	{
+		std::vector<std::string> names;
+		for (const auto& entry : g_fadeShapeNames)
+			names.emplace_back(entry.name);
+		return names;
+	}
+
+	std::vector<std::string> crossfadeModeNames()
+	{
+		std::vector<std::string> names;
+		for (const auto& entry : g_crossfadeModeNames)
+			names.emplace_back(entry.name);
+		return names;
+	}
+
+	Json toJson(const Fade& fade)
+	{
+		return {{"length", fade.length}, {"shape", fadeShapeName(fade.shape)}};
+	}
+
+	Json toJson(const Crossfade& crossfade)
+	{
+		if (crossfade.from == 0)
+			return nullptr;
+		return {{"from", crossfade.from}, {"mode", crossfadeModeName(crossfade.mode)},
+			{"shape", fadeShapeName(crossfade.shape)}, {"outShape", fadeShapeName(crossfade.outShape)},
+			{"length", crossfade.length}, {"outLength", crossfade.outLength}};
+	}
+
+	Json toJson(const AutoFades& settings)
+	{
+		return {{"fadeIn", settings.fadeIn}, {"fadeOut", settings.fadeOut}, {"crossfades", settings.crossfades},
+			{"length", settings.length}, {"fadeInShape", fadeShapeName(settings.fadeInShape)},
+			{"fadeOutShape", fadeShapeName(settings.fadeOutShape)},
+			{"crossfadeMode", crossfadeModeName(settings.crossfadeMode)},
+			{"crossfadeShape", fadeShapeName(settings.crossfadeShape)}};
+	}
+
+	Fade fadeFromJson(const Json& json, const Fade& fallback)
+	{
+		Fade fade = fallback;
+		if (json.contains("length"))
+			fade.length = json.at("length").get<time::Samples>();
+		if (json.contains("shape"))
+			fade.shape = shapeFrom(json.at("shape"));
+		return fade;
+	}
+
+	AutoFades autoFadesFromJson(const Json& json, const AutoFades& fallback)
+	{
+		AutoFades settings = fallback;
+		settings.fadeIn = json.value("fadeIn", settings.fadeIn);
+		settings.fadeOut = json.value("fadeOut", settings.fadeOut);
+		settings.crossfades = json.value("crossfades", settings.crossfades);
+		settings.length = json.value("length", settings.length);
+		if (json.contains("fadeInShape"))
+			settings.fadeInShape = shapeFrom(json.at("fadeInShape"));
+		if (json.contains("fadeOutShape"))
+			settings.fadeOutShape = shapeFrom(json.at("fadeOutShape"));
+		if (json.contains("crossfadeMode"))
+			settings.crossfadeMode = modeFrom(json.at("crossfadeMode"));
+		if (json.contains("crossfadeShape"))
+			settings.crossfadeShape = shapeFrom(json.at("crossfadeShape"));
+		return settings;
+	}
+
+	const char* markerTypeName(MarkerType type)
+	{
+		return type == MarkerType::Cycle ? "cycle" : "position";
+	}
+
+	std::optional<MarkerType> markerTypeFromName(const std::string& name)
+	{
+		if (name == "position")
+			return MarkerType::Position;
+		if (name == "cycle")
+			return MarkerType::Cycle;
+		return std::nullopt;
+	}
+
 	Json toJson(const Bus& bus)
 	{
 		return {{"id", bus.id}, {"name", bus.name}, {"direction", directionName(bus.direction)},
@@ -192,7 +358,7 @@ namespace gnubase::engine
 	{
 		return {{"id", track.id}, {"type", trackTypeName(track.type)}, {"name", track.name},
 			{"color", colorJson(track.color)}, {"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent},
-			{"channel", track.channel}};
+			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)}};
 	}
 
 	Json toJson(const Channel& channel)
@@ -210,13 +376,16 @@ namespace gnubase::engine
 
 	Json toJson(const Clip& clip)
 	{
-		return {{"id", clip.id}, {"name", clip.name}, {"media", clip.media}};
+		return {{"id", clip.id}, {"name", clip.name}, {"media", clip.media}, {"fadeIn", toJson(clip.fadeIn)},
+			{"fadeOut", toJson(clip.fadeOut)}};
 	}
 
 	Json toJson(const AudioEvent& event)
 	{
 		return {{"id", event.id}, {"track", event.track}, {"clip", event.clip}, {"position", event.position.value},
-			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute}};
+			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute},
+			{"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
+			{"crossfade", toJson(event.crossfade)}};
 	}
 
 	Json toJson(const Note& note)
@@ -288,7 +457,9 @@ namespace gnubase::engine
 
 	Json toJson(const Marker& marker)
 	{
-		return {{"id", marker.id}, {"position", marker.position}, {"name", marker.name},
+		return {{"id", marker.id}, {"track", marker.track}, {"type", markerTypeName(marker.type)},
+			{"number", marker.number}, {"position", marker.position.value},
+			{"end", marker.type == MarkerType::Cycle ? Json(marker.end.value) : Json(nullptr)}, {"name", marker.name},
 			{"color", colorJson(marker.color)}};
 	}
 
@@ -355,16 +526,66 @@ namespace gnubase::engine
 			signatures.push_back({{"bar", change.bar}, {"numerator", change.signature.numerator},
 				{"denominator", change.signature.denominator}});
 		return {{"name", project.name}, {"sampleRate", project.sampleRate}, {"tempo", tempo},
-			{"signatures", signatures}, {"busses", busses}, {"tracks", tracks},
-			{"channels", toJsonArray(project.channels)}, {"media", toJsonArray(project.media)},
+			{"signatures", signatures}, {"autoFades", toJson(project.autoFades)}, {"busses", busses},
+			{"tracks", tracks}, {"channels", toJsonArray(project.channels)}, {"media", toJsonArray(project.media)},
 			{"clips", toJsonArray(project.clips)}, {"audioEvents", toJsonArray(project.audioEvents)},
 			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
 			{"automation", toJsonArray(project.automation)}, {"quantize", midi::toJson(project.quantize)},
-			{"autoQuantize", project.autoQuantize}};
+			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack}};
 	}
 
 	namespace
 	{
+		bool numberTaken(const Project& project, const Marker& marker, int number)
+		{
+			return std::any_of(project.markers.begin(), project.markers.end(),
+				[&marker, number](const auto& entry)
+				{
+					const Marker& other = entry.second;
+					return other.id != marker.id && other.track == marker.track && other.type == marker.type &&
+						other.number == number;
+				});
+		}
+
+		// Markers without a track go onto a new marker track at the top, which becomes the active one if none is.
+		// Markers without a number get the first free ones on their track, in timeline order. Cycle markers shorter
+		// than a sample get longer.
+		void placeOldMarkers(Project& project)
+		{
+			const bool trackless = std::any_of(project.markers.begin(), project.markers.end(),
+				[](const auto& entry) { return entry.second.track == 0; });
+			if (trackless)
+			{
+				Track track;
+				track.id = project.newId();
+				track.type = TrackType::Marker;
+				track.name = "Markers";
+				project.trackById[track.id] = track;
+				project.tracks.insert(project.tracks.begin(), track.id);
+				if (project.activeMarkerTrack == 0)
+					project.activeMarkerTrack = track.id;
+				for (auto& [id, marker] : project.markers)
+					if (marker.track == 0)
+						marker.track = track.id;
+			}
+			std::vector<Marker*> unnumbered;
+			for (auto& [id, marker] : project.markers)
+			{
+				keepMinimumLength(project, marker);
+				if (marker.number == 0)
+					unnumbered.push_back(&marker);
+			}
+			std::stable_sort(unnumbered.begin(), unnumbered.end(),
+				[](const Marker* a, const Marker* b) { return a->position.value < b->position.value; });
+			for (Marker* marker : unnumbered)
+			{
+				int number = 1;
+				while (numberTaken(project, *marker, number))
+					++number;
+				marker->number = number;
+			}
+		}
+
 		std::string numberText(double value)
 		{
 			std::ostringstream text;
@@ -478,6 +699,8 @@ namespace gnubase::engine
 			signatures.push_back({change.at("bar").get<int64_t>(),
 				{change.at("numerator").get<int>(), change.at("denominator").get<int>()}});
 		project.signatures = time::SignatureMap(signatures);
+		// Files from before fades have none of them.
+		project.autoFades = autoFadesFromJson(json.value("autoFades", Json::object()));
 
 		for (const Json& bus : json.at("busses"))
 			project.busses.push_back({bus.at("id").get<ObjectId>(), bus.at("name").get<std::string>(),
@@ -497,6 +720,8 @@ namespace gnubase::engine
 			track.timeBase = timeBaseFromName(item.at("timeBase").get<std::string>());
 			track.parent = item.at("parent").get<ObjectId>();
 			track.channel = item.at("channel").get<ObjectId>();
+			if (const Json autoFades = item.value("autoFades", Json()); !autoFades.is_null())
+				track.autoFades = autoFadesFromJson(autoFades);
 			(track.parent == 0 ? project.tracks : project.trackById.at(track.parent).children).push_back(track.id);
 			project.trackById[track.id] = track;
 		}
@@ -528,7 +753,9 @@ namespace gnubase::engine
 		for (const Json& item : json.at("clips"))
 		{
 			const auto id = item.at("id").get<ObjectId>();
-			project.clips[id] = {id, item.at("name").get<std::string>(), item.at("media").get<ObjectId>()};
+			project.clips[id] = {id, item.at("name").get<std::string>(), item.at("media").get<ObjectId>(),
+				fadeFromJson(item.value("fadeIn", Json::object())),
+				fadeFromJson(item.value("fadeOut", Json::object()))};
 		}
 		const auto base = [&project](ObjectId track) { return project.trackById.at(track).timeBase; };
 		for (const Json& item : json.at("audioEvents"))
@@ -542,6 +769,9 @@ namespace gnubase::engine
 			event.length = item.at("length").get<time::Samples>();
 			event.volume = item.value("volume", 0.0); // files from before event volume and mute
 			event.mute = item.value("mute", false);
+			event.fadeIn = fadeFromJson(item.value("fadeIn", Json::object()));
+			event.fadeOut = fadeFromJson(item.value("fadeOut", Json::object()));
+			event.crossfade = crossfadeFrom(item.value("crossfade", Json()));
 			project.audioEvents[event.id] = event;
 		}
 		for (const Json& item : json.at("midiParts"))
@@ -578,12 +808,27 @@ namespace gnubase::engine
 			}
 			project.midiParts[part.id] = std::move(part);
 		}
+		// Files from before marker tracks have markers without a track, type and number: position markers in ticks.
 		for (const Json& item : json.at("markers"))
 		{
-			const auto id = item.at("id").get<ObjectId>();
-			project.markers[id] = {id, item.at("position").get<time::Ticks>(), item.at("name").get<std::string>(),
-				colorFrom(item.at("color"))};
+			Marker marker;
+			marker.id = item.at("id").get<ObjectId>();
+			marker.track = item.value("track", ObjectId{0});
+			const std::string typeName = item.value("type", std::string("position"));
+			const auto type = markerTypeFromName(typeName);
+			if (!type)
+				throw std::invalid_argument("unknown marker type " + typeName);
+			marker.type = *type;
+			marker.number = item.value("number", 0); // 0: numbered below
+			const time::TimeBase timeBase = marker.track == 0 ? time::TimeBase::Musical : base(marker.track);
+			marker.position = {timeBase, item.at("position").get<int64_t>()};
+			marker.end = marker.type == MarkerType::Cycle ? time::Position{timeBase, item.at("end").get<int64_t>()}
+														  : marker.position;
+			marker.name = item.at("name").get<std::string>();
+			marker.color = colorFrom(item.at("color"));
+			project.markers[marker.id] = marker;
 		}
+		project.activeMarkerTrack = json.value("activeMarkerTrack", ObjectId{0});
 		for (const Json& item : json.value("automation", Json::array()))
 		{
 			AutomationLane lane = automationLaneFromJson(project, item);
@@ -627,6 +872,7 @@ namespace gnubase::engine
 				see(pointId);
 		}
 		project.nextId = std::max(json.value("nextId", ObjectId{0}), highest + 1);
+		placeOldMarkers(project);
 		return project;
 	}
 }

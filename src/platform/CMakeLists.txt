@@ -13,6 +13,7 @@ add_library(gnubase-platform STATIC
 	rt/mpmcqueue.h
 	rt/realtime.cpp rt/realtime.h
 	rt/rtutil.h
+	rt/seqlockpair.h
 	rt/snapshotpublisher.h
 	rt/spscqueue.h
 	rt/triplebuffer.h

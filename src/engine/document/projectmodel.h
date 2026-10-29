@@ -57,8 +57,10 @@ namespace gnubase::engine
 		void registerHistoryCommands(Engine& engine);
 		void registerMediaFolderCommands(Engine& engine, Jobs& jobs); // project.backup, media.prepareArchive and more
 		void registerMidiEditCommands(Engine& engine);                // midiedits.cpp: note.set and controller.set
+		void registerMarkerCommands(Engine& engine);                  // markers.cpp: marker.*
 		void registerMidiFileCommands(Engine& engine); // midifilecommands.cpp: midiFile.export and midiFile.import
 		Json importMidiFile(Project& project, CommandContext& context);
+		void registerFadeCommands(Engine& engine); // fadeedits.cpp: fades, crossfades and auto fades
 		void record(std::string action, const Project& before, CommandContext& context);
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);

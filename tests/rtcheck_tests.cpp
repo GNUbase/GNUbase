@@ -6,11 +6,14 @@
 #include "engine/plugins/hostmanager.h"
 #include "engine/plugins/pluginslot.h"
 #include "engine/processors/builtin.h"
+#include "engine/processors/builtinplugin.h"
 #include "ipc/connection.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 #include "platform/rt/snapshotpublisher.h"
 #include "platform/rt/workerpool.h"
+#include "plugin/extensions.h"
+#include "plugin/plugin.h"
 #include "plugin/remote/proxy.h"
 #include "testutils/testutils.h"
 
@@ -381,6 +384,128 @@ TEST_CASE("every built-in processor processes notes and parameter changes withou
 	CHECK(g_violations == 0);
 }
 
+TEST_CASE("every built-in processor processes signals, parameter sweeps and resets without allocating", "[unit]")
+{
+	using namespace gnubase::engine::graph;
+	using namespace gnubase::engine::processors;
+	constexpr uint32_t frames = 256;
+	EventBuffer eventsIn(256);
+	EventBuffer eventsOut(64);
+	TransportBlock transport;
+	transport.tempo = 97.0;
+
+	const RecordViolations record;
+	for (const int channels : {1, 2, 6})
+	{
+		std::vector<float> samples(static_cast<size_t>(channels) * frames);
+		std::vector<float*> pointers;
+		pointers.reserve(static_cast<size_t>(channels));
+		for (int c = 0; c < channels; ++c)
+			pointers.push_back(samples.data() + (static_cast<size_t>(c) * frames));
+		for (const BuiltinInfo& info : builtins())
+		{
+			const std::shared_ptr<Processor> processor = createBuiltin(info.id);
+			processor->prepareFor(48000.0, frames);
+			for (int block = 0; block < 6; ++block)
+			{
+				// A loud signal, every parameter at its minimum, maximum and default in turn, and a reset.
+				for (size_t i = 0; i < samples.size(); ++i)
+					samples[i] = (i % 7 == 0 ? 3.0f : -0.5f) * static_cast<float>(block % 3);
+				eventsIn.clear();
+				for (const ParameterInfo& parameter : info.parameters)
+				{
+					ProcessEvent event;
+					event.type = ProcessEvent::Type::Parameter;
+					event.offset = static_cast<uint32_t>(block * 40);
+					event.parameter = parameter.id;
+					event.parameterValue = parameter.defaultValue;
+					if (block % 3 == 0)
+						event.parameterValue = parameter.minimum;
+					else if (block % 3 == 1)
+						event.parameterValue = parameter.maximum;
+					eventsIn.add(event);
+				}
+				const ScopedRealtimeContext realtime;
+				processor->process({pointers.data(), channels, frames, eventsIn, eventsOut, transport});
+				if (block == 3)
+					(*processor).reset();
+			}
+		}
+	}
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("the built-in plugins process, flush parameters and reset without allocating", "[unit]")
+{
+	using namespace gnubase;
+	using namespace gnubase::plugin;
+	class NullHost final : public Host
+	{
+	public:
+		void requestRestart() override {}
+		void requestProcess() override {}
+		void requestCallback() override {}
+		void* extension(std::string_view /*id*/) override { return nullptr; }
+	};
+	constexpr uint32_t frames = 128;
+	std::vector<float> in(size_t{2} * frames, 0.25f);
+	std::vector<float> out(size_t{2} * frames, 0.0f);
+	float* const inputs[] = {in.data(), in.data() + frames};
+	float* const outputs[] = {out.data(), out.data() + frames};
+	EventList eventsIn(64);
+	EventList eventsOut(64);
+	TransportSegment segment;
+	segment.transport.flags = Transport::Playing | Transport::TempoValid;
+
+	NullHost host;
+	engine::processors::BuiltinFactory factory;
+	const RecordViolations record;
+	for (size_t i = 0; i < factory.count(); ++i)
+	{
+		const std::unique_ptr<Plugin> instance = factory.create(factory.descriptor(i).id, host);
+		REQUIRE(instance->init());
+		REQUIRE(instance->activate(48000.0, 1, frames));
+		auto* params = extension<Params>(*instance);
+		const bool instrument = extension<AudioPorts>(*instance)->audioPortCount(true) == 0;
+		REQUIRE(instance->startProcessing());
+		for (int block = 0; block < 4; ++block)
+		{
+			eventsIn.clear();
+			ParamInfo info;
+			for (uint32_t p = 0; p < params->paramCount(); ++p)
+				if (params->paramInfo(p, info))
+				{
+					Event event;
+					event.offset = static_cast<uint32_t>(block * 8);
+					event.type = EventType::ParamValue;
+					event.param = info.id;
+					event.value = block % 2 == 0 ? info.maximum : info.defaultValue;
+					eventsIn.push(event);
+				}
+			const AudioBuffer input{inputs, 2, 0};
+			AudioBuffer output{outputs, 2, 0};
+			// The event lists are references, so they come first; the rest is set by name.
+			Process process{0, -1, ProcessMode::Realtime, nullptr, 0, nullptr, 0, eventsIn, eventsOut, nullptr, 0};
+			process.frames = frames;
+			process.steadyTime = int64_t{block} * frames;
+			process.audioInputs = &input;
+			process.audioInputCount = instrument ? 0U : 1U;
+			process.audioOutputs = &output;
+			process.audioOutputCount = 1;
+			process.transport = &segment;
+			process.transportCount = 1;
+			const ScopedRealtimeContext realtime;
+			CHECK(instance->process(process) == ProcessStatus::Continue);
+			eventsOut.clear();
+			params->flushParams(eventsIn, eventsOut);
+			(*instance).reset();
+		}
+		instance->stopProcessing();
+		instance->deactivate();
+	}
+	CHECK(g_violations == 0);
+}
+
 TEST_CASE("rendering a project through the dummy device passes the RT checker", "[unit]")
 {
 	using gnubase::engine::Json;
@@ -431,6 +556,47 @@ TEST_CASE("playing audio events, with overlaps and cycle jumps, passes the RT ch
 				{"length", 1000}});
 	run("audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}});
 	run("transport.set", {{"left", 500}, {"right", 2000}, {"cycle", true}});
+	run("transport.play", Json::object());
+
+	const RecordViolations record;
+	run("audio.render", {{"frames", 9600}});
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("playing fades, crossfades and auto fades passes the RT checker", "[integration]")
+{
+	using gnubase::engine::Json;
+	const gnubase::test::TempDir dir;
+	const std::string path = (dir.path() / "clip.wav").u8string();
+	gnubase::test::Audio audio;
+	audio.channels = 2;
+	audio.samples.assign(size_t{2} * 20000, 0.25f);
+	gnubase::test::writeWav(path, audio);
+
+	gnubase::engine::Engine engine;
+	gnubase::engine::Client client(engine);
+	const auto run = [&client](const std::string& command, const Json& parameters)
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	const Json track = run("track.add", {{"type", "audio"}, {"timeBase", "linear"}});
+	const Json media = run("media.add", {{"path", path}});
+	const Json clip = run("clip.add", {{"media", media.at("media").at("id")}});
+	std::vector<Json> events;
+	for (const int position : {0, 700, 1500, 3000})
+		events.push_back(run("audioEvent.add",
+			{{"track", track.at("track").at("id")}, {"clip", clip.at("clip").at("id")}, {"position", position},
+				{"length", 1000}}));
+	const auto id = [&events](size_t i) { return events[i].at("event").at("id"); };
+	run("audioEvent.setFades", {{"event", id(0)}, {"fadeIn", {{"length", 300}, {"shape", "sCurve"}}}});
+	run("crossfade.set", {{"from", id(0)}, {"to", id(1)}, {"mode", "equalPower"}});
+	run("clip.setFades", {{"clip", clip.at("clip").at("id")}, {"fadeOut", {{"length", 5000}}}});
+	run("autoFades.set", {{"fadeIn", true}, {"fadeOut", true}, {"crossfades", true}});
+	run("audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}});
+	run("transport.set", {{"left", 500}, {"right", 3500}, {"cycle", true}});
 	run("transport.play", Json::object());
 
 	const RecordViolations record;

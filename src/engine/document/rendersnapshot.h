@@ -49,6 +49,11 @@ namespace gnubase::engine
 		time::Samples length = 0; // in the media file's sample frames
 		float gain = 1.0f;        // the event volume, linear
 		bool muted = false;
+		Fade fadeIn; // fade lengths in the media file's sample frames
+		Fade fadeOut;
+		Fade clipFadeIn; // at the media file's start and end
+		Fade clipFadeOut;
+		Crossfade crossfade; // only one that applies (crossfadeApplies)
 	};
 
 	struct RenderNote
@@ -101,6 +106,7 @@ namespace gnubase::engine
 		std::string instrument;                       // instrument tracks: a built-in instrument's id, or empty
 		double volume = 1.0;                          // the fader's static value, a linear gain
 		double pan = 0.0;                             // the static balance, -1 to 1
+		AutoFades autoFades;                          // audio tracks: their own settings or the project's
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
 		std::vector<RenderNote> notes;                // sorted by start, then pitch
 		std::vector<RenderController> controllers;    // sorted by position
@@ -117,6 +123,7 @@ namespace gnubase::engine
 	{
 		uint64_t revision = 0; // counts the snapshots compiled for an engine
 		double sampleRate = 48000.0;
+		time::TempoMap tempo{120.0}; // for processors that follow the tempo, e.g. a synced delay
 		std::vector<RenderBus> busses;
 		std::vector<RenderMedia> media;
 		std::vector<RenderChannel> channels; // in track order

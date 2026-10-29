@@ -87,6 +87,7 @@ add_library(gnubase-engine STATIC
 	audio/analysiscommands.cpp
 	audio/audioengine.cpp audio/audioengine.h
 	audio/automation.cpp audio/automation.h
+	audio/fades.cpp audio/fades.h
 	audio/performance.cpp audio/performance.h
 	audio/playback.cpp audio/playback.h
 	audio/sequencer.cpp audio/sequencer.h
@@ -99,12 +100,21 @@ add_library(gnubase-engine STATIC
 	audiofile/writer.cpp
 	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/document.cpp document/document.h
+	document/fadeedits.cpp
 	document/history.cpp document/history.h
+	document/markers.cpp
 	document/midiedits.cpp
 	document/midifilecommands.cpp
 	document/projectmodel.cpp document/projectmodel.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/serialize.cpp document/serialize.h
+	dsp/biquad.cpp dsp/biquad.h
+	dsp/delay.cpp dsp/delay.h
+	dsp/dither.cpp dsp/dither.h
+	dsp/dsp.h
+	dsp/dynamics.cpp dsp/dynamics.h
+	dsp/equalizer.cpp dsp/equalizer.h
+	dsp/reverb.cpp dsp/reverb.h
 	dsp/timestretch.cpp dsp/timestretch.h
 	engine.cpp engine.h
 	graph/events.h
@@ -123,6 +133,8 @@ add_library(gnubase-engine STATIC
 	plugins/hostmanager.cpp plugins/hostmanager.h
 	plugins/pluginslot.cpp plugins/pluginslot.h
 	processors/builtin.cpp processors/builtin.h
+	processors/builtinplugin.cpp processors/builtinplugin.h
+	processors/effects.h
 	processors/gainpan.cpp processors/gainpan.h
 	processors/generators.cpp processors/generators.h
 	processors/testsynth.cpp processors/testsynth.h
@@ -135,5 +147,5 @@ add_library(gnubase-engine STATIC
 	time/timecode.cpp time/timecode.h)
 target_include_directories(gnubase-engine PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-engine PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}")
-target_link_libraries(gnubase-engine PUBLIC gnubase-platform gnubase-plugin-remote nlohmann_json::nlohmann_json PRIVATE gnubase-decoders gnubase-r8brain gnubase-rubberband FLAC::FLAC pugixml::pugixml miniz)
+target_link_libraries(gnubase-engine PUBLIC gnubase-platform gnubase-plugin gnubase-plugin-remote nlohmann_json::nlohmann_json PRIVATE gnubase-decoders gnubase-r8brain gnubase-rubberband FLAC::FLAC pugixml::pugixml miniz)
 gnubase_target_defaults(gnubase-engine)
