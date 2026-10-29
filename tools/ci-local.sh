@@ -5,7 +5,8 @@
 # - on Windows: windows-x64 (build and tests) and windows-arm64 (cross-compiled; its tests need an ARM64 machine);
 # - on Linux, and on Windows in WSL: linux-gcc and linux-clang (builds and tests), asan-ubsan, tsan and clang-tidy.
 # macOS is left to CI. It checks the commit at HEAD, so commit first: on Windows the Linux jobs run in a clone inside
-# WSL (~/gnubase-ci), which builds far faster than the Windows folder and has Linux line endings.
+# WSL (~/gnubase-ci/<checkout folder name>, one per checkout, so worktrees can run checks at the same time), which
+# builds far faster than the Windows folder and has Linux line endings.
 # Usage: tools/ci-local.sh [job...]    default: every job this machine can run
 # Environment: GNUBASE_WSL names the WSL distribution (default Ubuntu), GNUBASE_CI_JOBS the compile jobs per build.
 # Setup: Windows needs Visual Studio 2026; Linux (or WSL, Ubuntu 24.04) needs the packages in .github/workflows/ci.yml
@@ -19,7 +20,7 @@ set -u
 if [ "${1:-}" = --wsl ]; then
 	source=$2
 	shift 2
-	mirror=$HOME/gnubase-ci
+	mirror=$HOME/gnubase-ci/$(basename "$source")
 	export GIT_LFS_SKIP_SMUDGE=1 # as in CI: only the test audio comes from Git LFS
 	mkdir -p "$source/build/ci-local"
 	if ! { { [ -d "$mirror/.git" ] || git clone -q --no-checkout "$source" "$mirror"; } && cd "$mirror" &&
@@ -177,6 +178,7 @@ done
 if $here || [ $os != windows ]; then
 	[ $os = linux ] && [ "$(id -u)" = 0 ] && sysctl -qw vm.mmap_rnd_bits=28 2>/dev/null # as in CI, for ASan and TSan
 	export CCACHE_MAXSIZE=${CCACHE_MAXSIZE:-20G}
+	export CCACHE_BASEDIR=$root # paths relative to the checkout, so clones of other checkouts share the cache
 	# Vulkan only through Mesa's software rasterizer, as on CI's runners, which have no GPU: a real GPU's driver makes
 	# the window tests depend on the machine, and AMD's leaks under ASan.
 	lavapipe=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -n 1)
