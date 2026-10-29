@@ -35,13 +35,16 @@ One exception: the VST3 SDK's C++ namespace is a keyword, so the list allows it 
 
 ## Workflow
 
-1. Create one branch per issue from an up-to-date `main`.
+1. Create one branch per issue from an up-to-date `main`. Work that needs a pull request that isn't merged yet starts from that pull request's branch instead, and its pull request targets that branch; once the first one is merged, it targets `main`.
 2. Write the failing test first and make sure it fails, then implement until it passes. Tag every Catch2 test case `[unit]`, `[integration]` or `[ui]`, plus `[slow]` for long ones. Shared helpers are in `tests/testutils/`.
-3. Before committing, run `tools/format.sh` and build and test with your preset (see the [README](README.md#building)). clang-tidy must report nothing: configure with `-DGNUBASE_CLANG_TIDY=ON` to run it while compiling. Fix findings rather than silencing them; `NOLINT` only with the check name and a reason.
+3. Before committing, run `tools/format.sh` and build and test with your preset (see the [README](README.md#building)). clang-tidy must report nothing: configure with `-DGNUBASE_CLANG_TIDY=ON` to run it while compiling. Fix findings rather than silencing them; `NOLINT` only with the check name and a reason. Before pushing, `tools/ci-local.sh` runs all of CI except macOS on your machine at once, the Linux jobs in WSL on Windows; its header says what it needs.
 4. Make small, focused commits with a summary line and a body that explains why.
 5. Open a pull request: say what changed and why, list what you deliberately left out, and add "Closes #N". Code, build and CI changes always go through a pull request.
 6. CI must pass on every platform: builds and tests on Windows, macOS and Linux, sanitizers, clang-tidy, formatting and license headers, and the keyword scan. When a check fails, read its log and fix it with a new commit. Don't force-push a pull request branch.
-7. Maintainers squash-merge, so `main` gets one commit per pull request.
+7. Merge `main` into your branch only when it conflicts or you need something from it: a pull request doesn't have to be up to date to be merged, and every push runs all of CI again. A conflict in `docs/lua.md` or `docs/mcp.md` needs no hand-merging: take either side and run the tests with `GNUBASE_UPDATE_DOCS=1`.
+8. Maintainers squash-merge, so `main` gets one commit per pull request.
+
+Keep pull requests out of each other's way: a feature's notes go into its own file in [docs/features/](docs/features/), not into [docs/architecture.md](docs/architecture.md), which only covers what features build on; and CMake lists sources one per line, sorted.
 
 An issue is done when its tests came first and pass in CI on all platforms, it is reachable through the engine API and the MCP server, the UI uses only the engine API, the real-time rules hold and the docs are updated.
 

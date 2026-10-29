@@ -21,7 +21,10 @@ GNUbase is licensed under the GPL-3.0-or-later, so everything that goes into it 
 | [cpp-httplib](https://github.com/yhirose/cpp-httplib) | `ext/cpp-httplib` | the MCP server's HTTP transport | yes, header-only | MIT | `ext/cpp-httplib/LICENSE` |
 | [CLAP](https://github.com/free-audio/clap) | `ext/clap` | the CLAP plugin interface: test plugins now, the CLAP adapter of the plugin host later | no, only test plugins so far; header-only | MIT | `ext/clap/LICENSE` |
 | [VST3 SDK](https://github.com/GNUbase/vst3sdk) | `ext/vst3sdk` (GNUbase mirror, [dependencies.md](dependencies.md#vst3-sdk)) | the VST3 plugin interfaces, for the VST3 adapter of the plugin host and the test plugins; the module loader and host classes, for the adapter | yes, in `gnubase-pluginhost`, linked statically (the interfaces and parts of `public.sdk`) | MIT | `ext/vst3sdk/LICENSE.txt` |
+| [ASIO SDK](https://github.com/GNUbase/asio) 2.3.4 | `ext/asio` (GNUbase mirror, [dependencies.md](dependencies.md)) | the ASIO audio backend | Windows only: its headers | GPL-3.0-only, the open option of its dual license (the other is proprietary) | `ext/asio/LICENSE.txt` |
 | [Catch2](https://github.com/catchorg/Catch2) | `ext/Catch2` | tests | no, only test programs | BSL-1.0 | `ext/Catch2/LICENSE.txt` |
+
+The ASIO SDK is licensed under the GPL version 3 only, without "or later", so Windows builds of GNUbase, which include it, can be distributed under the GPLv3 only. The rest of GNUbase stays GPL-3.0-or-later.
 
 Some of these bundle code from other projects under its own license:
 

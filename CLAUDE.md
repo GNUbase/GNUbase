@@ -9,7 +9,7 @@ Open-source (GPLv3) digital audio workstation for Windows, macOS and Linux. GNUb
 - Planning lives in GitHub milestones and issues: https://github.com/GNUbase/GNUbase. Basic functionality first, optional features later.
 
 ## Architecture rules (non-negotiable)
-Details and reasoning (processes, modules, threads, engine API, IPC) are in [docs/architecture.md](docs/architecture.md). Read it before changing module boundaries, threads or the engine API.
+Details and reasoning (processes, modules, threads, engine API, IPC) are in [docs/architecture.md](docs/architecture.md). Read it before changing module boundaries, threads or the engine API. How each feature works goes into its own file in `docs/features/`, never into `architecture.md`, so that pull requests don't conflict there.
 
 1. **Engine/UI separation.** The engine is a headless library with no UI dependency. The UI is an editor and event listener: it sends commands through the engine API and renders state from engine events. It never touches engine internals. Anything the UI can do must be possible through the engine API.
 2. **Everything is testable and remote-controllable.** Every engine command is exposed by the built-in MCP server, generated from the command registry. UI features are reachable through the MCP UI tools: DOM tree, screenshots, input injection, audio capture, MIDI send/receive, plugin parameters.
@@ -54,6 +54,8 @@ Details and reasoning (processes, modules, threads, engine API, IPC) are in [doc
 - Naming, enforced by clang-tidy: types `PascalCase`, functions and variables `camelCase`, private and protected members `m_camelCase`, globals and namespace-level constants `g_camelCase`, macros `UPPER_CASE`.
 - `#pragma once`, RAII, no raw `new`/`delete`, no `using namespace` in headers.
 - Small, focused commits with tests green.
+- CMake lists source files one per line, sorted, so pull requests that add files rarely conflict.
+- Test locally before pushing: `tools/ci-local.sh` runs every CI job except macOS on this machine; CI confirms. Don't wait for CI to start the next piece of work: work that needs an unmerged pull request branches from it, and its pull request targets that branch until the first one is merged. Merge `main` into a branch only when it conflicts or you need something from it, since every push runs all of CI again. Resolve conflicts in `docs/lua.md` and `docs/mcp.md` by taking either side and running the tests with `GNUBASE_UPDATE_DOCS=1`.
 
 ## Repository layout (target)
 ```

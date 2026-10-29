@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/audio/automation.h"
+#include "engine/audio/midiports.h"
 #include "engine/audio/performance.h"
 #include "engine/audio/playback.h"
 #include "engine/audio/sequencer.h"
@@ -49,15 +50,16 @@ namespace gnubase::engine
 	class AudioEngine : public audio::AudioCallback
 	{
 	public:
-		AudioEngine(
-			rt::SnapshotPublisher<RenderSnapshot>& snapshots, std::vector<std::unique_ptr<audio::Backend>> backends);
+		AudioEngine(rt::SnapshotPublisher<RenderSnapshot>& snapshots,
+			std::vector<std::unique_ptr<audio::Backend>> backends,
+			std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends);
 		~AudioEngine() override; // stops the device
 
 		// Registers audio.devices, audio.setDevice, audio.setProcessing, audio.get, audio.performance,
 		// audio.resetPerformance, audio.reset, audio.controlPanel, audio.render, audio.start, audio.stop and
-		// audio.capture, and the transport commands transport.play, transport.stop, transport.toggle, transport.locate,
-		// transport.set, transport.exchangeLocators and transport.get. audio.analyze, audio.compare and audio.record
-		// are in analysiscommands.cpp.
+		// audio.capture, the transport commands transport.play, transport.stop, transport.toggle, transport.locate,
+		// transport.set, transport.exchangeLocators and transport.get, and the MIDI port commands (MidiPorts).
+		// audio.analyze, audio.compare and audio.record are in analysiscommands.cpp.
 		void registerCommands(Engine& engine);
 
 		// Command thread: compiles a new graph if the project changed since the last one.
@@ -182,6 +184,8 @@ namespace gnubase::engine
 		std::atomic<uint64_t> m_started{0}; // the newest program the audio thread started
 		uint64_t m_running = 0;             // audio thread: the program it runs
 		Transport m_transport;              // advanced by the audio thread
+		MidiPorts m_midi;
+		audio::MidiBuffer m_midiInput; // the block's messages from all MIDI inputs, for MIDI recording (#97)
 
 		// Changed only while the device is stopped.
 		enum class Limit : uint8_t
