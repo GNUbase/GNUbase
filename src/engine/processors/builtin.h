@@ -44,6 +44,9 @@ namespace gnubase::engine::processors
 	// an unknown id.
 	std::shared_ptr<graph::Processor> createBuiltin(const std::string& id);
 
+	// Whether id is a built-in instrument.
+	bool isInstrument(const std::string& id);
+
 	// Registers processor.list, which returns builtins().
 	void registerCommands(Engine& engine);
 
