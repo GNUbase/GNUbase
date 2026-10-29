@@ -21,11 +21,19 @@ namespace gnubase::engine
 			std::mutex mutex;
 			std::condition_variable arrived;
 			std::deque<Message> messages;
+			std::function<void(const Event&)> listener; // a Listener's mailbox hands events to it instead
 
 			void post(Message message)
 			{
 				{
+					// Under the lock, so a Listener that stops waits for a call that runs.
 					const std::scoped_lock lock(mutex);
+					if (listener)
+					{
+						if (const auto* event = std::get_if<Event>(&message))
+							listener(*event);
+						return;
+					}
 					messages.push_back(std::move(message));
 				}
 				arrived.notify_all();
@@ -228,6 +236,26 @@ namespace gnubase::engine
 		const std::scoped_lock lock(m_engine.m_mutex);
 		auto& clients = m_engine.m_clients;
 		clients.erase(std::remove(clients.begin(), clients.end(), m_mailbox), clients.end());
+	}
+
+	Listener::Listener(Engine& engine, std::function<void(const Event&)> function)
+		: m_engine(engine), m_mailbox(std::make_shared<detail::Mailbox>())
+	{
+		m_mailbox->listener = std::move(function);
+		const std::scoped_lock lock(m_engine.m_mutex);
+		m_engine.m_clients.push_back(m_mailbox);
+	}
+
+	Listener::~Listener()
+	{
+		{
+			const std::scoped_lock lock(m_engine.m_mutex);
+			auto& clients = m_engine.m_clients;
+			clients.erase(std::remove(clients.begin(), clients.end(), m_mailbox), clients.end());
+		}
+		// The command thread may still hold the mailbox; from here on it only queues what nobody reads.
+		const std::scoped_lock lock(m_mailbox->mutex);
+		m_mailbox->listener = nullptr;
 	}
 
 	RequestId Client::send(std::string command, Json parameters)

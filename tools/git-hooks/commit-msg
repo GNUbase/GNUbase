@@ -8,7 +8,7 @@ if [ ! -e "$list" ]; then
 	required=$(git config --bool gnubase.requireKeywordList); rc=$?
 	{ [ $rc -eq 1 ] || [ "$required" = false ]; } && exit 0
 fi
-pattern=$(tr -d '\r' < "$list" | sed -e '/^$/d' | paste -sd '|' -)
+pattern=$(tr -d '\r' < "$list" | cut -f1 | sed -e '/^$/d' | paste -sd '|' -)
 [ -n "$pattern" ] || { echo "Commit blocked, keyword list $list missing or empty" >&2; exit 1; }
 hits=$(git stripspace --strip-comments < "$1" | grep -n -i -E -e "$pattern"); rc=$?
 [ $rc -eq 1 ] && exit 0
