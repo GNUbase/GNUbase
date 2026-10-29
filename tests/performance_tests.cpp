@@ -10,7 +10,9 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 using namespace gnubase::engine;
@@ -68,7 +70,7 @@ namespace
 	}
 }
 
-TEST_CASE("audio.performance reports the load per block and thread, and resets", "[integration]")
+TEST_CASE("audio.performance reports the load per block and thread", "[integration]")
 {
 	Engine engine;
 	Client client(engine);
@@ -83,7 +85,7 @@ TEST_CASE("audio.performance reports the load per block and thread, and resets",
 		run(client, "track.add", {{"type", "audio"}});
 	run(client, "audio.render", {{"frames", 6400}});
 
-	const Json measured = run(client, "audio.performance", {{"reset", true}});
+	const Json measured = run(client, "audio.performance");
 	CHECK(measured.at("cycles") == 100);
 	CHECK(measured.at("load").get<double>() > 0.0);
 	CHECK(measured.at("peak").get<double>() >= measured.at("load").get<double>());
@@ -99,10 +101,97 @@ TEST_CASE("audio.performance reports the load per block and thread, and resets",
 	CHECK(measured.at("diskLoad").get<double>() >= 0.0);
 	CHECK(measured.at("diskLoad").get<double>() <= 1.0);
 	CHECK(measured.at("diskDropouts") == 0);
+	// Reading changes nothing.
+	CHECK(run(client, "audio.performance").at("cycles") == 100);
+}
 
-	// The reset takes effect with the next block.
+namespace
+{
+	// The next event called name among the messages the client has received, if any.
+	std::optional<Json> takeEvent(Client& client, const std::string& name)
+	{
+		while (const std::optional<Message> message = client.poll())
+			if (const auto* event = std::get_if<Event>(&*message); event != nullptr && event->name == name)
+				return event->data;
+		return std::nullopt;
+	}
+
+	const CommandInfo* findCommand(const std::vector<CommandInfo>& commands, const std::string& name)
+	{
+		const auto found = std::find_if(
+			commands.begin(), commands.end(), [&name](const CommandInfo& info) { return info.name == name; });
+		return found != commands.end() ? &*found : nullptr;
+	}
+}
+
+TEST_CASE("audio.resetPerformance starts a new measurement and tells every client", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	Client other(engine);
+	const std::vector<CommandInfo> commands = engine.commands();
+	const CommandInfo* query = findCommand(commands, "audio.performance");
+	const CommandInfo* reset = findCommand(commands, "audio.resetPerformance");
+	REQUIRE(query != nullptr);
+	REQUIRE(reset != nullptr);
+	CHECK(query->query);
+	CHECK(!reset->query); // it changes what every client sees
+	CHECK(!client.call("audio.performance", {{"reset", true}}).ok());
+
+	run(client, "audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}, {"input", {{"processor", "noise"}}}});
+	run(client, "track.add", {{"type", "audio"}});
+	run(client, "audio.render", {{"frames", 6400}});
+	while (other.poll())
+	{
+	}
+
+	// The result is the measurement that ended.
+	const Json ended = run(client, "audio.resetPerformance");
+	CHECK(ended.at("cycles") == 100);
+	CHECK(ended.at("peak").get<double>() > 0.0);
+	const std::optional<Json> event = takeEvent(other, "audio.performanceReset");
+	REQUIRE(event.has_value());
+	if (event)
+		CHECK(event->at("cycles") == 100);
+
+	// With the device stopped the reset is immediate; while it runs, it takes effect with the next block.
+	const Json fresh = run(client, "audio.performance");
+	CHECK(fresh.at("cycles") == 0);
+	CHECK(fresh.at("peak") == 0.0);
+	CHECK(fresh.at("overloads") == 0);
+	CHECK(fresh.at("load").get<double>() > 0.0); // the average goes on
 	run(client, "audio.render", {{"frames", 640}});
 	CHECK(run(client, "audio.performance").at("cycles") == 10);
+}
+
+TEST_CASE("audio.performance starts over with a new device or new processing threads", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}, {"input", {{"processor", "noise"}}}});
+	run(client, "audio.setProcessing", {{"threads", 2}});
+	run(client, "track.add", {{"type", "audio"}});
+	run(client, "track.add", {{"type", "audio"}});
+	run(client, "audio.render", {{"frames", 6400}});
+	REQUIRE(run(client, "audio.performance").at("cycles") == 100);
+
+	// The old device's numbers don't stay up while the new one hasn't processed a block.
+	run(client, "audio.setDevice", {{"blockSize", 128}, {"captureSeconds", 1}});
+	const Json device = run(client, "audio.performance");
+	CHECK(device.at("cycles") == 0);
+	CHECK(device.at("load") == 0.0);
+	CHECK(device.at("peak") == 0.0);
+	CHECK(device.at("overloads") == 0);
+	CHECK(device.at("threads").empty());
+
+	// Nor do the old threads' averages when the number of threads changes.
+	run(client, "audio.render", {{"frames", 1280}});
+	REQUIRE(run(client, "audio.performance").at("cycles") == 10);
+	run(client, "audio.setProcessing", {{"threads", 1}});
+	const Json processing = run(client, "audio.performance");
+	CHECK(processing.at("cycles") == 0);
+	CHECK(processing.at("load") == 0.0);
+	CHECK(processing.at("threads").empty());
 }
 
 TEST_CASE("audio.performance reports how far the disk streams have run empty", "[integration]")
