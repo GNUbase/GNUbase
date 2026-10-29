@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Checks that a test plugin's binary exports exactly its format's entry points (CMakeLists.txt in this folder).
 # Usage: cmake -DLISTER=<nm or dumpbin> -DFILE=<binary> -DEXPECTED=<symbol,symbol,...> -P check-exports.cmake
+cmake_minimum_required(VERSION 3.25) # script mode starts with old policies; IN_LIST needs CMP0057
 string(REPLACE "," ";" expected "${EXPECTED}")
 list(SORT expected)
 
