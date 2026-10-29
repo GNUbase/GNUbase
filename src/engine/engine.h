@@ -146,7 +146,7 @@ namespace gnubase::engine
 		// the user's); without one, they are kept in memory only, as in tests.
 		explicit Engine(std::vector<std::unique_ptr<audio::Backend>> backends = audio::makeBackends(),
 			const std::filesystem::path& settingsDirectory = {},
-			std::vector<std::unique_ptr<midi::Backend>> midiBackends = midi::makeBackends());
+			std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends = gnubase::midi::makeBackends());
 		~Engine();
 		Engine(const Engine&) = delete;
 		Engine& operator=(const Engine&) = delete;

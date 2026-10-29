@@ -100,9 +100,26 @@ namespace
 	{
 		return std::find(values.begin(), values.end(), value) != values.end();
 	}
+
+	// Whether a listed device opens and starts. A driver can be installed for hardware that isn't plugged in.
+	bool available(Backend& backend, const DeviceInfo& listed)
+	{
+		try
+		{
+			std::unique_ptr<Device> device = backend.open(config(listed.id));
+			ContractCallback callback(device->format());
+			device->start(callback);
+			return true;
+		}
+		catch (const DeviceError& error)
+		{
+			WARN("skipped device " << listed.id << ", which doesn't start: " << error.what());
+			return false;
+		}
+	}
 }
 
-void checkDeviceContract(Backend& backend)
+void checkDeviceContract(Backend& backend, bool skipUnavailable)
 {
 	INFO("backend " << backend.name());
 	const std::vector<DeviceInfo> devices = backend.devices();
@@ -119,6 +136,8 @@ void checkDeviceContract(Backend& backend)
 	for (const DeviceInfo& listed : devices)
 	{
 		INFO("device " << listed.id);
+		if (skipUnavailable && !available(backend, listed))
+			continue;
 
 		// With its defaults the device describes itself completely.
 		std::unique_ptr<Device> device = backend.open(config(listed.id));
@@ -174,12 +193,16 @@ TEST_CASE("the dummy backend keeps the device contract", "[unit]")
 }
 
 // Hidden: opens real devices and plays silence through them. Run it on a machine with audio hardware:
-// gnubase-tests "[hardware]"
+// gnubase-tests "[hardware]". Devices that don't start, such as those of drivers for unplugged hardware, are skipped.
 TEST_CASE("every hardware backend keeps the device contract", "[.hardware]")
 {
+	// A section per backend, so one runs on its own: gnubase-tests "[hardware]" -c "<backend name>".
 	for (const std::unique_ptr<Backend>& backend : makeBackends())
 		if (backend->name() != "dummy")
-			checkDeviceContract(*backend);
+			DYNAMIC_SECTION(backend->name())
+			{
+				checkDeviceContract(*backend, true);
+			}
 }
 
 #ifdef _WIN32

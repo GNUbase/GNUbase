@@ -78,7 +78,7 @@ namespace gnubase::engine
 
 	Engine::Engine(
 		std::vector<std::unique_ptr<audio::Backend>> backends, const std::filesystem::path& settingsDirectory,
-		std::vector<std::unique_ptr<midi::Backend>> midiBackends)
+		std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends)
 	{
 		registerCommand({"engine.version", 1, "The GNUbase version.", CommandInfo{}.parameters,
 							Json::parse(R"({"type": "object", "properties": {"version": {"type": "string"}},

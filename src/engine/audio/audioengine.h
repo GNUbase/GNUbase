@@ -52,7 +52,7 @@ namespace gnubase::engine
 	public:
 		AudioEngine(rt::SnapshotPublisher<RenderSnapshot>& snapshots,
 			std::vector<std::unique_ptr<audio::Backend>> backends,
-			std::vector<std::unique_ptr<midi::Backend>> midiBackends);
+			std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends);
 		~AudioEngine() override; // stops the device
 
 		// Registers audio.devices, audio.setDevice, audio.setProcessing, audio.get, audio.performance,

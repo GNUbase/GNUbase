@@ -27,7 +27,7 @@ namespace gnubase::engine
 	class MidiPorts
 	{
 	public:
-		explicit MidiPorts(std::vector<std::unique_ptr<midi::Backend>> backends);
+		explicit MidiPorts(std::vector<std::unique_ptr<gnubase::midi::Backend>> backends);
 		~MidiPorts(); // closes the ports
 		MidiPorts(const MidiPorts&) = delete;
 		MidiPorts& operator=(const MidiPorts&) = delete;
@@ -56,14 +56,14 @@ namespace gnubase::engine
 	private:
 		struct Port
 		{
-			midi::Backend* backend = nullptr;
-			midi::PortInfo info;
+			gnubase::midi::Backend* backend = nullptr;
+			gnubase::midi::PortInfo info;
 			std::string showAs; // empty: the system name
 			bool visible = true;
 			bool inAllInputs = true;
 			bool present = true;
 			int slot = -1; // an input's index in m_allInputs and in the input queue
-			std::unique_ptr<midi::Input> input;
+			std::unique_ptr<gnubase::midi::Input> input;
 		};
 
 		// What the audio thread received, for the monitor.
@@ -80,11 +80,11 @@ namespace gnubase::engine
 		static Json toJson(const Port& port);
 		Json list() const;
 
-		std::vector<std::unique_ptr<midi::Backend>> m_backends;
+		std::vector<std::unique_ptr<gnubase::midi::Backend>> m_backends;
 		std::vector<Port> m_ports;
 		bool m_listed = false;
 		int m_nextSlot = 0;
-		midi::InputQueue m_queue;
+		gnubase::midi::InputQueue m_queue;
 		std::array<std::atomic<bool>, g_maxInputs> m_allInputs{};
 		rt::SpscQueue<Received> m_monitor;
 		std::atomic<size_t> m_monitorDropped{0};

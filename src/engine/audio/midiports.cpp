@@ -20,7 +20,7 @@ namespace gnubase::engine
 		}
 	}
 
-	MidiPorts::MidiPorts(std::vector<std::unique_ptr<midi::Backend>> backends)
+	MidiPorts::MidiPorts(std::vector<std::unique_ptr<gnubase::midi::Backend>> backends)
 		: m_backends(std::move(backends)), m_monitor(g_monitorSize)
 	{
 	}
@@ -66,9 +66,9 @@ namespace gnubase::engine
 		m_listed = true;
 		bool changed = false;
 		std::vector<bool> seen(m_ports.size(), false);
-		for (const std::unique_ptr<midi::Backend>& backend : m_backends)
+		for (const std::unique_ptr<gnubase::midi::Backend>& backend : m_backends)
 		{
-			std::vector<midi::PortInfo> infos;
+			std::vector<gnubase::midi::PortInfo> infos;
 			try
 			{
 				infos = backend->ports();
@@ -80,7 +80,7 @@ namespace gnubase::engine
 					seen[i] = seen[i] || (m_ports[i].backend == backend.get() && m_ports[i].present); // as they were
 				continue;
 			}
-			for (const midi::PortInfo& info : infos)
+			for (const gnubase::midi::PortInfo& info : infos)
 			{
 				const auto found = std::find_if(m_ports.begin(), m_ports.end(),
 					[&backend, &info](const Port& port)
@@ -185,7 +185,7 @@ namespace gnubase::engine
 
 	void MidiPorts::registerCommands(Engine& engine)
 	{
-		for (const std::unique_ptr<midi::Backend>& backend : m_backends)
+		for (const std::unique_ptr<gnubase::midi::Backend>& backend : m_backends)
 			backend->onPortsChanged([&engine] { engine.post("midi.refresh"); });
 
 		engine.registerCommand(
