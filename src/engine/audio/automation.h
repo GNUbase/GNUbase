@@ -14,9 +14,9 @@
 // block, at their sample offsets, and the channel's fader and source processor play them.
 namespace gnubase::engine
 {
-	// Ramps that a processor can't follow exactly (curves, and every ramp of a parameter other than the fader) are
-	// played as straight pieces of this many frames, counted from the point where the ramp starts. MIDI controllers
-	// get a controller event at each of these frames during a ramp.
+	// Ramps are played in steps of this many frames, counted from the point where the ramp starts: the fader glides
+	// along curves in straight pieces of this length (and along straight ramps exactly), instrument parameters get
+	// their value at each of these frames, and MIDI controllers get theirs where their MIDI 1.0 value changes.
 	inline constexpr uint32_t g_automationInterval = 64;
 
 	// One parameter's automation as the audio thread plays it.
@@ -25,7 +25,7 @@ namespace gnubase::engine
 		enum class Kind : uint8_t
 		{
 			Fader,      // parameter events for the channel's fader, which glides along ramps
-			Instrument, // parameter events for the channel's instrument
+			Instrument, // parameter events for the channel's instrument, which jumps to each value
 			Midi,       // MIDI controller events for the channel's source
 		};
 
@@ -61,9 +61,9 @@ namespace gnubase::engine
 
 	// Turns a channel's automation into events, block by block. While stopped, every parameter takes its value at
 	// the cursor; while playing, each segment of the transport block plays its part of the curves: steps at their
-	// sample, ramps as gliding parameter events (or controller events at g_automationInterval). A start, a locate, a
-	// cycle jump and new automation set every value at the frame where they happen, so playback is right from any
-	// position on.
+	// sample, ramps as gliding fader events or as the value every g_automationInterval frames. A start, a locate, a
+	// cycle jump, new automation and a new source processor set every value at the frame where they happen, so
+	// playback is right from any position on.
 	class AutomationPlayer
 	{
 	public:
@@ -75,18 +75,20 @@ namespace gnubase::engine
 		// Command thread: the automation last set.
 		const ChannelAutomation& latest() const { return m_automation.latest(); }
 
-		// Audio thread: adds the block's events for the fader to fader and the others to source.
-		void play(
-			const graph::TransportBlock& transport, graph::EventBuffer& source, graph::EventBuffer& fader) noexcept;
+		// Audio thread: adds the block's events for the fader to fader and the others to source, for the source
+		// processor processor (only compared, to send every value again to a new one).
+		void play(const graph::TransportBlock& transport, const void* processor, graph::EventBuffer& source,
+			graph::EventBuffer& fader) noexcept;
 
 	private:
 		rt::SnapshotPublisher<ChannelAutomation> m_automation;
 		uint64_t m_revision = 0; // command thread: the last revision given
 
 		// Audio thread.
-		uint64_t m_played = 0;    // the revision played last
-		int64_t m_next = -1;      // where playback goes on without a jump; -1 while stopped
-		int64_t m_stoppedAt = -1; // the cursor while stopped
+		uint64_t m_played = 0;             // the revision played last
+		const void* m_processor = nullptr; // the source processor played for last
+		int64_t m_next = -1;               // where playback goes on without a jump; -1 while stopped
+		int64_t m_stoppedAt = -1;          // the cursor while stopped
 	};
 
 	// A channel's fader: a linear gain and, on stereo channels, a balance as in the built-in gainPan (the side

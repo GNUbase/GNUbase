@@ -196,8 +196,8 @@ namespace gnubase::engine
 	struct AutomationPoint
 	{
 		ObjectId id = 0;
-		time::Ticks position = 0; // musical time, so automation follows the tempo
-		double value = 0.0;       // in the target's unit
+		time::Position position; // in the track's time base, like the track's events
+		double value = 0.0;      // in the target's unit
 		AutomationShape shape = AutomationShape::Linear;
 		double curve = 0.0; // Curve: -1 to 1; above 0 the value moves fast at first, below 0 slowly at first
 	};

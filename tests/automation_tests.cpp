@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/automation.h"
+#include "engine/audio/sequencer.h"
 #include "engine/document/rendersnapshot.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/graph/events.h"
 #include "engine/graph/graph.h"
+#include "engine/midi/midivalues.h"
 #include "engine/processors/testsynth.h"
 #include "testutils/testutils.h"
 
@@ -14,7 +17,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <functional>
+#include <limits>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -330,9 +336,10 @@ TEST_CASE("automation points are compiled to the project's samples, following th
 	AutomationLane volume;
 	volume.id = project.newId();
 	volume.track = track;
-	volume.points[project.newId()] = {0, 0, 0.0, AutomationShape::Linear, 0.0};
-	volume.points[project.newId()] = {0, ticks(48000) + ticks(24000), -20.0, AutomationShape::Step, 0.0};
-	volume.points[project.newId()] = {0, ticks(24000), -6.0, AutomationShape::Curve, -0.5};
+	const auto musical = [](int64_t value) { return gnubase::time::Position{gnubase::time::TimeBase::Musical, value}; };
+	volume.points[project.newId()] = {0, musical(0), 0.0, AutomationShape::Linear, 0.0};
+	volume.points[project.newId()] = {0, musical(ticks(48000) + ticks(24000)), -20.0, AutomationShape::Step, 0.0};
+	volume.points[project.newId()] = {0, musical(ticks(24000)), -6.0, AutomationShape::Curve, -0.5};
 	project.automation[volume.id] = volume;
 	AutomationLane unread = volume;
 	unread.id = project.newId();
@@ -360,14 +367,83 @@ TEST_CASE("automation points are compiled to the project's samples, following th
 	CHECK(points[2].position == 48000 + 48000); // half a second at 120 BPM takes a second at 60
 }
 
+TEST_CASE("automation points on linear tracks keep their time when the tempo changes", "[unit]")
+{
+	using gnubase::time::TimeBase;
+	Project project = newProject();
+	project.tempo = gnubase::time::TempoMap(100.0); // was 120 BPM when the points were made
+	const auto add = [&project](TimeBase base, int64_t position)
+	{
+		const ObjectId track = project.newId();
+		const ObjectId channel = project.newId();
+		project.trackById[track] = {track, TrackType::Audio, "Audio", "", base, 0, channel, {}};
+		project.tracks.push_back(track);
+		project.channels[channel] = {channel, track, 2, 0, 0, {}, 0.0, 0.0};
+		AutomationLane lane;
+		lane.id = project.newId();
+		lane.track = track;
+		lane.points[project.newId()] = {0, {base, position}, -20.0, AutomationShape::Step, 0.0};
+		project.automation[lane.id] = lane;
+	};
+	add(TimeBase::Linear, 480000);         // a dip at 10 s
+	add(TimeBase::Musical, ticks(480000)); // a dip at beat 21, 10 s at 120 BPM
+
+	const auto snapshot = compile(project, 1);
+	CHECK(snapshot->channels.at(0).automation.at(0).points.at(0).position == 480000); // still at 10 s
+	CHECK(snapshot->channels.at(1).automation.at(0).points.at(0).position == 576000); // 12 s at 100 BPM
+}
+
+TEST_CASE("automation points take positions in their track's time base and keep their time when it changes", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = idOf(run(client, "track.add", {{"type", "instrument"}, {"timeBase", "linear"}}), "track");
+	const ObjectId lane =
+		idOf(run(client, "automationLane.add", {{"track", track}, {"target", {{"type", "volume"}}}}), "lane");
+	run(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 480000}, {"value", -20.0}}}}});
+	const auto positionsOf = [&client]()
+	{
+		std::vector<int64_t> result;
+		const Json lanes = run(client, "automationLane.list").at("lanes");
+		for (const Json& point : lanes.at(0).at("points"))
+			result.push_back(point.at("position").get<int64_t>());
+		return result;
+	};
+	CHECK(positionsOf() == std::vector<int64_t>{480000}); // samples
+
+	// Switching the time base keeps the time, and so does a new sample rate on a linear track.
+	run(client, "track.set", {{"track", track}, {"timeBase", "musical"}});
+	CHECK(positionsOf() == std::vector<int64_t>{ticks(480000)});
+	run(client, "track.set", {{"track", track}, {"timeBase", "linear"}});
+	CHECK(positionsOf() == std::vector<int64_t>{480000});
+	run(client, "project.set", {{"sampleRate", 96000.0}});
+	CHECK(positionsOf() == std::vector<int64_t>{960000});
+	run(client, "project.set", {{"sampleRate", 48000.0}});
+
+	// Saved in the track's time base.
+	const Project loaded = projectFromJson(run(client, "project.get"));
+	REQUIRE(loaded.automation.size() == 1);
+	CHECK(loaded.automation.begin()->second.points.begin()->second.position ==
+		gnubase::time::Position{gnubase::time::TimeBase::Linear, 480000});
+
+	// Following a part in samples.
+	run(client, "automation.set", {{"followsEvents", true}});
+	const ObjectId part =
+		idOf(run(client, "midiPart.add", {{"track", track}, {"position", 48000}, {"length", 48000}}), "part");
+	run(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 60000}, {"value", -6.0}}}}});
+	run(client, "midiPart.set", {{"part", part}, {"position", 96000}});
+	CHECK(positionsOf() == std::vector<int64_t>{108000, 480000});
+	run(client, "automation.set", {{"followsEvents", false}});
+}
+
 TEST_CASE("the automation player turns curves into parameter and controller events at their samples", "[unit]")
 {
 	using Kind = PlayedLane::Kind;
 	using Type = graph::ProcessEvent::Type;
 	AutomationPlayer player;
 	auto automation = std::make_unique<ChannelAutomation>();
-	// The fader follows a straight ramp with one event, other parameters glide in pieces of g_automationInterval,
-	// controllers get an event at each piece.
+	// The fader follows a straight ramp with one event; instrument parameters and controllers get the value of each
+	// g_automationInterval frame at that frame.
 	automation->lanes.push_back({{AutomationTargetType::Volume, 0, 0, 0}, Kind::Fader, ChannelFader::Volume, 1.0, 0.0,
 		2.0, {{100, 0.5, AutomationShape::Linear, 0.0}, {300, 1.5, AutomationShape::Step, 0.0}}});
 	automation->lanes.push_back({{AutomationTargetType::Instrument, 2, 0, 0}, Kind::Instrument, 2, 0.25, 0.0, 1.0,
@@ -380,7 +456,7 @@ TEST_CASE("the automation player turns curves into parameter and controller even
 	graph::EventBuffer source(graph::g_maxEventsPerBlock);
 	graph::EventBuffer fader(graph::g_maxEventsPerBlock);
 	const graph::TransportSegment segment{0, 512, 0};
-	player.play({true, 0, &segment, 1}, source, fader);
+	player.play({true, 0, &segment, 1}, nullptr, source, fader);
 
 	// The fader: its value at the start and the ramp, which arrives at the value the curve then keeps.
 	REQUIRE(fader.size() == 2);
@@ -397,14 +473,17 @@ TEST_CASE("the automation player turns curves into parameter and controller even
 	for (const graph::ProcessEvent& event : source)
 		(event.type == Type::Parameter ? parameters : controllers).push_back(event);
 	REQUIRE(parameters.size() == 3);
-	CHECK(parameters[0].ramp == 0);
-	CHECK(parameters[1].offset == 0);
-	CHECK(parameters[1].ramp == 64);
+	for (const graph::ProcessEvent& event : parameters)
+	{
+		CHECK(event.ramp == 0);
+		CHECK(event.parameter == 2);
+	}
+	CHECK(parameters[0].offset == 0);
+	CHECK(parameters[0].parameterValue == 0.0);
+	CHECK(parameters[1].offset == 64);
 	CHECK(parameters[1].parameterValue == 0.5);
-	CHECK(parameters[2].offset == 64);
-	CHECK(parameters[2].ramp == 64);
+	CHECK(parameters[2].offset == 128);
 	CHECK(parameters[2].parameterValue == 1.0);
-	CHECK(parameters[2].parameter == 2);
 
 	std::vector<uint32_t> offsets;
 	for (const graph::ProcessEvent& event : controllers)
@@ -423,11 +502,11 @@ TEST_CASE("the automation player turns curves into parameter and controller even
 	source.clear();
 	fader.clear();
 	const graph::TransportSegment on{0, 512, 512};
-	player.play({true, 512, &on, 1}, source, fader);
+	player.play({true, 512, &on, 1}, nullptr, source, fader);
 	CHECK(source.empty());
 	CHECK(fader.empty());
 	const graph::TransportSegment jump{0, 64, 200};
-	player.play({true, 200, &jump, 1}, source, fader);
+	player.play({true, 200, &jump, 1}, nullptr, source, fader);
 	REQUIRE(fader.size() == 2);
 	CHECK(fader[0].parameterValue == 1.0); // mid-ramp
 	CHECK(fader[0].ramp == 0);
@@ -437,12 +516,12 @@ TEST_CASE("the automation player turns curves into parameter and controller even
 	// Stopped: the values at the cursor, once per cursor position.
 	source.clear();
 	fader.clear();
-	player.play({false, 50, nullptr, 0}, source, fader);
+	player.play({false, 50, nullptr, 0}, nullptr, source, fader);
 	REQUIRE(fader.size() == 1);
 	CHECK(fader[0].parameterValue == 0.5);
 	fader.clear();
 	source.clear();
-	player.play({false, 50, nullptr, 0}, source, fader);
+	player.play({false, 50, nullptr, 0}, nullptr, source, fader);
 	CHECK(fader.empty());
 	CHECK(source.empty());
 }
@@ -614,4 +693,221 @@ TEST_CASE("automation follows moved events and parts when the setting is on", "[
 	run(client, "history.undo");
 	CHECK(positionsOf().size() == 5);
 	run(client, "automation.set", {{"followsEvents", false}});
+}
+
+namespace
+{
+	// An event the automation player sent, at its project position.
+	struct PlayedEvent
+	{
+		int64_t position = 0;
+		graph::ProcessEvent::Type type = graph::ProcessEvent::Type::Parameter;
+		uint32_t parameter = 0;
+		double value = 0.0; // parameterValue, or the MIDI value
+		uint32_t ramp = 0;
+
+		bool operator==(const PlayedEvent& other) const
+		{
+			return position == other.position && type == other.type && parameter == other.parameter &&
+				value == other.value && ramp == other.ramp;
+		}
+	};
+
+	// Plays frames from position 0 in blocks of blockSize and returns the events for the source.
+	std::vector<PlayedEvent> playInBlocks(AutomationPlayer& player, int64_t frames, int64_t blockSize)
+	{
+		std::vector<PlayedEvent> result;
+		graph::EventBuffer source(graph::g_maxEventsPerBlock);
+		graph::EventBuffer fader(graph::g_maxEventsPerBlock);
+		for (int64_t start = 0; start < frames; start += blockSize)
+		{
+			source.clear();
+			fader.clear();
+			const graph::TransportSegment segment{0, static_cast<uint32_t>(std::min(blockSize, frames - start)), start};
+			player.play({true, start, &segment, 1}, nullptr, source, fader);
+			for (const graph::ProcessEvent& event : source)
+				result.push_back({start + event.offset, event.type, event.parameter,
+					event.type == graph::ProcessEvent::Type::Parameter ? event.parameterValue
+																	   : static_cast<double>(event.value),
+					event.ramp});
+		}
+		return result;
+	}
+}
+
+TEST_CASE(
+	"instrument parameters and MIDI controllers get their values at their own frames for any block size", "[unit]")
+{
+	using Kind = PlayedLane::Kind;
+	using Type = graph::ProcessEvent::Type;
+	const auto automation = []()
+	{
+		auto result = std::make_unique<ChannelAutomation>();
+		result->lanes.push_back({{AutomationTargetType::Instrument, 1, 0, 0}, Kind::Instrument, 1, 0.0, 0.0, 1.0,
+			{{0, 0.0, AutomationShape::Linear, 0.0}, {1280, 1.0, AutomationShape::Curve, 0.5},
+				{2000, 0.25, AutomationShape::Step, 0.0}}});
+		result->lanes.push_back({{AutomationTargetType::Controller, 0, 1, 0}, Kind::Midi, 0, 0.0, 0.0, 1.0,
+			{{100, 0.0, AutomationShape::Linear, 0.0}, {1500, 1.0, AutomationShape::Curve, -0.5},
+				{2500, 0.0, AutomationShape::Step, 0.0}}});
+		return result;
+	};
+	AutomationPlayer whole;
+	whole.setAutomation(automation());
+	const std::vector<PlayedEvent> expected = playInBlocks(whole, 3000, 3000);
+
+	// The instrument gets each step's value at that step, never one from further on.
+	std::vector<PlayedEvent> ramp;
+	for (const PlayedEvent& event : expected)
+		if (event.type == Type::Parameter && event.position <= 1280)
+			ramp.push_back(event);
+	REQUIRE(ramp.size() == 21);
+	for (size_t i = 0; i < ramp.size(); ++i)
+	{
+		CHECK(ramp[i].position == static_cast<int64_t>(i) * 64);
+		CHECK(ramp[i].value == static_cast<double>(i) / 20.0);
+		CHECK(ramp[i].ramp == 0);
+	}
+
+	const int blockSize = GENERATE(1, 64, 100, 333);
+	INFO("block size " << blockSize);
+	AutomationPlayer player;
+	player.setAutomation(automation());
+	CHECK(playInBlocks(player, 3000, blockSize) == expected);
+}
+
+TEST_CASE("a new source processor gets every automation value again", "[unit]")
+{
+	using Kind = PlayedLane::Kind;
+	AutomationPlayer player;
+	auto automation = std::make_unique<ChannelAutomation>();
+	automation->instrument = "testSynth";
+	automation->lanes.push_back({{AutomationTargetType::Instrument, 0, 0, 0}, Kind::Instrument, 0, 0.25, 0.0, 1.0, {}});
+	player.setAutomation(std::move(automation));
+
+	// The new automation reaches the audio thread while the old graph still plays, with the old instrument.
+	const int oldInstrument = 0;
+	const int newInstrument = 0;
+	graph::EventBuffer source(graph::g_maxEventsPerBlock);
+	graph::EventBuffer fader(graph::g_maxEventsPerBlock);
+	const graph::TransportSegment first{0, 64, 0};
+	player.play({true, 0, &first, 1}, &oldInstrument, source, fader);
+	CHECK(source.size() == 1);
+	source.clear();
+	const graph::TransportSegment second{0, 64, 64};
+	player.play({true, 64, &second, 1}, &oldInstrument, source, fader);
+	CHECK(source.empty());
+
+	// Then the graph with the new instrument: it gets the values at once.
+	const graph::TransportSegment third{0, 64, 128};
+	player.play({true, 128, &third, 1}, &newInstrument, source, fader);
+	REQUIRE(source.size() == 1);
+	CHECK(source[0].offset == 0);
+	CHECK(source[0].parameterValue == 0.25);
+	source.clear();
+	player.play({false, 192, nullptr, 0}, &newInstrument, source, fader);
+	source.clear();
+	player.play({false, 192, nullptr, 0}, &oldInstrument, source, fader); // stopped too
+	CHECK(source.size() == 1);
+}
+
+TEST_CASE("MIDI controller ramps send only changes and leave room for notes", "[unit]")
+{
+	using Kind = PlayedLane::Kind;
+	using Type = graph::ProcessEvent::Type;
+	constexpr uint32_t blockSize = 8192;
+
+	// A slow ramp changes the MIDI 1.0 value twice in a block: three events, not one every 64 frames.
+	{
+		AutomationPlayer player;
+		auto automation = std::make_unique<ChannelAutomation>();
+		automation->lanes.push_back({{AutomationTargetType::Controller, 0, 7, 0}, Kind::Midi, 0, 0.0, 0.0, 1.0,
+			{{0, 0.0, AutomationShape::Linear, 0.0},
+				{int64_t{blockSize} * 2, 5.0 / 128.0, AutomationShape::Step, 0.0}}});
+		player.setAutomation(std::move(automation));
+		const std::vector<PlayedEvent> events = playInBlocks(player, blockSize, blockSize);
+		REQUIRE(events.size() == 3);
+		CHECK(events[0].position == 0);
+		CHECK(gnubase::engine::midi::controllerToMidi1(static_cast<uint32_t>(events[1].value)) == 1);
+		CHECK(gnubase::engine::midi::controllerToMidi1(static_cast<uint32_t>(events[2].value)) == 2);
+	}
+
+	// Sixteen controllers ramping over the whole range in one block, and a sequencer's notes after them.
+	auto state = std::make_shared<ChannelState>();
+	auto automation = std::make_unique<ChannelAutomation>();
+	for (uint8_t number = 0; number < 16; ++number)
+		automation->lanes.push_back({{AutomationTargetType::Controller, 0, number, 0}, Kind::Midi, 0, 0.0, 0.0, 1.0,
+			{{0, 0.0, AutomationShape::Linear, 0.0}, {blockSize, 1.0, AutomationShape::Step, 0.0}}});
+	state->automation.setAutomation(std::move(automation));
+	auto sequencer = std::make_shared<MidiSequencer>();
+	auto sequence = std::make_unique<MidiSequence>();
+	for (int64_t i = 0; i < 200; ++i)
+		sequence->notes.push_back({i * 40, (i * 40) + 20, static_cast<uint8_t>(i % 128), 30000, 1});
+	sequencer->setSequence(std::move(sequence));
+	ChannelStrip strip(state, sequencer);
+	strip.prepareFor(48000.0, blockSize);
+	const graph::EventBuffer in(graph::g_maxEventsPerBlock);
+	graph::EventBuffer out(graph::g_maxEventsPerBlock);
+	const graph::TransportSegment segment{0, blockSize, 0};
+	const graph::TransportBlock transport{true, 0, &segment, 1};
+	strip.process({nullptr, 0, blockSize, in, out, transport});
+
+	size_t on = 0;
+	size_t off = 0;
+	size_t controllers = 0;
+	for (const graph::ProcessEvent& event : out)
+	{
+		on += event.type == Type::NoteOn ? 1 : 0;
+		off += event.type == Type::NoteOff ? 1 : 0;
+		controllers += event.type == Type::Controller ? 1 : 0;
+	}
+	CHECK(on == 200);
+	CHECK(off == 200);
+	CHECK(controllers >= 16);
+	CHECK(controllers <= (graph::g_maxEventsPerBlock / 2) + 16);
+}
+
+TEST_CASE("projects whose automation or channels have values out of range or not finite are refused", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId audio = idOf(run(client, "track.add", {{"type", "audio"}}), "track");
+	const ObjectId midi = idOf(run(client, "track.add", {{"type", "midi"}}), "track");
+	run(client, "automationPoint.add",
+		{{"lane",
+			 idOf(run(client, "automationLane.add", {{"track", audio}, {"target", {{"type", "volume"}}}}), "lane")},
+			{"points", {{{"position", 0}, {"value", -6.0}, {"shape", "curve"}, {"curve", 0.5}}}}});
+	run(client, "automationPoint.add",
+		{{"lane",
+			 idOf(run(client, "automationLane.add",
+					  {{"track", midi}, {"target", {{"type", "controller"}, {"number", 7}, {"channel", 2}}}}),
+				 "lane")},
+			{"points", {{{"position", 0}, {"value", 0.5}}}}});
+	const Json good = run(client, "project.get");
+	CHECK(projectFromJson(good).automation.size() == 2);
+
+	// Each change makes the file one that the commands couldn't have made.
+	const auto refused = [&good](const std::function<void(Json&)>& change)
+	{
+		Json bad = good;
+		change(bad);
+		CHECK_THROWS_AS(projectFromJson(bad), std::invalid_argument);
+	};
+	const double nan = std::numeric_limits<double>::quiet_NaN();
+	const double infinity = std::numeric_limits<double>::infinity();
+	refused([](Json& p) { p["automation"][0]["points"][0]["curve"] = -200.0; }); // exp() would overflow
+	refused([nan](Json& p) { p["automation"][0]["points"][0]["curve"] = nan; });
+	refused([nan](Json& p) { p["automation"][0]["points"][0]["value"] = nan; });
+	refused([infinity](Json& p) { p["automation"][0]["points"][0]["value"] = -infinity; });
+	refused([](Json& p) { p["automation"][0]["points"][0]["value"] = 7.0; });
+	refused([](Json& p) { p["automation"][0]["points"][0]["position"] = -1; });
+	refused([](Json& p) { p["automation"][0]["points"][0]["shape"] = "wobble"; });
+	refused([](Json& p) { p["automation"][1]["points"][0]["value"] = 1.5; });
+	refused([](Json& p) { p["automation"][0]["track"] = 9999; });
+	refused([midi](Json& p) { p["automation"][0]["track"] = midi; });   // a MIDI track has no volume
+	refused([audio](Json& p) { p["automation"][1]["track"] = audio; }); // nor an audio track controllers
+	refused([](Json& p) { p["automation"][0]["target"]["type"] = "brightness"; });
+	refused([](Json& p) { p["automation"][1]["target"]["number"] = 300; });
+	refused([](Json& p) { p["automation"][1]["target"]["channel"] = 16; });
+	refused([](Json& p) { p["channels"][0]["volume"] = 1000.0; });
+	refused([nan](Json& p) { p["channels"][0]["pan"] = nan; });
 }

@@ -158,13 +158,13 @@ namespace
 							{{"track", idOf(track, "track")}, {"target", target}, {"read", read}}),
 				"lane");
 		};
-		run(client, "automationPoint.add",
+		run(client, "automationPoint.add", // in samples on the linear track: a quarter note is 22050
 			{{"lane", lane(vocals, {{"type", "volume"}})},
 				{"points",
 					{{{"position", 0}, {"value", -20.0}, {"shape", "step"}},
-						{{"position", g_ticksPerQuarter}, {"value", -6.0}, {"shape", "linear"}},
-						{{"position", 2 * g_ticksPerQuarter}, {"value", 0.0}, {"shape", "curve"}, {"curve", 0.4}},
-						{{"position", 3 * g_ticksPerQuarter}, {"value", -144.0}}}}});
+						{{"position", 22050}, {"value", -6.0}, {"shape", "linear"}},
+						{{"position", 2 * 22050}, {"value", 0.0}, {"shape", "curve"}, {"curve", 0.4}},
+						{{"position", 3 * 22050}, {"value", -144.0}}}}});
 		run(client, "automationPoint.add",
 			{{"lane", lane(piano, {{"type", "pan"}})},
 				{"points",
@@ -710,4 +710,78 @@ TEST_CASE("saving keeps the history, loading starts a new one", "[integration]")
 	run(client, "project.load", {{"path", file}});
 	CHECK(run(client, "history.get").at("steps").empty());
 	CHECK(run(client, "project.get").at("tracks").size() == 1);
+}
+
+TEST_CASE("automation on linear tracks is written in seconds; numbers that aren't finite don't load", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const Json track = run(client, "track.add", {{"type", "audio"}, {"name", "Linear"}, {"timeBase", "linear"}});
+	run(client, "channel.set", {{"channel", idOf(track, "channel")}, {"volume", -6.0}});
+	const ObjectId lane = idOf(
+		run(client, "automationLane.add", {{"track", idOf(track, "track")}, {"target", {{"type", "volume"}}}}), "lane");
+	run(client, "automationPoint.add", // 10 s, 12.5 s and 15 s
+		{{"lane", lane},
+			{"points",
+				{{{"position", 480000}, {"value", -20.0}}, {{"position", 600000}, {"value", -10.0}},
+					{{"position", 720000}, {"value", 0.0}, {"shape", "curve"}, {"curve", 0.5}},
+					{{"position", 768000}, {"value", -3.0}}}}});
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+	const std::map<std::string, std::string> saved = readZip(file);
+	const std::string& xml = saved.at("project.xml");
+	CHECK(xml.find("<RealPoint time=\"10\"") != std::string::npos);
+	CHECK(xml.find("<RealPoint time=\"12.5\"") != std::string::npos);
+
+	// A curve in GNUbase's entry that would overflow: the entry is refused and project.xml loads.
+	{
+		std::map<std::string, std::string> entries = saved;
+		Json extension = Json::parse(entries.at("gnubase.json"));
+		for (Json& point : extension.at("project").at("automation").at(0).at("points"))
+			if (point.contains("curve"))
+				point["curve"] = -200.0;
+		entries["gnubase.json"] = extension.dump();
+		writeZip(file, entries);
+		run(client, "project.load", {{"path", file}});
+		const Json loaded = run(client, "project.get");
+		const Json& points = loaded.at("automation").at(0).at("points");
+		CHECK(points.size() > 4); // the curve in straight pieces, from project.xml
+		for (const Json& point : points)
+			CHECK(!point.contains("curve"));
+	}
+
+	// project.xml alone, with "nan" and "inf" for the channel's volume and pan and in the first two points.
+	{
+		std::map<std::string, std::string> entries = saved;
+		entries.erase("gnubase.json");
+		std::string& text = entries.at("project.xml");
+		// Replaces the attribute's value in the nth element of the name.
+		const auto replaceValue =
+			[&text](const std::string& element, int nth, const std::string& attribute, const char* value)
+		{
+			size_t start = text.find("<" + element + " ");
+			for (int i = 0; i < nth; ++i)
+				start = text.find("<" + element + " ", start + 1);
+			REQUIRE(start != std::string::npos);
+			const size_t from = text.find(attribute + "=\"", start) + attribute.size() + 2;
+			text.replace(from, text.find('"', from) - from, value);
+		};
+		replaceValue("Volume", 0, "value", "nan");
+		replaceValue("Pan", 0, "value", "inf");
+		replaceValue("RealPoint", 0, "time", "inf");
+		replaceValue("RealPoint", 1, "value", "-nan");
+		writeZip(file, entries);
+		run(client, "project.load", {{"path", file}});
+		const Json loaded = run(client, "project.get");
+		const Json channel =
+			withId(loaded.at("channels"), "id", withId(loaded.at("tracks"), "name", "Linear").at("channel"));
+		CHECK(channel.at("volume") == 0.0); // the default: unity gain
+		CHECK(channel.at("pan") == 0.0);
+		const Json& points = loaded.at("automation").at(0).at("points");
+		REQUIRE(!points.empty());
+		CHECK(std::abs(points[0].at("value").get<double>()) < 1e-9); // the point at 15 s, 0 dB
+		for (const Json& point : points)
+			CHECK(std::isfinite(point.at("value").get<double>()));
+	}
 }

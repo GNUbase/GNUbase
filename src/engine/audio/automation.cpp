@@ -2,6 +2,7 @@
 #include "engine/audio/automation.h"
 
 #include "engine/graph/graph.h"
+#include "engine/midi/midivalues.h"
 
 #include <algorithm>
 #include <cmath>
@@ -86,6 +87,21 @@ namespace gnubase::engine
 			return static_cast<uint32_t>(std::llround(std::clamp(value, 0.0, 1.0) * 4294967295.0));
 		}
 
+		// A MIDI lane's value at MIDI 1.0's resolution: 7 bits, 14 for pitch bend.
+		uint32_t midi1Value(const PlayedLane& lane, double value)
+		{
+			const uint32_t full = midiValue(value);
+			return lane.target.type == AutomationTargetType::PitchBend ? midi::pitchBendToMidi1(full)
+																	   : midi::controllerToMidi1(full);
+		}
+
+		// Whether the source's events have room for a step of a ramp: ramps leave half of them to the source's own
+		// events, the notes. The steps they skip only delay the value; the end of a ramp always arrives.
+		bool roomForRamp(const graph::EventBuffer& source) noexcept
+		{
+			return source.size() < source.capacity() / 2;
+		}
+
 		// Adds an event that sets the lane's parameter to value at offset, gliding there over ramp frames if the
 		// parameter glides.
 		void emit(const PlayedLane& lane, uint32_t offset, double value, uint32_t ramp, graph::EventBuffer& source,
@@ -140,7 +156,8 @@ namespace gnubase::engine
 			if (jump)
 				emit(lane, segment.offset, automationValue(points, begin), 0, source, fader);
 
-			const bool glides = lane.kind != Kind::Midi;
+			// The fader glides along ramps; instruments and MIDI get the value at each g_automationInterval frame.
+			const bool glides = lane.kind == Kind::Fader;
 			int64_t at = begin;
 			for (;;)
 			{
@@ -184,11 +201,22 @@ namespace gnubase::engine
 							pieceEnd = std::min(pieceEnd, grid);
 						}
 						if (glides)
+						{
 							emit(lane, offset(piece), between(from, to, pieceEnd),
 								static_cast<uint32_t>(pieceEnd - piece), source, fader);
+						}
 						else if (piece > from.position && (piece - from.position) % g_automationInterval == 0 &&
-							(piece > begin || !jump))
-							emit(lane, offset(piece), between(from, to, piece), 0, source, fader);
+							(piece > begin || !jump) && roomForRamp(source))
+						{
+							// MIDI controllers only when their MIDI 1.0 value changes, so that ramps don't flood the
+							// events: compared with the step before, which had the same MIDI 1.0 value as the last
+							// one sent.
+							const double value = between(from, to, piece);
+							if (lane.kind != Kind::Midi ||
+								midi1Value(lane, value) !=
+									midi1Value(lane, between(from, to, piece - g_automationInterval)))
+								emit(lane, offset(piece), value, 0, source, fader);
+						}
 						piece = pieceEnd;
 					}
 				}
@@ -226,12 +254,15 @@ namespace gnubase::engine
 		m_automation.publish(std::move(automation));
 	}
 
-	void AutomationPlayer::play(
-		const graph::TransportBlock& transport, graph::EventBuffer& source, graph::EventBuffer& fader) noexcept
+	void AutomationPlayer::play(const graph::TransportBlock& transport, const void* processor,
+		graph::EventBuffer& source, graph::EventBuffer& fader) noexcept
 	{
 		const ChannelAutomation& automation = m_automation.acquire();
-		bool changed = automation.revision != m_played;
+		// New automation, or a new source processor (e.g. another instrument) that hasn't had the values yet: the
+		// automation may have reached the audio thread before the graph with the new source.
+		bool changed = automation.revision != m_played || processor != m_processor;
 		m_played = automation.revision;
+		m_processor = processor;
 
 		if (!transport.playing)
 		{
@@ -369,7 +400,7 @@ namespace gnubase::engine
 		m_faderEvents.clear();
 		for (const graph::ProcessEvent& event : context.eventsIn)
 			m_sourceEvents.add(event);
-		m_state->automation.play(context.transport, m_sourceEvents, m_faderEvents);
+		m_state->automation.play(context.transport, m_source.get(), m_sourceEvents, m_faderEvents);
 
 		if (m_source)
 			m_source->process({context.audio, context.channels, context.frames, m_sourceEvents, context.eventsOut,

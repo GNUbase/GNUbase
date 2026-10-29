@@ -94,6 +94,13 @@ namespace gnubase::engine
 			return std::clamp((value * 2.0) - 1.0, -1.0, 1.0);
 		}
 
+		// A number attribute, or fallback if it is missing or not a finite number such as "nan" or "inf".
+		double finiteNumber(const pugi::xml_attribute& attribute, double fallback)
+		{
+			const double value = attribute.as_double(fallback);
+			return std::isfinite(value) ? value : fallback;
+		}
+
 		// Curved segments become this many straight pieces in project.xml.
 		constexpr int g_curvePieces = 8;
 
@@ -500,10 +507,10 @@ namespace gnubase::engine
 					return target.type == AutomationTargetType::Pan ? panToNormalized(v) : v;
 				};
 				// Values in DAWproject's units, which curves bend in like playback does (volume as gain).
-				const auto write = [&](time::Ticks position, double v, bool hold)
+				const auto write = [&](int64_t position, double v, bool hold)
 				{
 					pugi::xml_node point = points.append_child("RealPoint");
-					point.append_attribute("time") = automationTime(track, position);
+					point.append_attribute("time") = laneTime(track, position); // in the track's time base
 					point.append_attribute("value") = v;
 					point.append_attribute("interpolation") = hold ? "hold" : "linear";
 				};
@@ -511,34 +518,27 @@ namespace gnubase::engine
 				sorted.reserve(lane.points.size());
 				for (const auto& [id, point] : lane.points)
 					sorted.push_back(&point);
-				std::stable_sort(sorted.begin(), sorted.end(),
-					[](const AutomationPoint* a, const AutomationPoint* b) { return a->position < b->position; });
+				std::stable_sort(sorted.begin(), sorted.end(), [](const AutomationPoint* a, const AutomationPoint* b)
+					{ return a->position.value < b->position.value; });
 				for (size_t i = 0; i < sorted.size(); ++i)
 				{
 					const AutomationPoint& point = *sorted[i];
-					write(point.position, value(point.value), point.shape == AutomationShape::Step);
+					const int64_t at = point.position.value;
+					write(at, value(point.value), point.shape == AutomationShape::Step);
 					if (point.shape != AutomationShape::Curve || i + 1 == sorted.size())
 						continue;
 					// The curve's own shape, in straight pieces between the two points.
 					const AutomationPoint& next = *sorted[i + 1];
-					const std::vector<RenderAutomationPoint> curve{
-						{point.position, value(point.value), point.shape, point.curve},
-						{next.position, value(next.value), next.shape, next.curve}};
+					const int64_t nextAt = next.position.value;
+					const std::vector<RenderAutomationPoint> curve{{at, value(point.value), point.shape, point.curve},
+						{nextAt, value(next.value), next.shape, next.curve}};
 					for (int piece = 1; piece < g_curvePieces; ++piece)
 					{
-						const time::Ticks at =
-							point.position + ((next.position - point.position) * piece / g_curvePieces);
-						if (at > point.position && at < next.position)
-							write(at, automationValue(curve, at), false);
+						const int64_t pieceAt = at + ((nextAt - at) * piece / g_curvePieces);
+						if (pieceAt > at && pieceAt < nextAt)
+							write(pieceAt, automationValue(curve, pieceAt), false);
 					}
 				}
-			}
-
-			// An automation position in the lane's time unit: beats on musical tracks, seconds on linear ones.
-			double automationTime(const Track& track, time::Ticks position) const
-			{
-				return track.timeBase == time::TimeBase::Musical ? toBeats(position)
-																 : m_project.tempo.toSeconds(position);
 			}
 
 			void writeAudioClip(pugi::xml_node clips, const Track& track, const AudioEvent& event)
@@ -873,7 +873,7 @@ namespace gnubase::engine
 						const pugi::xml_node pan = channelNode.child("Pan");
 						if (!volume.empty())
 						{
-							const double value = volume.attribute("value").as_double(1.0);
+							const double value = finiteNumber(volume.attribute("value"), 1.0);
 							channel.volume = std::string(volume.attribute("unit").as_string("linear")) == "decibel"
 								? std::clamp(value, g_minChannelVolume, g_maxChannelVolume)
 								: gainToVolume(value);
@@ -881,7 +881,7 @@ namespace gnubase::engine
 						}
 						if (!pan.empty())
 						{
-							channel.pan = normalizedToPan(pan.attribute("value").as_double(0.5));
+							channel.pan = normalizedToPan(finiteNumber(pan.attribute("value"), 0.5));
 							m_parameters[pan.attribute("id").as_string()] = {track.id, AutomationTargetType::Pan};
 						}
 					}
@@ -999,10 +999,14 @@ namespace gnubase::engine
 				const std::string unit = points.attribute("unit").as_string("");
 				for (const pugi::xml_node element : points.children("RealPoint"))
 				{
+					// Points without a finite time and value are left out: NaN would reach the audio.
+					const double at = element.attribute("time").as_double(0.0);
+					const double value = element.attribute("value").as_double(0.0);
+					if (!std::isfinite(at) || !std::isfinite(value))
+						continue;
 					AutomationPoint point;
 					point.id = m_project.newId();
-					point.position = toTicks(element.attribute("time").as_double(), context.seconds);
-					const double value = element.attribute("value").as_double(0.0);
+					point.position = {time::TimeBase::Musical, toTicks(at, context.seconds)};
 					switch (automated.type)
 					{
 					case AutomationTargetType::Volume:

@@ -44,8 +44,6 @@ namespace gnubase::engine
 	// {"type": ..., plus "parameter" for instrument, "number" and "channel" for controller, "channel" for pitchBend
 	// and channelPressure}.
 	Json toJson(const AutomationTarget& target);
-	// The inverse of toJson(const AutomationTarget&), without checking the values.
-	AutomationTarget automationTargetFromJson(const Json& json);
 	Json toJson(const AutomationPoint& point);
 	Json toJson(const AutomationLane& lane); // with its points, sorted by position
 
@@ -54,6 +52,8 @@ namespace gnubase::engine
 	Json toJson(const Project& project);
 
 	// The inverse of toJson(const Project&). Ids continue at nextId if the JSON has it, or else after the highest
-	// id. Throws std::exception for JSON that isn't such a project.
+	// id. Throws std::exception for JSON that isn't such a project, and std::invalid_argument for automation that
+	// the automation commands wouldn't make: on no track or a track it doesn't fit, with target numbers out of
+	// range, or with points whose position, value or curve isn't a finite number in its range.
 	Project projectFromJson(const Json& json);
 }

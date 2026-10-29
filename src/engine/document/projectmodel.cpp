@@ -276,6 +276,13 @@ namespace gnubase::engine
 					part.length = end.value - part.position.value;
 					context.emit("midiPart.changed", {{"part", toJson(part)}});
 				}
+			for (auto& [id, lane] : project.automation)
+				if (lane.track == track.id && !lane.points.empty())
+				{
+					for (auto& [pointId, point] : lane.points)
+						point.position = time::rebase(point.position, base, project.tempo, project.sampleRate);
+					context.emit("automationLane.changed", {{"lane", toJson(lane)}});
+				}
 			track.timeBase = base;
 		}
 
@@ -296,6 +303,18 @@ namespace gnubase::engine
 					part.length = rescale(part.length, factor);
 					context.emit("midiPart.changed", {{"part", toJson(part)}});
 				}
+			for (auto& [id, lane] : project.automation)
+			{
+				bool changed = false;
+				for (auto& [pointId, point] : lane.points)
+					if (point.position.base == time::TimeBase::Linear)
+					{
+						point.position.value = rescale(point.position.value, factor);
+						changed = true;
+					}
+				if (changed)
+					context.emit("automationLane.changed", {{"lane", toJson(lane)}});
+			}
 			project.sampleRate = sampleRate;
 		}
 
@@ -414,15 +433,12 @@ namespace gnubase::engine
 			return text.str();
 		}
 
-		// Changes a point by what a command gives for it, checked.
-		void changePoint(
-			AutomationPoint& point, const Json& item, const std::string& name, const std::pair<double, double>& range)
+		// Changes a point by what a command gives for it, checked. Positions are in the time base of the lane's track.
+		void changePoint(AutomationPoint& point, const Json& item, const std::string& name, const Track& track,
+			const std::pair<double, double>& range)
 		{
 			if (item.contains("position"))
-			{
-				point.position = item.at("position").get<time::Ticks>();
-				require(point.position >= 0, name + ".position must not be negative");
-			}
+				point.position = position(track, item.at("position"), name + ".position");
 			if (item.contains("value"))
 			{
 				point.value = item.at("value").get<double>();
@@ -511,11 +527,13 @@ namespace gnubase::engine
 			AutomationLane& lane = find(project.automation, parameters.at("lane").get<ObjectId>(), "automation lane");
 			const Json& items = parameters.at("points");
 			const std::pair<double, double> range = automationRange(project, lane);
+			const Track& track = project.trackById.at(lane.track);
 			std::vector<AutomationPoint> points;
 			for (size_t i = 0; i < items.size(); ++i)
 			{
 				AutomationPoint point;
-				changePoint(point, items[i], "points[" + std::to_string(i) + "]", range);
+				point.position.base = track.timeBase;
+				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range);
 				points.push_back(point);
 			}
 			for (AutomationPoint& point : points)
@@ -534,6 +552,7 @@ namespace gnubase::engine
 			AutomationLane& lane = find(project.automation, parameters.at("lane").get<ObjectId>(), "automation lane");
 			const Json& items = parameters.at("points");
 			const std::pair<double, double> range = automationRange(project, lane);
+			const Track& track = project.trackById.at(lane.track);
 			std::vector<AutomationPoint> points;
 			for (size_t i = 0; i < items.size(); ++i)
 			{
@@ -542,7 +561,7 @@ namespace gnubase::engine
 				require(found != lane.points.end(),
 					"no automation point " + idText(id) + " in automation lane " + idText(lane.id));
 				AutomationPoint point = found->second;
-				changePoint(point, items[i], "points[" + std::to_string(i) + "]", range);
+				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range);
 				points.push_back(point);
 			}
 			for (const AutomationPoint& point : points)
@@ -567,42 +586,51 @@ namespace gnubase::engine
 		}
 
 		// Automation follows events: when an event or part moves, the automation of its track in the range it covered
-		// moves with it and replaces the points where it lands.
-		void followEvent(Project& project, ObjectId track, time::Ticks from, time::Ticks end, time::Ticks to,
-			CommandContext& context)
+		// moves with it and replaces the points where it lands. The points are in the track's time base, like the
+		// event's positions.
+		void followEvent(Project& project, ObjectId track, const time::Position& fromPosition,
+			const time::Position& endPosition, const time::Position& toPosition, CommandContext& context)
 		{
+			const time::TimeBase base = project.trackById.at(track).timeBase;
+			const auto inBase = [&project, base](const time::Position& position)
+			{ return time::rebase(position, base, project.tempo, project.sampleRate).value; };
+			const int64_t from = inBase(fromPosition);
+			const int64_t end = inBase(endPosition);
+			const int64_t to = inBase(toPosition);
 			if (to == from || end <= from)
 				return;
-			const time::Ticks landing = to + (end - from);
+			const int64_t landing = to + (end - from);
 			for (auto& [id, lane] : project.automation)
 			{
 				if (lane.track != track)
 					continue;
 				std::vector<AutomationPoint> moving;
 				for (const auto& [pointId, point] : lane.points)
-					if (point.position >= from && point.position < end)
+					if (point.position.value >= from && point.position.value < end)
 						moving.push_back(point);
 				if (moving.empty())
 					continue;
 				for (auto point = lane.points.begin(); point != lane.points.end();)
 				{
-					const bool moves = point->second.position >= from && point->second.position < end;
-					const bool covered = point->second.position >= to && point->second.position < landing;
+					const int64_t at = point->second.position.value;
+					const bool moves = at >= from && at < end;
+					const bool covered = at >= to && at < landing;
 					point = covered && !moves ? lane.points.erase(point) : std::next(point);
 				}
 				for (const AutomationPoint& point : moving)
-					lane.points[point.id].position = point.position + (to - from);
+					lane.points[point.id].position.value = point.position.value + (to - from);
 				context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 			}
 		}
 
-		// Where an audio event ends, in ticks.
-		time::Ticks eventEnd(const Project& project, const AudioEvent& event)
+		// Where an audio event ends, in the time base of its position.
+		time::Position eventEnd(const Project& project, const AudioEvent& event)
 		{
 			const MediaFile& media = project.media.at(project.clips.at(event.clip).media);
 			const time::Samples start = time::toSamples(event.position, project.tempo, project.sampleRate);
 			const auto length = std::llround(static_cast<double>(event.length) * project.sampleRate / media.sampleRate);
-			return project.tempo.toTicks(start + length, project.sampleRate);
+			return time::rebase(
+				{time::TimeBase::Linear, start + length}, event.position.base, project.tempo, project.sampleRate);
 		}
 
 		// Commands.
@@ -991,9 +1019,7 @@ namespace gnubase::engine
 			require(changed.length > 0, "length must be positive");
 			checkAudioEvent(project, changed);
 			if (follow && changed.position != event.position)
-				followEvent(project, event.track, time::toTicks(event.position, project.tempo, project.sampleRate),
-					eventEnd(project, event), time::toTicks(changed.position, project.tempo, project.sampleRate),
-					context);
+				followEvent(project, event.track, event.position, eventEnd(project, event), changed.position, context);
 			event = changed;
 			Json result = {{"event", toJson(event)}};
 			context.emit("audioEvent.changed", result);
@@ -1038,9 +1064,7 @@ namespace gnubase::engine
 			const int64_t length = parameters.value("length", part.length);
 			require(length > 0, "length must be positive");
 			if (follow && newPosition != part.position)
-				followEvent(project, part.track, time::toTicks(part.position, project.tempo, project.sampleRate),
-					time::toTicks(partEnd(part), project.tempo, project.sampleRate),
-					time::toTicks(newPosition, project.tempo, project.sampleRate), context);
+				followEvent(project, part.track, part.position, partEnd(part), newPosition, context);
 			part.position = newPosition;
 			part.length = length;
 			part.name = parameters.value("name", part.name);
@@ -1863,8 +1887,9 @@ namespace gnubase::engine
 				{"position", "value"});
 		add(engine,
 			{"automationPoint.add", 1,
-				"Adds points to an automation lane: position in ticks (musical time, so automation follows tempo "
-				"changes), value in the target's unit, shape of the curve to the next point (step, linear or curve; "
+				"Adds points to an automation lane: position in the track's time base (ticks on musical tracks, so "
+				"automation follows tempo changes; samples on linear ones, so it keeps its time), value in the "
+				"target's unit, shape of the curve to the next point (step, linear or curve; "
 				"default linear) and for curves the bend, curve, from -1 to 1 (above 0 the value moves fast at first). "
 				"Before the first point the curve has its value, after the last point the last one's; points at one "
 				"position make a jump. A ramp of volume moves the gain in a straight line.",
