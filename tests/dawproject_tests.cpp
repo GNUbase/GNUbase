@@ -575,6 +575,69 @@ TEST_CASE("folders, groups, nested clips, markers and tempo changes load from pr
 	CHECK(std::abs(part.at("controllers")[0].at("value").get<double>() - 0.25) < 1e-9);
 }
 
+TEST_CASE("markers from before marker tracks load onto a new marker track", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const ObjectId vocals =
+		idOf(run(client, "track.add", {{"type", "audio"}, {"name", "Vocals"}, {"timeBase", "linear"}}), "track");
+	const ObjectId input =
+		idOf(run(client, "bus.add", {{"direction", "input"}, {"name", "Mic"}, {"channels", 1}}), "bus");
+	run(client, "track.add", {{"type", "marker"}});
+	const ObjectId later =
+		idOf(run(client, "marker.add", {{"position", 8 * g_ticksPerQuarter}, {"name", "Later"}}), "marker");
+	const ObjectId first =
+		idOf(run(client, "marker.add", {{"position", 2 * g_ticksPerQuarter}, {"name", "First"}, {"color", "#00ff00"}}),
+			"marker");
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+
+	// An entry as GNUbase wrote it before marker tracks: markers have no track, type or number, in ticks.
+	std::map<std::string, std::string> entries = readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	Json& project = extension.at("project");
+	Json tracks = Json::array();
+	for (const Json& track : project.at("tracks"))
+		if (track.at("type") != "marker")
+			tracks.push_back(track);
+	project["tracks"] = tracks;
+	for (Json& marker : project.at("markers"))
+		for (const char* key : {"track", "type", "number", "end"})
+			marker.erase(key);
+	project.erase("activeMarkerTrack");
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+
+	run(client, "project.new");
+	run(client, "project.load", {{"path", file}});
+	const Json after = run(client, "project.get");
+	// Read from GNUbase's entry, not project.xml: ids, the linear time base and the input bus are still there.
+	CHECK(withId(after.at("tracks"), "id", vocals).at("timeBase") == "linear");
+	CHECK(withId(after.at("busses"), "id", input).at("name") == "Mic");
+	REQUIRE(after.at("tracks").size() == 2);
+	const Json& markerTrack = after.at("tracks").at(0);
+	CHECK(markerTrack.at("type") == "marker");
+	CHECK(markerTrack.at("name") == "Markers");
+	CHECK(after.at("activeMarkerTrack") == markerTrack.at("id"));
+	const Json& markers = after.at("markers");
+	REQUIRE(markers.size() == 2);
+	for (const Json& marker : markers)
+	{
+		CHECK(marker.at("track") == markerTrack.at("id"));
+		CHECK(marker.at("type") == "position");
+	}
+	CHECK(withId(markers, "id", first).at("number") == 1); // numbered in timeline order
+	CHECK(withId(markers, "id", first).at("position") == 2 * g_ticksPerQuarter);
+	CHECK(withId(markers, "id", first).at("color") == "#00ff00");
+	CHECK(withId(markers, "id", later).at("number") == 2);
+	CHECK(withId(markers, "id", later).at("name") == "Later");
+	// The new marker track's id is new, and the next id comes after it.
+	CHECK(markerTrack.at("id").get<ObjectId>() > std::max(first, later));
+	const ObjectId next = idOf(run(client, "track.add", {{"type", "audio"}}), "track");
+	CHECK(next == highestId(after) + 1);
+}
+
 TEST_CASE("a project.xml changed by another application wins over GNUbase's entry", "[integration]")
 {
 	const test::TempDir dir;

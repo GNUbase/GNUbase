@@ -45,11 +45,11 @@ namespace gnubase::engine
 		bool locate(time::Samples position);         // also the new start position for returnToStart
 		bool set(const TransportSettings& settings); // new locators and modes
 
-		// Command thread: the settings as requested, whether playback was requested, and the cursor as of the last
-		// block.
+		// Command thread: the settings as requested, whether playback was requested, and the cursor: where the last
+		// locate goes until the audio thread has applied it, then as of the last block.
 		const TransportSettings& settings() const { return m_requested; }
 		bool playing() const { return m_requestedPlaying; }
-		time::Samples position() const { return m_published.load(std::memory_order_acquire); }
+		time::Samples position() const;
 
 		// Audio thread, or the command thread while no audio thread runs: applies the waiting requests.
 		void update() noexcept;
@@ -72,6 +72,7 @@ namespace gnubase::engine
 			Type type = Type::Play;
 			time::Samples position = 0;
 			TransportSettings settings;
+			uint64_t locate = 0; // Locate: which one, counted from 1
 		};
 
 		bool send(const Request& request);
@@ -82,15 +83,19 @@ namespace gnubase::engine
 		rt::SpscQueue<Request> m_requests;
 		TransportSettings m_requested;
 		bool m_requestedPlaying = false;
+		uint64_t m_locates = 0;           // how many locates were sent
+		time::Samples m_locateTarget = 0; // where the last one goes
 
 		// Audio thread.
 		TransportSettings m_settings;
 		bool m_playing = false;
 		time::Samples m_position = 0;
 		time::Samples m_start = 0; // where playback started or was last located to
+		uint64_t m_locate = 0;     // the last locate applied
 		std::vector<graph::TransportSegment> m_segments;
 		graph::TransportBlock m_block;
 
 		std::atomic<time::Samples> m_published{0}; // m_position after each block
+		std::atomic<uint64_t> m_applied{0};        // m_locate, stored after m_published
 	};
 }

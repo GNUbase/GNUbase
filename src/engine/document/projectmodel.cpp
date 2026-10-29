@@ -279,6 +279,7 @@ namespace gnubase::engine
 				{
 					marker.position = time::rebase(marker.position, base, project.tempo, project.sampleRate);
 					marker.end = time::rebase(marker.end, base, project.tempo, project.sampleRate);
+					keepMinimumLength(project, marker); // rounding may have left it shorter than a sample
 					context.emit("marker.changed", {{"marker", toJson(marker)}});
 				}
 			track.timeBase = base;
@@ -301,14 +302,19 @@ namespace gnubase::engine
 					part.length = rescale(part.length, factor);
 					context.emit("midiPart.changed", {{"part", toJson(part)}});
 				}
+			project.sampleRate = sampleRate;
+			// At a lower rate, a short cycle marker may become shorter than a sample, in either time base.
 			for (auto& [id, marker] : project.markers)
-				if (marker.position.base == time::TimeBase::Linear)
+			{
+				const bool linear = marker.position.base == time::TimeBase::Linear;
+				if (linear)
 				{
 					marker.position.value = rescale(marker.position.value, factor);
 					marker.end.value = rescale(marker.end.value, factor);
-					context.emit("marker.changed", {{"marker", toJson(marker)}});
 				}
-			project.sampleRate = sampleRate;
+				if (keepMinimumLength(project, marker) || linear)
+					context.emit("marker.changed", {{"marker", toJson(marker)}});
+			}
 		}
 
 		int64_t countTracks(const Project& project, TrackType type)
@@ -981,6 +987,7 @@ namespace gnubase::engine
 		void announce(const Project& project, const ProjectChange& change, Direction direction, CommandContext& context)
 		{
 			bool reordered = false;
+			bool activated = false;
 			if (change.settingsBefore && change.settingsAfter)
 			{
 				const bool redo = direction == Direction::Redo;
@@ -991,8 +998,7 @@ namespace gnubase::engine
 					context.emit("project.changed", {{"name", current.name}, {"sampleRate", current.sampleRate}});
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
-				if (current.activeMarkerTrack != previous.activeMarkerTrack)
-					context.emit("marker.trackActivated", {{"track", current.activeMarkerTrack}});
+				activated = current.activeMarkerTrack != previous.activeMarkerTrack;
 			}
 			for (const ObjectChange<Track>& track : change.tracks)
 				reordered = reordered || !track.before || !track.after || track.before->parent != track.after->parent ||
@@ -1003,6 +1009,9 @@ namespace gnubase::engine
 			announceObjects(change.clips, direction, "clip", "clip", context);
 			announceObjects(change.audioEvents, direction, "audioEvent", "event", context);
 			announceObjects(change.markers, direction, "marker", "marker", context);
+			// After the tracks, so that a client knows the track that becomes active.
+			if (activated)
+				context.emit("marker.trackActivated", {{"track", project.activeMarkerTrack}});
 			for (const MidiPartChange& part : change.midiParts)
 			{
 				const auto current = project.midiParts.find(part.id);

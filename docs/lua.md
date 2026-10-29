@@ -552,7 +552,7 @@ Parameters:
 
 #### `gnubase.marker.add`
 
-Adds a position marker, or with type cycle a cycle marker, to a marker track (default: the active one; without a marker track one is added). position and end are in the track's time base (ticks or samples) or "cursor". A position marker defaults to the cursor, a cycle marker to the locators. Position and cycle markers are numbered separately on each track; a new marker gets the first free number unless one is given.
+Adds a position marker, or with type cycle a cycle marker, to a marker track (default: the active one; without a marker track one is added). position and end are in the track's time base (ticks or samples) or "cursor". A position marker defaults to the cursor, a cycle marker to the locators; a cycle marker ends at least one sample after its position. Position and cycle markers are numbered separately on each track; a new marker gets the first free number unless one is given.
 
 Parameters:
 
@@ -934,7 +934,7 @@ Returns:
 
 #### `gnubase.transport.get`
 
-Whether playback runs, the project cursor in samples, the locators and the modes.
+Whether playback runs, the project cursor in samples, the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.
 
 Only reads; changes nothing.
 

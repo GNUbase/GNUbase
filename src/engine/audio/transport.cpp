@@ -23,9 +23,17 @@ namespace gnubase::engine
 		return m_requests.tryPush(request);
 	}
 
+	time::Samples Transport::position() const
+	{
+		// m_applied is stored after m_published: once it shows the last locate, m_published is at least as new.
+		if (m_applied.load(std::memory_order_acquire) != m_locates)
+			return m_locateTarget;
+		return m_published.load(std::memory_order_acquire);
+	}
+
 	bool Transport::play()
 	{
-		if (!send({Request::Type::Play, 0, {}}))
+		if (!send({Request::Type::Play, 0, {}, 0}))
 			return false;
 		m_requestedPlaying = true;
 		return true;
@@ -33,7 +41,7 @@ namespace gnubase::engine
 
 	bool Transport::stop()
 	{
-		if (!send({Request::Type::Stop, 0, {}}))
+		if (!send({Request::Type::Stop, 0, {}, 0}))
 			return false;
 		m_requestedPlaying = false;
 		return true;
@@ -41,12 +49,16 @@ namespace gnubase::engine
 
 	bool Transport::locate(time::Samples position)
 	{
-		return send({Request::Type::Locate, position, {}});
+		if (!send({Request::Type::Locate, position, {}, m_locates + 1}))
+			return false;
+		++m_locates;
+		m_locateTarget = position;
+		return true;
 	}
 
 	bool Transport::set(const TransportSettings& settings)
 	{
-		if (!send({Request::Type::Set, 0, settings}))
+		if (!send({Request::Type::Set, 0, settings, 0}))
 			return false;
 		m_requested = settings;
 		return true;
@@ -79,6 +91,7 @@ namespace gnubase::engine
 			return;
 		case Request::Type::Locate:
 			locateTo(request.position);
+			m_locate = request.locate;
 			return;
 		case Request::Type::Set:
 			m_settings = request.settings;
@@ -92,6 +105,7 @@ namespace gnubase::engine
 		while (m_requests.tryPop(request))
 			apply(request);
 		m_published.store(m_position, std::memory_order_release);
+		m_applied.store(m_locate, std::memory_order_release);
 	}
 
 	const graph::TransportBlock& Transport::advance(uint32_t frames) noexcept

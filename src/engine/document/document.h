@@ -154,7 +154,7 @@ namespace gnubase::engine
 		MarkerType type = MarkerType::Position;
 		int number = 1;
 		time::Position position; // in the track's time base; a cycle marker's start
-		time::Position end;      // cycle markers: after the position; position markers: the same as the position
+		time::Position end;      // cycle markers: at least one sample after the position; position markers: the same
 		std::string name;
 		std::string color; // "#rrggbb", or empty for the default color
 	};
@@ -187,6 +187,13 @@ namespace gnubase::engine
 
 	// An empty project with a stereo input and a stereo output bus.
 	Project newProject();
+
+	// Whether a marker is long enough: a cycle marker ends at least one sample after its position.
+	bool hasMinimumLength(const Project& project, const Marker& marker);
+
+	// Moves the end of a cycle marker that isn't long enough, e.g. after a new time base or sample rate, to one sample
+	// after its position. Returns whether it moved it.
+	bool keepMinimumLength(const Project& project, Marker& marker);
 
 	// Equality compares every member; the undo history uses it to find what a command changed.
 	inline bool operator==(const Bus& a, const Bus& b)

@@ -107,6 +107,24 @@ TEST_CASE("a stopped transport has no segments and stays at the cursor", "[unit]
 	CHECK(!transport.playing());
 }
 
+TEST_CASE("the cursor shows a waiting locate until the audio thread applies it", "[unit]")
+{
+	Transport transport;
+	REQUIRE(transport.locate(1234));
+	CHECK(transport.position() == 1234); // no block has applied it yet
+	REQUIRE(transport.locate(500));
+	CHECK(transport.position() == 500); // the last one counts
+	REQUIRE(transport.play());
+	transport.advance(64);
+	CHECK(transport.position() == 564); // applied: playback goes on from there
+	transport.advance(64);
+	CHECK(transport.position() == 628);
+	REQUIRE(transport.locate(10));
+	CHECK(transport.position() == 10);
+	transport.advance(64);
+	CHECK(transport.position() == 74);
+}
+
 TEST_CASE("playback advances the cursor one block at a time", "[unit]")
 {
 	Transport transport;
@@ -332,6 +350,21 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK_THAT(reject(client, "transport.set", {{"right", -5}}), ContainsSubstring("right"));
 	CHECK_THAT(reject(client, "transport.set", {{"left", "somewhere"}}), ContainsSubstring("left"));
 	CHECK_THAT(reject(client, "transport.set", {{"startMode", "selection"}}), ContainsSubstring("startMode"));
+}
+
+TEST_CASE("transport commands see a locate that the running device has not applied yet", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 8192}}); // a block every 170 ms
+	run(client, "audio.start");
+	CHECK(run(client, "transport.locate", {{"position", 70000}}).at("position") == 70000);
+	CHECK(run(client, "transport.get").at("position") == 70000);
+	CHECK(run(client, "transport.set", {{"left", "cursor"}}).at("left") == 70000);
+	run(client, "transport.locate", {{"position", 1000}});
+	CHECK(run(client, "transport.set", {{"right", "cursor"}}).at("right") == 1000);
+	run(client, "audio.stop");
+	CHECK(run(client, "transport.get").at("position") == 1000);
 }
 
 TEST_CASE("go to project end locates to the end of the last event", "[integration]")

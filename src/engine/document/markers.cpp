@@ -162,10 +162,10 @@ namespace gnubase::engine
 			return static_cast<int>(number);
 		}
 
-		void requireRange(const Marker& marker)
+		void requireRange(const Project& project, const Marker& marker)
 		{
-			require(marker.type == MarkerType::Position || marker.end.value > marker.position.value,
-				"a cycle marker's end must be after its position");
+			require(hasMinimumLength(project, marker),
+				"a cycle marker's end must be at least one sample after its position");
 		}
 
 		// The markers of a track in timeline order.
@@ -270,7 +270,7 @@ namespace gnubase::engine
 				marker.position = fromSamples(project, track, left);
 				marker.end = fromSamples(project, track, right);
 			}
-			requireRange(marker);
+			requireRange(project, marker);
 			marker.number = chosenNumber(project, marker, parameters, firstFreeNumber(project, marker));
 			marker.name = parameters.value("name", "");
 			marker.color = color(parameters, {});
@@ -294,6 +294,7 @@ namespace gnubase::engine
 				{
 					marker.position = time::rebase(marker.position, target.timeBase, project.tempo, project.sampleRate);
 					marker.end = time::rebase(marker.end, target.timeBase, project.tempo, project.sampleRate);
+					keepMinimumLength(project, marker);
 					marker.track = target.id;
 					moved = true;
 				}
@@ -305,13 +306,15 @@ namespace gnubase::engine
 				const time::Position start = position(project, track, parameters.at("position"), "position", transport);
 				marker.end.value += start.value - marker.position.value; // a cycle marker moves as a whole
 				marker.position = start;
+				if (!parameters.contains("end"))
+					keepMinimumLength(project, marker); // in ticks, its length in samples may round down
 			}
 			if (parameters.contains("end"))
 			{
 				require(marker.type == MarkerType::Cycle, "only cycle markers have an end");
 				marker.end = position(project, track, parameters.at("end"), "end", transport);
 			}
-			requireRange(marker);
+			requireRange(project, marker);
 			const bool keepsNumber = !moved || !numberTaken(project, marker, marker.number);
 			marker.number = chosenNumber(
 				project, marker, parameters, keepsNumber ? marker.number : firstFreeNumber(project, marker));
@@ -443,7 +446,8 @@ namespace gnubase::engine
 				"Adds a position marker, or with type cycle a cycle marker, to a marker track (default: the active "
 				"one; "
 				"without a marker track one is added). position and end are in the track's time base (ticks or "
-				"samples) or \"cursor\". A position marker defaults to the cursor, a cycle marker to the locators. "
+				"samples) or \"cursor\". A position marker defaults to the cursor, a cycle marker to the locators; "
+				"a cycle marker ends at least one sample after its position. "
 				"Position and cycle markers are numbered separately on each track; a new marker gets the first free "
 				"number unless one is given.",
 				objectSchema(

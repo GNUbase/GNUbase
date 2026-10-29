@@ -303,6 +303,50 @@ TEST_CASE("a marker track's time base and the sample rate keep markers at their 
 	CHECK(idOf(marker) == idOf(cycle));
 }
 
+TEST_CASE("cycle markers end at least one sample after their position and stay so when rebased or rescaled", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId musical = addMarkerTrack(client);
+	// At 120 BPM and 48 kHz a sample is about 72 ticks.
+	CHECK_THAT(reject(client, "marker.add", {{"type", "cycle"}, {"position", 0}, {"end", 1}}),
+		ContainsSubstring("one sample"));
+	const Json shortest = addMarker(client, {{"type", "cycle"}, {"position", 0}, {"end", 80}});
+	CHECK_THAT(
+		reject(client, "marker.set", {{"marker", idOf(shortest)}, {"end", 30}}), ContainsSubstring("one sample"));
+	const ObjectId linear = addMarkerTrack(client, {{"timeBase", "linear"}});
+	CHECK_THAT(reject(client, "marker.add", {{"type", "cycle"}, {"position", 5}, {"end", 5}}),
+		ContainsSubstring("one sample"));
+	const Json sample = addMarker(client, {{"type", "cycle"}, {"position", 5}, {"end", 6}});
+
+	// Rebasing keeps a one-sample cycle marker one sample long.
+	run(client, "track.set", {{"track", linear}, {"timeBase", "musical"}});
+	run(client, "track.set", {{"track", linear}, {"timeBase", "linear"}});
+	Json marker = run(client, "marker.list", {{"track", linear}}).at("markers").at(0);
+	CHECK(marker.at("position") == 5);
+	CHECK(marker.at("end") == 6);
+	run(client, "track.set", {{"track", musical}, {"timeBase", "linear"}});
+	marker = run(client, "marker.list", {{"track", musical}}).at("markers").at(0);
+	CHECK(marker.at("position") == 0);
+	CHECK(marker.at("end") == 1);
+	run(client, "track.set", {{"track", musical}, {"timeBase", "musical"}});
+
+	// A lower sample rate would make both shorter than a sample: their ends move to one sample after the position.
+	run(client, "project.set", {{"sampleRate", 16000.0}});
+	for (const ObjectId track : {musical, linear})
+	{
+		marker = run(client, "marker.list", {{"track", track}}).at("markers").at(0);
+		INFO(marker.dump());
+		CHECK(marker.at("endSamples").get<int64_t>() == marker.at("positionSamples").get<int64_t>() + 1);
+	}
+	CHECK(run(client, "marker.list", {{"track", linear}}).at("markers").at(0).at("position") == 2);
+	CHECK(run(client, "marker.list", {{"track", linear}}).at("markers").at(0).at("end") == 3);
+	// It still renames, and makes a range for the locators.
+	run(client, "marker.set", {{"marker", idOf(shortest)}, {"name", "Short"}});
+	const Json locators = run(client, "marker.setLocators", {{"marker", idOf(sample)}});
+	CHECK(locators.at("right").get<int64_t>() == locators.at("left").get<int64_t>() + 1);
+}
+
 TEST_CASE("marker.list lists a track's markers in timeline order with their samples", "[unit]")
 {
 	Engine engine;
@@ -372,6 +416,32 @@ TEST_CASE("locating to the next and previous marker and to marker N", "[unit]")
 	CHECK(run(client, "marker.locateNext", {{"track", other}}).at("marker").is_null());
 	CHECK(run(client, "marker.locateNext", {{"track", one.at("track")}}).at("position") == 4 * g_quarterSamples);
 	CHECK(run(client, "history.get").at("steps").size() == steps);
+}
+
+TEST_CASE("marker commands see a locate that the running audio device has not applied yet", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 8192}}); // a block every 170 ms: a locate waits for the next one
+	run(client, "audio.start");
+	addMarkerTrack(client);
+	const Json one = addPosition(client, 2, "One");
+	const Json two = addPosition(client, 4, "Two");
+
+	CHECK(run(client, "marker.locateNext").at("marker").at("id") == idOf(one));
+	CHECK(run(client, "marker.locateNext").at("marker").at("id") == idOf(two));
+	CHECK(run(client, "marker.locatePrevious").at("marker").at("id") == idOf(one));
+	CHECK(cursor(client) == 2 * g_quarterSamples);
+
+	run(client, "transport.locate", {{"position", 3 * g_quarterSamples}});
+	CHECK(addMarker(client, {{"name", "Here"}}).at("position") == 3 * g_ticksPerQuarter);
+	run(client, "transport.locate", {{"position", 5 * g_quarterSamples}});
+	CHECK(
+		addMarker(client, {{"type", "cycle"}, {"position", 0}, {"end", "cursor"}}).at("end") == 5 * g_ticksPerQuarter);
+	run(client, "transport.locate", {{"position", 6 * g_quarterSamples}});
+	CHECK(run(client, "marker.set", {{"marker", idOf(one)}, {"position", "cursor"}}).at("marker").at("position") ==
+		6 * g_ticksPerQuarter);
+	run(client, "audio.stop");
 }
 
 TEST_CASE("markers on musical and linear marker tracks locate to their samples", "[unit]")
@@ -468,4 +538,31 @@ TEST_CASE("every marker edit is one undo step that undo announces", "[unit]")
 	CHECK(run(client, "project.get").at("markers").size() == 4);
 	run(client, "history.undo");
 	CHECK(run(client, "project.get") == edited);
+}
+
+TEST_CASE("redo announces a marker track before activating it", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	Client listener(engine);
+	const ObjectId first = addMarkerTrack(client);
+	run(client, "track.remove", {{"track", first}});
+	run(client, "history.undo", {{"steps", 2}});
+	eventNames(listener);
+	for (const char* command : {"history.redo", "history.undo", "history.redo", "history.redo", "history.undo"})
+	{
+		INFO(command);
+		run(client, command);
+		// The track a client hears of as the active one is one it knows: added before, removed after.
+		const std::vector<std::string> names = eventNames(listener);
+		const auto activated = std::find(names.begin(), names.end(), "marker.trackActivated");
+		REQUIRE(activated != names.end());
+		const auto announcedBefore = [&names, activated](const char* name)
+		{
+			const auto found = std::find(names.begin(), names.end(), name);
+			return found == names.end() || found < activated;
+		};
+		CHECK(announcedBefore("track.added"));
+		CHECK(announcedBefore("track.removed"));
+	}
 }

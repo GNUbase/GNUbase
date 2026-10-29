@@ -734,7 +734,7 @@ Arguments:
 
 Engine command `marker.add`.
 
-Adds a position marker, or with type cycle a cycle marker, to a marker track (default: the active one; without a marker track one is added). position and end are in the track's time base (ticks or samples) or "cursor". A position marker defaults to the cursor, a cycle marker to the locators. Position and cycle markers are numbered separately on each track; a new marker gets the first free number unless one is given.
+Adds a position marker, or with type cycle a cycle marker, to a marker track (default: the active one; without a marker track one is added). position and end are in the track's time base (ticks or samples) or "cursor". A position marker defaults to the cursor, a cycle marker to the locators; a cycle marker ends at least one sample after its position. Position and cycle markers are numbered separately on each track; a new marker gets the first free number unless one is given.
 
 Arguments:
 
@@ -1181,7 +1181,7 @@ Result:
 
 Engine command `transport.get`. Read-only.
 
-Whether playback runs, the project cursor in samples, the locators and the modes.
+Whether playback runs, the project cursor in samples, the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.
 
 Result:
 
@@ -1300,6 +1300,6 @@ Queries without required arguments can also be read as resources:
 - `gnubase://marker.list`: The markers of a marker track (default: the active one; track 0 if there is none) in timeline order, with their position and end also in the project's samples.
 - `gnubase://processor.list`: Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units.
 - `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts.
-- `gnubase://transport.get`: Whether playback runs, the project cursor in samples, the locators and the modes.
+- `gnubase://transport.get`: Whether playback runs, the project cursor in samples, the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.
 
 <!-- End of the generated tool catalogue -->

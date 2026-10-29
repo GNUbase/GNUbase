@@ -174,6 +174,59 @@ namespace gnubase::engine
 			{"activeMarkerTrack", project.activeMarkerTrack}};
 	}
 
+	namespace
+	{
+		bool numberTaken(const Project& project, const Marker& marker, int number)
+		{
+			return std::any_of(project.markers.begin(), project.markers.end(),
+				[&marker, number](const auto& entry)
+				{
+					const Marker& other = entry.second;
+					return other.id != marker.id && other.track == marker.track && other.type == marker.type &&
+						other.number == number;
+				});
+		}
+
+		// Markers without a track go onto a new marker track at the top, which becomes the active one if none is.
+		// Markers without a number get the first free ones on their track, in timeline order. Cycle markers shorter
+		// than a sample get longer.
+		void placeOldMarkers(Project& project)
+		{
+			const bool trackless = std::any_of(project.markers.begin(), project.markers.end(),
+				[](const auto& entry) { return entry.second.track == 0; });
+			if (trackless)
+			{
+				Track track;
+				track.id = project.newId();
+				track.type = TrackType::Marker;
+				track.name = "Markers";
+				project.trackById[track.id] = track;
+				project.tracks.insert(project.tracks.begin(), track.id);
+				if (project.activeMarkerTrack == 0)
+					project.activeMarkerTrack = track.id;
+				for (auto& [id, marker] : project.markers)
+					if (marker.track == 0)
+						marker.track = track.id;
+			}
+			std::vector<Marker*> unnumbered;
+			for (auto& [id, marker] : project.markers)
+			{
+				keepMinimumLength(project, marker);
+				if (marker.number == 0)
+					unnumbered.push_back(&marker);
+			}
+			std::stable_sort(unnumbered.begin(), unnumbered.end(),
+				[](const Marker* a, const Marker* b) { return a->position.value < b->position.value; });
+			for (Marker* marker : unnumbered)
+			{
+				int number = 1;
+				while (numberTaken(project, *marker, number))
+					++number;
+				marker->number = number;
+			}
+		}
+	}
+
 	Project projectFromJson(const Json& json)
 	{
 		Project project;
@@ -274,20 +327,22 @@ namespace gnubase::engine
 			}
 			project.midiParts[part.id] = std::move(part);
 		}
+		// Files from before marker tracks have markers without a track, type and number: position markers in ticks.
 		for (const Json& item : json.at("markers"))
 		{
 			Marker marker;
 			marker.id = item.at("id").get<ObjectId>();
-			marker.track = item.at("track").get<ObjectId>();
-			const auto type = markerTypeFromName(item.at("type").get<std::string>());
+			marker.track = item.value("track", ObjectId{0});
+			const std::string typeName = item.value("type", std::string("position"));
+			const auto type = markerTypeFromName(typeName);
 			if (!type)
-				throw std::invalid_argument("unknown marker type " + item.at("type").dump());
+				throw std::invalid_argument("unknown marker type " + typeName);
 			marker.type = *type;
-			marker.number = item.at("number").get<int>();
-			marker.position = {base(marker.track), item.at("position").get<int64_t>()};
-			marker.end = marker.type == MarkerType::Cycle
-				? time::Position{base(marker.track), item.at("end").get<int64_t>()}
-				: marker.position;
+			marker.number = item.value("number", 0); // 0: numbered below
+			const time::TimeBase timeBase = marker.track == 0 ? time::TimeBase::Musical : base(marker.track);
+			marker.position = {timeBase, item.at("position").get<int64_t>()};
+			marker.end = marker.type == MarkerType::Cycle ? time::Position{timeBase, item.at("end").get<int64_t>()}
+														  : marker.position;
 			marker.name = item.at("name").get<std::string>();
 			marker.color = colorFrom(item.at("color"));
 			project.markers[marker.id] = marker;
@@ -319,6 +374,7 @@ namespace gnubase::engine
 		for (const auto& [id, marker] : project.markers)
 			see(id);
 		project.nextId = std::max(json.value("nextId", ObjectId{0}), highest + 1);
+		placeOldMarkers(project);
 		return project;
 	}
 }
