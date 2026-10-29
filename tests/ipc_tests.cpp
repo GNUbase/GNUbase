@@ -19,8 +19,13 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
+
+#ifdef __linux__
+#include <sys/statvfs.h>
+#endif
 
 using namespace gnubase;
 using namespace std::chrono_literals;
@@ -135,8 +140,8 @@ TEST_CASE("a message ring refuses messages that do not fit", "[unit]")
 	MessageRingStorage storage(256);
 	ipc::MessageRing& ring = storage.ring;
 	const std::vector<std::byte> tooLarge(ring.maxMessageSize() + 1);
-	CHECK_FALSE(ring.tryWrite(1, 1, tooLarge.data(), static_cast<uint32_t>(tooLarge.size())));
-	CHECK_FALSE(ring.tryWrite(0, 1, nullptr, 0)); // type 0 is reserved for padding
+	CHECK(!ring.tryWrite(1, 1, tooLarge.data(), static_cast<uint32_t>(tooLarge.size())));
+	CHECK(!ring.tryWrite(0, 1, nullptr, 0)); // type 0 is reserved for padding
 
 	// 16 bytes per message with its header: the ring holds exactly 16 of them.
 	int written = 0;
@@ -245,7 +250,7 @@ TEST_CASE("a block ring hands out its slots in order", "[unit]")
 		ring.endRead();
 	}
 	CHECK(ring.beginRead() == nullptr);
-	CHECK_FALSE(ring.corrupt());
+	CHECK(!ring.corrupt());
 }
 
 TEST_CASE("a block ring passes blocks between two threads", "[unit]")
@@ -368,10 +373,30 @@ TEST_CASE("a doorbell wakes a waiter in another thread", "[unit]")
 	SECTION("without a ring the wait times out")
 	{
 		const auto start = std::chrono::steady_clock::now();
-		CHECK_FALSE(waiter.wait(waiter.value(), 30ms));
+		CHECK(!waiter.wait(waiter.value(), 30ms));
 		CHECK(std::chrono::steady_clock::now() - start >= 30ms);
-		CHECK_FALSE(waiter.wait(waiter.value(), 0ms));
+		CHECK(!waiter.wait(waiter.value(), 0ms));
 	}
+}
+
+TEST_CASE("a doorbell wait ends close to its deadline", "[unit]")
+{
+	// At 128 frames and 48 kHz a block lasts 2.67 ms, so a wait that overshoots by a timer tick (15.6 ms by default on
+	// Windows) stalls the whole mix. The median keeps a busy CI machine's hiccups out.
+	const std::string name = ipc::makeUniqueName();
+	std::atomic<uint32_t> word{0};
+	const ipc::Doorbell doorbell = ipc::Doorbell::create(word, name);
+	std::vector<double> milliseconds;
+	for (int i = 0; i < 21; ++i)
+	{
+		const auto start = std::chrono::steady_clock::now();
+		CHECK(!doorbell.wait(doorbell.value(), 2ms));
+		milliseconds.push_back(
+			std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+	}
+	std::sort(milliseconds.begin(), milliseconds.end());
+	CHECK(milliseconds.front() >= 2.0);
+	CHECK(milliseconds[milliseconds.size() / 2] < 7.0);
 }
 
 TEST_CASE("the shared memory layout is the same for every process", "[unit]")
@@ -398,13 +423,13 @@ TEST_CASE("invalid configurations are refused", "[unit]")
 	ipc::Config config = smallConfig();
 	CHECK(ipc::validConfig(config));
 	config.eventRingSize = 1000; // not a power of two
-	CHECK_FALSE(ipc::validConfig(config));
+	CHECK(!ipc::validConfig(config));
 	config = smallConfig();
 	config.maxChannels = 0;
-	CHECK_FALSE(ipc::validConfig(config));
+	CHECK(!ipc::validConfig(config));
 	config = smallConfig();
 	config.maxFrames = 1 << 20;
-	CHECK_FALSE(ipc::validConfig(config));
+	CHECK(!ipc::validConfig(config));
 	CHECK_THROWS_AS(ipc::Connection::create(config), ipc::Error);
 }
 
@@ -412,7 +437,7 @@ TEST_CASE("an engine and a host exchange audio blocks and events", "[unit]")
 {
 	ipc::Connection engine = ipc::Connection::create(smallConfig());
 	CHECK(engine.side() == ipc::Side::Engine);
-	CHECK_FALSE(engine.waitForPeer(0ms));
+	CHECK(!engine.waitForPeer(0ms));
 	ipc::Connection host = ipc::Connection::open(engine.name());
 	CHECK(host.side() == ipc::Side::Host);
 	REQUIRE(engine.waitForPeer(1s));
@@ -530,6 +555,110 @@ TEST_CASE("waiting for a block ends at the deadline or when the peer closes", "[
 	}
 }
 
+TEST_CASE("late answers to blocks whose deadline passed are dropped", "[unit]")
+{
+	ipc::Connection engine = ipc::Connection::create(smallConfig());
+	ipc::Connection host = ipc::Connection::open(engine.name());
+	std::array<std::byte, 64> buffer{};
+	ipc::MessageHeader header;
+
+	// The host answers with one event of the given type.
+	const auto answer = [&host, &buffer, &header](uint64_t sequence, uint16_t eventType)
+	{
+		ipc::AudioBlock input;
+		REQUIRE(host.receiveBlock(input) == ipc::ReadStatus::Ok);
+		for (uint32_t i = 0; i < input.eventCount; ++i)
+			REQUIRE(host.receiveEvent(header, buffer.data(), buffer.size()) == ipc::ReadStatus::Ok);
+		host.releaseBlock();
+		ipc::AudioBlock output;
+		REQUIRE(host.beginBlock(output));
+		output.sequence = sequence;
+		output.frames = 8;
+		output.channels = 1;
+		output.channel(0)[0] = static_cast<float>(sequence);
+		REQUIRE(host.sendEvent(eventType, 1, &sequence, sizeof(sequence)));
+		output.eventCount = 1;
+		host.sendBlock(output);
+	};
+	const auto send = [&engine](uint64_t sequence)
+	{
+		ipc::AudioBlock block;
+		REQUIRE(engine.beginBlock(block));
+		block.sequence = sequence;
+		block.frames = 8;
+		block.channels = 1;
+		engine.sendBlock(block);
+	};
+
+	// Block 1 misses its deadline, and its answer only comes once the engine has sent block 2.
+	send(1);
+	CHECK(engine.waitForAnswer(1, 10ms) == ipc::WaitResult::Timeout);
+	send(2);
+	answer(1, 101);
+
+	SECTION("waitForBlock reports the late answer like any other block")
+	{
+		REQUIRE(engine.waitForBlock(1s) == ipc::WaitResult::Ready);
+		ipc::AudioBlock block;
+		REQUIRE(engine.receiveBlock(block) == ipc::ReadStatus::Ok);
+		CHECK(block.sequence == 1);
+		engine.releaseBlock();
+	}
+	SECTION("waitForAnswer drops it with its events and waits for the right one")
+	{
+		CHECK(engine.waitForAnswer(2, 10ms) == ipc::WaitResult::Timeout);
+		answer(2, 102);
+		REQUIRE(engine.waitForAnswer(2, 1s) == ipc::WaitResult::Ready);
+		ipc::AudioBlock block;
+		REQUIRE(engine.receiveBlock(block) == ipc::ReadStatus::Ok);
+		CHECK(block.sequence == 2);
+		CHECK(block.channel(0)[0] == 2.0f);
+		REQUIRE(engine.receiveEvent(header, buffer.data(), buffer.size()) == ipc::ReadStatus::Ok);
+		CHECK(header.type == 102);
+		CHECK(engine.receiveEvent(header, buffer.data(), buffer.size()) == ipc::ReadStatus::Empty);
+		engine.releaseBlock();
+		CHECK(engine.receiveBlock(block) == ipc::ReadStatus::Empty);
+	}
+	SECTION("an answer to a block the engine never sent breaks the protocol")
+	{
+		answer(7, 107);
+		REQUIRE(engine.waitForAnswer(2, 1s) == ipc::WaitResult::Ready);
+		ipc::AudioBlock block;
+		CHECK(engine.receiveBlock(block) == ipc::ReadStatus::Corrupt);
+	}
+}
+
+TEST_CASE("a refused second host leaves the first host's process id alone", "[unit]")
+{
+	const ipc::Connection engine = ipc::Connection::create(smallConfig());
+	const ipc::Connection first = ipc::Connection::open(engine.name());
+	// The first host plays another process.
+	const platform::SharedMemory memory = platform::SharedMemory::open(engine.name());
+	static_cast<ipc::SegmentHeader*>(memory.data())->hostPid.store(4242);
+	CHECK_THROWS_WITH(ipc::Connection::open(engine.name()), ContainsSubstring("another host"));
+	CHECK(engine.peerProcessId() == 4242);
+}
+
+TEST_CASE("shared memory the system cannot back fails at creation", "[unit]")
+{
+	// Rather than with SIGBUS on the first touch, from an audio thread, when /dev/shm is full.
+#ifdef __APPLE__
+	SKIP("macOS has no way to reserve the pages of shared memory up front");
+#elif defined(__linux__)
+	struct statvfs status{};
+	REQUIRE(statvfs("/dev/shm", &status) == 0);
+	if (status.f_blocks == 0)
+		SKIP("/dev/shm has no size limit");
+	// Larger than all of /dev/shm, so that the kernel refuses at once instead of filling it first.
+	const size_t total = size_t{status.f_blocks} * status.f_frsize;
+	CHECK_THROWS_AS(
+		platform::SharedMemory::create(ipc::makeUniqueName(), total + (size_t{64} << 20)), std::system_error);
+#else
+	// More than the page file and memory of any test machine together.
+	CHECK_THROWS_AS(platform::SharedMemory::create(ipc::makeUniqueName(), size_t{1} << 42), std::system_error);
+#endif
+}
+
 TEST_CASE("a host refuses shared memory of another protocol version", "[unit]")
 {
 	const ipc::Connection engine = ipc::Connection::create(smallConfig());
@@ -562,8 +691,8 @@ TEST_CASE("segment headers are checked before anything else is read", "[unit]")
 	const size_t size = segment.size() * sizeof(CacheLine);
 	ipc::initializeSegment(segment.data(), config, 1234);
 	CHECK(ipc::checkSegment(segment.data(), size).empty());
-	CHECK_FALSE(ipc::checkSegment(segment.data(), size - 64).empty());
-	CHECK_FALSE(ipc::checkSegment(segment.data(), 16).empty());
+	CHECK(!ipc::checkSegment(segment.data(), size - 64).empty());
+	CHECK(!ipc::checkSegment(segment.data(), 16).empty());
 
 	Random random(62);
 	int refused = 0;

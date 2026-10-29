@@ -99,9 +99,9 @@ namespace gnubase::ipc
 				tail += need;
 				continue;
 			}
-			if (need > toEnd || need > available || next.size > bufferSize)
+			if (need > toEnd || need > available || (buffer != nullptr && next.size > bufferSize))
 				return fail();
-			if (next.size > 0)
+			if (buffer != nullptr && next.size > 0)
 				std::memcpy(buffer, m_data + position + g_headerSize, next.size);
 			header = next;
 			m_tail = tail + need;

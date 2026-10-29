@@ -40,7 +40,8 @@ namespace gnubase::ipc
 
 		// Consumer only. Copies the next message's payload into `buffer` and its header into `header`. A message
 		// larger than `bufferSize` counts as corrupt, so the buffer should hold maxMessageSize bytes, or the largest
-		// message the protocol allows on this ring.
+		// message the protocol allows on this ring. With a null `buffer` the message is dropped: only its header is
+		// copied.
 		ReadStatus tryRead(MessageHeader& header, void* buffer, size_t bufferSize) noexcept;
 
 		// Consumer only: true if tryRead would not return Empty.

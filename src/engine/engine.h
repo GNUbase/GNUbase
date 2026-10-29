@@ -144,6 +144,7 @@ namespace gnubase::engine
 
 	private:
 		friend class Client;
+		friend class Listener;
 
 		struct Command
 		{
@@ -197,6 +198,23 @@ namespace gnubase::engine
 		// Sends a command and waits for its result. Other messages stay queued for poll and wait.
 		Result call(std::string command, Json parameters = Json::object(),
 			std::chrono::milliseconds timeout = std::chrono::seconds(10));
+
+	private:
+		Engine& m_engine;
+		std::shared_ptr<detail::Mailbox> m_mailbox;
+	};
+
+	// Calls a function for every event while it exists, instead of queueing events like a client: on the thread that
+	// sends the event, before the command's result reaches its client. The function must be quick, must not block and
+	// must not call the engine. For servers that hand events on to clients of their own, such as MCP sessions.
+	// Listeners must not outlive their engine.
+	class Listener
+	{
+	public:
+		Listener(Engine& engine, std::function<void(const Event&)> function);
+		~Listener();
+		Listener(const Listener&) = delete;
+		Listener& operator=(const Listener&) = delete;
 
 	private:
 		Engine& m_engine;

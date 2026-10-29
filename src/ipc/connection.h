@@ -4,6 +4,7 @@
 #include "ipc/doorbell.h"
 #include "ipc/protocol.h"
 #include "ipc/rings.h"
+#include "platform/process.h"
 #include "platform/sharedmemory.h"
 
 #include <array>
@@ -32,7 +33,7 @@ namespace gnubase::ipc
 	{
 		Ready,      // there is something to read
 		Timeout,    // nothing arrived in time: the peer is slow, hung or gone
-		PeerClosed, // the peer closed the connection
+		PeerClosed, // the peer closed the connection; for a host also: the engine's process is gone
 	};
 
 	// A view of one audio block in shared memory. The header fields are a private copy: the reader checked them, and
@@ -83,7 +84,9 @@ namespace gnubase::ipc
 		static Connection create(const Config& config);
 
 		// Host: opens the connection the engine created. Throws Error if the name is unknown, the protocol version
-		// differs, the memory is not a valid segment, or another host attached already.
+		// differs, the memory is not a valid segment, or another host attached already. On Linux the host process then
+		// ends with the engine if the engine started it (platform::endWithParent); everywhere, a host's waits report
+		// PeerClosed instead of Timeout once the engine's process is gone, so a host never outlives a crashed engine.
 		static Connection open(const std::string& name);
 
 		const std::string& name() const noexcept { return m_memory.name(); }
@@ -93,7 +96,8 @@ namespace gnubase::ipc
 		// Engine: waits until the host opened the connection. Not real-time.
 		bool waitForPeer(std::chrono::nanoseconds timeout);
 		PeerState peerState() const noexcept;
-		// The peer's process id: the host's once it attached, the engine's for the host.
+		// The peer's process id: the host's once it attached, the engine's for the host. The host writes its own, so
+		// the engine never decides from it which process to kill: platform::ChildProcess::id() does.
 		uint32_t peerProcessId() const noexcept;
 
 		// Audio path. beginBlock gets the next free outgoing slot (false if all are in flight), with the header zeroed;
@@ -109,8 +113,15 @@ namespace gnubase::ipc
 		ReadStatus receiveEvent(MessageHeader& header, void* buffer, size_t bufferSize) noexcept;
 
 		// Waits for an incoming block until the timeout passes or the peer closes. Ready also covers a corrupt ring,
-		// which receiveBlock then reports.
+		// which receiveBlock then reports. A host that answers after the engine's deadline passed leaves a late answer
+		// in the ring, and the next wait returns Ready for it, with the old sequence number: the engine waits with
+		// waitForAnswer instead.
 		WaitResult waitForBlock(std::chrono::nanoseconds timeout) noexcept;
+
+		// Engine: waits for the answer to block `sequence`, like waitForBlock, and drops late answers to older blocks
+		// on the way, with their events. Ready means receiveBlock returns that answer, or Corrupt if the host broke
+		// the protocol, e.g. by answering a block that was never sent. Sequence numbers count up by block.
+		WaitResult waitForAnswer(uint64_t sequence, std::chrono::nanoseconds timeout) noexcept;
 
 		// Control path, not real-time. sendControl wakes the peer's control thread.
 		bool sendControl(uint16_t type, uint16_t version, const void* payload, uint32_t size);
@@ -136,9 +147,11 @@ namespace gnubase::ipc
 		Lane& incoming() noexcept { return m_lanes[m_side == Side::Engine ? g_toEngine : g_toHost]; }
 		std::atomic<uint32_t>& ownState() const noexcept;
 		const std::atomic<uint32_t>& peerStateWord() const noexcept;
-		WaitResult waitFor(
-			const Doorbell& bell, bool (Connection::*ready)(), std::chrono::nanoseconds timeout) noexcept;
+		template <typename Ready>
+		WaitResult waitFor(const Doorbell& bell, Ready ready, std::chrono::nanoseconds timeout) noexcept;
 		bool blockReady() noexcept;
+		bool answerReady(uint64_t sequence) noexcept;
+		bool dropEvents(uint32_t count) noexcept;
 		bool controlReady() noexcept;
 
 		platform::SharedMemory m_memory;
@@ -146,7 +159,8 @@ namespace gnubase::ipc
 		Config m_config;
 		Layout m_layout;
 		std::array<Lane, 2> m_lanes;
-		bool m_corrupt = false;  // an incoming block header was impossible
+		platform::ProcessWatch m_engineProcess; // the host's view of the engine
+		bool m_corrupt = false;                 // an incoming block header was impossible
 		bool m_attached = false; // this side announced itself in the segment header, so close() tells the peer
 	};
 }

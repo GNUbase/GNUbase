@@ -46,8 +46,8 @@ namespace gnubase::ipc
 
 	Connection::Connection(Connection&& other) noexcept
 		: m_memory(std::move(other.m_memory)), m_side(other.m_side), m_config(other.m_config), m_layout(other.m_layout),
-		  m_lanes(std::move(other.m_lanes)), m_corrupt(other.m_corrupt),
-		  m_attached(std::exchange(other.m_attached, false))
+		  m_lanes(std::move(other.m_lanes)), m_engineProcess(std::move(other.m_engineProcess)),
+		  m_corrupt(other.m_corrupt), m_attached(std::exchange(other.m_attached, false))
 	{
 	}
 
@@ -61,6 +61,7 @@ namespace gnubase::ipc
 			m_config = other.m_config;
 			m_layout = other.m_layout;
 			m_lanes = std::move(other.m_lanes);
+			m_engineProcess = std::move(other.m_engineProcess);
 			m_corrupt = other.m_corrupt;
 			m_attached = std::exchange(other.m_attached, false);
 		}
@@ -107,15 +108,18 @@ namespace gnubase::ipc
 		if (!validConfig(connection.m_config) || connection.m_layout.size > connection.m_memory.size())
 			throw Error("Cannot connect to " + name + ": the configuration changed");
 		connection.connect(Side::Host);
+		connection.m_engineProcess = platform::ProcessWatch(header.enginePid);
 
-		header.hostPid = platform::currentProcessId();
+		// Claim the segment before writing to it, so that a refused second host changes nothing.
+		uint32_t expected = 0;
+		if (!header.hostPid.compare_exchange_strong(expected, platform::currentProcessId(), std::memory_order_acq_rel))
+			throw Error("Cannot connect to " + name + ": another host is attached");
 		header.hostVersionMajor = g_versionMajor;
 		header.hostVersionMinor = g_versionMinor;
-		uint32_t expected = g_none;
-		if (!header.hostState.compare_exchange_strong(expected, g_attached, std::memory_order_acq_rel))
-			throw Error("Cannot connect to " + name + ": another host is attached");
+		header.hostState.store(g_attached, std::memory_order_release);
 		connection.m_attached = true;
 		connection.outgoing().controlBell.ring();
+		platform::endWithParent(header.enginePid);
 		return connection;
 	}
 
@@ -186,7 +190,7 @@ namespace gnubase::ipc
 
 	uint32_t Connection::peerProcessId() const noexcept
 	{
-		return m_side == Side::Engine ? header().hostPid : header().enginePid;
+		return m_side == Side::Engine ? header().hostPid.load(std::memory_order_acquire) : header().enginePid;
 	}
 
 	bool Connection::beginBlock(AudioBlock& block) noexcept
@@ -264,33 +268,77 @@ namespace gnubase::ipc
 		return m_corrupt || blocks.beginRead() != nullptr || blocks.corrupt();
 	}
 
+	bool Connection::answerReady(uint64_t sequence) noexcept
+	{
+		BlockRing& blocks = incoming().blocks;
+		while (!m_corrupt)
+		{
+			const std::byte* slot = blocks.beginRead();
+			if (slot == nullptr)
+				return blocks.corrupt();
+			BlockHeader header;
+			std::memcpy(&header, slot, sizeof(header));
+			// Counting up, wrapping around like the sequence numbers.
+			const auto behind = static_cast<int64_t>(sequence - header.sequence);
+			if (behind == 0)
+				return true;
+			if (behind < 0 || !dropEvents(header.eventCount))
+				m_corrupt = true; // an answer to a block not sent yet, or events missing
+			else
+				blocks.endRead(); // a late answer
+		}
+		return true;
+	}
+
+	bool Connection::dropEvents(uint32_t count) noexcept
+	{
+		MessageRing& events = incoming().events;
+		MessageHeader header;
+		for (uint32_t i = 0; i < count; ++i)
+		{
+			if (events.tryRead(header, nullptr, 0) != ReadStatus::Ok)
+				return false;
+		}
+		return true;
+	}
+
 	bool Connection::controlReady() noexcept
 	{
 		return incoming().control.readable();
 	}
 
-	WaitResult Connection::waitFor(
-		const Doorbell& bell, bool (Connection::*ready)(), std::chrono::nanoseconds timeout) noexcept
+	template <typename Ready>
+	WaitResult Connection::waitFor(const Doorbell& bell, Ready ready, std::chrono::nanoseconds timeout) noexcept
 	{
 		const auto deadline = std::chrono::steady_clock::now() + timeout;
 		for (;;)
 		{
 			// Read the word first: a ring after this point ends the wait below at once.
 			const uint32_t seen = bell.value();
-			if ((this->*ready)())
+			if (ready())
 				return WaitResult::Ready;
 			if (peerState() == PeerState::Closed)
 				return WaitResult::PeerClosed;
 			const auto remaining = deadline - std::chrono::steady_clock::now();
 			if (remaining <= std::chrono::nanoseconds::zero())
+			{
+				// A crashed engine never closes: its host would only ever see timeouts.
+				if (m_side == Side::Host && m_engineProcess.gone())
+					return WaitResult::PeerClosed;
 				return WaitResult::Timeout;
+			}
 			bell.wait(seen, remaining);
 		}
 	}
 
 	WaitResult Connection::waitForBlock(std::chrono::nanoseconds timeout) noexcept
 	{
-		return waitFor(incoming().audioBell, &Connection::blockReady, timeout);
+		return waitFor(incoming().audioBell, [this] { return blockReady(); }, timeout);
+	}
+
+	WaitResult Connection::waitForAnswer(uint64_t sequence, std::chrono::nanoseconds timeout) noexcept
+	{
+		return waitFor(incoming().audioBell, [this, sequence] { return answerReady(sequence); }, timeout);
 	}
 
 	bool Connection::sendControl(uint16_t type, uint16_t version, const void* payload, uint32_t size)
@@ -312,7 +360,7 @@ namespace gnubase::ipc
 	WaitResult Connection::waitForControl(std::chrono::nanoseconds timeout)
 	{
 		rt::assertNotRealtime("Connection::waitForControl");
-		return waitFor(incoming().controlBell, &Connection::controlReady, timeout);
+		return waitFor(incoming().controlBell, [this] { return controlReady(); }, timeout);
 	}
 
 	void Connection::close() noexcept

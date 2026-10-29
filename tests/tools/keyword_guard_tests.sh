@@ -73,8 +73,9 @@ reset_index()
 
 # Keywords: case-insensitive extended regexes, mostly CRLF as written on Windows, with an empty line. "Zorblaxer" ends
 # in r on an LF line: POSIX sed doesn't define \r, and a sed that reads "s/\r$//" as "s/r$//" would cut it short.
+# "bl[o0]rp" may appear in the content of files in two folders, as an SDK's namespace would.
 keywords="$tmp/keywords"
-printf 'wib+le\r\n\r\nquux ?frob\r\nZorblaxer\n' > "$keywords"
+printf 'wib+le\r\n\r\nquux ?frob\r\nbl[o0]rp\tvendor/sdk/ src/adapter\r\nZorblaxer\n' > "$keywords"
 
 # A repository with the tools, and a fresh clone of it.
 origin="$tmp/origin"
@@ -106,6 +107,16 @@ reset_index "$clone"
 check "a keyword in a file name is blocked" 1 commit_file "$clone" docs/QuuxFrob.txt "harmless" "Add docs"
 reset_index "$clone"
 check "a keyword in the commit message is blocked" 1 commit_file "$clone" d.txt "harmless" "Mention quux frob"
+reset_index "$clone"
+check "a keyword passes in the folders listed with it" 0 commit_file "$clone" src/adapter/x.cpp "blorp::Thing" "Add x"
+check "in each of them" 0 commit_file "$clone" vendor/sdk/y.h "BL0RP" "Add y"
+check "but not outside them" 1 commit_file "$clone" src/adapterish/z.cpp "blorp" "Add z"
+reset_index "$clone"
+check "other keywords stay blocked in those folders" 1 commit_file "$clone" src/adapter/w.cpp "wibble" "Add w"
+reset_index "$clone"
+check "file names in those folders are still scanned" 1 commit_file "$clone" src/adapter/blorp.cpp "fine" "Add v"
+reset_index "$clone"
+check "commit messages are still scanned" 1 commit_file "$clone" src/adapter/u.cpp "fine" "About blorp"
 reset_index "$clone"
 mkdir -p "$clone/sub"
 check "commits from a subfolder are scanned" 1 commit_file "$clone/sub" e.txt "Zorblaxer" "Add e"
@@ -176,6 +187,21 @@ base=$(git -C "$origin" rev-parse HEAD)
 printf 'Pull request about quuxfrob\n' > "$tmp/pull-request-title"
 check "a keyword in an extra text file is found" 1 scan "$keywords" "$base" HEAD "$tmp/pull-request-title"
 expect "the finding names the text file" -F "pull-request-title"
+base=$(git -C "$origin" rev-parse HEAD)
+commit_file "$origin" src/adapter/x.cpp "blorp::Thing" "Add the adapter"
+check "a keyword passes in the folders listed with it" 0 scan "$keywords" "$base" HEAD
+commit_file "$origin" src/adapterish/x.cpp "first line
+blorp" "Add another"
+check "but is found outside them" 1 scan "$keywords" "$base" HEAD
+expect "the finding names file and line" -F "src/adapterish/x.cpp:2"
+reject "the allowed line is not reported" -F "src/adapter/x.cpp"
+base=$(git -C "$origin" rev-parse HEAD)
+commit_file "$origin" src/adapter/y.cpp "wibble" "Add y"
+check "other keywords are found in those folders" 1 scan "$keywords" "$base" HEAD
+expect "the finding names file and line" -F "src/adapter/y.cpp:1"
+base=$(git -C "$origin" rev-parse HEAD)
+commit_file "$origin" src/adapter/z.cpp "fine" "About blorp"
+check "commit messages are still scanned" 1 scan "$keywords" "$base" HEAD
 check "a missing list is an error" 2 scan "$tmp/missing" "$base" HEAD
 check "an unknown commit is an error" 2 scan "$keywords" 0123456789abcdef0123456789abcdef01234567 HEAD
 
