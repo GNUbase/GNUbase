@@ -10,6 +10,7 @@
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 #include "platform/rt/snapshotpublisher.h"
+#include "platform/rt/workerpool.h"
 #include "plugin/remote/proxy.h"
 #include "testutils/testutils.h"
 
@@ -21,10 +22,13 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <initializer_list>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #ifndef GNUBASE_PLUGINHOST
@@ -83,6 +87,88 @@ TEST_CASE("the RT checker reports a deallocation in real-time code", "[unit]")
 	}
 	CHECK(g_violations == 1);
 }
+
+#if (defined(_MSC_VER) && defined(_DEBUG)) || defined(GNUBASE_RTCHECK_MALLOC)
+// The RT checker sees the C heap too, for malloc in third-party code such as Rubber Band Library: MSVC debug builds,
+// and Linux (not with sanitizers).
+// Called through volatile pointers: compilers know the C heap functions touch no memory of the program, so they may
+// move direct calls out of a real-time scope.
+namespace
+{
+	void* (*volatile g_malloc)(std::size_t) = std::malloc;
+	void* (*volatile g_realloc)(void*, std::size_t) = std::realloc;
+	void* (*volatile g_calloc)(std::size_t, std::size_t) = std::calloc;
+	void (*volatile g_free)(void*) = std::free;
+}
+
+TEST_CASE("the RT checker reports malloc and free in real-time code", "[unit]")
+{
+	const RecordViolations record;
+	void* memory = nullptr;
+	{
+		const ScopedRealtimeContext realtime;
+		memory = g_malloc(64);
+		g_keepAlive = memory;
+	}
+	CHECK(g_violations == 1);
+	void* grown = nullptr;
+	{
+		const ScopedRealtimeContext realtime;
+		grown = g_realloc(memory, 128);
+		g_keepAlive = grown;
+	}
+	CHECK(g_violations == 2);
+	REQUIRE(grown != nullptr);
+	memory = grown;
+	{
+		const ScopedRealtimeContext realtime;
+		g_free(memory);
+		g_free(nullptr); // frees nothing
+	}
+	CHECK(g_violations == 3);
+	{
+		const ScopedRealtimeContext realtime;
+		memory = g_calloc(4, 16);
+		g_keepAlive = memory;
+	}
+	CHECK(g_violations == 4);
+	g_free(memory);
+	// operator new reports once, not again for the malloc inside it.
+	{
+		const ScopedRealtimeContext realtime;
+		const auto value = std::make_unique<int>(42);
+		g_keepAlive = value.get();
+	}
+	CHECK(g_violations == 6);
+	// Outside real-time code, all of them are fine.
+	memory = g_malloc(64);
+	g_keepAlive = memory;
+	g_free(memory);
+	CHECK(g_violations == 6);
+}
+#endif
+
+#ifdef GNUBASE_RTCHECK_MALLOC
+TEST_CASE("the RT checker reports aligned C allocations in real-time code", "[unit]")
+{
+	const RecordViolations record;
+	void* memory = nullptr;
+	int result = -1;
+	{
+		const ScopedRealtimeContext realtime;
+		result = posix_memalign(&memory, 64, 256); // Rubber Band Library allocates this way on Linux
+		g_keepAlive = memory;
+	}
+	REQUIRE(result == 0);
+	CHECK(g_violations == 1);
+	CHECK(reinterpret_cast<std::uintptr_t>(memory) % 64 == 0);
+	{
+		const ScopedRealtimeContext realtime;
+		std::free(memory);
+	}
+	CHECK(g_violations == 2);
+}
+#endif
 
 TEST_CASE("allocations outside real-time code are fine", "[unit]")
 {
@@ -193,6 +279,35 @@ TEST_CASE("processing a processing graph and swapping in a new one never allocat
 	graphs.publish(std::make_unique<CompiledGraph>(desc, 48000.0, 256)); // built outside real-time code
 	cycle();
 	cycle();
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("processing a graph on a worker pool never allocates or frees, on any thread", "[unit]")
+{
+	using namespace gnubase::engine::graph;
+	using namespace gnubase::engine::processors;
+	GraphDesc desc;
+	for (int i = 0; i < 16; ++i)
+		desc.nodes.push_back({NodeKind::Builtin, 0, 2, createBuiltin(i % 2 == 0 ? "testSynth" : "noise")});
+	desc.nodes.push_back({NodeKind::Channel, 0, 2, nullptr});
+	desc.nodes.push_back({NodeKind::OutputBus, 0, 2, nullptr});
+	for (int i = 0; i < 16; ++i)
+		desc.audio.push_back({i, i < 8 ? 16 : 17});
+	desc.audio.push_back({16, 17});
+	WorkerPool pool(3);
+	const CompiledGraph graph(desc, 48000.0, 256);
+
+	const RecordViolations record;
+	for (int block = 0; block < 50; ++block)
+	{
+		ProcessEvent note;
+		note.type = ProcessEvent::Type::NoteOn;
+		note.key = static_cast<uint8_t>(40 + block);
+		note.velocity = 0x8000;
+		graph.events(0).add(note);
+		const ScopedRealtimeContext realtime;
+		graph.process(256, TransportBlock{}, &pool);
+	}
 	CHECK(g_violations == 0);
 }
 
@@ -348,6 +463,132 @@ TEST_CASE("the audio thread reads disk streams without allocating or locking", "
 		for (int i = 0; i < 1000; ++i)
 			stream->read(buffer.data(), 64);
 	}
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("playing MIDI parts through an instrument, with edits, stops and cycle jumps, passes the RT checker",
+	"[integration]")
+{
+	using gnubase::engine::Json;
+	gnubase::engine::Engine engine;
+	gnubase::engine::Client client(engine);
+	const auto run = [&client](const std::string& command, const Json& parameters)
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	const auto channelOf = [&](const Json& track)
+	{
+		const Json project = run("project.get", Json::object());
+		for (const Json& t : project.at("tracks"))
+			if (t.at("id") == track.at("track").at("id"))
+				return t.at("channel");
+		return Json();
+	};
+	constexpr int64_t quarter = 1720320; // ticks per 24000 samples at 120 BPM and 48 kHz
+	const Json instrument = run("track.add", {{"type", "instrument"}});
+	const Json midi = run("track.add", {{"type", "midi"}});
+	run("channel.set", {{"channel", channelOf(instrument)}, {"instrument", "testSynth"}});
+	run("channel.set", {{"channel", channelOf(midi)}, {"output", channelOf(instrument)}});
+	std::vector<Json> parts;
+	for (const Json& track : {instrument, midi})
+		parts.push_back(
+			run("midiPart.add", {{"track", track.at("track").at("id")}, {"position", 0}, {"length", quarter}})
+				.at("part")
+				.at("id"));
+	for (const Json& part : parts)
+	{
+		Json notes = Json::array();
+		for (int i = 0; i < 16; ++i)
+			notes.push_back(
+				{{"position", i * quarter / 32}, {"length", quarter / 8}, {"pitch", 48 + i}, {"velocity", 0.5}});
+		run("note.add", {{"part", part}, {"notes", notes}});
+		run("controller.add",
+			{{"part", part},
+				{"controllers",
+					{{{"position", 100}, {"number", 7}, {"value", 0.5}},
+						{{"position", 200}, {"type", "pitchBend"}, {"value", 0.75}},
+						{{"position", 300}, {"type", "channelPressure"}, {"value", 0.25}},
+						{{"position", 400}, {"type", "polyPressure"}, {"number", 50}, {"value", 1.0}},
+						{{"position", 500}, {"type", "program"}, {"number", 3}},
+						{{"position", 600}, {"type", "sysEx"}, {"data", {0xF0, 0x7E, 0x7F, 0x09, 0x01, 0xF7}}}}}});
+	}
+	run("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	run("transport.set", {{"left", 1000}, {"right", 9000}, {"cycle", true}});
+	run("transport.play", Json::object());
+
+	const RecordViolations record;
+	run("audio.render", {{"frames", 9600}});
+	run("note.add", // a new sequence, swapped in between blocks
+		{{"part", parts[1]},
+			{"notes", {{{"position", 0}, {"length", quarter / 2}, {"pitch", 72}, {"velocity", 1.0}}}}});
+	run("audio.render", {{"frames", 4800}});
+	run("transport.locate", {{"position", 3000}}); // a locate ends the sounding notes
+	run("audio.render", {{"frames", 4800}});
+	run("transport.stop", Json::object());
+	run("audio.render", {{"frames", 960}});
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE(
+	"playing automation of volume, pan, instrument parameters and controllers passes the RT checker", "[integration]")
+{
+	using gnubase::engine::Json;
+	gnubase::engine::Engine engine;
+	gnubase::engine::Client client(engine);
+	const auto run = [&client](const std::string& command, const Json& parameters)
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	const auto points = [](std::initializer_list<std::pair<int64_t, double>> list, const char* shape)
+	{
+		Json result = Json::array();
+		for (const auto& [position, value] : list) // samples, in ticks at 120 BPM and 48 kHz
+			result.push_back({{"position", position * 1792 / 25}, {"value", value}, {"shape", shape}});
+		return result;
+	};
+	const auto lane = [&run](const Json& track, const Json& target)
+	{
+		return run("automationLane.add", {{"track", track.at("track").at("id")}, {"target", target}})
+			.at("lane")
+			.at("id");
+	};
+	run("audio.setDevice",
+		{{"blockSize", 64}, {"captureSeconds", 1},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 441.0}, {"Level", 0.5}}}}}});
+	const Json audio = run("track.add", {{"type", "audio"}});
+	const Json instrument = run("track.add", {{"type", "instrument"}});
+	run("channel.set", {{"channel", instrument.at("channel").at("id")}, {"instrument", "testSynth"}});
+	run("automationPoint.add",
+		{{"lane", lane(audio, {{"type", "volume"}})},
+			{"points", points({{0, -30.0}, {2000, 0.0}, {5000, -6.0}, {9000, -60.0}}, "linear")}});
+	run("automationPoint.add",
+		{{"lane", lane(audio, {{"type", "pan"}})}, {"points", points({{0, -1.0}, {4000, 1.0}, {8000, 0.0}}, "curve")}});
+	run("automationPoint.add",
+		{{"lane", lane(instrument, {{"type", "instrument"}, {"parameter", 0}})},
+			{"points", points({{0, 0.0}, {3000, 1.0}, {6000, 0.5}}, "linear")}});
+	const Json controller = lane(instrument, {{"type", "controller"}, {"number", 7}, {"channel", 0}});
+	run("automationPoint.add",
+		{{"lane", controller}, {"points", points({{0, 0.0}, {1000, 1.0}, {7000, 0.25}}, "curve")}});
+	run("transport.set", {{"left", 1000}, {"right", 9000}, {"cycle", true}});
+	run("transport.play", Json::object());
+
+	const RecordViolations record;
+	run("audio.render", {{"frames", 9600}});
+	run("automationPoint.add", // new curves, swapped in between blocks
+		{{"lane", controller}, {"points", points({{1500, 0.5}, {2500, 0.0}}, "step")}});
+	run("audio.render", {{"frames", 4800}});
+	run("transport.locate", {{"position", 3000}}); // mid-ramp
+	run("audio.render", {{"frames", 4800}});
+	run("transport.stop", Json::object());
+	run("audio.render", {{"frames", 960}});
+	run("transport.locate", {{"position", 5000}}); // while stopped
+	run("audio.render", {{"frames", 960}});
 	CHECK(g_violations == 0);
 }
 

@@ -11,6 +11,7 @@ namespace gnubase::engine
 
 	// Checks a value against a JSON schema and returns what is wrong, or an empty string if it fits. Supports the
 	// part of JSON Schema that commands use: type (one or a list), properties, required, additionalProperties: false,
-	// items and enum. name is where the value comes from in messages, such as "parameters.gain must be number".
+	// items, enum, minimum and maximum. name is where the value comes from in messages, such as "parameters.gain must
+	// be number".
 	std::string validate(const Json& value, const Json& schema, const std::string& name = "parameters");
 }

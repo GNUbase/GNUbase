@@ -8,7 +8,9 @@
 
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -84,6 +86,7 @@ namespace gnubase::engine
 				note.pitch = integer(item, "pitch", note.pitch, 0, 127, name);
 				note.channel = integer(item, "channel", note.channel, 0, 15, name);
 				note.velocity = scaled(item, "velocity", note.velocity, g_maxVelocity, name);
+				note.releaseVelocity = scaled(item, "releaseVelocity", note.releaseVelocity, g_maxVelocity, name);
 				notes.push_back(note);
 			}
 			// Changed only once every item is valid. ProjectModel::add would restore the project anyway.
@@ -97,6 +100,25 @@ namespace gnubase::engine
 			return {{"notes", result}};
 		}
 
+		// Whether controller events of the type have the field, besides id, position and type.
+		bool uses(ControllerType type, const std::string& key)
+		{
+			switch (type)
+			{
+			case ControllerType::Control:
+			case ControllerType::PolyPressure:
+				return key == "number" || key == "value" || key == "channel";
+			case ControllerType::PitchBend:
+			case ControllerType::ChannelPressure:
+				return key == "value" || key == "channel";
+			case ControllerType::Program:
+				return key == "number" || key == "bank" || key == "channel";
+			case ControllerType::SysEx:
+				return key == "data";
+			}
+			return false;
+		}
+
 		Json setControllers(Project& project, CommandContext& context)
 		{
 			MidiPart& part = findPart(project, context.parameters());
@@ -106,12 +128,23 @@ namespace gnubase::engine
 			{
 				const Json& item = items[i];
 				const std::string name = "controllers[" + std::to_string(i) + "]";
-				Controller controller = changed(part.controllers, item, name, "controller");
-				controller.position = position(item, controller.position, name);
-				controller.number = integer(item, "number", controller.number, 0, 127, name);
-				controller.channel = integer(item, "channel", controller.channel, 0, 15, name);
-				controller.value = scaled(item, "value", controller.value, g_maxControllerValue, name);
-				controllers.push_back(controller);
+				const Controller& current = changed(part.controllers, item, name, "controller");
+				// The event as it becomes, its fields with the changes, checked against its type as controller.add
+				// checks a new one. A null bank removes it.
+				Json merged = toJson(current);
+				for (auto field = item.begin(); field != item.end(); ++field)
+					merged[field.key()] = field.value();
+				if (merged.contains("bank") && merged.at("bank").is_null())
+					merged.erase("bank");
+				const std::optional<ControllerType> type = controllerTypeFromName(merged.at("type").get<std::string>());
+				if (type.has_value())
+					for (auto field = item.begin(); field != item.end(); ++field)
+						require(field.key() == "id" || field.key() == "position" || field.key() == "type" ||
+								uses(*type, field.key()),
+							name + "." + field.key() + " doesn't apply to " + controllerTypeName(*type) + " events");
+				Controller controller = controllerFrom(merged, name);
+				controller.id = current.id;
+				controllers.push_back(std::move(controller));
 			}
 			Json result = Json::array();
 			for (const Controller& controller : controllers)
@@ -146,19 +179,29 @@ namespace gnubase::engine
 		add(engine,
 			{"note.set", 1,
 				"Changes notes of a MIDI part: each change names a note by id and gives what changes, position and "
-				"length in ticks, pitch 0-127, velocity 0-1 or MIDI channel 0-15. Returns the changed notes.",
+				"length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1 or MIDI channel 0-15. Returns the "
+				"changed notes.",
 				changesSchema("notes",
 					{{"position", integer}, {"length", integer}, {"pitch", integer}, {"velocity", number},
-						{"channel", integer}}),
+						{"releaseVelocity", number}, {"channel", integer}}),
 				resultSchema("notes"), false},
 			setNotes);
 		add(engine,
 			{"controller.set", 1,
 				"Changes controller events of a MIDI part: each change names a controller event by id and gives what "
-				"changes, position in ticks, controller number 0-127, value 0-1 or MIDI channel 0-15. Returns the "
-				"changed controller events.",
+				"changes: position in ticks, type, and the fields of the type as controller.add takes them (number, "
+				"value, channel, bank, data). A field the type doesn't have is an error, such as value on a program "
+				"change; a null bank removes it. A new type keeps the fields it shares with the old one and needs the "
+				"others. Returns the changed controller events.",
 				changesSchema("controllers",
-					{{"position", integer}, {"number", integer}, {"value", number}, {"channel", integer}}),
+					{{"position", integer},
+						{"type",
+							{{"type", "string"},
+								{"enum",
+									{"controller", "pitchBend", "channelPressure", "polyPressure", "program",
+										"sysEx"}}}},
+						{"number", integer}, {"value", number}, {"channel", integer},
+						{"bank", {{"type", {"integer", "null"}}}}, {"data", {{"type", "array"}, {"items", integer}}}}),
 				resultSchema("controllers"), false},
 			setControllers);
 	}

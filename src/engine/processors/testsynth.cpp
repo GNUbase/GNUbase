@@ -128,6 +128,11 @@ namespace gnubase::engine::processors
 						m_release = event.parameterValue;
 					break;
 				case graph::ProcessEvent::Type::Controller:
+				case graph::ProcessEvent::Type::PitchBend:
+				case graph::ProcessEvent::Type::ChannelPressure:
+				case graph::ProcessEvent::Type::PolyPressure:
+				case graph::ProcessEvent::Type::Program:
+				case graph::ProcessEvent::Type::SysEx:
 					break;
 				}
 			},
