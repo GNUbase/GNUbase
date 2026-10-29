@@ -82,8 +82,11 @@ foreach(name IN LISTS GNUBASE_TEST_PLUGINS)
 	add_library(${vst3Target} MODULE common/${name}.cpp)
 	target_link_libraries(${vst3Target} PRIVATE gnubase-testplugin-vst3)
 
+	# Both formats have the same name, so MSVC's import libraries go into a folder per target: in a shared one, parallel
+	# links (Ninja) write the same .lib and .exp.
 	foreach(target ${clapTarget} ${vst3Target})
-		set_target_properties(${target} PROPERTIES OUTPUT_NAME gnubase-test-${name} PREFIX "")
+		set_target_properties(${target} PROPERTIES OUTPUT_NAME gnubase-test-${name} PREFIX ""
+			ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/${target}")
 	endforeach()
 	if(APPLE)
 		# Bundle folders: <name>.clap or <name>.vst3/Contents/MacOS/<name> with Contents/Info.plist.
