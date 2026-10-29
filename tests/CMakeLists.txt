@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-add_library(gnubase-testutils STATIC testutils/fakeui.cpp testutils/fakeui.h testutils/testutils.cpp
-	testutils/testutils.h)
+add_library(gnubase-testutils STATIC testutils/fakeui.cpp testutils/fakeui.h testutils/goldenimage.cpp
+	testutils/goldenimage.h testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
 target_compile_definitions(gnubase-testutils PRIVATE
@@ -18,8 +18,8 @@ target_sources(gnubase-tests PRIVATE device_tests.cpp effects_tests.cpp ipc_test
 target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-ipc gnubase-mcp gnubase-plugin gnubase-pluginhost-core gnubase-scripting gnubase-testutils Catch2::Catch2WithMain miniz pugixml::pugixml
 	cpp-httplib)
 
-# The UI's tests (#48), apart from the lists above so that both can grow without conflicts.
-target_sources(gnubase-tests PRIVATE shell_tests.cpp window_tests.cpp)
+# The UI's tests (#48, #49), apart from the lists above so that both can grow without conflicts.
+target_sources(gnubase-tests PRIVATE rmlui_tests.cpp shell_tests.cpp window_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE gnubase-ui SDL3::SDL3)
 
 # IPC tests run a helper process that plays a plugin host (tests/ipcpeer.cpp).
@@ -96,6 +96,8 @@ endforeach()
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}"
 	GNUBASE_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs"
 	GNUBASE_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources"
+	# Lato (SIL OFL) from RmlUi's samples, for text in tests until GNUbase bundles its own fonts (#207).
+	GNUBASE_TEST_FONTS_DIR="${PROJECT_SOURCE_DIR}/ext/RmlUi/Samples/assets"
 	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>
 	GNUBASE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 gnubase_target_defaults(gnubase-tests)

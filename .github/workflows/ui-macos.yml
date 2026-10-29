@@ -11,11 +11,14 @@ on:
       - src/app/**
       - tests/CMakeLists.txt
       - tests/window_tests.cpp
+      - tests/testutils/**
       - tests/data/ui/**
+      - tests/golden/ui/**
       - CMakeLists.txt
       - CMakePresets.json
       - ext/SDL
       - ext/RmlUi
+      - ext/freetype
       - .github/workflows/ui-macos.yml
   push:
     branches: [main]
@@ -37,11 +40,21 @@ jobs:
         with:
           submodules: recursive
 
+      # Every build needs the VST3 SDK's interfaces (the plugin host's VST3 adapter), which the recursive checkout
+      # skips, as in ci.yml.
+      - name: Fetch the VST3 SDK
+        run: |
+          git submodule update --init --checkout ext/vst3sdk
+          git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
+
+      - name: Fetch golden images
+        run: git lfs pull --include "tests/golden/ui/**"
+
       - name: Install packages
         timeout-minutes: 15
         run: brew install ninja
 
-      # Only the arm64 slice, and no test plugins, which need the VST3 SDK and aren't part of the window tests.
+      # Only the arm64 slice, and no test plugins, which aren't part of the window tests.
       - name: Configure
         run: cmake --preset macos -DCMAKE_OSX_ARCHITECTURES=arm64 -DGNUBASE_TEST_PLUGINS=OFF
 
@@ -52,3 +65,12 @@ jobs:
         env:
           GNUBASE_REQUIRE_GPU: 1
         run: ctest --preset macos -C Release -L ui
+
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-output-ui-macos-arm64
+          path: build/macos/tests/output/
+          if-no-files-found: ignore
+          retention-days: 14

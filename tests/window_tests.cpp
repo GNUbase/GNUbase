@@ -3,6 +3,7 @@
 // SDL's offscreen video driver unless SDL_VIDEO_DRIVER names another, so they need no display, only a Vulkan driver
 // (Mesa's lavapipe in CI). Where SDL_GPU has no device, such as CI's macOS Intel runner, they are skipped, unless
 // GNUBASE_REQUIRE_GPU=1 says this machine must have one. On Apple Silicon they run in .github/workflows/ui-macos.yml.
+#include "testutils/goldenimage.h"
 #include "testutils/testutils.h"
 #include "ui/gpurenderer.h"
 #include "ui/rmlui.h"
@@ -25,6 +26,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -196,6 +198,20 @@ namespace
 		std::string files;
 	};
 
+	// The top left of the image.
+	ui::Image crop(const ui::Image& image, int width, int height)
+	{
+		REQUIRE(image.width >= width);
+		REQUIRE(image.height >= height);
+		ui::Image cropped{width, height, {}};
+		for (int row = 0; row < height; ++row)
+		{
+			const auto begin = image.pixels.begin() + (static_cast<ptrdiff_t>(row) * image.width * 4);
+			cropped.pixels.insert(cropped.pixels.end(), begin, begin + (static_cast<ptrdiff_t>(width) * 4));
+		}
+		return cropped;
+	}
+
 	Rml::ElementFormControlInput& field(const ui::Window& window, const char* id)
 	{
 		auto* input = dynamic_cast<Rml::ElementFormControlInput*>(window.context().GetDocument(0)->GetElementById(id));
@@ -228,6 +244,27 @@ TEST_CASE("windows draw their RmlUi documents through SDL_GPU at their dp ratio"
 		CHECK(near(at(image, ratio, 110.0F, 45.0F), g_black));
 		CHECK(near(at(image, ratio, 60.0F, 70.0F), g_black));
 		CHECK(near(at(image, ratio, 180.0F, 120.0F), g_black));
+	}
+}
+
+TEST_CASE("a sample document looks the same on every platform", "[ui]")
+{
+	Gpu gpu;
+	for (const char* face : {"LatoLatin-Regular.ttf", "LatoLatin-Bold.ttf"})
+		REQUIRE(ui::RmlUi::loadFont(std::filesystem::path(GNUBASE_TEST_FONTS_DIR) / face));
+	const ui::Window& window = gpu.open("sample.rml", 640, 480);
+	INFO("SDL_GPU " << gpu.renderer->driver() << " on SDL's " << ui::SdlWindowSystem::driver() << " video driver");
+	const float monitorScale = window.dpRatio() / gpu.shell->uiScale();
+	for (const int ratio : {1, 2})
+	{
+		// The same dp ratio gives the same pixels, whatever the monitor's scale.
+		gpu.shell->setUiScale(static_cast<float>(ratio) / monitorScale);
+		const std::string name = "sample-" + std::to_string(ratio) + "x";
+		const ui::Image image = crop(gpu.screenshot(window, name), 320 * ratio, 240 * ratio);
+		// GPUs may round a few edge pixels differently: one in 500 may differ by more than 8 of 255.
+		const test::ImageDiff diff = test::compareWithGolden("ui/" + name, image, 8, image.pixels.size() / 4 / 500);
+		INFO(diff.report);
+		CHECK(diff.equal);
 	}
 }
 

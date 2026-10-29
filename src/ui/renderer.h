@@ -32,6 +32,9 @@ namespace gnubase::ui
 	// Writes the image as a PNG file; false if it can't.
 	bool writePng(const Image& image, const std::filesystem::path& file);
 
+	// Reads a PNG file as RGBA; empty if it can't.
+	std::optional<Image> readPng(const std::filesystem::path& file);
+
 	// Draws windows' RmlUi contexts: on the screen, or offscreen into an image for screenshots (#58, #59).
 	class Renderer
 	{
