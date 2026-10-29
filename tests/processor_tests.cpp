@@ -303,9 +303,10 @@ TEST_CASE("processor.list describes every built-in processor and its parameters"
 	std::vector<std::string> ids;
 	for (const Json& processor : list)
 		ids.push_back(processor.at("id").get<std::string>());
-	CHECK(ids == std::vector<std::string>{"gainPan", "impulse", "noise", "positionProbe", "sine", "testSynth"});
+	CHECK(ids ==
+		std::vector<std::string>{"gainPan", "impulse", "noise", "noteProbe", "positionProbe", "sine", "testSynth"});
 
-	const Json& synth = list[5];
+	const Json& synth = list[6];
 	CHECK(synth.at("instrument") == true);
 	CHECK(list[0].at("instrument") == false);
 	const Json& release = synth.at("parameters")[TestSynth::Release];

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Synth: a polyphonic sine instrument with a linear attack and release. It sends a note end event when a voice has
-// faded out, so hosts can test voice lifetimes.
+// faded out or was taken for a new note, so hosts can test voice lifetimes.
 #include "testplugin.h"
 
 #include <algorithm>
@@ -41,6 +41,16 @@ namespace gnubase::testplugins
 			Synth() : TestPlugin({volumeParam(), releaseParam()}) {}
 
 			void resetState() override { m_voices = {}; }
+
+			// A released voice fades out within the longest release.
+			double tailSeconds() const override { return releaseParam().maxValue / 1000.0; }
+
+			void process(const ProcessBlock& block) override
+			{
+				m_block = &block;
+				TestPlugin::process(block);
+				m_block = nullptr;
+			}
 
 		protected:
 			void handleEvent(const Event& event) override
@@ -102,6 +112,7 @@ namespace gnubase::testplugins
 			}
 
 		private:
+			// Takes a free voice, or the first one when all are busy: that voice ends, at the new note's time.
 			void startVoice(const Event& event)
 			{
 				Voice* voice = m_voices.data();
@@ -111,6 +122,8 @@ namespace gnubase::testplugins
 						voice = &candidate;
 						break;
 					}
+				if (voice->active && m_block != nullptr)
+					endVoice(*voice, *m_block, std::min(event.time, m_block->frames));
 				*voice = Voice{};
 				voice->active = true;
 				voice->noteId = event.noteId;
@@ -161,6 +174,7 @@ namespace gnubase::testplugins
 			}
 
 			std::array<Voice, 16> m_voices{};
+			const ProcessBlock* m_block = nullptr; // the block being processed, for note ends from handleEvent
 		};
 	}
 

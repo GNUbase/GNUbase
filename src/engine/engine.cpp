@@ -3,7 +3,10 @@
 
 #include "engine/audio/audioengine.h"
 #include "engine/document/projectmodel.h"
+#include "engine/jobs/jobs.h"
+#include "engine/peaks/peakcache.h"
 #include "engine/processors/builtin.h"
+#include "engine/settings/usersettings.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 
@@ -72,7 +75,8 @@ namespace gnubase::engine
 		return GNUBASE_VERSION;
 	}
 
-	Engine::Engine(std::vector<std::unique_ptr<audio::Backend>> backends)
+	Engine::Engine(
+		std::vector<std::unique_ptr<audio::Backend>> backends, const std::filesystem::path& settingsDirectory)
 	{
 		registerCommand({"engine.version", 1, "The GNUbase version.", CommandInfo{}.parameters,
 							Json::parse(R"({"type": "object", "properties": {"version": {"type": "string"}},
@@ -92,10 +96,17 @@ namespace gnubase::engine
 				return Json{{"commands", list}};
 			});
 		processors::registerCommands(*this);
+		m_jobs = std::make_unique<Jobs>(*this);
+		m_jobs->registerCommands(*this);
 		m_project = std::make_unique<ProjectModel>();
-		m_project->registerCommands(*this);
+		m_project->registerCommands(*this, *m_jobs);
 		m_audio = std::make_unique<AudioEngine>(m_project->snapshots(), std::move(backends));
 		m_audio->registerCommands(*this);
+		m_peaks = std::make_unique<peaks::PeakCache>(
+			[this](const std::string& name, const Json& data) { broadcast(name, data); });
+		m_peaks->registerCommands(*this);
+		m_settings = std::make_unique<settings::Store>(settings::userFormat(), settingsDirectory);
+		settings::registerCommands(*this, *m_settings);
 		m_thread = std::thread([this] { run(); });
 	}
 
@@ -107,7 +118,9 @@ namespace gnubase::engine
 			m_stopping = true;
 		}
 		m_wake.notify_all();
-		m_thread.join();
+		m_thread.join(); // fails the commands that didn't run, which jobs may wait for
+		m_peaks.reset(); // stops its worker while the clients can still be reached
+		m_jobs.reset();  // no command starts a job anymore; cancels the running ones and waits for them
 	}
 
 	void Engine::registerCommand(CommandInfo info, CommandHandler handler)
@@ -125,9 +138,39 @@ namespace gnubase::engine
 		rt::assertNotRealtime("engine::Engine::post");
 		{
 			const std::scoped_lock lock(m_mutex);
-			m_requests.push_back({m_nextRequest++, std::move(command), std::move(parameters), nullptr});
+			m_requests.push_back({m_nextRequest++, std::move(command), std::move(parameters), nullptr, nullptr});
 		}
 		m_wake.notify_one();
+	}
+
+	void Engine::post(std::string command, Json parameters, std::function<void(Result result)> done)
+	{
+		rt::assertNotRealtime("engine::Engine::post");
+		RequestId id = 0;
+		{
+			const std::scoped_lock lock(m_mutex);
+			id = m_nextRequest++;
+			if (!m_stopping)
+			{
+				m_requests.push_back({id, std::move(command), std::move(parameters), nullptr, std::move(done)});
+				m_wake.notify_one();
+				return;
+			}
+		}
+		done({id, nullptr, "the engine stopped before " + command + " ran"});
+	}
+
+	void Engine::broadcast(std::string name, Json data)
+	{
+		rt::assertNotRealtime("engine::Engine::broadcast");
+		std::vector<std::shared_ptr<detail::Mailbox>> clients;
+		{
+			const std::scoped_lock lock(m_mutex);
+			clients = m_clients;
+		}
+		const Event event{std::move(name), std::move(data), 0};
+		for (const auto& client : clients)
+			client->post(event);
 	}
 
 	rt::SnapshotPublisher<RenderSnapshot>& Engine::renderSnapshots()
@@ -150,13 +193,29 @@ namespace gnubase::engine
 		for (;;)
 		{
 			Request request;
+			std::deque<Request> left;
+			bool stopping = false;
 			{
 				std::unique_lock lock(m_mutex);
 				m_wake.wait(lock, [this] { return m_stopping || !m_requests.empty(); });
-				if (m_stopping)
-					return;
-				request = std::move(m_requests.front());
-				m_requests.pop_front();
+				stopping = m_stopping;
+				if (stopping)
+				{
+					left.swap(m_requests); // from here on, post fails at once
+				}
+				else
+				{
+					request = std::move(m_requests.front());
+					m_requests.pop_front();
+				}
+			}
+			if (stopping)
+			{
+				// Jobs may wait for commands they posted; they get an error.
+				for (const Request& waiting : left)
+					if (waiting.done)
+						waiting.done({waiting.id, nullptr, "the engine stopped before " + waiting.command + " ran"});
+				return;
 			}
 			execute(request);
 		}
@@ -234,8 +293,19 @@ namespace gnubase::engine
 			for (const auto& client : clients)
 				client->post(event);
 		}
+		// After the command's own events, so media.added reaches clients before the peak worker's media.peaksReady.
+		try
+		{
+			m_peaks->sync(m_project->snapshots().latest().media);
+		}
+		catch (const std::exception& error)
+		{
+			logging::error("The peaks of the media files are not updated: {}", error.what());
+		}
 		if (request.sender)
 			request.sender->post(std::move(result));
+		else if (request.done)
+			request.done(std::move(result));
 		else if (!result.ok())
 			logging::error("{} failed: {}", request.command, result.error);
 	}
@@ -280,7 +350,7 @@ namespace gnubase::engine
 		{
 			const std::scoped_lock lock(m_engine.m_mutex);
 			id = m_engine.m_nextRequest++;
-			m_engine.m_requests.push_back({id, std::move(command), std::move(parameters), m_mailbox});
+			m_engine.m_requests.push_back({id, std::move(command), std::move(parameters), m_mailbox, nullptr});
 		}
 		m_engine.m_wake.notify_one();
 		return id;

@@ -5,7 +5,12 @@
 #include "engine/audiofile/resampler.h"
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/serialize.h"
+#include "engine/dsp/timestretch.h"
 #include "engine/graph/graph.h"
+#include "engine/jobs/jobs.h"
+#include "engine/media/backup.h"
+#include "engine/midi/quantizecommands.h"
+#include "engine/processors/builtin.h"
 
 #include <algorithm>
 #include <array>
@@ -14,8 +19,14 @@
 #include <cmath>
 #include <ctime>
 #include <filesystem>
+#include <initializer_list>
+#include <memory>
 #include <optional>
+#include <set>
+#include <sstream>
+#include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -108,6 +119,13 @@ namespace gnubase::engine
 		Json arraySchema(Json items)
 		{
 			return {{"type", "array"}, {"items", std::move(items)}};
+		}
+
+		// An object schema that also allows null.
+		Json nullable(Json schema)
+		{
+			schema["type"] = {"object", "null"};
+			return schema;
 		}
 
 		// Lookups and checks. They throw CommandError, which fails the command with the message.
@@ -282,6 +300,13 @@ namespace gnubase::engine
 					keepMinimumLength(project, marker); // rounding may have left it shorter than a sample
 					context.emit("marker.changed", {{"marker", toJson(marker)}});
 				}
+			for (auto& [id, lane] : project.automation)
+				if (lane.track == track.id && !lane.points.empty())
+				{
+					for (auto& [pointId, point] : lane.points)
+						point.position = time::rebase(point.position, base, project.tempo, project.sampleRate);
+					context.emit("automationLane.changed", {{"lane", toJson(lane)}});
+				}
 			track.timeBase = base;
 		}
 
@@ -302,6 +327,18 @@ namespace gnubase::engine
 					part.length = rescale(part.length, factor);
 					context.emit("midiPart.changed", {{"part", toJson(part)}});
 				}
+			for (auto& [id, lane] : project.automation)
+			{
+				bool changed = false;
+				for (auto& [pointId, point] : lane.points)
+					if (point.position.base == time::TimeBase::Linear)
+					{
+						point.position.value = rescale(point.position.value, factor);
+						changed = true;
+					}
+				if (changed)
+					context.emit("automationLane.changed", {{"lane", toJson(lane)}});
+			}
 			project.sampleRate = sampleRate;
 			// At a lower rate, a short cycle marker may become shorter than a sample, in either time base.
 			for (auto& [id, marker] : project.markers)
@@ -341,6 +378,313 @@ namespace gnubase::engine
 			context.emit("marker.trackActivated", {{"track", track}});
 		}
 
+		// Automation.
+
+		// A lane's target from a command, checked against the track it automates.
+		AutomationTarget automationTarget(const Project& project, const Track& track, const Json& json)
+		{
+			const std::optional<AutomationTargetType> parsed =
+				automationTargetTypeFromName(json.at("type").get<std::string>());
+			if (!parsed.has_value())
+				throw CommandError(
+					"target.type must be volume, pan, instrument, controller, pitchBend or channelPressure");
+			const AutomationTargetType type = *parsed;
+			AutomationTarget target;
+			target.type = type;
+			require(track.channel != 0, "track " + idText(track.id) + " has no channel to automate");
+			const Channel& channel = project.channels.at(track.channel);
+			const bool midi = track.type == TrackType::Midi || track.type == TrackType::Instrument;
+			const auto only = [&json, type](std::initializer_list<const char*> keys)
+			{
+				for (const auto& [key, value] : json.items())
+					require(key == "type" ||
+							std::any_of(keys.begin(), keys.end(), [&key = key](const char* k) { return key == k; }),
+						std::string("target.") + key + " doesn't belong to a " + automationTargetTypeName(type) +
+							" target");
+			};
+			const auto midiChannel = [&json]()
+			{
+				const auto value = json.value("channel", int64_t{0});
+				requireRange(value, 0, 15, "target.channel");
+				return static_cast<uint8_t>(value);
+			};
+			switch (target.type)
+			{
+			case AutomationTargetType::Volume:
+			case AutomationTargetType::Pan:
+				only({});
+				require(channel.channels > 0 && track.type != TrackType::Midi, "a MIDI track has no volume or pan");
+				break;
+			case AutomationTargetType::Instrument:
+			{
+				only({"parameter"});
+				require(track.type == TrackType::Instrument, "only instrument tracks have an instrument");
+				require(!channel.instrument.empty(), "track " + idText(track.id) + " plays no instrument");
+				require(json.contains("parameter"), "target.parameter is required");
+				const auto parameter = json.at("parameter").get<int64_t>();
+				const auto& builtins = processors::builtins();
+				const auto info = std::find_if(builtins.begin(), builtins.end(),
+					[&channel](const processors::BuiltinInfo& b) { return b.id == channel.instrument; });
+				require(info != builtins.end() &&
+						std::any_of(info->parameters.begin(), info->parameters.end(),
+							[parameter](const processors::ParameterInfo& p) { return p.id == parameter; }),
+					channel.instrument + " has no parameter " + std::to_string(parameter));
+				target.parameter = static_cast<uint32_t>(parameter);
+				break;
+			}
+			case AutomationTargetType::Controller:
+				only({"number", "channel"});
+				require(midi, "MIDI controllers are automated on MIDI and instrument tracks");
+				require(json.contains("number"), "target.number is required");
+				requireRange(json.at("number").get<int64_t>(), 0, 127, "target.number");
+				target.number = json.at("number").get<uint8_t>();
+				target.channel = midiChannel();
+				break;
+			case AutomationTargetType::PitchBend:
+			case AutomationTargetType::ChannelPressure:
+				only({"channel"});
+				require(midi, "MIDI controllers are automated on MIDI and instrument tracks");
+				target.channel = midiChannel();
+				break;
+			}
+			return target;
+		}
+
+		// The values a lane's points can have, in its target's unit.
+		std::pair<double, double> automationRange(const Project& project, const AutomationLane& lane)
+		{
+			switch (lane.target.type)
+			{
+			case AutomationTargetType::Volume:
+				return {g_minChannelVolume, g_maxChannelVolume};
+			case AutomationTargetType::Pan:
+				return {-1.0, 1.0};
+			case AutomationTargetType::Instrument:
+			{
+				const Channel& channel = project.channels.at(project.trackById.at(lane.track).channel);
+				for (const processors::BuiltinInfo& info : processors::builtins())
+					if (info.id == channel.instrument)
+						for (const processors::ParameterInfo& parameter : info.parameters)
+							if (parameter.id == lane.target.parameter)
+								return {parameter.minimum, parameter.maximum};
+				throw CommandError("the instrument of automation lane " + idText(lane.id) + " has no parameter " +
+					std::to_string(lane.target.parameter) + " any more");
+			}
+			case AutomationTargetType::Controller:
+			case AutomationTargetType::PitchBend:
+			case AutomationTargetType::ChannelPressure:
+				return {0.0, 1.0};
+			}
+			return {0.0, 1.0};
+		}
+
+		std::string numberText(double value)
+		{
+			std::ostringstream text;
+			text << value;
+			return text.str();
+		}
+
+		// Changes a point by what a command gives for it, checked. Positions are in the time base of the lane's track.
+		void changePoint(AutomationPoint& point, const Json& item, const std::string& name, const Track& track,
+			const std::pair<double, double>& range)
+		{
+			if (item.contains("position"))
+				point.position = position(track, item.at("position"), name + ".position");
+			if (item.contains("value"))
+			{
+				point.value = item.at("value").get<double>();
+				require(point.value >= range.first && point.value <= range.second,
+					name + ".value must be from " + numberText(range.first) + " to " + numberText(range.second));
+			}
+			if (item.contains("shape"))
+			{
+				const std::optional<AutomationShape> shape =
+					automationShapeFromName(item.at("shape").get<std::string>());
+				if (!shape.has_value())
+					throw CommandError(name + ".shape must be step, linear or curve");
+				point.shape = *shape;
+			}
+			if (item.contains("curve"))
+			{
+				point.curve = item.at("curve").get<double>();
+				require(point.curve >= -1.0 && point.curve <= 1.0, name + ".curve must be from -1 to 1");
+			}
+			if (point.shape != AutomationShape::Curve)
+				point.curve = 0.0;
+		}
+
+		Json pointsJson(const std::vector<AutomationPoint>& points)
+		{
+			Json list = Json::array();
+			for (const AutomationPoint& point : points)
+				list.push_back(toJson(point));
+			return list;
+		}
+
+		Json addAutomationLane(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			AutomationLane lane;
+			lane.track = parameters.at("track").get<ObjectId>();
+			const Track& track = find(project.trackById, lane.track, "track");
+			lane.target = automationTarget(project, track, parameters.at("target"));
+			lane.read = parameters.value("read", true);
+			for (const auto& [id, other] : project.automation)
+				require(other.track != lane.track || !(other.target == lane.target),
+					"track " + idText(lane.track) + " already has this automation lane: " + idText(id));
+			lane.id = project.newId();
+			Json result = {{"lane", toJson(lane)}};
+			project.automation[lane.id] = std::move(lane);
+			context.emit("automationLane.added", result);
+			return result;
+		}
+
+		Json setAutomationLane(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			AutomationLane& lane = find(project.automation, parameters.at("lane").get<ObjectId>(), "automation lane");
+			lane.read = parameters.value("read", lane.read);
+			Json result = {{"lane", toJson(lane)}};
+			context.emit("automationLane.changed", result);
+			return result;
+		}
+
+		Json removeAutomationLane(Project& project, CommandContext& context)
+		{
+			const ObjectId id = context.parameters().at("lane").get<ObjectId>();
+			find(project.automation, id, "automation lane");
+			project.automation.erase(id);
+			context.emit("automationLane.removed", {{"lane", id}});
+			return Json::object();
+		}
+
+		Json listAutomationLanes(const Project& project, CommandContext& context)
+		{
+			const auto track = context.parameters().value("track", ObjectId{0});
+			if (track != 0)
+				require(project.trackById.count(track) != 0, "no track " + idText(track));
+			Json lanes = Json::array();
+			for (const ObjectId id : project.trackOrder())
+				if (track == 0 || id == track)
+					for (const auto& [laneId, lane] : project.automation)
+						if (lane.track == id)
+							lanes.push_back(toJson(lane));
+			return {{"lanes", std::move(lanes)}};
+		}
+
+		Json addAutomationPoints(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			AutomationLane& lane = find(project.automation, parameters.at("lane").get<ObjectId>(), "automation lane");
+			const Json& items = parameters.at("points");
+			const std::pair<double, double> range = automationRange(project, lane);
+			const Track& track = project.trackById.at(lane.track);
+			std::vector<AutomationPoint> points;
+			for (size_t i = 0; i < items.size(); ++i)
+			{
+				AutomationPoint point;
+				point.position.base = track.timeBase;
+				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range);
+				points.push_back(point);
+			}
+			for (AutomationPoint& point : points)
+			{
+				point.id = project.newId();
+				lane.points[point.id] = point;
+			}
+			Json added = pointsJson(points);
+			context.emit("automationPoint.added", {{"lane", lane.id}, {"points", added}});
+			return {{"points", added}};
+		}
+
+		Json setAutomationPoints(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			AutomationLane& lane = find(project.automation, parameters.at("lane").get<ObjectId>(), "automation lane");
+			const Json& items = parameters.at("points");
+			const std::pair<double, double> range = automationRange(project, lane);
+			const Track& track = project.trackById.at(lane.track);
+			std::vector<AutomationPoint> points;
+			for (size_t i = 0; i < items.size(); ++i)
+			{
+				const auto id = items[i].at("id").get<ObjectId>();
+				const auto found = lane.points.find(id);
+				require(found != lane.points.end(),
+					"no automation point " + idText(id) + " in automation lane " + idText(lane.id));
+				AutomationPoint point = found->second;
+				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range);
+				points.push_back(point);
+			}
+			for (const AutomationPoint& point : points)
+				lane.points[point.id] = point;
+			Json changed = pointsJson(points);
+			context.emit("automationPoint.changed", {{"lane", lane.id}, {"points", changed}});
+			return {{"points", changed}};
+		}
+
+		Json removeAutomationPoints(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			AutomationLane& lane = find(project.automation, parameters.at("lane").get<ObjectId>(), "automation lane");
+			const auto ids = parameters.at("points").get<std::vector<ObjectId>>();
+			for (const ObjectId id : ids)
+				require(lane.points.count(id) != 0,
+					"no automation point " + idText(id) + " in automation lane " + idText(lane.id));
+			for (const ObjectId id : ids)
+				lane.points.erase(id);
+			context.emit("automationPoint.removed", {{"lane", lane.id}, {"points", ids}});
+			return Json::object();
+		}
+
+		// Automation follows events: when an event or part moves, the automation of its track in the range it covered
+		// moves with it and replaces the points where it lands. The points are in the track's time base, like the
+		// event's positions.
+		void followEvent(Project& project, ObjectId track, const time::Position& fromPosition,
+			const time::Position& endPosition, const time::Position& toPosition, CommandContext& context)
+		{
+			const time::TimeBase base = project.trackById.at(track).timeBase;
+			const auto inBase = [&project, base](const time::Position& position)
+			{ return time::rebase(position, base, project.tempo, project.sampleRate).value; };
+			const int64_t from = inBase(fromPosition);
+			const int64_t end = inBase(endPosition);
+			const int64_t to = inBase(toPosition);
+			if (to == from || end <= from)
+				return;
+			const int64_t landing = to + (end - from);
+			for (auto& [id, lane] : project.automation)
+			{
+				if (lane.track != track)
+					continue;
+				std::vector<AutomationPoint> moving;
+				for (const auto& [pointId, point] : lane.points)
+					if (point.position.value >= from && point.position.value < end)
+						moving.push_back(point);
+				if (moving.empty())
+					continue;
+				for (auto point = lane.points.begin(); point != lane.points.end();)
+				{
+					const int64_t at = point->second.position.value;
+					const bool moves = at >= from && at < end;
+					const bool covered = at >= to && at < landing;
+					point = covered && !moves ? lane.points.erase(point) : std::next(point);
+				}
+				for (const AutomationPoint& point : moving)
+					lane.points[point.id].position.value = point.position.value + (to - from);
+				context.emit("automationLane.changed", {{"lane", toJson(lane)}});
+			}
+		}
+
+		// Where an audio event ends, in the time base of its position.
+		time::Position eventEnd(const Project& project, const AudioEvent& event)
+		{
+			const MediaFile& media = project.media.at(project.clips.at(event.clip).media);
+			const time::Samples start = time::toSamples(event.position, project.tempo, project.sampleRate);
+			const auto length = std::llround(static_cast<double>(event.length) * project.sampleRate / media.sampleRate);
+			return time::rebase(
+				{time::TimeBase::Linear, start + length}, event.position.base, project.tempo, project.sampleRate);
+		}
+
 		// Commands.
 
 		Json addTrack(Project& project, CommandContext& context)
@@ -374,7 +718,7 @@ namespace gnubase::engine
 			std::optional<Channel> channel;
 			if (hasChannel)
 			{
-				channel = Channel{project.newId(), track.id, channels, 0, 0};
+				channel = Channel{project.newId(), track.id, channels, 0, 0, {}, 0.0, 0.0};
 				const auto mainOutput = std::find_if(project.busses.begin(), project.busses.end(),
 					[](const Bus& bus) { return bus.direction == BusDirection::Output; });
 				if (hasAudio && mainOutput != project.busses.end())
@@ -484,6 +828,8 @@ namespace gnubase::engine
 					part = part->second.track == removed ? project.midiParts.erase(part) : std::next(part);
 				for (auto marker = project.markers.begin(); marker != project.markers.end();)
 					marker = marker->second.track == removed ? project.markers.erase(marker) : std::next(marker);
+				for (auto lane = project.automation.begin(); lane != project.automation.end();)
+					lane = lane->second.track == removed ? project.automation.erase(lane) : std::next(lane);
 				project.channels.erase(gone.channel);
 				project.trackById.erase(removed);
 				context.emit("track.removed", {{"track", removed}});
@@ -523,6 +869,27 @@ namespace gnubase::engine
 				changed.output = parameters.at("output").get<ObjectId>();
 				checkOutput(project, changed, changed.output);
 			}
+			if (parameters.contains("instrument"))
+			{
+				changed.instrument = parameters.at("instrument").get<std::string>();
+				require(type == TrackType::Instrument || changed.instrument.empty(),
+					"only an instrument track's channel plays an instrument");
+				if (!changed.instrument.empty())
+				{
+					const auto& builtins = processors::builtins();
+					const auto info = std::find_if(builtins.begin(), builtins.end(),
+						[&](const processors::BuiltinInfo& b) { return b.id == changed.instrument; });
+					require(info != builtins.end(), "no built-in processor " + changed.instrument);
+					require(info->instrument, changed.instrument + " is not an instrument");
+				}
+			}
+			if (parameters.contains("volume") || parameters.contains("pan"))
+				require(changed.channels > 0 && type != TrackType::Midi, "a MIDI channel has no volume or pan");
+			changed.volume = parameters.value("volume", channel.volume);
+			require(changed.volume >= g_minChannelVolume && changed.volume <= g_maxChannelVolume,
+				"volume must be from -144 to 6 dB");
+			changed.pan = parameters.value("pan", channel.pan);
+			require(changed.pan >= -1.0 && changed.pan <= 1.0, "pan must be from -1 to 1");
 			channel = changed;
 			Json result = {{"channel", toJson(channel)}};
 			context.emit("channel.changed", result);
@@ -566,12 +933,16 @@ namespace gnubase::engine
 			return Json::object();
 		}
 
-		Json addMedia(Project& project, CommandContext& context)
+		// mediaFolder is where media are copied to with copy, or empty if the project has no file yet.
+		Json addMedia(Project& project, CommandContext& context, const std::filesystem::path& mediaFolder)
 		{
 			const Json& parameters = context.parameters();
 			MediaFile media;
 			media.path = parameters.at("path").get<std::string>();
 			require(!media.path.empty(), "path must not be empty");
+			const bool copy = parameters.value("copy", false);
+			require(!copy || !mediaFolder.empty(),
+				"save the project first: media are copied into the folder of its project file");
 			const auto given = std::count_if(g_mediaProperties.begin(), g_mediaProperties.end(),
 				[&parameters](const char* name) { return parameters.contains(name); });
 			require(given == 0 || given == 3,
@@ -599,11 +970,147 @@ namespace gnubase::engine
 			require(media.sampleRate > 0.0, "sampleRate must be positive");
 			requireRange(media.channels, 1, g_maxAudioChannels, "channels");
 			require(media.length >= 0, "length must not be negative");
+			if (copy)
+			{
+				std::error_code error;
+				require(std::filesystem::is_regular_file(std::filesystem::u8path(media.path), error),
+					"can't copy " + media.path + ": there is no such file");
+			}
 			media.id = project.newId();
 			project.media[media.id] = media;
 			Json result = {{"media", toJson(media)}};
 			context.emit("media.added", result);
 			return result;
+		}
+
+		// The same file, by any path to it. Files that don't exist (yet) are compared by their absolute paths.
+		bool sameFile(const std::string& first, const std::string& second)
+		{
+			const std::filesystem::path a = std::filesystem::u8path(first);
+			const std::filesystem::path b = std::filesystem::u8path(second);
+			std::error_code error;
+			if (std::filesystem::equivalent(a, b, error))
+				return true;
+			std::error_code errorA;
+			std::error_code errorB;
+			const std::filesystem::path absoluteA = std::filesystem::absolute(a, errorA);
+			const std::filesystem::path absoluteB = std::filesystem::absolute(b, errorB);
+			return !errorA && !errorB && absoluteA.lexically_normal() == absoluteB.lexically_normal();
+		}
+
+		// A new file for media.convert and media.stretch: never one of the project's media files, the source among
+		// them, which writing would destroy beyond what undo can bring back.
+		void requireNewMediaPath(const Project& project, const std::string& path)
+		{
+			require(!path.empty(), "path must not be empty");
+			for (const auto& [id, media] : project.media)
+				require(!sameFile(path, media.path), "path is media file " + idText(id) + "; choose a new file");
+		}
+
+		// Copies media files into the media folder as a job, then points the media at their copies with one
+		// command, a transaction named action, so that it is one undo step. Media whose path changed while the job
+		// copied, or that were removed, keep their path, and their copies are removed. The job's result is
+		// {copied: [{media, from, to}], missing: [{media, path}], changed: [media]}. Returns the job.
+		Json startMediaCopy(Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder,
+			std::string action)
+		{
+			return jobs.start(std::move(kind),
+				[files = std::move(files), folder = std::move(folder), action = std::move(action)](
+					JobContext& job) mutable
+				{
+					copyMedia(files, folder, job);
+					Json relink = Json::array();
+					Json missing = Json::array();
+					std::vector<std::string> made;
+					for (const MediaCopy& file : files)
+					{
+						if (file.to.empty())
+						{
+							missing.push_back({{"media", file.media}, {"path", file.from}});
+							continue;
+						}
+						relink.push_back({{"media", file.media}, {"from", file.from}, {"path", file.to}});
+						made.push_back(file.to);
+					}
+
+					std::set<ObjectId> skipped;
+					try
+					{
+						job.checkCancelled();
+						if (!relink.empty())
+						{
+							const Json command = {{"command", "media.relink"}, {"parameters", {{"files", relink}}}};
+							const Json result = job.command(
+								"history.transaction", {{"description", action}, {"commands", Json::array({command})}});
+							for (const Json& media : result.at("results").at(0).at("skipped"))
+								skipped.insert(media.get<ObjectId>());
+						}
+					}
+					catch (...)
+					{
+						removeFiles(made);
+						throw;
+					}
+
+					Json copied = Json::array();
+					Json changed = Json::array();
+					std::vector<std::string> unused;
+					for (const MediaCopy& file : files)
+					{
+						if (file.to.empty())
+							continue;
+						if (skipped.count(file.media) != 0)
+						{
+							changed.push_back(file.media);
+							unused.push_back(file.to);
+							continue;
+						}
+						copied.push_back({{"media", file.media}, {"from", file.from}, {"to", file.to}});
+					}
+					removeFiles(unused);
+					return Json{{"copied", std::move(copied)}, {"missing", std::move(missing)},
+						{"changed", std::move(changed)}};
+				});
+		}
+
+		Json relinkMedia(Project& project, CommandContext& context)
+		{
+			Json relinked = Json::array();
+			Json skipped = Json::array();
+			for (const Json& entry : context.parameters().at("files"))
+			{
+				const ObjectId id = entry.at("media").get<ObjectId>();
+				const std::string path = entry.at("path").get<std::string>();
+				require(!path.empty(), "path must not be empty");
+				if (entry.contains("from"))
+				{
+					const auto found = project.media.find(id);
+					if (found == project.media.end() || found->second.path != entry.at("from").get<std::string>())
+					{
+						skipped.push_back(id);
+						continue;
+					}
+				}
+				MediaFile& media = find(project.media, id, "media file");
+				AudioFileInfo info;
+				try
+				{
+					info = AudioFileReader::open(path)->info();
+				}
+				catch (const AudioFileError& error)
+				{
+					throw CommandError(error.what());
+				}
+				require(info.sampleRate == media.sampleRate && info.channels == media.channels,
+					path + " has " + std::to_string(info.channels) + " channels at " +
+						std::to_string(std::llround(info.sampleRate)) + " Hz, media file " + idText(id) + " " +
+						std::to_string(media.channels) + " at " + std::to_string(std::llround(media.sampleRate)) +
+						" Hz");
+				media.path = path;
+				context.emit("media.changed", {{"media", toJson(media)}});
+				relinked.push_back(id);
+			}
+			return {{"relinked", std::move(relinked)}, {"skipped", std::move(skipped)}};
 		}
 
 		Json convertMedia(Project& project, CommandContext& context)
@@ -612,7 +1119,7 @@ namespace gnubase::engine
 			const MediaFile& source = find(project.media, parameters.at("media").get<ObjectId>(), "media file");
 			MediaFile media;
 			media.path = parameters.at("path").get<std::string>();
-			require(!media.path.empty(), "path must not be empty");
+			requireNewMediaPath(project, media.path);
 			const double sampleRate = parameters.value("sampleRate", project.sampleRate);
 			require(sampleRate > 0.0, "sampleRate must be positive");
 			try
@@ -623,6 +1130,49 @@ namespace gnubase::engine
 				media.length = info.frames;
 			}
 			catch (const AudioFileError& error)
+			{
+				throw CommandError(error.what());
+			}
+			media.id = project.newId();
+			project.media[media.id] = media;
+			Json result = {{"media", toJson(media)}};
+			context.emit("media.added", result);
+			return result;
+		}
+
+		Json stretchMedia(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			const MediaFile& source = find(project.media, parameters.at("media").get<ObjectId>(), "media file");
+			MediaFile media;
+			media.path = parameters.at("path").get<std::string>();
+			requireNewMediaPath(project, media.path);
+			dsp::StretchSettings settings;
+			settings.ratio = parameters.value("ratio", 1.0);
+			settings.semitones = parameters.value("semitones", 0.0);
+			settings.cents = parameters.value("cents", 0.0);
+			settings.preserveFormants = parameters.value("formants", false);
+			// The schema only lets known names through.
+			settings.preset = dsp::stretchPresetFromString(parameters.value("preset", "quality"))
+								  .value_or(dsp::StretchPreset::Quality);
+			settings.mode =
+				dsp::stretchModeFromString(parameters.value("mode", "offline")).value_or(dsp::StretchMode::Offline);
+			require(settings.ratio >= dsp::g_minStretchRatio && settings.ratio <= dsp::g_maxStretchRatio,
+				"ratio must be between 0.1 and 10");
+			require(std::abs(settings.semitones + (settings.cents / 100.0)) <= dsp::g_maxPitchSemitones,
+				"the pitch shift must be within 48 semitones either way");
+			try
+			{
+				const AudioFileInfo info = dsp::stretchFile(source.path, media.path, settings);
+				media.sampleRate = info.sampleRate;
+				media.channels = info.channels;
+				media.length = info.frames;
+			}
+			catch (const AudioFileError& error)
+			{
+				throw CommandError(error.what());
+			}
+			catch (const std::invalid_argument& error) // settings out of the real-time range
 			{
 				throw CommandError(error.what());
 			}
@@ -707,7 +1257,7 @@ namespace gnubase::engine
 			return result;
 		}
 
-		Json setAudioEvent(Project& project, CommandContext& context)
+		Json setAudioEvent(Project& project, CommandContext& context, bool follow)
 		{
 			const Json& parameters = context.parameters();
 			AudioEvent& event = find(project.audioEvents, parameters.at("event").get<ObjectId>(), "audio event");
@@ -721,6 +1271,8 @@ namespace gnubase::engine
 			changed.mute = parameters.value("mute", event.mute);
 			require(changed.length > 0, "length must be positive");
 			checkAudioEvent(project, changed);
+			if (follow && changed.position != event.position)
+				followEvent(project, event.track, event.position, eventEnd(project, event), changed.position, context);
 			event = changed;
 			Json result = {{"event", toJson(event)}};
 			context.emit("audioEvent.changed", result);
@@ -755,7 +1307,7 @@ namespace gnubase::engine
 			return result;
 		}
 
-		Json setMidiPart(Project& project, CommandContext& context)
+		Json setMidiPart(Project& project, CommandContext& context, bool follow)
 		{
 			const Json& parameters = context.parameters();
 			MidiPart& part = find(project.midiParts, parameters.at("part").get<ObjectId>(), "MIDI part");
@@ -764,6 +1316,8 @@ namespace gnubase::engine
 				: part.position;
 			const int64_t length = parameters.value("length", part.length);
 			require(length > 0, "length must be positive");
+			if (follow && newPosition != part.position)
+				followEvent(project, part.track, part.position, partEnd(part), newPosition, context);
 			part.position = newPosition;
 			part.length = length;
 			part.name = parameters.value("name", part.name);
@@ -808,6 +1362,9 @@ namespace gnubase::engine
 				note.pitch = item.at("pitch").get<uint8_t>();
 				note.channel = item.value("channel", uint8_t{0});
 				note.velocity = static_cast<uint16_t>(std::lround(unitValue(item, "velocity", name) * g_maxVelocity));
+				if (item.contains("releaseVelocity"))
+					note.releaseVelocity =
+						static_cast<uint16_t>(std::lround(unitValue(item, "releaseVelocity", name) * g_maxVelocity));
 				notes.push_back(note);
 			}
 			Json added = Json::array();
@@ -820,27 +1377,60 @@ namespace gnubase::engine
 			context.emit("note.added", {{"part", part.id}, {"notes", added}});
 			return {{"notes", added}};
 		}
+	}
 
+	Controller controllerFrom(const Json& item, const std::string& name)
+	{
+		const std::optional<ControllerType> parsed =
+			controllerTypeFromName(item.value("type", std::string("controller")));
+		if (!parsed.has_value())
+			throw CommandError(
+				name + ".type must be controller, pitchBend, channelPressure, polyPressure, program or sysEx");
+		const ControllerType type = *parsed;
+		const auto needs = [&](const char* key) { require(item.contains(key), name + "." + key + " is required"); };
+		const bool numbered =
+			type == ControllerType::Control || type == ControllerType::PolyPressure || type == ControllerType::Program;
+		if (numbered)
+		{
+			needs("number");
+			requireRange(item.at("number").get<int64_t>(), 0, 127, name + ".number");
+		}
+		if (type != ControllerType::Program && type != ControllerType::SysEx)
+		{
+			needs("value");
+			unitValue(item, "value", name);
+		}
+		if (type == ControllerType::Program && item.contains("bank"))
+			requireRange(item.at("bank").get<int64_t>(), 0, g_maxBank, name + ".bank");
+		if (type == ControllerType::SysEx)
+		{
+			needs("data");
+			const auto data = item.at("data").get<std::vector<int64_t>>();
+			require(data.size() >= 2 && data.front() == 0xF0 && data.back() == 0xF7,
+				name + ".data must start with 0xF0 and end with 0xF7");
+			require(
+				std::all_of(data.begin() + 1, data.end() - 1, [](int64_t byte) { return byte >= 0 && byte < 0x80; }),
+				name + ".data bytes between 0xF0 and 0xF7 must be 0 to 127");
+		}
+		requireRange(item.value("channel", int64_t{0}), 0, 15, name + ".channel");
+		Controller controller = controllerFromJson(item);
+		controller.position = item.at("position").get<time::Ticks>();
+		require(controller.position >= 0, name + ".position must not be negative");
+		return controller;
+	}
+
+	namespace
+	{
 		Json addControllers(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
 			MidiPart& part = find(project.midiParts, parameters.at("part").get<ObjectId>(), "MIDI part");
 			std::vector<Controller> controllers;
 			const Json& items = parameters.at("controllers");
+			controllers.reserve(items.size());
 			for (size_t i = 0; i < items.size(); ++i)
 			{
-				const Json& item = items[i];
-				const std::string name = "controllers[" + std::to_string(i) + "]";
-				Controller controller;
-				controller.position = item.at("position").get<time::Ticks>();
-				require(controller.position >= 0, name + ".position must not be negative");
-				requireRange(item.at("number").get<int64_t>(), 0, 127, name + ".number");
-				requireRange(item.value("channel", int64_t{0}), 0, 15, name + ".channel");
-				controller.number = item.at("number").get<uint8_t>();
-				controller.channel = item.value("channel", uint8_t{0});
-				controller.value =
-					static_cast<uint32_t>(std::llround(unitValue(item, "value", name) * g_maxControllerValue));
-				controllers.push_back(controller);
+				controllers.push_back(controllerFrom(items[i], "controllers[" + std::to_string(i) + "]"));
 			}
 			Json added = Json::array();
 			for (Controller& controller : controllers)
@@ -904,7 +1494,9 @@ namespace gnubase::engine
 			{"channel.set", "Change channel"},
 			{"media.add", "Add media file"},
 			{"media.convert", "Convert media file"},
+			{"media.stretch", "Stretch media file"},
 			{"media.remove", "Remove media file"},
+			{"media.relink", "Relink media files"},
 			{"clip.add", "Add clip"},
 			{"clip.remove", "Remove clip"},
 			{"audioEvent.add", "Add audio event"},
@@ -924,6 +1516,13 @@ namespace gnubase::engine
 			{"marker.remove", "Remove markers"},
 			{"marker.renumber", "Renumber markers"},
 			{"marker.activateTrack", "Activate marker track"},
+			{"automationLane.add", "Add automation lane"},
+			{"automationLane.set", "Change automation lane"},
+			{"automationLane.remove", "Remove automation lane"},
+			{"automationPoint.add", "Add automation points"},
+			{"automationPoint.set", "Change automation points"},
+			{"automationPoint.remove", "Remove automation points"},
+			{"midiFile.import", "Import MIDI file"},
 		};
 
 		// Empty for commands without a fixed name, such as transactions.
@@ -1021,6 +1620,16 @@ namespace gnubase::engine
 				else
 					context.emit(existed ? "midiPart.changed" : "midiPart.added", {{"part", toJson(current->second)}});
 			}
+			for (const AutomationLaneChange& lane : change.automation)
+			{
+				const auto current = project.automation.find(lane.id);
+				const bool existed = direction == Direction::Redo ? lane.before.has_value() : lane.after.has_value();
+				if (current == project.automation.end())
+					context.emit("automationLane.removed", {{"lane", lane.id}});
+				else
+					context.emit(existed ? "automationLane.changed" : "automationLane.added",
+						{{"lane", toJson(current->second)}});
+			}
 			if (reordered)
 				context.emit("track.reordered", {{"tracks", project.trackOrder()}});
 		}
@@ -1032,13 +1641,18 @@ namespace gnubase::engine
 
 	void ProjectModel::add(Engine& engine, CommandInfo info, Handler handler)
 	{
+		std::string action = actionName(info.name);
+		addEdit(engine, std::move(info), std::move(action), std::move(handler));
+	}
+
+	void ProjectModel::addEdit(Engine& engine, CommandInfo info, std::string action, Handler handler)
+	{
 		if (info.query)
 		{
 			engine.registerCommand(std::move(info),
 				[this, handler = std::move(handler)](CommandContext& context) { return handler(m_project, context); });
 			return;
 		}
-		std::string action = actionName(info.name);
 		if (!action.empty())
 			m_edits[info.name] = {info, handler};
 		engine.registerCommand(std::move(info),
@@ -1220,7 +1834,7 @@ namespace gnubase::engine
 			[this](Project& project, CommandContext& context) { return transaction(project, context); });
 	}
 
-	void ProjectModel::registerCommands(Engine& engine)
+	void ProjectModel::registerCommands(Engine& engine, Jobs& jobs)
 	{
 		const Json idSchema = {{"type", "integer"}};
 		const Json integerSchema = {{"type", "integer"}};
@@ -1247,29 +1861,40 @@ namespace gnubase::engine
 				"Saves the project as a DAWproject file. Media files are copied into it unless embedMedia is false; "
 				"then the file refers to them where they are.",
 				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}, {"path"}), noResult, true},
-			[](Project& project, CommandContext& context)
+			[this](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				DawProjectSaveOptions options;
 				options.embedMedia = parameters.value("embedMedia", true);
+				const std::string path = parameters.at("path").get<std::string>();
 				try
 				{
-					saveDawProject(project, parameters.at("path").get<std::string>(), options);
+					saveDawProject(project, path, options);
+					m_file = std::filesystem::absolute(std::filesystem::u8path(path)).u8string();
 				}
-				catch (const std::runtime_error& error)
+				catch (const std::exception& error)
 				{
 					throw CommandError(error.what());
 				}
+				context.emit("project.saved", {{"file", m_file}});
 				return Json::object();
 			});
 		addControl(engine,
 			{"project.load", 1,
 				"Replaces the project with a DAWproject file and clears the undo history. Media files embedded in "
-				"it are extracted to mediaFolder, by default a folder named after the file next to it.",
-				objectSchema({{"path", stringSchema}, {"mediaFolder", stringSchema}}, {"path"}), noResult, false},
+				"it are extracted to mediaFolder, by default a folder named after the file next to it. With "
+				"revision, it loads only if the project is still at that revision (see project.revision), and fails "
+				"otherwise, so that no change made meanwhile is lost.",
+				objectSchema(
+					{{"path", stringSchema}, {"mediaFolder", stringSchema}, {"revision", integerSchema}}, {"path"}),
+				noResult, false},
 			[this](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
+				if (parameters.contains("revision"))
+					require(parameters.at("revision").get<uint64_t>() == m_revision,
+						"the project changed after revision " +
+							std::to_string(parameters.at("revision").get<uint64_t>()));
 				const std::string path = parameters.at("path").get<std::string>();
 				const std::filesystem::path file = std::filesystem::u8path(path);
 				const std::string folder = parameters.value("mediaFolder",
@@ -1277,8 +1902,9 @@ namespace gnubase::engine
 				try
 				{
 					m_project = loadDawProject(path, folder);
+					m_file = std::filesystem::absolute(file).u8string();
 				}
-				catch (const std::runtime_error& error)
+				catch (const std::exception& error)
 				{
 					throw CommandError(error.what());
 				}
@@ -1296,6 +1922,7 @@ namespace gnubase::engine
 			[this](CommandContext& context)
 			{
 				m_project = newProject();
+				m_file.clear();
 				m_history.clear();
 				context.emit("project.reset");
 				announceHistory(context);
@@ -1365,9 +1992,13 @@ namespace gnubase::engine
 		add(engine,
 			{"channel.set", 1,
 				"Changes a channel's audio channels, input (an input bus) or output (an output bus or a group "
-				"channel; for MIDI tracks an instrument channel). 0 disconnects.",
+				"channel; for MIDI tracks an instrument channel). 0 disconnects. instrument is the built-in "
+				"instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in "
+				"dB, from -144 to 6 (default 0); pan is a stereo channel's balance from -1 (left) to 1 (right). "
+				"Automation of volume and pan overrides them while it plays.",
 				objectSchema(
-					{{"channel", idSchema}, {"channels", integerSchema}, {"input", idSchema}, {"output", idSchema}},
+					{{"channel", idSchema}, {"channels", integerSchema}, {"input", idSchema}, {"output", idSchema},
+						{"instrument", stringSchema}, {"volume", numberSchema}, {"pan", numberSchema}},
 					{"channel"}),
 				resultSchema({"channel"}), false},
 			setChannel);
@@ -1375,21 +2006,74 @@ namespace gnubase::engine
 		add(engine,
 			{"media.add", 1,
 				"Adds an audio file. Its sample rate, channel count and length in sample frames are read from the "
-				"file, "
-				"or taken as given, for a file that is still being recorded.",
+				"file, or taken as given, for a file that is still being recorded. With copy, a file from outside the "
+				"project folder is also copied into its media folder (see project.location); the project must have "
+				"been saved. The copy runs as a job, returned as job (null without one), with the result that "
+				"media.prepareArchive's job has: the media file is added at once where it is, and when the copy is "
+				"done it is pointed at the copy as an undo step of its own.",
 				objectSchema({{"path", stringSchema}, {"sampleRate", numberSchema}, {"channels", integerSchema},
-								 {"length", integerSchema}},
+								 {"length", integerSchema}, {"copy", booleanSchema}},
 					{"path"}),
-				resultSchema({"media"}), false},
-			addMedia);
+				{{"type", "object"},
+					{"properties", {{"media", {{"type", "object"}}}, {"job", nullable(Jobs::schema())}}},
+					{"required", {"media", "job"}}},
+				false},
+			[this, &jobs](Project& project, CommandContext& context)
+			{
+				const std::filesystem::path mediaFolder =
+					m_file.empty() ? std::filesystem::path() : mediaFolderFor(std::filesystem::u8path(m_file));
+				Json result = addMedia(project, context, mediaFolder);
+				result["job"] = nullptr;
+				const MediaFile& media = project.media.at(result.at("media").at("id").get<ObjectId>());
+				if (context.parameters().value("copy", false) && !isInside(media.path, mediaFolder.parent_path()))
+					result["job"] = startMediaCopy(jobs, "media.add", {MediaCopy{media.id, media.path, {}}},
+						mediaFolder, "Copy media file into the project");
+				return result;
+			});
+		add(engine,
+			{"media.relink", 1,
+				"Points media files at other files, such as copies, as one undo step. Each new file must be an audio "
+				"file with the media file's sample rate and channel count. An entry with from applies only if the "
+				"media file is still there and still points at from; otherwise it is skipped. Returns the media "
+				"files it relinked and the ones it skipped.",
+				objectSchema(
+					{{"files",
+						arraySchema(objectSchema({{"media", idSchema}, {"path", stringSchema}, {"from", stringSchema}},
+							{"media", "path"}))}},
+					{"files"}),
+				{{"type", "object"},
+					{"properties", {{"relinked", arraySchema(idSchema)}, {"skipped", arraySchema(idSchema)}}},
+					{"required", {"relinked", "skipped"}}},
+				false},
+			relinkMedia);
 		add(engine,
 			{"media.convert", 1,
 				"Converts a media file to another sample rate (by default the project's), writes the result to path as "
-				"a 32-bit float WAV file and adds it as a new media file.",
+				"a 32-bit float WAV file and adds it as a new media file. path must not be one of the project's media "
+				"files.",
 				objectSchema(
 					{{"media", idSchema}, {"path", stringSchema}, {"sampleRate", numberSchema}}, {"media", "path"}),
 				resultSchema({"media"}), false},
 			convertMedia);
+		add(engine,
+			{"media.stretch", 1,
+				"Time-stretches and pitch-shifts a media file, writes the result to path as a 32-bit float WAV file "
+				"and adds it as a new media file; path must not be one of the project's media files. ratio is the new "
+				"length over the old one, from 0.1 to 10 (default 1: "
+				"unchanged); semitones and cents shift the pitch, together within 48 semitones either way (default 0). "
+				"preset picks the algorithm: quality (default) and efficient for any material, drums, plucked, pads, "
+				"vocals, mix and solo tuned for kinds of material at a lower CPU cost. formants keeps the spectral "
+				"envelope when the pitch shifts, e.g. for voices. mode offline (default) analyzes the whole file first "
+				"for the best result; realtime processes it the way playback does, with ratios from 0.25 to 4 and "
+				"pitch "
+				"shifts within 24 semitones.",
+				objectSchema(
+					{{"media", idSchema}, {"path", stringSchema}, {"ratio", numberSchema}, {"semitones", numberSchema},
+						{"cents", numberSchema}, {"preset", enumSchema(dsp::stretchPresetNames())},
+						{"formants", booleanSchema}, {"mode", enumSchema(dsp::stretchModeNames())}},
+					{"media", "path"}),
+				resultSchema({"media"}), false},
+			stretchMedia);
 		add(engine,
 			{"media.remove", 1, "Removes an audio file that no clip uses.",
 				objectSchema({{"media", idSchema}}, {"media"}), noResult, false},
@@ -1422,7 +2106,8 @@ namespace gnubase::engine
 						{"length", integerSchema}, {"volume", numberSchema}, {"mute", booleanSchema}},
 					{"event"}),
 				resultSchema({"event"}), false},
-			setAudioEvent);
+			[this](Project& project, CommandContext& context)
+			{ return setAudioEvent(project, context, m_automationFollowsEvents); });
 		add(engine,
 			{"audioEvent.remove", 1, "Removes an audio event.", objectSchema({{"event", idSchema}}, {"event"}),
 				noResult, false},
@@ -1442,7 +2127,8 @@ namespace gnubase::engine
 								 {"length", integerSchema}},
 					{"part"}),
 				resultSchema({"part"}), false},
-			setMidiPart);
+			[this](Project& project, CommandContext& context)
+			{ return setMidiPart(project, context, m_automationFollowsEvents); });
 		add(engine,
 			{"midiPart.remove", 1, "Removes a MIDI part with its notes and controllers.",
 				objectSchema({{"part", idSchema}}, {"part"}), noResult, false},
@@ -1450,12 +2136,12 @@ namespace gnubase::engine
 
 		const Json note =
 			objectSchema({{"position", integerSchema}, {"length", integerSchema}, {"pitch", integerSchema},
-							 {"velocity", numberSchema}, {"channel", integerSchema}},
+							 {"velocity", numberSchema}, {"releaseVelocity", numberSchema}, {"channel", integerSchema}},
 				{"position", "length", "pitch", "velocity"});
 		add(engine,
 			{"note.add", 1,
 				"Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity "
-				"0-1, MIDI channel 0-15 (default 0).",
+				"0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0).",
 				objectSchema({{"part", idSchema}, {"notes", arraySchema(note)}}, {"part", "notes"}),
 				{{"type", "object"}, {"properties", {{"notes", {{"type", "array"}}}}}, {"required", {"notes"}}}, false},
 			addNotes);
@@ -1466,13 +2152,20 @@ namespace gnubase::engine
 			[](Project& project, CommandContext& context)
 			{ return removeFromPart(project, context, &MidiPart::notes, "notes", "note"); });
 
-		const Json controller = objectSchema({{"position", integerSchema}, {"number", integerSchema},
-												 {"value", numberSchema}, {"channel", integerSchema}},
-			{"position", "number", "value"});
+		const Json controller = objectSchema(
+			{{"position", integerSchema},
+				{"type",
+					enumSchema({"controller", "pitchBend", "channelPressure", "polyPressure", "program", "sysEx"})},
+				{"number", integerSchema}, {"value", numberSchema}, {"channel", integerSchema}, {"bank", integerSchema},
+				{"data", arraySchema(integerSchema)}},
+			{"position"});
 		add(engine,
 			{"controller.add", 1,
-				"Adds controller events to a MIDI part: position from the part's start in ticks, controller number "
-				"0-127, value 0-1, MIDI channel 0-15 (default 0).",
+				"Adds controller events to a MIDI part: position from the part's start in ticks, MIDI channel 0-15 "
+				"(default 0). type (default controller) says what else an event has: controller: number 0-127 and "
+				"value 0-1; pitchBend: value 0-1, 0.5 is no bend; channelPressure: value; polyPressure: number (the "
+				"pitch) and value; program: number (the program) and optionally bank 0-16383; sysEx: data, the "
+				"message's bytes from 0xF0 to 0xF7.",
 				objectSchema({{"part", idSchema}, {"controllers", arraySchema(controller)}}, {"part", "controllers"}),
 				{{"type", "object"}, {"properties", {{"controllers", {{"type", "array"}}}}},
 					{"required", {"controllers"}}},
@@ -1487,6 +2180,250 @@ namespace gnubase::engine
 
 		registerMidiEditCommands(engine);
 		registerMarkerCommands(engine);
+		registerAutomationCommands(engine);
+		midi::registerQuantizeCommands(*this, engine);
+		registerMidiFileCommands(engine);
 		registerHistoryCommands(engine);
+		registerMediaFolderCommands(engine, jobs);
 	}
+
+	void ProjectModel::registerAutomationCommands(Engine& engine)
+	{
+		const Json idSchema = {{"type", "integer"}};
+		const Json numberSchema = {{"type", "number"}};
+		const Json booleanSchema = {{"type", "boolean"}};
+		const Json noResult = Json::object();
+		const Json target = objectSchema(
+			{{"type", enumSchema({"volume", "pan", "instrument", "controller", "pitchBend", "channelPressure"})},
+				{"parameter", idSchema}, {"number", idSchema}, {"channel", idSchema}},
+			{"type"});
+		const Json shape = enumSchema({"step", "linear", "curve"});
+		const Json pointsResult = {
+			{"type", "object"}, {"properties", {{"points", {{"type", "array"}}}}}, {"required", {"points"}}};
+
+		add(engine,
+			{"automationLane.add", 1,
+				"Adds an automation lane to a track: the curve of one parameter. target.type says which: volume (the "
+				"channel's fader, in dB) and pan (-1 to 1) on tracks with audio channels; instrument, a parameter of "
+				"an instrument track's built-in instrument (target.parameter, an id from processor.list, in its "
+				"range); controller (target.number 0-127), pitchBend (0.5 is no bend) and channelPressure, all 0 to "
+				"1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). A track has one lane per "
+				"target. read (default true): the curve plays; without it, or without points, the parameter keeps its "
+				"static value.",
+				objectSchema({{"track", idSchema}, {"target", target}, {"read", booleanSchema}}, {"track", "target"}),
+				resultSchema({"lane"}), false},
+			addAutomationLane);
+		add(engine,
+			{"automationLane.set", 1, "Turns reading an automation lane on or off.",
+				objectSchema({{"lane", idSchema}, {"read", booleanSchema}}, {"lane"}), resultSchema({"lane"}), false},
+			setAutomationLane);
+		add(engine,
+			{"automationLane.remove", 1, "Removes an automation lane with its points.",
+				objectSchema({{"lane", idSchema}}, {"lane"}), noResult, false},
+			removeAutomationLane);
+		add(engine,
+			{"automationLane.list", 1,
+				"The automation lanes of a track, or of every track in track order, with their points sorted by "
+				"position.",
+				objectSchema({{"track", idSchema}}),
+				{{"type", "object"}, {"properties", {{"lanes", {{"type", "array"}}}}}, {"required", {"lanes"}}}, true},
+			[](Project& project, CommandContext& context) { return listAutomationLanes(project, context); });
+
+		const Json point =
+			objectSchema({{"position", idSchema}, {"value", numberSchema}, {"shape", shape}, {"curve", numberSchema}},
+				{"position", "value"});
+		add(engine,
+			{"automationPoint.add", 1,
+				"Adds points to an automation lane: position in the track's time base (ticks on musical tracks, so "
+				"automation follows tempo changes; samples on linear ones, so it keeps its time), value in the "
+				"target's unit, shape of the curve to the next point (step, linear or curve; "
+				"default linear) and for curves the bend, curve, from -1 to 1 (above 0 the value moves fast at first). "
+				"Before the first point the curve has its value, after the last point the last one's; points at one "
+				"position make a jump. A ramp of volume moves the gain in a straight line.",
+				objectSchema({{"lane", idSchema}, {"points", arraySchema(point)}}, {"lane", "points"}), pointsResult,
+				false},
+			addAutomationPoints);
+		const Json change = objectSchema({{"id", idSchema}, {"position", idSchema}, {"value", numberSchema},
+											 {"shape", shape}, {"curve", numberSchema}},
+			{"id"});
+		add(engine,
+			{"automationPoint.set", 1, "Changes points of an automation lane: their position, value, shape or curve.",
+				objectSchema({{"lane", idSchema}, {"points", arraySchema(change)}}, {"lane", "points"}), pointsResult,
+				false},
+			setAutomationPoints);
+		add(engine,
+			{"automationPoint.remove", 1, "Removes points from an automation lane.",
+				objectSchema({{"lane", idSchema}, {"points", arraySchema(idSchema)}}, {"lane", "points"}), noResult,
+				false},
+			removeAutomationPoints);
+
+		const Json settings = {
+			{"type", "object"}, {"properties", {{"followsEvents", booleanSchema}}}, {"required", {"followsEvents"}}};
+		addControl(engine,
+			{"automation.get", 1,
+				"The automation settings. followsEvents (default false): when an audio event or MIDI part moves, the "
+				"automation of its track in its range moves with it and replaces the points where it lands.",
+				objectSchema({}), settings, true},
+			[this](CommandContext&) { return Json{{"followsEvents", m_automationFollowsEvents}}; });
+		addControl(engine,
+			{"automation.set", 1,
+				"Changes the automation settings (see automation.get). A setting, so it stays when a new project "
+				"starts.",
+				objectSchema({{"followsEvents", booleanSchema}}), settings, false},
+			[this](CommandContext& context)
+			{
+				m_automationFollowsEvents = context.parameters().value("followsEvents", m_automationFollowsEvents);
+				Json result = {{"followsEvents", m_automationFollowsEvents}};
+				context.emit("automation.changed", result);
+				return result;
+			});
+	}
+
+	void ProjectModel::registerMediaFolderCommands(Engine& engine, Jobs& jobs)
+	{
+		const Json stringSchema = {{"type", "string"}};
+		const Json nullableString = {{"type", {"string", "null"}}};
+		const Json booleanSchema = {{"type", "boolean"}};
+		const Json numberSchema = {{"type", "number"}};
+
+		add(engine,
+			{"project.location", 1,
+				"Where the project is: its project file (set by project.save and project.load), the folder of that "
+				"file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. "
+				"All null for a project that has no file yet.",
+				objectSchema({}),
+				objectSchema({{"file", nullableString}, {"folder", nullableString}, {"mediaFolder", nullableString}},
+					{"file", "folder", "mediaFolder"}),
+				true},
+			[this](Project&, CommandContext&)
+			{
+				if (m_file.empty())
+					return Json{{"file", nullptr}, {"folder", nullptr}, {"mediaFolder", nullptr}};
+				const std::filesystem::path file = std::filesystem::u8path(m_file);
+				return Json{{"file", m_file}, {"folder", file.parent_path().u8string()},
+					{"mediaFolder", mediaFolderFor(file).u8string()}};
+			});
+
+		const Json integerSchema = {{"type", "integer"}};
+		const Json copied = objectSchema({{"media", integerSchema}, {"from", stringSchema}, {"to", stringSchema}});
+		const Json missing = objectSchema({{"media", integerSchema}, {"path", stringSchema}});
+		addControl(engine,
+			{"media.prepareArchive", 1,
+				"Makes the project self-contained, so that its folder can be archived or moved: copies every media "
+				"file from outside the project folder into its media folder and points the media at the copies. The "
+				"copies run as a job: this returns at once, job.progress and job.finished events follow, and "
+				"job.cancel stops it and removes the copies. Once they are done, the media are pointed at them as one "
+				"undo step. The job's result lists the copies as copied, media files that couldn't be read as "
+				"missing (they keep their paths), and media whose path changed while the job ran as changed (they "
+				"keep the new path). The project must have been saved; save it again without embedding media to keep "
+				"the new paths.",
+				objectSchema({}), objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
+			[this, &jobs](CommandContext&)
+			{
+				require(
+					!m_file.empty(), "save the project first: media are copied into the folder of its project file");
+				const std::filesystem::path file = std::filesystem::u8path(m_file);
+				std::vector<MediaCopy> files;
+				for (const auto& [id, media] : m_project.media)
+					if (!isInside(media.path, file.parent_path()))
+						files.push_back({id, media.path, {}});
+				return Json{{"job",
+					startMediaCopy(
+						jobs, "media.prepareArchive", std::move(files), mediaFolderFor(file), "Prepare archive")}};
+			});
+		addControl(engine,
+			{"project.revision", 1,
+				"A number that grows with every change of the project: every edit, undo and redo, and loading or "
+				"starting a project. project.load with revision loads only if it hasn't changed.",
+				objectSchema({}), objectSchema({{"revision", integerSchema}}, {"revision"}), true},
+			[this](CommandContext&) { return Json{{"revision", m_revision}}; });
+
+		engine.registerCommand(
+			{"project.backup", 1,
+				"Backs the project up as it is now into folder, which must be empty or new: the project file, named "
+				"name (by default after the project file, or else the project), and copies of its media in the "
+				"folder Audio, which the project file refers to relative to itself, so that the folder opens on "
+				"another machine. The project itself stays as it is. minimize keeps only the ranges of audio files "
+				"that audio events play, with handles seconds (default 1) before and after; removeUnused leaves out "
+				"clips that no audio event uses and media that no clip uses. currentVersionsOnly and skipVideo have "
+				"no effect until clips have versions and projects have video. activate opens the backup once it is "
+				"done, unless the project changed meanwhile. The backup runs as a job: this returns at once, "
+				"job.progress and job.finished events follow, and job.cancel stops it and removes what it wrote. A "
+				"folder that a running job writes into can't be used. The job's result is {file, files, missing, "
+				"activated, activationError}: missing lists the media files that couldn't be read and keep their old "
+				"paths; activated says whether the backup was opened, and activationError why not, if it was asked "
+				"to be.",
+				objectSchema({{"folder", stringSchema}, {"name", stringSchema}, {"minimize", booleanSchema},
+								 {"handles", numberSchema}, {"removeUnused", booleanSchema},
+								 {"currentVersionsOnly", booleanSchema}, {"skipVideo", booleanSchema},
+								 {"activate", booleanSchema}},
+					{"folder"}),
+				objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
+			[this, &jobs](CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				BackupOptions options;
+				options.folder = parameters.at("folder").get<std::string>();
+				require(!options.folder.empty(), "folder must not be empty");
+				const std::filesystem::path folder = std::filesystem::u8path(options.folder);
+				require(!jobs.writesInto(folder),
+					"a running job writes into " + options.folder + ": choose another folder or wait for it");
+				std::error_code error;
+				if (std::filesystem::exists(folder, error))
+				{
+					require(std::filesystem::is_directory(folder, error), "folder " + options.folder + " is a file");
+					require(std::filesystem::directory_iterator(folder, error) == std::filesystem::directory_iterator(),
+						"choose an empty or a new folder: " + options.folder + " isn't empty");
+				}
+				auto project = std::make_shared<Project>(m_project); // the project as it is now, for the job's thread
+				if (parameters.contains("name"))
+				{
+					options.name = parameters.at("name").get<std::string>();
+					const std::string problem = fileNameProblem(options.name);
+					require(problem.empty(), problem);
+					project->name = options.name;
+				}
+				else
+				{
+					options.name = safeFileName(
+						m_file.empty() ? m_project.name : std::filesystem::u8path(m_file).stem().u8string());
+				}
+				options.minimize = parameters.value("minimize", false);
+				options.handles = parameters.value("handles", 1.0);
+				require(options.handles >= 0.0, "handles must not be negative");
+				options.removeUnused = parameters.value("removeUnused", false);
+				options.currentVersionsOnly = parameters.value("currentVersionsOnly", false);
+				options.skipVideo = parameters.value("skipVideo", false);
+				const bool activate = parameters.value("activate", false);
+
+				// Opening the backup replaces the project, so only if it is still as it was backed up.
+				const uint64_t revision = m_revision;
+				return Json{{"job",
+					jobs.start(
+						"project.backup",
+						[project = std::shared_ptr<const Project>(std::move(project)), options, activate, revision](
+							JobContext& job)
+						{
+							Json result = backupProject(*project, options, job);
+							result["activated"] = false;
+							result["activationError"] = nullptr;
+							if (activate)
+							{
+								try
+								{
+									job.command("project.load", {{"path", result.at("file")}, {"revision", revision}});
+									result["activated"] = true;
+								}
+								catch (const CommandError& error)
+								{
+									result["activationError"] =
+										std::string("the backup wasn't opened: ") + error.what();
+								}
+							}
+							return result;
+						},
+						folder)}};
+			});
+	}
+
 }

@@ -20,6 +20,7 @@ The graph (#15) gets a **live** flag per node. The command thread computes it wh
    - an input bus feeding a channel that monitors its input (#100) or records (#96);
    - an instrument or MIDI channel that monitors or is record-enabled (#97), and so receives MIDI from a device;
    - a plugin slot with prefetching turned off (a per-plugin setting, for plugins that misbehave with large or early blocks);
+   - a plugin slot whose editor is open, or with automation in a write mode (write, touch, latch; #120). Edits in a plugin's editor reach the plugin as it processes; on a prefetched slot that is up to *L* ahead of what the user hears, so knob moves would lag by *L* and touch automation would be recorded *L* early ([plugin-api.md](plugin-api.md#parameters-and-automation));
    - external effects and instruments, which route through hardware.
 2. Every node that receives audio or events from a live node is live too, down to the output busses. For example, a group bus that sums a monitored track is live; the other tracks feeding it stay prefetched.
 3. Everything else is prefetched. With prefetching turned off, every node is live, which is today's behavior.
@@ -91,7 +92,8 @@ The scheduler, not cooperation, makes the live path win. A prefetch task can tak
 ## Plugin IPC
 
 - A plugin slot is prepared with a maximum block size of max(*B*, *P*). It keeps that size when it moves between the paths, so moving never calls into the plugin's setup.
-- The GNUbase plugin API (#61) passes a **process mode** with every block: real time, prefetch or offline. The format adapters map it to their formats; VST3, for example, has a prefetch processing mode. Some plugins, such as samplers that stream from disk, need it to behave correctly.
+- The GNUbase plugin API (#61) has a **process mode**: real time, prefetch or offline. The format adapters map it to their formats; VST3, for example, has a prefetch processing mode. Some plugins, such as samplers that stream from disk, need it to behave correctly. Every format sets the mode outside processing, so it is a main-thread call while the plugin is inactive, and changing it is a restart. A slot that moves from the prefetch path to the live path keeps its prefetch mode until the next stop, when it is restarted with the real-time mode; it never waits for the restart. Every block also says what it is, for information ([plugin-api.md](plugin-api.md#process)).
+- Opening a plugin's editor, or putting its automation into a write mode, makes the slot live (see "Two paths through one graph"). It moves at once; closing the editor moves it back at the next stop or locate, like every live-to-prefetched switch.
 - Large blocks amortize the cost per block of the IPC wake-up and the round trip (#62, #76). Several host processes compute prefetch blocks in parallel.
 - The watchdog (#65) gives prefetch blocks a deadline in proportion to their length and their lead, not the device block's.
 - A plugin's own latency is compensated as on the live path (#71). Prefetching doesn't change a node's path latency.
@@ -105,7 +107,7 @@ The scheduler, not cooperation, makes the live path win. A prefetch task can tak
 ## Engine API
 
 - `audio.setDevice` / `audio.get`: `prefetch` (on or off) and `prefetchLevel` (low, normal or high). Turning it on or off rebuilds the graph and applies at the next stop.
-- `graph.get`: `live` per node, and the reason (input, monitored, record-enabled, plugin setting, downstream).
+- `graph.get`: `live` per node, and the reason (input, monitored, record-enabled, plugin setting, editor open, automation writing, downstream).
 - Plugin slots: `prefetch` (true by default), with the plugin slot milestone.
 
 ## Implementation steps

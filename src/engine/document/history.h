@@ -33,6 +33,16 @@ namespace gnubase::engine
 		std::vector<ObjectChange<Controller>> controllers;
 	};
 
+	// An automation lane's own properties (with its points left out) and its changed points.
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
+	struct AutomationLaneChange
+	{
+		ObjectId id = 0;
+		std::optional<AutomationLane> before;
+		std::optional<AutomationLane> after;
+		std::vector<ObjectChange<AutomationPoint>> points;
+	};
+
 	// The parts of a project that are not objects with ids, or keep their order: name, sample rate, tempo, time
 	// signatures, busses, the top-level tracks and the active marker track.
 	struct ProjectSettings
@@ -59,6 +69,7 @@ namespace gnubase::engine
 		std::vector<ObjectChange<AudioEvent>> audioEvents;
 		std::vector<MidiPartChange> midiParts;
 		std::vector<ObjectChange<Marker>> markers;
+		std::vector<AutomationLaneChange> automation;
 
 		bool empty() const;
 	};
