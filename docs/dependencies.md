@@ -19,9 +19,9 @@ Rules:
 
 ## VST3 SDK
 
-The VST3 SDK is used unchanged, from mirrors in the GNUbase account: the SDK's own repository names its vendor, which GNUbase never writes (CLAUDE.md, "Source of truth and naming"). `ext/vst3sdk` is [GNUbase/vst3sdk](https://github.com/GNUbase/vst3sdk), pinned at `v3.8.1_build_84`, the first release under the MIT license. Its own submodules have relative URLs, so they resolve to the GNUbase mirrors too (`vst3_base`, `vst3_cmake`, `vst3_pluginterfaces`, `vst3_public_sdk`, ...).
+The VST3 SDK is used unchanged, from mirrors in the GNUbase account: the SDK's own repository names its vendor, which GNUbase never writes (CLAUDE.md, "Source of truth and naming"). `ext/vst3sdk` is [GNUbase/vst3sdk](https://github.com/GNUbase/vst3sdk), pinned at `v3.8.1_build_84`. The SDK is under the MIT license since `v3.8.0_build_66`. Its own submodules have relative URLs, so they resolve to the GNUbase mirrors too (`vst3_base`, `vst3_cmake`, `vst3_pluginterfaces`, `vst3_public_sdk`, ...).
 
-GNUbase needs only `base`, `cmake`, `pluginterfaces` and `public.sdk`, not the SDK's documentation, tutorials or GUI library. So `.gitmodules` sets `update = none` for `ext/vst3sdk`, which a recursive update skips, and the SDK is fetched with two extra commands (see [Cloning](#cloning)). CMake stops with these commands if the SDK is missing.
+GNUbase needs only `base`, `cmake`, `pluginterfaces` and `public.sdk`, not the SDK's documentation, tutorials or GUI library. So `.gitmodules` sets `update = none` for `ext/vst3sdk`, which a recursive update skips, and the SDK is fetched with two extra commands (see [Cloning](#cloning)). CMake stops with these commands if the SDK is missing, unless `GNUBASE_TEST_PLUGINS` is off: only the test plugins use it so far.
 
 GNUbase uses only the interface headers in `pluginterfaces`, header-only, and implements the interfaces itself. The SDK's C++ namespace also names the vendor, so GNUbase code never writes it either: CMake reads it from `pluginterfaces/base/funknown.h` and passes it as the compile definition `GNUBASE_VST3_NS` (the `vst3-sdk` target), and `src/pluginhost/vst3/vst3ns.h` makes it available as `namespace vst`. Code includes that header and writes `vst::FUnknown`, `vst::Vst::IComponent` and so on.
 
