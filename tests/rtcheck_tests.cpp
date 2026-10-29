@@ -4,6 +4,7 @@
 #include "engine/engine.h"
 #include "engine/graph/graph.h"
 #include "engine/processors/builtin.h"
+#include "ipc/connection.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 #include "platform/rt/snapshotpublisher.h"
@@ -13,8 +14,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
@@ -579,5 +582,72 @@ TEST_CASE(
 	run("audio.render", {{"frames", 960}});
 	run("transport.locate", {{"position", 5000}}); // while stopped
 	run("audio.render", {{"frames", 960}});
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("sending blocks to a plugin host and waiting for its answers passes the RT checker", "[unit]")
+{
+	using namespace gnubase::ipc;
+	Config config;
+	config.maxChannels = 2;
+	config.maxFrames = 64;
+	config.eventRingSize = 1024;
+	config.controlRingSize = 1024;
+	Connection engine = Connection::create(config);
+	Connection host = Connection::open(engine.name());
+	static constexpr int blocks = 200;
+
+	const RecordViolations record;
+	// The host's audio thread answers every block, as a plugin host process would.
+	std::thread hostThread(
+		[&host]
+		{
+			const ScopedRealtimeContext realtime;
+			std::array<std::byte, 64> event{};
+			MessageHeader header;
+			for (int i = 0; i < blocks; ++i)
+			{
+				AudioBlock input;
+				AudioBlock output;
+				if (host.waitForBlock(std::chrono::seconds(10)) != WaitResult::Ready ||
+					host.receiveBlock(input) != ReadStatus::Ok ||
+					host.receiveEvent(header, event.data(), event.size()) != ReadStatus::Ok || !host.beginBlock(output))
+					return;
+				output.sequence = input.sequence;
+				output.frames = input.frames;
+				output.channels = 1;
+				output.channel(0)[0] = input.channel(0)[0];
+				host.releaseBlock();
+				host.sendBlock(output);
+			}
+		});
+	int answered = 0;
+	{
+		const ScopedRealtimeContext realtime;
+		for (int i = 0; i < blocks; ++i)
+		{
+			// No Catch2 assertions in here: they may allocate.
+			AudioBlock block;
+			if (!engine.beginBlock(block))
+				break;
+			block.sequence = static_cast<uint64_t>(i);
+			block.frames = 64;
+			block.channels = 2;
+			block.channel(0)[0] = static_cast<float>(i);
+			block.eventCount = 1;
+			if (!engine.sendEvent(1, 1, &i, sizeof(i)))
+				break;
+			engine.sendBlock(block);
+			AudioBlock answer;
+			if (engine.waitForAnswer(static_cast<uint64_t>(i), std::chrono::seconds(10)) != WaitResult::Ready ||
+				engine.receiveBlock(answer) != ReadStatus::Ok)
+				break;
+			if (answer.channel(0)[0] == static_cast<float>(i))
+				++answered;
+			engine.releaseBlock();
+		}
+	}
+	hostThread.join();
+	CHECK(answered == blocks);
 	CHECK(g_violations == 0);
 }

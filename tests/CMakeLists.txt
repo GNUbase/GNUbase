@@ -12,9 +12,16 @@ set(settingsEnvironment "GNUBASE_SETTINGS_DIR=${CMAKE_CURRENT_BINARY_DIR}/output
 
 add_executable(gnubase-tests analysis_tests.cpp app_tests.cpp audio_tests.cpp audiofile_tests.cpp automation_tests.cpp backup_tests.cpp coverage_tests.cpp dawproject_tests.cpp document_tests.cpp engine_tests.cpp graph_tests.cpp history_tests.cpp log_tests.cpp mcp_tests.cpp mcpevents_tests.cpp mcptools_tests.cpp midiedit_tests.cpp midifile_tests.cpp processor_tests.cpp rt_tests.cpp scripting_tests.cpp settings_tests.cpp streaming_tests.cpp testing_tests.cpp testutils_tests.cpp theme_tests.cpp time_tests.cpp
 	debugreports.cpp midi_tests.cpp multicore_tests.cpp peaks_tests.cpp performance_tests.cpp playback_tests.cpp quantize_tests.cpp sequencing_tests.cpp timestretch_tests.cpp transport_tests.cpp)
-target_sources(gnubase-tests PRIVATE device_tests.cpp plugin_api_tests.cpp)
-target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-mcp gnubase-plugin gnubase-scripting gnubase-testutils Catch2::Catch2WithMain miniz pugixml::pugixml
+target_sources(gnubase-tests PRIVATE device_tests.cpp ipc_tests.cpp ipc_process_tests.cpp plugin_api_tests.cpp)
+target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-ipc gnubase-mcp gnubase-plugin gnubase-scripting gnubase-testutils Catch2::Catch2WithMain miniz pugixml::pugixml
 	cpp-httplib)
+
+# IPC tests run a helper process that plays a plugin host (tests/ipcpeer.cpp).
+add_executable(gnubase-ipcpeer ipcpeer.cpp)
+target_link_libraries(gnubase-ipcpeer PRIVATE gnubase-ipc)
+gnubase_target_defaults(gnubase-ipcpeer)
+target_compile_definitions(gnubase-tests PRIVATE GNUBASE_IPCPEER="$<TARGET_FILE:gnubase-ipcpeer>")
+add_dependencies(gnubase-tests gnubase-ipcpeer)
 
 # The test plugins and the loader tests that load them into the test process (plugins/README.md).
 if(GNUBASE_TEST_PLUGINS)
