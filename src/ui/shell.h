@@ -8,6 +8,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -52,6 +54,15 @@ namespace gnubase::ui
 		uint64_t m_frames = 0;
 	};
 
+	// What a file dialog returned: the files the user chose, none if they cancelled, or why it failed.
+	struct FileDialogResult
+	{
+		std::vector<std::filesystem::path> files;
+		std::string error;
+
+		bool cancelled() const { return files.empty() && error.empty(); }
+	};
+
 	class Shell
 	{
 	public:
@@ -89,6 +100,10 @@ namespace gnubase::ui
 		// The window's content as it is now, drawn offscreen at its pixel size.
 		std::optional<Image> screenshot(WindowId id);
 
+		// Shows the OS's file dialog. done runs later on the UI thread, in a step, with what the user chose. Dialogs
+		// still open when the shell is destroyed never call done.
+		void showFileDialog(const FileDialog& dialog, std::function<void(const FileDialogResult&)> done);
+
 		// How long run() may wait for events before a window needs drawing; empty to wait for the next event.
 		std::optional<std::chrono::milliseconds> idleTimeout() const;
 
@@ -102,5 +117,7 @@ namespace gnubase::ui
 		std::map<WindowId, std::unique_ptr<Window>> m_open;
 		float m_uiScale = 1.0F;
 		bool m_running = true;
+		std::map<uint64_t, std::function<void(const FileDialogResult&)>> m_dialogs; // open file dialogs by id
+		uint64_t m_nextDialog = 1;
 	};
 }

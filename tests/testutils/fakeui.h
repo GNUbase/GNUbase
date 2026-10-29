@@ -8,6 +8,7 @@
 
 #include <deque>
 #include <map>
+#include <memory>
 
 // A window system and a renderer without an OS or a GPU, for testing the UI shell (ui/shell.h) with any monitors.
 namespace gnubase::test
@@ -28,7 +29,15 @@ namespace gnubase::test
 		void drag(ui::WindowId window, const ui::Rect& bounds);
 
 		// Queues an event, e.g. CloseRequested or Quit.
-		void push(ui::WindowEvent event);
+		void push(const ui::WindowEvent& event);
+
+		// Whether one of the window's text fields has the focus, so the OS's text input would be on.
+		bool textInputActive(ui::WindowId window) const;
+
+		// The file dialogs shown so far, by id, and answering one as the user would: choosing files, cancelling
+		// (no files) or failing (an error).
+		const std::map<uint64_t, ui::FileDialog>& fileDialogs() const { return m_dialogs; }
+		void answerFileDialog(uint64_t id, std::vector<std::filesystem::path> files, std::string error = {});
 
 		bool exists(ui::WindowId window) const { return m_windows.count(window) != 0; }
 		size_t windowCount() const { return m_windows.size(); }
@@ -43,15 +52,30 @@ namespace gnubase::test
 		ui::Size pixelSize(ui::WindowId window) const override;
 		float scale(ui::WindowId window) const override { return m_windows.at(window).scale; }
 		void setInputTarget(ui::WindowId window, Rml::Context* context) override;
+		Rml::TextInputHandler* textInputHandler(ui::WindowId window) override;
+		std::string clipboardText() const override { return m_clipboard; }
+		void setClipboardText(const std::string& text) override { m_clipboard = text; }
+		void showFileDialog(uint64_t id, const ui::FileDialog& dialog) override { m_dialogs[id] = dialog; }
 		std::optional<ui::WindowEvent> nextEvent(std::optional<std::chrono::milliseconds> timeout) override;
 
 	private:
+		// Remembers which of the window's text fields has the focus.
+		struct TextInput final : Rml::TextInputHandler
+		{
+			void OnActivate(Rml::TextInputContext* input) override { active = input; }
+			void OnDeactivate(Rml::TextInputContext* input) override;
+			void OnDestroy(Rml::TextInputContext* input) override { OnDeactivate(input); }
+
+			Rml::TextInputContext* active = nullptr;
+		};
+
 		struct FakeWindow
 		{
 			ui::WindowSpec spec;
 			ui::Rect bounds;
 			float scale = 1.0F; // of the monitor it was last on
 			Rml::Context* input = nullptr;
+			std::unique_ptr<TextInput> textInput = std::make_unique<TextInput>();
 		};
 
 		// Moves the window and queues Moved, and ScaleChanged and Resized if they changed.
@@ -61,6 +85,8 @@ namespace gnubase::test
 		std::map<ui::WindowId, FakeWindow> m_windows;
 		std::deque<ui::WindowEvent> m_events;
 		ui::WindowId m_nextId = 1;
+		std::string m_clipboard;
+		std::map<uint64_t, ui::FileDialog> m_dialogs;
 	};
 
 	// Draws nothing; counts what it was asked to do. Captures are blank images at the window's pixel size.

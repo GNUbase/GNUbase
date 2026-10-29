@@ -10,11 +10,16 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlInput.h>
+#include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/Input.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <filesystem>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -45,7 +50,7 @@ namespace
 
 		test::FakeWindowSystem windows;
 		test::NullRenderer renderer;
-		ui::RmlUi rmlui;
+		ui::RmlUi rmlui{windows};
 		ui::Shell shell{windows, renderer};
 	};
 
@@ -64,6 +69,39 @@ namespace
 		ui::WindowSpec spec;
 		spec.bounds = bounds;
 		return spec;
+	}
+
+	// An event parameter of the type it was given, read without RmlUi's type conversion.
+	template <typename T> T parameter(const Rml::Event& event, const char* name)
+	{
+		const Rml::Dictionary& parameters = event.GetParameters();
+		const auto it = parameters.find(name);
+		REQUIRE(it != parameters.end());
+		return it->second.GetReference<T>();
+	}
+
+	// Remembers the last file drop and the element it was dropped on.
+	struct DropListener final : Rml::EventListener
+	{
+		void ProcessEvent(Rml::Event& event) override
+		{
+			target = event.GetTargetElement()->GetId();
+			files = parameter<Rml::String>(event, "files");
+			count = parameter<int>(event, "count");
+			position = {parameter<int>(event, "mouse_x"), parameter<int>(event, "mouse_y")};
+		}
+
+		std::string target;
+		std::string files;
+		int count = 0;
+		ui::Point position;
+	};
+
+	Rml::ElementFormControlInput& field(Rml::ElementDocument& document, const char* id)
+	{
+		auto* input = dynamic_cast<Rml::ElementFormControlInput*>(document.GetElementById(id));
+		REQUIRE(input != nullptr);
+		return *input;
 	}
 
 	float boxWidth(ui::Window& window)
@@ -309,4 +347,129 @@ TEST_CASE("a window keeps drawing while its document animates", "[unit]")
 	ui.shell.step(milliseconds(0));
 	ui.shell.step(milliseconds(0));
 	CHECK_FALSE(ui.shell.idleTimeout().has_value());
+}
+
+TEST_CASE("files dropped on a window go to the element under the mouse", "[unit]")
+{
+	DropListener listener; // outlives the documents it listens to
+	Ui ui({retina()});
+	ui::Window& window = ui.shell.open(at({2000, 100, 800, 600}));
+	Rml::ElementDocument& document = show(window, "drop.rml");
+	ui.shell.step(milliseconds(0));
+	document.AddEventListener(ui::g_fileDropEvent, &listener);
+
+	ui::WindowEvent drop{ui::WindowEventKind::FilesDropped, window.id()};
+	drop.position = {300, 40}; // pixels: 150 by 20 dp at dp ratio 2, on "right"
+	drop.files = {"/music/kick.wav", "/music/snare.flac"};
+	ui.windows.push(drop);
+	ui.shell.step(milliseconds(0));
+	CHECK(listener.target == "right");
+	CHECK(listener.files == "/music/kick.wav\n/music/snare.flac");
+	CHECK(listener.count == 2);
+	CHECK(listener.position == ui::Point{300, 40});
+	CHECK(window.frames() == 2); // drawn again, since the drop may have changed it
+
+	drop.position = {20, 20};
+	drop.files = {"/music/bass.wav"};
+	ui.windows.push(drop);
+	ui.shell.step(milliseconds(0));
+	CHECK(listener.target == "left");
+	CHECK(listener.files == "/music/bass.wav");
+	CHECK(listener.count == 1);
+}
+
+TEST_CASE("a text field turns its window's text input on while it has the focus", "[unit]")
+{
+	Ui ui({primary()});
+	ui::Window& main = ui.shell.open(at({100, 100, 800, 600}));
+	ui::Window& other = ui.shell.open(at({200, 200, 400, 300}));
+	Rml::ElementDocument& document = show(main, "input.rml");
+	show(other, "input.rml");
+	ui.shell.step(milliseconds(0));
+	CHECK_FALSE(ui.windows.textInputActive(main.id()));
+
+	field(document, "name").Focus();
+	CHECK(ui.windows.textInputActive(main.id()));
+	CHECK_FALSE(ui.windows.textInputActive(other.id()));
+
+	field(document, "other").Focus();
+	CHECK(ui.windows.textInputActive(main.id()));
+
+	field(document, "other").Blur();
+	CHECK_FALSE(ui.windows.textInputActive(main.id()));
+}
+
+TEST_CASE("text fields copy to and paste from the system clipboard", "[unit]")
+{
+	Ui ui({primary()});
+	ui::Window& window = ui.shell.open(at({100, 100, 800, 600}));
+	Rml::ElementDocument& document = show(window, "input.rml");
+	ui.shell.step(milliseconds(0));
+	Rml::ElementFormControlInput& name = field(document, "name");
+	name.Focus();
+	Rml::Context& context = window.context();
+
+	context.ProcessKeyDown(Rml::Input::KI_A, Rml::Input::KM_CTRL);
+	context.ProcessKeyDown(Rml::Input::KI_C, Rml::Input::KM_CTRL);
+	CHECK(ui.windows.clipboardText() == "hello");
+
+	ui.windows.setClipboardText("world");
+	context.ProcessKeyDown(Rml::Input::KI_A, Rml::Input::KM_CTRL);
+	context.ProcessKeyDown(Rml::Input::KI_V, Rml::Input::KM_CTRL);
+	CHECK(name.GetValue() == "world");
+}
+
+TEST_CASE("file dialogs answer on the UI thread with what the user chose", "[unit]")
+{
+	Ui ui({primary()});
+	const ui::Window& window = ui.shell.open(at({100, 100, 800, 600}));
+	std::vector<std::pair<std::string, ui::FileDialogResult>> results;
+	const auto record = [&results](const char* name)
+	{ return [&results, name](const ui::FileDialogResult& result) { results.emplace_back(name, result); }; };
+
+	ui::FileDialog import;
+	import.title = "Import audio";
+	import.filters = {{"Audio files", "wav;aif;flac"}, {"All files", "*"}};
+	import.many = true;
+	import.parent = window.id();
+	ui.shell.showFileDialog(import, record("import"));
+	ui::FileDialog save;
+	save.kind = ui::FileDialogKind::Save;
+	save.location = "/projects/song.dawproject";
+	ui.shell.showFileDialog(save, record("save"));
+	ui::FileDialog folder;
+	folder.kind = ui::FileDialogKind::Folder;
+	ui.shell.showFileDialog(folder, record("folder"));
+
+	// The window system shows them as asked; nothing returns until the user answers.
+	REQUIRE(ui.windows.fileDialogs().size() == 3);
+	auto shown = ui.windows.fileDialogs().begin();
+	const uint64_t importId = shown->first;
+	CHECK(shown->second.kind == ui::FileDialogKind::Open);
+	CHECK(shown->second.title == "Import audio");
+	CHECK(shown->second.filters.size() == 2);
+	CHECK(shown->second.filters.at(0).extensions == "wav;aif;flac");
+	CHECK(shown->second.many);
+	CHECK(shown->second.parent == window.id());
+	const uint64_t saveId = (++shown)->first;
+	CHECK(shown->second.kind == ui::FileDialogKind::Save);
+	CHECK(shown->second.location == std::filesystem::path("/projects/song.dawproject"));
+	const uint64_t folderId = (++shown)->first;
+	CHECK(shown->second.kind == ui::FileDialogKind::Folder);
+	ui.shell.step(milliseconds(0));
+	CHECK(results.empty());
+
+	ui.windows.answerFileDialog(saveId, {});
+	ui.windows.answerFileDialog(importId, {"/audio/kick.wav", "/audio/snare.flac"});
+	ui.windows.answerFileDialog(folderId, {}, "no file dialog on this system");
+	ui.shell.step(milliseconds(0));
+	REQUIRE(results.size() == 3);
+	CHECK(results[0].first == "save");
+	CHECK(results[0].second.cancelled());
+	CHECK(results[1].first == "import");
+	CHECK(results[1].second.files == std::vector<std::filesystem::path>{"/audio/kick.wav", "/audio/snare.flac"});
+	CHECK_FALSE(results[1].second.cancelled());
+	CHECK(results[2].first == "folder");
+	CHECK(results[2].second.error == "no file dialog on this system");
+	CHECK_FALSE(results[2].second.cancelled());
 }
