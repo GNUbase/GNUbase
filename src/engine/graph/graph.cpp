@@ -9,6 +9,7 @@
 #include "platform/rt/workerpool.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -131,6 +132,8 @@ namespace gnubase::engine::graph
 			m_frames = frames;
 			m_transport = &transport;
 			m_done.store(0, std::memory_order_relaxed);
+			for (std::atomic<uint64_t>& busy : m_busy)
+				busy.store(0, std::memory_order_relaxed);
 			for (size_t i = 0; i < nodes.size(); ++i)
 				m_waiting[i].store(nodes[i].senders, std::memory_order_relaxed);
 
@@ -155,7 +158,31 @@ namespace gnubase::engine::graph
 			workers.run(*this, helpers);
 		}
 
+		// The serial path's time, all on thread 0.
+		void processedAlone(uint64_t nanoseconds) noexcept
+		{
+			for (std::atomic<uint64_t>& busy : m_busy)
+				busy.store(0, std::memory_order_relaxed);
+			m_busy[0].store(nanoseconds, std::memory_order_relaxed);
+		}
+
+		uint64_t busy(size_t thread) const
+		{
+			return thread < m_busy.size() ? m_busy[thread].load(std::memory_order_relaxed) : 0;
+		}
+
 		void work(size_t thread) noexcept override
+		{
+			// The time on nodes adds up here and reaches m_busy once, when the thread leaves: the counters share
+			// cache lines, which every node's update would pass between the threads.
+			uint64_t busy = 0;
+			workOn(thread, busy);
+			if (thread < m_busy.size())
+				m_busy[thread].fetch_add(busy, std::memory_order_relaxed);
+		}
+
+	private:
+		void workOn(size_t thread, uint64_t& busy) noexcept
 		{
 			const std::vector<Node>& nodes = m_graph.m_nodes;
 			auto idleSince = std::chrono::steady_clock::time_point::max();
@@ -183,6 +210,7 @@ namespace gnubase::engine::graph
 					std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start)
 						.count());
 				m_cost[i] = m_cost[i] - (m_cost[i] / 8) + (nanoseconds / 8); // a moving average over a few blocks
+				busy += nanoseconds;
 
 				// The last sender to finish makes a receiver ready; its acquire sees every sender's output.
 				for (const int receiver : nodes[i].receivers)
@@ -192,7 +220,6 @@ namespace gnubase::engine::graph
 			}
 		}
 
-	private:
 		const CompiledGraph& m_graph;
 		std::unique_ptr<std::atomic<int>[]> m_waiting; // per node, the senders not done yet
 		rt::MpmcQueue<int> m_ready;
@@ -203,6 +230,7 @@ namespace gnubase::engine::graph
 		std::vector<uint64_t> m_cost; // nanoseconds per node
 		std::vector<uint64_t> m_rank; // a node's cost plus the most its receivers have ahead of them
 		std::vector<int> m_roots;     // the nodes that receive from none
+		std::array<std::atomic<uint64_t>, g_maxThreads> m_busy{}; // per thread, nanoseconds in this block
 	};
 
 	CompiledGraph::CompiledGraph(const GraphDesc& graph, double sampleRate, uint32_t maxFrames)
@@ -314,8 +342,16 @@ namespace gnubase::engine::graph
 			m_scheduler->run(frames, transport, *workers, helpers);
 			return;
 		}
+		const auto start = std::chrono::steady_clock::now();
 		for (const int index : m_order)
 			processNode(static_cast<size_t>(index), frames, transport);
+		m_scheduler->processedAlone(static_cast<uint64_t>(
+			std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()));
+	}
+
+	uint64_t CompiledGraph::busyNanoseconds(size_t thread) const
+	{
+		return m_scheduler->busy(thread);
 	}
 
 	void CompiledGraph::processNode(size_t i, uint32_t frames, const TransportBlock& transport) const noexcept

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/performance.h"
 #include "engine/audio/playback.h"
 #include "engine/audio/sequencer.h"
 #include "engine/audio/transport.h"
@@ -9,6 +10,7 @@
 #include "platform/audio/device.h"
 #include "platform/audio/dummydevice.h"
 #include "platform/rt/snapshotpublisher.h"
+#include "platform/rt/triplebuffer.h"
 #include "platform/rt/workerpool.h"
 
 #include <atomic>
@@ -50,11 +52,11 @@ namespace gnubase::engine
 			rt::SnapshotPublisher<RenderSnapshot>& snapshots, std::vector<std::unique_ptr<audio::Backend>> backends);
 		~AudioEngine() override; // stops the device
 
-		// Registers audio.devices, audio.setDevice, audio.setProcessing, audio.get, audio.reset, audio.controlPanel,
-		// audio.render, audio.start, audio.stop and audio.capture, and the transport commands transport.play,
-		// transport.stop, transport.toggle, transport.locate, transport.set, transport.exchangeLocators and
-		// transport.get.
-		// audio.analyze, audio.compare and audio.record are in analysiscommands.cpp.
+		// Registers audio.devices, audio.setDevice, audio.setProcessing, audio.get, audio.performance,
+		// audio.resetPerformance, audio.reset, audio.controlPanel, audio.render, audio.start, audio.stop and
+		// audio.capture, and the transport commands transport.play, transport.stop, transport.toggle, transport.locate,
+		// transport.set, transport.exchangeLocators and transport.get. audio.analyze, audio.compare and audio.record
+		// are in analysiscommands.cpp.
 		void registerCommands(Engine& engine);
 
 		// Command thread: compiles a new graph if the project changed since the last one.
@@ -123,6 +125,11 @@ namespace gnubase::engine
 		static size_t defaultThreads();
 		Json processingStatus() const;
 		Json status() const;
+		Json performance();
+		Json resetPerformance();
+		// Command thread, while no block runs: the next measurement starts from nothing.
+		void clearPerformance();
+		void publishPerformance(const PerformanceData& data);
 		audio::DummyDevice& requireDummy();
 		void registerTransportCommands(Engine& engine);
 		void registerAnalysisCommands(Engine& engine); // analysiscommands.cpp
@@ -181,6 +188,11 @@ namespace gnubase::engine
 		size_t m_threads = defaultThreads(); // processing threads, the audio thread included
 		std::unique_ptr<rt::WorkerPool> m_workers;
 		Limit m_limitedBy = Limit::None; // why m_workers has fewer than planned
+
+		// Performance data: measured by the audio thread, read by the command thread.
+		PerformanceMeter m_meter; // audio thread, or the command thread while the device is stopped
+		rt::TripleBuffer<PerformanceData> m_performance;
+		std::atomic<bool> m_resetPerformance{false};
 
 		// The cue thread, while the device runs in real time. It reads the transport's settings and play state from
 		// m_cueState, which the command thread updates.

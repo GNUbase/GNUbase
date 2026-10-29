@@ -123,6 +123,11 @@ namespace gnubase::engine::graph
 		void process(uint32_t frames, const TransportBlock& transport = TransportBlock{},
 			rt::WorkerPool* workers = nullptr) const noexcept;
 
+		// Audio thread, after process: how long a thread processed nodes in the last block, in nanoseconds. Thread 0
+		// is the one that called process, 1 to 64 the workers.
+		uint64_t busyNanoseconds(size_t thread) const;
+		static constexpr size_t g_maxThreads = 65;
+
 	private:
 		class Scheduler;
 
