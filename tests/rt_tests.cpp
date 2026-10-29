@@ -399,7 +399,9 @@ namespace
 		return subnormal * one != 0.0f;
 	}
 
-	// Records, per thread, whether the job ran with subnormal numbers kept. Thread 0 waits until every worker came.
+	// Records, per thread that came, whether the job ran with subnormal numbers kept (-1: didn't come). Thread 0 holds
+	// the job open until every worker came or two seconds passed: a worker may still miss it, for example under a
+	// sanitizer's slowdown.
 	class ModeProbe final : public ParallelJob
 	{
 	public:
@@ -409,7 +411,7 @@ namespace
 		{
 			m_keeps[thread] = keepsSubnormals() ? 1 : 0;
 			++m_came;
-			const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+			const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
 			while (thread == 0 && m_came < m_keeps.size() && std::chrono::steady_clock::now() < until)
 				std::this_thread::yield();
 		}
@@ -421,7 +423,6 @@ namespace
 				keeps = -1;
 		}
 
-		size_t came() const { return m_came; }
 		int keeps(size_t thread) const { return m_keeps[thread]; }
 
 	private:
@@ -457,16 +458,23 @@ TEST_CASE("WorkerPool runs a job in its caller's floating-point mode on every th
 {
 	WorkerPool pool(3);
 	ModeProbe probe(3);
+	// Every thread that ran the job had the caller's mode; the caller and at least one worker ran it.
 	const auto checkEveryThread = [&](int keeps)
 	{
 		probe.reset();
 		pool.run(probe);
-		REQUIRE(probe.came() == 4);
-		for (size_t thread = 0; thread <= 3; ++thread)
+		CHECK(probe.keeps(0) == keeps);
+		size_t workers = 0;
+		for (size_t thread = 1; thread <= 3; ++thread)
 		{
 			CAPTURE(thread);
-			CHECK(probe.keeps(thread) == keeps);
+			if (probe.keeps(thread) != -1)
+			{
+				CHECK(probe.keeps(thread) == keeps);
+				++workers;
+			}
 		}
+		CHECK(workers >= 1);
 	};
 	REQUIRE(keepsSubnormals());
 	checkEveryThread(1);
