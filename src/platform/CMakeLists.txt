@@ -14,10 +14,11 @@ add_library(gnubase-platform STATIC
 	rt/rtutil.h
 	rt/snapshotpublisher.h
 	rt/spscqueue.h
-	rt/triplebuffer.h)
+	rt/triplebuffer.h
+	rt/workerpool.cpp rt/workerpool.h)
 target_include_directories(gnubase-platform PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-platform PRIVATE $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
-target_link_libraries(gnubase-platform PUBLIC Threads::Threads PRIVATE $<$<PLATFORM_ID:Windows>:dbghelp ole32 shell32>)
+target_link_libraries(gnubase-platform PUBLIC Threads::Threads PRIVATE "$<$<PLATFORM_ID:Windows>:dbghelp;avrt;ole32;shell32>")
 gnubase_target_defaults(gnubase-platform)
 
 # RT checker: replaces the global operator new/delete to report allocations in real-time code.

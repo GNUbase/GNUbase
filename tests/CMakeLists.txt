@@ -11,7 +11,7 @@ gnubase_target_defaults(gnubase-testutils)
 set(settingsEnvironment "GNUBASE_SETTINGS_DIR=${CMAKE_CURRENT_BINARY_DIR}/output/settings")
 
 add_executable(gnubase-tests analysis_tests.cpp app_tests.cpp audio_tests.cpp audiofile_tests.cpp backup_tests.cpp coverage_tests.cpp dawproject_tests.cpp document_tests.cpp engine_tests.cpp graph_tests.cpp history_tests.cpp log_tests.cpp mcp_tests.cpp mcpevents_tests.cpp mcptools_tests.cpp midiedit_tests.cpp midifile_tests.cpp processor_tests.cpp rt_tests.cpp scripting_tests.cpp settings_tests.cpp streaming_tests.cpp testing_tests.cpp testutils_tests.cpp theme_tests.cpp time_tests.cpp
-	debugreports.cpp midi_tests.cpp peaks_tests.cpp playback_tests.cpp sequencing_tests.cpp timestretch_tests.cpp transport_tests.cpp)
+	debugreports.cpp midi_tests.cpp multicore_tests.cpp peaks_tests.cpp performance_tests.cpp playback_tests.cpp sequencing_tests.cpp timestretch_tests.cpp transport_tests.cpp)
 target_sources(gnubase-tests PRIVATE device_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-mcp gnubase-scripting gnubase-testutils Catch2::Catch2WithMain miniz pugixml::pugixml
 	cpp-httplib)
@@ -24,6 +24,10 @@ if(GNUBASE_TEST_PLUGINS)
 	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_TEST_PLUGINS_DIR="${GNUBASE_TEST_PLUGINS_DIR}")
 	add_dependencies(gnubase-tests gnubase-test-plugins)
 endif()
+# Engine benchmarks (#212, #24): not a test, run by hand or by CI's benchmark job.
+add_executable(gnubase-bench bench/bench.cpp)
+target_link_libraries(gnubase-bench PRIVATE gnubase-engine)
+gnubase_target_defaults(gnubase-bench)
 
 # ThreadSanitizer defines its own operator new/delete, which the RT checker replaces; every other build runs it.
 if(NOT GNUBASE_SANITIZERS MATCHES "thread")

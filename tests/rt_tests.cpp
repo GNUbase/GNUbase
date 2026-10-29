@@ -4,12 +4,16 @@
 #include "platform/rt/snapshotpublisher.h"
 #include "platform/rt/spscqueue.h"
 #include "platform/rt/triplebuffer.h"
+#include "platform/rt/workerpool.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <limits>
 #include <memory>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -259,4 +263,300 @@ TEST_CASE("SnapshotPublisher keeps the reader's snapshot alive while publishing 
 		CHECK(last == count);
 	}
 	CHECK(g_liveSnapshots == 0);
+}
+
+TEST_CASE("Semaphore wakes a waiting thread once per release", "[unit]")
+{
+	Semaphore semaphore;
+	semaphore.release(2);
+	semaphore.wait();
+	semaphore.wait(); // both releases counted: neither wait blocks
+
+	std::atomic<int> woken{0};
+	std::thread waiter(
+		[&]
+		{
+			semaphore.wait();
+			++woken;
+			semaphore.wait();
+			++woken;
+		});
+	semaphore.release();
+	while (woken < 1)
+		std::this_thread::yield();
+	std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	CHECK(woken == 1);
+	semaphore.release();
+	waiter.join();
+	CHECK(woken == 2);
+}
+
+namespace
+{
+	// Hands out tasks 0 to count - 1 to whichever thread asks, and records which thread ran each.
+	class Tasks final : public ParallelJob
+	{
+	public:
+		explicit Tasks(size_t count) : m_ranBy(count) {}
+
+		void reset()
+		{
+			m_next = 0;
+			m_done = 0;
+			for (std::atomic<int>& ranBy : m_ranBy)
+				ranBy = -1;
+		}
+
+		void work(size_t thread) noexcept override
+		{
+			for (size_t task = m_next++; task < m_ranBy.size(); task = m_next++)
+			{
+				volatile double sum = 0.0; // a little work, so several threads get some
+				for (int i = 0; i < 2000; ++i)
+					sum = sum + (i * 0.5);
+				m_ranBy[task] = static_cast<int>(thread);
+				++m_done;
+			}
+			calls[std::min<size_t>(thread, calls.size() - 1)]++;
+		}
+
+		size_t done() const { return m_done; }
+		int ranBy(size_t task) const { return m_ranBy[task]; }
+
+		std::array<std::atomic<int>, 9> calls{};
+
+	private:
+		std::vector<std::atomic<int>> m_ranBy;
+		std::atomic<size_t> m_next{0};
+		std::atomic<size_t> m_done{0};
+	};
+}
+
+TEST_CASE("WorkerPool runs a job on the calling thread and its workers until it is done", "[unit]")
+{
+	for (const size_t workers : {size_t{0}, size_t{1}, size_t{3}, size_t{7}})
+	{
+		CAPTURE(workers);
+		WorkerPool pool(workers);
+		CHECK(pool.workers() == workers);
+		Tasks tasks(500);
+		std::array<int, 9> ran{};
+		for (int run = 0; run < 200; ++run)
+		{
+			tasks.reset();
+			pool.run(tasks);
+			REQUIRE(tasks.done() == 500); // finished when run returns
+			for (size_t task = 0; task < 500; ++task)
+			{
+				const int thread = tasks.ranBy(task);
+				REQUIRE(thread >= 0);
+				REQUIRE(static_cast<size_t>(thread) <= workers);
+				++ran[static_cast<size_t>(thread)];
+			}
+		}
+		CHECK(tasks.calls[0] == 200); // the calling thread works on every run
+		if (workers > 0)
+			CHECK(ran[0] < 200 * 500); // and the workers helped
+	}
+}
+
+TEST_CASE("WorkerPool never runs a job after run returned", "[unit]")
+{
+	class Probe final : public ParallelJob
+	{
+	public:
+		void work(size_t /*thread*/) noexcept override
+		{
+			if (closed)
+				++late;
+		}
+
+		std::atomic<bool> closed{false};
+		std::atomic<int> late{0};
+	};
+
+	WorkerPool pool(4);
+	std::vector<std::unique_ptr<Probe>> probes;
+	for (int run = 0; run < 500; ++run)
+	{
+		probes.push_back(std::make_unique<Probe>());
+		pool.run(*probes.back());
+		probes.back()->closed = true;
+	}
+	std::this_thread::sleep_for(std::chrono::milliseconds(50)); // late wake-ups have happened by now
+	int late = 0;
+	for (const auto& probe : probes)
+		late += probe->late;
+	CHECK(late == 0);
+}
+
+namespace
+{
+	bool keepsSubnormals() noexcept
+	{
+		const volatile float subnormal = 1e-39f;
+		const volatile float one = 1.0f;
+		return subnormal * one != 0.0f;
+	}
+
+	// Records, per thread that came, whether the job ran with subnormal numbers kept (-1: didn't come). Thread 0 holds
+	// the job open until every worker came or two seconds passed: a worker may still miss it, for example under a
+	// sanitizer's slowdown.
+	class ModeProbe final : public ParallelJob
+	{
+	public:
+		explicit ModeProbe(size_t workers) : m_keeps(workers + 1) {}
+
+		void work(size_t thread) noexcept override
+		{
+			m_keeps[thread] = keepsSubnormals() ? 1 : 0;
+			++m_came;
+			const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+			while (thread == 0 && m_came < m_keeps.size() && std::chrono::steady_clock::now() < until)
+				std::this_thread::yield();
+		}
+
+		void reset()
+		{
+			m_came = 0;
+			for (std::atomic<int>& keeps : m_keeps)
+				keeps = -1;
+		}
+
+		int keeps(size_t thread) const { return m_keeps[thread]; }
+
+	private:
+		std::vector<std::atomic<int>> m_keeps;
+		std::atomic<size_t> m_came{0};
+	};
+
+	// Counts the threads that took part; thread 0 stays for a while, so woken workers have time to come.
+	class Attendance final : public ParallelJob
+	{
+	public:
+		void work(size_t thread) noexcept override
+		{
+			++came;
+			if (thread == 0)
+				std::this_thread::sleep_for(std::chrono::milliseconds(30));
+		}
+
+		std::atomic<size_t> came{0};
+	};
+
+	// Simulates an OS that refuses worker pools for the lifetime of the object.
+	struct Faults
+	{
+		explicit Faults(const WorkerPoolFaults& faults) { setWorkerPoolFaults(faults); }
+		~Faults() { setWorkerPoolFaults({}); }
+		Faults(const Faults&) = delete;
+		Faults& operator=(const Faults&) = delete;
+	};
+}
+
+TEST_CASE("WorkerPool runs a job in its caller's floating-point mode on every thread", "[unit]")
+{
+	WorkerPool pool(3);
+	ModeProbe probe(3);
+	// Every thread that ran the job had the caller's mode; the caller and at least one worker ran it.
+	const auto checkEveryThread = [&](int keeps)
+	{
+		probe.reset();
+		pool.run(probe);
+		CHECK(probe.keeps(0) == keeps);
+		size_t workers = 0;
+		for (size_t thread = 1; thread <= 3; ++thread)
+		{
+			CAPTURE(thread);
+			if (probe.keeps(thread) != -1)
+			{
+				CHECK(probe.keeps(thread) == keeps);
+				++workers;
+			}
+		}
+		CHECK(workers >= 1);
+	};
+	REQUIRE(keepsSubnormals());
+	checkEveryThread(1);
+	{
+		const ScopedDenormalsDisabled noDenormals;
+		checkEveryThread(0);
+	}
+	checkEveryThread(1);
+}
+
+TEST_CASE("floatMode reads and sets the thread's floating-point mode", "[unit]")
+{
+	const uint64_t initial = floatMode();
+	{
+		const ScopedDenormalsDisabled noDenormals;
+		const uint64_t flushing = floatMode();
+		CHECK(flushing != initial);
+		setFloatMode(initial);
+		CHECK(keepsSubnormals());
+		setFloatMode(flushing);
+		CHECK(!keepsSubnormals());
+	}
+	CHECK(floatMode() == initial);
+}
+
+TEST_CASE("WorkerPool knows when its constructor returns which workers got real-time priority", "[unit]")
+{
+	{
+		const WorkerPool pool(3);
+		const size_t realtime = pool.realtimeWorkers();
+		CHECK(pool.realtime() == (realtime == 3));
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		CHECK(pool.realtimeWorkers() == realtime); // no worker was still on its way
+	}
+	const Faults faults({SIZE_MAX, true});
+	const WorkerPool pool(2);
+	CHECK(pool.realtimeWorkers() == 0);
+	CHECK(!pool.realtime());
+	CHECK(WorkerPool(0).realtime()); // no workers, none without
+}
+
+TEST_CASE("WorkerPool wakes no more workers than a job takes", "[unit]")
+{
+	WorkerPool pool(4);
+	for (const size_t helpers : {size_t{0}, size_t{1}, size_t{2}, size_t{0}})
+	{
+		CAPTURE(helpers);
+		std::this_thread::sleep_for(std::chrono::milliseconds(10)); // the workers sleep by now
+		Attendance job;
+		pool.run(job, helpers);
+		CHECK(job.came <= 1 + helpers);
+	}
+	Attendance all;
+	pool.run(all);
+	CHECK(all.came >= 1);
+	CHECK(all.came <= 5);
+}
+
+TEST_CASE("WorkerPool ends the threads it started when it can't start them all", "[unit]")
+{
+	{
+		const Faults faults({2, false});
+		CHECK_THROWS_AS(WorkerPool(5), std::system_error);
+		const WorkerPool two(2); // within the limit
+		CHECK(two.workers() == 2);
+	}
+	WorkerPool pool(5);
+	Tasks tasks(100);
+	tasks.reset();
+	pool.run(tasks);
+	CHECK(tasks.done() == 100);
+}
+
+TEST_CASE("Linux workers take the priority one below their audio thread's", "[unit]")
+{
+	STATIC_CHECK(workerPriority(80, 1) == 79);
+	STATIC_CHECK(workerPriority(20, 1) == 19);
+	STATIC_CHECK(workerPriority(1, 1) == 1);
+	STATIC_CHECK(workerPriority(0, 1) == 1);
+}
+
+TEST_CASE("hardwareThreads counts at least one thread", "[unit]")
+{
+	CHECK(hardwareThreads() >= 1);
 }

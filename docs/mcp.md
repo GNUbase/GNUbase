@@ -326,6 +326,7 @@ Result:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `audio_devices`
@@ -342,7 +343,7 @@ Result:
 
 Engine command `audio.get`. Read-only.
 
-The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, and how many frames of audio track playback were silent because a disk stream was late.
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing).
 
 Result:
 
@@ -351,7 +352,24 @@ Result:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
+
+#### `audio_performance`
+
+Engine command `audio.performance`. Read-only.
+
+Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1; cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late.
+
+Result:
+
+- `cycles`: integer, required
+- `diskDropouts`: integer, required
+- `diskLoad`: number, required
+- `load`: number, required
+- `overloads`: integer, required
+- `peak`: number, required
+- `threads`: array of number, required
 
 #### `audio_record`
 
@@ -391,6 +409,7 @@ Result:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `audio_reset`
@@ -406,7 +425,24 @@ Result:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
+
+#### `audio_resetPerformance`
+
+Engine command `audio.resetPerformance`.
+
+Starts a new performance measurement, like clicking the overload indicator: clears the peak, the overloads and the cycles; the averaged loads go on. Immediately while the device is stopped, otherwise with its next block. Returns the measurement that ended, as audio.performance does, and sends it as the event audio.performanceReset.
+
+Result:
+
+- `cycles`: integer, required
+- `diskDropouts`: integer, required
+- `diskLoad`: number, required
+- `load`: number, required
+- `overloads`: integer, required
+- `peak`: number, required
+- `threads`: array of number, required
 
 #### `audio_setDevice`
 
@@ -434,6 +470,28 @@ Result:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
+- `running`: boolean, required
+
+#### `audio_setProcessing`
+
+Engine command `audio.setProcessing`.
+
+Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; default: half the hardware threads, about one per core). Independent tracks then run in parallel; the output is the same for any number of threads. The device must be stopped. activeThreads in the result is how many process, and limitedBy why that is fewer: multiProcessing is off, the hardware has fewer threads, worker threads didn't get real-time priority (on Linux: no real-time privileges), or the system refused to start them (system). Fails, keeping the previous settings, if threads can't be started.
+
+Arguments:
+
+- `multiProcessing`: boolean
+- `threads`: integer
+
+Result:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `playbackDropouts`: integer, required
+- `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `audio_start`
@@ -449,6 +507,7 @@ Result:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 #### `audio_stop`
@@ -464,6 +523,7 @@ Result:
 - `droppedFrames`: integer, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
+- `processing`: object, required
 - `running`: boolean, required
 
 ### bus
@@ -889,6 +949,45 @@ Result:
 
 - `media`: object, required
 
+### midiFile
+
+#### `midiFile_export`
+
+Engine command `midiFile.export`. Read-only.
+
+Exports MIDI and instrument tracks (tracks, default all of them) as a standard MIDI file of type 0 (one track with every MIDI channel) or 1 (default: a tempo track, then a track per exported track), with ppq ticks per quarter note (24-960, default 480). The file has the notes and controllers as they play, converted to MIDI 1.0, the track names, tempo and time signatures, and the markers unless markers is false. A note ends where the next note of its pitch and channel starts, so that overlapping notes read back the same. range {start, end} in ticks exports only what starts in it, moved to the file's start. Returns the number of tracks in the file.
+
+Arguments:
+
+- `markers`: boolean
+- `path`: string, required
+- `ppq`: integer
+- `range`: object
+- `tracks`: array of integer
+- `type`: one of 0 | 1
+
+Result:
+
+- `tracks`: integer, required
+
+#### `midiFile_import`
+
+Engine command `midiFile.import`.
+
+Imports a standard MIDI file (type 0, 1 or 2) into new MIDI tracks (trackType midi, the default) or instrument tracks, one part per track from the bar of its first event to the bar after its last. A type 0 file gets a track per MIDI channel; the sequences of a type 2 file are laid out one after another, each from a bar start. Names that aren't UTF-8 are read as Windows-1252. Unless tempo is false, the file's tempo and time signatures replace the project's; unless markers is false, its markers are added. One undo step. Returns the new tracks and parts.
+
+Arguments:
+
+- `markers`: boolean
+- `path`: string, required
+- `tempo`: boolean
+- `trackType`: one of "midi" | "instrument"
+
+Result:
+
+- `parts`: array, required
+- `tracks`: array, required
+
 ### midiPart
 
 #### `midiPart_add`
@@ -941,7 +1040,7 @@ Result:
 
 Engine command `note.add`.
 
-Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity 0-1, MIDI channel 0-15 (default 0).
+Adds notes to a MIDI part: position from the part's start and length in ticks, pitch 0-127, velocity 0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0).
 
 Arguments:
 
@@ -967,7 +1066,7 @@ Arguments:
 
 Engine command `note.set`.
 
-Changes notes of a MIDI part: each change names a note by id and gives what changes, position and length in ticks, pitch 0-127, velocity 0-1 or MIDI channel 0-15. Returns the changed notes.
+Changes notes of a MIDI part: each change names a note by id and gives what changes, position and length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1 or MIDI channel 0-15. Returns the changed notes.
 
 Arguments:
 
@@ -1352,7 +1451,8 @@ Queries without required arguments can also be read as resources:
 
 - `gnubase://audio.analyze`: Measures the captured output of channels (default: every output) from frame start for frames frames (default: to the end of the capture). Per channel: the peak and RMS level, and a spectrum summary with the strongest frequencies (at most peaks, default 5, up to 20) and the power of octave bands. For the channels together: the integrated loudness in LUFS (ITU-R BS.1770), null below 400 ms. Levels are linear and in dBFS (a full-scale sine's peak is 0 dBFS, its RMS -3 dBFS); dBFS is null for silence.
 - `gnubase://audio.devices`: The audio backends of this build, the preferred one first, and the devices each has now: their ids, names, channel names, sample rates, block sizes, clock sources (and the current one), and whether the driver has a control panel. A backend that can't list its devices has an error instead.
-- `gnubase://audio.get`: The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, and how many frames of audio track playback were silent because a disk stream was late.
+- `gnubase://audio.get`: The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing).
+- `gnubase://audio.performance`: Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1; cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late.
 - `gnubase://engine.commands`: Every command with its documentation, parameters and result.
 - `gnubase://engine.version`: The GNUbase version.
 - `gnubase://graph.get`: The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes they receive audio and events from, and the order they are processed in.
