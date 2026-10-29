@@ -37,11 +37,17 @@ jobs:
         with:
           submodules: recursive
 
+      # The plugin host's VST3 adapter is part of every build (see ci.yml).
+      - name: Fetch the VST3 SDK
+        run: |
+          git submodule update --init --checkout ext/vst3sdk
+          git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
+
       - name: Install packages
         timeout-minutes: 15
         run: brew install ninja
 
-      # Only the arm64 slice, and no test plugins, which need the VST3 SDK and aren't part of the window tests.
+      # Only the arm64 slice, and no test plugins, which aren't part of the window tests.
       - name: Configure
         run: cmake --preset macos -DCMAKE_OSX_ARCHITECTURES=arm64 -DGNUBASE_TEST_PLUGINS=OFF
 
