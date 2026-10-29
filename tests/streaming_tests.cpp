@@ -360,4 +360,7 @@ TEST_CASE("media.convert writes a copy at the project's sample rate", "[integrat
 	CHECK(reader->info().sampleFormat == SampleFormat::Float32);
 
 	CHECK(!client.call("media.convert", {{"media", 999}, {"path", output}}).ok());
+	// Never over a file of the project, such as the source: undo couldn't bring it back.
+	CHECK(!client.call("media.convert", {{"media", added.value.at("media").at("id")}, {"path", input}}).ok());
+	CHECK(AudioFileReader::open(input)->info().frames == 44100);
 }

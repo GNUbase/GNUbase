@@ -7,8 +7,11 @@ target_compile_definitions(gnubase-testutils PRIVATE
 	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 gnubase_target_defaults(gnubase-testutils)
 
-add_executable(gnubase-tests analysis_tests.cpp app_tests.cpp audio_tests.cpp audiofile_tests.cpp coverage_tests.cpp dawproject_tests.cpp document_tests.cpp engine_tests.cpp graph_tests.cpp history_tests.cpp log_tests.cpp mcp_tests.cpp mcpevents_tests.cpp mcptools_tests.cpp midiedit_tests.cpp processor_tests.cpp rt_tests.cpp scripting_tests.cpp streaming_tests.cpp testing_tests.cpp testutils_tests.cpp theme_tests.cpp time_tests.cpp
-	debugreports.cpp midi_tests.cpp playback_tests.cpp quantize_tests.cpp sequencing_tests.cpp transport_tests.cpp)
+# Tests, and the app they start, keep their user settings in the build, never in the user's own settings folder.
+set(settingsEnvironment "GNUBASE_SETTINGS_DIR=${CMAKE_CURRENT_BINARY_DIR}/output/settings")
+
+add_executable(gnubase-tests analysis_tests.cpp app_tests.cpp audio_tests.cpp audiofile_tests.cpp backup_tests.cpp coverage_tests.cpp dawproject_tests.cpp document_tests.cpp engine_tests.cpp graph_tests.cpp history_tests.cpp log_tests.cpp mcp_tests.cpp mcpevents_tests.cpp mcptools_tests.cpp midiedit_tests.cpp processor_tests.cpp rt_tests.cpp scripting_tests.cpp settings_tests.cpp streaming_tests.cpp testing_tests.cpp testutils_tests.cpp theme_tests.cpp time_tests.cpp
+	debugreports.cpp midi_tests.cpp peaks_tests.cpp playback_tests.cpp quantize_tests.cpp sequencing_tests.cpp timestretch_tests.cpp transport_tests.cpp)
 target_sources(gnubase-tests PRIVATE device_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-mcp gnubase-scripting gnubase-testutils Catch2::Catch2WithMain miniz pugixml::pugixml
 	cpp-httplib)
@@ -16,8 +19,8 @@ target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-m
 # The test plugins and the loader tests that load them into the test process (plugins/README.md).
 if(GNUBASE_TEST_PLUGINS)
 	add_subdirectory(plugins)
-	target_sources(gnubase-tests PRIVATE clap_plugin_tests.cpp)
-	target_link_libraries(gnubase-tests PRIVATE clap-sdk ${CMAKE_DL_LIBS})
+	target_sources(gnubase-tests PRIVATE clap_plugin_tests.cpp vst3_plugin_tests.cpp)
+	target_link_libraries(gnubase-tests PRIVATE clap-sdk vst3-sdk ${CMAKE_DL_LIBS})
 	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_TEST_PLUGINS_DIR="${GNUBASE_TEST_PLUGINS_DIR}")
 	add_dependencies(gnubase-tests gnubase-test-plugins)
 endif()
@@ -49,7 +52,7 @@ foreach(luaTest IN LISTS luaTests)
 	file(RELATIVE_PATH script "${PROJECT_SOURCE_DIR}" "${luaTest}")
 	add_test(NAME "${script}" COMMAND gnubase --headless --script "${script}" WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 	set_tests_properties("${script}" PROPERTIES LABELS "integration;lua" ENVIRONMENT
-		"GNUBASE_GOLDEN_DIR=${CMAKE_CURRENT_SOURCE_DIR}/golden;GNUBASE_TEST_OUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/output")
+		"GNUBASE_GOLDEN_DIR=${CMAKE_CURRENT_SOURCE_DIR}/golden;GNUBASE_TEST_OUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/output;${settingsEnvironment}")
 endforeach()
 
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}"
@@ -58,11 +61,15 @@ target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERS
 	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>
 	GNUBASE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 gnubase_target_defaults(gnubase-tests)
+# Sanitizer builds are too slow for benchmarks.
+if(GNUBASE_SANITIZERS)
+	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_SANITIZED)
+endif()
 
 # Every TEST_CASE becomes a ctest test; its tags ([unit], [integration], [ui], [slow]) become ctest labels.
 # PRE_TEST discovery lets cross-compiled builds (e.g. Windows ARM64 on x64) configure and build.
 include(Catch)
-catch_discover_tests(gnubase-tests DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS)
+catch_discover_tests(gnubase-tests DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS PROPERTIES ENVIRONMENT "${settingsEnvironment}")
 
 # Shell tests for the scripts in tools/. They use the sh next to Git, which on Windows is the one Git runs hooks with
 # (Git/bin, found from Git/cmd or Git/mingw64/bin).
@@ -75,3 +82,9 @@ function(gnubase_add_shell_test name script)
 endfunction()
 gnubase_add_shell_test("the keyword guard blocks private keywords in commits and pull requests" keyword_guard_tests.sh)
 gnubase_add_shell_test("the license header check lists files without the SPDX header" spdx_check_tests.sh)
+
+# Benchmarks print measurements for design notes; they are not part of the test run.
+option(GNUBASE_BENCHMARKS "Build the benchmarks in tests/bench" OFF)
+if(GNUBASE_BENCHMARKS)
+	add_subdirectory(bench)
+endif()
