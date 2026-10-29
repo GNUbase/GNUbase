@@ -94,8 +94,11 @@ jobs:
           if [ -f "$bin/mesa/gnubase-render-spike.exe" ]; then
             spikes/render-backend/run-all.sh "$bin/mesa/gnubase-render-spike" out/mesa "gl3-mesa:--backend gl3"
           fi
-          { echo "### ${{ matrix.name }}"; cat out/summary.md; [ -f out/mesa/summary.md ] && tail -n 1 out/mesa/summary.md; } \
-            >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### ${{ matrix.name }}"
+            cat out/summary.md
+            if [ -f out/mesa/summary.md ]; then tail -n 1 out/mesa/summary.md; fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload screenshots and timings
         if: always()
