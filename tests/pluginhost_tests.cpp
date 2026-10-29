@@ -700,6 +700,26 @@ TEST_CASE("a remote plugin's requests and changes reach the engine", "[integrati
 	CHECK(!graph.slot().failed());
 }
 
+TEST_CASE("an active plugin keeps its latency when it moves to another host process", "[integration]")
+{
+	// test:latency reports its latency only while active: the info its new instance has before activation says 0.
+	plugins::HostManager manager(testOptions());
+	std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager, {"test:latency", "", "GNUbase"});
+	const plugin::remote::RemotePlugin& plugin = *remote;
+	SlotGraph graph(std::move(remote));
+	Noise noise;
+	graph.render(noise.block(64));
+	REQUIRE(plugin.latency() == 64);
+	const uint32_t before = manager.hosts().at(0).process;
+
+	CHECK(manager.setMode(plugins::HostingMode::PerInstance).get().empty());
+	CHECK(manager.hosts().at(0).process != before); // it did move
+	CHECK(plugin.latency() == 64);
+	CHECK(graph.slot().latency() == 64);
+	graph.render(noise.block(64));
+	CHECK(!graph.slot().failed());
+}
+
 TEST_CASE("killing the host process mid-render yields silence and an error event", "[integration]")
 {
 	Engine engine;
@@ -776,28 +796,90 @@ TEST_CASE("a block's deadline follows the block period", "[unit]")
 	CHECK(deadlines.forBlock(128, 0.0, false) == deadlines.realtimeMaximum);
 }
 
-TEST_CASE("a hung host process is detected within the deadline, and fails its other plugins at once", "[integration]")
+TEST_CASE("a late block is silence for that plugin and that block only", "[integration]")
 {
 	plugins::HostManager::Options options = testOptions();
-	options.deadlines.realtimeMinimum = 300ms;
-	options.deadlines.realtimeMaximum = 300ms;
+	options.deadlines.realtimeMinimum = 200ms;
+	options.deadlines.realtimeMaximum = 200ms;
+	options.deadlines.hang = 10s; // so a slow machine can't make the test plugin hang
 	plugins::HostManager manager(options);
-	SlotGraph hanging(createRemote(manager, {"test:hang", "", "GNUbase"}), plugin::ProcessMode::Realtime);
+	std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager, {"test:stall", "", "GNUbase"});
+	const plugin::remote::RemotePlugin& plugin = *remote;
+	SlotGraph stalling(std::move(remote), plugin::ProcessMode::Realtime);
+	SlotGraph other(createRemote(manager), plugin::ProcessMode::Realtime);
+	REQUIRE(manager.hosts().size() == 1); // the same vendor: the same process
+	LocalHost host;
+	SlotGraph reference(localPlugin("test:stall", host), plugin::ProcessMode::Realtime);
+	SlotGraph otherReference(localPlugin("test:gain", host), plugin::ProcessMode::Realtime);
+	Noise noise;
+	std::vector<std::vector<float>> inputs;
+	inputs.reserve(20);
+	for (int i = 0; i < 20; ++i)
+		inputs.push_back(noise.block(128));
+	REQUIRE(stalling.render(inputs[0]) == reference.render(inputs[0]));
+
+	// The block in which the plugin takes 300 ms misses its 200 ms deadline: it is silent.
+	CHECK(silent(stalling.render(inputs[1], {parameter(0, 1, 300.0)})));
+	CHECK(stalling.slot().failed());
+	CHECK(plugin.failure() == plugin::remote::Failure::None);
+	// Meanwhile the other plugin of its host process answers in time.
+	CHECK(other.render(inputs[1]) == otherReference.render(inputs[1]));
+	CHECK(!other.slot().failed());
+
+	// Then the plugin goes on: each block gets its own answer, never the late one, and its host isn't hung.
+	int late = 0;
+	for (size_t i = 2; i < inputs.size(); ++i)
+	{
+		const std::vector<float> output = stalling.render(inputs[i]);
+		if (silent(output))
+		{
+			++late; // still catching up
+			continue;
+		}
+		CHECK(output == reference.render(inputs[i]));
+		CHECK(!stalling.slot().failed());
+	}
+	CHECK(late <= 1);
+	CHECK(plugin.failure() == plugin::remote::Failure::None);
+	CHECK(other.render(inputs[0]) == otherReference.render(inputs[0]));
+	CHECK(manager.hosts().at(0).state == "running");
+	CHECK(manager.takeFailures().empty());
+}
+
+TEST_CASE("a plugin that answers no block for the hang timeout fails, and so do the other plugins of its host",
+	"[integration]")
+{
+	plugins::HostManager::Options options = testOptions();
+	options.deadlines.realtimeMinimum = 20ms;
+	options.deadlines.realtimeMaximum = 20ms;
+	options.deadlines.hang = 300ms;
+	plugins::HostManager manager(options);
+	std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager, {"test:hang", "", "GNUbase"});
+	const plugin::remote::RemotePlugin& plugin = *remote;
+	SlotGraph hanging(std::move(remote), plugin::ProcessMode::Realtime);
 	SlotGraph other(createRemote(manager, {"test:hang", "", "GNUbase"}), plugin::ProcessMode::Realtime);
 	REQUIRE(manager.hosts().size() == 1); // the same vendor: the same process
 	Noise noise;
 	const std::vector<float> input = noise.block(128);
 	CHECK(!silent(other.render(input)));
 
+	// Its blocks are silent, but until the hang timeout it hasn't failed, and the other plugin goes on.
 	const auto start = std::chrono::steady_clock::now();
-	const std::vector<float> output = hanging.render(input, {parameter(0, g_hang, 1.0)});
+	CHECK(silent(hanging.render(input, {parameter(0, g_hang, 1.0)})));
+	CHECK(plugin.failure() == plugin::remote::Failure::None);
+	CHECK(!silent(other.render(input)));
+	CHECK(!other.slot().failed());
+	while (plugin.failure() == plugin::remote::Failure::None && std::chrono::steady_clock::now() - start < 5s)
+	{
+		CHECK(silent(hanging.render(input)));
+		std::this_thread::sleep_for(1ms);
+	}
 	const auto elapsed = std::chrono::steady_clock::now() - start;
+	CHECK(plugin.failure() == plugin::remote::Failure::Deadline);
 	CHECK(elapsed >= 300ms);
 	CHECK(elapsed < 1300ms);
-	CHECK(silent(output));
-	CHECK(hanging.slot().failed());
 
-	// Later blocks don't wait for it any more, nor for the other plugins of its process, which still answers.
+	// Then its host is hung: later blocks don't wait for it, nor for the other plugins of its process.
 	auto next = std::chrono::steady_clock::now();
 	CHECK(silent(hanging.render(input)));
 	CHECK(std::chrono::steady_clock::now() - next < 100ms);
@@ -818,6 +900,22 @@ TEST_CASE("a hung host process is detected within the deadline, and fails its ot
 	CHECK(failures[0].plugin == "test:hang");
 	CHECK(failures[0].reason == "hung");
 	CHECK(failures[1].reason == "hung");
+	CHECK(manager.hosts().at(0).state == "hung");
+}
+
+TEST_CASE("an offline block that misses its deadline makes the plugin hang at once", "[integration]")
+{
+	plugins::HostManager::Options options = testOptions();
+	options.deadlines.offline = 300ms; // longer than the hang timeout
+	options.deadlines.hang = 250ms;
+	plugins::HostManager manager(options);
+	std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager, {"test:hang", "", "GNUbase"});
+	const plugin::remote::RemotePlugin& plugin = *remote;
+	SlotGraph hanging(std::move(remote), plugin::ProcessMode::Offline);
+	Noise noise;
+	const std::vector<float> input = noise.block(128);
+	CHECK(silent(hanging.render(input, {parameter(0, g_hang, 1.0)})));
+	CHECK(plugin.failure() == plugin::remote::Failure::Deadline);
 	CHECK(manager.hosts().at(0).state == "hung");
 }
 
@@ -989,6 +1087,55 @@ TEST_CASE("the plugin protocol's reader never reads past its data", "[unit]")
 	plugin::remote::PluginInfo info;
 	plugin::remote::Reader truncated(data.data(), 3);
 	CHECK(!plugin::remote::read(truncated, info));
+}
+
+TEST_CASE("plugin infos with empty names round-trip, however many parameters they have", "[unit]")
+{
+	// Unnamed, one-letter and numbered parameters and ports are common; empty names make each record its shortest.
+	plugin::remote::PluginInfo info;
+	info.descriptor.id = "test:gain";
+	info.extensions = {"params"};
+	for (const uint32_t id : {0U, 1U})
+	{
+		plugin::AudioPortInfo port;
+		port.id = id;
+		port.channelCount = 2;
+		info.inputs.push_back(port);
+		info.outputs.push_back(port);
+	}
+	for (uint32_t i = 0; i < 100; ++i)
+	{
+		plugin::ParamInfo param;
+		param.id = i + 1;
+		param.maximum = 1.0;
+		param.name = i % 2 == 0 ? "" : "A";
+		info.params.push_back(param);
+		info.values.push_back(static_cast<double>(i) / 100.0);
+	}
+	info.latency = 64;
+	info.tail = 7;
+	plugin::remote::Writer writer;
+	plugin::remote::write(writer, info);
+
+	plugin::remote::Reader reader(writer.data());
+	plugin::remote::PluginInfo read;
+	REQUIRE(plugin::remote::read(reader, read));
+	CHECK(reader.remaining() == 0);
+	CHECK(read.inputs.size() == 2);
+	CHECK(read.outputs.size() == 2);
+	REQUIRE(read.params.size() == 100);
+	CHECK(read.params[0].name.empty());
+	CHECK(read.params[0].module.empty());
+	CHECK(read.params[99].id == 100);
+	CHECK(read.params[99].name == "A");
+	CHECK(read.values == info.values);
+	CHECK(read.latency == 64);
+	CHECK(read.tail == 7);
+
+	// One byte short is still refused.
+	plugin::remote::Reader truncated(writer.data().data(), writer.data().size() - 1);
+	plugin::remote::PluginInfo partial;
+	CHECK(!plugin::remote::read(truncated, partial));
 }
 
 TEST_CASE("plugin hosts find the engine's process and their program", "[unit]")

@@ -76,6 +76,14 @@ namespace gnubase::plugin::remote
 			return strings;
 		}
 
+		// The bytes a record of PluginInfo takes at least: written with empty strings, so the size follows the layout.
+		template <typename Record> size_t shortest()
+		{
+			Writer writer;
+			write(writer, Record{});
+			return writer.data().size();
+		}
+
 		uint32_t channelsOf(const std::vector<AudioPortInfo>& ports)
 		{
 			uint32_t channels = 0;
@@ -310,14 +318,16 @@ namespace gnubase::plugin::remote
 		info.extensions = readStrings(reader);
 		for (std::vector<AudioPortInfo>* ports : {&info.inputs, &info.outputs})
 		{
-			const uint32_t count = reader.count(24);
+			static const size_t portSize = shortest<AudioPortInfo>();
+			const uint32_t count = reader.count(portSize);
 			if (count > g_maxPorts)
 				return false;
 			ports->resize(count);
 			for (AudioPortInfo& port : *ports)
 				read(reader, port);
 		}
-		const uint32_t params = reader.count(56);
+		static const size_t paramSize = shortest<ParamInfo>() + sizeof(double); // and its value
+		const uint32_t params = reader.count(paramSize);
 		info.params.resize(params);
 		info.values.resize(params);
 		for (uint32_t i = 0; i < params; ++i)

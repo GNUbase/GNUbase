@@ -5,8 +5,10 @@
 #include "plugins/common/testplugin.h"
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <string>
+#include <thread>
 #include <vector>
 
 // Every test plugin defines pluginDescriptor() and createPlugin(); tests/plugins/CMakeLists.txt prefixes them with the
@@ -42,6 +44,47 @@ namespace gnubase::testformat
 			std::unique_ptr<testplugins::TestPlugin> (*create)(testplugins::Host& host);
 		};
 
+		constexpr uint32_t g_stallId = 1;
+
+		// test:stall, only in this format: passes its input through, and setting Stall to more than 0 ms makes the
+		// plugin take that long once, on the thread that sets it. A parameter event while processing makes that block
+		// late, like a transient overrun.
+		class Stall final : public testplugins::TestPlugin
+		{
+		public:
+			Stall() : TestPlugin({stallParam()}) {}
+
+		protected:
+			void paramChanged(uint32_t id, double value) override
+			{
+				if (id == g_stallId && value > 0.0)
+					std::this_thread::sleep_for(std::chrono::duration<double, std::milli>(value));
+			}
+
+		private:
+			static testplugins::ParamInfo stallParam()
+			{
+				testplugins::ParamInfo info;
+				info.id = g_stallId;
+				info.name = "Stall";
+				info.maxValue = 10000.0;
+				info.unit = "ms";
+				return info;
+			}
+		};
+
+		const testplugins::Descriptor& stallDescriptor()
+		{
+			static const testplugins::Descriptor descriptor{"org.gnubase.test.stall", "GNUbase Test Stall",
+				"Takes longer once when its Stall parameter is set", false};
+			return descriptor;
+		}
+
+		std::unique_ptr<testplugins::TestPlugin> createStall(testplugins::Host& /*host*/)
+		{
+			return std::make_unique<Stall>();
+		}
+
 		const std::array g_entries{
 			Entry{"gain", testplugins::gainPluginDescriptor, testplugins::gainCreatePlugin},
 			Entry{"synth", testplugins::synthPluginDescriptor, testplugins::synthCreatePlugin},
@@ -50,6 +93,7 @@ namespace gnubase::testformat
 			Entry{"crash", testplugins::crashPluginDescriptor, testplugins::crashCreatePlugin},
 			Entry{"hang", testplugins::hangPluginDescriptor, testplugins::hangCreatePlugin},
 			Entry{"stateblob", testplugins::stateblobPluginDescriptor, testplugins::stateblobCreatePlugin},
+			Entry{"stall", stallDescriptor, createStall},
 		};
 
 		Descriptor describe(const Entry& entry)

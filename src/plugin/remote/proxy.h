@@ -25,11 +25,15 @@ namespace gnubase::plugin::remote
 	struct Deadlines
 	{
 		// Per block in real time and prefetch: this many block periods, within the bounds. A host that misses it
-		// already made the device miss its own deadline; the watchdog (#65) tunes these.
+		// already made the device miss its own deadline; the watchdog (#65) tunes these. A block that misses its
+		// deadline is silence for that plugin and that block only.
 		double realtimeBlocks = 2.0;
 		std::chrono::nanoseconds realtimeMinimum{std::chrono::milliseconds(2)};
 		std::chrono::nanoseconds realtimeMaximum{std::chrono::milliseconds(100)};
 		std::chrono::nanoseconds offline{std::chrono::seconds(10)}; // per offline block
+		// A plugin that answers no block in time for this long, counted from the first late block's sending, hangs:
+		// it fails, and so does its host. A shorter run of late blocks is only silence.
+		std::chrono::nanoseconds hang{std::chrono::milliseconds(250)};
 		// Quick main-thread calls, which the command thread may make: value texts, flushing parameters, process mode.
 		std::chrono::milliseconds query{std::chrono::seconds(2)};
 		// Slow main-thread calls, which run as jobs (engine::plugins::HostManager): create, activate, deactivate,
@@ -45,7 +49,7 @@ namespace gnubase::plugin::remote
 	enum class Failure : uint8_t
 	{
 		None,
-		Deadline, // a block was not answered in time, or its host hangs: another plugin of it missed a deadline
+		Deadline, // no block was answered in time for Deadlines::hang, or its host hangs: another plugin of it did so
 		HostGone, // the host process exited or closed the connection
 		Protocol, // the host broke the protocol
 	};
@@ -176,12 +180,22 @@ namespace gnubase::plugin::remote
 		void notified(Notification notification, uint32_t detail);
 		void applyInfo(PluginInfo info, bool keepDirtyValues);
 		void setParams(const PluginInfo& info);
-		void mirror(const Event& event) noexcept;
+		void mirror(const Event& event, bool markDirty = false) noexcept;
 		bool has(std::string_view extension) const;
 		bool resync(Binding& binding, const EventList* in, uint32_t& count) noexcept;
 		bool flushResync(Binding& binding);
-		ProcessStatus exchange(
+		// What became of a block: the plugin's status, Error unless it was answered in time; whether it went to the
+		// host, and whether it went but its answer came too late, which the next block's wait drops.
+		struct Exchanged
+		{
+			ProcessStatus status = ProcessStatus::Error;
+			bool sent = false;
+			bool late = false;
+		};
+		Exchanged exchange(
 			Binding& binding, const Process* process, uint32_t flags, const EventList& in, EventList* out) noexcept;
+		void missed(Binding& binding, std::chrono::steady_clock::time_point sent) noexcept;
+		void keep(Binding& binding, const EventList& in) noexcept;
 		bool sendEvents(ipc::Connection& audio, const EventList& events, uint32_t& count) noexcept;
 		bool readReply(Binding& binding, const ipc::AudioBlock& reply, const Process* process, EventList* out,
 			ProcessStatus& status) noexcept;
@@ -232,10 +246,12 @@ namespace gnubase::plugin::remote
 
 		// Audio thread.
 		uint64_t m_sequence = 0;
-		uint32_t m_flags = 0;                  // ProcessFlags for the next block: Reset
-		std::atomic<bool> m_processing{false}; // between startProcessing and stopProcessing
-		std::vector<std::byte> m_message;      // one audio message, sent or read back
-		const EventList m_noEvents;            // the events of blocks without frames
+		uint32_t m_flags = 0;                              // ProcessFlags for the next block: Reset
+		bool m_late = false;                               // the last block was late, or never sent
+		std::chrono::steady_clock::time_point m_lateSince; // when the first block of that run of late ones was sent
+		std::atomic<bool> m_processing{false};             // between startProcessing and stopProcessing
+		std::vector<std::byte> m_message;                  // one audio message, sent or read back
+		const EventList m_noEvents;                        // the events of blocks without frames
 
 		std::atomic<Failure> m_failure{Failure::None};
 	};
