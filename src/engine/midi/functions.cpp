@@ -224,7 +224,7 @@ namespace gnubase::engine::midi
 			{
 				std::sort(events.begin(), events.end(), comesBefore);
 				Controller restore = *events.back(); // the value after the range
-				const Controller* latest = nullptr;  // the event that plays last in the mirror image
+				const Controller* latest = nullptr;  // the event that plays last in the mirror image, by restoreAt
 				for (size_t i = 0; i < events.size(); ++i)
 				{
 					Controller& event = *events[i];
@@ -235,7 +235,9 @@ namespace gnubase::engine::midi
 						continue;
 					}
 					event.position = mirror - next;
-					if (latest == nullptr)
+					// Mirrored positions fall as i rises. Past restoreAt an event lies past the part's end, where
+					// playback drops it, so the lane holds the value of the first one at or before restoreAt.
+					if (latest == nullptr && event.position <= restoreAt)
 						latest = &event;
 				}
 				if (latest == nullptr || latest->value != restore.value)

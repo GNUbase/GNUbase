@@ -718,6 +718,27 @@ TEST_CASE(
 		CHECK(
 			laneOf(part, 64) == std::vector<std::pair<Ticks, int>>{{0, 0}, {2 * g_quarter, 127}, {part.length - 1, 0}});
 	}
+	SECTION("invert where the value that plays last lands past the part's end")
+	{
+		// The range is 0 to 5 quarters. The mirror image's last value lands at 4.5 quarters, where playback drops it,
+		// so the lane returns to its value on the part's last tick even though that value is the same.
+		MidiPart part = PartBuilder()
+							.note(1, 0, g_quarter, 60)
+							.note(2, 3 * g_quarter, 2 * g_quarter, 62) // runs past the part's end
+							.cc(3, 0, 64, 0)
+							.cc(4, g_quarter / 2, 64, 127)
+							.cc(5, 3 * g_quarter, 64, 0)
+							.cc(6, 0, 7, 50)
+							.cc(7, g_quarter / 2, 7, 100)
+							.cc(8, 3 * g_quarter, 7, 50)
+							.part;
+		part.length = 4 * g_quarter;
+		invert(part, NoteSelection(), part.length, NewIds().function());
+		CHECK(laneOf(part, 64) ==
+			std::vector<std::pair<Ticks, int>>{{0, 0}, {2 * g_quarter, 127}, {lastTick, 0}, {9 * g_quarter / 2, 0}});
+		CHECK(laneOf(part, 7) ==
+			std::vector<std::pair<Ticks, int>>{{0, 50}, {2 * g_quarter, 100}, {lastTick, 50}, {9 * g_quarter / 2, 50}});
+	}
 	SECTION("reverse in a part shortened to end before its last events")
 	{
 		MidiPart part = PartBuilder()
@@ -740,9 +761,9 @@ TEST_CASE(
 			controller.position += g_quarter;
 		part.length = g_quarter / 2; // ends before the first event
 		invert(part, NoteSelection(), part.length, NewIds().function());
-		// The range is 1 to 5 quarters: the lane returns to its value where the range starts, not before it.
-		CHECK(laneOf(part, 64) ==
-			std::vector<std::pair<Ticks, int>>{{g_quarter, 0}, {g_quarter, 0}, {3 * g_quarter, 127}});
+		// The range is 1 to 5 quarters: the lane ends at its value where the range starts, not before it, so it needs
+		// no event to return to it.
+		CHECK(laneOf(part, 64) == std::vector<std::pair<Ticks, int>>{{g_quarter, 0}, {3 * g_quarter, 127}});
 	}
 }
 
