@@ -514,7 +514,7 @@ TEST_CASE("MIDI file export writes tempo, signatures, markers, names and MIDI 1.
 	SECTION("only MIDI and instrument tracks")
 	{
 		Project withAudio = project;
-		withAudio.trackById[40] = Track{40, TrackType::Audio, "Vocals", "", {}, 0, 0, {}};
+		withAudio.trackById[40] = Track{40, TrackType::Audio, "Vocals", "", {}, 0, 0, {}, {}};
 		withAudio.tracks.push_back(40);
 		CHECK(midifile::exportProject(withAudio, options).tracks.size() == 2);
 		options.tracks = {40};
