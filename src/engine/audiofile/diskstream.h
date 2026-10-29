@@ -66,8 +66,9 @@ namespace gnubase::engine
 		// block the audio thread gave back since. Offline rendering waits for this, so it never drops out.
 		bool full() const;
 
-		// Any thread: the share of the read-ahead buffer the disk thread still has to refill, from 0 (full) to 1
-		// (empty). 0 once the file is read to the end.
+		// Any thread: the share of the read-ahead buffer the disk thread still has to fill, from 0 (full) to 1
+		// (empty): 1 for a new stream and right after a seek, whose old blocks all have to be read again. 0 once the
+		// file is read to the end.
 		double load() const;
 
 		// True if reading the file failed; the stream then plays silence.
@@ -107,8 +108,10 @@ namespace gnubase::engine
 		std::atomic<uint64_t> m_generation{1};
 		std::atomic<time::Samples> m_seekTarget{0}; // stored before the generation changes
 		std::atomic<uint64_t> m_readyGeneration{0};
-		std::atomic<uint64_t> m_endGeneration{0}; // the last generation the disk thread read to the end
-		std::atomic<size_t> m_returned{0};        // blocks in m_empty
+		std::atomic<uint64_t> m_endGeneration{0};   // the last generation the disk thread read to the end
+		std::atomic<size_t> m_returned{0};          // blocks in m_empty
+		std::atomic<size_t> m_spareCount{0};        // blocks in m_spare
+		std::atomic<uint64_t> m_takenGeneration{0}; // the generation whose old blocks the disk thread took back
 		std::atomic<uint64_t> m_dropouts{0};
 		std::atomic<bool> m_failed{false};
 
