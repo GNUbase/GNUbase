@@ -32,7 +32,8 @@ namespace gnubase::engine
 	Json toJson(const AudioEvent& event);
 	Json toJson(const Note& note);
 	Json toJson(const Controller& controller);
-	// A controller's type and values, without checking them; its id and position are left to the caller.
+	// A controller's type and the values the type uses, without checking them; the others are zero. Its id and
+	// position are left to the caller.
 	Controller controllerFromJson(const Json& json);
 	Json toJson(const MidiPart& part);
 	Json toJson(const Marker& marker);

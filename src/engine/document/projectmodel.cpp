@@ -1097,48 +1097,50 @@ namespace gnubase::engine
 			context.emit("note.added", {{"part", part.id}, {"notes", added}});
 			return {{"notes", added}};
 		}
+	}
 
-		// A controller event from a command, checked; its id is left to the caller.
-		Controller controllerFrom(const Json& item, const std::string& name)
+	Controller controllerFrom(const Json& item, const std::string& name)
+	{
+		const std::optional<ControllerType> parsed =
+			controllerTypeFromName(item.value("type", std::string("controller")));
+		if (!parsed.has_value())
+			throw CommandError(
+				name + ".type must be controller, pitchBend, channelPressure, polyPressure, program or sysEx");
+		const ControllerType type = *parsed;
+		const auto needs = [&](const char* key) { require(item.contains(key), name + "." + key + " is required"); };
+		const bool numbered =
+			type == ControllerType::Control || type == ControllerType::PolyPressure || type == ControllerType::Program;
+		if (numbered)
 		{
-			const std::optional<ControllerType> parsed =
-				controllerTypeFromName(item.value("type", std::string("controller")));
-			if (!parsed.has_value())
-				throw CommandError(
-					name + ".type must be controller, pitchBend, channelPressure, polyPressure, program or sysEx");
-			const ControllerType type = *parsed;
-			const auto needs = [&](const char* key) { require(item.contains(key), name + "." + key + " is required"); };
-			const bool numbered = type == ControllerType::Control || type == ControllerType::PolyPressure ||
-				type == ControllerType::Program;
-			if (numbered)
-			{
-				needs("number");
-				requireRange(item.at("number").get<int64_t>(), 0, 127, name + ".number");
-			}
-			if (type != ControllerType::Program && type != ControllerType::SysEx)
-			{
-				needs("value");
-				unitValue(item, "value", name);
-			}
-			if (type == ControllerType::Program && item.contains("bank"))
-				requireRange(item.at("bank").get<int64_t>(), 0, g_maxBank, name + ".bank");
-			if (type == ControllerType::SysEx)
-			{
-				needs("data");
-				const auto data = item.at("data").get<std::vector<int64_t>>();
-				require(data.size() >= 2 && data.front() == 0xF0 && data.back() == 0xF7,
-					name + ".data must start with 0xF0 and end with 0xF7");
-				require(std::all_of(
-							data.begin() + 1, data.end() - 1, [](int64_t byte) { return byte >= 0 && byte < 0x80; }),
-					name + ".data bytes between 0xF0 and 0xF7 must be 0 to 127");
-			}
-			requireRange(item.value("channel", int64_t{0}), 0, 15, name + ".channel");
-			Controller controller = controllerFromJson(item);
-			controller.position = item.at("position").get<time::Ticks>();
-			require(controller.position >= 0, name + ".position must not be negative");
-			return controller;
+			needs("number");
+			requireRange(item.at("number").get<int64_t>(), 0, 127, name + ".number");
 		}
+		if (type != ControllerType::Program && type != ControllerType::SysEx)
+		{
+			needs("value");
+			unitValue(item, "value", name);
+		}
+		if (type == ControllerType::Program && item.contains("bank"))
+			requireRange(item.at("bank").get<int64_t>(), 0, g_maxBank, name + ".bank");
+		if (type == ControllerType::SysEx)
+		{
+			needs("data");
+			const auto data = item.at("data").get<std::vector<int64_t>>();
+			require(data.size() >= 2 && data.front() == 0xF0 && data.back() == 0xF7,
+				name + ".data must start with 0xF0 and end with 0xF7");
+			require(
+				std::all_of(data.begin() + 1, data.end() - 1, [](int64_t byte) { return byte >= 0 && byte < 0x80; }),
+				name + ".data bytes between 0xF0 and 0xF7 must be 0 to 127");
+		}
+		requireRange(item.value("channel", int64_t{0}), 0, 15, name + ".channel");
+		Controller controller = controllerFromJson(item);
+		controller.position = item.at("position").get<time::Ticks>();
+		require(controller.position >= 0, name + ".position must not be negative");
+		return controller;
+	}
 
+	namespace
+	{
 		Json addControllers(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
