@@ -120,8 +120,9 @@ namespace
 		{
 			m_slot->setProcessMode(mode);
 			graph::GraphDesc desc;
-			desc.nodes = {{graph::NodeKind::InputBus, 1, 2, nullptr}, {graph::NodeKind::PluginSlot, 2, 2, m_slot},
-				{graph::NodeKind::OutputBus, 3, 2, nullptr}};
+			desc.nodes = {{graph::NodeKind::InputBus, 1, engine::ChannelFormat::Stereo, nullptr},
+				{graph::NodeKind::PluginSlot, 2, engine::ChannelFormat::Stereo, m_slot},
+				{graph::NodeKind::OutputBus, 3, engine::ChannelFormat::Stereo, nullptr}};
 			desc.audio = {{0, 1}, {1, 2}};
 			m_graph = std::make_unique<graph::CompiledGraph>(desc, g_sampleRate, g_maxFrames);
 		}

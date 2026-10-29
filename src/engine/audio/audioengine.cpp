@@ -85,7 +85,7 @@ namespace gnubase::engine
 			auto automation = std::make_unique<ChannelAutomation>();
 			automation->instrument = channel.instrument;
 			std::vector<PlayedLane>& lanes = automation->lanes;
-			if (channel.channels > 0 && channel.type != TrackType::Midi)
+			if (channel.format != ChannelFormat::None)
 			{
 				lanes.push_back({{AutomationTargetType::Volume, 0, 0, 0}, Kind::Fader, ChannelFader::Volume,
 					channel.volume, 0.0, volumeGain(g_maxChannelVolume), {}});
@@ -247,13 +247,13 @@ namespace gnubase::engine
 			const graph::NodeDesc& node = desc.nodes[i];
 			if (node.kind == graph::NodeKind::InputBus)
 			{
-				program->inputs.push_back({static_cast<int>(i), input, node.channels});
-				input += node.channels;
+				program->inputs.push_back({static_cast<int>(i), input, channelCount(node.format)});
+				input += channelCount(node.format);
 			}
 			else if (node.kind == graph::NodeKind::OutputBus)
 			{
-				program->outputs.push_back({static_cast<int>(i), output, node.channels});
-				output += node.channels;
+				program->outputs.push_back({static_cast<int>(i), output, channelCount(node.format)});
+				output += channelCount(node.format);
 			}
 		}
 		m_revision = snapshot.revision;

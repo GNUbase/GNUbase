@@ -106,6 +106,8 @@ namespace
 			idOf(run(client, "bus.add", {{"direction", "input"}, {"name", "Mic"}, {"channels", 1}}), "bus");
 		const ObjectId cue =
 			idOf(run(client, "bus.add", {{"direction", "output"}, {"name", "Cue"}, {"channels", 2}}), "bus");
+		// Six channels that aren't 5.1: only GNUbase's entry knows the format.
+		run(client, "bus.add", {{"direction", "output"}, {"name", "Surround"}, {"format", "6.0 music"}});
 		const ObjectId folder =
 			idOf(run(client, "track.add", {{"type", "folder"}, {"name", "Band"}, {"groupChannel", true}}), "track");
 		const Json vocals = run(client, "track.add",
@@ -475,6 +477,8 @@ TEST_CASE("without GNUbase's entry, a project is read from project.xml", "[integ
 	{ return withId(after.at("channels"), "id", withId(after.at("tracks"), "name", name).at("channel")); };
 	CHECK(channelOf("Vocals").at("output") == channelOf("Band").at("id"));
 	CHECK(channelOf("Vocals").at("channels") == 1);
+	// DAWproject has only channel counts: six channels come back as 5.1.
+	CHECK(withId(after.at("busses"), "name", "Surround").at("format") == "5.1");
 	CHECK(channelOf("Reverb").at("output") == withId(after.at("busses"), "name", "Cue").at("id"));
 	// The audio event, to the sample frame, and the notes and controllers.
 	REQUIRE(after.at("audioEvents").size() == 1);

@@ -12,6 +12,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <queue>
@@ -43,10 +44,10 @@ namespace gnubase::engine::graph
 		GraphDesc graph;
 		for (const RenderBus& bus : snapshot.busses)
 			graph.nodes.push_back({bus.direction == BusDirection::Input ? NodeKind::InputBus : NodeKind::OutputBus,
-				bus.id, bus.channels, nullptr});
+				bus.id, bus.format, nullptr});
 		const int firstChannel = static_cast<int>(snapshot.busses.size());
 		for (const RenderChannel& channel : snapshot.channels)
-			graph.nodes.push_back({NodeKind::Channel, channel.id, channel.channels, nullptr});
+			graph.nodes.push_back({NodeKind::Channel, channel.id, channel.format, nullptr});
 
 		for (size_t i = 0; i < snapshot.channels.size(); ++i)
 		{
@@ -108,6 +109,9 @@ namespace gnubase::engine::graph
 
 	namespace
 	{
+		// The center of the default pan law, -3 dB: where mono reaches L and R.
+		const double g_centerGain = std::pow(10.0, -3.0 / 20.0);
+
 		// A worker that finds no ready node for this long leaves the cycle, so it doesn't spin at real-time priority
 		// while the last nodes of a narrow part of the graph run. The audio thread stays until every node is done.
 		constexpr auto g_idleSpin = std::chrono::microseconds(50);
@@ -245,7 +249,7 @@ namespace gnubase::engine::graph
 			Node node;
 			node.kind = desc.kind;
 			node.object = desc.object;
-			node.channels = std::max(desc.channels, 0);
+			node.channels = channelCount(desc.format);
 			node.processor = desc.processor.get();
 			node.firstChannel = channels;
 			channels += static_cast<size_t>(node.channels);
@@ -265,6 +269,17 @@ namespace gnubase::engine::graph
 			std::sort(node.audioInputs.begin(), node.audioInputs.end());
 			std::sort(node.eventInputs.begin(), node.eventInputs.end());
 		}
+		for (size_t i = 0; i < m_nodes.size(); ++i)
+			for (const int input : m_nodes[i].audioInputs)
+			{
+				const ChannelFormat from = graph.nodes[static_cast<size_t>(input)].format;
+				const std::vector<float> gains = conversionGains(from, graph.nodes[i].format, g_centerGain);
+				const int sources = channelCount(from);
+				std::vector<Tap>& taps = m_nodes[i].taps.emplace_back();
+				for (size_t g = 0; g < gains.size(); ++g)
+					if (gains[g] != 0.0f)
+						taps.push_back({static_cast<int>(g) % sources, static_cast<int>(g) / sources, gains[g]});
+			}
 		for (size_t i = 0; i < m_nodes.size(); ++i)
 		{
 			Node& node = m_nodes[i];
@@ -361,8 +376,8 @@ namespace gnubase::engine::graph
 		if (node.kind != NodeKind::InputBus)
 			for (int c = 0; c < node.channels; ++c)
 				std::memset(audio[c], 0, frames * sizeof(float));
-		for (const int input : node.audioInputs)
-			mix(m_nodes[static_cast<size_t>(input)], node, frames);
+		for (size_t input = 0; input < node.audioInputs.size(); ++input)
+			mix(m_nodes[static_cast<size_t>(node.audioInputs[input])], node.taps[input], node, frames);
 
 		EventBuffer& eventsIn = m_eventsIn[i];
 		for (const int input : node.eventInputs)
@@ -378,20 +393,21 @@ namespace gnubase::engine::graph
 		eventsIn.clear();
 	}
 
-	void CompiledGraph::mix(const Node& from, const Node& to, uint32_t frames) const noexcept
+	void CompiledGraph::mix(
+		const Node& from, const std::vector<Tap>& taps, const Node& to, uint32_t frames) const noexcept
 	{
-		if (from.channels == 0)
-			return;
 		float* const* source = m_channels.data() + from.firstChannel;
 		float* const* target = m_channels.data() + to.firstChannel;
-		for (int c = 0; c < to.channels; ++c)
+		for (const Tap& tap : taps)
 		{
-			if (from.channels > 1 && c >= from.channels)
-				break;
-			const float* in = source[from.channels == 1 ? 0 : c];
-			float* out = target[c];
-			for (uint32_t i = 0; i < frames; ++i)
-				out[i] += in[i];
+			const float* in = source[tap.from];
+			float* out = target[tap.to];
+			if (tap.gain == 1.0f)
+				for (uint32_t i = 0; i < frames; ++i)
+					out[i] += in[i];
+			else
+				for (uint32_t i = 0; i < frames; ++i)
+					out[i] += in[i] * tap.gain;
 		}
 	}
 }

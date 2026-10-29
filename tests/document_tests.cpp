@@ -137,7 +137,7 @@ TEST_CASE("tracks get ids, default names and channels routed to the main output"
 
 	const RenderSnapshot& snapshot = engine.renderSnapshots().acquire();
 	REQUIRE(snapshot.channels.size() == ids.size());
-	CHECK(renderChannel(snapshot, mono).channels == 1);
+	CHECK(renderChannel(snapshot, mono).format == ChannelFormat::Mono);
 	CHECK(renderChannel(snapshot, mono).output.kind == RenderTarget::Kind::Bus);
 	CHECK(renderChannel(snapshot, mono).output.index == 1);
 	CHECK(renderChannel(snapshot, midi).output.kind == RenderTarget::Kind::None);

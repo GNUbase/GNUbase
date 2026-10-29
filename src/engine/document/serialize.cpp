@@ -351,7 +351,7 @@ namespace gnubase::engine
 	Json toJson(const Bus& bus)
 	{
 		return {{"id", bus.id}, {"name", bus.name}, {"direction", directionName(bus.direction)},
-			{"channels", bus.channels}};
+			{"format", formatName(bus.format)}, {"channels", channelCount(bus.format)}};
 	}
 
 	Json toJson(const Track& track)
@@ -363,9 +363,9 @@ namespace gnubase::engine
 
 	Json toJson(const Channel& channel)
 	{
-		return {{"id", channel.id}, {"track", channel.track}, {"channels", channel.channels}, {"input", channel.input},
-			{"output", channel.output}, {"instrument", channel.instrument}, {"volume", channel.volume},
-			{"pan", channel.pan}};
+		return {{"id", channel.id}, {"track", channel.track}, {"format", formatName(channel.format)},
+			{"channels", channelCount(channel.format)}, {"input", channel.input}, {"output", channel.output},
+			{"instrument", channel.instrument}, {"volume", channel.volume}, {"pan", channel.pan}};
 	}
 
 	Json toJson(const MediaFile& media)
@@ -603,6 +603,23 @@ namespace gnubase::engine
 			return number;
 		}
 
+		// A bus's or channel's format; files from before formats have only a channel count.
+		ChannelFormat formatFromJson(const Json& json)
+		{
+			if (json.contains("format"))
+			{
+				const std::string name = json.at("format").get<std::string>();
+				if (const std::optional<ChannelFormat> format = formatFromName(name))
+					return *format;
+				throw std::invalid_argument("unknown format " + name);
+			}
+			const int channels = json.at("channels").get<int>();
+			const ChannelFormat format = defaultFormat(channels);
+			if (format == ChannelFormat::None && channels != 0)
+				throw std::invalid_argument("no format has " + std::to_string(channels) + " channels");
+			return format;
+		}
+
 		// An optional whole number from a file, 0 if it is missing.
 		int64_t checkedInteger(const Json& json, const char* key, int64_t maximum, const std::string& name)
 		{
@@ -645,7 +662,7 @@ namespace gnubase::engine
 			{
 			case AutomationTargetType::Volume:
 			case AutomationTargetType::Pan:
-				fits = track.type != TrackType::Midi && project.channels.at(track.channel).channels > 0;
+				fits = project.channels.at(track.channel).format != ChannelFormat::None;
 				minimum = lane.target.type == AutomationTargetType::Volume ? g_minChannelVolume : -1.0;
 				maximum = lane.target.type == AutomationTargetType::Volume ? g_maxChannelVolume : 1.0;
 				break;
@@ -704,8 +721,7 @@ namespace gnubase::engine
 
 		for (const Json& bus : json.at("busses"))
 			project.busses.push_back({bus.at("id").get<ObjectId>(), bus.at("name").get<std::string>(),
-				bus.at("direction") == "input" ? BusDirection::Input : BusDirection::Output,
-				bus.at("channels").get<int>()});
+				bus.at("direction") == "input" ? BusDirection::Input : BusDirection::Output, formatFromJson(bus)});
 		// Tracks come from top to bottom, folders before what they contain.
 		for (const Json& item : json.at("tracks"))
 		{
@@ -730,7 +746,7 @@ namespace gnubase::engine
 			const auto id = item.at("id").get<ObjectId>();
 			const std::string name = "channel " + std::to_string(id);
 			// Files from before instruments and channel volume have none.
-			Channel channel{id, item.at("track").get<ObjectId>(), item.at("channels").get<int>(),
+			Channel channel{id, item.at("track").get<ObjectId>(), formatFromJson(item),
 				item.at("input").get<ObjectId>(), item.at("output").get<ObjectId>(),
 				item.value("instrument", std::string()),
 				checkedNumber(

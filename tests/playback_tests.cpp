@@ -126,14 +126,15 @@ namespace
 						front = &event;
 				if (front == nullptr)
 					continue;
-				// A mono track goes to every output channel; a clip plays on the track's channels one to one, and a
-				// mono clip on all of them.
+				// A mono track reaches both output channels at -3 dB; a clip plays on the track's channels one to
+				// one, and a mono clip on all of them.
 				const int trackChannel = track.channels == 1 ? 0 : outputChannel;
 				const int clipChannel = front->clipChannels == 1 ? 0 : trackChannel;
 				if (clipChannel >= front->clipChannels)
 					continue;
 				const auto gain = static_cast<float>(std::pow(10.0, front->volume / 20.0));
-				sum += ramp(front->offset + (position - front->start), clipChannel) * gain;
+				const float sample = ramp(front->offset + (position - front->start), clipChannel) * gain;
+				sum += track.channels == 1 ? sample * static_cast<float>(std::pow(10.0, -3.0 / 20.0)) : sample;
 			}
 			return sum;
 		}
@@ -340,7 +341,7 @@ TEST_CASE("clips at another sample rate play converted to the project's rate", "
 {
 	const gnubase::test::TempDir dir;
 	Song song(64);
-	const TestTrack track = song.addTrack(1);
+	const TestTrack track = song.addTrack(2);
 	const ObjectId clip = song.addClip(writeRamp(dir, "half-rate", 1, 2000, 24000));
 	run(song.client, "audioEvent.add", {{"track", track.id}, {"clip", clip}, {"position", 1000}});
 

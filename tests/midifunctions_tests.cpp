@@ -102,7 +102,8 @@ namespace
 		track.id = project.newId();
 		track.type = type;
 		track.name = name;
-		const Channel channel{project.newId(), track.id, type == TrackType::Midi ? 0 : 2, 0, 0, {}, 0.0, 0.0};
+		const Channel channel{project.newId(), track.id,
+			type == TrackType::Midi ? ChannelFormat::None : ChannelFormat::Stereo, 0, 0, {}, 0.0, 0.0};
 		track.channel = channel.id;
 		project.channels[channel.id] = channel;
 		project.tracks.push_back(track.id);

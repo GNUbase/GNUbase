@@ -490,7 +490,7 @@ TEST_CASE("a crossfade of a clip with itself plays it seamlessly, also from insi
 	INFO("block size " << blockSize);
 	const gnubase::test::TempDir dir;
 	Session session(blockSize);
-	const ObjectId track = session.addTrack(1);
+	const ObjectId track = session.addTrack();
 	const ObjectId clip = session.addClip(writeClip(dir, "ramp", 1, 5000, ramp));
 	// As after splitting an event at 1000 and dragging both ends over the cut: the same frames overlap.
 	const ObjectId a = session.addEvent(track, clip, 0, 1100);
@@ -586,7 +586,7 @@ TEST_CASE("an event fading out plays on behind every event in front of it until 
 	const gnubase::test::TempDir dir;
 	Session session(blockSize);
 	Client& client = session.client;
-	const ObjectId track = session.addTrack(1);
+	const ObjectId track = session.addTrack();
 	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 10000, one));
 
 	SECTION("crossfades into an event that crossfades on into a third one")
@@ -646,7 +646,7 @@ TEST_CASE("an event on top of a crossfade hides the events it joins", "[integrat
 	const gnubase::test::TempDir dir;
 	Session session(blockSize);
 	Client& client = session.client;
-	const ObjectId track = session.addTrack(1);
+	const ObjectId track = session.addTrack();
 	// Each event plays a clip of its own level, so the output shows which ones play: exact in float.
 	const auto level = [&](const std::string& name, float value)
 	{ return session.addClip(writeClip(dir, name, 1, 3000, [value](int64_t, int) { return value; })); };
@@ -769,7 +769,7 @@ TEST_CASE("renders are bit for bit the same for every block size where several e
 		const gnubase::test::TempDir dir;
 		Session session(blockSize);
 		Client& client = session.client;
-		const ObjectId track = session.addTrack(1);
+		const ObjectId track = session.addTrack();
 		const ObjectId low =
 			session.addClip(writeClip(dir, "low", 1, 30000, [](int64_t f, int) { return sine(331.0, f); }));
 		const ObjectId high =
@@ -826,7 +826,7 @@ TEST_CASE("a render of every fade shape matches its golden file", "[integration]
 {
 	const gnubase::test::TempDir dir;
 	Session session(256);
-	const ObjectId track = session.addTrack(1);
+	const ObjectId track = session.addTrack();
 	const ObjectId clip =
 		session.addClip(writeClip(dir, "sine", 1, 48000, [](int64_t f, int) { return sine(441.0, f); }));
 	int64_t position = 0;
@@ -848,7 +848,7 @@ TEST_CASE("a render of equal power crossfades matches its golden file", "[integr
 {
 	const gnubase::test::TempDir dir;
 	Session session(256);
-	const ObjectId track = session.addTrack(1);
+	const ObjectId track = session.addTrack();
 	const ObjectId low =
 		session.addClip(writeClip(dir, "low", 1, 48000, [](int64_t f, int) { return sine(330.0, f); }));
 	const ObjectId high =
