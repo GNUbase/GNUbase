@@ -772,10 +772,11 @@ Result:
 
 Engine command `media.peaks`. Read-only.
 
-The waveform overview of a media file for drawing: frames sample frames of the file from start (default: all of it), in pixels columns (up to 65536). Per channel, the smallest and largest sample of each column, from -32767 to 32767 (full scale). The columns come from the coarsest level of the file's peaks (level: 256, 4096 or 65536 frames per peak) that has a peak per column, so they cost the same at any length. status says whether the peaks are ready; while they are generated, only the first available frames have columns and the rest are 0. A file that changed since its peaks were made gets new ones; media.peaksProgress and media.peaksReady report how that goes.
+The waveform overview of a media file for drawing: frames sample frames of the file from start (default: the rest of the file), in pixels columns (up to 65536). Per channel (default: all of them; channels picks some, numbered from 0), the smallest and largest sample of each column, from -32767 to 32767 (full scale). Pixels times channels can be up to 262144. The columns come from the coarsest level of the file's peaks (level: 256, 4096 or 65536 frames per peak) that has a peak per column, so they cost the same at any length. status says whether the peaks are ready; while they are generated, only the first available frames have columns and the rest are 0. A file that changed since its peaks were made gets new ones; media.peaksProgress and media.peaksReady report how that goes.
 
 Arguments:
 
+- `channels`: array of integer
 - `frames`: integer
 - `media`: integer, required
 - `pixels`: integer, required

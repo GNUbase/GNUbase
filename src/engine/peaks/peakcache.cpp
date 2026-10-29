@@ -56,7 +56,18 @@ namespace gnubase::engine::peaks
 	namespace
 	{
 		constexpr int g_progressSteps = 20; // progress events at most every 5 %
-		constexpr int64_t g_maxPixels = 65536;
+		// A temporary peak file this old was left by a writer that crashed; writing one takes moments.
+		constexpr std::chrono::seconds g_staleTemporaryAge = std::chrono::minutes(10);
+
+		// Throws if columns of these channels would be too many values.
+		void checkSize(size_t pixels, const std::vector<int>& channels, int fileChannels)
+		{
+			const size_t count = channels.empty() ? static_cast<size_t>(fileChannels) : channels.size();
+			if (pixels * count > g_maxColumnValues)
+				throw std::invalid_argument(std::to_string(pixels) + " pixels of " + std::to_string(count) +
+					" channels are more than " + std::to_string(g_maxColumnValues) +
+					" values: ask for fewer pixels or pick channels");
+		}
 
 		// Writes the peak file next to the audio file, or else into the fallback folder. Returns where, or nothing.
 		std::string store(const std::string& source, const SourceStamp& stamp, const PeakData& data,
@@ -130,8 +141,8 @@ namespace gnubase::engine::peaks
 		return "pending";
 	}
 
-	PeakRecorder::PeakRecorder(std::shared_ptr<detail::Entry> entry, std::filesystem::path fallbackFolder)
-		: m_entry(std::move(entry)), m_fallbackFolder(std::move(fallbackFolder))
+	PeakRecorder::PeakRecorder(PeakCache& cache, std::shared_ptr<detail::Entry> entry)
+		: m_cache(cache), m_entry(std::move(entry))
 	{
 	}
 
@@ -161,7 +172,8 @@ namespace gnubase::engine::peaks
 	void PeakRecorder::finish()
 	{
 		rt::assertNotRealtime("peaks::PeakRecorder::finish");
-		std::shared_ptr<const PeakData> data;
+		if (m_finished)
+			return;
 		{
 			const std::scoped_lock lock(m_entry->mutex);
 			if (m_entry->builder)
@@ -169,23 +181,12 @@ namespace gnubase::engine::peaks
 				m_entry->data = std::make_shared<const PeakData>(m_entry->builder->take());
 				m_entry->builder.reset();
 			}
-			data = m_entry->data;
-		}
-		m_finished = true;
-		const std::optional<SourceStamp> stamp = stampOf(std::filesystem::u8path(m_entry->path));
-		const std::string file = stamp ? store(m_entry->path, *stamp, *data, m_fallbackFolder) : std::string();
-		{
-			const std::scoped_lock lock(m_entry->mutex);
 			m_entry->state = State::Ready;
-			m_entry->stamp = stamp;
-			m_entry->file = file;
 			m_entry->generated = true;
 		}
-		m_entry->recording = false;
-		if (!stamp)
-			throw PeakFileError("can't read " + m_entry->path);
-		if (file.empty())
-			throw PeakFileError("can't write the peaks of " + m_entry->path);
+		m_finished = true;
+		// Hashing the file and writing the peak file take a while: the worker does it, not the recorder's thread.
+		m_cache.finishRecording(m_entry);
 	}
 
 	PeakCache::PeakCache(Notify notify, CacheSettings settings)
@@ -248,7 +249,16 @@ namespace gnubase::engine::peaks
 		if (slot)
 			slot->cancelled = true;
 		slot = entry;
-		m_queue.push_back(std::move(entry));
+		m_queue.push_back({std::move(entry), false});
+		m_wake.notify_one();
+	}
+
+	void PeakCache::finishRecording(std::shared_ptr<Entry> entry)
+	{
+		{
+			const std::scoped_lock lock(m_mutex);
+			m_queue.push_back({std::move(entry), true});
+		}
 		m_wake.notify_one();
 	}
 
@@ -292,7 +302,7 @@ namespace gnubase::engine::peaks
 	}
 
 	std::optional<PeakCache::Query> PeakCache::query(
-		ObjectId media, uint64_t start, std::optional<uint64_t> frames, size_t pixels)
+		ObjectId media, uint64_t start, std::optional<uint64_t> frames, size_t pixels, const std::vector<int>& channels)
 	{
 		std::shared_ptr<Entry> entry;
 		uint64_t length = 0;
@@ -312,18 +322,30 @@ namespace gnubase::engine::peaks
 
 		Query result;
 		std::shared_ptr<const PeakData> data;
+		std::optional<ColumnSource> source;
 		uint64_t count = 0;
 		{
 			const std::scoped_lock lock(entry->mutex);
 			result.status = entry->status();
 			data = entry->data;
-			count = frames.value_or(length > 0 ? length : result.status.frames);
-			// Peaks that are still being built are read under the lock; complete ones are immutable.
+			const uint64_t whole = length > 0 ? length : result.status.frames;
+			count = frames.value_or(whole > start ? whole - start : 0);
+			// Peaks that are still being built: only the few the columns need are copied under the lock, so a
+			// recorder's append never waits for a query.
 			if (!data && entry->builder && count > 0)
-				result.columns = columns(entry->builder->data(), start, count, pixels);
+			{
+				checkSize(pixels, channels, entry->builder->data().channels);
+				source = columnSource(entry->builder->data(), start, count, pixels, channels);
+			}
 		}
+		// Complete peaks are immutable.
 		if (data && count > 0)
-			result.columns = columns(*data, start, count, pixels);
+		{
+			checkSize(pixels, channels, data->channels);
+			source = columnSource(*data, start, count, pixels, channels);
+		}
+		if (source)
+			result.columns = columns(*source, start, count, pixels);
 		if (result.columns.pixels == 0)
 		{
 			// Nothing to show yet.
@@ -346,7 +368,7 @@ namespace gnubase::engine::peaks
 				slot->cancelled = true;
 			slot = entry;
 		}
-		return std::make_unique<PeakRecorder>(std::move(entry), m_settings.fallbackFolder);
+		return std::make_unique<PeakRecorder>(*this, std::move(entry));
 	}
 
 	bool PeakCache::waitIdle(std::chrono::milliseconds timeout)
@@ -359,7 +381,7 @@ namespace gnubase::engine::peaks
 	{
 		for (;;)
 		{
-			std::shared_ptr<Entry> entry;
+			Job job;
 			{
 				std::unique_lock lock(m_mutex);
 				m_busy = false;
@@ -367,29 +389,49 @@ namespace gnubase::engine::peaks
 				m_wake.wait(lock, [this] { return m_stopping || !m_queue.empty(); });
 				if (m_stopping)
 					return;
-				entry = std::move(m_queue.front());
+				job = std::move(m_queue.front());
 				m_queue.pop_front();
 				m_busy = true;
 			}
+			// Once there is work, not at startup: a cache that is never used touches no folder.
+			sweep(m_settings.fallbackFolder);
 			try
 			{
-				process(entry);
+				if (job.finishRecording)
+					storeRecording(job.entry);
+				else
+					process(job.entry);
 			}
 			catch (const std::exception& error)
 			{
-				fail(entry, error.what(), std::nullopt);
+				// With the file's size and time, so it is only tried again once it changes.
+				fail(job.entry, error.what(), sizeAndTime(std::filesystem::u8path(job.entry->path)));
+				job.entry->recording = false;
 			}
 		}
+	}
+
+	void PeakCache::sweep(const std::filesystem::path& folder)
+	{
+		if (!m_swept.insert(folder).second)
+			return;
+		if (const size_t removed = removeStaleTemporaries(folder, g_staleTemporaryAge); removed > 0)
+			logging::info("Removed {} temporary peak files left behind in {}", removed, folder.u8string());
 	}
 
 	void PeakCache::process(const std::shared_ptr<Entry>& entry)
 	{
 		if (entry->cancelled)
 			return;
-		const std::optional<SourceStamp> stamp = stampOf(std::filesystem::u8path(entry->path));
+		const std::filesystem::path audio = std::filesystem::u8path(entry->path);
+		sweep(audio.parent_path());
+		const std::optional<SourceStamp> stamp = stampOf(audio);
 		if (!stamp)
 		{
-			fail(entry, "can't read " + entry->path, std::nullopt);
+			// An audio file that exists but can't be read, e.g. without permission or locked by another program, keeps
+			// its size and time, so it is only tried again once it changes. One that doesn't exist has none: it is
+			// tried again once it appears.
+			fail(entry, "can't read " + entry->path, sizeAndTime(audio));
 			return;
 		}
 		try
@@ -432,9 +474,10 @@ namespace gnubase::engine::peaks
 				announce(entry, "media.peaksReady", {{"frames", frames}, {"generated", false}});
 				return true;
 			}
-			catch (const PeakFileError& problem)
+			catch (const std::exception& problem)
 			{
-				logging::info("Ignoring {}", problem.what());
+				// Damaged, foreign or unreadable: the peaks are generated again and replace it.
+				logging::info("Ignoring the peak file {}: {}", file.u8string(), problem.what());
 			}
 		}
 		return false;
@@ -508,6 +551,39 @@ namespace gnubase::engine::peaks
 		announce(entry, "media.peaksReady", {{"frames", data->frames}, {"generated", true}});
 	}
 
+	void PeakCache::storeRecording(const std::shared_ptr<Entry>& entry)
+	{
+		std::shared_ptr<const PeakData> data;
+		{
+			const std::scoped_lock lock(entry->mutex);
+			data = entry->data;
+		}
+		if (entry->cancelled || !data)
+		{
+			entry->recording = false;
+			return;
+		}
+		const std::filesystem::path audio = std::filesystem::u8path(entry->path);
+		sweep(audio.parent_path());
+		const std::optional<SourceStamp> stamp = stampOf(audio);
+		const std::string file = stamp ? store(entry->path, *stamp, *data, m_settings.fallbackFolder) : std::string();
+		std::string error;
+		if (!stamp)
+			error = "can't read " + entry->path;
+		else if (file.empty())
+			error = "can't write the peaks of " + entry->path;
+		{
+			const std::scoped_lock lock(entry->mutex);
+			entry->stamp = stamp;
+			entry->file = file;
+			entry->error = error;
+		}
+		entry->recording = false; // from now on a query notices when the file changes
+		if (!error.empty())
+			logging::warning("The peaks of the recording {} are not kept: {}", entry->path, error);
+		announce(entry, "media.peaksReady", {{"frames", data->frames}, {"generated", true}});
+	}
+
 	void PeakCache::fail(
 		const std::shared_ptr<Entry>& entry, const std::string& error, std::optional<SourceStamp> stamp)
 	{
@@ -543,20 +619,24 @@ namespace gnubase::engine::peaks
 	void PeakCache::registerCommands(Engine& engine)
 	{
 		const Json columnsSchema = {{"type", "object"},
-			{"properties", {{"min", {{"type", "array"}}}, {"max", {{"type", "array"}}}}}, {"required", {"min", "max"}}};
+			{"properties", {{"channel", integerSchema()}, {"min", {{"type", "array"}}}, {"max", {{"type", "array"}}}}},
+			{"required", {"channel", "min", "max"}}};
 		engine.registerCommand(
 			{"media.peaks", 1,
 				"The waveform overview of a media file for drawing: frames sample frames of the file from start "
-				"(default: all of it), in pixels columns (up to 65536). Per channel, the smallest and largest sample "
-				"of each column, from -32767 to 32767 (full scale). The columns come from the coarsest level of the "
-				"file's peaks (level: 256, 4096 or 65536 frames per peak) that has a peak per column, so they cost the "
-				"same at any length. status says whether the peaks are ready; while they are generated, only the "
-				"first available frames have columns and the rest are 0. A file that changed since its peaks were "
-				"made gets new ones; media.peaksProgress and media.peaksReady report how that goes.",
+				"(default: the rest of the file), in pixels columns (up to 65536). Per channel (default: all of them; "
+				"channels picks some, numbered from 0), the smallest and largest sample of each column, from -32767 "
+				"to 32767 (full scale). Pixels times channels can be up to 262144. The columns come from the coarsest "
+				"level of the file's peaks (level: 256, 4096 or 65536 frames per peak) that has a peak per column, so "
+				"they cost the same at any length. status says whether the peaks are ready; while they are "
+				"generated, only the first available frames have columns and the rest are 0. A file that changed "
+				"since its peaks were made gets new ones; media.peaksProgress and media.peaksReady report how that "
+				"goes.",
 				{{"type", "object"},
 					{"properties",
 						{{"media", integerSchema()}, {"start", integerSchema()}, {"frames", integerSchema()},
-							{"pixels", integerSchema()}}},
+							{"pixels", integerSchema()},
+							{"channels", {{"type", "array"}, {"items", integerSchema()}}}}},
 					{"required", {"media", "pixels"}}, {"additionalProperties", false}},
 				{{"type", "object"},
 					{"properties",
@@ -579,9 +659,21 @@ namespace gnubase::engine::peaks
 					frames = static_cast<uint64_t>(count);
 				}
 				const auto pixels = parameters.at("pixels").get<int64_t>();
-				require(pixels > 0 && pixels <= g_maxPixels, "pixels must be from 1 to " + std::to_string(g_maxPixels));
+				require(pixels > 0 && static_cast<uint64_t>(pixels) <= g_maxPixels,
+					"pixels must be from 1 to " + std::to_string(g_maxPixels));
+				std::vector<int> picked;
+				if (parameters.contains("channels"))
+				{
+					for (const Json& channel : parameters.at("channels"))
+					{
+						const auto index = channel.get<int64_t>();
+						require(index >= 0 && index < 256, "there is no channel " + std::to_string(index));
+						picked.push_back(static_cast<int>(index));
+					}
+					require(!picked.empty(), "channels must name at least one channel");
+				}
 				const std::optional<Query> result =
-					query(media, static_cast<uint64_t>(start), frames, static_cast<size_t>(pixels));
+					query(media, static_cast<uint64_t>(start), frames, static_cast<size_t>(pixels), picked);
 				require(result.has_value(), "no media file " + std::to_string(media));
 				const Columns& columns = result->columns;
 				Json channels = Json::array();
@@ -589,9 +681,10 @@ namespace gnubase::engine::peaks
 				{
 					const auto first = static_cast<std::ptrdiff_t>(static_cast<size_t>(channel) * columns.pixels);
 					const auto last = first + static_cast<std::ptrdiff_t>(columns.pixels);
-					channels.push_back(
-						{{"min", std::vector<int16_t>(columns.min.begin() + first, columns.min.begin() + last)},
-							{"max", std::vector<int16_t>(columns.max.begin() + first, columns.max.begin() + last)}});
+					const int index = picked.empty() ? channel : picked[static_cast<size_t>(channel)];
+					channels.push_back({{"channel", index},
+						{"min", std::vector<int16_t>(columns.min.begin() + first, columns.min.begin() + last)},
+						{"max", std::vector<int16_t>(columns.max.begin() + first, columns.max.begin() + last)}});
 				}
 				return Json{{"media", media}, {"status", stateName(result->status.state)}, {"level", columns.factor},
 					{"available", result->status.frames}, {"channels", channels}};

@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <random>
 #include <stdexcept>
 #include <system_error>
@@ -130,6 +131,7 @@ namespace gnubase::engine::peaks
 				return bytes;
 			}
 			size_t left() const { return m_bytes.size() - m_offset; }
+			size_t offset() const { return m_offset; }
 			[[noreturn]] void fail(const std::string& reason) const
 			{
 				throw PeakFileError(m_file.u8string() + " is not a valid peak file: " + reason);
@@ -147,37 +149,6 @@ namespace gnubase::engine::peaks
 			size_t m_offset = 0;
 		};
 
-		// A file's size and modification time, without its header hash; nothing if it isn't a readable file.
-		std::optional<SourceStamp> sizeAndTime(const std::filesystem::path& file)
-		{
-			// The OS directly: clang-analyzer reports std::filesystem's status flags in MSVC's own headers.
-			SourceStamp stamp;
-#ifdef _WIN32
-			WIN32_FILE_ATTRIBUTE_DATA attributes{};
-			if (GetFileAttributesExW(file.c_str(), GetFileExInfoStandard, &attributes) == 0 ||
-				(attributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
-				return std::nullopt;
-			stamp.size = (static_cast<uint64_t>(attributes.nFileSizeHigh) << 32) | attributes.nFileSizeLow;
-			stamp.modified =
-				static_cast<int64_t>((static_cast<uint64_t>(attributes.ftLastWriteTime.dwHighDateTime) << 32) |
-					attributes.ftLastWriteTime.dwLowDateTime); // 100 ns since 1601
-#else
-			struct stat status{};
-			if (::stat(file.c_str(), &status) != 0 || !S_ISREG(status.st_mode))
-				return std::nullopt;
-			stamp.size = static_cast<uint64_t>(status.st_size);
-#ifdef __APPLE__
-			const timespec& time = status.st_mtimespec;
-#else
-			const timespec& time = status.st_mtim;
-#endif
-			const int64_t seconds = time.tv_sec;
-			const int64_t nanoseconds = time.tv_nsec;
-			stamp.modified = (seconds * 1000000000) + nanoseconds;
-#endif
-			return stamp;
-		}
-
 		std::string hex(uint64_t value)
 		{
 			static constexpr char digits[] = "0123456789abcdef";
@@ -185,6 +156,27 @@ namespace gnubase::engine::peaks
 			for (size_t i = 0; i < 16; ++i)
 				text[15 - i] = digits[(value >> (4 * i)) & 0xf];
 			return text;
+		}
+
+		// Windows file times count 100 ns ticks since 1601; stamps count ns since 1970 everywhere, so a folder shared
+		// between systems keeps its peak files.
+		[[maybe_unused]] constexpr int64_t g_windowsTo1970 = 116444736000000000LL;
+
+		// A temporary peak file: "<name>.gbpeaks.<16 hex digits>.tmp".
+		bool isTemporary(const std::string& name)
+		{
+			const std::string suffix = ".tmp";
+			const std::string extension = ".gbpeaks.";
+			constexpr size_t digits = 16;
+			if (name.size() < extension.size() + digits + suffix.size() ||
+				name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0)
+				return false;
+			const size_t hexAt = name.size() - suffix.size() - digits;
+			if (name.compare(hexAt - extension.size(), extension.size(), extension) != 0)
+				return false;
+			return std::all_of(name.begin() + static_cast<std::ptrdiff_t>(hexAt),
+				name.begin() + static_cast<std::ptrdiff_t>(hexAt + digits),
+				[](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
 		}
 	}
 
@@ -345,43 +337,80 @@ namespace gnubase::engine::peaks
 		}
 	}
 
-	Columns columns(const PeakData& data, uint64_t start, uint64_t frames, size_t pixels)
+	ColumnSource columnSource(
+		const PeakData& data, uint64_t start, uint64_t frames, size_t pixels, const std::vector<int>& channels)
 	{
 		if (pixels == 0 || frames == 0)
 			throw std::invalid_argument("columns need at least one pixel and one frame");
 		if (data.levels.empty())
 			throw std::invalid_argument("peaks without levels");
-		Columns result;
-		result.channels = data.channels;
-		result.pixels = pixels;
-		const auto channels = static_cast<size_t>(data.channels);
-		result.min.assign(channels * pixels, 0);
-		result.max.assign(channels * pixels, 0);
+		for (const int channel : channels)
+			if (channel < 0 || channel >= data.channels)
+				throw std::invalid_argument("there is no channel " + std::to_string(channel) + " in peaks of " +
+					std::to_string(data.channels) + " channels");
+		std::vector<int> picked = channels;
+		if (picked.empty())
+			for (int channel = 0; channel < data.channels; ++channel)
+				picked.push_back(channel);
 
 		// The coarsest level that still has a peak per column.
 		const Level* level = data.levels.data();
 		for (const Level& candidate : data.levels)
 			if (static_cast<uint64_t>(candidate.factor) <= frames / pixels)
 				level = &candidate;
-		result.factor = level->factor;
-		const uint64_t factor = level->factor;
 
+		ColumnSource source;
+		source.factor = level->factor;
+		source.frames = data.frames;
+		source.channels = static_cast<int>(picked.size());
+		// The peaks from the first column's to the last one's, as far as there are any.
+		const uint64_t factor = level->factor;
+		const uint64_t end = start + frames;
+		const uint64_t first = std::min(start / factor, level->peaks);
+		const uint64_t last =
+			end < start ? level->peaks : std::min((end / factor) + (end % factor != 0 ? 1 : 0), level->peaks);
+		source.first = first;
+		source.peaks = last - first;
+		source.values.reserve(static_cast<size_t>(source.peaks) * picked.size() * 2);
+		for (uint64_t peak = first; peak < last; ++peak)
+			for (const int channel : picked)
+			{
+				source.values.push_back(level->min(peak, channel, data.channels));
+				source.values.push_back(level->max(peak, channel, data.channels));
+			}
+		return source;
+	}
+
+	Columns columns(const ColumnSource& source, uint64_t start, uint64_t frames, size_t pixels)
+	{
+		if (pixels == 0 || frames == 0)
+			throw std::invalid_argument("columns need at least one pixel and one frame");
+		Columns result;
+		result.factor = source.factor;
+		result.channels = source.channels;
+		result.pixels = pixels;
+		const auto channels = static_cast<size_t>(source.channels);
+		result.min.assign(channels * pixels, 0);
+		result.max.assign(channels * pixels, 0);
+		const uint64_t factor = source.factor;
+		const uint64_t limit = source.first + source.peaks;
 		for (size_t i = 0; i < pixels; ++i)
 		{
 			const uint64_t begin = start + scale(i, frames, pixels);
 			const uint64_t end = std::max(begin + 1, start + scale(i + 1, frames, pixels));
-			if (begin >= data.frames)
+			if (begin >= source.frames)
 				break;
-			const uint64_t first = begin / factor;
-			const uint64_t last = std::min((end + factor - 1) / factor, level->peaks);
+			const uint64_t first = std::max(begin / factor, source.first);
+			const uint64_t last = std::min((end + factor - 1) / factor, limit);
 			for (size_t channel = 0; channel < channels; ++channel)
 			{
 				int16_t low = g_emptyMin;
 				int16_t high = g_emptyMax;
 				for (uint64_t peak = first; peak < last; ++peak)
 				{
-					low = std::min(low, level->min(peak, static_cast<int>(channel), data.channels));
-					high = std::max(high, level->max(peak, static_cast<int>(channel), data.channels));
+					const size_t at = ((static_cast<size_t>(peak - source.first) * channels) + channel) * 2;
+					low = std::min(low, source.values[at]);
+					high = std::max(high, source.values[at + 1]);
 				}
 				result.min[(channel * pixels) + i] = low;
 				result.max[(channel * pixels) + i] = high;
@@ -389,6 +418,43 @@ namespace gnubase::engine::peaks
 			result.covered = i + 1;
 		}
 		return result;
+	}
+
+	Columns columns(
+		const PeakData& data, uint64_t start, uint64_t frames, size_t pixels, const std::vector<int>& channels)
+	{
+		return columns(columnSource(data, start, frames, pixels, channels), start, frames, pixels);
+	}
+
+	std::optional<SourceStamp> sizeAndTime(const std::filesystem::path& file)
+	{
+		// The OS directly: clang-analyzer reports std::filesystem's status flags in MSVC's own headers.
+		SourceStamp stamp;
+#ifdef _WIN32
+		WIN32_FILE_ATTRIBUTE_DATA attributes{};
+		if (GetFileAttributesExW(file.c_str(), GetFileExInfoStandard, &attributes) == 0 ||
+			(attributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+			return std::nullopt;
+		stamp.size = (static_cast<uint64_t>(attributes.nFileSizeHigh) << 32) | attributes.nFileSizeLow;
+		const auto ticks =
+			static_cast<int64_t>((static_cast<uint64_t>(attributes.ftLastWriteTime.dwHighDateTime) << 32) |
+				attributes.ftLastWriteTime.dwLowDateTime);
+		stamp.modified = (ticks - g_windowsTo1970) * 100;
+#else
+		struct stat status{};
+		if (::stat(file.c_str(), &status) != 0 || !S_ISREG(status.st_mode))
+			return std::nullopt;
+		stamp.size = static_cast<uint64_t>(status.st_size);
+#ifdef __APPLE__
+		const timespec& time = status.st_mtimespec;
+#else
+		const timespec& time = status.st_mtim;
+#endif
+		const int64_t seconds = time.tv_sec;
+		const int64_t nanoseconds = time.tv_nsec;
+		stamp.modified = (seconds * 1000000000) + nanoseconds;
+#endif
+		return stamp;
 	}
 
 	std::optional<SourceStamp> stampOf(const std::filesystem::path& file)
@@ -472,11 +538,23 @@ namespace gnubase::engine::peaks
 
 	PeakFile readPeakFile(const std::filesystem::path& file)
 	{
-		std::ifstream stream(file, std::ios::binary);
+		std::ifstream stream(file, std::ios::binary | std::ios::ate);
 		if (!stream)
 			throw PeakFileError("can't open " + file.u8string());
-		const std::string bytes((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
-		Reader in(bytes, file);
+		const std::streamoff end = stream.tellg();
+		if (end < 0)
+			throw PeakFileError("can't read " + file.u8string());
+		const auto fileSize = static_cast<uint64_t>(end);
+		// The header and the level table first: the file's size is checked against them before the values are read,
+		// so a damaged or foreign file of any size costs no more than its header.
+		const auto headerSize = static_cast<size_t>(std::min<uint64_t>(
+			fileSize, g_fixedHeader + g_maxSourceLength + (static_cast<uint64_t>(g_maxLevels) * g_levelEntry)));
+		std::string header(headerSize, '\0');
+		stream.seekg(0);
+		stream.read(header.data(), static_cast<std::streamsize>(header.size()));
+		if (static_cast<size_t>(stream.gcount()) != header.size())
+			throw PeakFileError("can't read " + file.u8string());
+		Reader in(header, file);
 
 		if (in.getBytes(g_magic.size()) != std::string(g_magic.data(), g_magic.size()))
 			in.fail("it doesn't start with the magic bytes");
@@ -508,7 +586,7 @@ namespace gnubase::engine::peaks
 			level.factor = static_cast<uint32_t>(in.get(4));
 			in.get(4);
 			level.peaks = in.get(8);
-			if (level.peaks > in.left())
+			if (level.peaks > fileSize)
 				in.fail("it is too short");
 			if (level.factor == 0 ||
 				(i > 0 && (level.factor <= data.levels.back().factor || level.factor % data.levels.back().factor != 0)))
@@ -518,15 +596,45 @@ namespace gnubase::engine::peaks
 			values += level.peaks * channels * 2;
 			data.levels.push_back(std::move(level));
 		}
-		if (in.left() != values * 2)
-			in.fail(in.left() < values * 2 ? "it is too short" : "it is too long");
+		const uint64_t left = fileSize - in.offset();
+		if (left != values * 2)
+			in.fail(left < values * 2 ? "it is too short" : "it is too long");
+
+		std::string body(static_cast<size_t>(left), '\0');
+		stream.seekg(static_cast<std::streamoff>(in.offset()));
+		stream.read(body.data(), static_cast<std::streamsize>(body.size()));
+		if (static_cast<size_t>(stream.gcount()) != body.size())
+			throw PeakFileError("can't read " + file.u8string());
+		Reader rest(body, file);
 		for (Level& level : data.levels)
 		{
 			level.values.resize(static_cast<size_t>(level.peaks * channels * 2));
 			for (int16_t& value : level.values)
-				value = static_cast<int16_t>(static_cast<uint16_t>(in.get(2)));
+				value = static_cast<int16_t>(static_cast<uint16_t>(rest.get(2)));
 		}
 		return contents;
+	}
+
+	size_t removeStaleTemporaries(const std::filesystem::path& folder, std::chrono::seconds age)
+	{
+		const auto now =
+			std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch());
+		const int64_t before = now.count() - std::chrono::duration_cast<std::chrono::nanoseconds>(age).count();
+		size_t removed = 0;
+		std::error_code error;
+		for (std::filesystem::directory_iterator it(folder, error), end; !error && it != end; it.increment(error))
+		{
+			const std::filesystem::path& path = it->path();
+			if (!isTemporary(path.filename().u8string()))
+				continue;
+			const std::optional<SourceStamp> found = sizeAndTime(path);
+			if (!found || found->modified > before)
+				continue;
+			std::error_code ignored;
+			if (std::filesystem::remove(path, ignored))
+				++removed;
+		}
+		return removed;
 	}
 
 	std::filesystem::path besidePath(const std::filesystem::path& audioFile)
@@ -550,8 +658,13 @@ namespace gnubase::engine::peaks
 	std::filesystem::path defaultFallbackFolder()
 	{
 #ifdef _WIN32
-		if (const wchar_t* appData = _wgetenv(L"LOCALAPPDATA"); appData != nullptr)
-			return std::filesystem::path(appData) / "GNUbase" / "peaks";
+		wchar_t* appData = nullptr;
+		size_t length = 0;
+		if (_wdupenv_s(&appData, &length, L"LOCALAPPDATA") == 0 && appData != nullptr)
+		{
+			const std::unique_ptr<wchar_t, decltype(&std::free)> owned(appData, &std::free);
+			return std::filesystem::path(owned.get()) / "GNUbase" / "peaks";
+		}
 #elif defined(__APPLE__)
 		if (const char* home = std::getenv("HOME"); home != nullptr)
 			return std::filesystem::path(home) / "Library" / "Caches" / "GNUbase" / "peaks";

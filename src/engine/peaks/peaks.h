@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -91,22 +92,40 @@ namespace gnubase::engine::peaks
 	struct Columns
 	{
 		uint32_t factor = 0; // the level they come from
-		int channels = 0;
+		int channels = 0;    // the channels asked for
 		size_t pixels = 0;
 		uint64_t covered = 0;     // the leading columns that have peaks; the rest are 0
 		std::vector<int16_t> min; // channels * pixels: per channel, per column
 		std::vector<int16_t> max;
 	};
 
+	// The peaks that columns are made of: a copy of the part of one level they read, for some of the channels. Cheap
+	// to take while the peaks are locked; the columns are then computed from it without the lock.
+	struct ColumnSource
+	{
+		uint32_t factor = 0;
+		uint64_t frames = 0;         // the frames the peaks cover
+		uint64_t first = 0;          // the level's first peak in values
+		uint64_t peaks = 0;          // the peaks in values
+		int channels = 0;            // the channels in values
+		std::vector<int16_t> values; // peaks * channels * 2, as in Level
+	};
+
 	// Column i covers frames [start + i * frames / pixels, start + (i + 1) * frames / pixels), widened to whole peaks
 	// of the coarsest level that still has at least one peak per column. Costs a few peaks per column at any length.
-	Columns columns(const PeakData& data, uint64_t start, uint64_t frames, size_t pixels);
+	// channels: the channels to return, in that order; empty for all of them. Throws std::invalid_argument for a
+	// channel the peaks don't have.
+	ColumnSource columnSource(
+		const PeakData& data, uint64_t start, uint64_t frames, size_t pixels, const std::vector<int>& channels = {});
+	Columns columns(const ColumnSource& source, uint64_t start, uint64_t frames, size_t pixels);
+	Columns columns(
+		const PeakData& data, uint64_t start, uint64_t frames, size_t pixels, const std::vector<int>& channels = {});
 
 	// What a peak file says about its audio file, to notice when the audio file changed.
 	struct SourceStamp
 	{
 		uint64_t size = 0;
-		int64_t modified = 0;    // the modification time: 100 ns ticks since 1601 on Windows, else ns since 1970
+		int64_t modified = 0;    // the modification time in ns since 1970 (UTC), on every system
 		uint64_t headerHash = 0; // FNV-1a of the first g_headerBytes bytes
 
 		bool operator==(const SourceStamp& other) const
@@ -120,6 +139,9 @@ namespace gnubase::engine::peaks
 
 	// The audio file's stamp, or nothing if it can't be read.
 	std::optional<SourceStamp> stampOf(const std::filesystem::path& file);
+
+	// The file's size and modification time, with no header hash, without reading it; nothing if it isn't a file.
+	std::optional<SourceStamp> sizeAndTime(const std::filesystem::path& file);
 
 	// Size and modification time only, without reading the file: cheap enough to check before every query.
 	bool sameSizeAndTime(const std::filesystem::path& file, const SourceStamp& stamp);
@@ -146,6 +168,10 @@ namespace gnubase::engine::peaks
 	void writePeakFile(
 		const std::filesystem::path& file, const std::string& source, const SourceStamp& stamp, const PeakData& data);
 	PeakFile readPeakFile(const std::filesystem::path& file);
+
+	// Removes the temporary files "<name>.gbpeaks.<16 hex digits>.tmp" in folder that a writer left behind when it
+	// crashed: those last modified more than age ago, so a write still going on keeps its file. Returns how many.
+	size_t removeStaleTemporaries(const std::filesystem::path& folder, std::chrono::seconds age);
 
 	// Where an audio file's peaks are kept: next to it as "<file name>.gbpeaks", or, where that folder can't be
 	// written, in the fallback folder under a name made from a hash of its path.

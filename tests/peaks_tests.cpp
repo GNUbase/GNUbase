@@ -25,6 +25,15 @@
 #include <utility>
 #include <vector>
 
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <winioctl.h>
+#else
+#include <sys/stat.h>
+#endif
+
 using namespace gnubase::engine;
 namespace peaks = gnubase::engine::peaks;
 namespace test = gnubase::test;
@@ -247,6 +256,84 @@ namespace
 		REQUIRE(result.ok());
 		return result.value;
 	}
+
+	// Keeps a file from being read while it exists, as another program that locks it (Windows) or a missing read
+	// permission (elsewhere) would. Its size and time stay readable.
+	class Unreadable
+	{
+	public:
+		explicit Unreadable(std::filesystem::path file) : m_file(std::move(file))
+		{
+#ifdef _WIN32
+			m_handle =
+				CreateFileW(m_file.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+			m_active = m_handle != INVALID_HANDLE_VALUE;
+#else
+			m_active = ::chmod(m_file.c_str(), 0) == 0;
+			if (m_active && std::ifstream(m_file).good())
+				release(); // root reads anything
+#endif
+		}
+		~Unreadable() { release(); }
+		Unreadable(const Unreadable&) = delete;
+		Unreadable& operator=(const Unreadable&) = delete;
+		Unreadable(Unreadable&&) = delete;
+		Unreadable& operator=(Unreadable&&) = delete;
+
+		bool active() const { return m_active; }
+
+		void release()
+		{
+			if (!m_active)
+				return;
+			m_active = false;
+#ifdef _WIN32
+			CloseHandle(m_handle);
+#else
+			::chmod(m_file.c_str(), S_IRUSR | S_IWUSR);
+#endif
+		}
+
+	private:
+		std::filesystem::path m_file;
+		bool m_active = false;
+#ifdef _WIN32
+		HANDLE m_handle = INVALID_HANDLE_VALUE;
+#endif
+	};
+
+	// Makes a file size bytes long without writing them: a sparse file, where the file system supports it.
+	bool makeSparse(const std::filesystem::path& file, uint64_t size)
+	{
+#ifdef _WIN32
+		HANDLE handle = CreateFileW(
+			file.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (handle == INVALID_HANDLE_VALUE)
+			return false;
+		DWORD bytes = 0;
+		LARGE_INTEGER end{};
+		end.QuadPart = static_cast<LONGLONG>(size);
+		const bool done = DeviceIoControl(handle, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &bytes, nullptr) != 0 &&
+			SetFilePointerEx(handle, end, nullptr, FILE_BEGIN) != 0 && SetEndOfFile(handle) != 0;
+		CloseHandle(handle);
+		return done;
+#else
+		std::error_code error;
+		std::filesystem::resize_file(file, size, error);
+		return !error;
+#endif
+	}
+
+	// Sets a file's modification time to that long ago.
+	void makeOld(const std::filesystem::path& file, std::chrono::seconds ago)
+	{
+		std::filesystem::last_write_time(file, std::filesystem::file_time_type::clock::now() - ago);
+	}
+
+	void touch(const std::filesystem::path& file)
+	{
+		std::ofstream(file, std::ios::binary) << "x";
+	}
 }
 
 TEST_CASE("every level of a peak builder matches a brute-force scan of the samples", "[unit]")
@@ -341,6 +428,58 @@ TEST_CASE("columns come from the coarsest level with a peak per column and cover
 	CHECK_THROWS(peaks::columns(data, 0, 100, 0));
 }
 
+TEST_CASE("columns are made from a copy of only the peaks they read", "[unit]")
+{
+	const std::vector<uint32_t> levels = {16, 256, 4096};
+	const peaks::PeakData data = build(testSignal(2, 100000, 13), 2, levels);
+	struct Case
+	{
+		uint64_t start;
+		uint64_t frames;
+		size_t pixels;
+	};
+	for (const Case& c : {Case{0, 100000, 20}, Case{0, 100000, 1000}, Case{12345, 5000, 7}, Case{99990, 10, 50},
+			 Case{50000, 3000, 3000}, Case{50000, 100000, 10}, Case{200000, 100, 10}})
+	{
+		CAPTURE(c.start, c.frames, c.pixels);
+		const peaks::ColumnSource source = peaks::columnSource(data, c.start, c.frames, c.pixels);
+		CHECK(source.channels == 2);
+		CHECK(source.values.size() == source.peaks * 2 * 2);
+		// The peaks that cover [start, start + frames), and no more.
+		CHECK(source.peaks <= (c.frames / source.factor) + 2);
+		const peaks::Columns fromCopy = peaks::columns(source, c.start, c.frames, c.pixels);
+		const peaks::Columns direct = peaks::columns(data, c.start, c.frames, c.pixels);
+		CHECK(fromCopy.factor == direct.factor);
+		CHECK(fromCopy.covered == direct.covered);
+		CHECK(fromCopy.min == direct.min);
+		CHECK(fromCopy.max == direct.max);
+	}
+}
+
+TEST_CASE("columns of some channels, in the order asked for", "[unit]")
+{
+	const peaks::PeakData data = build(testSignal(3, 20000, 31), 3, {16, 256});
+	const peaks::Columns all = peaks::columns(data, 0, 20000, 40);
+	REQUIRE(all.channels == 3);
+	const auto channelOf = [](const peaks::Columns& columns, size_t channel)
+	{
+		const auto first = static_cast<std::ptrdiff_t>(channel * columns.pixels);
+		const auto last = first + static_cast<std::ptrdiff_t>(columns.pixels);
+		return std::make_pair(std::vector<int16_t>(columns.min.begin() + first, columns.min.begin() + last),
+			std::vector<int16_t>(columns.max.begin() + first, columns.max.begin() + last));
+	};
+
+	const peaks::Columns picked = peaks::columns(data, 0, 20000, 40, {2, 0});
+	REQUIRE(picked.channels == 2);
+	REQUIRE(picked.min.size() == 80);
+	CHECK(channelOf(picked, 0) == channelOf(all, 2));
+	CHECK(channelOf(picked, 1) == channelOf(all, 0));
+	CHECK(channelOf(peaks::columns(data, 0, 20000, 40, {1}), 0) == channelOf(all, 1));
+
+	CHECK_THROWS_AS(peaks::columns(data, 0, 20000, 40, {3}), std::invalid_argument);
+	CHECK_THROWS_AS(peaks::columns(data, 0, 20000, 40, {-1}), std::invalid_argument);
+}
+
 TEST_CASE("peak files round trip, and damaged ones are rejected", "[unit]")
 {
 	const test::TempDir dir;
@@ -382,6 +521,39 @@ TEST_CASE("peak files round trip, and damaged ones are rejected", "[unit]")
 	CHECK_THROWS_AS(peaks::readPeakFile(dir.path() / "missing.gbpeaks"), peaks::PeakFileError);
 }
 
+TEST_CASE("a peak file far larger than its header says is rejected without reading it", "[unit]")
+{
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "huge.gbpeaks";
+	peaks::writePeakFile(file, "take.wav", {1, 2, 3}, build(testSignal(1, 5000), 1, peaks::defaultLevels()));
+	// 64 GiB: more memory than a test machine has, so reading it all would fail with std::bad_alloc.
+	if (!makeSparse(file, 64ULL << 30))
+		SKIP("this file system can't make sparse files");
+	const auto before = std::chrono::steady_clock::now();
+	CHECK_THROWS_WITH(peaks::readPeakFile(file), ContainsSubstring("too long"));
+	CHECK(std::chrono::steady_clock::now() - before < std::chrono::seconds(5));
+}
+
+TEST_CASE("temporary peak files that a crash left behind are removed once they are old", "[unit]")
+{
+	const test::TempDir dir;
+	const std::filesystem::path stale = dir.path() / "take.wav.gbpeaks.0123456789abcdef.tmp";
+	const std::filesystem::path fresh = dir.path() / "take.wav.gbpeaks.fedcba9876543210.tmp";
+	const std::filesystem::path other = dir.path() / "notes.tmp";
+	const std::filesystem::path notHex = dir.path() / "take.wav.gbpeaks.0123456789abcdeg.tmp";
+	const std::filesystem::path peakFile = dir.path() / "take.wav.gbpeaks";
+	for (const auto& file : {stale, fresh, other, notHex, peakFile})
+		touch(file);
+	for (const auto& file : {stale, other, notHex, peakFile})
+		makeOld(file, std::chrono::hours(2));
+
+	CHECK(peaks::removeStaleTemporaries(dir.path(), std::chrono::hours(1)) == 1);
+	CHECK_FALSE(std::filesystem::exists(stale));
+	for (const auto& file : {fresh, other, notHex, peakFile})
+		CHECK(std::filesystem::exists(file));
+	CHECK(peaks::removeStaleTemporaries(dir.path() / "missing", std::chrono::hours(1)) == 0);
+}
+
 TEST_CASE("an audio file's stamp changes with its size, its modification time and its header", "[unit]")
 {
 	const test::TempDir dir;
@@ -412,6 +584,25 @@ TEST_CASE("an audio file's stamp changes with its size, its modification time an
 	CHECK(fallback.parent_path() == dir.path() / "cache");
 	CHECK(fallback.extension() == ".gbpeaks");
 	CHECK(fallback != peaks::fallbackPath(dir.path() / "cache", dir.path() / "other.wav"));
+}
+
+TEST_CASE("modification times count nanoseconds since 1970 on every system", "[unit]")
+{
+	// So a folder shared between Windows and other systems keeps its peak files.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "take.wav";
+	touch(file);
+	const std::optional<peaks::SourceStamp> stamp = peaks::sizeAndTime(file);
+	REQUIRE(stamp.has_value());
+	const auto now =
+		std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch());
+	const auto modified = std::chrono::nanoseconds(stamp.value_or(peaks::SourceStamp{}).modified);
+	CHECK(modified > now - std::chrono::minutes(5));
+	CHECK(modified < now + std::chrono::minutes(5));
+	CHECK(stamp.value_or(peaks::SourceStamp{}).headerHash == 0);
+	CHECK(stamp.value_or(peaks::SourceStamp{}).size == 1);
+	CHECK_FALSE(peaks::sizeAndTime(dir.path() / "missing.wav"));
+	CHECK_FALSE(peaks::sizeAndTime(dir.path()));
 }
 
 TEST_CASE("the cache generates peaks in the background and loads the peak file next time", "[integration]")
@@ -455,6 +646,14 @@ TEST_CASE("the cache generates peaks in the background and loads the peak file n
 		CHECK(query.columns.covered == 500);
 		checkColumns(query.columns, written.data);
 		CHECK_FALSE(cache.query(8, 0, std::nullopt, 500));
+
+		// Without frames, the columns run from start to the end of the file.
+		const peaks::PeakCache::Query rest = queryOf(cache, 7, 150000, std::nullopt, 500);
+		CHECK(rest.columns.covered == 500);
+		const peaks::Columns expected = peaks::columns(written.data, 150000, 50000, 500);
+		CHECK(rest.columns.min == expected.min);
+		CHECK(rest.columns.max == expected.max);
+		CHECK(queryOf(cache, 7, 250000, std::nullopt, 10).columns.covered == 0);
 	}
 
 	// The next time, the peak file is used.
@@ -467,6 +666,8 @@ TEST_CASE("the cache generates peaks in the background and loads the peak file n
 	CHECK(events.count("media.peaksProgress") == 0);
 	const peaks::Status status = statusOf(cache, 3);
 	CHECK_FALSE(status.generated);
+	// A media file without a length uses the frames that have peaks.
+	CHECK(queryOf(cache, 3, 199000, std::nullopt, 100).columns.covered == 100);
 
 	// Two media files of the same audio file share its peaks.
 	cache.sync({mediaFile(3, file), mediaFile(4, file)});
@@ -581,6 +782,95 @@ TEST_CASE("an audio file that can't be read fails, and is tried again once it ex
 	REQUIRE_FALSE(events.waitFor("media.peaksReady").is_null());
 }
 
+TEST_CASE("an audio file that exists but can't be read is tried again only once it changes", "[integration]")
+{
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "locked.wav";
+	writeAudio(file, testSignal(1, 1000), 1);
+	Unreadable lock(file);
+	if (!lock.active())
+		SKIP("can't keep this file from being read");
+	peaks::CacheSettings settings;
+	settings.fallbackFolder = dir.path() / "cache";
+	Announcements events;
+	peaks::PeakCache cache(events.notify(), settings);
+	cache.sync({mediaFile(1, file)});
+	REQUIRE_FALSE(events.waitFor("media.peaksFailed").is_null());
+
+	// Every query used to start it again, fail again and announce it again: a UI that redraws on that loops.
+	for (int i = 0; i < 5; ++i)
+	{
+		CHECK(queryOf(cache, 1, 0, 100, 10).status.state == peaks::State::Failed);
+		REQUIRE(cache.waitIdle(std::chrono::seconds(10)));
+	}
+	CHECK(events.count("media.peaksFailed") == 0);
+
+	// Once it changes, it is tried again.
+	lock.release();
+	writeAudio(file, testSignal(1, 2000), 1);
+	std::filesystem::last_write_time(file, std::filesystem::last_write_time(file) + std::chrono::seconds(3));
+	cache.query(1, 0, 100, 10);
+	const Json ready = events.waitFor("media.peaksReady");
+	REQUIRE_FALSE(ready.is_null());
+	CHECK(ready.at("frames") == 2000);
+}
+
+TEST_CASE("a huge damaged peak file is generated again and replaced", "[integration]")
+{
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "take.wav";
+	writeAudio(file, testSignal(1, 10000), 1);
+	peaks::CacheSettings settings;
+	settings.fallbackFolder = dir.path() / "cache";
+	{
+		Announcements events;
+		peaks::PeakCache cache(events.notify(), settings);
+		cache.sync({mediaFile(1, file)});
+		REQUIRE_FALSE(events.waitFor("media.peaksReady").is_null());
+	}
+	if (!makeSparse(peaks::besidePath(file), 64ULL << 30))
+		SKIP("this file system can't make sparse files");
+
+	Announcements events;
+	peaks::PeakCache cache(events.notify(), settings);
+	cache.sync({mediaFile(1, file)});
+	const Json ready = events.waitFor("media.peaksReady");
+	REQUIRE_FALSE(ready.is_null());
+	CHECK(ready.at("generated") == true);
+	CHECK(statusOf(cache, 1).state == peaks::State::Ready);
+	CHECK(std::filesystem::file_size(peaks::besidePath(file)) < 100000);
+}
+
+TEST_CASE("the cache removes temporary peak files that a crash left behind", "[integration]")
+{
+	const test::TempDir dir;
+	const std::filesystem::path audio = dir.path() / "audio";
+	std::filesystem::create_directories(audio);
+	const std::filesystem::path file = audio / "take.wav";
+	writeAudio(file, testSignal(1, 1000), 1);
+	peaks::CacheSettings settings;
+	settings.fallbackFolder = dir.path() / "cache";
+	std::filesystem::create_directories(settings.fallbackFolder);
+
+	const std::filesystem::path besideLeftover = audio / "other.wav.gbpeaks.0123456789abcdef.tmp";
+	const std::filesystem::path cacheLeftover =
+		settings.fallbackFolder / "other.wav-0011223344556677.gbpeaks.0123456789abcdef.tmp";
+	const std::filesystem::path writing = audio / "other.wav.gbpeaks.fedcba9876543210.tmp";
+	for (const auto& leftover : {besideLeftover, cacheLeftover, writing})
+		touch(leftover);
+	makeOld(besideLeftover, std::chrono::hours(2));
+	makeOld(cacheLeftover, std::chrono::hours(2));
+
+	Announcements events;
+	peaks::PeakCache cache(events.notify(), settings);
+	cache.sync({mediaFile(1, file)});
+	REQUIRE(cache.waitIdle(std::chrono::seconds(10)));
+	REQUIRE_FALSE(events.waitFor("media.peaksReady").is_null());
+	CHECK_FALSE(std::filesystem::exists(besideLeftover));
+	CHECK_FALSE(std::filesystem::exists(cacheLeftover));
+	CHECK(std::filesystem::exists(writing)); // a write that may still go on
+}
+
 TEST_CASE("removing a media file cancels the generation of its peaks", "[integration]")
 {
 	const test::TempDir dir;
@@ -659,6 +949,10 @@ TEST_CASE("a recording's peaks grow with every append and are written when it fi
 	writer.reset();
 	recorder->finish();
 	CHECK(statusOf(cache, 5).state == peaks::State::Ready);
+	const Json stored = events.waitFor("media.peaksReady");
+	REQUIRE_FALSE(stored.is_null());
+	CHECK(stored == Json{{"media", 5}, {"frames", 120000}, {"generated", true}});
+	CHECK(statusOf(cache, 5).file == peaks::besidePath(file).u8string());
 	const peaks::PeakFile written = peaks::readPeakFile(peaks::besidePath(file));
 	checkAgainstScan(written.data, samples, 2);
 	CHECK(written.stamp == peaks::stampOf(file));
@@ -670,6 +964,60 @@ TEST_CASE("a recording's peaks grow with every append and are written when it fi
 	const Json ready = later.waitFor("media.peaksReady");
 	REQUIRE_FALSE(ready.is_null());
 	CHECK(ready.at("generated") == false);
+}
+
+TEST_CASE("finishing a recording returns at once; the worker writes its peak file", "[integration]")
+{
+	const test::TempDir dir;
+	const std::filesystem::path busy = dir.path() / "busy.wav";
+	writeAudio(busy, testSignal(1, 20000), 1);
+	const std::filesystem::path file = dir.path() / "recording.wav";
+
+	// The worker is busy with another file until the recording has finished.
+	std::mutex mutex;
+	std::condition_variable changed;
+	bool working = false;
+	bool finished = false;
+	peaks::CacheSettings settings;
+	settings.fallbackFolder = dir.path() / "cache";
+	settings.beforeChunk = [&]
+	{
+		std::unique_lock lock(mutex);
+		working = true;
+		changed.notify_all();
+		changed.wait(lock, [&] { return finished; });
+	};
+	Announcements events;
+	peaks::PeakCache cache(events.notify(), settings);
+	cache.sync({mediaFile(1, busy)});
+	{
+		std::unique_lock lock(mutex);
+		REQUIRE(changed.wait_for(lock, std::chrono::seconds(10), [&] { return working; }));
+	}
+
+	const std::vector<float> samples = testSignal(1, 30000, 37);
+	writeAudio(file, samples, 1);
+	const std::unique_ptr<peaks::PeakRecorder> recorder = cache.record(file.u8string(), 1, 48000.0);
+	cache.sync({mediaFile(1, busy), mediaFile(2, file)});
+	recorder->append(samples.data(), samples.size());
+	recorder->finish();
+	// The peaks are ready at once; the file is hashed and the peak file written later, on the worker.
+	CHECK(statusOf(cache, 2).state == peaks::State::Ready);
+	CHECK(statusOf(cache, 2).frames == 30000);
+	CHECK_FALSE(std::filesystem::exists(peaks::besidePath(file)));
+	CHECK(events.count("media.peaksReady") == 0);
+
+	{
+		const std::scoped_lock lock(mutex);
+		finished = true;
+	}
+	changed.notify_all();
+	REQUIRE(cache.waitIdle(std::chrono::seconds(10)));
+	CHECK(events.count("media.peaksReady") == 2);
+	CHECK(statusOf(cache, 2).file == peaks::besidePath(file).u8string());
+	const peaks::PeakFile written = peaks::readPeakFile(peaks::besidePath(file));
+	checkAgainstScan(written.data, samples, 1);
+	CHECK(written.stamp == peaks::stampOf(file));
 }
 
 TEST_CASE("media.peaks returns min and max columns of a media file", "[integration]")
@@ -697,6 +1045,7 @@ TEST_CASE("media.peaks returns min and max columns of a media file", "[integrati
 	for (size_t channel = 0; channel < 2; ++channel)
 	{
 		const Json& columns = result.at("channels").at(channel);
+		CHECK(columns.at("channel") == channel);
 		REQUIRE(columns.at("min").size() == 50);
 		for (size_t i = 0; i < 50; ++i)
 		{
@@ -724,6 +1073,105 @@ TEST_CASE("media.peaks returns min and max columns of a media file", "[integrati
 	const Json again = waitForEvent(client, "media.peaksReady");
 	REQUIRE_FALSE(again.is_null());
 	CHECK(again.at("generated") == false);
+}
+
+TEST_CASE("media.peaks picks channels and limits pixels times channels", "[integration]")
+{
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "eight.wav";
+	const std::vector<float> samples = testSignal(8, 5000, 41);
+	writeAudio(file, samples, 8);
+
+	Engine engine;
+	Client client(engine);
+	const Json id = run(client, "media.add", {{"path", file.u8string()}}).at("media").at("id");
+	REQUIRE_FALSE(waitForEvent(client, "media.peaksReady").is_null());
+	const peaks::Columns expected = peaks::columns(build(samples, 8, peaks::defaultLevels()), 0, 5000, 20);
+
+	const Json picked = run(client, "media.peaks", {{"media", id}, {"pixels", 20}, {"channels", {7, 2}}});
+	REQUIRE(picked.at("channels").size() == 2);
+	for (size_t i = 0; i < 2; ++i)
+	{
+		const size_t channel = i == 0 ? 7 : 2;
+		const Json& columns = picked.at("channels").at(i);
+		CHECK(columns.at("channel") == channel);
+		REQUIRE(columns.at("max").size() == 20);
+		for (size_t column = 0; column < 20; ++column)
+		{
+			CHECK(columns.at("min").at(column) == expected.min[(channel * 20) + column]);
+			CHECK(columns.at("max").at(column) == expected.max[(channel * 20) + column]);
+		}
+	}
+
+	// 65536 pixels of 8 channels would be 524288 values per side.
+	CHECK_THAT(
+		client.call("media.peaks", {{"media", id}, {"pixels", 65536}}).error, ContainsSubstring("pick channels"));
+	const Json two = run(client, "media.peaks", {{"media", id}, {"pixels", 65536}, {"channels", {0, 1}}});
+	CHECK(two.at("channels").size() == 2);
+	CHECK(two.at("channels").at(0).at("max").size() == 65536);
+	CHECK_FALSE(client.call("media.peaks", {{"media", id}, {"pixels", 65537}, {"channels", {0}}}).ok());
+	CHECK_THAT(client.call("media.peaks", {{"media", id}, {"pixels", 10}, {"channels", {8}}}).error,
+		ContainsSubstring("channel 8"));
+	CHECK_FALSE(client.call("media.peaks", {{"media", id}, {"pixels", 10}, {"channels", Json::array()}}).ok());
+}
+
+TEST_CASE("media.added reaches clients before the media file's media.peaksReady", "[integration]")
+{
+	const test::TempDir dir;
+	std::vector<std::filesystem::path> files;
+	files.reserve(10);
+	for (int i = 0; i < 10; ++i)
+	{
+		files.push_back(dir.path() / ("take" + std::to_string(i) + ".wav"));
+		writeAudio(files.back(), testSignal(1, 1000, static_cast<uint32_t>(i)), 1);
+	}
+	{
+		// Peak files first, so the worker only has to load them: as fast as it gets.
+		peaks::CacheSettings settings;
+		settings.fallbackFolder = dir.path() / "cache";
+		Announcements events;
+		peaks::PeakCache cache(events.notify(), settings);
+		std::vector<RenderMedia> media;
+		media.reserve(files.size());
+		for (const auto& file : files)
+			media.push_back(mediaFile(static_cast<ObjectId>(media.size() + 1), file));
+		cache.sync(media);
+		REQUIRE(cache.waitIdle(std::chrono::seconds(20)));
+	}
+
+	Engine engine;
+	Client client(engine);
+	for (const auto& file : files)
+	{
+		CAPTURE(file.u8string());
+		const RequestId request = client.send("media.add", {{"path", file.u8string()}});
+		std::vector<std::string> order;
+		Json id;
+		const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+		while (std::chrono::steady_clock::now() < until)
+		{
+			std::optional<Message> message = client.wait(std::chrono::seconds(1));
+			if (!message)
+				continue;
+			if (const auto* result = std::get_if<Result>(&*message); result != nullptr && result->request == request)
+			{
+				REQUIRE(result->ok());
+				id = result->value.at("media").at("id");
+				order.emplace_back("result");
+			}
+			else if (const auto* event = std::get_if<Event>(&*message); event != nullptr)
+			{
+				order.push_back(event->name);
+				if (event->name == "media.peaksReady")
+					break;
+			}
+		}
+		REQUIRE_FALSE(order.empty());
+		CHECK(order.back() == "media.peaksReady");
+		const auto added = std::find(order.begin(), order.end(), "media.added");
+		CHECK(added != order.end());
+		CHECK(added < order.end() - 1);
+	}
 }
 
 TEST_CASE(
