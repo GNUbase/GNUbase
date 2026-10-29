@@ -12,6 +12,30 @@
 # plus clang, ccache, git-lfs and, through pipx, clang-tidy==22.1.8 and clang-format==22.1.3.
 # Logs: build/ci-local/<job>.log. Exit status: 0 every job passed, 1 a job failed, 2 error.
 set -u
+
+# Started by Windows inside WSL: moves the clone to the Windows checkout's HEAD, with the same submodules and test
+# audio, runs the Linux jobs there and copies their logs back.
+if [ "${1:-}" = --wsl ]; then
+	source=$2
+	shift 2
+	mirror=$HOME/gnubase-ci
+	export GIT_LFS_SKIP_SMUDGE=1 # as in CI: only the test audio comes from Git LFS
+	mkdir -p "$source/build/ci-local"
+	if ! { { [ -d "$mirror/.git" ] || git clone -q --no-checkout "$source" "$mirror"; } && cd "$mirror" &&
+		git fetch -q --no-tags "$source" HEAD && git checkout -q --force --detach FETCH_HEAD &&
+		git submodule sync -q && git submodule update -q --init --recursive &&
+		git submodule update -q --init --checkout ext/vst3sdk &&
+		git -C ext/vst3sdk submodule update -q --init base cmake pluginterfaces public.sdk &&
+		git lfs pull --include "tests/data/**,tests/golden/**"; } > "$source/build/ci-local/wsl.log" 2>&1; then
+		echo "Preparing the clone in WSL failed, see build/ci-local/wsl.log"
+		exit 1
+	fi
+	bash tools/ci-local.sh --here "$@"
+	status=$?
+	cp build/ci-local/*.log "$source/build/ci-local/"
+	exit $status
+fi
+
 root=$(git rev-parse --show-toplevel) || exit 2
 cd "$root" || exit 2
 logs="$root/build/ci-local"
@@ -156,36 +180,15 @@ if $here || [ $os != windows ]; then
 	exit
 fi
 
-# Windows: the Linux jobs go to WSL, into a clone moved to this checkout's HEAD, with the same submodules and test
-# audio. Their logs are copied back here.
+# Windows: the Linux jobs go to WSL (see --wsl above).
 [ -z "$(git status --porcelain --untracked-files=no)" ] ||
 	echo "Note: uncommitted changes are not checked, only HEAD $(git rev-parse --short HEAD)." >&2
 started=$SECONDS
 status=0
 if [ ${#linuxJobs[@]} -gt 0 ]; then
 	source=$(cygpath -m "$root" | sed -E 's|^([A-Za-z]):|/mnt/\L\1|')
-	MSYS_NO_PATHCONV=1 wsl.exe -d "${GNUBASE_WSL:-Ubuntu}" -- bash -c '
-		source=$1
-		shift
-		mirror=$HOME/gnubase-ci
-		export GIT_LFS_SKIP_SMUDGE=1 # as in CI: only the test audio comes from Git LFS
-		set -e
-		[ -d "$mirror/.git" ] || git clone -q --no-checkout "$source" "$mirror"
-		cd "$mirror"
-		git fetch -q --no-tags "$source" HEAD
-		git checkout -q --force --detach FETCH_HEAD
-		git submodule sync -q
-		git submodule update -q --init --recursive
-		git submodule update -q --init --checkout ext/vst3sdk
-		git -C ext/vst3sdk submodule update -q --init base cmake pluginterfaces public.sdk
-		git lfs pull --include "tests/data/**,tests/golden/**"
-		set +e
-		bash tools/ci-local.sh --here "$@"
-		status=$?
-		mkdir -p "$source/build/ci-local"
-		cp build/ci-local/*.log "$source/build/ci-local/"
-		exit $status
-	' _ "$source" "${linuxJobs[@]}" &
+	MSYS_NO_PATHCONV=1 wsl.exe -d "${GNUBASE_WSL:-Ubuntu}" -- bash "$source/tools/ci-local.sh" --wsl "$source" \
+		"${linuxJobs[@]}" &
 	wslPid=$!
 fi
 if [ ${#otherJobs[@]} -gt 0 ]; then
