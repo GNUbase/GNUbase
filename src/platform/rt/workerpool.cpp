@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <climits>
+#include <optional>
 #include <string>
 #include <system_error>
 
@@ -298,8 +299,11 @@ namespace gnubase::rt
 
 	void WorkerPool::loop(size_t thread, double periodSeconds)
 	{
-		const ScopedRealtimePriority priority(periodSeconds);
-		const bool realtime = priority.active() && !g_refuseRealtime.load();
+		// A refused worker runs at normal priority, as on Linux without real-time privileges.
+		std::optional<ScopedRealtimePriority> priority;
+		if (!g_refuseRealtime.load())
+			priority.emplace(periodSeconds);
+		const bool realtime = priority && priority->active();
 		if (realtime)
 			m_realtime.fetch_add(1, std::memory_order_release);
 		m_started.release();
