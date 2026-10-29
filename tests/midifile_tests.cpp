@@ -124,7 +124,12 @@ namespace
 		project.name = "Song";
 		project.tempo = TempoMap({{0, 120.0, false}, {4 * g_quarter, 90.0, false}});
 		project.signatures = SignatureMap({{0, {4, 4}}, {2, {3, 4}}});
-		project.markers[1] = Marker{1, 4 * g_quarter, "Verse", ""};
+		Marker verse;
+		verse.id = 1;
+		verse.position = {gnubase::time::TimeBase::Musical, 4 * g_quarter};
+		verse.end = verse.position;
+		verse.name = "Verse";
+		project.markers[1] = verse;
 
 		Track track;
 		track.id = 2;
@@ -564,9 +569,39 @@ TEST_CASE("MIDI file export and import keep notes, controllers, tempo, signature
 		CHECK_THAT(imported.tempo.points()[2].bpm, WithinAbs(140.5, 1e-3));
 		CHECK(imported.signatures == project.signatures);
 		REQUIRE(imported.markers.size() == 1);
-		CHECK(imported.markers[0].position == 4 * g_quarter);
+		CHECK(imported.markers[0].position.value == 4 * g_quarter);
 		CHECK(imported.markers[0].name == "Verse");
 	}
+}
+
+TEST_CASE("MIDI file export writes the markers of every marker track, cycle markers at their start", "[unit]")
+{
+	Project project = newProject();
+	project.sampleRate = 44100.0;
+	const auto marker = [&project](ObjectId id, ObjectId track, MarkerType type, gnubase::time::Position position,
+							gnubase::time::Position end, const char* name)
+	{
+		Marker added;
+		added.id = id;
+		added.track = track;
+		added.type = type;
+		added.position = position;
+		added.end = end;
+		added.name = name;
+		project.markers[id] = added;
+	};
+	using gnubase::time::TimeBase;
+	// A cycle marker on a musical track, a position marker on a linear one at 1 s: two quarter notes at 120 BPM.
+	marker(10, 1, MarkerType::Cycle, {TimeBase::Musical, 3 * g_quarter}, {TimeBase::Musical, 5 * g_quarter}, "Loop");
+	marker(11, 2, MarkerType::Position, {TimeBase::Linear, 44100}, {TimeBase::Linear, 44100}, "Take");
+	const midifile::Import imported =
+		midifile::importFile(midifile::read(midifile::write(midifile::exportProject(project, {}))));
+	REQUIRE(imported.markers.size() == 2);
+	CHECK(imported.markers[0].name == "Take");
+	CHECK(imported.markers[0].position.value == 2 * g_quarter);
+	CHECK(imported.markers[1].name == "Loop");
+	CHECK(imported.markers[1].position.value == 3 * g_quarter);
+	CHECK(imported.markers[1].type == MarkerType::Position);
 }
 
 TEST_CASE("MIDI file export turns tempo ramps into steps that take as long", "[unit]")
@@ -751,7 +786,7 @@ TEST_CASE("MIDI file import lays a type 2 file's sequences out one after another
 	CHECK(std::make_tuple(tempo[1].position, tempo[1].bpm) == std::make_tuple(3 * g_quarter, 120.0));
 	CHECK(std::make_tuple(tempo[2].position, tempo[2].bpm) == std::make_tuple(7 * g_quarter, 150.0));
 	REQUIRE(imported.markers.size() == 1);
-	CHECK(imported.markers[0].position == 7 * g_quarter);
+	CHECK(imported.markers[0].position.value == 7 * g_quarter);
 	REQUIRE(imported.tracks.size() == 3);
 	CHECK(imported.tracks[0].notes.at(0).position == 0);
 	CHECK(imported.tracks[1].notes.at(0).position == 3 * g_quarter);
@@ -778,9 +813,11 @@ TEST_CASE("midiFile.import and midiFile.export round-trip a file through the eng
 	REQUIRE(imported.at("tracks").size() == 1);
 	REQUIRE(imported.at("parts").size() == 1);
 	const Json project = run(client, "project.get");
-	REQUIRE(project.at("tracks").size() == 1);
-	CHECK(project.at("tracks")[0].at("name") == "Piano");
-	CHECK(project.at("tracks")[0].at("type") == "midi");
+	REQUIRE(project.at("tracks").size() == 2); // the file's markers are on a new marker track at the top
+	CHECK(project.at("tracks")[0].at("type") == "marker");
+	CHECK(project.at("activeMarkerTrack") == project.at("tracks")[0].at("id"));
+	CHECK(project.at("tracks")[1].at("name") == "Piano");
+	CHECK(project.at("tracks")[1].at("type") == "midi");
 	const Json& part = project.at("midiParts")[0];
 	CHECK(part.at("position") == 4 * g_quarter); // the bar of the first event
 	CHECK(part.at("length") == 4 * g_quarter);   // to the end of the bar of the last
@@ -790,6 +827,9 @@ TEST_CASE("midiFile.import and midiFile.export round-trip a file through the eng
 	CHECK(project.at("signatures").size() == 2);
 	REQUIRE(project.at("markers").size() == 1);
 	CHECK(project.at("markers")[0].at("name") == "Verse");
+	CHECK(project.at("markers")[0].at("track") == project.at("tracks")[0].at("id"));
+	CHECK(project.at("markers")[0].at("type") == "position");
+	CHECK(project.at("markers")[0].at("number") == 1);
 
 	const std::filesystem::path copy = dir.path() / "copy.mid";
 	CHECK(run(client, "midiFile.export", {{"path", utf8(copy)}, {"ppq", 96}}).at("tracks") == 2);
@@ -810,6 +850,43 @@ TEST_CASE("midiFile.import and midiFile.export round-trip a file through the eng
 	CHECK(second.at("tracks")[0].at("type") == "instrument");
 	CHECK(second.at("tempo").size() == 1);
 	CHECK(second.at("markers").empty());
+}
+
+TEST_CASE(
+	"midiFile.import adds markers to the active marker track and keeps cycle markers a sample long", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const auto track =
+		run(client, "track.add", {{"type", "marker"}, {"timeBase", "linear"}}).at("track").at("id").get<ObjectId>();
+	// At 120 BPM and 48 kHz, 50 ticks are 0.7 samples, which round to one; at 240 BPM they would round to none.
+	const auto musical = run(client, "track.add", {{"type", "marker"}}).at("track").at("id").get<ObjectId>();
+	const auto cycle = run(client, "marker.add", {{"track", musical}, {"type", "cycle"}, {"position", 0}, {"end", 50}})
+						   .at("marker")
+						   .at("id")
+						   .get<ObjectId>();
+	run(client, "marker.add", {{"track", track}, {"position", 0}, {"name", "Start"}});
+	run(client, "marker.activateTrack", {{"track", track}});
+
+	// 240 BPM, and a marker one quarter note in: 12000 samples.
+	const std::filesystem::path path = dir.path() / "fast.mid";
+	writeBytes(path,
+		join({header(1, 1, 96),
+			chunk("MTrk",
+				join({{0x00, 0xFF, 0x51, 0x03, 0x03, 0xD0, 0x90}, {0x60, 0xFF, 0x06, 0x05}, text("Verse"), {0x00},
+					endOfTrack()}))}));
+	run(client, "midiFile.import", {{"path", utf8(path)}});
+
+	const Json markers = run(client, "marker.list", {{"track", track}}).at("markers");
+	REQUIRE(markers.size() == 2);
+	CHECK(markers[1].at("name") == "Verse");
+	CHECK(markers[1].at("position") == 12000);
+	CHECK(markers[1].at("number") == 2);
+	const Json list = run(client, "marker.list", {{"track", musical}}).at("markers");
+	REQUIRE(list.size() == 1);
+	CHECK(list[0].at("id") == cycle);
+	CHECK(list[0].at("endSamples").get<int64_t>() > list[0].at("positionSamples").get<int64_t>());
 }
 
 TEST_CASE("midiFile.import splits a type 0 file by channel", "[integration]")
@@ -860,8 +937,8 @@ TEST_CASE("midiFile.import reads names that aren't UTF-8 and the project still s
 					endOfTrack()}))}));
 	run(client, "midiFile.import", {{"path", utf8(path)}});
 	const Json project = run(client, "project.get");
-	REQUIRE(project.at("tracks").size() == 1);
-	CHECK(project.at("tracks")[0].at("name") == "B\xC3\xA4sse");
+	REQUIRE(project.at("tracks").size() == 2); // and a marker track for the marker
+	CHECK(project.at("tracks")[1].at("name") == "B\xC3\xA4sse");
 	REQUIRE(project.at("markers").size() == 1);
 	CHECK(project.at("markers")[0].at("name") ==
 		"Br\xC3\xBC"

@@ -23,6 +23,8 @@ namespace gnubase::engine
 	const char* timeBaseName(time::TimeBase base);
 	time::TimeBase timeBaseFromName(const std::string& name);
 	const char* directionName(BusDirection direction);
+	const char* markerTypeName(MarkerType type);
+	std::optional<MarkerType> markerTypeFromName(const std::string& name);
 
 	Json toJson(const Bus& bus);
 	Json toJson(const Track& track);
