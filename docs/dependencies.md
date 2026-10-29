@@ -57,6 +57,9 @@ Used unchanged, pinned to an upstream release tag.
 | `ext/cpp-httplib` | [yhirose/cpp-httplib](https://github.com/yhirose/cpp-httplib) | `v0.61.0` |
 | `ext/lua` | [lua/lua](https://github.com/lua/lua) (the Lua team's repository) | `v5.4.9` |
 | `ext/clap` | [free-audio/clap](https://github.com/free-audio/clap) | `1.2.10` |
+| `ext/asio` | [GNUbase/asio](https://github.com/GNUbase/asio), a mirror of [audiosdk/asio](https://github.com/audiosdk/asio), a copy of the ASIO SDK's download | commit `496a076` (SDK 2.3.4) |
+
+The ASIO SDK is only published as a download on its vendor's website, which has no git repository; `ext/asio` is GNUbase's mirror of a third party's copy of that download, with one commit and no tags, so the pinned commit can't disappear. GNUbase uses only its headers (`ext/asio/common`), and only on Windows. Its files name the vendor, which GNUbase's own files never do, so the SDK stays in its submodule and is never copied into the tree.
 
 `ext/json`, `ext/flac`, `ext/cpp-httplib` and `ext/lua` are shallow submodules (`shallow = true` in `.gitmodules`): their full history is large and never needed. dr_libs tags each library separately, so the pin is the newest tag whose commit has the newest release of all three; stb has no tags, so it is pinned to a commit. Lua is compiled as C++ (see the top-level `CMakeLists.txt`), so a Lua error unwinds C++ code with an exception and destructors run; include its C headers (`lua.h`, `lauxlib.h`, `lualib.h`), not `lua.hpp`. In the JSON library, implicit conversions are off (`JSON_ImplicitConversions`), so values are read with `get<T>()`.
 

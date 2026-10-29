@@ -400,6 +400,7 @@ namespace gnubase::engine
 		m_faderEvents.clear();
 		for (const graph::ProcessEvent& event : context.eventsIn)
 			m_sourceEvents.add(event);
+		m_sourceEvents.nextSource();
 		m_state->automation.play(context.transport, m_source.get(), m_sourceEvents, m_faderEvents);
 
 		if (m_source)

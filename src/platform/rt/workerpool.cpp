@@ -8,6 +8,7 @@
 #include <chrono>
 #include <climits>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 
@@ -187,6 +188,13 @@ namespace gnubase::rt
 	{
 		std::atomic<size_t> g_threadLimit{SIZE_MAX};
 		std::atomic<bool> g_refuseRealtime{false};
+		std::atomic<bool> g_pretendRealtime{false};
+
+		// The tickets of the job of a generation, for count more workers; see WorkerPool::admit.
+		constexpr uint64_t tickets(uint64_t generation, size_t count) noexcept
+		{
+			return (generation << 8) | count;
+		}
 
 		// Spinning between jobs only catches the next one when the load is close to the full period; otherwise the
 		// worker sleeps.
@@ -211,6 +219,7 @@ namespace gnubase::rt
 	{
 		g_threadLimit.store(faults.threadLimit);
 		g_refuseRealtime.store(faults.refuseRealtime);
+		g_pretendRealtime.store(faults.pretendRealtime);
 	}
 
 	WorkerPool::WorkerPool(size_t workers, double periodSeconds)
@@ -220,6 +229,9 @@ namespace gnubase::rt
 			  std::chrono::duration_cast<std::chrono::steady_clock::duration>(g_maxSpin)))
 	{
 		assertNotRealtime("starting a worker pool");
+		if (workers > g_maxWorkers)
+			throw std::invalid_argument("a worker pool takes at most " + std::to_string(g_maxWorkers) + " workers");
+		m_wakes = std::make_unique<Semaphore[]>(workers);
 		m_threads.reserve(workers);
 		try
 		{
@@ -250,7 +262,7 @@ namespace gnubase::rt
 	{
 		m_stop.store(true, std::memory_order_seq_cst);
 		m_generation.fetch_add(1, std::memory_order_seq_cst);
-		m_wake.release(static_cast<int>(m_threads.size()));
+		wake(g_maxWorkers);
 		for (std::thread& thread : m_threads)
 			thread.join();
 		m_threads.clear();
@@ -265,27 +277,55 @@ namespace gnubase::rt
 			return;
 		}
 		followCaller();
-		m_floatMode.store(floatMode(), std::memory_order_relaxed); // published by the store of m_job
-		m_helpers.store(helpers, std::memory_order_relaxed);       // published by the change of the generation
-		m_admitted.store(0, std::memory_order_relaxed);
+		const uint64_t generation = m_generation.load(std::memory_order_relaxed) + 1; // only this thread changes it
+		m_floatMode.store(floatMode(), std::memory_order_relaxed);                    // published by the store of m_job
+		m_tickets.store(tickets(generation, helpers), std::memory_order_seq_cst);
 		m_job.store(&job, std::memory_order_seq_cst);
-		m_generation.fetch_add(1, std::memory_order_seq_cst);
-		// A worker counts itself as a sleeper before it checks the generation one last time, and this thread counts
-		// the sleepers after it changed the generation: a worker either sees the new job or is woken. Sleepers this
-		// job doesn't need stay counted for the next one.
-		if (const size_t sleepers = m_sleepers.exchange(0, std::memory_order_seq_cst); sleepers > 0)
-		{
-			const size_t woken = std::min(sleepers, helpers);
-			if (sleepers > woken)
-				m_sleepers.fetch_add(sleepers - woken, std::memory_order_seq_cst);
-			m_wake.release(static_cast<int>(woken));
-		}
+		m_generation.store(generation, std::memory_order_seq_cst);
+		wake(helpers);
 		job.work(0);
-		// A worker increments m_inside before it reads m_job, and this thread clears m_job before it reads m_inside:
-		// with sequentially consistent order a worker either sees no job or is counted here.
+		// A worker increments m_inside before it takes a ticket, and this thread takes the tickets back before it
+		// reads m_inside: with sequentially consistent order a worker either gets no ticket or is counted here, so a
+		// worker never takes a ticket of this job after run returned. Clearing m_job lets the admitted ones go.
+		m_tickets.store(tickets(generation, 0), std::memory_order_seq_cst);
 		m_job.store(nullptr, std::memory_order_seq_cst);
 		while (m_inside.load(std::memory_order_seq_cst) != 0)
 			cpuPause();
+	}
+
+	bool WorkerPool::admit(uint64_t generation) noexcept
+	{
+		// The job's generation and its tickets are one word: a worker takes a ticket only from the job it saw, so a
+		// worker that comes late for one job can't take one of the next job's tickets as well.
+		uint64_t current = m_tickets.load(std::memory_order_seq_cst);
+		while ((current >> 8) == generation && (current & 0xFF) != 0)
+			if (m_tickets.compare_exchange_weak(current, current - 1, std::memory_order_seq_cst))
+				return true;
+		return false;
+	}
+
+	void WorkerPool::wake(size_t count) noexcept
+	{
+		// A worker sets its sleeping bit before it checks the generation one last time, and this thread takes the bits
+		// after it changed the generation: a worker either sees the new job or is woken. Each taken bit gets one
+		// release of that worker's own semaphore, so no other worker can take the wake-up. Sleepers the job doesn't
+		// need keep their bits for the next one.
+		uint64_t sleeping = m_sleeping.load(std::memory_order_seq_cst);
+		uint64_t taken = 0;
+		do
+		{
+			taken = 0;
+			uint64_t rest = sleeping;
+			for (size_t i = 0; i < count && rest != 0; ++i)
+			{
+				taken |= rest & (~rest + 1); // the lowest bit
+				rest &= rest - 1;
+			}
+		} while (
+			taken != 0 && !m_sleeping.compare_exchange_weak(sleeping, sleeping & ~taken, std::memory_order_seq_cst));
+		for (size_t worker = 0; taken != 0; ++worker, taken >>= 1)
+			if ((taken & 1) != 0)
+				m_wakes[worker].release();
 	}
 
 	void WorkerPool::followCaller() noexcept
@@ -304,7 +344,7 @@ namespace gnubase::rt
 		if (!g_refuseRealtime.load())
 			priority.emplace(periodSeconds);
 		const bool realtime = priority && priority->active();
-		if (realtime)
+		if (realtime || g_pretendRealtime.load())
 			m_realtime.fetch_add(1, std::memory_order_release);
 		m_started.release();
 
@@ -317,12 +357,12 @@ namespace gnubase::rt
 		bool tookPart = false;
 		for (;;)
 		{
-			seen = waitForJob(seen, tookPart);
+			seen = waitForJob(thread - 1, seen, tookPart);
 			tookPart = false;
 			if (m_stop.load(std::memory_order_seq_cst))
 				break;
 			m_inside.fetch_add(1, std::memory_order_seq_cst);
-			if (m_admitted.fetch_add(1, std::memory_order_relaxed) < m_helpers.load(std::memory_order_relaxed))
+			if (admit(seen))
 				if (ParallelJob* job = m_job.load(std::memory_order_seq_cst))
 				{
 					if (const uint64_t callerMode = m_floatMode.load(std::memory_order_relaxed); callerMode != mode)
@@ -350,8 +390,9 @@ namespace gnubase::rt
 		setFloatMode(initialMode);
 	}
 
-	uint64_t WorkerPool::waitForJob(uint64_t seen, bool spin) noexcept
+	uint64_t WorkerPool::waitForJob(size_t worker, uint64_t seen, bool spin) noexcept
 	{
+		const uint64_t bit = uint64_t{1} << worker;
 		// Jobs come once per audio block: spinning a little after taking part in one catches the next one without the
 		// latency of a wake-up when the load is high.
 		auto spinUntil = std::chrono::steady_clock::now() + (spin ? m_spin : std::chrono::steady_clock::duration{});
@@ -365,11 +406,12 @@ namespace gnubase::rt
 				cpuPause();
 				continue;
 			}
-			m_sleepers.fetch_add(1, std::memory_order_seq_cst);
+			m_sleeping.fetch_or(bit, std::memory_order_seq_cst);
 			generation = m_generation.load(std::memory_order_seq_cst);
-			if (generation != seen)
-				return generation; // counted anyway: the extra release only wakes this worker once for nothing
-			m_wake.wait();
+			// A new job: unless run took the bit already, and with it releases the semaphore, the worker goes to it.
+			if (generation != seen && (m_sleeping.fetch_and(~bit, std::memory_order_seq_cst) & bit) != 0)
+				return generation;
+			m_wakes[worker].wait();
 			spinUntil = std::chrono::steady_clock::now() + m_spin;
 		}
 	}

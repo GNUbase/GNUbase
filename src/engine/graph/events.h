@@ -39,31 +39,44 @@ namespace gnubase::engine::graph
 		uint32_t size = 0;
 	};
 
-	// The events of one block, sorted by offset. At one offset note-offs come first, then the other events, then
-	// note-ons, whatever order they were added in, so a note that starts where a note of the same pitch from another
-	// source ends still sounds. Memory is allocated in the constructor only, so adding, reading and clearing are
-	// real-time safe.
+	// The events of one block from one or more sources, sorted by offset. Each source's events keep their order, so a
+	// note of no length or a note-on followed by pressure on it arrives as sent. At one offset a source's events go
+	// before the earlier sources' events that rank after them: note-offs first, then the other events, then note-ons,
+	// so a note that starts where a note of the same pitch from another source ends still sounds. Memory is allocated
+	// in the constructor only, so adding, merging, reading and clearing are real-time safe.
 	class EventBuffer
 	{
 	public:
 		explicit EventBuffer(size_t capacity = 0) : m_events(capacity) {}
 
-		// Inserts the event by its offset and rank, after the events of the same offset and rank. Returns false and
-		// drops the event if the buffer is full.
+		// Inserts an event of the current source by its offset, after the source's previous event unless that one
+		// comes later. Returns false and drops the event if the buffer is full.
 		bool add(const ProcessEvent& event) noexcept
 		{
 			if (m_size == m_events.size())
 				return false;
-			const int rank = rankOf(event.type);
-			size_t i = m_size;
-			for (; i > 0 && comesAfter(m_events[i - 1], event.offset, rank); --i)
-				m_events[i] = m_events[i - 1];
-			m_events[i] = event;
-			++m_size;
+			insert(event);
 			return true;
 		}
 
-		void clear() noexcept { m_size = 0; }
+		// The events added from now on come from another source.
+		void nextSource() noexcept { m_after = 0; }
+
+		// Adds the events of another source. In a full buffer a note-off takes the place of the last event that isn't
+		// one, so that no note hangs; other events are dropped.
+		void merge(const EventBuffer& source) noexcept
+		{
+			nextSource();
+			for (const ProcessEvent& event : source)
+				if (m_size < m_events.size() || (event.type == ProcessEvent::Type::NoteOff && dropLastNotNoteOff()))
+					insert(event);
+		}
+
+		void clear() noexcept
+		{
+			m_size = 0;
+			m_after = 0;
+		}
 
 		size_t size() const { return m_size; }
 		bool empty() const { return m_size == 0; }
@@ -74,6 +87,36 @@ namespace gnubase::engine::graph
 		const ProcessEvent* end() const { return m_events.data() + m_size; }
 
 	private:
+		// Before the first event at the offset that ranks after it, but not before the source's previous event.
+		void insert(const ProcessEvent& event) noexcept
+		{
+			size_t i = m_after > 0 && m_events[m_after - 1].offset <= event.offset ? m_after : 0;
+			const int rank = rankOf(event.type);
+			while (i < m_size && !comesAfter(m_events[i], event.offset, rank))
+				++i;
+			for (size_t j = m_size; j > i; --j)
+				m_events[j] = m_events[j - 1];
+			m_events[i] = event;
+			++m_size;
+			m_after = i + 1;
+		}
+
+		bool dropLastNotNoteOff() noexcept
+		{
+			for (size_t i = m_size; i > 0; --i)
+			{
+				if (m_events[i - 1].type == ProcessEvent::Type::NoteOff)
+					continue;
+				for (size_t j = i; j < m_size; ++j)
+					m_events[j - 1] = m_events[j];
+				--m_size;
+				if (i <= m_after)
+					--m_after;
+				return true;
+			}
+			return false;
+		}
+
 		static int rankOf(ProcessEvent::Type type) noexcept
 		{
 			if (type == ProcessEvent::Type::NoteOff)
@@ -88,5 +131,6 @@ namespace gnubase::engine::graph
 
 		std::vector<ProcessEvent> m_events; // sized to the capacity; the first m_size are in use
 		size_t m_size = 0;
+		size_t m_after = 0; // the current source's next event goes after this many, or 0
 	};
 }
