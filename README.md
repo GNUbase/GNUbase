@@ -42,6 +42,8 @@ You need Git with [Git LFS](https://git-lfs.com), CMake 3.25 or later and a C++1
 ```bash
 git clone --recursive https://github.com/GNUbase/GNUbase.git
 cd GNUbase
+git submodule update --init --checkout ext/vst3sdk     # the VST3 SDK, without its docs and GUI library
+git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
 tools/install-git-hooks.sh      # on Windows, run it in Git Bash
 ```
 

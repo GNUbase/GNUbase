@@ -62,6 +62,25 @@ add_library(cpp-httplib INTERFACE)
 target_include_directories(cpp-httplib SYSTEM INTERFACE ${PROJECT_SOURCE_DIR}/ext/cpp-httplib)
 find_package(Threads REQUIRED)
 target_link_libraries(cpp-httplib INTERFACE Threads::Threads $<$<PLATFORM_ID:Windows>:ws2_32>)
+# The VST3 SDK's interfaces, header-only: GNUbase implements and calls the interfaces itself. The SDK's C++ namespace
+# is read from its header and passed as GNUBASE_VST3_NS, so GNUbase code refers to it only through the alias in
+# src/pluginhost/vst3/vst3ns.h (docs/dependencies.md). Only the test plugins use it so far, so a build without them
+# doesn't need the SDK.
+if(GNUBASE_TEST_PLUGINS)
+	set(vst3Header "${PROJECT_SOURCE_DIR}/ext/vst3sdk/pluginterfaces/base/funknown.h")
+	if(NOT EXISTS "${vst3Header}")
+		message(FATAL_ERROR "The VST3 SDK is missing. Fetch it with\n"
+			"  git submodule update --init --checkout ext/vst3sdk\n"
+			"  git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk\n"
+			"or configure with -DGNUBASE_TEST_PLUGINS=OFF.")
+	endif()
+	file(STRINGS "${vst3Header}" vst3Namespace REGEX "^namespace [A-Za-z_][A-Za-z0-9_]* *{")
+	list(GET vst3Namespace 0 vst3Namespace)
+	string(REGEX REPLACE "^namespace ([A-Za-z0-9_]+).*" "\\1" vst3Namespace "${vst3Namespace}")
+	add_library(vst3-sdk INTERFACE)
+	target_include_directories(vst3-sdk SYSTEM INTERFACE ${PROJECT_SOURCE_DIR}/ext/vst3sdk)
+	target_compile_definitions(vst3-sdk INTERFACE GNUBASE_VST3_NS=${vst3Namespace})
+endif()
 
 # Settings for every GNUbase target; third-party code is not affected.
 function(gnubase_target_defaults target)
@@ -84,6 +103,7 @@ endfunction()
 
 add_subdirectory(src/platform)
 add_subdirectory(src/ipc)
+add_subdirectory(src/plugin)
 add_subdirectory(src/engine)
 add_subdirectory(src/mcp)
 add_subdirectory(src/scripting)
