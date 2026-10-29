@@ -109,6 +109,7 @@ namespace
 			std::unique_ptr<Device> device = backend.open(config(listed.id));
 			ContractCallback callback(device->format());
 			device->start(callback);
+			device->stop(); // while the callback is still there
 			return true;
 		}
 		catch (const DeviceError& error)
@@ -173,13 +174,15 @@ void checkDeviceContract(Backend& backend, bool skipUnavailable)
 		CHECK(callback.violations() == 0);
 		device.reset(); // stops it
 
-		// Every listed sample rate, block size and clock source opens as asked.
+		// Every listed sample rate, block size and clock source opens as asked. Block sizes and clock sources at the
+		// rate they were listed for: some drivers allow other sizes at other rates, and opening at a rate may change
+		// the device's current one.
 		for (const double rate : info.sampleRates)
 			CHECK(backend.open(config(listed.id, rate))->format().sampleRate == rate);
 		for (const uint32_t size : info.blockSizes)
-			CHECK(backend.open(config(listed.id, 0.0, size))->format().blockSize == size);
+			CHECK(backend.open(config(listed.id, format.sampleRate, size))->format().blockSize == size);
 		for (size_t i = 0; i < info.clockSources.size(); ++i)
-			CHECK(backend.open(config(listed.id, 0.0, 0, info.clockSources[i]))->info().clockSource ==
+			CHECK(backend.open(config(listed.id, format.sampleRate, 0, info.clockSources[i]))->info().clockSource ==
 				static_cast<int>(i));
 		CHECK_THROWS_AS(backend.open(config(listed.id, 0.0, 0, "no such clock")), DeviceError);
 	}
