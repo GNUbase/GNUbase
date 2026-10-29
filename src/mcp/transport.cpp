@@ -17,6 +17,7 @@ namespace gnubase::mcp
 	namespace
 	{
 		constexpr std::string_view g_hexDigits = "0123456789abcdef";
+		constexpr const char* g_sessionHeader = "Mcp-Session-Id";
 
 		bool startsWith(std::string_view text, std::string_view prefix)
 		{
@@ -54,15 +55,17 @@ namespace gnubase::mcp
 
 	void serveStdio(Server& server, std::istream& in, std::ostream& out)
 	{
+		std::string session = server.startSession(false);
 		for (std::string line; std::getline(in, line);)
 		{
 			if (!line.empty() && line.back() == '\r')
 				line.pop_back();
 			if (line.empty())
 				continue;
-			if (const std::optional<std::string> response = server.handle(std::string_view(line)))
+			if (const std::optional<std::string> response = server.handle(std::string_view(line), session))
 				out << *response << '\n' << std::flush;
 		}
+		server.endSession(session);
 	}
 
 	HttpServer::HttpServer(Server& server, const std::string& token, int port)
@@ -90,18 +93,34 @@ namespace gnubase::mcp
 		http.Post("/mcp",
 			[&server](const httplib::Request& request, httplib::Response& response)
 			{
-				if (const std::optional<std::string> answer = server.handle(std::string_view(request.body)))
+				std::string session = request.get_header_value(g_sessionHeader);
+				if (!session.empty() && !server.hasSession(session))
+				{
+					response.status = 404; // it ended; the client starts a new one with initialize
+					return;
+				}
+				if (const std::optional<std::string> answer = server.handle(std::string_view(request.body), session))
 					response.set_content(*answer, "application/json");
 				else
 					response.status = 202;
+				if (!session.empty())
+					response.set_header(g_sessionHeader, session);
 			});
-		const auto noStream = [](const httplib::Request&, httplib::Response& response)
-		{
-			response.status = 405;
-			response.set_header("Allow", "POST");
-		};
-		http.Get("/mcp", noStream);
-		http.Delete("/mcp", noStream);
+		http.Get("/mcp",
+			[](const httplib::Request&, httplib::Response& response)
+			{
+				response.status = 405;
+				response.set_header("Allow", "POST, DELETE");
+			});
+		http.Delete("/mcp",
+			[&server](const httplib::Request& request, httplib::Response& response)
+			{
+				const std::string session = request.get_header_value(g_sessionHeader);
+				if (session.empty())
+					response.status = 400;
+				else
+					response.status = server.endSession(session) ? 204 : 404;
+			});
 
 		if (port == 0)
 			m_port = http.bind_to_any_port("127.0.0.1");
