@@ -10,7 +10,10 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <string>
+#include <thread>
 #include <variant>
 #include <vector>
 
@@ -123,6 +126,43 @@ TEST_CASE("the cursor shows a waiting locate until the audio thread applies it",
 	CHECK(transport.position() == 10);
 	transport.advance(64);
 	CHECK(transport.position() == 74);
+}
+
+TEST_CASE("the cursor can be read on another thread while the command thread locates", "[unit]")
+{
+	// The cue thread reads the cursor every few milliseconds while a device runs. Each read is a cursor the transport
+	// had: one of the locates, never older than the one read before it.
+	constexpr Samples locates = 20000;
+	Transport transport;
+	std::atomic<bool> done{false};
+	std::atomic<bool> consistent{true};
+	std::thread audio(
+		[&]
+		{
+			while (!done)
+				transport.update();
+		});
+	std::thread cue(
+		[&]
+		{
+			Samples last = 0;
+			while (!done)
+			{
+				const Samples position = transport.position();
+				if (position < last || position > locates)
+					consistent = false;
+				last = position;
+			}
+		});
+	for (Samples position = 1; position <= locates; ++position)
+		while (!transport.locate(position)) // the request queue is full until the audio thread catches up
+			std::this_thread::yield();
+	done = true;
+	audio.join();
+	cue.join();
+	CHECK(consistent);
+	transport.update();
+	CHECK(transport.position() == locates);
 }
 
 TEST_CASE("playback advances the cursor one block at a time", "[unit]")
@@ -365,6 +405,27 @@ TEST_CASE("transport commands see a locate that the running device has not appli
 	CHECK(run(client, "transport.set", {{"right", "cursor"}}).at("right") == 1000);
 	run(client, "audio.stop");
 	CHECK(run(client, "transport.get").at("position") == 1000);
+}
+
+TEST_CASE("locating while the device runs and the cue thread reads the cursor", "[integration]")
+{
+	// The cue thread reads the cursor every 5 ms while the device runs: locating meanwhile must not race with it.
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 256}});
+	run(client, "audio.start");
+	for (const Samples position : {48000, 1000, 96000, 0, 12345})
+	{
+		run(client, "transport.locate", {{"position", position}});
+		std::this_thread::sleep_for(std::chrono::milliseconds(20)); // longer than the cue interval
+		CHECK(run(client, "transport.get").at("position") == position);
+	}
+	run(client, "transport.play");
+	run(client, "transport.locate", {{"position", 500000}});
+	std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	CHECK(run(client, "transport.get").at("position").get<Samples>() >= 500000);
+	run(client, "transport.stop");
+	run(client, "audio.stop");
 }
 
 TEST_CASE("go to project end locates to the end of the last event", "[integration]")

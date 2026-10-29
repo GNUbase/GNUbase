@@ -25,10 +25,11 @@ namespace gnubase::engine
 
 	time::Samples Transport::position() const
 	{
-		// m_applied is stored after m_published: once it shows the last locate, m_published is at least as new.
-		if (m_applied.load(std::memory_order_acquire) != m_locates)
-			return m_locateTarget;
-		return m_published.load(std::memory_order_acquire);
+		// The audio thread may apply a locate before its count is stored, so a count it has reached or passed is no
+		// longer waiting. Applied counts read after the sent one are at least as new.
+		const auto [locates, target] = m_sent.load();
+		const auto [applied, cursor] = m_applied.load();
+		return applied < locates ? target : cursor;
 	}
 
 	bool Transport::play()
@@ -52,7 +53,7 @@ namespace gnubase::engine
 		if (!send({Request::Type::Locate, position, {}, m_locates + 1}))
 			return false;
 		++m_locates;
-		m_locateTarget = position;
+		m_sent.store(m_locates, position);
 		return true;
 	}
 
@@ -104,8 +105,7 @@ namespace gnubase::engine
 		Request request;
 		while (m_requests.tryPop(request))
 			apply(request);
-		m_published.store(m_position, std::memory_order_release);
-		m_applied.store(m_locate, std::memory_order_release);
+		m_applied.store(m_locate, m_position);
 	}
 
 	const graph::TransportBlock& Transport::advance(uint32_t frames) noexcept
@@ -134,7 +134,7 @@ namespace gnubase::engine
 			offset += length;
 			m_position = jumps ? m_settings.left : m_position + length;
 		}
-		m_published.store(m_position, std::memory_order_release);
+		m_applied.store(m_locate, m_position);
 		return m_block;
 	}
 }

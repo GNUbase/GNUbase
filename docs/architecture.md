@@ -94,7 +94,8 @@ Data moves between threads only through:
 
 - lock-free queues: commands to the engine, events to clients, messages to the audio thread (#14);
 - immutable render snapshots, published with an atomic pointer swap; the command thread frees an old snapshot once the audio thread no longer uses it;
-- triple buffers for continuous values such as meters and the playback position, read by the UI once per frame.
+- triple buffers for continuous values such as meters and the playback position, read by the UI once per frame;
+- sequence locks (`rt::SeqLockPair`) for values that several threads must read together, such as the transport cursor and the locate still waiting for the audio thread, which the command and cue threads read: the writer never waits, a reader retries while a store is under way.
 
 ## Logging and crash reports
 

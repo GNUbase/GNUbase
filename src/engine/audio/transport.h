@@ -3,9 +3,9 @@
 
 #include "engine/graph/processor.h"
 #include "engine/time/tempomap.h"
+#include "platform/rt/seqlockpair.h"
 #include "platform/rt/spscqueue.h"
 
-#include <atomic>
 #include <cstdint>
 #include <vector>
 
@@ -45,10 +45,12 @@ namespace gnubase::engine
 		bool locate(time::Samples position);         // also the new start position for returnToStart
 		bool set(const TransportSettings& settings); // new locators and modes
 
-		// Command thread: the settings as requested, whether playback was requested, and the cursor: where the last
-		// locate goes until the audio thread has applied it, then as of the last block.
+		// Command thread: the settings as requested and whether playback was requested.
 		const TransportSettings& settings() const { return m_requested; }
 		bool playing() const { return m_requestedPlaying; }
+
+		// Any thread but the audio thread (the cue thread reads it while a device runs): the cursor, where the last
+		// locate goes until the audio thread has applied it, then as of the last block.
 		time::Samples position() const;
 
 		// Audio thread, or the command thread while no audio thread runs: applies the waiting requests.
@@ -83,8 +85,7 @@ namespace gnubase::engine
 		rt::SpscQueue<Request> m_requests;
 		TransportSettings m_requested;
 		bool m_requestedPlaying = false;
-		uint64_t m_locates = 0;           // how many locates were sent
-		time::Samples m_locateTarget = 0; // where the last one goes
+		uint64_t m_locates = 0; // how many locates were sent
 
 		// Audio thread.
 		TransportSettings m_settings;
@@ -95,7 +96,10 @@ namespace gnubase::engine
 		std::vector<graph::TransportSegment> m_segments;
 		graph::TransportBlock m_block;
 
-		std::atomic<time::Samples> m_published{0}; // m_position after each block
-		std::atomic<uint64_t> m_applied{0};        // m_locate, stored after m_published
+		// Written by the command thread: how many locates were sent and where the last one goes.
+		rt::SeqLockPair<uint64_t, time::Samples> m_sent;
+		// Written by the audio thread: m_locate and m_position after each block. Each pair is read whole, so the cursor
+		// never mixes one locate's count with another's target, or one block's position with another's locate.
+		rt::SeqLockPair<uint64_t, time::Samples> m_applied;
 	};
 }
