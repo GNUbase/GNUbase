@@ -709,6 +709,62 @@ Parameters:
 - `name`: string
 - `sampleRate`: number
 
+### settings
+
+#### `gnubase.settings.get`
+
+The value of a user setting; settings.list describes them all.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
+
+Returns:
+
+- `key`: string, required
+- `value`: any, required. The setting's value.
+
+#### `gnubase.settings.list`
+
+Every user setting with its key, description, JSON schema, default and value; the settings file, null when settings are kept in memory only; its version; and what happened when it was loaded: the status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the problems found, where the original file was kept, and whether the file is read-only for this session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be backed up or locked).
+
+Only reads; changes nothing.
+
+Returns:
+
+- `file`: string or null, required
+- `load`: object, required
+- `settings`: array, required
+- `version`: integer, required
+
+#### `gnubase.settings.reset`
+
+Puts a user setting back to its default, or every one without key, and saves the settings file. Returns the settings that were reset with their values; emits settings.changed with those that changed.
+
+Parameters:
+
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme". The setting.
+
+Returns:
+
+- `values`: object, required
+
+#### `gnubase.settings.set`
+
+Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes.
+
+Parameters:
+
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
+- `value`: any, required. The new value; it must fit the setting's schema.
+
+Returns:
+
+- `key`: string, required
+- `value`: any, required. The setting's value.
+
 ### track
 
 #### `gnubase.track.add`
