@@ -179,7 +179,7 @@ if $here || [ $os != windows ]; then
 	export CCACHE_MAXSIZE=${CCACHE_MAXSIZE:-20G}
 	# Vulkan only through Mesa's software rasterizer, as on CI's runners, which have no GPU: a real GPU's driver makes
 	# the window tests depend on the machine, and AMD's leaks under ASan.
-	lavapipe=$(ls /usr/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -n 1)
+	lavapipe=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -n 1)
 	[ -n "$lavapipe" ] && export VK_DRIVER_FILES=$lavapipe
 	runJobs "${jobs[@]}"
 	exit
