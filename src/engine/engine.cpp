@@ -221,22 +221,54 @@ namespace gnubase::engine
 		}
 	}
 
+	std::shared_ptr<const Engine::Command> Engine::find(const std::string& name) const
+	{
+		const std::scoped_lock lock(m_mutex);
+		const auto found = m_commands.find(name);
+		if (found == m_commands.end())
+			throw CommandError("unknown command " + name);
+		return found->second;
+	}
+
+	Json Engine::runInside(const std::string& command, const Json& parameters, CommandContext& outer)
+	{
+		try
+		{
+			const std::shared_ptr<const Command> inner = find(command);
+			if (const std::string problem = validate(parameters, inner->info.parameters); !problem.empty())
+				throw CommandError(problem);
+			CommandContext context(parameters, &outer);
+			Json value = inner->handler(context);
+			if (const std::string problem = validate(value, inner->info.result, "result"); !problem.empty())
+				throw CommandError("returned an invalid result: " + problem);
+			return value;
+		}
+		catch (const std::exception& error)
+		{
+			throw CommandError(command + ": " + error.what());
+		}
+	}
+
+	Json CommandContext::call(const std::string& command, const Json& parameters)
+	{
+		if (m_outer != nullptr)
+			return m_outer->call(command, parameters);
+		GNUBASE_ASSERT(m_engine != nullptr);
+		if (m_engine == nullptr)
+			throw CommandError("no engine runs this command");
+		return m_engine->runInside(command, parameters, *this);
+	}
+
 	void Engine::execute(Request& request)
 	{
 		CommandContext context(request.parameters);
+		context.m_engine = this;
 		Result result;
 		result.request = request.id;
 		std::vector<std::shared_ptr<detail::Mailbox>> clients;
 		try
 		{
-			std::shared_ptr<const Command> command;
-			{
-				const std::scoped_lock lock(m_mutex);
-				if (const auto found = m_commands.find(request.command); found != m_commands.end())
-					command = found->second;
-			}
-			if (!command)
-				throw CommandError("unknown command " + request.command);
+			const std::shared_ptr<const Command> command = find(request.command);
 			if (const std::string problem = validate(request.parameters, command->info.parameters); !problem.empty())
 				throw CommandError(problem);
 			Json value = command->handler(context);

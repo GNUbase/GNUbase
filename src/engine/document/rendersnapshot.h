@@ -123,6 +123,7 @@ namespace gnubase::engine
 	{
 		uint64_t revision = 0; // counts the snapshots compiled for an engine
 		double sampleRate = 48000.0;
+		time::TempoMap tempo{120.0}; // for processors that follow the tempo, e.g. a synced delay
 		std::vector<RenderBus> busses;
 		std::vector<RenderMedia> media;
 		std::vector<RenderChannel> channels; // in track order

@@ -343,7 +343,8 @@ namespace gnubase::engine
 
 				pugi::xml_node structure = root.append_child("Structure");
 				for (const ObjectId id : m_project.tracks)
-					writeTrack(structure, m_project.trackById.at(id));
+					if (m_project.trackById.at(id).type != TrackType::Marker) // markers go into the arrangement
+						writeTrack(structure, m_project.trackById.at(id));
 				for (const Bus& bus : m_project.busses)
 					if (bus.direction == BusDirection::Output)
 					{
@@ -702,16 +703,26 @@ namespace gnubase::engine
 				}
 			}
 
+			// DAWproject has one list of markers in the arrangement, without ranges: it gets the markers of every
+			// marker track in timeline order, cycle markers at their start. Marker tracks, cycle marker ends and the
+			// numbers are in GNUbase's entry.
 			void writeMarkers(pugi::xml_node arrangement) const
 			{
 				if (m_project.markers.empty())
 					return;
+				std::vector<std::pair<time::Ticks, const Marker*>> sorted;
+				sorted.reserve(m_project.markers.size());
+				for (const auto& [id, marker] : m_project.markers)
+					sorted.emplace_back(time::toTicks(marker.position, m_project.tempo, m_project.sampleRate), &marker);
+				std::stable_sort(
+					sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
 				pugi::xml_node markers = arrangement.append_child("Markers");
 				markers.append_attribute("id") = "markers";
-				for (const auto& [id, marker] : m_project.markers)
+				for (const auto& [ticks, entry] : sorted)
 				{
+					const Marker& marker = *entry;
 					pugi::xml_node element = markers.append_child("Marker");
-					element.append_attribute("time") = toBeats(marker.position);
+					element.append_attribute("time") = toBeats(ticks);
 					element.append_attribute("name") = marker.name.c_str();
 					if (!marker.color.empty())
 						element.append_attribute("color") = marker.color.c_str();
@@ -1377,17 +1388,41 @@ namespace gnubase::engine
 					m_project.audioEvents[event.id] = event;
 			}
 
+			// The arrangement's markers become position markers on a marker track at the top, numbered in timeline
+			// order.
 			void readMarkers(const pugi::xml_node& markers)
 			{
+				if (!markers.child("Marker"))
+					return;
+				Track track;
+				track.id = m_project.newId();
+				track.type = TrackType::Marker;
+				track.name = "Markers";
+				m_project.trackById[track.id] = track;
+				m_project.tracks.insert(m_project.tracks.begin(), track.id);
+				m_project.activeMarkerTrack = track.id;
+
 				const bool seconds = std::string(markers.attribute("timeUnit").as_string("beats")) == "seconds";
+				std::vector<Marker> read;
 				for (const pugi::xml_node element : markers.children("Marker"))
 				{
 					Marker marker;
 					marker.id = m_project.newId();
-					marker.position = toTicks(element.attribute("time").as_double(), seconds);
+					marker.track = track.id;
+					marker.position = {
+						time::TimeBase::Musical, toTicks(element.attribute("time").as_double(), seconds)};
+					marker.end = marker.position;
 					marker.name = element.attribute("name").as_string("");
 					const std::string color = element.attribute("color").as_string("");
 					marker.color = validColor(color) ? color : std::string();
+					read.push_back(marker);
+				}
+				std::stable_sort(read.begin(), read.end(),
+					[](const Marker& a, const Marker& b) { return a.position.value < b.position.value; });
+				int number = 0;
+				for (Marker& marker : read)
+				{
+					marker.number = ++number;
 					m_project.markers[marker.id] = marker;
 				}
 			}

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "platform/rt/denormals.h"
 #include "platform/rt/mpmcqueue.h"
+#include "platform/rt/seqlockpair.h"
 #include "platform/rt/snapshotpublisher.h"
 #include "platform/rt/spscqueue.h"
 #include "platform/rt/triplebuffer.h"
@@ -11,10 +12,12 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace gnubase::rt;
@@ -172,6 +175,33 @@ TEST_CASE("TripleBuffer never shows a half-written value", "[unit]")
 		last = pair.a;
 	}
 	writer.join();
+	CHECK(consistent);
+}
+
+TEST_CASE("SeqLockPair gives every reader a whole pair, never older than the last one it read", "[unit]")
+{
+	constexpr int64_t count = 200000;
+	SeqLockPair<int64_t, int64_t> pair;
+	CHECK(pair.load() == std::pair<int64_t, int64_t>{0, 0});
+
+	std::atomic<bool> consistent{true};
+	const auto read = [&]
+	{
+		int64_t last = 0;
+		while (last < count)
+		{
+			const auto [a, b] = pair.load();
+			if (a != -b || a < last)
+				consistent = false;
+			last = a;
+		}
+	};
+	std::thread first(read);
+	std::thread second(read);
+	for (int64_t i = 1; i <= count; ++i)
+		pair.store(i, -i);
+	first.join();
+	second.join();
 	CHECK(consistent);
 }
 

@@ -50,6 +50,7 @@ namespace gnubase::engine
 			{TrackType::Folder, "folder", "Folder"},
 			{TrackType::Group, "group", "Group"},
 			{TrackType::Effect, "effect", "FX"},
+			{TrackType::Marker, "marker", "Marker"},
 		};
 
 		const TrackTypeName& trackTypeEntry(TrackType type)
@@ -291,6 +292,14 @@ namespace gnubase::engine
 					part.length = end.value - part.position.value;
 					context.emit("midiPart.changed", {{"part", toJson(part)}});
 				}
+			for (auto& [id, marker] : project.markers)
+				if (marker.track == track.id)
+				{
+					marker.position = time::rebase(marker.position, base, project.tempo, project.sampleRate);
+					marker.end = time::rebase(marker.end, base, project.tempo, project.sampleRate);
+					keepMinimumLength(project, marker); // rounding may have left it shorter than a sample
+					context.emit("marker.changed", {{"marker", toJson(marker)}});
+				}
 			for (auto& [id, lane] : project.automation)
 				if (lane.track == track.id && !lane.points.empty())
 				{
@@ -331,14 +340,42 @@ namespace gnubase::engine
 					context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 			}
 			project.sampleRate = sampleRate;
+			// At a lower rate, a short cycle marker may become shorter than a sample, in either time base.
+			for (auto& [id, marker] : project.markers)
+			{
+				const bool linear = marker.position.base == time::TimeBase::Linear;
+				if (linear)
+				{
+					marker.position.value = rescale(marker.position.value, factor);
+					marker.end.value = rescale(marker.end.value, factor);
+				}
+				if (keepMinimumLength(project, marker) || linear)
+					context.emit("marker.changed", {{"marker", toJson(marker)}});
+			}
 		}
 
+		int64_t countTracks(const Project& project, TrackType type)
+		{
+			return std::count_if(project.trackById.begin(), project.trackById.end(),
+				[type](const auto& entry) { return entry.second.type == type; });
+		}
+
+		// The first marker track is called "Markers", the next ones "Marker 01", "Marker 02" and so on.
 		std::string defaultTrackName(const Project& project, TrackType type)
 		{
-			const auto count = std::count_if(project.trackById.begin(), project.trackById.end(),
-				[type](const auto& entry) { return entry.second.type == type; });
-			const std::string number = std::to_string(count + 1);
+			const auto count = countTracks(project, type);
+			if (type == TrackType::Marker && count == 0)
+				return "Markers";
+			const std::string number = std::to_string(type == TrackType::Marker ? count : count + 1);
 			return trackTypeEntry(type).defaultName + std::string(number.size() < 2 ? " 0" : " ") + number;
+		}
+
+		void activateMarkerTrack(Project& project, ObjectId track, CommandContext& context)
+		{
+			if (project.activeMarkerTrack == track)
+				return;
+			project.activeMarkerTrack = track;
+			context.emit("marker.trackActivated", {{"track", track}});
 		}
 
 		// Automation.
@@ -658,7 +695,13 @@ namespace gnubase::engine
 			const size_t index = insertIndex(parameters, siblings(project, parent));
 			const bool groupChannel = parameters.value("groupChannel", false);
 			require(!groupChannel || type == TrackType::Folder, "only folder tracks have an optional group channel");
-			const bool hasChannel = type != TrackType::Folder || groupChannel;
+			if (type == TrackType::Marker)
+			{
+				require(parent == 0, "marker tracks can't be inside a folder");
+				require(countTracks(project, TrackType::Marker) < g_maxMarkerTracks,
+					"a project has at most " + std::to_string(g_maxMarkerTracks) + " marker tracks");
+			}
+			const bool hasChannel = (type != TrackType::Folder && type != TrackType::Marker) || groupChannel;
 			const bool hasAudio = hasChannel && type != TrackType::Midi;
 			require(hasAudio || !parameters.contains("channels"), "this track has no audio channels");
 			const int channels = hasAudio ? audioChannels(parameters, 2) : 0;
@@ -698,6 +741,8 @@ namespace gnubase::engine
 
 			Json result = {{"track", toJson(track)}, {"channel", channel ? toJson(*channel) : Json(nullptr)}};
 			context.emit("track.added", result);
+			if (type == TrackType::Marker) // a new marker track is the active one
+				activateMarkerTrack(project, track.id, context);
 			return result;
 		}
 
@@ -726,6 +771,7 @@ namespace gnubase::engine
 			const ObjectId id = parameters.at("track").get<ObjectId>();
 			Track& track = find(project.trackById, id, "track");
 			const ObjectId parent = folderParent(project, parameters);
+			require(track.type != TrackType::Marker || parent == 0, "marker tracks can't be inside a folder");
 			const std::vector<ObjectId> moved = subtree(project, id);
 			require(std::find(moved.begin(), moved.end(), parent) == moved.end(),
 				"can't move a folder into itself or a folder inside it");
@@ -780,6 +826,8 @@ namespace gnubase::engine
 					event = event->second.track == removed ? project.audioEvents.erase(event) : std::next(event);
 				for (auto part = project.midiParts.begin(); part != project.midiParts.end();)
 					part = part->second.track == removed ? project.midiParts.erase(part) : std::next(part);
+				for (auto marker = project.markers.begin(); marker != project.markers.end();)
+					marker = marker->second.track == removed ? project.markers.erase(marker) : std::next(marker);
 				for (auto lane = project.automation.begin(); lane != project.automation.end();)
 					lane = lane->second.track == removed ? project.automation.erase(lane) : std::next(lane);
 				project.channels.erase(gone.channel);
@@ -787,6 +835,13 @@ namespace gnubase::engine
 				context.emit("track.removed", {{"track", removed}});
 			}
 			disconnect(project, channels, context);
+			// Without the active marker track, the topmost marker track is the active one.
+			if (project.activeMarkerTrack == id)
+			{
+				const auto top = std::find_if(project.tracks.begin(), project.tracks.end(),
+					[&project](ObjectId track) { return project.trackById.at(track).type == TrackType::Marker; });
+				activateMarkerTrack(project, top == project.tracks.end() ? 0 : *top, context);
+			}
 			return Json::object();
 		}
 
@@ -1468,6 +1523,11 @@ namespace gnubase::engine
 			{"controller.add", "Add controllers"},
 			{"controller.remove", "Remove controllers"},
 			{"controller.set", "Change controllers"},
+			{"marker.add", "Add marker"},
+			{"marker.set", "Change marker"},
+			{"marker.remove", "Remove markers"},
+			{"marker.renumber", "Renumber markers"},
+			{"marker.activateTrack", "Activate marker track"},
 			{"automationLane.add", "Add automation lane"},
 			{"automationLane.set", "Change automation lane"},
 			{"automationLane.remove", "Remove automation lane"},
@@ -1538,6 +1598,7 @@ namespace gnubase::engine
 		void announce(const Project& project, const ProjectChange& change, Direction direction, CommandContext& context)
 		{
 			bool reordered = false;
+			bool activated = false;
 			if (change.settingsBefore && change.settingsAfter)
 			{
 				const bool redo = direction == Direction::Redo;
@@ -1551,6 +1612,7 @@ namespace gnubase::engine
 							{"autoFades", toJson(current.autoFades)}});
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
+				activated = current.activeMarkerTrack != previous.activeMarkerTrack;
 			}
 			for (const ObjectChange<Track>& track : change.tracks)
 				reordered = reordered || !track.before || !track.after || track.before->parent != track.after->parent ||
@@ -1561,6 +1623,9 @@ namespace gnubase::engine
 			announceObjects(change.clips, direction, "clip", "clip", context);
 			announceObjects(change.audioEvents, direction, "audioEvent", "event", context);
 			announceObjects(change.markers, direction, "marker", "marker", context);
+			// After the tracks, so that a client knows the track that becomes active.
+			if (activated)
+				context.emit("marker.trackActivated", {{"track", project.activeMarkerTrack}});
 			for (const MidiPartChange& part : change.midiParts)
 			{
 				const auto current = project.midiParts.find(part.id);
@@ -1792,7 +1857,7 @@ namespace gnubase::engine
 		const Json stringSchema = {{"type", "string"}};
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json noResult = Json::object();
-		const Json trackTypes = enumSchema({"audio", "instrument", "midi", "folder", "group", "effect"});
+		const Json trackTypes = enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker"});
 		const Json timeBases = enumSchema({"musical", "linear"});
 		const Json color = {{"type", {"string", "null"}}};
 
@@ -1906,7 +1971,8 @@ namespace gnubase::engine
 				"Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks "
 				"(default: "
 				"last). Audio channels default to stereo; folders get a channel only with groupChannel. New channels "
-				"play through the main output, or through the folder's group channel.",
+				"play through the main output, or through the folder's group channel. Marker tracks have no channel "
+				"and stay at the top level; a project has at most 10, and a new one becomes the active marker track.",
 				objectSchema({{"type", trackTypes}, {"name", stringSchema}, {"color", color}, {"parent", idSchema},
 								 {"index", integerSchema}, {"channels", integerSchema}, {"timeBase", timeBases},
 								 {"groupChannel", booleanSchema}},
@@ -1919,7 +1985,7 @@ namespace gnubase::engine
 		add(engine,
 			{"track.set", 1,
 				"Changes a track's name, color (#rrggbb, or null for the default) or time base. A new time base keeps "
-				"its events and parts at the same time.",
+				"its events, parts and markers at the same time.",
 				objectSchema({{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases}},
 					{"track"}),
 				resultSchema({"track"}), false},
@@ -1932,7 +1998,9 @@ namespace gnubase::engine
 			moveTrack);
 		add(engine,
 			{"track.remove", 1,
-				"Removes a track with its channel, events and parts; a folder also removes the tracks inside it.",
+				"Removes a track with its channel, events, parts or markers; a folder also removes the tracks inside "
+				"it. "
+				"Without the active marker track, the topmost marker track becomes the active one.",
 				objectSchema({{"track", idSchema}}, {"track"}), noResult, false},
 			removeTrack);
 
@@ -2126,6 +2194,7 @@ namespace gnubase::engine
 			{ return removeFromPart(project, context, &MidiPart::controllers, "controllers", "controller"); });
 
 		registerMidiEditCommands(engine);
+		registerMarkerCommands(engine);
 		registerAutomationCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
 		registerMidiFileCommands(engine);

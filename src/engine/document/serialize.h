@@ -40,6 +40,9 @@ namespace gnubase::engine
 	Fade fadeFromJson(const Json& json, const Fade& fallback = {});
 	AutoFades autoFadesFromJson(const Json& json, const AutoFades& fallback = {});
 
+	const char* markerTypeName(MarkerType type);
+	std::optional<MarkerType> markerTypeFromName(const std::string& name);
+
 	Json toJson(const Bus& bus);
 	Json toJson(const Track& track);
 	Json toJson(const Channel& channel);

@@ -44,7 +44,7 @@ namespace gnubase::engine
 	};
 
 	// The parts of a project that are not objects with ids, or keep their order: name, sample rate, tempo, time
-	// signatures, auto fades, busses and the top-level tracks.
+	// signatures, auto fades, busses, the top-level tracks and the active marker track.
 	struct ProjectSettings
 	{
 		std::string name;
@@ -54,6 +54,7 @@ namespace gnubase::engine
 		AutoFades autoFades;
 		std::vector<Bus> busses;
 		std::vector<ObjectId> tracks;
+		ObjectId activeMarkerTrack = 0;
 	};
 
 	// How a project changed, object by object. The id counter is left out on purpose: undoing an addition doesn't
