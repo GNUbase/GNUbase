@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/engine.h"
 #include "platform/audio/dummydevice.h"
+#include "platform/hosttime.h"
+#include "platform/midi/dummyport.h"
 #include "platform/rt/realtime.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -522,4 +524,82 @@ TEST_CASE("audio.reset keeps the dummy device's settings", "[unit]")
 	CHECK(status.at("position") == 0); // a new device
 	run(client, "audio.render", {{"frames", 64}});
 	CHECK(capture(client, 0, 64) != std::vector<float>(64, 0.0f)); // with its input
+}
+
+namespace
+{
+	std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends(
+		std::unique_ptr<gnubase::midi::DummyBackend> backend)
+	{
+		std::vector<std::unique_ptr<gnubase::midi::Backend>> backends;
+		backends.push_back(std::move(backend));
+		return backends;
+	}
+}
+
+TEST_CASE("midi.ports lists the MIDI ports and keeps their settings while they are unplugged", "[integration]")
+{
+	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+	gnubase::midi::DummyBackend& backend = *dummy;
+	backend.addLoopback("Keys");
+	Engine engine(makeBackends(), {}, midiBackends(std::move(dummy)));
+	Client client(engine);
+	Json ports = run(client, "midi.ports").at("ports");
+	REQUIRE(ports.size() == 2);
+	CHECK(ports[0] ==
+		Json{{"backend", "dummy"}, {"id", "Keys"}, {"input", true}, {"name", "Keys"}, {"showAs", "Keys"},
+			{"visible", true}, {"inAllInputs", true}, {"present", true}, {"open", true}, {"midi2", false}});
+	CHECK(ports[1].at("input") == false);
+	CHECK(ports[1].at("open") == false); // outputs open once something sends to them
+
+	const Json keys =
+		run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", "My keys"}, {"inAllInputs", false}});
+	CHECK(keys.at("showAs") == "My keys");
+	CHECK(keys.at("inAllInputs") == false);
+	CHECK_THAT(reject(client, "midi.setPort", {{"id", "Keys"}, {"input", false}, {"inAllInputs", true}}),
+		ContainsSubstring("only inputs"));
+	CHECK_THAT(
+		reject(client, "midi.setPort", {{"id", "Drums"}, {"input", true}}), ContainsSubstring("no MIDI input Drums"));
+
+	// Unplugged: the backend tells the engine, which lists the port as not present and keeps its settings.
+	backend.removeLoopback("Keys");
+	CHECK(waitForEvent(
+		client, "midi.changed", [](const Json& data) { return data.at("ports")[0].at("present") == false; }));
+	ports = run(client, "midi.ports").at("ports");
+	CHECK(ports[0].at("open") == false);
+	CHECK(ports[0].at("showAs") == "My keys");
+
+	// Plugged in again: open again, with its settings.
+	backend.addLoopback("Keys");
+	CHECK(
+		waitForEvent(client, "midi.changed", [](const Json& data) { return data.at("ports")[0].at("open") == true; }));
+	CHECK(run(client, "midi.ports").at("ports")[0].at("inAllInputs") == false);
+
+	// Hidden inputs are closed.
+	CHECK(run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"visible", false}}).at("open") == false);
+	CHECK(run(client, "midi.refresh").at("ports").size() == 2);
+}
+
+TEST_CASE("MIDI input reaches the monitor at its frame position once the device processes blocks", "[unit]")
+{
+	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+	gnubase::midi::DummyBackend& backend = *dummy;
+	backend.addLoopback("Keys");
+	Engine engine(makeBackends(), {}, midiBackends(std::move(dummy)));
+	Client client(engine);
+	CHECK(run(client, "midi.monitor").at("received").empty()); // the first MIDI command opens the ports
+	run(client, "audio.setDevice", {{"blockSize", 64}});
+
+	constexpr gnubase::HostTime second = 1000000000;
+	const auto keys = backend.openOutput("Keys");
+	keys->send(noteOn(60), gnubase::hostTime() - second);          // long ago: the next block's first frame
+	keys->send(noteOn(62), gnubase::hostTime() + (3600 * second)); // in an hour
+	CHECK(run(client, "midi.monitor").at("received").empty());     // no block yet
+
+	run(client, "audio.render", {{"frames", 128}});
+	const Json monitor = run(client, "midi.monitor");
+	CHECK(monitor.at("received") ==
+		Json::array({{{"backend", "dummy"}, {"id", "Keys"}, {"position", 0}, {"bytes", {0x90, 60, 100}}}}));
+	CHECK(monitor.at("dropped") == 0);
+	CHECK(run(client, "midi.monitor").at("received").empty()); // each message once
 }

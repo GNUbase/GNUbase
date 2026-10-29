@@ -146,7 +146,7 @@ namespace gnubase::audio
 			const rt::ScopedRealtimeContext realtime;
 			if (m_input)
 				m_input(m_inputs.data(), m_format.inputChannels, frames, position);
-			callback.process({m_inputs.data(), m_outputs.data(), frames, position, m_midiIn, m_midiOut});
+			callback.process({m_inputs.data(), m_outputs.data(), frames, position, hostTime(), m_midiIn, m_midiOut});
 		}
 
 		// Capture, then publish what was captured.
