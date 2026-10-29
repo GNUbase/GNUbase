@@ -19,8 +19,8 @@ target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-m
 # The test plugins and the loader tests that load them into the test process (plugins/README.md).
 if(GNUBASE_TEST_PLUGINS)
 	add_subdirectory(plugins)
-	target_sources(gnubase-tests PRIVATE clap_plugin_tests.cpp)
-	target_link_libraries(gnubase-tests PRIVATE clap-sdk ${CMAKE_DL_LIBS})
+	target_sources(gnubase-tests PRIVATE clap_plugin_tests.cpp vst3_plugin_tests.cpp)
+	target_link_libraries(gnubase-tests PRIVATE clap-sdk vst3-sdk ${CMAKE_DL_LIBS})
 	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_TEST_PLUGINS_DIR="${GNUBASE_TEST_PLUGINS_DIR}")
 	add_dependencies(gnubase-tests gnubase-test-plugins)
 endif()
