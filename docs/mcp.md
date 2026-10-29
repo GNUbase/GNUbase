@@ -947,6 +947,176 @@ Result:
 
 - `jobs`: array of object, required
 
+### marker
+
+#### `marker_activateTrack`
+
+Engine command `marker.activateTrack`.
+
+Makes a marker track the active one, which marker commands use when they are given no track.
+
+Arguments:
+
+- `track`: integer, required
+
+#### `marker_add`
+
+Engine command `marker.add`.
+
+Adds a position marker, or with type cycle a cycle marker, to a marker track (default: the active one; without a marker track one is added). position and end are in the track's time base (ticks or samples) or "cursor". A position marker defaults to the cursor, a cycle marker to the locators; a cycle marker ends at least one sample after its position. Position and cycle markers are numbered separately on each track; a new marker gets the first free number unless one is given.
+
+Arguments:
+
+- `color`: string or null
+- `end`: integer or string
+- `name`: string
+- `number`: integer
+- `position`: integer or string
+- `track`: integer
+- `type`: one of "position" | "cycle"
+
+Result:
+
+- `marker`: object, required
+
+#### `marker_list`
+
+Engine command `marker.list`. Read-only.
+
+The markers of a marker track (default: the active one; track 0 if there is none) in timeline order, with their position and end also in the project's samples.
+
+Arguments:
+
+- `track`: integer
+
+Result:
+
+- `markers`: array, required
+- `track`: integer, required
+
+#### `marker_locate`
+
+Engine command `marker.locate`.
+
+Moves the project cursor to a marker, given by id (marker) or by its number on a marker track (default: the active one) and type (default: position). Cycle markers locate to their start.
+
+Arguments:
+
+- `marker`: integer
+- `number`: integer
+- `track`: integer
+- `type`: one of "position" | "cycle"
+
+Result:
+
+- `marker`: object or null, required
+- `position`: integer, required
+
+#### `marker_locateNext`
+
+Engine command `marker.locateNext`.
+
+Moves the project cursor to the next marker after it on a marker track (default: the active one): position markers and the start and end of cycle markers. Without one the cursor stays and marker is null. Returns the marker and the cursor in samples.
+
+Arguments:
+
+- `track`: integer
+
+Result:
+
+- `marker`: object or null, required
+- `position`: integer, required
+
+#### `marker_locatePrevious`
+
+Engine command `marker.locatePrevious`.
+
+Moves the project cursor to the previous marker before it on a marker track (default: the active one), like marker.locateNext.
+
+Arguments:
+
+- `track`: integer
+
+Result:
+
+- `marker`: object or null, required
+- `position`: integer, required
+
+#### `marker_range`
+
+Engine command `marker.range`. Read-only.
+
+The range between the markers around a position in samples, on a marker track (default: the active one): from the last marker at or before it to the next one, counting position markers and the start and end of cycle markers. A range selection between markers spans it.
+
+Arguments:
+
+- `position`: integer, required
+- `track`: integer
+
+Result:
+
+- `end`: integer, required
+- `start`: integer, required
+
+#### `marker_remove`
+
+Engine command `marker.remove`.
+
+Removes markers.
+
+Arguments:
+
+- `markers`: array of integer, required
+
+#### `marker_renumber`
+
+Engine command `marker.renumber`.
+
+Numbers a marker track's position or cycle markers again from 1, in timeline order (default: the active track).
+
+Arguments:
+
+- `track`: integer
+- `type`: one of "position" | "cycle", required
+
+#### `marker_set`
+
+Engine command `marker.set`.
+
+Changes a marker: moves it (position, in the track's time base or "cursor"; a cycle marker keeps its length unless end is given), renames it, changes its color or number, or moves it to another marker track, where it takes the first free number if its own is taken.
+
+Arguments:
+
+- `color`: string or null
+- `end`: integer or string
+- `marker`: integer, required
+- `name`: string
+- `number`: integer
+- `position`: integer or string
+- `track`: integer
+
+Result:
+
+- `marker`: object, required
+
+#### `marker_setLocators`
+
+Engine command `marker.setLocators`.
+
+Sets the left and right locators to a cycle marker's start and end, given by id (marker) or by its number on a marker track (default: the active one).
+
+Arguments:
+
+- `marker`: integer
+- `number`: integer
+- `track`: integer
+
+Result:
+
+- `left`: integer, required
+- `marker`: object, required
+- `right`: integer, required
+
 ### media
 
 #### `media_add`
@@ -1102,7 +1272,7 @@ Result:
 
 Engine command `midiFile.import`.
 
-Imports a standard MIDI file (type 0, 1 or 2) into new MIDI tracks (trackType midi, the default) or instrument tracks, one part per track from the bar of its first event to the bar after its last. A type 0 file gets a track per MIDI channel; the sequences of a type 2 file are laid out one after another, each from a bar start. Names that aren't UTF-8 are read as Windows-1252. Unless tempo is false, the file's tempo and time signatures replace the project's; unless markers is false, its markers are added. One undo step. Returns the new tracks and parts.
+Imports a standard MIDI file (type 0, 1 or 2) into new MIDI tracks (trackType midi, the default) or instrument tracks, one part per track from the bar of its first event to the bar after its last. A type 0 file gets a track per MIDI channel; the sequences of a type 2 file are laid out one after another, each from a bar start. Names that aren't UTF-8 are read as Windows-1252. Unless tempo is false, the file's tempo and time signatures replace the project's; unless markers is false, its markers are added to the active marker track (one is added if there is none). One undo step. Returns the new tracks and parts.
 
 Arguments:
 
@@ -1568,7 +1738,7 @@ Result:
 
 Engine command `track.add`.
 
-Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; folders get a channel only with groupChannel. New channels play through the main output, or through the folder's group channel.
+Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; folders get a channel only with groupChannel. New channels play through the main output, or through the folder's group channel. Marker tracks have no channel and stay at the top level; a project has at most 10, and a new one becomes the active marker track.
 
 Arguments:
 
@@ -1579,7 +1749,7 @@ Arguments:
 - `name`: string
 - `parent`: integer
 - `timeBase`: one of "musical" | "linear"
-- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect", required
+- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect" | "marker", required
 
 Result:
 
@@ -1602,7 +1772,7 @@ Arguments:
 
 Engine command `track.remove`.
 
-Removes a track with its channel, events and parts; a folder also removes the tracks inside it.
+Removes a track with its channel, events, parts or markers; a folder also removes the tracks inside it. Without the active marker track, the topmost marker track becomes the active one.
 
 Arguments:
 
@@ -1612,7 +1782,7 @@ Arguments:
 
 Engine command `track.set`.
 
-Changes a track's name, color (#rrggbb, or null for the default) or time base. A new time base keeps its events and parts at the same time.
+Changes a track's name, color (#rrggbb, or null for the default) or time base. A new time base keeps its events, parts and markers at the same time.
 
 Arguments:
 
@@ -1647,7 +1817,7 @@ Result:
 
 Engine command `transport.get`. Read-only.
 
-Whether playback runs, the project cursor in samples, the locators and the modes.
+Whether playback runs, the project cursor in samples, the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.
 
 Result:
 
@@ -1767,6 +1937,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://graph.get`: The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes they receive audio and events from, and the order they are processed in.
 - `gnubase://history.get`: The undo history: every step with its action, time (UTC) and details, the position (steps before it are done, the ones after it can be redone) and the maximum number of steps (0: no limit).
 - `gnubase://job.list`: Every background job since the engine started, such as backups: id, kind, state (running, done, failed or cancelled), progress from 0 to 1, what it is doing, and its result or error once it ended.
+- `gnubase://marker.list`: The markers of a marker track (default: the active one; track 0 if there is none) in timeline order, with their position and end also in the project's samples.
 - `gnubase://media.peakStatus`: The state of the waveform overviews of a media file, or of every media file: pending, generating (with progress from 0 to 1), ready, failed (with the error) or recording; the frames that have peaks; the peak file they were loaded from or written to; whether they were generated from the audio file rather than loaded. Peak files are kept next to their audio file as <file name>.gbpeaks, or in fallbackFolder where that can't be written.
 - `gnubase://processor.list`: Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units.
 - `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts.
@@ -1775,6 +1946,6 @@ Queries without required arguments can also be read as resources:
 - `gnubase://quantize.get`: The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).
 - `gnubase://quantize.presets`: The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings.
 - `gnubase://settings.list`: Every user setting with its key, description, JSON schema, default and value; the settings file, null when settings are kept in memory only; its version; and what happened when it was loaded: the status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the problems found, where the original file was kept, and whether the file is read-only for this session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be backed up or locked).
-- `gnubase://transport.get`: Whether playback runs, the project cursor in samples, the locators and the modes.
+- `gnubase://transport.get`: Whether playback runs, the project cursor in samples, the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.
 
 <!-- End of the generated tool catalogue -->

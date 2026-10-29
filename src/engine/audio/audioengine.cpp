@@ -1037,7 +1037,8 @@ namespace gnubase::engine
 	void AudioEngine::registerTransportCommands(Engine& engine)
 	{
 		// Every transport command returns the transport's state and announces it with transport.changed. While the
-		// device runs, the audio thread applies the request at its next block, so the position may not show it yet.
+		// device runs, the audio thread applies the request at its next block; until then the position is where a
+		// locate goes.
 		const auto command = [this, &engine](const char* name, const char* description, const char* parameters,
 								 std::function<void(const Json&)> handle)
 		{
@@ -1091,7 +1092,9 @@ namespace gnubase::engine
 				sent(m_transport.set(settings));
 			});
 		engine.registerCommand(
-			{"transport.get", 1, "Whether playback runs, the project cursor in samples, the locators and the modes.",
+			{"transport.get", 1,
+				"Whether playback runs, the project cursor in samples, the locators and the modes. After a locate the "
+				"cursor is where it goes, even before the audio thread has applied it.",
 				noParameters(), transportSchema(), true},
 			[this](CommandContext&) { return transportStatus(); });
 	}

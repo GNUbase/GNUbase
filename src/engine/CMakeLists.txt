@@ -100,6 +100,7 @@ add_library(gnubase-engine STATIC
 	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/document.cpp document/document.h
 	document/history.cpp document/history.h
+	document/markers.cpp
 	document/midiedits.cpp
 	document/midifilecommands.cpp
 	document/projectmodel.cpp document/projectmodel.h
