@@ -237,6 +237,7 @@ namespace gnubase::pluginhost::vst3
 		void readBuses();
 		void readParams();
 		void readMidiMapping();
+		void readProgramMap();
 		void busesChanged();
 		const Param* findParam(uint32_t id) const noexcept;
 		static double toNormalized(const Param& param, double value) noexcept;
@@ -258,6 +259,9 @@ namespace gnubase::pluginhost::vst3
 			vst::int32 offset) noexcept;
 		void noteExpression(const plugin::Event& event, vst::int32 offset) noexcept;
 		void controller(int16_t port, int16_t channel, int32_t control, double normalized, vst::int32 offset) noexcept;
+		void programChange(int16_t port, int16_t channel, uint32_t program, vst::int32 offset) noexcept;
+		// A change of a parameter that a MIDI message controls: for the processor, and for the engine's mirror.
+		void mappedChange(vst::Vst::ParamID id, double normalized, vst::int32 offset) noexcept;
 		void addEvent(vst::Vst::Event& event) noexcept;
 		void takeMainThreadChanges() noexcept;
 		void drainEdits(plugin::EventList* out, bool toProcessor) noexcept;
@@ -300,6 +304,8 @@ namespace gnubase::pluginhost::vst3
 		std::vector<std::pair<vst::Vst::ParamID, size_t>> m_paramIndex; // sorted by id
 		// For each event input bus, channel and controller (vst::Vst::kCountCtrlNumber): the mapped parameter.
 		std::vector<vst::Vst::ParamID> m_midiMap;
+		// For each event input bus and channel: the program change parameter of the unit that plays it, or kNoParamId.
+		std::vector<vst::Vst::ParamID> m_programMap;
 		// Changes the plugin reported while active, applied when it is deactivated for the restart it asked for.
 		bool m_busesChanged = false;
 		bool m_mappingChanged = false;

@@ -34,10 +34,16 @@ namespace gnubase::tests::vst3adapter
 						  // process call has the same mode, otherwise 0
 		Odd = 12,         // read only: its title fills all 128 characters, without a terminator, and starts with an
 						  // unpaired UTF-16 surrogate
-		ParamCount = 13,
+		Bend = 13,        // controlled by pitch bend, through the MIDI mapping
+		Pressure = 14,    // controlled by channel pressure, through the MIDI mapping
+		BankMsb = 15,     // controlled by controller 0, bank select, through the MIDI mapping
+		BankLsb = 16,     // controlled by controller 32, bank select's LSB, through the MIDI mapping
+		ParamCount = 17,
 	};
 
 	inline constexpr uint32_t g_maxLatency = 1000;
 	inline constexpr uint32_t g_tail = 4800;
 	inline constexpr uint8_t g_gainController = 7; // MIDI CC 7 controls Gain
+	inline constexpr uint8_t g_bankSelect = 0;     // MIDI CC 0 controls BankMsb
+	inline constexpr uint8_t g_bankSelectLsb = 32; // MIDI CC 32 controls BankLsb
 }

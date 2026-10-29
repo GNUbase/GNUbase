@@ -27,13 +27,15 @@ namespace gnubase::pluginhost::vst3
 		using vst::Vst::BusDirections;
 		using vst::Vst::MediaTypes;
 
-		constexpr size_t g_extraQueues = 64;        // parameter queues beyond the parameter count, for unknown ids
-		constexpr size_t g_maxInPoints = 64;        // changes of one parameter in one block
-		constexpr size_t g_maxOutPoints = 32;       // changes of one parameter the plugin reports per block
-		constexpr size_t g_maxEvents = 1024;        // VST3 events per block, in and out
-		constexpr size_t g_maxOutputs = 4096;       // GNUbase output events per sub-block
-		constexpr size_t g_minQueue = 4096;         // values queued between the threads, at least
-		constexpr size_t g_channels = 16;           // MIDI channels per event bus
+		constexpr size_t g_extraQueues = 64;  // parameter queues beyond the parameter count, for unknown ids
+		constexpr size_t g_maxInPoints = 64;  // changes of one parameter in one block
+		constexpr size_t g_maxOutPoints = 32; // changes of one parameter the plugin reports per block
+		constexpr size_t g_maxEvents = 1024;  // VST3 events per block, in and out
+		constexpr size_t g_maxOutputs = 4096; // GNUbase output events per sub-block
+		constexpr size_t g_minQueue = 4096;   // values queued between the threads, at least
+		constexpr size_t g_channels = 16;     // MIDI channels per event bus
+		constexpr int32_t g_bankSelect = 0;   // MIDI controllers: bank select, and its LSB
+		constexpr int32_t g_bankSelectLsb = 32;
 		constexpr size_t g_maxText = 128;           // characters of a String128
 		constexpr double g_perNoteBendRange = 48.0; // semitones of a MIDI 2.0 per-note pitch bend, as MPE's default
 		constexpr double g_maxUint32 = 4294967295.0;
@@ -489,6 +491,7 @@ namespace gnubase::pluginhost::vst3
 
 	void Vst3Plugin::readMidiMapping()
 	{
+		readProgramMap();
 		m_midiMap.clear();
 		if (m_midiMapping == nullptr || m_eventInputs.empty())
 			return;
@@ -505,6 +508,33 @@ namespace gnubase::pluginhost::vst3
 							static_cast<vst::int16>(channel), static_cast<vst::Vst::CtrlNumber>(control),
 							id) == vst::kResultTrue)
 						m_midiMap[(((bus * g_channels) + channel) * controls) + control] = id;
+				}
+			}
+		}
+	}
+
+	void Vst3Plugin::readProgramMap()
+	{
+		// As VST3 hosts do: a program change on a bus and channel goes to the program change parameter of the unit
+		// that plays them (IUnitInfo::getUnitByBus), or of the root unit.
+		m_programMap.assign(m_eventInputs.size() * g_channels, vst::Vst::kNoParamId);
+		for (size_t bus = 0; bus < m_eventInputs.size(); ++bus)
+		{
+			for (size_t channel = 0; channel < g_channels; ++channel)
+			{
+				vst::Vst::UnitID unit = vst::Vst::kRootUnitId;
+				vst::Vst::UnitID found = vst::Vst::kRootUnitId;
+				if (m_units != nullptr &&
+					m_units->getUnitByBus(MediaTypes::kEvent, BusDirections::kInput, static_cast<vst::int32>(bus),
+						static_cast<vst::int32>(channel), found) == vst::kResultTrue)
+					unit = found;
+				for (const Param& param : m_params)
+				{
+					if (param.programChange && param.unit == unit && param.stepCount > 0)
+					{
+						m_programMap[(bus * g_channels) + channel] = param.info.id;
+						break;
+					}
 				}
 			}
 		}
@@ -1096,7 +1126,8 @@ namespace gnubase::pluginhost::vst3
 				found = true;
 			}
 		}
-		if (!found && event.noteId >= 0)
+		// Without a voice, an expression needs a note id; poly pressure only a key, as in MIDI.
+		if (!found && (event.noteId >= 0 || (pressure && event.key >= 0 && event.key <= 127)))
 			send(Voice{event.port < 0 ? int16_t{0} : event.port, event.channel < 0 ? int16_t{0} : event.channel,
 				event.key, event.noteId});
 	}
@@ -1110,9 +1141,26 @@ namespace gnubase::pluginhost::vst3
 			return;
 		const auto ch = static_cast<size_t>(std::clamp<int16_t>(channel, 0, 15));
 		const vst::Vst::ParamID id = m_midiMap[(((bus * g_channels) + ch) * controls) + static_cast<size_t>(control)];
-		if (id == vst::Vst::kNoParamId)
+		if (id != vst::Vst::kNoParamId)
+			mappedChange(id, std::clamp(normalized, 0.0, 1.0), offset);
+	}
+
+	void Vst3Plugin::programChange(int16_t port, int16_t channel, uint32_t program, vst::int32 offset) noexcept
+	{
+		const auto bus = static_cast<size_t>(busIndex(port));
+		if (bus >= m_eventInputs.size() || m_programMap.empty())
 			return;
-		normalized = std::clamp(normalized, 0.0, 1.0);
+		const auto ch = static_cast<size_t>(std::clamp<int16_t>(channel, 0, 15));
+		const vst::Vst::ParamID id = m_programMap[(bus * g_channels) + ch];
+		const Param* param = id != vst::Vst::kNoParamId ? findParam(id) : nullptr;
+		// A program the list doesn't have is ignored.
+		if (param == nullptr || program > static_cast<uint32_t>(param->stepCount))
+			return;
+		mappedChange(id, static_cast<double>(program) / param->stepCount, offset);
+	}
+
+	void Vst3Plugin::mappedChange(vst::Vst::ParamID id, double normalized, vst::int32 offset) noexcept
+	{
 		hostParamChange(id, normalized, offset);
 		// The engine's mirror learns the value as a change the plugin made.
 		plugin::Event event;
@@ -1157,6 +1205,9 @@ namespace gnubase::pluginhost::vst3
 		}
 		case 0xb0:
 			controller(event.port, channel, data1, data2 / 127.0, offset);
+			break;
+		case 0xc0:
+			programChange(event.port, channel, data1, offset);
 			break;
 		case 0xd0:
 			controller(event.port, channel, vst::Vst::kAfterTouch, data1 / 127.0, offset);
@@ -1217,6 +1268,14 @@ namespace gnubase::pluginhost::vst3
 		}
 		case 0xb0:
 			controller(event.port, channel, index, value, offset);
+			break;
+		case 0xc0: // with a valid bank, the bank selects come first, as in MIDI 1.0
+			if ((word & 1U) != 0)
+			{
+				controller(event.port, channel, g_bankSelect, ((data >> 8) & 0x7f) / 127.0, offset);
+				controller(event.port, channel, g_bankSelectLsb, (data & 0x7f) / 127.0, offset);
+			}
+			programChange(event.port, channel, (data >> 24) & 0x7f, offset);
 			break;
 		case 0xd0:
 			controller(event.port, channel, vst::Vst::kAfterTouch, value, offset);

@@ -660,6 +660,123 @@ TEST_CASE("notes, expressions, MIDI 1.0, MIDI 2.0 and sysex reach a VST3 plugin 
 	stop(*plugin);
 }
 
+TEST_CASE("pitch bend, pressure, bank selects and program changes reach a VST3 plugin as VST3 hosts pass them",
+	"[integration]")
+{
+	Vst3Fixture fixture;
+	const std::unique_ptr<plugin::Plugin> plugin = fixture.create();
+	start(*plugin);
+	Runner runner(*plugin);
+
+	// MIDI 1.0 messages on the first channel, as the engine's plugin slots send them (engine::plugins::convertEvent).
+	const auto midi = [](uint32_t offset, uint32_t status, uint32_t data1, uint32_t data2 = 0)
+	{
+		plugin::Event event;
+		event.offset = offset;
+		event.type = plugin::EventType::Midi;
+		event.port = 0;
+		event.channel = 0;
+		event.data[0] = status | (data1 << 8) | (data2 << 16);
+		return event;
+	};
+	std::vector<plugin::Event> events;
+	events.push_back(midi(5, 0xe0, 0x00, 0x60)); // pitch bend 0x3000
+	events.push_back(midi(10, 0xd0, 64));        // channel pressure
+	events.push_back(noteEvent(plugin::EventType::NoteOn, 12, 60, 0.5));
+	events.push_back(midi(15, 0xa0, 60, 100)); // poly pressure on the note that plays
+	events.push_back(midi(16, 0xa0, 61, 50));  // and on a key without a note
+	events.push_back(midi(20, 0xb0, g_bankSelect, 1));
+	events.push_back(midi(20, 0xb0, g_bankSelectLsb, 2));
+	events.push_back(midi(30, 0xc0, 1)); // the second program, Loud
+	events.push_back(midi(40, 0xc0, 5)); // there is no sixth program: ignored
+	const std::vector<float> input = ramp(256);
+	std::vector<float> output = runner.run(input, events);
+
+	const plugin::EventList& out = runner.out;
+	const auto values = [&out](uint32_t param)
+	{
+		std::vector<plugin::Event> result;
+		for (const plugin::Event& event : out)
+		{
+			if (isParam(event, plugin::EventType::ParamValue, param))
+				result.push_back(event);
+		}
+		return result;
+	};
+	// Pitch bend, channel pressure and the bank selects change the parameters the plugin's MIDI mapping assigns to
+	// them, and the engine's mirror learns the values as changes the plugin made.
+	const std::vector<plugin::Event> bend = values(Bend);
+	REQUIRE(bend.size() == 1);
+	CHECK(bend[0].offset == 5);
+	CHECK(bend[0].value == Approx(0x3000 / 16383.0));
+	CHECK((bend[0].flags & plugin::Event::DontRecord) != 0);
+	const std::vector<plugin::Event> pressure = values(Pressure);
+	REQUIRE(pressure.size() == 1);
+	CHECK(pressure[0].offset == 10);
+	CHECK(pressure[0].value == Approx(64.0 / 127.0));
+	const std::vector<plugin::Event> bankMsb = values(BankMsb);
+	const std::vector<plugin::Event> bankLsb = values(BankLsb);
+	REQUIRE(bankMsb.size() == 1);
+	REQUIRE(bankLsb.size() == 1);
+	CHECK(bankMsb[0].offset == 20);
+	CHECK(bankMsb[0].value == Approx(1.0 / 127.0));
+	CHECK(bankLsb[0].offset == 20);
+	CHECK(bankLsb[0].value == Approx(2.0 / 127.0));
+
+	// Poly pressure is VST3's poly pressure event, which the plugin sends back: for the note that plays with its id,
+	// for a key without a note without one.
+	const plugin::Event* noteOn =
+		find(out, [](const plugin::Event& e) { return e.type == plugin::EventType::NoteOn && e.key == 60; });
+	REQUIRE(noteOn != nullptr);
+	const auto polyPressure = [&out](int16_t key)
+	{
+		return find(out,
+			[key](const plugin::Event& e)
+			{
+				return e.type == plugin::EventType::NoteExpression &&
+					e.expression == plugin::expressionId(plugin::NoteExpression::Pressure) && e.key == key;
+			});
+	};
+	const plugin::Event* playing = polyPressure(60);
+	REQUIRE(playing != nullptr);
+	CHECK(playing->offset == 15);
+	CHECK(playing->noteId == noteOn->noteId);
+	CHECK(playing->value == Approx(100.0 / 127.0));
+	const plugin::Event* unplayed = polyPressure(61);
+	REQUIRE(unplayed != nullptr);
+	CHECK(unplayed->offset == 16);
+	CHECK(unplayed->noteId == -1);
+	CHECK(unplayed->value == Approx(50.0 / 127.0));
+
+	// A program change sets the program change parameter of the root unit's program list, which the mirror learns:
+	// Loud, gain x2, from the program change's sample on.
+	const std::vector<plugin::Event> program = values(Program);
+	REQUIRE(program.size() == 1);
+	CHECK(program[0].offset == 30);
+	CHECK(program[0].value == 0.5);
+	CHECK(output[g_defaultLatency + 20] == input[20]);
+	CHECK(output[g_defaultLatency + 50] == input[50] * 2.0f);
+
+	// A MIDI 2.0 program change with a valid bank sends the bank selects first: Quiet, gain x0.5.
+	plugin::Event midi2;
+	midi2.offset = 8;
+	midi2.type = plugin::EventType::Midi2;
+	midi2.port = 0;
+	midi2.data[0] = (0x4U << 28) | (0xc0U << 16) | 1U; // program change, channel 1, bank valid
+	midi2.data[1] = (2U << 24) | (3U << 8) | 4U;       // program 3, bank 3 / 4
+	output = runner.run(input, {midi2});
+	const std::vector<plugin::Event> program2 = values(Program);
+	REQUIRE(program2.size() == 1);
+	CHECK(program2[0].offset == 8);
+	CHECK(program2[0].value == 1.0);
+	REQUIRE(values(BankMsb).size() == 1);
+	CHECK(values(BankMsb)[0].value == Approx(3.0 / 127.0));
+	REQUIRE(values(BankLsb).size() == 1);
+	CHECK(values(BankLsb)[0].value == Approx(4.0 / 127.0));
+	CHECK(output[g_defaultLatency + 50] == input[50] * 0.5f);
+	stop(*plugin);
+}
+
 TEST_CASE(
 	"edits in a VST3 plugin's controller become gestures and values for the host and the processor", "[integration]")
 {
@@ -951,8 +1068,17 @@ TEST_CASE("a VST3 plugin processes notes, MIDI, parameters and transport changes
 	plugin::Event tuning = noteEvent(plugin::EventType::NoteExpression, 40, 60, 0.0);
 	tuning.expression = plugin::expressionId(plugin::NoteExpression::Tuning);
 	tuning.value = -3.0;
+	plugin::Event bend = midi;
+	bend.offset = 55;
+	bend.data[0] = 0xe0 | (0x7f << 16);
+	plugin::Event polyPressure = midi;
+	polyPressure.offset = 60;
+	polyPressure.data[0] = 0xa0 | (61 << 8) | (90 << 16);
+	plugin::Event program = midi;
+	program.offset = 65;
+	program.data[0] = 0xc0 | (1 << 8);
 	const std::vector<plugin::Event> events{noteEvent(plugin::EventType::NoteOn, 0, 60, 0.8), paramEvent(10, Gain, 0.3),
-		tuning, midi, noteEvent(plugin::EventType::NoteOff, 90, 60, 0.0)};
+		tuning, midi, bend, polyPressure, program, noteEvent(plugin::EventType::NoteOff, 90, 60, 0.0)};
 	const std::vector<plugin::TransportSegment> transport{segment(0, 120.0), segment(70, 90.0)};
 	const std::vector<uint8_t> sysex{0xf0, 0x01, 0x02, 0xf7};
 	// An edit in the controller, which the next block reports.

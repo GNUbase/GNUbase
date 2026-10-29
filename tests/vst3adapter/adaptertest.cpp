@@ -481,7 +481,7 @@ namespace
 				info.flags = sv::ParameterInfo::kCanAutomate;
 				static constexpr std::array<const char*, ParamCount> titles{"Gain", "Bypass", "Mode", "Latency",
 					"Program", "Note count", "Last tuning", "Tempo", "Edit trigger", "Layout", "Audio edit",
-					"Process mode", ""};
+					"Process mode", "", "Bend", "Pressure", "Bank MSB", "Bank LSB"};
 				copy(info.title, titles[static_cast<size_t>(i)]);
 				switch (i)
 				{
@@ -521,6 +521,11 @@ namespace
 				case Tempo:
 				case ProcessMode:
 					info.flags = sv::ParameterInfo::kIsReadOnly;
+					break;
+				case Bend:
+				case Pressure:
+				case BankMsb:
+				case BankLsb: // continuous and automatable, from 0
 					break;
 				default: // EditTrigger, Layout, AudioEdit
 					info.stepCount = 1;
@@ -780,13 +785,25 @@ namespace
 			return vst::kNotImplemented;
 		}
 
-		// IMidiMapping: CC 7 on every channel of the event input controls Gain.
+		// IMidiMapping, on every channel of the event input: CC 7 controls Gain, pitch bend Bend, channel pressure
+		// Pressure, and the bank selects CC 0 and CC 32 BankMsb and BankLsb.
 		tresult PLUGIN_API getMidiControllerAssignment(
 			vst::int32 bus, vst::int16 /*channel*/, sv::CtrlNumber control, sv::ParamID& id) override
 		{
-			if (bus != 0 || control != g_gainController)
+			if (bus != 0)
 				return kResultFalse;
-			id = Gain;
+			if (control == g_gainController)
+				id = Gain;
+			else if (control == sv::kPitchBend)
+				id = Bend;
+			else if (control == sv::kAfterTouch)
+				id = Pressure;
+			else if (control == g_bankSelect)
+				id = BankMsb;
+			else if (control == g_bankSelectLsb)
+				id = BankLsb;
+			else
+				return kResultFalse;
 			return kResultTrue;
 		}
 

@@ -6,7 +6,7 @@
 - **buses**: a stereo main input, a side-chain input that is off by default, a stereo output, and an event input and output. Mono and stereo are accepted, as long as the main input and output match;
 - **parameters with units**: Gain and Mode belong to the unit "Amp"; Bypass has `kIsBypass`, Mode and Program are lists (Program's default lies between two steps), three parameters are read only and report what the processor got (note ons, the last tuning expression, the tempo of each process call);
 - a **program list** on the root unit with three programs and their pitch names, and a program change parameter;
-- **MIDI mapping**: controller 7 controls Gain;
+- **MIDI mapping**: controller 7 controls Gain, and the parameters Bend, Pressure, Bank MSB and Bank LSB follow pitch bend, channel pressure and the bank selects (controllers 0 and 32); program changes go to the program change parameter;
 - **events**: every input event comes back on the output bus as it came in;
 - **edits in the controller**: setting "Edit trigger" makes the controller edit Gain with `beginEdit`, `performEdit` and `endEdit`, as an editor would, and mark the controller's state dirty (`IComponentHandler2::setDirty`); "Audio edit" makes the component make the same kind of edit from the audio thread, through the handler the controller sent it, as many plugins do;
 - **restarts**: a Latency change in the controller calls `restartComponent(kLatencyChanged)`, a program change `kParamValuesChanged`, and "Layout" `kIoChanged`: the component switches its main buses to mono when it is deactivated;
