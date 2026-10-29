@@ -616,10 +616,11 @@ namespace gnubase::engine
 				return result;
 			}
 
-			// A crossfade's length, or the whole overlap.
+			// A crossfade's length, or the whole overlap: never longer than the overlap, as it plays.
 			static double crossfadeSeconds(time::Samples length, double rate, const Seconds& out, const Seconds& in)
 			{
-				return length > 0 ? static_cast<double>(length) / rate : std::max(0.0, out.end - in.start);
+				const double overlap = std::max(0.0, out.end - in.start);
+				return length > 0 ? std::min(static_cast<double>(length) / rate, overlap) : overlap;
 			}
 
 			double fadeInSeconds(const AudioEvent& event) const
@@ -629,7 +630,7 @@ namespace gnubase::engine
 				if (crossfadeApplies(m_project, event))
 					return crossfadeSeconds(
 						event.crossfade.length, in.rate, seconds(m_project.audioEvents.at(event.crossfade.from)), in);
-				return static_cast<double>(event.fadeIn.length) / in.rate;
+				return static_cast<double>(std::min(event.fadeIn.length, event.length)) / in.rate; // as it plays
 			}
 
 			double fadeOutSeconds(const AudioEvent& event) const
@@ -638,7 +639,7 @@ namespace gnubase::engine
 				for (const auto& [id, to] : m_project.audioEvents)
 					if (to.crossfade.from == event.id && crossfadeApplies(m_project, to))
 						return crossfadeSeconds(to.crossfade.outLength, out.rate, out, seconds(to));
-				return static_cast<double>(event.fadeOut.length) / out.rate;
+				return static_cast<double>(std::min(event.fadeOut.length, event.length)) / out.rate;
 			}
 
 			void writeMidiClip(pugi::xml_node clips, const Track& track, const MidiPart& part)

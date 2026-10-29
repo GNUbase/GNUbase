@@ -9,6 +9,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <miniz.h>
+#include <pugixml.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -793,6 +794,47 @@ TEST_CASE("without GNUbase's entry, crossfades come back from the fade times of 
 
 	CHECK(events[5].at("crossfade").is_null());
 	near(events[4].at("fadeOut").at("length"), 4000.0);
+}
+
+TEST_CASE("crossfades are written no longer than the overlap they play over", "[integration]")
+{
+	const test::TempDir dir;
+	const std::string audio = utf8(dir.path() / "take.wav");
+	writeWav(audio, 48000.0, 1, 100000);
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = idOf(run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}), "track");
+	const ObjectId media = idOf(run(client, "media.add", {{"path", audio}}), "media");
+	const ObjectId clip = idOf(run(client, "clip.add", {{"media", media}}), "clip");
+	const auto add = [&](int64_t position, int64_t length)
+	{
+		return idOf(run(client, "audioEvent.add",
+						{{"track", track}, {"clip", clip}, {"position", position}, {"length", length}}),
+			"event");
+	};
+	const ObjectId a = add(0, 20000);
+	const ObjectId b = add(15000, 20000);
+	run(client, "crossfade.set", {{"from", a}, {"to", b}, {"mode", "custom"}, {"length", 4000}, {"outLength", 4500}});
+	// The overlap shrinks to 1000 frames; the crossfade still plays, clamped to it.
+	run(client, "audioEvent.set", {{"event", b}, {"position", 19000}});
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+
+	pugi::xml_document xml;
+	REQUIRE(xml.load_string(readZip(file).at("project.xml").c_str()));
+	std::vector<double> fadeIns;
+	std::vector<double> fadeOuts;
+	for (const pugi::xpath_node& node : xml.select_nodes("//Clip[@fadeTimeUnit]"))
+	{
+		fadeIns.push_back(node.node().attribute("fadeInTime").as_double());
+		fadeOuts.push_back(node.node().attribute("fadeOutTime").as_double());
+	}
+	REQUIRE(fadeIns.size() == 2);
+	const double overlap = 1000.0 / 48000.0;
+	CHECK(std::abs(fadeOuts[0] - overlap) < 1e-9);
+	CHECK(std::abs(fadeIns[1] - overlap) < 1e-9);
+	CHECK(fadeIns[0] == 0.0);
+	CHECK(fadeOuts[1] == 0.0);
 }
 
 TEST_CASE("a clip inside another one has only its own fades", "[integration]")
