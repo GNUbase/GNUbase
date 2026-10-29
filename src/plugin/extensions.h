@@ -86,9 +86,19 @@ namespace gnubase::plugin
 	public:
 		static constexpr std::string_view extensionId() { return "gnubase.audio-ports-activation"; }
 
-		// [main] Turns a port on or off, e.g. the unused outputs of a multi-output instrument. An inactive port gets
-		// an AudioBuffer without channels.
+		// [main] Whether setAudioPortActiveWhileProcessing works. VST3's activateBus doesn't (setup state only); CLAP
+		// plugins say so themselves.
+		virtual bool audioPortsActivatableWhileProcessing() const = 0;
+
+		// [main, inactive] Turns a port on or off, e.g. a side-chain input or the unused outputs of a multi-output
+		// instrument. An inactive port gets an AudioBuffer without channels. Without the [audio] path below, switching
+		// a port of an active plugin means a restart.
 		virtual bool setAudioPortActive(bool input, uint32_t index, bool active) = 0;
+
+		// [audio] Only if audioPortsActivatableWhileProcessing(): the same between two blocks, without a restart, so a
+		// side-chain can be switched during playback. The port keeps its channels in the block; while it is off, the
+		// host passes silence with the constant mask set, and the plugin ignores it.
+		virtual bool setAudioPortActiveWhileProcessing(bool input, uint32_t index, bool active) noexcept = 0;
 
 	protected:
 		~AudioPortsActivation() = default;
@@ -139,13 +149,31 @@ namespace gnubase::plugin
 		~NotePorts() = default;
 	};
 
+	class HostNotePorts
+	{
+	public:
+		static constexpr std::string_view extensionId() { return "gnubase.host-note-ports"; }
+
+		enum Rescan : uint8_t
+		{
+			Names = 1, // only names changed: any time
+			All = 2,   // ports, ids or dialects changed: only while inactive, or after requestRestart()
+		};
+
+		// [main] The note ports changed; the host reads them again.
+		virtual void rescanNotePorts(uint32_t what) = 0;
+
+	protected:
+		~HostNotePorts() = default;
+	};
+
 	// ---- Parameters ----
 
 	struct ParamInfo
 	{
 		enum Flags : uint16_t
 		{
-			Stepped = 1, // integer values only
+			Stepped = 1, // stepCount + 1 values from minimum to maximum, see stepCount
 			Periodic = 2,
 			Hidden = 4,
 			ReadOnly = 8, // the plugin sets it, e.g. a gain reduction meter
@@ -154,7 +182,7 @@ namespace gnubase::plugin
 			AutomatablePerNote = 64, // a ParamValue event that names a note changes only its voices
 			Modulatable = 128,       // takes ParamMod events
 			ModulatablePerNote = 256,
-			Enum = 512,             // Stepped, and every value has a name (valueToText)
+			Enum = 512,             // Stepped, and every value has a name (paramValueToText)
 			RequiresProcess = 1024, // a change only takes effect in process(), not in flush()
 		};
 
@@ -165,10 +193,14 @@ namespace gnubase::plugin
 		double minimum = 0.0;
 		double maximum = 1.0;
 		double defaultValue = 0.0;
+		// Stepped: the values are minimum + k * (maximum - minimum) / stepCount for k from 0 to stepCount. A CLAP
+		// stepped parameter from 0 to 4 has the step count 4; a VST3 one with the step count 4 has the range 0 to 1
+		// and the values 0, 0.25, ... 1. 0 for parameters that aren't stepped.
+		uint32_t stepCount = 0;
 	};
 
 	// Values are plain values in the parameter's range. Formats whose values are normalized (VST3, FST) declare the
-	// range 0 to 1, or 0 to the step count for stepped parameters.
+	// range 0 to 1 for every parameter, stepped ones included, so automation is stored as the format's own values.
 	class Params
 	{
 	public:
@@ -318,6 +350,19 @@ namespace gnubase::plugin
 		~Tail() = default;
 	};
 
+	class HostTail
+	{
+	public:
+		static constexpr std::string_view extensionId() { return "gnubase.host-tail"; }
+
+		// [main] The tail changed; the host reads it again. A remote plugin's proxy caches the tail, so a plugin that
+		// doesn't call this keeps its old one.
+		virtual void tailChanged() = 0;
+
+	protected:
+		~HostTail() = default;
+	};
+
 	class Render
 	{
 	public:
@@ -352,21 +397,81 @@ namespace gnubase::plugin
 		~NoteNames() = default;
 	};
 
+	// ---- Voices ----
+
+	struct VoiceInfo
+	{
+		enum Flags : uint8_t
+		{
+			OverlappingNotes = 1, // the plugin plays several voices on one key and channel, told apart by note id
+		};
+
+		uint32_t voiceCount = 0;    // the voices the plugin plays at most now, e.g. 1 in mono mode
+		uint32_t voiceCapacity = 0; // the most it can play
+		uint32_t flags = 0;
+	};
+
+	// How many voices a plugin plays, so per-note modulators (pp. 1049-1077) and expressions know what to address.
+	class Voices
+	{
+	public:
+		static constexpr std::string_view extensionId() { return "gnubase.voices"; }
+
+		// [main, active]
+		virtual bool voiceInfo(VoiceInfo& info) const = 0;
+
+	protected:
+		~Voices() = default;
+	};
+
+	class HostVoices
+	{
+	public:
+		static constexpr std::string_view extensionId() { return "gnubase.host-voices"; }
+
+		// [main] The voice info changed; the host reads it again.
+		virtual void voiceInfoChanged() = 0;
+
+	protected:
+		~HostVoices() = default;
+	};
+
 	// ---- Editors ----
 
 	enum class WindowApi : uint8_t
 	{
-		Win32,   // HWND
-		Cocoa,   // NSView*
-		X11,     // Window
-		Wayland, // wl_surface*, for floating windows only
+		Win32,   // HWND in handle
+		Cocoa,   // NSView* in handle
+		X11,     // Window in handle
+		Wayland, // floating windows only; WindowHandle::exported names a window of another process
 	};
 
-	// A window of the plugin host process, or of GNUbase for setTransient. Handles are 64 bits in every process.
+	// A window of the plugin host process, or of GNUbase for guiSetTransient. Native handles are 64 bits in every
+	// process. A Wayland window of another process is named by its xdg-foreign handle, a string, which links it to a
+	// native Wayland window only: an XWayland window can't be linked to a Wayland one.
 	struct WindowHandle
 	{
 		WindowApi api = WindowApi::Win32;
-		uint64_t handle = 0;
+		uint64_t handle = 0;  // Win32, Cocoa, X11, and a Wayland window of the same process (wl_surface*)
+		std::string exported; // Wayland, another process: the handle from xdg-foreign's export
+	};
+
+	// A key press in an editor, for GNUbase's key commands.
+	struct KeyEvent
+	{
+		enum Modifiers : uint8_t
+		{
+			Shift = 1,
+			Control = 2,
+			Alt = 4,     // Option on macOS
+			Command = 8, // Command on macOS, the Windows key, Super on Linux
+		};
+
+		uint32_t scancode = 0;  // USB HID keyboard usage, layout independent: the values of SDL's scancodes
+		uint32_t character = 0; // the Unicode character the key produced, 0 for none
+		uint32_t modifiers = 0;
+		bool down = true;
+		bool repeat = false;
 	};
 
 	class Gui
@@ -402,6 +507,9 @@ namespace gnubase::plugin
 		virtual bool guiRequestShow() = 0;
 		virtual bool guiRequestHide() = 0;
 		virtual void guiClosed(bool destroyed) = 0; // the user closed a floating editor
+		// A key press or release the editor didn't handle. The host runs the key command bound to it, so space starts
+		// playback while an editor has the focus.
+		virtual void guiKeyUnhandled(const KeyEvent& key) = 0;
 
 	protected:
 		~HostGui() = default;
@@ -463,6 +571,25 @@ namespace gnubase::plugin
 		~ContextMenu() = default;
 	};
 
+	// The other way round: the plugin's editor shows GNUbase's menu for one of its parameters (automation, MIDI learn,
+	// remote controls) when the user right-clicks a knob. VST3's IComponentHandler3, CLAP's host context menu.
+	class HostContextMenu
+	{
+	public:
+		static constexpr std::string_view extensionId() { return "gnubase.host-context-menu"; }
+
+		// [main] GNUbase's entries for the parameter (or the whole plugin: g_noParam), for a plugin that builds the
+		// menu itself, and running one of them.
+		virtual bool populateHostContextMenu(uint32_t param, std::vector<MenuItem>& items) = 0;
+		virtual bool performHostContextMenuAction(uint32_t param, uint32_t action) = 0;
+		// [main] Or GNUbase shows the menu itself, at a position in the editor's window, in its pixels.
+		virtual bool hostContextMenuCanPopup() const = 0;
+		virtual bool hostContextMenuPopup(uint32_t param, int32_t x, int32_t y) = 0;
+
+	protected:
+		~HostContextMenu() = default;
+	};
+
 	// ---- What the host tells the plugin ----
 
 	class ThreadCheck
@@ -496,6 +623,18 @@ namespace gnubase::plugin
 
 	protected:
 		~HostTrackInfo() = default;
+	};
+
+	class TrackInfoListener
+	{
+	public:
+		static constexpr std::string_view extensionId() { return "gnubase.track-info-listener"; }
+
+		// [main] The channel's name, color or channel count changed; the plugin reads HostTrackInfo again.
+		virtual void trackInfoChanged() = 0;
+
+	protected:
+		~TrackInfoListener() = default;
 	};
 
 	// ---- GNUbase extensions: beyond what any one format defines ----

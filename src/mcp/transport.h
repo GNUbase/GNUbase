@@ -17,11 +17,14 @@ namespace gnubase::mcp
 	class Server;
 
 	// The stdio transport: one JSON-RPC message per line in, one response per line out. Returns when the input ends.
+	// The input is one session.
 	void serveStdio(Server& server, std::istream& in, std::ostream& out);
 
 	// The streamable HTTP transport on 127.0.0.1: POST /mcp with one JSON-RPC message, answered with JSON, or with
 	// 202 for notifications. Every request needs "Authorization: Bearer <token>". Requests from other machines, from
-	// web pages of other origins (DNS rebinding) and without the token are refused. There is no stream of
+	// web pages of other origins (DNS rebinding) and without the token are refused. initialize starts a session and
+	// answers with its id in the Mcp-Session-Id header, which the client sends with its requests from then on.
+	// DELETE /mcp ends the session; requests of a session that ended or expired get 404. There is no stream of
 	// server-initiated messages yet, so GET answers 405.
 	class HttpServer
 	{

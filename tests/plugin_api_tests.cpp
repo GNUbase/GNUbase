@@ -8,6 +8,7 @@
 #include "engine/processors/builtin.h"
 #include "engine/processors/builtinplugin.h"
 #include "engine/processors/gainpan.h"
+#include "plugin/checkedplugin.h"
 #include "plugin/events.h"
 #include "plugin/extensions.h"
 #include "plugin/plugin.h"
@@ -17,6 +18,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -263,6 +267,180 @@ TEST_CASE("the plugin API restores a plugin's state in another instance", "[unit
 	const std::vector<float> copyOut = copyRunner.process();
 	CHECK(sourceOut == copyOut);
 	CHECK_THAT(sourceOut[0], WithinAbs(0.25 * std::pow(10.0, -12.0 / 20.0), 1e-6));
+}
+
+TEST_CASE("plugin events have one layout with room for namespaces and expression ids", "[unit]")
+{
+	// The layout is what the IPC copies; the header's static_asserts pin it, this documents it.
+	CHECK(sizeof(Event) == 56);
+	CHECK(offsetof(Event, space) == 4);
+	CHECK(offsetof(Event, type) == 6);
+	CHECK(offsetof(Event, flags) == 8);
+	CHECK(offsetof(Event, noteId) == 12);
+	CHECK(offsetof(Event, param) == 20);
+	CHECK(offsetof(Event, value) == 24);
+	CHECK(offsetof(Event, expression) == 32);
+	CHECK(offsetof(Event, data) == 40);
+
+	const Event event;
+	CHECK(event.space == g_coreEventSpace);
+	CHECK(event.expression == expressionId(NoteExpression::Volume));
+
+	// The common expressions keep their own ids, below those a plugin defines.
+	CHECK(expressionId(NoteExpression::Pressure) == 6);
+	CHECK(expressionId(NoteExpression::Pressure) < g_firstPluginExpression);
+}
+
+TEST_CASE("plugin event lists count what they drop and keep room for ends", "[unit]")
+{
+	Event note;
+	note.type = EventType::NoteOn;
+	note.key = 60;
+	Event noteOff = note;
+	noteOff.type = EventType::NoteOff;
+	Event gestureEnd = paramValue(0, 1, 0.0);
+	gestureEnd.type = EventType::ParamGestureEnd;
+
+	EventList list(8, 0, 2);
+	CHECK(list.endReserve() == 2);
+	for (int i = 0; i < 6; ++i)
+		REQUIRE(list.push(note));
+	CHECK(list.dropped() == 0);
+
+	// The last two places are kept for events that end something: a lost note off or gesture end leaves a note
+	// hanging or touch automation recording.
+	CHECK(!list.push(note));
+	CHECK(!list.push(paramValue(0, 1, 0.5)));
+	CHECK(list.dropped() == 2);
+	REQUIRE(list.push(gestureEnd));
+	REQUIRE(list.push(noteOff));
+	CHECK(list.size() == 8);
+
+	// Full: even an end is dropped now, and counted.
+	CHECK(!list.push(noteOff));
+	CHECK(list.dropped() == 3);
+
+	// Out of order counts too.
+	list.clear();
+	CHECK(list.dropped() == 0);
+	REQUIRE(list.push(paramValue(5, 1, 0.5)));
+	CHECK(!list.push(paramValue(4, 1, 0.5)));
+	CHECK(list.dropped() == 1);
+
+	// Events of other namespaces never take the reserve, whatever their type.
+	EventList small(2, 0, 1);
+	Event foreign = noteOff;
+	foreign.space = 7;
+	REQUIRE(small.push(note));
+	CHECK(!small.push(foreign));
+	REQUIRE(small.push(noteOff));
+
+	// The default reserve is an eighth of the capacity.
+	CHECK(EventList(64).endReserve() == 8);
+	CHECK(EventList(3).endReserve() == 0);
+}
+
+namespace
+{
+	// Which thread a test pretends to be on.
+	class TestThreads final : public ThreadCheck
+	{
+	public:
+		bool isMainThread() const noexcept override { return !audio; }
+		bool isAudioThread() const noexcept override { return audio; }
+
+		bool audio = false;
+	};
+
+	void countViolation(const char* /*message*/, void* context) noexcept
+	{
+		++*static_cast<int*>(context);
+	}
+}
+
+TEST_CASE("a checked plugin reports calls on the wrong thread or in the wrong state", "[unit]")
+{
+	BuiltinFactory factory;
+	TestHost host;
+	TestThreads threads;
+	int handled = 0;
+	CheckedPlugin plugin(factory.create("builtin:gainPan", host), threads, &countViolation, &handled);
+	CHECK(plugin.lifecycle() == CheckedPlugin::Lifecycle::Created);
+	CHECK(plugin.descriptor().id == "builtin:gainPan"); // [any], in every state
+
+	SECTION("the whole lifecycle in order")
+	{
+		REQUIRE(plugin.init());
+		CHECK(plugin.lifecycle() == CheckedPlugin::Lifecycle::Inactive);
+		CHECK(extension<Params>(plugin) != nullptr); // the plugin's own extensions
+		REQUIRE(plugin.setProcessMode(ProcessMode::Offline));
+		REQUIRE(plugin.activate(g_sampleRate, 1, g_frames));
+		CHECK(plugin.lifecycle() == CheckedPlugin::Lifecycle::Active);
+
+		threads.audio = true;
+		REQUIRE(plugin.startProcessing());
+		CHECK(plugin.lifecycle() == CheckedPlugin::Lifecycle::Processing);
+		Runner runner(plugin);
+		runner.fill(0.5f);
+		CHECK(runner.process()[0] == 0.5f);
+		plugin.reset();
+		plugin.stopProcessing();
+		CHECK(plugin.lifecycle() == CheckedPlugin::Lifecycle::Active);
+
+		threads.audio = false;
+		plugin.deactivate();
+		CHECK(plugin.lifecycle() == CheckedPlugin::Lifecycle::Inactive);
+		CHECK(plugin.violations() == 0);
+		CHECK(handled == 0);
+		CHECK(plugin.lastViolation() == nullptr);
+	}
+
+	SECTION("calls in the wrong state are refused and reported")
+	{
+		CHECK(plugin.extension(Params::extensionId()) == nullptr); // before init
+		CHECK(!plugin.activate(g_sampleRate, 1, g_frames));
+		CHECK(plugin.violations() == 2);
+		CHECK(handled == 2);
+		REQUIRE(plugin.lastViolation() != nullptr);
+		CHECK(std::string(plugin.lastViolation()).find("activate") != std::string::npos);
+
+		REQUIRE(plugin.init());
+		CHECK(!plugin.init()); // twice
+		threads.audio = true;
+		CHECK(!plugin.startProcessing()); // not active
+		Runner runner(plugin);
+		runner.process(ProcessStatus::Error); // not processing: the plugin isn't called
+		threads.audio = false;
+		REQUIRE(plugin.activate(g_sampleRate, 1, g_frames));
+		CHECK(!plugin.setProcessMode(ProcessMode::Offline)); // only while inactive: a restart
+		CHECK(plugin.violations() == 6);
+		CHECK(plugin.lifecycle() == CheckedPlugin::Lifecycle::Active);
+		plugin.deactivate();
+	}
+
+	SECTION("calls on the wrong thread are refused and reported")
+	{
+		threads.audio = true;
+		CHECK(!plugin.init()); // [main]
+		threads.audio = false;
+		REQUIRE(plugin.init());
+		REQUIRE(plugin.activate(g_sampleRate, 1, g_frames));
+		CHECK(!plugin.startProcessing()); // [audio]
+		threads.audio = true;
+		REQUIRE(plugin.startProcessing());
+		plugin.deactivate(); // [main], and still processing
+		CHECK(plugin.lifecycle() == CheckedPlugin::Lifecycle::Processing);
+		threads.audio = false;
+		Runner runner(plugin);
+		runner.process(ProcessStatus::Error); // [audio]
+		CHECK(plugin.violations() == 4);
+		CHECK(handled == 4);
+		threads.audio = true;
+		plugin.stopProcessing();
+		threads.audio = false;
+		plugin.deactivate();
+		CHECK(plugin.violations() == 4);
+	}
 }
 
 TEST_CASE("plugin event lists keep their order and carry system exclusive messages", "[unit]")
