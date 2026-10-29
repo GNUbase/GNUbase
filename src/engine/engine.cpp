@@ -98,7 +98,7 @@ namespace gnubase::engine
 		m_audio = std::make_unique<AudioEngine>(m_project->snapshots(), std::move(backends));
 		m_audio->registerCommands(*this);
 		m_peaks = std::make_unique<peaks::PeakCache>(
-			[this](const std::string& name, const Json& data) { broadcast({name, data, 0}); });
+			[this](const std::string& name, const Json& data) { broadcast(name, data); });
 		m_peaks->registerCommands(*this);
 		m_thread = std::thread([this] { run(); });
 	}
@@ -133,6 +133,19 @@ namespace gnubase::engine
 			m_requests.push_back({m_nextRequest++, std::move(command), std::move(parameters), nullptr});
 		}
 		m_wake.notify_one();
+	}
+
+	void Engine::broadcast(std::string name, Json data)
+	{
+		rt::assertNotRealtime("engine::Engine::broadcast");
+		std::vector<std::shared_ptr<detail::Mailbox>> clients;
+		{
+			const std::scoped_lock lock(m_mutex);
+			clients = m_clients;
+		}
+		const Event event{std::move(name), std::move(data), 0};
+		for (const auto& client : clients)
+			client->post(event);
 	}
 
 	rt::SnapshotPublisher<RenderSnapshot>& Engine::renderSnapshots()
@@ -187,7 +200,6 @@ namespace gnubase::engine
 				throw CommandError(problem);
 			Json value = command->handler(context);
 			m_audio->sync(); // a changed project gets a new processing graph
-			m_peaks->sync(m_project->snapshots().latest().media);
 			if (const std::string problem = validate(value, command->info.result, "result"); !problem.empty())
 				throw CommandError(request.command + " returned an invalid result: " + problem);
 			result.value = std::move(value);
@@ -208,21 +220,19 @@ namespace gnubase::engine
 			for (const auto& client : clients)
 				client->post(event);
 		}
+		// After the command's own events, so media.added reaches clients before the peak worker's media.peaksReady.
+		try
+		{
+			m_peaks->sync(m_project->snapshots().latest().media);
+		}
+		catch (const std::exception& error)
+		{
+			logging::error("The peaks of the media files are not updated: {}", error.what());
+		}
 		if (request.sender)
 			request.sender->post(std::move(result));
 		else if (!result.ok())
 			logging::error("{} failed: {}", request.command, result.error);
-	}
-
-	void Engine::broadcast(Event event)
-	{
-		std::vector<std::shared_ptr<detail::Mailbox>> clients;
-		{
-			const std::scoped_lock lock(m_mutex);
-			clients = m_clients;
-		}
-		for (const auto& client : clients)
-			client->post(event);
 	}
 
 	Client::Client(Engine& engine) : m_engine(engine), m_mailbox(std::make_shared<detail::Mailbox>())

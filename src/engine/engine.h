@@ -132,6 +132,10 @@ namespace gnubase::engine
 		// reach every client; its result goes nowhere, and a failure is logged. Not for audio threads.
 		void post(std::string command, Json parameters = Json::object());
 
+		// Announces an event from one of the engine's own threads, such as a background job's progress. Every client
+		// receives it. Not for audio threads.
+		void broadcast(std::string name, Json data = Json::object());
+
 		// Every registered command, sorted by name. The engine.commands query returns the same as JSON.
 		std::vector<CommandInfo> commands() const;
 
@@ -159,8 +163,6 @@ namespace gnubase::engine
 
 		void run();
 		void execute(Request& request);
-		// Announces an event from one of the engine's background threads to every client.
-		void broadcast(Event event);
 
 		mutable std::mutex m_mutex; // guards everything below except the thread
 		std::map<std::string, std::shared_ptr<const Command>> m_commands;
