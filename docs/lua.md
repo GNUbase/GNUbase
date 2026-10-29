@@ -599,7 +599,7 @@ Returns:
 
 #### `gnubase.media.convert`
 
-Converts a media file to another sample rate (by default the project's), writes the result to path as a 32-bit float WAV file and adds it as a new media file.
+Converts a media file to another sample rate (by default the project's), writes the result to path as a 32-bit float WAV file and adds it as a new media file. path must not be one of the project's media files.
 
 Parameters:
 
@@ -676,6 +676,25 @@ Removes an audio file that no clip uses.
 Parameters:
 
 - `media`: integer, required
+
+#### `gnubase.media.stretch`
+
+Time-stretches and pitch-shifts a media file, writes the result to path as a 32-bit float WAV file and adds it as a new media file; path must not be one of the project's media files. ratio is the new length over the old one, from 0.1 to 10 (default 1: unchanged); semitones and cents shift the pitch, together within 48 semitones either way (default 0). preset picks the algorithm: quality (default) and efficient for any material, drums, plucked, pads, vocals, mix and solo tuned for kinds of material at a lower CPU cost. formants keeps the spectral envelope when the pitch shifts, e.g. for voices. mode offline (default) analyzes the whole file first for the best result; realtime processes it the way playback does, with ratios from 0.25 to 4 and pitch shifts within 24 semitones.
+
+Parameters:
+
+- `cents`: number
+- `formants`: boolean
+- `media`: integer, required
+- `mode`: one of "realtime" | "offline"
+- `path`: string, required
+- `preset`: one of "quality" | "efficient" | "drums" | "plucked" | "pads" | "vocals" | "mix" | "solo"
+- `ratio`: number
+- `semitones`: number
+
+Returns:
+
+- `media`: object, required
 
 ### midiPart
 

@@ -14,6 +14,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -72,6 +74,88 @@ TEST_CASE("the RT checker reports a deallocation in real-time code", "[unit]")
 	}
 	CHECK(g_violations == 1);
 }
+
+#if (defined(_MSC_VER) && defined(_DEBUG)) || defined(GNUBASE_RTCHECK_MALLOC)
+// The RT checker sees the C heap too, for malloc in third-party code such as Rubber Band Library: MSVC debug builds,
+// and Linux (not with sanitizers).
+// Called through volatile pointers: compilers know the C heap functions touch no memory of the program, so they may
+// move direct calls out of a real-time scope.
+namespace
+{
+	void* (*volatile g_malloc)(std::size_t) = std::malloc;
+	void* (*volatile g_realloc)(void*, std::size_t) = std::realloc;
+	void* (*volatile g_calloc)(std::size_t, std::size_t) = std::calloc;
+	void (*volatile g_free)(void*) = std::free;
+}
+
+TEST_CASE("the RT checker reports malloc and free in real-time code", "[unit]")
+{
+	const RecordViolations record;
+	void* memory = nullptr;
+	{
+		const ScopedRealtimeContext realtime;
+		memory = g_malloc(64);
+		g_keepAlive = memory;
+	}
+	CHECK(g_violations == 1);
+	void* grown = nullptr;
+	{
+		const ScopedRealtimeContext realtime;
+		grown = g_realloc(memory, 128);
+		g_keepAlive = grown;
+	}
+	CHECK(g_violations == 2);
+	REQUIRE(grown != nullptr);
+	memory = grown;
+	{
+		const ScopedRealtimeContext realtime;
+		g_free(memory);
+		g_free(nullptr); // frees nothing
+	}
+	CHECK(g_violations == 3);
+	{
+		const ScopedRealtimeContext realtime;
+		memory = g_calloc(4, 16);
+		g_keepAlive = memory;
+	}
+	CHECK(g_violations == 4);
+	g_free(memory);
+	// operator new reports once, not again for the malloc inside it.
+	{
+		const ScopedRealtimeContext realtime;
+		const auto value = std::make_unique<int>(42);
+		g_keepAlive = value.get();
+	}
+	CHECK(g_violations == 6);
+	// Outside real-time code, all of them are fine.
+	memory = g_malloc(64);
+	g_keepAlive = memory;
+	g_free(memory);
+	CHECK(g_violations == 6);
+}
+#endif
+
+#ifdef GNUBASE_RTCHECK_MALLOC
+TEST_CASE("the RT checker reports aligned C allocations in real-time code", "[unit]")
+{
+	const RecordViolations record;
+	void* memory = nullptr;
+	int result = -1;
+	{
+		const ScopedRealtimeContext realtime;
+		result = posix_memalign(&memory, 64, 256); // Rubber Band Library allocates this way on Linux
+		g_keepAlive = memory;
+	}
+	REQUIRE(result == 0);
+	CHECK(g_violations == 1);
+	CHECK(reinterpret_cast<std::uintptr_t>(memory) % 64 == 0);
+	{
+		const ScopedRealtimeContext realtime;
+		std::free(memory);
+	}
+	CHECK(g_violations == 2);
+}
+#endif
 
 TEST_CASE("allocations outside real-time code are fine", "[unit]")
 {

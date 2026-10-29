@@ -11,7 +11,7 @@ gnubase_target_defaults(gnubase-testutils)
 set(settingsEnvironment "GNUBASE_SETTINGS_DIR=${CMAKE_CURRENT_BINARY_DIR}/output/settings")
 
 add_executable(gnubase-tests analysis_tests.cpp app_tests.cpp audio_tests.cpp audiofile_tests.cpp backup_tests.cpp coverage_tests.cpp dawproject_tests.cpp document_tests.cpp engine_tests.cpp graph_tests.cpp history_tests.cpp log_tests.cpp mcp_tests.cpp mcpevents_tests.cpp mcptools_tests.cpp midiedit_tests.cpp processor_tests.cpp rt_tests.cpp scripting_tests.cpp settings_tests.cpp streaming_tests.cpp testing_tests.cpp testutils_tests.cpp theme_tests.cpp time_tests.cpp
-	peaks_tests.cpp playback_tests.cpp transport_tests.cpp)
+	peaks_tests.cpp playback_tests.cpp timestretch_tests.cpp transport_tests.cpp)
 target_sources(gnubase-tests PRIVATE device_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE gnubase-app gnubase-engine gnubase-mcp gnubase-scripting gnubase-testutils Catch2::Catch2WithMain miniz pugixml::pugixml
 	cpp-httplib)
@@ -82,3 +82,9 @@ function(gnubase_add_shell_test name script)
 endfunction()
 gnubase_add_shell_test("the keyword guard blocks private keywords in commits and pull requests" keyword_guard_tests.sh)
 gnubase_add_shell_test("the license header check lists files without the SPDX header" spdx_check_tests.sh)
+
+# Benchmarks print measurements for design notes; they are not part of the test run.
+option(GNUBASE_BENCHMARKS "Build the benchmarks in tests/bench" OFF)
+if(GNUBASE_BENCHMARKS)
+	add_subdirectory(bench)
+endif()
