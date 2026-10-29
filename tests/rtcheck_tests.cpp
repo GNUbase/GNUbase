@@ -398,7 +398,7 @@ TEST_CASE("sending blocks to a plugin host and waiting for its answers passes th
 				break;
 			engine.sendBlock(block);
 			AudioBlock answer;
-			if (engine.waitForBlock(std::chrono::seconds(10)) != WaitResult::Ready ||
+			if (engine.waitForAnswer(static_cast<uint64_t>(i), std::chrono::seconds(10)) != WaitResult::Ready ||
 				engine.receiveBlock(answer) != ReadStatus::Ok)
 				break;
 			if (answer.channel(0)[0] == static_cast<float>(i))

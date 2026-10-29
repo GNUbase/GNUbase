@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/connection.h"
 #include "platform/process.h"
+#include "platform/sharedmemory.h"
+#include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -10,8 +12,21 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
+#include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 // CMake passes the helper's full path; the fallback only serves tools that compile this file on its own.
 #ifndef GNUBASE_IPCPEER
@@ -38,6 +53,26 @@ namespace
 	platform::ChildProcess startPeer(const ipc::Connection& connection, const std::string& mode)
 	{
 		return platform::ChildProcess::start(GNUBASE_IPCPEER, {connection.name(), mode});
+	}
+
+	platform::ChildProcess startHelper(const std::string& argument, const std::string& mode)
+	{
+		return platform::ChildProcess::start(GNUBASE_IPCPEER, {argument, mode});
+	}
+
+	// Waits up to ten seconds for a process to end.
+	bool ends(uint32_t id)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + 10s;
+		while (platform::processExists(id) && std::chrono::steady_clock::now() < deadline)
+			std::this_thread::sleep_for(10ms);
+		return !platform::processExists(id);
+	}
+
+	std::string readFile(const std::filesystem::path& path)
+	{
+		std::ifstream file(path, std::ios::binary);
+		return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 	}
 
 	// Sends one block of `frames` frames whose samples count up from `start`, with `events` events.
@@ -173,4 +208,97 @@ TEST_CASE("round-trip latency to a host process", "[integration][benchmark]")
 	CHECK(median < 5000.0);
 	engine.close();
 	CHECK(peer.wait(10s) == 0);
+}
+
+TEST_CASE("a host process gets no standard input or output, and its errors go to a file", "[integration]")
+{
+	// In headless mode stdout carries MCP, so a plugin's printf must not reach it.
+	const test::TempDir folder;
+	const std::filesystem::path errors = folder.path() / "host.log";
+	platform::ChildProcess peer = platform::ChildProcess::start(GNUBASE_IPCPEER, {"-", "print"}, errors);
+	CHECK(peer.wait(10s) == 0); // stdin is at its end at once
+	const std::string text = readFile(errors);
+	CHECK(text.find("to stderr") != std::string::npos);
+	CHECK(text.find("to stdout") == std::string::npos);
+}
+
+TEST_CASE("a host process inherits no handles from the engine", "[integration]")
+{
+	const test::TempDir folder;
+	const std::filesystem::path path = folder.path() / "engine.log";
+#ifdef _WIN32
+	SECURITY_ATTRIBUTES inheritable{};
+	inheritable.nLength = sizeof(inheritable);
+	inheritable.bInheritHandle = TRUE;
+	HANDLE file =
+		CreateFileW(path.c_str(), GENERIC_WRITE, 0, &inheritable, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	REQUIRE(file != INVALID_HANDLE_VALUE);
+	platform::ChildProcess peer = startHelper("-", "sleep");
+	CloseHandle(file);
+	// Opening the file without sharing fails while the host holds an inherited handle to it.
+	HANDLE again = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	CHECK(again != INVALID_HANDLE_VALUE);
+	if (again != INVALID_HANDLE_VALUE)
+		CloseHandle(again);
+	peer.kill();
+#else
+	const int file = ::open(path.c_str(), O_WRONLY | O_CREAT, 0600); // inheritable: no O_CLOEXEC
+	REQUIRE(file >= 0);
+	platform::ChildProcess peer = startHelper(std::to_string(file), "fd");
+	CHECK(peer.wait(10s) == 0);
+	::close(file);
+#endif
+}
+
+TEST_CASE("killing a process waits only so long, and the process is still collected", "[integration]")
+{
+	platform::ChildProcess peer = startHelper("-", "sleep");
+	const uint32_t id = peer.id();
+	REQUIRE(platform::processExists(id));
+	const auto start = std::chrono::steady_clock::now();
+	peer.kill(0ms);
+	CHECK(std::chrono::steady_clock::now() - start < 1s);
+	CHECK(!peer.running());
+	// A reaper collects it later, so no zombie is left (POSIX).
+	CHECK(ends(id));
+}
+
+TEST_CASE("a host notices when the engine process is gone", "[integration]")
+{
+	// A process that has ended plays the engine.
+	platform::ChildProcess gone = startHelper("-", "exit");
+	REQUIRE(gone.wait(10s).has_value());
+	const ipc::Connection engine = ipc::Connection::create(config());
+	{
+		const platform::SharedMemory memory = platform::SharedMemory::open(engine.name());
+		static_cast<ipc::SegmentHeader*>(memory.data())->enginePid = gone.id();
+	}
+	ipc::Connection host = ipc::Connection::open(engine.name());
+	CHECK(host.waitForBlock(20ms) == ipc::WaitResult::PeerClosed);
+	CHECK(host.waitForControl(20ms) == ipc::WaitResult::PeerClosed);
+
+	// With the engine alive, the same wait just times out.
+	const ipc::Connection alive = ipc::Connection::create(config());
+	ipc::Connection aliveHost = ipc::Connection::open(alive.name());
+	CHECK(aliveHost.waitForBlock(20ms) == ipc::WaitResult::Timeout);
+}
+
+TEST_CASE("a host process ends when the engine process dies", "[integration]")
+{
+	// gnubase-ipcpeer plays the engine as well: it starts a host and writes the host's process id to a file.
+	const test::TempDir folder;
+	const std::filesystem::path file = folder.path() / "host.pid";
+	platform::ChildProcess engine = startHelper(file.u8string(), "engine");
+	uint32_t hostId = 0;
+	const auto deadline = std::chrono::steady_clock::now() + 10s;
+	while (hostId == 0 && std::chrono::steady_clock::now() < deadline)
+	{
+		std::this_thread::sleep_for(10ms);
+		std::ifstream(file) >> hostId;
+	}
+	REQUIRE(hostId != 0);
+	REQUIRE(platform::processExists(hostId));
+
+	engine.kill();
+	CHECK(ends(hostId));
 }

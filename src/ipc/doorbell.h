@@ -14,6 +14,8 @@ namespace gnubase::ipc
 	// - macOS: the kernel's compare-and-wait on the word, the primitive behind the system's own futex-like locks
 	//   (__ulock_wait/__ulock_wake with UL_COMPARE_AND_WAIT_SHARED). Named POSIX semaphores have no timed wait there.
 	// - Windows: an auto-reset event named after the connection; the word still tells a real wake-up from a stale one.
+	//   The wait ends at its deadline through a high-resolution waitable timer: a plain timed wait would end at the
+	//   next tick of the system timer, up to 15.6 ms late.
 	// ring() never blocks or allocates, so an audio thread may call it. wait() blocks until the word changes or the
 	// timeout passes; an audio thread only uses it for the bounded wait for a plugin host's answer.
 	class Doorbell
@@ -45,5 +47,6 @@ namespace gnubase::ipc
 
 		std::atomic<uint32_t>* m_word = nullptr;
 		void* m_event = nullptr; // Windows
+		void* m_timer = nullptr; // Windows: the deadline of wait()
 	};
 }
