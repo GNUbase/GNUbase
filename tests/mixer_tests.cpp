@@ -116,7 +116,7 @@ namespace
 TEST_CASE("pan laws attenuate the center and keep the sides at 0 dB", "[unit]")
 {
 	const std::pair<PanLaw, double> laws[] = {{PanLaw::Off, 1.0}, {PanLaw::Minus3, gain(-3.0)},
-		{PanLaw::Minus4_5, gain(-4.5)}, {PanLaw::Minus6, gain(-6.0)}, {PanLaw::EqualPower, std::sqrt(0.5)}};
+		{PanLaw::Minus4Point5, gain(-4.5)}, {PanLaw::Minus6, gain(-6.0)}, {PanLaw::EqualPower, std::sqrt(0.5)}};
 	for (const auto& [law, center] : laws)
 	{
 		INFO(panLawName(law));

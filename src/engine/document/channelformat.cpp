@@ -55,7 +55,7 @@ namespace gnubase::engine
 		};
 
 		constexpr PanLawInfo g_panLaws[] = {{PanLaw::Off, "0dB", 0.0}, {PanLaw::Minus3, "-3dB", -3.0},
-			{PanLaw::Minus4_5, "-4.5dB", -4.5}, {PanLaw::Minus6, "-6dB", -6.0},
+			{PanLaw::Minus4Point5, "-4.5dB", -4.5}, {PanLaw::Minus6, "-6dB", -6.0},
 			{PanLaw::EqualPower, "equalPower", 0.0}};
 
 		bool has(const std::vector<Speaker>& speakers, Speaker speaker)

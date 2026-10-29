@@ -77,11 +77,11 @@ namespace gnubase::engine
 	// doesn't sound louder there than panned to one side. The side panned toward is at 0 dB with every law.
 	enum class PanLaw : uint8_t
 	{
-		Off,        // "0dB": the center isn't turned down; the side panned away from goes down in a straight line
-		Minus3,     // "-3dB", the default
-		Minus4_5,   // "-4.5dB"
-		Minus6,     // "-6dB"
-		EqualPower, // "equalPower": the power of both sides together stays the same, -3.01 dB at the center
+		Off,          // "0dB": the center isn't turned down; the side panned away from goes down in a straight line
+		Minus3,       // "-3dB", the default
+		Minus4Point5, // "-4.5dB"
+		Minus6,       // "-6dB"
+		EqualPower,   // "equalPower": the power of both sides together stays the same, -3.01 dB at the center
 	};
 
 	const char* panLawName(PanLaw law);
