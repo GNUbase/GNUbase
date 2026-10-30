@@ -397,7 +397,7 @@ TEST_CASE("cycle playback ends notes at the right locator and plays the notes fr
 
 TEST_CASE("locating into held notes chases them, unless the user setting turns it off", "[integration]")
 {
-	enum class Setting
+	enum class Setting : uint8_t
 	{
 		Default,
 		Off,
