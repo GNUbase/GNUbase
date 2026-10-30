@@ -584,8 +584,8 @@ namespace gnubase::engine
 		if (m_device)
 			stopMonitoringDirectly(); // the hardware would go on monitoring
 		m_workers.reset();
-		clearPerformance(); // the old device's numbers would stay up until the new one processes a block
 		m_device.reset();
+		clearPerformance(); // the old device's numbers would stay up until the new one processes a block
 		m_dummy = nullptr;
 		m_inputPorts.clear();
 		m_outputPorts.clear();
@@ -869,7 +869,7 @@ namespace gnubase::engine
 			return;
 		const audio::DeviceFormat& format = m_device->format();
 		const double period = format.blockSize / format.sampleRate;
-		auto workers = std::make_unique<rt::WorkerPool>(wanted, period);
+		auto workers = std::make_unique<rt::WorkerPool>(wanted, period, m_device->workgroup());
 		if (!workers->realtime())
 		{
 			// The audio thread waits for nodes that workers hold: a worker without real-time priority that the OS
@@ -877,7 +877,7 @@ namespace gnubase::engine
 			const size_t realtime = workers->realtimeWorkers();
 			workers.reset();
 			if (realtime > 0)
-				workers = std::make_unique<rt::WorkerPool>(realtime, period);
+				workers = std::make_unique<rt::WorkerPool>(realtime, period, m_device->workgroup());
 			if (workers && !workers->realtime())
 				workers.reset();
 			m_limitedBy = Limit::Realtime;
@@ -964,12 +964,14 @@ namespace gnubase::engine
 	{
 		m_meter = PerformanceMeter();
 		m_resetPerformance.store(false, std::memory_order_release);
+		m_deviceOverloadsBefore = m_device ? m_device->overloads() : 0;
 		publishPerformance(PerformanceData{});
 	}
 
 	Json AudioEngine::resetPerformance()
 	{
 		Json ended = performance();
+		m_deviceOverloadsBefore = m_device ? m_device->overloads() : 0;
 		if (m_device && m_device->running())
 		{
 			m_resetPerformance.store(true, std::memory_order_release); // the audio thread owns the meter
@@ -990,8 +992,11 @@ namespace gnubase::engine
 		Json threads = Json::array();
 		for (size_t t = 0; t < data.threads; ++t)
 			threads.push_back(data.threadLoad[t]);
-		return {{"load", data.load}, {"peak", data.peak}, {"overloads", data.overloads}, {"cycles", data.cycles},
-			{"threads", threads}, {"diskLoad", m_playback.diskLoad()}, {"diskDropouts", m_playback.dropouts()}};
+		const uint64_t deviceOverloads = m_device ? m_device->overloads() - m_deviceOverloadsBefore : 0;
+		return {{"load", data.load}, {"peak", data.peak}, {"overloads", data.overloads + deviceOverloads},
+			{"deviceOverloads", deviceOverloads}, {"cycles", data.cycles}, {"threads", threads},
+			{"diskLoad", m_playback.diskLoad()}, {"diskDropouts", m_playback.dropouts()},
+			{"blockSize", m_device ? m_device->format().blockSize : 0}};
 	}
 
 	void AudioEngine::registerCommands(Engine& engine)
@@ -1081,21 +1086,36 @@ namespace gnubase::engine
 				return result;
 			});
 		const Json performanceSchema = Json::parse(R"({"type": "object", "properties": {"load": {"type": "number"},
-				"peak": {"type": "number"}, "overloads": {"type": "integer"}, "cycles": {"type": "integer"},
-				"threads": {"type": "array", "items": {"type": "number"}}, "diskLoad": {"type": "number"},
-				"diskDropouts": {"type": "integer"}},
-				"required": ["load", "peak", "overloads", "cycles", "threads", "diskLoad", "diskDropouts"]})");
+				"peak": {"type": "number"}, "overloads": {"type": "integer"}, "deviceOverloads": {"type": "integer"},
+				"cycles": {"type": "integer"}, "threads": {"type": "array", "items": {"type": "number"}},
+				"diskLoad": {"type": "number"}, "diskDropouts": {"type": "integer"}, "blockSize": {"type": "integer"}},
+				"required": ["load", "peak", "overloads", "deviceOverloads", "cycles", "threads", "diskLoad",
+					"diskDropouts", "blockSize"]})");
 		engine.registerCommand(
 			{"audio.performance", 1,
 				"Performance data for the performance monitor. Loads are the share of a block's duration spent "
 				"processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest "
-				"block; overloads: blocks above 1; cycles: blocks measured; threads: the load of each processing "
+				"block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported (a block "
+				"that was both counts twice); cycles: blocks measured; threads: the load of each processing "
 				"thread, the audio thread first. Peak, overloads and cycles count since the last "
 				"audio.resetPerformance; everything starts over with a new device or new processing threads. "
 				"diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of "
-				"audio track playback that were silent because a disk stream was late.",
+				"audio track playback that were silent because a disk stream was late. blockSize: the device's "
+				"block size in frames, 0 without a device.",
 				noParameters(), performanceSchema, true},
 			[this](CommandContext&) { return performance(); });
+		engine.registerCommand(
+			{"audio.simulateOverload", 1,
+				"Only the dummy device: simulates its driver reporting a dropout, which audio.performance counts in "
+				"deviceOverloads and overloads. Returns the performance data, as audio.performance does.",
+				noParameters(), performanceSchema, false},
+			[this](CommandContext&)
+			{
+				require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
+				require(m_dummy != nullptr, "only the dummy device simulates overloads");
+				m_dummy->reportOverload();
+				return performance();
+			});
 		engine.registerCommand(
 			{"audio.resetPerformance", 1,
 				"Starts a new performance measurement, like clicking the overload indicator: clears the peak, the "

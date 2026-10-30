@@ -210,13 +210,15 @@ Returns:
 
 #### `gnubase.audio.performance`
 
-Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1; cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late.
+Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported (a block that was both counts twice); cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late. blockSize: the device's block size in frames, 0 without a device.
 
 Only reads; changes nothing.
 
 Returns:
 
+- `blockSize`: integer, required
 - `cycles`: integer, required
+- `deviceOverloads`: integer, required
 - `diskDropouts`: integer, required
 - `diskLoad`: number, required
 - `load`: number, required
@@ -297,7 +299,9 @@ Starts a new performance measurement, like clicking the overload indicator: clea
 
 Returns:
 
+- `blockSize`: integer, required
 - `cycles`: integer, required
+- `deviceOverloads`: integer, required
 - `diskDropouts`: integer, required
 - `diskLoad`: number, required
 - `load`: number, required
@@ -356,6 +360,22 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `running`: boolean, required
+
+#### `gnubase.audio.simulateOverload`
+
+Only the dummy device: simulates its driver reporting a dropout, which audio.performance counts in deviceOverloads and overloads. Returns the performance data, as audio.performance does.
+
+Returns:
+
+- `blockSize`: integer, required
+- `cycles`: integer, required
+- `deviceOverloads`: integer, required
+- `diskDropouts`: integer, required
+- `diskLoad`: number, required
+- `load`: number, required
+- `overloads`: integer, required
+- `peak`: number, required
+- `threads`: array of number, required
 
 #### `gnubase.audio.start`
 
@@ -1726,7 +1746,7 @@ Returns:
 
 #### `gnubase.pluginhost.get`
 
-How plugins are grouped into plugin host processes, and the processes. mode: the hosting mode, "shared" (one process for every plugin), "perVendor", "perPlugin" or "perInstance"; defaultMode: the mode GNUbase starts with; overrides: plugin ids with a mode of their own. hosts: each process with its id (process), its group ("shared", "vendor:<vendor>", "plugin:<id>" or "instance:<instance>"), its state ("running", "hung" or "exited") and its plugin instances, whether they failed.
+How plugins are grouped into plugin host processes, and the processes. mode: the hosting mode, "shared" (one process for every plugin), "perVendor", "perPlugin" or "perInstance"; defaultMode: the mode GNUbase starts with; overrides: plugin ids with a mode of their own. hosts: each process with its id (process), its group ("shared", "vendor:<vendor>", "plugin:<id>" or "instance:<instance>"), its state ("running", "hung" or "exited"), its log file's name in the log folder (log) and its plugin instances, whether they failed.
 
 Only reads; changes nothing.
 

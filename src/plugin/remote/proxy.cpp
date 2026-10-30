@@ -234,15 +234,31 @@ namespace gnubase::plugin::remote
 	bool RemotePlugin::setProcessMode(ProcessMode mode)
 	{
 		rt::assertNotRealtime("RemotePlugin::setProcessMode");
-		const std::scoped_lock calls(m_callMutex);
-		const std::shared_ptr<Binding> current = binding();
-		if (current->active)
+		// A quick query: it waits for a slow call of this plugin, e.g. a state transfer, only until its own deadline.
+		// Then the instance gets the mode when it activates. (It waits for a time, not until one: libstdc++ under TSan
+		// can't wait until a steady_clock time.)
+		const auto deadline = std::chrono::steady_clock::now() + m_deadlines.query;
+		m_wantedMode.store(mode, std::memory_order_relaxed);
+		const std::unique_lock calls(m_callMutex, m_deadlines.query);
+		if (!calls.owns_lock())
+			return true;
+		const auto left =
+			std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+		return applyMode(*binding(), std::max(left, std::chrono::milliseconds(0)));
+	}
+
+	bool RemotePlugin::applyMode(Binding& binding, std::chrono::milliseconds timeout)
+	{
+		if (binding.active)
 			return false;
-		if (current->created)
+		const ProcessMode mode = m_wantedMode.load(std::memory_order_relaxed);
+		if (mode == m_mode)
+			return true;
+		if (binding.created)
 		{
 			Writer writer;
 			writer.u8(static_cast<uint8_t>(mode));
-			if (!call(*current, Message::SetProcessMode, writer.data(), m_deadlines.query).ok)
+			if (!call(binding, Message::SetProcessMode, writer.data(), timeout).ok)
 				return false;
 		}
 		m_mode = mode;
@@ -305,6 +321,11 @@ namespace gnubase::plugin::remote
 		const std::shared_ptr<Binding> current = binding();
 		if (!current->created || current->active || failure() != Failure::None)
 			return false;
+		if (!applyMode(*current, m_deadlines.job))
+		{
+			logging::warning("Cannot set the process mode of the plugin {}", m_id);
+			return false;
+		}
 		m_sampleRate = sampleRate;
 		m_minFrames = minFrames;
 		m_maxFrames = maxFrames;
@@ -578,7 +599,7 @@ namespace gnubase::plugin::remote
 		if (Binding* live = m_live.load(); live != nullptr)
 		{
 			// Only a plugin that refused to start isn't started. If Start came too late, or the host couldn't take
-			// it yet, the next block sends it again first; the host ignores a Start while it processes.
+			// it yet, the next block carries it; the host ignores a Start while it processes.
 			bool refused = false;
 			if (!live->started)
 			{
@@ -621,14 +642,15 @@ namespace gnubase::plugin::remote
 			m_busy.store(true);
 			if (Binding* live = m_live.load(); live != nullptr)
 			{
-				// After a move, the new instance starts with its first block. A Start that isn't answered in time is
-				// sent again with the next block, and this one is silence, so a callback waits one deadline at most.
-				if (!live->started)
-					live->started = exchange(*live, nullptr, Start, m_noEvents, nullptr).status != ProcessStatus::Error;
-				if (live->started && process.frames <= m_maxFrames)
+				if (process.frames <= m_maxFrames)
 				{
-					const Exchanged block = exchange(*live, &process, m_flags, process.eventsIn, &process.eventsOut);
+					// After a late start or a move, the instance starts with the block itself, so the block keeps its
+					// events like any other. Until a block is answered in time, each one carries Start again; the host
+					// ignores it while it processes.
+					const uint32_t flags = m_flags | (live->started ? 0U : static_cast<uint32_t>(Start));
+					const Exchanged block = exchange(*live, &process, flags, process.eventsIn, &process.eventsOut);
 					status = block.status;
+					live->started = live->started || status != ProcessStatus::Error;
 					// A block the host never got lost its notes and audio: the next one resets the plugin, so no
 					// note hangs.
 					m_flags = block.sent ? 0 : m_flags | Reset;
@@ -651,6 +673,8 @@ namespace gnubase::plugin::remote
 			m_busy.store(true);
 			if (Binding* live = m_live.load(); live != nullptr && live->started)
 				exchange(*live, nullptr, Flush, in, &out);
+			else if (live != nullptr)
+				keep(*live, in); // the Start goes with the next block, and so do the changes
 			idle();
 			return;
 		}

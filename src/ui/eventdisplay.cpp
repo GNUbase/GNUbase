@@ -10,6 +10,7 @@
 #include <RmlUi/Core/Property.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
 #include <stdexcept>
@@ -32,6 +33,10 @@ namespace gnubase::ui
 		constexpr double g_wheelScroll = 0.1;       // of the view's width per line, scrolling across
 		constexpr double g_dragZoomDistance = 40.0; // dp dragged in the ruler to zoom by a factor of 2
 		constexpr double g_overviewEdge = 4.0;      // dp either side of the overview rectangle's edges
+
+		// What the display listens to in its document.
+		constexpr std::array<Rml::EventId, 5> g_documentEvents = {Rml::EventId::Mousemove, Rml::EventId::Mouseup,
+			Rml::EventId::Resize, Rml::EventId::Click, Rml::EventId::Change};
 
 		Rml::Element& add(Rml::Element& parent, const char* tag, const char* classes)
 		{
@@ -78,8 +83,9 @@ namespace gnubase::ui
 		root.SetClass("cross-hair", m_crossHair);
 		for (const Rml::EventId id : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mousescroll})
 			root.AddEventListener(id, this);
-		for (const Rml::EventId id : {Rml::EventId::Mousemove, Rml::EventId::Mouseup, Rml::EventId::Resize})
+		for (const Rml::EventId id : g_documentEvents)
 			m_document->AddEventListener(id, this);
+		findControls();
 		setRulerFormat(m_format);
 
 		m_actions = {{"zoom.in", [this] { zoomIn(); }}, {"zoom.out", [this] { zoomOut(); }},
@@ -89,8 +95,13 @@ namespace gnubase::ui
 			{"view.autoScroll", [this] { setAutoScroll(!m_autoScroll); }}};
 
 		// Every change to the project is an undo step or a new project; the display shows the project as it is then.
-		m_subscriptions.push_back(m_binding.on("history.changed", [this](const engine::Event&) { requestProject(); }));
-		m_subscriptions.push_back(m_binding.on("project.reset", [this](const engine::Event&) { requestProject(); }));
+		for (const char* event : {"history.changed", "project.reset"})
+			m_subscriptions.push_back(m_binding.on(event,
+				[this](const engine::Event&)
+				{
+					requestProject();
+					requestMarkers();
+				}));
 		m_subscriptions.push_back(
 			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
 		m_subscriptions.push_back(m_binding.on("settings.changed",
@@ -101,6 +112,7 @@ namespace gnubase::ui
 				{
 					m_presets = *presets;
 					m_presetsKnown = true;
+					showPresets();
 				}
 			}));
 		const std::weak_ptr<bool> alive = m_alive;
@@ -115,8 +127,13 @@ namespace gnubase::ui
 			[this, alive](const engine::Result& result)
 			{
 				if (!alive.expired() && result.ok() && !m_presetsKnown) // newer changes win
+				{
 					m_presets = result.value.at("value");
+					showPresets();
+				}
 			});
+		requestMarkers();
+		showAutoScroll();
 
 		root.GetOwnerDocument()->UpdateDocument(); // lays it out, so that it knows its size
 		apply();
@@ -124,11 +141,16 @@ namespace gnubase::ui
 
 	EventDisplay::~EventDisplay()
 	{
+		if (m_dialog)
+		{
+			m_dialog->RemoveEventListener(Rml::EventId::Click, this);
+			m_dialog->GetOwnerDocument()->Close();
+		}
 		if (!alive())
 			return;
 		for (const Rml::EventId id : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mousescroll})
 			m_root->RemoveEventListener(id, this);
-		for (const Rml::EventId id : {Rml::EventId::Mousemove, Rml::EventId::Mouseup, Rml::EventId::Resize})
+		for (const Rml::EventId id : g_documentEvents)
 			m_document->RemoveEventListener(id, this);
 	}
 
@@ -299,6 +321,7 @@ namespace gnubase::ui
 		m_playing = playing;
 		follow();
 		apply();
+		showAutoScroll();
 	}
 
 	void EventDisplay::setCursor(int64_t sample)
@@ -457,12 +480,20 @@ namespace gnubase::ui
 		m_autoScroll = on;
 		m_suspended = false;
 		follow();
+		showAutoScroll();
 	}
 
 	void EventDisplay::setAutoScrollMode(AutoScrollMode mode)
 	{
 		m_autoScrollMode = mode;
 		follow();
+		showAutoScroll();
+	}
+
+	void EventDisplay::setSuspendAutoScrollWhenEditing(bool suspend)
+	{
+		m_suspendWhenEditing = suspend;
+		showAutoScroll();
 	}
 
 	void EventDisplay::setRulerFormat(TimeFormat format)
@@ -472,6 +503,7 @@ namespace gnubase::ui
 			return;
 		m_ruler->setScale(rulerScale(format, m_time));
 		m_ruler->SetAttribute("format", timeFormatName(format));
+		showFormat();
 	}
 
 	void EventDisplay::setCrossHair(bool shown)
@@ -524,12 +556,18 @@ namespace gnubase::ui
 	{
 		m_presetsKnown = true;
 		m_binding.send("settings.set", {{"key", "ui.zoomPresets"}, {"value", m_presets}});
+		showPresets();
 	}
 
 	void EventDisplay::ProcessEvent(Rml::Event& event)
 	{
 		if (!alive())
 			return;
+		if (event.GetCurrentElement()->GetOwnerDocument() != m_document)
+		{
+			dialogEvent(event);
+			return;
+		}
 		Rml::Element* target = event.GetTargetElement();
 		switch (event.GetId())
 		{
@@ -559,6 +597,14 @@ namespace gnubase::ui
 			break;
 		case Rml::EventId::Resize:
 			setView(m_view);
+			break;
+		case Rml::EventId::Click:
+			click(target);
+			break;
+		case Rml::EventId::Change:
+			// A click on the auto-scroll button switches it off, or on again while it's suspended.
+			if (target != nullptr && target == m_autoScrollButton)
+				setAutoScroll(m_suspended || event.GetParameter<bool>("value", false));
 			break;
 		default:
 			break;
@@ -611,6 +657,7 @@ namespace gnubase::ui
 		else if (inside(&target, m_area) && m_playing && m_autoScroll && m_suspendWhenEditing)
 		{
 			m_suspended = true;
+			showAutoScroll();
 		}
 		event.StopPropagation();
 	}

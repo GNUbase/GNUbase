@@ -4,10 +4,12 @@
 #include "platform/hosttime.h"
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -172,20 +174,43 @@ namespace gnubase::audio
 		// plays on one output (pair) at a time. Not on the audio thread; also while the device runs.
 		virtual void monitorInput(const InputMonitor& /*monitor*/) {}
 
-		// Called when the driver asks to be opened again, e.g. because its settings changed in its control panel. Never
-		// called on the audio thread. Set it while the device is stopped.
-		void onReset(std::function<void()> handler) { m_reset = std::move(handler); }
+		// The audio workgroup of the device's audio thread (macOS: an os_workgroup_t), which threads that help it join
+		// (rt::WorkerPool), or null if it has none. Valid while the device is open.
+		virtual void* workgroup() const { return nullptr; }
 
-	protected:
-		// For backends, when their driver asks for a reset.
-		void requestReset() const
+		// Called when the driver asks to be opened again, e.g. because its settings changed in its control panel. Never
+		// called on the audio thread, but possibly on a driver's thread while this is set.
+		void onReset(std::function<void()> handler)
 		{
-			if (m_reset)
-				m_reset();
+			const std::scoped_lock lock(m_resetMutex);
+			m_reset = std::move(handler);
 		}
 
+		// Dropouts the driver reported since the device was opened: blocks it played or recorded without the engine
+		// (an xrun), as the performance monitor counts them (#45). Any thread.
+		uint64_t overloads() const { return m_overloads.load(std::memory_order_relaxed); }
+
+	protected:
+		// For backends, when their driver asks for a reset. Not on the audio thread. The handler runs on a copy,
+		// outside the lock: what it sets off may destroy this device before it returns.
+		void requestReset() const
+		{
+			std::function<void()> handler;
+			{
+				const std::scoped_lock lock(m_resetMutex);
+				handler = m_reset;
+			}
+			if (handler)
+				handler();
+		}
+
+		// For backends, when their driver reports a dropout. Any thread, the audio thread too.
+		void reportOverload() noexcept { m_overloads.fetch_add(1, std::memory_order_relaxed); }
+
 	private:
+		mutable std::mutex m_resetMutex; // guards m_reset
 		std::function<void()> m_reset;
+		std::atomic<uint64_t> m_overloads{0};
 	};
 
 	// A kind of driver. It lists its devices and opens them.

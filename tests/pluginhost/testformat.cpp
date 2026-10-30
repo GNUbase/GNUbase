@@ -46,24 +46,28 @@ namespace gnubase::testformat
 		};
 
 		// test:stall's parameters.
-		constexpr uint32_t g_stallId = 1;  // Stall, in ms
-		constexpr uint32_t g_valueId = 2;  // Value, which does nothing
-		constexpr uint32_t g_resetsId = 3; // Resets, which counts the plugin's resets
-		constexpr uint32_t g_rescanId = 4; // Rescan: 1 makes every stall end with a values rescan
+		constexpr uint32_t g_stallId = 1;   // Stall, in ms
+		constexpr uint32_t g_valueId = 2;   // Value, which does nothing
+		constexpr uint32_t g_resetsId = 3;  // Resets, which counts the plugin's resets
+		constexpr uint32_t g_rescanId = 4;  // Rescan: 1 makes every stall end with a values rescan
+		constexpr uint32_t g_offlineId = 5; // Offline: 1 while the host's process mode is offline
 
 		// test:stall, only in this format: passes its input through, and setting Stall to more than 0 ms makes the
 		// plugin take that long once, on the thread that sets it. A parameter event while processing makes that block
 		// late, like a transient overrun. Value and Resets show in its state which parameter changes and resets
-		// reached it.
+		// reached it, Offline which process mode.
 		class Stall final : public testplugins::TestPlugin
 		{
 		public:
 			explicit Stall(testplugins::Host& host)
 				: TestPlugin({param(g_stallId, "Stall", 10000.0, "ms"), param(g_valueId, "Value", 1.0, ""),
-					  param(g_resetsId, "Resets", 1.0e9, ""), param(g_rescanId, "Rescan", 1.0, "")}),
+					  param(g_resetsId, "Resets", 1.0e9, ""), param(g_rescanId, "Rescan", 1.0, ""),
+					  param(g_offlineId, "Offline", 1.0, "")}),
 				  m_host(host)
 			{
 			}
+
+			void setOffline(bool offline) { setParam(g_offlineId, offline ? 1.0 : 0.0); }
 
 			void resetState() override
 			{
@@ -269,6 +273,13 @@ namespace gnubase::testformat
 				if (latency != m_reportedLatency && m_hostLatency != nullptr)
 					m_hostLatency->latencyChanged();
 				m_reportedLatency = latency;
+				return true;
+			}
+
+			bool setProcessMode(ProcessMode mode) override
+			{
+				if (auto* stall = dynamic_cast<Stall*>(m_core.get()))
+					stall->setOffline(mode == ProcessMode::Offline);
 				return true;
 			}
 

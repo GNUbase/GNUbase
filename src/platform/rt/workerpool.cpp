@@ -24,6 +24,7 @@
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <mach/thread_policy.h>
+#include <os/workgroup.h>
 #include <pthread.h>
 #else
 #include <cerrno>
@@ -222,7 +223,7 @@ namespace gnubase::rt
 		g_pretendRealtime.store(faults.pretendRealtime);
 	}
 
-	WorkerPool::WorkerPool(size_t workers, double periodSeconds)
+	WorkerPool::WorkerPool(size_t workers, double periodSeconds, void* workgroup)
 		: m_spin(std::clamp(std::chrono::duration_cast<std::chrono::steady_clock::duration>(
 								std::chrono::duration<double>(periodSeconds / 16.0)),
 			  std::chrono::duration_cast<std::chrono::steady_clock::duration>(g_minSpin),
@@ -240,7 +241,7 @@ namespace gnubase::rt
 				if (i >= g_threadLimit.load())
 					throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again),
 						"starting worker thread " + std::to_string(i + 1));
-				m_threads.emplace_back([this, i, periodSeconds] { loop(i + 1, periodSeconds); });
+				m_threads.emplace_back([this, i, periodSeconds, workgroup] { loop(i + 1, periodSeconds, workgroup); });
 			}
 		}
 		catch (...)
@@ -337,7 +338,7 @@ namespace gnubase::rt
 		m_priority.store(prioritySuitingCaller(), std::memory_order_relaxed); // published by the new generation
 	}
 
-	void WorkerPool::loop(size_t thread, double periodSeconds)
+	void WorkerPool::loop(size_t thread, double periodSeconds, void* workgroup)
 	{
 		// A refused worker runs at normal priority, as on Linux without real-time privileges.
 		std::optional<ScopedRealtimePriority> priority;
@@ -346,6 +347,16 @@ namespace gnubase::rt
 		const bool realtime = priority && priority->active();
 		if (realtime || g_pretendRealtime.load())
 			m_realtime.fetch_add(1, std::memory_order_release);
+#ifdef __APPLE__
+		// The device's workgroup tells the scheduler that this thread works for its audio thread's deadline.
+		auto* const group = static_cast<os_workgroup_t>(workgroup);
+		os_workgroup_join_token_s token{};
+		const bool joined = group != nullptr && os_workgroup_join(group, &token) == 0;
+		if (joined)
+			m_joined.fetch_add(1, std::memory_order_release);
+#else
+		(void)workgroup;
+#endif
 		m_started.release();
 
 		const uint64_t initialMode = floatMode();
@@ -388,6 +399,10 @@ namespace gnubase::rt
 			m_inside.fetch_sub(1, std::memory_order_seq_cst);
 		}
 		setFloatMode(initialMode);
+#ifdef __APPLE__
+		if (joined)
+			os_workgroup_leave(group, &token);
+#endif
 	}
 
 	uint64_t WorkerPool::waitForJob(size_t worker, uint64_t seen, bool spin) noexcept

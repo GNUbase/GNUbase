@@ -6,6 +6,9 @@
 #include "platform/audio/asiohost.h"
 #include "platform/audio/wasapi.h"
 #endif
+#ifdef __APPLE__
+#include "platform/audio/coreaudio.h"
+#endif
 
 namespace gnubase::audio
 {
@@ -16,6 +19,9 @@ namespace gnubase::audio
 		backends.push_back(makeAsioBackend());
 		backends.push_back(makeWasapiBackend(false));
 		backends.push_back(makeWasapiBackend(true));
+#endif
+#ifdef __APPLE__
+		backends.push_back(makeCoreAudioBackend());
 #endif
 		backends.push_back(std::make_unique<DummyBackend>());
 		return backends;

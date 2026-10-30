@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Engine performance data (#24): processing load, peaks, overloads, per-thread load and the disk streams' load.
+// Engine performance data (#24, #45): processing load, peaks, overloads, per-thread load, the disk streams' load,
+// the block size and the overloads the device reports.
 #include "engine/audio/performance.h"
 #include "engine/engine.h"
+#include "platform/audio/dummydevice.h"
 #include "platform/rt/workerpool.h"
 #include "testutils/testutils.h"
 
@@ -244,4 +246,55 @@ TEST_CASE("audio.performance reports how far the disk streams have run empty", "
 	CHECK(performance.at("diskLoad").get<double>() >= 0.0);
 	CHECK(performance.at("diskLoad").get<double>() < 0.5);
 	CHECK(performance.at("diskDropouts") == 0);
+}
+
+TEST_CASE("a device counts the overloads its driver reports from when it opens", "[unit]")
+{
+	gnubase::audio::DummyDevice device(gnubase::audio::DeviceFormat{}, 0);
+	CHECK(device.overloads() == 0);
+	device.reportOverload();
+	device.reportOverload();
+	CHECK(device.overloads() == 2);
+	CHECK(gnubase::audio::DummyDevice(gnubase::audio::DeviceFormat{}, 0).overloads() == 0);
+}
+
+TEST_CASE("audio.performance counts simulated device overloads and reports the block size", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	const Json none = run(client, "audio.performance");
+	CHECK(none.at("blockSize") == 0);
+	CHECK(none.at("deviceOverloads") == 0);
+	CHECK(!client.call("audio.simulateOverload").ok()); // there is no device
+
+	run(client, "audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}});
+	CHECK(run(client, "audio.performance").at("blockSize") == 64);
+	run(client, "audio.simulateOverload");
+	const Json simulated = run(client, "audio.simulateOverload");
+	CHECK(simulated.at("deviceOverloads") == 2);
+	CHECK(simulated.at("overloads") == 2);
+
+	// They add to the blocks over their time, which offline rendering of an empty project hardly has.
+	run(client, "audio.render", {{"frames", 640}});
+	const Json rendered = run(client, "audio.performance");
+	CHECK(rendered.at("deviceOverloads") == 2);
+	CHECK(rendered.at("overloads").get<uint64_t>() >= 2);
+
+	// A reset starts the count over, and so does a new device.
+	CHECK(run(client, "audio.resetPerformance").at("deviceOverloads") == 2);
+	const Json reset = run(client, "audio.performance");
+	CHECK(reset.at("deviceOverloads") == 0);
+	CHECK(reset.at("overloads") == 0);
+	run(client, "audio.simulateOverload");
+	CHECK(run(client, "audio.performance").at("deviceOverloads") == 1);
+	run(client, "audio.setDevice", {{"blockSize", 128}, {"captureSeconds", 1}});
+	const Json device = run(client, "audio.performance");
+	CHECK(device.at("deviceOverloads") == 0);
+	CHECK(device.at("blockSize") == 128);
+
+	// Also while the device runs.
+	run(client, "audio.start");
+	run(client, "audio.simulateOverload");
+	CHECK(run(client, "audio.performance").at("deviceOverloads") == 1);
+	run(client, "audio.stop");
 }

@@ -1,16 +1,19 @@
 # Event display
 
 The project window's timeline (#84, reference manual pp. 67–73, 101–104, 110, 316–317): the events of every track
-under a ruler, with an overview line above, the project cursor and a cross-hair cursor, zoom and scrolling. The code
-is `ui::EventDisplay` (`src/ui/eventdisplay.h`), with the time formats in `src/ui/timeformat.h`; it draws with the
-canvas elements ([canvas.md](canvas.md)).
+under a ruler, with an overview line above, the project cursor and a cross-hair cursor, zoom and scrolling, and the
+menus for the ruler's time format, zoom presets and auto-scroll. The code is `ui::EventDisplay`
+(`src/ui/eventdisplay.h`, its menus in `src/ui/eventdisplaymenus.cpp`), with the time formats in
+`src/ui/timeformat.h`; it draws with the canvas elements ([canvas.md](canvas.md)) and uses the widget library's
+buttons, menus and dialogs ([widgets.md](widgets.md)).
 
 ## Structure
 
 `EventDisplay` fills an element of a document and follows the project through the engine binding
 ([ui-engine-binding.md](ui-engine-binding.md)): it is one more client of the engine API, and shows what any client
-changed. The app shows it in the main window (`resources/ui/project.rml`, `AppUi::showProject`) until the docking
-system (#56) and the track list (#81) give the project window its zones.
+changed. The app shows it in the main window (`resources/ui/project.rml`, `AppUi::showProject`), under a toolbar with
+the auto-scroll and zoom presets buttons, until the docking system (#56) and the track list (#81) give the project
+window its zones and its toolbar.
 
 ```
 .event-display                  the element the document gives it
@@ -55,7 +58,9 @@ frame rate of the user's (`setRulerFormat`; its `format` attribute names it: `ba
 - `ui::formatTime` writes a position the way position displays do (`1.1.1.0`, `0:00:01.500`, `00:00:01:12`, `72000`),
   exactly as the engine converts it (`engine/time`).
 
-The ruler's time formats follow the reference's (p. 69). Its mode "bars and beats linear" (p. 70), which keeps bars
+**Time format menu** (`#ruler-format-menu`): the arrow button at the ruler's right end (`.ruler-format`, in the
+document) and a right click anywhere in the ruler open it, with Bars+Beats, Seconds, Timecode, Samples and fps (User);
+the ruler's format is checked. The ruler's time formats follow the reference's (p. 69). Its mode "bars and beats linear" (p. 70), which keeps bars
 evenly spaced across tempo changes, comes with the tempo track (#155); the project's frame rate, start time and length
 come with the project setup (#78): until then timecode runs at 25 fps.
 
@@ -75,13 +80,18 @@ come with the project setup (#78): until then timecode runs at 25 fps.
   `g_trackHeight` (40 dp, until tracks have heights of their own, #81).
 - **Commands.** `actions()` maps command ids to the display's functions. `AppUi` adds them as key commands
   ([key-commands.md](key-commands.md)) and binds the reference's keys (manual p. 1573) in the project window's focus
-  zone, `project`, which the window has when it opens and wherever it is clicked. Menus run them with
-  `KeyCommands::run`; MCP clients press their keys with `ui_key`.
+  zone, `project`, which the window has when it opens and wherever it is clicked. `KeyCommands::run` runs one as its
+  key would; MCP clients press the keys with `ui_key`.
 - **Zoom presets** are the user setting `ui.zoomPresets`, for every project: each a name and the seconds the view
   shows. `addZoomPreset`, `applyZoomPreset` (keeps the left edge), `removeZoomPreset` and `renameZoomPreset` change it
   through `settings.set`; changes from MCP or Lua apply at once.
-- The presets menu, the ruler's time format menu and the auto-scroll menu come with the widget library's menus (#54).
-  Zoom to selection waits for selections (#85); track height presets for the track list (#81).
+- **Zoom presets menu** (`#zoom-presets-menu`, the toolbar's `#zoom-presets` button; reference pp. 103–104): the
+  presets, which apply as above; Zoom Full; the cycle markers of the active marker track (`marker.list`, asked for
+  again on every `history.changed`), each zooming to its range; Add..., which names the view's zoom in a dialog
+  (`resources/ui/zoom-preset.rml`) and adds it; and Organize..., a dialog (`zoom-presets.rml`) with a row per preset,
+  whose name can be edited and which a Delete button marks deleted. OK saves the presets as the dialog shows them, in
+  one `settings.set`; Cancel and Escape drop the changes. The dialogs load from the folder of the display's document.
+- Zoom to selection waits for selections (#85); track height presets for the track list (#81).
 
 ## Overview line, cursors and auto-scroll
 
@@ -95,6 +105,11 @@ come with the project setup (#78): until then timecode runs at 25 fps.
   view a page when the cursor leaves it, *stationary* keeps the cursor in the middle. With
   `setSuspendAutoScrollWhenEditing`, a click in the lanes while playing suspends it until playback stops or
   auto-scroll is switched on again.
+- **Auto-scroll button and menu.** The toolbar's toggle button `#auto-scroll` switches it, and shows it: `.checked`
+  while it's on, `.suspended` while editing suspends it (the themes draw it in the warning color, as the reference
+  changes the button's color, p. 317). A click on a suspended button resumes auto-scroll rather than switching it
+  off. The arrow beside it opens `#auto-scroll-menu`: Page Scroll and Stationary Cursor, the mode checked, and Suspend
+  Auto-Scroll when Editing, checked while it's on.
 
 ## Checks
 
@@ -108,5 +123,11 @@ come with the project setup (#78): until then timecode runs at 25 fps.
   presets through the user settings; the cross-hair cursor; the time format; the command ids.
 - `tests/uiapp_tests.cpp` shows the project window in the app's own window through SDL_GPU: the cursor's box 150 dp
   from the lanes as MCP's `ui_dom` reports it, a golden image (`tests/golden/ui/event-display.png`), and zooming with
-  Ctrl and the wheel through the UI tools; the keys zoom, vertically too, zoom full and switch auto-scroll when the
-  window opens and after a click into it, and zoom undo runs as a command.
+  Ctrl and the wheel through the UI tools. It drives the menus with clicks, keys and text as MCP's UI tools do: the
+  time format menu from its arrow and a right click in the ruler, every format, the checked one; zoom presets added
+  through the dialog (and cancelled with Escape), listed and applied, Zoom Full, a cycle marker from the engine
+  listed and zoomed to, presets renamed and deleted in the organize dialog with OK and dropped with Cancel; the
+  auto-scroll button on and off, the modes and suspending from its menu, checked, and the button suspended by a click
+  in the lanes while the dummy device plays, and resumed by a click on it.
+  The keys zoom, vertically too, zoom full and switch auto-scroll when the window opens and after a click into
+  it, and zoom undo runs as a command.
