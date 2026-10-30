@@ -78,6 +78,7 @@ namespace gnubase::engine
 		uint32_t value = 0;
 		uint8_t channel = 0;
 		std::vector<uint8_t> data; // SysEx
+		int32_t part = -1;         // the index of its MIDI part in the channel's midiParts
 	};
 
 	struct RenderPart

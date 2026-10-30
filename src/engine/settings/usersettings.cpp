@@ -54,8 +54,8 @@ namespace gnubase::engine::settings
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
 				{"midi.chaseBeyondParts",
-					"Chases controller events from the whole track, not just from the MIDI part under the position. "
-					"Off makes locating in tracks with many controller events faster.",
+					"Chases controller events from the whole track; off, only from the MIDI parts under the "
+					"position, so none outside parts.",
 					Json{{"type", "boolean"}}, true},
 				{"midi.chaseControllers",
 					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each control "

@@ -14,7 +14,7 @@
 
 namespace gnubase::engine
 {
-	// The events of one kind in a sequence, in time order, for chasing: indices into a run of an order vector.
+	// The events of one kind, in time order, for chasing: a run of an index's events, or of an order vector.
 	struct ChaseLane
 	{
 		uint16_t kind = 0; // channel * 128 + pitch or number; programs and pitch bends follow (MidiSequencer::g_chased)
@@ -22,18 +22,30 @@ namespace gnubase::engine
 		uint32_t last = 0;
 	};
 
-	// A track's controller events that can be chased (control changes, program changes and pitch bends), indexed by
-	// kind (makeChaseTrack), so a chase finds each kind's last event by binary search.
-	struct ChaseTrack
+	// Controller events that can be chased (control changes, program changes and pitch bends), sorted by kind, then
+	// position, so a chase finds each kind's last event by binary search.
+	struct ChaseIndex
 	{
-		std::vector<RenderController> controllers; // sorted by position, without SysEx data
-		std::vector<RenderPart> parts;             // sorted by start
-		std::vector<uint32_t> order;               // indices into controllers, by kind, then position
-		std::vector<ChaseLane> lanes;              // runs of order, by kind
+		std::vector<RenderController> controllers;
+		std::vector<ChaseLane> lanes; // runs of controllers, by kind
 	};
 
-	// Command thread: the chase index of a track's controller events (sorted by position) and MIDI parts.
-	ChaseTrack makeChaseTrack(const std::vector<RenderController>& controllers, std::vector<RenderPart> parts);
+	struct ChasePart
+	{
+		RenderPart range;
+		ChaseIndex index; // the part's own controller events
+	};
+
+	// A track's controller events for chasing (makeChaseTrack): all of them, and those of each MIDI part.
+	struct ChaseTrack
+	{
+		ChaseIndex all;
+		std::vector<ChasePart> parts; // sorted by start
+	};
+
+	// Command thread: the chase index of a track's controller events (sorted by position, each with the index of its
+	// part in parts) and MIDI parts (sorted by start).
+	ChaseTrack makeChaseTrack(const std::vector<RenderController>& controllers, const std::vector<RenderPart>& parts);
 
 	// What a MIDI or instrument track plays, in the project's samples.
 	struct MidiSequence
@@ -68,10 +80,12 @@ namespace gnubase::engine
 	// note removed while it sounds still ends.
 	//
 	// Where playback jumps, it chases what MidiChase chooses, at the jump's offset: after the note-offs, the last
-	// controller event of each kind before the position (MidiSequence::chase), in time order; then the controller
-	// events at that position itself; then the notes that sound there as they would have if playback had run up to
-	// it: of each pitch the last one that started, with its velocity, until its end; then the notes that start there.
-	// A locate while stopped chases the controller events alone. A chase takes a binary search per kind of event.
+	// controller event of each kind before the position (MidiSequence::chase), in time order, unless one of its kind is
+	// at the position itself, on any of the tracks chased, and plays there; then the controller events at the position;
+	// then the notes that sound there as they would have if playback had run up to it: of each pitch the last one that
+	// started, with its velocity, until its end; then the notes that start there. A locate while stopped chases the
+	// controller events alone, up to and including those at the cursor. A chase takes a binary search per kind of
+	// event.
 	//
 	// When the block's event buffer is full, the sequencer skips the rest of the segment: notes that should have
 	// ended in it end at the start of the next block that has room, notes that should have started don't play, and
@@ -114,9 +128,9 @@ namespace gnubase::engine
 		// Notes it can't end for a full buffer end as soon as there is room.
 		void endAll(uint32_t offset, graph::EventBuffer& out) noexcept;
 		// Finds the controller events to chase at a position; sendChased sends them, false if the buffer filled first.
-		void findChased(const MidiSequence& sequence, int64_t position, uint8_t chase) noexcept;
-		void consider(
-			const ChaseTrack& track, uint16_t trackIndex, int64_t from, int64_t position, uint8_t chase) noexcept;
+		// Stopped, it takes the events at the position too.
+		void findChased(const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped) noexcept;
+		void consider(const ChaseIndex& index, uint16_t track, int64_t position, uint8_t chase, bool stopped) noexcept;
 		bool sendChased(uint32_t offset, graph::EventBuffer& out) noexcept;
 		// Starts the notes that sound at a position; false if the buffer was full before it started them all.
 		bool chaseNotes(
@@ -126,6 +140,7 @@ namespace gnubase::engine
 		struct Chased
 		{
 			int64_t position = std::numeric_limits<int64_t>::min(); // where it was; the minimum: none of its kind
+			bool played = false; // one of its kind is at the position and plays there: not chased
 			uint32_t value = 0;
 			uint16_t track = 0; // in MidiSequence::chase
 			uint16_t kind = 0;

@@ -75,6 +75,21 @@ namespace gnubase::engine
 			}
 		}
 
+		// Sorts controller events (by position) by kind and finds the runs of one kind.
+		void index(ChaseIndex& index)
+		{
+			std::stable_sort(index.controllers.begin(), index.controllers.end(),
+				[](const RenderController& a, const RenderController& b) { return chaseKind(a) < chaseKind(b); });
+			index.lanes.clear();
+			for (size_t i = 0; i < index.controllers.size(); ++i)
+			{
+				const auto kind = static_cast<uint16_t>(chaseKind(index.controllers[i]));
+				if (index.lanes.empty() || index.lanes.back().kind != kind)
+					index.lanes.push_back({kind, static_cast<uint32_t>(i), static_cast<uint32_t>(i)});
+				index.lanes.back().last = static_cast<uint32_t>(i + 1);
+			}
+		}
+
 		// The last of a lane's events before a position, or nullptr.
 		template <typename Event, typename PositionOf> const Event* lastBefore(const std::vector<Event>& events,
 			const std::vector<uint32_t>& order, const ChaseLane& lane, int64_t position, PositionOf positionOf)
@@ -146,19 +161,23 @@ namespace gnubase::engine
 		}
 	}
 
-	ChaseTrack makeChaseTrack(const std::vector<RenderController>& controllers, std::vector<RenderPart> parts)
+	ChaseTrack makeChaseTrack(const std::vector<RenderController>& controllers, const std::vector<RenderPart>& parts)
 	{
 		ChaseTrack track;
+		track.parts.resize(parts.size());
+		for (size_t i = 0; i < parts.size(); ++i)
+			track.parts[i].range = parts[i];
 		for (const RenderController& controller : controllers)
 		{
-			if (chaseKind(controller) < 0)
+			if (chaseKind(controller) < 0) // SysEx among them, so no data is copied
 				continue;
-			RenderController copy = controller;
-			copy.data.clear();
-			track.controllers.push_back(std::move(copy));
+			track.all.controllers.push_back(controller);
+			if (controller.part >= 0 && static_cast<size_t>(controller.part) < parts.size())
+				track.parts[static_cast<size_t>(controller.part)].index.controllers.push_back(controller);
 		}
-		track.parts = std::move(parts);
-		indexByKind(track.controllers, chaseKind, track.order, track.lanes);
+		index(track.all);
+		for (ChasePart& part : track.parts)
+			index(part.index);
 		return track;
 	}
 
@@ -203,7 +222,7 @@ namespace gnubase::engine
 				m_cursor = m_next; // where playback stopped
 			m_next = -1;
 			if (m_cursor >= 0 && transport.position != m_cursor) // a locate while stopped
-				findChased(sequence, transport.position, chase);
+				findChased(sequence, transport.position, chase, true);
 			m_cursor = transport.position;
 			sendChased(0, context.eventsOut);
 			return;
@@ -214,7 +233,7 @@ namespace gnubase::engine
 			if (segment.position != m_next) // a start, a locate or a cycle jump
 			{
 				endAll(segment.offset, context.eventsOut);
-				findChased(sequence, segment.position, chase);
+				findChased(sequence, segment.position, chase, false);
 				m_chaseNotes = (chase & g_chaseNotes) != 0;
 			}
 			play(sequence, segment, context.eventsOut);
@@ -284,7 +303,7 @@ namespace gnubase::engine
 		}
 	}
 
-	void MidiSequencer::findChased(const MidiSequence& sequence, int64_t position, uint8_t chase) noexcept
+	void MidiSequencer::findChased(const MidiSequence& sequence, int64_t position, uint8_t chase, bool stopped) noexcept
 	{
 		for (size_t i = m_chasedSent; i < m_chasedCount; ++i) // the rest of a chase that didn't fit
 			m_chased[i] = Chased();
@@ -298,45 +317,61 @@ namespace gnubase::engine
 			const auto index = static_cast<uint16_t>(t);
 			if ((chase & g_chaseBeyondParts) != 0)
 			{
-				consider(track, index, std::numeric_limits<int64_t>::min(), position, chase);
+				consider(track.all, index, position, chase, stopped);
 				continue;
 			}
-			for (const RenderPart& part : track.parts) // those under the position, each from its start
+			for (const ChasePart& part : track.parts) // those under the position
 			{
-				if (part.start > position)
+				if (part.range.start > position)
 					break;
-				if (part.end > position)
-					consider(track, index, part.start, position, chase);
+				if (part.range.end > position)
+					consider(part.index, index, position, chase, stopped);
 			}
 		}
 
 		// The kinds found, in time order; at one position by track, then kind, so a bank select precedes its program.
 		for (size_t kind = 0; kind < m_chased.size(); ++kind)
-			if (m_chased[kind].position != std::numeric_limits<int64_t>::min())
+		{
+			if (m_chased[kind].played || m_chased[kind].position == std::numeric_limits<int64_t>::min())
 			{
-				m_chased[m_chasedCount++] = m_chased[kind];
-				if (m_chasedCount - 1 != kind)
-					m_chased[kind] = Chased();
+				m_chased[kind] = Chased();
+				continue;
 			}
+			m_chased[m_chasedCount++] = m_chased[kind];
+			if (m_chasedCount - 1 != kind)
+				m_chased[kind] = Chased();
+		}
 		std::sort(m_chased.begin(), m_chased.begin() + static_cast<std::ptrdiff_t>(m_chasedCount),
 			[](const Chased& a, const Chased& b)
 			{ return std::tie(a.position, a.track, a.kind) < std::tie(b.position, b.track, b.kind); });
 	}
 
 	void MidiSequencer::consider(
-		const ChaseTrack& track, uint16_t trackIndex, int64_t from, int64_t position, uint8_t chase) noexcept
+		const ChaseIndex& index, uint16_t track, int64_t position, uint8_t chase, bool stopped) noexcept
 	{
-		for (const ChaseLane& lane : track.lanes)
+		for (const ChaseLane& lane : index.lanes)
 		{
 			if (!chases(lane.kind, chase))
 				continue;
-			const RenderController* controller = lastBefore(
-				track.controllers, track.order, lane, position, [](const RenderController& c) { return c.position; });
+			const auto first = index.controllers.begin() + lane.first;
+			const auto last = index.controllers.begin() + lane.last;
+			// Playing, the events at the position play there, after the chase: their kind isn't chased. Stopped,
+			// nothing plays them, so they are chased with the others.
+			const auto found = stopped ? std::upper_bound(first, last, position,
+											 [](int64_t at, const RenderController& c) { return at < c.position; })
+									   : std::lower_bound(first, last, position,
+											 [](const RenderController& c, int64_t at) { return c.position < at; });
 			Chased& chased = m_chased[lane.kind];
-			if (controller == nullptr || controller->position < from || controller->position < chased.position)
+			if (!stopped && found != last && found->position == position)
+				chased.played = true;
+			if (found == first)
 				continue;
-			chased = {controller->position, controller->value, trackIndex, lane.kind, controller->type,
-				controller->number, controller->channel};
+			const RenderController& controller = *std::prev(found);
+			if (controller.position < chased.position) // at one position the later track wins
+				continue;
+			const bool played = chased.played;
+			chased = {controller.position, played, controller.value, track, lane.kind, controller.type,
+				controller.number, controller.channel};
 		}
 	}
 

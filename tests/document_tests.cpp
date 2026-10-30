@@ -386,6 +386,34 @@ TEST_CASE("the snapshot follows the sample rate and the track's time base", "[un
 	CHECK(renderChannel(engine.renderSnapshots().acquire(), audio).audioEvents[0].start == 48000);
 }
 
+TEST_CASE("the snapshot has a MIDI track's parts by start, and each controller event knows its part", "[unit]")
+{
+	// For chasing limited to the parts under the position. The later part is added first.
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = addTrack(client, {{"type", "midi"}});
+	ObjectId parts[2] = {};
+	for (const int i : {1, 0})
+	{
+		parts[i] = run(client, "midiPart.add",
+			{{"track", track}, {"position", i * 4 * g_ticksPerQuarter}, {"length", 4 * g_ticksPerQuarter}})
+					   .at("part")
+					   .at("id")
+					   .get<ObjectId>();
+		run(client, "controller.add",
+			{{"part", parts[i]}, {"controllers", {{{"position", 0}, {"number", 7}, {"value", 0.5}}}}});
+	}
+
+	const RenderChannel& channel = renderChannel(engine.renderSnapshots().acquire(), track);
+	REQUIRE(channel.midiParts.size() == 2);
+	CHECK(channel.midiParts[0].start == 0);
+	CHECK(channel.midiParts[0].end == 4 * g_quarterSamples);
+	CHECK(channel.midiParts[1].start == 4 * g_quarterSamples);
+	REQUIRE(channel.controllers.size() == 2);
+	CHECK(channel.controllers[0].part == 0);
+	CHECK(channel.controllers[1].part == 1);
+}
+
 TEST_CASE("the snapshot carries the project's tempo map, for processors that follow the tempo", "[unit]")
 {
 	Project project;

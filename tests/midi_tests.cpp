@@ -576,8 +576,13 @@ namespace
 		std::vector<RenderController> controllers = {}, std::vector<RenderPart> parts = {})
 	{
 		auto result = std::make_shared<MidiSequencer>();
+		// Each controller event in the first part it falls into, unless the test chose one.
+		for (RenderController& c : controllers)
+			for (size_t i = 0; c.part < 0 && i < parts.size(); ++i)
+				if (parts[i].start <= c.position && c.position < parts[i].end)
+					c.part = static_cast<int32_t>(i);
 		auto sequence = std::make_unique<MidiSequence>();
-		sequence->chase.push_back(makeChaseTrack(controllers, std::move(parts)));
+		sequence->chase.push_back(makeChaseTrack(controllers, parts));
 		sequence->notes = std::move(notes);
 		sequence->controllers = std::move(controllers);
 		result->setSequence(std::move(sequence));
@@ -746,6 +751,35 @@ TEST_CASE("a locate while stopped chases the controllers but no notes", "[unit]"
 	CHECK(player.heard == expected);
 }
 
+TEST_CASE("a locate while stopped also sends the controller events at the cursor", "[unit]")
+{
+	// A program change on a part's first tick: stopped, it is chased with the rest; playing from there, it plays
+	// there and isn't chased as well.
+	Player player(
+		chasing(chaseAll(), {}, {control(10, 7, 1), controller(100, ControllerType::Program, 5, 0)}, {{100, 200}}), 16);
+	player.stop();
+	player.locate(100);
+	player.stop(); // frame 16
+	player.play(16);
+	const std::vector<Heard> expected = {{16, Type::Controller, 0, 7, 1, {}}, {16, Type::Program, 0, 5, 0, {}},
+		{32, Type::Controller, 0, 7, 1, {}}, {32, Type::Program, 0, 5, 0, {}}};
+	CHECK(player.heard == expected);
+}
+
+TEST_CASE("chasing limited to parts ignores overlapping parts that ended before the position", "[unit]")
+{
+	// Part 0 from 0 to 1000 and part 1 from 100 to 200, both with CC 7; at 500 only part 0 sounds.
+	std::vector<RenderController> controllers = {control(50, 7, 1), control(150, 7, 2)};
+	controllers[0].part = 0;
+	controllers[1].part = 1;
+	MidiChase chase = chaseAll();
+	chase.beyondParts = false;
+	Player player(chasing(chase, {}, controllers, {{0, 1000}, {100, 200}}), 16);
+	player.locate(500);
+	player.play(16);
+	CHECK(player.heard == std::vector<Heard>{{0, Type::Controller, 0, 7, 1, {}}});
+}
+
 TEST_CASE("cycle playback chases at every jump to the left locator", "[unit]")
 {
 	const uint32_t blockSize = GENERATE(1U, 16U, 100U);
@@ -843,4 +877,45 @@ TEST_CASE("a chase that doesn't fit into the event buffer goes on in the next bl
 		CHECK(ofType(player.heard, Type::Controller) ==
 			std::vector<Heard>{{16, Type::Controller, 0, 7, 1, {}}, {32, Type::Controller, 0, 10, 2, {}}});
 	}
+}
+
+TEST_CASE("a routed MIDI track's controller event at the jump position wins over an older chased one", "[unit]")
+{
+	// As AudioEngine::attachMidi sets them up: the MIDI track's sequencer chases no controller events, the
+	// instrument's chases the MIDI track's. The MIDI track's events reach the instrument through its input.
+	const uint32_t blockSize = GENERATE(1U, 64U);
+	CAPTURE(blockSize);
+	const std::vector<RenderController> controllers = {control(1000, 7, 100),
+		controller(1000, ControllerType::Program, 1, 0), control(2000, 1, 9), control(5000, 7, 50),
+		controller(5000, ControllerType::Program, 2, 0)};
+	auto routedSequence = std::make_unique<MidiSequence>();
+	routedSequence->controllers = controllers;
+	auto routed = std::make_shared<MidiSequencer>();
+	routed->setSequence(std::move(routedSequence));
+	routed->setChase(chaseAll());
+
+	auto instrumentSequence = std::make_unique<MidiSequence>();
+	instrumentSequence->chase.push_back(makeChaseTrack({}, {}));
+	instrumentSequence->chase.push_back(makeChaseTrack(controllers, {}));
+	auto own = std::make_shared<MidiSequencer>();
+	own->setSequence(std::move(instrumentSequence));
+	own->setChase(chaseAll());
+	auto recorder = std::make_shared<Recorder>();
+
+	graph::GraphDesc desc;
+	desc.nodes.push_back({graph::NodeKind::Channel, 0, ChannelFormat::None, routed});
+	desc.nodes.push_back(
+		{graph::NodeKind::Channel, 0, ChannelFormat::Stereo, std::make_shared<InstrumentChannel>(own, recorder)});
+	desc.events.push_back({0, 1});
+	const graph::CompiledGraph compiled(desc, 48000.0, blockSize);
+	const graph::TransportSegment segment{0, blockSize, 5000};
+	compiled.process(blockSize, {true, 5000, &segment, 1});
+
+	std::vector<Heard> heard;
+	std::copy_if(recorder->heard.begin(), recorder->heard.end(), std::back_inserter(heard),
+		[](const Heard& h) { return h.frame == 0; });
+	// The MIDI track's events come first, as an instrument's input does; CC 7 and the program aren't chased.
+	const std::vector<Heard> expected = {
+		{0, Type::Controller, 0, 7, 50, {}}, {0, Type::Program, 0, 2, 0, {}}, {0, Type::Controller, 0, 1, 9, {}}};
+	CHECK(heard == expected);
 }
