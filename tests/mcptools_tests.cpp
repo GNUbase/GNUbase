@@ -479,3 +479,47 @@ TEST_CASE("MCP clients play MIDI into an instrument and get the rendered audio b
 	const Json after = mcp.call("audio_analyze", {{"channels", {0}}, {"start", 16000}, {"frames", 8000}});
 	CHECK(after.at("channels").at(0).at("peak").get<double>() < 1e-4);
 }
+
+// An MCP client sends MIDI into an instrument track and a MIDI track routed to it, and gets back what the instrument
+// played, with its frame positions, and the rendered audio. tests/lua/midi.lua does the same from Lua.
+TEST_CASE("MCP clients send MIDI into tracks and receive what the instrument played and the audio", "[integration]")
+{
+	Engine engine;
+	McpClient mcp(engine);
+	mcp.call("project_new");
+	mcp.call("audio_setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	const int64_t synth = idOf(mcp.call("track_add", {{"type", "instrument"}}).at("channel"));
+	mcp.call("channel_set", {{"channel", synth}, {"instrument", "testSynth"}});
+	const int64_t midi = idOf(mcp.call("track_add", {{"type", "midi"}}).at("channel"));
+	mcp.call("channel_set", {{"channel", midi}, {"output", synth}});
+
+	// A4 (440 Hz) into the instrument track and E5 (659.3 Hz) into the MIDI track, from frame 1000 to 12000.
+	for (const auto& [channel, pitch] : {std::pair{synth, 69}, std::pair{midi, 76}})
+		mcp.call("midi_inject",
+			{{"channel", channel},
+				{"messages",
+					{{{"position", 1000}, {"bytes", {0x90, pitch, 127}}},
+						{{"position", 12000}, {"bytes", {0x80, pitch, 0}}}}}});
+	mcp.call("audio_render", {{"frames", 24000}});
+
+	// What the instrument played, with timestamps: at one frame the MIDI track's events come first.
+	const auto played = [synth](int64_t position, int status, int pitch, int velocity)
+	{ return Json{{"channel", synth}, {"position", position}, {"bytes", {status, pitch, velocity}}}; };
+	const Json captured = mcp.call("midi_capture");
+	CHECK(captured.at("captured") ==
+		Json::array({played(1000, 0x90, 76, 127), played(1000, 0x90, 69, 127), played(12000, 0x80, 76, 0),
+			played(12000, 0x80, 69, 0)}));
+	CHECK(captured.at("dropped") == 0);
+
+	// The rendered audio: silent before the notes, both pitches while they sound, silent after the release.
+	const Json before = mcp.call("audio_analyze", {{"channels", {0}}, {"start", 0}, {"frames", 1000}});
+	CHECK(before.at("channels").at(0).at("peak").get<double>() == 0.0);
+	const Json playing =
+		mcp.call("audio_analyze", {{"channels", {0}}, {"start", 1000}, {"frames", 11000}, {"peaks", 2}});
+	const std::vector<double> found = frequencies(playing.at("channels").at(0));
+	REQUIRE(found.size() == 2);
+	CHECK(std::abs(found[0] - 440.0) < 2.0);
+	CHECK(std::abs(found[1] - 659.26) < 2.0);
+	const Json after = mcp.call("audio_analyze", {{"channels", {0}}, {"start", 16000}, {"frames", 8000}});
+	CHECK(after.at("channels").at(0).at("peak").get<double>() < 1e-4);
+}

@@ -240,12 +240,12 @@ TEST_CASE("zooming in and out keeps the project cursor in place, and zoom steps 
 	CHECK(same(fixture.display.view(), in));
 	CHECK(fixture.display.undoZoom());
 	CHECK(same(fixture.display.view(), start));
-	CHECK_FALSE(fixture.display.undoZoom());
+	CHECK(!fixture.display.undoZoom());
 	CHECK(fixture.display.redoZoom());
 	CHECK(same(fixture.display.view(), in));
 	// A new zoom step drops what could be redone.
 	fixture.display.zoomOut();
-	CHECK_FALSE(fixture.display.redoZoom());
+	CHECK(!fixture.display.redoZoom());
 
 	// Zoom full: from the project start to its end, but at least a minute (the project length comes with #78).
 	fixture.display.zoomFull();
@@ -431,7 +431,7 @@ TEST_CASE("horizontal zoom presets are user settings for every project", "[unit]
 	CHECK(fixture.display.applyZoomPreset("Detail"));
 	CHECK(fixture.display.visibleLength() == Approx(4.0));
 	CHECK(fixture.display.view().start == Approx(7.0)); // keeps the left edge
-	CHECK_FALSE(fixture.display.applyZoomPreset("Nothing"));
+	CHECK(!fixture.display.applyZoomPreset("Nothing"));
 
 	// Presets set from elsewhere, e.g. through MCP, apply as well.
 	fixture.call("settings.set",
@@ -464,11 +464,11 @@ TEST_CASE("the cross-hair cursor follows the mouse over the event lanes", "[unit
 	// Gone outside the lanes, and when switched off.
 	fixture.automation.move(std::nullopt, fixture.ruler(10));
 	fixture.step();
-	CHECK_FALSE(vertical.IsVisible());
+	CHECK(!vertical.IsVisible());
 	fixture.display.setCrossHair(false);
 	fixture.automation.move(std::nullopt, fixture.lanesAt(321, 45));
 	fixture.step();
-	CHECK_FALSE(vertical.IsVisible());
+	CHECK(!vertical.IsVisible());
 }
 
 TEST_CASE("the ruler shows the chosen time format", "[unit]")
