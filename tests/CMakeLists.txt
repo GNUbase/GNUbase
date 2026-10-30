@@ -72,11 +72,13 @@ add_executable(gnubase-tests
 	transport_tests.cpp
 	uisettings_tests.cpp
 	uithemes_tests.cpp
+	uitools_tests.cpp
 	window_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE
 	Catch2::Catch2WithMain
 	cpp-httplib
 	gnubase-app
+	gnubase-app-ui
 	gnubase-engine
 	gnubase-ipc
 	gnubase-mcp

@@ -181,6 +181,12 @@ namespace gnubase::ui
 		while (!m_open.empty())
 			close(std::prev(m_open.end())->first);
 		m_running = false;
+		// Nothing runs posted work any more: drop it, so that threads waiting for it learn so at once.
+		std::vector<std::function<void()>> posted;
+		{
+			const std::scoped_lock lock(m_postedMutex);
+			posted.swap(m_posted);
+		}
 	}
 
 	void Shell::refresh(Window& window)

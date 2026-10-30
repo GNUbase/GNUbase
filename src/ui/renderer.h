@@ -35,6 +35,10 @@ namespace gnubase::ui
 	// Reads a PNG file as RGBA; empty if it can't.
 	std::optional<Image> readPng(const std::filesystem::path& file);
 
+	// The same in memory: the PNG file's bytes; empty if the image can't be encoded or the bytes decoded.
+	std::vector<uint8_t> encodePng(const Image& image);
+	std::optional<Image> decodePng(const std::vector<uint8_t>& png);
+
 	// Draws windows' RmlUi contexts: on the screen, or offscreen into an image for screenshots (#58, #59).
 	class Renderer
 	{

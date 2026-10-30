@@ -107,7 +107,7 @@ namespace gnubase::ui
 		// Steps until the shell quits, sleeping while no window needs drawing. Returns the exit code, 0.
 		int run();
 
-		// Closes every window and ends run().
+		// Closes every window and ends run(). Work posted but not run yet is dropped.
 		void quit();
 		bool running() const { return m_running; }
 

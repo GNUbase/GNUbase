@@ -2,11 +2,13 @@
 // Every engine command must be reachable through MCP and Lua, with a schema and documentation (#31). The tools and
 // bindings are generated from the command registry, so this fails when a command lacks what generation needs.
 #include "app/scripttool.h"
+#include "app/uitools.h"
 #include "engine/engine.h"
 #include "mcp/catalogue.h"
 #include "mcp/server.h"
 #include "scripting/reference.h"
 #include "scripting/runtime.h"
+#include "testutils/fakeui.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -70,9 +72,11 @@ namespace
 
 	std::string catalogue()
 	{
+		gnubase::test::FakeUi ui({}); // for the windowed app's UI tools
 		Engine engine;
 		gnubase::mcp::Server server(engine);
 		gnubase::app::addScriptTool(server, engine);
+		gnubase::app::addUiTools(server, ui.shell);
 		return gnubase::mcp::catalogue(server);
 	}
 }
@@ -82,6 +86,7 @@ TEST_CASE("the MCP tool catalogue lists every tool with its arguments, and the r
 	const std::string text = catalogue();
 	CHECK(text.find("### track\n\n#### `track_add`\n\nEngine command `track.add`.") != std::string::npos);
 	CHECK(text.find("#### `script_run`\n\n") != std::string::npos); // tools that aren't engine commands too
+	CHECK(text.find("### ui\n\n#### `ui_click`\n\n") != std::string::npos);
 	CHECK(text.find("#### `project_get`\n\nEngine command `project.get`. Read-only.") != std::string::npos);
 	CHECK(text.find("- `type`: one of \"audio\" | \"instrument\"") != std::string::npos);
 	CHECK(text.find("Result:\n\n- `channel`: object or null, required\n- `track`: object, required") !=
