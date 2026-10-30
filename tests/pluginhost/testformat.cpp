@@ -5,6 +5,7 @@
 #include "plugins/common/testplugin.h"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <string>
@@ -48,6 +49,7 @@ namespace gnubase::testformat
 		constexpr uint32_t g_stallId = 1;  // Stall, in ms
 		constexpr uint32_t g_valueId = 2;  // Value, which does nothing
 		constexpr uint32_t g_resetsId = 3; // Resets, which counts the plugin's resets
+		constexpr uint32_t g_rescanId = 4; // Rescan: 1 makes every stall end with a values rescan
 
 		// test:stall, only in this format: passes its input through, and setting Stall to more than 0 ms makes the
 		// plugin take that long once, on the thread that sets it. A parameter event while processing makes that block
@@ -56,9 +58,10 @@ namespace gnubase::testformat
 		class Stall final : public testplugins::TestPlugin
 		{
 		public:
-			Stall()
+			explicit Stall(testplugins::Host& host)
 				: TestPlugin({param(g_stallId, "Stall", 10000.0, "ms"), param(g_valueId, "Value", 1.0, ""),
-					  param(g_resetsId, "Resets", 1.0e9, "")})
+					  param(g_resetsId, "Resets", 1.0e9, ""), param(g_rescanId, "Rescan", 1.0, "")}),
+				  m_host(host)
 			{
 			}
 
@@ -72,8 +75,13 @@ namespace gnubase::testformat
 		protected:
 			void paramChanged(uint32_t id, double value) override
 			{
-				if (id == g_stallId && value > 0.0)
-					std::this_thread::sleep_for(std::chrono::duration<double, std::milli>(value));
+				if (id != g_stallId || value <= 0.0)
+					return;
+				std::this_thread::sleep_for(std::chrono::duration<double, std::milli>(value));
+				double rescan = 0.0;
+				paramValue(g_rescanId, rescan);
+				if (rescan > 0.0)
+					m_host.requestValuesRescan();
 			}
 
 		private:
@@ -86,6 +94,8 @@ namespace gnubase::testformat
 				info.unit = unit;
 				return info;
 			}
+
+			testplugins::Host& m_host;
 		};
 
 		const testplugins::Descriptor& stallDescriptor()
@@ -95,9 +105,9 @@ namespace gnubase::testformat
 			return descriptor;
 		}
 
-		std::unique_ptr<testplugins::TestPlugin> createStall(testplugins::Host& /*host*/)
+		std::unique_ptr<testplugins::TestPlugin> createStall(testplugins::Host& host)
 		{
-			return std::make_unique<Stall>();
+			return std::make_unique<Stall>(host);
 		}
 
 		const std::array g_entries{
@@ -392,9 +402,21 @@ namespace gnubase::testformat
 			uint32_t latency() const override { return m_core->latency(); }
 			uint32_t tail() const noexcept override { return 0; }
 
+			void onMainThread() override
+			{
+				if (m_rescanValues.exchange(false) && m_hostParams != nullptr)
+					m_hostParams->rescanParams(HostParams::Values);
+			}
+
 		private:
 			// testplugins::Host
 			void requestRestart() override { m_host.requestRestart(); }
+			void requestValuesRescan() override
+			{
+				// HostParams is for the main thread only.
+				m_rescanValues = true;
+				m_host.requestCallback();
+			}
 
 			Descriptor m_descriptor;
 			bool m_instrument = false;
@@ -403,6 +425,7 @@ namespace gnubase::testformat
 			HostParams* m_hostParams = nullptr;
 			uint32_t m_reportedLatency = 0; // as for a CLAP host, no latency until the plugin says so
 			std::unique_ptr<testplugins::TestPlugin> m_core;
+			std::atomic<bool> m_rescanValues{false};
 		};
 
 		class TestFactory final : public Factory
