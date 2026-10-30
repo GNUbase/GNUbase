@@ -17,6 +17,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <iterator>
 
@@ -83,7 +85,7 @@ namespace gnubase::ui
 		// A number attribute; fallback if it is missing or not a finite number.
 		double number(Rml::Element& element, const char* name, double fallback)
 		{
-			const double value = element.GetAttribute<double>(name, fallback);
+			const auto value = element.GetAttribute<double>(name, fallback);
 			return std::isfinite(value) ? value : fallback;
 		}
 	}
@@ -132,7 +134,7 @@ namespace gnubase::ui
 
 	void Canvas::OnRender()
 	{
-		Rml::Context* context = GetContext();
+		const Rml::Context* context = GetContext();
 		if (context == nullptr)
 			return;
 		const float dpRatio = context->GetDensityIndependentPixelRatio();
@@ -281,14 +283,15 @@ namespace gnubase::ui
 			float previousTop = 0.0F;
 			float previousBottom = 0.0F;
 			float previousEnd = -1.0F;
-			for (double pixel = first; pixel < last; ++pixel)
+			for (auto i = static_cast<int64_t>(first); i < static_cast<int64_t>(last); ++i)
 			{
+				const auto pixel = static_cast<double>(i);
 				// The columns the pixel covers: at least one.
 				const double start = (pixel * frame.unitsPerPixel) - m_span.start;
 				const double end = start + frame.unitsPerPixel;
-				const auto a = static_cast<size_t>(
+				const auto a = static_cast<std::ptrdiff_t>(
 					std::clamp(std::floor(start / perColumn), 0.0, static_cast<double>(columns - 1)));
-				const auto b = static_cast<size_t>(
+				const auto b = static_cast<std::ptrdiff_t>(
 					std::clamp(std::ceil(end / perColumn), static_cast<double>(a + 1), static_cast<double>(columns)));
 				const int16_t low = *std::min_element(peaks.low.begin() + a, peaks.low.begin() + b);
 				const int16_t high = *std::max_element(peaks.high.begin() + a, peaks.high.begin() + b);
@@ -357,10 +360,18 @@ namespace gnubase::ui
 			if (from.shape == engine::AutomationShape::Step)
 				path.emplace_back(x1, y(from.value));
 			else if (from.shape == engine::AutomationShape::Curve && x1 > x0)
-				for (double pixel = std::max(x0, -2.0) + 2.0; pixel < std::min(x1, right + 2.0); pixel += 2.0)
+			{
+				// A piece every 2 pixels.
+				const double begin = std::max(x0, -2.0);
+				const auto pieces = static_cast<int64_t>(std::ceil((std::min(x1, right + 2.0) - begin) / 2.0));
+				for (int64_t i = 1; i < pieces; ++i)
+				{
+					const double pixel = begin + (2.0 * static_cast<double>(i));
 					path.emplace_back(pixel,
 						y(from.value +
 							((to.value - from.value) * engine::automationBend((pixel - x0) / (x1 - x0), from.curve))));
+				}
+			}
 		}
 
 		// Segments cut to the frame, so that a point far away doesn't make huge vertices.
@@ -463,9 +474,10 @@ namespace gnubase::ui
 		const float baseline = font == 0 ? 0.0F : static_cast<float>(fonts.GetFontMetrics(font).ascent);
 		if ((frame.to() - frame.from()) / step > 10000.0)
 			return; // a scale that asks for more ticks than pixels
-		for (double k = std::ceil(frame.from() / step); k * step < frame.to(); ++k)
+		for (auto k = static_cast<int64_t>(std::ceil(frame.from() / step)); static_cast<double>(k) * step < frame.to();
+			++k)
 		{
-			const double major = k * step;
+			const double major = static_cast<double>(k) * step;
 			const float x = frame.x(major);
 			if (width > 0.0F && ticks.alpha != 0)
 			{
