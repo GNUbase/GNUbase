@@ -11,6 +11,8 @@
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
+#include "ui/themes.h"
+#include "ui/uisettings.h"
 
 #include <chrono>
 #include <filesystem>
@@ -29,14 +31,6 @@ namespace gnubase::app
 #else
 		constexpr bool g_liveReload = false;
 #endif
-
-		// The user's UI scale, from the user setting ui.scale.
-		float uiScale(engine::Engine& engine)
-		{
-			engine::Client client(engine);
-			const engine::Result result = client.call("settings.get", {{"key", "ui.scale"}});
-			return result.ok() ? result.value.at("value").get<float>() : 1.0F;
-		}
 	}
 
 	int runWindowed(const Options& options, std::ostream& err)
@@ -47,7 +41,7 @@ namespace gnubase::app
 		const std::optional<std::filesystem::path> resources = findResources();
 		if (!resources)
 		{
-			err << "gnubase: cannot find its resources folder, which has the fonts\n";
+			err << "gnubase: cannot find its resources folder, which has the fonts and themes\n";
 			logging::error("Cannot find the resources folder");
 			return g_exitSetup;
 		}
@@ -69,18 +63,21 @@ namespace gnubase::app
 			return g_exitSetup;
 		}
 		ui::RmlUi rmlui(*windows);
+		std::unique_ptr<ui::Themes> themes;
 		try
 		{
 			ui::Fonts(*resources / "fonts").load();
+			themes = std::make_unique<ui::Themes>(*resources);
 		}
 		catch (const std::runtime_error& error)
 		{
-			err << "gnubase: cannot load its fonts: " << error.what() << '\n';
-			logging::error("Cannot load the fonts: {}", error.what());
+			err << "gnubase: cannot load its fonts and themes: " << error.what() << '\n';
+			logging::error("Cannot load the fonts and themes: {}", error.what());
 			return g_exitSetup;
 		}
 		ui::Shell shell(*windows, *renderer);
-		shell.setUiScale(uiScale(engine));
+		// The theme and the UI scale from the user settings, also when they change while GNUbase runs.
+		const ui::UiSettings uiSettings(engine, shell, *themes);
 		if (g_liveReload)
 			shell.every(std::chrono::milliseconds(250), [&] { ui::reloadChangedDocuments(rmlui.files(), shell); });
 		ui::WindowSpec main;

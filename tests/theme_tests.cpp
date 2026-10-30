@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace
 {
@@ -26,6 +27,27 @@ namespace
 	nlohmann::json readJson(const std::filesystem::path& file)
 	{
 		return nlohmann::json::parse(gnubase::test::readText(file));
+	}
+
+	// The selectors of a theme style sheet's rules, in order: the lines before those that open a block, without the
+	// media query, which names the theme.
+	std::vector<std::string> selectors(const std::string& sheet)
+	{
+		std::vector<std::string> result;
+		std::string previous;
+		size_t start = 0;
+		while (start < sheet.size())
+		{
+			size_t end = sheet.find('\n', start);
+			if (end == std::string::npos)
+				end = sheet.size();
+			const std::string line = sheet.substr(start, end - start);
+			if (line.find('{') != std::string::npos && previous.rfind("@media", 0) != 0)
+				result.push_back(previous);
+			previous = line;
+			start = end + 1;
+		}
+		return result;
 	}
 
 	void checkSvg(const std::filesystem::path& file, const nlohmann::json& asset)
@@ -78,10 +100,25 @@ TEST_CASE("every theme has the same assets, each a renderable SVG of its manifes
 			}
 		}
 
+		// The theme's style sheet uses every skin, and styles the same widgets and states as every other theme.
+		const std::string sheet = gnubase::test::readText(dir / "theme.rcss");
+		CHECK(sheet.find("@media (theme: " + std::string(theme) + ")") != std::string::npos);
+		for (const auto& [name, asset] : assets.items())
+		{
+			INFO("asset " << name);
+			const std::string file = asset.at("file").get<std::string>();
+			const bool used =
+				sheet.find("(" + file + ")") != std::string::npos || sheet.find("(" + file + ",") != std::string::npos;
+			CHECK(used);
+		}
+		CHECK(selectors(sheet) == selectors(gnubase::test::readText(themesDir() / "gnubase" / "theme.rcss")));
+
 		const nlohmann::json tokens = readJson(dir / "tokens.json");
 		for (const char* color : {"background", "surface", "surfaceRaised", "border", "text", "textMuted", "accent",
 				 "accent2", "danger", "warning", "success"})
 			CHECK(tokens.contains(color));
 		CHECK(tokens.at("trackPalette").size() == 8);
+		CHECK(tokens.at("fontFamilies").contains("ui"));
+		CHECK(tokens.at("fontFamilies").contains("counter"));
 	}
 }

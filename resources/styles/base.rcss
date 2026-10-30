@@ -1,0 +1,303 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* GNUbase's design system (docs/features/themes.md): how every widget is laid out, in dp. Colors, fonts and skins
+   come from the active theme, and documents add their own layout after both. RmlUi has no default style sheet, so the
+   block elements are declared here too. */
+
+body, div, p, h1, h2, h3, h4, form, ul, ol, li, tabset, panels, panel, .menu-item, .list-item, .menu-separator
+{
+	display: block;
+}
+
+body
+{
+	margin: 0;
+	padding: 0;
+}
+
+p, h1, h2, h3, h4
+{
+	margin: 0 0 6dp 0;
+}
+
+/* Icons (resources/icons): 16 dp unless a document says otherwise. */
+svg.icon
+{
+	width: 16dp;
+	height: 16dp;
+}
+
+/* Buttons, also with an icon, and the small toggle buttons of tracks and channels (mute, solo, record, monitor). */
+button
+{
+	display: inline-block;
+	box-sizing: border-box;
+	min-width: 64dp;
+	height: 24dp;
+	padding: 4dp 10dp;
+	text-align: center;
+	tab-index: auto;
+	nav: auto;
+}
+
+button svg.icon
+{
+	vertical-align: -3dp;
+}
+
+button.icon-only
+{
+	min-width: 24dp;
+	width: 24dp;
+	padding: 4dp 0;
+}
+
+button.toggle
+{
+	min-width: 20dp;
+	width: 20dp;
+	height: 20dp;
+	padding: 2dp 0;
+}
+
+/* Text fields */
+input.text, input.password
+{
+	display: inline-block;
+	box-sizing: border-box;
+	width: 160dp;
+	height: 24dp;
+	padding: 4dp 6dp;
+	nav: auto;
+}
+
+textarea
+{
+	display: inline-block;
+	box-sizing: border-box;
+	width: 240dp;
+	height: 72dp;
+	padding: 4dp 6dp;
+	nav: auto;
+}
+
+/* Check boxes and radio buttons */
+input.checkbox, input.radio
+{
+	display: inline-block;
+	width: 18dp;
+	height: 18dp;
+	vertical-align: -4dp;
+	nav: auto;
+}
+
+/* Drop-down lists */
+select
+{
+	display: inline-block;
+	box-sizing: border-box;
+	width: 160dp;
+	height: 24dp;
+	nav: auto;
+}
+
+select selectvalue
+{
+	width: auto;
+	height: 24dp;
+	margin-right: 24dp;
+	padding: 4dp 0 0 6dp;
+	box-sizing: border-box;
+}
+
+select selectarrow
+{
+	width: 12dp;
+	height: 8dp;
+	margin: 8dp 6dp 0 0;
+}
+
+select selectbox
+{
+	margin-top: 2dp;
+	padding: 4dp 0;
+}
+
+select selectbox option
+{
+	width: auto;
+	padding: 3dp 12dp;
+}
+
+/* Sliders and progress bars */
+input.range
+{
+	display: inline-block;
+	width: 120dp;
+	height: 16dp;
+	vertical-align: -3dp;
+	nav: auto;
+}
+
+input.range slidertrack
+{
+	height: 8dp;
+	margin-top: 4dp;
+}
+
+/* RmlUi places the fill over the track and gives it the track's height. */
+input.range sliderprogress
+{
+	margin: 0;
+}
+
+input.range sliderbar
+{
+	width: 16dp;
+	height: 16dp;
+	margin-left: -8dp;
+	margin-right: -8dp;
+}
+
+input.range sliderarrowdec, input.range sliderarrowinc
+{
+	width: 0;
+	height: 0;
+}
+
+progress
+{
+	display: inline-block;
+	width: 120dp;
+	height: 8dp;
+}
+
+/* Scroll bars */
+scrollbarvertical
+{
+	width: 10dp;
+}
+
+scrollbarvertical sliderbar
+{
+	min-height: 24dp;
+}
+
+scrollbarhorizontal
+{
+	height: 10dp;
+}
+
+scrollbarhorizontal sliderbar
+{
+	min-width: 24dp;
+}
+
+scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc,
+scrollbarhorizontal sliderarrowdec, scrollbarhorizontal sliderarrowinc
+{
+	width: 0;
+	height: 0;
+}
+
+scrollbarcorner
+{
+	width: 10dp;
+	height: 10dp;
+}
+
+/* Tabs */
+tabset tabs
+{
+	display: flex;
+	height: 28dp;
+	padding: 2dp 4dp 0 4dp;
+	box-sizing: border-box;
+}
+
+tabset tab
+{
+	display: block;
+	height: 26dp;
+	padding: 5dp 12dp 0 12dp;
+	box-sizing: border-box;
+	margin-right: 2dp;
+}
+
+/* Dialogs, panels, toolbars, displays, tooltips, menus and lists */
+.dialog
+{
+	display: block;
+	padding-bottom: 12dp;
+}
+
+.dialog-titlebar
+{
+	display: block;
+	height: 28dp;
+	padding: 6dp 12dp 0 12dp;
+	box-sizing: border-box;
+}
+
+.panel
+{
+	display: block;
+	padding: 8dp;
+}
+
+.panel-header
+{
+	display: block;
+	height: 24dp;
+	padding: 4dp 8dp 0 8dp;
+	box-sizing: border-box;
+}
+
+.toolbar
+{
+	display: flex;
+	align-items: center;
+	height: 32dp;
+	padding: 0 6dp;
+	box-sizing: border-box;
+}
+
+.display, .tooltip
+{
+	display: inline-block;
+	padding: 4dp 8dp;
+}
+
+.menu, .list
+{
+	display: block;
+	padding: 4dp 0;
+}
+
+.menu-item
+{
+	padding: 3dp 12dp;
+}
+
+.menu-separator
+{
+	height: 8dp;
+}
+
+.list-item
+{
+	height: 22dp;
+	padding: 3dp 10dp 0 10dp;
+	box-sizing: border-box;
+}
+
+/* Fixed graphics of mixer and editor widgets: their sizes in the themes' artwork */
+.dropdown-arrow { display: inline-block; width: 12dp; height: 8dp; }
+.knob, .knob-pointer { display: block; width: 40dp; height: 40dp; }
+.fader { display: block; width: 12dp; }
+.fader-cap { display: block; width: 22dp; height: 12dp; }
+.meter { display: block; width: 12dp; }
+.meter-fill { display: block; width: 12dp; }
+.meter-peak { display: block; width: 12dp; height: 4dp; }
+.splitter-grip-vertical { display: block; width: 8dp; height: 24dp; }
+.splitter-grip-horizontal { display: block; width: 24dp; height: 8dp; }
+.focus-ring { display: block; }
