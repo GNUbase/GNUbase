@@ -48,6 +48,7 @@ namespace gnubase::audio
 		// Why the device can't be used now, e.g. because its hardware isn't connected; empty if it can, as far as the
 		// backend knows. Backend::open still tries such a device.
 		std::string unavailableReason;
+		bool canMonitorDirectly = false; // the driver routes inputs to outputs itself (Device::monitorInput)
 	};
 
 	// How to open a device. Zero and empty values leave the choice to the driver.
@@ -64,6 +65,18 @@ namespace gnubase::audio
 	{
 		uint32_t input = 0;
 		uint32_t output = 0;
+	};
+
+	// Direct monitoring: the driver plays an input on outputs itself, without the latency of the round trip through
+	// the engine. The input goes to output, and with a pan above -1 partly to the output after it: pan 1 plays it on
+	// that one only, as the second of a stereo pair.
+	struct InputMonitor
+	{
+		int input = 0;
+		int output = 0;
+		bool on = false;
+		double gain = 1.0; // linear, at most 4 (+12 dB)
+		double pan = -1.0;
 	};
 
 	// A MIDI 1.0 channel message at a frame within a block.
@@ -154,6 +167,10 @@ namespace gnubase::audio
 
 		// Opens the driver's control panel, if it has one (DeviceInfo::controlPanel).
 		virtual void openControlPanel() {}
+
+		// Starts or stops monitoring an input directly, if the driver can (DeviceInfo::canMonitorDirectly). Each input
+		// plays on one output (pair) at a time. Not on the audio thread; also while the device runs.
+		virtual void monitorInput(const InputMonitor& /*monitor*/) {}
 
 		// Called when the driver asks to be opened again, e.g. because its settings changed in its control panel. Never
 		// called on the audio thread. Set it while the device is stopped.
