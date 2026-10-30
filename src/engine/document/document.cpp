@@ -28,9 +28,68 @@ namespace gnubase::engine
 	Project newProject()
 	{
 		Project project;
-		project.busses.push_back({project.newId(), "Stereo In", BusDirection::Input, ChannelFormat::Stereo});
-		project.busses.push_back({project.newId(), "Stereo Out", BusDirection::Output, ChannelFormat::Stereo});
+		project.busses.push_back(
+			{project.newId(), "Stereo In", BusDirection::Input, ChannelFormat::Stereo, {}, 0, {}, false});
+		project.busses.push_back(
+			{project.newId(), "Stereo Out", BusDirection::Output, ChannelFormat::Stereo, {}, 0, {}, false});
+		keepMainMix(project);
 		return project;
+	}
+
+	ObjectId mainMix(const Project& project)
+	{
+		const auto bus = std::find_if(
+			project.busses.begin(), project.busses.end(), [](const Bus& candidate) { return candidate.mainMix; });
+		return bus != project.busses.end() ? bus->id : 0;
+	}
+
+	std::string busProblem(const Project& project, const Bus& bus)
+	{
+		const int channels = channelCount(bus.format);
+		if (channels == 0)
+			return "a bus needs audio channels";
+		if (bus.parent == 0)
+		{
+			const auto ports = static_cast<int>(bus.ports.size());
+			if (ports != 0 && ports != channels)
+				return std::string("a ") + formatName(bus.format) + " bus needs " + std::to_string(channels) +
+					(channels == 1 ? " port" : " ports") + ", one per channel";
+			if (!bus.parentChannels.empty())
+				return "only child busses have parentChannels";
+			if (bus.mainMix && bus.direction != BusDirection::Output)
+				return "only an output bus can be the main mix";
+			return {};
+		}
+		const auto parent = std::find_if(project.busses.begin(), project.busses.end(),
+			[&bus](const Bus& candidate) { return candidate.id == bus.parent; });
+		if (parent == project.busses.end() || parent->parent != 0)
+			return "a child bus's parent must be a top-level bus";
+		if (parent->direction != bus.direction)
+			return "a child bus has its parent's direction";
+		if (!bus.ports.empty())
+			return "a child bus uses its parent's ports";
+		if (bus.mainMix)
+			return "a child bus can't be the main mix";
+		const int parentChannels = channelCount(parent->format);
+		if (channels >= parentChannels)
+			return "a child bus has fewer channels than its parent";
+		std::vector<int> used = bus.parentChannels;
+		std::sort(used.begin(), used.end());
+		if (static_cast<int>(used.size()) != channels || std::adjacent_find(used.begin(), used.end()) != used.end() ||
+			used.front() < 0 || used.back() >= parentChannels)
+			return "parentChannels must be " + std::to_string(channels) + " different channels of the parent, 0 to " +
+				std::to_string(parentChannels - 1);
+		return {};
+	}
+
+	void keepMainMix(Project& project)
+	{
+		if (mainMix(project) != 0)
+			return;
+		const auto bus = std::find_if(project.busses.begin(), project.busses.end(),
+			[](const Bus& candidate) { return candidate.direction == BusDirection::Output && candidate.parent == 0; });
+		if (bus != project.busses.end())
+			bus->mainMix = true;
 	}
 
 	bool hasMinimumLength(const Project& project, const Marker& marker)

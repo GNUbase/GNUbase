@@ -91,19 +91,36 @@ namespace
 	}
 
 	// Reads the whole stream the way an audio thread does: blockFrames at a time, at the pace of real time if
-	// realTime is set.
+	// realTime is set. It catches up on the scheduler's lateness (a sleep can overshoot by a 15.6 ms tick on
+	// Windows, far more than a block), so it keeps real time on average. Like a device after an overrun, it doesn't
+	// catch up after a stall: reading the late blocks all at once would empty the buffer faster than real time,
+	// which no device does.
 	std::vector<float> play(DiskStream& stream, gnubase::time::Samples frames, size_t blockFrames, bool realTime)
 	{
+		constexpr auto stall = std::chrono::milliseconds(50);
+		using Clock = std::chrono::steady_clock;
 		const auto channels = static_cast<size_t>(stream.channels());
 		std::vector<float> output(static_cast<size_t>(frames) * channels);
 		const auto period = std::chrono::duration<double>(static_cast<double>(blockFrames) / stream.sampleRate());
-		const auto start = std::chrono::steady_clock::now();
+		auto start = Clock::now();
+		size_t first = 0; // the block read at start
 		size_t done = 0;
 		for (size_t block = 0; done < static_cast<size_t>(frames); ++block)
 		{
 			if (realTime)
-				std::this_thread::sleep_until(
-					start + std::chrono::duration_cast<std::chrono::steady_clock::duration>(period * block));
+			{
+				const auto due = start + std::chrono::duration_cast<Clock::duration>(period * (block - first));
+				const auto now = Clock::now();
+				if (now - due > stall)
+				{
+					start = now;
+					first = block;
+				}
+				else
+				{
+					std::this_thread::sleep_until(due);
+				}
+			}
 			const size_t count = std::min(blockFrames, static_cast<size_t>(frames) - done);
 			stream.read(output.data() + (done * channels), count);
 			done += count;
@@ -111,20 +128,41 @@ namespace
 		return output;
 	}
 
+	// The frames of output, from frame from on, that differ from the made-up file's samples from its frame first on:
+	// silent ones, where the stream dropped out, and foreign ones, which hold samples that don't belong there, such
+	// as audio from before a seek.
+	struct Mismatches
+	{
+		size_t silent = 0;
+		size_t foreign = 0;
+	};
+
+	Mismatches compare(const std::vector<float>& output, int channels, gnubase::time::Samples first, size_t from = 0)
+	{
+		Mismatches result;
+		const auto count = output.size() / static_cast<size_t>(channels);
+		for (size_t frame = from; frame < count; ++frame)
+		{
+			bool wrong = false;
+			bool silent = true;
+			for (int channel = 0; channel < channels; ++channel)
+			{
+				const float sample = output[(frame * static_cast<size_t>(channels)) + static_cast<size_t>(channel)];
+				wrong = wrong ||
+					sample != SignalReader::value(first + static_cast<gnubase::time::Samples>(frame - from), channel);
+				silent = silent && sample == 0.0f;
+			}
+			if (wrong)
+				++(silent ? result.silent : result.foreign);
+		}
+		return result;
+	}
+
 	// How many frames of output differ from the made-up file's samples.
 	size_t mismatches(const std::vector<float>& output, int channels, gnubase::time::Samples first)
 	{
-		size_t wrong = 0;
-		const auto count = output.size() / static_cast<size_t>(channels);
-		for (size_t frame = 0; frame < count; ++frame)
-			for (int channel = 0; channel < channels; ++channel)
-				if (output[(frame * static_cast<size_t>(channels)) + static_cast<size_t>(channel)] !=
-					SignalReader::value(first + static_cast<gnubase::time::Samples>(frame), channel))
-				{
-					++wrong;
-					break;
-				}
-		return wrong;
+		const Mismatches result = compare(output, channels, first);
+		return result.silent + result.foreign;
 	}
 
 	std::vector<float> sine(double frequency, double sampleRate, size_t frames, double amplitude = 0.5)
@@ -297,16 +335,21 @@ TEST_CASE("a disk too slow for real time shows as dropouts, and the stream keeps
 TEST_CASE("after seeking, the stream continues at the new position", "[integration]")
 {
 	DiskStreamer streamer;
-	DiskStreamSettings settings; // a buffer much smaller than the file, as with real files
+	// A buffer much smaller than the file, as with real files, of about 370 ms: enough for a busy test machine.
+	DiskStreamSettings settings;
 	settings.blockFrames = 1024;
-	settings.blocks = 4;
+	settings.blocks = 16;
 	const auto stream = streamer.open(std::make_unique<SignalReader>(2, 44100.0, 100000), 44100.0, settings);
 	REQUIRE(waitUntilReady(*stream));
 	play(*stream, 5000, 128, true); // in real time: faster than that, a small buffer runs dry
 	stream->seek(70000);
 	REQUIRE(waitUntilReady(*stream));
 	const std::vector<float> output = play(*stream, 20000, 128, true);
-	CHECK(mismatches(output, 2, 70000) == 0);
+
+	// Nothing from before the seek, and every silent frame where the file belongs is a dropout the stream counted.
+	const Mismatches wrong = compare(output, 2, 70000);
+	CHECK(wrong.foreign == 0);
+	CHECK(wrong.silent <= stream->dropouts());
 	CHECK(stream->dropouts() == 0);
 }
 
@@ -316,10 +359,11 @@ TEST_CASE("seeking during playback never plays audio from before the seek", "[in
 	DiskStreamer streamer;
 	DiskStreamSettings settings;
 	settings.blockFrames = 1024;
-	settings.blocks = 4;
+	settings.blocks = 16;
 	const auto stream = streamer.open(std::make_unique<SignalReader>(1, 48000.0, 100000), 48000.0, settings);
 	REQUIRE(waitUntilReady(*stream));
 	play(*stream, 2000, 64, false);
+	const uint64_t dropoutsBefore = stream->dropouts();
 	stream->seek(60000);
 	const std::vector<float> output = play(*stream, 20000, 64, true);
 
@@ -327,11 +371,11 @@ TEST_CASE("seeking during playback never plays audio from before the seek", "[in
 	const auto first = static_cast<size_t>(
 		std::find_if(output.begin(), output.end(), [](float value) { return value != 0.0f; }) - output.begin());
 	REQUIRE(first < 10000);
-	size_t wrong = 0;
-	for (size_t frame = first; frame < output.size(); ++frame)
-		if (output[frame] != SignalReader::value(60000 + static_cast<int64_t>(frame - first), 0))
-			++wrong;
-	CHECK(wrong == 0);
+	const Mismatches wrong = compare(output, 1, 60000, first);
+	const uint64_t dropouts = stream->dropouts() - dropoutsBefore;
+	CHECK(wrong.foreign == 0);
+	CHECK(wrong.silent <= dropouts);
+	CHECK(dropouts == 0);
 }
 
 TEST_CASE("streams play files at the output sample rate, and seeking stays exact", "[integration]")

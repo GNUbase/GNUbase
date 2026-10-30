@@ -14,8 +14,10 @@ target_link_libraries(gnubase-app PUBLIC gnubase-engine gnubase-mcp gnubase-scri
 target_compile_definitions(gnubase-app PRIVATE GNUBASE_SOURCE_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources")
 gnubase_target_defaults(gnubase-app)
 
-# The MCP tools for the UI (#58), for the executable and the tests.
+# The app's UI and its MCP tools (#58), for the executable and the UI tests.
 add_library(gnubase-app-ui STATIC
+	appui.cpp
+	appui.h
 	uitools.cpp
 	uitools.h)
 target_link_libraries(gnubase-app-ui PUBLIC gnubase-mcp gnubase-ui)

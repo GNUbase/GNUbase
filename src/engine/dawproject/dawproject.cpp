@@ -353,19 +353,23 @@ namespace gnubase::engine
 				for (const ObjectId id : m_project.tracks)
 					if (m_project.trackById.at(id).type != TrackType::Marker) // markers go into the arrangement
 						writeTrack(structure, m_project.trackById.at(id));
+				// The main mix first: other applications take the first master channel as their main output.
+				std::vector<const Bus*> masters;
 				for (const Bus& bus : m_project.busses)
-					if (bus.direction == BusDirection::Output)
-					{
-						pugi::xml_node track = structure.append_child("Track");
-						track.append_attribute("id") = xmlId("ot", bus.id).c_str();
-						track.append_attribute("name") = bus.name.c_str();
-						track.append_attribute("contentType") = "audio";
-						track.append_attribute("loaded") = true;
-						pugi::xml_node channel = track.append_child("Channel");
-						channel.append_attribute("id") = xmlId("o", bus.id).c_str();
-						channel.append_attribute("role") = "master";
-						channel.append_attribute("audioChannels") = channelCount(bus.format);
-					}
+					if (bus.direction == BusDirection::Output && bus.parent == 0)
+						masters.insert(bus.mainMix ? masters.begin() : masters.end(), &bus);
+				for (const Bus* bus : masters)
+				{
+					pugi::xml_node track = structure.append_child("Track");
+					track.append_attribute("id") = xmlId("ot", bus->id).c_str();
+					track.append_attribute("name") = bus->name.c_str();
+					track.append_attribute("contentType") = "audio";
+					track.append_attribute("loaded") = true;
+					pugi::xml_node channel = track.append_child("Channel");
+					channel.append_attribute("id") = xmlId("o", bus->id).c_str();
+					channel.append_attribute("role") = "master";
+					channel.append_attribute("audioChannels") = channelCount(bus->format);
+				}
 
 				pugi::xml_node arrangement = root.append_child("Arrangement");
 				arrangement.append_attribute("id") = "arrangement";
@@ -405,10 +409,15 @@ namespace gnubase::engine
 				return type == TrackType::Effect ? "effect" : "regular";
 			}
 
-			bool isBus(ObjectId id) const
+			// A channel's destination: another channel, or an output bus's master channel; a child bus's parent's,
+			// since DAWproject has no child busses.
+			std::string destination(ObjectId output) const
 			{
-				return std::any_of(
-					m_project.busses.begin(), m_project.busses.end(), [id](const Bus& bus) { return bus.id == id; });
+				const auto bus = std::find_if(m_project.busses.begin(), m_project.busses.end(),
+					[output](const Bus& candidate) { return candidate.id == output; });
+				if (bus == m_project.busses.end())
+					return xmlId("c", output);
+				return xmlId("o", bus->parent != 0 ? bus->parent : bus->id);
 			}
 
 			void writeTrack(pugi::xml_node parent, const Track& track)
@@ -429,8 +438,7 @@ namespace gnubase::engine
 					element.append_attribute("audioChannels") = channelCount(channel.format);
 					// A MIDI track's output is an instrument, which DAWproject's audio routing can't describe.
 					if (channel.format != ChannelFormat::None && channel.output != 0)
-						element.append_attribute("destination") =
-							xmlId(isBus(channel.output) ? "o" : "c", channel.output).c_str();
+						element.append_attribute("destination") = destination(channel.output).c_str();
 					if (channel.format != ChannelFormat::None && track.type != TrackType::Midi)
 					{
 						pugi::xml_node pan = element.append_child("Pan");
@@ -966,7 +974,9 @@ namespace gnubase::engine
 				if (role == "master" && !hasChildren)
 				{
 					// The first master channel becomes the main output, any other one another output bus.
-					Bus bus = m_firstMaster ? mainOutput() : Bus{m_project.newId(), "", BusDirection::Output};
+					Bus bus = m_firstMaster
+						? mainOutput()
+						: Bus{m_project.newId(), "", BusDirection::Output, ChannelFormat::Stereo, {}, 0, {}, false};
 					bus.name = node.attribute("name").as_string("Stereo Out");
 					bus.format = importedFormat(audioChannels);
 					if (m_firstMaster)

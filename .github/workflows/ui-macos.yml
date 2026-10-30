@@ -11,6 +11,7 @@ on:
       - src/app/**
       - resources/**
       - tests/CMakeLists.txt
+      - tests/uiapp*
       - tests/window_tests.cpp
       - tests/testutils/**
       - tests/data/ui/**

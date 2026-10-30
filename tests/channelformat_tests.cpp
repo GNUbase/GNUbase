@@ -178,9 +178,10 @@ TEST_CASE("a 5.1 channel on a stereo bus plays the downmix; mono reaches only th
 	// A 5.1 input bus feeds a 5.1 channel, which plays on a stereo output bus; a mono input bus feeds a mono channel
 	// on a 5.1 output bus.
 	RenderSnapshot snapshot;
-	snapshot.busses = {{1, BusDirection::Input, ChannelFormat::Surround51},
-		{2, BusDirection::Output, ChannelFormat::Stereo}, {3, BusDirection::Input, ChannelFormat::Mono},
-		{4, BusDirection::Output, ChannelFormat::Surround51}};
+	snapshot.busses = {{1, BusDirection::Input, ChannelFormat::Surround51, {}, -1, {}},
+		{2, BusDirection::Output, ChannelFormat::Stereo, {}, -1, {}},
+		{3, BusDirection::Input, ChannelFormat::Mono, {}, -1, {}},
+		{4, BusDirection::Output, ChannelFormat::Surround51, {}, -1, {}}};
 	RenderChannel surround;
 	surround.id = 10;
 	surround.format = ChannelFormat::Surround51;

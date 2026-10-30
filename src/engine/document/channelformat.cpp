@@ -69,6 +69,12 @@ namespace gnubase::engine
 		return info(format).name;
 	}
 
+	const char* speakerName(Speaker speaker)
+	{
+		constexpr const char* names[] = {"M", "L", "R", "C", "LFE", "Ls", "Rs", "Cs", "Sl", "Sr"};
+		return names[static_cast<size_t>(speaker)];
+	}
+
 	std::optional<ChannelFormat> formatFromName(const std::string& name)
 	{
 		for (const FormatInfo& entry : formats())

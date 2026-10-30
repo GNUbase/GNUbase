@@ -102,6 +102,13 @@ namespace
 		return format;
 	}
 
+	// A change for Store::modify: appends text to a text setting.
+	struct Append
+	{
+		std::string text;
+		std::string operator()(const Json& value) const { return value.get<std::string>() + text; }
+	};
+
 	// The client's next message, which must be an event.
 	gnubase::engine::Event nextEvent(gnubase::engine::Client& client)
 	{
@@ -617,6 +624,44 @@ TEST_CASE("several GNUbase processes share the settings file without losing each
 	}
 	CHECK(first.set("title", "Mix"));
 	CHECK(settings::Store(windowFormat(), dir.path()).values().at("title") == "Mix");
+}
+
+TEST_CASE("modify changes a setting from the value that another process saved meanwhile", "[unit]")
+{
+	const TempDir dir;
+	const fs::path file = dir.path() / "window.json";
+	settings::Store first(windowFormat(), dir.path());
+	settings::Store second(windowFormat(), dir.path());
+	CHECK(first.modify("title", Append{" A"}) == "GNUbase A");
+	CHECK(second.modify("title", Append{" B"}) == "GNUbase A B"); // builds on the first one's change
+	CHECK(second.value("title") == "GNUbase A B");
+	CHECK(readJson(file).at("values").at("title") == "GNUbase A B");
+
+	// A value that doesn't fit the schema, or a change that throws, changes nothing.
+	CHECK_THROWS_WITH(first.modify("width", [](const Json&) { return Json(50); }), "width must be at least 100");
+	CHECK_THROWS_AS(
+		first.modify("width", [](const Json&) -> Json { throw std::runtime_error("no"); }), std::runtime_error);
+	CHECK_THROWS_WITH(first.modify("depth", [](const Json& value) { return value; }), "there is no setting depth");
+	CHECK(first.value("width") == 800);
+	CHECK(!readJson(file).at("values").contains("width"));
+
+	// The default leaves the file, and a value there that doesn't fit counts as the default.
+	CHECK(first.modify("title", [](const Json&) { return Json("GNUbase"); }) == "GNUbase");
+	CHECK(!readJson(file).at("values").contains("title"));
+	writeText(file, R"({"version": 3, "values": {"title": 7, "width": 1024}})");
+	CHECK(first.modify("title", Append{"!"}) == "GNUbase!");
+	CHECK(readJson(file).at("values") == Json::parse(R"({"title": "GNUbase!", "width": 1024})"));
+
+	// Kept in memory, and read-only since a newer GNUbase took the file: changes apply, and nothing is written.
+	settings::Store memory(windowFormat());
+	CHECK(memory.modify("title", Append{"!"}) == "GNUbase!");
+	CHECK(memory.modify("title", Append{"!"}) == "GNUbase!!");
+	const std::string newer = R"({"version": 4, "values": {"title": "Mix"}})";
+	writeText(file, newer);
+	CHECK(first.modify("title", Append{"?"}) == "GNUbase!?");
+	CHECK(first.loadReport().readOnly);
+	CHECK(first.modify("title", Append{"?"}) == "GNUbase!??");
+	CHECK(readText(file) == newer);
 }
 
 // Every version of the user settings file that a GNUbase release wrote is in tests/data/settings, as

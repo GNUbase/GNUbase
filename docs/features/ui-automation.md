@@ -1,6 +1,6 @@
 # UI automation
 
-MCP clients, and later the C++ test harness (#59) and Lua (#208), read GNUbase's UI back and drive it as a user would
+MCP clients and UI tests ([ui-tests.md](ui-tests.md)), and later Lua (#208), read GNUbase's UI back and drive it as a user would
 (#58): its windows and documents, the DOM with each element's box, screenshots of windows or single elements, and mouse
 and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
 

@@ -413,8 +413,8 @@ TEST_CASE("the graph of a render snapshot routes channels to busses, groups and 
 {
 	// Busses: stereo in, stereo out. Channels: audio track -> group -> out, MIDI track -> instrument -> out.
 	RenderSnapshot snapshot;
-	snapshot.busses = {
-		{1, BusDirection::Input, ChannelFormat::Stereo}, {2, BusDirection::Output, ChannelFormat::Stereo}};
+	snapshot.busses = {{1, BusDirection::Input, ChannelFormat::Stereo, {}, -1, {}},
+		{2, BusDirection::Output, ChannelFormat::Stereo, {}, -1, {}}};
 	RenderChannel audio;
 	audio.id = 10;
 	audio.input = 0;

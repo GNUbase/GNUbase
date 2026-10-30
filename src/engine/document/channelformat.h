@@ -54,6 +54,7 @@ namespace gnubase::engine
 	std::vector<std::string> formatNames(); // every format with audio, for schemas
 
 	const std::vector<Speaker>& speakers(ChannelFormat format);
+	const char* speakerName(Speaker speaker); // "L", "LFE", "Ls" and so on
 	int channelCount(ChannelFormat format);
 
 	// The format for a number of audio channels: mono, stereo, LRC, quadro, 5.0, 5.1, 7.0 and 7.1; None for any

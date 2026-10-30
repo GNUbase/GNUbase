@@ -14,6 +14,7 @@
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
 #include "ui/themes.h"
+#include "uiapp.h"
 
 #include <RmlUi/Core/Box.h>
 #include <RmlUi/Core/Context.h>
@@ -23,11 +24,6 @@
 #include <RmlUi/Core/SystemInterface.h>
 #include <SDL3/SDL.h>
 #include <catch2/catch_test_macros.hpp>
-
-#if defined(__linux__) && defined(GNUBASE_SANITIZED)
-#include <dlfcn.h>
-#include <link.h>
-#endif
 
 #include <algorithm>
 #include <array>
@@ -58,23 +54,6 @@ namespace
 		return std::string(GNUBASE_TEST_DATA_DIR) + "/ui/" + name;
 	}
 
-#if defined(__linux__) && defined(GNUBASE_SANITIZED)
-	// LeakSanitizer can't see what an unloaded library still referenced, so once SDL_GPU's Vulkan driver is unloaded,
-	// the memory Mesa keeps for the life of the process (allocated on its own threads) shows up as leaks. Loading the
-	// drivers once more, and never closing them, keeps them loaded until the tests exit.
-	void keepVulkanDriversLoaded()
-	{
-		dl_iterate_phdr(
-			[](dl_phdr_info* info, size_t /*size*/, void* /*data*/)
-			{
-				if (std::string(info->dlpi_name).find("libvulkan_") != std::string::npos) [[maybe_unused]]
-					void* kept = dlopen(info->dlpi_name, RTLD_NOW | RTLD_NOLOAD | RTLD_NODELETE);
-				return 0;
-			},
-			nullptr);
-	}
-#endif
-
 	// SDL's video, the GPU renderer, RmlUi and the shell, made and destroyed in the app's order. Skips the test if
 	// this machine has no SDL_GPU device.
 	// GNUbase's bundled fonts (ui/fonts.h); RmlUi must be initialised.
@@ -87,9 +66,7 @@ namespace
 	{
 		Gpu()
 		{
-#ifdef __linux__
-			SDL_SetHintWithPriority(SDL_HINT_VIDEO_DRIVER, "offscreen", SDL_HINT_DEFAULT); // SDL_VIDEO_DRIVER wins
-#endif
+			test::useTestDisplay();
 			windows = std::make_unique<ui::SdlWindowSystem>();
 			try
 			{
@@ -99,14 +76,9 @@ namespace
 			}
 			catch (const ui::GpuUnavailable& error)
 			{
-				const char* require = std::getenv("GNUBASE_REQUIRE_GPU");
-				if (require != nullptr && std::string(require) == "1")
-					FAIL(error.what());
-				SKIP(error.what());
+				test::gpuUnavailable(error);
 			}
-#if defined(__linux__) && defined(GNUBASE_SANITIZED)
-			keepVulkanDriversLoaded();
-#endif
+			test::keepVulkanDriversLoaded();
 			rmlui = std::make_unique<ui::RmlUi>(*windows);
 			shell = std::make_unique<ui::Shell>(*windows, *renderer);
 		}
@@ -398,7 +370,7 @@ TEST_CASE("every theme looks the same on every platform, and switches without lo
 TEST_CASE("another thread wakes SDL's event loop while it waits", "[ui]")
 {
 #ifdef __linux__
-	SDL_SetHintWithPriority(SDL_HINT_VIDEO_DRIVER, "offscreen", SDL_HINT_DEFAULT); // SDL_VIDEO_DRIVER wins
+	test::useTestDisplay();
 #endif
 	ui::SdlWindowSystem windows;
 	const auto started = std::chrono::steady_clock::now();
