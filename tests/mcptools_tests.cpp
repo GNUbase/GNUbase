@@ -275,6 +275,7 @@ TEST_CASE("MCP clients list, get and set parameters; a lower volume renders lowe
 		{{"blockSize", 64}, {"captureSeconds", 1},
 			{"input", {{"processor", "sine"}, {"parameters", {{"Level", 0.5}}}}}});
 	const int64_t channel = idOf(mcp.call("track_add", {{"type", "audio"}}).at("channel"));
+	mcp.call("channel_set", {{"channel", channel}, {"monitor", true}});
 	const Json parameters = mcp.call("parameter_list", {{"channel", channel}}).at("parameters");
 	REQUIRE(!parameters.empty());
 	const Json volume = parameters.at(0).at("target");

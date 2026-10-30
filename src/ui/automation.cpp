@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/automation.h"
 
+#include "ui/keycommands.h"
+
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
@@ -12,7 +14,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <map>
 #include <sstream>
 
 namespace gnubase::ui
@@ -23,13 +24,6 @@ namespace gnubase::ui
 	{
 		// A drag moves the mouse in this many steps, so that elements on the way see it pass.
 		constexpr int g_dragSteps = 8;
-
-		std::string lowercase(std::string text)
-		{
-			std::transform(text.begin(), text.end(), text.begin(),
-				[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-			return text;
-		}
 
 		// Text as it shows with white-space: normal: runs of white space as one space, none at the ends.
 		std::string collapsed(const std::string& text)
@@ -144,46 +138,12 @@ namespace gnubase::ui
 			return found;
 		}
 
-		int modifier(const std::string& name)
-		{
-			static const std::map<std::string, int> modifiers = {{"ctrl", Rml::Input::KM_CTRL},
-				{"control", Rml::Input::KM_CTRL}, {"shift", Rml::Input::KM_SHIFT}, {"alt", Rml::Input::KM_ALT},
-				{"option", Rml::Input::KM_ALT}, {"meta", Rml::Input::KM_META}, {"cmd", Rml::Input::KM_META},
-				{"command", Rml::Input::KM_META}};
-			const auto it = modifiers.find(lowercase(name));
-			if (it == modifiers.end())
-				throw std::invalid_argument("unknown modifier " + name + "; use Ctrl, Shift, Alt or Meta");
-			return it->second;
-		}
-
 		int modifierState(const std::vector<std::string>& names)
 		{
 			int state = 0;
 			for (const std::string& name : names)
-				state |= modifier(name);
+				state |= parseModifier(name);
 			return state;
-		}
-
-		Rml::Input::KeyIdentifier keyIdentifier(const std::string& name)
-		{
-			using namespace Rml::Input;
-			static const std::map<std::string, KeyIdentifier> named = {{"enter", KI_RETURN}, {"return", KI_RETURN},
-				{"escape", KI_ESCAPE}, {"esc", KI_ESCAPE}, {"tab", KI_TAB}, {"backspace", KI_BACK},
-				{"delete", KI_DELETE}, {"del", KI_DELETE}, {"insert", KI_INSERT}, {"home", KI_HOME}, {"end", KI_END},
-				{"pageup", KI_PRIOR}, {"pagedown", KI_NEXT}, {"up", KI_UP}, {"down", KI_DOWN}, {"left", KI_LEFT},
-				{"right", KI_RIGHT}, {"space", KI_SPACE}};
-			const std::string key = lowercase(name);
-			if (const auto it = named.find(key); it != named.end())
-				return it->second;
-			if (key.size() == 1 && key[0] >= 'a' && key[0] <= 'z')
-				return static_cast<KeyIdentifier>(KI_A + (key[0] - 'a'));
-			if (key.size() == 1 && key[0] >= '0' && key[0] <= '9')
-				return static_cast<KeyIdentifier>(KI_0 + (key[0] - '0'));
-			if (key.size() > 1 && key[0] == 'f' &&
-				std::all_of(key.begin() + 1, key.end(), [](unsigned char c) { return std::isdigit(c) != 0; }))
-				if (const int number = std::stoi(key.substr(1)); number >= 1 && number <= 24)
-					return static_cast<KeyIdentifier>(KI_F1 + number - 1);
-			throw std::invalid_argument("unknown key " + name);
 		}
 
 		int buttonIndex(MouseButton button)
@@ -378,20 +338,12 @@ namespace gnubase::ui
 
 	Json Automation::key(std::optional<WindowId> window, const std::string& keys)
 	{
-		std::vector<std::string> parts;
-		std::istringstream split(keys);
-		for (std::string part; std::getline(split, part, '+');)
-			parts.push_back(part);
-		if (parts.empty())
-			throw std::invalid_argument("no key given");
-		const Rml::Input::KeyIdentifier pressed = keyIdentifier(parts.back());
-		parts.pop_back();
-		const int state = modifierState(parts);
-
+		const KeyPress pressed = parseKeys(keys);
 		Window& shown = resolve(window);
 		Rml::Context& context = updated(shown);
-		context.ProcessKeyDown(pressed, state);
-		context.ProcessKeyUp(pressed, state);
+		if (context.ProcessKeyDown(pressed.key, pressed.modifiers))
+			m_shell.unusedKey(shown, pressed);
+		context.ProcessKeyUp(pressed.key, pressed.modifiers);
 		shown.requestRender();
 		return {{"focus", nodeOrNull(context.GetFocusElement())}};
 	}

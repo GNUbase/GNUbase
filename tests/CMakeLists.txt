@@ -39,6 +39,7 @@ add_executable(gnubase-tests
 	history_tests.cpp
 	ipc_process_tests.cpp
 	ipc_tests.cpp
+	keycommands_tests.cpp
 	latency_tests.cpp
 	log_tests.cpp
 	marker_tests.cpp
@@ -51,6 +52,7 @@ add_executable(gnubase-tests
 	midifile_tests.cpp
 	midifunctions_tests.cpp
 	mixer_tests.cpp
+	monitoring_tests.cpp
 	multicore_tests.cpp
 	parameter_tests.cpp
 	peaks_tests.cpp
