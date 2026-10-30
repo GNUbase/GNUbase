@@ -124,12 +124,12 @@ job()
 		fi
 		;;
 	windows-x64)
-		vsDev x64 "cmake --preset windows-x64-ninja -DGNUBASE_LTO=OFF" \
+		vsDev x64 "cmake --preset windows-x64-ninja -DGNUBASE_LTO=OFF $launcher" \
 			"cmake --build --preset windows-x64-ninja --config Release" && runTests build/windows-x64-ninja Release
 		;;
 	windows-arm64)
 		local cross="-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=ARM64"
-		vsDev x64_arm64 "cmake --preset windows-arm64-ninja $cross -DGNUBASE_LTO=OFF" \
+		vsDev x64_arm64 "cmake --preset windows-arm64-ninja $cross -DGNUBASE_LTO=OFF $launcher" \
 			"cmake --build --preset windows-arm64-ninja --config Release"
 		;;
 	linux-gcc | linux-clang)
