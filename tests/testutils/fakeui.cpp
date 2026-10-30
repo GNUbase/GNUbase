@@ -144,6 +144,12 @@ namespace gnubase::test
 		return it == m_presents.end() ? 0 : it->second;
 	}
 
+	Rml::TextureHandle NullRenderer::GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector2i dimensions)
+	{
+		m_textures.push_back(ui::Image{dimensions.x, dimensions.y, std::vector<uint8_t>(source.begin(), source.end())});
+		return m_textures.size();
+	}
+
 	Rml::CompiledGeometryHandle NullRenderer::CompileGeometry(
 		Rml::Span<const Rml::Vertex> /*vertices*/, Rml::Span<const int> /*indices*/)
 	{
