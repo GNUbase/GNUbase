@@ -95,6 +95,9 @@ namespace gnubase::engine
 			copy.name = part->name;
 			copy.position = part->position;
 			copy.length = part->length;
+			copy.mute = part->mute;
+			copy.lock = part->lock;
+			copy.shared = part->shared;
 			return copy;
 		}
 
@@ -198,6 +201,9 @@ namespace gnubase::engine
 			part.name = target->name;
 			part.position = target->position;
 			part.length = target->length;
+			part.mute = target->mute;
+			part.lock = target->lock;
+			part.shared = target->shared;
 			applyObjects(part.notes, partChange.notes, direction);
 			applyObjects(part.controllers, partChange.controllers, direction);
 		}
