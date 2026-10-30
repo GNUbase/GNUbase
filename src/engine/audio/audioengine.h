@@ -62,6 +62,9 @@ namespace gnubase::engine
 		// audio.analyze, audio.compare and audio.record are in analysiscommands.cpp.
 		void registerCommands(Engine& engine);
 
+		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
+		void setChase(const MidiChase& chase);
+
 		// Any thread but the audio thread, without waiting: the project cursor (Transport::position).
 		time::Samples position() const { return m_transport.position(); }
 
@@ -178,6 +181,7 @@ namespace gnubase::engine
 			std::shared_ptr<InstrumentChannel> channel;
 		};
 		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers;   // per MIDI and instrument channel
+		MidiChase m_chase;                                                 // what they chase
 		std::map<ObjectId, Instrument> m_instruments;                      // per instrument channel
 		std::map<ObjectId, std::shared_ptr<ChannelState>> m_channelStates; // per channel
 		std::vector<PendingRelease> m_releases;

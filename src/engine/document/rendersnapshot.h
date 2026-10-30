@@ -76,6 +76,12 @@ namespace gnubase::engine
 		std::vector<uint8_t> data; // SysEx
 	};
 
+	struct RenderPart
+	{
+		time::Samples start = 0;
+		time::Samples end = 0;
+	};
+
 	struct RenderAutomationPoint
 	{
 		time::Samples position = 0;
@@ -118,6 +124,7 @@ namespace gnubase::engine
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
 		std::vector<RenderNote> notes;                // sorted by start, then pitch
 		std::vector<RenderController> controllers;    // sorted by position
+		std::vector<RenderPart> midiParts;            // sorted by start
 		std::vector<RenderAutomationLane> automation; // in the order of the lanes' ids
 	};
 

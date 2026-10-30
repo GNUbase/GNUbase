@@ -548,3 +548,198 @@ TEST_CASE("one source's events at one offset reach the instrument in their order
 		std::vector<Heard>{off(3, 62), on(3, 60), off(3, 60), on(3, 62), {3, Type::ChannelPressure, 0, 0, 77, {}}});
 	CHECK(recorder->held[62]);
 }
+
+namespace
+{
+	RenderController controller(int64_t position, ControllerType type, int number, uint32_t value, int channel = 0)
+	{
+		RenderController result;
+		result.position = position;
+		result.type = type;
+		result.number = static_cast<uint8_t>(number);
+		result.value = value;
+		result.channel = static_cast<uint8_t>(channel);
+		return result;
+	}
+
+	MidiChase chaseAll()
+	{
+		MidiChase chase;
+		chase.notes = true;
+		chase.controllers = true;
+		chase.programs = true;
+		chase.pitchBend = true;
+		return chase;
+	}
+
+	std::shared_ptr<MidiSequencer> chasing(MidiChase chase, std::vector<RenderNote> notes,
+		std::vector<RenderController> controllers = {}, std::vector<RenderPart> parts = {})
+	{
+		auto result = std::make_shared<MidiSequencer>();
+		auto sequence = std::make_unique<MidiSequence>();
+		sequence->notes = std::move(notes);
+		sequence->controllers = std::move(controllers);
+		sequence->parts = std::move(parts);
+		result->setSequence(std::move(sequence));
+		result->setChase(chase);
+		return result;
+	}
+
+	// The types of the events heard at a frame, in their order.
+	std::vector<Type> typesAt(const std::vector<Heard>& heard, int64_t frame)
+	{
+		std::vector<Type> types;
+		for (const Heard& h : heard)
+			if (h.frame == frame)
+				types.push_back(h.type);
+		return types;
+	}
+}
+
+TEST_CASE("locating into held notes starts them there and ends them where they end, for any block size", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(1U, 7U, 16U, 64U);
+	INFO("block size " << blockSize);
+	// At 120: 60 and 64 sound, 67 has ended, 62 starts there, and 70 started again at 100.
+	Player player(chasing(chaseAll(),
+					  {note(0, 300, 60), note(10, 400, 70), note(50, 200, 64), note(90, 110, 67), note(100, 130, 70),
+						  note(120, 150, 62)}),
+		blockSize);
+	player.locate(120);
+	player.play(200);
+	const std::vector<Heard> expected = {
+		on(0, 60), on(0, 70), on(0, 64), on(0, 62), off(10, 70), off(30, 62), off(80, 64), off(180, 60)};
+	CHECK(player.heard == expected);
+}
+
+TEST_CASE("a jump sends each chased controller's last value before it, in their order, then the notes", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(1U, 16U, 64U);
+	INFO("block size " << blockSize);
+	const std::vector<RenderController> controllers = {control(10, 7, 50),
+		controller(15, ControllerType::Program, 3, 0), controller(18, ControllerType::Control, 1, 9, 1),
+		controller(20, ControllerType::PitchBend, 0, 1000), control(30, 7, 80),
+		controller(40, ControllerType::ChannelPressure, 0, 5), control(120, 10, 5)};
+	Player player(chasing(chaseAll(), {note(100, 200, 60), note(120, 130, 62)}, controllers), blockSize);
+	player.locate(120);
+	player.play(64);
+	player.locate(25); // while playing: 60 ends first
+	player.play(16);
+
+	const std::vector<Heard> expected = {{0, Type::Program, 0, 3, 0, {}}, {0, Type::Controller, 1, 1, 9, {}},
+		{0, Type::PitchBend, 0, 0, 1000, {}}, {0, Type::Controller, 0, 7, 80, {}},
+		{0, Type::Controller, 0, 10, 5, {}}, // at the position itself: played, not chased
+		on(0, 60), on(0, 62), off(10, 62), off(64, 60), {64, Type::Controller, 0, 7, 50, {}},
+		{64, Type::Program, 0, 3, 0, {}}, {64, Type::Controller, 1, 1, 9, {}}, {64, Type::PitchBend, 0, 0, 1000, {}},
+		{69, Type::Controller, 0, 7, 80, {}}, {79, Type::ChannelPressure, 0, 0, 5, {}}};
+	CHECK(player.heard == expected);
+}
+
+TEST_CASE("only the chosen event types are chased", "[unit]")
+{
+	const std::vector<RenderController> controllers = {control(10, 7, 50),
+		controller(15, ControllerType::Program, 3, 0), controller(20, ControllerType::PitchBend, 0, 1000),
+		controller(25, ControllerType::ChannelPressure, 0, 5), controller(26, ControllerType::PolyPressure, 60, 5)};
+	MidiChase chase;
+	std::vector<Type> expected;
+	SECTION("nothing")
+	{
+	}
+	SECTION("notes")
+	{
+		chase.notes = true;
+		expected = {Type::NoteOn};
+	}
+	SECTION("controllers")
+	{
+		chase.controllers = true;
+		expected = {Type::Controller};
+	}
+	SECTION("program changes")
+	{
+		chase.programs = true;
+		expected = {Type::Program};
+	}
+	SECTION("pitch bend")
+	{
+		chase.pitchBend = true;
+		expected = {Type::PitchBend};
+	}
+	Player player(chasing(chase, {note(0, 100, 60)}, controllers), 16);
+	player.locate(50);
+	player.play(16);
+	CHECK(typesAt(player.heard, 0) == expected);
+}
+
+TEST_CASE("chasing limited to parts takes only the part under the position", "[unit]")
+{
+	const std::vector<RenderController> controllers = {
+		control(10, 7, 1), control(50, 1, 3), controller(110, ControllerType::Program, 4, 0), control(150, 7, 2)};
+	const std::vector<RenderPart> parts = {{0, 100}, {100, 200}, {300, 400}};
+	MidiChase chase = chaseAll();
+	chase.beyondParts = false;
+	Player player(chasing(chase, {}, controllers, parts), 16);
+	player.locate(160);
+	player.play(16);
+	player.locate(250); // in no part
+	player.play(16);
+	player.locate(100); // at a part's start
+	player.play(16);
+	const std::vector<Heard> limited = {
+		{0, Type::Program, 0, 4, 0, {}}, {0, Type::Controller, 0, 7, 2, {}}, {42, Type::Program, 0, 4, 0, {}}};
+	CHECK(player.heard == limited);
+
+	chase.beyondParts = true;
+	Player beyond(chasing(chase, {}, controllers, parts), 16);
+	beyond.locate(250);
+	beyond.play(16);
+	const std::vector<Heard> all = {
+		{0, Type::Controller, 0, 1, 3, {}}, {0, Type::Program, 0, 4, 0, {}}, {0, Type::Controller, 0, 7, 2, {}}};
+	CHECK(beyond.heard == all);
+}
+
+TEST_CASE("a locate while stopped chases the controllers but no notes", "[unit]")
+{
+	Player player(chasing(chaseAll(), {note(0, 500, 60)}, {control(10, 7, 1), control(100, 7, 2)}), 16);
+	player.stop();
+	player.locate(150);
+	player.stop();   // frame 16
+	player.stop();   // the same position: nothing
+	player.play(16); // frame 48: starting playback chases again, with the notes
+	player.stop();
+	player.stop(); // where playback stopped: nothing
+	const std::vector<Heard> expected = {
+		{16, Type::Controller, 0, 7, 2, {}}, {48, Type::Controller, 0, 7, 2, {}}, on(48, 60), off(64, 60)};
+	CHECK(player.heard == expected);
+}
+
+TEST_CASE("cycle playback chases at every jump to the left locator", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(1U, 16U, 100U);
+	INFO("block size " << blockSize);
+	Player player(chasing(chaseAll(), {note(90, 300, 50)}, {control(50, 7, 1), control(150, 7, 2)}), blockSize);
+	player.setCycle(100, 200);
+	player.locate(100);
+	player.play(200);
+	const std::vector<Heard> expected = {{0, Type::Controller, 0, 7, 1, {}}, on(0, 50),
+		{50, Type::Controller, 0, 7, 2, {}}, off(100, 50), {100, Type::Controller, 0, 7, 1, {}}, on(100, 50),
+		{150, Type::Controller, 0, 7, 2, {}}};
+	CHECK(player.heard == expected);
+}
+
+TEST_CASE("a jump into a full block chases in the next block that has room", "[unit]")
+{
+	Player player(chasing(chaseAll(), {note(0, 1000, 60), note(10, 1000, 62)}, {control(5, 7, 1)}), 16);
+	player.play(16);
+	fillInput(player);
+	player.locate(500);
+	player.play(16); // no room: the notes end in the next block, and it chases there
+	player.play(16);
+	player.stop();
+	const std::vector<Heard> expected = {on(0, 60), {5, Type::Controller, 0, 7, 1, {}}, on(10, 62), off(32, 60),
+		off(32, 62), {32, Type::Controller, 0, 7, 1, {}}, on(32, 60), on(32, 62), off(48, 60), off(48, 62)};
+	std::vector<Heard> heard;
+	std::copy_if(player.heard.begin(), player.heard.end(), std::back_inserter(heard),
+		[](const Heard& h) { return h.frame < 16 || h.frame >= 32; }); // without the input that filled the block
+	CHECK(heard == expected);
+}

@@ -113,9 +113,10 @@ namespace
 				.get<std::vector<float>>();
 		}
 
-		// Checks the probe's output against the notes that should sound at the positions played, -1 when stopped:
-		// after a jump only notes that start from there on.
-		void check(const std::vector<int64_t>& played)
+		// Checks the probe's output against the notes that should sound at the positions played, -1 when stopped.
+		// A jump chases the notes that sound where it lands, or, without chasing, only plays those that start from
+		// there on.
+		void check(const std::vector<int64_t>& played, bool chase = true)
 		{
 			const std::vector<float> count = capture(0, static_cast<int64_t>(played.size()));
 			const std::vector<float> pitches = capture(1, static_cast<int64_t>(played.size()));
@@ -126,7 +127,12 @@ namespace
 			{
 				const int64_t position = played[i];
 				if (position < 0 || i == 0 || played[i - 1] + 1 != position)
+				{
 					sounding.clear();
+					for (const TestNote& note : notes)
+						if (chase && position >= 0 && note.start < position && note.end > position)
+							sounding.insert(&note);
+				}
 				for (auto note = sounding.begin(); note != sounding.end();)
 					note = (*note)->end <= position ? sounding.erase(note) : std::next(note);
 				for (const TestNote& note : notes)
@@ -384,6 +390,42 @@ TEST_CASE("cycle playback ends notes at the right locator and plays the notes fr
 	run(song.client, "transport.play");
 	run(song.client, "audio.render", {{"frames", 3000}});
 	song.check(positions(800, 3000, 1000, 1600));
+}
+
+TEST_CASE("locating into held notes chases them, unless the user setting turns it off", "[integration]")
+{
+	const bool chase = GENERATE(true, false);
+	INFO("chase " << chase);
+	Song song(64);
+	if (!chase)
+		run(song.client, "settings.set", {{"key", "midi.chaseNotes"}, {"value", false}});
+	song.add(0, {0, 20000, 60});
+	song.add(1, {300, 20000, 64});
+	song.add(1, {4000, 4950, 67}); // ends before the locate position
+	run(song.client, "transport.locate", {{"position", 5000}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 300}});
+	run(song.client, "transport.locate", {{"position", 4500}}); // while playing
+	run(song.client, "audio.render", {{"frames", 600}});
+
+	std::vector<int64_t> played = positions(5000, 300);
+	for (const int64_t position : positions(4500, 600))
+		played.push_back(position);
+	song.check(played, chase);
+}
+
+TEST_CASE("the chase settings are user settings", "[integration]")
+{
+	Engine engine;
+	Client client{engine};
+	const Json list = run(client, "settings.list");
+	for (const char* key : {"midi.chaseNotes", "midi.chaseControllers", "midi.chasePrograms", "midi.chasePitchBend",
+			 "midi.chaseBeyondParts"})
+	{
+		INFO(key);
+		CHECK(run(client, "settings.get", {{"key", key}}).at("value") == true);
+		CHECK(list.dump().find(key) != std::string::npos);
+	}
 }
 
 TEST_CASE("a MIDI sequence rendered through the test synth matches its golden file", "[integration]")

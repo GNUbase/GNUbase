@@ -2214,7 +2214,7 @@ The value of a user setting; settings.list describes them all.
 
 Arguments:
 
-- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "ui.scale" | "ui.theme", required. The setting.
 
 Result:
 
@@ -2242,7 +2242,7 @@ Puts a user setting back to its default, or every one without key, and saves the
 
 Arguments:
 
-- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme". The setting.
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "ui.scale" | "ui.theme". The setting.
 
 Result:
 
@@ -2252,11 +2252,11 @@ Result:
 
 Engine command `settings.set`.
 
-Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes.
+Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `midi.chaseBeyondParts` (boolean, default true): Chases controller events from the whole track, not just from the MIDI part under the position. Off makes locating in tracks with many controller events faster; `midi.chaseControllers` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each control change's last value before that position; `midi.chaseNotes` (boolean, default true): Where playback starts or jumps, MIDI tracks start the notes that sound at that position; `midi.chasePitchBend` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last pitch bend before that position; `midi.chasePrograms` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last program change before that position; `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes.
 
 Arguments:
 
-- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "ui.scale" | "ui.theme", required. The setting.
 - `value`: any, required. The new value; it must fit the setting's schema.
 
 Result:

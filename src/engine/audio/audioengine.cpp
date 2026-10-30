@@ -247,7 +247,9 @@ namespace gnubase::engine
 			auto sequence = std::make_unique<MidiSequence>();
 			sequence->notes = channel.notes;
 			sequence->controllers = channel.controllers;
+			sequence->parts = channel.midiParts;
 			sequencer->setSequence(std::move(sequence));
+			sequencer->setChase(m_chase);
 			sequencers[channel.id] = sequencer;
 
 			std::shared_ptr<graph::Processor> processor = sequencer;
@@ -937,6 +939,13 @@ namespace gnubase::engine
 			{"right", settings.right}, {"cycle", settings.cycle},
 			{"startMode", settings.startMode == StartMode::CycleStart ? "cycleStart" : "cursor"},
 			{"returnToStart", settings.returnToStart}};
+	}
+
+	void AudioEngine::setChase(const MidiChase& chase)
+	{
+		m_chase = chase;
+		for (const auto& [id, sequencer] : m_sequencers)
+			sequencer->setChase(chase);
 	}
 
 	time::Samples AudioEngine::projectEnd() const
