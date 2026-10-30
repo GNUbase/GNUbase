@@ -6,6 +6,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <future>
 #include <memory>
@@ -166,6 +167,66 @@ TEST_CASE("a listener gets every event before the command's result, until it is 
 	REQUIRE(sender.call("test.setValue", {{"value", 8}}).ok());
 	const std::scoped_lock lock(mutex);
 	CHECK(heard.size() == 1);
+}
+
+TEST_CASE("the command log lists the commands that ran, with the clients that sent them", "[unit]")
+{
+	Engine engine;
+	int stored = 0;
+	registerSetValue(engine, stored);
+	Client ui(engine, "ui");
+	Client mcp(engine, "mcp");
+	const Result set = ui.call("test.setValue", {{"value", 1}});
+	REQUIRE(set.ok());
+	const Result failed = mcp.call("test.setValue", {{"value", "one"}});
+	REQUIRE_FALSE(failed.ok());
+	REQUIRE(mcp.call("engine.version").ok()); // queries change nothing, so the log leaves them out
+	std::promise<Result> posted;
+	engine.post("test.setValue", {{"value", 2}}, [&posted](Result result) { posted.set_value(std::move(result)); });
+	const Result fromEngine = posted.get_future().get();
+	REQUIRE(fromEngine.ok());
+
+	Json commands = Client(engine).call("engine.commandLog").value.at("commands");
+	REQUIRE(commands.size() == 3);
+	CHECK(commands[0] ==
+		Json{{"request", set.request}, {"client", "ui"}, {"command", "test.setValue"}, {"parameters", {{"value", 1}}}});
+	CHECK(commands[1] ==
+		Json{{"request", failed.request}, {"client", "mcp"}, {"command", "test.setValue"},
+			{"parameters", {{"value", "one"}}}, {"error", failed.error}});
+	CHECK(commands[2].at("request") == fromEngine.request);
+	CHECK(commands[2].at("client") == "engine"); // posted by the engine's own threads
+	CHECK(commands[2].at("parameters") == Json{{"value", 2}});
+
+	// It keeps the newest commands.
+	for (int i = 0; i < 300; ++i)
+		engine.post("test.setValue", {{"value", i}});
+	commands = ui.call("engine.commandLog").value.at("commands");
+	REQUIRE(commands.size() == 256);
+	CHECK(commands.front().at("parameters").at("value") == 44);
+	CHECK(commands.back().at("parameters").at("value") == 299);
+}
+
+TEST_CASE("a client can be told when a message arrives", "[unit]")
+{
+	Engine engine;
+	int stored = 0;
+	registerSetValue(engine, stored);
+	std::atomic<int> arrived{0};
+	Client client(engine, "ui", [&arrived] { ++arrived; });
+	Client other(engine);
+	REQUIRE(other.call("test.setValue", {{"value", 1}}).ok());
+	CHECK(arrived == 1); // the event, before the other client's result
+	client.send("engine.version");
+	REQUIRE(other.call("test.setValue", {{"value", 2}}).ok()); // runs after it
+	CHECK(arrived == 3);                                       // its result and another event
+}
+
+TEST_CASE("the playback position is read without a command", "[unit]")
+{
+	Engine engine;
+	CHECK(engine.playbackPosition() == 0);
+	REQUIRE(Client(engine).call("transport.locate", {{"position", 4800}}).ok());
+	CHECK(engine.playbackPosition() == 4800);
 }
 
 TEST_CASE("failed commands report why and change nothing", "[unit]")

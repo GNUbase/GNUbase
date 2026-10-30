@@ -708,6 +708,16 @@ Returns:
 
 ### engine
 
+#### `gnubase.engine.commandLog`
+
+The last 256 commands that ran, oldest first, without queries: what the UI and other clients did. Each with its request id (events name it too), the client that sent it (ui, mcp, lua, app for the command line, engine for the engine's own commands), the command, its parameters, and the error if it failed.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `commands`: array of object, required
+
 #### `gnubase.engine.commands`
 
 Every command with its documentation, parameters and result.

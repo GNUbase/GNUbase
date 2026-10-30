@@ -123,7 +123,7 @@ sequenceDiagram
   A-->>C: meters and position (lock-free buffers, no JSON)
 ```
 
-- The API is `gnubase::engine::Engine` and `Client` (`src/engine/engine.h`). Commands are asynchronous: `send` returns a request id, then the events and the result arrive in the client's queue; `call` sends and waits for the result.
+- The API is `gnubase::engine::Engine` and `Client` (`src/engine/engine.h`). Commands are asynchronous: `send` returns a request id, then the events and the result arrive in the client's queue; `call` sends and waits for the result. A client has a name (`ui`, `mcp`, `lua`), which the command log (`engine.commandLog`) shows next to each command it sent, and can be told when a message arrives, as the UI is ([features/ui-engine-binding.md](features/ui-engine-binding.md)).
 - Parameters are checked against the command's JSON schema before it runs, and results against theirs; a failure becomes an error result with the reason. A command's events reach every client before its result reaches the sender, and a failed command emits none.
 - **Events** name what changed (object ids and properties), so a client updates only what it shows.
 - A command can run another command as part of it with `CommandContext::call`: the parameters and result are checked against that command's schemas, its events go out with the outer command's, and its failure fails the outer command. It is for commands outside the document, such as the transport; document commands combine through `history.transaction` instead, so each undo step stays one command or one transaction.

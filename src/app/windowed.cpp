@@ -5,6 +5,7 @@
 #include "app/resources.h"
 #include "engine/engine.h"
 #include "platform/log.h"
+#include "ui/enginebinding.h"
 #include "ui/fonts.h"
 #include "ui/gpurenderer.h"
 #include "ui/livereload.h"
@@ -78,6 +79,8 @@ namespace gnubase::app
 		ui::Shell shell(*windows, *renderer);
 		// The theme and the UI scale from the user settings, also when they change while GNUbase runs.
 		const ui::UiSettings uiSettings(engine, shell, *themes);
+		ui::EngineBinding binding(engine, [&shell] { shell.wake(); });
+		shell.eachStep([&binding] { return binding.update(); });
 		if (g_liveReload)
 			shell.every(std::chrono::milliseconds(250), [&] { ui::reloadChangedDocuments(rmlui.files(), shell); });
 		ui::WindowSpec main;

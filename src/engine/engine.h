@@ -177,6 +177,10 @@ namespace gnubase::engine
 		// The plugin host processes and the plugins that run in them.
 		plugins::HostManager& pluginHosts();
 
+		// The project cursor in samples, where the audio thread last moved it or a locate puts it, read without a
+		// command and without waiting: for the UI to read once a frame while playing. Not for audio threads.
+		int64_t playbackPosition() const;
+
 	private:
 		friend class Client;
 		friend class CommandContext;
@@ -206,6 +210,7 @@ namespace gnubase::engine
 		std::map<std::string, std::shared_ptr<const Command>> m_commands;
 		std::deque<Request> m_requests;
 		std::vector<std::shared_ptr<detail::Mailbox>> m_clients;
+		std::deque<Json> m_commandLog; // the newest commands that aren't queries; only the command thread uses it
 		RequestId m_nextRequest = 1;
 		bool m_stopping = false;
 		std::condition_variable m_wake;
@@ -223,7 +228,10 @@ namespace gnubase::engine
 	class Client
 	{
 	public:
-		explicit Client(Engine& engine);
+		// The name tells the command log who sent a command: "ui", "mcp", "lua" and so on. arrived is called on the
+		// thread that queues a message, whenever it queued one, e.g. to wake the UI thread; it must be quick, must not
+		// block and must not call the engine.
+		explicit Client(Engine& engine, std::string name = "client", std::function<void()> arrived = {});
 		~Client();
 		Client(const Client&) = delete;
 		Client& operator=(const Client&) = delete;
