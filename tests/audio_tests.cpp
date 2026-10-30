@@ -159,14 +159,23 @@ namespace
 		FakeDriver& m_driver;
 	};
 
-	// A backend with one device, fake-1, whose driver can change its preferred block size and ask for a reset.
+	// A backend with one device, fake-1, whose driver can change its preferred block size and ask for a reset. It also
+	// lists fake-2, whose hardware isn't connected.
 	class FakeBackend : public Backend
 	{
 	public:
 		explicit FakeBackend(std::shared_ptr<FakeDriver> driver) : m_driver(std::move(driver)) {}
 
 		std::string name() const override { return "fake"; }
-		std::vector<DeviceInfo> devices() override { return {fakeInfo()}; }
+
+		std::vector<DeviceInfo> devices() override
+		{
+			DeviceInfo unplugged;
+			unplugged.id = "fake-2";
+			unplugged.name = "Unplugged interface";
+			unplugged.unavailableReason = "not connected";
+			return {fakeInfo(), unplugged};
+		}
 
 		std::unique_ptr<Device> open(const DeviceConfig& config) override
 		{
@@ -419,10 +428,16 @@ TEST_CASE("audio.devices lists every backend's devices", "[unit]")
 	const Json backends = run(client, "audio.devices").at("backends");
 	REQUIRE(backends.size() == 2);
 	CHECK(backends[0].at("name") == "fake");
-	CHECK(backends[0].at("devices") ==
-		Json::array({{{"id", "fake-1"}, {"name", "Fake interface"}, {"inputs", {"Mic", "Line"}},
+	const Json& devices = backends[0].at("devices");
+	REQUIRE(devices.size() == 2);
+	CHECK(devices[0] ==
+		Json{{"id", "fake-1"}, {"name", "Fake interface"}, {"inputs", {"Mic", "Line"}},
 			{"outputs", {"Main L", "Main R"}}, {"sampleRates", {44100.0, 48000.0}}, {"blockSizes", {128, 256}},
-			{"clockSources", {"Internal", "Word clock"}}, {"clockSource", "Internal"}, {"controlPanel", true}}}));
+			{"clockSources", {"Internal", "Word clock"}}, {"clockSource", "Internal"}, {"controlPanel", true},
+			{"available", true}, {"unavailableReason", nullptr}});
+	CHECK(devices[1].at("id") == "fake-2");
+	CHECK(devices[1].at("available") == false);
+	CHECK(devices[1].at("unavailableReason") == "not connected");
 	CHECK(backends[1].at("name") == "dummy");
 	CHECK(backends[1].at("devices")[0].at("id") == "dummy");
 }

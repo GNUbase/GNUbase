@@ -22,13 +22,14 @@ namespace gnubase
 		return result;
 	}
 
-	inline std::wstring wide(const std::string& text)
+	// From UTF-8, or from another code page such as CP_ACP, the ANSI code page of older APIs.
+	inline std::wstring wide(const std::string& text, UINT codePage = CP_UTF8)
 	{
-		const int size = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+		const int size = MultiByteToWideChar(codePage, 0, text.c_str(), -1, nullptr, 0);
 		if (size <= 1)
 			return {};
 		std::wstring result(static_cast<size_t>(size - 1), L'\0');
-		MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, result.data(), size);
+		MultiByteToWideChar(codePage, 0, text.c_str(), -1, result.data(), size);
 		return result;
 	}
 }

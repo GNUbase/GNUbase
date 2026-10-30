@@ -10,12 +10,14 @@
 #include <iasiodrv.h>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <string>
 #include <thread>
@@ -138,8 +140,8 @@ namespace
 			info->isActive = ASIOTrue;
 			info->channelGroup = 0;
 			info->type = info->isInput == ASIOTrue ? sampleType : ASIOSTFloat32LSB;
-			std::snprintf(
-				info->name, sizeof(info->name), "%s %ld", info->isInput == ASIOTrue ? "In" : "Out", info->channel + 1);
+			std::snprintf(info->name, sizeof(info->name), "%s %ld",
+				info->isInput == ASIOTrue ? inputName.c_str() : "Out", info->channel + 1);
 			return ASE_OK;
 		}
 
@@ -213,10 +215,11 @@ namespace
 		ASIOSampleType sampleType = ASIOSTInt32LSB;
 		bool initFails = false;
 		std::string errorText = "fake failure";
-		bool silent = false;       // starts, but never calls back
-		bool refuseRates = false;  // says it runs at 44.1 kHz, but doesn't switch
-		long refusedBlockSize = 0; // allowed, but createBuffers fails
-		int flakyCreates = 0;      // createBuffers fails this often first, then works
+		std::string inputName = "In"; // the inputs are this and their number
+		bool silent = false;          // starts, but never calls back
+		bool refuseRates = false;     // says it runs at 44.1 kHz, but doesn't switch
+		long refusedBlockSize = 0;    // allowed, but createBuffers fails
+		int flakyCreates = 0;         // createBuffers fails this often first, then works
 		double rate = 48000.0;
 		long clock = 0;
 		long blockSize = 0;
@@ -225,16 +228,29 @@ namespace
 		std::thread thread;
 	};
 
+	// Drivers by name.
+	AsioDrivers fakes(const std::map<std::string, FakeDriver*>& drivers)
+	{
+		return {[drivers]
+			{
+				std::vector<std::string> names;
+				for (const auto& driver : drivers)
+					names.push_back(driver.first);
+				return names;
+			},
+			[drivers](const std::string& name)
+			{
+				const auto found = drivers.find(name);
+				if (found == drivers.end())
+					return static_cast<IASIO*>(nullptr);
+				found->second->AddRef();
+				return static_cast<IASIO*>(found->second);
+			}};
+	}
+
 	AsioDrivers fake(FakeDriver& driver)
 	{
-		return {[] { return std::vector<std::string>{"Fake ASIO"}; },
-			[&driver](const std::string& name)
-			{
-				if (name != "Fake ASIO")
-					return static_cast<IASIO*>(nullptr);
-				driver.AddRef();
-				return static_cast<IASIO*>(&driver);
-			}};
+		return fakes({{"Fake ASIO", &driver}});
 	}
 
 	// Copies the inputs to the outputs and remembers the first block.
@@ -259,8 +275,8 @@ TEST_CASE("the ASIO backend keeps the device contract with a driver", "[unit]")
 {
 	FakeDriver driver;
 	const std::unique_ptr<Backend> backend = makeAsioBackend(fake(driver));
-	checkDeviceContract(*backend);
-	CHECK(driver.references == 0); // every driver loaded was released
+	checkDeviceContract(*backend, true); // as with hardware
+	CHECK(driver.references == 0);       // every driver loaded was released
 }
 
 TEST_CASE("the ASIO backend converts the driver's samples and passes its requests on", "[unit]")
@@ -402,4 +418,70 @@ TEST_CASE("the ASIO backend refuses to start a driver that never calls back", "[
 	device.reset();
 	CHECK(copy.blocks > 0);
 	CHECK(driver.references == 0);
+}
+
+TEST_CASE("the ASIO backend converts the driver's strings from the ANSI code page to UTF-8", "[unit]")
+{
+	if (GetACP() != 1252)
+		SKIP("the test's driver strings are in Windows-1252");
+	FakeDriver driver;
+	driver.inputName = "Entr\xE9"
+					   "e"; // "Entrée" in Windows-1252
+	driver.errorText = "Pas d'appareil connect\xE9";
+	const std::unique_ptr<Backend> backend = makeAsioBackend(fake(driver));
+	CHECK(backend->open({})->info().inputs.front() ==
+		"Entr\xC3\xA9"
+		"e 1"); // in UTF-8
+
+	driver.initFails = true;
+	CHECK_THROWS_WITH(backend->open({}), Catch::Matchers::ContainsSubstring("Pas d'appareil connect\xC3\xA9"));
+}
+
+TEST_CASE("the ASIO backend lists drivers it couldn't open or start as unavailable, with the reason", "[unit]")
+{
+	FakeDriver unplugged; // refuses init without its hardware
+	unplugged.initFails = true;
+	unplugged.errorText = "No device is connected to the PC";
+	FakeDriver silent; // starts without its hardware, but never calls back
+	silent.silent = true;
+	FakeDriver working;
+	const std::unique_ptr<Backend> backend =
+		makeAsioBackend(fakes({{"Unplugged", &unplugged}, {"Silent", &silent}, {"Working", &working}}));
+	const auto reasons = [&backend]
+	{
+		std::map<std::string, std::string> result;
+		for (const DeviceInfo& info : backend->devices())
+			result[info.id] = info.unavailableReason;
+		return result;
+	};
+	const auto openAndStart = [&backend](const std::string& name)
+	{
+		DeviceConfig config;
+		config.device = name;
+		Copy copy;
+		try
+		{
+			backend->open(config)->start(copy);
+		}
+		catch (const DeviceError&) // listed as unavailable from now on
+		{
+		}
+	};
+	// The backend learns about a driver only by loading it.
+	CHECK(reasons() == std::map<std::string, std::string>{{"Silent", ""}, {"Unplugged", ""}, {"Working", ""}});
+
+	for (const char* name : {"Unplugged", "Silent", "Working"})
+		openAndStart(name);
+	std::map<std::string, std::string> unavailable = reasons();
+	CHECK_THAT(unavailable["Unplugged"], Catch::Matchers::ContainsSubstring("No device is connected to the PC"));
+	CHECK_THAT(unavailable["Silent"], Catch::Matchers::ContainsSubstring("doesn't process audio"));
+	CHECK(unavailable["Working"].empty());
+
+	// Their hardware was plugged in.
+	unplugged.initFails = false;
+	silent.silent = false;
+	openAndStart("Unplugged");
+	openAndStart("Silent");
+	CHECK(reasons() == std::map<std::string, std::string>{{"Silent", ""}, {"Unplugged", ""}, {"Working", ""}});
+	CHECK(unplugged.references + silent.references + working.references == 0);
 }

@@ -101,28 +101,29 @@ namespace
 		return std::find(values.begin(), values.end(), value) != values.end();
 	}
 
-	// Whether a listed device opens and starts. A driver can be installed for hardware that isn't plugged in.
-	bool available(Backend& backend, const DeviceInfo& listed)
+	// Opens and starts a device once, whether it can or not: some backends learn only that way that a device is
+	// unavailable.
+	void tryDevice(Backend& backend, const std::string& id)
 	{
 		try
 		{
-			std::unique_ptr<Device> device = backend.open(config(listed.id));
+			std::unique_ptr<Device> device = backend.open(config(id));
 			ContractCallback callback(device->format());
 			device->start(callback);
 			device->stop(); // while the callback is still there
-			return true;
 		}
-		catch (const DeviceError& error)
+		catch (const DeviceError&)
 		{
-			WARN("skipped device " << listed.id << ", which doesn't start: " << error.what());
-			return false;
 		}
 	}
 }
 
-void checkDeviceContract(Backend& backend, bool skipUnavailable)
+void checkDeviceContract(Backend& backend, bool openFirst)
 {
 	INFO("backend " << backend.name());
+	if (openFirst)
+		for (const DeviceInfo& listed : backend.devices())
+			tryDevice(backend, listed.id);
 	const std::vector<DeviceInfo> devices = backend.devices();
 	std::set<std::string> ids;
 	for (const DeviceInfo& listed : devices)
@@ -137,8 +138,11 @@ void checkDeviceContract(Backend& backend, bool skipUnavailable)
 	for (const DeviceInfo& listed : devices)
 	{
 		INFO("device " << listed.id);
-		if (skipUnavailable && !available(backend, listed))
+		if (!listed.unavailableReason.empty())
+		{
+			WARN("skipped device " << listed.id << ", which is unavailable: " << listed.unavailableReason);
 			continue;
+		}
 
 		// With its defaults the device describes itself completely.
 		std::unique_ptr<Device> device = backend.open(config(listed.id));
@@ -196,7 +200,8 @@ TEST_CASE("the dummy backend keeps the device contract", "[unit]")
 }
 
 // Hidden: opens real devices and plays silence through them. Run it on a machine with audio hardware:
-// gnubase-tests "[hardware]". Devices that don't start, such as those of drivers for unplugged hardware, are skipped.
+// gnubase-tests "[hardware]". Devices listed as unavailable, such as those of drivers for unplugged hardware, are
+// skipped.
 TEST_CASE("every hardware backend keeps the device contract", "[.hardware]")
 {
 	// A section per backend, so one runs on its own: gnubase-tests "[hardware]" -c "<backend name>".
