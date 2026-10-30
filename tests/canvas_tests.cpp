@@ -38,8 +38,8 @@ namespace
 			return spec;
 		}
 
-		// Shows the elements in a document whose style sheet is style, and draws them.
-		Rml::ElementDocument& show(const std::string& style, const std::string& body)
+		// Shows body in a document with the style sheet style.
+		Rml::ElementDocument& show(const std::string& style, const std::string& body) const
 		{
 			Rml::ElementDocument* document = window.context().LoadDocumentFromMemory(
 				"<rml><head><style>body { margin: 0; } event-lanes, waveform, curve, ruler { display: block; } " +
@@ -49,7 +49,7 @@ namespace
 			return *document;
 		}
 
-		template <typename T> T& element(const char* id)
+		template <typename T> T& element(const char* id) const
 		{
 			auto* found = dynamic_cast<T*>(window.context().GetDocument(0)->GetElementById(id));
 			REQUIRE(found != nullptr);
@@ -105,9 +105,20 @@ namespace
 		return lanes;
 	}
 
-	const Colour g_red(255, 0, 0, 255);
-	const Colour g_green(0, 255, 0, 255);
-	const Colour g_blue(0, 0, 255, 255);
+	Colour red()
+	{
+		return {255, 0, 0, 255};
+	}
+
+	Colour green()
+	{
+		return {0, 255, 0, 255};
+	}
+
+	Colour blue()
+	{
+		return {0, 0, 255, 255};
+	}
 }
 
 TEST_CASE("documents get the canvas elements, with the style properties they draw with", "[unit]")
@@ -139,21 +150,21 @@ TEST_CASE("event lanes fill events with color, outlined by stroke-color, in thei
 	lanes.setLanes({{20.0F, {{1000.0, 500.0}}}, {30.0F, {{2000.0, 1000.0}}}});
 	std::vector<Rml::Vertex> vertices = fixture.draw();
 	// Per event a fill and an outline ring: 50 by 20 pixels and 100 by 30, outlines 2 pixels wide.
-	CHECK(count(vertices, g_red) == 8);
-	CHECK(count(vertices, g_blue) == 16);
-	std::vector<float> fill = extent(vertices, g_red);
+	CHECK(count(vertices, red()) == 8);
+	CHECK(count(vertices, blue()) == 16);
+	std::vector<float> fill = extent(vertices, red());
 	CHECK(fill[2] - fill[0] == 196.0F); // from the first event's fill to the second's
 	CHECK(fill[3] - fill[1] == 46.0F);
 
 	// A change of style builds them again with the new colors; without an outline there is no ring.
 	lanes.SetClass("muted", true);
 	vertices = fixture.draw();
-	CHECK(count(vertices, g_green) == 8);
-	CHECK(count(vertices, g_red) == 0);
+	CHECK(count(vertices, green()) == 8);
+	CHECK(count(vertices, red()) == 0);
 	lanes.SetAttribute("style", "stroke-width: 0px");
 	vertices = fixture.draw();
-	CHECK(count(vertices, g_blue) == 0);
-	fill = extent(vertices, g_green);
+	CHECK(count(vertices, blue()) == 0);
+	fill = extent(vertices, green());
 	CHECK(fill[2] - fill[0] == 200.0F);
 	CHECK(fill[3] - fill[1] == 50.0F);
 }
@@ -170,10 +181,10 @@ TEST_CASE("event lanes build only the events around the view, and scrolling with
 	lanes.setLanes(tracks());
 	const std::vector<Rml::Vertex> built = fixture.draw();
 	CHECK(lanes.builds() == 1);
-	const size_t events = count(built, g_red) / 4;
+	const size_t events = count(built, red()) / 4;
 	CHECK(events > 0);
 	CHECK(events <= 31 * 31); // 31 events per lane in 3000 dp, 31 lanes of 60 dp in 1800 dp
-	CHECK(count(built, g_blue) == events * 8);
+	CHECK(count(built, blue()) == events * 8);
 
 	// Scrolling less than a view's width or height moves what's built.
 	for (int frame = 1; frame <= 99; ++frame)
@@ -184,7 +195,7 @@ TEST_CASE("event lanes build only the events around the view, and scrolling with
 	}
 	CHECK(lanes.builds() == 1);
 	lanes.SetAttribute("start", "30100");
-	CHECK(count(fixture.draw(), g_red) / 4 <= 31 * 31);
+	CHECK(count(fixture.draw(), red()) / 4 <= 31 * 31);
 	CHECK(lanes.builds() == 2);
 	lanes.SetAttribute("scroll-top", "2400");
 	fixture.draw();
@@ -235,8 +246,8 @@ TEST_CASE("a waveform shows in each pixel the peaks of the columns it covers", "
 	wave.setPeaks({0.0, 400.0}, {peaks, peaks});
 	vertices = fixture.draw();
 	CHECK(vertices.size() == 32);
-	CHECK(extent(vertices, g_green)[1] == 45.0F); // the first channel's 16384 at a quarter of its 20
-	CHECK(extent(vertices, g_green)[3] == 80.0F); // the second channel's -32767 at the bottom
+	CHECK(extent(vertices, green())[1] == 45.0F); // the first channel's 16384 at a quarter of its 20
+	CHECK(extent(vertices, green())[3] == 80.0F); // the second channel's -32767 at the bottom
 }
 
 TEST_CASE("a curve builds only the segments around the view", "[unit]")
@@ -246,6 +257,7 @@ TEST_CASE("a curve builds only the segments around the view", "[unit]")
 		R"(<curve id="curve" scale="10"/>)");
 	auto& curve = fixture.element<ui::Curve>("curve");
 	std::vector<ui::CurvePoint> points;
+	points.reserve(10000);
 	for (int i = 0; i < 10000; ++i)
 		points.push_back({i * 100.0, (i % 2) * 1.0, engine::AutomationShape::Linear, 0.0});
 	curve.setPoints(points);
