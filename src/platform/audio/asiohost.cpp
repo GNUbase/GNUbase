@@ -264,6 +264,22 @@ namespace gnubase::audio
 				m_thread.post([this] { m_driver->controlPanel(); });
 			}
 
+			void monitorInput(const InputMonitor& monitor) override
+			{
+				if (!m_info.canMonitorDirectly)
+					return;
+				// Gains go up to +12 dB, taken as 4; pan goes from all left to all right of a stereo pair.
+				constexpr double maximum = 0x7fffffff;
+				ASIOInputMonitor parameters{};
+				parameters.input = monitor.input;
+				parameters.output = monitor.output;
+				parameters.gain = static_cast<long>(std::llround(std::clamp(monitor.gain / 4.0, 0.0, 1.0) * maximum));
+				parameters.state = monitor.on ? ASIOTrue : ASIOFalse;
+				parameters.pan =
+					static_cast<long>(std::llround(std::clamp((monitor.pan + 1.0) / 2.0, 0.0, 1.0) * maximum));
+				m_thread.call([this, &parameters] { m_driver->future(kAsioSetInputMonitor, &parameters); });
+			}
+
 			// The driver's thread, once per buffer.
 			void process(long index) noexcept
 			{
@@ -413,6 +429,7 @@ namespace gnubase::audio
 					m_latency = {static_cast<uint32_t>(std::max(inputLatency, 0L)),
 						static_cast<uint32_t>(std::max(outputLatency, 0L))};
 				m_outputReady = m_driver->outputReady() == ASE_OK;
+				m_info.canMonitorDirectly = m_driver->future(kAsioCanInputMonitor, nullptr) == ASE_SUCCESS;
 
 				m_format.sampleRate = rate;
 				m_format.blockSize = blockSize;
@@ -507,7 +524,8 @@ namespace gnubase::audio
 			{
 			case kAsioSelectorSupported:
 				return value == kAsioEngineVersion || value == kAsioResetRequest || value == kAsioBufferSizeChange ||
-						value == kAsioResyncRequest || value == kAsioSupportsTimeInfo
+						value == kAsioResyncRequest || value == kAsioLatenciesChanged ||
+						value == kAsioSupportsTimeInfo || value == kAsioSupportsInputMonitor
 					? 1
 					: 0;
 			case kAsioEngineVersion:
@@ -515,10 +533,12 @@ namespace gnubase::audio
 			case kAsioResetRequest:
 			case kAsioBufferSizeChange:
 			case kAsioResyncRequest:
+			case kAsioLatenciesChanged: // opening the driver again reads them
 				if (const AsioDevice* device = g_open.load(std::memory_order_acquire); device != nullptr)
 					device->driverReset();
 				return 1;
 			case kAsioSupportsTimeInfo:
+			case kAsioSupportsInputMonitor:
 				return 1;
 			default:
 				return 0;

@@ -434,7 +434,7 @@ TEST_CASE("audio.devices lists every backend's devices", "[unit]")
 		Json{{"id", "fake-1"}, {"name", "Fake interface"}, {"inputs", {"Mic", "Line"}},
 			{"outputs", {"Main L", "Main R"}}, {"sampleRates", {44100.0, 48000.0}}, {"blockSizes", {128, 256}},
 			{"clockSources", {"Internal", "Word clock"}}, {"clockSource", "Internal"}, {"controlPanel", true},
-			{"available", true}, {"unavailableReason", nullptr}});
+			{"available", true}, {"unavailableReason", nullptr}, {"canMonitorDirectly", false}});
 	CHECK(devices[1].at("id") == "fake-2");
 	CHECK(devices[1].at("available") == false);
 	CHECK(devices[1].at("unavailableReason") == "not connected");
