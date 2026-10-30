@@ -2,8 +2,10 @@
 #include "app/windowed.h"
 
 #include "app/headless.h"
+#include "app/resources.h"
 #include "engine/engine.h"
 #include "platform/log.h"
+#include "ui/fonts.h"
 #include "ui/gpurenderer.h"
 #include "ui/livereload.h"
 #include "ui/rmlui.h"
@@ -13,6 +15,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <stdexcept>
 
@@ -41,6 +44,14 @@ namespace gnubase::app
 		engine::Engine engine(audio::makeBackends(), std::filesystem::u8path(options.settings));
 		if (!setUpEngine(engine, options, err))
 			return g_exitSetup;
+		const std::optional<std::filesystem::path> resources = findResources();
+		if (!resources)
+		{
+			err << "gnubase: cannot find its resources folder, which has the fonts\n";
+			logging::error("Cannot find the resources folder");
+			return g_exitSetup;
+		}
+		logging::info("Resources from {}", resources->u8string());
 
 		// Made in this order and destroyed in the reverse: RmlUi releases its resources through the renderer, and
 		// the shell's windows need all three.
@@ -58,6 +69,16 @@ namespace gnubase::app
 			return g_exitSetup;
 		}
 		ui::RmlUi rmlui(*windows);
+		try
+		{
+			ui::Fonts(*resources / "fonts").load();
+		}
+		catch (const std::runtime_error& error)
+		{
+			err << "gnubase: cannot load its fonts: " << error.what() << '\n';
+			logging::error("Cannot load the fonts: {}", error.what());
+			return g_exitSetup;
+		}
 		ui::Shell shell(*windows, *renderer);
 		shell.setUiScale(uiScale(engine));
 		if (g_liveReload)

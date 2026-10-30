@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- A sample document (#49) that must look the same on every platform: text in Lato (family LatoLatin) at several
-     sizes and two weights, borders, rounded corners, a turned box and clipped text, in 320x240 dp. Its screenshots
-     are tests/golden/ui/sample-1x.png and sample-2x.png. -->
+<!-- A sample document (#49) that must look the same on every platform: text in Inter, GNUbase's font (#207), at
+     several sizes and two weights, borders, rounded corners, a turned box and clipped text, in 320x240 dp. Its
+     screenshots are tests/golden/ui/sample-1x.png and sample-2x.png. -->
 <rml>
 <head>
 	<title>Sample</title>
@@ -9,7 +9,7 @@
 		body {
 			display: block; position: absolute; left: 0; top: 0; width: 320dp; height: 240dp; margin: 0;
 			padding: 12dp; box-sizing: border-box; background-color: #1d2127; color: #e8eaed;
-			font-family: LatoLatin; font-size: 13dp;
+			font-family: Inter; font-size: 13dp;
 		}
 		h1 { display: block; margin: 0 0 4dp 0; font-size: 22dp; font-weight: bold; color: #ffffff; }
 		p { display: block; margin: 0 0 8dp 0; }

@@ -47,8 +47,8 @@ jobs:
           git submodule update --init --checkout ext/vst3sdk
           git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
 
-      - name: Fetch golden images
-        run: git lfs pull --include "tests/golden/ui/**"
+      - name: Fetch golden images and fonts
+        run: git lfs pull --include "tests/golden/ui/**,resources/fonts/**"
 
       - name: Install packages
         timeout-minutes: 15
