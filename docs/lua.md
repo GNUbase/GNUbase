@@ -205,12 +205,13 @@ Returns:
 
 #### `gnubase.audio.ports`
 
-The audio device's ports by name, in order, each with the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. Without a device there are no ports.
+The audio device's ports by name, in order, each with the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) whose channels run past the device's ports, with those channels, which are silent; bus.set gives them ports. Without a device there are no ports.
 
 Only reads; changes nothing.
 
 Returns:
 
+- `beyondDevice`: array, required
 - `busses`: array, required
 - `inputs`: array, required
 - `missing`: array, required
@@ -1609,6 +1610,52 @@ Parameters:
 Returns:
 
 - `notes`: array, required
+
+### parameter
+
+#### `gnubase.parameter.get`
+
+One parameter of a channel, named by its target, as parameter.list returns it.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `channel`: integer, required
+- `target`: object, required
+
+Returns:
+
+- `parameter`: object, required
+
+#### `gnubase.parameter.list`
+
+The automatable parameters of a channel: on channels with audio the fader's volume (in dB, up to the project's maxVolume), pan, panLeft and panRight (-1 to 1, see channel.set), and on instrument tracks the parameters of their built-in instrument (see processor.list; plugins come later). Each has its target, as automationLane.add takes it, its name, minimum, maximum, default, unit, whether it is stepped (whole numbers only), options (the names of a stepped parameter's values from the minimum on, if it has any), its static value and text, the value as it is displayed. Automation overrides the static value while it plays. MIDI channels have none: their volume and pan are MIDI controllers (channel.set midiVolume and midiPan).
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `channel`: integer, required
+
+Returns:
+
+- `parameters`: array, required
+
+#### `gnubase.parameter.set`
+
+Sets the static value of a channel's parameter (see parameter.list), named by its target, from either value or text: the name of one of its options, or a number, optionally followed by its unit, in any case ("-6 dB"). Values beyond the range stop at its ends, and stepped parameters round to whole numbers. Volume and pan changes glide over 5 ms. A channel that gets another instrument starts with its parameters at their defaults. Returns the parameter.
+
+Parameters:
+
+- `channel`: integer, required
+- `target`: object, required
+- `text`: string
+- `value`: number
+
+Returns:
+
+- `parameter`: object, required
 
 ### pluginhost
 

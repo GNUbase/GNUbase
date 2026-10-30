@@ -12,6 +12,7 @@
 #include "engine/midi/functioncommands.h"
 #include "engine/midi/quantizecommands.h"
 #include "engine/processors/builtin.h"
+#include "platform/log.h"
 
 #include <algorithm>
 #include <array>
@@ -444,12 +445,9 @@ namespace gnubase::engine
 				require(!channel.instrument.empty(), "track " + idText(track.id) + " plays no instrument");
 				require(json.contains("parameter"), "target.parameter is required");
 				const auto parameter = json.at("parameter").get<int64_t>();
-				const auto& builtins = processors::builtins();
-				const auto info = std::find_if(builtins.begin(), builtins.end(),
-					[&channel](const processors::BuiltinInfo& b) { return b.id == channel.instrument; });
-				require(info != builtins.end() &&
-						std::any_of(info->parameters.begin(), info->parameters.end(),
-							[parameter](const processors::ParameterInfo& p) { return p.id == parameter; }),
+				const processors::BuiltinInfo* info = processors::findBuiltin(channel.instrument);
+				require(info != nullptr && isParameterId(json.at("parameter")) &&
+						processors::findParameter(*info, static_cast<uint32_t>(parameter)) != nullptr,
 					channel.instrument + " has no parameter " + std::to_string(parameter));
 				target.parameter = static_cast<uint32_t>(parameter);
 				break;
@@ -486,11 +484,10 @@ namespace gnubase::engine
 			case AutomationTargetType::Instrument:
 			{
 				const Channel& channel = project.channels.at(project.trackById.at(lane.track).channel);
-				for (const processors::BuiltinInfo& info : processors::builtins())
-					if (info.id == channel.instrument)
-						for (const processors::ParameterInfo& parameter : info.parameters)
-							if (parameter.id == lane.target.parameter)
-								return {parameter.minimum, parameter.maximum};
+				const processors::BuiltinInfo* info = processors::findBuiltin(channel.instrument);
+				if (const processors::ParameterInfo* parameter =
+						info != nullptr ? processors::findParameter(*info, lane.target.parameter) : nullptr)
+					return {parameter->minimum, parameter->maximum};
 				throw CommandError("the instrument of automation lane " + idText(lane.id) + " has no parameter " +
 					std::to_string(lane.target.parameter) + " any more");
 			}
@@ -900,12 +897,13 @@ namespace gnubase::engine
 					"only an instrument track's channel plays an instrument");
 				if (!changed.instrument.empty())
 				{
-					const auto& builtins = processors::builtins();
-					const auto info = std::find_if(builtins.begin(), builtins.end(),
-						[&](const processors::BuiltinInfo& b) { return b.id == changed.instrument; });
-					require(info != builtins.end(), "no built-in processor " + changed.instrument);
+					const processors::BuiltinInfo* info = processors::findBuiltin(changed.instrument);
+					require(info != nullptr, "no built-in processor " + changed.instrument);
 					require(info->instrument, changed.instrument + " is not an instrument");
 				}
+				// Another instrument starts with its parameters at their defaults.
+				if (changed.instrument != channel.instrument)
+					changed.instrumentParameters.clear();
 			}
 			for (const char* key : {"volume", "pan", "panner", "panLeft", "panRight", "panBypass"})
 				if (parameters.contains(key))
@@ -1009,12 +1007,12 @@ namespace gnubase::engine
 				: busDirection(parameters.at("direction"));
 			bus.format = channelFormat(parameters, ChannelFormat::Stereo);
 			bus.ports = parameters.value("ports", std::vector<std::string>());
+			if (parameters.contains("parentChannels")) // without a parent, checkBus refuses them
+				bus.parentChannels = parentChannelsFromJson(parameters.at("parentChannels"));
 			if (parent != nullptr)
 			{
 				require(parent->parent == 0, "a child bus's parent must be a top-level bus");
-				if (parameters.contains("parentChannels"))
-					bus.parentChannels = parameters.at("parentChannels").get<std::vector<int>>();
-				else
+				if (!parameters.contains("parentChannels"))
 					// The speakers both formats have.
 					for (const Speaker speaker : speakers(bus.format))
 					{
@@ -1192,16 +1190,11 @@ namespace gnubase::engine
 			return busses;
 		}
 
-		const char* directionKey(BusDirection direction)
-		{
-			return direction == BusDirection::Input ? "input" : "output";
-		}
-
 		// The user's own presets of a direction, by name.
 		Json userPresets(BusDirection direction, CommandContext& context)
 		{
 			const Json presets = context.call("settings.get", {{"key", "audio.busPresets"}}).at("value");
-			const Json mine = presets.value(directionKey(direction), Json::object());
+			const Json mine = presets.value(directionName(direction), Json::object());
 			return mine.is_object() ? mine : Json::object();
 		}
 
@@ -1266,7 +1259,7 @@ namespace gnubase::engine
 						item.value("ports", std::vector<std::string>()), 0, {}, false});
 					for (const Json& child : item.value("children", Json::array()))
 						created.push_back({project.newId(), child.at("name").get<std::string>(), direction,
-							format(child), {}, parent, child.at("parentChannels").get<std::vector<int>>(), false});
+							format(child), {}, parent, parentChannelsFromJson(child.at("parentChannels")), false});
 				}
 			}
 			catch (const Json::exception& error)
@@ -1316,7 +1309,7 @@ namespace gnubase::engine
 			const Json presets = busPresets(direction, context);
 			const auto preset = std::find_if(
 				presets.begin(), presets.end(), [&name](const Json& entry) { return entry.at("name") == name; });
-			require(preset != presets.end(), std::string("no ") + directionKey(direction) + " bus preset " + name);
+			require(preset != presets.end(), std::string("no ") + directionName(direction) + " bus preset " + name);
 			const std::vector<Bus> previous = project.busses;
 			const std::vector<ObjectId> channels = applyPreset(project, direction, preset->at("busses"));
 			announceBusses(previous, project.busses, context);
@@ -1919,6 +1912,7 @@ namespace gnubase::engine
 			{"track.move", "Move track"},
 			{"track.remove", "Remove track"},
 			{"channel.set", "Change channel"},
+			{"parameter.set", "Change parameter"},
 			{"media.add", "Add media file"},
 			{"media.convert", "Convert media file"},
 			{"media.stretch", "Stretch media file"},
@@ -2344,7 +2338,20 @@ namespace gnubase::engine
 				Project project = newProject();
 				for (const BusDirection direction : {BusDirection::Input, BusDirection::Output})
 					if (const Json presets = userPresets(direction, context); presets.contains("Default"))
-						applyPreset(project, direction, presets.at("Default"));
+					{
+						// A preset that doesn't work, e.g. edited by hand, leaves the standard busses.
+						Project withPreset = project;
+						try
+						{
+							applyPreset(withPreset, direction, presets.at("Default"));
+							project = std::move(withPreset);
+						}
+						catch (const CommandError& error)
+						{
+							logging::warning(
+								"The {} bus preset Default isn't applied: {}", directionName(direction), error.what());
+						}
+					}
 				m_project = std::move(project);
 				m_file.clear();
 				m_history.clear();
@@ -2457,7 +2464,7 @@ namespace gnubase::engine
 				Json presets = context.call("settings.get", {{"key", "audio.busPresets"}}).at("value");
 				Json mine = userPresets(direction, context);
 				mine[name] = presetBusses(m_project, direction);
-				presets[directionKey(direction)] = std::move(mine);
+				presets[directionName(direction)] = std::move(mine);
 				context.call("settings.set", {{"key", "audio.busPresets"}, {"value", std::move(presets)}});
 				return Json::object();
 			});
@@ -2471,7 +2478,7 @@ namespace gnubase::engine
 				Json presets = context.call("settings.get", {{"key", "audio.busPresets"}}).at("value");
 				Json mine = userPresets(direction, context);
 				require(mine.erase(name) == 1, "no user bus preset " + name + "; only the user's own presets go");
-				presets[directionKey(direction)] = std::move(mine);
+				presets[directionName(direction)] = std::move(mine);
 				context.call("settings.set", {{"key", "audio.busPresets"}, {"value", std::move(presets)}});
 				return Json::object();
 			});
@@ -2725,6 +2732,7 @@ namespace gnubase::engine
 		registerMidiEditCommands(engine);
 		registerMarkerCommands(engine);
 		registerAutomationCommands(engine);
+		registerParameterCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
 		registerMidiFileCommands(engine);

@@ -135,13 +135,10 @@ namespace gnubase::engine
 
 		const processors::BuiltinInfo& generatorInfo(const std::string& id)
 		{
-			for (const processors::BuiltinInfo& info : processors::builtins())
-				if (info.id == id)
-				{
-					require(!info.instrument, id + " is not a generator");
-					return info;
-				}
-			throw CommandError("no built-in processor " + id);
+			const processors::BuiltinInfo* info = processors::findBuiltin(id);
+			require(info != nullptr, "no built-in processor " + id);
+			require(!info->instrument, id + " is not a generator");
+			return *info;
 		}
 	}
 
@@ -575,6 +572,7 @@ namespace gnubase::engine
 		Json outputs = list(m_outputPorts);
 		Json busses = Json::array();
 		Json missing = Json::array();
+		Json beyond = Json::array();
 		for (size_t b = 0; b < snapshot.busses.size(); ++b)
 		{
 			const RenderBus& bus = snapshot.busses[b];
@@ -594,6 +592,14 @@ namespace gnubase::engine
 				if (users.empty() || users.back() != bus.id)
 					users.push_back(bus.id);
 			}
+			// A bus on consecutive ports has no names that could be missing: its channels past the device's ports.
+			Json silent = Json::array();
+			for (size_t c = 0; bus.ports.empty() && c < used[b].size(); ++c)
+				if (used[b][c] < 0)
+					silent.push_back(c);
+			if (!silent.empty())
+				beyond.push_back(
+					{{"bus", bus.id}, {"direction", input ? "input" : "output"}, {"channels", std::move(silent)}});
 			for (const std::string& name : bus.ports)
 			{
 				if (name.empty() || std::find(names.begin(), names.end(), name) != names.end())
@@ -608,7 +614,7 @@ namespace gnubase::engine
 			}
 		}
 		return {{"inputs", std::move(inputs)}, {"outputs", std::move(outputs)}, {"busses", std::move(busses)},
-			{"missing", std::move(missing)}};
+			{"missing", std::move(missing)}, {"beyondDevice", std::move(beyond)}};
 	}
 
 	void AudioEngine::openDummy(const Json& parameters)
@@ -883,10 +889,13 @@ namespace gnubase::engine
 				"The audio device's ports by name, in order, each with the busses that use it (the bus ids); each "
 				"bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing "
 				"ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts "
-				"re-routes them. Without a device there are no ports.",
+				"re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) "
+				"whose channels run past the device's ports, with those channels, which are silent; bus.set gives "
+				"them ports. Without a device there are no ports.",
 				noParameters(), Json::parse(R"({"type": "object", "properties": {"inputs": {"type": "array"},
-					"outputs": {"type": "array"}, "busses": {"type": "array"}, "missing": {"type": "array"}},
-					"required": ["inputs", "outputs", "busses", "missing"]})"),
+					"outputs": {"type": "array"}, "busses": {"type": "array"}, "missing": {"type": "array"},
+					"beyondDevice": {"type": "array"}},
+					"required": ["inputs", "outputs", "busses", "missing", "beyondDevice"]})"),
 				true},
 			[this](CommandContext&) { return ports(); });
 		engine.registerCommand(

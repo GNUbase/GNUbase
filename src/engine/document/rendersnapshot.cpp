@@ -88,6 +88,7 @@ namespace gnubase::engine
 			render.type = track.type;
 			render.format = channel.format;
 			render.instrument = channel.instrument;
+			render.instrumentParameters = channel.instrumentParameters;
 			render.volume = volumeGain(channel.volume);
 			render.pan = channel.pan;
 			render.stereoPanner = channel.panner;

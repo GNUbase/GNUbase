@@ -14,9 +14,9 @@
 
 namespace gnubase::app
 {
-	// GNUbase's UI for an engine: SDL3 windows drawn through SDL_GPU, RmlUi with GNUbase's fonts and themes, and the
-	// shell, which follows the user settings and the engine's events, with the main window open. runWindowed runs it;
-	// UI tests (tests/uiapp.h) drive the same UI. Throws std::runtime_error if this machine can't show it
+	// GNUbase's UI for an engine: SDL3 windows drawn through SDL_GPU, RmlUi with GNUbase's fonts, themes and widgets,
+	// and the shell, which follows the user settings and the engine's events, with the main window open. runWindowed
+	// runs it; UI tests (tests/uiapp.h) drive the same UI. Throws std::runtime_error if this machine can't show it
 	// (ui::GpuUnavailable without an SDL_GPU device) or the fonts and themes in the resources can't be loaded.
 	class AppUi
 	{
