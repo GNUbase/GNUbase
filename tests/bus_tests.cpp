@@ -53,11 +53,12 @@ namespace
 
 	Json bus(Client& client, ObjectId id)
 	{
-		for (const Json& entry : projectList(client, "busses"))
-			if (entry.at("id") == id)
-				return entry;
-		FAIL("no bus " << id);
-		return {};
+		const Json busses = projectList(client, "busses");
+		const auto found =
+			std::find_if(busses.begin(), busses.end(), [id](const Json& entry) { return entry.at("id") == id; });
+		INFO("bus " << id);
+		REQUIRE(found != busses.end());
+		return *found;
 	}
 
 	std::vector<ObjectId> busIds(Client& client, const char* direction)
@@ -505,11 +506,11 @@ TEST_CASE("bus presets: standard, from the device's ports, and the user's own", 
 	{ return run(client, "bus.presets", {{"direction", direction}}).at("presets"); };
 	const auto preset = [](const Json& list, const std::string& name)
 	{
-		for (const Json& entry : list)
-			if (entry.at("name") == name)
-				return entry;
-		FAIL("no preset " << name);
-		return Json();
+		const auto found =
+			std::find_if(list.begin(), list.end(), [&name](const Json& entry) { return entry.at("name") == name; });
+		INFO("preset " << name);
+		REQUIRE(found != list.end());
+		return *found;
 	};
 
 	const Json inputs = presets("input");
