@@ -19,6 +19,10 @@ namespace gnubase::engine
 	// their value at each of these frames, and MIDI controllers get theirs where their MIDI 1.0 value changes.
 	inline constexpr uint32_t g_automationInterval = 64;
 
+	// From 0 to 1 as x goes from 0 to 1, bent by curve (-1 to 1): how a curve segment of automation ramps (see
+	// AutomationShape::Curve). (1 - e^(-kx)) / (1 - e^(-k)) with k = 6 * curve.
+	double automationBend(double x, double curve);
+
 	// How long the fader glides to a new static value, e.g. when the volume is set during playback, so it doesn't
 	// click: 5 ms.
 	inline constexpr double g_faderSmoothing = 0.005;

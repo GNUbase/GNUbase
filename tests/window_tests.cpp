@@ -7,6 +7,7 @@
 #include "testutils/goldenimage.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
+#include "ui/canvas.h"
 #include "ui/fonts.h"
 #include "ui/gpurenderer.h"
 #include "ui/pseudolocale.h"
@@ -498,6 +499,89 @@ TEST_CASE("RmlUi's effects look as RmlUi's OpenGL 3 renderer draws them", "[ui]"
 			tile->RemoveProperty("margin-left");
 			tile->RemoveProperty("margin-top");
 		}
+	}
+}
+
+TEST_CASE("canvas elements draw their data where the view puts it, clipped to their box, at any dp ratio", "[ui]")
+{
+	Gpu gpu;
+	loadFonts();
+	const ui::Window& window = gpu.open("canvas.rml", 960, 480); // 410 by 200 dp at dp ratio 2
+	Rml::ElementDocument& document = *window.context().GetDocument(0);
+	auto* lanes = dynamic_cast<ui::EventLanes*>(document.GetElementById("lanes"));
+	auto* wave = dynamic_cast<ui::Waveform*>(document.GetElementById("wave"));
+	auto* curve = dynamic_cast<ui::Curve*>(document.GetElementById("curve"));
+	REQUIRE(lanes != nullptr);
+	REQUIRE(wave != nullptr);
+	REQUIRE(curve != nullptr);
+	// Two lanes of 50 dp: an event from 100 to 200 dp; one from -50 to 50 dp and one from 380 to 450 dp, which the
+	// element's box cuts off.
+	lanes->setLanes({{50.0F, {{1000.0, 1000.0}}}, {50.0F, {{-500.0, 1000.0}, {3800.0, 700.0}}}});
+	// Full scale for 200 dp, then silence.
+	ui::PeakColumns peaks;
+	for (int i = 0; i < 400; ++i)
+	{
+		peaks.low.push_back(static_cast<int16_t>(i < 200 ? -32767 : 0));
+		peaks.high.push_back(static_cast<int16_t>(i < 200 ? 32767 : 0));
+	}
+	wave->setPeaks({0.0, 4000.0}, {peaks});
+	// A ramp from the bottom to the top at 200 dp, which holds until 300 dp, then half way up.
+	curve->setPoints({{0.0, 0.0, engine::AutomationShape::Linear, 0.0},
+		{2000.0, 1.0, engine::AutomationShape::Step, 0.0}, {3000.0, 0.5, engine::AutomationShape::Linear, 0.0}});
+	const auto lit = [](const Color& color) { return color[0] > 128 || color[1] > 128 || color[2] > 128; };
+	constexpr Color yellow{255, 255, 0, 255};
+
+	const float monitorScale = window.dpRatio() / gpu.shell->uiScale();
+	for (const int ratio : {1, 2})
+	{
+		gpu.shell->setUiScale(static_cast<float>(ratio) / monitorScale);
+		const auto r = static_cast<float>(ratio);
+		INFO("dp ratio " << ratio);
+		lanes->SetAttribute("start", "0");
+		ui::Image image = gpu.screenshot(window, "canvas-" + std::to_string(ratio) + "x");
+
+		// Ruler: labels of at least four digits' width apart, so a major tick every 500 units (50 dp) reaching to
+		// the top, with a label right of it, and minor ticks every 10 dp at the bottom.
+		CHECK(near(at(image, r, 50.0F, 5.0F), yellow));
+		CHECK(near(at(image, r, 40.0F, 18.0F), yellow));
+		CHECK(near(at(image, r, 45.0F, 18.0F), g_black));
+		CHECK(near(at(image, r, 40.0F, 5.0F), g_black));
+		bool label = false;
+		for (float x = 51.0F; x < 75.0F; x += 0.5F)
+			for (float y = 0.0F; y < 15.0F; y += 0.5F)
+				label = label || lit(at(image, r, x, y));
+		CHECK(label);
+
+		// Event lanes: fills inside 2 dp outlines, but no outline where the box cuts an event off.
+		CHECK(near(at(image, r, 150.0F, 45.0F), g_red));
+		CHECK(near(at(image, r, 101.0F, 45.0F), g_blue));
+		CHECK(near(at(image, r, 99.0F, 45.0F), g_black));
+		CHECK(near(at(image, r, 150.0F, 21.0F), g_blue));
+		CHECK(near(at(image, r, 25.0F, 95.0F), g_red));
+		CHECK(near(at(image, r, 0.0F, 95.0F), g_red));
+		CHECK(near(at(image, r, 390.0F, 95.0F), g_red));
+		CHECK(near(at(image, r, 399.0F, 95.0F), g_red));
+		CHECK(near(at(image, r, 405.0F, 95.0F), g_black));
+
+		// Waveform: full scale from edge to edge, silence a line in the middle.
+		CHECK(near(at(image, r, 100.0F, 121.0F), g_green));
+		CHECK(near(at(image, r, 100.0F, 159.0F), g_green));
+		CHECK(near(at(image, r, 300.0F, 140.0F), g_green));
+		CHECK(near(at(image, r, 300.0F, 135.0F), g_black));
+
+		// Curve: half way up the ramp at 100 dp, at the top until 300 dp, then half way up.
+		CHECK(lit(at(image, r, 100.0F, 180.0F)));
+		CHECK(near(at(image, r, 100.0F, 170.0F), g_black));
+		CHECK(lit(at(image, r, 250.0F, 161.0F)));
+		CHECK(near(at(image, r, 250.0F, 180.0F), g_black));
+		CHECK(lit(at(image, r, 300.0F, 170.0F)));
+		CHECK(lit(at(image, r, 350.0F, 180.0F)));
+
+		// Scrolled by 100 dp, the first event starts at the left edge.
+		lanes->SetAttribute("start", "1000");
+		image = gpu.screenshot(window, "canvas-scrolled-" + std::to_string(ratio) + "x");
+		CHECK(near(at(image, r, 50.0F, 45.0F), g_red));
+		CHECK(near(at(image, r, 150.0F, 45.0F), g_black));
 	}
 }
 

@@ -22,6 +22,7 @@ add_executable(gnubase-tests
 	audiofile_tests.cpp
 	automation_tests.cpp
 	backup_tests.cpp
+	canvas_tests.cpp
 	channelformat_tests.cpp
 	coverage_tests.cpp
 	dawproject_tests.cpp
@@ -139,6 +140,11 @@ endif()
 add_executable(gnubase-bench bench/bench.cpp)
 target_link_libraries(gnubase-bench PRIVATE gnubase-engine)
 gnubase_target_defaults(gnubase-bench)
+# The canvas benchmark (#55): needs a display and a GPU, so it's run by hand (docs/features/canvas.md).
+add_executable(gnubase-canvas-bench bench/canvas_bench.cpp)
+target_link_libraries(gnubase-canvas-bench PRIVATE gnubase-ui SDL3::SDL3)
+target_compile_definitions(gnubase-canvas-bench PRIVATE GNUBASE_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources")
+gnubase_target_defaults(gnubase-canvas-bench)
 
 # ThreadSanitizer defines its own operator new/delete, which the RT checker replaces; every other build runs it.
 if(NOT GNUBASE_SANITIZERS MATCHES "thread")

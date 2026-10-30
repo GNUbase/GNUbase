@@ -296,6 +296,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
     c = theme["colors"]
     sizes = theme["fontSizes"]
     fonts = theme["fontFamilies"]
+    widths = theme["borderWidths"]
     assets = manifest["assets"]
     # Text on an accent-colored fill: dark on a light accent, white on a dark one.
     on_accent = c["background"] if luminance(c["accent"]) > 0.4 else "#ffffff"
@@ -411,6 +412,13 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".meter-peak", {"decorator": skin("meter-peak")}),
         (".splitter-grip-vertical", {"decorator": skin("splitter-grip-vertical")}),
         (".splitter-grip-horizontal", {"decorator": skin("splitter-grip-horizontal")}),
+        # Canvas elements (docs/features/canvas.md): events and notes, waveforms, automation curves and rulers
+        ("event-lanes", {"color": mix(c["surfaceRaised"], c["accent"], .35), "stroke-color": c["accent"],
+                         "stroke-width": f"{widths['hairline']}dp"}),
+        ("waveform", {"color": c["accent"]}),
+        ("curve", {"stroke-color": c["accent2"], "stroke-width": f"{widths['focus']}dp"}),
+        ("ruler", {"color": c["textMuted"], "stroke-color": c["border"], "stroke-width": f"{widths['hairline']}dp",
+                   "font-size": f"{sizes['small']}dp"}),
     ]
 
     lines = ["/* SPDX-License-Identifier: GPL-3.0-or-later */",
