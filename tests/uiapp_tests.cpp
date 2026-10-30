@@ -3,8 +3,11 @@
 // dummy device, driven with ui::Automation as MCP's UI tools drive it, with screenshots compared with golden images.
 #include "uiapp.h"
 
+#include "engine/time/tempomap.h"
 #include "scripting/runtime.h"
 #include "ui/automation.h"
+#include "ui/canvas.h"
+#include "ui/eventdisplay.h"
 #include "ui/themes.h"
 
 #include <RmlUi/Core/Context.h>
@@ -98,6 +101,44 @@ TEST_CASE("settings changed through the engine restyle GNUbase's UI", "[ui]")
 	app.call("settings.set", {{"key", "ui.scale"}, {"value", 2.0}});
 	REQUIRE(
 		app.waitUntil([&app, monitorScale] { return std::abs(app.main().dpRatio() - (2.0F * monitorScale)) < 0.01F; }));
+}
+
+TEST_CASE("the project window shows events and the project cursor where the engine has them", "[ui]")
+{
+	test::UiApp app({800, 300});
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	app.call("midiPart.add", // from 1 to 3 seconds at 120 BPM
+		{{"track", track.at("id")}, {"position", 2 * time::g_ticksPerQuarter},
+			{"length", 4 * time::g_ticksPerQuarter}});
+	app.call("transport.locate", {{"position", 72000}}); // 1.5 seconds
+	const auto element = [&app](const char* selector)
+	{ return app.ui().dom(std::nullopt, selector, 0).at("elements").at(0); };
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			auto* lanes =
+				dynamic_cast<ui::EventLanes*>(app.main().context().GetDocument(0)->QuerySelector("event-lanes.events"));
+			return lanes != nullptr && !lanes->lanes().empty() && !lanes->lanes()[0].events.empty() &&
+				display.cursor() == 1.5;
+		}));
+	app.shell().step(std::chrono::milliseconds(0));
+
+	// As MCP's UI tools see it: the view in the canvas elements' attributes, the cursor 1.5 seconds right of the
+	// lanes' left edge at 0.01 seconds per dp.
+	const Json lanes = element("event-lanes.events");
+	CHECK(lanes.at("attributes").at("scale") == "0.01");
+	CHECK(element(".project-cursor").at("box").at("x").get<int>() - lanes.at("box").at("x").get<int>() == 150);
+	test::UiApp::checkGolden("event-display", app.screenshot("event-display", {800, 300}));
+
+	// Ctrl and the mouse wheel zoom in around the mouse, through the UI tools.
+	const ui::Target over{
+		"", 0, ui::Point{lanes.at("box").at("x").get<int>() + 150, lanes.at("box").at("y").get<int>() + 10}};
+	app.ui().wheel(std::nullopt, over, 0.0F, -3.0F, {"ctrl"});
+	CHECK(display.view().scale < 0.01);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(element(".project-cursor").at("box").at("x").get<int>() - lanes.at("box").at("x").get<int>() == 150);
 }
 
 // UI tests in Lua (#208): ctest runs each tests/lua/ui/*.lua through this test case, which GNUBASE_LUA_UI_TEST tells

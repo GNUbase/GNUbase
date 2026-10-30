@@ -4,6 +4,7 @@
 #include "engine/engine.h"
 #include "scripting/runtime.h"
 #include "ui/enginebinding.h"
+#include "ui/eventdisplay.h"
 #include "ui/gpurenderer.h"
 #include "ui/keycommands.h"
 #include "ui/rmlui.h"
@@ -14,6 +15,7 @@
 
 #include <filesystem>
 #include <iosfwd>
+#include <memory>
 
 namespace gnubase::app
 {
@@ -37,6 +39,10 @@ namespace gnubase::app
 		AppUi& operator=(AppUi&&) = delete;
 		~AppUi() = default;
 
+		// Shows the project window in the main window (resources/ui/project.rml) with the event display. Throws
+		// std::runtime_error if the document can't be loaded.
+		ui::EventDisplay& showProject();
+
 		ui::Shell& shell() { return m_shell; }
 		ui::Window& mainWindow() { return m_main; }
 		ui::RmlUi& rmlui() { return m_rmlui; }
@@ -58,5 +64,8 @@ namespace gnubase::app
 		ui::EngineBinding m_binding;
 		ui::KeyCommands m_keys;
 		ui::Window& m_main;
+		engine::Engine& m_engine;
+		std::filesystem::path m_resources;
+		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
 	};
 }

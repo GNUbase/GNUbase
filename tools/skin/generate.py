@@ -430,6 +430,17 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("curve", {"stroke-color": c["accent2"], "stroke-width": f"{widths['focus']}dp"}),
         ("ruler", {"color": c["textMuted"], "stroke-color": c["border"], "stroke-width": f"{widths['hairline']}dp",
                    "font-size": f"{sizes['small']}dp"}),
+        # The event display (docs/features/event-display.md): overview line, ruler, lanes and cursors
+        (".event-display", {"background-color": c["background"]}),
+        (".event-display .overview", {"background-color": c["surface"]}),
+        (".event-display .overview event-lanes", {"color": mix(c["surface"], c["accent"], .45),
+                                                  "stroke-color": "transparent"}),
+        (".event-display .overview-view", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent"],
+                                           "background-color": c["accent"] + "26"}),
+        (".event-display ruler", {"background-color": c["surface"]}),
+        (".event-display .project-cursor", {"background-color": c["text"]}),
+        (".event-display .cross-hair-vertical, .event-display .cross-hair-horizontal",
+         {"background-color": mix(c["background"], c["textMuted"], .5)}),
     ]
 
     lines = ["/* SPDX-License-Identifier: GPL-3.0-or-later */",

@@ -54,6 +54,7 @@ namespace gnubase::app
 			ui::WindowSpec main;
 			main.size = {}; // 80 % of the primary monitor
 			appUi = std::make_unique<AppUi>(engine, *resources, main, out);
+			appUi->showProject();
 		}
 		catch (const std::runtime_error& error)
 		{

@@ -33,6 +33,7 @@ add_executable(gnubase-tests
 	effects_tests.cpp
 	engine_tests.cpp
 	enginebinding_tests.cpp
+	eventdisplay_tests.cpp
 	fade_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
@@ -75,6 +76,7 @@ add_executable(gnubase-tests
 	testutils_tests.cpp
 	theme_tests.cpp
 	time_tests.cpp
+	timeformat_tests.cpp
 	timestretch_tests.cpp
 	transport_tests.cpp
 	uiapp.cpp
