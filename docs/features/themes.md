@@ -54,6 +54,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   `.knob-pointer`, `.fader`, `.fader-cap`, `.slider-track`, `.slider-fill`, `.slider-thumb`, `valuefield`, `.meter`,
   `.meter-fill`, `.meter-peak`, the color picker's `.color-field`, `.color-hue` and their thumbs, `.splitter-grip-vertical`, `.splitter-grip-horizontal`, `.dropdown-arrow`,
   `.focus-ring`.
+- **Canvas elements** ([canvas.md](canvas.md)) by their tags: `event-lanes`, `waveform`, `curve` and `ruler`, with
+  `color` and the canvas properties `stroke-color` and `stroke-width`.
 
 ## Checks
 

@@ -468,7 +468,7 @@ namespace gnubase::audio
 			DeviceError unavailable(const std::string& name, const std::string& reason) const
 			{
 				(*m_unavailable)[name] = reason;
-				return DeviceError("ASIO: " + name + ": " + reason);
+				return DeviceError{"ASIO: " + name + ": " + reason};
 			}
 
 			void check(ASIOError error, const char* what) const

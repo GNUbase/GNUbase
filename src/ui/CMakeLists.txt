@@ -15,6 +15,8 @@ target_link_libraries(gnubase-ui-thirdparty PUBLIC RmlUi::RmlUi SDL3::SDL3)
 add_library(gnubase-ui STATIC
 	automation.cpp
 	automation.h
+	canvas.cpp
+	canvas.h
 	colorwidgets.cpp
 	datamodel.cpp
 	datamodel.h

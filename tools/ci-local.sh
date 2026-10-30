@@ -6,7 +6,8 @@
 # - on Linux, and on Windows in WSL: linux-gcc and linux-clang (builds and tests), asan-ubsan, tsan and clang-tidy.
 # macOS is left to CI. It checks the commit at HEAD, so commit first: on Windows the Linux jobs run in a clone inside
 # WSL (~/gnubase-ci/<checkout folder name>, one per checkout, so worktrees can run checks at the same time), which
-# builds far faster than the Windows folder and has Linux line endings.
+# builds far faster than the Windows folder and has Linux line endings. Unlike CI, it builds without link-time
+# optimization, which only makes every link slow, and one run at a time per machine (lockMachine).
 # Usage: tools/ci-local.sh [job...]    default: every job this machine can run
 # Environment: GNUBASE_WSL names the WSL distribution (default Ubuntu), GNUBASE_CI_JOBS the compile jobs per build.
 # Setup: Windows needs Visual Studio 2026; Linux (or WSL, Ubuntu 24.04) needs the packages in .github/workflows/ci.yml
@@ -48,6 +49,8 @@ threads=$(nproc 2>/dev/null || echo 8)
 # A quarter of the hardware threads per build: several builds share them, and WSL gets only half of the memory.
 export CMAKE_BUILD_PARALLEL_LEVEL=${GNUBASE_CI_JOBS:-$((threads / 4 > 2 ? threads / 4 : 2))}
 export PATH="$HOME/.local/bin:$PATH" # pipx
+# Linux builds go through ccache, which can't cache files compiled with a precompiled header, as SDL and RmlUi are.
+ccache=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON)
 
 case "$(uname -s)" in
 MINGW* | MSYS* | CYGWIN*)
@@ -114,29 +117,29 @@ job()
 		fi
 		;;
 	windows-x64)
-		vsDev x64 "cmake --preset windows-x64-ninja" "cmake --build --preset windows-x64-ninja --config Release" &&
-			runTests build/windows-x64-ninja Release
+		vsDev x64 "cmake --preset windows-x64-ninja -DGNUBASE_LTO=OFF" \
+			"cmake --build --preset windows-x64-ninja --config Release" && runTests build/windows-x64-ninja Release
 		;;
 	windows-arm64)
-		vsDev x64_arm64 "cmake --preset windows-arm64-ninja -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=ARM64" \
+		local cross="-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=ARM64"
+		vsDev x64_arm64 "cmake --preset windows-arm64-ninja $cross -DGNUBASE_LTO=OFF" \
 			"cmake --build --preset windows-arm64-ninja --config Release"
 		;;
 	linux-gcc | linux-clang)
-		cmake --preset "$1" -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache &&
-			cmake --build --preset "$1" --config Release && runTests "build/$1" Release
+		cmake --preset "$1" -DGNUBASE_LTO=OFF "${ccache[@]}" && cmake --build --preset "$1" --config Release &&
+			runTests "build/$1" Release
 		;;
 	asan-ubsan | tsan)
 		local sanitizers=thread
 		[ "$1" = asan-ubsan ] && sanitizers=address,undefined
 		export ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
 		export TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1:suppressions=$root/tools/tsan-suppressions.txt
-		cmake --preset linux-clang -B "build/$1" -DGNUBASE_SANITIZERS=$sanitizers -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-			-DCMAKE_CXX_COMPILER_LAUNCHER=ccache && cmake --build "build/$1" --target gnubase-tests &&
-			runTests "build/$1" Debug
+		cmake --preset linux-clang -B "build/$1" -DGNUBASE_SANITIZERS=$sanitizers "${ccache[@]}" &&
+			cmake --build "build/$1" --target gnubase-tests && runTests "build/$1" Debug
 		;;
 	clang-tidy)
-		cmake --preset linux-clang -B build/clang-tidy -DGNUBASE_CLANG_TIDY=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-			-DCMAKE_CXX_COMPILER_LAUNCHER=ccache && cmake --build build/clang-tidy
+		cmake --preset linux-clang -B build/clang-tidy -DGNUBASE_CLANG_TIDY=ON "${ccache[@]}" &&
+			cmake --build build/clang-tidy
 		;;
 	*)
 		echo "Unknown job $1" >&2
@@ -177,7 +180,32 @@ for name in "${jobs[@]}"; do
 	esac
 done
 
+# One run at a time per machine: runs at the same time share its cores and memory, so each takes about as long as all
+# of them one after the other. A run waits until the one before it ends; a lock left by a run that was killed is taken
+# over. On Windows the run holds it for its Linux jobs in WSL too. A run of the format job alone doesn't wait.
+lock=/tmp/gnubase-ci-local.lock # not TMPDIR, which a tool may set for its own commands
+lockMachine()
+{
+	[ "${jobs[*]}" = format ] && return
+	local owner waiting=false
+	until mkdir "$lock" 2>/dev/null; do
+		owner=$(cat "$lock/pid" 2>/dev/null)
+		if [ -n "$owner" ] && ! ps -p "$owner" >/dev/null 2>&1; then
+			# Two runs that take over the same lock at once may both start, as they did without the lock.
+			rm -rf "$lock" 2>/dev/null || sleep 5
+			continue
+		fi
+		$waiting || echo "Waiting for the run in $(cat "$lock/checkout" 2>/dev/null) to end."
+		waiting=true
+		sleep 5
+	done
+	echo $$ > "$lock/pid"
+	echo "$root" > "$lock/checkout"
+	trap 'rm -rf "$lock"' EXIT
+}
+
 if $here || [ $os != windows ]; then
+	$here || lockMachine
 	[ $os = linux ] && [ "$(id -u)" = 0 ] && sysctl -qw vm.mmap_rnd_bits=28 2>/dev/null # as in CI, for ASan and TSan
 	export CCACHE_MAXSIZE=${CCACHE_MAXSIZE:-20G}
 	export CCACHE_BASEDIR=$root # paths relative to the checkout, so clones of other checkouts share the cache
@@ -201,6 +229,7 @@ fi
 git lfs pull --include "tests/data/**,tests/golden/**,resources/fonts/**" || exit 2
 [ -z "$(git status --porcelain --untracked-files=no)" ] ||
 	echo "Note: uncommitted changes are not checked, only HEAD $(git rev-parse --short HEAD)." >&2
+lockMachine
 started=$SECONDS
 status=0
 if [ ${#linuxJobs[@]} -gt 0 ]; then

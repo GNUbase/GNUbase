@@ -14,6 +14,20 @@ namespace gnubase::engine
 {
 	namespace
 	{
+		// How strongly a curve of 1 or -1 bends.
+		constexpr double g_curveBend = 6.0;
+	}
+
+	double automationBend(double x, double curve)
+	{
+		const double k = g_curveBend * curve;
+		if (std::abs(k) < 1e-9)
+			return x;
+		return (1.0 - std::exp(-k * x)) / (1.0 - std::exp(-k));
+	}
+
+	namespace
+	{
 		// A stereo channel's balance: the side the pan moves away from is turned down.
 		double balance(int channel, double pan)
 		{
@@ -70,24 +84,12 @@ namespace gnubase::engine
 		using Points = std::vector<RenderAutomationPoint>;
 		using Kind = PlayedLane::Kind;
 
-		// How strongly a curve of 1 or -1 bends.
-		constexpr double g_curveBend = 6.0;
-
-		// From 0 to 1 as x goes from 0 to 1, bent by curve: (1 - e^(-kx)) / (1 - e^(-k)) with k = 6 * curve.
-		double bend(double x, double curve)
-		{
-			const double k = g_curveBend * curve;
-			if (std::abs(k) < 1e-9)
-				return x;
-			return (1.0 - std::exp(-k * x)) / (1.0 - std::exp(-k));
-		}
-
 		// A point on the bent curve between two points.
 		double bent(const RenderAutomationPoint& from, const RenderAutomationPoint& to, int64_t position)
 		{
 			const double x =
 				static_cast<double>(position - from.position) / static_cast<double>(to.position - from.position);
-			return from.value + ((to.value - from.value) * bend(x, from.curve));
+			return from.value + ((to.value - from.value) * automationBend(x, from.curve));
 		}
 
 		// The value between two points, at a position from the first one up to the second one. Curves are played as
