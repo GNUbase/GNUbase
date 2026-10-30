@@ -353,7 +353,8 @@ namespace gnubase::engine
 	Json toJson(const Bus& bus)
 	{
 		return {{"id", bus.id}, {"name", bus.name}, {"direction", directionName(bus.direction)},
-			{"format", formatName(bus.format)}, {"channels", channelCount(bus.format)}};
+			{"format", formatName(bus.format)}, {"channels", channelCount(bus.format)}, {"ports", bus.ports},
+			{"parent", bus.parent}, {"parentChannels", bus.parentChannels}, {"mainMix", bus.mainMix}};
 	}
 
 	Json toJson(const Track& track)
@@ -739,9 +740,18 @@ namespace gnubase::engine
 		if (project.maxVolume != 6.0 && project.maxVolume != 12.0)
 			throw std::invalid_argument("maxVolume must be 6 or 12");
 
-		for (const Json& bus : json.at("busses"))
-			project.busses.push_back({bus.at("id").get<ObjectId>(), bus.at("name").get<std::string>(),
-				bus.at("direction") == "input" ? BusDirection::Input : BusDirection::Output, formatFromJson(bus)});
+		// Files from before ports have only the first four.
+		for (const Json& item : json.at("busses"))
+			project.busses.push_back({item.at("id").get<ObjectId>(), item.at("name").get<std::string>(),
+				item.at("direction") == "input" ? BusDirection::Input : BusDirection::Output, formatFromJson(item),
+				item.value("ports", std::vector<std::string>()), item.value("parent", ObjectId{0}),
+				item.value("parentChannels", std::vector<int>()), item.value("mainMix", false)});
+		for (const Bus& bus : project.busses)
+			if (const std::string problem = busProblem(project, bus); !problem.empty())
+				throw std::invalid_argument("bus " + std::to_string(bus.id) + ": " + problem);
+		if (std::count_if(project.busses.begin(), project.busses.end(), [](const Bus& bus) { return bus.mainMix; }) > 1)
+			throw std::invalid_argument("more than one bus is the main mix");
+		keepMainMix(project);
 		// Tracks come from top to bottom, folders before what they contain.
 		for (const Json& item : json.at("tracks"))
 		{
