@@ -16,6 +16,9 @@ namespace gnubase::engine
 		ObjectId id = 0;
 		BusDirection direction = BusDirection::Output;
 		ChannelFormat format = ChannelFormat::Stereo;
+		std::vector<std::string> ports; // as in Bus
+		int parent = -1;                // child busses: an index into RenderSnapshot::busses
+		std::vector<int> parentChannels;
 	};
 
 	struct RenderMedia

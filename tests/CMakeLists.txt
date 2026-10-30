@@ -22,6 +22,7 @@ add_executable(gnubase-tests
 	audiofile_tests.cpp
 	automation_tests.cpp
 	backup_tests.cpp
+	bus_tests.cpp
 	channelformat_tests.cpp
 	coverage_tests.cpp
 	dawproject_tests.cpp
@@ -70,6 +71,9 @@ add_executable(gnubase-tests
 	time_tests.cpp
 	timestretch_tests.cpp
 	transport_tests.cpp
+	uiapp.cpp
+	uiapp.h
+	uiapp_tests.cpp
 	uisettings_tests.cpp
 	uithemes_tests.cpp
 	uitools_tests.cpp

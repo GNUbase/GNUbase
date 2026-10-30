@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/windowed.h"
 
+#include "app/appui.h"
 #include "app/headless.h"
 #include "app/resources.h"
 #include "app/scripttool.h"
@@ -9,15 +10,9 @@
 #include "mcp/server.h"
 #include "mcp/transport.h"
 #include "platform/log.h"
-#include "ui/enginebinding.h"
-#include "ui/fonts.h"
-#include "ui/gpurenderer.h"
 #include "ui/livereload.h"
-#include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
-#include "ui/themes.h"
-#include "ui/uisettings.h"
 
 #include <chrono>
 #include <filesystem>
@@ -53,14 +48,12 @@ namespace gnubase::app
 		}
 		logging::info("Resources from {}", resources->u8string());
 
-		// Made in this order and destroyed in the reverse: RmlUi releases its resources through the renderer, and
-		// the shell's windows need all three.
-		std::unique_ptr<ui::SdlWindowSystem> windows;
-		std::unique_ptr<ui::GpuRenderer> renderer;
+		std::unique_ptr<AppUi> appUi;
 		try
 		{
-			windows = std::make_unique<ui::SdlWindowSystem>();
-			renderer = std::make_unique<ui::GpuRenderer>(*windows);
+			ui::WindowSpec main;
+			main.size = {}; // 80 % of the primary monitor
+			appUi = std::make_unique<AppUi>(engine, *resources, main);
 		}
 		catch (const std::runtime_error& error)
 		{
@@ -68,29 +61,10 @@ namespace gnubase::app
 			logging::error("Cannot show the UI: {}", error.what());
 			return g_exitSetup;
 		}
-		ui::RmlUi rmlui(*windows);
-		std::unique_ptr<ui::Themes> themes;
-		try
-		{
-			ui::Fonts(*resources / "fonts").load();
-			themes = std::make_unique<ui::Themes>(*resources);
-		}
-		catch (const std::runtime_error& error)
-		{
-			err << "gnubase: cannot load its fonts and themes: " << error.what() << '\n';
-			logging::error("Cannot load the fonts and themes: {}", error.what());
-			return g_exitSetup;
-		}
-		ui::Shell shell(*windows, *renderer);
-		// The theme and the UI scale from the user settings, also when they change while GNUbase runs.
-		const ui::UiSettings uiSettings(engine, shell, *themes);
-		ui::EngineBinding binding(engine, [&shell] { shell.wake(); });
-		shell.eachStep([&binding] { return binding.update(); });
+		ui::Shell& shell = appUi->shell();
 		if (g_liveReload)
-			shell.every(std::chrono::milliseconds(250), [&] { ui::reloadChangedDocuments(rmlui.files(), shell); });
-		ui::WindowSpec main;
-		main.size = {}; // 80 % of the primary monitor
-		shell.open(main);
+			shell.every(
+				std::chrono::milliseconds(250), [&] { ui::reloadChangedDocuments(appUi->rmlui().files(), shell); });
 
 		// MCP over HTTP with the UI tools, if asked for. Its tools use the shell, so it stops first.
 		std::optional<mcp::Server> server;
@@ -107,7 +81,7 @@ namespace gnubase::app
 			logging::info("Serving MCP on {}", http->url());
 		}
 		logging::info("UI on SDL's {} video driver, drawing through SDL_GPU {}", ui::SdlWindowSystem::driver(),
-			renderer->driver());
+			appUi->renderer().driver());
 		return shell.run();
 	}
 }

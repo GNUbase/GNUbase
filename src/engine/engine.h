@@ -177,6 +177,10 @@ namespace gnubase::engine
 		// The plugin host processes and the plugins that run in them.
 		plugins::HostManager& pluginHosts();
 
+		// The folder of the user settings; empty when they are kept in memory only. Features whose user settings
+		// have files of their own, such as the quantize presets, keep them there.
+		const std::filesystem::path& settingsDirectory() const { return m_settingsDirectory; }
+
 		// The project cursor in samples, where the audio thread last moved it or a locate puts it, read without a
 		// command and without waiting: for the UI to read once a frame while playing. Not for audio threads.
 		int64_t playbackPosition() const;
@@ -207,6 +211,7 @@ namespace gnubase::engine
 		Json runInside(const std::string& command, const Json& parameters, CommandContext& outer);
 		void applySettings(); // hands the user settings to the parts of the engine that use them
 
+		const std::filesystem::path m_settingsDirectory;
 		mutable std::mutex m_mutex; // guards everything below except the thread
 		std::map<std::string, std::shared_ptr<const Command>> m_commands;
 		std::deque<Request> m_requests;
