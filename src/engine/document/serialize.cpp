@@ -237,6 +237,15 @@ namespace gnubase::engine
 		return direction == BusDirection::Input ? "input" : "output";
 	}
 
+	std::vector<int> parentChannelsFromJson(const Json& json)
+	{
+		std::vector<int> channels;
+		for (const int64_t channel : json.get<std::vector<int64_t>>())
+			channels.push_back(
+				channel >= 0 && channel <= std::numeric_limits<int>::max() ? static_cast<int>(channel) : -1);
+		return channels;
+	}
+
 	const char* fadeShapeName(FadeShape shape)
 	{
 		for (const auto& entry : g_fadeShapeNames)
@@ -745,7 +754,7 @@ namespace gnubase::engine
 			project.busses.push_back({item.at("id").get<ObjectId>(), item.at("name").get<std::string>(),
 				item.at("direction") == "input" ? BusDirection::Input : BusDirection::Output, formatFromJson(item),
 				item.value("ports", std::vector<std::string>()), item.value("parent", ObjectId{0}),
-				item.value("parentChannels", std::vector<int>()), item.value("mainMix", false)});
+				parentChannelsFromJson(item.value("parentChannels", Json::array())), item.value("mainMix", false)});
 		for (const Bus& bus : project.busses)
 			if (const std::string problem = busProblem(project, bus); !problem.empty())
 				throw std::invalid_argument("bus " + std::to_string(bus.id) + ": " + problem);

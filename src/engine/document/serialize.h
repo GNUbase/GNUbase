@@ -24,6 +24,9 @@ namespace gnubase::engine
 	const char* timeBaseName(time::TimeBase base);
 	time::TimeBase timeBaseFromName(const std::string& name);
 	const char* directionName(BusDirection direction);
+	// A child bus's parentChannels. Numbers beyond int are -1, which busProblem refuses, rather than wrapping around
+	// to channels that exist.
+	std::vector<int> parentChannelsFromJson(const Json& json);
 	const char* fadeShapeName(FadeShape shape);
 	std::optional<FadeShape> fadeShapeFromName(const std::string& name);
 	const char* crossfadeModeName(CrossfadeMode mode);
