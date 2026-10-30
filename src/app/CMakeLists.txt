@@ -14,9 +14,16 @@ target_link_libraries(gnubase-app PUBLIC gnubase-engine gnubase-mcp gnubase-scri
 target_compile_definitions(gnubase-app PRIVATE GNUBASE_SOURCE_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources")
 gnubase_target_defaults(gnubase-app)
 
+# The MCP tools for the UI (#58), for the executable and the tests.
+add_library(gnubase-app-ui STATIC
+	uitools.cpp
+	uitools.h)
+target_link_libraries(gnubase-app-ui PUBLIC gnubase-mcp gnubase-ui)
+gnubase_target_defaults(gnubase-app-ui)
+
 # The executable adds the UI, which the library leaves out.
 add_executable(gnubase main.cpp windowed.cpp windowed.h)
-target_link_libraries(gnubase PRIVATE gnubase-app gnubase-ui)
+target_link_libraries(gnubase PRIVATE gnubase-app gnubase-app-ui gnubase-ui)
 # Debug builds load documents again when their RML or RCSS files change (ui/livereload.h).
 target_compile_definitions(gnubase PRIVATE $<$<CONFIG:Debug>:GNUBASE_LIVE_RELOAD>)
 gnubase_target_defaults(gnubase)

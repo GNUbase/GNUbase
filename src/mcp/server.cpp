@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -57,6 +58,25 @@ namespace gnubase::mcp
 		Json textContent(const std::string& value)
 		{
 			return Json::array({Json{{"type", "text"}, {"text", value}}});
+		}
+
+		std::string base64(const std::vector<uint8_t>& bytes)
+		{
+			constexpr std::string_view alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+			std::string text;
+			text.reserve((bytes.size() + 2) / 3 * 4);
+			for (size_t i = 0; i < bytes.size(); i += 3)
+			{
+				const size_t count = std::min<size_t>(3, bytes.size() - i);
+				uint32_t bits = static_cast<uint32_t>(bytes[i]) << 16U;
+				if (count > 1)
+					bits |= static_cast<uint32_t>(bytes[i + 1]) << 8U;
+				if (count > 2)
+					bits |= bytes[i + 2];
+				for (size_t c = 0; c < 4; ++c)
+					text += c <= count ? alphabet[(bits >> (18 - (6 * c))) & 0x3FU] : '=';
+			}
+			return text;
 		}
 
 		std::string toolName(std::string command)
@@ -260,6 +280,11 @@ namespace gnubase::mcp
 				if (const std::string problem = engine::validate(arguments, extra->inputSchema, "arguments");
 					!problem.empty())
 					throw std::invalid_argument(problem);
+				if (extra->image)
+					return {{"content",
+								Json::array({Json{{"type", "image"}, {"data", base64(extra->image(arguments))},
+									{"mimeType", "image/png"}}})},
+						{"isError", false}};
 				Json value = extra->name == g_eventsTool ? takeEvents(arguments, session) : extra->run(arguments);
 				Json response = {{"content", textContent(text(value))}, {"isError", false}};
 				response["structuredContent"] = std::move(value);

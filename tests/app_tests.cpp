@@ -98,7 +98,10 @@ TEST_CASE("the command line selects headless mode, the MCP transport, the audio 
 	CHECK(options.project == "song.dawproject");
 	CHECK(options.sampleRate == 44100.0);
 	CHECK(options.blockSize == 512);
-	CHECK(parseOptions({"--headless", "--mcp-http"}).port == 0); // a free port
+	CHECK(parseOptions({"--headless", "--mcp-http"}).port == 0);      // a free port
+	CHECK(parseOptions({"--mcp-http"}).transport == Transport::Http); // the windowed app with the UI tools
+	CHECK_THROWS_AS(parseOptions({"--mcp-stdio"}), UsageError);       // stdin and stdout are the terminal's
+	CHECK_THROWS_AS(parseOptions({"--script", "check.lua"}), UsageError);
 	CHECK(parseOptions({"--help"}).help);
 	CHECK(parseOptions({"--version"}).version);
 
