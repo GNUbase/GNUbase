@@ -290,41 +290,53 @@ namespace gnubase::audio
 			return info;
 		}
 
-		// Tells a device when one of its endpoints goes away or, if it follows them, the default endpoints change.
+		// Tells devices when one of their endpoints goes away or, for those that follow them, the default endpoints
+		// change. There is one for the whole process, registered on first use and never released: a call may still be
+		// on its way when UnregisterEndpointNotificationCallback returns, and would then reach a freed object (#316).
 		class Notifications
 			: public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>,
 				  IMMNotificationClient>
 		{
 		public:
-			Notifications(std::vector<std::wstring> endpoints, bool followsDefault, std::function<void()> changed)
-				: m_endpoints(std::move(endpoints)), m_followsDefault(followsDefault), m_changed(std::move(changed))
+			// Needs COM's multithreaded apartment. Throws DeviceError if it can't register.
+			static Notifications& instance()
 			{
+				static Notifications& client = registered(); // tried again on the next call if it throws
+				return client;
 			}
 
-			// No more calls after this returns.
-			void detach()
+			// Calls changed on the notification thread until unsubscribe(key).
+			void subscribe(const void* key, std::vector<std::wstring> endpoints, bool followsDefault,
+				std::function<void()> changed)
 			{
 				const std::scoped_lock lock(m_mutex);
-				m_changed = nullptr;
+				m_subscribers[key] = Subscriber{std::move(endpoints), followsDefault, std::move(changed)};
+			}
+
+			// No more calls for key after this returns.
+			void unsubscribe(const void* key)
+			{
+				const std::scoped_lock lock(m_mutex);
+				m_subscribers.erase(key);
 			}
 
 			HRESULT STDMETHODCALLTYPE OnDeviceStateChanged(LPCWSTR id, DWORD state) override
 			{
 				if (state != DEVICE_STATE_ACTIVE)
-					changed(id);
+					gone(id);
 				return S_OK;
 			}
 
 			HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR id) override
 			{
-				changed(id);
+				gone(id);
 				return S_OK;
 			}
 
 			HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow /*flow*/, ERole role, LPCWSTR /*id*/) override
 			{
-				if (m_followsDefault && role == eConsole)
-					notify();
+				if (role == eConsole)
+					notify([](const Subscriber& subscriber) { return subscriber.followsDefault; });
 				return S_OK;
 			}
 
@@ -335,23 +347,48 @@ namespace gnubase::audio
 			}
 
 		private:
-			void changed(LPCWSTR id)
+			struct Subscriber
 			{
-				if (id != nullptr && std::find(m_endpoints.begin(), m_endpoints.end(), id) != m_endpoints.end())
-					notify();
+				std::vector<std::wstring> endpoints;
+				bool followsDefault;
+				std::function<void()> changed;
+			};
+
+			static Notifications& registered()
+			{
+				ComPtr<Notifications> client = Microsoft::WRL::Make<Notifications>();
+				ComPtr<IMMDeviceEnumerator> enumerator = makeEnumerator();
+				check(enumerator->RegisterEndpointNotificationCallback(client.Get()),
+					"IMMDeviceEnumerator::RegisterEndpointNotificationCallback");
+				// Both stay for the rest of the process, and so does the apartment they live in.
+				CO_MTA_USAGE_COOKIE cookie{};
+				CoIncrementMTAUsage(&cookie);
+				enumerator.Detach();
+				return *client.Detach();
 			}
 
-			void notify()
+			void gone(LPCWSTR id)
+			{
+				if (id == nullptr)
+					return;
+				notify(
+					[id](const Subscriber& subscriber)
+					{
+						return std::find(subscriber.endpoints.begin(), subscriber.endpoints.end(), id) !=
+							subscriber.endpoints.end();
+					});
+			}
+
+			template <typename Concerns> void notify(Concerns concerns)
 			{
 				const std::scoped_lock lock(m_mutex);
-				if (m_changed)
-					m_changed();
+				for (const auto& [key, subscriber] : m_subscribers)
+					if (concerns(subscriber))
+						subscriber.changed();
 			}
 
-			std::vector<std::wstring> m_endpoints;
-			bool m_followsDefault;
-			std::mutex m_mutex; // guards m_changed
-			std::function<void()> m_changed;
+			std::mutex m_mutex; // guards m_subscribers
+			std::map<const void*, Subscriber> m_subscribers;
 		};
 
 		// One endpoint's stream.
@@ -360,12 +397,12 @@ namespace gnubase::audio
 			explicit Stream(Endpoint endpoint) : endpoint(std::move(endpoint)) {}
 
 			Endpoint endpoint;
+			Event event{false}; // before the client, which signals it until it is released
 			ComPtr<IAudioClient> client;
 			SampleFormat format = SampleFormat::Float32;
 			UINT32 bufferFrames = 0;
 			uint32_t periodFrames = 0;
 			uint32_t latencyFrames = 0;
-			Event event{false};
 		};
 
 		void initialize(Stream& stream, double rate, bool exclusive)
@@ -428,9 +465,9 @@ namespace gnubase::audio
 		{
 		public:
 			// A block size of 0 makes a block a period of the output.
-			WasapiDevice(DeviceInfo info, ComPtr<IMMDeviceEnumerator> enumerator, const Endpoint& output,
-				const Endpoint* input, double rate, uint32_t blockSize, bool exclusive, bool followsDefault)
-				: m_info(std::move(info)), m_enumerator(std::move(enumerator)), m_exclusive(exclusive), m_output(output)
+			WasapiDevice(DeviceInfo info, const Endpoint& output, const Endpoint* input, double rate,
+				uint32_t blockSize, bool exclusive, bool followsDefault)
+				: m_info(std::move(info)), m_exclusive(exclusive), m_output(output)
 			{
 				initialize(m_output, rate, exclusive);
 				check(m_output.client->GetService(IID_PPV_ARGS(&m_render)), "IAudioClient::GetService");
@@ -469,17 +506,14 @@ namespace gnubase::audio
 					std::sort(m_info.blockSizes.begin(), m_info.blockSizes.end());
 				}
 
-				m_notifications =
-					Microsoft::WRL::Make<Notifications>(std::move(ids), followsDefault, [this] { requestReset(); });
-				check(m_enumerator->RegisterEndpointNotificationCallback(m_notifications.Get()),
-					"IMMDeviceEnumerator::RegisterEndpointNotificationCallback");
+				// Last: if the constructor throws, the destructor that unsubscribes doesn't run.
+				Notifications::instance().subscribe(this, std::move(ids), followsDefault, [this] { requestReset(); });
 			}
 
 			~WasapiDevice() override
 			{
 				WasapiDevice::stop(); // not virtually: a derived device would be gone already
-				m_notifications->detach();
-				m_enumerator->UnregisterEndpointNotificationCallback(m_notifications.Get());
+				Notifications::instance().unsubscribe(this);
 			}
 
 			const DeviceFormat& format() const override { return m_format; }
@@ -499,7 +533,14 @@ namespace gnubase::audio
 					"IAudioRenderClient::ReleaseBuffer");
 				if (m_input)
 					check(m_input->client->Start(), "starting the input");
-				check(m_output.client->Start(), "starting the output");
+				const HRESULT started = m_output.client->Start();
+				if (FAILED(started) && m_input)
+				{
+					// Else the input would go on capturing and signalling its event.
+					m_input->client->Stop();
+					m_input->client->Reset();
+				}
+				check(started, "starting the output");
 				ResetEvent(m_stop.get());
 				m_thread = std::thread([this, &callback] { run(callback); });
 			}
@@ -628,13 +669,11 @@ namespace gnubase::audio
 
 			MtaUsage m_mta;
 			DeviceInfo m_info;
-			ComPtr<IMMDeviceEnumerator> m_enumerator;
 			bool m_exclusive;
 			Stream m_output;
 			std::optional<Stream> m_input;
 			ComPtr<IAudioRenderClient> m_render;
 			ComPtr<IAudioCaptureClient> m_capture;
-			ComPtr<Notifications> m_notifications;
 			DeviceFormat m_format;
 			DeviceLatency m_latency;
 
@@ -706,7 +745,7 @@ namespace gnubase::audio
 			std::unique_ptr<Device> open(const DeviceConfig& config) override
 			{
 				const MtaUsage mta;
-				ComPtr<IMMDeviceEnumerator> enumerator = makeEnumerator();
+				const ComPtr<IMMDeviceEnumerator> enumerator = makeEnumerator();
 				std::string outputId;
 				std::string inputId;
 				const bool followsDefault = config.device.empty() || config.device == "default";
@@ -758,8 +797,8 @@ namespace gnubase::audio
 					name = input ? output.name + " + " + input->name : output.name;
 				}
 				DeviceInfo info = makeInfo(id, name, output, input ? &*input : nullptr, rates);
-				return std::make_unique<WasapiDevice>(std::move(info), std::move(enumerator), output,
-					input ? &*input : nullptr, rate, config.blockSize, m_exclusive, followsDefault);
+				return std::make_unique<WasapiDevice>(std::move(info), output, input ? &*input : nullptr, rate,
+					config.blockSize, m_exclusive, followsDefault);
 			}
 
 		private:

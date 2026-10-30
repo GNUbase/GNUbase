@@ -340,6 +340,29 @@ TEST_CASE("a device passes its driver's reset requests on", "[unit]")
 	CHECK(resets == 1);
 }
 
+// Drivers ask for resets on threads of their own, e.g. WASAPI's endpoint notifications, also while the engine sets the
+// handler (#316). Each handler owns memory that replacing it frees, so a race shows under the thread sanitizer.
+TEST_CASE("a device takes a new reset handler while its driver asks for resets", "[unit]")
+{
+	DummyDevice device(DeviceFormat{}, 0);
+	std::atomic<int> resets{0};
+	std::atomic<bool> done{false};
+	std::thread driver(
+		[&device, &done]
+		{
+			while (!done.load())
+				device.requestReset();
+		});
+	while (resets.load() < 1000)
+	{
+		auto counter = std::make_shared<std::atomic<int>*>(&resets);
+		device.onReset([counter] { ++**counter; });
+	}
+	done = true;
+	driver.join();
+	CHECK(resets.load() >= 1000);
+}
+
 TEST_CASE("driver samples convert to float and back in every sample format", "[unit]")
 {
 	const std::array<float, 6> left{0.0f, 0.5f, -0.5f, 1.0f, -1.0f, 0.25f};
