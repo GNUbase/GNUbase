@@ -113,7 +113,7 @@ int main(int argc, char** argv)
 
 		ui::SdlWindowSystem windows;
 		ui::GpuRenderer renderer(windows);
-		ui::RmlUi rmlui(windows);
+		const ui::RmlUi rmlui(windows);
 		const std::filesystem::path resources(GNUBASE_RESOURCES_DIR);
 		ui::Fonts(resources / "fonts").load();
 		const ui::Themes themes(resources);
@@ -148,7 +148,8 @@ int main(int argc, char** argv)
 		SDL_Window* sdl = ui::SdlWindowSystem::sdlWindow(window.id());
 		const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(sdl));
 		const double refresh = mode != nullptr ? mode->refresh_rate : 0.0;
-		const double width = window.pixelSize().width / window.dpRatio(); // dp; the elements are as wide
+		const double width =
+			static_cast<double>(window.pixelSize().width) / window.dpRatio(); // dp; the elements are as wide
 		std::printf("SDL_GPU %s, %.0f x %.0f pixels at dp ratio %.2f, display refresh %.2f Hz\n",
 			renderer.driver().c_str(), static_cast<double>(window.pixelSize().width),
 			static_cast<double>(window.pixelSize().height), static_cast<double>(window.dpRatio()), refresh);

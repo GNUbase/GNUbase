@@ -358,7 +358,9 @@ namespace gnubase::ui
 			const CurvePoint& to = m_points[point + 1];
 			const double x1 = x(to.position);
 			if (from.shape == engine::AutomationShape::Step)
+			{
 				path.emplace_back(x1, y(from.value));
+			}
 			else if (from.shape == engine::AutomationShape::Curve && x1 > x0)
 			{
 				// A piece every 2 pixels.
