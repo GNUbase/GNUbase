@@ -6,6 +6,7 @@
 #include "ui/rmlui.h"
 #include "ui/shell.h"
 
+#include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
@@ -19,6 +20,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -463,4 +465,69 @@ TEST_CASE("file dialogs answer on the UI thread with what the user chose", "[uni
 	CHECK(results[2].first == "folder");
 	CHECK(results[2].second.error == "no file dialog on this system");
 	CHECK_FALSE(results[2].second.cancelled());
+}
+
+TEST_CASE("work posted from any thread runs on the UI thread in the shell's next step, which it wakes", "[unit]")
+{
+	Ui ui{{primary()}};
+	ui.shell.open(at({100, 100, 800, 600}));
+	const std::thread::id uiThread = std::this_thread::get_id();
+	std::thread::id ranOn;
+	int runs = 0;
+	std::thread engine(
+		[&]
+		{
+			ui.shell.post(
+				[&]
+				{
+					ranOn = std::this_thread::get_id();
+					++runs;
+				});
+		});
+	engine.join();
+	CHECK(runs == 0); // not before the shell steps
+	CHECK(ui.windows.wakes() == 1);
+
+	ui.shell.step(milliseconds(0));
+	CHECK(runs == 1);
+	CHECK(ranOn == uiThread);
+	ui.shell.step(milliseconds(0));
+	CHECK(runs == 1); // once
+}
+
+TEST_CASE("the theme applies in every window, also in windows opened later, without loading documents again", "[unit]")
+{
+	Ui ui{{primary()}};
+	const char* rml = R"(<rml><head><style>
+		body { color: #000000; }
+		@media (theme: day) { body { color: #ff0000; } }
+		@media (theme: night) { body { color: #0000ff; } }
+	</style></head><body/></rml>)";
+	const auto load = [&](ui::Window& window)
+	{
+		Rml::ElementDocument* document = window.context().LoadDocumentFromMemory(rml);
+		REQUIRE(document != nullptr);
+		document->Show();
+		return document;
+	};
+	ui::Window& first = ui.shell.open(at({100, 100, 800, 600}));
+	Rml::ElementDocument* document = load(first);
+	ui.shell.step(milliseconds(0));
+	CHECK(ui.shell.theme().empty());
+	CHECK(document->GetComputedValues().color() == Rml::Colourb(0, 0, 0));
+
+	ui.shell.setTheme("day");
+	CHECK(ui.shell.theme() == "day");
+	CHECK(first.renderRequested());
+	ui.shell.step(milliseconds(0));
+	CHECK(document->GetComputedValues().color() == Rml::Colourb(255, 0, 0));
+	ui.shell.setTheme("night");
+	ui.shell.step(milliseconds(0));
+	CHECK(first.context().GetDocument(0) == document); // the same document
+	CHECK(document->GetComputedValues().color() == Rml::Colourb(0, 0, 255));
+
+	ui::Window& second = ui.shell.open(at({200, 200, 800, 600}));
+	const Rml::ElementDocument* other = load(second);
+	ui.shell.step(milliseconds(0));
+	CHECK(other->GetComputedValues().color() == Rml::Colourb(0, 0, 255));
 }

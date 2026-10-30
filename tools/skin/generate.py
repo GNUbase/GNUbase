@@ -30,6 +30,7 @@ THEMES = {
         "radii": {"small": 3, "control": 5, "panel": 6, "round": 999},
         "borderWidths": {"hairline": 1, "control": 1, "focus": 2},
         "fontSizes": {"small": 11, "body": 13, "label": 12, "title": 15, "display": 20},
+        "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": True,
     },
     "dark": {
@@ -47,6 +48,7 @@ THEMES = {
         "radii": {"small": 3, "control": 4, "panel": 5, "round": 999},
         "borderWidths": {"hairline": 1, "control": 1, "focus": 2},
         "fontSizes": {"small": 11, "body": 13, "label": 12, "title": 15, "display": 20},
+        "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
     },
     "light": {
@@ -64,6 +66,7 @@ THEMES = {
         "radii": {"small": 3, "control": 5, "panel": 6, "round": 999},
         "borderWidths": {"hairline": 1, "control": 1, "focus": 2},
         "fontSizes": {"small": 11, "body": 13, "label": 12, "title": 15, "display": 20},
+        "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
     },
 }
@@ -272,7 +275,155 @@ def tokens_for(theme: dict) -> dict:
     result["cornerRadii"] = theme["radii"]
     result["borderWidths"] = theme["borderWidths"]
     result["fontSizes"] = theme["fontSizes"]
+    result["fontFamilies"] = theme["fontFamilies"]
     return result
+
+
+def luminance(color: str) -> float:
+    """Relative luminance of a #rrggbb color, 0 for black to 1 for white."""
+    def linear(channel: int) -> float:
+        c = channel / 255
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+    return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+
+
+def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
+    """The theme's style sheet: colors, fonts and skins for every widget state, inside the theme's media query.
+
+    resources/styles holds the layout; ui::Themes gives every document both (docs/features/themes.md).
+    """
+    c = theme["colors"]
+    sizes = theme["fontSizes"]
+    fonts = theme["fontFamilies"]
+    assets = manifest["assets"]
+    # Text on an accent-colored fill: dark on a light accent, white on a dark one.
+    on_accent = c["background"] if luminance(c["accent"]) > 0.4 else "#ffffff"
+
+    def skin(asset: str) -> str:
+        item = assets[asset]
+        if "slice" not in item:
+            return f"svg({item['file']})"
+        s = item["slice"]
+        return f"svg-ninepatch({item['file']}, {s['top']} {s['right']} {s['bottom']} {s['left']})"
+
+    rules = [
+        ("body", {"background-color": c["background"], "color": c["text"], "font-family": fonts["ui"],
+                  "font-size": f"{sizes['body']}dp"}),
+        ("h1", {"font-size": f"{sizes['title']}dp", "font-weight": "600"}),
+        ("h2", {"font-size": f"{sizes['body']}dp", "font-weight": "600"}),
+        (".text-small", {"font-size": f"{sizes['small']}dp", "color": c["textMuted"]}),
+        (".text-label", {"font-size": f"{sizes['label']}dp"}),
+        (".text-title", {"font-size": f"{sizes['title']}dp", "font-weight": "600"}),
+        (".text-display", {"font-size": f"{sizes['display']}dp", "font-weight": "600"}),
+        (".text-muted", {"color": c["textMuted"]}),
+        (".text-accent", {"color": c["accent"]}),
+        (".counter", {"font-family": fonts["counter"]}),
+        ("svg.icon", {"image-color": c["text"]}),
+        ("svg.icon.accent", {"image-color": c["accent"]}),
+        ("svg.icon.muted", {"image-color": c["textMuted"]}),
+        ("svg.icon.danger", {"image-color": c["danger"]}),
+        # Containers
+        (".dialog", {"decorator": skin("dialog")}),
+        (".dialog-titlebar", {"decorator": skin("dialog-titlebar"), "font-weight": "600"}),
+        (".panel", {"decorator": skin("panel")}),
+        (".panel-header", {"decorator": skin("panel-header"), "color": c["textMuted"],
+                           "font-size": f"{sizes['label']}dp"}),
+        (".toolbar", {"decorator": skin("toolbar")}),
+        (".display", {"decorator": skin("display"), "font-family": fonts["counter"], "color": c["text"]}),
+        (".tooltip", {"decorator": skin("tooltip"), "font-size": f"{sizes['small']}dp"}),
+        (".focus-ring", {"decorator": skin("focus-ring")}),
+        # Menus and lists, the drop-down list's too
+        (".menu, select selectbox", {"decorator": skin("menu")}),
+        (".menu-item:hover, select selectbox option:hover", {"decorator": skin("menu-item-hover")}),
+        (".menu-separator", {"decorator": skin("menu-separator")}),
+        (".list", {"decorator": skin("list")}),
+        (".list-item:hover", {"decorator": skin("list-item-hover")}),
+        (".list-item.selected, select selectbox option:checked", {"decorator": skin("list-item-selected")}),
+        # Tabs
+        ("tabset tabs", {"decorator": skin("tabbar")}),
+        ("tabset tab", {"decorator": skin("tab-normal"), "color": c["textMuted"]}),
+        ("tabset tab:hover", {"decorator": skin("tab-hover"), "color": c["text"]}),
+        ("tabset tab:selected", {"decorator": skin("tab-active"), "color": c["text"]}),
+        # Buttons
+        ("button", {"decorator": skin("button-normal"), "color": c["text"]}),
+        ("button:hover", {"decorator": skin("button-hover")}),
+        ("button:active", {"decorator": skin("button-pressed")}),
+        ("button.checked", {"decorator": skin("button-checked")}),
+        ("button:disabled", {"decorator": skin("button-disabled"), "color": c["textMuted"]}),
+        ("button.primary", {"decorator": skin("button-primary-normal"), "color": on_accent}),
+        ("button.primary:hover", {"decorator": skin("button-primary-hover")}),
+        ("button.primary:active", {"decorator": skin("button-primary-pressed")}),
+        ("button:focus-visible", {"decorator": f"{skin('button-normal')}, {skin('focus-ring')}"}),
+        ("button.primary:focus-visible", {"decorator": f"{skin('button-primary-normal')}, {skin('focus-ring')}"}),
+        ("button svg.icon", {"image-color": c["text"]}),
+        ("button:disabled svg.icon", {"image-color": c["textMuted"]}),
+        ("button.primary svg.icon", {"image-color": on_accent}),
+        # Toggle buttons: mute, solo, record and monitor
+        ("button.toggle", {"decorator": skin("toggle-off"), "color": c["textMuted"],
+                           "font-size": f"{sizes['small']}dp", "font-weight": "600"}),
+        ("button.toggle:hover", {"decorator": skin("toggle-hover"), "color": c["text"]}),
+    ]
+    for kind in ("mute", "solo", "record", "monitor"):
+        rules.append((f"button.toggle.{kind}.checked", {"decorator": skin(f"toggle-{kind}"), "color": c["text"]}))
+    rules += [
+        # Text fields
+        ("input.text, input.password, textarea", {"decorator": skin("field-normal"), "color": c["text"]}),
+        ("input.text:focus, input.password:focus, textarea:focus", {"decorator": skin("field-focus")}),
+        ("input.text:disabled, input.password:disabled, textarea:disabled",
+         {"decorator": skin("field-disabled"), "color": c["textMuted"]}),
+        ("input.text selection, input.password selection, textarea selection",
+         {"background-color": mix(c["surfaceRaised"], c["accent"], .45), "color": c["text"]}),
+        # Drop-down lists: open or focused, hovered, normal
+        ("select", {"decorator": skin("dropdown-normal"), "color": c["text"]}),
+        ("select:hover", {"decorator": skin("dropdown-hover")}),
+        ("select:focus", {"decorator": skin("dropdown-open")}),
+        ("select:disabled", {"decorator": skin("field-disabled"), "color": c["textMuted"]}),
+        ("select selectarrow, .dropdown-arrow", {"decorator": skin("dropdown-arrow")}),
+        # Check boxes and radio buttons
+        ("input.checkbox", {"decorator": skin("checkbox-off")}),
+        ("input.checkbox:checked", {"decorator": skin("checkbox-on")}),
+        ("input.checkbox.mixed", {"decorator": skin("checkbox-mixed")}),
+        ("input.radio", {"decorator": skin("radio-off")}),
+        ("input.radio:checked", {"decorator": skin("radio-on")}),
+        ("input.checkbox:disabled, input.radio:disabled", {"opacity": "0.5"}),
+        # Sliders and progress bars
+        ("input.range slidertrack, progress", {"decorator": skin("slider-track")}),
+        ("input.range sliderprogress, progress fill", {"decorator": skin("slider-fill")}),
+        ("input.range sliderbar", {"decorator": skin("slider-thumb")}),
+        # Scroll bars
+        ("scrollbarvertical slidertrack", {"decorator": skin("scrollbar-track-vertical")}),
+        ("scrollbarvertical sliderbar", {"decorator": skin("scrollbar-thumb-vertical")}),
+        ("scrollbarvertical sliderbar:hover, scrollbarvertical sliderbar:active",
+         {"decorator": skin("scrollbar-thumb-vertical-hover")}),
+        ("scrollbarhorizontal slidertrack", {"decorator": skin("scrollbar-track-horizontal")}),
+        ("scrollbarhorizontal sliderbar", {"decorator": skin("scrollbar-thumb-horizontal")}),
+        ("scrollbarhorizontal sliderbar:hover, scrollbarhorizontal sliderbar:active",
+         {"decorator": skin("scrollbar-thumb-horizontal-hover")}),
+        ("scrollbarcorner", {"background-color": mix(c["background"], c["surface"], .35)}),
+        # Mixer and editor graphics
+        (".knob", {"decorator": skin("knob-base")}),
+        (".knob-pointer", {"decorator": skin("knob-pointer")}),
+        (".fader", {"decorator": skin("fader-track")}),
+        (".fader-cap", {"decorator": skin("fader-cap")}),
+        (".meter", {"decorator": skin("meter-background")}),
+        (".meter-fill", {"decorator": skin("meter-fill")}),
+        (".meter-peak", {"decorator": skin("meter-peak")}),
+        (".splitter-grip-vertical", {"decorator": skin("splitter-grip-vertical")}),
+        (".splitter-grip-horizontal", {"decorator": skin("splitter-grip-horizontal")}),
+    ]
+
+    lines = ["/* SPDX-License-Identifier: GPL-3.0-or-later */",
+             f"/* The {name} theme: colors, fonts and skins of GNUbase's widgets (docs/features/themes.md). Generated by",
+             "   tools/skin/generate.py: change the generator and run it again rather than editing this file. */",
+             f"@media (theme: {name})", "{"]
+    for selector, declarations in rules:
+        lines.append(f"	{selector}")
+        lines.append("	{")
+        lines.extend(f"		{prop}: {value};" for prop, value in declarations.items())
+        lines.append("	}")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
 
 
 def write_theme(root: Path, name: str, theme: dict) -> dict:
@@ -293,6 +444,7 @@ def write_theme(root: Path, name: str, theme: dict) -> dict:
     manifest = {"theme": name, "units": "dp", "assets": assets}
     (dest / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
     (dest / "tokens.json").write_text(json.dumps(tokens_for(theme), indent=2) + "\n", encoding="utf-8", newline="\n")
+    (dest / "theme.rcss").write_text(theme_rcss(name, theme, manifest), encoding="utf-8", newline="\n")
     return manifest
 
 
@@ -349,13 +501,15 @@ Generated by `python tools/skin/generate.py resources/themes`. The generator is 
 
 ## Layout and naming
 
-Each theme (`gnubase`, `dark`, `light`) contains {count} SVG assets, `manifest.json`, and `tokens.json`. Stateful assets use `<component>-<state>.svg`. Manifest dimensions and slice insets are dp at 1×. Fixed assets omit `slice`.
+Each theme (`gnubase`, `dark`, `light`) contains {count} SVG assets, `manifest.json`, `tokens.json`, and `theme.rcss`. Stateful assets use `<component>-<state>.svg`. Manifest dimensions and slice insets are dp at 1×. Fixed assets omit `slice`.
+
+`theme.rcss` is the theme's style sheet: the colors, fonts, and skins of every widget state, all inside `@media (theme: <name>)`. GNUbase gives every document the shared style sheets in `resources/styles` and every theme's style sheet, and activates the theme the user chose; see `docs/features/themes.md`.
 
 ## 9-slice assets
 
 {nine}.
 
-Use the manifest's `left`, `top`, `right`, and `bottom` inset values. Corners are wholly inside those insets; only edges and centers should stretch. The offline `preview.html` renders every 9-slice at three sizes using CSS `border-image`.
+Use the manifest's `left`, `top`, `right`, and `bottom` inset values. Corners are wholly inside those insets; only edges and centers should stretch. In RCSS they are drawn with `decorator: svg-ninepatch(<file>, <top> <right> <bottom> <left>)`, which rasterizes each skin once per UI scale. The offline `preview.html` renders every 9-slice at three sizes using CSS `border-image`.
 
 ## Rendering rules
 

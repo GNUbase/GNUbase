@@ -8,6 +8,7 @@
 
 #include <RmlUi/Core/RenderInterface.h>
 
+#include <atomic>
 #include <cstddef>
 #include <deque>
 #include <map>
@@ -62,6 +63,10 @@ namespace gnubase::test
 		void setClipboardText(const std::string& text) override { m_clipboard = text; }
 		void showFileDialog(uint64_t id, const ui::FileDialog& dialog) override { m_dialogs[id] = dialog; }
 		std::optional<ui::WindowEvent> nextEvent(std::optional<std::chrono::milliseconds> timeout) override;
+		void wake() override;
+
+		// How often another thread woke the window system.
+		int wakes() const { return m_wakes; }
 
 	private:
 		// Remembers which of the window's text fields has the focus.
@@ -92,6 +97,8 @@ namespace gnubase::test
 		ui::WindowId m_nextId = 1;
 		std::string m_clipboard;
 		std::map<uint64_t, ui::FileDialog> m_dialogs;
+		std::atomic<int> m_wakes{0};
+		std::atomic<int> m_pendingWakes{0};
 	};
 
 	// Draws nothing; counts what it was asked to do. Captures are blank images at the window's pixel size.
@@ -113,6 +120,8 @@ namespace gnubase::test
 		const std::vector<ui::Image>& generatedTextures() const { return m_textures; }
 		// How many textures RmlUi released.
 		size_t releasedTextures() const { return m_released; }
+		// The vertices of every geometry RmlUi compiled so far, in order.
+		const std::vector<std::vector<Rml::Vertex>>& compiledGeometry() const { return m_geometry; }
 
 	private:
 		Rml::CompiledGeometryHandle CompileGeometry(
@@ -137,6 +146,7 @@ namespace gnubase::test
 		Rml::CompiledGeometryHandle m_nextGeometry = 1;
 		std::vector<ui::Image> m_textures;
 		size_t m_released = 0;
+		std::vector<std::vector<Rml::Vertex>> m_geometry;
 	};
 
 	// The fake window system, the null renderer, RmlUi and the shell, made and destroyed in the app's order.

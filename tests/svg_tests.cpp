@@ -5,11 +5,13 @@
 // window system, whose renderer keeps the textures RmlUi generates; tests/window_tests.cpp draws icons through
 // SDL_GPU at 100 %, 150 % and 200 % and compares them with golden images.
 #include "testutils/fakeui.h"
+#include "testutils/testutils.h"
 #include "ui/shell.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -18,7 +20,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -40,6 +44,12 @@ namespace
 				files.push_back(entry.path());
 		std::sort(files.begin(), files.end());
 		return files;
+	}
+
+	void write(const std::filesystem::path& file, const std::string& content)
+	{
+		std::ofstream out(file, std::ios::binary);
+		out << content;
 	}
 
 	// GNUbase's icons (resources/icons), all monochrome.
@@ -274,4 +284,96 @@ TEST_CASE("several hundred icons are rasterized once per icon and size, never in
 	}
 	for (int frame = 0; frame < 10; ++frame)
 		CHECK(graphics.draw().empty());
+}
+
+TEST_CASE("an SVG decorator finds its file next to the style sheet that names it", "[unit]")
+{
+	// A theme's style sheet names its graphics next to itself, wherever the document that uses it is.
+	const test::TempDir temp;
+	std::filesystem::create_directories(temp.path() / "theme");
+	std::filesystem::create_directories(temp.path() / "documents");
+	std::filesystem::copy_file(
+		resources() / "themes" / "gnubase" / "knob-base.svg", temp.path() / "theme" / "knob.svg");
+	write(temp.path() / "theme" / "theme.rcss", R"(
+		div { display: block; width: 30dp; height: 30dp; decorator: svg(knob.svg); }
+		div.skin { decorator: svg-ninepatch(knob.svg, 4); })");
+	write(temp.path() / "documents" / "page.rml", R"(<rml><head>
+		<link type="text/rcss" href="../theme/theme.rcss"/></head><body><div/><div class="skin"/></body></rml>)");
+
+	test::FakeUi fake{{{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}}};
+	const ui::Window& window = fake.shell.open(Graphics::spec());
+	Rml::ElementDocument* document =
+		window.context().LoadDocument((temp.path() / "documents" / "page.rml").generic_u8string());
+	REQUIRE(document != nullptr);
+	document->Show();
+	fake.shell.step(milliseconds(0));
+
+	// The plain decorator at the element's size, the skin at the file's own size.
+	std::vector<std::pair<int, int>> sizes;
+	for (const ui::Image& texture : fake.renderer.generatedTextures())
+		sizes.emplace_back(texture.width, texture.height);
+	std::sort(sizes.begin(), sizes.end());
+	CHECK(sizes == std::vector<std::pair<int, int>>{{30, 30}, {40, 40}});
+}
+
+TEST_CASE("a 9-slice skin keeps its corners at their size and stretches its edges and middle", "[unit]")
+{
+	Graphics graphics;
+	const std::filesystem::path button = resources() / "themes" / "gnubase" / "button-normal.svg"; // 24 x 24 dp
+	graphics.show("<div style=\"display: block; width: 100dp; height: 40dp; decorator: svg-ninepatch(&quot;" +
+		button.generic_u8string() + "&quot;, 6 6 6 6);\"/>");
+	for (const float scale : {1.0F, 1.5F, 2.0F})
+	{
+		INFO("UI scale " << scale);
+		graphics.fake.shell.setUiScale(scale);
+		const size_t compiled = graphics.fake.renderer.compiledGeometry().size();
+		const std::vector<ui::Image> textures = graphics.draw();
+
+		// The skin is rasterized at its own size in pixels, not the element's.
+		REQUIRE(textures.size() == 1);
+		CHECK(textures[0].width == static_cast<int>(24.0F * scale));
+		CHECK(textures[0].height == static_cast<int>(24.0F * scale));
+
+		// Nine patches on a grid of four by four vertices: the corners are 6 dp, the edges and middle stretch.
+		std::vector<std::vector<Rml::Vertex>> patches;
+		const auto& geometry = graphics.fake.renderer.compiledGeometry();
+		for (size_t i = compiled; i < geometry.size(); ++i)
+			if (geometry[i].size() == 16)
+				patches.push_back(geometry[i]);
+		REQUIRE(patches.size() == 1);
+		const std::array<float, 4> columns = {0.0F, 6.0F * scale, 94.0F * scale, 100.0F * scale};
+		const std::array<float, 4> rows = {0.0F, 6.0F * scale, 34.0F * scale, 40.0F * scale};
+		const std::array<float, 4> texture = {0.0F, 0.25F, 0.75F, 1.0F};
+		for (size_t y = 0; y < 4; ++y)
+		{
+			for (size_t x = 0; x < 4; ++x)
+			{
+				const Rml::Vertex& vertex = patches[0][(y * 4) + x];
+				CHECK(vertex.position.x == Catch::Approx(columns.at(x)));
+				CHECK(vertex.position.y == Catch::Approx(rows.at(y)));
+				CHECK(vertex.tex_coord.x == Catch::Approx(texture.at(x)));
+				CHECK(vertex.tex_coord.y == Catch::Approx(texture.at(y)));
+			}
+		}
+	}
+}
+
+TEST_CASE("a 9-slice skin is rasterized once per scale, whatever the sizes of the elements it draws", "[unit]")
+{
+	Graphics graphics;
+	const std::filesystem::path field = resources() / "themes" / "gnubase" / "field-normal.svg"; // 24 x 24 dp
+	std::string rml;
+	for (const int width : {30, 80, 200, 420})
+		rml += "<div style=\"display: block; width: " + std::to_string(width) +
+			"dp; height: 24dp; decorator: svg-ninepatch(&quot;" + field.generic_u8string() + "&quot;, 6);\"/>";
+	graphics.show(rml);
+	const std::vector<ui::Image> first = graphics.draw();
+	REQUIRE(first.size() == 1);
+	CHECK(first[0].width == 24);
+	for (int frame = 0; frame < 10; ++frame)
+		CHECK(graphics.draw().empty());
+	graphics.fake.shell.setUiScale(2.0F);
+	const std::vector<ui::Image> scaled = graphics.draw();
+	REQUIRE(scaled.size() == 1);
+	CHECK(scaled[0].width == 48);
 }

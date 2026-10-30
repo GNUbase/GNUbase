@@ -12,7 +12,9 @@ library PlutoVG that comes with it.
   that an SVG can't make it read other files either: an image inside an SVG must be a `data:` URI.
 - **Use.** A document shows a graphic with the `<svg>` element, `<svg src="icons/transport-play.svg"/>`, or as a
   background with the decorator `decorator: svg(file)`. The element's size comes from the style sheet in `dp`, else
-  from the file's `width` and `height`, taken as dp.
+  from the file's `width` and `height`, taken as dp. Themes draw their 9-slice skins with `svg-ninepatch`
+  ([themes.md](themes.md)). A decorator finds its file relative to the style sheet that names it, or, in a `style`
+  attribute, relative to the document.
 - **Rasterizing.** LunaSVG rasterizes a graphic at the size it has on screen in pixels: a 24 dp icon is 24 pixels at
   100 %, 36 at 150 % and 48 at 200 %, whatever the reason for the dp ratio (the monitor's scale, the user's UI scale).
   When the size changes, RmlUi lays the element out again and the graphic is rasterized again at the new size.
@@ -26,13 +28,12 @@ library PlutoVG that comes with it.
   its `image-color`: a theme gives icons their colors in its style sheets (`image-color: #e8eaed`), and states such as
   `:hover` or `.muted` change the color without a new raster. Graphics with colors of their own keep them as long as
   `image-color` stays white, its default.
-- **Limits.** The decorator joins a relative file name to the path of the document it is used in, not to the style
-  sheet that names it, as image decorators do. Themes' style sheets (#53) need that fixed in the fork, or must name
-  graphics relative to the documents.
 - **Checks.** `tests/svg_tests.cpp`, on the fake window system, whose renderer keeps the textures RmlUi generates:
   - every icon and theme graphic loads through LunaSVG and rasterizes at its size, with something to see;
   - an icon is rasterized at its pixel size at 100 %, 150 % and 200 %, and so is a graphic drawn as a decorator;
   - icons rasterize `currentColor` white, while graphics with their own colors, or with their own `color`, keep them;
+  - a decorator finds its file next to the style sheet that names it, and a 9-slice skin keeps its corners at their
+    size and is rasterized once per scale ([themes.md](themes.md));
   - 672 icons on screen (every icon in three sizes and four colors) are rasterized once per icon and size; 100 steady
     frames and a change of color rasterize nothing, a new UI scale rasterizes each again once and releases the old
     rasters.
