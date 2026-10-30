@@ -28,6 +28,8 @@ add_library(gnubase-ui STATIC
 	gpurenderer.cpp
 	gpurenderer.h
 	image.cpp
+	keycommands.cpp
+	keycommands.h
 	livereload.cpp
 	livereload.h
 	pseudolocale.cpp
