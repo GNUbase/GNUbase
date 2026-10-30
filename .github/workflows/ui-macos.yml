@@ -9,6 +9,7 @@ on:
     paths:
       - src/ui/**
       - src/app/**
+      - resources/**
       - tests/CMakeLists.txt
       - tests/window_tests.cpp
       - tests/testutils/**
@@ -19,6 +20,7 @@ on:
       - ext/SDL
       - ext/RmlUi
       - ext/freetype
+      - ext/lunasvg
       - .github/workflows/ui-macos.yml
   push:
     branches: [main]
