@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Runs CI's checks on this machine, all at once, so a pull request doesn't have to wait for CI (CONTRIBUTING.md):
+# Runs CI's checks on this machine, all at once, e.g. to reproduce a CI failure (CONTRIBUTING.md):
 # - format: license headers, clang-format and, where the private keyword list is, the keyword scan;
 # - on Windows: windows-x64 (build and tests) and windows-arm64 (cross-compiled; its tests need an ARM64 machine);
 # - on Linux, and on Windows in WSL: linux-gcc and linux-clang (builds and tests), asan-ubsan, tsan and clang-tidy.
