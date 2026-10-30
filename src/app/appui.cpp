@@ -4,6 +4,11 @@
 #include "ui/fonts.h"
 #include "ui/widgets.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
+
+#include <stdexcept>
+
 namespace gnubase::app
 {
 	namespace
@@ -20,9 +25,26 @@ namespace gnubase::app
 		engine::Engine& engine, const std::filesystem::path& resources, const ui::WindowSpec& main, int msaaSamples)
 		: m_renderer(m_windows, msaaSamples), m_rmlui(m_windows), m_themes(fontsAndThemes(resources)),
 		  m_shell(m_windows, m_renderer), m_settings(engine, m_shell, m_themes),
-		  m_binding(engine, [this] { m_shell.wake(); }), m_main(m_shell.open(main))
+		  m_binding(engine, [this] { m_shell.wake(); }), m_main(m_shell.open(main)), m_engine(engine),
+		  m_resources(resources)
 	{
 		ui::registerWidgets(m_rmlui);
 		m_shell.eachStep([this] { return m_binding.update(); });
+	}
+
+	ui::EventDisplay& AppUi::showProject()
+	{
+		const std::filesystem::path file = m_resources / "ui" / "project.rml";
+		Rml::ElementDocument* document = m_main.context().LoadDocument(file.generic_u8string());
+		Rml::Element* root = document == nullptr ? nullptr : document->GetElementById("event-display");
+		if (root == nullptr)
+		{
+			if (document != nullptr)
+				document->Close();
+			throw std::runtime_error("cannot load the project window from " + file.u8string());
+		}
+		document->Show();
+		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
+		return *m_eventDisplay;
 	}
 }

@@ -54,6 +54,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   `.focus-ring`.
 - **Canvas elements** ([canvas.md](canvas.md)) by their tags: `event-lanes`, `waveform`, `curve` and `ruler`, with
   `color` and the canvas properties `stroke-color` and `stroke-width`.
+- **Event display** ([event-display.md](event-display.md)): `.event-display` with `.overview`, `.overview-view`,
+  `.project-cursor`, `.cross-hair-vertical` and `.cross-hair-horizontal`.
 
 ## Checks
 

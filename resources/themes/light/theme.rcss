@@ -398,4 +398,35 @@
 		stroke-width: 1dp;
 		font-size: 11dp;
 	}
+	.event-display
+	{
+		background-color: #eef1f5;
+	}
+	.event-display .overview
+	{
+		background-color: #ffffff;
+	}
+	.event-display .overview event-lanes
+	{
+		color: #90bcee;
+		stroke-color: transparent;
+	}
+	.event-display .overview-view
+	{
+		border-width: 1dp;
+		border-color: #0969da;
+		background-color: #0969da26;
+	}
+	.event-display ruler
+	{
+		background-color: #ffffff;
+	}
+	.event-display .project-cursor
+	{
+		background-color: #17202d;
+	}
+	.event-display .cross-hair-vertical, .event-display .cross-hair-horizontal
+	{
+		background-color: #a2aab4;
+	}
 }

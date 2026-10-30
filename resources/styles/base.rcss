@@ -500,3 +500,97 @@ meter .meter-peak
 	left: 0;
 	margin-bottom: -4dp;
 }
+
+/* The event display (docs/features/event-display.md): the overview line, then the ruler over the event lanes, with
+   the project cursor across both. Code sets only where the cursors and the overview's rectangle are; the cross-hair
+   cursor shows while the mouse is over the lanes. */
+.event-display
+{
+	position: relative;
+	overflow: hidden;
+}
+
+.event-display .overview
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 20dp;
+	overflow: hidden;
+}
+
+.event-display .overview event-lanes, .event-display .event-area event-lanes
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+}
+
+.event-display .overview-view
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	box-sizing: border-box;
+}
+
+.event-display .timeline
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 20dp;
+	bottom: 0;
+	overflow: hidden;
+}
+
+.event-display ruler
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 24dp;
+}
+
+.event-display .event-area
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 24dp;
+	bottom: 0;
+	overflow: hidden;
+}
+
+.event-display .project-cursor, .event-display .cross-hair-vertical
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 1dp;
+	pointer-events: none;
+}
+
+.event-display .cross-hair-horizontal
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 1dp;
+	pointer-events: none;
+}
+
+.event-display .cross-hair-vertical, .event-display .cross-hair-horizontal
+{
+	display: none;
+}
+
+.event-display.cross-hair .event-area:hover .cross-hair-vertical,
+.event-display.cross-hair .event-area:hover .cross-hair-horizontal
+{
+	display: block;
+}

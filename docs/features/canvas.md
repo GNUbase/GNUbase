@@ -13,7 +13,7 @@ editor and the automation lanes fill them.
 | `<event-lanes>` | `setLanes`: lanes with a height in dp and their events (start and length), by start | events as rectangles in `color`, outlined in `stroke-color`: the events of tracks, or a key editor's notes with one lane per pitch |
 | `<waveform>` | `setPeaks`: a time span and peak columns per channel as `media.peaks` returns them | the channels one above the other in `color`; a pixel shows the lowest and highest sample of the columns it covers, silence a line one pixel high |
 | `<curve>` | `setPoints`: points with a value from 0 to 1 and the shape of the segment that starts at them, by position | a line in `stroke-color`, `stroke-width` wide, level with the first point before it and with the last after it; steps, ramps and bent curves as the engine plays them (`engine::automationBend`) |
-| `<ruler>` | `setScale`: how to divide the timeline and label it (`RulerScale`) | ticks in `stroke-color` along the bottom, labelled major ticks to the top, labels in `color` and the element's font. The default counts in decimal steps of 1, 2 and 5; bars and beats, timecode and the other formats come with #84 |
+| `<ruler>` | `setScale`: how to divide the timeline and label it (`RulerScale`: the marks between two positions, labelled ones at least a given distance apart) | ticks in `stroke-color` along the bottom, labelled ticks to the top, labels in `color` and the element's font, at least their width and an em apart. The default counts in decimal steps of 1, 2 and 5; `ui/timeformat.h` has bars and beats, seconds, timecode and samples ([event-display.md](event-display.md)) |
 
 - **Time axis.** Positions are in whatever units the code that fills an element uses: ticks, samples or seconds. The
   attributes `start` (the position at the left edge, default 0) and `scale` (units per dp, default 1) map them to the
@@ -76,7 +76,7 @@ build/windows-x64/bin/Release/gnubase-canvas-bench
   filled and outlined in the style sheet's colors, which change with the style; of 10,000 events only those around the
   view are built, scrolling within the build only moves it, and zooming, resizing and new data build again; a waveform
   pixel shows the peaks of the columns it covers; a curve builds only the segments around the view; the ruler's
-  decimal scale and its labels.
+  decimal scale and its marks.
 - `tests/window_tests.cpp` draws all four through SDL_GPU at dp ratios 1 and 2 and checks their pixels: positions,
   outlines, clipping at the box, the waveform's full scale and silence, the curve's ramp, step and level, the ruler's
   ticks and labels, and scrolling.
