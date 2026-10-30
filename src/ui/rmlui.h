@@ -3,6 +3,7 @@
 
 #include <RmlUi/Core/ElementInstancer.h>
 #include <RmlUi/Core/FileInterface.h>
+#include <RmlUi/Core/Plugin.h>
 #include <RmlUi/Core/SystemInterface.h>
 
 #include <chrono>
@@ -106,11 +107,15 @@ namespace gnubase::ui
 		// Same, for elements that need more than their tag to be made.
 		void registerElement(const std::string& tag, std::unique_ptr<Rml::ElementInstancer> instancer);
 
+		// Registers an RmlUi plugin, e.g. one that hooks every document as it loads, until RmlUi shuts down.
+		void registerPlugin(std::unique_ptr<Rml::Plugin> plugin);
+
 		FileInterface& files() { return m_files; }
 
 	private:
 		SystemInterface m_system;
 		FileInterface m_files;
 		std::vector<std::unique_ptr<Rml::ElementInstancer>> m_instancers; // RmlUi uses them until Rml::Shutdown
+		std::vector<std::unique_ptr<Rml::Plugin>> m_plugins;              // the same
 	};
 }
