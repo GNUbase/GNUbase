@@ -54,7 +54,7 @@ TEST_CASE("UI tests run GNUbase's UI on the dummy device, with its fonts and the
 		app.setDpRatio(static_cast<float>(ratio));
 		CHECK(app.main().dpRatio() == static_cast<float>(ratio));
 		const std::string name = "app-sample-" + std::to_string(ratio) + "x";
-		app.checkGolden(name, app.screenshot(name, {320, 240}));
+		test::UiApp::checkGolden(name, app.screenshot(name, {320, 240}));
 	}
 }
 
