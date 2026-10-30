@@ -410,3 +410,35 @@ TEST_CASE("keys zoom the project window", "[ui]")
 	app.ui().key(std::nullopt, "F");
 	CHECK(display.autoScroll());
 }
+
+TEST_CASE("keys edit the selected events in the project window", "[ui]")
+{
+	test::UiApp app({800, 300});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	const auto part = app.call("midiPart.add", {{"track", track.at("id")}, {"position", 0}, {"length", 4 * 1720320}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	const auto parts = [&app] { return app.call("project.get").at("midiParts"); };
+
+	// The reference's keys (manual p. 1564): select all, duplicate, mute, nudge, delete with Backspace.
+	// Until the display shows the part.
+	REQUIRE(app.waitUntil(
+		[&app, &display, part]
+		{
+			app.ui().key(std::nullopt, "Mod+A");
+			return display.selection() == std::vector<uint64_t>{part};
+		}));
+	app.ui().key(std::nullopt, "Mod+D");
+	REQUIRE(app.waitUntil([&parts] { return parts().size() == 2; }));
+	REQUIRE(
+		app.waitUntil([&display, part] { return display.selection().size() == 1 && display.selection()[0] != part; }));
+	app.ui().key(std::nullopt, "Shift+M");
+	REQUIRE(app.waitUntil([&parts] { return parts()[1].at("mute") == true; }));
+	app.ui().key(std::nullopt, "Mod+Right");
+	REQUIRE(app.waitUntil([&parts] { return parts()[1].at("position") == 5 * 1720320; }));
+	app.ui().key(std::nullopt, "Backspace");
+	REQUIRE(app.waitUntil([&parts] { return parts().size() == 1; }));
+	CHECK(app.keys().keysFor("edit.delete") == std::vector<std::string>{"Delete", "Backspace"});
+}

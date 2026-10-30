@@ -83,10 +83,12 @@ there), `edit.glue`, `edit.duplicate`, `edit.fillLoop`, `edit.toRealCopy`, `edit
 submenu `edit.selectAll`, `edit.selectNone`, `edit.invertSelection`, `edit.selectInLoop`,
 `edit.selectFromStartToCursor`, `edit.selectFromCursorToEnd` and `edit.selectUnderCursor` (on every track until the
 track list, #81, selects tracks). `repeat(count, shared)` is the Repeat Events dialog's action. Copies, duplicates
-and new parts become the selection.
+and new parts become the selection. `app::AppUi` binds the reference's keys for them in the project window
+([key-commands.md](key-commands.md)): Delete and Backspace delete, Mod+D duplicates, Alt+X splits at the cursor, Mod
+and the arrows nudge, and so on.
 
 Not yet: the info line (#89, which `event.get` feeds), a selection rectangle, the arrow keys' selection, the drag
-delay, the Repeat Events dialog, default keys for the edit commands, a lock and a shared copy icon on events, and
+delay, the Repeat Events dialog, a lock and a shared copy icon on events, and
 moving a selection on several tracks to other tracks.
 
 ## Checks
@@ -99,5 +101,7 @@ moving a selection on several tracks to other tracks.
   with drags, shared copies with Alt and Shift, onto another track; resizing at the edges, splitting with Alt, adding
   parts with a double click at a bar and between the locators; every edit command on the selection, the select
   submenu, muted events shown greyed out and locked ones kept.
+- `tests/uiapp_tests.cpp` presses the default keys in the app's project window: select all, duplicate, mute, nudge
+  and Backspace.
 - `tests/lua/events.lua`: a muted part is silent and plays again after undo; duplicating, shared copies, splitting and
   gluing from Lua.

@@ -36,7 +36,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 8> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 34> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -45,6 +45,33 @@ namespace gnubase::app
 			{"zoom.undo", "Undoes the project window's last zoom.", nullptr},
 			{"zoom.redo", "Redoes the project window's last undone zoom.", nullptr},
 			{"view.autoScroll", "Switches the project window's auto-scroll on or off.", "F"},
+			// Editing parts and events (docs/features/parts-and-events.md); Backspace deletes too.
+			{"edit.delete", "Deletes the selected events.", "Delete"},
+			{"edit.mute", "Mutes the selected events.", "Shift+M"},
+			{"edit.unmute", "Unmutes the selected events.", "Shift+U"},
+			{"edit.lock", "Locks the selected events.", "Mod+Shift+L"},
+			{"edit.unlock", "Unlocks the selected events.", "Mod+Shift+U"},
+			{"edit.splitAtCursor", "Splits the selected events, or all there, at the project cursor.", "Alt+X"},
+			{"edit.splitLoop", "Splits the selected events, or all there, at the locators.", nullptr},
+			{"edit.glue", "Glues the selected events together.", nullptr},
+			{"edit.duplicate", "Duplicates the selected events.", "Mod+D"},
+			{"edit.fillLoop", "Fills the locator range with copies of the selected events.", nullptr},
+			{"edit.toRealCopy", "Converts the selected shared copies to real copies.", nullptr},
+			{"edit.nudgeLeft", "Moves the selected events left.", "Mod+Left"},
+			{"edit.nudgeRight", "Moves the selected events right.", "Mod+Right"},
+			{"edit.nudgeStartLeft", "Moves the start of the selected events left.", "Alt+Left"},
+			{"edit.nudgeStartRight", "Moves the start of the selected events right.", "Alt+Shift+Right"},
+			{"edit.nudgeEndLeft", "Moves the end of the selected events left.", "Alt+Shift+Left"},
+			{"edit.nudgeEndRight", "Moves the end of the selected events right.", "Alt+Right"},
+			{"edit.moveStartToCursor", "Moves the selected events so that they start at the project cursor.", "Mod+L"},
+			{"edit.moveEndToCursor", "Moves the selected events so that they end at the project cursor.", nullptr},
+			{"edit.selectAll", "Selects every event in the project window.", "Mod+A"},
+			{"edit.selectNone", "Selects no events.", "Mod+Shift+A"},
+			{"edit.invertSelection", "Selects the events that aren't selected, and no others.", "Mod+Alt+I"},
+			{"edit.selectInLoop", "Selects the events between the locators.", nullptr},
+			{"edit.selectFromStartToCursor", "Selects the events that end before the project cursor.", nullptr},
+			{"edit.selectFromCursorToEnd", "Selects the events that start after the project cursor.", nullptr},
+			{"edit.selectUnderCursor", "Selects the events at the project cursor.", nullptr},
 		}};
 	}
 
@@ -80,6 +107,7 @@ namespace gnubase::app
 			if (command.keys != nullptr)
 				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
 		}
+		m_keys.bind({"Backspace", "edit.delete", engine::Json::object(), "project"});
 	}
 
 	ui::EventDisplay& AppUi::showProject()
