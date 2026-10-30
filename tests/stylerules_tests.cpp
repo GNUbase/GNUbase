@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The UI's styling rules (CLAUDE.md, "UI conventions"; #53): C++ and Lua code never set a style property such as a
 // color, font, border or spacing. They change an element's classes and pseudo-classes, and the style sheets decide how
-// each state looks. Code may set only geometry that comes from data, such as a position, a size or a transform. Nor do
+// each state looks. Code may set only geometry that comes from data, such as a position, a size or a transform, and
+// colors that are data themselves, such as the color a color picker picks, in the files listed below. Nor do
 // documents and the shared style sheets name a theme: ui::Themes gives them the active one (docs/features/themes.md).
 #include "testutils/testutils.h"
 
@@ -24,6 +25,14 @@ namespace
 		return properties;
 	}
 
+	// Colors that are data themselves, by the file that shows them: the color picker's field and swatches.
+	std::set<std::string> dataColors(const std::filesystem::path& file)
+	{
+		if (file.filename() == "colorwidgets.cpp")
+			return {"background-color"};
+		return {};
+	}
+
 	// RmlUi's property id, e.g. TransformOriginX, as the RCSS property name, transform-origin-x.
 	std::string propertyName(const std::string& id)
 	{
@@ -40,7 +49,7 @@ namespace
 	// Where the code sets a style property other than geometry, as "line N: <what>". Code in C++ calls
 	// Element::SetProperty with a property name or id, or sets the style attribute; Lua scripts use RmlUi's Lua
 	// API, element.style.<name>, element.style["<name>"], SetProperty and SetAttribute.
-	std::vector<std::string> styleViolations(const std::string& code)
+	std::vector<std::string> styleViolations(const std::string& code, const std::set<std::string>& colors = {})
 	{
 		static const std::regex setProperty(
 			R"re(SetProperty\s*\(\s*(?:"([a-zA-Z-]+)"|(?:Rml::)?PropertyId::(\w+)|([^,)]*)))re");
@@ -67,7 +76,7 @@ namespace
 				if (match[1].matched || match[2].matched)
 				{
 					const std::string property = match[1].matched ? match[1].str() : propertyName(match[2].str());
-					if (geometry().count(property) == 0)
+					if (geometry().count(property) == 0 && colors.count(property) == 0)
 						report("sets the style property " + property);
 				}
 				else
@@ -81,7 +90,7 @@ namespace
 				for (char& c : property)
 					if (c == '_')
 						c = '-';
-				if (geometry().count(property) == 0)
+				if (geometry().count(property) == 0 && colors.count(property) == 0)
 					report("sets the style property " + property);
 			}
 			if (std::regex_search(line, styleAttribute))
@@ -133,6 +142,9 @@ TEST_CASE("the style check finds code that sets a style property, but allows geo
 	CHECK(styleViolations("if element.style.color == 'red' then end").empty());
 	CHECK(styleViolations(R"code(element->SetClass("muted", true); element->SetPseudoClass("checked", true);)code")
 			.empty());
+
+	// Colors that are data, where a file may show them.
+	CHECK(styleViolations(R"code(swatch->SetProperty("background-color", picked);)code", {"background-color"}).empty());
 }
 
 TEST_CASE("GNUbase's C++ and Lua code style elements through classes, never through style properties", "[unit]")
@@ -146,7 +158,7 @@ TEST_CASE("GNUbase's C++ and Lua code style elements through classes, never thro
 	for (const std::filesystem::path& file : code)
 	{
 		INFO(file);
-		CHECK(styleViolations(gnubase::test::readText(file)).empty());
+		CHECK(styleViolations(gnubase::test::readText(file), dataColors(file)).empty());
 	}
 }
 
