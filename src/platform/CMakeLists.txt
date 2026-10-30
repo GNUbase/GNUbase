@@ -41,6 +41,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	target_sources(gnubase-platform PRIVATE
 		audio/pipewire.cpp audio/pipewire.h)
 	target_link_libraries(gnubase-platform PRIVATE PkgConfig::PIPEWIRE)
+	# PipeWire's interface macros (pw_core_add_listener and the like) expand to GNU statement expressions, which
+	# clang's -Wpedantic reports at the call site.
+	set_source_files_properties(audio/pipewire.cpp PROPERTIES COMPILE_OPTIONS
+		$<$<CXX_COMPILER_ID:Clang>:-Wno-gnu-statement-expression-from-macro-expansion>)
 endif()
 if(APPLE)
 	target_sources(gnubase-platform PRIVATE
