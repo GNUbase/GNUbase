@@ -344,7 +344,7 @@ TEST_CASE("a window keeps drawing while its document animates", "[unit]")
 TEST_CASE("step tasks run in every step, and once a frame while they have values to follow", "[unit]")
 {
 	Ui ui({primary()});
-	ui::Window& window = ui.shell.open(at({100, 100, 800, 600}));
+	const ui::Window& window = ui.shell.open(at({100, 100, 800, 600}));
 	ui.shell.step(milliseconds(0));
 	int runs = 0;
 	bool following = false;
