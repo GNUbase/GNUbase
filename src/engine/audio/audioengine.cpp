@@ -135,13 +135,10 @@ namespace gnubase::engine
 
 		const processors::BuiltinInfo& generatorInfo(const std::string& id)
 		{
-			for (const processors::BuiltinInfo& info : processors::builtins())
-				if (info.id == id)
-				{
-					require(!info.instrument, id + " is not a generator");
-					return info;
-				}
-			throw CommandError("no built-in processor " + id);
+			const processors::BuiltinInfo* info = processors::findBuiltin(id);
+			require(info != nullptr, "no built-in processor " + id);
+			require(!info->instrument, id + " is not a generator");
+			return *info;
 		}
 	}
 
