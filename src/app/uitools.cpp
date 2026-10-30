@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/uitools.h"
 
+#include "engine/schema.h"
 #include "ui/automation.h"
 
 #include <algorithm>
@@ -97,8 +98,17 @@ namespace gnubase::app
 				(text.empty() || element.value("text", std::string()).find(text) != std::string::npos);
 		}
 
+		// Runs task on the UI thread, at once if the caller is on it, and returns what it returned.
+		template <typename Task> auto onUi(ui::Shell& shell, Caller caller, Task task)
+		{
+			if (caller == Caller::UiThread)
+				return task();
+			return ui::onUiThread(shell, std::move(task), g_uiTimeout);
+		}
+
 		// Waits until an element that the selector matches is visible, or until none is, and returns them.
-		Json wait(ui::Shell& shell, const std::shared_ptr<ui::Automation>& automation, const Json& arguments)
+		Json wait(
+			ui::Shell& shell, Caller caller, const std::shared_ptr<ui::Automation>& automation, const Json& arguments)
 		{
 			const std::optional<ui::WindowId> window = windowOf(arguments);
 			const auto selector = arguments.at("selector").get<std::string>();
@@ -109,9 +119,11 @@ namespace gnubase::app
 				std::chrono::milliseconds(std::llround(std::clamp(seconds, 0.0, g_maxWait) * 1000.0));
 			while (true)
 			{
-				const Json elements = ui::onUiThread(
-					shell, [automation, window, selector] { return automation->dom(window, selector, 0); }, g_uiTimeout)
-										  .at("elements");
+				const Json elements = onUi(shell, caller,
+					[automation, window, selector]
+					{
+						return automation->dom(window, selector, 0);
+					}).at("elements");
 				Json matching = Json::array();
 				for (const Json& element : elements)
 					if (visible ? shows(element, text)
@@ -130,27 +142,28 @@ namespace gnubase::app
 					message += visible ? "no visible element matches " + what : what + " is still visible";
 					throw std::runtime_error(message);
 				}
-				std::this_thread::sleep_for(g_waitInterval);
+				if (caller == Caller::UiThread)
+					shell.step(g_waitInterval); // lets the UI run, as the event loop does
+				else
+					std::this_thread::sleep_for(g_waitInterval);
 			}
 		}
 	}
 
-	void addUiTools(mcp::Server& server, ui::Shell& shell)
+	std::vector<mcp::Server::Tool> uiTools(ui::Shell& shell, Caller caller)
 	{
+		std::vector<mcp::Server::Tool> tools;
 		const auto automation = std::make_shared<ui::Automation>(shell);
 		// Runs work with the arguments on the UI thread.
-		const auto run = [&shell, automation](auto work)
+		const auto run = [&shell, caller, automation](auto work)
 		{
-			return [&shell, automation, work](const Json& arguments)
-			{
-				return ui::onUiThread(
-					shell, [automation, work, arguments] { return work(*automation, arguments); }, g_uiTimeout);
-			};
+			return [&shell, caller, automation, work](const Json& arguments)
+			{ return onUi(shell, caller, [automation, work, arguments] { return work(*automation, arguments); }); };
 		};
 		const Json elementResult = object({{"element", {{"type", {"object", "null"}}}}}, {"element"});
 		const Json focusResult = object({{"focus", {{"type", {"object", "null"}}}}}, {"focus"});
 
-		server.addTool({"ui_windows",
+		tools.push_back({"ui_windows",
 			"Lists GNUbase's open windows: each window's id, whether it's the main window, its size in pixels, its dp "
 			"ratio (pixels per density-independent pixel: its monitor's scale times the UI scale) and its documents "
 			"(title, source file, whether visible and modal). Coordinates in the other ui_ tools are in the window's "
@@ -158,7 +171,7 @@ namespace gnubase::app
 			object(Json::object()), object({{"windows", {{"type", "array"}}}}, {"windows"}), true,
 			run([](ui::Automation& ui, const Json& /*arguments*/) { return ui.windows(); })});
 
-		server.addTool({"ui_dom",
+		tools.push_back({"ui_dom",
 			"Reads a window's DOM (RmlUi documents): its documents, or with selector the elements that the CSS "
 			"selector matches (like querySelectorAll), each as a tree of elements with tag, id, classes, other "
 			"attributes, a form control's value, pseudo-classes such as hover, focus or checked, whether it's visible, "
@@ -176,21 +189,20 @@ namespace gnubase::app
 						windowOf(arguments), arguments.value("selector", std::string()), arguments.value("depth", -1));
 				})});
 
-		server.addTool({"ui_screenshot",
+		tools.push_back({"ui_screenshot",
 			"Takes a screenshot of a window, or with selector of the element it matches (its border box), as a PNG "
 			"image in the window's pixels.",
 			object(
 				{{"window", windowProperty()}, {"selector", {{"type", "string"}, {"description", "A CSS selector."}}},
 					{"index", {{"type", "integer"}, {"minimum", 0}}}}),
-			nullptr, true, [&shell, automation](const Json& arguments)
+			nullptr, true, [&shell, caller, automation](const Json& arguments)
 			{
-				const ui::Image image = ui::onUiThread(
-					shell, [automation, arguments]
-					{ return automation->screenshot(windowOf(arguments), targetOf(arguments)); }, g_uiTimeout);
+				const ui::Image image = onUi(shell, caller, [automation, arguments]
+					{ return automation->screenshot(windowOf(arguments), targetOf(arguments)); });
 				return Json::binary(ui::encodePng(image)); // encoded on this thread, not the UI's
 			}});
 
-		server.addTool({"ui_wait",
+		tools.push_back({"ui_wait",
 			"Waits until an element that the CSS selector matches is visible, and has the text if one is given; with "
 			"visible false, until none is. Returns the elements the selector matches then (with the text), like "
 			"ui_dom with depth 0, or an error after the seconds have passed.",
@@ -205,9 +217,10 @@ namespace gnubase::app
 							{"description", "How long to wait at most; 5 if left out."}}}},
 				{"selector"}),
 			object({{"elements", {{"type", "array"}}}}, {"elements"}), true,
-			[&shell, automation](const Json& arguments) { return wait(shell, automation, arguments); }});
+			[&shell, caller, automation](const Json& arguments)
+			{ return wait(shell, caller, automation, arguments); }});
 
-		server.addTool({"ui_move",
+		tools.push_back({"ui_move",
 			"Moves the mouse to the centre of an element or to a point, e.g. to hover over it. Returns the element "
 			"now under the mouse.",
 			object(targetProperties()), elementResult, false,
@@ -219,7 +232,7 @@ namespace gnubase::app
 		clickProperties["count"] = {{"type", "integer"}, {"minimum", 1}, {"maximum", 3},
 			{"description", "2 for a double click; 1 if left out."}};
 		clickProperties["modifiers"] = modifiersProperty("Keys held while clicking.");
-		server.addTool({"ui_click",
+		tools.push_back({"ui_click",
 			"Clicks the centre of the element that the CSS selector matches, or a point. The element must be visible. "
 			"Returns the element under the mouse, the one that got the click unless another covers it.",
 			object(std::move(clickProperties)), elementResult, false,
@@ -236,7 +249,7 @@ namespace gnubase::app
 		from["description"] = "Where to press the button: selector and index, or x and y.";
 		Json to = object(dragTarget);
 		to["description"] = "Where to release it, the same way.";
-		server.addTool({"ui_drag",
+		tools.push_back({"ui_drag",
 			"Drags with the left button from one element or point to another and drops there, e.g. a fader's cap, "
 			"finer with shift held. Returns the element under the mouse at the end.",
 			object({{"window", windowProperty()}, {"from", std::move(from)}, {"to", std::move(to)},
@@ -254,7 +267,7 @@ namespace gnubase::app
 		wheelProperties["dx"] = {{"type", "number"}, {"description", "Lines to the right; 0 if left out."}};
 		wheelProperties["dy"] = {{"type", "number"}, {"description", "Lines down; 0 if left out."}};
 		wheelProperties["modifiers"] = modifiersProperty("Keys held while turning the wheel.");
-		server.addTool({"ui_wheel",
+		tools.push_back({"ui_wheel",
 			"Turns the mouse wheel over an element or a point, or where the mouse is, e.g. to scroll a list or turn "
 			"a knob.",
 			object(std::move(wheelProperties)), elementResult, false,
@@ -265,7 +278,7 @@ namespace gnubase::app
 						arguments.value("dy", 0.0F), arguments.value("modifiers", std::vector<std::string>()));
 				})});
 
-		server.addTool({"ui_key",
+		tools.push_back({"ui_key",
 			"Presses and releases a key with modifiers, written like \"Enter\", \"Ctrl+Shift+S\" or \"Mod+Z\": "
 			"letters, digits, F1 to F24, Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, "
 			"Up, Down, Left, Right, Space, . , - +, and on the keypad Num0 to Num9, NumEnter, Num* Num/ Num+ Num- "
@@ -276,11 +289,33 @@ namespace gnubase::app
 			run([](ui::Automation& ui, const Json& arguments)
 				{ return ui.key(windowOf(arguments), arguments.at("keys").get<std::string>()); })});
 
-		server.addTool({"ui_text",
+		tools.push_back({"ui_text",
 			"Types text into the element with the keyboard focus, e.g. a text field that ui_click focused. Returns "
 			"that element.",
 			object({{"window", windowProperty()}, {"text", {{"type", "string"}}}}, {"text"}), focusResult, false,
 			run([](ui::Automation& ui, const Json& arguments)
 				{ return ui.text(windowOf(arguments), arguments.at("text").get<std::string>()); })});
+		return tools;
+	}
+
+	void addUiTools(mcp::Server& server, ui::Shell& shell)
+	{
+		for (mcp::Server::Tool& tool : uiTools(shell, Caller::OtherThread))
+			server.addTool(std::move(tool));
+	}
+
+	void addUiFunctions(scripting::Runtime& lua, ui::Shell& shell)
+	{
+		for (mcp::Server::Tool& tool : uiTools(shell, Caller::UiThread))
+		{
+			// The MCP server checks the arguments against the tool's schema; so does Lua.
+			lua.addFunction("ui." + tool.name.substr(3),
+				[schema = std::move(tool.inputSchema), run = std::move(tool.run)](const Json& parameters)
+				{
+					if (const std::string problem = engine::validate(parameters, schema); !problem.empty())
+						throw std::invalid_argument(problem);
+					return run(parameters);
+				});
+		}
 	}
 }

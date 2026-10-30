@@ -46,6 +46,7 @@ namespace gnubase::test
 		ui::Shell& shell() { return m_ui->shell(); }
 		ui::Window& main() { return m_ui->mainWindow(); }
 		ui::Automation& ui() { return *m_automation; }
+		scripting::Runtime& lua() { return m_ui->lua(); }
 		ui::KeyCommands& keys() { return m_ui->keyCommands(); }
 
 		// Runs an engine command that must succeed; returns its result.
