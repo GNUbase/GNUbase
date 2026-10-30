@@ -266,8 +266,12 @@ namespace gnubase::ui
 			refresh(*window);
 			break;
 		case WindowEventKind::Exposed:
+			window->m_renderRequested = true;
+			break;
 		case WindowEventKind::Input:
 			window->m_renderRequested = true;
+			if (event.key)
+				unusedKey(*window, *event.key);
 			break;
 		case WindowEventKind::FilesDropped:
 			drop(*window, event);
@@ -341,6 +345,12 @@ namespace gnubase::ui
 		for (auto& [id, window] : m_open)
 			if (window->m_renderRequested || nextUpdate(*window, now) <= now)
 				draw(*window);
+	}
+
+	void Shell::unusedKey(Window& window, const KeyPress& keys)
+	{
+		if (m_unusedKey)
+			m_unusedKey(window, keys);
 	}
 
 	void Shell::every(std::chrono::milliseconds interval, std::function<void()> task)

@@ -125,13 +125,14 @@ namespace gnubase::engine
 		m_jobs->registerCommands(*this);
 		m_project = std::make_unique<ProjectModel>();
 		m_project->registerCommands(*this, *m_jobs);
-		m_audio = std::make_unique<AudioEngine>(m_project->snapshots(), std::move(backends), std::move(midiBackends));
+		m_settings = std::make_unique<settings::Store>(settings::userFormat(), settingsDirectory);
+		settings::registerCommands(*this, *m_settings);
+		m_audio = std::make_unique<AudioEngine>(
+			m_project->snapshots(), *m_settings, std::move(backends), std::move(midiBackends));
 		m_audio->registerCommands(*this);
 		m_peaks = std::make_unique<peaks::PeakCache>(
 			[this](const std::string& name, const Json& data) { broadcast(name, data); });
 		m_peaks->registerCommands(*this);
-		m_settings = std::make_unique<settings::Store>(settings::userFormat(), settingsDirectory);
-		settings::registerCommands(*this, *m_settings);
 		m_thread = std::thread([this] { run(); });
 	}
 

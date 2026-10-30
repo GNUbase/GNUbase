@@ -698,7 +698,7 @@ Returns:
 
 #### `gnubase.channel.set`
 
-Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts between formats where a channel feeds a destination of another one: speakers both formats have connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, or to L and R at the pan law's center). instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 (silence) to the project's maxVolume (default 0); values beyond them stop there. The panner depends on the routing: a mono channel on a stereo destination has its position pan, -1 (left) to 1 (right), placed with the project's pan law; a stereo channel on a stereo or mono destination has the balance panner (panner balance, the default: pan turns down the other side) or the combined panner (panner combined: panLeft and panRight place its left and right channel, by default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when playback starts or jumps; automation of those controllers overrides them.
+Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts between formats where a channel feeds a destination of another one: speakers both formats have connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, or to L and R at the pan law's center). instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 (silence) to the project's maxVolume (default 0); values beyond them stop there. The panner depends on the routing: a mono channel on a stereo destination has its position pan, -1 (left) to 1 (right), placed with the project's pan law; a stereo channel on a stereo or mono destination has the balance panner (panner balance, the default: pan turns down the other side) or the combined panner (panner combined: panLeft and panRight place its left and right channel, by default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records (the default). Monitoring glides in and out over one audio block.
 
 Parameters:
 
@@ -709,12 +709,14 @@ Parameters:
 - `instrument`: string
 - `midiPan`: integer or null
 - `midiVolume`: integer or null
+- `monitor`: boolean
 - `output`: integer
 - `pan`: number
 - `panBypass`: boolean
 - `panLeft`: number
 - `panRight`: number
 - `panner`: one of "balance" | "combined"
+- `recordEnable`: boolean
 - `volume`: number
 
 Returns:
@@ -1250,6 +1252,17 @@ Returns:
 - `removedParts`: array of integer, required
 - `tracks`: array of integer, required
 
+#### `gnubase.midi.capture`
+
+What instruments played since the last call, at most 4096 MIDI 1.0 messages, oldest first, each with its instrument track's channel, its frame position on the audio device and its bytes: the events of the track's parts, of the MIDI tracks routed to it and what midi.inject played into them, with controller automation and the note-offs of a stop. A program change with a bank comes as bank select MSB and LSB, then the program change; SysEx isn't captured. dropped counts the messages that didn't fit.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `captured`: array, required
+- `dropped`: integer, required
+
 #### `gnubase.midi.deleteContinuousControllers`
 
 Removes the control changes of continuous controllers. Bank select, data entry, the switches 64-69 (such as the sustain pedal), data increment and decrement, NRPN, RPN and channel mode messages stay. Works on the MIDI parts in parts. Returns the parts it changed.
@@ -1361,6 +1374,15 @@ Parameters:
 Returns:
 
 - `parts`: array of integer, required
+
+#### `gnubase.midi.inject`
+
+Plays MIDI 1.0 channel messages into a MIDI or instrument track's channel as if they came from the track's MIDI input: the track sends them on to its instrument, before the events of its parts, also while the transport stands. bytes: a status byte from 0x80 to 0xEF and its data bytes. position: the message's frame on the audio device, as audio.capture and midi.monitor count them; messages for frames the device has processed already play at the start of its next block, those for one frame in the order they came. They wait until the device processes their block, at most 4096 at a time, and are dropped when the device changes. midi.capture returns what instruments played.
+
+Parameters:
+
+- `channel`: integer, required
+- `messages`: array of object, required
 
 #### `gnubase.midi.invert`
 
@@ -2010,7 +2032,7 @@ Only reads; changes nothing.
 
 Parameters:
 
-- `key`: one of "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
+- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
 
 Returns:
 
@@ -2036,7 +2058,7 @@ Puts a user setting back to its default, or every one without key, and saves the
 
 Parameters:
 
-- `key`: one of "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme". The setting.
+- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme". The setting.
 
 Returns:
 
@@ -2044,11 +2066,11 @@ Returns:
 
 #### `gnubase.settings.set`
 
-Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.busPresets` (object, default {"input":{},"output":{}}): The user's own bus presets, per direction (input, output) by name: each a list of busses with their name, format, ports and child busses (bus.savePreset); `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes.
+Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.autoMonitoring` (one of ["manual","whileRecordEnabled","whileRecording","tapeMachine"], default "tapeMachine"): When record-enabled audio tracks monitor their input, besides the monitor button: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records; `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.busPresets` (object, default {"input":{},"output":{}}): The user's own bus presets, per direction (input, output) by name: each a list of busses with their name, format, ports and child busses (bus.savePreset); `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes.
 
 Parameters:
 
-- `key`: one of "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
+- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
 - `value`: any, required. The new value; it must fit the setting's schema.
 
 Returns:
@@ -2124,13 +2146,14 @@ Returns:
 - `left`: integer, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required
 
 #### `gnubase.transport.get`
 
-Whether playback runs, the project cursor in samples, the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.
+Whether playback and recording run, the project cursor in samples, the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.
 
 Only reads; changes nothing.
 
@@ -2140,6 +2163,7 @@ Returns:
 - `left`: integer, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required
@@ -2159,6 +2183,7 @@ Returns:
 - `left`: integer, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required
@@ -2173,6 +2198,26 @@ Returns:
 - `left`: integer, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `recording`: boolean, required
+- `returnToStart`: boolean, required
+- `right`: integer, required
+- `startMode`: one of "cursor" | "cycleStart", required
+
+#### `gnubase.transport.record`
+
+Starts recording (record true, the default): playback starts as with transport.play if it stood, or recording punches in where it plays. record false punches out and playback goes on. Record-enabled tracks may monitor their input meanwhile, by the user setting audio.autoMonitoring (see channel.set).
+
+Parameters:
+
+- `record`: boolean
+
+Returns:
+
+- `cycle`: boolean, required
+- `left`: integer, required
+- `playing`: boolean, required
+- `position`: integer, required
+- `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required
@@ -2195,13 +2240,14 @@ Returns:
 - `left`: integer, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required
 
 #### `gnubase.transport.stop`
 
-Stops playback. With returnToStart the cursor goes back to where playback started or was last located to.
+Stops playback and recording. With returnToStart the cursor goes back to where playback started or was last located to.
 
 Returns:
 
@@ -2209,6 +2255,7 @@ Returns:
 - `left`: integer, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required
@@ -2223,6 +2270,7 @@ Returns:
 - `left`: integer, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required

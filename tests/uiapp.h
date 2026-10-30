@@ -47,6 +47,7 @@ namespace gnubase::test
 		ui::Window& main() { return m_ui->mainWindow(); }
 		ui::Automation& ui() { return *m_automation; }
 		scripting::Runtime& lua() { return m_ui->lua(); }
+		ui::KeyCommands& keys() { return m_ui->keyCommands(); }
 
 		// Runs an engine command that must succeed; returns its result.
 		engine::Json call(const std::string& command, const engine::Json& parameters = engine::Json::object());
