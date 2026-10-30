@@ -8,7 +8,6 @@
 
 #include <array>
 #include <cstdint>
-#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
@@ -61,8 +60,8 @@ namespace gnubase::engine::metronome
 		// What tells whether a file changed: its time and size, or nothing if it isn't there.
 		struct Stamp
 		{
-			std::filesystem::file_time_type modified;
-			uintmax_t size = 0;
+			uint64_t size = 0;
+			int64_t modified = 0; // ns since 1970
 			bool exists = false;
 
 			bool operator==(const Stamp& other) const

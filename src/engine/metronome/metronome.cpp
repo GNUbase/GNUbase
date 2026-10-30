@@ -4,11 +4,13 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
 #include "engine/dsp/dsp.h"
+#include "engine/peaks/peaks.h"
 #include "platform/log.h"
 
 #include <algorithm>
 #include <cmath>
-#include <system_error>
+#include <filesystem>
+#include <optional>
 
 namespace gnubase::engine::metronome
 {
@@ -101,15 +103,10 @@ namespace gnubase::engine::metronome
 
 	SoundLibrary::Stamp SoundLibrary::stamp(const std::string& path)
 	{
-		const std::filesystem::path file = std::filesystem::u8path(path);
-		std::error_code error;
-		Stamp result;
-		result.modified = std::filesystem::last_write_time(file, error);
-		if (error)
+		const std::optional<peaks::SourceStamp> found = peaks::sizeAndTime(std::filesystem::u8path(path));
+		if (!found)
 			return {};
-		result.size = std::filesystem::file_size(file, error);
-		result.exists = !error;
-		return result.exists ? result : Stamp{};
+		return {found->size, found->modified, true};
 	}
 
 	std::unique_ptr<const ClickConfig> compile(const MetronomeSettings& settings, const time::TempoMap& tempo,
