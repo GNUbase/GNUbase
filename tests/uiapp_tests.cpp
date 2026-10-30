@@ -14,13 +14,18 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/EventListener.h>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 using namespace gnubase;
 using engine::Json;
@@ -43,6 +48,70 @@ namespace
 	{
 		return {text, 0, std::nullopt};
 	}
+
+	// The one element that the selector matches, as MCP's ui_dom shows it.
+	Json element(test::UiApp& app, const std::string& selector)
+	{
+		const Json found = app.ui().dom(std::nullopt, selector, 0).at("elements");
+		REQUIRE(found.size() == 1);
+		return found[0];
+	}
+
+	size_t count(test::UiApp& app, const std::string& selector)
+	{
+		return app.ui().dom(std::nullopt, selector, 0).at("elements").size();
+	}
+
+	bool visible(test::UiApp& app, const std::string& selector)
+	{
+		return element(app, selector).at("visible").get<bool>();
+	}
+
+	bool hasClass(test::UiApp& app, const std::string& selector, const std::string& name)
+	{
+		const Json classes = element(app, selector).value("classes", Json::array());
+		return std::find(classes.begin(), classes.end(), name) != classes.end();
+	}
+
+	void click(test::UiApp& app, const ui::Target& target)
+	{
+		app.ui().click(std::nullopt, target, ui::MouseButton::Left, 1, {});
+	}
+
+	// The menu's item with that text, for the UI tools to click.
+	ui::Target menuItem(test::UiApp& app, const std::string& menu, const std::string& text)
+	{
+		const std::string items = menu + " > menuitem";
+		const Json found = app.ui().dom(std::nullopt, items, 0).at("elements");
+		size_t i = 0;
+		while (i < found.size() && found[i].value("text", "") != text)
+			++i;
+		INFO("the menu " << menu << " has no item " << text);
+		REQUIRE(i < found.size());
+		return {items, static_cast<int>(i), std::nullopt};
+	}
+
+	// Opens a menu with its button and clicks the item with that text, which closes the menu.
+	void choose(test::UiApp& app, const char* button, const std::string& menu, const std::string& text)
+	{
+		click(app, selector(button));
+		REQUIRE(visible(app, menu));
+		click(app, menuItem(app, menu, text));
+		CHECK(!visible(app, menu));
+	}
+
+	// The project window in a main window of 800 by 300 dp, at a dp ratio of 1.
+	struct ProjectWindow
+	{
+		ProjectWindow() : display(app.appUi().showProject())
+		{
+			app.setDpRatio(1.0F);
+			app.shell().step(std::chrono::milliseconds(0));
+		}
+
+		test::UiApp app{{800, 300}};
+		ui::EventDisplay& display;
+	};
 }
 
 TEST_CASE("UI tests run GNUbase's UI on the dummy device, with its fonts and theme, at a fixed dp ratio", "[ui]")
@@ -139,6 +208,162 @@ TEST_CASE("the project window shows events and the project cursor where the engi
 	CHECK(display.view().scale < 0.01);
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(element(".project-cursor").at("box").at("x").get<int>() - lanes.at("box").at("x").get<int>() == 150);
+}
+
+TEST_CASE("the ruler's time format menu opens from its arrow button and with a right click in the ruler", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	CHECK(!visible(app, "#ruler-format-menu"));
+
+	// The arrow at the ruler's right end opens it; the ruler's format is checked.
+	click(app, selector(".ruler-format"));
+	REQUIRE(visible(app, "#ruler-format-menu"));
+	CHECK(hasClass(app, "#ruler-format-menu > [format=barsBeats]", "checked"));
+	click(app, menuItem(app, "#ruler-format-menu", "Seconds"));
+	CHECK(window.display.rulerFormat() == ui::TimeFormat::Seconds);
+	CHECK(element(app, "ruler").at("attributes").at("format") == "seconds");
+	CHECK(hasClass(app, "#ruler-format-menu > [format=seconds]", "checked"));
+	CHECK(!hasClass(app, "#ruler-format-menu > [format=barsBeats]", "checked"));
+
+	// A right click anywhere in the ruler opens it at the mouse.
+	const Json ruler = element(app, "ruler").at("box");
+	const ui::Point at{ruler.at("x").get<int>() + 100, ruler.at("y").get<int>() + 4};
+	app.ui().click(std::nullopt, {"", 0, at}, ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#ruler-format-menu"));
+	CHECK(element(app, "#ruler-format-menu").at("box").at("x") == at.x);
+	const std::vector<std::pair<std::string, ui::TimeFormat>> formats = {{"Timecode", ui::TimeFormat::Timecode},
+		{"Samples", ui::TimeFormat::Samples}, {"fps (User)", ui::TimeFormat::UserFrames},
+		{"Bars+Beats", ui::TimeFormat::BarsBeats}};
+	for (const auto& [text, format] : formats)
+	{
+		if (!visible(app, "#ruler-format-menu"))
+			click(app, selector(".ruler-format"));
+		click(app, menuItem(app, "#ruler-format-menu", text));
+		CHECK(window.display.rulerFormat() == format);
+	}
+}
+
+TEST_CASE("the zoom presets menu adds, applies and organizes presets, and zooms full and to cycle markers", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	ui::EventDisplay& display = window.display;
+	const auto presets = [&app] { return app.call("settings.get", {{"key", "ui.zoomPresets"}}).at("value"); };
+
+	// Add: the zoom as it is, under a name typed into a dialog. Escape cancels it.
+	display.zoomTo(0.0, 4.0);
+	choose(app, "#zoom-presets", "#zoom-presets-menu", "Add...");
+	REQUIRE(app.waitUntil([&app] { return count(app, "#zoom-preset-name") == 1; }));
+	app.ui().text(std::nullopt, "Detail");
+	app.ui().key(std::nullopt, "Escape");
+	REQUIRE(app.waitUntil([&app] { return count(app, "#zoom-preset-name") == 0; }));
+	choose(app, "#zoom-presets", "#zoom-presets-menu", "Add...");
+	REQUIRE(app.waitUntil([&app] { return count(app, "#zoom-preset-name") == 1; }));
+	app.ui().text(std::nullopt, "Detail");
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&display] { return display.zoomPresets().size() == 1; }));
+	CHECK(presets() == Json::array({{{"name", "Detail"}, {"seconds", 4.0}}}));
+
+	// The presets come first in the menu; one applies, keeping the left edge.
+	display.zoomFull();
+	display.scrollTo(7.0);
+	choose(app, "#zoom-presets", "#zoom-presets-menu", "Detail");
+	CHECK(display.visibleLength() == Catch::Approx(4.0));
+	CHECK(display.view().start == Catch::Approx(7.0));
+	choose(app, "#zoom-presets", "#zoom-presets-menu", "Zoom Full");
+	CHECK(display.view().start == 0.0);
+	CHECK(display.visibleLength() == Catch::Approx(ui::g_minimumProjectLength));
+
+	// The project's cycle markers follow Zoom Full; one zooms to its range.
+	app.call("marker.add",
+		{{"type", "cycle"}, {"name", "Chorus"}, {"position", 8 * time::g_ticksPerQuarter},
+			{"end", 16 * time::g_ticksPerQuarter}}); // from 4 to 8 seconds at 120 BPM
+	REQUIRE(app.waitUntil([&app] { return count(app, "#zoom-presets-menu > menuitem[cycle-marker]") == 1; }));
+	choose(app, "#zoom-presets", "#zoom-presets-menu", "Chorus");
+	CHECK(display.view().start == Catch::Approx(4.0));
+	CHECK(display.visibleLength() == Catch::Approx(4.0));
+
+	// Organize: a dialog lists the presets to rename and delete; OK applies the changes, Cancel drops them.
+	app.call("settings.set",
+		{{"key", "ui.zoomPresets"},
+			{"value",
+				Json::array({{{"name", "Detail"}, {"seconds", 4.0}}, {{"name", "Overview"}, {"seconds", 120.0}}})}});
+	REQUIRE(app.waitUntil([&app] { return count(app, "#zoom-presets-menu > menuitem[preset]") == 2; }));
+	const auto organize = [&app]
+	{
+		choose(app, "#zoom-presets", "#zoom-presets-menu", "Organize...");
+		REQUIRE(app.waitUntil([&app] { return count(app, "#zoom-presets-dialog") == 1; }));
+		REQUIRE(count(app, "#zoom-presets-dialog .preset") == 2);
+	};
+	organize();
+	click(app, {"#zoom-presets-dialog .preset button", 1, std::nullopt});
+	CHECK(!visible(app, "#zoom-presets-dialog .preset.deleted"));
+	click(app, selector("#zoom-presets-dialog [result=cancel]"));
+	REQUIRE(app.waitUntil([&app] { return count(app, "#zoom-presets-dialog") == 0; }));
+	CHECK(display.zoomPresets().size() == 2);
+
+	organize();
+	click(app, {"#zoom-presets-dialog .preset input", 0, std::nullopt});
+	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().text(std::nullopt, "Close-up");
+	click(app, {"#zoom-presets-dialog .preset button", 1, std::nullopt}); // deletes Overview
+	click(app, selector("#zoom-presets-dialog button.primary"));
+	REQUIRE(app.waitUntil([&app] { return count(app, "#zoom-presets-dialog") == 0; }));
+	CHECK(display.zoomPresets() == Json::array({{{"name", "Close-up"}, {"seconds", 4.0}}}));
+	REQUIRE(app.waitUntil([&] { return presets() == display.zoomPresets(); }));
+	REQUIRE(app.waitUntil([&app] { return count(app, "#zoom-presets-menu > menuitem[preset]") == 1; }));
+	click(app, selector("#zoom-presets"));
+	CHECK(element(app, "#zoom-presets-menu > menuitem[preset]").at("text") == "Close-up");
+}
+
+TEST_CASE("the auto-scroll button switches auto-scroll, its menu sets the mode, and it shows suspension", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	ui::EventDisplay& display = window.display;
+
+	click(app, selector("#auto-scroll"));
+	CHECK(display.autoScroll());
+	CHECK(hasClass(app, "#auto-scroll", "checked"));
+
+	// The settings menu sets the mode and whether editing suspends auto-scroll, each checked while it's on.
+	click(app, selector("#auto-scroll-settings"));
+	CHECK(hasClass(app, "#page-scroll", "checked"));
+	CHECK(!hasClass(app, "#stationary-cursor", "checked"));
+	click(app, selector("#stationary-cursor"));
+	CHECK(display.autoScrollMode() == ui::AutoScrollMode::Stationary);
+	choose(app, "#auto-scroll-settings", "#auto-scroll-menu", "Suspend Auto-Scroll when Editing");
+	CHECK(display.suspendAutoScrollWhenEditing());
+	click(app, selector("#auto-scroll-settings"));
+	CHECK(hasClass(app, "#stationary-cursor", "checked"));
+	CHECK(!hasClass(app, "#page-scroll", "checked"));
+	CHECK(hasClass(app, "#suspend-auto-scroll", "checked"));
+	app.ui().key(std::nullopt, "Escape");
+
+	// While playing, a click in the event lanes suspends auto-scroll, which the button shows; a click on the button
+	// resumes it.
+	app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+	app.call("audio.start");
+	app.call("transport.play");
+	app.call("transport.locate", {{"position", 48000 * 30}});
+	REQUIRE(app.waitUntil([&display] { return display.view().start > 20.0; })); // the cursor in the middle
+	const Json lanes = element(app, "event-lanes.events").at("box");
+	click(app, {"", 0, ui::Point{lanes.at("x").get<int>() + 100, lanes.at("y").get<int>() + 10}});
+	CHECK(display.autoScrollSuspended());
+	CHECK(hasClass(app, "#auto-scroll", "suspended"));
+	click(app, selector("#auto-scroll"));
+	CHECK(display.autoScroll());
+	CHECK(!display.autoScrollSuspended());
+	CHECK(hasClass(app, "#auto-scroll", "checked"));
+	CHECK(!hasClass(app, "#auto-scroll", "suspended"));
+
+	// Another click switches it off.
+	click(app, selector("#auto-scroll"));
+	CHECK(!display.autoScroll());
+	CHECK(!hasClass(app, "#auto-scroll", "checked"));
+	app.call("transport.stop");
+	app.call("audio.stop");
 }
 
 // UI tests in Lua (#208): ctest runs each tests/lua/ui/*.lua through this test case, which GNUBASE_LUA_UI_TEST tells

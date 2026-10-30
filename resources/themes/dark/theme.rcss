@@ -117,6 +117,10 @@
 	{
 		color: #b7bbc0;
 	}
+	menuitem.checked
+	{
+		color: #5ea7b3;
+	}
 	.menu-separator, menuseparator
 	{
 		decorator: svg-ninepatch(menu-separator.svg, 2 2 2 2);
@@ -168,6 +172,11 @@
 	button.checked
 	{
 		decorator: svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	button.suspended
+	{
+		decorator: svg-ninepatch(button-normal.svg, 6 6 6 6);
+		color: #cda85f;
 	}
 	button:disabled
 	{
