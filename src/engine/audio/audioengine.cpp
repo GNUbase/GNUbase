@@ -4,6 +4,7 @@
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
 #include "engine/processors/builtin.h"
+#include "engine/settings/usersettings.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 
@@ -50,11 +51,13 @@ namespace gnubase::engine
 		Json transportSchema()
 		{
 			return Json::parse(R"({"type": "object",
-			"properties": {"playing": {"type": "boolean"}, "position": {"type": "integer"},
+			"properties": {"playing": {"type": "boolean"}, "recording": {"type": "boolean"},
+				"position": {"type": "integer"},
 				"left": {"type": "integer"}, "right": {"type": "integer"}, "cycle": {"type": "boolean"},
 				"startMode": {"type": "string", "enum": ["cursor", "cycleStart"]},
 				"returnToStart": {"type": "boolean"}},
-			"required": ["playing", "position", "left", "right", "cycle", "startMode", "returnToStart"]})");
+			"required": ["playing", "recording", "position", "left", "right", "cycle", "startMode",
+				"returnToStart"]})");
 		}
 
 		Json noParameters()
@@ -144,12 +147,12 @@ namespace gnubase::engine
 		}
 	}
 
-	AudioEngine::AudioEngine(rt::SnapshotPublisher<RenderSnapshot>& snapshots,
+	AudioEngine::AudioEngine(rt::SnapshotPublisher<RenderSnapshot>& snapshots, const settings::Store& settings,
 		std::vector<std::unique_ptr<audio::Backend>> backends,
 		std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends)
-		: m_snapshots(snapshots), m_backends(std::move(backends)), m_midi(std::move(midiBackends)),
-		  m_midiInput(graph::g_maxEventsPerBlock), m_generatorEvents(graph::g_maxEventsPerBlock),
-		  m_generatorOut(graph::g_maxEventsPerBlock)
+		: m_snapshots(snapshots), m_settings(settings), m_backends(std::move(backends)),
+		  m_midi(std::move(midiBackends)), m_midiInput(graph::g_maxEventsPerBlock),
+		  m_generatorEvents(graph::g_maxEventsPerBlock), m_generatorOut(graph::g_maxEventsPerBlock)
 	{
 	}
 
@@ -223,13 +226,26 @@ namespace gnubase::engine
 
 	void AudioEngine::sync()
 	{
-		if (m_device && m_snapshots.latest().revision != m_revision)
+		if (m_device && (m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring))
 			rebuild();
+	}
+
+	AutoMonitoring AudioEngine::autoMonitoring() const
+	{
+		const std::string mode = m_settings.get(settings::g_audioAutoMonitoring);
+		if (mode == "manual")
+			return AutoMonitoring::Manual;
+		if (mode == "whileRecordEnabled")
+			return AutoMonitoring::WhileRecordEnabled;
+		if (mode == "whileRecording")
+			return AutoMonitoring::WhileRecording;
+		return AutoMonitoring::TapeMachine;
 	}
 
 	void AudioEngine::rebuild()
 	{
 		const RenderSnapshot& snapshot = m_snapshots.latest();
+		m_autoMonitoring = autoMonitoring();
 		const audio::DeviceFormat& format = m_device->format();
 		graph::GraphDesc desc = graph::describe(snapshot);
 
@@ -366,30 +382,55 @@ namespace gnubase::engine
 				state->automation.setAutomation(std::move(automation));
 			states[channel.id] = state;
 			const Panning panning{channel.panner, channel.stereoPanner, channel.panBypass, snapshot.panLaw};
+			std::optional<Monitoring> monitoring;
+			if (channel.input >= 0)
+				monitoring = Monitoring{channel.monitor, channel.recordEnable, m_autoMonitoring};
 			for (graph::NodeDesc& node : desc.nodes)
 				if (node.kind == graph::NodeKind::Channel && node.object == channel.id)
-					node.processor = std::make_shared<ChannelStrip>(state, node.processor, panning);
+					node.processor = std::make_shared<ChannelStrip>(state, node.processor, panning, monitoring);
 		}
 		m_channelStates = std::move(states);
+	}
+
+	namespace
+	{
+		// The tracks that direct monitoring is for: groups aren't on the device, so what plays into one is
+		// monitored through the graph.
+		bool monitoredDirectly(const RenderChannel& channel)
+		{
+			return channel.type == TrackType::Audio && channel.input >= 0 &&
+				channel.output.kind == RenderTarget::Kind::Bus;
+		}
 	}
 
 	void AudioEngine::monitorDirectly(
 		const RenderSnapshot& snapshot, graph::GraphDesc& desc, const std::vector<std::vector<int>>& ports)
 	{
-		// Each input port plays on one output, the first track's that uses it; a mono input on a wider bus is panned
-		// to the bus's first port and the one after it, other inputs play on the port of the same channel.
-		std::map<int, audio::InputMonitor> monitors;
 		const int firstChannel = static_cast<int>(snapshot.busses.size());
 		for (size_t i = 0; i < snapshot.channels.size(); ++i)
 		{
 			const RenderChannel& channel = snapshot.channels[i];
-			if (channel.type != TrackType::Audio || channel.input < 0 || channel.output.kind != RenderTarget::Kind::Bus)
-				continue; // groups aren't on the device: what plays into one is monitored through the graph
+			if (!monitoredDirectly(channel))
+				continue;
 			const int node = firstChannel + static_cast<int>(i);
 			desc.audio.erase(std::remove_if(desc.audio.begin(), desc.audio.end(),
 								 [&channel, node](const graph::Connection& connection)
 								 { return connection.from == channel.input && connection.to == node; }),
 				desc.audio.end());
+		}
+		routeDirectly(snapshot, ports);
+	}
+
+	void AudioEngine::routeDirectly(const RenderSnapshot& snapshot, const std::vector<std::vector<int>>& ports)
+	{
+		// Each input port plays on one output, the first monitoring track's that uses it; a mono input on a wider bus
+		// is panned to the bus's first port and the one after it, other inputs play on the port of the same channel.
+		std::map<int, audio::InputMonitor> monitors;
+		for (const RenderChannel& channel : snapshot.channels)
+		{
+			const Monitoring monitoring{channel.monitor, channel.recordEnable, m_autoMonitoring};
+			if (!monitoredDirectly(channel) || !monitoring.active(m_transport.playing(), m_transport.recording()))
+				continue;
 			const std::vector<int>& inputs = ports[static_cast<size_t>(channel.input)];
 			const std::vector<int>& outputs = ports[static_cast<size_t>(channel.output.index)];
 			const bool panned = inputs.size() == 1 && outputs.size() > 1;
@@ -1224,8 +1265,9 @@ namespace gnubase::engine
 	Json AudioEngine::transportStatus() const
 	{
 		const TransportSettings& settings = m_transport.settings();
-		return {{"playing", m_transport.playing()}, {"position", m_transport.position()}, {"left", settings.left},
-			{"right", settings.right}, {"cycle", settings.cycle},
+		return {{"playing", m_transport.playing()}, {"recording", m_transport.recording()},
+			{"position", m_transport.position()}, {"left", settings.left}, {"right", settings.right},
+			{"cycle", settings.cycle},
 			{"startMode", settings.startMode == StartMode::CycleStart ? "cycleStart" : "cursor"},
 			{"returnToStart", settings.returnToStart}};
 	}
@@ -1335,6 +1377,9 @@ namespace gnubase::engine
 				[this, handle = std::move(handle)](CommandContext& context)
 				{
 					handle(context.parameters());
+					if (m_device && m_directMonitoring)
+						routeDirectly(m_snapshots.latest(),
+							devicePorts(m_snapshots.latest().busses, m_inputPorts, m_outputPorts));
 					Json result = transportStatus();
 					context.emit("transport.changed", result);
 					return result;
@@ -1345,9 +1390,21 @@ namespace gnubase::engine
 			"nothing while playing.",
 			nullptr, [this](const Json&) { play(); });
 		command("transport.stop",
-			"Stops playback. With returnToStart the cursor goes back to where playback started or was last located "
-			"to.",
+			"Stops playback and recording. With returnToStart the cursor goes back to where playback started or was "
+			"last located to.",
 			nullptr, [this](const Json&) { sent(m_transport.stop()); });
+		command("transport.record",
+			"Starts recording (record true, the default): playback starts as with transport.play if it stood, or "
+			"recording punches in where it plays. record false punches out and playback goes on. Record-enabled "
+			"tracks may monitor their input meanwhile, by the user setting audio.autoMonitoring (see channel.set).",
+			R"({"type": "object", "additionalProperties": false, "properties": {"record": {"type": "boolean"}}})",
+			[this](const Json& parameters)
+			{
+				const bool record = parameters.value("record", true);
+				if (record && !m_transport.playing())
+					play();
+				sent(m_transport.record(record));
+			});
 		command("transport.toggle", "Stops playback if it plays, otherwise starts it.", nullptr,
 			[this](const Json&)
 			{
@@ -1380,8 +1437,8 @@ namespace gnubase::engine
 			});
 		engine.registerCommand(
 			{"transport.get", 1,
-				"Whether playback runs, the project cursor in samples, the locators and the modes. After a locate the "
-				"cursor is where it goes, even before the audio thread has applied it.",
+				"Whether playback and recording run, the project cursor in samples, the locators and the modes. "
+				"After a locate the cursor is where it goes, even before the audio thread has applied it.",
 				noParameters(), transportSchema(), true},
 			[this](CommandContext&) { return transportStatus(); });
 	}

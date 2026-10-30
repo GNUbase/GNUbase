@@ -99,6 +99,8 @@ namespace gnubase::engine
 			render.panBypass = channel.panBypass;
 			render.midiVolume = channel.midiVolume;
 			render.midiPan = channel.midiPan;
+			render.monitor = channel.monitor;
+			render.recordEnable = channel.recordEnable;
 			render.autoFades = track.autoFades.value_or(project.autoFades);
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;

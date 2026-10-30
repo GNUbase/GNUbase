@@ -18,6 +18,7 @@ namespace gnubase::engine::settings
 	// feature lives; the preferences dialog (#162) shows them all.
 	inline constexpr Key<double> g_uiScale{"ui.scale"};
 	inline constexpr Key<std::string> g_uiTheme{"ui.theme"};
+	inline constexpr Key<std::string> g_audioAutoMonitoring{"audio.autoMonitoring"};
 	inline constexpr Key<std::string> g_audioBackend{"audio.backend"};
 	inline constexpr Key<std::string> g_audioDevice{"audio.device"};
 	inline constexpr Key<double> g_audioSampleRate{"audio.sampleRate"};

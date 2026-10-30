@@ -45,6 +45,17 @@ namespace gnubase::engine
 		if (!send({Request::Type::Stop, 0, {}, 0}))
 			return false;
 		m_requestedPlaying = false;
+		m_requestedRecording = false;
+		return true;
+	}
+
+	bool Transport::record(bool on)
+	{
+		Request request{Request::Type::Record, 0, {}, 0};
+		request.record = on;
+		if (!send(request))
+			return false;
+		m_requestedRecording = on && m_requestedPlaying;
 		return true;
 	}
 
@@ -87,6 +98,7 @@ namespace gnubase::engine
 			if (!m_playing)
 				return;
 			m_playing = false;
+			m_recording = false;
 			if (m_settings.returnToStart)
 				m_position = m_start;
 			return;
@@ -96,6 +108,9 @@ namespace gnubase::engine
 			return;
 		case Request::Type::Set:
 			m_settings = request.settings;
+			return;
+		case Request::Type::Record:
+			m_recording = request.record && m_playing;
 			return;
 		}
 	}
@@ -114,6 +129,7 @@ namespace gnubase::engine
 		GNUBASE_ASSERT(frames <= m_segments.size());
 		frames = std::min(frames, static_cast<uint32_t>(m_segments.size()));
 		m_block.playing = m_playing;
+		m_block.recording = m_recording;
 		m_block.position = m_position;
 		m_block.segmentCount = 0;
 		if (!m_playing)

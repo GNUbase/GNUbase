@@ -30,6 +30,11 @@ namespace gnubase::engine
 	class Engine;
 	struct RenderSnapshot;
 
+	namespace settings
+	{
+		class Store;
+	}
+
 	// Plays the project through an audio device. On the command thread it compiles the processing graph for the
 	// device's format whenever the project's render snapshot changes, and hands it to the audio thread. On the audio
 	// thread it copies the device inputs into the input busses, processes the graph where the transport plays and
@@ -47,10 +52,14 @@ namespace gnubase::engine
 	// The device comes from one of the audio backends (audio.devices, audio.setDevice). When its driver asks for a
 	// reset, the engine opens it again with the same settings and restarts it if it ran (audio.reset). The dummy
 	// device also renders offline and captures its output; its input can be one of the built-in generators.
+	//
+	// Audio tracks hear their input bus while they monitor it: with the monitor button, or record-enabled by the user
+	// setting audio.autoMonitoring and the transport's state (docs/features/latency-and-monitoring.md).
 	class AudioEngine : public audio::AudioCallback
 	{
 	public:
-		AudioEngine(rt::SnapshotPublisher<RenderSnapshot>& snapshots,
+		// The user settings are the engine's; only the command thread reads them.
+		AudioEngine(rt::SnapshotPublisher<RenderSnapshot>& snapshots, const settings::Store& settings,
 			std::vector<std::unique_ptr<audio::Backend>> backends,
 			std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends);
 		~AudioEngine() override; // stops the device
@@ -58,8 +67,9 @@ namespace gnubase::engine
 		// Registers audio.devices, audio.setDevice, audio.ports, audio.setProcessing, audio.get, audio.performance,
 		// audio.resetPerformance, audio.reset, audio.controlPanel, audio.render, audio.start, audio.stop,
 		// audio.capture and audio.captureInput, the transport commands transport.play, transport.stop,
-		// transport.toggle, transport.locate, transport.set, transport.exchangeLocators and transport.get, and the MIDI
-		// port commands (MidiPorts). audio.analyze, audio.compare and audio.record are in analysiscommands.cpp.
+		// transport.toggle, transport.record, transport.locate, transport.set, transport.exchangeLocators and
+		// transport.get, and the MIDI port commands (MidiPorts). audio.analyze, audio.compare and audio.record are in
+		// analysiscommands.cpp.
 		void registerCommands(Engine& engine);
 
 		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
@@ -68,7 +78,8 @@ namespace gnubase::engine
 		// Any thread but the audio thread, without waiting: the project cursor (Transport::position).
 		time::Samples position() const { return m_transport.position(); }
 
-		// Command thread: compiles a new graph if the project changed since the last one.
+		// Command thread: compiles a new graph if the project or the automatic monitoring mode changed since the last
+		// one.
 		void sync();
 
 		// Audio thread.
@@ -162,16 +173,22 @@ namespace gnubase::engine
 		std::vector<Release> releases();
 		// Puts every channel's processor into a channel strip with the channel's fader and automation.
 		void attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
+		AutoMonitoring autoMonitoring() const; // the user setting
 		// Direct monitoring: audio tracks that play into an output bus hear their input bus through the device
 		// instead of the graph. ports: the device channels of each bus (devicePorts).
 		void monitorDirectly(
 			const RenderSnapshot& snapshot, graph::GraphDesc& desc, const std::vector<std::vector<int>>& ports);
+		// Routes the inputs of the tracks that monitor while the transport is as requested; again after every
+		// transport command, since monitoring may follow the transport.
+		void routeDirectly(const RenderSnapshot& snapshot, const std::vector<std::vector<int>>& ports);
 		void stopMonitoringDirectly();
 		// Audio thread: the dummy device's input where recording places it (audio.captureInput).
 		void captureInput(const audio::DeviceBlock& block) noexcept;
 
 		rt::SnapshotPublisher<RenderSnapshot>& m_snapshots;
 		uint64_t m_revision = 0;
+		const settings::Store& m_settings;
+		AutoMonitoring m_autoMonitoring = AutoMonitoring::TapeMachine; // the graph's
 
 		Engine* m_engine = nullptr;
 		std::vector<std::unique_ptr<audio::Backend>> m_backends;
