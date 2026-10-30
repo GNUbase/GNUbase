@@ -384,4 +384,26 @@
 	{
 		decorator: svg(splitter-grip-horizontal.svg);
 	}
+	event-lanes
+	{
+		color: #3c575d;
+		stroke-color: #5ea7b3;
+		stroke-width: 1dp;
+	}
+	waveform
+	{
+		color: #5ea7b3;
+	}
+	curve
+	{
+		stroke-color: #7896bd;
+		stroke-width: 2dp;
+	}
+	ruler
+	{
+		color: #b7bbc0;
+		stroke-color: #484c50;
+		stroke-width: 1dp;
+		font-size: 11dp;
+	}
 }
