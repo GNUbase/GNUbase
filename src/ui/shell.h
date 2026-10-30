@@ -102,7 +102,7 @@ namespace gnubase::ui
 		void post(std::function<void()> task);
 
 		// Handles the events that arrive within timeout (all that are waiting, without timeout), then updates and
-		// draws every window that needs it.
+		// draws every window that needs it. Throws std::logic_error inside a step, e.g. from an event handler.
 		void step(std::optional<std::chrono::milliseconds> timeout);
 
 		// Steps until the shell quits, sleeping while no window needs drawing. Returns the exit code, 0.
@@ -165,6 +165,7 @@ namespace gnubase::ui
 		float m_uiScale = 1.0F;
 		std::string m_theme;
 		bool m_running = true;
+		bool m_stepping = false;
 		std::map<uint64_t, std::function<void(const FileDialogResult&)>> m_dialogs; // open file dialogs by id
 		uint64_t m_nextDialog = 1;
 		std::vector<Task> m_tasks;

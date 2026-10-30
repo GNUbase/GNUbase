@@ -4,6 +4,7 @@
 #include "uiapp.h"
 
 #include "engine/time/tempomap.h"
+#include "scripting/runtime.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
 #include "ui/eventdisplay.h"
@@ -16,6 +17,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -136,4 +139,18 @@ TEST_CASE("the project window shows events and the project cursor where the engi
 	CHECK(display.view().scale < 0.01);
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(element(".project-cursor").at("box").at("x").get<int>() - lanes.at("box").at("x").get<int>() == 150);
+}
+
+// UI tests in Lua (#208): ctest runs each tests/lua/ui/*.lua through this test case, which GNUBASE_LUA_UI_TEST tells
+// which file, in the source folder. The file runs in the app's UI Lua on the UI thread, and prints its report.
+TEST_CASE("a UI test written in Lua passes", "[.][ui][lua-ui]")
+{
+	const char* variable = std::getenv("GNUBASE_LUA_UI_TEST");
+	const std::string file = variable != nullptr ? variable : "";
+	REQUIRE(!file.empty());
+	test::UiApp app;
+	const std::optional<std::string> error = app.lua().runFile(std::filesystem::u8path(file));
+	INFO(error.value_or(""));
+	// Not CHECK_FALSE: Catch2's ContinueOnFailure | FalseTest trips clang-analyzer's EnumCastOutOfRange check
+	CHECK(!error.has_value());
 }
