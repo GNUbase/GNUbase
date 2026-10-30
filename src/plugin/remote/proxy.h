@@ -217,7 +217,7 @@ namespace gnubase::plugin::remote
 		std::function<void()> m_onDestroy;
 
 		// Serializes the slow main-thread calls, which are never meant to overlap.
-		std::mutex m_callMutex;
+		std::timed_mutex m_callMutex;
 		// Guards the binding pointer, the cached info and the parameter index; never held while waiting for the host.
 		mutable std::mutex m_mutex;
 		std::shared_ptr<Binding> m_binding;

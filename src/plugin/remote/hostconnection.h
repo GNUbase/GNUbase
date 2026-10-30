@@ -80,6 +80,9 @@ namespace gnubase::plugin::remote
 		// next block instead of waiting for their own deadline.
 		bool hung() const noexcept { return m_hung.load(std::memory_order_acquire); }
 		void markHung() noexcept { m_hung.store(true, std::memory_order_release); }
+		// [any] Its main thread didn't answer the last request in time: no new plugins go there until it answers one.
+		// Its plugins go on processing.
+		bool unresponsive() const noexcept { return m_unresponsive.load(std::memory_order_acquire); }
 
 		// Ends the process at once, as a crash would; the plugin control thread kills it. Returns once exited() is
 		// true, after a second at most. Never holds a lock meanwhile. Tests use it.
@@ -119,7 +122,7 @@ namespace gnubase::plugin::remote
 		uint32_t m_processId = 0;
 		platform::ChildProcess m_process; // the plugin control thread's while it runs
 
-		std::mutex m_sendMutex; // one sender at a time on the control ring
+		std::timed_mutex m_sendMutex; // one sender at a time on the control ring; others wait their own timeout at most
 		std::unique_ptr<MessageWriter> m_writer;
 		std::mutex m_mutex; // guards everything below
 		std::condition_variable m_replied;
@@ -131,6 +134,7 @@ namespace gnubase::plugin::remote
 		std::atomic<uint32_t> m_nextInstance{1};
 		std::atomic<bool> m_exited{false};
 		std::atomic<bool> m_hung{false};
+		std::atomic<bool> m_unresponsive{false};
 		std::atomic<bool> m_killRequested{false};
 		std::atomic<bool> m_stopping{false};
 		std::thread m_thread; // the plugin control thread

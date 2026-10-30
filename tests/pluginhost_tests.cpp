@@ -47,15 +47,16 @@ namespace
 	constexpr uint32_t g_maxFrames = 256;
 
 	// Parameter ids of the test plugins (tests/plugins/README.md).
-	constexpr uint32_t g_gain = 1;      // test:gain, dB
-	constexpr uint32_t g_hang = 1;      // test:hang, 0 or 1
-	constexpr uint32_t g_latency = 1;   // test:latency, samples
-	constexpr uint32_t g_seed = 1;      // test:stateblob
-	constexpr uint32_t g_stateSize = 2; // test:stateblob, bytes
-	constexpr uint32_t g_stall = 1;     // test:stall, ms
-	constexpr uint32_t g_value = 2;     // test:stall
-	constexpr uint32_t g_rescan = 4;    // test:stall
-	constexpr uint32_t g_resets = 3;    // test:stall
+	constexpr uint32_t g_gain = 1;       // test:gain, dB
+	constexpr uint32_t g_hang = 1;       // test:hang, 0 or 1
+	constexpr uint32_t g_hangOnLoad = 2; // test:hang, 0 or 1
+	constexpr uint32_t g_latency = 1;    // test:latency, samples
+	constexpr uint32_t g_seed = 1;       // test:stateblob
+	constexpr uint32_t g_stateSize = 2;  // test:stateblob, bytes
+	constexpr uint32_t g_stall = 1;      // test:stall, ms
+	constexpr uint32_t g_value = 2;      // test:stall
+	constexpr uint32_t g_rescan = 4;     // test:stall
+	constexpr uint32_t g_resets = 3;     // test:stall
 
 	plugins::HostManager::Options testOptions()
 	{
@@ -1060,6 +1061,51 @@ TEST_CASE("a values rescan keeps the parameter changes of a block its host can't
 	CHECK(savedValue(plugin, "test:stall", g_value) == 0.75);
 }
 
+TEST_CASE("the first block after a start its host can't take yet keeps its parameter changes, and resets the plugin",
+	"[integration]")
+{
+	plugins::HostManager::Options options = testOptions();
+	options.deadlines.realtimeMinimum = 20ms;
+	options.deadlines.realtimeMaximum = 20ms;
+	options.deadlines.hang = 10s;
+	plugins::HostManager manager(options);
+	std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager, {"test:stall", "", "GNUbase"});
+	plugin::remote::RemotePlugin& plugin = *remote;
+	SlotGraph stalling(std::move(remote), plugin::ProcessMode::Realtime);
+	LocalHost host;
+	SlotGraph reference(localPlugin("test:stall", host), plugin::ProcessMode::Realtime);
+	Noise noise;
+	const std::vector<float> input = noise.block(128);
+	REQUIRE(stalling.render(input) == reference.render(input));
+	const double resets = savedValue(plugin, "test:stall", g_resets);
+
+	// The plugin takes 300 ms, and processing stops and starts again meanwhile: the Start doesn't fit, and neither
+	// does the first block after it, with a new value.
+	CHECK(silent(stalling.render(input, {parameter(0, g_stall, 300.0)})));
+	plugin.stopProcessing();
+	CHECK(plugin.startProcessing());
+	CHECK(silent(stalling.render(input, {parameter(0, g_value, 0.75)})));
+	CHECK(eventually(
+		[&]
+		{
+			std::this_thread::sleep_for(5ms);
+			return stalling.render(input) == reference.render(input);
+		}));
+
+	// The change reached the plugin, which was reset since.
+	CHECK(plugin.failure() == plugin::remote::Failure::None);
+	CHECK(savedValue(plugin, "test:stall", g_value) == 0.75);
+	CHECK(savedValue(plugin, "test:stall", g_resets) > resets);
+
+	// A start its host takes at once: the first block's change goes with it, and nothing is reset.
+	const double settled = savedValue(plugin, "test:stall", g_resets);
+	plugin.stopProcessing();
+	CHECK(plugin.startProcessing());
+	CHECK(stalling.render(input, {parameter(0, g_value, 0.25)}) == reference.render(input));
+	CHECK(savedValue(plugin, "test:stall", g_value) == 0.25);
+	CHECK(savedValue(plugin, "test:stall", g_resets) == settled);
+}
+
 TEST_CASE("late blocks before a pause or a new start don't count towards the hang timeout", "[integration]")
 {
 	plugins::HostManager::Options options = testOptions();
@@ -1183,6 +1229,54 @@ TEST_CASE("an offline block that misses its deadline makes the plugin hang at on
 	CHECK(silent(hanging.render(input, {parameter(0, g_hang, 1.0)})));
 	CHECK(plugin.failure() == plugin::remote::Failure::Deadline);
 	CHECK(manager.hosts().at(0).state == "hung");
+}
+
+TEST_CASE("a host whose main thread doesn't answer gets no new plugins", "[integration]")
+{
+	plugins::HostManager::Options options = testOptions();
+	options.deadlines.query = 200ms;
+	options.deadlines.job = 2s; // the hanging plugin's destroy waits this long
+	plugins::HostManager manager(options);
+	const std::unique_ptr<plugin::remote::RemotePlugin> hanging = createRemote(manager, {"test:hang", "", "GNUbase"});
+	const std::unique_ptr<plugin::remote::RemotePlugin> before = createRemote(manager);
+	REQUIRE(manager.hosts().size() == 1); // the same vendor: the same process
+
+	// A flush while inactive hangs the host's main thread: the query isn't answered.
+	flush(*hanging, {paramEvent(g_hang, 1.0)});
+	const std::unique_ptr<plugin::remote::RemotePlugin> after = createRemote(manager);
+	CHECK(after->host() != before->host());
+	CHECK(manager.hosts().size() == 2);
+}
+
+TEST_CASE("a process mode change doesn't wait for a slow call of the same plugin", "[integration]")
+{
+	plugins::HostManager::Options options = testOptions();
+	options.deadlines.query = 200ms;
+	options.deadlines.job = 2s;
+	plugins::HostManager manager(options);
+	const std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager, {"test:hang", "", "GNUbase"});
+	plugin::remote::RemotePlugin& plugin = *remote;
+	flush(plugin, {paramEvent(g_hangOnLoad, 1.0)});
+	const std::vector<uint8_t> state = stateOf(plugin);
+
+	// Loading a state saved with Hang on load hangs the host's main thread until the job deadline.
+	std::atomic<bool> loading{false};
+	std::atomic<bool> loaded{true};
+	std::thread load(
+		[&]
+		{
+			loading = true;
+			loaded = plugin::extension<plugin::State>(plugin)->loadState(
+				state.data(), state.size(), plugin::StateContext::Project);
+		});
+	REQUIRE(eventually([&] { return loading.load(); }));
+	std::this_thread::sleep_for(100ms); // the load holds the plugin's calls now
+
+	const auto start = std::chrono::steady_clock::now();
+	CHECK(!plugin.setProcessMode(plugin::ProcessMode::Offline));
+	CHECK(std::chrono::steady_clock::now() - start < 1s);
+	load.join();
+	CHECK(!loaded);
 }
 
 TEST_CASE("a host process exits when the engine dies, even while a plugin blocks its main thread", "[integration]")

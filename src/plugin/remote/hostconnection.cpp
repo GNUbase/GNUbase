@@ -4,6 +4,7 @@
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 
+#include <algorithm>
 #include <exception>
 #include <optional>
 #include <string>
@@ -105,11 +106,19 @@ namespace gnubase::plugin::remote
 		ControlHeader header;
 		header.request = request;
 		header.instance = instance;
-		SendResult result = SendResult::Sent;
+		// A large message, e.g. a state, may take its whole timeout to go out: a quick request waits for it only as
+		// long as its own timeout allows.
+		const auto start = std::chrono::steady_clock::now();
+		std::unique_lock lock(m_sendMutex, timeout);
+		if (!lock.owns_lock())
 		{
-			const std::scoped_lock lock(m_sendMutex);
-			result = m_writer->send(type, header, body, timeout);
+			error = "the plugin host is still busy receiving another request";
+			return false;
 		}
+		const auto left =
+			std::chrono::duration_cast<std::chrono::milliseconds>(timeout - (std::chrono::steady_clock::now() - start));
+		const SendResult result = m_writer->send(type, header, body, std::max(left, std::chrono::milliseconds(0)));
+		lock.unlock();
 		switch (result)
 		{
 		case SendResult::Sent:
@@ -152,6 +161,8 @@ namespace gnubase::plugin::remote
 		m_pending.erase(id);
 		if (pending.done)
 			return std::move(pending.reply);
+		if (sent)
+			m_unresponsive.store(true, std::memory_order_release);
 		// A reply that comes later finds no request and is dropped.
 		if (sent)
 			return {false, "the plugin host did not answer in time", {}, true};
@@ -179,6 +190,7 @@ namespace gnubase::plugin::remote
 	{
 		if (message.type == Message::Reply)
 		{
+			m_unresponsive.store(false, std::memory_order_release); // a late reply too: the main thread is back
 			Reply reply;
 			if (message.tooLarge)
 			{

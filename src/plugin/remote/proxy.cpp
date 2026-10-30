@@ -234,7 +234,10 @@ namespace gnubase::plugin::remote
 	bool RemotePlugin::setProcessMode(ProcessMode mode)
 	{
 		rt::assertNotRealtime("RemotePlugin::setProcessMode");
-		const std::scoped_lock calls(m_callMutex);
+		// A quick query: it doesn't wait longer than its own deadline for a slow call, e.g. a state transfer.
+		const std::unique_lock calls(m_callMutex, m_deadlines.query);
+		if (!calls.owns_lock())
+			return false;
 		const std::shared_ptr<Binding> current = binding();
 		if (current->active)
 			return false;
@@ -578,7 +581,7 @@ namespace gnubase::plugin::remote
 		if (Binding* live = m_live.load(); live != nullptr)
 		{
 			// Only a plugin that refused to start isn't started. If Start came too late, or the host couldn't take
-			// it yet, the next block sends it again first; the host ignores a Start while it processes.
+			// it yet, the next block carries it; the host ignores a Start while it processes.
 			bool refused = false;
 			if (!live->started)
 			{
@@ -621,14 +624,15 @@ namespace gnubase::plugin::remote
 			m_busy.store(true);
 			if (Binding* live = m_live.load(); live != nullptr)
 			{
-				// After a move, the new instance starts with its first block. A Start that isn't answered in time is
-				// sent again with the next block, and this one is silence, so a callback waits one deadline at most.
-				if (!live->started)
-					live->started = exchange(*live, nullptr, Start, m_noEvents, nullptr).status != ProcessStatus::Error;
-				if (live->started && process.frames <= m_maxFrames)
+				if (process.frames <= m_maxFrames)
 				{
-					const Exchanged block = exchange(*live, &process, m_flags, process.eventsIn, &process.eventsOut);
+					// After a late start or a move, the instance starts with the block itself, so the block keeps its
+					// events like any other. Until a block is answered in time, each one carries Start again; the host
+					// ignores it while it processes.
+					const uint32_t flags = m_flags | (live->started ? 0U : static_cast<uint32_t>(Start));
+					const Exchanged block = exchange(*live, &process, flags, process.eventsIn, &process.eventsOut);
 					status = block.status;
+					live->started = live->started || status != ProcessStatus::Error;
 					// A block the host never got lost its notes and audio: the next one resets the plugin, so no
 					// note hangs.
 					m_flags = block.sent ? 0 : m_flags | Reset;

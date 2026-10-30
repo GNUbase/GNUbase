@@ -222,7 +222,7 @@ namespace gnubase::engine::plugins
 			if (const auto found = m_shared->hosts.find(group); found != m_shared->hosts.end())
 			{
 				const std::shared_ptr<HostConnection>& connection = found->second.connection;
-				if (connection && !connection->exited() && !connection->hung())
+				if (connection && !connection->exited() && !connection->hung() && !connection->unresponsive())
 					return connection;
 			}
 			// A new process, with the lowest log file number no other process of this manager uses.
