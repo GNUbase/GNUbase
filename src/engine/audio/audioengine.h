@@ -66,8 +66,8 @@ namespace gnubase::engine
 		~AudioEngine() override; // stops the device
 
 		// Registers audio.devices, audio.setDevice, audio.ports, audio.setProcessing, audio.get, audio.performance,
-		// audio.resetPerformance, audio.reset, audio.controlPanel, audio.render, audio.start, audio.stop,
-		// audio.capture and audio.captureInput, the transport commands transport.play, transport.stop,
+		// audio.resetPerformance, audio.simulateOverload, audio.reset, audio.controlPanel, audio.render, audio.start,
+		// audio.stop, audio.capture and audio.captureInput, the transport commands transport.play, transport.stop,
 		// transport.toggle, transport.record, transport.locate, transport.set, transport.exchangeLocators and
 		// transport.get, and the MIDI port commands (MidiPorts). audio.analyze, audio.compare and audio.record are in
 		// analysiscommands.cpp, midi.inject and midi.capture in miditap.cpp.
@@ -251,6 +251,7 @@ namespace gnubase::engine
 		PerformanceMeter m_meter; // audio thread, or the command thread while the device is stopped
 		rt::TripleBuffer<PerformanceData> m_performance;
 		std::atomic<bool> m_resetPerformance{false};
+		uint64_t m_deviceOverloadsBefore = 0; // the device's overloads when the measurement started
 
 		// The cue thread, while the device runs in real time. It reads the transport's settings and play state from
 		// m_cueState, which the command thread updates.

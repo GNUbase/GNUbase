@@ -22,4 +22,6 @@ UI setup as the app, and drive it with the interface behind MCP's UI tools ([ui-
   Vulkan driver, so they need no display; CI runs them on Linux and Windows, and on Apple Silicon in
   `.github/workflows/ui-macos.yml`. Where SDL_GPU has no device, such as CI's macOS Intel runner, they are skipped,
   unless `GNUBASE_REQUIRE_GPU=1` says the machine must have one.
-- **Tests:** `tests/uiapp_tests.cpp`. Lua UI tests come with #208.
+- **In Lua.** UI tests can be written in Lua, in `tests/lua/ui/`, and run in the same harness: see
+  [ui-lua.md](ui-lua.md).
+- **Tests:** `tests/uiapp_tests.cpp`.

@@ -100,5 +100,6 @@ namespace gnubase::ui
 		registerValueWidgets(rmlui);
 		registerPopupWidgets(rmlui);
 		registerViewWidgets(rmlui);
+		registerColorWidgets(rmlui);
 	}
 }

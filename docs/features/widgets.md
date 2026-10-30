@@ -7,7 +7,7 @@ so every document in the app and in UI tests has them.
 - **Look.** Widgets only change their state: attributes, pseudo-classes such as `:disabled`, and state classes such as
   `.checked`. The shared style sheets in `resources/styles` lay them out and the active theme draws each state from its
   skins ([themes.md](themes.md)), so no widget sets a color, font or skin. Code sets only geometry from data, such as
-  where a fader's cap sits.
+  where a fader's cap sits, and in the color picker the colors that are its data.
 - **Data.** A widget keeps its state in attributes (`value`, `checked`, `disabled`) and reports what the user changed
   with a `change` event whose `value` parameter is the new value. So `data-value` and `data-checked` bind widgets to a
   data model ([architecture.md](../architecture.md#rmlui)), whose handler sends the engine command; the engine's
@@ -127,6 +127,19 @@ width or height of the element before it (without its padding and borders), from
 after it, and sends `change` with that size in dp, e.g. for a workspace to keep. In a column it has the state class
 `.column`; the theme's grip shows which way it moves.
 
+## Color picker
+
+`<colorpicker>` picks a color, its `value` attribute `#rrggbb` (reference manual pp. 118-119): a field picks the
+saturation (left to right) and the value (bottom to top) for the hue that the hue strip beside it picks, both from a
+click and through a drag; value fields edit hue (0-360), saturation and value (0-100), and red, green and blue
+(0-255). Two swatches show the color the picker started with and the new one. Each change sets `value` and sends
+`change` with it, so `data-value` binds the picker; the value fields inside send their own `change` events with
+numbers. A grey keeps the hue it had, so turning the saturation up again doesn't jump to red. The field's gradients
+and the hue strip are in the themes; code gives the field its hue and the swatches their colors, the one place where
+code sets a color, since there the color is the user's data: `background-color` only, as CLAUDE.md's UI conventions
+allow (`tests/stylerules_tests.cpp` lists the files that may). Dialogs put the
+picker next to their OK and Cancel buttons. Not yet: the reference's context menu to copy, paste and reset colors.
+
 ## Checks
 
 `tests/widgets_tests.cpp` drives each widget in the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) through
@@ -140,4 +153,5 @@ elsewhere and Escape, skip disabled items, and work with the keys. Tooltips show
 Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result.
 Tabs show their panels. List views select with clicks, Ctrl, Shift and the keys, and follow their data; trees expand
 and collapse by click and keys, with indents by level; tables select body rows only; splitters move the boundary in a
-row and in a column, never below nothing.
+row and in a column, never below nothing. The color picker picks from its field, its hue strip and its numbers,
+draws the old and the new color, and follows its data.

@@ -376,6 +376,18 @@
 	{
 		decorator: svg(dropdown-arrow.svg);
 	}
+	colorpicker .color-field
+	{
+		decorator: linear-gradient(to bottom, #00000000, #000000), linear-gradient(to right, #ffffff, #ffffff00);
+	}
+	colorpicker .color-hue
+	{
+		decorator: linear-gradient(to bottom, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+	}
+	colorpicker .color-field-thumb, colorpicker .color-hue-thumb
+	{
+		decorator: svg(slider-thumb.svg);
+	}
 	.splitter-grip-vertical
 	{
 		decorator: svg(splitter-grip-vertical.svg);
@@ -405,5 +417,36 @@
 		stroke-color: #303754;
 		stroke-width: 1dp;
 		font-size: 11dp;
+	}
+	.event-display
+	{
+		background-color: #090b18;
+	}
+	.event-display .overview
+	{
+		background-color: #101426;
+	}
+	.event-display .overview event-lanes
+	{
+		color: #106f82;
+		stroke-color: transparent;
+	}
+	.event-display .overview-view
+	{
+		border-width: 1dp;
+		border-color: #10dff2;
+		background-color: #10dff226;
+	}
+	.event-display ruler
+	{
+		background-color: #101426;
+	}
+	.event-display .project-cursor
+	{
+		background-color: #f1f4ff;
+	}
+	.event-display .cross-hair-vertical, .event-display .cross-hair-horizontal
+	{
+		background-color: #5c6174;
 	}
 }

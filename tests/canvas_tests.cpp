@@ -269,17 +269,26 @@ TEST_CASE("a curve builds only the segments around the view", "[unit]")
 
 TEST_CASE("a ruler's default scale counts in decimal steps of 1, 2 and 5", "[unit]")
 {
-	const ui::RulerScale scale;
-	CHECK(scale.step(1.0) == std::pair<double, int>{1.0, 5});
-	CHECK(scale.step(1.2) == std::pair<double, int>{2.0, 4});
-	CHECK(scale.step(330.0) == std::pair<double, int>{500.0, 5});
-	CHECK(scale.step(7000.0) == std::pair<double, int>{10000.0, 5});
-	CHECK(scale.step(0.03).first == Catch::Approx(0.05));
-	CHECK(scale.label(1500.0, 500.0) == "1500");
-	CHECK(scale.label(-1000.0, 500.0) == "-1000");
-	CHECK(scale.label(0.30000000000000004, 0.1) == "0.3");
-	CHECK(scale.label(0.25, 0.05) == "0.25");
-	CHECK(scale.label(123456789.0, 10000.0) == "123456789");
+	CHECK(ui::decimalStep(1.0) == std::pair<double, int>{1.0, 5});
+	CHECK(ui::decimalStep(1.2) == std::pair<double, int>{2.0, 4});
+	CHECK(ui::decimalStep(330.0) == std::pair<double, int>{500.0, 5});
+	CHECK(ui::decimalStep(7000.0) == std::pair<double, int>{10000.0, 5});
+	CHECK(ui::decimalStep(0.03).first == Catch::Approx(0.05));
+	CHECK(ui::decimalLabel(1500.0, 500.0) == "1500");
+	CHECK(ui::decimalLabel(-1000.0, 500.0) == "-1000");
+	CHECK(ui::decimalLabel(0.30000000000000004, 0.1) == "0.3");
+	CHECK(ui::decimalLabel(0.25, 0.05) == "0.25");
+	CHECK(ui::decimalLabel(123456789.0, 10000.0) == "123456789");
+
+	// Labelled marks at every step from the first at or after the start, minor ones between them.
+	std::vector<ui::RulerMark> marks;
+	ui::RulerScale().marks(-120.0, 401.0, 150.0, marks);
+	REQUIRE(marks.size() == size_t{12}); // 3 labelled marks with 3 minor ones each
+	CHECK(marks[0].position == 0.0);
+	CHECK(marks[0].label == "0");
+	CHECK(marks[1].position == 50.0);
+	CHECK(marks[1].label.empty());
+	CHECK(marks[8].label == "400");
 }
 
 TEST_CASE("a ruler labels the major ticks around the view, far enough apart for their labels", "[unit]")
@@ -293,15 +302,17 @@ TEST_CASE("a ruler labels the major ticks around the view, far enough apart for 
 	double minimum = 0.0;
 	std::set<double> labelled;
 	ui::RulerScale scale;
-	scale.step = [&minimum](double units)
+	scale.marks = [&](double from, double to, double units, std::vector<ui::RulerMark>& marks)
 	{
 		minimum = units;
-		return std::pair<double, int>{1000.0, 4};
-	};
-	scale.label = [&labelled](double position, double /*step*/)
-	{
-		labelled.insert(position);
-		return "1";
+		ui::evenMarks(
+			from, to, 1000.0, 4,
+			[&labelled](double position)
+			{
+				labelled.insert(position);
+				return "1";
+			},
+			marks);
 	};
 	ruler.setScale(scale);
 	const std::vector<Rml::Vertex> vertices = fixture.draw();

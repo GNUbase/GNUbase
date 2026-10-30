@@ -72,6 +72,8 @@ namespace gnubase::plugin::remote
 		HostConnection& operator=(HostConnection&&) = delete;
 
 		uint32_t processId() const { return m_processId; }
+		// Its log file name in the log folder, as launched.
+		const std::string& logFile() const { return m_logFile; }
 
 		// [any] The process has exited or crashed, or broke the protocol; it answers no more requests. The plugin
 		// control thread looks at the process every 5 ms.
@@ -80,6 +82,10 @@ namespace gnubase::plugin::remote
 		// next block instead of waiting for their own deadline.
 		bool hung() const noexcept { return m_hung.load(std::memory_order_acquire); }
 		void markHung() noexcept { m_hung.store(true, std::memory_order_release); }
+		// [any] How long a request that missed its deadline has gone unanswered, with no reply to any request since;
+		// zero once the host answers one. A host that is only busy, e.g. with a state transfer, answers within the
+		// longest deadline a request has. Its plugins go on processing meanwhile.
+		std::chrono::steady_clock::duration silence() const noexcept;
 
 		// Ends the process at once, as a crash would; the plugin control thread kills it. Returns once exited() is
 		// true, after a second at most. Never holds a lock meanwhile. Tests use it.
@@ -110,16 +116,17 @@ namespace gnubase::plugin::remote
 
 		HostConnection() = default;
 		bool send(Message type, uint32_t instance, uint32_t request, const std::vector<uint8_t>& body,
-			std::chrono::milliseconds timeout, std::string& error);
+			std::chrono::steady_clock::time_point deadline, std::string& error);
 		void run();
 		void received(const ControlMessage& message);
 		void finish(); // the process is gone: fails every waiting request
 
 		ipc::Connection m_control;
 		uint32_t m_processId = 0;
+		std::string m_logFile;
 		platform::ChildProcess m_process; // the plugin control thread's while it runs
 
-		std::mutex m_sendMutex; // one sender at a time on the control ring
+		std::timed_mutex m_sendMutex; // one sender at a time on the control ring; others wait their own timeout at most
 		std::unique_ptr<MessageWriter> m_writer;
 		std::mutex m_mutex; // guards everything below
 		std::condition_variable m_replied;
@@ -131,6 +138,7 @@ namespace gnubase::plugin::remote
 		std::atomic<uint32_t> m_nextInstance{1};
 		std::atomic<bool> m_exited{false};
 		std::atomic<bool> m_hung{false};
+		std::atomic<int64_t> m_silentSince{0}; // steady clock ticks when the unanswered request went out; 0: none
 		std::atomic<bool> m_killRequested{false};
 		std::atomic<bool> m_stopping{false};
 		std::thread m_thread; // the plugin control thread

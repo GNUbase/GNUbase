@@ -400,31 +400,50 @@ namespace gnubase::ui
 		meshes.push_back({std::move(mesh), {}});
 	}
 
+	std::pair<double, int> decimalStep(double minimum)
+	{
+		if (!(minimum > 0.0) || !std::isfinite(minimum))
+			return {1.0, 5};
+		const double power = std::pow(10.0, std::floor(std::log10(minimum)));
+		for (const auto& [factor, parts] : {std::pair<double, int>{1.0, 5}, {2.0, 4}, {5.0, 5}})
+			if (factor * power >= minimum * (1.0 - 1e-9))
+				return {factor * power, parts};
+		return {10.0 * power, 5};
+	}
+
+	std::string decimalLabel(double position, double step)
+	{
+		const int decimals = step > 0.0 ? std::clamp(-static_cast<int>(std::floor(std::log10(step) + 1e-9)), 0, 9) : 0;
+		std::array<char, 64> text{};
+		std::snprintf(text.data(), text.size(), "%.*f", decimals, position);
+		std::string written = text.data();
+		if (written.find_first_not_of("-0.") == std::string::npos && written[0] == '-')
+			written.erase(0, 1); // no "-0"
+		return written;
+	}
+
+	void evenMarks(double from, double to, double step, int parts, const std::function<std::string(double)>& label,
+		std::vector<RulerMark>& marks)
+	{
+		if (!(step > 0.0) || parts < 1 || !((to - from) / step <= 10000.0))
+			return; // a scale that asks for more ticks than pixels
+		for (auto k = static_cast<int64_t>(std::ceil(from / step)); static_cast<double>(k) * step < to; ++k)
+		{
+			const double major = static_cast<double>(k) * step;
+			marks.push_back({major, label(major)});
+			for (int part = 1; part < parts; ++part)
+				marks.push_back({major + (step * part / parts), {}});
+		}
+	}
+
 	RulerScale::RulerScale()
-		: step(
-			  [](double minimum)
+		: marks(
+			  [](double from, double to, double minimum, std::vector<RulerMark>& marks)
 			  {
-				  // The smallest of 1, 2 and 5 times a power of ten that is at least minimum.
-				  if (!(minimum > 0.0) || !std::isfinite(minimum))
-					  return std::pair<double, int>{1.0, 5};
-				  const double power = std::pow(10.0, std::floor(std::log10(minimum)));
-				  for (const auto& [factor, parts] : {std::pair<double, int>{1.0, 5}, {2.0, 4}, {5.0, 5}})
-					  if (factor * power >= minimum * (1.0 - 1e-9))
-						  return std::pair<double, int>{factor * power, parts};
-				  return std::pair<double, int>{10.0 * power, 5};
-			  }),
-		  label(
-			  [](double position, double step)
-			  {
-				  // As many decimals as the step needs.
-				  const int decimals =
-					  step > 0.0 ? std::clamp(-static_cast<int>(std::floor(std::log10(step) + 1e-9)), 0, 9) : 0;
-				  std::array<char, 64> text{};
-				  std::snprintf(text.data(), text.size(), "%.*f", decimals, position);
-				  std::string written = text.data();
-				  if (written.find_first_not_of("-0.") == std::string::npos && written[0] == '-')
-					  written.erase(0, 1); // no "-0"
-				  return written;
+				  const auto [step, parts] = decimalStep(minimum);
+				  evenMarks(
+					  from, to, step, parts, [step = step](double position) { return decimalLabel(position, step); },
+					  marks);
 			  })
 	{
 	}
@@ -450,22 +469,31 @@ namespace gnubase::ui
 
 	void Ruler::build(const Frame& frame, Rml::TexturedMeshList& meshes)
 	{
+		if (!m_scale.marks)
+			return;
 		const Rml::FontFaceHandle font = GetFontFaceHandle();
 		Rml::FontEngineInterface& fonts = *Rml::GetFontEngineInterface();
 		const Rml::ComputedValues& computed = GetComputedValues();
 		const Rml::TextShapingContext shaping{
 			computed.language(), computed.direction(), computed.font_kerning(), computed.letter_spacing()};
-		// Labels at least their width and an em apart.
+		// Labels at least their width and an em apart: four ems at first, then as wide as the widest label asks.
 		const double em = computed.font_size();
-		double widest = 0.0;
-		if (font != 0)
-			for (const double position : {frame.from(), frame.to()})
-				widest = std::max(widest,
-					static_cast<double>(
-						fonts.GetStringWidth(font, m_scale.label(position, frame.unitsPerPixel), shaping)));
-		const auto [step, parts] = m_scale.step((widest + em) * frame.unitsPerPixel);
-		if (!(step > 0.0) || parts < 1)
-			return;
+		std::vector<RulerMark> marks;
+		double minimum = 4.0 * em * frame.unitsPerPixel;
+		for (int attempt = 0; attempt < 3; ++attempt)
+		{
+			marks.clear();
+			m_scale.marks(frame.from(), frame.to(), minimum, marks);
+			double widest = 0.0;
+			if (font != 0)
+				for (const RulerMark& mark : marks)
+					if (!mark.label.empty())
+						widest = std::max(widest, static_cast<double>(fonts.GetStringWidth(font, mark.label, shaping)));
+			const double needed = (widest + em) * frame.unitsPerPixel;
+			if (needed <= minimum * (1.0 + 1e-9))
+				break;
+			minimum = needed;
+		}
 
 		const Colour ticks = stroke();
 		const float width = strokeWidth();
@@ -474,24 +502,20 @@ namespace gnubase::ui
 		Rml::Mesh lines;
 		Rml::TexturedMeshList labels;
 		const float baseline = font == 0 ? 0.0F : static_cast<float>(fonts.GetFontMetrics(font).ascent);
-		if ((frame.to() - frame.from()) / step > 10000.0)
-			return; // a scale that asks for more ticks than pixels
-		for (auto k = static_cast<int64_t>(std::ceil(frame.from() / step)); static_cast<double>(k) * step < frame.to();
-			++k)
+		const bool drawTicks = width > 0.0F && ticks.alpha != 0;
+		for (const RulerMark& mark : marks)
 		{
-			const double major = static_cast<double>(k) * step;
-			const float x = frame.x(major);
-			if (width > 0.0F && ticks.alpha != 0)
+			const float x = frame.x(mark.position);
+			if (mark.label.empty())
 			{
-				quad(lines, x, y0, x + width, y0 + frame.size.y, ticks);
-				for (int part = 1; part < parts; ++part)
-				{
-					const float minor = frame.x(major + (step * part / parts));
-					quad(lines, minor, y0 + std::round(frame.size.y * 0.75F), minor + width, y0 + frame.size.y, ticks);
-				}
+				if (drawTicks)
+					quad(lines, x, y0 + std::round(frame.size.y * 0.75F), x + width, y0 + frame.size.y, ticks);
+				continue;
 			}
+			if (drawTicks)
+				quad(lines, x, y0, x + width, y0 + frame.size.y, ticks);
 			if (font != 0)
-				fonts.GenerateString(*GetRenderManager(), font, 0, m_scale.label(major, step),
+				fonts.GenerateString(*GetRenderManager(), font, 0, mark.label,
 					{x + width + std::round(static_cast<float>(em) / 4.0F), y0 + std::round(baseline)}, text,
 					computed.opacity(), shaping, labels);
 		}

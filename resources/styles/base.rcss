@@ -501,6 +501,100 @@ meter .meter-peak
 	margin-bottom: -4dp;
 }
 
+/* The event display (docs/features/event-display.md): the overview line, then the ruler over the event lanes, with
+   the project cursor across both. Code sets only where the cursors and the overview's rectangle are; the cross-hair
+   cursor shows while the mouse is over the lanes. */
+.event-display
+{
+	position: relative;
+	overflow: hidden;
+}
+
+.event-display .overview
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 20dp;
+	overflow: hidden;
+}
+
+.event-display .overview event-lanes, .event-display .event-area event-lanes
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+}
+
+.event-display .overview-view
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	box-sizing: border-box;
+}
+
+.event-display .timeline
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 20dp;
+	bottom: 0;
+	overflow: hidden;
+}
+
+.event-display ruler
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 24dp;
+}
+
+.event-display .event-area
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 24dp;
+	bottom: 0;
+	overflow: hidden;
+}
+
+.event-display .project-cursor, .event-display .cross-hair-vertical
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 1dp;
+	pointer-events: none;
+}
+
+.event-display .cross-hair-horizontal
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 1dp;
+	pointer-events: none;
+}
+
+.event-display .cross-hair-vertical, .event-display .cross-hair-horizontal
+{
+	display: none;
+}
+
+.event-display.cross-hair .event-area:hover .cross-hair-vertical,
+.event-display.cross-hair .event-area:hover .cross-hair-horizontal
+{
+	display: block;
+}
+
 /* Menus (ui/widgets.h): hidden until they open, over the document. A menu inside an item is its submenu, shown
    beside the item while the mouse is over it. */
 menu
@@ -664,4 +758,87 @@ splitter .splitter-grip-horizontal, splitter.column .splitter-grip-vertical
 splitter.column .splitter-grip-horizontal
 {
 	display: block;
+}
+
+/* The color picker: the saturation and value field, the hue strip, the old and new colors' swatches, and the value
+   fields with their labels. Code places the thumbs and gives the field and the swatches their data's colors. */
+colorpicker
+{
+	display: block;
+	position: relative;
+	width: 336dp;
+	height: 200dp;
+}
+
+colorpicker .color-field
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 200dp;
+	height: 200dp;
+	drag: drag;
+}
+
+colorpicker .color-hue
+{
+	position: absolute;
+	left: 208dp;
+	top: 0;
+	width: 16dp;
+	height: 200dp;
+	drag: drag;
+}
+
+colorpicker .color-field-thumb, colorpicker .color-hue-thumb
+{
+	position: absolute;
+	width: 16dp;
+	height: 16dp;
+	margin: -8dp 0 0 -8dp;
+}
+
+colorpicker .color-hue-thumb
+{
+	left: 50%;
+}
+
+colorpicker .color-swatches
+{
+	position: absolute;
+	left: 236dp;
+	top: 0;
+	width: 100dp;
+	height: 24dp;
+	display: flex;
+}
+
+colorpicker .color-old, colorpicker .color-new
+{
+	flex: 1;
+}
+
+colorpicker .color-values
+{
+	position: absolute;
+	left: 236dp;
+	top: 30dp;
+	width: 100dp;
+}
+
+colorpicker .color-value
+{
+	display: flex;
+	align-items: center;
+	margin-bottom: 4dp;
+}
+
+colorpicker .color-value-label
+{
+	width: 16dp;
+}
+
+colorpicker valuefield
+{
+	width: 84dp;
 }

@@ -115,6 +115,7 @@ namespace gnubase::ui
 		using Canvas::Canvas;
 
 		void setLanes(std::vector<Lane> lanes);
+		const std::vector<Lane>& lanes() const { return m_lanes; }
 
 	protected:
 		void build(const Frame& frame, Rml::TexturedMeshList& meshes) override;
@@ -178,16 +179,32 @@ namespace gnubase::ui
 		std::vector<CurvePoint> m_points;
 	};
 
-	// How a ruler divides the timeline. step gives the distance between labelled ticks for labels at least minimum
-	// units apart, and how many parts minor ticks divide it into; label writes a position, given the step. The
-	// default counts in decimal steps of 1, 2 and 5.
+	// A tick of a ruler: labelled ticks reach to the top, the others are a quarter as high.
+	struct RulerMark
+	{
+		double position = 0.0;
+		std::string label; // empty for a minor tick
+	};
+
+	// How a ruler divides the timeline: marks adds the ticks from `from` up to `to`, by position, with the labelled
+	// ones at least minimum units apart. The default counts in decimal steps of 1, 2 and 5; ui/timeformat.h has bars
+	// and beats, seconds, timecode and samples.
 	struct RulerScale
 	{
-		std::function<std::pair<double, int>(double minimum)> step;
-		std::function<std::string(double position, double step)> label;
+		std::function<void(double from, double to, double minimum, std::vector<RulerMark>& marks)> marks;
 
 		RulerScale();
 	};
+
+	// The smallest of 1, 2 and 5 times a power of ten that is at least minimum, and how many parts minor ticks divide
+	// it into.
+	std::pair<double, int> decimalStep(double minimum);
+	// A position with as many decimals as the step needs.
+	std::string decimalLabel(double position, double step);
+	// Marks every step from `from` up to `to`, labelled by label, each divided by minor ticks into parts. Adds nothing
+	// for more than 10,000 steps.
+	void evenMarks(double from, double to, double step, int parts, const std::function<std::string(double)>& label,
+		std::vector<RulerMark>& marks);
 
 	// <ruler>: ticks in stroke-color along the bottom, labelled major ticks reaching to the top, labels in color and
 	// the element's font right of their tick.

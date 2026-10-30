@@ -17,12 +17,15 @@ add_library(gnubase-ui STATIC
 	automation.h
 	canvas.cpp
 	canvas.h
+	colorwidgets.cpp
 	datamodel.cpp
 	datamodel.h
 	displays.cpp
 	displays.h
 	enginebinding.cpp
 	enginebinding.h
+	eventdisplay.cpp
+	eventdisplay.h
 	fonts.cpp
 	fonts.h
 	gpurenderer.cpp
@@ -44,6 +47,8 @@ add_library(gnubase-ui STATIC
 	shell.h
 	themes.cpp
 	themes.h
+	timeformat.cpp
+	timeformat.h
 	ui.cpp
 	ui.h
 	uisettings.cpp

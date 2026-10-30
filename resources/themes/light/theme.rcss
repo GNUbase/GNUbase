@@ -376,6 +376,18 @@
 	{
 		decorator: svg(dropdown-arrow.svg);
 	}
+	colorpicker .color-field
+	{
+		decorator: linear-gradient(to bottom, #00000000, #000000), linear-gradient(to right, #ffffff, #ffffff00);
+	}
+	colorpicker .color-hue
+	{
+		decorator: linear-gradient(to bottom, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+	}
+	colorpicker .color-field-thumb, colorpicker .color-hue-thumb
+	{
+		decorator: svg(slider-thumb.svg);
+	}
 	.splitter-grip-vertical
 	{
 		decorator: svg(splitter-grip-vertical.svg);
@@ -405,5 +417,36 @@
 		stroke-color: #b9c1cc;
 		stroke-width: 1dp;
 		font-size: 11dp;
+	}
+	.event-display
+	{
+		background-color: #eef1f5;
+	}
+	.event-display .overview
+	{
+		background-color: #ffffff;
+	}
+	.event-display .overview event-lanes
+	{
+		color: #90bcee;
+		stroke-color: transparent;
+	}
+	.event-display .overview-view
+	{
+		border-width: 1dp;
+		border-color: #0969da;
+		background-color: #0969da26;
+	}
+	.event-display ruler
+	{
+		background-color: #ffffff;
+	}
+	.event-display .project-cursor
+	{
+		background-color: #17202d;
+	}
+	.event-display .cross-hair-vertical, .event-display .cross-hair-horizontal
+	{
+		background-color: #a2aab4;
 	}
 }

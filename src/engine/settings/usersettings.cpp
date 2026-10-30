@@ -82,6 +82,17 @@ namespace gnubase::engine::settings
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
+				{"ui.zoomPresets",
+					"The horizontal zoom presets of the event display, for every project: each a name and the "
+					"seconds the view shows.",
+					Json{{"type", "array"},
+						{"items",
+							{{"type", "object"},
+								{"properties",
+									{{"name", {{"type", "string"}}},
+										{"seconds", {{"type", "number"}, {"minimum", 0}}}}},
+								{"required", Json::array({"name", "seconds"})}}}},
+					Json::array()},
 			};
 			return result;
 		}();

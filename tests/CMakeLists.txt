@@ -33,6 +33,7 @@ add_executable(gnubase-tests
 	effects_tests.cpp
 	engine_tests.cpp
 	enginebinding_tests.cpp
+	eventdisplay_tests.cpp
 	fade_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
@@ -75,6 +76,7 @@ add_executable(gnubase-tests
 	testutils_tests.cpp
 	theme_tests.cpp
 	time_tests.cpp
+	timeformat_tests.cpp
 	timestretch_tests.cpp
 	transport_tests.cpp
 	uiapp.cpp
@@ -184,6 +186,16 @@ foreach(luaTest IN LISTS luaTests)
 	add_test(NAME "${script}" COMMAND gnubase --headless --script "${script}" WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 	set_tests_properties("${script}" PROPERTIES LABELS "integration;lua" TIMEOUT 300 ENVIRONMENT
 		"GNUBASE_GOLDEN_DIR=${CMAKE_CURRENT_SOURCE_DIR}/golden;GNUBASE_TEST_OUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/output;${settingsEnvironment}")
+endforeach()
+
+# Every tests/lua/ui/*.lua is a UI test in Lua (#208), which gnubase-tests runs in the app's UI (tests/uiapp_tests.cpp),
+# in the source folder like the other Lua tests. Catch2 exits with 4 when it skips the test: no SDL_GPU device.
+file(GLOB luaUiTests CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/lua/ui/*.lua")
+foreach(luaTest IN LISTS luaUiTests)
+	file(RELATIVE_PATH script "${PROJECT_SOURCE_DIR}" "${luaTest}")
+	add_test(NAME "${script}" COMMAND gnubase-tests "[lua-ui]" WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+	set_tests_properties("${script}" PROPERTIES LABELS "ui;lua" TIMEOUT 300 SKIP_RETURN_CODE 4 ENVIRONMENT
+		"GNUBASE_LUA_UI_TEST=${script};${settingsEnvironment}")
 endforeach()
 
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}"

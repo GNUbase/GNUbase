@@ -43,9 +43,11 @@ namespace gnubase::test
 		explicit UiApp(ui::Size size = {640, 480});
 
 		engine::Engine& engine() { return m_engine; }
+		app::AppUi& appUi() { return *m_ui; }
 		ui::Shell& shell() { return m_ui->shell(); }
 		ui::Window& main() { return m_ui->mainWindow(); }
 		ui::Automation& ui() { return *m_automation; }
+		scripting::Runtime& lua() { return m_ui->lua(); }
 		ui::KeyCommands& keys() { return m_ui->keyCommands(); }
 
 		// Runs an engine command that must succeed; returns its result.
