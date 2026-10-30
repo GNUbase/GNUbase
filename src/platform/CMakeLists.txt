@@ -35,6 +35,13 @@ if(WIN32)
 		winutf8.h)
 	target_include_directories(gnubase-platform SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/ext/asio/common)
 endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	find_package(PkgConfig REQUIRED)
+	pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
+	target_sources(gnubase-platform PRIVATE
+		audio/pipewire.cpp audio/pipewire.h)
+	target_link_libraries(gnubase-platform PRIVATE PkgConfig::PIPEWIRE)
+endif()
 target_include_directories(gnubase-platform PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-platform PRIVATE $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 # shm_open is in librt on glibc before 2.34.
