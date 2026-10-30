@@ -4,7 +4,10 @@
 #include "engine/graph/graph.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <iterator>
 #include <limits>
+#include <tuple>
 #include <utility>
 
 namespace gnubase::engine
@@ -22,22 +25,18 @@ namespace gnubase::engine
 		constexpr uint8_t g_chaseBeyondParts = 16;
 		constexpr uint8_t g_chaseControllerEvents = g_chaseControllers | g_chasePrograms | g_chasePitchBend;
 
-		// Where a controller event is remembered while chasing, or -1 if chase doesn't chase it.
-		int chasedIndex(const RenderController& controller, uint8_t chase)
+		// A controller event's kind for chasing (ChaseLane::kind), or -1 if it isn't chased.
+		int chaseKind(const RenderController& controller)
 		{
+			const int channel = controller.channel % 16;
 			switch (controller.type)
 			{
 			case ControllerType::Control:
-				return (chase & g_chaseControllers) != 0 ? ((controller.channel % 16) * 128) + (controller.number % 128)
-														 : -1;
+				return (channel * 128) + (controller.number % 128);
 			case ControllerType::Program:
-				return (chase & g_chasePrograms) != 0
-					? static_cast<int>(MidiSequencer::g_notes) + (controller.channel % 16)
-					: -1;
+				return static_cast<int>(MidiSequencer::g_notes) + channel;
 			case ControllerType::PitchBend:
-				return (chase & g_chasePitchBend) != 0
-					? static_cast<int>(MidiSequencer::g_notes) + 16 + (controller.channel % 16)
-					: -1;
+				return static_cast<int>(MidiSequencer::g_notes) + 16 + channel;
 			case ControllerType::ChannelPressure:
 			case ControllerType::PolyPressure:
 			case ControllerType::SysEx:
@@ -46,11 +45,44 @@ namespace gnubase::engine
 			return -1;
 		}
 
-		// How many controller events chase can find at most.
-		size_t chasedCount(uint8_t chase)
+		bool chases(int kind, uint8_t chase)
 		{
-			return ((chase & g_chaseControllers) != 0 ? MidiSequencer::g_notes : 0) +
-				((chase & g_chasePrograms) != 0 ? 16 : 0) + ((chase & g_chasePitchBend) != 0 ? 16 : 0);
+			if (kind < static_cast<int>(MidiSequencer::g_notes))
+				return (chase & g_chaseControllers) != 0;
+			if (kind < static_cast<int>(MidiSequencer::g_notes) + 16)
+				return (chase & g_chasePrograms) != 0;
+			return (chase & g_chasePitchBend) != 0;
+		}
+
+		// Indexes events by kind: order gets the indices of those with a kind, by kind and then in their order, lanes
+		// the runs of one kind.
+		template <typename Event, typename KindOf> void indexByKind(const std::vector<Event>& events, KindOf kindOf,
+			std::vector<uint32_t>& order, std::vector<ChaseLane>& lanes)
+		{
+			order.clear();
+			lanes.clear();
+			for (size_t i = 0; i < events.size(); ++i)
+				if (kindOf(events[i]) >= 0)
+					order.push_back(static_cast<uint32_t>(i));
+			std::stable_sort(order.begin(), order.end(),
+				[&](uint32_t a, uint32_t b) { return kindOf(events[a]) < kindOf(events[b]); });
+			for (size_t i = 0; i < order.size(); ++i)
+			{
+				const auto kind = static_cast<uint16_t>(kindOf(events[order[i]]));
+				if (lanes.empty() || lanes.back().kind != kind)
+					lanes.push_back({kind, static_cast<uint32_t>(i), static_cast<uint32_t>(i)});
+				lanes.back().last = static_cast<uint32_t>(i + 1);
+			}
+		}
+
+		// The last of a lane's events before a position, or nullptr.
+		template <typename Event, typename PositionOf> const Event* lastBefore(const std::vector<Event>& events,
+			const std::vector<uint32_t>& order, const ChaseLane& lane, int64_t position, PositionOf positionOf)
+		{
+			const auto first = order.begin() + lane.first;
+			const auto found = std::lower_bound(first, order.begin() + lane.last, position,
+				[&](uint32_t i, int64_t at) { return positionOf(events[i]) < at; });
+			return found == first ? nullptr : &events[*std::prev(found)];
 		}
 
 		graph::ProcessEvent noteEvent(graph::ProcessEvent::Type type, uint16_t index, uint32_t offset)
@@ -63,15 +95,16 @@ namespace gnubase::engine
 			return event;
 		}
 
-		graph::ProcessEvent controllerEvent(const RenderController& controller, uint32_t offset)
+		graph::ProcessEvent controllerEvent(
+			ControllerType type, uint8_t channel, uint8_t number, uint32_t value, uint32_t offset)
 		{
 			using Type = graph::ProcessEvent::Type;
 			graph::ProcessEvent event;
 			event.offset = offset;
-			event.channel = controller.channel;
-			event.key = controller.number;
-			event.value = controller.value;
-			switch (controller.type)
+			event.channel = channel;
+			event.key = number;
+			event.value = value;
+			switch (type)
 			{
 			case ControllerType::Control:
 				event.type = Type::Controller;
@@ -95,12 +128,38 @@ namespace gnubase::engine
 				event.channel = 0;
 				event.key = 0;
 				event.value = 0;
-				event.data = controller.data.data();
-				event.size = static_cast<uint32_t>(controller.data.size());
 				break;
 			}
 			return event;
 		}
+
+		graph::ProcessEvent controllerEvent(const RenderController& controller, uint32_t offset)
+		{
+			graph::ProcessEvent event =
+				controllerEvent(controller.type, controller.channel, controller.number, controller.value, offset);
+			if (controller.type == ControllerType::SysEx)
+			{
+				event.data = controller.data.data();
+				event.size = static_cast<uint32_t>(controller.data.size());
+			}
+			return event;
+		}
+	}
+
+	ChaseTrack makeChaseTrack(const std::vector<RenderController>& controllers, std::vector<RenderPart> parts)
+	{
+		ChaseTrack track;
+		for (const RenderController& controller : controllers)
+		{
+			if (chaseKind(controller) < 0)
+				continue;
+			RenderController copy = controller;
+			copy.data.clear();
+			track.controllers.push_back(std::move(copy));
+		}
+		track.parts = std::move(parts);
+		indexByKind(track.controllers, chaseKind, track.order, track.lanes);
+		return track;
 	}
 
 	MidiSequencer::MidiSequencer() : m_sequence(std::make_unique<const MidiSequence>())
@@ -109,10 +168,11 @@ namespace gnubase::engine
 
 	void MidiSequencer::setSequence(std::unique_ptr<MidiSequence> sequence)
 	{
-		sequence->reach.resize(sequence->notes.size());
-		int64_t reach = std::numeric_limits<int64_t>::min();
-		for (size_t i = 0; i < sequence->notes.size(); ++i)
-			sequence->reach[i] = reach = std::max(reach, sequence->notes[i].end);
+		// Notes of no length don't play, so they don't take the place of an earlier note of their pitch either.
+		indexByKind(
+			sequence->notes, [](const RenderNote& note)
+			{ return note.end > note.start ? ((note.channel % 16) * 128) + (note.pitch % 128) : -1; },
+			sequence->noteOrder, sequence->noteLanes);
 		m_sequence.publish(std::move(sequence));
 	}
 
@@ -138,14 +198,14 @@ namespace gnubase::engine
 		if (!transport.playing)
 		{
 			endAll(0, context.eventsOut);
-			m_pending = 0;
+			m_chaseNotes = false;
 			if (m_next >= 0)
 				m_cursor = m_next; // where playback stopped
 			m_next = -1;
-			// A locate while stopped chases the controller events, again in the next block if they didn't fit.
-			if (m_cursor < 0 || transport.position == m_cursor ||
-				chaseControllers(sequence, transport.position, 0, chase, context.eventsOut))
-				m_cursor = transport.position;
+			if (m_cursor >= 0 && transport.position != m_cursor) // a locate while stopped
+				findChased(sequence, transport.position, chase);
+			m_cursor = transport.position;
+			sendChased(0, context.eventsOut);
 			return;
 		}
 		for (size_t s = 0; s < transport.segmentCount; ++s)
@@ -154,7 +214,8 @@ namespace gnubase::engine
 			if (segment.position != m_next) // a start, a locate or a cycle jump
 			{
 				endAll(segment.offset, context.eventsOut);
-				m_pending = chase;
+				findChased(sequence, segment.position, chase);
+				m_chaseNotes = (chase & g_chaseNotes) != 0;
 			}
 			play(sequence, segment, context.eventsOut);
 			m_next = segment.position + segment.frames;
@@ -181,7 +242,7 @@ namespace gnubase::engine
 				ending = std::min(ending, std::max(m_ends[m_sounding[i]], begin));
 			const int64_t starting = note != sequence.notes.end() ? note->start : g_never;
 			const int64_t changing = controller != sequence.controllers.end() ? controller->position : g_never;
-			const int64_t chasing = (m_pending & (g_chaseNotes | g_chaseControllerEvents)) != 0 ? begin : g_never;
+			const int64_t chasing = m_chasedSent < m_chasedCount || m_chaseNotes ? begin : g_never;
 			const int64_t at = std::min({ending, starting, changing, chasing});
 			if (at >= end)
 				return;
@@ -197,11 +258,10 @@ namespace gnubase::engine
 						return;
 				}
 			}
-			else if ((m_pending & g_chaseControllerEvents) != 0)
+			else if (m_chasedSent < m_chasedCount)
 			{
-				if (!chaseControllers(sequence, begin, offset, m_pending, out))
+				if (!sendChased(offset, out))
 					return;
-				m_pending &= static_cast<uint8_t>(~g_chaseControllerEvents);
 			}
 			else if (changing == at)
 			{
@@ -209,11 +269,11 @@ namespace gnubase::engine
 					return;
 				++controller;
 			}
-			else if ((m_pending & g_chaseNotes) != 0)
+			else if (m_chaseNotes)
 			{
 				if (!chaseNotes(sequence, begin, offset, out))
 					return;
-				m_pending = 0;
+				m_chaseNotes = false;
 			}
 			else
 			{
@@ -224,73 +284,94 @@ namespace gnubase::engine
 		}
 	}
 
-	bool MidiSequencer::chaseControllers(const MidiSequence& sequence, int64_t position, uint32_t offset, uint8_t chase,
-		graph::EventBuffer& out) noexcept
+	void MidiSequencer::findChased(const MidiSequence& sequence, int64_t position, uint8_t chase) noexcept
 	{
-		const size_t wanted = chasedCount(chase);
-		if (wanted == 0)
-			return true;
-		const std::vector<RenderController>& controllers = sequence.controllers;
-		const auto before = [](const RenderController& c, int64_t at) { return c.position < at; };
-		auto first = controllers.begin();
-		if ((chase & g_chaseBeyondParts) == 0)
+		for (size_t i = m_chasedSent; i < m_chasedCount; ++i) // the rest of a chase that didn't fit
+			m_chased[i] = Chased();
+		m_chasedCount = 0;
+		m_chasedSent = 0;
+		if ((chase & g_chaseControllerEvents) == 0)
+			return;
+		for (size_t t = 0; t < sequence.chase.size(); ++t)
 		{
-			// The earliest start of the parts under the position; none: nothing to chase.
-			int64_t start = g_never;
-			for (const RenderPart& part : sequence.parts)
+			const ChaseTrack& track = sequence.chase[t];
+			const auto index = static_cast<uint16_t>(t);
+			if ((chase & g_chaseBeyondParts) != 0)
+			{
+				consider(track, index, std::numeric_limits<int64_t>::min(), position, chase);
+				continue;
+			}
+			for (const RenderPart& part : track.parts) // those under the position, each from its start
 			{
 				if (part.start > position)
 					break;
 				if (part.end > position)
-					start = std::min(start, part.start);
+					consider(track, index, part.start, position, chase);
 			}
-			if (start == g_never)
-				return true;
-			first = std::lower_bound(controllers.begin(), controllers.end(), start, before);
 		}
 
-		// Back from the position, the last controller event of each kind.
-		size_t found = 0;
-		for (auto c = std::lower_bound(first, controllers.end(), position, before); c != first && found < wanted;)
+		// The kinds found, in time order; at one position by track, then kind, so a bank select precedes its program.
+		for (size_t kind = 0; kind < m_chased.size(); ++kind)
+			if (m_chased[kind].position != std::numeric_limits<int64_t>::min())
+			{
+				m_chased[m_chasedCount++] = m_chased[kind];
+				if (m_chasedCount - 1 != kind)
+					m_chased[kind] = Chased();
+			}
+		std::sort(m_chased.begin(), m_chased.begin() + static_cast<std::ptrdiff_t>(m_chasedCount),
+			[](const Chased& a, const Chased& b)
+			{ return std::tie(a.position, a.track, a.kind) < std::tie(b.position, b.track, b.kind); });
+	}
+
+	void MidiSequencer::consider(
+		const ChaseTrack& track, uint16_t trackIndex, int64_t from, int64_t position, uint8_t chase) noexcept
+	{
+		for (const ChaseLane& lane : track.lanes)
 		{
-			--c;
-			const int index = chasedIndex(*c, chase);
-			if (index < 0 || m_chased[static_cast<size_t>(index)])
+			if (!chases(lane.kind, chase))
 				continue;
-			m_chased[static_cast<size_t>(index)] = true;
-			m_found[found++] = static_cast<size_t>(c - controllers.begin());
+			const RenderController* controller = lastBefore(
+				track.controllers, track.order, lane, position, [](const RenderController& c) { return c.position; });
+			Chased& chased = m_chased[lane.kind];
+			if (controller == nullptr || controller->position < from || controller->position < chased.position)
+				continue;
+			chased = {controller->position, controller->value, trackIndex, lane.kind, controller->type,
+				controller->number, controller->channel};
 		}
+	}
 
-		// Sent in the order they were sent before.
-		bool room = true;
-		for (size_t i = found; i-- > 0;)
+	bool MidiSequencer::sendChased(uint32_t offset, graph::EventBuffer& out) noexcept
+	{
+		for (; m_chasedSent < m_chasedCount; ++m_chasedSent)
 		{
-			const RenderController& controller = controllers[m_found[i]];
-			m_chased[static_cast<size_t>(chasedIndex(controller, chase))] = false;
-			room = room && out.add(controllerEvent(controller, offset));
+			const Chased& chased = m_chased[m_chasedSent];
+			if (!out.add(controllerEvent(chased.type, chased.channel, chased.number, chased.value, offset)))
+				return false;
+			m_chased[m_chasedSent] = Chased();
 		}
-		return room;
+		m_chasedCount = 0;
+		m_chasedSent = 0;
+		return true;
 	}
 
 	bool MidiSequencer::chaseNotes(
 		const MidiSequence& sequence, int64_t position, uint32_t offset, graph::EventBuffer& out) noexcept
 	{
-		// From the first note that may still sound up to those that start at the position.
-		const std::vector<RenderNote>& notes = sequence.notes;
-		const auto first = static_cast<size_t>(
-			std::upper_bound(sequence.reach.begin(), sequence.reach.end(), position) - sequence.reach.begin());
-		const auto last = static_cast<size_t>(std::lower_bound(notes.begin(), notes.end(), position,
-												  [](const RenderNote& n, int64_t at) { return n.start < at; }) -
-			notes.begin());
-		for (size_t i = first; i < last; ++i)
+		// Of each pitch the last note that started before the position, if it still sounds there, in their order.
+		size_t count = 0;
+		for (const ChaseLane& lane : sequence.noteLanes)
 		{
-			const RenderNote& note = notes[i];
-			if (note.end <= position)
-				continue;
+			const RenderNote* note = lastBefore(
+				sequence.notes, sequence.noteOrder, lane, position, [](const RenderNote& n) { return n.start; });
+			if (note != nullptr && note->end > position)
+				m_chasedNotes[count++] = static_cast<uint32_t>(note - sequence.notes.data());
+		}
+		std::sort(m_chasedNotes.begin(), m_chasedNotes.begin() + static_cast<std::ptrdiff_t>(count));
+		for (size_t i = 0; i < count; ++i)
+		{
+			const RenderNote& note = sequence.notes[m_chasedNotes[i]];
 			const auto index = static_cast<uint16_t>(((note.channel % 16) * 128) + (note.pitch % 128));
-			if (sounds(index))
-				m_ends[index] = note.end; // started again before the position: sounds on until the later one ends
-			else if (!noteOn(note, offset, out))
+			if (!sounds(index) && !noteOn(note, offset, out)) // sounds: chased in an earlier block
 				return false;
 		}
 		return true;

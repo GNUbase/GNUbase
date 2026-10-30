@@ -577,11 +577,28 @@ namespace
 	{
 		auto result = std::make_shared<MidiSequencer>();
 		auto sequence = std::make_unique<MidiSequence>();
+		sequence->chase.push_back(makeChaseTrack(controllers, std::move(parts)));
 		sequence->notes = std::move(notes);
 		sequence->controllers = std::move(controllers);
-		sequence->parts = std::move(parts);
 		result->setSequence(std::move(sequence));
 		result->setChase(chase);
+		return result;
+	}
+
+	// Sends events of another kind for the processor's input in the next block, leaving room for count events.
+	void fillInputBut(Player& player, size_t count)
+	{
+		ProcessEvent event;
+		event.type = Type::ChannelPressure;
+		for (size_t i = count; i < graph::g_maxEventsPerBlock; ++i)
+			player.send(event);
+	}
+
+	std::vector<Heard> ofType(const std::vector<Heard>& heard, Type type)
+	{
+		std::vector<Heard> result;
+		std::copy_if(
+			heard.begin(), heard.end(), std::back_inserter(result), [type](const Heard& h) { return h.type == type; });
 		return result;
 	}
 
@@ -600,7 +617,7 @@ TEST_CASE("locating into held notes starts them there and ends them where they e
 {
 	const uint32_t blockSize = GENERATE(1U, 7U, 16U, 64U);
 	INFO("block size " << blockSize);
-	// At 120: 60 and 64 sound, 67 has ended, 62 starts there, and 70 started again at 100.
+	// At 120: 60 and 64 sound, 67 has ended, 62 starts there, and 70 started again at 100: that one is chased.
 	Player player(chasing(chaseAll(),
 					  {note(0, 300, 60), note(10, 400, 70), note(50, 200, 64), note(90, 110, 67), note(100, 130, 70),
 						  note(120, 150, 62)}),
@@ -608,8 +625,19 @@ TEST_CASE("locating into held notes starts them there and ends them where they e
 	player.locate(120);
 	player.play(200);
 	const std::vector<Heard> expected = {
-		on(0, 60), on(0, 70), on(0, 64), on(0, 62), off(10, 70), off(30, 62), off(80, 64), off(180, 60)};
+		on(0, 60), on(0, 64), on(0, 70), on(0, 62), off(10, 70), off(30, 62), off(80, 64), off(180, 60)};
 	CHECK(player.heard == expected);
+}
+
+TEST_CASE("a pitch that started again sounds after a jump only while the later note does", "[unit]")
+{
+	// As when playing through: the note at 500 ends the one at 0, and from 600 the pitch is silent.
+	Player player(chasing(chaseAll(), {note(0, 1000, 60), note(500, 600, 60)}), 16);
+	player.locate(550);
+	player.play(64);
+	player.locate(700);
+	player.play(64);
+	CHECK(player.heard == std::vector<Heard>{on(0, 60), off(50, 60)});
 }
 
 TEST_CASE("a jump sends each chased controller's last value before it, in their order, then the notes", "[unit]")
@@ -664,6 +692,11 @@ TEST_CASE("only the chosen event types are chased", "[unit]")
 	{
 		chase.pitchBend = true;
 		expected = {Type::PitchBend};
+	}
+	SECTION("everything: still no pressure")
+	{
+		chase = chaseAll();
+		expected = {Type::Controller, Type::Program, Type::PitchBend, Type::NoteOn};
 	}
 	Player player(chasing(chase, {note(0, 100, 60)}, controllers), 16);
 	player.locate(50);
@@ -742,4 +775,70 @@ TEST_CASE("a jump into a full block chases in the next block that has room", "[u
 	std::copy_if(player.heard.begin(), player.heard.end(), std::back_inserter(heard),
 		[](const Heard& h) { return h.frame < 16 || h.frame >= 32; }); // without the input that filled the block
 	CHECK(heard == expected);
+}
+
+TEST_CASE("an instrument chases its MIDI tracks' controller events with its own, the latest of each kind", "[unit]")
+{
+	// The instrument track's own CC 7 is older than that of the MIDI track routed to it; at one position, the later
+	// track's wins. Each kind of controller event is sent once.
+	auto sequence = std::make_unique<MidiSequence>();
+	const std::vector<RenderController> own = {control(10, 7, 100), control(40, 1, 1)};
+	const std::vector<RenderController> routed = {control(40, 1, 2), control(50, 7, 30)};
+	sequence->chase.push_back(makeChaseTrack(own, {}));
+	sequence->chase.push_back(makeChaseTrack(routed, {}));
+	auto instrument = std::make_shared<MidiSequencer>();
+	instrument->setSequence(std::move(sequence));
+	instrument->setChase(chaseAll());
+	Player player(instrument, 16);
+	player.locate(100);
+	player.play(16);
+	CHECK(player.heard == std::vector<Heard>{{0, Type::Controller, 0, 1, 2, {}}, {0, Type::Controller, 0, 7, 30, {}}});
+}
+
+TEST_CASE("a chase that doesn't fit into the event buffer goes on in the next blocks, each event once", "[unit]")
+{
+	SECTION("room for some")
+	{
+		std::vector<RenderController> controllers;
+		for (int number = 0; number < 10; ++number)
+			controllers.push_back(control(number, number, 1));
+		Player player(chasing(chaseAll(), {}, controllers), 16);
+		fillInputBut(player, 4);
+		player.locate(100);
+		player.play(32);
+		std::vector<Heard> expected;
+		for (int number = 0; number < 10; ++number)
+			expected.push_back({number < 4 ? 0 : 16, Type::Controller, 0, number, 1, {}});
+		CHECK(ofType(player.heard, Type::Controller) == expected);
+	}
+	SECTION("more than a block holds")
+	{
+		// 16 channels of 128 controllers: two blocks; the note that starts at the position is chased in the third.
+		std::vector<RenderController> controllers;
+		for (int channel = 0; channel < 16; ++channel)
+			for (int number = 0; number < 128; ++number)
+			{
+				RenderController c = control(channel, number, 1);
+				c.channel = static_cast<uint8_t>(channel);
+				controllers.push_back(c);
+			}
+		std::sort(controllers.begin(), controllers.end(),
+			[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
+		Player player(chasing(chaseAll(), {note(100, 1000, 60)}, controllers), 16);
+		player.locate(100);
+		player.play(48);
+		CHECK(ofType(player.heard, Type::Controller).size() == controllers.size());
+		CHECK(notesIn(player.heard) == std::vector<Heard>{on(32, 60)});
+	}
+	SECTION("while stopped")
+	{
+		Player player(chasing(chaseAll(), {}, {control(1, 7, 1), control(2, 10, 2)}), 16);
+		player.stop();
+		fillInputBut(player, 1);
+		player.locate(100);
+		player.stop();
+		player.stop();
+		CHECK(ofType(player.heard, Type::Controller) ==
+			std::vector<Heard>{{16, Type::Controller, 0, 7, 1, {}}, {32, Type::Controller, 0, 10, 2, {}}});
+	}
 }

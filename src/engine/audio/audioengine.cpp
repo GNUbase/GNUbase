@@ -230,10 +230,14 @@ namespace gnubase::engine
 
 	void AudioEngine::attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc, uint64_t generation)
 	{
-		std::map<ObjectId, std::set<ObjectId>> sources; // per instrument channel, the MIDI channels routed to it
+		std::map<ObjectId, std::set<ObjectId>> sources;  // per instrument channel, the MIDI channels routed to it
+		std::map<ObjectId, const RenderChannel*> routed; // those MIDI channels
 		for (const RenderChannel& channel : snapshot.channels)
 			if (channel.type == TrackType::Midi && channel.output.kind == RenderTarget::Kind::Channel)
+			{
 				sources[snapshot.channels[static_cast<size_t>(channel.output.index)].id].insert(channel.id);
+				routed[channel.id] = &channel;
+			}
 
 		std::map<ObjectId, std::shared_ptr<MidiSequencer>> sequencers;
 		std::map<ObjectId, Instrument> instruments;
@@ -247,7 +251,14 @@ namespace gnubase::engine
 			auto sequence = std::make_unique<MidiSequence>();
 			sequence->notes = channel.notes;
 			sequence->controllers = channel.controllers;
-			sequence->parts = channel.midiParts;
+			// An instrument chases the controller events of the MIDI tracks routed to it with its own, so the latest of
+			// each kind wins, whichever track it is on.
+			if (routed.count(channel.id) == 0)
+				sequence->chase.push_back(makeChaseTrack(channel.controllers, channel.midiParts));
+			if (channel.type == TrackType::Instrument)
+				for (const ObjectId source : sources[channel.id])
+					sequence->chase.push_back(
+						makeChaseTrack(routed.at(source)->controllers, routed.at(source)->midiParts));
 			sequencer->setSequence(std::move(sequence));
 			sequencer->setChase(m_chase);
 			sequencers[channel.id] = sequencer;

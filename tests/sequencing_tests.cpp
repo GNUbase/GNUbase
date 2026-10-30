@@ -8,6 +8,8 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <set>
 #include <string>
 #include <utility>
@@ -69,7 +71,8 @@ namespace
 	class Song
 	{
 	public:
-		explicit Song(int blockSize)
+		explicit Song(int blockSize, const std::filesystem::path& settings = {})
+			: engine(gnubase::audio::makeBackends(), settings)
 		{
 			run(client, "audio.setDevice", {{"blockSize", blockSize}, {"inputChannels", 0}, {"captureSeconds", 1}});
 			instrument = idOf(run(client, "track.add", {{"type", "instrument"}}), "track");
@@ -394,11 +397,25 @@ TEST_CASE("cycle playback ends notes at the right locator and plays the notes fr
 
 TEST_CASE("locating into held notes chases them, unless the user setting turns it off", "[integration]")
 {
-	const bool chase = GENERATE(true, false);
-	INFO("chase " << chase);
-	Song song(64);
-	if (!chase)
+	enum class Setting
+	{
+		Default,
+		Off,
+		OffInTheFile, // when the engine starts
+		OffAndReset,
+	};
+	const Setting setting = GENERATE(Setting::Default, Setting::Off, Setting::OffInTheFile, Setting::OffAndReset);
+	INFO("setting " << static_cast<int>(setting));
+	const bool chase = setting == Setting::Default || setting == Setting::OffAndReset;
+	const gnubase::test::TempDir folder;
+	if (setting == Setting::OffInTheFile)
+		std::ofstream(folder.path() / "settings.json", std::ios::binary)
+			<< R"({"version": 1, "values": {"midi.chaseNotes": false}})";
+	Song song(64, folder.path());
+	if (setting == Setting::Off || setting == Setting::OffAndReset)
 		run(song.client, "settings.set", {{"key", "midi.chaseNotes"}, {"value", false}});
+	if (setting == Setting::OffAndReset)
+		run(song.client, "settings.reset", {{"key", "midi.chaseNotes"}});
 	song.add(0, {0, 20000, 60});
 	song.add(1, {300, 20000, 64});
 	song.add(1, {4000, 4950, 67}); // ends before the locate position
