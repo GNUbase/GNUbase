@@ -152,9 +152,11 @@ namespace gnubase::ui
 	std::u32string Fonts::missing(const FontFamily& family, std::string_view text) const
 	{
 		std::vector<FontFile> faces;
+		faces.reserve(family.faces.size());
 		for (const std::filesystem::path& face : family.faces)
 			faces.emplace_back(face);
 		std::vector<FontFile> fallback;
+		fallback.reserve(m_fallback.size());
 		for (const std::filesystem::path& face : m_fallback)
 			fallback.emplace_back(face);
 

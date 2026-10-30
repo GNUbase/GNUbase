@@ -44,44 +44,53 @@ namespace
 	}
 
 	// Text of the user interface, with the symbols a DAW shows.
-	const std::vector<std::string> g_uiTexts = {
-		"Open Project…",
-		"Save As…",
-		"Audio Connections",
-		"Sample rate: 48.000 kHz · Bit depth: 24 bit",
-		"Volume −6.0 dB, pan 25% L, −∞ dB",
-		"Key: C♯ major / B♭ minor / F♮",
-		"Bars → Seconds ← ↑ ↓ ± ½ × ° € “Quoted” ‘single’ «guillemets»",
-	};
+	std::vector<std::string> uiTexts()
+	{
+		return {
+			"Open Project…",
+			"Save As…",
+			"Audio Connections",
+			"Sample rate: 48.000 kHz · Bit depth: 24 bit",
+			"Volume −6.0 dB, pan 25% L, −∞ dB",
+			"Key: C♯ major / B♭ minor / F♮",
+			"Bars → Seconds ← ↑ ↓ ± ½ × ° € “Quoted” ‘single’ «guillemets»",
+		};
+	}
 
 	// The alphabets of languages GNUbase may be translated into, as pangrams. Chinese, Japanese and Korean need
 	// fallback fonts of their own, which come with the translations (#172).
-	const std::vector<std::string> g_translations = {
-		"Falsches Üben von Xylophonmusik quält jeden größeren Zwerg.",
-		"Portez ce vieux whisky au juge blond qui fume : dès Noël où un zéphyr haï me vêt de glaçons würmiens, je dîne "
-		"d’exquis rôtis de bœuf au kir à l’aÿ d’âge mûr & cætera !",
-		"El veloz murciélago hindú comía feliz cardillo y kiwi. ¿La cigüeña tocaba el saxofón detrás del palenque?",
-		"Luís argüia à Júlia que «brações, fé, chá, óxido, pôr, zângão» eram palavras do português.",
-		"Pchnąć w tę łódź jeża lub ośm skrzyń fig.",
-		"Příliš žluťoučký kůň úpěl ďábelské ódy.",
-		"Árvíztűrő tükörfúrógép.",
-		"Fumegând hipnotic sașiul azvârle mreje în bălți.",
-		"Pijamalı hasta yağız şoföre çabucak güvendi.",
-		"Flygande bäckasiner söka hwila på mjuka tuvor. Høj bly gom vandt fræk sexquiz på wc.",
-		"Ξεσκεπάζω την ψυχοφθόρα βδελυγμία.",
-		"Съешь же ещё этих мягких французских булок, да выпей чаю.",
-		"Чуєш їх, доцю, га? Кумедна ж ти, прощайся без ґольфів!",
-		"Tôi có thể ăn thủy tinh mà không hại gì.",
-	};
+	std::vector<std::string> translations()
+	{
+		return {
+			"Falsches Üben von Xylophonmusik quält jeden größeren Zwerg.",
+			"Portez ce vieux whisky au juge blond qui fume : dès Noël où un zéphyr haï me vêt de glaçons würmiens,",
+			"je dîne d’exquis rôtis de bœuf au kir à l’aÿ d’âge mûr & cætera !",
+			"El veloz murciélago hindú comía feliz cardillo y kiwi. ¿La cigüeña tocaba el saxofón detrás del palenque?",
+			"Luís argüia à Júlia que «brações, fé, chá, óxido, pôr, zângão» eram palavras do português.",
+			"Pchnąć w tę łódź jeża lub ośm skrzyń fig.",
+			"Příliš žluťoučký kůň úpěl ďábelské ódy.",
+			"Árvíztűrő tükörfúrógép.",
+			"Fumegând hipnotic sașiul azvârle mreje în bălți.",
+			"Pijamalı hasta yağız şoföre çabucak güvendi.",
+			"Flygande bäckasiner söka hwila på mjuka tuvor. Høj bly gom vandt fræk sexquiz på wc.",
+			"Ξεσκεπάζω την ψυχοφθόρα βδελυγμία.",
+			"Съешь же ещё этих мягких французских булок, да выпей чаю.",
+			"Чуєш їх, доцю, га? Кумедна ж ти, прощайся без ґольфів!",
+			"Tôi có thể ăn thủy tinh mà không hại gì.",
+		};
+	}
 
 	// What counters and time displays show.
-	const std::vector<std::string> g_counterTexts = {
-		"0001.01.01.000",
-		"00:01:23:12",
-		"00:01:23.456",
-		"−12.5 dB +3.0 dB −∞",
-		"120.000 BPM 4/4",
-	};
+	std::vector<std::string> counterTexts()
+	{
+		return {
+			"0001.01.01.000",
+			"00:01:23:12",
+			"00:01:23.456",
+			"−12.5 dB +3.0 dB −∞",
+			"120.000 BPM 4/4",
+		};
+	}
 }
 
 TEST_CASE("GNUbase's fonts are all in their manifest, with their licenses next to them", "[unit]")
@@ -146,19 +155,19 @@ TEST_CASE(
 	const ui::Fonts fonts(fontsFolder());
 	const ui::FontFamily& text = *fonts.withRole("ui");
 	const ui::FontFamily& counter = *fonts.withRole("counter");
-	for (const std::string& line : g_uiTexts)
+	for (const std::string& line : uiTexts())
 	{
 		INFO(line);
 		CHECK(utf8(fonts.missing(text, line)).empty());
 		INFO(ui::pseudoLocalize(line));
 		CHECK(utf8(fonts.missing(text, ui::pseudoLocalize(line))).empty());
 	}
-	for (const std::string& line : g_translations)
+	for (const std::string& line : translations())
 	{
 		INFO(line);
 		CHECK(utf8(fonts.missing(text, line)).empty());
 	}
-	for (const std::string& line : g_counterTexts)
+	for (const std::string& line : counterTexts())
 	{
 		INFO(line);
 		CHECK(utf8(fonts.missing(counter, line)).empty());
@@ -187,7 +196,7 @@ TEST_CASE("the counter font's digits are all equally wide, so running numbers do
 
 TEST_CASE("the fonts load into RmlUi in every weight and style the manifest lists", "[unit]")
 {
-	test::FakeUi fake{{{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}}};
+	const test::FakeUi fake{{{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}}};
 	const ui::Fonts fonts(fontsFolder());
 	fonts.load();
 
@@ -196,8 +205,10 @@ TEST_CASE("the fonts load into RmlUi in every weight and style the manifest list
 	REQUIRE(engine != nullptr);
 	using Rml::Style::FontStyle;
 	using Rml::Style::FontWeight;
+	// NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange): FontWeight takes any CSS weight, not only its names
 	for (const auto weight : {FontWeight::Normal, FontWeight(500), FontWeight(600), FontWeight::Bold})
 		CHECK(engine->GetFontFaceHandle("inter", FontStyle::Normal, weight, 13) != 0);
+	// NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
 	CHECK(engine->GetFontFaceHandle("inter", FontStyle::Italic, FontWeight::Normal, 13) != 0);
 	CHECK(engine->GetFontFaceHandle("jetbrains mono", FontStyle::Normal, FontWeight::Normal, 13) != 0);
 	CHECK(engine->GetFontFaceHandle("jetbrains mono", FontStyle::Normal, FontWeight::Bold, 13) != 0);

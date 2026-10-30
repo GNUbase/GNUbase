@@ -141,7 +141,7 @@ TEST_CASE("GNUbase finds its resources next to the program, else in the source t
 	// The tests have none next to them, so they find the source tree's, with the fonts' manifest.
 	const std::optional<std::filesystem::path> own = findResources();
 	REQUIRE(own.has_value());
-	CHECK(std::filesystem::is_regular_file(*own / "fonts" / "fonts.json"));
+	CHECK(std::filesystem::is_regular_file(own.value_or(std::filesystem::path()) / "fonts" / "fonts.json"));
 }
 
 TEST_CASE("MCP clients run Lua scripts in a sandbox with script_run", "[unit]")
