@@ -60,6 +60,25 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"}}, ""},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
+				{"midi.chaseBeyondParts",
+					"Chases controller events from the whole track; off, only from the MIDI parts under the "
+					"position, so none outside parts.",
+					Json{{"type", "boolean"}}, true},
+				{"midi.chaseControllers",
+					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each control "
+					"change's last value before that position.",
+					Json{{"type", "boolean"}}, true},
+				{"midi.chaseNotes",
+					"Where playback starts or jumps, MIDI tracks start the notes that sound at that position.",
+					Json{{"type", "boolean"}}, true},
+				{"midi.chasePitchBend",
+					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "
+					"channel's last pitch bend before that position.",
+					Json{{"type", "boolean"}}, true},
+				{"midi.chasePrograms",
+					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "
+					"channel's last program change before that position.",
+					Json{{"type", "boolean"}}, true},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
@@ -80,7 +99,7 @@ namespace gnubase::engine::settings
 		return format;
 	}
 
-	void registerCommands(Engine& engine, Store& store)
+	void registerCommands(Engine& engine, Store& store, std::function<void()> changed)
 	{
 		Json keys = Json::array();
 		std::string list;
@@ -116,12 +135,15 @@ namespace gnubase::engine::settings
 							{"value", {{"description", "The new value; it must fit the setting's schema."}}}}},
 					{"required", Json::array({"key", "value"})}, {"additionalProperties", false}},
 				keyAndValue, false},
-			[&store](CommandContext& context)
+			[&store, changed](CommandContext& context)
 			{
 				const std::string name = context.parameters().at("key").get<std::string>();
 				const Json& value = context.parameters().at("value");
 				if (store.set(name, value))
+				{
+					changed();
 					context.emit("settings.changed", {{"values", {{name, value}}}});
+				}
 				return Json{{"key", name}, {"value", store.value(name)}};
 			});
 
@@ -134,25 +156,28 @@ namespace gnubase::engine::settings
 				{{"type", "object"}, {"properties", {{"values", {{"type", "object"}}}}},
 					{"required", Json::array({"values"})}},
 				false},
-			[&store](CommandContext& context)
+			[&store, changed = std::move(changed)](CommandContext& context)
 			{
-				Json changed = Json::object();
+				Json reset = Json::object();
 				Json values = Json::object();
 				if (const auto name = context.parameters().find("key"); name != context.parameters().end())
 				{
 					const std::string setting = name->get<std::string>();
 					if (store.reset(setting))
-						changed[setting] = store.value(setting);
+						reset[setting] = store.value(setting);
 					values[setting] = store.value(setting);
 				}
 				else
 				{
 					for (const std::string& setting : store.reset())
-						changed[setting] = store.value(setting);
+						reset[setting] = store.value(setting);
 					values = store.values();
 				}
-				if (!changed.empty())
-					context.emit("settings.changed", {{"values", std::move(changed)}});
+				if (!reset.empty())
+				{
+					changed();
+					context.emit("settings.changed", {{"values", std::move(reset)}});
+				}
 				return Json{{"values", std::move(values)}};
 			});
 

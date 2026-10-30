@@ -666,3 +666,96 @@ dialog .dialog-titlebar
 {
 	drag: drag;
 }
+
+/* List, tree and table views (ui/widgets.h). Rows inside a collapsed tree row are hidden; a tree row starts with its
+   indent, which code sizes from its level, and its toggle, turned to point right while the row is collapsed. */
+listview
+{
+	display: block;
+	padding: 4dp 0;
+	overflow-y: auto;
+	tab-index: auto;
+}
+
+listitem
+{
+	display: block;
+	box-sizing: border-box;
+	height: 22dp;
+	padding: 3dp 10dp 0 10dp;
+	white-space: nowrap;
+}
+
+listitem.hidden, listview tr.hidden
+{
+	display: none;
+}
+
+.tree-indent
+{
+	display: inline-block;
+	height: 1dp;
+}
+
+.tree-toggle
+{
+	display: inline-block;
+	width: 12dp;
+	height: 8dp;
+	margin-right: 4dp;
+	visibility: hidden;
+	transform: rotate(-90deg);
+}
+
+listitem.parent > .tree-toggle, tr.parent .tree-toggle
+{
+	visibility: visible;
+}
+
+listitem.expanded > .tree-toggle, tr.expanded .tree-toggle
+{
+	transform: none;
+}
+
+table
+{
+	display: table;
+	width: 100%;
+}
+
+thead, tbody, tfoot
+{
+	display: table-row-group;
+}
+
+tr
+{
+	display: table-row;
+}
+
+td
+{
+	display: table-cell;
+	padding: 3dp 10dp;
+	white-space: nowrap;
+}
+
+/* Splitters between the elements of a flex row or column; the grip shows which way they move. */
+splitter
+{
+	display: flex;
+	flex: 0 0 8dp;
+	align-items: center;
+	justify-content: center;
+	drag: drag;
+}
+
+splitter .splitter-grip-horizontal, splitter.column .splitter-grip-vertical
+{
+	display: none;
+}
+
+splitter.column .splitter-grip-horizontal
+{
+	display: block;
+}
