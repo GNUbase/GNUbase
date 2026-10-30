@@ -340,6 +340,22 @@ Result:
 
 - `samples`: array, required
 
+#### `audio_captureInput`
+
+Engine command `audio.captureInput`. Read-only.
+
+What an input channel of the dummy device recorded at project positions from start, at most 1048576 frames: its input goes where the transport played the record offset before it arrived (see audio.get), only while the transport plays, and the last cycle lap over the ones before. Up to captureSeconds from position 0; positions not recorded are silent. Only while the device stands.
+
+Arguments:
+
+- `channel`: integer, required
+- `frames`: integer, required
+- `start`: integer, required
+
+Result:
+
+- `samples`: array, required
+
 #### `audio_compare`
 
 Engine command `audio.compare`. Read-only.
@@ -380,7 +396,7 @@ Result:
 
 Engine command `audio.devices`. Read-only.
 
-The audio backends of this build, the preferred one first, and the devices each has now: their ids, names, channel names, sample rates, block sizes, clock sources (and the current one), whether the driver has a control panel, and whether the device is available. An unavailable device, e.g. one whose hardware isn't connected, has an unavailableReason; audio.setDevice still tries it. Some backends only learn that by opening or starting the device (ASIO). A backend that can't list its devices has an error instead.
+The audio backends of this build, the preferred one first, and the devices each has now: their ids, names, channel names, sample rates, block sizes, clock sources (and the current one), whether the driver has a control panel, whether it can monitor inputs directly (canMonitorDirectly), and whether the device is available. An unavailable device, e.g. one whose hardware isn't connected, has an unavailableReason; audio.setDevice still tries it. Some backends only learn that by opening or starting the device (ASIO). A backend that can't list its devices has an error instead.
 
 Result:
 
@@ -390,7 +406,7 @@ Result:
 
 Engine command `audio.get`. Read-only.
 
-The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing).
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing).
 
 Result:
 
@@ -417,6 +433,20 @@ Result:
 - `overloads`: integer, required
 - `peak`: number, required
 - `threads`: array of number, required
+
+#### `audio_ports`
+
+Engine command `audio.ports`. Read-only.
+
+The audio device's ports by name, in order, each with the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) whose channels run past the device's ports, with those channels, which are silent; bus.set gives them ports. Without a device there are no ports.
+
+Result:
+
+- `beyondDevice`: array, required
+- `busses`: array, required
+- `inputs`: array, required
+- `missing`: array, required
+- `outputs`: array, required
 
 #### `audio_record`
 
@@ -496,7 +526,8 @@ Result:
 Engine command `audio.setDevice`.
 
 Replaces the audio device. backend: one from audio.devices, by default "dummy". device: its id, by default the backend's default device. sampleRate and blockSize: by default the driver's current rate and preferred size. clockSource: a name from the device's clockSources. The device starts stopped at position 0. Another backend's device is closed before the new one opens, since drivers often allow only one; if opening fails, there is no device.
-The dummy device has no hardware: its output is captured in memory (audio.capture) and it renders offline (audio.render). Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs (inputChannels, outputChannels), 60 s of capture (captureSeconds). Its input is silent, or a built-in generator (see processor.list) with parameters by name.
+Recorded input goes where the transport played the device's input + output latency before it arrived, so what is played along to or looped back lines up with what played (recordOffset in audio.get). recordShift (frames, -65536 to 65536) moves recordings that much later, for drivers that report their latency wrong. directMonitoring: the driver monitors audio tracks' inputs itself, without the engine's latency, for tracks that play into an output bus (canMonitorDirectly in audio.devices says which can); their fader and pan set its level and position, automation doesn't reach it.
+The dummy device has no hardware: its output is captured in memory (audio.capture) and it renders offline (audio.render). Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs (inputChannels, outputChannels), 60 s of capture (captureSeconds). Its input is silent, or a built-in generator (see processor.list) with parameters by name. It reports inputLatency and outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that much later, as a cable from each output to the input of the same number would, which needs at least a block. It monitors directly by adding inputs to its outputs.
 
 Arguments:
 
@@ -505,9 +536,14 @@ Arguments:
 - `captureSeconds`: number
 - `clockSource`: string
 - `device`: string
+- `directMonitoring`: boolean
 - `input`: object
 - `inputChannels`: integer
+- `inputLatency`: integer
+- `loopback`: boolean
 - `outputChannels`: integer
+- `outputLatency`: integer
+- `recordShift`: integer
 - `sampleRate`: number
 
 Result:
@@ -730,39 +766,125 @@ Result:
 
 Engine command `bus.add`.
 
-Adds an input or output bus. format is its speaker arrangement (default stereo): mono, stereo, or a surround format with a fixed speaker order, e.g. 5.1 as L R C LFE Ls Rs. channels (1 to 8) picks mono, stereo, LRC, quadro, 5.0, 5.1, 7.0 or 7.1 instead.
+Adds an input or output bus. format is its speaker arrangement (default stereo): mono, stereo, or a surround format with a fixed speaker order, e.g. 5.1 as L R C LFE Ls Rs. channels (1 to 8) picks mono, stereo, LRC, quadro, 5.0, 5.1, 7.0 or 7.1 instead. Without a name it is named after its format and direction, e.g. "Stereo In 2". ports: the device port of each channel by name (see audio.ports), an empty name for none; without ports the bus takes consecutive device ports in bus order. A port can serve several busses. The first output bus becomes the main mix. A child bus routes to some channels of its parent, a top-level bus of the same direction with more channels (direction may be left out): parentChannels are the parent's channel indices, one per channel of the child, by default the speakers both formats have; it uses its parent's ports.
 
 Arguments:
 
 - `channels`: integer
-- `direction`: one of "input" | "output", required
+- `direction`: one of "input" | "output"
 - `format`: one of "mono" | "stereo" | "LRC" | "LRS" | "LRC+LFE" | "LRS+LFE" | "LRCS" | "LRCS+LFE" | "quadro" | "quadro+LFE" | "5.0" | "5.1" | "6.0 cine" | "6.0 music" | "7.0" | "7.1"
-- `name`: string, required
+- `name`: string
+- `parent`: integer
+- `parentChannels`: array of integer
+- `ports`: array of string
 
 Result:
 
 - `bus`: object, required
 
+#### `bus_applyPreset`
+
+Engine command `bus.applyPreset`.
+
+Replaces the project's busses of a direction with a preset's (see bus.presets). Channels that used the old busses move to the new bus at the same place, or to none (inputs) or the main mix (outputs). Returns the new busses.
+
+Arguments:
+
+- `direction`: one of "input" | "output", required
+- `name`: string, required
+
+Result:
+
+- `busses`: array, required
+
+#### `bus_presets`
+
+Engine command `bus.presets`. Read-only.
+
+The bus presets of a direction: standard ones with one bus of a common format, hardware ones made from the audio device's ports (all mono, or stereo pairs), and the user's own (bus.savePreset), which hide others of their name. Each has a name, a kind and its busses: name, format, ports and children (name, format, parentChannels).
+
+Arguments:
+
+- `direction`: one of "input" | "output", required
+
+Result:
+
+- `presets`: array, required
+
+#### `bus_remapPorts`
+
+Engine command `bus.remapPorts`.
+
+Re-routes ports, e.g. missing ones (see audio.ports) after opening a project made on other hardware: ports maps port names to the names that replace them in every bus of the direction. Returns the busses that changed.
+
+Arguments:
+
+- `direction`: one of "input" | "output", required
+- `ports`: object, required
+
+Result:
+
+- `busses`: array, required
+
 #### `bus_remove`
 
 Engine command `bus.remove`.
 
-Removes a bus; channels connected to it are disconnected.
+Removes a bus and its child busses; channels connected to them are disconnected. Removing the main mix makes the next output bus the main mix.
 
 Arguments:
 
 - `bus`: integer, required
+
+#### `bus_removePreset`
+
+Engine command `bus.removePreset`.
+
+Removes one of the user's own bus presets.
+
+Arguments:
+
+- `direction`: one of "input" | "output", required
+- `name`: string, required
+
+#### `bus_rename`
+
+Engine command `bus.rename`.
+
+Renames several busses with an incrementing number or letter: name ends in a number ("Out 1", "Out 01") or in a space and a capital letter ("Bus A", up to Z). The first bus given gets the name as given, the others follow in bus order from there, continuing from the top.
+
+Arguments:
+
+- `busses`: array of integer, required
+- `name`: string, required
+
+Result:
+
+- `busses`: array, required
+
+#### `bus_savePreset`
+
+Engine command `bus.savePreset`.
+
+Saves the project's busses of a direction as a user preset, for every project (the user setting audio.busPresets), replacing one of the same name. A preset named Default is applied to new projects.
+
+Arguments:
+
+- `direction`: one of "input" | "output", required
+- `name`: string, required
 
 #### `bus_set`
 
 Engine command `bus.set`.
 
-Renames a bus.
+Renames a bus, changes its ports (as in bus.add; [] for consecutive ports in bus order) or makes it the main mix (mainMix: true), the output bus new channels are routed to and that is monitored.
 
 Arguments:
 
 - `bus`: integer, required
+- `mainMix`: boolean
 - `name`: string
+- `ports`: array of string
 
 Result:
 
@@ -1842,6 +1964,54 @@ Result:
 
 - `notes`: array, required
 
+### parameter
+
+#### `parameter_get`
+
+Engine command `parameter.get`. Read-only.
+
+One parameter of a channel, named by its target, as parameter.list returns it.
+
+Arguments:
+
+- `channel`: integer, required
+- `target`: object, required
+
+Result:
+
+- `parameter`: object, required
+
+#### `parameter_list`
+
+Engine command `parameter.list`. Read-only.
+
+The automatable parameters of a channel: on channels with audio the fader's volume (in dB, up to the project's maxVolume), pan, panLeft and panRight (-1 to 1, see channel.set), and on instrument tracks the parameters of their built-in instrument (see processor.list; plugins come later). Each has its target, as automationLane.add takes it, its name, minimum, maximum, default, unit, whether it is stepped (whole numbers only), options (the names of a stepped parameter's values from the minimum on, if it has any), its static value and text, the value as it is displayed. Automation overrides the static value while it plays. MIDI channels have none: their volume and pan are MIDI controllers (channel.set midiVolume and midiPan).
+
+Arguments:
+
+- `channel`: integer, required
+
+Result:
+
+- `parameters`: array, required
+
+#### `parameter_set`
+
+Engine command `parameter.set`.
+
+Sets the static value of a channel's parameter (see parameter.list), named by its target, from either value or text: the name of one of its options, or a number, optionally followed by its unit, in any case ("-6 dB"). Values beyond the range stop at its ends, and stepped parameters round to whole numbers. Volume and pan changes glide over 5 ms. A channel that gets another instrument starts with its parameters at their defaults. Returns the parameter.
+
+Arguments:
+
+- `channel`: integer, required
+- `target`: object, required
+- `text`: string
+- `value`: number
+
+Result:
+
+- `parameter`: object, required
+
 ### pluginhost
 
 #### `pluginhost_check`
@@ -1974,7 +2144,7 @@ Result:
 
 Engine command `project.new`.
 
-Replaces the project with an empty one that has a stereo input and output bus, and clears the undo history.
+Replaces the project with an empty one that has a stereo input and output bus, or the busses of the user's bus presets named Default (see bus.savePreset), and clears the undo history.
 
 #### `project_revision`
 
@@ -2114,17 +2284,20 @@ Result:
 
 Engine command `quantize.presets`. Read-only.
 
-The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings.
+The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings. The user's presets are kept in the settings folder, so they come back when GNUbase starts again: file is where (null if they are kept in memory only), readOnly whether changes are saved (not while the file belongs to a newer GNUbase), and problems what was wrong with it, such as presets that this GNUbase can't read and skips; they stay in the file.
 
 Result:
 
+- `file`: string or null, required
 - `presets`: array, required
+- `problems`: array, required
+- `readOnly`: boolean, required
 
 #### `quantize_removePreset`
 
 Engine command `quantize.removePreset`.
 
-Removes one of the user's quantize presets.
+Removes one of the user's quantize presets, and the presets of that name that this GNUbase can't read (see quantize.presets).
 
 Arguments:
 
@@ -2161,7 +2334,7 @@ Result:
 
 Engine command `quantize.savePreset`.
 
-Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset of that name. Factory presets can't be replaced. Presets belong to GNUbase, not to the project.
+Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset of that name. Factory presets can't be replaced. Presets belong to the user, not to the project: they are saved in the settings folder.
 
 Arguments:
 
@@ -2214,7 +2387,7 @@ The value of a user setting; settings.list describes them all.
 
 Arguments:
 
-- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
 
 Result:
 
@@ -2242,7 +2415,7 @@ Puts a user setting back to its default, or every one without key, and saves the
 
 Arguments:
 
-- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme". The setting.
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme". The setting.
 
 Result:
 
@@ -2252,11 +2425,11 @@ Result:
 
 Engine command `settings.set`.
 
-Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes.
+Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.busPresets` (object, default {"input":{},"output":{}}): The user's own bus presets, per direction (input, output) by name: each a list of busses with their name, format, ports and child busses (bus.savePreset); `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes.
 
 Arguments:
 
-- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
 - `value`: any, required. The new value; it must fit the setting's schema.
 
 Result:
@@ -2613,9 +2786,10 @@ Result:
 Queries without required arguments can also be read as resources:
 
 - `gnubase://audio.analyze`: Measures the captured output of channels (default: every output) from frame start for frames frames (default: to the end of the capture). Per channel: the peak and RMS level, and a spectrum summary with the strongest frequencies (at most peaks, default 5, up to 20) and the power of octave bands. For the channels together: the integrated loudness in LUFS (ITU-R BS.1770), null below 400 ms. Levels are linear and in dBFS (a full-scale sine's peak is 0 dBFS, its RMS -3 dBFS); dBFS is null for silence.
-- `gnubase://audio.devices`: The audio backends of this build, the preferred one first, and the devices each has now: their ids, names, channel names, sample rates, block sizes, clock sources (and the current one), whether the driver has a control panel, and whether the device is available. An unavailable device, e.g. one whose hardware isn't connected, has an unavailableReason; audio.setDevice still tries it. Some backends only learn that by opening or starting the device (ASIO). A backend that can't list its devices has an error instead.
-- `gnubase://audio.get`: The audio device (its backend, id, name, format, channel names, latencies in frames, clock source and whether it has a control panel), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing).
+- `gnubase://audio.devices`: The audio backends of this build, the preferred one first, and the devices each has now: their ids, names, channel names, sample rates, block sizes, clock sources (and the current one), whether the driver has a control panel, whether it can monitor inputs directly (canMonitorDirectly), and whether the device is available. An unavailable device, e.g. one whose hardware isn't connected, has an unavailableReason; audio.setDevice still tries it. Some backends only learn that by opening or starting the device (ASIO). A backend that can't list its devices has an error instead.
+- `gnubase://audio.get`: The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing).
 - `gnubase://audio.performance`: Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1; cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late.
+- `gnubase://audio.ports`: The audio device's ports by name, in order, each with the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) whose channels run past the device's ports, with those channels, which are silent; bus.set gives them ports. Without a device there are no ports.
 - `gnubase://automation.get`: The automation settings. followsEvents (default false): when an audio event or MIDI part moves, the automation of its track in its range moves with it and replaces the points where it lands.
 - `gnubase://automationLane.list`: The automation lanes of a track, or of every track in track order, with their points sorted by position.
 - `gnubase://engine.commandLog`: The last 256 commands that ran, oldest first, without queries: what the UI and other clients did. Each with its request id (events name it too), the client that sent it (ui, mcp, lua, app for the command line, engine for the engine's own commands), the command, its parameters, and the error if it failed.
@@ -2634,7 +2808,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://project.location`: Where the project is: its project file (set by project.save and project.load), the folder of that file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. All null for a project that has no file yet.
 - `gnubase://project.revision`: A number that grows with every change of the project: every edit, undo and redo, and loading or starting a project. project.load with revision loads only if it hasn't changed.
 - `gnubase://quantize.get`: The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).
-- `gnubase://quantize.presets`: The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings.
+- `gnubase://quantize.presets`: The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings. The user's presets are kept in the settings folder, so they come back when GNUbase starts again: file is where (null if they are kept in memory only), readOnly whether changes are saved (not while the file belongs to a newer GNUbase), and problems what was wrong with it, such as presets that this GNUbase can't read and skips; they stay in the file.
 - `gnubase://settings.list`: Every user setting with its key, description, JSON schema, default and value; the settings file, null when settings are kept in memory only; its version; and what happened when it was loaded: the status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the problems found, where the original file was kept, and whether the file is read-only for this session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be backed up or locked).
 - `gnubase://transport.get`: Whether playback runs, the project cursor in samples, the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.
 

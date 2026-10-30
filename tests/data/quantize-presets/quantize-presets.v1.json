@@ -1,0 +1,59 @@
+{
+	"version": 1,
+	"values": {
+		"quantize.presets": [
+			{
+				"name": "Swing 8",
+				"settings": {
+					"catchRange": 0,
+					"grid": "1/8",
+					"groove": null,
+					"lengthStrength": 0.0,
+					"maxMove": 0,
+					"origin": 0,
+					"preQuantize": null,
+					"randomize": 0,
+					"safeRange": 0,
+					"seed": 12345678901234,
+					"soft": false,
+					"strength": 0.75,
+					"swing": 0.5,
+					"tuplet": 0,
+					"velocityStrength": 0.0
+				}
+			},
+			{
+				"name": "Late",
+				"settings": {
+					"catchRange": 0,
+					"grid": "1/16",
+					"groove": {
+						"length": 6881280,
+						"points": [
+							{
+								"length": 430080,
+								"position": 172032,
+								"velocity": 1.0
+							},
+							{
+								"position": 3612672
+							}
+						]
+					},
+					"lengthStrength": 0.5,
+					"maxMove": 430080,
+					"origin": 1720320,
+					"preQuantize": "1/16",
+					"randomize": 0,
+					"safeRange": 0,
+					"seed": 0,
+					"soft": false,
+					"strength": 1.0,
+					"swing": 0.0,
+					"tuplet": 0,
+					"velocityStrength": 0.25
+				}
+			}
+		]
+	}
+}

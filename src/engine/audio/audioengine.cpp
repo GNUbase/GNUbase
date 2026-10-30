@@ -30,6 +30,7 @@ namespace gnubase::engine
 		constexpr auto g_offlineWait = std::chrono::seconds(30); // for the streams before an offline block
 		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20;   // frames one audio.capture returns at most
 		constexpr int64_t g_maxThreads = 64;
+		constexpr int64_t g_maxLatency = 65536; // frames: the dummy device's latencies and the record shift
 
 		Json statusSchema()
 		{
@@ -76,18 +77,70 @@ namespace gnubase::engine
 				{"sampleRates", info.sampleRates}, {"blockSizes", info.blockSizes}, {"clockSources", info.clockSources},
 				{"clockSource", clockSource}, {"controlPanel", info.controlPanel},
 				{"available", info.unavailableReason.empty()},
-				{"unavailableReason", info.unavailableReason.empty() ? Json() : Json(info.unavailableReason)}};
+				{"unavailableReason", info.unavailableReason.empty() ? Json() : Json(info.unavailableReason)},
+				{"canMonitorDirectly", info.canMonitorDirectly}};
+		}
+
+		// A device's port names: its channel names, "Input 3" or "Output 3" where it has none, " #2" and so on after
+		// names that repeat, so that each one names one port.
+		std::vector<std::string> portNames(std::vector<std::string> names, int channels, const std::string& generic)
+		{
+			names.resize(static_cast<size_t>(std::max(channels, 0)));
+			for (size_t i = 0; i < names.size(); ++i)
+			{
+				if (names[i].empty())
+					names[i] = generic + std::to_string(i + 1);
+				const auto before = names.begin() + static_cast<std::ptrdiff_t>(i);
+				const std::string base = names[i];
+				for (int n = 2; std::find(names.begin(), before, names[i]) != before; ++n)
+					names[i] = base + " #" + std::to_string(n);
+			}
+			return names;
+		}
+
+		// The device channel each channel of each bus uses, or -1: ports by name; a bus without ports the next ones
+		// in bus order, as many as the busses of its direction before it have channels are skipped; a child bus its
+		// parent's.
+		std::vector<std::vector<int>> devicePorts(const std::vector<RenderBus>& busses,
+			const std::vector<std::string>& inputs, const std::vector<std::string>& outputs)
+		{
+			std::vector<std::vector<int>> result(busses.size());
+			std::array<int, 2> next{}; // per direction, the first port of the next bus without ports
+			for (size_t b = 0; b < busses.size(); ++b)
+			{
+				const RenderBus& bus = busses[b];
+				if (bus.parent >= 0)
+					continue;
+				const bool input = bus.direction == BusDirection::Input;
+				const std::vector<std::string>& names = input ? inputs : outputs;
+				int& first = next[input ? 0 : 1];
+				const int channels = channelCount(bus.format);
+				for (int c = 0; c < channels; ++c)
+				{
+					int port = first + c < static_cast<int>(names.size()) ? first + c : -1;
+					if (!bus.ports.empty())
+					{
+						const auto found = std::find(names.begin(), names.end(), bus.ports[static_cast<size_t>(c)]);
+						port = found != names.end() ? static_cast<int>(found - names.begin()) : -1;
+					}
+					result[b].push_back(port);
+				}
+				first += channels;
+			}
+			for (size_t b = 0; b < busses.size(); ++b)
+				if (busses[b].parent >= 0)
+					for (const int channel : busses[b].parentChannels)
+						result[b].push_back(
+							result[static_cast<size_t>(busses[b].parent)][static_cast<size_t>(channel)]);
+			return result;
 		}
 
 		const processors::BuiltinInfo& generatorInfo(const std::string& id)
 		{
-			for (const processors::BuiltinInfo& info : processors::builtins())
-				if (info.id == id)
-				{
-					require(!info.instrument, id + " is not a generator");
-					return info;
-				}
-			throw CommandError("no built-in processor " + id);
+			const processors::BuiltinInfo* info = processors::findBuiltin(id);
+			require(info != nullptr, "no built-in processor " + id);
+			require(!info->instrument, id + " is not a generator");
+			return *info;
 		}
 	}
 
@@ -199,28 +252,20 @@ namespace gnubase::engine
 		const uint64_t generation = ++m_generation;
 		attachMidi(snapshot, desc, generation);
 		attachStrips(snapshot, desc);
+		std::vector<std::vector<int>> ports = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
+		if (m_directMonitoring)
+			monitorDirectly(snapshot, desc, ports);
 
 		auto program = std::make_unique<Program>(desc, format.sampleRate, format.blockSize);
 		program->tempo = snapshot.tempo;
 		program->sampleRate = snapshot.sampleRate;
 		program->generation = generation;
 		program->releases = releases();
-		int input = 0;
-		int output = 0;
-		for (size_t i = 0; i < desc.nodes.size(); ++i)
-		{
-			const graph::NodeDesc& node = desc.nodes[i];
-			if (node.kind == graph::NodeKind::InputBus)
-			{
-				program->inputs.push_back({static_cast<int>(i), input, channelCount(node.format)});
-				input += channelCount(node.format);
-			}
-			else if (node.kind == graph::NodeKind::OutputBus)
-			{
-				program->outputs.push_back({static_cast<int>(i), output, channelCount(node.format)});
-				output += channelCount(node.format);
-			}
-		}
+		// Bus nodes come first, in bus order (graph::describe); child busses reach the device through their parent.
+		for (size_t b = 0; b < snapshot.busses.size(); ++b)
+			if (snapshot.busses[b].parent < 0)
+				(snapshot.busses[b].direction == BusDirection::Input ? program->inputs : program->outputs)
+					.push_back({static_cast<int>(b), std::move(ports[b])});
 		m_revision = snapshot.revision;
 		if (m_programs)
 			m_programs->publish(std::move(program));
@@ -315,6 +360,55 @@ namespace gnubase::engine
 		m_channelStates = std::move(states);
 	}
 
+	void AudioEngine::monitorDirectly(
+		const RenderSnapshot& snapshot, graph::GraphDesc& desc, const std::vector<std::vector<int>>& ports)
+	{
+		// Each input port plays on one output, the first track's that uses it; a mono input on a wider bus is panned
+		// to the bus's first port and the one after it, other inputs play on the port of the same channel.
+		std::map<int, audio::InputMonitor> monitors;
+		const int firstChannel = static_cast<int>(snapshot.busses.size());
+		for (size_t i = 0; i < snapshot.channels.size(); ++i)
+		{
+			const RenderChannel& channel = snapshot.channels[i];
+			if (channel.type != TrackType::Audio || channel.input < 0 || channel.output.kind != RenderTarget::Kind::Bus)
+				continue; // groups aren't on the device: what plays into one is monitored through the graph
+			const int node = firstChannel + static_cast<int>(i);
+			desc.audio.erase(std::remove_if(desc.audio.begin(), desc.audio.end(),
+								 [&channel, node](const graph::Connection& connection)
+								 { return connection.from == channel.input && connection.to == node; }),
+				desc.audio.end());
+			const std::vector<int>& inputs = ports[static_cast<size_t>(channel.input)];
+			const std::vector<int>& outputs = ports[static_cast<size_t>(channel.output.index)];
+			const bool panned = inputs.size() == 1 && outputs.size() > 1;
+			for (size_t c = 0; c < inputs.size() && !outputs.empty(); ++c)
+			{
+				const int output = outputs[std::min(c, outputs.size() - 1)];
+				if (inputs[c] >= 0 && output >= 0 && monitors.count(inputs[c]) == 0)
+					monitors[inputs[c]] = {inputs[c], output, true, channel.volume, panned ? channel.pan : -1.0};
+			}
+		}
+
+		// Those that stop first, as an input may move to another output.
+		for (const auto& [input, monitor] : m_monitors)
+			if (monitors.count(input) == 0)
+				m_device->monitorInput({monitor.input, monitor.output, false, monitor.gain, monitor.pan});
+		for (const auto& [input, monitor] : monitors)
+		{
+			const auto old = m_monitors.find(input);
+			if (old == m_monitors.end() || old->second.output != monitor.output || old->second.gain != monitor.gain ||
+				old->second.pan != monitor.pan)
+				m_device->monitorInput(monitor);
+		}
+		m_monitors = std::move(monitors);
+	}
+
+	void AudioEngine::stopMonitoringDirectly()
+	{
+		for (const auto& [input, monitor] : m_monitors)
+			m_device->monitorInput({monitor.input, monitor.output, false, monitor.gain, monitor.pan});
+		m_monitors.clear();
+	}
+
 	std::vector<AudioEngine::Release> AudioEngine::releases()
 	{
 		// Done once the audio thread started a program that has them; not needed if the instrument is gone or
@@ -360,25 +454,36 @@ namespace gnubase::engine
 		for (const BusLink& link : program.inputs)
 		{
 			float* const* bus = program.graph.audio(link.node);
-			for (int c = 0; c < link.channels; ++c)
+			for (size_t c = 0; c < link.ports.size(); ++c)
 			{
-				const int device = link.firstChannel + c;
-				if (device < format.inputChannels)
-					std::memcpy(bus[c], block.inputs[device], bytes);
+				const int port = link.ports[c];
+				if (port >= 0 && port < format.inputChannels)
+					std::memcpy(bus[c], block.inputs[port], bytes);
 				else
 					std::memset(bus[c], 0, bytes);
 			}
 		}
 		m_playback.beginBlock();
 		graph::TransportBlock transport = m_transport.advance(block.frames);
+		m_played.add(block.position, block.frames, transport);
+		captureInput(block);
 		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
 		program.graph.process(block.frames, transport, m_workers.get());
 		m_playback.endBlock();
+		// Outputs start silent; busses that share a port add up there, in bus order.
 		for (const BusLink& link : program.outputs)
 		{
 			float* const* bus = program.graph.audio(link.node);
-			for (int c = 0; c < link.channels && link.firstChannel + c < format.outputChannels; ++c)
-				std::memcpy(block.outputs[link.firstChannel + c], bus[c], bytes);
+			for (size_t c = 0; c < link.ports.size(); ++c)
+			{
+				const int port = link.ports[c];
+				if (port < 0 || port >= format.outputChannels)
+					continue;
+				float* out = block.outputs[port];
+				const float* in = bus[c];
+				for (uint32_t i = 0; i < block.frames; ++i)
+					out[i] += in[i];
+			}
 		}
 
 		const std::chrono::duration<double> busy = std::chrono::steady_clock::now() - start;
@@ -391,6 +496,22 @@ namespace gnubase::engine
 		m_programs->release();
 	}
 
+	void AudioEngine::captureInput(const audio::DeviceBlock& block) noexcept
+	{
+		if (m_capturedInput.empty())
+			return;
+		const auto frames = static_cast<int64_t>(m_capturedInput[0].size());
+		const size_t channels = std::min(m_capturedInput.size(), static_cast<size_t>(m_device->format().inputChannels));
+		for (uint32_t i = 0; i < block.frames; ++i)
+		{
+			const time::Samples position = m_played.at(static_cast<int64_t>(block.position + i) - m_recordOffset);
+			if (position < 0 || position >= frames)
+				continue;
+			for (size_t c = 0; c < channels; ++c)
+				m_capturedInput[c][static_cast<size_t>(position)] = block.inputs[c][i];
+		}
+	}
+
 	audio::DummyDevice& AudioEngine::requireDummy()
 	{
 		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
@@ -401,11 +522,18 @@ namespace gnubase::engine
 	void AudioEngine::closeDevice()
 	{
 		stopDevice();
+		if (m_device)
+			stopMonitoringDirectly(); // the hardware would go on monitoring
 		m_workers.reset();
 		clearPerformance(); // the old device's numbers would stay up until the new one processes a block
 		m_device.reset();
 		m_dummy = nullptr;
+		m_inputPorts.clear();
+		m_outputPorts.clear();
 		m_programs.reset();
+		m_directMonitoring = false;
+		m_played = PlayedPositions();
+		m_capturedInput.clear();
 	}
 
 	void AudioEngine::setDevice(const Json& parameters)
@@ -421,13 +549,18 @@ namespace gnubase::engine
 			throw CommandError("no audio backend " + name + "; there are " + names);
 		}
 
+		const auto recordShift = parameters.value("recordShift", int64_t{0});
+		require(
+			recordShift >= -g_maxLatency && recordShift <= g_maxLatency, "recordShift must be from -65536 to 65536");
+		const bool directMonitoring = parameters.value("directMonitoring", false);
 		if (name == "dummy")
 		{
 			openDummy(parameters);
 		}
 		else
 		{
-			for (const char* key : {"inputChannels", "outputChannels", "captureSeconds", "input"})
+			for (const char* key : {"inputChannels", "outputChannels", "captureSeconds", "input", "inputLatency",
+					 "outputLatency", "loopback"})
 				require(!parameters.contains(key), std::string("only the dummy device takes ") + key);
 			audio::DeviceConfig config;
 			config.device = parameters.value("device", std::string());
@@ -442,8 +575,22 @@ namespace gnubase::engine
 			m_generator = nullptr;
 			m_device = (*backend)->open(config);
 		}
+		const audio::DeviceInfo info = m_device->info();
+		if (directMonitoring && !info.canMonitorDirectly)
+		{
+			const std::string device = info.name;
+			closeDevice();
+			throw CommandError("the driver of " + device + " can't monitor directly");
+		}
 		m_backend = name;
 		m_parameters = parameters;
+		m_directMonitoring = directMonitoring;
+		m_recordShift = recordShift;
+		const audio::DeviceLatency latency = m_device->latency();
+		m_recordOffset = std::max<int64_t>(int64_t{latency.input} + latency.output - recordShift, 0);
+		m_played = PlayedPositions(static_cast<size_t>(m_recordOffset) + m_device->format().blockSize);
+		m_inputPorts = portNames(info.inputs, m_device->format().inputChannels, "Input ");
+		m_outputPorts = portNames(info.outputs, m_device->format().outputChannels, "Output ");
 		m_device->onReset(
 			[engine = m_engine]
 			{
@@ -489,6 +636,66 @@ namespace gnubase::engine
 		return {{"backends", std::move(backends)}};
 	}
 
+	Json AudioEngine::ports() const
+	{
+		const RenderSnapshot& snapshot = m_snapshots.latest();
+		const std::vector<std::vector<int>> used = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
+		const auto list = [](const std::vector<std::string>& names)
+		{
+			Json ports = Json::array();
+			for (const std::string& name : names)
+				ports.push_back({{"name", name}, {"busses", Json::array()}});
+			return ports;
+		};
+		Json inputs = list(m_inputPorts);
+		Json outputs = list(m_outputPorts);
+		Json busses = Json::array();
+		Json missing = Json::array();
+		Json beyond = Json::array();
+		for (size_t b = 0; b < snapshot.busses.size(); ++b)
+		{
+			const RenderBus& bus = snapshot.busses[b];
+			const bool input = bus.direction == BusDirection::Input;
+			const std::vector<std::string>& names = input ? m_inputPorts : m_outputPorts;
+			Json ports = Json::array();
+			for (const int port : used[b])
+				ports.push_back(port >= 0 ? Json(names[static_cast<size_t>(port)]) : Json(nullptr));
+			busses.push_back({{"bus", bus.id}, {"ports", std::move(ports)}});
+			if (bus.parent >= 0)
+				continue; // child busses use their parent's
+			for (const int port : used[b])
+			{
+				if (port < 0)
+					continue;
+				Json& users = (input ? inputs : outputs)[static_cast<size_t>(port)]["busses"];
+				if (users.empty() || users.back() != bus.id)
+					users.push_back(bus.id);
+			}
+			// A bus on consecutive ports has no names that could be missing: its channels past the device's ports.
+			Json silent = Json::array();
+			for (size_t c = 0; bus.ports.empty() && c < used[b].size(); ++c)
+				if (used[b][c] < 0)
+					silent.push_back(c);
+			if (!silent.empty())
+				beyond.push_back(
+					{{"bus", bus.id}, {"direction", input ? "input" : "output"}, {"channels", std::move(silent)}});
+			for (const std::string& name : bus.ports)
+			{
+				if (name.empty() || std::find(names.begin(), names.end(), name) != names.end())
+					continue;
+				const auto entry = std::find_if(missing.begin(), missing.end(), [&name, input](const Json& port)
+					{ return port.at("name") == name && (port.at("direction") == "input") == input; });
+				if (entry == missing.end())
+					missing.push_back(
+						{{"name", name}, {"direction", input ? "input" : "output"}, {"busses", {bus.id}}});
+				else if (entry->at("busses").back() != bus.id)
+					entry->at("busses").push_back(bus.id);
+			}
+		}
+		return {{"inputs", std::move(inputs)}, {"outputs", std::move(outputs)}, {"busses", std::move(busses)},
+			{"missing", std::move(missing)}, {"beyondDevice", std::move(beyond)}};
+	}
+
 	void AudioEngine::openDummy(const Json& parameters)
 	{
 		if (const auto device = parameters.find("device"); device != parameters.end())
@@ -503,11 +710,20 @@ namespace gnubase::engine
 		const auto inputs = parameters.value("inputChannels", int64_t{format.inputChannels});
 		const auto outputs = parameters.value("outputChannels", int64_t{format.outputChannels});
 		const double seconds = parameters.value("captureSeconds", 60.0);
+		const auto inputLatency = parameters.value("inputLatency", int64_t{0});
+		const auto outputLatency = parameters.value("outputLatency", int64_t{0});
+		const bool loopback = parameters.value("loopback", false);
 		require(format.sampleRate >= 8000.0 && format.sampleRate <= 384000.0, "sampleRate must be from 8000 to 384000");
 		require(blockSize >= 1 && blockSize <= 8192, "blockSize must be from 1 to 8192");
 		require(inputs >= 0 && inputs <= 64, "inputChannels must be from 0 to 64");
 		require(outputs >= 0 && outputs <= 64, "outputChannels must be from 0 to 64");
 		require(seconds >= 0.0 && seconds <= g_maxCaptureSeconds, "captureSeconds must be from 0 to 600");
+		require(
+			inputLatency >= 0 && inputLatency <= g_maxLatency && outputLatency >= 0 && outputLatency <= g_maxLatency,
+			"inputLatency and outputLatency must be from 0 to 65536");
+		require(!loopback || inputLatency + outputLatency >= blockSize,
+			"the dummy device's loopback needs inputLatency + outputLatency of at least a block");
+		require(!loopback || !parameters.contains("input"), "the dummy device's input is its loopback or a generator");
 		format.blockSize = static_cast<uint32_t>(blockSize);
 		format.inputChannels = static_cast<int>(inputs);
 		format.outputChannels = static_cast<int>(outputs);
@@ -541,10 +757,12 @@ namespace gnubase::engine
 
 		closeDevice();
 		m_generator = std::move(generator);
-		auto device = std::make_unique<audio::DummyDevice>(
-			format, static_cast<size_t>(std::llround(seconds * format.sampleRate)));
+		const auto captureFrames = static_cast<size_t>(std::llround(seconds * format.sampleRate));
+		auto device = std::make_unique<audio::DummyDevice>(format, captureFrames);
+		device->setLatency({static_cast<uint32_t>(inputLatency), static_cast<uint32_t>(outputLatency)}, loopback);
 		m_dummy = device.get();
 		m_device = std::move(device);
+		m_capturedInput.assign(static_cast<size_t>(format.inputChannels), std::vector<float>(captureFrames));
 		if (m_generator)
 			m_dummy->setInput(
 				[this](float* const* channels, int count, uint32_t frames, uint64_t /*position*/)
@@ -668,7 +886,8 @@ namespace gnubase::engine
 		Json device = toJson(m_device->info());
 		device.update({{"backend", m_backend}, {"sampleRate", format.sampleRate}, {"blockSize", format.blockSize},
 			{"inputChannels", format.inputChannels}, {"outputChannels", format.outputChannels},
-			{"inputLatency", latency.input}, {"outputLatency", latency.output}});
+			{"inputLatency", latency.input}, {"outputLatency", latency.output}, {"recordShift", m_recordShift},
+			{"recordOffset", m_recordOffset}, {"directMonitoring", m_directMonitoring}});
 		return {{"device", std::move(device)}, {"running", m_device->running()}, {"position", m_device->position()},
 			{"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
 			{"droppedFrames", m_dummy != nullptr ? m_dummy->droppedFrames() : 0},
@@ -722,10 +941,10 @@ namespace gnubase::engine
 			{"audio.devices", 1,
 				"The audio backends of this build, the preferred one first, and the devices each has now: their ids, "
 				"names, channel names, sample rates, block sizes, clock sources (and the current one), whether the "
-				"driver has a control panel, and whether the device is available. An unavailable device, e.g. one "
-				"whose hardware isn't connected, has an unavailableReason; audio.setDevice still tries it. Some "
-				"backends only learn that by opening or starting the device (ASIO). A backend that can't list its "
-				"devices has an error instead.",
+				"driver has a control panel, whether it can monitor inputs directly (canMonitorDirectly), and whether "
+				"the device is available. An unavailable device, e.g. one whose hardware isn't connected, has an "
+				"unavailableReason; audio.setDevice still tries it. Some backends only learn that by opening or "
+				"starting the device (ASIO). A backend that can't list its devices has an error instead.",
 				noParameters(), Json::parse(R"({"type": "object", "properties": {"backends": {"type": "array"}},
 					"required": ["backends"]})"),
 				true},
@@ -737,15 +956,27 @@ namespace gnubase::engine
 				"rate and preferred size. clockSource: a name from the device's clockSources. The device starts "
 				"stopped at position 0. Another backend's device is closed before the new one opens, since drivers "
 				"often allow only one; if opening fails, there is no device.\n"
+				"Recorded input goes where the transport played the device's input + output latency before it "
+				"arrived, so what is played along to or looped back lines up with what played (recordOffset in "
+				"audio.get). recordShift (frames, -65536 to 65536) moves recordings that much later, for drivers that "
+				"report their latency wrong. directMonitoring: the driver monitors audio tracks' inputs itself, "
+				"without the engine's latency, for tracks that play into an output bus (canMonitorDirectly in "
+				"audio.devices says which can); their fader and pan set its level and position, automation doesn't "
+				"reach it.\n"
 				"The dummy device has no hardware: its output is captured in memory (audio.capture) and it renders "
 				"offline (audio.render). Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs "
 				"(inputChannels, outputChannels), 60 s of capture (captureSeconds). Its input is silent, or a "
-				"built-in generator (see processor.list) with parameters by name.",
+				"built-in generator (see processor.list) with parameters by name. It reports inputLatency and "
+				"outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that "
+				"much later, as a cable from each output to the input of the same number would, which needs at least "
+				"a block. It monitors directly by adding inputs to its outputs.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
 					"backend": {"type": "string"}, "device": {"type": "string"}, "clockSource": {"type": "string"},
 					"sampleRate": {"type": "number"}, "blockSize": {"type": "integer"},
+					"recordShift": {"type": "integer"}, "directMonitoring": {"type": "boolean"},
 					"inputChannels": {"type": "integer"}, "outputChannels": {"type": "integer"},
-					"captureSeconds": {"type": "number"},
+					"captureSeconds": {"type": "number"}, "inputLatency": {"type": "integer"},
+					"outputLatency": {"type": "integer"}, "loopback": {"type": "boolean"},
 					"input": {"type": "object", "additionalProperties": false, "required": ["processor"],
 						"properties": {"processor": {"type": "string"}, "parameters": {"type": "object"}}}}})"),
 				statusSchema(), false},
@@ -756,6 +987,20 @@ namespace gnubase::engine
 				context.emit("audio.changed", result);
 				return result;
 			});
+		engine.registerCommand(
+			{"audio.ports", 1,
+				"The audio device's ports by name, in order, each with the busses that use it (the bus ids); each "
+				"bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing "
+				"ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts "
+				"re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) "
+				"whose channels run past the device's ports, with those channels, which are silent; bus.set gives "
+				"them ports. Without a device there are no ports.",
+				noParameters(), Json::parse(R"({"type": "object", "properties": {"inputs": {"type": "array"},
+					"outputs": {"type": "array"}, "busses": {"type": "array"}, "missing": {"type": "array"},
+					"beyondDevice": {"type": "array"}},
+					"required": ["inputs", "outputs", "busses", "missing", "beyondDevice"]})"),
+				true},
+			[this](CommandContext&) { return ports(); });
 		engine.registerCommand(
 			{"audio.setProcessing", 1,
 				"Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; "
@@ -806,9 +1051,11 @@ namespace gnubase::engine
 			});
 		engine.registerCommand(
 			{"audio.get", 1,
-				"The audio device (its backend, id, name, format, channel names, latencies in frames, clock source "
-				"and whether it has a control panel), whether it runs, how many frames it has processed and, if it is "
-				"the dummy device, captured, how many frames of audio track playback were silent because a disk stream "
+				"The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, "
+				"whether it has a control panel, whether it can monitor directly and does (directMonitoring), the "
+				"record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether "
+				"it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames "
+				"of audio track playback were silent because a disk stream "
 				"was late, and the processing threads (see audio.setProcessing).",
 				noParameters(), statusSchema(), true},
 			[this](CommandContext&) { return status(); });
@@ -902,6 +1149,37 @@ namespace gnubase::engine
 				return Json{{"samples",
 					device.captured(
 						static_cast<int>(channel), static_cast<size_t>(start), static_cast<size_t>(frames))}};
+			});
+		engine.registerCommand(
+			{"audio.captureInput", 1,
+				"What an input channel of the dummy device recorded at project positions from start, at most 1048576 "
+				"frames: its input goes where the transport played the record offset before it arrived (see "
+				"audio.get), only while the transport plays, and the last cycle lap over the ones before. Up to "
+				"captureSeconds from position 0; positions not recorded are silent. Only while the device stands.",
+				Json::parse(R"({"type": "object", "additionalProperties": false,
+					"required": ["channel", "start", "frames"], "properties": {"channel": {"type": "integer"},
+					"start": {"type": "integer"}, "frames": {"type": "integer"}}})"),
+				Json::parse(R"({"type": "object", "properties": {"samples": {"type": "array"}},
+					"required": ["samples"]})"),
+				true},
+			[this](CommandContext& context)
+			{
+				const audio::DummyDevice& device = requireDummy();
+				require(!device.running(), "the audio device is running");
+				const Json& parameters = context.parameters();
+				const auto channel = parameters.at("channel").get<int64_t>();
+				const auto start = parameters.at("start").get<int64_t>();
+				const auto frames = parameters.at("frames").get<int64_t>();
+				require(channel >= 0 && channel < device.format().inputChannels,
+					"no input channel " + std::to_string(channel));
+				require(start >= 0, "start must not be negative");
+				require(frames >= 0 && frames <= g_maxCaptureRead, "frames must be from 0 to 1048576");
+				const std::vector<float>& samples = m_capturedInput[static_cast<size_t>(channel)];
+				const auto begin = static_cast<size_t>(std::min<int64_t>(start, static_cast<int64_t>(samples.size())));
+				const size_t end = std::min(samples.size(), begin + static_cast<size_t>(frames));
+				return Json{{"samples",
+					std::vector<float>(samples.begin() + static_cast<std::ptrdiff_t>(begin),
+						samples.begin() + static_cast<std::ptrdiff_t>(end))}};
 			});
 		registerAnalysisCommands(engine);
 		registerTransportCommands(engine);

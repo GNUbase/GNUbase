@@ -159,6 +159,40 @@ namespace gnubase::engine::settings
 		return changed;
 	}
 
+	Json Store::modify(std::string_view key, const std::function<Json(const Json& value)>& change)
+	{
+		rt::assertNotRealtime("settings::Store::modify");
+		const Definition& setting = definition(key);
+		const auto changed = [&setting, &change](const Json& value)
+		{
+			Json result = change(value);
+			if (const std::string problem = validate(result, setting.schema, setting.key); !problem.empty())
+				throw SettingsError(problem);
+			return result;
+		};
+		std::optional<Json> result;
+		if (!m_file.empty() && !m_report.readOnly)
+		{
+			update(
+				[&setting, &changed, &result](Json& fileValues)
+				{
+					const auto found = fileValues.find(setting.key);
+					const bool fits =
+						found != fileValues.end() && validate(*found, setting.schema, setting.key).empty();
+					Json value = changed(fits ? *found : setting.defaultValue);
+					if (value == setting.defaultValue)
+						fileValues.erase(setting.key);
+					else
+						fileValues[setting.key] = value;
+					result = std::move(value);
+				});
+		}
+		if (!result) // kept in memory or read-only, which the file of a newer GNUbase may just have made it
+			result = changed(m_values.find(setting.key)->second);
+		m_values[setting.key] = *result;
+		return *result;
+	}
+
 	bool Store::reset(std::string_view key)
 	{
 		return set(key, definition(key).defaultValue);
