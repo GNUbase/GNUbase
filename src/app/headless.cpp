@@ -38,7 +38,7 @@ namespace gnubase::app
 
 	bool setUpEngine(engine::Engine& engine, const Options& options, std::ostream& err)
 	{
-		engine::Client client(engine);
+		engine::Client client(engine, "app");
 		return setUp(client, "audio.setDevice",
 				   {{"backend", options.audio}, {"sampleRate", options.sampleRate}, {"blockSize", options.blockSize}},
 				   "cannot set up the audio device", err) &&

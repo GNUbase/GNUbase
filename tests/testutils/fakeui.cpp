@@ -112,8 +112,16 @@ namespace gnubase::test
 		m_events.push_back(std::move(event));
 	}
 
+	void FakeWindowSystem::wake()
+	{
+		++m_wakes;
+		m_woken = true;
+	}
+
 	std::optional<ui::WindowEvent> FakeWindowSystem::nextEvent(std::optional<std::chrono::milliseconds> /*timeout*/)
 	{
+		if (m_events.empty() && m_woken.exchange(false))
+			return ui::WindowEvent{ui::WindowEventKind::Woken};
 		if (m_events.empty())
 			return std::nullopt; // nothing else will happen, so don't wait
 		ui::WindowEvent event = std::move(m_events.front());

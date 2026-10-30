@@ -5,6 +5,7 @@
 #include "app/resources.h"
 #include "engine/engine.h"
 #include "platform/log.h"
+#include "ui/enginebinding.h"
 #include "ui/fonts.h"
 #include "ui/gpurenderer.h"
 #include "ui/livereload.h"
@@ -30,10 +31,10 @@ namespace gnubase::app
 		constexpr bool g_liveReload = false;
 #endif
 
-		// The user's UI scale, from the user setting ui.scale.
+		// The user's UI scale, from the user setting ui.scale, read before the UI runs.
 		float uiScale(engine::Engine& engine)
 		{
-			engine::Client client(engine);
+			engine::Client client(engine, "ui");
 			const engine::Result result = client.call("settings.get", {{"key", "ui.scale"}});
 			return result.ok() ? result.value.at("value").get<float>() : 1.0F;
 		}
@@ -81,6 +82,15 @@ namespace gnubase::app
 		}
 		ui::Shell shell(*windows, *renderer);
 		shell.setUiScale(uiScale(engine));
+		ui::EngineBinding binding(engine, [&shell] { shell.wake(); });
+		shell.eachStep([&binding] { return binding.update(); });
+		const ui::Subscription scale = binding.on("settings.changed",
+			[&shell](const engine::Event& event)
+			{
+				const engine::Json& values = event.data.at("values");
+				if (const auto value = values.find("ui.scale"); value != values.end())
+					shell.setUiScale(value->get<float>());
+			});
 		if (g_liveReload)
 			shell.every(std::chrono::milliseconds(250), [&] { ui::reloadChangedDocuments(rmlui.files(), shell); });
 		ui::WindowSpec main;

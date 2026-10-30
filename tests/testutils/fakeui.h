@@ -8,6 +8,7 @@
 
 #include <RmlUi/Core/RenderInterface.h>
 
+#include <atomic>
 #include <cstddef>
 #include <deque>
 #include <map>
@@ -36,6 +37,9 @@ namespace gnubase::test
 		// Queues an event, e.g. CloseRequested or Quit.
 		void push(const ui::WindowEvent& event);
 
+		// How often wake was called.
+		int wakes() const { return m_wakes; }
+
 		// Whether one of the window's text fields has the focus, so the OS's text input would be on.
 		bool textInputActive(ui::WindowId window) const;
 
@@ -62,6 +66,7 @@ namespace gnubase::test
 		void setClipboardText(const std::string& text) override { m_clipboard = text; }
 		void showFileDialog(uint64_t id, const ui::FileDialog& dialog) override { m_dialogs[id] = dialog; }
 		std::optional<ui::WindowEvent> nextEvent(std::optional<std::chrono::milliseconds> timeout) override;
+		void wake() override;
 
 	private:
 		// Remembers which of the window's text fields has the focus.
@@ -92,6 +97,8 @@ namespace gnubase::test
 		ui::WindowId m_nextId = 1;
 		std::string m_clipboard;
 		std::map<uint64_t, ui::FileDialog> m_dialogs;
+		std::atomic<int> m_wakes{0};
+		std::atomic<bool> m_woken{false};
 	};
 
 	// Draws nothing; counts what it was asked to do. Captures are blank images at the window's pixel size.

@@ -186,7 +186,7 @@ namespace gnubase::scripting
 	}
 
 	Runtime::Runtime(engine::Engine& engine, Trust trust, std::ostream& output)
-		: m_client(engine), m_output(output), m_state(luaL_newstate())
+		: m_client(engine, "lua"), m_output(output), m_state(luaL_newstate())
 	{
 		rt::assertNotRealtime("scripting::Runtime");
 		if (!m_state)

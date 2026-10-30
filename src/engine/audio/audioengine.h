@@ -62,6 +62,9 @@ namespace gnubase::engine
 		// audio.analyze, audio.compare and audio.record are in analysiscommands.cpp.
 		void registerCommands(Engine& engine);
 
+		// Any thread but the audio thread, without waiting: the project cursor (Transport::position).
+		time::Samples position() const { return m_transport.position(); }
+
 		// Command thread: compiles a new graph if the project changed since the last one.
 		void sync();
 

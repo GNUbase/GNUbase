@@ -17,6 +17,8 @@ add_library(gnubase-ui STATIC
 	datamodel.h
 	displays.cpp
 	displays.h
+	enginebinding.cpp
+	enginebinding.h
 	fonts.cpp
 	fonts.h
 	gpurenderer.cpp

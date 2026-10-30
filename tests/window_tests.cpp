@@ -35,7 +35,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
+#include <thread>
 
 using namespace gnubase;
 using std::chrono::milliseconds;
@@ -593,6 +595,26 @@ TEST_CASE("text fields copy to and paste from SDL's clipboard", "[ui]")
 
 	SDL_SetClipboardText(saved);
 	SDL_free(saved);
+}
+
+TEST_CASE("waking the shell from another thread ends its wait for events", "[ui]")
+{
+	Gpu gpu;
+	gpu.open("boxes.rml");
+	gpu.shell->step(milliseconds(0));
+	const auto start = std::chrono::steady_clock::now();
+	std::thread waker(
+		[&gpu]
+		{
+			std::this_thread::sleep_for(milliseconds(50));
+			gpu.shell->wake();
+		});
+	std::optional<ui::WindowEvent> event = gpu.windows->nextEvent(std::chrono::seconds(10));
+	while (event && event->kind != ui::WindowEventKind::Woken) // e.g. the window being shown
+		event = gpu.windows->nextEvent(std::chrono::seconds(10));
+	waker.join();
+	CHECK(event.has_value());
+	CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(5));
 }
 
 TEST_CASE("a file dialog's answer reaches its caller on the UI thread", "[ui]")

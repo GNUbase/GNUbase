@@ -41,6 +41,7 @@ namespace gnubase::ui
 		Quit,             // the application should quit, e.g. Cmd+Q, the last window closed by the OS, or SIGTERM
 		FilesDropped,     // files were dragged from elsewhere and dropped on the window
 		FileDialogClosed, // a file dialog was answered, cancelled or failed
+		Woken,            // another thread called wake
 	};
 
 	struct WindowEvent
@@ -48,7 +49,7 @@ namespace gnubase::ui
 		WindowEvent(WindowEventKind kind, WindowId window = 0) : kind(kind), window(window) {}
 
 		WindowEventKind kind = WindowEventKind::Exposed;
-		WindowId window = 0;                      // zero for DisplaysChanged, Quit and FileDialogClosed
+		WindowId window = 0;                      // zero for DisplaysChanged, Quit, FileDialogClosed and Woken
 		Point position;                           // FilesDropped: where, in the window's pixels
 		std::vector<std::filesystem::path> files; // FilesDropped: the files; FileDialogClosed: what the user chose
 		uint64_t dialog = 0;                      // FileDialogClosed: the id showFileDialog was given
@@ -119,5 +120,8 @@ namespace gnubase::ui
 		// The next event, waiting up to timeout for one; without timeout, until one arrives. Input events are
 		// delivered to the window's input target before they are reported.
 		virtual std::optional<WindowEvent> nextEvent(std::optional<std::chrono::milliseconds> timeout) = 0;
+
+		// From any thread: makes nextEvent report Woken, once for any number of calls before it does.
+		virtual void wake() = 0;
 	};
 }
