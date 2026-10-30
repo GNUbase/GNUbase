@@ -5,6 +5,10 @@
 #ifdef _WIN32
 #include "platform/audio/wasapi.h"
 #endif
+#ifdef __APPLE__
+#include "platform/audio/coreaudio.h"
+#include "platform/rt/workerpool.h"
+#endif
 #ifdef __linux__
 #include "platform/audio/pipewire.h"
 #include "platform/process.h"
@@ -247,6 +251,62 @@ TEST_CASE("the WASAPI backends list their devices and refuse unknown ones", "[un
 }
 #endif
 
+#ifdef __APPLE__
+// Only lists devices; the contract suite above opens them ("[hardware]").
+TEST_CASE("the CoreAudio backend lists its devices and refuses unknown ones", "[unit]")
+{
+	const std::unique_ptr<Backend> backend = makeCoreAudioBackend();
+	CHECK(backend->name() == "coreaudio");
+	for (const DeviceInfo& device : backend->devices())
+	{
+		INFO("device " << device.id);
+		CHECK(device.inputs.size() + device.outputs.size() > 0);
+		CHECK(!device.sampleRates.empty());
+		CHECK(std::is_sorted(device.sampleRates.begin(), device.sampleRates.end()));
+		CHECK(!device.blockSizes.empty());
+		CHECK(device.clockSources.empty());
+	}
+	CHECK_THROWS_AS(backend->open(config("no such device")), DeviceError);
+}
+
+// Hidden: opens the default output device ("[hardware]").
+TEST_CASE("worker threads join the audio workgroup of a CoreAudio device", "[.hardware]")
+{
+	const std::unique_ptr<Device> device = makeCoreAudioBackend()->open(config(""));
+	REQUIRE(device->workgroup() != nullptr);
+	const gnubase::rt::WorkerPool pool(
+		2, device->format().blockSize / device->format().sampleRate, device->workgroup());
+	CHECK(pool.workgroupWorkers() == 2);
+	const gnubase::rt::WorkerPool alone(2);
+	CHECK(alone.workgroupWorkers() == 0);
+}
+
+// Hidden: opens every device at every listed rate ("[hardware]"). GNUbase's own rate change must not make the device
+// ask for a reset, and its channels are those it has at the rate it opened at, as the listing then shows them.
+TEST_CASE("a CoreAudio device opened at another rate keeps still and has that rate's channels", "[.hardware]")
+{
+	const std::unique_ptr<Backend> backend = makeCoreAudioBackend();
+	for (const DeviceInfo& listed : backend->devices())
+		for (const double rate : listed.sampleRates)
+		{
+			INFO("device " << listed.id << " at " << rate << " Hz");
+			std::atomic<int> resets{0};
+			const std::unique_ptr<Device> device = backend->open(config(listed.id, rate));
+			device->onReset([&resets] { resets.fetch_add(1); });
+			std::this_thread::sleep_for(std::chrono::milliseconds(300));
+			CHECK(resets.load() == 0);
+			const std::vector<DeviceInfo> now = backend->devices();
+			const auto found = std::find_if(
+				now.begin(), now.end(), [&listed](const DeviceInfo& info) { return info.id == listed.id; });
+			REQUIRE(found != now.end());
+			CHECK(device->format().inputChannels == static_cast<int>(found->inputs.size()));
+			CHECK(device->format().outputChannels == static_cast<int>(found->outputs.size()));
+			CHECK(device->info().inputs == found->inputs);
+			CHECK(device->info().outputs == found->outputs);
+		}
+}
+#endif
+
 #ifdef __linux__
 namespace
 {
@@ -385,6 +445,7 @@ TEST_CASE("the dummy device names its channels and keeps the format it was given
 	CHECK(contains(info.blockSizes, 100U));
 	CHECK(info.clockSources.empty());
 	CHECK(!info.controlPanel);
+	CHECK(device.workgroup() == nullptr); // only CoreAudio devices have one
 }
 
 TEST_CASE("a device passes its driver's reset requests on", "[unit]")
@@ -395,6 +456,29 @@ TEST_CASE("a device passes its driver's reset requests on", "[unit]")
 	device.onReset([&resets] { ++resets; });
 	device.requestReset();
 	CHECK(resets == 1);
+}
+
+// Drivers ask for resets on threads of their own, e.g. WASAPI's endpoint notifications, also while the engine sets the
+// handler (#316). Each handler owns memory that replacing it frees, so a race shows under the thread sanitizer.
+TEST_CASE("a device takes a new reset handler while its driver asks for resets", "[unit]")
+{
+	DummyDevice device(DeviceFormat{}, 0);
+	std::atomic<int> resets{0};
+	std::atomic<bool> done{false};
+	std::thread driver(
+		[&device, &done]
+		{
+			while (!done.load())
+				device.requestReset();
+		});
+	while (resets.load() < 1000)
+	{
+		auto counter = std::make_shared<std::atomic<int>*>(&resets);
+		device.onReset([counter] { ++**counter; });
+	}
+	done = true;
+	driver.join();
+	CHECK(resets.load() >= 1000);
 }
 
 TEST_CASE("driver samples convert to float and back in every sample format", "[unit]")

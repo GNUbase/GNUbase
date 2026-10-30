@@ -869,7 +869,7 @@ namespace gnubase::engine
 			return;
 		const audio::DeviceFormat& format = m_device->format();
 		const double period = format.blockSize / format.sampleRate;
-		auto workers = std::make_unique<rt::WorkerPool>(wanted, period);
+		auto workers = std::make_unique<rt::WorkerPool>(wanted, period, m_device->workgroup());
 		if (!workers->realtime())
 		{
 			// The audio thread waits for nodes that workers hold: a worker without real-time priority that the OS
@@ -877,7 +877,7 @@ namespace gnubase::engine
 			const size_t realtime = workers->realtimeWorkers();
 			workers.reset();
 			if (realtime > 0)
-				workers = std::make_unique<rt::WorkerPool>(realtime, period);
+				workers = std::make_unique<rt::WorkerPool>(realtime, period, m_device->workgroup());
 			if (workers && !workers->realtime())
 				workers.reset();
 			m_limitedBy = Limit::Realtime;

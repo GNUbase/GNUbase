@@ -6,6 +6,9 @@
 #include "platform/audio/asiohost.h"
 #include "platform/audio/wasapi.h"
 #endif
+#ifdef __APPLE__
+#include "platform/audio/coreaudio.h"
+#endif
 #ifdef __linux__
 #include "platform/audio/pipewire.h"
 #endif
@@ -19,6 +22,9 @@ namespace gnubase::audio
 		backends.push_back(makeAsioBackend());
 		backends.push_back(makeWasapiBackend(false));
 		backends.push_back(makeWasapiBackend(true));
+#endif
+#ifdef __APPLE__
+		backends.push_back(makeCoreAudioBackend());
 #endif
 #ifdef __linux__
 		backends.push_back(makePipeWireBackend());
