@@ -6,7 +6,9 @@
 
 #include "ui/automation.h"
 #include "ui/datamodel.h"
+#include "ui/widgets.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/EventListener.h>
@@ -15,6 +17,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <optional>
@@ -366,4 +369,199 @@ TEST_CASE("meters show the level and the peak in dB", "[ui]")
 	page.document->GetElementById("right")->SetAttribute("value", "0");
 	CHECK(app.waitUntil([&page] { return page.box("#right .meter-level").at("height").get<int>() == 109; }));
 	CHECK_FALSE(test::compareImages(app.ui().screenshot(std::nullopt, at("#right")), silent, {8}).equal);
+}
+
+namespace
+{
+	bool visible(test::UiApp& app, const std::string& selector)
+	{
+		return element(app, selector).at("visible").get<bool>();
+	}
+
+	ui::Target point(int x, int y)
+	{
+		return {"", 0, ui::Point{x, y}};
+	}
+
+	// The main window's size in pixels.
+	ui::Size windowSize(test::UiApp& app)
+	{
+		const Json window = app.ui().windows().at("windows").at(0);
+		return {window.at("width").get<int>(), window.at("height").get<int>()};
+	}
+
+	// Whether the element's border box lies inside the main window.
+	bool insideWindow(test::UiApp& app, const std::string& selector)
+	{
+		const Json box = element(app, selector).at("box");
+		const ui::Size window = windowSize(app);
+		return box.at("x").get<int>() >= 0 && box.at("y").get<int>() >= 0 &&
+			box.at("x").get<int>() + box.at("width").get<int>() <= window.width &&
+			box.at("y").get<int>() + box.at("height").get<int>() <= window.height;
+	}
+}
+
+TEST_CASE("menus open under their button and close on an item, a click elsewhere or Escape", "[ui]")
+{
+	test::UiApp app;
+	const Events events(app.show("popups.rml"));
+	CHECK_FALSE(visible(app, "#edit"));
+
+	// The menu opens under its button; another click on the button closes it.
+	click(app, "#edit-button");
+	REQUIRE(visible(app, "#edit"));
+	const Json button = element(app, "#edit-button").at("box");
+	const Json menu = element(app, "#edit").at("box");
+	CHECK(menu.at("x") == button.at("x"));
+	CHECK(menu.at("y").get<int>() == button.at("y").get<int>() + button.at("height").get<int>());
+	click(app, "#edit-button");
+	CHECK_FALSE(visible(app, "#edit"));
+
+	// A click on an item reaches the item and closes the menu; a disabled item does neither.
+	click(app, "#edit-button");
+	CHECK(has(element(app, "#redo"), "pseudoClasses", "disabled"));
+	click(app, "#redo");
+	CHECK(events.clicks.count("redo") == 0);
+	CHECK(visible(app, "#edit"));
+	click(app, "#undo");
+	CHECK(events.clicks.at("undo") == 1);
+	CHECK_FALSE(visible(app, "#edit"));
+
+	click(app, "#edit-button");
+	app.ui().key(std::nullopt, "Escape");
+	CHECK_FALSE(visible(app, "#edit"));
+	click(app, "#edit-button");
+	click(app, "#plain");
+	CHECK_FALSE(visible(app, "#edit"));
+
+	// Down and Up move between the items that aren't disabled, and Enter clicks one.
+	click(app, "#edit-button");
+	app.ui().key(std::nullopt, "Down");
+	app.ui().key(std::nullopt, "Down");
+	CHECK(has(element(app, "#cut"), "pseudoClasses", "focus"));
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(events.clicks.at("cut") == 1);
+	CHECK_FALSE(visible(app, "#edit"));
+}
+
+TEST_CASE("context menus open at the mouse on a right click, inside the window, with submenus on hover", "[ui]")
+{
+	test::UiApp app;
+	const Events events(app.show("popups.rml"));
+
+	const Json track = element(app, "#track").at("box");
+	const int x = track.at("x").get<int>() + 10;
+	const int y = track.at("y").get<int>() + 10;
+	app.ui().click(std::nullopt, point(x, y), ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#track-menu"));
+	CHECK(element(app, "#track-menu").at("box").at("x") == x);
+	CHECK(element(app, "#track-menu").at("box").at("y") == y);
+
+	// The submenu shows while the mouse is over its item; a click on that item keeps the menu open.
+	CHECK_FALSE(visible(app, "#colors"));
+	app.ui().move(std::nullopt, at("#color"));
+	CHECK(visible(app, "#colors"));
+	click(app, "#color");
+	CHECK(visible(app, "#track-menu"));
+	click(app, "#blue");
+	CHECK(events.clicks.at("blue") == 1);
+	CHECK_FALSE(visible(app, "#track-menu"));
+
+	// In the window's corner the menu opens inside the window. Without a contextmenu attribute, or with the left
+	// button, none opens.
+	app.ui().click(std::nullopt, at("#corner"), ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#track-menu"));
+	CHECK(insideWindow(app, "#track-menu"));
+	click(app, "#plain");
+	app.ui().click(std::nullopt, at("#plain"), ui::MouseButton::Right, 1, {});
+	click(app, "#track");
+	CHECK_FALSE(visible(app, "#track-menu"));
+}
+
+TEST_CASE("tooltips show an element's title once the mouse rests on it", "[ui]")
+{
+	test::UiApp app;
+	app.show("popups.rml");
+
+	app.ui().move(std::nullopt, at("#track"));
+	CHECK_FALSE(visible(app, "tooltip"));
+	REQUIRE(app.waitUntil([&app] { return visible(app, "tooltip"); }));
+	CHECK(element(app, "tooltip").at("text") == "Audio 01");
+	const Json track = element(app, "#track").at("box");
+	CHECK(element(app, "tooltip").at("box").at("y").get<int>() >
+		track.at("y").get<int>() + (track.at("height").get<int>() / 2));
+
+	// Over an element without a title there's none; near the window's corner it stays inside; a click hides it.
+	app.ui().move(std::nullopt, at("#plain"));
+	CHECK_FALSE(visible(app, "tooltip"));
+	app.ui().move(std::nullopt, at("#corner"));
+	REQUIRE(app.waitUntil([&app] { return visible(app, "tooltip"); }));
+	CHECK(app.waitUntil([&app] { return insideWindow(app, "tooltip"); }));
+	click(app, "#corner");
+	CHECK_FALSE(visible(app, "tooltip"));
+}
+
+namespace
+{
+	// The results of the close events of dialogs.
+	struct Closes final : Rml::EventListener
+	{
+		void ProcessEvent(Rml::Event& event) override
+		{
+			results.push_back(event.GetParameter<Rml::String>("result", ""));
+		}
+
+		std::vector<std::string> results;
+	};
+
+	// Loads the dialog from tests/data/ui and shows it modal over the main window's documents.
+	void openDialog(test::UiApp& app, Closes& closes)
+	{
+		Rml::ElementDocument* dialog =
+			app.main().context().LoadDocument(std::string(GNUBASE_TEST_DATA_DIR) + "/ui/dialog.rml");
+		REQUIRE(dialog != nullptr);
+		dialog->AddEventListener(ui::g_dialogCloseEvent, &closes);
+		dialog->Show(Rml::ModalFlag::Modal);
+		app.shell().step(std::chrono::milliseconds(0));
+	}
+
+	bool dialogOpen(test::UiApp& app)
+	{
+		return !app.ui().dom(std::nullopt, "#rename-dialog", 0).at("elements").empty();
+	}
+}
+
+TEST_CASE("dialogs open in the middle, move by their title bar, and close with Enter, Escape or a button", "[ui]")
+{
+	Closes closes; // outlives the documents it listens to
+	test::UiApp app;
+	app.show("popups.rml");
+	openDialog(app, closes);
+
+	const Json box = element(app, "#rename-dialog").at("box");
+	const ui::Size window = windowSize(app);
+	CHECK(std::abs(box.at("x").get<int>() + (box.at("width").get<int>() / 2) - (window.width / 2)) <= 1);
+	CHECK(std::abs(box.at("y").get<int>() + (box.at("height").get<int>() / 2) - (window.height / 2)) <= 1);
+
+	const Json bar = element(app, "#rename-dialog .dialog-titlebar").at("box");
+	const int x = bar.at("x").get<int>() + 20;
+	const int y = bar.at("y").get<int>() + 10;
+	app.ui().drag(std::nullopt, point(x, y), point(x + 40, y + 30));
+	const Json moved = element(app, "#rename-dialog").at("box");
+	CHECK(moved.at("x").get<int>() == box.at("x").get<int>() + 40);
+	CHECK(moved.at("y").get<int>() == box.at("y").get<int>() + 30);
+
+	// Enter in the text field clicks OK, which closes the dialog with its result.
+	click(app, "#name");
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(app.waitUntil([&app] { return !dialogOpen(app); }));
+	CHECK(closes.results == std::vector<std::string>{"ok"});
+
+	openDialog(app, closes);
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(app.waitUntil([&app] { return !dialogOpen(app); }));
+	openDialog(app, closes);
+	click(app, "#cancel");
+	CHECK(app.waitUntil([&app] { return !dialogOpen(app); }));
+	CHECK(closes.results == std::vector<std::string>{"ok", "cancel", "cancel"});
 }

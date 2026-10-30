@@ -63,6 +63,39 @@ theme's `.meter-fill`, which is as tall as the meter, so the gradient keeps its 
 top edge marks the peak, and a meter without one hides it. Engine meters reach the UI once a frame (#111) and set the
 attributes, through a data model or directly.
 
+## Menus and context menus
+
+- `<menu>` holds `<menuitem>`s and `<menuseparator>`s and stays hidden until it opens, with the state class `.open`:
+  under a button whose `menu` attribute names it by id (a second click on the button closes it), or at the mouse on
+  a right click on an element whose `contextmenu` attribute names it. It opens inside the window, moved left or up
+  where it would stick out. Put menus straight into the body, so that no container clips them.
+- A click on an item is a click on that item, for the document to handle, and closes the menu. Escape and a click
+  outside close it too. A `disabled` item gets `:disabled` and ignores clicks; `type="toggle"` makes an item checkable,
+  as for buttons.
+- A `<menu>` inside an item is its submenu, shown beside the item while the mouse is over it (pure RCSS:
+  `menuitem:hover > menu`); a click on that item keeps the menu open.
+- Keys: Down and Up move the focus between the items that aren't disabled, Enter clicks the focused one.
+
+## Tooltips
+
+An element's `title` attribute is its tooltip: when the mouse has rested 0.6 seconds over the element, or over one
+inside it without a title of its own, the document's `<tooltip>` shows the text 20 dp under the mouse, inside the
+window, with the state class `.shown`. It goes when the mouse moves to an element without a title or leaves the window,
+and on a click, a key or the wheel. Every document gets its tooltip element when it loads; it lets the mouse through.
+
+## Dialogs
+
+`<dialog>` is a dialog in a document of its own, which the app loads and shows, usually modal
+(`ElementDocument::Show(Rml::ModalFlag::Modal)`). It opens in the middle of the window, and dragging its
+`.dialog-titlebar` moves it. Escape closes it with the result `cancel`; Enter clicks its `button.primary`, also from
+a text field, but not from a multi-line one or a value field being edited; a click on an element with a `result`
+attribute closes it with that result. Closing sends the event `close` (`ui::g_dialogCloseEvent`) with the parameter
+`result`, then closes the document.
+
+How it works: an RmlUi plugin (`RmlUi::registerPlugin`) gives every document a tooltip and listens to it in the capture
+phase, before its elements: for `contextmenu` and `menu` attributes, titles, clicks outside open menus, Escape, and
+its dialog's keys, which text fields would otherwise keep to themselves.
+
 ## Checks
 
 `tests/widgets_tests.cpp` drives each widget in the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) through
@@ -71,3 +104,6 @@ buttons that turn on and off, look different when on, and follow a data model. K
 fields are dragged (also with Shift), turned with the wheel, stepped with the arrow keys and reset with Ctrl-click,
 their parts placed where the value says; data-value binds them both ways; the wheel turns them instead of scrolling
 the page; value fields take typed numbers and leave bad ones. Meters show their level and peak at the right heights.
+Menus open under their button and at the mouse, inside the window, show submenus on hover, close on an item, a click
+elsewhere and Escape, skip disabled items, and work with the keys. Tooltips show after a rest and go with the mouse.
+Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result.

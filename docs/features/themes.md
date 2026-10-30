@@ -46,8 +46,9 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
 - **Fields and choices:** `input.text`, `input.password`, `textarea` (`:focus`, `:disabled`), `select` (`:hover`;
   `:focus` while open or focused), `input.checkbox` (`:checked`, `.mixed`), `input.radio`, `input.range`, `progress`,
   and the scroll bars.
-- **Containers:** `.dialog`, `.dialog-titlebar`, `.panel`, `.panel-header`, `.toolbar`, `.display`, `.tooltip`,
-  `.menu` with `.menu-item` and `.menu-separator`, `.list` with `.list-item` (`.selected`), `tabset` with its tabs.
+- **Containers:** `.dialog` (and `dialog`), `.dialog-titlebar`, `.panel`, `.panel-header`, `.toolbar`, `.display`,
+  `.tooltip` (and `tooltip`), `.menu` with `.menu-item` and `.menu-separator` (and `menu`, `menuitem` with `:hover`,
+  `:focus-visible` and `:disabled`, `menuseparator`), `.list` with `.list-item` (`.selected`), `tabset` with its tabs.
 - **Mixer and editor parts**, which the widget library's elements are made of ([widgets.md](widgets.md)): `.knob`,
   `.knob-pointer`, `.fader`, `.fader-cap`, `.slider-track`, `.slider-fill`, `.slider-thumb`, `valuefield`, `.meter`,
   `.meter-fill`, `.meter-peak`, `.splitter-grip-vertical`, `.splitter-grip-horizontal`, `.dropdown-arrow`,

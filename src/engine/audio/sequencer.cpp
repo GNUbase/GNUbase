@@ -64,7 +64,8 @@ namespace gnubase::engine
 		}
 	}
 
-	MidiSequencer::MidiSequencer() : m_sequence(std::make_unique<const MidiSequence>())
+	MidiSequencer::MidiSequencer()
+		: m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock)
 	{
 	}
 
@@ -78,6 +79,9 @@ namespace gnubase::engine
 		// The sequence stays in use until the next block, so SysEx data lives as long as the events pointing at it.
 		const MidiSequence& sequence = m_sequence.acquire();
 		for (const graph::ProcessEvent& event : context.eventsIn)
+			context.eventsOut.add(event);
+		context.eventsOut.nextSource();
+		for (const graph::ProcessEvent& event : m_input)
 			context.eventsOut.add(event);
 		context.eventsOut.nextSource();
 

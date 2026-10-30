@@ -34,6 +34,7 @@ add_library(gnubase-ui STATIC
 	keycommands.h
 	livereload.cpp
 	livereload.h
+	popupwidgets.cpp
 	pseudolocale.cpp
 	pseudolocale.h
 	renderer.h
@@ -54,6 +55,7 @@ add_library(gnubase-ui STATIC
 	valuewidgets.cpp
 	widgets.cpp
 	widgets.h
+	widgetutils.h
 	windowsystem.h)
 target_link_libraries(gnubase-ui
 	PUBLIC gnubase-engine RmlUi::RmlUi
