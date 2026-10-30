@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
-#include "engine/settings/store.h"
-
 namespace gnubase::engine
 {
 	class Engine;
 	class ProjectModel;
+}
+
+namespace gnubase::engine::settings
+{
+	struct Format;
 }
 
 namespace gnubase::engine::midi

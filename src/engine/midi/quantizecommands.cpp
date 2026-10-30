@@ -6,6 +6,7 @@
 #include "engine/engine.h"
 #include "engine/midi/quantize.h"
 #include "engine/schema.h"
+#include "engine/settings/store.h"
 #include "platform/log.h"
 
 #include <algorithm>
@@ -61,7 +62,7 @@ namespace gnubase::engine::midi
 			explicit PresetLibrary(const std::filesystem::path& settingsDirectory)
 				: m_store(quantizePresetsFormat(), settingsDirectory)
 			{
-				m_user = read(m_store.value(g_presetsKey), true);
+				m_user = read(m_store.value(g_presetsKey), &m_skipped);
 			}
 
 			static bool isFactory(const std::string& name)
@@ -85,30 +86,37 @@ namespace gnubase::engine::midi
 			{
 				require(!preset.name.empty(), "name must not be empty");
 				require(!isFactory(preset.name), preset.name + " is a factory preset");
+				const Json item = {{"name", preset.name}, {"settings", midi::toJson(preset.settings)}};
+				std::string problem;
+				if (!readPreset(item, problem)) // it would be saved, but not listed
+					throw CommandError("the preset can't be saved: " + problem);
 				change(
-					[&preset](Json& list, const std::vector<QuantizePreset>&)
+					[&preset, &item](Json& list, const std::vector<QuantizePreset>&)
 					{
-						// In the place of the first one of that name, which this GNUbase may not be able to read.
-						const Json item = {{"name", preset.name}, {"settings", midi::toJson(preset.settings)}};
-						const auto first = std::find_if(list.begin(), list.end(), named(preset.name));
-						if (first == list.end())
+						if (const auto mine = userItem(list, preset.name); mine != list.end())
 						{
-							list.push_back(item);
+							*mine = item;
 							return;
 						}
-						*first = item;
-						list.erase(std::remove_if(std::next(first), list.end(), named(preset.name)), list.end());
+						require(std::none_of(list.begin(), list.end(), named(preset.name)),
+							"a preset named " + preset.name +
+								" is in the file but can't be read, such as one of a newer GNUbase; "
+								"quantize.removePreset removes it");
+						list.push_back(item);
 					});
 			}
 
+			// Removes the user's preset of that name, and the presets of that name that this GNUbase can't read.
 			void remove(const std::string& name)
 			{
 				require(!isFactory(name), "factory presets can't be removed");
 				change(
-					[&name](Json& list, const std::vector<QuantizePreset>& user)
+					[&name](Json& list, const std::vector<QuantizePreset>&)
 					{
-						requireUserPreset(user, name);
-						list.erase(std::remove_if(list.begin(), list.end(), named(name)), list.end());
+						const auto end = std::remove_if(list.begin(), list.end(), named(name));
+						if (end == list.end())
+							throw CommandError("no quantize preset " + name);
+						list.erase(end, list.end());
 					});
 			}
 
@@ -123,13 +131,22 @@ namespace gnubase::engine::midi
 						require(!isFactory(newName), newName + " is a factory preset");
 						if (newName == name)
 							return;
-						require(!hasUserPreset(user, newName), "a preset named " + newName + " exists");
-						// The renamed preset takes the place of those of its new name that this GNUbase can't read.
-						list.erase(std::remove_if(list.begin(), list.end(), named(newName)), list.end());
-						for (Json& item : list)
-							if (named(name)(item))
-								item["name"] = newName;
+						// Also one this GNUbase can't read: it stays for the GNUbase that wrote it.
+						require(std::none_of(list.begin(), list.end(), named(newName)),
+							"a preset named " + newName + " exists");
+						(*userItem(list, name))["name"] = newName;
 					});
+			}
+
+			// Where the presets are kept, whether changes are saved, and what was wrong with the file.
+			Json report() const
+			{
+				const settings::LoadReport& load = m_store.loadReport();
+				Json problems = load.problems;
+				for (const std::string& problem : m_skipped)
+					problems.push_back(problem);
+				return {{"file", m_store.file().empty() ? Json(nullptr) : Json(m_store.file().u8string())},
+					{"readOnly", load.readOnly}, {"problems", std::move(problems)}};
 			}
 
 			Json toJson() const
@@ -170,8 +187,49 @@ namespace gnubase::engine::midi
 					throw CommandError("no quantize preset " + name);
 			}
 
-			// Changes the list of presets in the file as it is now, then uses what the file has. If the file can't be
-			// written, nothing changes.
+			// A preset of the file, or nothing and why this GNUbase can't read it.
+			static std::optional<QuantizePreset> readPreset(const Json& item, std::string& problem)
+			{
+				const Json schema = {{"type", "object"},
+					{"properties", {{"name", {{"type", "string"}}}, {"settings", quantizeSettingsSchema()}}},
+					{"required", {"name", "settings"}}};
+				problem = validate(item, schema, "preset");
+				if (!problem.empty())
+					return std::nullopt;
+				QuantizePreset preset{item.at("name").get<std::string>(), {}};
+				if (preset.name.empty())
+					problem = "it has no name";
+				else if (isFactory(preset.name))
+					problem = "a factory preset has its name";
+				if (!problem.empty())
+					return std::nullopt;
+				try
+				{
+					preset.settings = quantizeSettingsFromJson(item.at("settings"));
+				}
+				catch (const std::invalid_argument& error)
+				{
+					problem = std::string("preset.settings.") + error.what();
+					return std::nullopt;
+				}
+				return preset;
+			}
+
+			// The item of the file that is the user's preset of that name: the first one of that name that this
+			// GNUbase can read.
+			static Json::iterator userItem(Json& list, const std::string& name)
+			{
+				return std::find_if(list.begin(), list.end(),
+					[&name](const Json& item)
+					{
+						std::string problem;
+						return named(name)(item) && readPreset(item, problem).has_value();
+					});
+			}
+
+			// Changes the list of presets in the file as it is now, then uses what the file has: also when the
+			// change fails, since another process may have changed the file. If the file can't be written, the
+			// presets don't change.
 			void change(const Edit& edit)
 			{
 				Json list;
@@ -180,8 +238,9 @@ namespace gnubase::engine::midi
 					list = m_store.modify(g_presetsKey,
 						[this, &edit](const Json& value)
 						{
+							m_user = read(value);
 							Json changed = value;
-							edit(changed, read(value, false));
+							edit(changed, m_user);
 							return changed;
 						});
 				}
@@ -189,56 +248,39 @@ namespace gnubase::engine::midi
 				{
 					throw CommandError(std::string("cannot save the quantize presets: ") + error.what());
 				}
-				m_user = read(list, false);
+				m_user = read(list);
 			}
 
-			// The presets of the list that this GNUbase can read. The others are skipped, with a log message if
-			// report is true, and stay in the file for the GNUbase that wrote them.
-			std::vector<QuantizePreset> read(const Json& list, bool report) const
+			// The presets of the list that this GNUbase can read. The others are skipped, and stay in the file for
+			// the GNUbase that wrote them; with skipped, the log and skipped say why.
+			std::vector<QuantizePreset> read(const Json& list, std::vector<std::string>* skipped = nullptr) const
 			{
-				const Json schema = {{"type", "object"},
-					{"properties", {{"name", {{"type", "string"}}}, {"settings", quantizeSettingsSchema()}}},
-					{"required", {"name", "settings"}}};
 				std::vector<QuantizePreset> presets;
 				for (size_t i = 0; i < list.size(); ++i)
 				{
-					const Json& item = list[i];
-					std::string problem = validate(item, schema, "preset");
-					QuantizePreset preset;
-					if (problem.empty())
+					std::string problem;
+					std::optional<QuantizePreset> preset = readPreset(list[i], problem);
+					if (preset && hasUserPreset(presets, preset->name))
 					{
-						preset.name = item.at("name").get<std::string>();
-						if (preset.name.empty())
-							problem = "it has no name";
-						else if (isFactory(preset.name))
-							problem = "a factory preset has its name";
-						else if (hasUserPreset(presets, preset.name))
-							problem = "an earlier preset has its name";
+						problem = "an earlier preset has its name";
+						preset.reset();
 					}
-					if (problem.empty())
+					if (preset)
 					{
-						try
-						{
-							preset.settings = quantizeSettingsFromJson(item.at("settings"));
-						}
-						catch (const std::invalid_argument& error)
-						{
-							problem = std::string("preset.settings.") + error.what();
-						}
-					}
-					if (problem.empty())
-					{
-						presets.push_back(std::move(preset));
+						presets.push_back(std::move(*preset));
 						continue;
 					}
-					if (report)
-						logging::warning("Quantize presets: skipped preset {} of {}: {}; it stays in the file", i + 1,
-							m_store.file().u8string(), problem);
+					if (skipped == nullptr)
+						continue;
+					skipped->push_back(m_store.file().u8string() + ": skipped preset " + std::to_string(i + 1) + ": " +
+						problem + "; it stays in the file");
+					logging::warning("Quantize presets: {}", skipped->back());
 				}
 				return presets;
 			}
 
-			settings::Store m_store; // only the command thread uses it
+			settings::Store m_store;            // only the command thread uses it
+			std::vector<std::string> m_skipped; // why presets of the file weren't read when the engine started
 			std::vector<QuantizePreset> m_user;
 		};
 
@@ -506,13 +548,23 @@ namespace gnubase::engine::midi
 			{"quantize.presets", 1,
 				"The quantize presets: the factory presets (straight grids \"1/1\" to \"1/128\", triplets such as "
 				"\"1/8 Triplet\" and dotted grids such as \"1/4 Dotted\") and the user's, each with its settings. The "
-				"user's presets are kept in the settings folder (quantize-presets.json), so they come back when "
-				"GNUbase "
-				"starts again.",
+				"user's presets are kept in the settings folder, so they come back when GNUbase starts again: file is "
+				"where (null if they are kept in memory only), readOnly whether changes are saved (not while the file "
+				"belongs to a newer GNUbase), and problems what was wrong with it, such as presets that this GNUbase "
+				"can't read and skips; they stay in the file.",
 				objectSchema({}),
-				{{"type", "object"}, {"properties", {{"presets", {{"type", "array"}}}}}, {"required", {"presets"}}},
+				{{"type", "object"},
+					{"properties",
+						{{"presets", {{"type", "array"}}}, {"file", {{"type", {"string", "null"}}}},
+							{"readOnly", {{"type", "boolean"}}}, {"problems", {{"type", "array"}}}}},
+					{"required", {"presets", "file", "readOnly", "problems"}}},
 				true},
-			[presets](CommandContext&) { return Json{{"presets", presets->toJson()}}; });
+			[presets](CommandContext&)
+			{
+				Json result = presets->report();
+				result["presets"] = presets->toJson();
+				return result;
+			});
 		engine.registerCommand(
 			{"quantize.savePreset", 1,
 				"Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset "
@@ -539,7 +591,9 @@ namespace gnubase::engine::midi
 				presets->announce(context);
 				return Json::object();
 			});
-		engine.registerCommand({"quantize.removePreset", 1, "Removes one of the user's quantize presets.",
+		engine.registerCommand({"quantize.removePreset", 1,
+								   "Removes one of the user's quantize presets, and the presets of that name "
+								   "that this GNUbase can't read (see quantize.presets).",
 								   objectSchema({{"name", stringSchema}}, {"name"}), Json::object(), false},
 			[presets](CommandContext& context)
 			{

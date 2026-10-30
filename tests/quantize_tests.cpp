@@ -6,6 +6,7 @@
 #include "engine/engine.h"
 #include "engine/midi/quantize.h"
 #include "engine/midi/quantizecommands.h"
+#include "engine/settings/store.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -1024,16 +1025,27 @@ TEST_CASE("quantize presets that can't be read are skipped and stay in the file"
 		CHECK(user[0].at("settings").at("grid") == "1/8");
 		CHECK(user[0].at("settings").at("strength") == 0.5);
 		CHECK(user[0].at("settings").at("swing") == 0.0); // what the preset doesn't have is the default
+		const Json listed = run(f.client, "quantize.presets");
+		CHECK(listed.at("problems").size() == presets.size() - 1); // why each one was skipped
+		CHECK(!listed.at("readOnly").get<bool>());
 
-		// Saving keeps the skipped ones for the GNUbase that wrote them; a preset saved under one's name replaces it.
+		// The skipped ones stay for the GNUbase that wrote them, and so do their names, so that nothing is lost
+		// unnoticed. quantize.removePreset removes them.
+		CHECK_THAT(reject(f.client, "quantize.savePreset", {{"name", "Newer"}}), ContainsSubstring("can't be read"));
+		CHECK_THAT(reject(f.client, "quantize.renamePreset", {{"name", "Loose"}, {"newName", "Newer"}}),
+			ContainsSubstring("exists"));
+		run(f.client, "quantize.removePreset", {{"name", "Too strong"}});
 		run(f.client, "quantize.savePreset", {{"name", "Too strong"}, {"settings", {{"strength", 1.0}}}});
 		run(f.client, "quantize.savePreset", {{"name", "Tight"}});
+		// Replaces the preset it reads, and leaves the other one of that name.
+		run(f.client, "quantize.savePreset", {{"name", "Loose"}, {"settings", {{"strength", 0.25}}}});
 		CHECK(names(userPresets(f.client)) == std::vector<std::string>{"Loose", "Too strong", "Tight"});
 		const Json stored = readJson(file).at("values").at("quantize.presets");
 		REQUIRE(stored.size() == presets.size() + 1);
-		CHECK(stored[1].at("settings").at("strength") == 1.0);
+		CHECK(stored[0].at("settings").at("strength") == 0.25);
 		for (size_t kept = 2; kept < presets.size(); ++kept)
-			CHECK(stored[kept] == presets[kept]);
+			CHECK(stored[kept - 1] == presets[kept]);
+		CHECK(stored[presets.size() - 1].at("name") == "Too strong");
 		CHECK(stored.back().at("name") == "Tight");
 	}
 	SECTION("a file that isn't JSON")
@@ -1053,7 +1065,35 @@ TEST_CASE("quantize presets that can't be read are skipped and stay in the file"
 		writePresets(dir.path(), {{"Loose", {{"strength", 0.5}}}});
 		Fixture f(dir.path());
 		CHECK(userPresets(f.client).empty());
+		CHECK(run(f.client, "quantize.presets").at("problems").size() == 1);
 	}
+	SECTION("a file of a newer GNUbase is left as it is, and quantize.presets says so")
+	{
+		const std::string newer = R"({"version": 2, "values": {"quantize.presets": []}})";
+		std::ofstream(file, std::ios::binary) << newer;
+		Fixture f(dir.path());
+		run(f.client, "quantize.savePreset", {{"name", "Tight"}}); // until GNUbase quits
+		CHECK(names(userPresets(f.client)) == std::vector<std::string>{"Tight"});
+		const Json listed = run(f.client, "quantize.presets");
+		CHECK(listed.at("readOnly").get<bool>());
+		CHECK_THAT(listed.at("problems").dump(), ContainsSubstring("newer"));
+		CHECK(listed.at("file") == file.u8string());
+		CHECK(test::readText(file) == newer);
+	}
+}
+
+TEST_CASE("a quantize preset that can't be saved changes nothing", "[integration]")
+{
+	const test::TempDir dir;
+	Fixture f(dir.path());
+	const Json listed = run(f.client, "quantize.presets");
+	CHECK(!listed.at("readOnly").get<bool>());
+	CHECK(listed.at("problems").empty());
+	std::filesystem::create_directories(dir.path() / g_presetsFile); // where the file would be written
+	CHECK_THAT(reject(f.client, "quantize.savePreset", {{"name", "Tight"}}), ContainsSubstring("cannot save"));
+	CHECK(userPresets(f.client).empty());
+	Fixture memory;
+	CHECK(run(memory.client, "quantize.presets").at("file").is_null()); // kept in memory only
 }
 
 TEST_CASE("GNUbase processes on one settings folder keep each other's quantize presets", "[integration]")
@@ -1068,6 +1108,9 @@ TEST_CASE("GNUbase processes on one settings folder keep each other's quantize p
 	run(first.client, "quantize.renamePreset", {{"name", "Second"}, {"newName", "Renamed"}});
 	CHECK(names(userPresets(first.client)) == std::vector<std::string>{"First", "Renamed"});
 	run(second.client, "quantize.removePreset", {{"name", "First"}});
+	// A change that fails still shows the presets in the file as they are now.
+	CHECK_THAT(reject(first.client, "quantize.removePreset", {{"name", "First"}}), ContainsSubstring("no quantize"));
+	CHECK(names(userPresets(first.client)) == std::vector<std::string>{"Renamed"});
 	Fixture third(dir.path());
 	CHECK(names(userPresets(third.client)) == std::vector<std::string>{"Renamed"});
 }
