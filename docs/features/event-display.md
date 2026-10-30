@@ -24,6 +24,7 @@ window its zones and its toolbar.
     ruler.timeline-ruler        the ruler, in the chosen time format
     .event-area
       event-lanes.events        a lane per track
+      .waveforms                a waveform per audio event near the view (peaks.md)
       .cross-hair-vertical, .cross-hair-horizontal
     .project-cursor             across the ruler and the lanes
 ```

@@ -529,6 +529,27 @@ meter .meter-peak
 	bottom: 0;
 }
 
+/* The waveforms of audio events (#83): code puts each over its event's lane. */
+.event-display .waveforms
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .waveforms waveform
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	box-sizing: border-box;
+	padding: 2dp 0;
+	pointer-events: none;
+}
+
 .event-display .overview-view
 {
 	position: absolute;
