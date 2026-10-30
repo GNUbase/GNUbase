@@ -49,8 +49,9 @@ namespace gnubase::spike
 
 	// The backends; null with a reason in error if this machine can't run them.
 	std::unique_ptr<Backend> makeGl3Backend(const WindowOptions& options, std::string& error);
+	// msaa: samples per pixel, 0 for the renderer's default.
 	std::unique_ptr<Backend> makeGpuBackend(
-		const WindowOptions& options, const std::string& driver, std::string& error);
+		const WindowOptions& options, const std::string& driver, int msaa, std::string& error);
 
 	// A window with the options and the given extra flags, e.g. SDL_WINDOW_OPENGL.
 	SDL_Window* createWindow(const WindowOptions& options, SDL_WindowFlags flags, std::string& error);

@@ -83,6 +83,13 @@ target_link_libraries(gnubase-tests PRIVATE
 
 # The UI's tests (#48, #49) use SDL directly.
 target_link_libraries(gnubase-tests PRIVATE gnubase-ui SDL3::SDL3)
+# The effects test (#285) draws the render spike's features document, with its waveform elements.
+target_sources(gnubase-tests PRIVATE
+	"${PROJECT_SOURCE_DIR}/spikes/render-backend/elements.cpp")
+target_include_directories(gnubase-tests PRIVATE
+	"${PROJECT_SOURCE_DIR}/spikes/render-backend")
+target_compile_definitions(gnubase-tests PRIVATE
+	GNUBASE_SPIKE_DOCUMENTS="${PROJECT_SOURCE_DIR}/spikes/render-backend/documents")
 
 # IPC tests run a helper process that plays a plugin host (tests/ipcpeer.cpp).
 add_executable(gnubase-ipcpeer ipcpeer.cpp)

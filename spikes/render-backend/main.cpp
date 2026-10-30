@@ -31,6 +31,7 @@ namespace
 	{
 		std::string backend;
 		std::string gpuDriver; // SDL_GPU: vulkan, direct3d12 or metal; empty for SDL's choice
+		int msaa = 0;          // SDL_GPU: samples per pixel; 0 for the renderer's default
 		std::string document = "features";
 		std::string screenshot;
 		int benchmarkFrames = 0;
@@ -42,6 +43,7 @@ namespace
 
 	constexpr const char* g_usage = R"(usage: gnubase-render-spike --backend gl3|gpu [options]
   --gpu-driver NAME     SDL_GPU driver: vulkan, direct3d12 or metal (default: SDL's choice)
+  --msaa N              SDL_GPU multisampling, samples per pixel, 1 for none (default 2, as OpenGL 3)
   --document NAME       features or benchmark, or the path of an RML file (default: features)
   --screenshot FILE     render offscreen, write FILE (PNG) and exit
   --benchmark FRAMES    time FRAMES frames without vsync and print the results as JSON
@@ -88,6 +90,8 @@ namespace
 				options.backend = value;
 			else if (option == "--gpu-driver")
 				options.gpuDriver = value;
+			else if (option == "--msaa")
+				options.msaa = number(option, value);
 			else if (option == "--document")
 				options.document = value;
 			else if (option == "--screenshot")
@@ -171,8 +175,9 @@ namespace
 			window.height = static_cast<int>(static_cast<float>(window.height) * options.scale);
 		}
 		std::string error;
-		std::unique_ptr<Backend> backend =
-			options.backend == "gl3" ? makeGl3Backend(window, error) : makeGpuBackend(window, options.gpuDriver, error);
+		std::unique_ptr<Backend> backend = options.backend == "gl3"
+			? makeGl3Backend(window, error)
+			: makeGpuBackend(window, options.gpuDriver, options.msaa, error);
 		if (!backend)
 			throw std::runtime_error(error);
 

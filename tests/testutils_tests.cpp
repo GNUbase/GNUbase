@@ -154,17 +154,44 @@ TEST_CASE("images compare equal within the tolerance, allowing a number of pixel
 	const gnubase::ui::Image expected = gradient();
 	gnubase::ui::Image actual = expected;
 	actual.pixels[0] += 3;
-	CHECK(compareImages(actual, expected, 3).equal);
-	CHECK(compareImages(actual, expected, 2, 1).equal);
+	CHECK(compareImages(actual, expected, {3}).equal);
+	CHECK(compareImages(actual, expected, {2, 1}).equal);
 
-	const ImageDiff diff = compareImages(actual, expected, 2);
+	const ImageDiff diff = compareImages(actual, expected, {2});
 	CHECK_FALSE(diff.equal);
 	CHECK(diff.maxDifference == 3);
 	CHECK(diff.differentPixels == 1);
 	CHECK(diff.report.find("(0, 0)") != std::string::npos);
 
 	actual.width = 3;
-	CHECK_FALSE(compareImages(actual, expected, 255, 100).equal);
+	CHECK_FALSE(compareImages(actual, expected, {255, 100}).equal);
+}
+
+TEST_CASE("images compared on averages ignore single pixels of an edge antialiased differently", "[unit]")
+{
+	// A vertical edge between black and white; one of its pixels is half covered in the actual image only.
+	gnubase::ui::Image expected{8, 8, {}};
+	for (int y = 0; y < 8; ++y)
+	{
+		for (int x = 0; x < 8; ++x)
+		{
+			const auto value = static_cast<uint8_t>(x < 4 ? 0 : 255);
+			expected.pixels.insert(expected.pixels.end(), {value, value, value, 255});
+		}
+	}
+	const auto at = [](int x, int y) { return ((static_cast<size_t>(y) * 8) + static_cast<size_t>(x)) * 4; };
+	gnubase::ui::Image actual = expected;
+	for (size_t channel = 0; channel < 3; ++channel)
+		actual.pixels[at(4, 3) + channel] = 128;
+	CHECK_FALSE(compareImages(actual, expected, {16}).equal);
+	CHECK(compareImages(actual, expected, {16, 0, 1}).equal);
+
+	// Averaging doesn't hide a line that is missing.
+	gnubase::ui::Image missing = expected;
+	for (int y = 0; y < 8; ++y)
+		for (size_t channel = 0; channel < 3; ++channel)
+			missing.pixels[at(5, y) + channel] = 0;
+	CHECK_FALSE(compareImages(missing, expected, {16, 0, 1}).equal);
 }
 
 TEST_CASE("compareWithGolden saves the actual image and marks the differences", "[unit]")
@@ -172,12 +199,12 @@ TEST_CASE("compareWithGolden saves the actual image and marks the differences", 
 	const TempDir golden;
 	const TempDir output;
 	const gnubase::ui::Image expected = gradient();
-	CHECK(compareWithGolden(golden.path(), output.path(), "ui/gradient", expected, 0, 0, true).equal);
-	CHECK(compareWithGolden(golden.path(), output.path(), "ui/gradient", expected, 0, 0).equal);
+	CHECK(compareWithGolden(golden.path(), output.path(), "ui/gradient", expected, {}, true).equal);
+	CHECK(compareWithGolden(golden.path(), output.path(), "ui/gradient", expected, {}).equal);
 
 	gnubase::ui::Image actual = expected;
 	actual.pixels[(5 * 4) + 1] = 255; // the pixel at (1, 1)
-	const ImageDiff diff = compareWithGolden(golden.path(), output.path(), "ui/gradient", actual, 0, 0);
+	const ImageDiff diff = compareWithGolden(golden.path(), output.path(), "ui/gradient", actual, {});
 	CHECK_FALSE(diff.equal);
 	CHECK(gnubase::ui::readPng(output.path() / "ui/gradient.actual.png").value_or(gnubase::ui::Image{}).pixels ==
 		actual.pixels);
@@ -186,6 +213,6 @@ TEST_CASE("compareWithGolden saves the actual image and marks the differences", 
 	CHECK(marked.value_or(gnubase::ui::Image{}).pixel(1, 1) == std::array<uint8_t, 4>{255, 0, 255, 255});
 	CHECK(marked.value_or(gnubase::ui::Image{}).pixel(0, 0)[3] == 255);
 
-	CHECK_FALSE(compareWithGolden(golden.path(), output.path(), "missing", actual, 0, 0).equal);
+	CHECK_FALSE(compareWithGolden(golden.path(), output.path(), "missing", actual, {}).equal);
 	CHECK(std::filesystem::exists(output.path() / "missing.actual.png"));
 }

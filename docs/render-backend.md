@@ -45,7 +45,8 @@ compositing, filters, shaders for gradients, clip masks through the stencil buff
 renderers implement only geometry, textures, scissoring and transforms. RmlUi skips what a renderer lacks, and box
 shadows, which it draws through layers, come out wrong.
 
-Results on every platform: see [CI results](#ci-results).
+Results on every platform: see [CI results](#ci-results). Since #285, SDL_GPU draws every tile: see
+[Effects in SDL_GPU](#effects-in-sdl_gpu-285).
 
 ## CI results
 
@@ -146,3 +147,54 @@ SDL_GPU, option 2, decided by the maintainers on 2026-10-29:
 - RmlUi's effects (layers, filters, gradients, clip masks and masks) are ported to its SDL_GPU renderer in GNUbase's
   RmlUi fork: #285. The theme (#53) and the widgets (#54) wait for it.
 - OpenGL 3 stays only in the spike.
+
+## Effects in SDL_GPU (#285)
+
+GNUbase's RmlUi fork gives the SDL_GPU renderer (`ext/RmlUi/Backends/RmlUi_Renderer_SDL_GPU.cpp`) the rest of RmlUi's
+render interface, ported from the OpenGL 3 renderer: clip masks, layers composited with blend modes, the filters
+(opacity, blur, drop shadow, and the colour matrices brightness, contrast, grayscale, hue-rotate, invert, saturate and
+sepia), mask images, and linear, radial and conic gradients, repeating or not. Box shadows come from layers and
+filters, so they work too.
+
+- **Design.** As in the OpenGL 3 renderer: the frame is drawn into multisampled layers that share a stencil buffer
+  (the clip masks); filters work on four postprocess textures that the layers are resolved into; at the end the base
+  layer is blended onto the window's texture. RmlUi's calls only record commands, and `EndFrame` runs them after one
+  copy pass that uploads the frame's geometry, so drawing and uploads don't take turns.
+- **Multisampling.** Two samples per pixel by default, as the OpenGL 3 renderer (`ui::g_defaultMsaaSamples`;
+  `GpuRenderer` and the renderer take another count). A device without that count takes the next larger one it has:
+  Mesa's lavapipe has four but not two. The UI tests ask for four, which every API has, with the same sample positions
+  everywhere, and which Mesa used for the references.
+- **Shaders.** One HLSL source per shader in `ext/RmlUi/Backends/RmlUi_SDL_GPU`, compiled ahead of time into SPIR-V,
+  DXIL and MSL and committed as C arrays in `ShadersCompiledSPV.h`, as upstream does. Building GNUbase needs no shader
+  tools, and every platform runs the same compiled shaders. Compiling them at build time instead would mean building
+  SDL_shadercross with DXC and SPIRV-Cross on every platform and CI runner, for files that rarely change. Whoever
+  changes a shader regenerates the header with SDL_shadercross (built from its repository with DXC 1.9.2602) and
+  commits both:
+
+  ```bash
+  python3 ext/RmlUi/Backends/RmlUi_SDL_GPU/compile_shaders.py path/to/shadercross
+  ```
+
+- **Tests.** `RmlUi's effects look as RmlUi's OpenGL 3 renderer draws them` (`tests/window_tests.cpp`) draws each tile
+  of the spike's `features` document at dp ratios 1 and 2 and compares it with the OpenGL 3 renderer's drawing of it
+  (`tests/golden/ui/effects`, cut from the spike's screenshots by `spikes/render-backend/reference-tiles.py`), averaged
+  over 3x3 pixels within 16 of 255: OpenGL draws bottom-up, so its samples cover edges from the other side. Blurs
+  downscale in steps that round to even pixels, so the test puts each tile as far from the window's corner, modulo 64
+  pixels, as it is in the references.
+- **Benchmark** (the spike's benchmark document, milliseconds per frame, mean over 300 frames; Vulkan on lavapipe with
+  four CPU cores, three to four runs each):
+
+  | Renderer | ms per frame |
+  |---|---|
+  | RmlUi 6.3's SDL_GPU renderer | 31 to 44, mean 38 |
+  | The port, without multisampling (`--msaa 1`) | 34 to 35 |
+  | The port, multisampled (lavapipe: four samples) | 47 to 49 |
+  | OpenGL 3 on llvmpipe, multisampled | 29 |
+
+  Without multisampling, as RmlUi 6.3's renderer drew, the port is as fast or faster: the frame's uploads go in one copy
+  pass. Multisampling costs lavapipe a third more, since it rasterizes on the CPU. The `Render spike` workflow times
+  both on every platform.
+- **lavapipe and the scissor.** Mesa's lavapipe (25.2) lets a scissored draw into a multisampled texture cover half the
+  samples of the pixels left of and above the scissor rectangle. Fullscreen passes into the layers are therefore
+  bounded by their geometry (the viewport) as well as by the scissor; otherwise they would pick up whatever an earlier
+  frame left beside the region in the postprocess textures.
