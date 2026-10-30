@@ -939,6 +939,14 @@ namespace gnubase::engine
 				requireRange(number, 0, 127, key);
 				*value = static_cast<int>(number);
 			}
+			for (const auto& [key, value] :
+				{std::pair{"monitor", &changed.monitor}, std::pair{"recordEnable", &changed.recordEnable}})
+			{
+				if (!parameters.contains(key))
+					continue;
+				require(type == TrackType::Audio, std::string("only audio tracks have ") + key);
+				*value = parameters.at(key).get<bool>();
+			}
 			channel = changed;
 			Json result = {{"channel", toJson(channel)}};
 			context.emit("channel.changed", result);
@@ -2542,14 +2550,18 @@ namespace gnubase::engine
 				"overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume "
 				"and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the "
 				"instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when "
-				"playback starts or jumps; automation of those controllers overrides them.",
-				objectSchema(
-					{{"channel", idSchema}, {"format", formats}, {"channels", integerSchema}, {"input", idSchema},
-						{"output", idSchema}, {"instrument", stringSchema},
-						{"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
-						{"panRight", numberSchema}, {"panBypass", booleanSchema},
-						{"midiVolume", {{"type", {"integer", "null"}}}}, {"midiPan", {{"type", {"integer", "null"}}}},
-						{"volume", numberSchema}, {"pan", numberSchema}},
+				"playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable "
+				"are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording "
+				"and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, "
+				"whileRecording while the transport records, tapeMachine while it stands or records (the default). "
+				"Monitoring glides in and out over one audio block.",
+				objectSchema({{"channel", idSchema}, {"format", formats}, {"channels", integerSchema},
+								 {"input", idSchema}, {"output", idSchema}, {"instrument", stringSchema},
+								 {"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
+								 {"panRight", numberSchema}, {"panBypass", booleanSchema},
+								 {"midiVolume", {{"type", {"integer", "null"}}}},
+								 {"midiPan", {{"type", {"integer", "null"}}}}, {"volume", numberSchema},
+								 {"pan", numberSchema}, {"monitor", booleanSchema}, {"recordEnable", booleanSchema}},
 					{"channel"}),
 				resultSchema({"channel"}), false},
 			setChannel);

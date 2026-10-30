@@ -266,10 +266,12 @@ namespace gnubase::app
 				})});
 
 		server.addTool({"ui_key",
-			"Presses and releases a key with modifiers, written like \"Enter\" or \"Ctrl+Shift+S\": letters, digits, "
-			"F1 to F24, Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, Up, Down, Left, "
-			"Right, Space; modifiers Ctrl, Shift, Alt and Meta (Cmd). Keys don't type text: use ui_text for that. "
-			"Returns the element with the keyboard focus.",
+			"Presses and releases a key with modifiers, written like \"Enter\", \"Ctrl+Shift+S\" or \"Mod+Z\": "
+			"letters, digits, F1 to F24, Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, "
+			"Up, Down, Left, Right, Space, . , - +, and on the keypad Num0 to Num9, NumEnter, Num* Num/ Num+ Num- "
+			"Num.; modifiers Mod (the platform's command key: Cmd on macOS, Ctrl elsewhere), Ctrl, Shift, Alt and Meta "
+			"(Cmd). A key that the focused element doesn't use runs its key command, e.g. Space starts or stops "
+			"playback. Keys don't type text: use ui_text for that. Returns the element with the keyboard focus.",
 			object({{"window", windowProperty()}, {"keys", {{"type", "string"}}}}, {"keys"}), focusResult, false,
 			run([](ui::Automation& ui, const Json& arguments)
 				{ return ui.key(windowOf(arguments), arguments.at("keys").get<std::string>()); })});

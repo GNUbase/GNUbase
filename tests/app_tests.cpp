@@ -60,12 +60,14 @@ namespace
 		return result;
 	}
 
-	// A project with one audio track, which plays the device input.
+	// A project with one audio track, which monitors the device input.
 	std::string saveProject(const gnubase::test::TempDir& dir)
 	{
 		gnubase::engine::Engine engine;
 		gnubase::engine::Client client(engine);
-		REQUIRE(client.call("track.add", {{"type", "audio"}}).ok());
+		const gnubase::engine::Result track = client.call("track.add", {{"type", "audio"}});
+		REQUIRE(track.ok());
+		REQUIRE(client.call("channel.set", {{"channel", track.value.at("channel").at("id")}, {"monitor", true}}).ok());
 		const std::string path = (dir.path() / "one track.dawproject").u8string();
 		REQUIRE(client.call("project.save", {{"path", path}}).ok());
 		return path;
@@ -229,7 +231,8 @@ namespace
 	// The acceptance script for Lua: build a project, render it and check the level.
 	constexpr const char* g_renderScript = R"(
 gnubase.project.new()
-gnubase.track.add{type = "audio"} -- plays the device input
+local track = gnubase.track.add{type = "audio"}
+gnubase.channel.set{channel = track.channel.id, monitor = true} -- hears the device input
 gnubase.audio.setDevice{blockSize = 128, captureSeconds = 1, input = {processor = "sine"}}
 gnubase.audio.render{frames = 24000}
 local peak = 0

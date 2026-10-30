@@ -15,8 +15,9 @@ test.before(function()
 	gnubase.audio.setDevice{blockSize = 128, captureSeconds = 1, input = {processor = "sine"}}
 end)
 
-test.case("an audio track plays the device input", function()
-	gnubase.track.add{type = "audio"}
+test.case("an audio track monitors the device input", function()
+	local track = gnubase.track.add{type = "audio"}
+	gnubase.channel.set{channel = track.channel.id, monitor = true}
 	gnubase.audio.render{frames = 4800}
 	local samples = gnubase.audio.capture{channel = 0, start = 0, frames = 4800}.samples
 	test.near(peak(samples), 0.5, 0.001)

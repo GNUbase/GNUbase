@@ -120,6 +120,8 @@ namespace gnubase::engine
 		bool panBypass = false;
 		std::optional<int> midiVolume; // MIDI channels: CC 7 and CC 10 to send, 0 to 127
 		std::optional<int> midiPan;
+		bool monitor = false; // audio tracks: the monitor and record enable buttons
+		bool recordEnable = false;
 		AutoFades autoFades;                          // audio tracks: their own settings or the project's
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
 		std::vector<RenderNote> notes;                // sorted by start, then pitch
