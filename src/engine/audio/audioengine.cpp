@@ -277,6 +277,9 @@ namespace gnubase::engine
 		program->sampleRate = snapshot.sampleRate;
 		program->generation = generation;
 		program->releases = releases();
+		program->sequencers.assign(m_sequencers.begin(), m_sequencers.end()); // ordered by channel id
+		for (const auto& [channel, instrument] : m_instruments)
+			program->instruments.emplace_back(channel, instrument.channel);
 		// Bus nodes come first, in bus order (graph::describe); child busses reach the device through their parent.
 		for (size_t b = 0; b < snapshot.busses.size(); ++b)
 			if (snapshot.busses[b].parent < 0)
@@ -509,7 +512,9 @@ namespace gnubase::engine
 		m_played.add(block.position, block.frames, transport);
 		captureInput(block);
 		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
+		m_tap.deliver(block.position, block.frames, program.sequencers);
 		program.graph.process(block.frames, transport, m_workers.get());
+		m_tap.capture(block.position, program.instruments);
 		m_playback.endBlock();
 		// Outputs start silent; busses that share a port add up there, in bus order.
 		for (const BusLink& link : program.outputs)
@@ -575,6 +580,7 @@ namespace gnubase::engine
 		m_directMonitoring = false;
 		m_played = PlayedPositions();
 		m_capturedInput.clear();
+		m_tap.clear(); // the next device starts at position 0
 	}
 
 	void AudioEngine::setDevice(const Json& parameters)
@@ -1225,6 +1231,7 @@ namespace gnubase::engine
 		registerAnalysisCommands(engine);
 		registerTransportCommands(engine);
 		m_midi.registerCommands(engine);
+		registerMidiTapCommands(engine);
 	}
 
 	void AudioEngine::sent(bool accepted)
