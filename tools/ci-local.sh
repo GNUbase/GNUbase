@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Runs CI's checks on this machine, all at once, so a pull request doesn't have to wait for CI (CONTRIBUTING.md):
+# Runs CI's checks on this machine, all at once, e.g. to reproduce a CI failure (CONTRIBUTING.md):
 # - format: license headers, clang-format and, where the private keyword list is, the keyword scan;
 # - on Windows: windows-x64 (build and tests) and windows-arm64 (cross-compiled; its tests need an ARM64 machine);
 # - on Linux, and on Windows in WSL: linux-gcc and linux-clang (builds and tests), asan-ubsan, tsan and clang-tidy.
@@ -14,7 +14,9 @@
 # plus clang with its sanitizer runtimes (libclang-rt-18-dev), ccache, git-lfs, make (without it, GCC's link-time
 # optimization runs its jobs one after another: linking the tests takes ten times as long) and, through pipx,
 # clang-tidy==22.1.8 and clang-format==22.1.3.
-# Logs: build/ci-local/<job>.log. Exit status: 0 every job passed, 1 a job failed, 2 error.
+# Logs: build/ci-local/<job>.log. Exit status: 0 every job passed, 1 a job failed, 2 error. When every job this machine
+# can run passed and the checkout had no uncommitted changes, build/ci-local/passed holds the commit they checked, so
+# other tools can skip checking it again.
 set -u
 
 # Started by Windows inside WSL with the checkout, its repository and HEAD's commit: moves the clone to that commit,
@@ -65,7 +67,9 @@ if [ "${1:-}" = --here ]; then # the Linux half, started by Windows inside WSL
 	here=true
 	shift
 fi
+everything=true
 if [ $# -gt 0 ]; then
+	everything=false
 	jobs=("$@")
 else
 	case $os in
@@ -83,6 +87,10 @@ runTests()
 	echo "=== Running the failed tests again, one at a time"
 	ctest --test-dir "$1" -C "$2" --output-on-failure --timeout 300 --rerun-failed
 }
+
+# Windows builds without a compiler launcher: sccache was slower than plain MSVC on a local machine, even with every
+# file cached. CMake keeps a launcher in the build folder's cache, so the empty values drop one set by earlier runs.
+launcher="-DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER="
 
 # Windows: a job runs its commands in a developer environment of the given architecture (vcvarsall's argument).
 vsDev()
@@ -117,12 +125,12 @@ job()
 		fi
 		;;
 	windows-x64)
-		vsDev x64 "cmake --preset windows-x64-ninja -DGNUBASE_LTO=OFF" \
+		vsDev x64 "cmake --preset windows-x64-ninja -DGNUBASE_LTO=OFF $launcher" \
 			"cmake --build --preset windows-x64-ninja --config Release" && runTests build/windows-x64-ninja Release
 		;;
 	windows-arm64)
 		local cross="-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=ARM64"
-		vsDev x64_arm64 "cmake --preset windows-arm64-ninja $cross -DGNUBASE_LTO=OFF" \
+		vsDev x64_arm64 "cmake --preset windows-arm64-ninja $cross -DGNUBASE_LTO=OFF $launcher" \
 			"cmake --build --preset windows-arm64-ninja --config Release"
 		;;
 	linux-gcc | linux-clang)
@@ -227,11 +235,15 @@ if git submodule status --recursive | grep -q '^+' || git submodule status | gre
 		git -C ext/vst3sdk submodule update -q --init base cmake pluginterfaces public.sdk || exit 2
 fi
 git lfs pull --include "tests/data/**,tests/golden/**,resources/fonts/**" || exit 2
-[ -z "$(git status --porcelain --untracked-files=no)" ] ||
-	echo "Note: uncommitted changes are not checked, only HEAD $(git rev-parse --short HEAD)." >&2
+# The Windows jobs build the working tree, so only a clean one marks HEAD as passed.
+clean=false
+[ -z "$(git status --porcelain --untracked-files=no)" ] && clean=true
+$clean || echo "Note: uncommitted changes are not checked, only HEAD $(git rev-parse --short HEAD)." >&2
 lockMachine
 started=$SECONDS
 status=0
+commit=$(git rev-parse HEAD)
+rm -f "$logs/passed"
 if [ ${#linuxJobs[@]} -gt 0 ]; then
 	wslPath() { cygpath -m "$1" | sed -E 's|^([A-Za-z]):|/mnt/\L\1|'; }
 	source=$(wslPath "$root")
@@ -245,6 +257,9 @@ if [ ${#otherJobs[@]} -gt 0 ]; then
 fi
 if [ ${#linuxJobs[@]} -gt 0 ]; then
 	wait $wslPid || status=1
+fi
+if [ $status -eq 0 ] && $everything && $clean; then
+	echo "$commit" > "$logs/passed"
 fi
 echo "All jobs took $(((SECONDS - started) / 60)):$(printf %02d $(((SECONDS - started) % 60))) min; logs in build/ci-local."
 exit $status

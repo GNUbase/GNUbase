@@ -90,7 +90,7 @@
 	{
 		decorator: svg-ninepatch(toolbar.svg, 6 6 6 6);
 	}
-	.display
+	.display, valuefield
 	{
 		decorator: svg-ninepatch(display.svg, 6 6 6 6);
 		font-family: JetBrains Mono;
@@ -300,15 +300,15 @@
 	{
 		opacity: 0.5;
 	}
-	input.range slidertrack, progress
+	input.range slidertrack, progress, .slider-track
 	{
 		decorator: svg-ninepatch(slider-track.svg, 1 1 1 1);
 	}
-	input.range sliderprogress, progress fill
+	input.range sliderprogress, progress fill, .slider-fill
 	{
 		decorator: svg-ninepatch(slider-fill.svg, 1 1 1 1);
 	}
-	input.range sliderbar
+	input.range sliderbar, .slider-thumb
 	{
 		decorator: svg(slider-thumb.svg);
 	}

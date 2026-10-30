@@ -1,0 +1,32 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The widgets with a number (#54) for tests/widgets_tests.cpp: a knob, a fader, a slider, value fields and meters.
+     The data model "values" binds the fader's volume and the gain field. The page (#page) scrolls, so that a test can
+     check that the wheel turns a widget rather than scrolling the page. -->
+<rml>
+<head>
+	<title>Values</title>
+	<style>
+		body { position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
+		#page { position: absolute; left: 0; top: 0; right: 0; bottom: 0; padding: 8dp; overflow-y: auto; }
+		.row { display: flex; align-items: flex-start; margin-bottom: 8dp; }
+		.row > * { margin-right: 12dp; }
+		.tall { height: 2000dp; }
+	</style>
+</head>
+<body data-model="values">
+<div id="page">
+	<div class="row">
+		<knob id="pan" min="-100" max="100" default="0" step="1" value="0"/>
+		<fader id="volume" min="-60" max="6" default="0" data-value="volume"/>
+		<meter id="left" value="-12" peak="-6"/>
+		<meter id="right"/>
+		<valuefield id="gain" min="-24" max="24" default="0" decimals="1" unit="dB" data-value="gain"/>
+		<valuefield id="locked" value="0.5" disabled="disabled"/>
+	</div>
+	<div class="row">
+		<slider id="send" value="0.25"/>
+	</div>
+	<div class="tall"/>
+</div>
+</body>
+</rml>

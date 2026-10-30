@@ -4,15 +4,17 @@
 #include "ui/displays.h"
 
 #include <RmlUi/Core/Header.h>
+#include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/Types.h>
 
-#include <RmlUi/Core/TextInputHandler.h> // needs the two above
+#include <RmlUi/Core/TextInputHandler.h> // needs Header.h and Types.h above
 
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 // What the shell needs from the operating system's windowing: monitors, top-level windows and their events. SDL3
@@ -27,6 +29,19 @@ namespace gnubase::ui
 		Size size{1280, 800};       // in desktop coordinates; used if bounds is empty
 		std::optional<Rect> bounds; // where to open it, e.g. from a workspace (#163); centred on the primary otherwise
 		bool hidden = false;        // tests and offscreen screenshots
+	};
+
+	// A key pressed with the modifiers held, as RmlUi has them: Rml::Input::KeyModifier flags.
+	struct KeyPress
+	{
+		Rml::Input::KeyIdentifier key = Rml::Input::KI_UNKNOWN;
+		int modifiers = 0;
+
+		bool operator==(const KeyPress& other) const { return key == other.key && modifiers == other.modifiers; }
+		bool operator<(const KeyPress& other) const
+		{
+			return std::make_pair(key, modifiers) < std::make_pair(other.key, other.modifiers);
+		}
 	};
 
 	enum class WindowEventKind : uint8_t
@@ -54,6 +69,7 @@ namespace gnubase::ui
 		std::vector<std::filesystem::path> files; // FilesDropped: the files; FileDialogClosed: what the user chose
 		uint64_t dialog = 0;                      // FileDialogClosed: the id showFileDialog was given
 		std::string error;                        // FileDialogClosed: why the dialog failed; empty if it didn't
+		std::optional<KeyPress> key;              // Input: a key pressed that no element used, for key commands
 	};
 
 	enum class FileDialogKind : uint8_t

@@ -393,7 +393,8 @@ namespace gnubase::engine
 			{"panner", channel.panner == StereoPanner::Combined ? "combined" : "balance"}, {"panLeft", channel.panLeft},
 			{"panRight", channel.panRight}, {"panBypass", channel.panBypass},
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
-			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}};
+			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
+			{"recordEnable", channel.recordEnable}};
 	}
 
 	Json toJson(const MediaFile& media)
@@ -854,6 +855,10 @@ namespace gnubase::engine
 			// Files from before instrument parameters have none.
 			channel.instrumentParameters = instrumentParametersFromJson(
 				item.value("instrumentParameters", Json::array()), channel.instrument, name);
+			// Only audio tracks have the buttons; files from before them have them off.
+			const bool audio = track != project.trackById.end() && track->second.type == TrackType::Audio;
+			channel.monitor = audio && item.value("monitor", false);
+			channel.recordEnable = audio && item.value("recordEnable", false);
 			project.channels[id] = std::move(channel);
 		}
 		for (const Json& item : json.at("media"))

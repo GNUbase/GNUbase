@@ -17,7 +17,7 @@ The cost is the **prefetch latency**: a change to a prefetched node, such as a f
 The graph (#15) gets a **live** flag per node. The command thread computes it when it describes the graph:
 
 1. A node is a **live source** when it receives live input:
-   - an input bus feeding a channel that monitors its input (#100) or records (#96);
+   - an input bus feeding a channel that may monitor its input (monitor or record enable on, [features/latency-and-monitoring.md](features/latency-and-monitoring.md)) or records (#96);
    - an instrument or MIDI channel that monitors or is record-enabled (#97), and so receives MIDI from a device;
    - a plugin slot with prefetching turned off (a per-plugin setting, for plugins that misbehave with large or early blocks);
    - a plugin slot whose editor is open, or with automation in a write mode (write, touch, latch; #120). Edits in a plugin's editor reach the plugin as it processes; on a prefetched slot that is up to *L* ahead of what the user hears, so knob moves would lag by *L* and touch automation would be recorded *L* early ([plugin-api.md](plugin-api.md#parameters-and-automation));

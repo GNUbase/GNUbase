@@ -331,7 +331,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".panel-header", {"decorator": skin("panel-header"), "color": c["textMuted"],
                            "font-size": f"{sizes['label']}dp"}),
         (".toolbar", {"decorator": skin("toolbar")}),
-        (".display", {"decorator": skin("display"), "font-family": fonts["counter"], "color": c["text"]}),
+        (".display, valuefield", {"decorator": skin("display"), "font-family": fonts["counter"], "color": c["text"]}),
         (".tooltip", {"decorator": skin("tooltip"), "font-size": f"{sizes['small']}dp"}),
         (".focus-ring", {"decorator": skin("focus-ring")}),
         # Menus and lists, the drop-down list's too
@@ -389,9 +389,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("input.radio:checked", {"decorator": skin("radio-on")}),
         ("input.checkbox:disabled, input.radio:disabled", {"opacity": "0.5"}),
         # Sliders and progress bars
-        ("input.range slidertrack, progress", {"decorator": skin("slider-track")}),
-        ("input.range sliderprogress, progress fill", {"decorator": skin("slider-fill")}),
-        ("input.range sliderbar", {"decorator": skin("slider-thumb")}),
+        ("input.range slidertrack, progress, .slider-track", {"decorator": skin("slider-track")}),
+        ("input.range sliderprogress, progress fill, .slider-fill", {"decorator": skin("slider-fill")}),
+        ("input.range sliderbar, .slider-thumb", {"decorator": skin("slider-thumb")}),
         # Scroll bars
         ("scrollbarvertical slidertrack", {"decorator": skin("scrollbar-track-vertical")}),
         ("scrollbarvertical sliderbar", {"decorator": skin("scrollbar-thumb-vertical")}),

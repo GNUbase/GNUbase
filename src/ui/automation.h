@@ -66,17 +66,19 @@ namespace gnubase::ui
 		engine::Json click(std::optional<WindowId> window, const Target& target, MouseButton button, int count,
 			const std::vector<std::string>& modifiers);
 
-		// Presses the left button at from, moves to to in steps and releases it there. Returns the element under the
-		// mouse at the end.
-		engine::Json drag(std::optional<WindowId> window, const Target& from, const Target& to);
+		// Presses the left button at from, moves to to in steps and releases it there, holding the modifiers. Returns
+		// the element under the mouse at the end.
+		engine::Json drag(std::optional<WindowId> window, const Target& from, const Target& to,
+			const std::vector<std::string>& modifiers = {});
 
-		// Turns the mouse wheel by dx and dy lines (positive is right and down) at the target, or where the mouse is.
-		engine::Json wheel(std::optional<WindowId> window, const Target& at, float dx, float dy);
+		// Turns the mouse wheel by dx and dy lines (positive is right and down) at the target, or where the mouse is,
+		// holding the modifiers.
+		engine::Json wheel(std::optional<WindowId> window, const Target& at, float dx, float dy,
+			const std::vector<std::string>& modifiers = {});
 
-		// Presses and releases a key with modifiers, written like "Enter", "Ctrl+S" or "Shift+Alt+F5": letters,
-		// digits, F1 to F24, Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, Up, Down,
-		// Left, Right, Space; modifiers Ctrl, Shift, Alt and Meta (or Cmd). Returns {"focus": ...}, the element with
-		// the keyboard focus, or null.
+		// Presses and releases a key with modifiers, written like "Enter", "Ctrl+S", "Mod+Z" or "Shift+Alt+F5" (keys
+		// and modifiers as ui::parseKeys reads them). A key that no element uses runs its key command
+		// (ui/keycommands.h). Returns {"focus": ...}, the element with the keyboard focus, or null.
 		engine::Json key(std::optional<WindowId> window, const std::string& keys);
 
 		// Types the UTF-8 text into the element with the focus. Returns the focus, as key does.

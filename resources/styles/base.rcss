@@ -314,3 +314,189 @@ tabset tab
 .splitter-grip-vertical { display: block; width: 8dp; height: 24dp; }
 .splitter-grip-horizontal { display: block; width: 24dp; height: 8dp; }
 .focus-ring { display: block; }
+
+/* Widgets with a number (ui/widgets.h). They take the focus for the arrow keys and get the mouse's drags. Code
+   positions their parts from the value: the knob's pointer, the fader's cap, the slider's fill and thumb, the meter's
+   level and peak. */
+knob, fader, slider, valuefield
+{
+	tab-index: auto;
+	drag: drag;
+}
+
+knob
+{
+	display: inline-block;
+	position: relative;
+	width: 40dp;
+	height: 40dp;
+}
+
+knob .knob, knob .knob-pointer
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+}
+
+fader
+{
+	display: inline-block;
+	position: relative;
+	width: 24dp;
+	height: 120dp;
+}
+
+fader .fader
+{
+	position: absolute;
+	left: 6dp;
+	top: 0;
+	height: 100%;
+}
+
+/* Where the cap's centre goes: half a cap from either end. */
+fader .fader-travel
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 6dp;
+	bottom: 6dp;
+}
+
+fader .fader-cap
+{
+	position: absolute;
+	left: 1dp;
+	margin-top: -6dp;
+}
+
+slider
+{
+	display: inline-block;
+	position: relative;
+	width: 120dp;
+	height: 16dp;
+	vertical-align: -3dp;
+}
+
+slider .slider-track
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 4dp;
+	height: 8dp;
+}
+
+slider .slider-fill
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	height: 100%;
+}
+
+/* Where the thumb's centre goes: half a thumb from either end. */
+slider .slider-travel
+{
+	position: absolute;
+	left: 8dp;
+	right: 8dp;
+	top: 0;
+	bottom: 0;
+}
+
+slider .slider-thumb
+{
+	position: absolute;
+	top: 0;
+	width: 16dp;
+	height: 16dp;
+	margin-left: -8dp;
+}
+
+valuefield
+{
+	display: inline-block;
+	position: relative;
+	box-sizing: border-box;
+	width: 80dp;
+	height: 24dp;
+	padding: 4dp 8dp;
+	text-align: right;
+	white-space: nowrap;
+}
+
+/* A double click edits the value in a text field over the widget. */
+valuefield input.text
+{
+	display: none;
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+	text-align: right;
+}
+
+valuefield.editing
+{
+	drag: none;
+}
+
+valuefield.editing input.text
+{
+	display: block;
+}
+
+valuefield.editing .valuefield-text
+{
+	visibility: hidden;
+}
+
+meter
+{
+	display: inline-block;
+	position: relative;
+	width: 12dp;
+	height: 120dp;
+	overflow: hidden;
+	clip: always; /* RmlUi clips only content that overflows in flow, not the absolute parts */
+}
+
+meter .meter
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	height: 100%;
+}
+
+meter .meter-level
+{
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	width: 100%;
+	overflow: hidden;
+	clip: always;
+}
+
+meter .meter-fill
+{
+	position: absolute;
+	left: 0;
+	bottom: 0;
+}
+
+/* The peak's top edge marks the level; at the bottom the meter hides it. */
+meter .meter-peak
+{
+	position: absolute;
+	left: 0;
+	margin-bottom: -4dp;
+}

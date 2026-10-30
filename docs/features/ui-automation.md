@@ -25,10 +25,12 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
   with white space collapsed; an element whose children are left out by the depth has its text instead. A selector
   matches in every document of the window, the documents themselves included, in document order.
 - **Input.** A click moves the mouse to the centre of the element, or to the point, and presses and releases the
-  button; a double click is two clicks, which RmlUi recognises by their timing. A drag presses at the start, moves in
-  eight steps and releases at the end, so RmlUi sends `dragstart`, `drag` and `dragdrop`. Wheel turns are in lines,
-  positive to the right and down. Keys are pressed and released with modifiers; they don't type text, which `ui_text`
-  sends as text input, as the OS's text input does after a key press. Each input tool answers with the element under
+  button; a double click is two clicks, which RmlUi recognises by their timing, with the UI updated between them as
+  frames would be, so a first click that opens a field leaves the second to the field. A drag presses at the start,
+  moves in eight steps and releases at the end, so RmlUi sends `dragstart`, `drag` and `dragdrop`. Wheel turns are in
+  lines, positive to the right and down. Clicks, drags and wheel turns can hold modifiers, e.g. Shift for a fine drag. Keys are pressed and released with modifiers; they don't type text, which `ui_text`
+  sends as text input, as the OS's text input does after a key press. A key that no element uses runs its key command,
+  as the user's does ([key-commands.md](key-commands.md)). Each input tool answers with the element under
   the mouse or with the focus, so a client sees what it hit.
 - **Waiting.** `ui_wait` asks the UI thread every 20 ms whether an element that a selector matches is visible (with a
   given text), or that none is, for at most 60 seconds.
