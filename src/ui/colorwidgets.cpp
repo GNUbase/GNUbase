@@ -185,11 +185,12 @@ namespace gnubase::ui
 					return;
 				}
 				// A value field changed.
-				const auto field = std::find(m_fields.begin(), m_fields.end(), event.GetTargetElement());
-				if (field == m_fields.end())
+				size_t index = 0;
+				while (index < m_fields.size() && m_fields[index] != event.GetTargetElement())
+					++index;
+				if (index == m_fields.size())
 					return;
 				const float value = event.GetParameter("value", 0.0F);
-				const size_t index = static_cast<size_t>(field - m_fields.begin());
 				if (index < 3)
 				{
 					Hsv color = m_color;
