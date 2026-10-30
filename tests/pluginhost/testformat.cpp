@@ -46,10 +46,10 @@ namespace gnubase::testformat
 		};
 
 		// test:stall's parameters.
-		constexpr uint32_t g_stallId = 1;  // Stall, in ms
-		constexpr uint32_t g_valueId = 2;  // Value, which does nothing
-		constexpr uint32_t g_resetsId = 3; // Resets, which counts the plugin's resets
-		constexpr uint32_t g_rescanId = 4; // Rescan: 1 makes every stall end with a values rescan
+		constexpr uint32_t g_stallId = 1;   // Stall, in ms
+		constexpr uint32_t g_valueId = 2;   // Value, which does nothing
+		constexpr uint32_t g_resetsId = 3;  // Resets, which counts the plugin's resets
+		constexpr uint32_t g_rescanId = 4;  // Rescan: 1 makes every stall end with a values rescan
 		constexpr uint32_t g_offlineId = 5; // Offline: 1 while the host's process mode is offline
 
 		// test:stall, only in this format: passes its input through, and setting Stall to more than 0 ms makes the

@@ -199,7 +199,7 @@ namespace gnubase::engine::plugins
 		static std::string groupOf(const Shared& shared, uint64_t instance, const PluginRef& plugin);
 		std::shared_ptr<plugin::remote::HostConnection> hostFor(const std::string& group);
 		bool answers(const plugin::remote::HostConnection& host) const; // new plugins may go there
-		bool awayFromGroup(const Instance& instance) const;              // with Shared::mutex locked
+		bool awayFromGroup(const Instance& instance) const;             // with Shared::mutex locked
 		static void post(Shared& shared, std::function<void()> job);
 		static std::vector<std::shared_ptr<plugin::remote::HostConnection>> dropUnused(Shared& shared);
 		static void refresh(Shared& shared, uint64_t id);

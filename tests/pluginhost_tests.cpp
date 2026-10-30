@@ -47,16 +47,16 @@ namespace
 	constexpr uint32_t g_maxFrames = 256;
 
 	// Parameter ids of the test plugins (tests/plugins/README.md).
-	constexpr uint32_t g_gain = 1;       // test:gain, dB
-	constexpr uint32_t g_hang = 1;       // test:hang, 0 or 1
-	constexpr uint32_t g_latency = 1;    // test:latency, samples
-	constexpr uint32_t g_seed = 1;       // test:stateblob
-	constexpr uint32_t g_stateSize = 2;  // test:stateblob, bytes
-	constexpr uint32_t g_stall = 1;      // test:stall, ms
-	constexpr uint32_t g_value = 2;      // test:stall
-	constexpr uint32_t g_rescan = 4;     // test:stall
-	constexpr uint32_t g_resets = 3;     // test:stall
-	constexpr uint32_t g_offline = 5;    // test:stall, 0 or 1
+	constexpr uint32_t g_gain = 1;      // test:gain, dB
+	constexpr uint32_t g_hang = 1;      // test:hang, 0 or 1
+	constexpr uint32_t g_latency = 1;   // test:latency, samples
+	constexpr uint32_t g_seed = 1;      // test:stateblob
+	constexpr uint32_t g_stateSize = 2; // test:stateblob, bytes
+	constexpr uint32_t g_stall = 1;     // test:stall, ms
+	constexpr uint32_t g_value = 2;     // test:stall
+	constexpr uint32_t g_rescan = 4;    // test:stall
+	constexpr uint32_t g_resets = 3;    // test:stall
+	constexpr uint32_t g_offline = 5;   // test:stall, 0 or 1
 
 	plugins::HostManager::Options testOptions()
 	{
@@ -1106,8 +1106,8 @@ TEST_CASE("the first block after a start its host can't take yet keeps its param
 	CHECK(savedValue(plugin, "test:stall", g_resets) == settled);
 }
 
-TEST_CASE("a parameter flush on the audio thread before the first block after a start reaches the plugin",
-	"[integration]")
+TEST_CASE(
+	"a parameter flush on the audio thread before the first block after a start reaches the plugin", "[integration]")
 {
 	plugins::HostManager manager(testOptions());
 	std::unique_ptr<plugin::remote::RemotePlugin> remote = createRemote(manager, {"test:stall", "", "GNUbase"});
@@ -1299,8 +1299,8 @@ TEST_CASE("a host whose main thread is busy with a slow call still gets new plug
 	CHECK(manager.hosts().size() == 1);
 }
 
-TEST_CASE("a process mode change during a slow call of the same plugin applies when the plugin activates",
-	"[integration]")
+TEST_CASE(
+	"a process mode change during a slow call of the same plugin applies when the plugin activates", "[integration]")
 {
 	plugins::HostManager::Options options = testOptions();
 	options.deadlines.query = 200ms;
