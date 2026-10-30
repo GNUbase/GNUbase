@@ -343,7 +343,8 @@ TEST_CASE("every theme looks the same on every platform, and switches without lo
 	loadFonts();
 	const ui::Themes themes(std::filesystem::path(GNUBASE_RESOURCES_DIR));
 	gpu.shell->setTheme(ui::g_defaultTheme);
-	const ui::Window& window = gpu.open("widgets.rml", 1024, 720); // fits SDL's offscreen display
+	// Small enough for SDL's offscreen display (1024 x 768) and CI's macOS screen, which shrinks taller windows.
+	const ui::Window& window = gpu.open("widgets.rml", 1024, 640);
 	Rml::ElementDocument* document = window.context().GetDocument(0);
 	REQUIRE(document != nullptr);
 	// The states the mouse and the keyboard would cause. The text field shows its focus without a blinking caret.
@@ -362,7 +363,8 @@ TEST_CASE("every theme looks the same on every platform, and switches without lo
 	// The page, 560 x 360 dp, or as much of it as the window shows.
 	const auto compare = [&](const std::string& name, int ratio)
 	{
-		const ui::Image image = crop(gpu.screenshot(window, name), 0, 0, std::min(560 * ratio, 1024), 360 * ratio);
+		const ui::Image image =
+			crop(gpu.screenshot(window, name), 0, 0, std::min(560 * ratio, 1024), std::min(360 * ratio, 640));
 		const test::ImageDiff diff = test::compareWithGolden("ui/" + name, image, {8, image.pixels.size() / 4 / 500});
 		INFO(diff.report);
 		CHECK(diff.equal);
@@ -386,8 +388,8 @@ TEST_CASE("every theme looks the same on every platform, and switches without lo
 	INFO(same.report);
 	CHECK(same.equal);
 
-	// At dp ratio 2 the skins are rasterized at twice their size; their corners stay sharp. The window shows 512 dp of
-	// the page's width.
+	// At dp ratio 2 the skins are rasterized at twice their size; their corners stay sharp. The window shows 512 x 320
+	// dp of the page.
 	gpu.shell->setUiScale(2.0F / monitorScale);
 	compare("theme-gnubase-2x", 2);
 }
