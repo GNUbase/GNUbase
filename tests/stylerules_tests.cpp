@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The UI's styling rules (CLAUDE.md, "UI conventions"; #53): C++ and Lua code never set a style property such as a
 // color, font, border or spacing. They change an element's classes and pseudo-classes, and the style sheets decide how
-// each state looks. Code may set only geometry that comes from data, such as a position, a size or a transform, and
-// colors that are data themselves, such as the color a color picker picks, in the files listed below. Nor do
-// documents and the shared style sheets name a theme: ui::Themes gives them the active one (docs/features/themes.md).
+// each state looks. Code may set only geometry that comes from data, such as a position, a size or a transform, and,
+// in the files listed below, background-color to a color that is user data, such as the color a color picker picks.
+// Nor do documents and the shared style sheets name a theme: ui::Themes gives them the active one
+// (docs/features/themes.md).
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -25,7 +26,9 @@ namespace
 		return properties;
 	}
 
-	// Colors that are data themselves, by the file that shows them: the color picker's field and swatches.
+	// The color properties a file may set to colors that are user data: background-color only, and only where the
+	// color is the data itself, such as the color picker's field (its hue) and swatches. Track and event colors come
+	// with #94.
 	std::set<std::string> dataColors(const std::filesystem::path& file)
 	{
 		if (file.filename() == "colorwidgets.cpp")

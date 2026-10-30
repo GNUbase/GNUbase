@@ -136,7 +136,8 @@ click and through a drag; value fields edit hue (0-360), saturation and value (0
 `change` with it, so `data-value` binds the picker; the value fields inside send their own `change` events with
 numbers. A grey keeps the hue it had, so turning the saturation up again doesn't jump to red. The field's gradients
 and the hue strip are in the themes; code gives the field its hue and the swatches their colors, the one place where
-code sets a color, since there the color is the data (`tests/stylerules_tests.cpp` lists the file). Dialogs put the
+code sets a color, since there the color is the user's data: `background-color` only, as CLAUDE.md's UI conventions
+allow (`tests/stylerules_tests.cpp` lists the files that may). Dialogs put the
 picker next to their OK and Cancel buttons. Not yet: the reference's context menu to copy, paste and reset colors.
 
 ## Checks
