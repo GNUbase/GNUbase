@@ -1946,6 +1946,7 @@ namespace gnubase::engine
 			{"controller.remove", "Remove controllers"},
 			{"controller.set", "Change controllers"},
 			{"marker.add", "Add marker"},
+			{"marker.put", "Set marker"},
 			{"marker.set", "Change marker"},
 			{"marker.remove", "Remove markers"},
 			{"marker.renumber", "Renumber markers"},

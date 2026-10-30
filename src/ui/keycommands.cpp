@@ -167,6 +167,7 @@ namespace gnubase::ui
 			{"Mod+Num2", "transport.set", {{"right", "cursor"}}},
 			{"Shift+N", "marker.locateNext"},
 			{"Shift+B", "marker.locatePrevious"},
+			{"Insert", "marker.add"},
 			// Edit
 			{"Mod+Z", "history.undo"},
 			{"Mod+Shift+Z", "history.redo"},
@@ -176,6 +177,13 @@ namespace gnubase::ui
 			keys.emplace_back("Shift+" + std::to_string(number), "marker.locate", Json{{"number", number}});
 		for (int number = 3; number <= 9; ++number)
 			keys.emplace_back("Num" + std::to_string(number), "marker.locate", Json{{"number", number}});
+		// Set Marker 1 to 9 the same way with Mod, and Recall Cycle Marker 1 to 9 with Shift and the keypad.
+		for (int number = 1; number <= 9; ++number)
+			keys.emplace_back("Mod+" + std::to_string(number), "marker.put", Json{{"number", number}});
+		for (int number = 3; number <= 9; ++number)
+			keys.emplace_back("Mod+Num" + std::to_string(number), "marker.put", Json{{"number", number}});
+		for (int number = 1; number <= 9; ++number)
+			keys.emplace_back("Shift+Num" + std::to_string(number), "marker.setLocators", Json{{"number", number}});
 		return keys;
 	}
 
