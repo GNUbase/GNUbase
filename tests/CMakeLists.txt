@@ -31,6 +31,7 @@ add_executable(gnubase-tests
 	effects_tests.cpp
 	engine_tests.cpp
 	fade_tests.cpp
+	fonts_tests.cpp
 	graph_tests.cpp
 	history_tests.cpp
 	ipc_process_tests.cpp
@@ -166,8 +167,6 @@ endforeach()
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}"
 	GNUBASE_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs"
 	GNUBASE_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources"
-	# Lato (SIL OFL) from RmlUi's samples, for text in tests until GNUbase bundles its own fonts (#207).
-	GNUBASE_TEST_FONTS_DIR="${PROJECT_SOURCE_DIR}/ext/RmlUi/Samples/assets"
 	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>
 	GNUBASE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 if(WIN32)

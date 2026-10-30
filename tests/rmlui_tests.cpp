@@ -28,9 +28,10 @@ using std::chrono::milliseconds;
 
 namespace
 {
+	// One of GNUbase's fonts (resources/fonts).
 	std::filesystem::path font(const char* name)
 	{
-		return std::filesystem::path(GNUBASE_TEST_FONTS_DIR) / name;
+		return std::filesystem::path(GNUBASE_RESOURCES_DIR) / "fonts" / "Inter" / name;
 	}
 
 	// The fake UI with one window.
@@ -100,10 +101,10 @@ namespace
 TEST_CASE("text is laid out in fonts loaded through FreeType", "[unit]")
 {
 	OneWindow fixture;
-	REQUIRE(ui::RmlUi::loadFont(font("LatoLatin-Regular.ttf")));
+	REQUIRE(ui::RmlUi::loadFont(font("Inter-Regular.ttf")));
 	CHECK_FALSE(ui::RmlUi::loadFont(font("missing.ttf")));
 	show(fixture.window, R"(<rml><head><style>
-			body { display: block; font-family: LatoLatin; font-size: 20dp; }
+			body { display: block; font-family: Inter; font-size: 20dp; }
 			span { display: inline-block; }
 		</style></head>
 		<body><span id="short">Hi</span><span id="long">Hello, world</span></body></rml>)");
@@ -129,7 +130,7 @@ TEST_CASE("documents, style sheets and fonts load from paths with any characters
 	write(folder / std::filesystem::u8path("Ölfarbe.rcss"), "#box { display: block; width: 123dp; height: 10dp; }");
 	write(folder / std::filesystem::u8path("Übersicht.rml"),
 		R"(<rml><head><link type="text/rcss" href="Ölfarbe.rcss"/></head><body><div id="box"/></body></rml>)");
-	std::filesystem::copy_file(font("LatoLatin-Regular.ttf"), folder / std::filesystem::u8path("Schrift ß.ttf"));
+	std::filesystem::copy_file(font("Inter-Regular.ttf"), folder / std::filesystem::u8path("Schrift ß.ttf"));
 
 	CHECK(ui::RmlUi::loadFont(folder / std::filesystem::u8path("Schrift ß.ttf")));
 	Rml::ElementDocument* document =

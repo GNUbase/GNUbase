@@ -13,16 +13,30 @@ target_compile_definitions(gnubase-ui-thirdparty PUBLIC RMLUI_SDL_VERSION_MAJOR=
 target_link_libraries(gnubase-ui-thirdparty PUBLIC RmlUi::RmlUi SDL3::SDL3)
 
 add_library(gnubase-ui STATIC
-	datamodel.cpp datamodel.h
-	displays.cpp displays.h
-	gpurenderer.cpp gpurenderer.h
+	datamodel.cpp
+	datamodel.h
+	displays.cpp
+	displays.h
+	fonts.cpp
+	fonts.h
+	gpurenderer.cpp
+	gpurenderer.h
 	image.cpp
-	livereload.cpp livereload.h
+	livereload.cpp
+	livereload.h
+	pseudolocale.cpp
+	pseudolocale.h
 	renderer.h
-	rmlui.cpp rmlui.h
-	sdlwindowsystem.cpp sdlwindowsystem.h
-	shell.cpp shell.h
-	ui.cpp ui.h
+	rmlui.cpp
+	rmlui.h
+	sdlwindowsystem.cpp
+	sdlwindowsystem.h
+	shell.cpp
+	shell.h
+	ui.cpp
+	ui.h
 	windowsystem.h)
-target_link_libraries(gnubase-ui PUBLIC gnubase-engine RmlUi::RmlUi PRIVATE gnubase-ui-thirdparty SDL3::SDL3)
+target_link_libraries(gnubase-ui
+	PUBLIC gnubase-engine RmlUi::RmlUi
+	PRIVATE Freetype::Freetype gnubase-ui-thirdparty SDL3::SDL3)
 gnubase_target_defaults(gnubase-ui)

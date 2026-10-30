@@ -1,0 +1,39 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- GNUbase's fonts (#207) in 360x250 dp: the user interface's family at the themes' font sizes and in every weight,
+     the counter family, characters from the fallback font, other alphabets, and pseudo-localized text, which the test
+     fills in. Its screenshots are tests/golden/ui/fonts-1x.png and fonts-2x.png. -->
+<rml>
+<head>
+	<title>Fonts</title>
+	<style>
+		body {
+			display: block; position: absolute; left: 0; top: 0; width: 360dp; height: 250dp; margin: 0;
+			padding: 10dp; box-sizing: border-box; background-color: #1d2127; color: #e8eaed;
+			font-family: Inter; font-size: 13dp;
+		}
+		p { display: block; margin: 0 0 4dp 0; white-space: nowrap; }
+		.display { font-size: 20dp; font-weight: 600; }
+		.title { font-size: 15dp; font-weight: 600; }
+		.label { font-size: 12dp; }
+		.small { font-size: 11dp; color: #9aa3ad; }
+		.counter { font-family: JetBrains Mono; font-size: 15dp; }
+		.medium { font-weight: 500; }
+		.semibold { font-weight: 600; }
+		.bold { font-weight: bold; }
+		.italic { font-style: italic; }
+	</style>
+</head>
+<body>
+	<p class="display">GNUbase 0123456789</p>
+	<p class="title">Audio Connections</p>
+	<p>The quick brown fox jumps over the lazy dog.</p>
+	<p class="label">Sample rate 48.000 kHz · Bars → Seconds</p>
+	<p class="small">Volume −6.0 dB · −∞ dB · ½ × 25%</p>
+	<p>Regular · <span class="medium">Medium</span> · <span class="semibold">SemiBold</span> ·
+		<span class="bold">Bold</span> · <span class="italic">Italic</span></p>
+	<p class="counter">0001.01.01.000 <span class="bold">00:01:23.456</span></p>
+	<p>Key: C♯ major · B♭ minor · F♮</p>
+	<p>Größe · Ελληνικά · Кириллица · Tiếng Việt</p>
+	<p id="pseudo"/>
+</body>
+</rml>
