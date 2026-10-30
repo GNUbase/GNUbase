@@ -908,6 +908,9 @@ namespace gnubase::engine
 					require(info != builtins.end(), "no built-in processor " + changed.instrument);
 					require(info->instrument, changed.instrument + " is not an instrument");
 				}
+				// Another instrument starts with its parameters at their defaults.
+				if (changed.instrument != channel.instrument)
+					changed.instrumentParameters.clear();
 			}
 			for (const char* key : {"volume", "pan", "panner", "panLeft", "panRight", "panBypass"})
 				if (parameters.contains(key))
@@ -1573,6 +1576,7 @@ namespace gnubase::engine
 			{"track.move", "Move track"},
 			{"track.remove", "Remove track"},
 			{"channel.set", "Change channel"},
+			{"parameter.set", "Change parameter"},
 			{"media.add", "Add media file"},
 			{"media.convert", "Convert media file"},
 			{"media.stretch", "Stretch media file"},
@@ -2301,6 +2305,7 @@ namespace gnubase::engine
 		registerMidiEditCommands(engine);
 		registerMarkerCommands(engine);
 		registerAutomationCommands(engine);
+		registerParameterCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
 		registerMidiFileCommands(engine);

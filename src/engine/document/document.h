@@ -60,6 +60,7 @@ namespace gnubase::engine
 
 	// The mixer channel of a track. MIDI tracks have a MIDI channel: no audio channels, and their output is an
 	// instrument track's channel.
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct Channel
 	{
 		ObjectId id = 0;
@@ -78,6 +79,9 @@ namespace gnubase::engine
 		// none sends nothing, which leaves the instrument's own.
 		std::optional<int> midiVolume = std::nullopt;
 		std::optional<int> midiPan = std::nullopt;
+		// The values set for the instrument's parameters (parameter.set), by parameter id; the others are at their
+		// defaults. A new instrument starts with none.
+		std::map<uint32_t, double> instrumentParameters;
 	};
 
 	// The fader's range: its bottom is silence, its top the project's maximum volume, at most this.
@@ -391,9 +395,9 @@ namespace gnubase::engine
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
-				   a.panRight, a.panBypass, a.midiVolume, a.midiPan) ==
+				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
-				b.panRight, b.panBypass, b.midiVolume, b.midiPan);
+				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters);
 	}
 
 	inline bool operator==(const MediaFile& a, const MediaFile& b)

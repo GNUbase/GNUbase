@@ -7,7 +7,13 @@
 #include "engine/processors/generators.h"
 #include "engine/processors/testsynth.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <functional>
+#include <iomanip>
+#include <locale>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -171,6 +177,22 @@ namespace gnubase::engine::processors
 			return builtins;
 		}
 
+		std::string_view trimmed(std::string_view text)
+		{
+			const auto space = [](char c) { return std::isspace(static_cast<unsigned char>(c)) != 0; };
+			while (!text.empty() && space(text.front()))
+				text.remove_prefix(1);
+			while (!text.empty() && space(text.back()))
+				text.remove_suffix(1);
+			return text;
+		}
+
+		bool sameIgnoringCase(std::string_view a, std::string_view b)
+		{
+			return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](char x, char y)
+				{ return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y)); });
+		}
+
 		Json toJson(const BuiltinInfo& info)
 		{
 			Json parameters = Json::array();
@@ -209,6 +231,56 @@ namespace gnubase::engine::processors
 			if (builtin.info.id == id)
 				return builtin.info.instrument;
 		return false;
+	}
+
+	const BuiltinInfo* findBuiltin(const std::string& id)
+	{
+		const std::vector<BuiltinInfo>& infos = builtins();
+		const auto found =
+			std::find_if(infos.begin(), infos.end(), [&id](const BuiltinInfo& info) { return info.id == id; });
+		return found != infos.end() ? &*found : nullptr;
+	}
+
+	const ParameterInfo* findParameter(const BuiltinInfo& info, uint32_t id)
+	{
+		const auto found = std::find_if(info.parameters.begin(), info.parameters.end(),
+			[id](const ParameterInfo& parameter) { return parameter.id == id; });
+		return found != info.parameters.end() ? &*found : nullptr;
+	}
+
+	std::string valueToText(const ParameterInfo& parameter, double value)
+	{
+		if (!parameter.options.empty())
+		{
+			const auto option = static_cast<size_t>(std::clamp(
+				std::round(value - parameter.minimum), 0.0, static_cast<double>(parameter.options.size() - 1)));
+			return parameter.options[option];
+		}
+		std::ostringstream text;
+		text.imbue(std::locale::classic());
+		text << std::fixed << std::setprecision(parameter.stepped ? 0 : 2) << value;
+		if (!parameter.unit.empty())
+			text << ' ' << parameter.unit;
+		return text.str();
+	}
+
+	std::optional<double> textToValue(const ParameterInfo& parameter, std::string_view text)
+	{
+		text = trimmed(text);
+		for (size_t i = 0; i < parameter.options.size(); ++i)
+			if (sameIgnoringCase(text, parameter.options[i]))
+				return parameter.minimum + static_cast<double>(i);
+		std::istringstream stream{std::string(text)};
+		stream.imbue(std::locale::classic());
+		double value = 0.0;
+		if (!(stream >> value) || !std::isfinite(value))
+			return std::nullopt;
+		std::string rest;
+		std::getline(stream, rest);
+		if (!trimmed(rest).empty() && !sameIgnoringCase(trimmed(rest), parameter.unit))
+			return std::nullopt;
+		value = std::clamp(value, parameter.minimum, parameter.maximum);
+		return parameter.stepped ? std::round(value) : value;
 	}
 
 	void registerCommands(Engine& engine)

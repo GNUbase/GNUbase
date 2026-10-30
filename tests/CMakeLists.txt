@@ -47,6 +47,7 @@ add_executable(gnubase-tests
 	midifunctions_tests.cpp
 	mixer_tests.cpp
 	multicore_tests.cpp
+	parameter_tests.cpp
 	peaks_tests.cpp
 	performance_tests.cpp
 	playback_tests.cpp

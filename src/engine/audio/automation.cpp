@@ -297,8 +297,13 @@ namespace gnubase::engine
 		for (const processors::BuiltinInfo& info : processors::builtins())
 			if (info.id == channel.instrument)
 				for (const processors::ParameterInfo& parameter : info.parameters)
+				{
+					const auto set = channel.instrumentParameters.find(parameter.id);
+					const double value =
+						set != channel.instrumentParameters.end() ? set->second : parameter.defaultValue;
 					lanes.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0}, Kind::Instrument,
-						parameter.id, parameter.defaultValue, parameter.minimum, parameter.maximum, {}});
+						parameter.id, value, parameter.minimum, parameter.maximum, {}});
+				}
 		const bool midi = channel.type == TrackType::Midi || channel.type == TrackType::Instrument;
 		for (const RenderAutomationLane& lane : channel.automation)
 		{

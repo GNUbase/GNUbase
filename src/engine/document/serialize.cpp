@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -206,6 +207,13 @@ namespace gnubase::engine
 		return std::nullopt;
 	}
 
+	bool isParameterId(const Json& json)
+	{
+		if (json.is_number_unsigned())
+			return json.get<uint64_t>() <= UINT32_MAX;
+		return json.is_number_integer() && json.get<int64_t>() >= 0 && json.get<int64_t>() <= UINT32_MAX;
+	}
+
 	const char* automationShapeName(AutomationShape shape)
 	{
 		for (const auto& entry : g_automationShapeNames)
@@ -365,9 +373,13 @@ namespace gnubase::engine
 
 	Json toJson(const Channel& channel)
 	{
+		Json parameters = Json::array();
+		for (const auto& [parameter, value] : channel.instrumentParameters)
+			parameters.push_back({{"parameter", parameter}, {"value", value}});
 		return {{"id", channel.id}, {"track", channel.track}, {"format", formatName(channel.format)},
 			{"channels", channelCount(channel.format)}, {"input", channel.input}, {"output", channel.output},
-			{"instrument", channel.instrument}, {"volume", channel.volume}, {"pan", channel.pan},
+			{"instrument", channel.instrument}, {"instrumentParameters", std::move(parameters)},
+			{"volume", channel.volume}, {"pan", channel.pan},
 			{"panner", channel.panner == StereoPanner::Combined ? "combined" : "balance"}, {"panLeft", channel.panLeft},
 			{"panRight", channel.panRight}, {"panBypass", channel.panBypass},
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
@@ -629,6 +641,35 @@ namespace gnubase::engine
 			return format;
 		}
 
+		// The values of a channel's instrument parameters from a file, checked like parameter.set checks them. Values
+		// of parameters the instrument doesn't have, e.g. from a newer build, are left out.
+		std::map<uint32_t, double> instrumentParametersFromJson(
+			const Json& json, const std::string& instrument, const std::string& name)
+		{
+			if (!json.is_array())
+				throw std::invalid_argument(name + " instrumentParameters must be a list");
+			std::map<uint32_t, double> values;
+			const processors::BuiltinInfo* info = processors::findBuiltin(instrument);
+			for (const Json& item : json)
+			{
+				if (!item.is_object() || !item.contains("parameter") || !isParameterId(item.at("parameter")) ||
+					!item.contains("value") || !item.at("value").is_number())
+					throw std::invalid_argument(name + " has an instrument parameter that isn't one: " + item.dump());
+				const auto id = item.at("parameter").get<uint32_t>();
+				const processors::ParameterInfo* parameter =
+					info != nullptr ? processors::findParameter(*info, id) : nullptr;
+				if (parameter == nullptr)
+					continue;
+				const std::string valueName = name + " parameter " + std::to_string(id);
+				const double value = checkedNumber(item.at("value"), parameter->minimum, parameter->maximum, valueName);
+				if (parameter->stepped && value != std::round(value))
+					throw std::invalid_argument(valueName + " must be a whole number");
+				if (!values.emplace(id, value).second)
+					throw std::invalid_argument(valueName + " is there twice");
+			}
+			return values;
+		}
+
 		// An optional whole number from a file, 0 if it is missing.
 		int64_t checkedInteger(const Json& json, const char* key, int64_t maximum, const std::string& name)
 		{
@@ -787,6 +828,9 @@ namespace gnubase::engine
 			if (!processors::isInstrument(channel.instrument) || track == project.trackById.end() ||
 				track->second.type != TrackType::Instrument)
 				channel.instrument.clear();
+			// Files from before instrument parameters have none.
+			channel.instrumentParameters = instrumentParametersFromJson(
+				item.value("instrumentParameters", Json::array()), channel.instrument, name);
 			project.channels[id] = std::move(channel);
 		}
 		for (const Json& item : json.at("media"))
