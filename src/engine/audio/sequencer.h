@@ -52,6 +52,11 @@ namespace gnubase::engine
 		// them (InstrumentChannel::releaseNotesOf).
 		void forget() noexcept { m_soundingCount = 0; }
 
+		// Audio thread: the events played into the track in this block (midi.inject), as from its MIDI input. They go
+		// out after the events it receives and before its parts' events, also while the transport stands. The audio
+		// engine fills them before the graph processes a block.
+		graph::EventBuffer& input() noexcept { return m_input; }
+
 	private:
 		void play(
 			const MidiSequence& sequence, const graph::TransportSegment& segment, graph::EventBuffer& out) noexcept;
@@ -67,6 +72,7 @@ namespace gnubase::engine
 		std::array<uint16_t, g_notes> m_sounding{}; // the sounding notes, as channel * 128 + pitch, in order
 		size_t m_soundingCount = 0;
 		int64_t m_next = -1; // where playback goes on without a jump; -1 while stopped
+		graph::EventBuffer m_input;
 	};
 
 	// An instrument track's channel: its own parts' events and those of the MIDI tracks routed to it, played by its
@@ -83,6 +89,9 @@ namespace gnubase::engine
 		// channel's own sequencer or one of the staying tracks' also holds. The departed sequencer forgets them.
 		void releaseNotesOf(
 			MidiSequencer& departed, const std::vector<std::shared_ptr<MidiSequencer>>& staying) noexcept;
+
+		// Audio thread, after the block's process: the events its instrument got (midi.capture).
+		const graph::EventBuffer& played() const noexcept { return m_events; }
 
 	protected:
 		void prepare(double sampleRate, uint32_t maxFrames) override;

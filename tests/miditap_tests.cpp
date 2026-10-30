@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // midi.inject plays MIDI into tracks as if from their MIDI input; midi.capture returns what instruments played.
+#include "engine/document/document.h"
 #include "engine/engine.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -59,7 +60,8 @@ namespace
 		void note(ObjectId channel, int64_t start, int64_t end, int pitch)
 		{
 			run(client, "midi.inject",
-				{{"channel", channel}, {"messages", {message(start, {0x90, pitch, 100}), message(end, {0x80, pitch, 0})}}});
+				{{"channel", channel},
+					{"messages", {message(start, {0x90, pitch, 100}), message(end, {0x80, pitch, 0})}}});
 		}
 
 		std::vector<float> capture(int channel, int64_t start, int64_t frames)
@@ -170,8 +172,8 @@ TEST_CASE("midi.capture returns what instruments played, at frame positions on t
 	const Json captured = run(probe.client, "midi.capture");
 	CHECK(captured.at("captured") ==
 		Json::array({entry(0, {0xB2, 0, 1}), entry(0, {0xB2, 32, 2}), entry(0, {0xC2, 3}), entry(20, {0xB1, 7, 100}),
-			entry(30, {0xE0, 0x00, 0x40}), entry(40, {0xD3, 90}), entry(50, {0x90, 62, 100}),
-			entry(60, {0xA0, 62, 80}), entry(70, {0xC4, 9}), entry(300, {0x80, 62, 64})}));
+			entry(30, {0xE0, 0x00, 0x40}), entry(40, {0xD3, 90}), entry(50, {0x90, 62, 100}), entry(60, {0xA0, 62, 80}),
+			entry(70, {0xC4, 9}), entry(300, {0x80, 62, 64})}));
 	CHECK(captured.at("dropped") == 0);
 	CHECK(run(probe.client, "midi.capture").at("captured").empty()); // each message once
 }
@@ -182,18 +184,18 @@ TEST_CASE("midi.inject takes MIDI 1.0 channel messages for MIDI and instrument t
 	Client client(engine);
 	const ObjectId instrument = channelOf(run(client, "track.add", {{"type", "instrument"}}));
 	const ObjectId audio = channelOf(run(client, "track.add", {{"type", "audio"}}));
-	const auto inject = [&client](ObjectId channel, const Json& messages)
-	{ return reject(client, "midi.inject", {{"channel", channel}, {"messages", messages}}); };
-	CHECK_THAT(inject(instrument, {message(0, {0x90, 60, 100})}), ContainsSubstring("no audio device"));
+	const auto inject = [&client](ObjectId channel, const Json& one)
+	{ return reject(client, "midi.inject", {{"channel", channel}, {"messages", Json::array({one})}}); };
+	CHECK_THAT(inject(instrument, message(0, {0x90, 60, 100})), ContainsSubstring("no audio device"));
 
 	run(client, "audio.setDevice", {{"inputChannels", 0}});
-	CHECK_THAT(inject(audio, {message(0, {0x90, 60, 100})}), ContainsSubstring("not a MIDI or instrument track"));
-	CHECK_THAT(inject(12345, {message(0, {0x90, 60, 100})}), ContainsSubstring("not a MIDI or instrument track"));
-	CHECK_THAT(inject(instrument, {message(0, {0xF8})}), ContainsSubstring("channel message"));
-	CHECK_THAT(inject(instrument, {message(0, {0x3C, 100})}), ContainsSubstring("channel message"));
-	CHECK_THAT(inject(instrument, {message(0, {0x90, 60})}), ContainsSubstring("3 bytes"));
-	CHECK_THAT(inject(instrument, {message(0, {0xC0, 1, 2})}), ContainsSubstring("2 bytes"));
-	CHECK_THAT(inject(instrument, {message(0, {0x90, 200, 100})}), ContainsSubstring("data bytes"));
-	CHECK_THAT(inject(instrument, {message(-1, {0x90, 60, 100})}), ContainsSubstring("position"));
+	CHECK_THAT(inject(audio, message(0, {0x90, 60, 100})), ContainsSubstring("not a MIDI or instrument track"));
+	CHECK_THAT(inject(12345, message(0, {0x90, 60, 100})), ContainsSubstring("not a MIDI or instrument track"));
+	CHECK_THAT(inject(instrument, message(0, {0xF8})), ContainsSubstring("channel message"));
+	CHECK_THAT(inject(instrument, message(0, {0x3C, 100})), ContainsSubstring("channel message"));
+	CHECK_THAT(inject(instrument, message(0, {0x90, 60})), ContainsSubstring("3 bytes"));
+	CHECK_THAT(inject(instrument, message(0, {0xC0, 1, 2})), ContainsSubstring("2 bytes"));
+	CHECK_THAT(inject(instrument, message(0, {0x90, 200, 100})), ContainsSubstring("data bytes"));
+	CHECK_THAT(inject(instrument, message(-1, {0x90, 60, 100})), ContainsSubstring("position"));
 	CHECK(run(client, "midi.inject", {{"channel", instrument}, {"messages", Json::array()}}) == Json::object());
 }
