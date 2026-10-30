@@ -30,6 +30,9 @@ namespace gnubase::engine
 	// The project cursor, play and stop, and cycle playback. The command thread sends requests; the audio thread
 	// applies them at the start of its next block and computes where each frame of the block plays.
 	//
+	// A count-in delays the start: for its length the blocks count in and don't play, then playback starts at the exact
+	// frame where it ends. Stop ends a count-in; the cursor stays.
+	//
 	// Cycle playback: while the cursor is before the right locator, reaching the right locator jumps to the left one.
 	// With the right locator after the left one that loops the range; with it before, it skips the range. Playback
 	// from the right locator or after it plays on.
@@ -40,7 +43,8 @@ namespace gnubase::engine
 		explicit Transport(uint32_t maxFrames = 8192);
 
 		// Command thread. Each returns false, and changes nothing, if too many requests are waiting.
-		bool play();                                 // from the cursor, or the left locator in StartMode::CycleStart
+		// From the cursor, or the left locator in StartMode::CycleStart; with a count-in, after it.
+		bool play(const graph::CountIn& countIn = {});
 		bool stop();                                 // returns to the start position if returnToStart is set
 		bool locate(time::Samples position);         // also the new start position for returnToStart
 		bool set(const TransportSettings& settings); // new locators and modes
@@ -74,7 +78,8 @@ namespace gnubase::engine
 			Type type = Type::Play;
 			time::Samples position = 0;
 			TransportSettings settings;
-			uint64_t locate = 0; // Locate: which one, counted from 1
+			uint64_t locate = 0;    // Locate: which one, counted from 1
+			graph::CountIn countIn; // Play
 		};
 
 		bool send(const Request& request);
@@ -90,6 +95,9 @@ namespace gnubase::engine
 		// Audio thread.
 		TransportSettings m_settings;
 		bool m_playing = false;
+		bool m_countingIn = false;
+		graph::CountIn m_countIn;
+		time::Samples m_countedIn = 0; // samples of the count-in done
 		time::Samples m_position = 0;
 		time::Samples m_start = 0; // where playback started or was last located to
 		uint64_t m_locate = 0;     // the last locate applied

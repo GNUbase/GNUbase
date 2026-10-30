@@ -540,7 +540,8 @@ namespace gnubase::engine
 			{"clips", toJsonArray(project.clips)}, {"audioEvents", toJsonArray(project.audioEvents)},
 			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
 			{"automation", toJsonArray(project.automation)}, {"quantize", midi::toJson(project.quantize)},
-			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack}};
+			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
+			{"metronome", metronome::toJson(project.metronome)}};
 	}
 
 	namespace
@@ -884,6 +885,9 @@ namespace gnubase::engine
 		if (json.contains("quantize"))
 			project.quantize = midi::quantizeSettingsFromJson(json.at("quantize"));
 		project.autoQuantize = json.value("autoQuantize", false);
+		// Files from before the metronome have none; values that aren't valid keep their defaults.
+		if (const auto found = json.find("metronome"); found != json.end())
+			metronome::apply(project.metronome, *found, false);
 
 		// Without a counter, ids continue after the highest one.
 		ObjectId highest = 0;

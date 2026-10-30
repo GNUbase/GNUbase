@@ -1385,6 +1385,72 @@ Result:
 
 - `media`: object, required
 
+### metronome
+
+#### `metronome_get`
+
+Engine command `metronome.get`. Read-only.
+
+The project's metronome settings and click patterns (see metronome.set).
+
+Result:
+
+- `audio`: object, required
+- `click`: boolean, required
+- `countIn`: object, required
+- `midi`: object, required
+- `patterns`: array, required
+- `whilePlaying`: boolean, required
+- `whileRecording`: boolean, required
+
+#### `metronome_set`
+
+Engine command `metronome.set`.
+
+Changes the given metronome settings and keeps the rest. click: the metronome clicks; whilePlaying, whileRecording: when it does (recording comes with #96 and #97). audio: the audio click; enabled, outputs (the output busses it plays through; empty: the first output bus), level (dB, -144 to 6, on top of each accent's), sounds (beeps, or samples: sample files where an accent has one) and per accent 1 to 4 by index, beeps [{frequency (Hz, 20-20000), level}] and samples [{path (an audio file, up to 10 s are played, or null), level}]. midi: the MIDI click; enabled, destination (an instrument channel, or null), channel (1-16) and per accent notes [{note (0-127), velocity (0-1)}]. countIn: enabled (starts that count in do: transport.play with countIn, and recording), bars (1-16) and signature: start (the signature and tempo at the start position), project (the bars before the start as the project has them) or custom (customSignature {numerator, denominator} at the tempo at the start). patterns replaces every click pattern (see metronome.setPattern). Accent 1 is the sound of a bar's first beat. Settings are not undo steps; they are saved with the project.
+
+Arguments:
+
+- `audio`: object
+- `click`: boolean
+- `countIn`: object
+- `midi`: object
+- `patterns`: array of object
+- `whilePlaying`: boolean
+- `whileRecording`: boolean
+
+Result:
+
+- `audio`: object, required
+- `click`: boolean, required
+- `countIn`: object, required
+- `midi`: object, required
+- `patterns`: array, required
+- `whilePlaying`: boolean, required
+- `whileRecording`: boolean, required
+
+#### `metronome_setPattern`
+
+Engine command `metronome.setPattern`.
+
+Sets the click pattern of a time signature: accents, the bar's clicks, evenly spread over it, each with an accent from 1 (the first beat's sound) to 4, or 0 for a click that stays silent; up to 64 clicks, e.g. [1, 3, 3, 2, 3, 3] for triplet eighths in 2/4. Without accents, or with an empty array, the signature goes back to its default pattern: a click per beat, the first with accent 1, the others with accent 2. The patterns apply wherever a signature holds, during playback and count-ins.
+
+Arguments:
+
+- `accents`: array of integer
+- `denominator`: integer, required
+- `numerator`: integer, required
+
+Result:
+
+- `audio`: object, required
+- `click`: boolean, required
+- `countIn`: object, required
+- `midi`: object, required
+- `patterns`: array, required
+- `whilePlaying`: boolean, required
+- `whileRecording`: boolean, required
+
 ### midiFile
 
 #### `midiFile_export`
@@ -2387,7 +2453,11 @@ Result:
 
 Engine command `transport.play`.
 
-Starts playback from the project cursor, or from the left locator if startMode is cycleStart. Does nothing while playing.
+Starts playback from the project cursor, or from the left locator if startMode is cycleStart. Does nothing while playing. countIn: count in first, as recording does, if the metronome's count-in is on (metronome.set): the metronome clicks the count-in's bars, then playback starts at the exact sample where they end. transport.stop ends a count-in.
+
+Arguments:
+
+- `countIn`: boolean
 
 Result:
 
@@ -2624,6 +2694,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://job.list`: Every background job since the engine started, such as backups: id, kind, state (running, done, failed or cancelled), progress from 0 to 1, what it is doing, and its result or error once it ended.
 - `gnubase://marker.list`: The markers of a marker track (default: the active one; track 0 if there is none) in timeline order, with their position and end also in the project's samples.
 - `gnubase://media.peakStatus`: The state of the waveform overviews of a media file, or of every media file: pending, generating (with progress from 0 to 1), ready, failed (with the error) or recording; the frames that have peaks; the peak file they were loaded from or written to; whether they were generated from the audio file rather than loaded. Peak files are kept next to their audio file as <file name>.gbpeaks, or in fallbackFolder where that can't be written.
+- `gnubase://metronome.get`: The project's metronome settings and click patterns (see metronome.set).
 - `gnubase://midi.monitor`: The MIDI input received since the last call from every open input, at most 4096 messages, each with its port, its frame position on the audio device and its bytes. dropped counts what didn't fit. Input reaches the monitor while an audio device processes blocks, which places it in time.
 - `gnubase://midi.ports`: The MIDI ports of every MIDI backend, inputs and outputs: backend, id, system name, the name they are shown as (showAs), whether they are visible, whether an input belongs to all MIDI inputs, whether the port is present now and open, and whether the system speaks MIDI 2.0 with it. Ports that were unplugged stay listed with their settings, not present.
 - `gnubase://pluginhost.get`: How plugins are grouped into plugin host processes, and the processes. mode: the hosting mode, "shared" (one process for every plugin), "perVendor", "perPlugin" or "perInstance"; defaultMode: the mode GNUbase starts with; overrides: plugin ids with a mode of their own. hosts: each process with its id (process), its group ("shared", "vendor:<vendor>", "plugin:<id>" or "instance:<instance>"), its state ("running", "hung" or "exited") and its plugin instances, whether they failed.

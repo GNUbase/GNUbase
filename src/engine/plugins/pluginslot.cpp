@@ -170,11 +170,18 @@ namespace gnubase::engine::plugins
 			m_transport[0].transport.position = transport.position;
 			return 1;
 		}
-		const auto count = static_cast<uint32_t>(std::min(transport.segmentCount, m_transport.size()));
-		for (uint32_t i = 0; i < count; ++i)
+		// After a count-in, playback starts within the block: until then it is stopped.
+		uint32_t count = 0;
+		if (transport.segments[0].offset > 0)
+		{
+			m_transport[0] = plugin::TransportSegment{};
+			m_transport[0].transport.position = transport.position;
+			count = 1;
+		}
+		for (size_t i = 0; i < transport.segmentCount && count < m_transport.size(); ++i)
 		{
 			const graph::TransportSegment& segment = transport.segments[i];
-			plugin::TransportSegment& converted = m_transport[i];
+			plugin::TransportSegment& converted = m_transport[count++];
 			converted = plugin::TransportSegment{};
 			converted.offset = segment.offset;
 			converted.transport.flags = plugin::Transport::Playing;

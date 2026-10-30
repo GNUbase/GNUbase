@@ -52,6 +52,8 @@ namespace gnubase::engine
 		snapshot->revision = revision;
 		snapshot->sampleRate = project.sampleRate;
 		snapshot->tempo = project.tempo;
+		snapshot->signatures = project.signatures;
+		snapshot->metronome = project.metronome;
 		snapshot->panLaw = project.panLaw;
 		snapshot->maxVolume = project.maxVolume;
 

@@ -199,6 +199,7 @@ namespace gnubase::engine
 		const uint64_t generation = ++m_generation;
 		attachMidi(snapshot, desc, generation);
 		attachStrips(snapshot, desc);
+		attachMetronome(snapshot, desc);
 
 		auto program = std::make_unique<Program>(desc, format.sampleRate, format.blockSize);
 		program->tempo = snapshot.tempo;
@@ -313,6 +314,63 @@ namespace gnubase::engine
 					node.processor = std::make_shared<ChannelStrip>(state, node.processor, panning);
 		}
 		m_channelStates = std::move(states);
+	}
+
+	void AudioEngine::attachMetronome(const RenderSnapshot& snapshot, graph::GraphDesc& desc)
+	{
+		const metronome::MetronomeSettings& settings = snapshot.metronome;
+		if (!settings.click && !settings.countIn)
+			return;
+		const double deviceRate = m_device->format().sampleRate;
+		std::array<metronome::SoundLibrary::Stamp, metronome::g_accents> samples;
+		if (settings.sounds == metronome::Sounds::Samples)
+			for (size_t accent = 0; accent < samples.size(); ++accent)
+				if (!settings.samples[accent].path.empty())
+					samples[accent] = metronome::SoundLibrary::stamp(settings.samples[accent].path);
+		const bool same = m_clickSource && m_clickSource->settings == settings &&
+			m_clickSource->tempo == snapshot.tempo && m_clickSource->signatures == snapshot.signatures &&
+			m_clickSource->projectRate == snapshot.sampleRate && m_clickSource->deviceRate == deviceRate &&
+			m_clickSource->samples == samples;
+		if (!same)
+		{
+			m_metronome->setConfig(metronome::compile(
+				settings, snapshot.tempo, snapshot.signatures, snapshot.sampleRate, deviceRate, m_clickSounds));
+			m_clickSource =
+				ClickSource{settings, snapshot.tempo, snapshot.signatures, snapshot.sampleRate, deviceRate, samples};
+		}
+
+		// After every other node, so busses add the click last. Outputs and destinations that are gone are left out.
+		const int node = static_cast<int>(desc.nodes.size());
+		std::vector<int> outputs;
+		int firstOutput = -1;
+		int destination = -1;
+		for (size_t i = 0; i < desc.nodes.size(); ++i)
+		{
+			const graph::NodeDesc& other = desc.nodes[i];
+			if (other.kind == graph::NodeKind::OutputBus)
+			{
+				firstOutput = firstOutput < 0 ? static_cast<int>(i) : firstOutput;
+				if (std::find(settings.outputs.begin(), settings.outputs.end(), other.object) != settings.outputs.end())
+					outputs.push_back(static_cast<int>(i));
+			}
+			else if (other.kind == graph::NodeKind::Channel && settings.destination != 0 &&
+				other.object == settings.destination && m_instruments.count(other.object) != 0)
+			{
+				destination = static_cast<int>(i);
+			}
+		}
+		if (settings.outputs.empty() && firstOutput >= 0)
+			outputs.push_back(firstOutput);
+		graph::NodeDesc click;
+		click.kind = graph::NodeKind::Builtin;
+		click.format = ChannelFormat::Mono;
+		click.processor = m_metronome;
+		desc.nodes.push_back(std::move(click));
+		if (settings.audio)
+			for (const int output : outputs)
+				desc.audio.push_back({node, output});
+		if (settings.midi && destination >= 0)
+			desc.events.push_back({node, destination});
 	}
 
 	std::vector<AudioEngine::Release> AudioEngine::releases()
@@ -918,16 +976,52 @@ namespace gnubase::engine
 		m_cueState.settings = m_transport.settings();
 	}
 
-	void AudioEngine::play()
+	void AudioEngine::play(bool countIn)
 	{
-		if (m_device && !m_transport.playing())
+		graph::CountIn plan;
+		if (!m_transport.playing())
 		{
 			const TransportSettings& settings = m_transport.settings();
 			const time::Samples start =
 				settings.startMode == StartMode::CycleStart ? settings.left : m_transport.position();
-			cue(start, false, m_device->format().blockSize, true);
+			if (m_device)
+				cue(start, false, m_device->format().blockSize, true);
+			if (countIn)
+				plan = countInFrom(start);
 		}
-		sent(m_transport.play());
+		sent(m_transport.play(plan));
+	}
+
+	graph::CountIn AudioEngine::countInFrom(time::Samples start) const
+	{
+		const RenderSnapshot& snapshot = m_snapshots.latest();
+		const metronome::MetronomeSettings& settings = snapshot.metronome;
+		graph::CountIn countIn;
+		if (!settings.countIn)
+			return countIn;
+		const double rate = snapshot.sampleRate;
+		const time::Ticks tick = snapshot.tempo.toTicks(start, rate);
+		if (settings.countInSignature == metronome::CountInSignature::Project)
+		{
+			// From the start of the bar countInBars before the one playback starts in. A start that rounds to just
+			// before a bar line is in the bar that starts there.
+			int64_t bar = snapshot.signatures.toBarsBeats(tick).bar;
+			if (snapshot.tempo.toSamples(snapshot.signatures.barStart(bar + 1), rate) <= start)
+				++bar;
+			countIn.projectTime = true;
+			countIn.origin = snapshot.tempo.toSamples(snapshot.signatures.barStart(bar - settings.countInBars), rate);
+			countIn.length = start - countIn.origin;
+			return countIn;
+		}
+		const time::TimeSignature signature = settings.countInSignature == metronome::CountInSignature::Custom
+			? settings.customSignature
+			: snapshot.signatures.signatureAt(tick);
+		countIn.bpm = snapshot.tempo.bpmAt(tick);
+		countIn.numerator = signature.numerator;
+		countIn.denominator = signature.denominator;
+		const metronome::ConstantTimeline timeline{countIn.bpm, signature, rate};
+		countIn.length = timeline.toSamples(timeline.barStart(settings.countInBars));
+		return countIn;
 	}
 
 	Json AudioEngine::transportStatus() const
@@ -1044,8 +1138,11 @@ namespace gnubase::engine
 		};
 		command("transport.play",
 			"Starts playback from the project cursor, or from the left locator if startMode is cycleStart. Does "
-			"nothing while playing.",
-			nullptr, [this](const Json&) { play(); });
+			"nothing while playing. countIn: count in first, as recording does, if the metronome's count-in is on "
+			"(metronome.set): the metronome clicks the count-in's bars, then playback starts at the exact sample "
+			"where they end. transport.stop ends a count-in.",
+			R"({"type": "object", "additionalProperties": false, "properties": {"countIn": {"type": "boolean"}}})",
+			[this](const Json& parameters) { play(parameters.value("countIn", false)); });
 		command("transport.stop",
 			"Stops playback. With returnToStart the cursor goes back to where playback started or was last located "
 			"to.",
@@ -1056,7 +1153,7 @@ namespace gnubase::engine
 				if (m_transport.playing())
 					sent(m_transport.stop());
 				else
-					play();
+					play(false);
 			});
 		command("transport.locate",
 			"Moves the project cursor to a position in samples, or to a target: projectStart, projectEnd (the end of "

@@ -8,6 +8,7 @@
 #include "engine/audio/sequencer.h"
 #include "engine/audio/transport.h"
 #include "engine/graph/graph.h"
+#include "engine/metronome/metronome.h"
 #include "engine/schema.h"
 #include "platform/audio/device.h"
 #include "platform/audio/dummydevice.h"
@@ -15,11 +16,13 @@
 #include "platform/rt/triplebuffer.h"
 #include "platform/rt/workerpool.h"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -144,7 +147,9 @@ namespace gnubase::engine
 		void setTransport(const Json& parameters);
 		void locate(const Json& parameters);
 		void sent(bool accepted); // after a transport request
-		void play();
+		void play(bool countIn);
+		// The count-in before playback from start, as the metronome's settings have it; length 0 for none.
+		graph::CountIn countInFrom(time::Samples start) const;
 		Json transportStatus() const;
 		time::Samples projectEnd() const;
 		void render(audio::DummyDevice& device, uint64_t frames);
@@ -159,6 +164,9 @@ namespace gnubase::engine
 		std::vector<Release> releases();
 		// Puts every channel's processor into a channel strip with the channel's fader and automation.
 		void attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
+		// Adds the metronome's node, if it may click, with its audio and MIDI routing, and compiles what it plays
+		// when that changed.
+		void attachMetronome(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
 
 		rt::SnapshotPublisher<RenderSnapshot>& m_snapshots;
 		uint64_t m_revision = 0;
@@ -181,6 +189,20 @@ namespace gnubase::engine
 		std::map<ObjectId, Instrument> m_instruments;                      // per instrument channel
 		std::map<ObjectId, std::shared_ptr<ChannelState>> m_channelStates; // per channel
 		std::vector<PendingRelease> m_releases;
+
+		// The metronome lasts across rebuilds; its sounds are compiled again only when they change.
+		struct ClickSource
+		{
+			metronome::MetronomeSettings settings;
+			time::TempoMap tempo{120.0};
+			time::SignatureMap signatures;
+			double projectRate = 0.0;
+			double deviceRate = 0.0;
+			std::array<metronome::SoundLibrary::Stamp, metronome::g_accents> samples; // the files as they were
+		};
+		std::shared_ptr<metronome::Metronome> m_metronome = std::make_shared<metronome::Metronome>();
+		metronome::SoundLibrary m_clickSounds;
+		std::optional<ClickSource> m_clickSource; // what m_metronome's config was compiled from
 
 		std::unique_ptr<rt::SnapshotPublisher<Program>> m_programs;
 		uint64_t m_generation = 0;          // the newest program's

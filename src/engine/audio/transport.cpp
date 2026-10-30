@@ -32,9 +32,9 @@ namespace gnubase::engine
 		return applied < locates ? target : cursor;
 	}
 
-	bool Transport::play()
+	bool Transport::play(const graph::CountIn& countIn)
 	{
-		if (!send({Request::Type::Play, 0, {}, 0}))
+		if (!send({Request::Type::Play, 0, {}, 0, countIn}))
 			return false;
 		m_requestedPlaying = true;
 		return true;
@@ -42,7 +42,7 @@ namespace gnubase::engine
 
 	bool Transport::stop()
 	{
-		if (!send({Request::Type::Stop, 0, {}, 0}))
+		if (!send({Request::Type::Stop, 0, {}, 0, {}}))
 			return false;
 		m_requestedPlaying = false;
 		return true;
@@ -50,7 +50,7 @@ namespace gnubase::engine
 
 	bool Transport::locate(time::Samples position)
 	{
-		if (!send({Request::Type::Locate, position, {}, m_locates + 1}))
+		if (!send({Request::Type::Locate, position, {}, m_locates + 1, {}}))
 			return false;
 		++m_locates;
 		m_sent.store(m_locates, position);
@@ -59,7 +59,7 @@ namespace gnubase::engine
 
 	bool Transport::set(const TransportSettings& settings)
 	{
-		if (!send({Request::Type::Set, 0, settings, 0}))
+		if (!send({Request::Type::Set, 0, settings, 0, {}}))
 			return false;
 		m_requested = settings;
 		return true;
@@ -76,14 +76,18 @@ namespace gnubase::engine
 		switch (request.type)
 		{
 		case Request::Type::Play:
-			if (m_playing)
+			if (m_playing || m_countingIn)
 				return;
 			if (m_settings.startMode == StartMode::CycleStart)
 				locateTo(m_settings.left);
 			m_start = m_position;
-			m_playing = true;
+			m_countingIn = request.countIn.length > 0;
+			m_countIn = request.countIn;
+			m_countedIn = 0;
+			m_playing = !m_countingIn;
 			return;
 		case Request::Type::Stop:
+			m_countingIn = false;
 			if (!m_playing)
 				return;
 			m_playing = false;
@@ -113,14 +117,25 @@ namespace gnubase::engine
 		update();
 		GNUBASE_ASSERT(frames <= m_segments.size());
 		frames = std::min(frames, static_cast<uint32_t>(m_segments.size()));
-		m_block.playing = m_playing;
 		m_block.position = m_position;
 		m_block.segmentCount = 0;
-		if (!m_playing)
+		m_block.countInFrames = 0;
+		uint32_t offset = 0;
+		if (m_countingIn)
+		{
+			offset = static_cast<uint32_t>(std::min<time::Samples>(frames, m_countIn.length - m_countedIn));
+			m_block.countInFrames = offset;
+			m_block.countInPosition = m_countedIn;
+			m_block.countIn = m_countIn;
+			m_countedIn += offset;
+			m_countingIn = m_countedIn < m_countIn.length;
+			m_playing = !m_countingIn;
+		}
+		m_block.playing = m_playing && offset < frames;
+		if (!m_block.playing)
 			return m_block;
 
 		const bool cycles = m_settings.cycle && m_settings.left != m_settings.right;
-		uint32_t offset = 0;
 		while (offset < frames)
 		{
 			uint32_t length = frames - offset;

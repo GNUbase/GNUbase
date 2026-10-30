@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/document/channelformat.h"
+#include "engine/metronome/metronomesettings.h"
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
@@ -365,6 +366,9 @@ namespace gnubase::engine
 		// not part of undo.
 		midi::QuantizeSettings quantize;
 		bool autoQuantize = false;
+
+		// The metronome and count-in (#101). Settings, not part of undo.
+		metronome::MetronomeSettings metronome;
 
 		ObjectId newId() { return nextId++; }
 
