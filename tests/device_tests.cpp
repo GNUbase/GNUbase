@@ -5,6 +5,10 @@
 #ifdef _WIN32
 #include "platform/audio/wasapi.h"
 #endif
+#ifdef __APPLE__
+#include "platform/audio/coreaudio.h"
+#include "platform/rt/workerpool.h"
+#endif
 #include "devicecontract.h"
 #include "platform/hosttime.h"
 #include "platform/rt/realtime.h"
@@ -241,6 +245,37 @@ TEST_CASE("the WASAPI backends list their devices and refuse unknown ones", "[un
 }
 #endif
 
+#ifdef __APPLE__
+// Only lists devices; the contract suite above opens them ("[hardware]").
+TEST_CASE("the CoreAudio backend lists its devices and refuses unknown ones", "[unit]")
+{
+	const std::unique_ptr<Backend> backend = makeCoreAudioBackend();
+	CHECK(backend->name() == "coreaudio");
+	for (const DeviceInfo& device : backend->devices())
+	{
+		INFO("device " << device.id);
+		CHECK(device.inputs.size() + device.outputs.size() > 0);
+		CHECK(!device.sampleRates.empty());
+		CHECK(std::is_sorted(device.sampleRates.begin(), device.sampleRates.end()));
+		CHECK(!device.blockSizes.empty());
+		CHECK(device.clockSources.empty());
+	}
+	CHECK_THROWS_AS(backend->open(config("no such device")), DeviceError);
+}
+
+// Hidden: opens the default output device ("[hardware]").
+TEST_CASE("worker threads join the audio workgroup of a CoreAudio device", "[.hardware]")
+{
+	const std::unique_ptr<Device> device = makeCoreAudioBackend()->open(config(""));
+	REQUIRE(device->workgroup() != nullptr);
+	const gnubase::rt::WorkerPool pool(
+		2, device->format().blockSize / device->format().sampleRate, device->workgroup());
+	CHECK(pool.workgroupWorkers() == 2);
+	const gnubase::rt::WorkerPool alone(2);
+	CHECK(alone.workgroupWorkers() == 0);
+}
+#endif
+
 TEST_CASE("the backends of this build come with the dummy backend last", "[unit]")
 {
 	const std::vector<std::unique_ptr<Backend>> backends = makeBackends();
@@ -267,6 +302,7 @@ TEST_CASE("the dummy device names its channels and keeps the format it was given
 	CHECK(contains(info.blockSizes, 100U));
 	CHECK(info.clockSources.empty());
 	CHECK(!info.controlPanel);
+	CHECK(device.workgroup() == nullptr); // only CoreAudio devices have one
 }
 
 TEST_CASE("a device passes its driver's reset requests on", "[unit]")
