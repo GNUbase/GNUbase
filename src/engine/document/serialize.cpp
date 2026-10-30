@@ -641,8 +641,9 @@ namespace gnubase::engine
 			return format;
 		}
 
-		// The values of a channel's instrument parameters from a file, checked like parameter.set checks them. Values
-		// of parameters the instrument doesn't have, e.g. from a newer build, are left out.
+		// The values of a channel's instrument parameters from a file. Like parameter.set, values beyond a parameter's
+		// range stop at its ends and stepped ones round, since a newer build may have widened the range; values of
+		// parameters the instrument doesn't have, e.g. from a newer build, are left out.
 		std::map<uint32_t, double> instrumentParametersFromJson(
 			const Json& json, const std::string& instrument, const std::string& name)
 		{
@@ -661,9 +662,12 @@ namespace gnubase::engine
 				if (parameter == nullptr)
 					continue;
 				const std::string valueName = name + " parameter " + std::to_string(id);
-				const double value = checkedNumber(item.at("value"), parameter->minimum, parameter->maximum, valueName);
-				if (parameter->stepped && value != std::round(value))
-					throw std::invalid_argument(valueName + " must be a whole number");
+				double value = item.at("value").get<double>();
+				if (!std::isfinite(value))
+					throw std::invalid_argument(valueName + " must be a finite number");
+				value = std::clamp(value, parameter->minimum, parameter->maximum);
+				if (parameter->stepped)
+					value = std::round(value);
 				if (!values.emplace(id, value).second)
 					throw std::invalid_argument(valueName + " is there twice");
 			}

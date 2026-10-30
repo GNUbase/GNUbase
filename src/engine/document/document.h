@@ -81,7 +81,10 @@ namespace gnubase::engine
 		std::optional<int> midiPan = std::nullopt;
 		// The values set for the instrument's parameters (parameter.set), by parameter id; the others are at their
 		// defaults. A new instrument starts with none.
-		std::map<uint32_t, double> instrumentParameters;
+		// The initializer lets Channel{...} leave it out without GCC's and Clang's -Wmissing-field-initializers, like
+		// the members above with default values.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see above
+		std::map<uint32_t, double> instrumentParameters = {};
 	};
 
 	// The fader's range: its bottom is silence, its top the project's maximum volume, at most this.

@@ -150,6 +150,7 @@ TEST_CASE("parameter.set takes a value or a display text, stops at the range and
 	CHECK(set(client, audio.channel, volume, "value", -1000.0).at("value") == -144.0);
 	CHECK(set(client, audio.channel, volume, "text", "-12 dB").at("value") == -12.0);
 	CHECK(set(client, audio.channel, volume, "text", " -3.5db ").at("value") == -3.5);
+	CHECK(set(client, audio.channel, volume, "text", "-6dB").at("value") == -6.0);
 	CHECK(set(client, audio.channel, pan, "text", "-0.5").at("value") == -0.5);
 	CHECK(set(client, audio.channel, pan, "value", 3.0).at("value") == 1.0);
 	CHECK(set(client, audio.channel, {{"type", "panRight"}}, "value", 0.0).at("value") == 0.0);
@@ -169,8 +170,7 @@ TEST_CASE("parameter.set takes a value or a display text, stops at the range and
 	refused({{"channel", audio.channel}, {"target", pan}, {"text", "0.5 dB"}}, "text");
 	refused({{"channel", audio.channel}, {"target", pan}}, "value or text");
 	refused({{"channel", audio.channel}, {"target", pan}, {"value", 0.5}, {"text", "0.5"}}, "value or text");
-	refused({{"channel", audio.channel}, {"target", {{"type", "controller"}, {"number", 7}}}, {"value", 0.5}},
-		"target.type");
+	refused({{"channel", audio.channel}, {"target", {{"type", "controller"}}}, {"value", 0.5}}, "target.type");
 	refused({{"channel", audio.channel}, {"target", {{"type", "pan"}, {"parameter", 1}}}, {"value", 0.5}},
 		"target.parameter");
 	refused({{"channel", audio.channel}, {"target", instrumentTarget(0)}, {"value", 0.5}}, "instrument");
@@ -250,7 +250,11 @@ TEST_CASE("instrument parameter values are saved, and files from before them or 
 		change(bad);
 		CHECK_THROWS_AS(projectFromJson(bad), std::invalid_argument);
 	};
-	refused([](Json& p) { p["channels"][0]["instrumentParameters"][0]["value"] = 2.0; });
+	// A value beyond the range, e.g. from a build that widened it, stops at its end.
+	Json wider = saved;
+	wider["channels"][0]["instrumentParameters"][0]["value"] = 2.0;
+	CHECK(
+		projectFromJson(wider).channels.at(synth.channel).instrumentParameters.at(processors::TestSynth::Level) == 1.0);
 	refused([](Json& p) { p["channels"][0]["instrumentParameters"][0]["value"] = "loud"; });
 	refused([](Json& p)
 		{ p["channels"][0]["instrumentParameters"][0]["value"] = std::numeric_limits<double>::infinity(); });
@@ -318,4 +322,17 @@ TEST_CASE("parameter values convert to display text and back", "[unit]")
 	CHECK(!processors::textToValue(decay, "").has_value());
 	CHECK(!processors::textToValue(decay, "nan").has_value());
 	CHECK(!processors::textToValue(decay, "inf").has_value());
+	CHECK(!processors::textToValue(decay, "s").has_value());
+	CHECK(!processors::textToValue(decay, ".").has_value());
+	// The unit may follow the number directly, also after an exponent; every standard library reads it the same.
+	CHECK(processors::textToValue(decay, "2.5S") == std::optional<double>(2.5));
+	CHECK(processors::textToValue(decay, "1e1s") == std::optional<double>(10.0));
+	CHECK(processors::textToValue(decay, ".5e+1 s") == std::optional<double>(5.0));
+	CHECK(processors::textToValue(decay, "3.") == std::optional<double>(3.0));
+	CHECK(!processors::textToValue(decay, "1e s").has_value());
+	CHECK(!processors::textToValue(decay, "2..5").has_value());
+
+	const processors::ParameterInfo& pan = builtinParameter("gainPan", "Pan");
+	CHECK(processors::valueToText(pan, -0.001) == "0.00");
+	CHECK(processors::valueToText(pan, -0.005) == "-0.01");
 }

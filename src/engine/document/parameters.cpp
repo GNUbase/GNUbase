@@ -214,7 +214,10 @@ namespace gnubase::engine
 	void ProjectModel::registerParameterCommands(Engine& engine)
 	{
 		const Json idSchema = {{"type", "integer"}};
-		const Json targetSchema = {{"type", "object"}};
+		const Json targetSchema = objectSchema(
+			{{"type", {{"type", "string"}, {"enum", {"volume", "pan", "panLeft", "panRight", "instrument"}}}},
+				{"parameter", {{"type", "integer"}, {"minimum", 0}, {"maximum", UINT32_MAX}}}},
+			{"type"});
 		const Json parameterResult = {
 			{"type", "object"}, {"properties", {{"parameter", {{"type", "object"}}}}}, {"required", {"parameter"}}};
 

@@ -187,6 +187,39 @@ namespace gnubase::engine::processors
 			return text;
 		}
 
+		// The length of the decimal number text starts with: a sign, digits with an optional point, and an optional
+		// exponent; 0 if it doesn't start with one.
+		size_t numberLength(std::string_view text)
+		{
+			const auto digit = [&text](size_t i) { return i < text.size() && text[i] >= '0' && text[i] <= '9'; };
+			const auto sign = [&text](size_t i) { return i < text.size() && (text[i] == '+' || text[i] == '-'); };
+			size_t end = sign(0) ? 1 : 0;
+			const size_t start = end;
+			while (digit(end))
+				++end;
+			bool digits = end > start;
+			if (end < text.size() && text[end] == '.')
+			{
+				const size_t fraction = ++end;
+				while (digit(end))
+					++end;
+				digits = digits || end > fraction;
+			}
+			if (!digits)
+				return 0;
+			if (end < text.size() && (text[end] == 'e' || text[end] == 'E'))
+			{
+				size_t exponent = sign(end + 1) ? end + 2 : end + 1;
+				if (digit(exponent))
+				{
+					while (digit(exponent))
+						++exponent;
+					end = exponent;
+				}
+			}
+			return end;
+		}
+
 		bool sameIgnoringCase(std::string_view a, std::string_view b)
 		{
 			return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](char x, char y)
@@ -256,12 +289,16 @@ namespace gnubase::engine::processors
 				std::round(value - parameter.minimum), 0.0, static_cast<double>(parameter.options.size() - 1)));
 			return parameter.options[option];
 		}
-		std::ostringstream text;
-		text.imbue(std::locale::classic());
-		text << std::fixed << std::setprecision(parameter.stepped ? 0 : 2) << value;
+		std::ostringstream stream;
+		stream.imbue(std::locale::classic());
+		stream << std::fixed << std::setprecision(parameter.stepped ? 0 : 2) << value;
+		std::string text = stream.str();
+		// Values that round to zero show no sign.
+		if (text.front() == '-' && text.find_first_not_of("-0.") == std::string::npos)
+			text.erase(0, 1);
 		if (!parameter.unit.empty())
-			text << ' ' << parameter.unit;
-		return text.str();
+			text += ' ' + parameter.unit;
+		return text;
 	}
 
 	std::optional<double> textToValue(const ParameterInfo& parameter, std::string_view text)
@@ -270,14 +307,18 @@ namespace gnubase::engine::processors
 		for (size_t i = 0; i < parameter.options.size(); ++i)
 			if (sameIgnoringCase(text, parameter.options[i]))
 				return parameter.minimum + static_cast<double>(i);
-		std::istringstream stream{std::string(text)};
+		// The number is split off by hand: how far operator>> reads into a unit that follows it ("-6dB") differs
+		// between standard libraries.
+		const size_t length = numberLength(text);
+		if (length == 0)
+			return std::nullopt;
+		std::istringstream stream{std::string(text.substr(0, length))};
 		stream.imbue(std::locale::classic());
 		double value = 0.0;
-		if (!(stream >> value) || !std::isfinite(value))
+		if (!(stream >> value) || stream.peek() != std::istringstream::traits_type::eof() || !std::isfinite(value))
 			return std::nullopt;
-		std::string rest;
-		std::getline(stream, rest);
-		if (!trimmed(rest).empty() && !sameIgnoringCase(trimmed(rest), parameter.unit))
+		const std::string_view rest = trimmed(text.substr(length));
+		if (!rest.empty() && !sameIgnoringCase(rest, parameter.unit))
 			return std::nullopt;
 		value = std::clamp(value, parameter.minimum, parameter.maximum);
 		return parameter.stepped ? std::round(value) : value;
