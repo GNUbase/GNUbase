@@ -15,6 +15,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 // The application shell (#48): GNUbase's top-level windows, each with its own RmlUi context, and the event loop that
@@ -126,6 +127,14 @@ namespace gnubase::ui
 		// the playback position, the shell steps at least once a frame (g_framePeriod).
 		void eachStep(std::function<bool()> task);
 
+		// Runs handler for every key pressed in a window that none of its elements used, e.g. for key commands
+		// (ui/keycommands.h). Elements that use a key stop its propagation.
+		void onUnusedKey(std::function<void(Window&, const KeyPress&)> handler) { m_unusedKey = std::move(handler); }
+
+		// Hands a key that no element of the window used to that handler. The shell calls it for the window system's
+		// input, and ui::Automation for the keys it presses.
+		void unusedKey(Window& window, const KeyPress& keys);
+
 		// From any thread: makes the shell step soon, e.g. when the engine sent the UI something.
 		void wake() { m_windows.wake(); }
 
@@ -163,5 +172,6 @@ namespace gnubase::ui
 		std::vector<std::function<void()>> m_posted;
 		std::vector<std::function<bool()>> m_stepTasks;
 		Clock::time_point m_nextFrame = Clock::time_point::max(); // when a step task that follows values runs again
+		std::function<void(Window&, const KeyPress&)> m_unusedKey;
 	};
 }

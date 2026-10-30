@@ -1,0 +1,29 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Focus zones for the key command tests (#57): a project zone, a lower zone with an editor zone and an element of
+     no zone of its own inside, and outside any zone a text field, a button and an empty element. -->
+<rml>
+<head>
+	<title>Key commands</title>
+	<style>
+		body { display: block; position: absolute; left: 0; top: 0; right: 0; bottom: 0; margin: 0; font-family: Inter; font-size: 14dp; }
+		div { display: block; position: absolute; }
+		#project { left: 0; top: 0; width: 300dp; height: 200dp; }
+		#lower { left: 0; top: 220dp; width: 600dp; height: 200dp; }
+		#editor { left: 10dp; top: 10dp; width: 280dp; height: 150dp; }
+		#meters { left: 310dp; top: 10dp; width: 280dp; height: 150dp; }
+		#name { display: block; position: absolute; left: 320dp; top: 10dp; width: 200dp; height: 20dp; }
+		#apply { display: block; position: absolute; left: 320dp; top: 50dp; width: 100dp; height: 30dp; }
+		#outside { left: 450dp; top: 100dp; width: 100dp; height: 50dp; }
+	</style>
+</head>
+<body>
+	<div id="project" focuszone="project"/>
+	<div id="lower" focuszone="lower">
+		<div id="editor" focuszone="editor"/>
+		<div id="meters"/>
+	</div>
+	<input type="text" id="name"/>
+	<button id="apply">Apply</button>
+	<div id="outside"/>
+</body>
+</rml>
