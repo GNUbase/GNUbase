@@ -38,10 +38,10 @@ namespace gnubase::engine
 		ChannelFormat format = ChannelFormat::Stereo;
 		// The device port each channel uses, by name; empty for none. No ports at all: the bus takes consecutive
 		// device ports in bus order. Child busses have none: they use their parent's.
-		std::vector<std::string> ports{};
-		ObjectId parent = 0;               // child busses: a top-level bus of the same direction
-		std::vector<int> parentChannels{}; // child busses: the parent's channel each of its channels is
-		bool mainMix = false;              // the default output; exactly one top-level output bus has it
+		std::vector<std::string> ports;
+		ObjectId parent = 0;             // child busses: a top-level bus of the same direction
+		std::vector<int> parentChannels; // child busses: the parent's channel each of its channels is
+		bool mainMix = false;            // the default output; exactly one top-level output bus has it
 	};
 
 	enum class TrackType : uint8_t

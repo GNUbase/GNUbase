@@ -28,8 +28,10 @@ namespace gnubase::engine
 	Project newProject()
 	{
 		Project project;
-		project.busses.push_back({project.newId(), "Stereo In", BusDirection::Input, ChannelFormat::Stereo});
-		project.busses.push_back({project.newId(), "Stereo Out", BusDirection::Output, ChannelFormat::Stereo});
+		project.busses.push_back(
+			{project.newId(), "Stereo In", BusDirection::Input, ChannelFormat::Stereo, {}, 0, {}, false});
+		project.busses.push_back(
+			{project.newId(), "Stereo Out", BusDirection::Output, ChannelFormat::Stereo, {}, 0, {}, false});
 		keepMainMix(project);
 		return project;
 	}

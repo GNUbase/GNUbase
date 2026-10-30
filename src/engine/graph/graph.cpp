@@ -60,14 +60,16 @@ namespace gnubase::engine::graph
 			const int child = static_cast<int>(i);
 			if (bus.direction == BusDirection::Output)
 			{
-				graph.audio.push_back({child, bus.parent, bus.parentChannels});
+				graph.audio.push_back({child, bus.parent});
+				graph.channelMaps.push_back({child, bus.parent, bus.parentChannels});
 				continue;
 			}
 			std::vector<int> channels(
 				static_cast<size_t>(channelCount(snapshot.busses[static_cast<size_t>(bus.parent)].format)), -1);
 			for (size_t c = 0; c < bus.parentChannels.size(); ++c)
 				channels[static_cast<size_t>(bus.parentChannels[c])] = static_cast<int>(c);
-			graph.audio.push_back({bus.parent, child, std::move(channels)});
+			graph.audio.push_back({bus.parent, child});
+			graph.channelMaps.push_back({bus.parent, child, std::move(channels)});
 		}
 
 		for (size_t i = 0; i < snapshot.channels.size(); ++i)
@@ -288,10 +290,9 @@ namespace gnubase::engine::graph
 			std::sort(node.audioInputs.begin(), node.audioInputs.end());
 			std::sort(node.eventInputs.begin(), node.eventInputs.end());
 		}
-		std::map<std::pair<int, int>, const std::vector<int>*> mapped; // connections that map channels
-		for (const Connection& connection : graph.audio)
-			if (!connection.channels.empty())
-				mapped[{connection.from, connection.to}] = &connection.channels;
+		std::map<std::pair<int, int>, const std::vector<int>*> mapped;
+		for (const ChannelMap& map : graph.channelMaps)
+			mapped[{map.from, map.to}] = &map.channels;
 		for (size_t i = 0; i < m_nodes.size(); ++i)
 			for (const int input : m_nodes[i].audioInputs)
 			{

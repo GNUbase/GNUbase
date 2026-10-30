@@ -1263,10 +1263,10 @@ namespace gnubase::engine
 				{
 					const ObjectId parent = project.newId();
 					created.push_back({parent, item.at("name").get<std::string>(), direction, format(item),
-						item.value("ports", std::vector<std::string>())});
+						item.value("ports", std::vector<std::string>()), 0, {}, false});
 					for (const Json& child : item.value("children", Json::array()))
 						created.push_back({project.newId(), child.at("name").get<std::string>(), direction,
-							format(child), {}, parent, child.at("parentChannels").get<std::vector<int>>()});
+							format(child), {}, parent, child.at("parentChannels").get<std::vector<int>>(), false});
 				}
 			}
 			catch (const Json::exception& error)

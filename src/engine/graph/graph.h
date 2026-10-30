@@ -53,14 +53,17 @@ namespace gnubase::engine::graph
 	{
 		int from = 0;
 		int to = 0;
-		// For each channel of from, the channel of to it adds to, or -1, instead of converting the format: a child
-		// bus and its parent. Empty: converted.
-		std::vector<int> channels{};
 
-		bool operator==(const Connection& other) const
-		{
-			return from == other.from && to == other.to && channels == other.channels;
-		}
+		bool operator==(const Connection& other) const { return from == other.from && to == other.to; }
+	};
+
+	// An audio connection whose channels are mapped instead of converted between formats: a child bus and its
+	// parent. For each channel of from, the channel of to it adds to, or -1.
+	struct ChannelMap
+	{
+		int from = 0;
+		int to = 0;
+		std::vector<int> channels;
 	};
 
 	struct GraphDesc
@@ -68,6 +71,7 @@ namespace gnubase::engine::graph
 		std::vector<NodeDesc> nodes;
 		std::vector<Connection> audio;           // audio from one node is added to another's input
 		std::vector<Connection> events;          // events one node outputs reach another
+		std::vector<ChannelMap> channelMaps;     // audio connections that map channels
 		double centerGain = 0.70794578438413791; // where mono reaches L and R without C: -3 dB, or the pan law's
 	};
 

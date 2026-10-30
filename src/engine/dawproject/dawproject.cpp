@@ -974,7 +974,9 @@ namespace gnubase::engine
 				if (role == "master" && !hasChildren)
 				{
 					// The first master channel becomes the main output, any other one another output bus.
-					Bus bus = m_firstMaster ? mainOutput() : Bus{m_project.newId(), "", BusDirection::Output};
+					Bus bus = m_firstMaster
+						? mainOutput()
+						: Bus{m_project.newId(), "", BusDirection::Output, ChannelFormat::Stereo, {}, 0, {}, false};
 					bus.name = node.attribute("name").as_string("Stereo Out");
 					bus.format = importedFormat(audioChannels);
 					if (m_firstMaster)
