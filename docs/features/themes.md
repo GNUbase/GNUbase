@@ -40,15 +40,15 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   `.text-small`, `.text-muted`, `.text-accent`, and `.counter` for time and counter displays in the counter font.
 - **Icons:** `svg.icon` (resources/icons) in the text color, `.accent`, `.muted` or `.danger`; icons in buttons follow
   the button's state.
-- **Buttons:** `button` with `:hover`, `:active`, `:disabled`, `:focus-visible` and the state class `.checked`;
-  `button.primary`; `button.icon-only`; toggle buttons `button.toggle` with `.mute`, `.solo`, `.record` or `.monitor`
+- **Buttons:** `button` with `:hover`, `:active`, `:disabled`, `:focus-visible` and the state classes `.checked` and
+  `.suspended` (a switch that is on but paused, such as auto-scroll while editing); `button.primary`; `button.icon-only`; toggle buttons `button.toggle` with `.mute`, `.solo`, `.record` or `.monitor`
   and `.checked` when on.
 - **Fields and choices:** `input.text`, `input.password`, `textarea` (`:focus`, `:disabled`), `select` (`:hover`;
   `:focus` while open or focused), `input.checkbox` (`:checked`, `.mixed`), `input.radio`, `input.range`, `progress`,
   and the scroll bars.
 - **Containers:** `.dialog` (and `dialog`), `.dialog-titlebar`, `.panel`, `.panel-header`, `.toolbar`, `.display`,
   `.tooltip` (and `tooltip`), `.menu` with `.menu-item` and `.menu-separator` (and `menu`, `menuitem` with `:hover`,
-  `:focus-visible` and `:disabled`, `menuseparator`), `.list` with `.list-item` (`.selected`), `tabset` with its tabs.
+  `:focus-visible`, `:disabled` and `.checked`, `menuseparator`), `.list` with `.list-item` (`.selected`), `tabset` with its tabs.
 - **Mixer and editor parts**, which the widget library's elements are made of ([widgets.md](widgets.md)): `.knob`,
   `.knob-pointer`, `.fader`, `.fader-cap`, `.slider-track`, `.slider-fill`, `.slider-thumb`, `valuefield`, `.meter`,
   `.meter-fill`, `.meter-peak`, `.splitter-grip-vertical`, `.splitter-grip-horizontal`, `.dropdown-arrow`,

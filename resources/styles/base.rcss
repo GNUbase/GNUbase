@@ -556,6 +556,15 @@ meter .meter-peak
 	height: 24dp;
 }
 
+/* A document's button at the ruler's right end, for the ruler's time format menu. */
+.event-display .ruler-format
+{
+	position: absolute;
+	top: 20dp;
+	right: 0;
+	z-index: 1;
+}
+
 .event-display .event-area
 {
 	position: absolute;

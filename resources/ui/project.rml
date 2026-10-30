@@ -1,6 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- The project window: for now the event display (#84) alone, filling the main window, until the docking system
-     (#56) and the track list (#81) give it zones, a toolbar and track controls. ui::EventDisplay fills the element. -->
+<!-- The project window: for now a toolbar and the event display (#84), filling the main window, until the docking
+     system (#56) and the track list (#81) give it zones, a toolbar and track controls. ui::EventDisplay fills the
+     element #event-display and drives the controls and menus with these ids (docs/features/event-display.md): the
+     ruler's arrow button .ruler-format, #ruler-format-menu, #zoom-presets-menu, #auto-scroll and #auto-scroll-menu.
+     Its dialogs are zoom-preset.rml and zoom-presets.rml, next to this file. -->
 <rml>
 <head>
 	<title>Project</title>
@@ -14,17 +17,66 @@
 			bottom: 0;
 		}
 
-		#event-display
+		#toolbar
 		{
 			position: absolute;
 			left: 0;
 			top: 0;
+			right: 0;
+			height: 32dp;
+			box-sizing: border-box;
+			padding: 4dp;
+		}
+
+		#toolbar button
+		{
+			margin-right: 2dp;
+		}
+
+		#auto-scroll-settings
+		{
+			margin-right: 12dp;
+		}
+
+		#event-display
+		{
+			position: absolute;
+			left: 0;
+			top: 32dp;
 			right: 0;
 			bottom: 0;
 		}
 	</style>
 </head>
 <body>
-	<div id="event-display" class="event-display"/>
+	<div id="toolbar" class="toolbar">
+		<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
+		<button id="auto-scroll-settings" class="icon-only" menu="auto-scroll-menu" title="Select Auto-Scroll Settings"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
+		<button id="zoom-presets" class="icon-only" menu="zoom-presets-menu" title="Horizontal Zoom Presets"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
+	</div>
+	<div id="event-display" class="event-display">
+		<button class="ruler-format icon-only" menu="ruler-format-menu" title="Ruler Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
+	</div>
+
+	<menu id="ruler-format-menu">
+		<menuitem format="barsBeats">Bars+Beats</menuitem>
+		<menuitem format="seconds">Seconds</menuitem>
+		<menuitem format="timecode">Timecode</menuitem>
+		<menuitem format="samples">Samples</menuitem>
+		<menuitem format="userFrames">fps (User)</menuitem>
+	</menu>
+	<!-- The presets come before Zoom Full, the project's cycle markers after it. -->
+	<menu id="zoom-presets-menu">
+		<menuitem id="zoom-full">Zoom Full</menuitem>
+		<menuseparator/>
+		<menuitem id="zoom-preset-add">Add...</menuitem>
+		<menuitem id="zoom-presets-organize">Organize...</menuitem>
+	</menu>
+	<menu id="auto-scroll-menu">
+		<menuitem id="page-scroll">Page Scroll</menuitem>
+		<menuitem id="stationary-cursor">Stationary Cursor</menuitem>
+		<menuseparator/>
+		<menuitem id="suspend-auto-scroll">Suspend Auto-Scroll when Editing</menuitem>
+	</menu>
 </body>
 </rml>

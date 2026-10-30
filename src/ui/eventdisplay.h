@@ -52,6 +52,12 @@ namespace gnubase::ui
 	// the style sheets. While playing it reads the playback position once a frame. Use it on the UI thread; the
 	// engine and the binding must outlive it. If the element goes, e.g. when live reload loads its document again,
 	// the display shows nothing more.
+	//
+	// The document may have the display's menus and buttons, which the display then drives (eventdisplaymenus.cpp,
+	// resources/ui/project.rml): a ruler time format menu #ruler-format-menu, which a right click in the ruler opens
+	// too; a horizontal zoom presets menu #zoom-presets-menu, whose Add and Organize items open the dialogs
+	// zoom-preset.rml and zoom-presets.rml next to the document; an auto-scroll toggle button #auto-scroll, with the
+	// state class .suspended while editing suspends it; and an auto-scroll settings menu #auto-scroll-menu.
 	class EventDisplay final : private Rml::EventListener
 	{
 	public:
@@ -90,7 +96,8 @@ namespace gnubase::ui
 		bool autoScroll() const { return m_autoScroll; }
 		void setAutoScrollMode(AutoScrollMode mode);
 		AutoScrollMode autoScrollMode() const { return m_autoScrollMode; }
-		void setSuspendAutoScrollWhenEditing(bool suspend) { m_suspendWhenEditing = suspend; }
+		void setSuspendAutoScrollWhenEditing(bool suspend);
+		bool suspendAutoScrollWhenEditing() const { return m_suspendWhenEditing; }
 		bool autoScrollSuspended() const { return m_suspended; }
 
 		void setRulerFormat(TimeFormat format);
@@ -148,6 +155,22 @@ namespace gnubase::ui
 		void apply();
 		void savePresets();
 
+		// The document's menus, buttons and dialogs for the display (eventdisplaymenus.cpp).
+		struct CycleMarker
+		{
+			std::string name;
+			int64_t start = 0; // samples
+			int64_t end = 0;
+		};
+		void findControls();
+		void requestMarkers();
+		void click(Rml::Element* target);
+		void dialogEvent(Rml::Event& event);
+		void openDialog(const char* file);
+		void showFormat();
+		void showPresets();
+		void showAutoScroll();
+
 		engine::Engine& m_engine;
 		EngineBinding& m_binding;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for the binding's answers after it went
@@ -192,6 +215,14 @@ namespace gnubase::ui
 		double m_dragTime = 0.0;   // under the mouse when it started
 		double m_dragAt = 0.0;     // dp from the left of the event lanes
 		bool m_dragZoomed = false;
+
+		Rml::Element* m_formatMenu = nullptr; // the document's, null if it has none
+		Rml::Element* m_presetsMenu = nullptr;
+		Rml::Element* m_autoScrollButton = nullptr;
+		Rml::Element* m_autoScrollMenu = nullptr;
+		std::vector<CycleMarker> m_cycleMarkers;
+		Rml::ObserverPtr<Rml::Element> m_dialog; // the dialog document open now
+		engine::Json m_organized;                // the presets that the organize dialog lists, by index
 
 		std::map<std::string, std::function<void()>> m_actions;
 		std::vector<Subscription> m_subscriptions;

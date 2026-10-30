@@ -1,0 +1,66 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Organizes the horizontal zoom presets (docs/features/event-display.md): ui::EventDisplay opens it from the zoom
+     presets menu's Organize item and fills #zoom-presets-list with a row per preset, its name to edit and a button
+     that deletes it. OK applies the changes, Cancel drops them. -->
+<rml>
+<head>
+	<title>Organize Presets</title>
+	<style>
+		dialog
+		{
+			width: 320dp;
+		}
+
+		#zoom-presets-list
+		{
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row, .preset
+		{
+			display: flex;
+		}
+
+		.row
+		{
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.preset
+		{
+			margin-bottom: 4dp;
+		}
+
+		.preset.deleted
+		{
+			display: none;
+		}
+
+		.preset input
+		{
+			flex: 1;
+			margin-right: 6dp;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="zoom-presets-dialog">
+		<div class="dialog-titlebar">Organize Presets</div>
+		<div id="zoom-presets-list"/>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>
