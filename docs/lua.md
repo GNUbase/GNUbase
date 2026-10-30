@@ -1757,7 +1757,7 @@ Returns:
 
 #### `gnubase.quantize.presets`
 
-The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings.
+The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings. The user's presets are kept in the settings folder (quantize-presets.json), so they come back when GNUbase starts again.
 
 Only reads; changes nothing.
 
@@ -1798,7 +1798,7 @@ Returns:
 
 #### `gnubase.quantize.savePreset`
 
-Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset of that name. Factory presets can't be replaced. Presets belong to GNUbase, not to the project.
+Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset of that name. Factory presets can't be replaced. Presets belong to the user, not to the project: they are saved in the settings folder.
 
 Parameters:
 
