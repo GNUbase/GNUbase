@@ -171,7 +171,7 @@ TEST_CASE("state changed through MCP shows in the UI, and UI actions reach the e
 	test::FakeUi fake({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}});
 	ui::WindowSpec spec;
 	spec.bounds = ui::Rect{100, 100, 800, 600};
-	ui::Window& window = fake.shell.open(spec);
+	const ui::Window& window = fake.shell.open(spec);
 	ui::EngineBinding binding(engine, [&fake] { fake.shell.wake(); });
 	fake.shell.eachStep([&binding] { return binding.update(); });
 
