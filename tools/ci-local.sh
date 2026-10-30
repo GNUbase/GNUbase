@@ -13,7 +13,9 @@
 # plus clang with its sanitizer runtimes (libclang-rt-18-dev), ccache, git-lfs, make (without it, GCC's link-time
 # optimization runs its jobs one after another: linking the tests takes ten times as long) and, through pipx,
 # clang-tidy==22.1.8 and clang-format==22.1.3.
-# Logs: build/ci-local/<job>.log. Exit status: 0 every job passed, 1 a job failed, 2 error.
+# Windows builds through sccache when it is on the PATH, as CI does.
+# Logs: build/ci-local/<job>.log. Exit status: 0 every job passed, 1 a job failed, 2 error. When every job this machine
+# can run passed, build/ci-local/passed holds the commit they checked, so other tools can skip checking it again.
 set -u
 
 # Started by Windows inside WSL with the checkout, its repository and HEAD's commit: moves the clone to that commit,
@@ -62,7 +64,9 @@ if [ "${1:-}" = --here ]; then # the Linux half, started by Windows inside WSL
 	here=true
 	shift
 fi
+everything=true
 if [ $# -gt 0 ]; then
+	everything=false
 	jobs=("$@")
 else
 	case $os in
@@ -80,6 +84,9 @@ runTests()
 	echo "=== Running the failed tests again, one at a time"
 	ctest --test-dir "$1" -C "$2" --output-on-failure --timeout 300 --rerun-failed
 }
+
+launcher=""
+command -v sccache > /dev/null && launcher="-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
 
 # Windows: a job runs its commands in a developer environment of the given architecture (vcvarsall's argument).
 vsDev()
@@ -114,11 +121,13 @@ job()
 		fi
 		;;
 	windows-x64)
-		vsDev x64 "cmake --preset windows-x64-ninja" "cmake --build --preset windows-x64-ninja --config Release" &&
+		vsDev x64 "cmake --preset windows-x64-ninja $launcher" \
+			"cmake --build --preset windows-x64-ninja --config Release" &&
 			runTests build/windows-x64-ninja Release
 		;;
 	windows-arm64)
-		vsDev x64_arm64 "cmake --preset windows-arm64-ninja -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=ARM64" \
+		vsDev x64_arm64 \
+			"cmake --preset windows-arm64-ninja -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=ARM64 $launcher" \
 			"cmake --build --preset windows-arm64-ninja --config Release"
 		;;
 	linux-gcc | linux-clang)
@@ -203,6 +212,8 @@ git lfs pull --include "tests/data/**,tests/golden/**,resources/fonts/**" || exi
 	echo "Note: uncommitted changes are not checked, only HEAD $(git rev-parse --short HEAD)." >&2
 started=$SECONDS
 status=0
+commit=$(git rev-parse HEAD)
+rm -f "$logs/passed"
 if [ ${#linuxJobs[@]} -gt 0 ]; then
 	wslPath() { cygpath -m "$1" | sed -E 's|^([A-Za-z]):|/mnt/\L\1|'; }
 	source=$(wslPath "$root")
@@ -216,6 +227,9 @@ if [ ${#otherJobs[@]} -gt 0 ]; then
 fi
 if [ ${#linuxJobs[@]} -gt 0 ]; then
 	wait $wslPid || status=1
+fi
+if [ $status -eq 0 ] && $everything; then
+	echo "$commit" > "$logs/passed"
 fi
 echo "All jobs took $(((SECONDS - started) / 60)):$(printf %02d $(((SECONDS - started) % 60))) min; logs in build/ci-local."
 exit $status
