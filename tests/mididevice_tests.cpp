@@ -7,10 +7,17 @@
 #ifdef _WIN32
 #include "platform/midi/winmm.h"
 #endif
+#ifdef __APPLE__
+#include "platform/midi/coremidi.h"
+
+#include <CoreMIDI/CoreMIDI.h>
+#endif
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <memory>
@@ -138,6 +145,61 @@ namespace
 		CHECK(inbox.messages().size() == 2);
 	}
 
+#ifdef __APPLE__
+	// A loopback of virtual ports: a virtual destination that passes what it receives on to a virtual source of the
+	// same name, timestamps and all.
+	class VirtualLoopback
+	{
+	public:
+		explicit VirtualLoopback(const char* name)
+		{
+			const CFStringRef text = CFStringCreateWithCString(nullptr, name, kCFStringEncodingUTF8);
+			REQUIRE(MIDIClientCreateWithBlock(text, &m_client, nullptr) == noErr);
+			REQUIRE(MIDISourceCreateWithProtocol(m_client, text, kMIDIProtocol_1_0, &m_source) == noErr);
+			const MIDIEndpointRef source = m_source;
+			REQUIRE(MIDIDestinationCreateWithProtocol(m_client, text, kMIDIProtocol_1_0, &m_destination,
+						^(const MIDIEventList* list, void* /*refCon*/) {
+						  MIDIReceivedEventList(source, list);
+						}) == noErr);
+			CFRelease(text);
+		}
+
+		// The client stays: CoreMIDI advises against disposing clients.
+		~VirtualLoopback()
+		{
+			MIDIEndpointDispose(m_destination);
+			MIDIEndpointDispose(m_source);
+		}
+
+		VirtualLoopback(const VirtualLoopback&) = delete;
+		VirtualLoopback& operator=(const VirtualLoopback&) = delete;
+
+	private:
+		MIDIClientRef m_client = 0;
+		MIDIEndpointRef m_source = 0;
+		MIDIEndpointRef m_destination = 0;
+	};
+
+	bool hasPort(Backend& backend, const std::string& name)
+	{
+		const std::vector<PortInfo> ports = backend.ports();
+		return std::any_of(ports.begin(), ports.end(), [&name](const PortInfo& port) { return port.name == name; });
+	}
+
+	// False if the condition isn't true within two seconds.
+	template <typename Condition> bool eventually(Condition condition)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+		while (!condition())
+		{
+			if (std::chrono::steady_clock::now() > deadline)
+				return false;
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		return true;
+	}
+#endif
+
 	struct Taken
 	{
 		int port = 0;
@@ -262,6 +324,62 @@ TEST_CASE("the WinMM backend lists its ports and refuses unknown ones", "[unit]"
 	Inbox inbox;
 	CHECK_THROWS_AS(backend->openInput("no such port", inbox.receiver()), std::runtime_error);
 	CHECK_THROWS_AS(backend->openOutput("no such port"), std::runtime_error);
+}
+#endif
+
+#ifdef __APPLE__
+// Opens every CoreMIDI port of the machine and loops back through virtual ports it creates itself, and through the
+// IAC driver's first bus when that is enabled.
+TEST_CASE("the CoreMIDI backend keeps the port contract and notices virtual ports coming and going", "[integration]")
+{
+	const std::unique_ptr<Backend> backend = makeCoreMidiBackend();
+	CHECK(backend->name() == "coremidi");
+	std::atomic<int> changes{0};
+	backend->onPortsChanged([&changes] { ++changes; });
+	const std::string name = "GNUbase test loopback";
+	CHECK(!hasPort(*backend, name));
+	{
+		const VirtualLoopback loopback(name.c_str());
+		REQUIRE(eventually([&] { return hasPort(*backend, name); }));
+		checkContract(*backend, name, name);
+	}
+	CHECK(eventually([&] { return !hasPort(*backend, name); }));
+	CHECK(eventually([&changes] { return changes > 0; })); // notifications come after the listing changed
+
+	const std::string iac = "IAC Driver Bus 1";
+	if (hasPort(*backend, iac))
+		checkContract(*backend, iac, iac);
+	else
+		WARN("the IAC driver is off: its loopback isn't checked");
+}
+
+TEST_CASE("the CoreMIDI backend receives MIDI 2.0 sources as MIDI 1.0 messages", "[integration]")
+{
+	const std::unique_ptr<Backend> backend = makeCoreMidiBackend();
+	backend->ports(); // the backend's client comes first, as in the application, so notifications reach it
+	const CFStringRef text = CFSTR("GNUbase test MIDI 2.0");
+	MIDIClientRef client = 0;
+	MIDIEndpointRef source = 0;
+	REQUIRE(MIDIClientCreateWithBlock(text, &client, nullptr) == noErr);
+	REQUIRE(MIDISourceCreateWithProtocol(client, text, kMIDIProtocol_2_0, &source) == noErr);
+	const auto ports = backend->ports();
+	const auto port = std::find_if(ports.begin(), ports.end(),
+		[](const PortInfo& info) { return info.input && info.name == "GNUbase test MIDI 2.0"; });
+	REQUIRE(port != ports.end());
+	CHECK(port->midi2);
+
+	Inbox inbox;
+	const auto input = backend->openInput(port->id, inbox.receiver());
+	// A MIDI 2.0 note on, group 0, channel 2, pitch 60, full velocity.
+	const std::array<UInt32, 2> words{0x40913c00, 0xffff0000};
+	MIDIEventList list{};
+	MIDIEventListAdd(&list, sizeof(list), MIDIEventListInit(&list, kMIDIProtocol_2_0), 0, words.size(), words.data());
+	REQUIRE(MIDIReceivedEventList(source, &list) == noErr);
+	REQUIRE(inbox.waitFor(1));
+	const MidiMessage received = inbox.messages()[0].first;
+	CHECK(received.size == 3);
+	CHECK(received.bytes == std::array<uint8_t, 3>{0x91, 60, 127});
+	MIDIEndpointDispose(source);
 }
 #endif
 
