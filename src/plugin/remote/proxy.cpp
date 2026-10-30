@@ -362,8 +362,22 @@ namespace gnubase::plugin::remote
 	void RemotePlugin::publish(Binding* binding)
 	{
 		m_live.store(binding);
-		// The audio thread set m_busy before it read m_live: once it is clear, no block uses the old binding.
-		while (m_busy.load())
+		// The audio thread set m_busy before it read m_live: once the block under way has ended, no block uses the
+		// old binding.
+		awaitIdle();
+	}
+
+	void RemotePlugin::idle() noexcept
+	{
+		m_idled.fetch_add(1);
+		m_busy.store(false, std::memory_order_release);
+	}
+
+	void RemotePlugin::awaitIdle() const
+	{
+		// Blocks may follow each other without a pause, e.g. while rendering offline: the count shows that one ended.
+		const uint64_t idled = m_idled.load();
+		while (m_busy.load() && m_idled.load() == idled)
 			std::this_thread::sleep_for(std::chrono::microseconds(50));
 	}
 
@@ -421,8 +435,7 @@ namespace gnubase::plugin::remote
 					m_changed[i] = false;
 			}
 			const Tracking rescanning(m_rescanning);
-			while (m_busy.load())
-				std::this_thread::sleep_for(std::chrono::microseconds(50));
+			awaitIdle();
 			ok = current->created && describeIn(*current, info, error);
 			if (ok)
 			{
@@ -523,14 +536,16 @@ namespace gnubase::plugin::remote
 	{
 		// The audio thread may mirror a newer value at any time: it marks a value before it stores it, so one that
 		// changed since the rescan began is either marked or no longer the one replaced, and stays. Only an equal
-		// value sent again at that moment can lose.
+		// value sent again at that moment can lose. A value that waits for a resync hasn't reached the plugin, which
+		// reports an older one: it stays too. A resync marks a value before it clears its dirty flag, so a value it
+		// sends meanwhile is either still dirty or marked.
 		const std::scoped_lock lock(m_mutex);
 		if (values.size() != m_paramIndex.size())
 			return;
 		for (size_t i = 0; i < values.size(); ++i)
 		{
 			double seen = m_values[i].load(std::memory_order_acquire);
-			if (!m_changed[i].load())
+			if (!m_dirty[i].load() && !m_changed[i].load())
 				m_values[i].compare_exchange_strong(seen, values[i]);
 		}
 	}
@@ -573,7 +588,7 @@ namespace gnubase::plugin::remote
 			}
 			started = !refused && failure() == Failure::None;
 		}
-		m_busy.store(false, std::memory_order_release);
+		idle();
 		m_processing.store(started, std::memory_order_release);
 		return started;
 	}
@@ -589,7 +604,7 @@ namespace gnubase::plugin::remote
 				exchange(*live, nullptr, Stop, m_noEvents, nullptr);
 			live->started = false;
 		}
-		m_busy.store(false, std::memory_order_release);
+		idle();
 		m_processing.store(false, std::memory_order_release);
 	}
 
@@ -619,7 +634,7 @@ namespace gnubase::plugin::remote
 					m_flags = block.sent ? 0 : m_flags | Reset;
 				}
 			}
-			m_busy.store(false, std::memory_order_release);
+			idle();
 		}
 		if (status == ProcessStatus::Error)
 			silence(process);
@@ -636,7 +651,7 @@ namespace gnubase::plugin::remote
 			m_busy.store(true);
 			if (Binding* live = m_live.load(); live != nullptr && live->started)
 				exchange(*live, nullptr, Flush, in, &out);
-			m_busy.store(false, std::memory_order_release);
+			idle();
 			return;
 		}
 		// [main]
@@ -674,7 +689,11 @@ namespace gnubase::plugin::remote
 		(void)in;
 		for (const auto& [id, index] : m_paramIndex)
 		{
-			if (!m_dirty[index].exchange(false, std::memory_order_relaxed))
+			if (!m_dirty[index].load())
+				continue;
+			if (m_rescanning.load())
+				m_changed[index].store(true);
+			if (!m_dirty[index].exchange(false))
 				continue;
 			Event event;
 			event.type = EventType::ParamValue;
