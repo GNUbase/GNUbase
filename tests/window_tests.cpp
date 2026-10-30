@@ -562,7 +562,7 @@ TEST_CASE("UI automation takes screenshots of single elements and hovers over th
 	const ui::Window& window = gpu.open("boxes.rml");
 	gpu.shell->step(milliseconds(0));
 	ui::Automation automation(*gpu.shell);
-	const ui::Target box{"#box"};
+	const ui::Target box{"#box", 0, std::nullopt};
 
 	// The box is 100 by 50 dp; its screenshot has just its pixels.
 	const ui::Image red = automation.screenshot(window.id(), box);

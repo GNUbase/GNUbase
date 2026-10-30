@@ -116,9 +116,12 @@ namespace gnubase::app
 					return {{"elements", std::move(matching)}};
 				if (std::chrono::steady_clock::now() >= deadline)
 				{
-					const std::string what = selector + (text.empty() ? "" : " with the text \"" + text + "\"");
-					throw std::runtime_error("waited " + Json(seconds).dump() + " s, but " +
-						(visible ? "no visible element matches " + what : what + " is still visible"));
+					std::string what = selector;
+					if (!text.empty())
+						what += " with the text \"" + text + '"';
+					std::string message = "waited " + Json(seconds).dump() + " s, but ";
+					message += visible ? "no visible element matches " + what : what + " is still visible";
+					throw std::runtime_error(message);
 				}
 				std::this_thread::sleep_for(g_waitInterval);
 			}
