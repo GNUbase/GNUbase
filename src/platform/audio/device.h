@@ -174,8 +174,7 @@ namespace gnubase::audio
 		virtual void monitorInput(const InputMonitor& /*monitor*/) {}
 
 		// Called when the driver asks to be opened again, e.g. because its settings changed in its control panel. Never
-		// called on the audio thread, but possibly on a driver's thread while this is set: the handler must not call
-		// onReset.
+		// called on the audio thread, but possibly on a driver's thread while this is set.
 		void onReset(std::function<void()> handler)
 		{
 			const std::scoped_lock lock(m_resetMutex);
@@ -183,12 +182,17 @@ namespace gnubase::audio
 		}
 
 	protected:
-		// For backends, when their driver asks for a reset. Not on the audio thread.
+		// For backends, when their driver asks for a reset. Not on the audio thread. The handler runs on a copy, outside
+		// the lock: what it sets off may destroy this device before it returns.
 		void requestReset() const
 		{
-			const std::scoped_lock lock(m_resetMutex);
-			if (m_reset)
-				m_reset();
+			std::function<void()> handler;
+			{
+				const std::scoped_lock lock(m_resetMutex);
+				handler = m_reset;
+			}
+			if (handler)
+				handler();
 		}
 
 	private:
