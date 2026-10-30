@@ -260,7 +260,7 @@ namespace gnubase::audio
 		};
 
 		// What the device, its safety offset and its first stream add, in frames.
-		uint32_t latency(AudioObjectID device, AudioObjectPropertyScope scope)
+		uint32_t driverLatency(AudioObjectID device, AudioObjectPropertyScope scope)
 		{
 			UInt32 deviceLatency = 0;
 			UInt32 safetyOffset = 0;
@@ -369,9 +369,9 @@ namespace gnubase::audio
 				m_format.inputChannels = static_cast<int>(m_info.inputs.size());
 				m_format.outputChannels = static_cast<int>(m_info.outputs.size());
 				if (m_format.inputChannels > 0)
-					m_latency.input = latency(object, kAudioObjectPropertyScopeInput) + frames;
+					m_latency.input = driverLatency(object, kAudioObjectPropertyScopeInput) + frames;
 				if (m_format.outputChannels > 0)
-					m_latency.output = latency(object, kAudioObjectPropertyScopeOutput) + frames;
+					m_latency.output = driverLatency(object, kAudioObjectPropertyScopeOutput) + frames;
 				if (std::find(m_info.blockSizes.begin(), m_info.blockSizes.end(), m_format.blockSize) ==
 					m_info.blockSizes.end())
 				{
