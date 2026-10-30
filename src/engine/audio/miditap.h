@@ -37,8 +37,9 @@ namespace gnubase::engine
 
 		MidiTap();
 
-		// Command thread. False if too many messages wait for the audio thread already.
-		bool inject(const Message& message) { return m_injected.tryPush(message); }
+		// Command thread: all of the messages, or none and false if they don't all fit beside those that wait for the
+		// audio thread already.
+		bool inject(const std::vector<Message>& messages);
 
 		// Command thread: what instruments played since the last call, oldest first, and how many messages didn't
 		// fit.

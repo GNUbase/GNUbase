@@ -30,14 +30,17 @@ TEST_CASE("SpscQueue delivers values in order and reports full and empty", "[uni
 
 	int value = 0;
 	CHECK_FALSE(queue.tryPop(value));
+	CHECK(queue.space() == 4);
 	for (int i = 0; i < 4; ++i)
 		CHECK(queue.tryPush(i));
 	CHECK_FALSE(queue.tryPush(99));
+	CHECK(queue.space() == 0);
 
 	for (int i = 0; i < 4; ++i)
 	{
 		REQUIRE(queue.tryPop(value));
 		CHECK(value == i);
+		CHECK(queue.space() == static_cast<size_t>(i) + 1);
 	}
 	CHECK_FALSE(queue.tryPop(value));
 }
