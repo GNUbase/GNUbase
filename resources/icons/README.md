@@ -2,6 +2,8 @@
 
 Style: 24 × 24 viewBox, 2 px rounded outline strokes, 2 px padding, simple geometry, and solid shapes only when they improve small-size legibility. All artwork is monochrome and inherits `currentColor`.
 
+Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is rasterized at its size on screen, and `currentColor` takes the element's `image-color`, which themes set in their style sheets ([docs/features/svg.md](../../docs/features/svg.md)).
+
 - `transport-play.svg` — Start playback.
 - `transport-pause.svg` — Pause playback.
 - `transport-stop.svg` — Stop playback.

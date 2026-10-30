@@ -9,6 +9,7 @@ GNUbase is licensed under the GPL-3.0-or-later, so everything that goes into it 
 | [SDL 3](https://github.com/libsdl-org/SDL) | `ext/SDL` (GNUbase fork) | windows, input, graphics | yes, linked statically | zlib | `ext/SDL/LICENSE.txt` |
 | [RmlUi](https://github.com/mikke89/RmlUi) | `ext/RmlUi` (GNUbase fork) | user interface (core and debugger), and from its `Backends` folder the SDL input code and the SDL_GPU renderer | yes, linked statically | MIT | `ext/RmlUi/LICENSE.txt` |
 | [FreeType](https://freetype.org) | `ext/freetype` (2.15.0) | rendering text for RmlUi's font engine | yes, linked statically | FreeType License or GPL-2.0-or-later, at the user's choice | `ext/freetype/LICENSE.TXT`, `ext/freetype/docs/FTL.TXT` and `ext/freetype/docs/GPLv2.TXT` |
+| [LunaSVG](https://github.com/sammycage/lunasvg) | `ext/lunasvg` (3.5.0 and later fixes) | rasterizing SVG icons and graphics for RmlUi's SVG plugin ([features/svg.md](features/svg.md)) | yes, linked statically | MIT | `ext/lunasvg/LICENSE` |
 | [Inter](https://github.com/rsms/inter) 4.1 | `resources/fonts/Inter` | the user interface's text | yes, as font files | SIL Open Font License 1.1 | `resources/fonts/Inter/OFL.txt` |
 | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) 2.304 | `resources/fonts/JetBrainsMono` | time and counter displays | yes, as font files | SIL Open Font License 1.1 | `resources/fonts/JetBrainsMono/OFL.txt` |
 | [Noto Sans Symbols](https://github.com/notofonts/symbols) 2.003 | `resources/fonts/NotoSansSymbols` | symbols the other fonts lack, such as ♯ and ♭ | yes, as font files | SIL Open Font License 1.1 | `resources/fonts/NotoSansSymbols/OFL.txt` |
@@ -40,6 +41,9 @@ Some of these bundle code from other projects under its own license:
 | FreeType | zlib, for compressed fonts | `ext/freetype/src/gzip` | zlib |
 | FreeType | BDF and PCF drivers, and `fthash` | `ext/freetype/src/bdf`, `ext/freetype/src/pcf`, `ext/freetype/src/base/fthash.c` | X11-style permissive license, in each folder's README |
 | FreeType | code taken from HarfBuzz for the auto-hinter | `ext/freetype/src/autofit/ft-hb-*` | Old MIT |
+| LunaSVG | PlutoVG, its 2D vector graphics library | `ext/lunasvg/plutovg` | MIT (`ext/lunasvg/plutovg/LICENSE`) |
+| PlutoVG | FreeType's rasterizer and stroker | `ext/lunasvg/plutovg/source/plutovg-ft-*` | FreeType License (`ext/lunasvg/plutovg/source/FTL.TXT`) |
+| PlutoVG | stb_image, stb_image_write and stb_truetype | `ext/lunasvg/plutovg/source/plutovg-stb-*` | MIT or Unlicense (public domain), at the user's choice |
 | Rubber Band Library | Speex resampler, KissFFT, SSE and NEON math functions, getopt, float_cast | `ext/rubberband/src/ext` | permissive licenses, in each folder; GNUbase's build compiles none of them (it uses Rubber Band's built-in FFT and resampler) |
 | r8brain-free-src | Takuya Ooura's FFT | `ext/r8brain/fft4g.h` | free to use, copy, modify and distribute for any purpose; see the file's header |
 
@@ -69,4 +73,3 @@ CLAUDE.md plans these components. Check the license of the exact release when on
 | Component | Used for | License |
 |---|---|---|
 | Lua 5.4 | scripting, UI scripts through RmlUi's Lua plugin | MIT |
-| LunaSVG | SVG icons and graphics through RmlUi's SVG plugin | MIT |

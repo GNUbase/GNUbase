@@ -1,0 +1,110 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- GNUbase's SVG graphics (#210) in 380x212 dp: icons at 16, 20, 24 and 32 dp, tinted by image-color as themes do,
+     and theme graphics in their own colors at the size their files give. Every length is a whole number of pixels at
+     100 %, 150 % and 200 %. Its screenshots are tests/golden/ui/icons-100.png, icons-150.png and icons-200.png. -->
+<rml>
+<head>
+	<title>Icons</title>
+	<style>
+		body {
+			display: block; position: absolute; left: 0; top: 0; width: 380dp; height: 212dp; margin: 0;
+			padding: 10dp; box-sizing: border-box; background-color: #1d2127;
+		}
+		.row { display: flex; align-items: flex-start; margin-bottom: 8dp; }
+		svg { margin-right: 6dp; image-color: #e8eaed; }
+		.s16 svg { width: 16dp; height: 16dp; }
+		.s20 svg { width: 20dp; height: 20dp; }
+		.s24 svg { width: 24dp; height: 24dp; }
+		.s32 svg { width: 32dp; height: 32dp; }
+		.theme svg { image-color: #ffffff; }
+		svg.accent { image-color: #10dff2; }
+		svg.danger { image-color: #e64b67; }
+		svg.warning { image-color: #d58a00; }
+		svg.success { image-color: #18a078; }
+		svg.muted { image-color: #9aa3ad; }
+	</style>
+</head>
+<body>
+	<div class="row s24">
+		<svg src="../../../resources/icons/transport-to-start.svg"/>
+		<svg src="../../../resources/icons/transport-rewind.svg"/>
+		<svg src="../../../resources/icons/transport-forward.svg"/>
+		<svg src="../../../resources/icons/transport-to-end.svg"/>
+		<svg src="../../../resources/icons/transport-stop.svg"/>
+		<svg src="../../../resources/icons/transport-play.svg" class="success"/>
+		<svg src="../../../resources/icons/transport-pause.svg"/>
+		<svg src="../../../resources/icons/transport-record.svg" class="danger"/>
+		<svg src="../../../resources/icons/transport-loop.svg" class="accent"/>
+		<svg src="../../../resources/icons/transport-punch-in.svg"/>
+		<svg src="../../../resources/icons/transport-punch-out.svg"/>
+		<svg src="../../../resources/icons/transport-metronome.svg"/>
+	</div>
+	<div class="row s16">
+		<svg src="../../../resources/icons/tool-pointer.svg" class="accent"/>
+		<svg src="../../../resources/icons/tool-range.svg"/>
+		<svg src="../../../resources/icons/tool-split.svg"/>
+		<svg src="../../../resources/icons/tool-glue.svg"/>
+		<svg src="../../../resources/icons/tool-erase.svg"/>
+		<svg src="../../../resources/icons/tool-zoom.svg"/>
+		<svg src="../../../resources/icons/tool-mute.svg"/>
+		<svg src="../../../resources/icons/tool-draw.svg"/>
+		<svg src="../../../resources/icons/tool-line.svg"/>
+		<svg src="../../../resources/icons/tool-audition.svg"/>
+	</div>
+	<div class="row s16">
+		<svg src="../../../resources/icons/general-add.svg"/>
+		<svg src="../../../resources/icons/general-remove.svg"/>
+		<svg src="../../../resources/icons/general-close.svg"/>
+		<svg src="../../../resources/icons/general-settings.svg"/>
+		<svg src="../../../resources/icons/general-search.svg"/>
+		<svg src="../../../resources/icons/general-menu.svg"/>
+		<svg src="../../../resources/icons/general-more.svg"/>
+		<svg src="../../../resources/icons/general-undo.svg" class="muted"/>
+		<svg src="../../../resources/icons/general-redo.svg" class="muted"/>
+		<svg src="../../../resources/icons/general-save.svg"/>
+		<svg src="../../../resources/icons/general-open.svg"/>
+		<svg src="../../../resources/icons/general-snap.svg" class="accent"/>
+		<svg src="../../../resources/icons/general-lock.svg"/>
+		<svg src="../../../resources/icons/general-link.svg"/>
+	</div>
+	<div class="row s20">
+		<svg src="../../../resources/icons/track-mute.svg" class="warning"/>
+		<svg src="../../../resources/icons/track-solo.svg" class="warning"/>
+		<svg src="../../../resources/icons/track-record-arm.svg" class="danger"/>
+		<svg src="../../../resources/icons/track-monitor.svg" class="accent"/>
+		<svg src="../../../resources/icons/track-read-automation.svg" class="success"/>
+		<svg src="../../../resources/icons/track-write-automation.svg" class="danger"/>
+		<svg src="../../../resources/icons/track-lanes.svg"/>
+		<svg src="../../../resources/icons/track-audio.svg"/>
+		<svg src="../../../resources/icons/track-instrument.svg"/>
+		<svg src="../../../resources/icons/track-midi.svg"/>
+		<svg src="../../../resources/icons/track-folder.svg"/>
+		<svg src="../../../resources/icons/track-group.svg"/>
+		<svg src="../../../resources/icons/track-effect.svg"/>
+		<svg src="../../../resources/icons/track-marker.svg"/>
+	</div>
+	<div class="row s32">
+		<svg src="../../../resources/icons/layout-left-zone.svg"/>
+		<svg src="../../../resources/icons/layout-lower-zone.svg"/>
+		<svg src="../../../resources/icons/layout-right-zone.svg"/>
+		<svg src="../../../resources/icons/layout-mixer.svg"/>
+		<svg src="../../../resources/icons/layout-editor.svg"/>
+		<svg src="../../../resources/icons/layout-detach.svg"/>
+		<svg src="../../../resources/icons/transport-stop.svg" class="accent" id="tinted"/>
+		<svg src="../../../resources/icons/transport-record.svg" class="danger"/>
+	</div>
+	<div class="row theme">
+		<svg src="../../../resources/themes/gnubase/toggle-record.svg"/>
+		<svg src="../../../resources/themes/gnubase/toggle-mute.svg"/>
+		<svg src="../../../resources/themes/gnubase/toggle-solo.svg"/>
+		<svg src="../../../resources/themes/gnubase/toggle-monitor.svg"/>
+		<svg src="../../../resources/themes/gnubase/checkbox-on.svg"/>
+		<svg src="../../../resources/themes/gnubase/checkbox-off.svg"/>
+		<svg src="../../../resources/themes/gnubase/radio-on.svg"/>
+		<svg src="../../../resources/themes/gnubase/slider-thumb.svg"/>
+		<svg src="../../../resources/themes/gnubase/fader-cap.svg"/>
+		<svg src="../../../resources/themes/gnubase/knob-base.svg"/>
+		<svg src="../../../resources/themes/gnubase/dropdown-arrow.svg"/>
+	</div>
+</body>
+</rml>

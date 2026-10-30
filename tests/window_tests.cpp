@@ -306,6 +306,33 @@ TEST_CASE("GNUbase's fonts look the same on every platform", "[ui]")
 	}
 }
 
+TEST_CASE("icons are sharp at 100 %, 150 % and 200 % UI scale, in the colors image-color gives them", "[ui]")
+{
+	Gpu gpu;
+	const ui::Window& window = gpu.open("icons.rml", 760, 424);
+	Rml::Element* tinted = window.context().GetDocument(0)->GetElementById("tinted");
+	REQUIRE(tinted != nullptr);
+	const float monitorScale = window.dpRatio() / gpu.shell->uiScale();
+	for (const int percent : {100, 150, 200})
+	{
+		// LunaSVG rasterizes each graphic at its pixel size at this scale, the same everywhere; the GPU draws the
+		// rasters pixel for pixel.
+		const float ratio = static_cast<float>(percent) / 100.0F;
+		gpu.shell->setUiScale(ratio / monitorScale);
+		const std::string name = "icons-" + std::to_string(percent);
+		const ui::Image image = crop(
+			gpu.screenshot(window, name), 0, 0, static_cast<int>(380.0F * ratio), static_cast<int>(212.0F * ratio));
+		const test::ImageDiff diff = test::compareWithGolden("ui/" + name, image, {8, image.pixels.size() / 4 / 500});
+		INFO(diff.report);
+		CHECK(diff.equal);
+
+		// The solid middle of the stop icon is exactly its image-color.
+		const Rml::Vector2f middle =
+			tinted->GetAbsoluteOffset(Rml::BoxArea::Content) + (tinted->GetBox().GetSize() / 2);
+		CHECK(near(image.pixel(static_cast<int>(middle.x), static_cast<int>(middle.y)), Color{0x10, 0xdf, 0xf2, 255}));
+	}
+}
+
 TEST_CASE("effects at a window's edges draw as in a context of the window's size", "[ui]")
 {
 	// A context can be larger than the frame it draws, e.g. for a frame while its window shrinks. A box shadow wider
