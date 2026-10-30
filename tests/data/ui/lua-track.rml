@@ -1,0 +1,43 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- For Lua UI tests (#208): its Lua opens the rename dialog (lua-rename.rml) for the track in the button's track
+     attribute. The dialog's field edits the name in a data model; OK renames the track through the engine. -->
+<rml>
+<head>
+	<title>Track</title>
+	<style>
+		body { display: block; position: absolute; left: 0; top: 0; right: 0; bottom: 0; margin: 0; font-family: Inter; font-size: 14dp; }
+		button { display: block; position: absolute; left: 10dp; top: 10dp; width: 120dp; height: 30dp; }
+	</style>
+	<script>
+		local function trackName(id)
+			for _, track in ipairs(gnubase.project.get().tracks) do
+				if track.id == id then
+					return track.name
+				end
+			end
+			error("no track " .. tostring(id))
+		end
+
+		-- The open dialog's data model. It opens and closes with the dialog: RmlUi's Lua plugin frees a data model
+		-- only when it is closed.
+		local model
+
+		function openRename(context, id)
+			model = context:OpenDataModel("rename", {track = id, name = trackName(id)})
+			context:LoadDocument("tests/data/ui/lua-rename.rml"):Show(DocumentModal.Modal)
+		end
+
+		-- Closes the dialog; OK renames the track first.
+		function closeRename(dialog, ok)
+			if ok then
+				gnubase.track.set{track = model.track, name = model.name}
+			end
+			dialog:Close()
+			dialog.context:CloseDataModel("rename")
+		end
+	</script>
+</head>
+<body>
+	<button id="rename" onclick="openRename(document.context, tonumber(element:GetAttribute('track')))">Rename track</button>
+</body>
+</rml>

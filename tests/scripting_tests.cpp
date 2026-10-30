@@ -6,8 +6,11 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 using Catch::Matchers::ContainsSubstring;
 using gnubase::engine::CommandContext;
@@ -158,4 +161,39 @@ TEST_CASE("a time limit stops scripts that run too long", "[unit]")
 	CHECK_THAT(lua.run("coroutine.wrap(function() while true do end end)()", "coroutine.lua").value_or(""),
 		ContainsSubstring("ran longer than"));
 	run(lua, "assert(gnubase.engine.version())"); // each run gets the full time again
+}
+
+TEST_CASE("Lua calls functions that C++ adds next to the commands, and takes events when asked", "[unit]")
+{
+	Engine engine;
+	registerTestCommands(engine);
+	std::ostringstream output;
+	Runtime lua(engine, Trust::Trusted, output);
+	lua.addFunction(
+		"fake.twice", [](const Json& parameters) { return Json{{"value", 2 * parameters.at("value").get<int>()}}; });
+	lua.addFunction("fake.picture",
+		[](const Json& /*parameters*/) { return Json::binary(std::vector<uint8_t>{0x89, 'P', 'N', 'G', 0}); });
+	lua.addFunction(
+		"fake.broken", [](const Json& /*parameters*/) -> Json { throw std::invalid_argument("no such element"); });
+	run(lua, R"(
+		assert(gnubase.fake.twice{value = 21}.value == 42)
+		assert(gnubase.fake.echo{value = 1}.value == 1) -- the area's commands stay
+		assert(gnubase.fake.picture() == "\x89PNG\0") -- binary results, such as screenshots, are strings
+		local ok, message = pcall(gnubase.fake.broken)
+		assert(not ok and message:find("no such element", 1, true), message)
+	)");
+	CHECK_THROWS_AS(lua.addFunction("fake.echo", [](const Json& parameters) { return parameters; }), std::logic_error);
+
+	// Code that doesn't run, such as the UI's handlers, gets the events that arrived since when asked.
+	run(lua, R"(
+		seen = {}
+		gnubase.on("fake.changed", function(event) seen[#seen + 1] = event.data.value end)
+	)");
+	REQUIRE(gnubase::engine::Client(engine).call("fake.emit", {{"value", 7}}).ok());
+	REQUIRE(gnubase::engine::Client(engine).call("fake.emit", {{"value", 8}}).ok());
+	CHECK_FALSE(lua.dispatchEvents().has_value());
+	run(lua, "assert(#seen == 2 and seen[1] == 7 and seen[2] == 8)");
+	run(lua, "gnubase.on('fake.changed', function() error('broken handler') end)");
+	REQUIRE(gnubase::engine::Client(engine).call("fake.emit", {{"value", 9}}).ok());
+	CHECK_THAT(lua.dispatchEvents().value_or(""), ContainsSubstring("broken handler"));
 }

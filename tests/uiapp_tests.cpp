@@ -4,6 +4,7 @@
 #include "uiapp.h"
 
 #include "engine/time/tempomap.h"
+#include "scripting/runtime.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
 #include "ui/eventdisplay.h"
@@ -19,6 +20,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <utility>
@@ -94,7 +97,7 @@ namespace
 		click(app, selector(button));
 		REQUIRE(visible(app, menu));
 		click(app, menuItem(app, menu, text));
-		CHECK_FALSE(visible(app, menu));
+		CHECK(!visible(app, menu));
 	}
 
 	// The project window in a main window of 800 by 300 dp, at a dp ratio of 1.
@@ -211,7 +214,7 @@ TEST_CASE("the ruler's time format menu opens from its arrow button and with a r
 {
 	ProjectWindow window;
 	test::UiApp& app = window.app;
-	CHECK_FALSE(visible(app, "#ruler-format-menu"));
+	CHECK(!visible(app, "#ruler-format-menu"));
 
 	// The arrow at the ruler's right end opens it; the ruler's format is checked.
 	click(app, selector(".ruler-format"));
@@ -221,7 +224,7 @@ TEST_CASE("the ruler's time format menu opens from its arrow button and with a r
 	CHECK(window.display.rulerFormat() == ui::TimeFormat::Seconds);
 	CHECK(element(app, "ruler").at("attributes").at("format") == "seconds");
 	CHECK(hasClass(app, "#ruler-format-menu > [format=seconds]", "checked"));
-	CHECK_FALSE(hasClass(app, "#ruler-format-menu > [format=barsBeats]", "checked"));
+	CHECK(!hasClass(app, "#ruler-format-menu > [format=barsBeats]", "checked"));
 
 	// A right click anywhere in the ruler opens it at the mouse.
 	const Json ruler = element(app, "ruler").at("box");
@@ -295,7 +298,7 @@ TEST_CASE("the zoom presets menu adds, applies and organizes presets, and zooms 
 	};
 	organize();
 	click(app, {"#zoom-presets-dialog .preset button", 1, std::nullopt});
-	CHECK_FALSE(visible(app, "#zoom-presets-dialog .preset.deleted"));
+	CHECK(!visible(app, "#zoom-presets-dialog .preset.deleted"));
 	click(app, selector("#zoom-presets-dialog [result=cancel]"));
 	REQUIRE(app.waitUntil([&app] { return count(app, "#zoom-presets-dialog") == 0; }));
 	CHECK(display.zoomPresets().size() == 2);
@@ -327,14 +330,14 @@ TEST_CASE("the auto-scroll button switches auto-scroll, its menu sets the mode, 
 	// The settings menu sets the mode and whether editing suspends auto-scroll, each checked while it's on.
 	click(app, selector("#auto-scroll-settings"));
 	CHECK(hasClass(app, "#page-scroll", "checked"));
-	CHECK_FALSE(hasClass(app, "#stationary-cursor", "checked"));
+	CHECK(!hasClass(app, "#stationary-cursor", "checked"));
 	click(app, selector("#stationary-cursor"));
 	CHECK(display.autoScrollMode() == ui::AutoScrollMode::Stationary);
 	choose(app, "#auto-scroll-settings", "#auto-scroll-menu", "Suspend Auto-Scroll when Editing");
 	CHECK(display.suspendAutoScrollWhenEditing());
 	click(app, selector("#auto-scroll-settings"));
 	CHECK(hasClass(app, "#stationary-cursor", "checked"));
-	CHECK_FALSE(hasClass(app, "#page-scroll", "checked"));
+	CHECK(!hasClass(app, "#page-scroll", "checked"));
 	CHECK(hasClass(app, "#suspend-auto-scroll", "checked"));
 	app.ui().key(std::nullopt, "Escape");
 
@@ -351,14 +354,28 @@ TEST_CASE("the auto-scroll button switches auto-scroll, its menu sets the mode, 
 	CHECK(hasClass(app, "#auto-scroll", "suspended"));
 	click(app, selector("#auto-scroll"));
 	CHECK(display.autoScroll());
-	CHECK_FALSE(display.autoScrollSuspended());
+	CHECK(!display.autoScrollSuspended());
 	CHECK(hasClass(app, "#auto-scroll", "checked"));
-	CHECK_FALSE(hasClass(app, "#auto-scroll", "suspended"));
+	CHECK(!hasClass(app, "#auto-scroll", "suspended"));
 
 	// Another click switches it off.
 	click(app, selector("#auto-scroll"));
-	CHECK_FALSE(display.autoScroll());
-	CHECK_FALSE(hasClass(app, "#auto-scroll", "checked"));
+	CHECK(!display.autoScroll());
+	CHECK(!hasClass(app, "#auto-scroll", "checked"));
 	app.call("transport.stop");
 	app.call("audio.stop");
+}
+
+// UI tests in Lua (#208): ctest runs each tests/lua/ui/*.lua through this test case, which GNUBASE_LUA_UI_TEST tells
+// which file, in the source folder. The file runs in the app's UI Lua on the UI thread, and prints its report.
+TEST_CASE("a UI test written in Lua passes", "[.][ui][lua-ui]")
+{
+	const char* variable = std::getenv("GNUBASE_LUA_UI_TEST");
+	const std::string file = variable != nullptr ? variable : "";
+	REQUIRE(!file.empty());
+	test::UiApp app;
+	const std::optional<std::string> error = app.lua().runFile(std::filesystem::u8path(file));
+	INFO(error.value_or(""));
+	// Not CHECK_FALSE: Catch2's ContinueOnFailure | FalseTest trips clang-analyzer's EnumCastOutOfRange check
+	CHECK(!error.has_value());
 }

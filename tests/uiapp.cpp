@@ -14,6 +14,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <iostream>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -63,7 +64,8 @@ namespace gnubase::test
 		main.hidden = true; // tests don't flash windows on the desktop
 		try
 		{
-			m_ui = std::make_unique<app::AppUi>(m_engine, std::filesystem::path(GNUBASE_RESOURCES_DIR), main, 4);
+			m_ui = std::make_unique<app::AppUi>(
+				m_engine, std::filesystem::path(GNUBASE_RESOURCES_DIR), main, std::cout, 4);
 		}
 		catch (const ui::GpuUnavailable& error)
 		{
