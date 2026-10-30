@@ -16,6 +16,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <map>
@@ -714,4 +715,78 @@ TEST_CASE("splitters move the boundary between the elements of a row or a column
 	const int rowsY = rows.at("y").get<int>() + (rows.at("height").get<int>() / 2);
 	app.ui().drag(std::nullopt, point(rowsX, rowsY), point(rowsX, rowsY - 20));
 	CHECK(element(app, "#tree").at("box").at("height") == 108); // 120 dp, padding 4 dp above and below
+}
+
+namespace
+{
+	// Whether the middle of the element looks like the color, within 2 of 255 a channel.
+	bool looksLike(test::UiApp& app, const std::string& selector, std::array<int, 3> color)
+	{
+		const ui::Image image = app.ui().screenshot(std::nullopt, at(selector));
+		const std::array<uint8_t, 4> pixel = image.pixel(image.width / 2, image.height / 2);
+		for (size_t i = 0; i < color.size(); ++i)
+			if (std::abs(static_cast<int>(pixel[i]) - color[i]) > 2)
+				return false;
+		return true;
+	}
+
+	// The color picker's value field in that row: 1 to 6 for H, S, V, R, G and B.
+	std::string colorField(int row)
+	{
+		return "#picker .color-value:nth-child(" + std::to_string(row) + ") valuefield";
+	}
+}
+
+TEST_CASE(
+	"color pickers pick from the field and the hue strip, take numbers, and show the old and the new color", "[ui]")
+{
+	test::UiApp app;
+	Rml::String color = "#ff0000";
+	ui::DataModel model(app.main().context(), "color");
+	REQUIRE(model.constructor().Bind("color", &color));
+	const Events events(app.show("color.rml"));
+	app.setDpRatio(1.0F);
+	const auto number = [&app](int row)
+	{ return std::stof(element(app, colorField(row)).at("attributes").at("value").get<std::string>()); };
+	CHECK(number(1) == 0.0F);
+	CHECK(number(2) == 100.0F);
+	CHECK(number(4) == 255.0F);
+	CHECK(looksLike(app, "#picker .color-new", {255, 0, 0}));
+
+	// The field picks saturation from left to right and value from bottom to top: a quarter in, halfway down.
+	const Json field = element(app, "#picker .color-field").at("box");
+	app.ui().click(std::nullopt,
+		point(field.at("x").get<int>() + (field.at("width").get<int>() / 4),
+			field.at("y").get<int>() + (field.at("height").get<int>() / 2)),
+		ui::MouseButton::Left, 1, {});
+	CHECK(color == "#806060");
+	REQUIRE(!events.changes.empty());
+	CHECK(events.changes.back().first == "picker");
+	CHECK(events.changes.back().second.Get<Rml::String>() == "#806060");
+
+	// The hue strip picks the hue from top to bottom: halfway is cyan.
+	const Json hue = element(app, "#picker .color-hue").at("box");
+	const int x = hue.at("x").get<int>() + (hue.at("width").get<int>() / 2);
+	app.ui().drag(std::nullopt, point(x, hue.at("y").get<int>() + 10),
+		point(x, hue.at("y").get<int>() + (hue.at("height").get<int>() / 2)));
+	CHECK(color == "#608080");
+	CHECK(number(1) == 180.0F);
+
+	// The numbers: red to 255.
+	app.ui().click(std::nullopt, at(colorField(4)), ui::MouseButton::Left, 2, {});
+	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().text(std::nullopt, "255");
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(color == "#ff8080");
+	CHECK(number(1) == 0.0F);
+
+	// The swatches show the color the picker started with and the new one.
+	CHECK(looksLike(app, "#picker .color-old", {255, 0, 0}));
+	CHECK(looksLike(app, "#picker .color-new", {255, 128, 128}));
+
+	// The data model sets the color, e.g. a track's.
+	color = "#0000ff";
+	model.changed("color");
+	CHECK(app.waitUntil([&number] { return number(6) == 255.0F && number(1) == 240.0F; }));
+	CHECK(looksLike(app, "#picker .color-new", {0, 0, 255}));
 }
