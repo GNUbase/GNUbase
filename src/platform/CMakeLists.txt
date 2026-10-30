@@ -34,6 +34,10 @@ if(WIN32)
 		midi/winmm.cpp midi/winmm.h
 		winutf8.h)
 	target_include_directories(gnubase-platform SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/ext/asio/common)
+elseif(APPLE)
+	target_sources(gnubase-platform PRIVATE
+		audio/coreaudio.cpp audio/coreaudio.h)
+	target_link_libraries(gnubase-platform PRIVATE "-framework CoreAudio" "-framework CoreFoundation")
 endif()
 if(APPLE)
 	target_sources(gnubase-platform PRIVATE

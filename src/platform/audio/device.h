@@ -173,6 +173,10 @@ namespace gnubase::audio
 		// plays on one output (pair) at a time. Not on the audio thread; also while the device runs.
 		virtual void monitorInput(const InputMonitor& /*monitor*/) {}
 
+		// The audio workgroup of the device's audio thread (macOS: an os_workgroup_t), which threads that help it join
+		// (rt::WorkerPool), or null if it has none. Valid while the device is open.
+		virtual void* workgroup() const { return nullptr; }
+
 		// Called when the driver asks to be opened again, e.g. because its settings changed in its control panel. Never
 		// called on the audio thread. Set it while the device is stopped.
 		void onReset(std::function<void()> handler) { m_reset = std::move(handler); }
