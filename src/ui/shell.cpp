@@ -296,6 +296,15 @@ namespace gnubase::ui
 
 	void Shell::step(std::optional<std::chrono::milliseconds> timeout)
 	{
+		if (m_stepping)
+			throw std::logic_error("the UI can't step inside one of its steps, e.g. wait in its own event handlers");
+		m_stepping = true;
+		const struct Stepped
+		{
+			bool& stepping;
+			~Stepped() { stepping = false; }
+		} stepped{m_stepping};
+
 		std::optional<WindowEvent> event = m_windows.nextEvent(timeout);
 		while (event && m_running)
 		{

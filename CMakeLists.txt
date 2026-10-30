@@ -66,6 +66,20 @@ set(LUNASVG_BUILD_EXAMPLES OFF CACHE BOOL "Set by GNUbase for LunaSVG")
 add_subdirectory(ext/lunasvg EXCLUDE_FROM_ALL SYSTEM)
 set(CMAKE_DISABLE_FIND_PACKAGE_lunasvg ON) # RmlUi takes the target above, never a LunaSVG installed on the system
 set(RMLUI_SVG_PLUGIN ON CACHE BOOL "Enable plugin for SVG images" FORCE)
+# Lua 5.4 for scripting. Compiled as C++, so a Lua error unwinds C++ code with an exception instead of longjmp and
+# destructors run. Everything else is the official build: the library without the lua program and the test library.
+file(GLOB luaSources ${PROJECT_SOURCE_DIR}/ext/lua/l*.c)
+list(FILTER luaSources EXCLUDE REGEX "/(lua|ltests)[.]c$")
+set_source_files_properties(${luaSources} PROPERTIES LANGUAGE CXX)
+add_library(lua STATIC ${luaSources})
+target_include_directories(lua SYSTEM PUBLIC ${PROJECT_SOURCE_DIR}/ext/lua)
+target_compile_definitions(lua PRIVATE $<$<NOT:$<PLATFORM_ID:Windows>>:LUA_USE_POSIX>)
+# RmlUi's Lua plugin runs UI scripts on that Lua (#208): RmlUi takes the target below, never a Lua installed on the
+# system.
+add_library(Lua::Lua INTERFACE IMPORTED)
+target_link_libraries(Lua::Lua INTERFACE lua)
+set(RMLUI_LUA_BINDINGS ON CACHE BOOL "Build Lua bindings" FORCE)
+set(RMLUI_LUA_BINDINGS_LIBRARY "lua_as_cxx" CACHE STRING "Lua library for the Lua bindings" FORCE)
 add_subdirectory(ext/RmlUi EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/Catch2 EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/json EXCLUDE_FROM_ALL SYSTEM)
@@ -82,14 +96,6 @@ add_subdirectory(ext/miniz EXCLUDE_FROM_ALL SYSTEM)
 # miniz adds /Zi: its files share one .pdb, which compiles through sccache can't write in parallel. Four small files,
 # so they skip the compiler cache.
 set_target_properties(miniz PROPERTIES C_COMPILER_LAUNCHER "")
-# Lua 5.4 for scripting. Compiled as C++, so a Lua error unwinds C++ code with an exception instead of longjmp and
-# destructors run. Everything else is the official build: the library without the lua program and the test library.
-file(GLOB luaSources ${PROJECT_SOURCE_DIR}/ext/lua/l*.c)
-list(FILTER luaSources EXCLUDE REGEX "/(lua|ltests)[.]c$")
-set_source_files_properties(${luaSources} PROPERTIES LANGUAGE CXX)
-add_library(lua STATIC ${luaSources})
-target_include_directories(lua SYSTEM PUBLIC ${PROJECT_SOURCE_DIR}/ext/lua)
-target_compile_definitions(lua PRIVATE $<$<NOT:$<PLATFORM_ID:Windows>>:LUA_USE_POSIX>)
 # cpp-httplib for the MCP server's HTTP transport: header-only, without TLS or compression.
 add_library(cpp-httplib INTERFACE)
 target_include_directories(cpp-httplib SYSTEM INTERFACE ${PROJECT_SOURCE_DIR}/ext/cpp-httplib)

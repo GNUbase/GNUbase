@@ -1,0 +1,18 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The rename dialog that lua-track.rml's Lua opens, bound to its data model "rename". -->
+<rml>
+<head>
+	<title>Rename track</title>
+	<style>
+		body { display: block; position: absolute; left: 100dp; top: 60dp; width: 300dp; height: 140dp; margin: 0; font-family: Inter; font-size: 14dp; }
+		div, p { display: block; }
+		#name { display: block; width: 200dp; height: 20dp; }
+		button { display: inline-block; width: 80dp; height: 24dp; }
+	</style>
+</head>
+<body id="rename" data-model="rename">
+	<p id="message">Enter a new name for the track.</p>
+	<input type="text" id="name" data-value="name"/>
+	<div><button id="ok" onclick="renameTrack(document)">OK</button><button id="cancel" onclick="document:Close()">Cancel</button></div>
+</body>
+</rml>

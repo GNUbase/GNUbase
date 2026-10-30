@@ -30,6 +30,9 @@ An event is a table with `name`, `data` (what changed) and `request` (the comman
 - The MCP tool `script_run` runs untrusted code: no `io`, `os`, `debug`, `package`, `require`, `dofile` or
   `loadfile`, `load` takes source code only, and Lua code may run for at most 60 seconds. It returns what the script
   printed.
+- The UI runs its documents' Lua on a trusted runtime of its own, with RmlUi's Lua plugin (the global `rmlui`) and the
+  MCP UI tools as functions: `gnubase.ui.click{selector = "#ok"}` for `ui_click`, and so on, with the same arguments
+  and results ([features/ui-lua.md](features/ui-lua.md)).
 
 ## Tests
 
@@ -84,7 +87,9 @@ Golden files, in trusted scripts only:
 - `test.readWav(path)` returns such audio from a 32-bit float WAV file; `test.writeWav(path, audio)` writes one.
 
 Every `tests/lua/*.lua` is a ctest test with the label `lua`, which runs `gnubase --headless --script` in the source
-folder. AI agents run test cases with the MCP tool `script_run`, whose output has the report.
+folder. Every `tests/lua/ui/*.lua` is a UI test, labelled `ui` and `lua`, which runs in the UI's runtime with the app's
+UI ([features/ui-lua.md](features/ui-lua.md)). AI agents run test cases with the MCP tool `script_run`, whose output
+has the report.
 
 ## Commands
 

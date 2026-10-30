@@ -1,6 +1,6 @@
 # UI automation
 
-MCP clients and UI tests ([ui-tests.md](ui-tests.md)), and later Lua (#208), read GNUbase's UI back and drive it as a user would
+MCP clients, UI tests ([ui-tests.md](ui-tests.md)) and Lua ([ui-lua.md](ui-lua.md)) read GNUbase's UI back and drive it as a user would
 (#58): its windows and documents, the DOM with each element's box, screenshots of windows or single elements, and mouse
 and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
 
@@ -16,7 +16,8 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
   `ui_drag`, `ui_wheel`, `ui_key` and `ui_text` to the MCP server; the windowed app serves them with `--mcp-http`, next
   to the engine's tools and `script_run`. Headless GNUbase has no UI and no UI tools. A screenshot comes back as MCP
   image content, a PNG: a tool returns the PNG as `Json::binary`, which `mcp::Server` sends as an image. PNG encoding
-  runs on the server's thread.
+  runs on the server's thread. `app::addUiFunctions` adds the same tools to the UI's Lua as `gnubase.ui.click` and so
+  on, from the same list ([ui-lua.md](ui-lua.md)).
 - **Coordinates.** Everything is in the window's pixels, as in its screenshots: an element's box, the points that
   mouse tools take, the window's size. A window's dp ratio (its monitor's scale times the UI scale, #53) converts to dp.
 - **The DOM.** An element has its tag, id, classes, other attributes, a form control's value, its active

@@ -7,7 +7,7 @@ GNUbase is licensed under the GPL-3.0-or-later, so everything that goes into it 
 | Component | Where | Used for | In the app | License | License text |
 |---|---|---|---|---|---|
 | [SDL 3](https://github.com/libsdl-org/SDL) | `ext/SDL` (GNUbase fork) | windows, input, graphics | yes, linked statically | zlib | `ext/SDL/LICENSE.txt` |
-| [RmlUi](https://github.com/mikke89/RmlUi) | `ext/RmlUi` (GNUbase fork) | user interface (core and debugger), and from its `Backends` folder the SDL input code and the SDL_GPU renderer | yes, linked statically | MIT | `ext/RmlUi/LICENSE.txt` |
+| [RmlUi](https://github.com/mikke89/RmlUi) | `ext/RmlUi` (GNUbase fork) | user interface (core, debugger and Lua plugin), and from its `Backends` folder the SDL input code and the SDL_GPU renderer | yes, linked statically | MIT | `ext/RmlUi/LICENSE.txt` |
 | [FreeType](https://freetype.org) | `ext/freetype` (2.15.0) | rendering text for RmlUi's font engine | yes, linked statically | FreeType License or GPL-2.0-or-later, at the user's choice | `ext/freetype/LICENSE.TXT`, `ext/freetype/docs/FTL.TXT` and `ext/freetype/docs/GPLv2.TXT` |
 | [LunaSVG](https://github.com/sammycage/lunasvg) | `ext/lunasvg` (3.5.0 and later fixes) | rasterizing SVG icons and graphics for RmlUi's SVG plugin ([features/svg.md](features/svg.md)) | yes, linked statically | MIT | `ext/lunasvg/LICENSE` |
 | [Inter](https://github.com/rsms/inter) 4.1 | `resources/fonts/Inter` | the user interface's text | yes, as font files | SIL Open Font License 1.1 | `resources/fonts/Inter/OFL.txt` |

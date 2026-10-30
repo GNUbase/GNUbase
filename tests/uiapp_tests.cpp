@@ -3,6 +3,7 @@
 // dummy device, driven with ui::Automation as MCP's UI tools drive it, with screenshots compared with golden images.
 #include "uiapp.h"
 
+#include "scripting/runtime.h"
 #include "ui/automation.h"
 #include "ui/themes.h"
 
@@ -13,6 +14,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -95,4 +98,16 @@ TEST_CASE("settings changed through the engine restyle GNUbase's UI", "[ui]")
 	app.call("settings.set", {{"key", "ui.scale"}, {"value", 2.0}});
 	REQUIRE(
 		app.waitUntil([&app, monitorScale] { return std::abs(app.main().dpRatio() - (2.0F * monitorScale)) < 0.01F; }));
+}
+
+// UI tests in Lua (#208): ctest runs each tests/lua/ui/*.lua through this test case, which GNUBASE_LUA_UI_TEST tells
+// which file, in the source folder. The file runs in the app's UI Lua on the UI thread, and prints its report.
+TEST_CASE("a UI test written in Lua passes", "[.][ui][lua-ui]")
+{
+	const char* file = std::getenv("GNUBASE_LUA_UI_TEST");
+	REQUIRE(file != nullptr);
+	test::UiApp app;
+	const std::optional<std::string> error = app.lua().runFile(std::filesystem::u8path(file));
+	INFO(error.value_or(""));
+	CHECK_FALSE(error.has_value());
 }
