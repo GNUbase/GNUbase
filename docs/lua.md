@@ -924,6 +924,20 @@ Returns:
 
 - `events`: array of integer, required
 
+#### `gnubase.event.get`
+
+Tells where audio events and MIDI parts are, as the info line shows them: for each its kind (audio or midi), track, name (an audio event's clip's), start, end and length in project samples, start and end in ticks, mute, lock and its shared copies' group (0: none).
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `events`: array of integer, required
+
+Returns:
+
+- `events`: array of object, required
+
 #### `gnubase.event.glue`
 
 Glues audio events or MIDI parts of one track into the first of them. Audio events glue where one continues the other in the same clip, as after a split; MIDI parts become one part from the first start to the last end, with all their notes and controllers. Returns the event.

@@ -1146,6 +1146,20 @@ Result:
 
 - `events`: array of integer, required
 
+#### `event_get`
+
+Engine command `event.get`. Read-only.
+
+Tells where audio events and MIDI parts are, as the info line shows them: for each its kind (audio or midi), track, name (an audio event's clip's), start, end and length in project samples, start and end in ticks, mute, lock and its shared copies' group (0: none).
+
+Arguments:
+
+- `events`: array of integer, required
+
+Result:
+
+- `events`: array of object, required
+
 #### `event_glue`
 
 Engine command `event.glue`.

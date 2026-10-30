@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <map>
 #include <set>
@@ -57,6 +58,7 @@ namespace gnubase::engine
 			require(!ids.empty(), "events must not be empty");
 			std::set<ObjectId> seen;
 			std::vector<Item> items;
+			items.reserve(ids.size());
 			for (const ObjectId id : ids)
 			{
 				require(seen.insert(id).second, "event " + std::to_string(id) + " is named twice");
@@ -480,6 +482,7 @@ namespace gnubase::engine
 			const Shift shift = shiftFrom(parameters);
 			const bool shared = parameters.value("shared", false);
 			std::vector<Item> copies;
+			copies.reserve(items.size());
 			for (const Item& item : items)
 			{
 				const ObjectId track = parameters.value("track", item.track());
@@ -721,6 +724,27 @@ namespace gnubase::engine
 			return {{"events", idsOf(items)}};
 		}
 
+		// What the info line shows of an event or part (reference manual p. 72): where it is in project samples and
+		// in ticks, whatever the track's time base.
+		Json eventInfo(Project& project, CommandContext& context)
+		{
+			Json result = Json::array();
+			for (const Item& item : itemsFrom(project, context.parameters(), false))
+			{
+				const time::Position end = endOf(project, item);
+				const bool audio = item.audio != nullptr;
+				const time::Samples start = samples(project, item.position());
+				Json info = {{"id", item.id()}, {"kind", audio ? "audio" : "midi"}, {"track", item.track()},
+					{"name", audio ? project.clips.at(item.audio->clip).name : item.part->name}, {"start", start},
+					{"end", samples(project, end)}, {"length", samples(project, end) - start},
+					{"startTicks", ticks(project, item.position())}, {"endTicks", ticks(project, end)},
+					{"mute", audio ? item.audio->mute : item.part->mute}, {"lock", item.locked()},
+					{"shared", audio ? ObjectId{0} : item.part->shared}};
+				result.push_back(std::move(info));
+			}
+			return {{"events", std::move(result)}};
+		}
+
 		// Schemas.
 
 		Json integer()
@@ -876,6 +900,15 @@ namespace gnubase::engine
 			{"event.remove", 1, "Removes audio events and MIDI parts. Locked ones can't be removed.",
 				schema({{"events", events()}}, {"events"}), {{"type", "object"}}, false},
 			"Delete", removeEvents);
+
+		addEdit(engine,
+			{"event.get", 1,
+				"Tells where audio events and MIDI parts are, as the info line shows them: for each its kind (audio or "
+				"midi), track, name (an audio event's clip's), start, end and length in project samples, start and end "
+				"in ticks, mute, lock and its shared copies' group (0: none).",
+				schema({{"events", events()}}, {"events"}),
+				schema({{"events", {{"type", "array"}, {"items", {{"type", "object"}}}}}}, {"events"}), true},
+			{}, eventInfo);
 
 		addEdit(engine,
 			{"event.toRealCopy", 1,

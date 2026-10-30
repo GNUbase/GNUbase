@@ -27,6 +27,7 @@ add_library(gnubase-ui STATIC
 	eventdisplay.cpp
 	eventdisplay.h
 	eventdisplaymenus.cpp
+	eventediting.cpp
 	fonts.cpp
 	fonts.h
 	gpurenderer.cpp

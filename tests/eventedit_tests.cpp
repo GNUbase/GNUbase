@@ -357,3 +357,24 @@ TEST_CASE("event.fillLoop fills the locators with copies, cutting the last one",
 	CHECK(f.midi(shared[0]).at("position") == 0);
 	CHECK(f.midi(shared[0]).at("shared") == f.midi(part).at("shared"));
 }
+
+TEST_CASE("event.get tells where events and parts are, in samples and ticks", "[unit]")
+{
+	Fixture f;
+	const int64_t event = f.audioEvent(f.track("audio", "linear"));
+	const int64_t part = f.part(f.track("midi"));
+	f.call("event.set", {{"events", {part}}, {"mute", true}});
+
+	const Json info = f.call("event.get", {{"events", {event, part}}}).at("events");
+	REQUIRE(info.size() == 2);
+	CHECK(info[0].at("kind") == "audio");
+	CHECK(info[0].at("name") == "take");
+	CHECK(info[0].at("start") == g_second);
+	CHECK(info[0].at("end") == 3 * g_second);
+	CHECK(info[0].at("startTicks") == 2 * g_quarter);
+	CHECK(info[1].at("kind") == "midi");
+	CHECK(info[1].at("length") == 2 * g_second);
+	CHECK(info[1].at("endTicks") == 2 * g_bar);
+	CHECK(info[1].at("mute") == true);
+	CHECK(info[1].at("lock") == false);
+}
