@@ -73,7 +73,7 @@ namespace gnubase::testplugins
 		// Deactivate and activate the plugin again, e.g. to apply a new latency.
 		virtual void requestRestart() = 0;
 		// Read the parameter values again, e.g. after the plugin changed them itself.
-		virtual void requestValuesRescan() {}
+		virtual void requestValuesRescan() = 0;
 	};
 
 	struct ProcessBlock
