@@ -47,7 +47,7 @@ namespace gnubase::engine::metronome
 			return tick >= 0 ? tick / length : -((-tick + length - 1) / length);
 		}
 		time::Ticks barStart(int64_t bar) const { return bar * barLength(); }
-		time::TimeSignature signatureAt(time::Ticks) const { return signature; }
+		time::TimeSignature signatureAt(time::Ticks /*tick*/) const { return signature; }
 		time::Samples toSamples(time::Ticks tick) const
 		{
 			const double beats = static_cast<double>(tick) / static_cast<double>(time::g_ticksPerQuarter);
@@ -105,7 +105,9 @@ namespace gnubase::engine::metronome
 				const time::Samples at = timeline.toSamples(start + (length * k / clicks));
 				if (at >= end)
 					return;
-				const int accent = pattern != nullptr ? pattern->accents[static_cast<size_t>(k)] : (k == 0 ? 1 : 2);
+				int accent = k == 0 ? 1 : 2; // the default pattern
+				if (pattern != nullptr)
+					accent = pattern->accents[static_cast<size_t>(k)];
 				if (at >= begin && accent != 0)
 					click(at, accent);
 			}

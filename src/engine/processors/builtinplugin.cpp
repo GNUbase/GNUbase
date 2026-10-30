@@ -320,18 +320,23 @@ namespace gnubase::engine::processors
 	{
 		const plugin::Transport& first = process.transport[0].transport;
 		graph::TransportBlock block;
-		block.playing = (first.flags & plugin::Transport::Playing) != 0;
 		block.position = first.position;
 		if ((first.flags & plugin::Transport::TempoValid) != 0 && first.tempo > 0.0)
 			block.tempo = first.tempo;
+		// After a count-in the block plays from a later segment on: the frames before it are stopped.
+		const size_t total = process.transportCount;
+		size_t start = 0;
+		while (start < total && (process.transport[start].transport.flags & plugin::Transport::Playing) == 0)
+			++start;
+		block.playing = start < total;
 		if (!block.playing)
 			return block;
-		const size_t count = std::min<size_t>(process.transportCount, m_segments.size());
+		const size_t count = std::min<size_t>(total - start, m_segments.size());
 		for (size_t i = 0; i < count; ++i)
 		{
-			const uint32_t begin = process.transport[i].offset;
-			const uint32_t end = i + 1 < count ? process.transport[i + 1].offset : process.frames;
-			m_segments[i] = {begin, end - begin, process.transport[i].transport.position};
+			const plugin::TransportSegment& segment = process.transport[start + i];
+			const uint32_t end = i + 1 < count ? process.transport[start + i + 1].offset : process.frames;
+			m_segments[i] = {segment.offset, end - segment.offset, segment.transport.position};
 		}
 		block.segments = m_segments.data();
 		block.segmentCount = count;

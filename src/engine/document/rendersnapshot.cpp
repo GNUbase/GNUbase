@@ -54,8 +54,16 @@ namespace gnubase::engine
 		snapshot->tempo = project.tempo;
 		snapshot->signatures = project.signatures;
 		snapshot->metronome = project.metronome;
-		if (snapshot->metronome.outputs.empty() && mainMix(project) != 0)
-			snapshot->metronome.outputs.push_back(mainMix(project)); // the default output
+		std::vector<ObjectId>& outputs = snapshot->metronome.outputs;
+		outputs.erase(std::remove_if(outputs.begin(), outputs.end(),
+						  [&project](ObjectId id)
+						  {
+							  return std::none_of(project.busses.begin(), project.busses.end(), [id](const Bus& bus)
+								  { return bus.id == id && bus.direction == BusDirection::Output; });
+						  }),
+			outputs.end());
+		if (outputs.empty() && mainMix(project) != 0)
+			outputs.push_back(mainMix(project)); // the default output, also when the chosen busses are gone
 		snapshot->panLaw = project.panLaw;
 		snapshot->maxVolume = project.maxVolume;
 

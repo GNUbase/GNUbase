@@ -1532,7 +1532,7 @@ Result:
 
 Engine command `metronome.setPattern`.
 
-Sets the click pattern of a time signature: accents, the bar's clicks, evenly spread over it, each with an accent from 1 (the first beat's sound) to 4, or 0 for a click that stays silent; up to 64 clicks, e.g. [1, 3, 3, 2, 3, 3] for triplet eighths in 2/4. Without accents, or with an empty array, the signature goes back to its default pattern: a click per beat, the first with accent 1, the others with accent 2. The patterns apply wherever a signature holds, during playback and count-ins.
+Sets the click pattern of a time signature: accents, the bar's clicks, evenly spread over it, each with an accent from 1 (the first beat's sound) to 4, or 0 for a click that stays silent; up to 64 clicks, e.g. [1, 3, 3, 2, 3, 3] for triplet eighths in 2/4. Without accents, or with an empty array, the signature goes back to its default pattern: a click per beat, the first with accent 1, the others with accent 2. The patterns apply wherever a signature holds, during playback and count-ins. Signatures with a numerator up to 64 have patterns; longer bars click on every beat.
 
 Arguments:
 

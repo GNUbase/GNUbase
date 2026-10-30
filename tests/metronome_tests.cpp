@@ -254,6 +254,9 @@ TEST_CASE("metronome.set changes the given settings, checks them and is no undo 
 	CHECK_THAT(
 		reject(client, "metronome.setPattern", {{"numerator", 4}, {"denominator", 4294967300LL}, {"accents", {1}}}),
 		ContainsSubstring("denominator"));
+	CHECK_THAT(
+		reject(client, "metronome.setPattern", {{"numerator", 4}, {"denominator", 4}, {"accents", {1, 4294967297LL}}}),
+		ContainsSubstring("accents"));
 	CHECK(run(client, "metronome.get") == before);
 }
 
@@ -468,6 +471,7 @@ TEST_CASE("the MIDI click plays its notes on the destination instrument", "[inte
 	run(client, "audio.render", {{"frames", 4000}});
 	const std::vector<float> after = capture(client, 0, 24000);
 	CHECK(std::all_of(after.begin() + 20000, after.end(), [](float s) { return s == 0.0f; }));
+	run(client, "metronome.set", {{"midi", {{"channel", 2}}}}); // the settings can still change
 }
 
 TEST_CASE("the audio click plays through the chosen output busses", "[integration]")
@@ -489,6 +493,14 @@ TEST_CASE("the audio click plays through the chosen output busses", "[integratio
 		const std::vector<float> main = capture(client, 0, 32000);
 		CHECK(std::all_of(main.begin() + 16000, main.end(), [](float s) { return s == 0.0f; }));
 		CHECK(framesOf(onsets(capture(client, 2, 32000))) == std::vector<int64_t>{16000, 24000});
+	}
+	SECTION("a removed bus: the main mix again, and the settings can still change")
+	{
+		run(client, "metronome.set", {{"audio", {{"outputs", {click}}}}});
+		run(client, "bus.remove", {{"bus", click}});
+		run(client, "metronome.set", {{"audio", {{"level", -1.0}}}});
+		run(client, "audio.render", {{"frames", 16000}});
+		CHECK(framesOf(onsets(capture(client, 0, 32000))) == std::vector<int64_t>{0, 8000, 16000, 24000});
 	}
 	SECTION("without outputs, the main mix")
 	{

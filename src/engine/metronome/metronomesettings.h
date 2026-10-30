@@ -117,5 +117,5 @@ namespace gnubase::engine::metronome
 
 	// Sets a signature's pattern, or with no accents goes back to its default pattern. Throws CommandError for
 	// patterns of more than g_maxClicks clicks or accents above g_accents.
-	void setPattern(MetronomeSettings& settings, time::TimeSignature signature, const std::vector<int>& accents);
+	void setPattern(MetronomeSettings& settings, time::TimeSignature signature, const Json& accents);
 }

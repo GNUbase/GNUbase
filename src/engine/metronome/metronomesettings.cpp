@@ -374,7 +374,7 @@ namespace gnubase::engine::metronome
 		settings = std::move(result);
 	}
 
-	void setPattern(MetronomeSettings& settings, time::TimeSignature signature, const std::vector<int>& accents)
+	void setPattern(MetronomeSettings& settings, time::TimeSignature signature, const Json& accents)
 	{
 		ClickPattern pattern;
 		if (!accents.empty())

@@ -42,7 +42,7 @@ namespace gnubase::engine::graph
 		// countIn. If the count-in ends in the block, playback starts after them, with the first segment.
 		uint32_t countInFrames = 0;
 		int64_t countInPosition = 0;
-		CountIn countIn;
+		CountIn countIn{};
 	};
 
 	// What a processor gets for one block.
