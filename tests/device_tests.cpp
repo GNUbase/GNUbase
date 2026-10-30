@@ -10,8 +10,12 @@
 #include "platform/rt/workerpool.h"
 #endif
 #ifdef __linux__
+#include "platform/audio/jack.h"
 #include "platform/audio/pipewire.h"
 #include "platform/process.h"
+
+#include <dlfcn.h>
+#include <jack/jack.h>
 #endif
 #include "devicecontract.h"
 #include "platform/hosttime.h"
@@ -26,6 +30,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -416,6 +421,223 @@ TEST_CASE("the PipeWire backend lists sinks with sources and names their channel
 }
 #endif
 
+#ifdef __linux__
+namespace
+{
+	bool required(const char* variable)
+	{
+		const char* value = std::getenv(variable);
+		return value != nullptr && std::string(value) == "1";
+	}
+
+	// A JACK backend on this libjack, or nothing if no JACK server runs for it. With requireVariable set to 1, one
+	// must: CI starts jackd with its dummy driver (tools/start-jack.sh) and PipeWire (tools/start-pipewire.sh).
+	std::unique_ptr<Backend> jackOrSkip(const std::string& library, const char* requireVariable)
+	{
+		std::unique_ptr<Backend> backend = makeJackBackend(library);
+		try
+		{
+			REQUIRE(backend->devices().size() == 1);
+		}
+		catch (const DeviceError& error)
+		{
+			if (required(requireVariable))
+				FAIL(error.what());
+			return nullptr;
+		}
+		return backend;
+	}
+
+	// PipeWire's libjack, where Debian and Ubuntu (pipewire-jack) or Fedora install it; empty if it isn't there.
+	std::string pipeWireJack()
+	{
+#if defined(__x86_64__)
+		const std::string debian = "/usr/lib/x86_64-linux-gnu/pipewire-0.3/jack/libjack.so.0";
+#elif defined(__aarch64__)
+		const std::string debian = "/usr/lib/aarch64-linux-gnu/pipewire-0.3/jack/libjack.so.0";
+#else
+		const std::string debian;
+#endif
+		for (const std::string& path : {debian, std::string("/usr/lib64/pipewire-0.3/jack/libjack.so.0")})
+			if (!path.empty() && std::filesystem::exists(path))
+				return path;
+		return {};
+	}
+
+	// A JACK client with two physical capture and two physical playback ports, as a sound card's driver has them.
+	// PipeWire marks only hardware ports physical, and in CI it has null sinks only.
+	class FakeHardware
+	{
+	public:
+		explicit FakeHardware(const std::string& library)
+		{
+			m_library = dlopen(library.c_str(), RTLD_NOW | RTLD_LOCAL);
+			REQUIRE(m_library != nullptr);
+			const auto open = function<decltype(&jack_client_open)>("jack_client_open");
+			const auto add = function<decltype(&jack_port_register)>("jack_port_register");
+			m_close = function<decltype(&jack_client_close)>("jack_client_close");
+			jack_status_t status{};
+			m_client = open("gnubase-test-hardware", JackNoStartServer, &status);
+			REQUIRE(m_client != nullptr);
+			for (const char* name : {"capture_1", "capture_2", "playback_1", "playback_2"})
+			{
+				const unsigned long direction = name[0] == 'c' ? JackPortIsOutput : JackPortIsInput;
+				REQUIRE(add(m_client, name, JACK_DEFAULT_AUDIO_TYPE,
+							direction | JackPortIsPhysical | JackPortIsTerminal, 0) != nullptr);
+			}
+			REQUIRE(function<decltype(&jack_activate)>("jack_activate")(m_client) == 0);
+		}
+
+		~FakeHardware() { m_close(m_client); } // unplugs it; the library stays loaded, as the backend's
+
+		FakeHardware(const FakeHardware&) = delete;
+		FakeHardware& operator=(const FakeHardware&) = delete;
+
+	private:
+		template <typename Function> Function function(const char* name)
+		{
+			const auto result = reinterpret_cast<Function>(dlsym(m_library, name));
+			REQUIRE(result != nullptr);
+			return result;
+		}
+
+		void* m_library = nullptr;
+		jack_client_t* m_client = nullptr;
+		decltype(&jack_client_close) m_close = nullptr;
+	};
+
+	// Takes longer than a cycle once, a few blocks in, so that the server reports an xrun.
+	class LateCallback : public AudioCallback
+	{
+	public:
+		explicit LateCallback(double seconds) : m_late(static_cast<gnubase::HostTime>(seconds * 1e9)) {}
+
+		void process(const DeviceBlock& /*block*/) noexcept override
+		{
+			if (m_blocks.fetch_add(1) != 4)
+				return;
+			const gnubase::HostTime until = gnubase::hostTime() + m_late;
+			while (gnubase::hostTime() < until)
+			{
+			}
+		}
+
+	private:
+		gnubase::HostTime m_late;
+		std::atomic<int> m_blocks{0};
+	};
+
+	// Waits up to two seconds for done().
+	bool waitUntil(const std::function<bool()>& done)
+	{
+		for (int i = 0; i < 200 && !done(); ++i)
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		return done();
+	}
+
+	// A running device leaves itself alone, but asks for a reset when another client changes the server's buffer size,
+	// and keeps its blocks within its block size meanwhile. PipeWire's JACK layer takes buffer size requests as a hint
+	// (clock.force-quantum) that it may not follow, so there only the first part is checked.
+	void checkJackResets(Backend& backend, bool bufferSizeChanges)
+	{
+		const std::unique_ptr<Device> device = backend.open(config("default"));
+		std::atomic<int> resets{0};
+		device->onReset([&resets] { ++resets; });
+		ContractCallback callback(device->format());
+		device->start(callback);
+		REQUIRE(callback.waitFor(8));
+		std::this_thread::sleep_for(std::chrono::milliseconds(300));
+		CHECK(resets == 0);
+		if (!bufferSizeChanges)
+			return;
+
+		const std::vector<uint32_t> sizes = device->info().blockSizes;
+		const uint32_t other = sizes.back() != device->format().blockSize ? sizes.back() : sizes.front();
+		{
+			const std::unique_ptr<Device> changer = backend.open(config("default", 0.0, other));
+			CHECK(changer->format().blockSize == other);
+			CHECK(waitUntil([&resets] { return resets > 0; }));
+			CHECK(callback.waitFor(4));
+		}
+		CHECK(callback.violations() == 0);
+	}
+
+	// The server reports a cycle the device took too long for as an xrun, which the device counts as an overload.
+	void checkJackXruns(Backend& backend)
+	{
+		const std::unique_ptr<Device> device = backend.open(config("default"));
+		const double cycle = device->format().blockSize / device->format().sampleRate;
+		LateCallback callback(cycle * 2); // much longer, and jackd drops the client
+		device->start(callback);
+		CHECK(waitUntil([&device] { return device->overloads() > 0; }));
+	}
+
+	// A device that uses the fake hardware's ports asks for a reset when it is unplugged.
+	void checkJackUnplug(Backend& backend, std::unique_ptr<FakeHardware> hardware)
+	{
+		const std::unique_ptr<Device> device = backend.open(config("default"));
+		const std::vector<std::string> outputs = device->info().outputs;
+		CHECK(std::find(outputs.begin(), outputs.end(), "gnubase-test-hardware:playback_2") != outputs.end());
+		std::atomic<int> resets{0};
+		device->onReset([&resets] { ++resets; });
+		ContractCallback callback(device->format());
+		device->start(callback);
+		REQUIRE(callback.waitFor(4));
+		hardware.reset();
+		CHECK(waitUntil([&resets] { return resets > 0; }));
+	}
+}
+
+TEST_CASE("the JACK backend keeps the device contract with jackd", "[integration]")
+{
+	const std::unique_ptr<Backend> backend = jackOrSkip("libjack.so.0", "GNUBASE_REQUIRE_JACK");
+	if (!backend)
+		SKIP("no JACK server runs here");
+	checkDeviceContract(*backend);
+	checkJackResets(*backend, true);
+	checkJackXruns(*backend);
+	checkJackUnplug(*backend, std::make_unique<FakeHardware>("libjack.so.0"));
+}
+
+TEST_CASE("the JACK backend keeps the device contract with PipeWire's JACK layer", "[integration]")
+{
+	const std::string library = pipeWireJack();
+	if (library.empty() && required("GNUBASE_REQUIRE_PIPEWIRE"))
+		FAIL("PipeWire's libjack isn't installed (pipewire-jack)");
+	const std::unique_ptr<Backend> backend =
+		library.empty() ? nullptr : jackOrSkip(library, "GNUBASE_REQUIRE_PIPEWIRE");
+	if (!backend)
+		SKIP("no PipeWire daemon with its JACK layer runs here");
+	auto hardware = std::make_unique<FakeHardware>(library);
+	checkDeviceContract(*backend);
+	checkJackResets(*backend, false);
+	checkJackUnplug(*backend, std::move(hardware));
+}
+
+TEST_CASE("the JACK backend lists the server's physical ports and refuses what the server doesn't do", "[integration]")
+{
+	const std::unique_ptr<Backend> backend = jackOrSkip("libjack.so.0", "GNUBASE_REQUIRE_JACK");
+	if (!backend)
+		SKIP("no JACK server runs here");
+	const DeviceInfo device = backend->devices().front();
+	CHECK(device.id == "default");
+	CHECK(!device.outputs.empty()); // e.g. system:playback_1
+	CHECK(device.sampleRates.size() == 1);
+	CHECK(device.clockSources.empty());
+	const double rate = device.sampleRates.front();
+	CHECK_THROWS_AS(backend->open(config("default", rate * 2)), DeviceError);
+	CHECK_THROWS_AS(backend->open(config("default", rate, 16384)), DeviceError);
+}
+
+TEST_CASE("the JACK backend reports a missing libjack as a device error", "[unit]")
+{
+	const std::unique_ptr<Backend> backend = makeJackBackend("libjack-that-isnt-there.so");
+	CHECK(backend->name() == "jack");
+	CHECK_THROWS_AS(backend->devices(), DeviceError);
+	CHECK_THROWS_AS(backend->open(config("")), DeviceError);
+}
+#endif
+
 TEST_CASE("the backends of this build come with the dummy backend last", "[unit]")
 {
 	const std::vector<std::unique_ptr<Backend>> backends = makeBackends();
@@ -423,6 +645,7 @@ TEST_CASE("the backends of this build come with the dummy backend last", "[unit]
 	CHECK(backends.back()->name() == "dummy");
 #ifdef __linux__
 	CHECK(backends.front()->name() == "pipewire");
+	CHECK(backends[1]->name() == "jack");
 #endif
 	std::set<std::string> names;
 	for (const std::unique_ptr<Backend>& backend : backends)
