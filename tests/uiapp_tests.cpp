@@ -159,7 +159,7 @@ TEST_CASE("a UI test written in Lua passes", "[.][ui][lua-ui]")
 TEST_CASE("keys zoom the project window", "[ui]")
 {
 	test::UiApp app({800, 300});
-	ui::EventDisplay& display = app.appUi().showProject();
+	const ui::EventDisplay& display = app.appUi().showProject();
 	const double scale = display.view().scale;
 
 	// The reference's keys in the project zone, which the project window has when it opens.
