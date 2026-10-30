@@ -1,0 +1,201 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// midi.inject plays MIDI into tracks as if from their MIDI input; midi.capture returns what instruments played.
+#include "engine/document/document.h"
+#include "engine/engine.h"
+
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
+
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
+
+using namespace gnubase::engine;
+using Catch::Matchers::ContainsSubstring;
+
+namespace
+{
+	Json run(Client& client, const std::string& command, Json parameters = Json::object())
+	{
+		const Result result = client.call(command, std::move(parameters));
+		INFO(command << " failed: " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	}
+
+	std::string reject(Client& client, const std::string& command, Json parameters)
+	{
+		const Result result = client.call(command, std::move(parameters));
+		INFO(command << " succeeded: " << result.value.dump());
+		REQUIRE(!result.ok());
+		return result.error;
+	}
+
+	ObjectId channelOf(const Json& added)
+	{
+		return added.at("channel").at("id").get<ObjectId>();
+	}
+
+	Json message(int64_t position, std::vector<int> bytes)
+	{
+		return {{"position", position}, {"bytes", std::move(bytes)}};
+	}
+
+	// An instrument track playing the note probe (channel 0: how many notes sound, channel 1: the sum of their
+	// pitches), and a MIDI track routed to it.
+	struct Probe
+	{
+		explicit Probe(int blockSize)
+		{
+			run(client, "audio.setDevice", {{"blockSize", blockSize}, {"inputChannels", 0}, {"captureSeconds", 1}});
+			instrument = channelOf(run(client, "track.add", {{"type", "instrument"}}));
+			midi = channelOf(run(client, "track.add", {{"type", "midi"}}));
+			run(client, "channel.set", {{"channel", instrument}, {"instrument", "noteProbe"}});
+			run(client, "channel.set", {{"channel", midi}, {"output", instrument}});
+		}
+
+		// A note from frame start to frame end, played into a channel.
+		void note(ObjectId channel, int64_t start, int64_t end, int pitch)
+		{
+			run(client, "midi.inject",
+				{{"channel", channel},
+					{"messages", {message(start, {0x90, pitch, 100}), message(end, {0x80, pitch, 0})}}});
+		}
+
+		std::vector<float> capture(int channel, int64_t start, int64_t frames)
+		{
+			return run(client, "audio.capture", {{"channel", channel}, {"start", start}, {"frames", frames}})
+				.at("samples")
+				.get<std::vector<float>>();
+		}
+
+		Engine engine;
+		Client client{engine};
+		ObjectId instrument = 0;
+		ObjectId midi = 0;
+	};
+
+	// The frames of a capture where a probe channel doesn't have the expected value, which is inside [from, to) and
+	// outside.
+	int64_t wrongFrames(const std::vector<float>& samples, int64_t from, int64_t to, float inside, float outside = 0.0f)
+	{
+		int64_t wrong = 0;
+		for (size_t i = 0; i < samples.size(); ++i)
+		{
+			const auto frame = static_cast<int64_t>(i);
+			wrong += samples[i] != (frame >= from && frame < to ? inside : outside) ? 1 : 0;
+		}
+		return wrong;
+	}
+}
+
+TEST_CASE("MIDI injected into instrument and MIDI tracks reaches the instrument at its exact frame", "[unit]")
+{
+	const int blockSize = GENERATE(1, 64, 100, 333);
+	INFO("block size " << blockSize);
+	Probe probe(blockSize);
+	probe.note(probe.instrument, 100, 400, 60);
+	probe.note(probe.midi, 250, 1000, 67);
+	run(probe.client, "audio.render", {{"frames", 1500}}); // the transport stands: tracks play their input anyway
+
+	const std::vector<float> count = probe.capture(0, 0, 1500);
+	const std::vector<float> pitches = probe.capture(1, 0, 1500);
+	for (size_t i = 0; i < count.size(); ++i)
+	{
+		const auto frame = static_cast<int64_t>(i);
+		const bool first = frame >= 100 && frame < 400;
+		const bool second = frame >= 250 && frame < 1000;
+		INFO("frame " << frame);
+		REQUIRE(count[i] == static_cast<float>((first ? 1 : 0) + (second ? 1 : 0)));
+		REQUIRE(pitches[i] == static_cast<float>((first ? 60 : 0) + (second ? 67 : 0)));
+	}
+}
+
+TEST_CASE("injected MIDI plays along with the parts while the transport plays", "[unit]")
+{
+	Probe probe(64);
+	const ObjectId track = run(probe.client, "project.get").at("tracks").at(0).at("id").get<ObjectId>();
+	const Json part = run(probe.client, "midiPart.add", {{"track", track}, {"position", 0}, {"length", 1720320}});
+	run(probe.client, "note.add", // frames 0 to 24000
+		{{"part", part.at("part").at("id")},
+			{"notes", {{{"position", 0}, {"length", 1720320}, {"pitch", 48}, {"velocity", 1.0}}}}});
+	probe.note(probe.midi, 500, 700, 72);
+	run(probe.client, "transport.play");
+	run(probe.client, "audio.render", {{"frames", 1000}});
+	CHECK(wrongFrames(probe.capture(0, 0, 1000), 500, 700, 2.0f, 1.0f) == 0);
+	CHECK(wrongFrames(probe.capture(1, 0, 1000), 500, 700, 120.0f, 48.0f) == 0);
+}
+
+TEST_CASE("MIDI injected for frames already processed plays at the start of the next block", "[unit]")
+{
+	Probe probe(64);
+	run(probe.client, "audio.render", {{"frames", 128}});
+	probe.note(probe.instrument, 10, 200, 60); // the device is at 128 already
+	run(probe.client, "audio.render", {{"frames", 128}});
+	CHECK(wrongFrames(probe.capture(0, 0, 256), 128, 200, 1.0f) == 0);
+
+	// Messages wait for their block, in the order they came for one frame.
+	run(probe.client, "midi.inject",
+		{{"channel", probe.instrument},
+			{"messages", {message(300, {0x90, 62, 100}), message(300, {0x80, 62, 0}), message(310, {0x80, 64, 0})}}});
+	run(probe.client, "midi.inject", {{"channel", probe.instrument}, {"messages", {message(290, {0x90, 64, 1})}}});
+	run(probe.client, "audio.render", {{"frames", 128}});
+	CHECK(wrongFrames(probe.capture(0, 256, 128), 34, 54, 1.0f) == 0); // 64 from 290 to 310; 62 doesn't sound
+}
+
+TEST_CASE("midi.capture returns what instruments played, at frame positions on the audio device", "[unit]")
+{
+	Probe probe(64);
+	CHECK(run(probe.client, "midi.capture") == Json{{"captured", Json::array()}, {"dropped", 0}});
+
+	// A program change with a bank from the instrument track's part, at frame 0.
+	const ObjectId track = run(probe.client, "project.get").at("tracks").at(0).at("id").get<ObjectId>();
+	const Json part = run(probe.client, "midiPart.add", {{"track", track}, {"position", 0}, {"length", 1720320}});
+	run(probe.client, "controller.add",
+		{{"part", part.at("part").at("id")},
+			{"controllers", {{{"position", 0}, {"type", "program"}, {"number", 3}, {"bank", 130}, {"channel", 2}}}}});
+
+	// Every kind of MIDI 1.0 channel message, injected into the MIDI track; a note-on of velocity 0 is a note-off.
+	run(probe.client, "midi.inject",
+		{{"channel", probe.midi},
+			{"messages",
+				{message(20, {0xB1, 7, 100}), message(30, {0xE0, 0x00, 0x40}), message(40, {0xD3, 90}),
+					message(50, {0x90, 62, 100}), message(60, {0xA0, 62, 80}), message(70, {0xC4, 9}),
+					message(300, {0x90, 62, 0})}}});
+	run(probe.client, "transport.play");
+	run(probe.client, "audio.render", {{"frames", 320}});
+
+	const auto entry = [&probe](int64_t position, std::vector<int> bytes)
+	{ return Json{{"channel", probe.instrument}, {"position", position}, {"bytes", std::move(bytes)}}; };
+	const Json captured = run(probe.client, "midi.capture");
+	CHECK(captured.at("captured") ==
+		Json::array({entry(0, {0xB2, 0, 1}), entry(0, {0xB2, 32, 2}), entry(0, {0xC2, 3}), entry(20, {0xB1, 7, 100}),
+			entry(30, {0xE0, 0x00, 0x40}), entry(40, {0xD3, 90}), entry(50, {0x90, 62, 100}), entry(60, {0xA0, 62, 80}),
+			entry(70, {0xC4, 9}), entry(300, {0x80, 62, 64})}));
+	CHECK(captured.at("dropped") == 0);
+	CHECK(run(probe.client, "midi.capture").at("captured").empty()); // each message once
+}
+
+TEST_CASE("midi.inject takes MIDI 1.0 channel messages for MIDI and instrument tracks", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId instrument = channelOf(run(client, "track.add", {{"type", "instrument"}}));
+	const ObjectId audio = channelOf(run(client, "track.add", {{"type", "audio"}}));
+	const auto inject = [&client](ObjectId channel, const Json& one)
+	{ return reject(client, "midi.inject", {{"channel", channel}, {"messages", Json::array({one})}}); };
+	CHECK_THAT(inject(instrument, message(0, {0x90, 60, 100})), ContainsSubstring("no audio device"));
+
+	run(client, "audio.setDevice", {{"inputChannels", 0}});
+	CHECK_THAT(inject(audio, message(0, {0x90, 60, 100})), ContainsSubstring("not a MIDI or instrument track"));
+	CHECK_THAT(inject(12345, message(0, {0x90, 60, 100})), ContainsSubstring("not a MIDI or instrument track"));
+	CHECK_THAT(inject(instrument, message(0, {0xF8})), ContainsSubstring("channel message"));
+	CHECK_THAT(inject(instrument, message(0, {0x3C, 100})), ContainsSubstring("channel message"));
+	CHECK_THAT(inject(instrument, message(0, {0x90, 60})), ContainsSubstring("3 bytes"));
+	CHECK_THAT(inject(instrument, message(0, {0xC0, 1, 2})), ContainsSubstring("2 bytes"));
+	CHECK_THAT(inject(instrument, message(0, {0x90, 200, 100})), ContainsSubstring("data bytes"));
+	CHECK_THAT(inject(instrument, message(-1, {0x90, 60, 100})), ContainsSubstring("position"));
+	CHECK(run(client, "midi.inject", {{"channel", instrument}, {"messages", Json::array()}}) == Json::object());
+}
