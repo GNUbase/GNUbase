@@ -33,7 +33,7 @@ namespace gnubase::engine
 			const uint8_t data2 = message.bytes[2];
 			graph::ProcessEvent event;
 			event.offset = offset;
-			event.channel = message.bytes[0] & 0x0FU;
+			event.channel = static_cast<uint8_t>(message.bytes[0] & 0x0FU);
 			event.key = data1;
 			switch (message.bytes[0] & 0xF0U)
 			{
@@ -65,7 +65,7 @@ namespace gnubase::engine
 			default: // 0xE0
 				event.type = Type::PitchBend;
 				event.key = 0;
-				event.value = midi::pitchBendFromMidi1(static_cast<uint16_t>(data1 | (data2 << 7U)));
+				event.value = midi::pitchBendFromMidi1(static_cast<uint16_t>(data1 | (uint32_t{data2} << 7U)));
 				break;
 			}
 			return event;
@@ -96,7 +96,7 @@ namespace gnubase::engine
 				break;
 			case Type::PitchBend:
 			{
-				const uint16_t bend = midi::pitchBendToMidi1(event.value);
+				const uint32_t bend = midi::pitchBendToMidi1(event.value);
 				add(0xE0U, bend, 3, bend >> 7U);
 				break;
 			}
