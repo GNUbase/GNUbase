@@ -54,7 +54,7 @@ TEST_CASE("time formats have names for commands and settings", "[unit]")
 		CHECK(ui::timeFormatFromName(ui::timeFormatName(format)) == format);
 	CHECK(ui::timeFormatName(ui::TimeFormat::BarsBeats) == "barsBeats");
 	CHECK(ui::timeFormatName(ui::TimeFormat::UserFrames) == "userFrames");
-	CHECK_FALSE(ui::timeFormatFromName("bars").has_value());
+	CHECK(!ui::timeFormatFromName("bars").has_value());
 }
 
 TEST_CASE("positions read in every time format as the engine converts them", "[unit]")
