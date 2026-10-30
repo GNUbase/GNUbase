@@ -222,8 +222,8 @@ namespace gnubase::engine
 		std::unique_ptr<Jobs> m_jobs;                    // background work such as backups
 		std::unique_ptr<plugins::HostManager> m_plugins; // outlives the audio engine, whose graphs may hold plugins
 		std::unique_ptr<ProjectModel> m_project;         // only the command thread touches the document
-		std::unique_ptr<AudioEngine> m_audio;            // plays the project; only the command thread changes it
 		std::unique_ptr<settings::Store> m_settings;     // the user settings; only the command thread uses them
+		std::unique_ptr<AudioEngine> m_audio;            // plays the project; only the command thread changes it
 		std::unique_ptr<peaks::PeakCache> m_peaks;       // waveform overviews of the project's media files
 		std::thread m_thread;
 	};

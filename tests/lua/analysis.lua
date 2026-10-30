@@ -4,7 +4,8 @@ local test = gnubase.test
 
 local function render(frequency, level, seconds)
 	gnubase.project.new()
-	gnubase.track.add{type = "audio"}
+	local track = gnubase.track.add{type = "audio"}
+	gnubase.channel.set{channel = track.channel.id, monitor = true}
 	gnubase.audio.setDevice{
 		captureSeconds = 10,
 		input = {processor = "sine", parameters = {Frequency = frequency, Level = level}},
