@@ -4,6 +4,7 @@ GNUbase has a built-in [Model Context Protocol](https://modelcontextprotocol.io)
 
 - **Tools come from the engine's command registry.** Every engine command is a tool, named with `_` instead of `.` (`track.add` is `track_add`), with the command's parameter schema as its input schema and its result schema as its output schema. A command that only reads is marked read-only (`readOnlyHint`). The [tool catalogue](#tool-catalogue) at the end lists them all; the registry itself is `engine_commands`.
 - **`script_run`** runs Lua code with the same API ([lua.md](lua.md)) in a sandbox, for work that takes many steps or for test cases written with `gnubase.test`.
+- **UI tools:** with its UI, GNUbase also lets agents read the UI back and use it: windows, the DOM, screenshots, mouse and keyboard (`ui_dom`, `ui_click`, ...). See [UI tools](#ui-tools).
 - **Events:** `events_take` returns what changed in the engine since the last call, such as `track.added` or `history.changed`, whoever changed it: this client, other MCP clients, Lua scripts or the UI. See [Events](#events).
 - **Resources:** queries without required parameters can also be read as resources, `gnubase://<command>`, e.g. `gnubase://project.get`.
 - **Errors:** a command that fails is a tool result with `isError: true` and the reason, such as `parameters.type must be one of [...]`, so the agent can correct itself. Malformed messages get JSON-RPC errors.
@@ -13,7 +14,7 @@ How it fits into GNUbase is described in [architecture.md](architecture.md#scrip
 
 ## Starting the server
 
-GNUbase serves MCP in headless mode, without UI. The engine plays through the dummy audio device, which has no hardware and captures its output in memory, so agents can render audio offline and measure it.
+GNUbase serves MCP in headless mode, without UI, or with its UI over HTTP (below). Headless, the engine plays through the dummy audio device, which has no hardware and captures its output in memory, so agents can render audio offline and measure it.
 
 **stdio** (the default): the MCP client starts GNUbase and talks to it over stdin and stdout, one JSON-RPC message per line. GNUbase stops when stdin ends.
 
@@ -34,6 +35,12 @@ gnubase --headless --mcp-http=8765     # a fixed port
 ```text
 MCP server: http://127.0.0.1:8765/mcp
 Access token: 3f1c...e9a0
+```
+
+**With the UI**: `--mcp-http` without `--headless` opens GNUbase's main window as usual and serves MCP over HTTP in the same way, with the [UI tools](#ui-tools) besides the engine's. It prints the URL and the token on stdout and serves until GNUbase quits. Over stdio only headless GNUbase serves MCP.
+
+```bash
+gnubase --mcp-http=8765 --project song.dawproject
 ```
 
 Clients send each message with `POST /mcp` and the header `Authorization: Bearer <token>`. Answers are JSON; notifications get `202 Accepted`. `initialize` starts a session and answers with its id in the header `Mcp-Session-Id`, which the client sends with every request after that; MCP clients do this on their own. `DELETE /mcp` ends the session, and so do 30 minutes without requests. Requests of a session that ended get `404`, and the client starts a new one with `initialize`. There is no stream of server-initiated messages yet, so `GET /mcp` answers `405`.
@@ -152,6 +159,26 @@ curl -X POST http://127.0.0.1:8765/mcp -H "Authorization: Bearer <token>" -H "Co
 
 Only `events_take` needs a session: send `initialize` first (`curl -i` shows the `Mcp-Session-Id` header of the answer) and then the header `Mcp-Session-Id: <id>` with every request.
 
+## UI tools
+
+GNUbase started with its UI and `--mcp-http` also has tools to look at the UI and use it, as a person would with the mouse and the keyboard, e.g. to test a feature end to end or to check how it looks. The UI is made of RmlUi documents (HTML-like, styled with CSS), so agents find elements with CSS selectors such as `#open`, `.track.selected` or `button`.
+
+- `ui_windows` lists the windows: their ids, which is the main window, their size in pixels and their dp ratio, and the documents each shows. The other tools take a `window`; without one they use the main window.
+- `ui_dom` reads the DOM: every element's tag, id, classes, other attributes, a form control's value, pseudo-classes such as `hover`, `focus` or `checked`, whether it's visible and its box. With a `selector` it returns the elements that match; `depth` limits how many levels of children come with them, and `depth: 0` returns the elements with their text.
+- `ui_screenshot` returns a PNG of the window, or with a `selector` of one element.
+- `ui_click`, `ui_move`, `ui_drag` and `ui_wheel` use the mouse on an element, by `selector` (and `index` among its matches), or on a point `x`, `y`. `ui_key` presses keys such as `Enter` or `Ctrl+S`; `ui_text` types text into the focused field. Each answers with the element it reached, so the agent sees what it hit.
+- `ui_wait` waits until an element is visible, or has a text, or until none is, e.g. for a dialog that a click opens.
+
+Boxes and points are in the window's pixels, as in its screenshots; on a monitor with a scale of 200 %, 1 dp is 2 pixels. An agent opening a dialog and reading it back:
+
+```json
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"ui_click","arguments":{"selector":"#rename"}}}
+{"id":5,"jsonrpc":"2.0","result":{"content":[…],"isError":false,"structuredContent":{"element":{"attributes":{"title":"Rename the track"},"box":{"height":30,"width":120,"x":10,"y":10},"id":"rename","pseudoClasses":["hover"],"tag":"button","text":"Rename track","visible":true}}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"ui_wait","arguments":{"selector":"#rename-dialog"}}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"ui_dom","arguments":{"selector":"#rename-dialog"}}}
+{"id":7,"jsonrpc":"2.0","result":{"content":[…],"isError":false,"structuredContent":{"elements":[{"box":{…},"children":[{"box":{…},"children":[{"text":"Enter a new name for Audio 01."}],"id":"message","tag":"p","visible":true},{"attributes":{"type":"text"},"box":{…},"id":"name","tag":"input","value":"Audio 01","visible":true},…],"id":"rename-dialog","tag":"body","visible":true}]}}}
+```
+
 ## Events
 
 Every session has a queue of the engine events since it started: what changed in the project, the transport, the audio device and the undo history, with the same names and data as in Lua ([lua.md](lua.md#events)). The events come from every client of the engine: this MCP client, other MCP clients, Lua scripts (those run with `script_run` too) and the UI. Over stdio, the whole input is one session; over HTTP, `initialize` starts a session for each client.
@@ -180,6 +207,7 @@ The MCP server gives a client the same power over GNUbase as the person using it
 - **Every HTTP request needs the access token** (`401` without it). The token is 32 random bytes from the operating system's random source, new on every start, and compared in constant time. Other users and programs on the machine can't use the server without it.
 - **Web pages can't use it.** Browsers send an `Origin` header; requests from pages of other origins are refused (`403`), which stops DNS rebinding attacks, where a web page reaches a local server through a name that resolves to 127.0.0.1.
 - **Tools act with your rights.** Some tools read and write files wherever you can, such as `project_load`, `project_save`, `media_add`, `media_convert`, `audio_record` and `audio_compare`. Only connect agents you trust with your files, and review what they do, as with any tool that edits files.
+- **UI tools act as you would.** With the UI, an agent can click, type and take screenshots in GNUbase's windows. They only reach GNUbase's own windows, never other programs or the OS's dialogs, such as file dialogs. Serving MCP with the UI is opt-in (`--mcp-http`), with the same token rules.
 - **`script_run` is sandboxed:** Lua without files, processes or bytecode (no `io`, `os`, `debug`, `package`, `require`, `dofile` or `loadfile`), and at most 60 seconds of Lua code per call. Scripts that come with a project never run without your consent.
 
 ## Troubleshooting
@@ -195,6 +223,9 @@ The MCP server gives a client the same power over GNUbase as the person using it
 | `405 Method Not Allowed` | The client opened `GET /mcp` for server-initiated messages, which GNUbase doesn't send yet. Clients fall back to POST. |
 | A tool result has `isError: true` | The command failed, and the text says why; nothing changed. `engine_commands` describes every command. |
 | This catalogue misses a tool | It's generated from the server; the tests fail when it's out of date. Run them with `GNUBASE_UPDATE_DOCS=1` and commit `docs/mcp.md`. |
+| The `ui_` tools are missing | GNUbase runs headless, which has no UI. Start it without `--headless`, with `--mcp-http`. |
+| A `ui_` tool says the UI didn't answer | The UI thread was busy for 10 seconds, e.g. loading a large project, or GNUbase is quitting. Try again. |
+| `ui_click` reports another element than the one asked for | Something covers it, such as a modal dialog; the click went to what is on top. `ui_screenshot` shows what the window looks like. |
 
 ## Tool catalogue
 
@@ -2413,6 +2444,157 @@ Result:
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required
+
+### ui
+
+#### `ui_click`
+
+Clicks the centre of the element that the CSS selector matches, or a point. The element must be visible. Returns the element under the mouse, the one that got the click unless another covers it.
+
+Arguments:
+
+- `button`: one of "left" | "right" | "middle". Left if left out.
+- `count`: integer. 2 for a double click; 1 if left out.
+- `index`: integer. Which of the elements the selector matches; 0, the first, if left out.
+- `modifiers`: array of one of "ctrl" | "shift" | "alt" | "meta". Keys held while clicking.
+- `selector`: string. A CSS selector; the mouse goes to the centre of the element it matches.
+- `window`: integer. The window's id from ui_windows; the main window if left out.
+- `x`: integer. Instead of a selector: the point in the window's pixels, with y.
+- `y`: integer. The point's y, with x.
+
+Result:
+
+- `element`: object or null, required
+
+#### `ui_dom`
+
+Read-only.
+
+Reads a window's DOM (RmlUi documents): its documents, or with selector the elements that the CSS selector matches (like querySelectorAll), each as a tree of elements with tag, id, classes, other attributes, a form control's value, pseudo-classes such as hover, focus or checked, whether it's visible, its border box in the window's pixels and its children, depth levels deep. Text is a child {"text": ...}; an element whose children are left out has its text instead. Use depth 0 to get just the elements.
+
+Arguments:
+
+- `depth`: integer. Levels of children; all if left out.
+- `selector`: string. A CSS selector.
+- `window`: integer. The window's id from ui_windows; the main window if left out.
+
+Result:
+
+- `elements`: array, required
+
+#### `ui_drag`
+
+Drags with the left button from one element or point to another and drops there. Returns the element under the mouse at the end.
+
+Arguments:
+
+- `from`: object, required. Where to press the button: selector and index, or x and y.
+- `to`: object, required. Where to release it, the same way.
+- `window`: integer. The window's id from ui_windows; the main window if left out.
+
+Result:
+
+- `element`: object or null, required
+
+#### `ui_key`
+
+Presses and releases a key with modifiers, written like "Enter" or "Ctrl+Shift+S": letters, digits, F1 to F24, Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, Up, Down, Left, Right, Space; modifiers Ctrl, Shift, Alt and Meta (Cmd). Keys don't type text: use ui_text for that. Returns the element with the keyboard focus.
+
+Arguments:
+
+- `keys`: string, required
+- `window`: integer. The window's id from ui_windows; the main window if left out.
+
+Result:
+
+- `focus`: object or null, required
+
+#### `ui_move`
+
+Moves the mouse to the centre of an element or to a point, e.g. to hover over it. Returns the element now under the mouse.
+
+Arguments:
+
+- `index`: integer. Which of the elements the selector matches; 0, the first, if left out.
+- `selector`: string. A CSS selector; the mouse goes to the centre of the element it matches.
+- `window`: integer. The window's id from ui_windows; the main window if left out.
+- `x`: integer. Instead of a selector: the point in the window's pixels, with y.
+- `y`: integer. The point's y, with x.
+
+Result:
+
+- `element`: object or null, required
+
+#### `ui_screenshot`
+
+Read-only.
+
+Takes a screenshot of a window, or with selector of the element it matches (its border box), as a PNG image in the window's pixels.
+
+Arguments:
+
+- `index`: integer
+- `selector`: string. A CSS selector.
+- `window`: integer. The window's id from ui_windows; the main window if left out.
+
+#### `ui_text`
+
+Types text into the element with the keyboard focus, e.g. a text field that ui_click focused. Returns that element.
+
+Arguments:
+
+- `text`: string, required
+- `window`: integer. The window's id from ui_windows; the main window if left out.
+
+Result:
+
+- `focus`: object or null, required
+
+#### `ui_wait`
+
+Read-only.
+
+Waits until an element that the CSS selector matches is visible, and has the text if one is given; with visible false, until none is. Returns the elements the selector matches then (with the text), like ui_dom with depth 0, or an error after the seconds have passed.
+
+Arguments:
+
+- `seconds`: number. How long to wait at most; 5 if left out.
+- `selector`: string, required. A CSS selector.
+- `text`: string. A part of the element's text.
+- `visible`: boolean. False to wait until no element is visible; true if left out.
+- `window`: integer. The window's id from ui_windows; the main window if left out.
+
+Result:
+
+- `elements`: array, required
+
+#### `ui_wheel`
+
+Turns the mouse wheel over an element or a point, or where the mouse is, e.g. to scroll a list.
+
+Arguments:
+
+- `dx`: number. Lines to the right; 0 if left out.
+- `dy`: number. Lines down; 0 if left out.
+- `index`: integer. Which of the elements the selector matches; 0, the first, if left out.
+- `selector`: string. A CSS selector; the mouse goes to the centre of the element it matches.
+- `window`: integer. The window's id from ui_windows; the main window if left out.
+- `x`: integer. Instead of a selector: the point in the window's pixels, with y.
+- `y`: integer. The point's y, with x.
+
+Result:
+
+- `element`: object or null, required
+
+#### `ui_windows`
+
+Read-only.
+
+Lists GNUbase's open windows: each window's id, whether it's the main window, its size in pixels, its dp ratio (pixels per density-independent pixel: its monitor's scale times the UI scale) and its documents (title, source file, whether visible and modal). Coordinates in the other ui_ tools are in the window's pixels, as in its screenshots.
+
+Result:
+
+- `windows`: array, required
 
 ### Resources
 

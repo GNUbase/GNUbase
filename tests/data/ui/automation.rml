@@ -1,0 +1,35 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- For the UI automation tools (#58): a button that opens the rename dialog (automation-dialog.rml), a search field,
+     a list that scrolls, a hidden element, and a handle to drag onto a target. -->
+<rml>
+<head>
+	<title>Automation</title>
+	<style>
+		body { display: block; position: absolute; left: 0; top: 0; right: 0; bottom: 0; margin: 0; font-family: Inter; font-size: 14dp; }
+		div, ul, li, p { display: block; }
+		button { display: block; position: absolute; left: 10dp; top: 10dp; width: 120dp; height: 30dp; }
+		#search { display: block; position: absolute; left: 10dp; top: 50dp; width: 200dp; height: 20dp; }
+		#items { position: absolute; left: 10dp; top: 80dp; width: 200dp; height: 60dp; overflow-y: auto; }
+		li { height: 20dp; }
+		scrollbarvertical { width: 10dp; }
+		scrollbarvertical sliderbar { min-height: 10dp; }
+		#hidden { display: none; }
+		#handle { position: absolute; left: 250dp; top: 10dp; width: 40dp; height: 40dp; drag: drag-drop; }
+		#target { position: absolute; left: 250dp; top: 100dp; width: 80dp; height: 80dp; }
+	</style>
+</head>
+<body>
+	<button id="open" class="primary wide" title="Opens the rename dialog">Rename track</button>
+	<input type="text" id="search"/>
+	<ul id="items">
+		<li class="item">Drums</li>
+		<li class="item selected">Bass</li>
+		<li class="item">Keys</li>
+		<li class="item">Vocals</li>
+		<li class="item">Guitar</li>
+	</ul>
+	<p id="hidden">Not shown</p>
+	<div id="handle"/>
+	<div id="target"/>
+</body>
+</rml>

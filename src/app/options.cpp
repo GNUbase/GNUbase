@@ -150,8 +150,9 @@ namespace gnubase::app
 				throw UsageError("unknown option " + arg);
 			}
 		}
-		if ((mcp || !options.script.empty()) && !options.headless && !options.help && !options.version)
-			throw UsageError("the MCP transports and --script need --headless for now");
+		if (((mcp && options.transport == Transport::Stdio) || !options.script.empty()) && !options.headless &&
+			!options.help && !options.version)
+			throw UsageError("--mcp-stdio and --script need --headless");
 		if (mcp && !options.script.empty())
 			throw UsageError("--script runs a script and exits; it doesn't serve MCP");
 		return options;
@@ -172,8 +173,8 @@ Opens GNUbase's main window, or with --headless runs without UI.
 
   --headless            run without UI: the engine and its MCP server
   --mcp-stdio           MCP over stdin and stdout (the default with --headless)
-  --mcp-http[=PORT]     MCP over HTTP on 127.0.0.1, on PORT or a free port; prints the URL and the access token
-                        and serves until Ctrl+C
+  --mcp-http[=PORT]     MCP over HTTP on 127.0.0.1, on PORT or a free port; prints the URL and the access token.
+                        Headless it serves until Ctrl+C; with the UI, until GNUbase quits, with the UI tools too
   --project FILE        load a DAWproject file
   --script FILE         run a Lua script, then exit (trusted: all standard libraries but os.exit)
   --audio BACKEND       the audio backend: )" +

@@ -36,7 +36,8 @@ namespace gnubase::mcp
 			engine::Json outputSchema; // or null
 			bool readOnly = false;
 			// Returns the structured result. A thrown std::exception becomes a tool result with isError and its
-			// message.
+			// message. A tool that returns a picture, such as a screenshot, returns a PNG file's bytes as
+			// engine::Json::binary, which the client gets as image content.
 			std::function<engine::Json(const engine::Json& arguments)> run;
 		};
 

@@ -13,6 +13,8 @@ target_compile_definitions(gnubase-ui-thirdparty PUBLIC RMLUI_SDL_VERSION_MAJOR=
 target_link_libraries(gnubase-ui-thirdparty PUBLIC RmlUi::RmlUi SDL3::SDL3)
 
 add_library(gnubase-ui STATIC
+	automation.cpp
+	automation.h
 	datamodel.cpp
 	datamodel.h
 	displays.cpp
