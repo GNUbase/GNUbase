@@ -56,7 +56,7 @@ namespace
 	{
 		void ProcessEvent(Rml::Event& event) override
 		{
-			const std::string type = event.GetType();
+			const std::string& type = event.GetType();
 			Json parameters = {{"target", event.GetTargetElement()->GetId()}};
 			for (const auto& [name, value] : event.GetParameters())
 				parameters[name] = value.Get<Rml::String>();
