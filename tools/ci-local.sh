@@ -22,14 +22,14 @@ if [ "${1:-}" = --wsl ]; then
 	source=$2 repository=$3 commit=$4
 	shift 4
 	mirror=$HOME/gnubase-ci/$(basename "$source")
-	export GIT_LFS_SKIP_SMUDGE=1 # as in CI: only the test audio comes from Git LFS
+	export GIT_LFS_SKIP_SMUDGE=1 # as in CI: only the test audio and the fonts come from Git LFS
 	mkdir -p "$source/build/ci-local"
 	if ! { { [ -d "$mirror/.git" ] || git clone -q --no-checkout "$repository" "$mirror"; } && cd "$mirror" &&
 		git fetch -q --no-tags "$repository" "$commit" && git checkout -q --force --detach FETCH_HEAD &&
 		git submodule sync -q && git submodule update -q --init --recursive &&
 		git submodule update -q --init --checkout ext/vst3sdk &&
 		git -C ext/vst3sdk submodule update -q --init base cmake pluginterfaces public.sdk &&
-		git lfs pull --include "tests/data/**,tests/golden/**"; } > "$source/build/ci-local/wsl.log" 2>&1; then
+		git lfs pull --include "tests/data/**,tests/golden/**,resources/fonts/**"; } > "$source/build/ci-local/wsl.log" 2>&1; then
 		echo "Preparing the clone in WSL failed, see build/ci-local/wsl.log"
 		exit 1
 	fi
@@ -197,7 +197,7 @@ if git submodule status --recursive | grep -q '^+' || git submodule status | gre
 	git submodule update -q --init --recursive && git submodule update -q --init --checkout ext/vst3sdk &&
 		git -C ext/vst3sdk submodule update -q --init base cmake pluginterfaces public.sdk || exit 2
 fi
-git lfs pull --include "tests/data/**,tests/golden/**" || exit 2
+git lfs pull --include "tests/data/**,tests/golden/**,resources/fonts/**" || exit 2
 [ -z "$(git status --porcelain --untracked-files=no)" ] ||
 	echo "Note: uncommitted changes are not checked, only HEAD $(git rev-parse --short HEAD)." >&2
 started=$SECONDS

@@ -62,9 +62,9 @@ jobs:
           git submodule update --init --checkout ext/vst3sdk
           git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
 
-      # Only the audio the tests read (test data and golden files), not every image in Git LFS.
-      - name: Fetch test audio
-        run: git lfs pull --include "tests/data/**,tests/golden/**"
+      # Only what the tests read (test data, golden files and the fonts), not every image in Git LFS.
+      - name: Fetch test data and fonts
+        run: git lfs pull --include "tests/data/**,tests/golden/**,resources/fonts/**"
 
       - name: Install packages (Linux)
         timeout-minutes: 15
@@ -171,8 +171,8 @@ jobs:
           git submodule update --init --checkout ext/vst3sdk
           git -C ext/vst3sdk submodule update --init base cmake pluginterfaces public.sdk
 
-      - name: Fetch test audio
-        run: git lfs pull --include "tests/data/**,tests/golden/**"
+      - name: Fetch test data and fonts
+        run: git lfs pull --include "tests/data/**,tests/golden/**,resources/fonts/**"
 
       - name: Install packages
         timeout-minutes: 15
