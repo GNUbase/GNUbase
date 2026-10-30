@@ -4,6 +4,7 @@
 #include "platform/hosttime.h"
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -176,6 +177,10 @@ namespace gnubase::audio
 		// called on the audio thread. Set it while the device is stopped.
 		void onReset(std::function<void()> handler) { m_reset = std::move(handler); }
 
+		// Dropouts the driver reported since the device was opened: blocks it played or recorded without the engine
+		// (an xrun), as the performance monitor counts them (#45). Any thread.
+		uint64_t overloads() const { return m_overloads.load(std::memory_order_relaxed); }
+
 	protected:
 		// For backends, when their driver asks for a reset.
 		void requestReset() const
@@ -184,8 +189,12 @@ namespace gnubase::audio
 				m_reset();
 		}
 
+		// For backends, when their driver reports a dropout. Any thread, the audio thread too.
+		void reportOverload() noexcept { m_overloads.fetch_add(1, std::memory_order_relaxed); }
+
 	private:
 		std::function<void()> m_reset;
+		std::atomic<uint64_t> m_overloads{0};
 	};
 
 	// A kind of driver. It lists its devices and opens them.
