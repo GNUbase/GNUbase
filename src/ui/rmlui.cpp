@@ -204,4 +204,10 @@ namespace gnubase::ui
 		Rml::Factory::RegisterElementInstancer(tag, instancer.get());
 		m_instancers.push_back(std::move(instancer));
 	}
+
+	void RmlUi::registerPlugin(std::unique_ptr<Rml::Plugin> plugin)
+	{
+		Rml::RegisterPlugin(plugin.get());
+		m_plugins.push_back(std::move(plugin));
+	}
 }
