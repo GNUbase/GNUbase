@@ -1,0 +1,26 @@
+{
+  "families": [
+    {
+      "name": "Inter",
+      "role": "ui",
+      "faces": [
+        "Inter/Inter-Regular.ttf",
+        "Inter/Inter-Italic.ttf",
+        "Inter/Inter-Medium.ttf",
+        "Inter/Inter-SemiBold.ttf",
+        "Inter/Inter-Bold.ttf"
+      ]
+    },
+    {
+      "name": "JetBrains Mono",
+      "role": "counter",
+      "faces": [
+        "JetBrainsMono/JetBrainsMono-Regular.ttf",
+        "JetBrainsMono/JetBrainsMono-Bold.ttf"
+      ]
+    }
+  ],
+  "fallback": [
+    "NotoSansSymbols/NotoSansSymbols-Regular.ttf"
+  ]
+}

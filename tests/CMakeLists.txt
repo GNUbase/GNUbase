@@ -31,6 +31,7 @@ add_executable(gnubase-tests
 	effects_tests.cpp
 	engine_tests.cpp
 	fade_tests.cpp
+	fonts_tests.cpp
 	graph_tests.cpp
 	history_tests.cpp
 	ipc_process_tests.cpp
