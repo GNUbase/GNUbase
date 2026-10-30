@@ -458,4 +458,24 @@
 	{
 		background-color: #66686c;
 	}
+	.event-display .marker-lines
+	{
+		stroke-color: #46566a;
+		stroke-width: 1dp;
+	}
+	.event-display .marker-events
+	{
+		color: #7896bd40;
+		stroke-color: #7896bd;
+		stroke-width: 1dp;
+	}
+	.event-display .marker-label
+	{
+		color: #b7bbc0;
+		font-size: 11dp;
+	}
+	.event-display .marker-label.active
+	{
+		color: #f3f4f5;
+	}
 }

@@ -7,6 +7,7 @@
 #include "ui/eventdisplay.h"
 #include "ui/gpurenderer.h"
 #include "ui/keycommands.h"
+#include "ui/markers.h"
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
@@ -39,9 +40,17 @@ namespace gnubase::app
 		AppUi& operator=(AppUi&&) = delete;
 		~AppUi() = default;
 
-		// Shows the project window in the main window (resources/ui/project.rml) with the event display. Throws
-		// std::runtime_error if the document can't be loaded.
+		// Shows the project window in the main window (resources/ui/project.rml) with the event display and its
+		// markers. Throws std::runtime_error if the document can't be loaded.
 		ui::EventDisplay& showProject();
+
+		// Opens the markers window in a window of its own (resources/ui/markers.rml), hidden like the main window, or
+		// closes it if it is open: the UI command window.markers, Mod+M. Returns it, or null when it closed it.
+		// Throws std::runtime_error if the document can't be loaded.
+		ui::MarkersWindow* toggleMarkers();
+		// The markers window while it is open, or null.
+		ui::MarkersWindow* markers() { return m_shell.find(m_markersWindow) != nullptr ? m_markers.get() : nullptr; }
+		ui::WindowId markersWindow() const { return m_markersWindow; }
 
 		ui::Shell& shell() { return m_shell; }
 		ui::Window& mainWindow() { return m_main; }
@@ -66,6 +75,10 @@ namespace gnubase::app
 		ui::Window& m_main;
 		engine::Engine& m_engine;
 		std::filesystem::path m_resources;
-		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
+		bool m_hidden = false;                            // the main window, and so the others
+		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // these go before the binding
+		std::unique_ptr<ui::MarkerLines> m_markerLines;   // and before the display
+		std::unique_ptr<ui::MarkersWindow> m_markers;
+		ui::WindowId m_markersWindow = 0;
 	};
 }

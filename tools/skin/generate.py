@@ -443,6 +443,13 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".event-display .project-cursor", {"background-color": c["text"]}),
         (".event-display .cross-hair-vertical, .event-display .cross-hair-horizontal",
          {"background-color": mix(c["background"], c["textMuted"], .5)}),
+        # Markers (docs/features/markers.md): lines behind the events, marker events and labels on marker tracks
+        (".event-display .marker-lines", {"stroke-color": mix(c["background"], c["accent2"], .5),
+                                          "stroke-width": f"{widths['hairline']}dp"}),
+        (".event-display .marker-events", {"color": c["accent2"] + "40", "stroke-color": c["accent2"],
+                                           "stroke-width": f"{widths['hairline']}dp"}),
+        (".event-display .marker-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        (".event-display .marker-label.active", {"color": c["text"]}),
     ]
 
     lines = ["/* SPDX-License-Identifier: GPL-3.0-or-later */",

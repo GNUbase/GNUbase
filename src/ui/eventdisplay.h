@@ -15,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Rml
@@ -115,6 +116,12 @@ namespace gnubase::ui
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
 		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off).
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
+
+		// Runs listener after every change of the view, for what others draw on the timeline, such as marker lines
+		// (ui/markers.h).
+		void onViewChanged(std::function<void()> listener) { m_viewListeners.push_back(std::move(listener)); }
+		// The element around the event lanes, which they fill.
+		Rml::Element& eventArea() const { return *m_area; }
 
 	private:
 		enum class Drag : uint8_t
@@ -225,6 +232,7 @@ namespace gnubase::ui
 		engine::Json m_organized;                // the presets that the organize dialog lists, by index
 
 		std::map<std::string, std::function<void()>> m_actions;
+		std::vector<std::function<void()>> m_viewListeners;
 		std::vector<Subscription> m_subscriptions;
 		std::optional<Subscription> m_position; // while playing
 	};

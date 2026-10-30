@@ -598,6 +598,25 @@ meter .meter-peak
 	display: none;
 }
 
+/* Markers (docs/features/markers.md): the marker lines and marker events are event lanes like the events; code
+   places the labels where their markers are. */
+.event-display .marker-labels
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .marker-label
+{
+	position: absolute;
+	padding-left: 3dp;
+	white-space: nowrap;
+}
+
 .event-display.cross-hair .event-area:hover .cross-hair-vertical,
 .event-display.cross-hair .event-area:hover .cross-hair-horizontal
 {
