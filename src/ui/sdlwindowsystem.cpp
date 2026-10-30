@@ -458,8 +458,12 @@ namespace gnubase::ui
 			// take the hover from what the tests point at.
 			if (event.type == SDL_EVENT_WINDOW_MOUSE_LEAVE && (SDL_GetWindowFlags(window) & SDL_WINDOW_HIDDEN) != 0)
 				return std::nullopt;
-			RmlSDL::InputEventHandler(target->second, window, event);
-			return WindowEvent{WindowEventKind::Input, id};
+			const bool unused = RmlSDL::InputEventHandler(target->second, window, event);
+			WindowEvent input{WindowEventKind::Input, id};
+			if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && unused) // one key command per press
+				input.key =
+					KeyPress{RmlSDL::ConvertKey(static_cast<int>(event.key.key)), RmlSDL::GetKeyModifierState()};
+			return input;
 		}
 		if (const std::optional<WindowEventKind> kind = kindOf(event.type))
 			return WindowEvent{*kind, id};

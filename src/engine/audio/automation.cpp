@@ -467,9 +467,29 @@ namespace gnubase::engine
 		}
 	}
 
-	ChannelStrip::ChannelStrip(
-		std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source, Panning panning)
-		: m_state(std::move(state)), m_source(std::move(source)), m_panning(panning),
+	bool Monitoring::active(bool playing, bool recording) const noexcept
+	{
+		if (monitor)
+			return true;
+		if (!recordEnable)
+			return false;
+		switch (mode)
+		{
+		case AutoMonitoring::Manual:
+			return false;
+		case AutoMonitoring::WhileRecordEnabled:
+			return true;
+		case AutoMonitoring::WhileRecording:
+			return recording;
+		case AutoMonitoring::TapeMachine:
+			return !playing || recording;
+		}
+		return false;
+	}
+
+	ChannelStrip::ChannelStrip(std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source,
+		Panning panning, std::optional<Monitoring> monitoring)
+		: m_state(std::move(state)), m_source(std::move(source)), m_panning(panning), m_monitoring(monitoring),
 		  m_sourceEvents(graph::g_maxEventsPerBlock), m_faderEvents(graph::g_maxEventsPerBlock),
 		  m_faderOut(graph::g_maxEventsPerBlock)
 	{
@@ -490,6 +510,19 @@ namespace gnubase::engine
 			m_sourceEvents.add(event);
 		m_sourceEvents.nextSource();
 		m_state->automation.play(context.transport, m_source.get(), m_sourceEvents, m_faderEvents, m_smoothing);
+
+		if (m_monitoring && context.frames > 0)
+		{
+			const graph::TransportBlock& transport = context.transport;
+			const float target = m_monitoring->active(transport.playing, transport.recording) ? 1.0f : 0.0f;
+			const float from = m_state->monitorGain < 0.0f ? target : m_state->monitorGain;
+			m_state->monitorGain = target;
+			const float step = (target - from) / static_cast<float>(context.frames);
+			if (from != 1.0f || target != 1.0f)
+				for (int c = 0; c < context.channels; ++c)
+					for (uint32_t i = 0; i < context.frames; ++i)
+						context.audio[c][i] *= from + (step * static_cast<float>(i + 1));
+		}
 
 		if (m_source)
 			m_source->process({context.audio, context.channels, context.frames, m_sourceEvents, context.eventsOut,

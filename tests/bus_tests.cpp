@@ -53,11 +53,11 @@ namespace
 
 	Json bus(Client& client, ObjectId id)
 	{
-		for (const Json& entry : projectList(client, "busses"))
-			if (entry.at("id") == id)
-				return entry;
-		FAIL("no bus " << id);
-		return {};
+		const Json busses = projectList(client, "busses");
+		const auto entry = std::find_if(busses.begin(), busses.end(), [id](const Json& b) { return b.at("id") == id; });
+		INFO("no bus " << id);
+		REQUIRE(entry != busses.end());
+		return *entry;
 	}
 
 	std::vector<ObjectId> busIds(Client& client, const char* direction)
@@ -85,12 +85,12 @@ namespace
 				{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 441.0}, {"Level", 0.1}}}}}});
 	}
 
-	// An audio track on the first input bus, which passes the sine on to output (a bus id).
+	// An audio track on the first input bus, which monitors the sine on output (a bus id).
 	ObjectId addTrack(Client& client, ObjectId output, const char* format = "stereo")
 	{
 		const Json track = run(client, "track.add", {{"type", "audio"}, {"format", format}});
 		const ObjectId channel = track.at("channel").at("id").get<ObjectId>();
-		run(client, "channel.set", {{"channel", channel}, {"output", output}});
+		run(client, "channel.set", {{"channel", channel}, {"output", output}, {"monitor", true}});
 		return channel;
 	}
 
@@ -505,11 +505,11 @@ TEST_CASE("bus presets: standard, from the device's ports, and the user's own", 
 	{ return run(client, "bus.presets", {{"direction", direction}}).at("presets"); };
 	const auto preset = [](const Json& list, const std::string& name)
 	{
-		for (const Json& entry : list)
-			if (entry.at("name") == name)
-				return entry;
-		FAIL("no preset " << name);
-		return Json();
+		const auto entry =
+			std::find_if(list.begin(), list.end(), [&name](const Json& p) { return p.at("name") == name; });
+		INFO("no preset " << name);
+		REQUIRE(entry != list.end());
+		return *entry;
 	};
 
 	const Json inputs = presets("input");
