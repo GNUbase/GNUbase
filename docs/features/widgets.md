@@ -96,6 +96,37 @@ How it works: an RmlUi plugin (`RmlUi::registerPlugin`) gives every document a t
 phase, before its elements: for `contextmenu` and `menu` attributes, titles, clicks outside open menus, Escape, and
 its dialog's keys, which text fields would otherwise keep to themselves.
 
+## Tabs
+
+RmlUi's `<tabset>` with its `<tab>`s and `<panel>`s: a click on a tab shows its panel and gives the tab `:selected`.
+The theme draws them; the widget library adds nothing.
+
+## List, tree and table views
+
+`<listview>` is a list, tree or table of rows that the user selects: its `<listitem>`s, or the rows (`<tr>`) of a
+`<table>` in it, except those of the `<thead>`. Each row has a `value` attribute (without commas).
+
+- **Selection.** A click selects a row. With the `multiple` attribute, Ctrl-click (Cmd-click on macOS) adds or removes
+  a row and Shift-click selects the rows from the last one clicked. Up and Down move the selection, Shift extends it,
+  Home and End go to the first and last row. Selected rows have the state class `.selected`. The view's `value`
+  attribute is the selected rows' values separated by commas, and `change` sends it, so `data-value` binds the
+  selection both ways, also when `data-for` makes the rows.
+- **Trees.** Rows with a `level` attribute (0 at the top) make a tree: the rows that follow a row with a higher level
+  are its children, shown while it has the `expanded` attribute. The view gives tree rows a `.tree-indent`, sized from
+  the level (16 dp a level), and a `.tree-toggle`, which the theme draws as an arrow; parents get the state classes
+  `.parent` and, when expanded, `.expanded`, and rows inside a collapsed parent `.hidden`. A click on the toggle, or
+  Right and Left on the selected row, expand and collapse it and send `toggle` (`ui::g_treeToggleEvent`) with the row's
+  `value` and `expanded`. The rows are flat, so data models describe trees as lists with levels.
+- **Tables.** `table`, `thead`, `tbody`, `tr` and `td` are laid out as tables; selected body rows look like selected
+  list items. Not yet: sorting by a column and resizing columns.
+
+## Splitters
+
+`<splitter>` between two elements of a flex row or column moves the boundary between them when dragged: it sets the
+width or height of the element before it (without its padding and borders), from nothing to taking all of the element
+after it, and sends `change` with that size in dp, e.g. for a workspace to keep. In a column it has the state class
+`.column`; the theme's grip shows which way it moves.
+
 ## Checks
 
 `tests/widgets_tests.cpp` drives each widget in the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) through
@@ -107,3 +138,6 @@ the page; value fields take typed numbers and leave bad ones. Meters show their 
 Menus open under their button and at the mouse, inside the window, show submenus on hover, close on an item, a click
 elsewhere and Escape, skip disabled items, and work with the keys. Tooltips show after a rest and go with the mouse.
 Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result.
+Tabs show their panels. List views select with clicks, Ctrl, Shift and the keys, and follow their data; trees expand
+and collapse by click and keys, with indents by level; tables select body rows only; splitters move the boundary in a
+row and in a column, never below nothing.

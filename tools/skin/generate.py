@@ -339,9 +339,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
          {"decorator": skin("menu-item-hover")}),
         ("menuitem:disabled", {"color": c["textMuted"]}),
         (".menu-separator, menuseparator", {"decorator": skin("menu-separator")}),
-        (".list", {"decorator": skin("list")}),
-        (".list-item:hover", {"decorator": skin("list-item-hover")}),
-        (".list-item.selected, select selectbox option:checked", {"decorator": skin("list-item-selected")}),
+        (".list, listview", {"decorator": skin("list")}),
+        (".list-item:hover, listitem:hover, listview tbody tr:hover", {"decorator": skin("list-item-hover")}),
+        (".list-item.selected, listitem.selected, listview tr.selected, select selectbox option:checked",
+         {"decorator": skin("list-item-selected")}),
         # Tabs
         ("tabset tabs", {"decorator": skin("tabbar")}),
         ("tabset tab", {"decorator": skin("tab-normal"), "color": c["textMuted"]}),
@@ -411,6 +412,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".meter", {"decorator": skin("meter-background")}),
         (".meter-fill", {"decorator": skin("meter-fill")}),
         (".meter-peak", {"decorator": skin("meter-peak")}),
+        (".tree-toggle", {"decorator": skin("dropdown-arrow")}),
         (".splitter-grip-vertical", {"decorator": skin("splitter-grip-vertical")}),
         (".splitter-grip-horizontal", {"decorator": skin("splitter-grip-horizontal")}),
     ]

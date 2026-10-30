@@ -565,3 +565,153 @@ TEST_CASE("dialogs open in the middle, move by their title bar, and close with E
 	CHECK(app.waitUntil([&app] { return !dialogOpen(app); }));
 	CHECK(closes.results == std::vector<std::string>{"ok", "cancel", "cancel"});
 }
+
+namespace
+{
+	// The page of views at dp ratio 1, with its data model.
+	struct ViewsPage
+	{
+		explicit ViewsPage(test::UiApp& app) : model(app.main().context(), "views")
+		{
+			REQUIRE(model.constructor().Bind("selection", &selection));
+			events = std::make_unique<Events>(app.show("views.rml"));
+			app.setDpRatio(1.0F);
+		}
+
+		Rml::String selection;
+		ui::DataModel model;
+		std::unique_ptr<Events> events;
+	};
+
+	bool selected(test::UiApp& app, const std::string& selector)
+	{
+		return has(element(app, selector), "classes", "selected");
+	}
+
+	void ctrlClick(test::UiApp& app, const std::string& selector, const std::string& modifier)
+	{
+		app.ui().click(std::nullopt, at(selector), ui::MouseButton::Left, 1, {modifier});
+	}
+}
+
+TEST_CASE("tabs show the panel of the tab clicked", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	CHECK(has(element(app, "#general"), "pseudoClasses", "selected"));
+	CHECK(visible(app, "#general-panel"));
+	CHECK_FALSE(visible(app, "#routing-panel"));
+
+	click(app, "#routing");
+	CHECK(has(element(app, "#routing"), "pseudoClasses", "selected"));
+	CHECK(visible(app, "#routing-panel"));
+	CHECK_FALSE(visible(app, "#general-panel"));
+}
+
+TEST_CASE("list views select rows with clicks and keys, and data-value binds the selection", "[ui]")
+{
+	test::UiApp app;
+	ViewsPage page(app);
+
+	click(app, "#bass");
+	CHECK(selected(app, "#bass"));
+	CHECK(page.selection == "2");
+	REQUIRE(!page.events->changes.empty());
+	CHECK(page.events->changes.back().first == "tracks");
+	CHECK(page.events->changes.back().second.Get<Rml::String>() == "2");
+
+	// Ctrl-click adds and removes a row, Shift-click selects a range, a plain click one row again.
+	ctrlClick(app, "#vocals", "ctrl");
+	CHECK(page.selection == "2,4");
+	ctrlClick(app, "#bass", "ctrl");
+	CHECK(page.selection == "4");
+	ctrlClick(app, "#vocals", "shift");
+	CHECK(page.selection == "2,3,4");
+	click(app, "#drums");
+	CHECK(page.selection == "1");
+
+	// Down and Up move the selection, Shift extends it, End goes to the last row.
+	app.ui().key(std::nullopt, "Down");
+	CHECK(page.selection == "2");
+	app.ui().key(std::nullopt, "Shift+Down");
+	CHECK(page.selection == "2,3");
+	app.ui().key(std::nullopt, "End");
+	CHECK(page.selection == "4");
+	app.ui().key(std::nullopt, "Up");
+	CHECK(page.selection == "3");
+
+	// The data model selects rows, e.g. after an engine event.
+	page.selection = "1,3";
+	page.model.changed("selection");
+	CHECK(app.waitUntil(
+		[&app] { return selected(app, "#drums") && selected(app, "#keys") && !selected(app, "#vocals"); }));
+}
+
+TEST_CASE("tree views show the children of expanded rows, toggled by click or by the arrow keys", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+
+	// Project is expanded, Audio isn't: its files are hidden. Children are indented by their level.
+	CHECK(visible(app, "#audio"));
+	CHECK_FALSE(visible(app, "#kick"));
+	CHECK(has(element(app, "#audio"), "classes", "parent"));
+	CHECK_FALSE(has(element(app, "#midi"), "classes", "parent"));
+	CHECK(element(app, "#audio .tree-indent").at("box").at("width") == 16);
+
+	click(app, "#audio .tree-toggle");
+	CHECK(visible(app, "#kick"));
+	CHECK(element(app, "#kick .tree-indent").at("box").at("width") == 32);
+	CHECK_FALSE(selected(app, "#audio"));
+
+	// A click selects; Left collapses the selected row and Right expands it; Down skips hidden rows.
+	click(app, "#audio");
+	app.ui().key(std::nullopt, "Left");
+	CHECK_FALSE(visible(app, "#kick"));
+	app.ui().key(std::nullopt, "Down");
+	CHECK(selected(app, "#midi"));
+	click(app, "#audio");
+	app.ui().key(std::nullopt, "Right");
+	CHECK(visible(app, "#snare"));
+	CHECK(element(app, "#audio").at("attributes").contains("expanded"));
+}
+
+TEST_CASE("table views select their body's rows", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+
+	click(app, "#row-verse");
+	CHECK(selected(app, "#row-verse"));
+	CHECK(element(app, "#table").at("attributes").at("value") == "verse");
+	click(app, "#header");
+	CHECK_FALSE(selected(app, "#header"));
+	CHECK(selected(app, "#row-verse"));
+}
+
+TEST_CASE("splitters move the boundary between the elements of a row or a column", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	CHECK_FALSE(has(element(app, "#split"), "classes", "column"));
+	CHECK(has(element(app, "#split-rows"), "classes", "column"));
+
+	const Json split = element(app, "#split").at("box");
+	const int x = split.at("x").get<int>() + (split.at("width").get<int>() / 2);
+	const int y = split.at("y").get<int>() + (split.at("height").get<int>() / 2);
+	app.ui().drag(std::nullopt, point(x, y), point(x + 40, y));
+	CHECK(element(app, "#tracks").at("box").at("width") == 190);
+	REQUIRE(!page.events->changes.empty());
+	CHECK(page.events->changes.back().first == "split");
+	CHECK(page.events->changes.back().second.Get<float>() == Catch::Approx(190.0F));
+
+	// Not smaller than nothing.
+	app.ui().drag(std::nullopt, point(x + 40, y), point(x - 400, y));
+	CHECK(element(app, "#tracks").at("box").at("width") == 0);
+
+	const Json rows = element(app, "#split-rows").at("box");
+	const int rowsX = rows.at("x").get<int>() + (rows.at("width").get<int>() / 2);
+	const int rowsY = rows.at("y").get<int>() + (rows.at("height").get<int>() / 2);
+	app.ui().drag(std::nullopt, point(rowsX, rowsY), point(rowsX, rowsY - 20));
+	CHECK(element(app, "#tree").at("box").at("height") == 108); // 120 dp, padding 4 dp above and below
+}
