@@ -43,6 +43,8 @@ namespace gnubase::audio
 
 		// Per driver name: whether the driver changes its sample rate when asked (see AsioDevice::open).
 		using RateSwitching = std::map<std::string, bool>;
+		// Per driver name: why it can't be used, as its last open or start showed (see AsioBackend::devices).
+		using Unavailable = std::map<std::string, std::string>;
 
 		using Handle = std::unique_ptr<std::remove_pointer_t<HANDLE>, decltype(&CloseHandle)>;
 
@@ -164,9 +166,10 @@ namespace gnubase::audio
 			return sizes;
 		}
 
+		// A driver's string, which is in the ANSI code page, in UTF-8.
 		std::string text(const char* chars, size_t size)
 		{
-			return {chars, strnlen(chars, size)};
+			return utf8(wide({chars, strnlen(chars, size)}, CP_ACP).c_str());
 		}
 
 		void bufferSwitch(long index, ASIOBool directProcess);
@@ -183,7 +186,8 @@ namespace gnubase::audio
 		{
 		public:
 			AsioDevice(const AsioDrivers& drivers, const std::string& name, const DeviceConfig& config,
-				RateSwitching& switching)
+				RateSwitching& switching, std::shared_ptr<Unavailable> unavailable)
+				: m_unavailable(std::move(unavailable))
 			{
 				AsioDevice* none = nullptr;
 				if (!g_open.compare_exchange_strong(none, this))
@@ -238,10 +242,11 @@ namespace gnubase::audio
 					{
 						m_thread.call([this] { m_driver->stop(); });
 						m_callback.store(nullptr, std::memory_order_release);
-						throw DeviceError("ASIO: " + m_info.name + " starts, but doesn't process audio");
+						throw unavailable(m_info.name, "the driver starts, but doesn't process audio");
 					}
 					std::this_thread::sleep_for(std::chrono::milliseconds(1));
 				}
+				m_unavailable->erase(m_info.name);
 				m_running = true;
 			}
 
@@ -300,9 +305,10 @@ namespace gnubase::audio
 			{
 				m_driver = drivers.create(name);
 				if (m_driver == nullptr)
-					throw DeviceError("ASIO: cannot load the driver " + name);
+					throw unavailable(name, "the driver doesn't load");
 				if (m_driver->init(GetDesktopWindow()) != ASIOTrue)
-					throw DeviceError("ASIO: " + name + " doesn't start: " + errorMessage());
+					throw unavailable(name, "the driver doesn't start: " + errorMessage());
+				m_unavailable->erase(name);
 				m_info.id = name;
 				m_info.name = name;
 				m_info.controlPanel = true;
@@ -441,12 +447,20 @@ namespace gnubase::audio
 				return text(message.data(), message.size());
 			}
 
+			// Remembers why the driver can't be used, and returns the error to throw.
+			DeviceError unavailable(const std::string& name, const std::string& reason) const
+			{
+				(*m_unavailable)[name] = reason;
+				return DeviceError("ASIO: " + name + ": " + reason);
+			}
+
 			void check(ASIOError error, const char* what) const
 			{
 				if (error != ASE_OK)
 					throw DeviceError("ASIO: " + m_info.name + ": " + what + " failed (" + std::to_string(error) + ")");
 			}
 
+			std::shared_ptr<Unavailable> m_unavailable;
 			DriverThread m_thread;
 			IASIO* m_driver = nullptr; // used on m_thread, and by process on the driver's audio thread
 			ASIOCallbacks m_callbacks{};
@@ -558,7 +572,8 @@ namespace gnubase::audio
 
 			std::string name() const override { return "asio"; }
 
-			// Names only: a driver tells more once it is loaded, and loading one would close the open one.
+			// Names only: a driver tells more once it is loaded, and loading one would close the open one. Drivers are
+			// unavailable if they didn't load or start the last time they were opened or started.
 			std::vector<DeviceInfo> devices() override
 			{
 				std::vector<DeviceInfo> devices;
@@ -568,6 +583,8 @@ namespace gnubase::audio
 					info.id = driver;
 					info.name = driver;
 					info.controlPanel = true;
+					if (const auto found = m_unavailable->find(driver); found != m_unavailable->end())
+						info.unavailableReason = found->second;
 					devices.push_back(std::move(info));
 				}
 				return devices;
@@ -581,12 +598,13 @@ namespace gnubase::audio
 				const std::string& name = config.device.empty() ? names.front() : config.device;
 				if (std::find(names.begin(), names.end(), name) == names.end())
 					throw DeviceError("no ASIO driver " + name);
-				return std::make_unique<AsioDevice>(m_drivers, name, config, m_switching);
+				return std::make_unique<AsioDevice>(m_drivers, name, config, m_switching, m_unavailable);
 			}
 
 		private:
 			AsioDrivers m_drivers;
 			RateSwitching m_switching;
+			std::shared_ptr<Unavailable> m_unavailable = std::make_shared<Unavailable>(); // shared with its devices
 		};
 	}
 

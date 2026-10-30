@@ -28,6 +28,8 @@ namespace gnubase::audio
 	// of the driver's channels; block sizes are those the driver allows at the sample rate, the preferred one by
 	// default. Sample rates are those the driver says it runs at, or only the current one if it doesn't switch when
 	// asked (tried once per driver and backend). A driver that doesn't call back within two seconds of starting fails
-	// to start. Reset, resync and buffer size change requests and sample rate changes ask the engine for a reset.
+	// to start. Drivers that didn't load or start the last time, as drivers for hardware that isn't connected often
+	// don't, are listed as unavailable, with the reason. Driver strings are converted from the ANSI code page to UTF-8.
+	// Reset, resync and buffer size change requests and sample rate changes ask the engine for a reset.
 	std::unique_ptr<Backend> makeAsioBackend(AsioDrivers drivers = {});
 }

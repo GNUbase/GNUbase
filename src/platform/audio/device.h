@@ -45,6 +45,9 @@ namespace gnubase::audio
 		std::vector<std::string> clockSources;
 		int clockSource = -1;      // the current one, an index into clockSources; -1 if there are none
 		bool controlPanel = false; // the driver has a control panel (Device::openControlPanel)
+		// Why the device can't be used now, e.g. because its hardware isn't connected; empty if it can, as far as the
+		// backend knows. Backend::open still tries such a device.
+		std::string unavailableReason;
 	};
 
 	// How to open a device. Zero and empty values leave the choice to the driver.
