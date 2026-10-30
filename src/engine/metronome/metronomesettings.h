@@ -73,7 +73,7 @@ namespace gnubase::engine::metronome
 		bool whileRecording = true; // it clicks while recording (#96, #97)
 
 		bool audio = true;             // the audio click
-		std::vector<ObjectId> outputs; // the output busses it plays through; none: the first output bus
+		std::vector<ObjectId> outputs; // the output busses it plays through; none: the main mix
 		double level = 0.0;            // dB, on top of each accent's level
 		Sounds sounds = Sounds::Beeps;
 		std::array<Beep, g_accents> beeps{{{1500.0, 0.0}, {1000.0, -6.0}, {1000.0, -12.0}, {800.0, -18.0}}};

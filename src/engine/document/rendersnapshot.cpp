@@ -54,6 +54,8 @@ namespace gnubase::engine
 		snapshot->tempo = project.tempo;
 		snapshot->signatures = project.signatures;
 		snapshot->metronome = project.metronome;
+		if (snapshot->metronome.outputs.empty() && mainMix(project) != 0)
+			snapshot->metronome.outputs.push_back(mainMix(project)); // the default output
 		snapshot->panLaw = project.panLaw;
 		snapshot->maxVolume = project.maxVolume;
 

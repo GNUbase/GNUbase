@@ -386,16 +386,14 @@ namespace gnubase::engine
 		// After every other node, so busses add the click last. Outputs and destinations that are gone are left out.
 		const int node = static_cast<int>(desc.nodes.size());
 		std::vector<int> outputs;
-		int firstOutput = -1;
 		int destination = -1;
 		for (size_t i = 0; i < desc.nodes.size(); ++i)
 		{
 			const graph::NodeDesc& other = desc.nodes[i];
-			if (other.kind == graph::NodeKind::OutputBus)
+			if (other.kind == graph::NodeKind::OutputBus &&
+				std::find(settings.outputs.begin(), settings.outputs.end(), other.object) != settings.outputs.end())
 			{
-				firstOutput = firstOutput < 0 ? static_cast<int>(i) : firstOutput;
-				if (std::find(settings.outputs.begin(), settings.outputs.end(), other.object) != settings.outputs.end())
-					outputs.push_back(static_cast<int>(i));
+				outputs.push_back(static_cast<int>(i));
 			}
 			else if (other.kind == graph::NodeKind::Channel && settings.destination != 0 &&
 				other.object == settings.destination && m_instruments.count(other.object) != 0)
@@ -403,8 +401,6 @@ namespace gnubase::engine
 				destination = static_cast<int>(i);
 			}
 		}
-		if (settings.outputs.empty() && firstOutput >= 0)
-			outputs.push_back(firstOutput);
 		graph::NodeDesc click;
 		click.kind = graph::NodeKind::Builtin;
 		click.format = ChannelFormat::Mono;

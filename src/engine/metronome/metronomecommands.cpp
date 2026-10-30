@@ -82,7 +82,7 @@ namespace gnubase::engine::metronome
 			{"metronome.set", 1,
 				"Changes the given metronome settings and keeps the rest. click: the metronome clicks; whilePlaying, "
 				"whileRecording: when it does (recording comes with #96 and #97). audio: the audio click; enabled, "
-				"outputs (the output busses it plays through; empty: the first output bus), level (dB, -144 to 6, on "
+				"outputs (the output busses it plays through; empty: the main mix), level (dB, -144 to 6, on "
 				"top of each accent's), sounds (beeps, or samples: sample files where an accent has one) and per "
 				"accent "
 				"1 to 4 by index, beeps [{frequency (Hz, 20-20000), level}] and samples [{path (an audio file, up to "

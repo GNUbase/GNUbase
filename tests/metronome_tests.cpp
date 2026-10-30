@@ -490,6 +490,14 @@ TEST_CASE("the audio click plays through the chosen output busses", "[integratio
 		CHECK(std::all_of(main.begin() + 16000, main.end(), [](float s) { return s == 0.0f; }));
 		CHECK(framesOf(onsets(capture(client, 2, 32000))) == std::vector<int64_t>{16000, 24000});
 	}
+	SECTION("without outputs, the main mix")
+	{
+		run(client, "bus.set", {{"bus", click}, {"mainMix", true}});
+		run(client, "audio.render", {{"frames", 16000}});
+		const std::vector<float> first = capture(client, 0, 32000);
+		CHECK(std::all_of(first.begin() + 16000, first.end(), [](float s) { return s == 0.0f; }));
+		CHECK(framesOf(onsets(capture(client, 2, 32000))) == std::vector<int64_t>{16000, 24000});
+	}
 	SECTION("audio off")
 	{
 		run(client, "metronome.set", {{"audio", {{"enabled", false}}}});
