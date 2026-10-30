@@ -70,21 +70,22 @@ come with the project setup (#78): until then timecode runs at 25 fps.
 
 ## Zoom and scrolling
 
-| Action | Command (`actions()`) | Mouse |
-|---|---|---|
-| Zoom in, zoom out by 2, around the project cursor, or onto it when it's out of view | `zoom.in`, `zoom.out` | Ctrl (Cmd) and the wheel, around the mouse, 1.25 per line; drag down or up in the ruler's lower half, around where the drag started, 2 per 40 dp |
-| Track heights by 1.25 | `zoom.inVertically`, `zoom.outVertically` | Ctrl and Shift and the wheel |
-| The whole project: from its start to the end of its last event, at least a minute | `zoom.full` | |
-| Undo and redo zoom | `zoom.undo`, `zoom.redo` | |
-| Auto-scroll on or off | `view.autoScroll` | |
-| Scroll | `scrollTo`, `scrollVertically` | the wheel down, Shift and the wheel across (a tenth of the view per line) |
+| Action | Command (`actions()`) | Keys | Mouse |
+|---|---|---|---|
+| Zoom in, zoom out by 2, around the project cursor, or onto it when it's out of view | `zoom.in`, `zoom.out` | H, G | Ctrl (Cmd) and the wheel, around the mouse, 1.25 per line; drag down or up in the ruler's lower half, around where the drag started, 2 per 40 dp |
+| Track heights by 1.25 | `zoom.inVertically`, `zoom.outVertically` | Shift+H, Shift+G | Ctrl and Shift and the wheel |
+| The whole project: from its start to the end of its last event, at least a minute | `zoom.full` | Shift+F | |
+| Undo and redo zoom | `zoom.undo`, `zoom.redo` | | |
+| Auto-scroll on or off | `view.autoScroll` | F | |
+| Scroll | `scrollTo`, `scrollVertically` | | the wheel down, Shift and the wheel across (a tenth of the view per line) |
 
 - Every zoom, and every drag that zooms, is one step in the zoom history; scrolling isn't. `zoomTo(from, to)` shows a
   stretch, such as a cycle marker's. Zoom stops at 10 µs and 60 s per dp, track heights at a quarter and eight times
   `g_trackHeight` (40 dp, until tracks have heights of their own, #81).
-- **Commands.** `actions()` maps command ids to the display's functions, for the key command system (#57) to bind
-  keys to (the reference's H, G, Shift+H and Shift+G). Until it does, MCP clients and tests zoom with the mouse
-  through the UI tools (`ui_wheel` with `modifiers`, `ui_drag`).
+- **Commands.** `actions()` maps command ids to the display's functions. `AppUi` adds them as key commands
+  ([key-commands.md](key-commands.md)) and binds the reference's keys (manual p. 1573) in the project window's focus
+  zone, `project`, which the window has when it opens and wherever it is clicked. `KeyCommands::run` runs one as its
+  key would; MCP clients press the keys with `ui_key`.
 - **Zoom presets** are the user setting `ui.zoomPresets`, for every project: each a name and the seconds the view
   shows. `addZoomPreset`, `applyZoomPreset` (keeps the left edge), `removeZoomPreset` and `renameZoomPreset` change it
   through `settings.set`; changes from MCP or Lua apply at once.
@@ -132,3 +133,5 @@ come with the project setup (#78): until then timecode runs at 25 fps.
   listed and zoomed to, presets renamed and deleted in the organize dialog with OK and dropped with Cancel; the
   auto-scroll button on and off, the modes and suspending from its menu, checked, and the button suspended by a click
   in the lanes while the dummy device plays, and resumed by a click on it.
+  The keys zoom, vertically too, zoom full and switch auto-scroll when the window opens and after a click into
+  it, and zoom undo runs as a command.
