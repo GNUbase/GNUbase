@@ -255,6 +255,13 @@ TEST_CASE("elements keep the keys they use, and a modal dialog keeps every key",
 	press(app, "F5");
 	CHECK(recorder.take() == Strings{"test.anywhere"});
 
+	// A focused knob turns with the arrow keys, which then don't run their command.
+	app.keys().bind({"Up", "test.anywhere"});
+	click(app, "#pan");
+	press(app, "Up");
+	CHECK(app.ui().dom(std::nullopt, "#pan", 0).at("elements")[0].at("attributes").at("value") == "1");
+	CHECK(recorder.take().empty());
+
 	// No key runs a command while a modal dialog has the focus, so typing into it never edits the project.
 	Rml::ElementDocument* dialog =
 		app.main().context().LoadDocument(std::string(GNUBASE_TEST_DATA_DIR) + "/ui/automation-dialog.rml");

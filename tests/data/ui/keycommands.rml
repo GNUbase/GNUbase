@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Focus zones for the key command tests (#57): a project zone, a lower zone with an editor zone and an element of
-     no zone of its own inside, and outside any zone a text field, a button and an empty element. -->
+     no zone of its own inside, and outside any zone a text field, a button, a knob and an empty element. -->
 <rml>
 <head>
 	<title>Key commands</title>
@@ -14,6 +14,7 @@
 		#name { display: block; position: absolute; left: 320dp; top: 10dp; width: 200dp; height: 20dp; }
 		#apply { display: block; position: absolute; left: 320dp; top: 50dp; width: 100dp; height: 30dp; }
 		#outside { left: 450dp; top: 100dp; width: 100dp; height: 50dp; }
+		#pan { position: absolute; left: 450dp; top: 160dp; }
 	</style>
 </head>
 <body>
@@ -24,6 +25,7 @@
 	</div>
 	<input type="text" id="name"/>
 	<button id="apply">Apply</button>
+	<knob id="pan" min="-100" max="100" step="1" value="0"/>
 	<div id="outside"/>
 </body>
 </rml>

@@ -27,7 +27,8 @@ it up in `app::AppUi`.
   (`Opt` for Alt). The default key map is written with `Mod`, so it is the same on every platform.
 - **Elements first.** RmlUi gets every key first, at the focused element, from where it bubbles up. An element that
   uses a key stops its propagation: a text field keeps the keys typed into it, a focused button is clicked by Space
-  and Enter, menus and dialogs keep their keys, Tab moves the focus. A key command runs only for a key that no element
+  and Enter, a focused knob, fader or slider turns with the arrow keys, menus and dialogs keep their keys, Tab moves
+  the focus. A key command runs only for a key that no element
   used: where `Rml::Context::ProcessKeyDown` says so, `SdlWindowSystem` passes the key on with its input event, and
   the shell hands it to its handler (`Shell::onUnusedKey`, `KeyCommands::press`). `ui::Automation::key`, and so MCP's
   `ui_key` and the UI tests, does the same. Widgets that act on keys must stop them, or the key commands run too.
@@ -69,7 +70,7 @@ in a zone; UI commands, replacing bindings and refusing unknown commands, bad pa
 UI (`test::UiApp`, [ui-tests.md](ui-tests.md)), keys pressed through `ui::Automation` start, stop and locate the
 transport and undo through the UI's client; the same keys run different commands in a project zone, an editor zone
 inside a lower zone, an element of the lower zone and outside any zone; lock keys don't count; a key from SDL's own
-event queue runs its command; and text fields, a focused button and a modal dialog keep their keys.
+event queue runs its command; and text fields, a focused button, a focused knob and a modal dialog keep their keys.
 
 Not yet: the key commands editor, presets and macros, which will keep the key map in the user settings, so that MCP
 and Lua reach it too; exporting the assignments; keys in tooltips; the On-Screen Keyboard, which takes most keys while
