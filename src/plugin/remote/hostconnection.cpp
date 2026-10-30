@@ -116,8 +116,8 @@ namespace gnubase::plugin::remote
 		header.request = request;
 		header.instance = instance;
 		// A large message, e.g. a state, may take its whole timeout to go out: a quick request waits for it only
-		// until its own deadline.
-		std::unique_lock lock(m_sendMutex, deadline);
+		// until its own deadline. With the time left: libstdc++ under TSan can't wait until a steady_clock time.
+		std::unique_lock lock(m_sendMutex, deadline - std::chrono::steady_clock::now());
 		if (!lock.owns_lock())
 		{
 			error = "the plugin host is still busy receiving another request";

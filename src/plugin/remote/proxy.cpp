@@ -235,10 +235,11 @@ namespace gnubase::plugin::remote
 	{
 		rt::assertNotRealtime("RemotePlugin::setProcessMode");
 		// A quick query: it waits for a slow call of this plugin, e.g. a state transfer, only until its own deadline.
-		// Then the instance gets the mode when it activates.
+		// Then the instance gets the mode when it activates. (It waits for a time, not until one: libstdc++ under TSan
+		// can't wait until a steady_clock time.)
 		const auto deadline = std::chrono::steady_clock::now() + m_deadlines.query;
 		m_wantedMode.store(mode, std::memory_order_relaxed);
-		const std::unique_lock calls(m_callMutex, deadline);
+		const std::unique_lock calls(m_callMutex, m_deadlines.query);
 		if (!calls.owns_lock())
 			return true;
 		const auto left =
