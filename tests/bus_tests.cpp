@@ -112,6 +112,7 @@ namespace
 		const auto start = run(client, "audio.get").at("capturedFrames").get<int64_t>();
 		run(client, "audio.render", {{"frames", frames}});
 		std::vector<float> peaks;
+		peaks.reserve(static_cast<size_t>(outputs));
 		for (int channel = 0; channel < outputs; ++channel)
 			peaks.push_back(peak(capture(client, channel, frames, start)));
 		return peaks;
