@@ -4,7 +4,6 @@
 #include "engine/engine.h"
 #include "mcp/sessions.h"
 
-#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -37,11 +36,9 @@ namespace gnubase::mcp
 			engine::Json outputSchema; // or null
 			bool readOnly = false;
 			// Returns the structured result. A thrown std::exception becomes a tool result with isError and its
-			// message.
+			// message. A tool that returns a picture, such as a screenshot, returns a PNG file's bytes as
+			// engine::Json::binary, which the client gets as image content.
 			std::function<engine::Json(const engine::Json& arguments)> run;
-			// Instead of run, for a tool that returns a picture, such as a screenshot: returns a PNG file's bytes,
-			// which the client gets as image content.
-			std::function<std::vector<uint8_t>(const engine::Json& arguments)> image;
 		};
 
 		explicit Server(engine::Engine& engine, SessionLimits limits = {});

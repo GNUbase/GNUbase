@@ -83,12 +83,8 @@ namespace gnubase::ui
 		engine::Json text(std::optional<WindowId> window, const std::string& text);
 
 	private:
-		Window& window(std::optional<WindowId> id);
-		// The window's context, laid out as it is now.
-		Rml::Context& context(Window& window);
-		Rml::Element& element(Window& window, const Target& target);
-		Point position(Window& window, const Target& target);
-		engine::Json under(Window& window);
+		// The window, or the main window.
+		Window& resolve(std::optional<WindowId> window);
 
 		Shell& m_shell;
 	};

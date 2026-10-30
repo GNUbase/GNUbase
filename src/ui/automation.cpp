@@ -198,15 +198,53 @@ namespace gnubase::ui
 				return 0;
 			}
 		}
+
+		// The window's context, laid out as it is now.
+		Rml::Context& updated(Window& window)
+		{
+			window.context().Update();
+			return window.context();
+		}
+
+		Rml::Element& targetElement(Window& window, const Target& target)
+		{
+			const Rml::ElementList found = matches(updated(window), target.selector);
+			if (found.empty())
+				throw std::invalid_argument("no element matches " + target.selector);
+			if (target.index < 0 || static_cast<size_t>(target.index) >= found.size())
+				throw std::invalid_argument("only " + std::to_string(found.size()) +
+					(found.size() == 1 ? " element matches " : " elements match ") + target.selector);
+			Rml::Element& chosen = *found[static_cast<size_t>(target.index)];
+			if (!visible(chosen))
+				throw std::invalid_argument(target.selector + " is not visible");
+			return chosen;
+		}
+
+		Point targetPoint(Window& window, const Target& target)
+		{
+			if (target.point)
+				return *target.point;
+			if (target.selector.empty())
+				throw std::invalid_argument("needs a selector or x and y");
+			const Rect bounds = box(targetElement(window, target));
+			return {bounds.x + (bounds.width / 2), bounds.y + (bounds.height / 2)};
+		}
+
+		// The element under the mouse after input, which the window draws again.
+		Json under(Window& window)
+		{
+			window.requestRender();
+			return {{"element", nodeOrNull(window.context().GetHoverElement())}};
+		}
 	}
 
-	Window& Automation::window(std::optional<WindowId> id)
+	Window& Automation::resolve(std::optional<WindowId> window)
 	{
-		if (id)
+		if (window)
 		{
-			if (Window* found = m_shell.find(*id))
+			if (Window* found = m_shell.find(*window))
 				return *found;
-			throw std::invalid_argument("no window " + std::to_string(*id) + "; ui_windows lists them");
+			throw std::invalid_argument("no window " + std::to_string(*window) + "; ui_windows lists them");
 		}
 		for (Window* open : m_shell.windows())
 			if (open->main())
@@ -214,46 +252,10 @@ namespace gnubase::ui
 		throw std::runtime_error("no window is open");
 	}
 
-	Rml::Context& Automation::context(Window& window)
-	{
-		window.context().Update();
-		return window.context();
-	}
-
-	Rml::Element& Automation::element(Window& window, const Target& target)
-	{
-		const Rml::ElementList found = matches(context(window), target.selector);
-		if (found.empty())
-			throw std::invalid_argument("no element matches " + target.selector);
-		if (target.index < 0 || static_cast<size_t>(target.index) >= found.size())
-			throw std::invalid_argument("only " + std::to_string(found.size()) +
-				(found.size() == 1 ? " element matches " : " elements match ") + target.selector);
-		Rml::Element& chosen = *found[static_cast<size_t>(target.index)];
-		if (!visible(chosen))
-			throw std::invalid_argument(target.selector + " is not visible");
-		return chosen;
-	}
-
-	Point Automation::position(Window& window, const Target& target)
-	{
-		if (target.point)
-			return *target.point;
-		if (target.selector.empty())
-			throw std::invalid_argument("needs a selector or x and y");
-		const Rect bounds = box(element(window, target));
-		return {bounds.x + (bounds.width / 2), bounds.y + (bounds.height / 2)};
-	}
-
-	Json Automation::under(Window& window)
-	{
-		window.requestRender();
-		return {{"element", nodeOrNull(window.context().GetHoverElement())}};
-	}
-
 	Json Automation::windows()
 	{
 		Json list = Json::array();
-		for (Window* open : m_shell.windows())
+		for (const Window* open : m_shell.windows())
 		{
 			Rml::Context& context = open->context();
 			Json documents = Json::array();
@@ -272,9 +274,9 @@ namespace gnubase::ui
 		return {{"windows", std::move(list)}};
 	}
 
-	Json Automation::dom(std::optional<WindowId> id, const std::string& selector, int depth)
+	Json Automation::dom(std::optional<WindowId> window, const std::string& selector, int depth)
 	{
-		Rml::Context& context = this->context(window(id));
+		Rml::Context& context = updated(resolve(window));
 		Json elements = Json::array();
 		if (selector.empty())
 		{
@@ -289,16 +291,16 @@ namespace gnubase::ui
 		return {{"elements", std::move(elements)}};
 	}
 
-	Image Automation::screenshot(std::optional<WindowId> id, const Target& element)
+	Image Automation::screenshot(std::optional<WindowId> window, const Target& element)
 	{
-		Window& shown = window(id);
+		Window& shown = resolve(window);
 		std::optional<Image> image = m_shell.screenshot(shown.id());
 		if (!image)
 			throw std::runtime_error("the window can't be drawn offscreen");
 		if (element.empty())
 			return *image;
 
-		const Rect bounds = box(this->element(shown, element));
+		const Rect bounds = box(targetElement(shown, element));
 		const int left = std::clamp(bounds.x, 0, image->width);
 		const int top = std::clamp(bounds.y, 0, image->height);
 		const int right = std::clamp(bounds.x + bounds.width, left, image->width);
@@ -307,65 +309,65 @@ namespace gnubase::ui
 		cropped.pixels.reserve(static_cast<size_t>(cropped.width) * static_cast<size_t>(cropped.height) * 4);
 		for (int row = top; row < bottom; ++row)
 		{
-			const auto begin = image->pixels.begin() + ((static_cast<ptrdiff_t>(row) * image->width + left) * 4);
+			const auto begin = image->pixels.begin() + (((static_cast<ptrdiff_t>(row) * image->width) + left) * 4);
 			cropped.pixels.insert(cropped.pixels.end(), begin, begin + (static_cast<ptrdiff_t>(cropped.width) * 4));
 		}
 		return cropped;
 	}
 
-	Json Automation::move(std::optional<WindowId> id, const Target& to)
+	Json Automation::move(std::optional<WindowId> window, const Target& to)
 	{
-		Window& target = window(id);
-		const Point at = position(target, to);
-		context(target).ProcessMouseMove(at.x, at.y, 0);
-		return under(target);
+		Window& shown = resolve(window);
+		const Point at = targetPoint(shown, to);
+		updated(shown).ProcessMouseMove(at.x, at.y, 0);
+		return under(shown);
 	}
 
-	Json Automation::click(std::optional<WindowId> id, const Target& on, MouseButton button, int count,
+	Json Automation::click(std::optional<WindowId> window, const Target& target, MouseButton button, int count,
 		const std::vector<std::string>& modifiers)
 	{
-		Window& target = window(id);
-		const Point at = position(target, on);
+		Window& shown = resolve(window);
+		const Point at = targetPoint(shown, target);
 		const int state = modifierState(modifiers);
-		Rml::Context& context = this->context(target);
+		Rml::Context& context = updated(shown);
 		context.ProcessMouseMove(at.x, at.y, state);
 		for (int i = 0; i < count; ++i)
 		{
 			context.ProcessMouseButtonDown(buttonIndex(button), state);
 			context.ProcessMouseButtonUp(buttonIndex(button), state);
 		}
-		return under(target);
+		return under(shown);
 	}
 
-	Json Automation::drag(std::optional<WindowId> id, const Target& from, const Target& to)
+	Json Automation::drag(std::optional<WindowId> window, const Target& from, const Target& to)
 	{
-		Window& target = window(id);
-		const Point start = position(target, from);
-		const Point end = position(target, to);
-		Rml::Context& context = this->context(target);
+		Window& shown = resolve(window);
+		const Point start = targetPoint(shown, from);
+		const Point end = targetPoint(shown, to);
+		Rml::Context& context = updated(shown);
 		context.ProcessMouseMove(start.x, start.y, 0);
 		context.ProcessMouseButtonDown(0, 0);
 		for (int step = 1; step <= g_dragSteps; ++step)
 			context.ProcessMouseMove(start.x + ((end.x - start.x) * step / g_dragSteps),
 				start.y + ((end.y - start.y) * step / g_dragSteps), 0);
 		context.ProcessMouseButtonUp(0, 0);
-		return under(target);
+		return under(shown);
 	}
 
-	Json Automation::wheel(std::optional<WindowId> id, const Target& at, float dx, float dy)
+	Json Automation::wheel(std::optional<WindowId> window, const Target& at, float dx, float dy)
 	{
-		Window& target = window(id);
-		Rml::Context& context = this->context(target);
+		Window& shown = resolve(window);
+		Rml::Context& context = updated(shown);
 		if (!at.empty())
 		{
-			const Point point = position(target, at);
+			const Point point = targetPoint(shown, at);
 			context.ProcessMouseMove(point.x, point.y, 0);
 		}
 		context.ProcessMouseWheel(Rml::Vector2f(dx, dy), 0);
-		return under(target);
+		return under(shown);
 	}
 
-	Json Automation::key(std::optional<WindowId> id, const std::string& keys)
+	Json Automation::key(std::optional<WindowId> window, const std::string& keys)
 	{
 		std::vector<std::string> parts;
 		std::istringstream split(keys);
@@ -377,20 +379,20 @@ namespace gnubase::ui
 		parts.pop_back();
 		const int state = modifierState(parts);
 
-		Window& target = window(id);
-		Rml::Context& context = this->context(target);
+		Window& shown = resolve(window);
+		Rml::Context& context = updated(shown);
 		context.ProcessKeyDown(pressed, state);
 		context.ProcessKeyUp(pressed, state);
-		target.requestRender();
+		shown.requestRender();
 		return {{"focus", nodeOrNull(context.GetFocusElement())}};
 	}
 
-	Json Automation::text(std::optional<WindowId> id, const std::string& text)
+	Json Automation::text(std::optional<WindowId> window, const std::string& text)
 	{
-		Window& target = window(id);
-		Rml::Context& context = this->context(target);
+		Window& shown = resolve(window);
+		Rml::Context& context = updated(shown);
 		context.ProcessTextInput(text);
-		target.requestRender();
+		shown.requestRender();
 		return {{"focus", nodeOrNull(context.GetFocusElement())}};
 	}
 }

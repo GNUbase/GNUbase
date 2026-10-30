@@ -280,12 +280,12 @@ namespace gnubase::mcp
 				if (const std::string problem = engine::validate(arguments, extra->inputSchema, "arguments");
 					!problem.empty())
 					throw std::invalid_argument(problem);
-				if (extra->image)
+				Json value = extra->name == g_eventsTool ? takeEvents(arguments, session) : extra->run(arguments);
+				if (value.is_binary())
 					return {{"content",
-								Json::array({Json{{"type", "image"}, {"data", base64(extra->image(arguments))},
+								Json::array({Json{{"type", "image"}, {"data", base64(value.get_binary())},
 									{"mimeType", "image/png"}}})},
 						{"isError", false}};
-				Json value = extra->name == g_eventsTool ? takeEvents(arguments, session) : extra->run(arguments);
 				Json response = {{"content", textContent(text(value))}, {"isError", false}};
 				response["structuredContent"] = std::move(value);
 				return response;

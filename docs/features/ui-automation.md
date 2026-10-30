@@ -15,7 +15,8 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
 - **MCP tools.** `app::addUiTools` adds `ui_windows`, `ui_dom`, `ui_screenshot`, `ui_wait`, `ui_move`, `ui_click`,
   `ui_drag`, `ui_wheel`, `ui_key` and `ui_text` to the MCP server; the windowed app serves them with `--mcp-http`, next
   to the engine's tools and `script_run`. Headless GNUbase has no UI and no UI tools. A screenshot comes back as MCP
-  image content, a PNG; `mcp::Server::Tool::image` is the tool kind for that. PNG encoding runs on the server's thread.
+  image content, a PNG: a tool returns the PNG as `Json::binary`, which `mcp::Server` sends as an image. PNG encoding
+  runs on the server's thread.
 - **Coordinates.** Everything is in the window's pixels, as in its screenshots: an element's box, the points that
   mouse tools take, the window's size. A window's dp ratio (its monitor's scale times the UI scale, #53) converts to dp.
 - **The DOM.** An element has its tag, id, classes, other attributes, a form control's value, its active

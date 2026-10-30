@@ -166,21 +166,19 @@ namespace gnubase::app
 						windowOf(arguments), arguments.value("selector", std::string()), arguments.value("depth", -1));
 				})});
 
-		mcp::Server::Tool screenshot{"ui_screenshot",
+		server.addTool({"ui_screenshot",
 			"Takes a screenshot of a window, or with selector of the element it matches (its border box), as a PNG "
 			"image in the window's pixels.",
 			object(
 				{{"window", windowProperty()}, {"selector", {{"type", "string"}, {"description", "A CSS selector."}}},
 					{"index", {{"type", "integer"}, {"minimum", 0}}}}),
-			nullptr, true, nullptr};
-		screenshot.image = [&shell, automation](const Json& arguments)
-		{
-			const ui::Image image = ui::onUiThread(
-				shell, [automation, arguments]
-				{ return automation->screenshot(windowOf(arguments), targetOf(arguments)); }, g_uiTimeout);
-			return ui::encodePng(image); // on this thread, not the UI's
-		};
-		server.addTool(std::move(screenshot));
+			nullptr, true, [&shell, automation](const Json& arguments)
+			{
+				const ui::Image image = ui::onUiThread(
+					shell, [automation, arguments]
+					{ return automation->screenshot(windowOf(arguments), targetOf(arguments)); }, g_uiTimeout);
+				return Json::binary(ui::encodePng(image)); // encoded on this thread, not the UI's
+			}});
 
 		server.addTool({"ui_wait",
 			"Waits until an element that the CSS selector matches is visible, and has the text if one is given; with "
