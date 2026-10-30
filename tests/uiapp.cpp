@@ -51,21 +51,35 @@ namespace gnubase::test
 #endif
 	}
 
-	UiApp::UiApp(ui::Size size) : m_engine(audio::makeBackends(), m_settings.path())
+	UiApp::UiApp(ui::Size size) : m_size(size)
 	{
+		start();
+	}
+
+	void UiApp::restart()
+	{
+		m_automation.reset();
+		m_ui.reset();
+		m_engine.reset();
+		start();
+	}
+
+	void UiApp::start()
+	{
+		m_engine = std::make_unique<engine::Engine>(audio::makeBackends(), m_settings.path());
 		std::ostringstream problems;
-		const bool ready = app::setUpEngine(m_engine, app::Options{}, problems); // the dummy device, the app's default
+		const bool ready = app::setUpEngine(*m_engine, app::Options{}, problems); // the dummy device, the app's default
 		INFO(problems.str());
 		REQUIRE(ready);
 
 		useTestDisplay();
 		ui::WindowSpec main;
-		main.size = size;
+		main.size = m_size;
 		main.hidden = true; // tests don't flash windows on the desktop
 		try
 		{
 			m_ui = std::make_unique<app::AppUi>(
-				m_engine, std::filesystem::path(GNUBASE_RESOURCES_DIR), main, std::cout, 4);
+				*m_engine, std::filesystem::path(GNUBASE_RESOURCES_DIR), main, std::cout, 4);
 		}
 		catch (const ui::GpuUnavailable& error)
 		{
@@ -78,7 +92,7 @@ namespace gnubase::test
 
 	engine::Json UiApp::call(const std::string& command, const engine::Json& parameters)
 	{
-		const engine::Result result = engine::Client(m_engine).call(command, parameters);
+		const engine::Result result = engine::Client(*m_engine).call(command, parameters);
 		INFO(command << ": " << result.error);
 		REQUIRE(result.ok());
 		return result.value;

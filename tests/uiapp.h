@@ -42,13 +42,17 @@ namespace gnubase::test
 		// The main window's size in desktop coordinates; in pixels at a monitor scale of 1.
 		explicit UiApp(ui::Size size = {640, 480});
 
-		engine::Engine& engine() { return m_engine; }
+		engine::Engine& engine() { return *m_engine; }
 		app::AppUi& appUi() { return *m_ui; }
 		ui::Shell& shell() { return m_ui->shell(); }
 		ui::Window& main() { return m_ui->mainWindow(); }
 		ui::Automation& ui() { return *m_automation; }
 		scripting::Runtime& lua() { return m_ui->lua(); }
 		ui::KeyCommands& keys() { return m_ui->keyCommands(); }
+
+		// Quits the UI and the engine and starts them again with the same user settings, as a user restarting GNUbase
+		// would, with the main window as it was first opened.
+		void restart();
 
 		// Runs an engine command that must succeed; returns its result.
 		engine::Json call(const std::string& command, const engine::Json& parameters = engine::Json::object());
@@ -72,8 +76,11 @@ namespace gnubase::test
 		static void checkGolden(const std::string& name, const ui::Image& image);
 
 	private:
+		void start();
+
 		TempDir m_settings;
-		engine::Engine m_engine;
+		ui::Size m_size;
+		std::unique_ptr<engine::Engine> m_engine;
 		std::unique_ptr<app::AppUi> m_ui;
 		std::unique_ptr<ui::Automation> m_automation;
 	};

@@ -29,6 +29,7 @@ add_executable(gnubase-tests
 	dawproject_tests.cpp
 	debugreports.cpp
 	device_tests.cpp
+	docking_tests.cpp
 	document_tests.cpp
 	effects_tests.cpp
 	engine_tests.cpp

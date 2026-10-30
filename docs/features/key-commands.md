@@ -59,8 +59,9 @@ The reference's defaults for the commands GNUbase has so far (`ui::defaultKeyMap
 | Mod+Z | `history.undo` | Undo |
 | Mod+Shift+Z | `history.redo` | Redo |
 
-Commands that come with their tickets bring their keys: zooming (#84), opening windows such as the mixer (F3), cycle,
-record, nudging and the rest of the reference's tables.
+Commands that come with their tickets bring their keys: zooming (#84), showing and hiding zones and strips
+([docking.md](docking.md#key-commands)), opening windows such as the mixer (F3), cycle, record, nudging and the rest of
+the reference's tables.
 
 ## Checks
 
