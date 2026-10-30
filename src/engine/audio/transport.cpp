@@ -137,4 +137,28 @@ namespace gnubase::engine
 		m_applied.store(m_locate, m_position);
 		return m_block;
 	}
+
+	void PlayedPositions::add(uint64_t start, uint32_t frames, const graph::TransportBlock& transport) noexcept
+	{
+		const size_t size = m_positions.size();
+		if (size == 0)
+			return;
+		for (uint32_t i = 0; i < frames; ++i)
+			m_positions[(start + i) % size] = -1;
+		for (size_t s = 0; s < transport.segmentCount; ++s)
+		{
+			const graph::TransportSegment& segment = transport.segments[s];
+			for (uint32_t i = 0; i < segment.frames; ++i)
+				m_positions[(start + segment.offset + i) % size] = segment.position + i;
+		}
+		m_end = static_cast<int64_t>(start + frames);
+	}
+
+	time::Samples PlayedPositions::at(int64_t frame) const noexcept
+	{
+		const auto size = static_cast<int64_t>(m_positions.size());
+		if (frame < 0 || frame >= m_end || frame < m_end - size)
+			return -1;
+		return m_positions[static_cast<size_t>(frame % size)];
+	}
 }

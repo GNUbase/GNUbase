@@ -30,6 +30,7 @@ namespace gnubase::audio
 	// asked (tried once per driver and backend). A driver that doesn't call back within two seconds of starting fails
 	// to start. Drivers that didn't load or start the last time, as drivers for hardware that isn't connected often
 	// don't, are listed as unavailable, with the reason. Driver strings are converted from the ANSI code page to UTF-8.
-	// Reset, resync and buffer size change requests and sample rate changes ask the engine for a reset.
+	// Reset, resync, buffer size and latency change requests and sample rate changes ask the engine for a reset.
+	// Drivers that can monitor inputs directly do it through ASIO's input monitor.
 	std::unique_ptr<Backend> makeAsioBackend(AsioDrivers drivers = {});
 }

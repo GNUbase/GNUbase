@@ -3,9 +3,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
+#include <optional>
 
 namespace gnubase::engine::processors
 {
@@ -170,19 +169,7 @@ namespace gnubase::engine::processors
 		const int index = indexOf(param);
 		if (index < 0)
 			return false;
-		const ParameterInfo& parameter = m_info.parameters[static_cast<size_t>(index)];
-		if (!parameter.options.empty())
-		{
-			const auto option = static_cast<size_t>(std::clamp(
-				std::round(value - parameter.minimum), 0.0, static_cast<double>(parameter.options.size() - 1)));
-			text = parameter.options[option];
-			return true;
-		}
-		char buffer[32];
-		std::snprintf(buffer, sizeof(buffer), parameter.stepped ? "%.0f" : "%.2f", value);
-		text = buffer;
-		if (!parameter.unit.empty())
-			text += " " + parameter.unit;
+		text = valueToText(m_info.parameters[static_cast<size_t>(index)], value);
 		return true;
 	}
 
@@ -191,17 +178,11 @@ namespace gnubase::engine::processors
 		const int index = indexOf(param);
 		if (index < 0)
 			return false;
-		const ParameterInfo& parameter = m_info.parameters[static_cast<size_t>(index)];
-		for (size_t i = 0; i < parameter.options.size(); ++i)
-			if (text == parameter.options[i])
-			{
-				value = parameter.minimum + static_cast<double>(i);
-				return true;
-			}
-		const std::string copy(text);
-		char* end = nullptr;
-		value = std::strtod(copy.c_str(), &end);
-		return end != copy.c_str();
+		const std::optional<double> parsed = textToValue(m_info.parameters[static_cast<size_t>(index)], text);
+		if (!parsed.has_value())
+			return false;
+		value = *parsed;
+		return true;
 	}
 
 	void BuiltinPlugin::flushParams(const plugin::EventList& in, plugin::EventList& /*out*/) noexcept
