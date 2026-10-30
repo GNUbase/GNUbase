@@ -294,16 +294,14 @@ namespace gnubase::engine
 				lanes.push_back({{AutomationTargetType::Controller, 0, number, 0}, Kind::Midi, 0,
 					static_cast<double>(midi::controllerFromMidi1(static_cast<uint8_t>(*value))) / 4294967295.0, 0.0,
 					1.0, {}});
-		for (const processors::BuiltinInfo& info : processors::builtins())
-			if (info.id == channel.instrument)
-				for (const processors::ParameterInfo& parameter : info.parameters)
-				{
-					const auto set = channel.instrumentParameters.find(parameter.id);
-					const double value =
-						set != channel.instrumentParameters.end() ? set->second : parameter.defaultValue;
-					lanes.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0}, Kind::Instrument,
-						parameter.id, value, parameter.minimum, parameter.maximum, {}});
-				}
+		if (const processors::BuiltinInfo* info = processors::findBuiltin(channel.instrument))
+			for (const processors::ParameterInfo& parameter : info->parameters)
+			{
+				const auto set = channel.instrumentParameters.find(parameter.id);
+				const double value = set != channel.instrumentParameters.end() ? set->second : parameter.defaultValue;
+				lanes.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0}, Kind::Instrument, parameter.id,
+					value, parameter.minimum, parameter.maximum, {}});
+			}
 		const bool midi = channel.type == TrackType::Midi || channel.type == TrackType::Instrument;
 		for (const RenderAutomationLane& lane : channel.automation)
 		{

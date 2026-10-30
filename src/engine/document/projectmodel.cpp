@@ -444,12 +444,9 @@ namespace gnubase::engine
 				require(!channel.instrument.empty(), "track " + idText(track.id) + " plays no instrument");
 				require(json.contains("parameter"), "target.parameter is required");
 				const auto parameter = json.at("parameter").get<int64_t>();
-				const auto& builtins = processors::builtins();
-				const auto info = std::find_if(builtins.begin(), builtins.end(),
-					[&channel](const processors::BuiltinInfo& b) { return b.id == channel.instrument; });
-				require(info != builtins.end() &&
-						std::any_of(info->parameters.begin(), info->parameters.end(),
-							[parameter](const processors::ParameterInfo& p) { return p.id == parameter; }),
+				const processors::BuiltinInfo* info = processors::findBuiltin(channel.instrument);
+				require(info != nullptr && isParameterId(json.at("parameter")) &&
+						processors::findParameter(*info, static_cast<uint32_t>(parameter)) != nullptr,
 					channel.instrument + " has no parameter " + std::to_string(parameter));
 				target.parameter = static_cast<uint32_t>(parameter);
 				break;
@@ -486,11 +483,10 @@ namespace gnubase::engine
 			case AutomationTargetType::Instrument:
 			{
 				const Channel& channel = project.channels.at(project.trackById.at(lane.track).channel);
-				for (const processors::BuiltinInfo& info : processors::builtins())
-					if (info.id == channel.instrument)
-						for (const processors::ParameterInfo& parameter : info.parameters)
-							if (parameter.id == lane.target.parameter)
-								return {parameter.minimum, parameter.maximum};
+				const processors::BuiltinInfo* info = processors::findBuiltin(channel.instrument);
+				if (const processors::ParameterInfo* parameter =
+						info != nullptr ? processors::findParameter(*info, lane.target.parameter) : nullptr)
+					return {parameter->minimum, parameter->maximum};
 				throw CommandError("the instrument of automation lane " + idText(lane.id) + " has no parameter " +
 					std::to_string(lane.target.parameter) + " any more");
 			}
@@ -902,10 +898,8 @@ namespace gnubase::engine
 					"only an instrument track's channel plays an instrument");
 				if (!changed.instrument.empty())
 				{
-					const auto& builtins = processors::builtins();
-					const auto info = std::find_if(builtins.begin(), builtins.end(),
-						[&](const processors::BuiltinInfo& b) { return b.id == changed.instrument; });
-					require(info != builtins.end(), "no built-in processor " + changed.instrument);
+					const processors::BuiltinInfo* info = processors::findBuiltin(changed.instrument);
+					require(info != nullptr, "no built-in processor " + changed.instrument);
 					require(info->instrument, changed.instrument + " is not an instrument");
 				}
 				// Another instrument starts with its parameters at their defaults.
