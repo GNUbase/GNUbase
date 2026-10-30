@@ -15,9 +15,11 @@
 #include <cmath>
 #include <cstring>
 #include <functional>
+#include <map>
 #include <queue>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace gnubase::engine::graph
 {
@@ -50,6 +52,25 @@ namespace gnubase::engine::graph
 			graph.nodes.push_back({NodeKind::Channel, channel.id, channel.format, nullptr,
 				channel.panner == Panner::Mono ? ChannelFormat::Stereo : ChannelFormat::None});
 		graph.centerGain = panGains(snapshot.panLaw, 0.0).first;
+		for (size_t i = 0; i < snapshot.busses.size(); ++i)
+		{
+			const RenderBus& bus = snapshot.busses[i];
+			if (bus.parent < 0)
+				continue;
+			const int child = static_cast<int>(i);
+			if (bus.direction == BusDirection::Output)
+			{
+				graph.audio.push_back({child, bus.parent});
+				graph.channelMaps.push_back({child, bus.parent, bus.parentChannels});
+				continue;
+			}
+			std::vector<int> channels(
+				static_cast<size_t>(channelCount(snapshot.busses[static_cast<size_t>(bus.parent)].format)), -1);
+			for (size_t c = 0; c < bus.parentChannels.size(); ++c)
+				channels[static_cast<size_t>(bus.parentChannels[c])] = static_cast<int>(c);
+			graph.audio.push_back({bus.parent, child});
+			graph.channelMaps.push_back({bus.parent, child, std::move(channels)});
+		}
 
 		for (size_t i = 0; i < snapshot.channels.size(); ++i)
 		{
@@ -269,9 +290,27 @@ namespace gnubase::engine::graph
 			std::sort(node.audioInputs.begin(), node.audioInputs.end());
 			std::sort(node.eventInputs.begin(), node.eventInputs.end());
 		}
+		std::map<std::pair<int, int>, const std::vector<int>*> mapped;
+		for (const ChannelMap& map : graph.channelMaps)
+			mapped[{map.from, map.to}] = &map.channels;
 		for (size_t i = 0; i < m_nodes.size(); ++i)
 			for (const int input : m_nodes[i].audioInputs)
 			{
+				if (const auto map = mapped.find({input, static_cast<int>(i)}); map != mapped.end())
+				{
+					std::vector<Tap>& taps = m_nodes[i].taps.emplace_back();
+					const std::vector<int>& targets = *map->second;
+					for (size_t c = 0; c < targets.size(); ++c)
+					{
+						if (targets[c] < 0)
+							continue;
+						if (static_cast<int>(c) >= m_nodes[static_cast<size_t>(input)].outputChannels ||
+							targets[c] >= m_nodes[i].channels)
+							throw std::invalid_argument("a connection maps a channel that isn't there");
+						taps.push_back({static_cast<int>(c), targets[c], 1.0f});
+					}
+					continue;
+				}
 				const NodeDesc& sender = graph.nodes[static_cast<size_t>(input)];
 				const ChannelFormat from = sender.output == ChannelFormat::None ? sender.format : sender.output;
 				const std::vector<float> gains = conversionGains(from, graph.nodes[i].format, graph.centerGain);
@@ -374,7 +413,7 @@ namespace gnubase::engine::graph
 	{
 		const Node& node = m_nodes[i];
 		float* const* audio = m_channels.data() + node.firstChannel;
-		if (node.kind != NodeKind::InputBus)
+		if (node.kind != NodeKind::InputBus || !node.audioInputs.empty()) // input child busses sum their parent's
 			for (int c = 0; c < std::max(node.channels, node.outputChannels); ++c)
 				std::memset(audio[c], 0, frames * sizeof(float));
 		for (size_t input = 0; input < node.audioInputs.size(); ++input)

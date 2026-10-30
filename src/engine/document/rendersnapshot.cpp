@@ -59,8 +59,11 @@ namespace gnubase::engine
 		for (const Bus& bus : project.busses)
 		{
 			busIndex[bus.id] = static_cast<int>(snapshot->busses.size());
-			snapshot->busses.push_back({bus.id, bus.direction, bus.format});
+			snapshot->busses.push_back({bus.id, bus.direction, bus.format, bus.ports, -1, bus.parentChannels});
 		}
+		for (size_t i = 0; i < project.busses.size(); ++i)
+			if (project.busses[i].parent != 0)
+				snapshot->busses[i].parent = busIndex.at(project.busses[i].parent);
 		std::map<ObjectId, int> mediaIndex;
 		for (const auto& [id, media] : project.media)
 		{
@@ -84,6 +87,7 @@ namespace gnubase::engine
 			render.type = track.type;
 			render.format = channel.format;
 			render.instrument = channel.instrument;
+			render.instrumentParameters = channel.instrumentParameters;
 			render.volume = volumeGain(channel.volume);
 			render.pan = channel.pan;
 			render.stereoPanner = channel.panner;

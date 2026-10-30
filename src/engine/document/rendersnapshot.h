@@ -4,6 +4,7 @@
 #include "engine/document/document.h"
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,6 +17,9 @@ namespace gnubase::engine
 		ObjectId id = 0;
 		BusDirection direction = BusDirection::Output;
 		ChannelFormat format = ChannelFormat::Stereo;
+		std::vector<std::string> ports; // as in Bus
+		int parent = -1;                // child busses: an index into RenderSnapshot::busses
+		std::vector<int> parentChannels;
 	};
 
 	struct RenderMedia
@@ -96,6 +100,7 @@ namespace gnubase::engine
 		std::vector<RenderAutomationPoint> points; // sorted by position; points at one position in the order added
 	};
 
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct RenderChannel
 	{
 		ObjectId id = 0;
@@ -104,10 +109,11 @@ namespace gnubase::engine
 		ChannelFormat format = ChannelFormat::Stereo;
 		int input = -1; // index into RenderSnapshot::busses, or -1
 		RenderTarget output;
-		std::string instrument;       // instrument tracks: a built-in instrument's id, or empty
-		double volume = 1.0;          // the fader's static value, a linear gain
-		double pan = 0.0;             // the static pan, -1 to 1
-		Panner panner = Panner::None; // by its format and its destination's
+		std::string instrument;                          // instrument tracks: a built-in instrument's id, or empty
+		std::map<uint32_t, double> instrumentParameters; // its parameters' static values that aren't the defaults
+		double volume = 1.0;                             // the fader's static value, a linear gain
+		double pan = 0.0;                                // the static pan, -1 to 1
+		Panner panner = Panner::None;                    // by its format and its destination's
 		StereoPanner stereoPanner = StereoPanner::Balance;
 		double panLeft = -1.0; // the combined panner's static positions
 		double panRight = 1.0;

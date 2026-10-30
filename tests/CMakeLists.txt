@@ -22,6 +22,7 @@ add_executable(gnubase-tests
 	audiofile_tests.cpp
 	automation_tests.cpp
 	backup_tests.cpp
+	bus_tests.cpp
 	canvas_tests.cpp
 	channelformat_tests.cpp
 	coverage_tests.cpp
@@ -50,6 +51,7 @@ add_executable(gnubase-tests
 	midifunctions_tests.cpp
 	mixer_tests.cpp
 	multicore_tests.cpp
+	parameter_tests.cpp
 	peaks_tests.cpp
 	performance_tests.cpp
 	playback_tests.cpp
@@ -71,9 +73,13 @@ add_executable(gnubase-tests
 	time_tests.cpp
 	timestretch_tests.cpp
 	transport_tests.cpp
+	uiapp.cpp
+	uiapp.h
+	uiapp_tests.cpp
 	uisettings_tests.cpp
 	uithemes_tests.cpp
 	uitools_tests.cpp
+	widgets_tests.cpp
 	window_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE
 	Catch2::Catch2WithMain

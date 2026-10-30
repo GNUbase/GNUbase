@@ -5,6 +5,8 @@
 // quantizing starts from the original positions unless it is soft (iterative).
 #include "engine/engine.h"
 #include "engine/midi/quantize.h"
+#include "engine/midi/quantizecommands.h"
+#include "engine/settings/store.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -13,6 +15,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <set>
 #include <string>
 #include <utility>
@@ -597,7 +600,11 @@ namespace
 		Client client{engine};
 		ObjectId track = 0;
 
-		Fixture() { track = run(client, "track.add", {{"type", "instrument"}}).at("track").at("id").get<ObjectId>(); }
+		// Without a settings folder, the user's presets are kept in memory only.
+		explicit Fixture(const std::filesystem::path& settings = {}) : engine(gnubase::audio::makeBackends(), settings)
+		{
+			track = run(client, "track.add", {{"type", "instrument"}}).at("track").at("id").get<ObjectId>();
+		}
 
 		ObjectId addPart(Ticks position, Ticks length = quarters(4), ObjectId onTrack = 0)
 		{
@@ -903,4 +910,233 @@ TEST_CASE("a groove extracted from a part that starts later is in phase with it"
 	f.addNotes(played, {quarters(9, 10), quarters(29, 10)});
 	run(f.client, "quantize.apply", {{"part", played}, {"preset", "Late"}});
 	CHECK(f.positions(played) == std::vector<Ticks>{quarters(11, 10), quarters(31, 10)});
+}
+
+namespace
+{
+	const char* const g_presetsFile = "quantize-presets.json";
+
+	// The user's presets, as quantize.presets lists them.
+	Json userPresets(Client& client)
+	{
+		Json user = Json::array();
+		const Json all = run(client, "quantize.presets");
+		for (const Json& preset : all.at("presets"))
+			if (preset.at("factory") == false)
+				user.push_back(preset);
+		return user;
+	}
+
+	std::vector<std::string> names(const Json& presets)
+	{
+		std::vector<std::string> result;
+		result.reserve(presets.size());
+		for (const Json& preset : presets)
+			result.push_back(preset.at("name").get<std::string>());
+		return result;
+	}
+
+	Json readJson(const std::filesystem::path& file)
+	{
+		return Json::parse(test::readText(file));
+	}
+
+	void writePresets(const std::filesystem::path& folder, const Json& presets)
+	{
+		std::ofstream(folder / g_presetsFile, std::ios::binary)
+			<< Json{{"version", 1}, {"values", {{"quantize.presets", presets}}}}.dump();
+	}
+}
+
+TEST_CASE("the user's quantize presets come back when GNUbase starts again", "[integration]")
+{
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / g_presetsFile;
+	Json saved;
+	{
+		Fixture f(dir.path());
+		CHECK(userPresets(f.client).empty());
+		CHECK(!std::filesystem::exists(file)); // factory presets aren't written
+		run(f.client, "quantize.set",
+			{{"settings", {{"grid", "1/8"}, {"swing", 0.5}, {"seed", 12345678901234}, {"strength", 0.1}}}});
+		run(f.client, "quantize.savePreset", {{"name", "Shuffle"}});
+		const ObjectId drums = f.addPart(quarters(1));
+		f.addNotes(drums, {quarters(1, 10), quarters(21, 10)});
+		run(f.client, "quantize.extractGroove", {{"part", drums}, {"name", "Late"}});
+		run(f.client, "quantize.savePreset", {{"name", "Gone"}});
+		run(f.client, "quantize.renamePreset", {{"name", "Shuffle"}, {"newName", "Swing 8"}});
+		run(f.client, "quantize.removePreset", {{"name", "Gone"}});
+		saved = userPresets(f.client);
+		CHECK(names(saved) == std::vector<std::string>{"Swing 8", "Late"});
+	}
+
+	// The file has each of the user's presets with its name and settings, and no factory preset.
+	const Json document = readJson(file);
+	CHECK(document.at("version") == 1);
+	const Json& stored = document.at("values").at("quantize.presets");
+	REQUIRE(stored.size() == 2);
+	for (size_t i = 0; i < stored.size(); ++i)
+	{
+		CHECK(stored[i].at("name") == saved[i].at("name"));
+		CHECK(stored[i].at("settings") == saved[i].at("settings"));
+	}
+
+	{
+		Fixture next(dir.path());
+		CHECK(userPresets(next.client) == saved);
+		// The groove quantizes as it did in the engine that made it.
+		const ObjectId played = next.addPart(quarters(4));
+		next.addNotes(played, {quarters(9, 10), quarters(29, 10)});
+		run(next.client, "quantize.apply", {{"part", played}, {"preset", "Late"}});
+		CHECK(next.positions(played) == std::vector<Ticks>{quarters(11, 10), quarters(31, 10)});
+		run(next.client, "quantize.removePreset", {{"name", "Late"}});
+		run(next.client, "quantize.removePreset", {{"name", "Swing 8"}});
+	}
+	CHECK(readJson(file).at("values") == Json::object()); // no presets is the default
+	Fixture last(dir.path());
+	CHECK(userPresets(last.client).empty());
+}
+
+TEST_CASE("quantize presets that can't be read are skipped and stay in the file", "[integration]")
+{
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / g_presetsFile;
+
+	SECTION("presets with invalid settings or names")
+	{
+		const Json presets = Json::array({
+			{{"name", "Loose"}, {"settings", {{"grid", "1/8"}, {"strength", 0.5}}}},
+			{{"name", "Too strong"}, {"settings", {{"strength", 2}}}},
+			{{"name", "Newer"}, {"settings", {{"grid", "1/8"}, {"humanize", 0.3}}}}, // a newer GNUbase's setting
+			{{"name", "Typed"}, {"settings", {{"tuplet", "three"}}}},
+			{{"name", "Groove"}, {"settings", {{"groove", {{"length", 10}, {"points", {{{"position", 10}}}}}}}}},
+			{{"name", "1/16"}, {"settings", Json::object()}}, // a factory preset's name
+			{{"name", ""}, {"settings", Json::object()}},
+			{{"name", "Loose"}, {"settings", Json::object()}}, // the same name again
+			{{"settings", Json::object()}},
+			"Swing",
+			nullptr,
+		});
+		writePresets(dir.path(), presets);
+		Fixture f(dir.path());
+		const Json user = userPresets(f.client);
+		REQUIRE(user.size() == 1);
+		CHECK(user[0].at("name") == "Loose");
+		CHECK(user[0].at("settings").at("grid") == "1/8");
+		CHECK(user[0].at("settings").at("strength") == 0.5);
+		CHECK(user[0].at("settings").at("swing") == 0.0); // what the preset doesn't have is the default
+		const Json listed = run(f.client, "quantize.presets");
+		CHECK(listed.at("problems").size() == presets.size() - 1); // why each one was skipped
+		CHECK(!listed.at("readOnly").get<bool>());
+
+		// The skipped ones stay for the GNUbase that wrote them, and so do their names, so that nothing is lost
+		// unnoticed. quantize.removePreset removes them.
+		CHECK_THAT(reject(f.client, "quantize.savePreset", {{"name", "Newer"}}), ContainsSubstring("can't be read"));
+		CHECK_THAT(reject(f.client, "quantize.renamePreset", {{"name", "Loose"}, {"newName", "Newer"}}),
+			ContainsSubstring("exists"));
+		run(f.client, "quantize.removePreset", {{"name", "Too strong"}});
+		run(f.client, "quantize.savePreset", {{"name", "Too strong"}, {"settings", {{"strength", 1.0}}}});
+		run(f.client, "quantize.savePreset", {{"name", "Tight"}});
+		// Replaces the preset it reads, and leaves the other one of that name.
+		run(f.client, "quantize.savePreset", {{"name", "Loose"}, {"settings", {{"strength", 0.25}}}});
+		CHECK(names(userPresets(f.client)) == std::vector<std::string>{"Loose", "Too strong", "Tight"});
+		const Json stored = readJson(file).at("values").at("quantize.presets");
+		REQUIRE(stored.size() == presets.size() + 1);
+		CHECK(stored[0].at("settings").at("strength") == 0.25);
+		for (size_t kept = 2; kept < presets.size(); ++kept)
+			CHECK(stored[kept - 1] == presets[kept]);
+		CHECK(stored[presets.size() - 1].at("name") == "Too strong");
+		CHECK(stored.back().at("name") == "Tight");
+	}
+	SECTION("a file that isn't JSON")
+	{
+		std::ofstream(file, std::ios::binary) << R"({"version": 1, "values": {"quantize.presets": [)";
+		{
+			Fixture f(dir.path());
+			CHECK(userPresets(f.client).empty());
+			CHECK(std::filesystem::exists(dir.path() / "quantize-presets.corrupt.json")); // kept as it was
+			run(f.client, "quantize.savePreset", {{"name", "Tight"}});
+		}
+		Fixture next(dir.path());
+		CHECK(names(userPresets(next.client)) == std::vector<std::string>{"Tight"});
+	}
+	SECTION("presets that aren't a list")
+	{
+		writePresets(dir.path(), {{"Loose", {{"strength", 0.5}}}});
+		Fixture f(dir.path());
+		CHECK(userPresets(f.client).empty());
+		CHECK(run(f.client, "quantize.presets").at("problems").size() == 1);
+	}
+	SECTION("a file of a newer GNUbase is left as it is, and quantize.presets says so")
+	{
+		const std::string newer = R"({"version": 2, "values": {"quantize.presets": []}})";
+		std::ofstream(file, std::ios::binary) << newer;
+		Fixture f(dir.path());
+		run(f.client, "quantize.savePreset", {{"name", "Tight"}}); // until GNUbase quits
+		CHECK(names(userPresets(f.client)) == std::vector<std::string>{"Tight"});
+		const Json listed = run(f.client, "quantize.presets");
+		CHECK(listed.at("readOnly").get<bool>());
+		CHECK_THAT(listed.at("problems").dump(), ContainsSubstring("newer"));
+		CHECK(listed.at("file") == file.u8string());
+		CHECK(test::readText(file) == newer);
+	}
+}
+
+TEST_CASE("a quantize preset that can't be saved changes nothing", "[integration]")
+{
+	const test::TempDir dir;
+	Fixture f(dir.path());
+	const Json listed = run(f.client, "quantize.presets");
+	CHECK(!listed.at("readOnly").get<bool>());
+	CHECK(listed.at("problems").empty());
+	std::filesystem::create_directories(dir.path() / g_presetsFile); // where the file would be written
+	CHECK_THAT(reject(f.client, "quantize.savePreset", {{"name", "Tight"}}), ContainsSubstring("cannot save"));
+	CHECK(userPresets(f.client).empty());
+	Fixture memory;
+	CHECK(run(memory.client, "quantize.presets").at("file").is_null()); // kept in memory only
+}
+
+TEST_CASE("GNUbase processes on one settings folder keep each other's quantize presets", "[integration]")
+{
+	const test::TempDir dir;
+	Fixture first(dir.path());
+	Fixture second(dir.path()); // started before the first one saved anything
+	run(first.client, "quantize.savePreset", {{"name", "First"}});
+	run(second.client, "quantize.savePreset", {{"name", "Second"}});
+	CHECK(names(userPresets(second.client)) == std::vector<std::string>{"First", "Second"});
+	// A change starts from the presets in the file, whichever process saved them.
+	run(first.client, "quantize.renamePreset", {{"name", "Second"}, {"newName", "Renamed"}});
+	CHECK(names(userPresets(first.client)) == std::vector<std::string>{"First", "Renamed"});
+	run(second.client, "quantize.removePreset", {{"name", "First"}});
+	// A change that fails still shows the presets in the file as they are now.
+	CHECK_THAT(reject(first.client, "quantize.removePreset", {{"name", "First"}}), ContainsSubstring("no quantize"));
+	CHECK(names(userPresets(first.client)) == std::vector<std::string>{"Renamed"});
+	Fixture third(dir.path());
+	CHECK(names(userPresets(third.client)) == std::vector<std::string>{"Renamed"});
+}
+
+// Every version of the quantize presets file that a GNUbase release wrote is in tests/data/quantize-presets, as
+// quantize-presets.v<version>.json. When the version goes up, add the new file: older ones must keep migrating.
+TEST_CASE("every earlier version of the quantize presets file still loads", "[integration]")
+{
+	const std::filesystem::path fixtures = std::filesystem::path(GNUBASE_TEST_DATA_DIR) / "quantize-presets";
+	int found = 0;
+	for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(fixtures))
+	{
+		CAPTURE(entry.path().filename().string());
+		const test::TempDir dir;
+		std::filesystem::copy_file(entry.path(), dir.path() / g_presetsFile);
+		const size_t count = readJson(entry.path()).at("values").at("quantize.presets").size();
+		{
+			const settings::Store store(quantizePresetsFormat(), dir.path());
+			CHECK((store.loadReport().status == settings::LoadStatus::Loaded ||
+				store.loadReport().status == settings::LoadStatus::Migrated));
+			CHECK(store.loadReport().problems.empty());
+		}
+		Fixture f(dir.path());
+		CHECK(count > 0);
+		CHECK(userPresets(f.client).size() == count); // every preset is read
+		++found;
+	}
+	CHECK(found == quantizePresetsFormat().version);
 }
