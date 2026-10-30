@@ -396,7 +396,7 @@ TEST_CASE("the snapshot has a MIDI track's parts by start, and each controller e
 	for (const int i : {1, 0})
 	{
 		parts[i] = run(client, "midiPart.add",
-			{{"track", track}, {"position", i * 4 * g_ticksPerQuarter}, {"length", 4 * g_ticksPerQuarter}})
+			{{"track", track}, {"position", 4 * g_ticksPerQuarter * i}, {"length", 4 * g_ticksPerQuarter}})
 					   .at("part")
 					   .at("id")
 					   .get<ObjectId>();
