@@ -9,6 +9,10 @@ namespace gnubase::ui
 	// attribute of what closed it.
 	inline constexpr const char* g_dialogCloseEvent = "close";
 
+	// The event a <listview> sends when the user expands or collapses a tree row, with the parameters "value" (the
+	// row's value) and "expanded".
+	inline constexpr const char* g_treeToggleEvent = "toggle";
+
 	// GNUbase's widget library (#54): the elements documents get for its widget tags, and the behaviour of RmlUi's own
 	// ones that GNUbase adds. docs/features/widgets.md describes each widget. Widgets keep their state in attributes
 	// (value, checked, disabled) and in the state classes that the themes style, and report what the user changed
@@ -19,4 +23,5 @@ namespace gnubase::ui
 	// The groups of widgets that registerWidgets registers, each in a source file of its own.
 	void registerValueWidgets(RmlUi& rmlui); // knobs, faders, sliders, value fields, meters
 	void registerPopupWidgets(RmlUi& rmlui); // menus, context menus, tooltips, dialogs
+	void registerViewWidgets(RmlUi& rmlui);  // list, tree and table views, splitters
 }

@@ -125,15 +125,15 @@
 	{
 		decorator: svg-ninepatch(menu-separator.svg, 2 2 2 2);
 	}
-	.list
+	.list, listview
 	{
 		decorator: svg-ninepatch(list.svg, 6 6 6 6);
 	}
-	.list-item:hover
+	.list-item:hover, listitem:hover, listview tbody tr:hover
 	{
 		decorator: svg-ninepatch(list-item-hover.svg, 6 6 6 6);
 	}
-	.list-item.selected, select selectbox option:checked
+	.list-item.selected, listitem.selected, listview tr.selected, select selectbox option:checked
 	{
 		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
@@ -380,6 +380,10 @@
 	.meter-peak
 	{
 		decorator: svg(meter-peak.svg);
+	}
+	.tree-toggle
+	{
+		decorator: svg(dropdown-arrow.svg);
 	}
 	.splitter-grip-vertical
 	{

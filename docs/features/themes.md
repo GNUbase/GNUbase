@@ -48,7 +48,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   and the scroll bars.
 - **Containers:** `.dialog` (and `dialog`), `.dialog-titlebar`, `.panel`, `.panel-header`, `.toolbar`, `.display`,
   `.tooltip` (and `tooltip`), `.menu` with `.menu-item` and `.menu-separator` (and `menu`, `menuitem` with `:hover`,
-  `:focus-visible`, `:disabled` and `.checked`, `menuseparator`), `.list` with `.list-item` (`.selected`), `tabset` with its tabs.
+  `:focus-visible`, `:disabled` and `.checked`, `menuseparator`), `.list` with `.list-item` (`.selected`) (and
+  `listview` with `listitem` and table rows, `.tree-toggle`), `tabset` with its tabs.
 - **Mixer and editor parts**, which the widget library's elements are made of ([widgets.md](widgets.md)): `.knob`,
   `.knob-pointer`, `.fader`, `.fader-cap`, `.slider-track`, `.slider-fill`, `.slider-thumb`, `valuefield`, `.meter`,
   `.meter-fill`, `.meter-peak`, `.splitter-grip-vertical`, `.splitter-grip-horizontal`, `.dropdown-arrow`,

@@ -1,0 +1,53 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Tabs, list, tree and table views, and splitters of the widget library (#54) for tests/widgets_tests.cpp. The data
+     model "views" binds the list's selection. -->
+<rml>
+<head>
+	<title>Views</title>
+	<style>
+		body { position: absolute; left: 0; top: 0; right: 0; bottom: 0; padding: 8dp; }
+		#panes { display: flex; height: 200dp; }
+		#tracks { width: 150dp; }
+		#middle { display: flex; flex-direction: column; flex: 1; }
+		#tree { height: 120dp; }
+		#bottom { flex: 1; }
+		#table { width: 200dp; }
+		tabset { height: 60dp; }
+	</style>
+</head>
+<body data-model="views">
+	<tabset id="tabs">
+		<tab id="general">General</tab><panel id="general-panel">General settings</panel>
+		<tab id="routing">Routing</tab><panel id="routing-panel">Routing settings</panel>
+	</tabset>
+	<div id="panes">
+		<listview id="tracks" multiple="multiple" data-value="selection">
+			<listitem id="drums" value="1">Drums</listitem>
+			<listitem id="bass" value="2">Bass</listitem>
+			<listitem id="keys" value="3">Keys</listitem>
+			<listitem id="vocals" value="4">Vocals</listitem>
+		</listview>
+		<splitter id="split"/>
+		<div id="middle">
+			<listview id="tree">
+				<listitem id="project" value="project" level="0" expanded="expanded">Project</listitem>
+				<listitem id="audio" value="audio" level="1">Audio</listitem>
+				<listitem id="kick" value="kick" level="2">Kick.wav</listitem>
+				<listitem id="snare" value="snare" level="2">Snare.wav</listitem>
+				<listitem id="midi" value="midi" level="1">MIDI</listitem>
+			</listview>
+			<splitter id="split-rows"/>
+			<div id="bottom"/>
+		</div>
+		<listview id="table">
+			<table>
+				<thead><tr id="header"><td>Name</td><td>Length</td></tr></thead>
+				<tbody>
+					<tr id="row-intro" value="intro"><td>Intro</td><td>8 bars</td></tr>
+					<tr id="row-verse" value="verse"><td>Verse</td><td>16 bars</td></tr>
+				</tbody>
+			</table>
+		</listview>
+	</div>
+</body>
+</rml>

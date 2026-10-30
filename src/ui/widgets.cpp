@@ -99,5 +99,6 @@ namespace gnubase::ui
 		rmlui.registerElement<Button>("menuitem");
 		registerValueWidgets(rmlui);
 		registerPopupWidgets(rmlui);
+		registerViewWidgets(rmlui);
 	}
 }
