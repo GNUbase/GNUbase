@@ -110,5 +110,6 @@ TEST_CASE("a UI test written in Lua passes", "[.][ui][lua-ui]")
 	test::UiApp app;
 	const std::optional<std::string> error = app.lua().runFile(std::filesystem::u8path(file));
 	INFO(error.value_or(""));
-	CHECK_FALSE(error.has_value());
+	// Not CHECK_FALSE: Catch2's ContinueOnFailure | FalseTest trips clang-analyzer's EnumCastOutOfRange check
+	CHECK(!error.has_value());
 }
