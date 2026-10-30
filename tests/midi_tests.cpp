@@ -800,6 +800,7 @@ TEST_CASE("a chase that doesn't fit into the event buffer goes on in the next bl
 	SECTION("room for some")
 	{
 		std::vector<RenderController> controllers;
+		controllers.reserve(10);
 		for (int number = 0; number < 10; ++number)
 			controllers.push_back(control(number, number, 1));
 		Player player(chasing(chaseAll(), {}, controllers), 16);
@@ -807,6 +808,7 @@ TEST_CASE("a chase that doesn't fit into the event buffer goes on in the next bl
 		player.locate(100);
 		player.play(32);
 		std::vector<Heard> expected;
+		expected.reserve(10);
 		for (int number = 0; number < 10; ++number)
 			expected.push_back({number < 4 ? 0 : 16, Type::Controller, 0, number, 1, {}});
 		CHECK(ofType(player.heard, Type::Controller) == expected);
