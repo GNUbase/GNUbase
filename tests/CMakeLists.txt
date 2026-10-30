@@ -70,6 +70,9 @@ add_executable(gnubase-tests
 	time_tests.cpp
 	timestretch_tests.cpp
 	transport_tests.cpp
+	uiapp.cpp
+	uiapp.h
+	uiapp_tests.cpp
 	uisettings_tests.cpp
 	uithemes_tests.cpp
 	uitools_tests.cpp
