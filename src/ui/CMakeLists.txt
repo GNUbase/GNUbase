@@ -43,6 +43,8 @@ add_library(gnubase-ui STATIC
 	ui.h
 	uisettings.cpp
 	uisettings.h
+	widgets.cpp
+	widgets.h
 	windowsystem.h)
 target_link_libraries(gnubase-ui
 	PUBLIC gnubase-engine RmlUi::RmlUi

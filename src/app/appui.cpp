@@ -2,6 +2,7 @@
 #include "app/appui.h"
 
 #include "ui/fonts.h"
+#include "ui/widgets.h"
 
 namespace gnubase::app
 {
@@ -21,6 +22,7 @@ namespace gnubase::app
 		  m_shell(m_windows, m_renderer), m_settings(engine, m_shell, m_themes),
 		  m_binding(engine, [this] { m_shell.wake(); }), m_main(m_shell.open(main))
 	{
+		ui::registerWidgets(m_rmlui);
 		m_shell.eachStep([this] { return m_binding.update(); });
 	}
 }

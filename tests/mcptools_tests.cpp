@@ -267,6 +267,40 @@ TEST_CASE("MCP clients add, change and remove automation lanes and points", "[in
 	CHECK(mcp.project().at("automation").empty());
 }
 
+TEST_CASE("MCP clients list, get and set parameters; a lower volume renders lower", "[integration]")
+{
+	Engine engine;
+	McpClient mcp(engine);
+	mcp.call("audio_setDevice",
+		{{"blockSize", 64}, {"captureSeconds", 1},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Level", 0.5}}}}}});
+	const int64_t channel = idOf(mcp.call("track_add", {{"type", "audio"}}).at("channel"));
+	const Json parameters = mcp.call("parameter_list", {{"channel", channel}}).at("parameters");
+	REQUIRE(!parameters.empty());
+	const Json volume = parameters.at(0).at("target");
+	CHECK(volume == Json{{"type", "volume"}});
+	const auto peak = [&mcp](int64_t start, int64_t frames)
+	{
+		return mcp.call("audio_analyze", {{"channels", {0}}, {"start", start}, {"frames", frames}})
+			.at("channels")
+			.at(0)
+			.at("peak")
+			.get<double>();
+	};
+
+	mcp.call("audio_render", {{"frames", 4800}});
+	const Json changed =
+		mcp.call("parameter_set", {{"channel", channel}, {"target", volume}, {"text", "-6 dB"}}).at("parameter");
+	CHECK(changed.at("value") == -6.0);
+	CHECK(changed.at("text") == "-6.00 dB");
+	CHECK(mcp.call("parameter_get", {{"channel", channel}, {"target", volume}}).at("parameter") == changed);
+	mcp.call("audio_render", {{"frames", 4800}});
+	// After the fader's 5 ms glide the level is 6 dB lower.
+	CHECK(std::abs((peak(4800 + 480, 4800 - 480) / peak(0, 4800)) - std::pow(10.0, -6.0 / 20.0)) < 1e-3);
+	CHECK_THAT(mcp.fails("parameter_set", {{"channel", channel}, {"target", volume}, {"text", "loud"}}),
+		ContainsSubstring("text"));
+}
+
 TEST_CASE("MCP clients play, stop, locate and cycle the transport", "[integration]")
 {
 	Engine engine;

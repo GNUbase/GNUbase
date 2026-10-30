@@ -24,6 +24,9 @@ namespace gnubase::engine
 	const char* timeBaseName(time::TimeBase base);
 	time::TimeBase timeBaseFromName(const std::string& name);
 	const char* directionName(BusDirection direction);
+	// A child bus's parentChannels. Numbers beyond int are -1, which busProblem refuses, rather than wrapping around
+	// to channels that exist.
+	std::vector<int> parentChannelsFromJson(const Json& json);
 	const char* fadeShapeName(FadeShape shape);
 	std::optional<FadeShape> fadeShapeFromName(const std::string& name);
 	const char* crossfadeModeName(CrossfadeMode mode);
@@ -58,6 +61,8 @@ namespace gnubase::engine
 	Json toJson(const Marker& marker);
 	const char* automationTargetTypeName(AutomationTargetType type);
 	std::optional<AutomationTargetType> automationTargetTypeFromName(const std::string& name);
+	// Whether json is a parameter id: a whole number from 0 to UINT32_MAX.
+	bool isParameterId(const Json& json);
 	const char* automationShapeName(AutomationShape shape);
 	std::optional<AutomationShape> automationShapeFromName(const std::string& name);
 	// {"type": ..., plus "parameter" for instrument, "number" and "channel" for controller, "channel" for pitchBend

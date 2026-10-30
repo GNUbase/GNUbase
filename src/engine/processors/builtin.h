@@ -6,7 +6,9 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace gnubase::engine
@@ -50,6 +52,21 @@ namespace gnubase::engine::processors
 
 	// Whether id is a built-in instrument.
 	bool isInstrument(const std::string& id);
+
+	// The built-in processor with this id, or nullptr.
+	const BuiltinInfo* findBuiltin(const std::string& id);
+
+	// The parameter of a built-in processor with this id, or nullptr.
+	const ParameterInfo* findParameter(const BuiltinInfo& info, uint32_t id);
+
+	// A parameter's value as text: a stepped parameter's option, or else the number, whole for stepped parameters
+	// and with two decimals otherwise, followed by the unit ("0.50 s"). The same in every C locale.
+	std::string valueToText(const ParameterInfo& parameter, double value);
+
+	// What a text means as a value of a parameter: the name of one of its options, or a number, optionally followed
+	// by the parameter's unit (both in any case). The value is clamped to the parameter's range and, if it is stepped,
+	// rounded to a whole number. Nothing for any other text, or a number that isn't finite.
+	std::optional<double> textToValue(const ParameterInfo& parameter, std::string_view text);
 
 	// Registers processor.list, which returns builtins().
 	void registerCommands(Engine& engine);

@@ -1,0 +1,25 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Buttons and toggle buttons of the widget library (#54) for tests/widgets_tests.cpp. The data model "buttons"
+     binds the mute button's state. -->
+<rml>
+<head>
+	<title>Buttons</title>
+	<style>
+		body { padding: 8dp; }
+		.row { display: flex; margin-bottom: 8dp; }
+		.row > * { margin-right: 6dp; }
+	</style>
+</head>
+<body data-model="buttons">
+	<div class="row">
+		<button id="apply" class="primary">Apply</button>
+		<button id="save"><svg class="icon" src="../../../resources/icons/general-save.svg"/> Save</button>
+		<button id="off" disabled="disabled">Off</button>
+	</div>
+	<div class="row">
+		<button id="mute" type="toggle" class="toggle mute" data-checked="muted">M</button>
+		<button id="loop" type="toggle" class="icon-only"><svg class="icon" src="../../../resources/icons/transport-loop.svg"/></button>
+		<button id="locked" type="toggle" class="toggle" disabled="disabled">L</button>
+	</div>
+</body>
+</rml>
