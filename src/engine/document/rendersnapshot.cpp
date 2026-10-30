@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <numeric>
 #include <tuple>
 
 namespace gnubase::engine
@@ -26,6 +27,8 @@ namespace gnubase::engine
 			const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate);
 			const time::Position endPosition{part.position.base, part.position.value + part.length};
 			const time::Ticks end = time::toTicks(endPosition, project.tempo, project.sampleRate);
+			const auto index = static_cast<int32_t>(channel.midiParts.size());
+			channel.midiParts.push_back({toSamples(project, start), toSamples(project, end)});
 			for (const auto& [id, note] : part.notes)
 			{
 				if (note.position >= end - start)
@@ -37,7 +40,7 @@ namespace gnubase::engine
 			for (const auto& [id, controller] : part.controllers)
 				if (controller.position < end - start)
 					channel.controllers.push_back({toSamples(project, start + controller.position), controller.type,
-						controller.number, controller.value, controller.channel, controller.data});
+						controller.number, controller.value, controller.channel, controller.data, index});
 		}
 	}
 
@@ -156,6 +159,23 @@ namespace gnubase::engine
 				{ return std::tie(a.start, a.pitch) < std::tie(b.start, b.pitch); });
 			std::stable_sort(channel.controllers.begin(), channel.controllers.end(),
 				[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
+			// The parts by start; their controller events keep pointing at them.
+			std::vector<size_t> byStart(channel.midiParts.size());
+			std::iota(byStart.begin(), byStart.end(), size_t{0});
+			std::stable_sort(byStart.begin(), byStart.end(),
+				[&channel](size_t a, size_t b) { return channel.midiParts[a].start < channel.midiParts[b].start; });
+			std::vector<int32_t> moved(byStart.size());
+			std::vector<RenderPart> parts;
+			parts.reserve(byStart.size());
+			for (size_t i = 0; i < byStart.size(); ++i)
+			{
+				moved[byStart[i]] = static_cast<int32_t>(i);
+				parts.push_back(channel.midiParts[byStart[i]]);
+			}
+			channel.midiParts = std::move(parts);
+			for (RenderController& controller : channel.controllers)
+				if (controller.part >= 0)
+					controller.part = moved[static_cast<size_t>(controller.part)];
 		}
 		return snapshot;
 	}
