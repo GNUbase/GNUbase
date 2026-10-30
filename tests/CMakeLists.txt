@@ -76,6 +76,7 @@ add_executable(gnubase-tests
 	uisettings_tests.cpp
 	uithemes_tests.cpp
 	uitools_tests.cpp
+	widgets_tests.cpp
 	window_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE
 	Catch2::Catch2WithMain

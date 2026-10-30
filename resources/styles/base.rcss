@@ -39,6 +39,13 @@ button
 	nav: auto;
 }
 
+/* A disabled button lets clicks pass and takes no focus (ui/widgets.h). */
+button:disabled
+{
+	pointer-events: none;
+	tab-index: none;
+}
+
 button svg.icon
 {
 	vertical-align: -3dp;
