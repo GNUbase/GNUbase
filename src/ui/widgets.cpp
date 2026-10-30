@@ -51,5 +51,6 @@ namespace gnubase::ui
 	void registerWidgets(RmlUi& rmlui)
 	{
 		rmlui.registerElement<Button>("button");
+		registerValueWidgets(rmlui);
 	}
 }

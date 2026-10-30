@@ -11,4 +11,7 @@ namespace gnubase::ui
 	// with a "change" event whose "value" parameter is the new value, so data-value and data-checked bind them to data
 	// models. Call it before loading documents that use them.
 	void registerWidgets(RmlUi& rmlui);
+
+	// The groups of widgets that registerWidgets registers, each in a source file of its own.
+	void registerValueWidgets(RmlUi& rmlui); // knobs, faders, sliders, value fields, meters
 }
