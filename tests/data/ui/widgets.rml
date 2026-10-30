@@ -1,0 +1,123 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- GNUbase's widgets in 560x360 dp (#53): every skin of a theme in its states, with text and icons in the theme's
+     colors. The document only lays them out; the shared style sheets and the active theme style them (ui::Themes).
+     The test hovers one button and list item and focuses a text field. Its screenshots are
+     tests/golden/ui/theme-<theme>.png, and theme-gnubase-2x.png at dp ratio 2. -->
+<rml>
+<head>
+	<title>Widgets</title>
+	<style>
+		body { position: absolute; left: 0; top: 0; width: 560dp; height: 360dp; box-sizing: border-box; padding: 8dp; }
+		.dialog { width: 360dp; height: 344dp; box-sizing: border-box; }
+		.row { display: flex; align-items: center; margin: 0 10dp 8dp 10dp; }
+		.row > * { margin-right: 6dp; }
+		tabset { margin: 0 0 8dp 0; }
+		tabset panels { height: 0; }
+		.side { position: absolute; left: 376dp; top: 8dp; width: 176dp; }
+		.side > div { margin-bottom: 8dp; }
+		.scroller { height: 48dp; overflow-y: scroll; }
+		.channel { position: absolute; left: 376dp; top: 254dp; width: 176dp; height: 98dp; }
+		.knob, .knob-pointer { position: absolute; left: 8dp; top: 8dp; }
+		.splitter-grip-vertical { position: absolute; left: 64dp; top: 16dp; }
+		.splitter-grip-horizontal { position: absolute; left: 16dp; top: 70dp; }
+		.fader { position: absolute; left: 104dp; top: 2dp; height: 94dp; }
+		.fader-cap { position: absolute; left: 99dp; top: 40dp; }
+		.meter { position: absolute; left: 140dp; top: 2dp; height: 94dp; }
+		.meter-fill { position: absolute; left: 140dp; top: 30dp; height: 66dp; }
+		.meter-peak { position: absolute; left: 140dp; top: 22dp; }
+	</style>
+</head>
+<body>
+	<div class="dialog">
+		<div class="dialog-titlebar">Channel Settings</div>
+		<tabset>
+			<tab>General</tab><panel/>
+			<tab>Routing</tab><panel/>
+			<tab>Inserts</tab><panel/>
+		</tabset>
+		<div class="row">
+			<button>Cancel</button>
+			<button class="primary">Apply</button>
+			<button id="hovered">Hover</button>
+			<button class="checked">On</button>
+			<button disabled="disabled">Off</button>
+		</div>
+		<div class="row">
+			<button class="toggle mute checked">M</button>
+			<button class="toggle solo checked">S</button>
+			<button class="toggle record checked">R</button>
+			<button class="toggle monitor checked">I</button>
+			<button class="toggle">W</button>
+			<button class="icon-only"><svg class="icon" src="../../../resources/icons/general-settings.svg"/></button>
+			<button><svg class="icon" src="../../../resources/icons/general-save.svg"/> Save</button>
+			<button disabled="disabled"><svg class="icon" src="../../../resources/icons/general-undo.svg"/></button>
+		</div>
+		<div class="row">
+			<input type="text" id="focused" value="Lead Synth"/>
+			<input type="text" value="Stereo Out" style="width: 120dp;"/>
+		</div>
+		<div class="row">
+			<input type="password" value="secret" disabled="disabled" style="width: 100dp;"/>
+			<select style="width: 140dp;"><option value="1" selected="selected">Stereo Out</option><option value="2">Bus 1</option></select>
+		</div>
+		<div class="row">
+			<input type="checkbox"/>
+			<input type="checkbox" checked="checked"/>
+			<input type="checkbox" class="mixed"/>
+			<input type="radio" name="mode"/>
+			<input type="radio" name="mode" checked="checked"/>
+			<input type="range" min="0" max="100" value="60"/>
+			<progress value="0.4" style="width: 60dp;"/>
+		</div>
+		<div class="row">
+			<span class="text-title">Title</span>
+			<span>Body</span>
+			<span class="text-label">Label</span>
+			<span class="text-small">Small</span>
+			<span class="text-accent">Accent</span>
+			<span class="counter">-6.0 dB</span>
+		</div>
+		<div class="row">
+			<svg class="icon" src="../../../resources/icons/transport-play.svg"/>
+			<svg class="icon accent" src="../../../resources/icons/transport-loop.svg"/>
+			<svg class="icon muted" src="../../../resources/icons/track-folder.svg"/>
+			<svg class="icon danger" src="../../../resources/icons/transport-record.svg"/>
+			<span class="display">0001.01.01.000</span>
+			<span class="tooltip">Tooltip</span>
+		</div>
+	</div>
+	<div class="side">
+		<div class="toolbar">
+			<svg class="icon" src="../../../resources/icons/tool-pointer.svg"/>
+			<svg class="icon" src="../../../resources/icons/tool-split.svg"/>
+			<svg class="icon" src="../../../resources/icons/tool-draw.svg"/>
+		</div>
+		<div class="panel">
+			<div class="panel-header">Inspector</div>
+		</div>
+		<div class="menu">
+			<div class="menu-item">Cut</div>
+			<div class="menu-item" id="menu-hovered">Copy</div>
+			<div class="menu-separator"/>
+			<div class="menu-item">Paste</div>
+		</div>
+		<div class="list scroller">
+			<div class="list-item">Analog Synth</div>
+			<div class="list-item selected">Lead Synth</div>
+			<div class="list-item" id="list-hovered">Warm Pad</div>
+			<div class="list-item">Drums</div>
+		</div>
+	</div>
+	<div class="channel">
+		<div class="knob"/>
+		<div class="knob-pointer"/>
+		<div class="fader"/>
+		<div class="fader-cap"/>
+		<div class="meter"/>
+		<div class="meter-fill"/>
+		<div class="meter-peak"/>
+		<div class="splitter-grip-vertical"/>
+		<div class="splitter-grip-horizontal"/>
+	</div>
+</body>
+</rml>

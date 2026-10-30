@@ -41,6 +41,7 @@ namespace gnubase::ui
 		Quit,             // the application should quit, e.g. Cmd+Q, the last window closed by the OS, or SIGTERM
 		FilesDropped,     // files were dragged from elsewhere and dropped on the window
 		FileDialogClosed, // a file dialog was answered, cancelled or failed
+		Wake,             // another thread asked the UI thread to wake up (wake), e.g. for work it posted
 	};
 
 	struct WindowEvent
@@ -119,5 +120,8 @@ namespace gnubase::ui
 		// The next event, waiting up to timeout for one; without timeout, until one arrives. Input events are
 		// delivered to the window's input target before they are reported.
 		virtual std::optional<WindowEvent> nextEvent(std::optional<std::chrono::milliseconds> timeout) = 0;
+
+		// Makes nextEvent return a Wake event soon, also while it waits. Safe to call from any thread.
+		virtual void wake() = 0;
 	};
 }

@@ -12,6 +12,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -87,6 +88,15 @@ namespace gnubase::ui
 		void setUiScale(float scale);
 		float uiScale() const { return m_uiScale; }
 
+		// The theme (ui/themes.h): its rules, inside "@media (theme: <name>)", apply in every window, also in windows
+		// opened later. Documents restyle without loading again. Empty for none.
+		void setTheme(const std::string& name);
+		const std::string& theme() const { return m_theme; }
+
+		// Runs task on the UI thread in the shell's next step, waking the shell if it waits for events. Safe to call
+		// from any thread, e.g. from an engine listener (ui/uisettings.h).
+		void post(std::function<void()> task);
+
 		// Handles the events that arrive within timeout (all that are waiting, without timeout), then updates and
 		// draws every window that needs it.
 		void step(std::optional<std::chrono::milliseconds> timeout);
@@ -133,9 +143,12 @@ namespace gnubase::ui
 		Renderer& m_renderer;
 		std::map<WindowId, std::unique_ptr<Window>> m_open;
 		float m_uiScale = 1.0F;
+		std::string m_theme;
 		bool m_running = true;
 		std::map<uint64_t, std::function<void(const FileDialogResult&)>> m_dialogs; // open file dialogs by id
 		uint64_t m_nextDialog = 1;
 		std::vector<Task> m_tasks;
+		std::mutex m_postedMutex; // guards m_posted, which other threads add to
+		std::vector<std::function<void()>> m_posted;
 	};
 }
