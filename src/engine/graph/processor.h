@@ -24,7 +24,8 @@ namespace gnubase::engine::graph
 		int64_t position = 0; // the project position of the block's first frame: the cursor while stopped
 		const TransportSegment* segments = nullptr;
 		size_t segmentCount = 0;
-		double tempo = 120.0; // quarter notes per minute at the block's first frame, from the project's tempo map
+		double tempo = 120.0;   // quarter notes per minute at the block's first frame, from the project's tempo map
+		bool recording = false; // only while playing
 	};
 
 	// What a processor gets for one block.

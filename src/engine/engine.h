@@ -209,7 +209,6 @@ namespace gnubase::engine
 		void execute(Request& request);
 		std::shared_ptr<const Command> find(const std::string& name) const; // throws CommandError if unknown
 		Json runInside(const std::string& command, const Json& parameters, CommandContext& outer);
-		void applySettings(); // hands the user settings to the parts of the engine that use them
 
 		const std::filesystem::path m_settingsDirectory;
 		mutable std::mutex m_mutex; // guards everything below except the thread
@@ -223,8 +222,8 @@ namespace gnubase::engine
 		std::unique_ptr<Jobs> m_jobs;                    // background work such as backups
 		std::unique_ptr<plugins::HostManager> m_plugins; // outlives the audio engine, whose graphs may hold plugins
 		std::unique_ptr<ProjectModel> m_project;         // only the command thread touches the document
-		std::unique_ptr<AudioEngine> m_audio;            // plays the project; only the command thread changes it
 		std::unique_ptr<settings::Store> m_settings;     // the user settings; only the command thread uses them
+		std::unique_ptr<AudioEngine> m_audio;            // plays the project; only the command thread changes it
 		std::unique_ptr<peaks::PeakCache> m_peaks;       // waveform overviews of the project's media files
 		std::thread m_thread;
 	};

@@ -41,6 +41,13 @@ namespace gnubase::engine::settings
 			result.name = "settings";
 			result.version = 1;
 			result.definitions = {
+				{"audio.autoMonitoring",
+					"When record-enabled audio tracks monitor their input, besides the monitor button: manual never, "
+					"whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it "
+					"stands or records.",
+					Json{{"type", "string"},
+						{"enum", {"manual", "whileRecordEnabled", "whileRecording", "tapeMachine"}}},
+					"tapeMachine"},
 				{"audio.backend", "The audio backend, such as wasapi or coreaudio, or empty for the preferred one.",
 					Json{{"type", "string"}}, ""},
 				{"audio.blockSize", "Frames per audio block.",
@@ -81,7 +88,7 @@ namespace gnubase::engine::settings
 		return format;
 	}
 
-	void registerCommands(Engine& engine, Store& store, std::function<void()> changed)
+	void registerCommands(Engine& engine, Store& store)
 	{
 		Json keys = Json::array();
 		std::string list;
@@ -117,15 +124,12 @@ namespace gnubase::engine::settings
 							{"value", {{"description", "The new value; it must fit the setting's schema."}}}}},
 					{"required", Json::array({"key", "value"})}, {"additionalProperties", false}},
 				keyAndValue, false},
-			[&store, changed](CommandContext& context)
+			[&store](CommandContext& context)
 			{
 				const std::string name = context.parameters().at("key").get<std::string>();
 				const Json& value = context.parameters().at("value");
 				if (store.set(name, value))
-				{
-					changed();
 					context.emit("settings.changed", {{"values", {{name, value}}}});
-				}
 				return Json{{"key", name}, {"value", store.value(name)}};
 			});
 
@@ -138,28 +142,25 @@ namespace gnubase::engine::settings
 				{{"type", "object"}, {"properties", {{"values", {{"type", "object"}}}}},
 					{"required", Json::array({"values"})}},
 				false},
-			[&store, changed = std::move(changed)](CommandContext& context)
+			[&store](CommandContext& context)
 			{
-				Json reset = Json::object();
+				Json changed = Json::object();
 				Json values = Json::object();
 				if (const auto name = context.parameters().find("key"); name != context.parameters().end())
 				{
 					const std::string setting = name->get<std::string>();
 					if (store.reset(setting))
-						reset[setting] = store.value(setting);
+						changed[setting] = store.value(setting);
 					values[setting] = store.value(setting);
 				}
 				else
 				{
 					for (const std::string& setting : store.reset())
-						reset[setting] = store.value(setting);
+						changed[setting] = store.value(setting);
 					values = store.values();
 				}
-				if (!reset.empty())
-				{
-					changed();
-					context.emit("settings.changed", {{"values", std::move(reset)}});
-				}
+				if (!changed.empty())
+					context.emit("settings.changed", {{"values", std::move(changed)}});
 				return Json{{"values", std::move(values)}};
 			});
 

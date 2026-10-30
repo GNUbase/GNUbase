@@ -27,8 +27,8 @@ namespace gnubase::engine
 		bool returnToStart = false; // on stop the cursor goes back to where playback started
 	};
 
-	// The project cursor, play and stop, and cycle playback. The command thread sends requests; the audio thread
-	// applies them at the start of its next block and computes where each frame of the block plays.
+	// The project cursor, play and stop, recording, and cycle playback. The command thread sends requests; the audio
+	// thread applies them at the start of its next block and computes where each frame of the block plays.
 	//
 	// Cycle playback: while the cursor is before the right locator, reaching the right locator jumps to the left one.
 	// With the right locator after the left one that loops the range; with it before, it skips the range. Playback
@@ -41,13 +41,15 @@ namespace gnubase::engine
 
 		// Command thread. Each returns false, and changes nothing, if too many requests are waiting.
 		bool play();                                 // from the cursor, or the left locator in StartMode::CycleStart
-		bool stop();                                 // returns to the start position if returnToStart is set
+		bool stop();                                 // ends recording; returns to the start if returnToStart is set
+		bool record(bool on);                        // while playing: punches in or out; stopped, does nothing
 		bool locate(time::Samples position);         // also the new start position for returnToStart
 		bool set(const TransportSettings& settings); // new locators and modes
 
 		// Command thread: the settings as requested and whether playback was requested.
 		const TransportSettings& settings() const { return m_requested; }
 		bool playing() const { return m_requestedPlaying; }
+		bool recording() const { return m_requestedRecording; }
 
 		// Any thread but the audio thread (the cue thread reads it while a device runs): the cursor, where the last
 		// locate goes until the audio thread has applied it, then as of the last block.
@@ -69,12 +71,14 @@ namespace gnubase::engine
 				Stop,
 				Locate,
 				Set,
+				Record,
 			};
 
 			Type type = Type::Play;
 			time::Samples position = 0;
 			TransportSettings settings;
 			uint64_t locate = 0; // Locate: which one, counted from 1
+			bool record = false; // Record: punch in, or out
 		};
 
 		bool send(const Request& request);
@@ -85,11 +89,13 @@ namespace gnubase::engine
 		rt::SpscQueue<Request> m_requests;
 		TransportSettings m_requested;
 		bool m_requestedPlaying = false;
+		bool m_requestedRecording = false;
 		uint64_t m_locates = 0; // how many locates were sent
 
 		// Audio thread.
 		TransportSettings m_settings;
 		bool m_playing = false;
+		bool m_recording = false;
 		time::Samples m_position = 0;
 		time::Samples m_start = 0; // where playback started or was last located to
 		uint64_t m_locate = 0;     // the last locate applied

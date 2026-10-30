@@ -77,11 +77,12 @@ namespace
 			{"processor", "sine"}, {"parameters", {{"Frequency", frequency}, {"Level", std::pow(10.0, dbfs / 20.0)}}}};
 	}
 
-	// An engine whose audio track plays a sine on the device input to both outputs, rendered offline.
+	// An engine whose audio track monitors a sine on the device input on both outputs, rendered offline.
 	void renderSine(Client& client, double frequency, double dbfs, int64_t frames, double sampleRate = 48000.0)
 	{
 		call(client, "project.new");
-		call(client, "track.add", {{"type", "audio"}});
+		const Json track = call(client, "track.add", {{"type", "audio"}});
+		call(client, "channel.set", {{"channel", track.at("channel").at("id")}, {"monitor", true}});
 		call(client, "audio.setDevice",
 			{{"sampleRate", sampleRate}, {"captureSeconds", 30}, {"input", sineInput(frequency, dbfs)}});
 		call(client, "audio.render", {{"frames", frames}});

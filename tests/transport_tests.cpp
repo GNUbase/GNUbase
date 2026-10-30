@@ -349,8 +349,8 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 
 	Json state = run(client, "transport.get");
 	CHECK(state ==
-		Json{{"playing", false}, {"position", 0}, {"left", 0}, {"right", 0}, {"cycle", false}, {"startMode", "cursor"},
-			{"returnToStart", false}});
+		Json{{"playing", false}, {"recording", false}, {"position", 0}, {"left", 0}, {"right", 0}, {"cycle", false},
+			{"startMode", "cursor"}, {"returnToStart", false}});
 
 	state = run(client, "transport.set", {{"left", 48000}, {"right", 96000}, {"cycle", true}});
 	CHECK(state.at("left") == 48000);
@@ -391,6 +391,32 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK_THAT(reject(client, "transport.set", {{"right", -5}}), ContainsSubstring("right"));
 	CHECK_THAT(reject(client, "transport.set", {{"left", "somewhere"}}), ContainsSubstring("left"));
 	CHECK_THAT(reject(client, "transport.set", {{"startMode", "selection"}}), ContainsSubstring("startMode"));
+}
+
+TEST_CASE("record starts playback and recording, punches in and out, and stop ends both", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "transport.set", {{"left", 48000}, {"startMode", "cycleStart"}});
+
+	Json state = run(client, "transport.record");
+	CHECK(state.at("playing") == true);
+	CHECK(state.at("recording") == true);
+	CHECK(state.at("position") == 48000);                         // from where playback starts
+	state = run(client, "transport.record", {{"record", false}}); // punch out: playback goes on
+	CHECK(state.at("playing") == true);
+	CHECK(state.at("recording") == false);
+	CHECK(run(client, "transport.record").at("recording") == true); // punch in while playing
+	CHECK(run(client, "transport.get").at("recording") == true);
+	state = run(client, "transport.stop");
+	CHECK(state.at("playing") == false);
+	CHECK(state.at("recording") == false);
+
+	CHECK(run(client, "transport.record", {{"record", false}}).at("playing") == false); // stopped: nothing to end
+	run(client, "transport.record");
+	state = run(client, "transport.toggle");
+	CHECK(state.at("playing") == false);
+	CHECK(state.at("recording") == false);
 }
 
 TEST_CASE("transport commands see a locate that the running device has not applied yet", "[integration]")

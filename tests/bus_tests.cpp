@@ -85,12 +85,12 @@ namespace
 				{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 441.0}, {"Level", 0.1}}}}}});
 	}
 
-	// An audio track on the first input bus, which passes the sine on to output (a bus id).
+	// An audio track on the first input bus, which monitors the sine on output (a bus id).
 	ObjectId addTrack(Client& client, ObjectId output, const char* format = "stereo")
 	{
 		const Json track = run(client, "track.add", {{"type", "audio"}, {"format", format}});
 		const ObjectId channel = track.at("channel").at("id").get<ObjectId>();
-		run(client, "channel.set", {{"channel", channel}, {"output", output}});
+		run(client, "channel.set", {{"channel", channel}, {"output", output}, {"monitor", true}});
 		return channel;
 	}
 

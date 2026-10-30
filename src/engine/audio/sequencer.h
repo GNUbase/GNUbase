@@ -57,6 +57,13 @@ namespace gnubase::engine
 		bool programs = false;
 		bool pitchBend = false;
 		bool beyondParts = true; // controller events from the whole track, not just the part under the position
+
+		bool operator==(const MidiChase& other) const
+		{
+			return notes == other.notes && controllers == other.controllers && programs == other.programs &&
+				pitchBend == other.pitchBend && beyondParts == other.beyondParts;
+		}
+		bool operator!=(const MidiChase& other) const { return !(*this == other); }
 	};
 
 	// Plays a track's MIDI parts as events at their sample offsets, after the events it receives (from MIDI tracks

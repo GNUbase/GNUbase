@@ -126,6 +126,7 @@ namespace
 					{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 441.0}, {"Level", 0.5}}}}}});
 			track = idOf(run(client, "track.add", {{"type", "audio"}}), "track");
 			channel = channelOf(client, track);
+			run(client, "channel.set", {{"channel", channel}, {"monitor", true}});
 		}
 
 		ObjectId lane(const Json& target)

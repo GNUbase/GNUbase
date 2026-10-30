@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -167,16 +168,38 @@ namespace gnubase::engine
 	{
 		AutomationPlayer automation;
 		std::shared_ptr<ChannelFader> fader = std::make_shared<ChannelFader>();
+		float monitorGain = -1.0f; // audio thread: the input's gain after the last block, -1 before the first
+	};
+
+	// The user setting audio.autoMonitoring: when record-enabled tracks monitor their input.
+	enum class AutoMonitoring : uint8_t
+	{
+		Manual,             // never: only the monitor button monitors
+		WhileRecordEnabled, // always
+		WhileRecording,     // while the transport records
+		TapeMachine,        // while it stands or records, not while it only plays
+	};
+
+	// An audio track's input monitoring (docs/features/latency-and-monitoring.md).
+	struct Monitoring
+	{
+		bool monitor = false; // the monitor button
+		bool recordEnable = false;
+		AutoMonitoring mode = AutoMonitoring::TapeMachine;
+
+		// Whether the track hears its input while the transport plays or stands and records or not.
+		bool active(bool playing, bool recording) const noexcept;
 	};
 
 	// The processor of a channel node: the channel's source (a track player, a sequencer or an instrument, or
 	// nothing for a group or effect channel) with the automation events added to its input, then the fader and its
-	// panner. A new strip is made for every graph, around the source and the state that the channel keeps.
+	// panner. A new strip is made for every graph, around the source and the state that the channel keeps. With
+	// monitoring, the input reaches the source only while the track monitors it, gliding in and out over a block.
 	class ChannelStrip : public graph::Processor
 	{
 	public:
-		ChannelStrip(
-			std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source, Panning panning = {});
+		ChannelStrip(std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source,
+			Panning panning = {}, std::optional<Monitoring> monitoring = std::nullopt);
 
 		void process(const graph::ProcessContext& context) noexcept override;
 		uint32_t latency() const override { return m_source ? m_source->latency() : 0; }
@@ -188,6 +211,7 @@ namespace gnubase::engine
 		std::shared_ptr<ChannelState> m_state;
 		std::shared_ptr<graph::Processor> m_source;
 		Panning m_panning;
+		std::optional<Monitoring> m_monitoring;
 		uint32_t m_smoothing = 0; // g_faderSmoothing in frames
 		graph::EventBuffer m_sourceEvents;
 		graph::EventBuffer m_faderEvents;

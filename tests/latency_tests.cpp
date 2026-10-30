@@ -365,7 +365,8 @@ TEST_CASE("direct monitoring routes audio tracks' inputs through the device inst
 		CHECK(status.at("device").at("canMonitorDirectly") == true);
 		CHECK(status.at("device").at("directMonitoring") == direct);
 		const Json track = run(client, "track.add", {{"type", "audio"}});
-		run(client, "channel.set", {{"channel", track.at("channel").at("id")}, {"volume", 20.0 * std::log10(0.5)}});
+		run(client, "channel.set",
+			{{"channel", track.at("channel").at("id")}, {"volume", 20.0 * std::log10(0.5)}, {"monitor", true}});
 		run(client, "audio.render", {{"frames", 640}});
 		return std::array<std::vector<float>, 2>{captured(client, 0, 640), captured(client, 1, 640)};
 	};
@@ -389,7 +390,8 @@ TEST_CASE(
 	const ObjectId mono =
 		idOf(run(client, "bus.add", {{"direction", "input"}, {"format", "mono"}, {"ports", {"Input 1"}}}), "bus");
 	const Json track = run(client, "track.add", {{"type", "audio"}, {"channels", 1}});
-	run(client, "channel.set", {{"channel", track.at("channel").at("id")}, {"input", mono}, {"pan", -1.0}});
+	run(client, "channel.set",
+		{{"channel", track.at("channel").at("id")}, {"input", mono}, {"pan", -1.0}, {"monitor", true}});
 	run(client, "audio.render", {{"frames", 640}});
 	CHECK(!silent(captured(client, 0, 640)));
 	CHECK(silent(captured(client, 1, 640)));
