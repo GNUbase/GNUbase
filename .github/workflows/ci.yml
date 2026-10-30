@@ -42,14 +42,17 @@ jobs:
         include:
           # Ninja instead of the Visual Studio generator, which ignores compiler launchers, so sccache can cache.
           - { name: windows-x64, runner: windows-2025, preset: windows-x64-ninja, arch: x64 }
-          - { name: windows-arm64, runner: windows-11-arm, preset: windows-arm64-ninja, arch: arm64 }
-          # ponytail: Intel runner because hosted macOS arm64 runners often never pick jobs up (they are cancelled after
-          # 15 minutes). Builds both slices, tests the x86_64 one; the window tests run on Apple Silicon in ui-macos.yml.
-          # Move back to macos-15 (arm64) before Intel images retire in 2027.
-          - { name: macos-universal, runner: macos-15-intel, preset: macos }
           - { name: linux-x64-gcc, runner: ubuntu-24.04, preset: linux-gcc }
-          - { name: linux-x64-clang, runner: ubuntu-24.04, preset: linux-clang }
-          - { name: linux-arm64-gcc, runner: ubuntu-24.04-arm, preset: linux-gcc }
+          # ponytail: paused while many pull requests are open at once, so each run takes fewer of GitHub's 20 concurrent
+          # jobs; macOS still builds in ui-macos.yml, Clang in the sanitizer and clang-tidy jobs. To restore, uncomment
+          # them and add their names back to the required checks of the ruleset "main: CI must pass".
+          # - { name: windows-arm64, runner: windows-11-arm, preset: windows-arm64-ninja, arch: arm64 }
+          # Intel runner because hosted macOS arm64 runners often never pick jobs up (they are cancelled after 15
+          # minutes). Builds both slices, tests the x86_64 one; the window tests run on Apple Silicon in ui-macos.yml.
+          # Move back to macos-15 (arm64) before Intel images retire in 2027.
+          # - { name: macos-universal, runner: macos-15-intel, preset: macos }
+          # - { name: linux-x64-clang, runner: ubuntu-24.04, preset: linux-clang }
+          # - { name: linux-arm64-gcc, runner: ubuntu-24.04-arm, preset: linux-gcc }
     steps:
       - uses: actions/checkout@v7
         with:
