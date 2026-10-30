@@ -3,7 +3,8 @@
      system (#56) and the track list (#81) give it zones, a toolbar and track controls. ui::EventDisplay fills the
      element #event-display and drives the controls and menus with these ids (docs/features/event-display.md): the
      ruler's arrow button .ruler-format, #ruler-format-menu, #zoom-presets-menu, #auto-scroll and #auto-scroll-menu.
-     Its dialogs are zoom-preset.rml and zoom-presets.rml, next to this file. -->
+     Its dialogs are zoom-preset.rml and zoom-presets.rml, next to this file.
+     The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
 <head>
 	<title>Project</title>
@@ -48,7 +49,7 @@
 		}
 	</style>
 </head>
-<body>
+<body focuszone="project">
 	<div id="toolbar" class="toolbar">
 		<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
 		<button id="auto-scroll-settings" class="icon-only" menu="auto-scroll-menu" title="Select Auto-Scroll Settings"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
