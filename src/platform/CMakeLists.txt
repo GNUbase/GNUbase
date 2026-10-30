@@ -35,6 +35,11 @@ if(WIN32)
 		winutf8.h)
 	target_include_directories(gnubase-platform SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/ext/asio/common)
 endif()
+if(APPLE)
+	target_sources(gnubase-platform PRIVATE
+		midi/coremidi.cpp midi/coremidi.h)
+	target_link_libraries(gnubase-platform PUBLIC "-framework CoreFoundation" "-framework CoreMIDI")
+endif()
 target_include_directories(gnubase-platform PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(gnubase-platform PRIVATE $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 # shm_open is in librt on glibc before 2.34.
