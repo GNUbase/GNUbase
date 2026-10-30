@@ -104,8 +104,9 @@ TEST_CASE("settings changed through the engine restyle GNUbase's UI", "[ui]")
 // which file, in the source folder. The file runs in the app's UI Lua on the UI thread, and prints its report.
 TEST_CASE("a UI test written in Lua passes", "[.][ui][lua-ui]")
 {
-	const char* file = std::getenv("GNUBASE_LUA_UI_TEST");
-	REQUIRE(file != nullptr);
+	const char* variable = std::getenv("GNUBASE_LUA_UI_TEST");
+	const std::string file = variable != nullptr ? variable : "";
+	REQUIRE(!file.empty());
 	test::UiApp app;
 	const std::optional<std::string> error = app.lua().runFile(std::filesystem::u8path(file));
 	INFO(error.value_or(""));
