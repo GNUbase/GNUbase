@@ -1,0 +1,13 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The color picker of the widget library (#54) for tests/widgets_tests.cpp, bound to the data model "color". -->
+<rml>
+<head>
+	<title>Color</title>
+	<style>
+		body { position: absolute; left: 0; top: 0; right: 0; bottom: 0; padding: 8dp; }
+	</style>
+</head>
+<body data-model="color">
+	<colorpicker id="picker" data-value="color"/>
+</body>
+</rml>

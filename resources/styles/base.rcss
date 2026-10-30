@@ -768,3 +768,86 @@ splitter.column .splitter-grip-horizontal
 {
 	display: block;
 }
+
+/* The color picker: the saturation and value field, the hue strip, the old and new colors' swatches, and the value
+   fields with their labels. Code places the thumbs and gives the field and the swatches their data's colors. */
+colorpicker
+{
+	display: block;
+	position: relative;
+	width: 336dp;
+	height: 200dp;
+}
+
+colorpicker .color-field
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 200dp;
+	height: 200dp;
+	drag: drag;
+}
+
+colorpicker .color-hue
+{
+	position: absolute;
+	left: 208dp;
+	top: 0;
+	width: 16dp;
+	height: 200dp;
+	drag: drag;
+}
+
+colorpicker .color-field-thumb, colorpicker .color-hue-thumb
+{
+	position: absolute;
+	width: 16dp;
+	height: 16dp;
+	margin: -8dp 0 0 -8dp;
+}
+
+colorpicker .color-hue-thumb
+{
+	left: 50%;
+}
+
+colorpicker .color-swatches
+{
+	position: absolute;
+	left: 236dp;
+	top: 0;
+	width: 100dp;
+	height: 24dp;
+	display: flex;
+}
+
+colorpicker .color-old, colorpicker .color-new
+{
+	flex: 1;
+}
+
+colorpicker .color-values
+{
+	position: absolute;
+	left: 236dp;
+	top: 30dp;
+	width: 100dp;
+}
+
+colorpicker .color-value
+{
+	display: flex;
+	align-items: center;
+	margin-bottom: 4dp;
+}
+
+colorpicker .color-value-label
+{
+	width: 16dp;
+}
+
+colorpicker valuefield
+{
+	width: 84dp;
+}

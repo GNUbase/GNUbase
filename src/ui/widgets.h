@@ -24,4 +24,5 @@ namespace gnubase::ui
 	void registerValueWidgets(RmlUi& rmlui); // knobs, faders, sliders, value fields, meters
 	void registerPopupWidgets(RmlUi& rmlui); // menus, context menus, tooltips, dialogs
 	void registerViewWidgets(RmlUi& rmlui);  // list, tree and table views, splitters
+	void registerColorWidgets(RmlUi& rmlui); // the color picker
 }

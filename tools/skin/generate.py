@@ -416,6 +416,13 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".meter-fill", {"decorator": skin("meter-fill")}),
         (".meter-peak", {"decorator": skin("meter-peak")}),
         (".tree-toggle", {"decorator": skin("dropdown-arrow")}),
+        # The color picker: saturation left to right and value bottom to top over the field's hue, which code sets,
+        # and the hues top to bottom
+        ("colorpicker .color-field",
+         {"decorator": "linear-gradient(to bottom, #00000000, #000000), linear-gradient(to right, #ffffff, #ffffff00)"}),
+        ("colorpicker .color-hue",
+         {"decorator": "linear-gradient(to bottom, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)"}),
+        ("colorpicker .color-field-thumb, colorpicker .color-hue-thumb", {"decorator": skin("slider-thumb")}),
         (".splitter-grip-vertical", {"decorator": skin("splitter-grip-vertical")}),
         (".splitter-grip-horizontal", {"decorator": skin("splitter-grip-horizontal")}),
         # Canvas elements (docs/features/canvas.md): events and notes, waveforms, automation curves and rulers
