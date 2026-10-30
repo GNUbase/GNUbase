@@ -2494,11 +2494,12 @@ Result:
 
 #### `ui_drag`
 
-Drags with the left button from one element or point to another and drops there. Returns the element under the mouse at the end.
+Drags with the left button from one element or point to another and drops there, e.g. a fader's cap, finer with shift held. Returns the element under the mouse at the end.
 
 Arguments:
 
 - `from`: object, required. Where to press the button: selector and index, or x and y.
+- `modifiers`: array of one of "ctrl" | "shift" | "alt" | "meta". Keys held while dragging.
 - `to`: object, required. Where to release it, the same way.
 - `window`: integer. The window's id from ui_windows; the main window if left out.
 
@@ -2580,13 +2581,14 @@ Result:
 
 #### `ui_wheel`
 
-Turns the mouse wheel over an element or a point, or where the mouse is, e.g. to scroll a list.
+Turns the mouse wheel over an element or a point, or where the mouse is, e.g. to scroll a list or turn a knob.
 
 Arguments:
 
 - `dx`: number. Lines to the right; 0 if left out.
 - `dy`: number. Lines down; 0 if left out.
 - `index`: integer. Which of the elements the selector matches; 0, the first, if left out.
+- `modifiers`: array of one of "ctrl" | "shift" | "alt" | "meta". Keys held while turning the wheel.
 - `selector`: string. A CSS selector; the mouse goes to the centre of the element it matches.
 - `window`: integer. The window's id from ui_windows; the main window if left out.
 - `x`: integer. Instead of a selector: the point in the window's pixels, with y.

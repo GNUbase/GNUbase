@@ -43,6 +43,7 @@ add_library(gnubase-ui STATIC
 	ui.h
 	uisettings.cpp
 	uisettings.h
+	valuewidgets.cpp
 	widgets.cpp
 	widgets.h
 	windowsystem.h)

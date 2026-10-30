@@ -333,37 +333,46 @@ namespace gnubase::ui
 		context.ProcessMouseMove(at.x, at.y, state);
 		for (int i = 0; i < count; ++i)
 		{
+			if (i > 0) // as frames pass between the OS's events: e.g. a double click's first click opened a field
+			{
+				context.Update();
+				context.ProcessMouseMove(at.x, at.y, state); // what's under the mouse now
+			}
 			context.ProcessMouseButtonDown(buttonIndex(button), state);
 			context.ProcessMouseButtonUp(buttonIndex(button), state);
 		}
 		return under(shown);
 	}
 
-	Json Automation::drag(std::optional<WindowId> window, const Target& from, const Target& to)
+	Json Automation::drag(
+		std::optional<WindowId> window, const Target& from, const Target& to, const std::vector<std::string>& modifiers)
 	{
 		Window& shown = resolve(window);
 		const Point start = targetPoint(shown, from);
 		const Point end = targetPoint(shown, to);
+		const int state = modifierState(modifiers);
 		Rml::Context& context = updated(shown);
-		context.ProcessMouseMove(start.x, start.y, 0);
-		context.ProcessMouseButtonDown(0, 0);
+		context.ProcessMouseMove(start.x, start.y, state);
+		context.ProcessMouseButtonDown(0, state);
 		for (int step = 1; step <= g_dragSteps; ++step)
 			context.ProcessMouseMove(start.x + ((end.x - start.x) * step / g_dragSteps),
-				start.y + ((end.y - start.y) * step / g_dragSteps), 0);
-		context.ProcessMouseButtonUp(0, 0);
+				start.y + ((end.y - start.y) * step / g_dragSteps), state);
+		context.ProcessMouseButtonUp(0, state);
 		return under(shown);
 	}
 
-	Json Automation::wheel(std::optional<WindowId> window, const Target& at, float dx, float dy)
+	Json Automation::wheel(
+		std::optional<WindowId> window, const Target& at, float dx, float dy, const std::vector<std::string>& modifiers)
 	{
 		Window& shown = resolve(window);
+		const int state = modifierState(modifiers);
 		Rml::Context& context = updated(shown);
 		if (!at.empty())
 		{
 			const Point point = targetPoint(shown, at);
-			context.ProcessMouseMove(point.x, point.y, 0);
+			context.ProcessMouseMove(point.x, point.y, state);
 		}
-		context.ProcessMouseWheel(Rml::Vector2f(dx, dy), 0);
+		context.ProcessMouseWheel(Rml::Vector2f(dx, dy), state);
 		return under(shown);
 	}
 
