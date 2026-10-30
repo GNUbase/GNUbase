@@ -41,6 +41,13 @@ namespace gnubase::engine::settings
 			result.name = "settings";
 			result.version = 1;
 			result.definitions = {
+				{"audio.autoMonitoring",
+					"When record-enabled audio tracks monitor their input, besides the monitor button: manual never, "
+					"whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it "
+					"stands or records.",
+					Json{{"type", "string"},
+						{"enum", {"manual", "whileRecordEnabled", "whileRecording", "tapeMachine"}}},
+					"tapeMachine"},
 				{"audio.backend", "The audio backend, such as wasapi or coreaudio, or empty for the preferred one.",
 					Json{{"type", "string"}}, ""},
 				{"audio.blockSize", "Frames per audio block.",
