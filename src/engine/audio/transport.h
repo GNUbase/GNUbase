@@ -102,4 +102,26 @@ namespace gnubase::engine
 		// never mixes one locate's count with another's target, or one block's position with another's locate.
 		rt::SeqLockPair<uint64_t, time::Samples> m_applied;
 	};
+
+	// Where the transport played each of the device's last frames, so recorded input finds where it belongs: with
+	// the audio that went out the record offset before it came in (the device's input and output latency, see
+	// docs/features/latency-and-monitoring.md). Kept per frame, so input lines up across cycle jumps, locates, starts
+	// and stops too.
+	class PlayedPositions
+	{
+	public:
+		// Command thread: keeps the positions of the last frames frames.
+		explicit PlayedPositions(size_t frames = 0) : m_positions(frames, -1) {}
+
+		// Audio thread: the frames from device frame start on played where transport says.
+		void add(uint64_t start, uint32_t frames, const graph::TransportBlock& transport) noexcept;
+
+		// Audio thread: where the device frame played, or -1 if the transport stood then, or the frame isn't kept:
+		// added longer ago than the last frames, or not yet.
+		time::Samples at(int64_t frame) const noexcept;
+
+	private:
+		std::vector<time::Samples> m_positions; // a ring, by device frame
+		int64_t m_end = 0;                      // the device frame after the last one added
+	};
 }

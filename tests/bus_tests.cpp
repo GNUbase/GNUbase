@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/document.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "testutils/testutils.h"
 
@@ -10,7 +11,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -222,6 +225,13 @@ TEST_CASE("child busses take channels of their parent", "[unit]")
 		ContainsSubstring("parentChannels"));
 	CHECK_THAT(reject(client, "bus.add", {{"parent", surround}, {"format", "stereo"}, {"parentChannels", {4}}}),
 		ContainsSubstring("parentChannels"));
+	// Channels beyond int don't wrap around to valid ones (4294967300 would be 4).
+	CHECK_THAT(reject(client, "bus.add",
+				   {{"parent", surround}, {"format", "stereo"},
+					   {"parentChannels", {int64_t{4294967300}, int64_t{4294967301}}}}),
+		ContainsSubstring("parentChannels"));
+	CHECK_THAT(
+		reject(client, "bus.add", {{"direction", "output"}, {"parentChannels", {0, 1}}}), ContainsSubstring("child"));
 	CHECK_THAT(
 		reject(client, "bus.add", {{"parent", surround}, {"direction", "input"}}), ContainsSubstring("direction"));
 	CHECK_THAT(reject(client, "bus.add", {{"parent", surround}, {"format", "LRS"}}), ContainsSubstring("speakers"));
@@ -355,6 +365,8 @@ TEST_CASE("audio.ports lists the device's ports with their busses, and missing p
 	const ObjectId stereoOut = busIds(client, "output")[0];
 	const ObjectId cue = addBus(client, {{"direction", "output"}, {"ports", names({"Output 1", "Output 9"})}});
 	const ObjectId front = addBus(client, {{"parent", cue}, {"format", "mono"}, {"parentChannels", {1}}});
+	// Without ports of its own, a bus takes the ports after those of the busses before it: here beyond the device's.
+	const ObjectId spare = addBus(client, {{"direction", "output"}, {"name", "Spare"}});
 
 	const Json ports = run(client, "audio.ports");
 	REQUIRE(ports.at("inputs").size() == 2);
@@ -365,8 +377,13 @@ TEST_CASE("audio.ports lists the device's ports with their busses, and missing p
 	CHECK(ports.at("busses") ==
 		Json::array({{{"bus", stereoIn}, {"ports", names({"Input 1", "Input 2"})}},
 			{{"bus", stereoOut}, {"ports", names({"Output 1", "Output 2"})}},
-			{{"bus", cue}, {"ports", {"Output 1", nullptr}}}, {{"bus", front}, {"ports", {nullptr}}}}));
+			{{"bus", cue}, {"ports", {"Output 1", nullptr}}}, {{"bus", front}, {"ports", {nullptr}}},
+			{{"bus", spare}, {"ports", {nullptr, nullptr}}}}));
 	CHECK(ports.at("missing") == Json::array({{{"name", "Output 9"}, {"direction", "output"}, {"busses", {cue}}}}));
+	CHECK(ports.at("beyondDevice") ==
+		Json::array({{{"bus", spare}, {"direction", "output"}, {"channels", Json::array({0, 1})}}}));
+	run(client, "bus.set", {{"bus", spare}, {"ports", names({"Output 3", "Output 4"})}});
+	CHECK(run(client, "audio.ports").at("beyondDevice") == Json::array());
 }
 
 TEST_CASE("a project opened on a device with fewer ports finds its missing ports and remaps them", "[integration]")
@@ -456,6 +473,11 @@ TEST_CASE("busses, ports, child busses and the main mix are saved with the proje
 	run(client, "project.new");
 	run(client, "project.load", {{"path", file}});
 	CHECK(run(client, "project.get").at("busses") == before);
+	Json wrapped = run(client, "project.get");
+	for (Json& entry : wrapped.at("busses"))
+		if (entry.at("id") == rear)
+			entry["parentChannels"] = {int64_t{4294967300}, int64_t{4294967301}};
+	CHECK_THROWS_AS(projectFromJson(wrapped), std::invalid_argument);
 
 	// project.xml: the main mix is the first master channel, and the child's track goes to its parent.
 	mz_zip_archive zip{};
@@ -543,4 +565,19 @@ TEST_CASE("bus presets: standard, from the device's ports, and the user's own", 
 		reject(client, "bus.removePreset", {{"direction", "input"}, {"name", "Stereo"}}), ContainsSubstring("user"));
 	CHECK_THAT(
 		reject(client, "bus.applyPreset", {{"direction", "input"}, {"name", "Default"}}), ContainsSubstring("Default"));
+}
+
+TEST_CASE("a Default bus preset that doesn't work leaves new projects their standard busses", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	// E.g. edited by hand, or from a build with a format this one doesn't know.
+	const Json broken = Json::array({{{"name", "Future In"}, {"format", "9.1.6"}}});
+	run(client, "settings.set",
+		{{"key", "audio.busPresets"}, {"value", {{"input", {{"Default", broken}}}, {"output", Json::object()}}}});
+	run(client, "project.new");
+	const Json busses = projectList(client, "busses");
+	REQUIRE(busses.size() == 2);
+	CHECK(busses[0].at("name") == "Stereo In");
+	CHECK(busses[1].at("name") == "Stereo Out");
 }
