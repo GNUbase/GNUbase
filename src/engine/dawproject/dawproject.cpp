@@ -69,7 +69,14 @@ namespace gnubase::engine
 		// GNUbase's entry until plugin slots are written as devices (#72).
 		bool exportable(const AutomationTarget& target)
 		{
-			return target.type != AutomationTargetType::Instrument;
+			return target.type != AutomationTargetType::Instrument && target.type != AutomationTargetType::PanLeft &&
+				target.type != AutomationTargetType::PanRight;
+		}
+
+		// DAWproject has only a channel count: the format for it, the widest one for more than 8 channels.
+		ChannelFormat importedFormat(int audioChannels)
+		{
+			return defaultFormat(std::clamp(audioChannels, 1, g_maxFormatChannels));
 		}
 
 		// Channel volume and pan in DAWproject's units: a linear gain and 0 to 1 with the center at 0.5.
@@ -78,11 +85,12 @@ namespace gnubase::engine
 			return volumeGain(decibels);
 		}
 
-		double gainToVolume(double gain)
+		// A gain as a volume up to the project's maximum.
+		double gainToVolume(double gain, double maximum)
 		{
 			if (gain <= 0.0)
 				return g_minChannelVolume;
-			return std::clamp(20.0 * std::log10(gain), g_minChannelVolume, g_maxChannelVolume);
+			return std::clamp(20.0 * std::log10(gain), g_minChannelVolume, maximum);
 		}
 
 		double panToNormalized(double pan)
@@ -356,7 +364,7 @@ namespace gnubase::engine
 						pugi::xml_node channel = track.append_child("Channel");
 						channel.append_attribute("id") = xmlId("o", bus.id).c_str();
 						channel.append_attribute("role") = "master";
-						channel.append_attribute("audioChannels") = bus.channels;
+						channel.append_attribute("audioChannels") = channelCount(bus.format);
 					}
 
 				pugi::xml_node arrangement = root.append_child("Arrangement");
@@ -418,12 +426,12 @@ namespace gnubase::engine
 					pugi::xml_node element = node.append_child("Channel");
 					element.append_attribute("id") = xmlId("c", channel.id).c_str();
 					element.append_attribute("role") = role(track.type);
-					element.append_attribute("audioChannels") = channel.channels;
+					element.append_attribute("audioChannels") = channelCount(channel.format);
 					// A MIDI track's output is an instrument, which DAWproject's audio routing can't describe.
-					if (channel.channels > 0 && channel.output != 0)
+					if (channel.format != ChannelFormat::None && channel.output != 0)
 						element.append_attribute("destination") =
 							xmlId(isBus(channel.output) ? "o" : "c", channel.output).c_str();
-					if (channel.channels > 0 && track.type != TrackType::Midi)
+					if (channel.format != ChannelFormat::None && track.type != TrackType::Midi)
 					{
 						pugi::xml_node pan = element.append_child("Pan");
 						pan.append_attribute("id") = xmlId("cp", channel.id).c_str();
@@ -437,7 +445,7 @@ namespace gnubase::engine
 						volume.append_attribute("name") = "Volume";
 						volume.append_attribute("unit") = "linear";
 						volume.append_attribute("min") = 0.0;
-						volume.append_attribute("max") = volumeToGain(g_maxChannelVolume);
+						volume.append_attribute("max") = volumeToGain(m_project.maxVolume);
 						volume.append_attribute("value") = volumeToGain(channel.volume);
 					}
 				}
@@ -516,6 +524,8 @@ namespace gnubase::engine
 					element.append_attribute("channel") = target.channel;
 					break;
 				case AutomationTargetType::Instrument:
+				case AutomationTargetType::PanLeft:
+				case AutomationTargetType::PanRight:
 					break;
 				}
 				const auto value = [&target](double v)
@@ -956,9 +966,9 @@ namespace gnubase::engine
 				if (role == "master" && !hasChildren)
 				{
 					// The first master channel becomes the main output, any other one another output bus.
-					Bus bus = m_firstMaster ? mainOutput() : Bus{m_project.newId(), "", BusDirection::Output, 2};
+					Bus bus = m_firstMaster ? mainOutput() : Bus{m_project.newId(), "", BusDirection::Output};
 					bus.name = node.attribute("name").as_string("Stereo Out");
-					bus.channels = std::clamp(audioChannels, 1, g_maxAudioChannels);
+					bus.format = importedFormat(audioChannels);
 					if (m_firstMaster)
 						mainOutput() = bus;
 					else
@@ -990,7 +1000,7 @@ namespace gnubase::engine
 					Channel channel;
 					channel.id = m_project.newId();
 					channel.track = track.id;
-					channel.channels = type == TrackType::Midi ? 0 : std::clamp(audioChannels, 1, g_maxAudioChannels);
+					channel.format = type == TrackType::Midi ? ChannelFormat::None : importedFormat(audioChannels);
 					if (type != TrackType::Midi)
 						channel.output = mainOutput().id;
 					if (type == TrackType::Audio)
@@ -1008,8 +1018,8 @@ namespace gnubase::engine
 						{
 							const double value = finiteNumber(volume.attribute("value"), 1.0);
 							channel.volume = std::string(volume.attribute("unit").as_string("linear")) == "decibel"
-								? std::clamp(value, g_minChannelVolume, g_maxChannelVolume)
-								: gainToVolume(value);
+								? std::clamp(value, g_minChannelVolume, m_project.maxVolume)
+								: gainToVolume(value, m_project.maxVolume);
 							m_parameters[volume.attribute("id").as_string()] = {track.id, AutomationTargetType::Volume};
 						}
 						if (!pan.empty())
@@ -1143,10 +1153,12 @@ namespace gnubase::engine
 					switch (automated.type)
 					{
 					case AutomationTargetType::Volume:
-						point.value = unit == "decibel" ? std::clamp(value, g_minChannelVolume, g_maxChannelVolume)
-														: gainToVolume(value);
+						point.value = unit == "decibel" ? std::clamp(value, g_minChannelVolume, m_project.maxVolume)
+														: gainToVolume(value, m_project.maxVolume);
 						break;
 					case AutomationTargetType::Pan:
+					case AutomationTargetType::PanLeft:
+					case AutomationTargetType::PanRight:
 						point.value = normalizedToPan(value);
 						break;
 					case AutomationTargetType::Instrument:

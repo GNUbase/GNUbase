@@ -77,43 +77,6 @@ namespace gnubase::engine
 				{"clockSource", clockSource}, {"controlPanel", info.controlPanel}};
 		}
 
-		// What a channel's automation plays: the fader's and the instrument's parameters with their static values or
-		// curves, and the MIDI controllers that have curves.
-		std::unique_ptr<ChannelAutomation> channelAutomation(const RenderChannel& channel)
-		{
-			using Kind = PlayedLane::Kind;
-			auto automation = std::make_unique<ChannelAutomation>();
-			automation->instrument = channel.instrument;
-			std::vector<PlayedLane>& lanes = automation->lanes;
-			if (channel.channels > 0 && channel.type != TrackType::Midi)
-			{
-				lanes.push_back({{AutomationTargetType::Volume, 0, 0, 0}, Kind::Fader, ChannelFader::Volume,
-					channel.volume, 0.0, volumeGain(g_maxChannelVolume), {}});
-				lanes.push_back(
-					{{AutomationTargetType::Pan, 0, 0, 0}, Kind::Fader, ChannelFader::Pan, channel.pan, -1.0, 1.0, {}});
-			}
-			for (const processors::BuiltinInfo& info : processors::builtins())
-				if (info.id == channel.instrument)
-					for (const processors::ParameterInfo& parameter : info.parameters)
-						lanes.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0}, Kind::Instrument,
-							parameter.id, parameter.defaultValue, parameter.minimum, parameter.maximum, {}});
-			const bool midi = channel.type == TrackType::Midi || channel.type == TrackType::Instrument;
-			for (const RenderAutomationLane& lane : channel.automation)
-			{
-				const auto match = std::find_if(lanes.begin(), lanes.end(),
-					[&lane](const PlayedLane& played) { return played.target == lane.target; });
-				if (match != lanes.end())
-					match->points = lane.points;
-				else if (midi &&
-					(lane.target.type == AutomationTargetType::Controller ||
-						lane.target.type == AutomationTargetType::PitchBend ||
-						lane.target.type == AutomationTargetType::ChannelPressure))
-					lanes.push_back({lane.target, Kind::Midi, 0, 0.0, 0.0, 1.0, lane.points});
-				// Anything else, e.g. a parameter of an instrument the channel no longer plays, waits.
-			}
-			return automation;
-		}
-
 		const processors::BuiltinInfo& generatorInfo(const std::string& id)
 		{
 			for (const processors::BuiltinInfo& info : processors::builtins())
@@ -247,13 +210,13 @@ namespace gnubase::engine
 			const graph::NodeDesc& node = desc.nodes[i];
 			if (node.kind == graph::NodeKind::InputBus)
 			{
-				program->inputs.push_back({static_cast<int>(i), input, node.channels});
-				input += node.channels;
+				program->inputs.push_back({static_cast<int>(i), input, channelCount(node.format)});
+				input += channelCount(node.format);
 			}
 			else if (node.kind == graph::NodeKind::OutputBus)
 			{
-				program->outputs.push_back({static_cast<int>(i), output, node.channels});
-				output += node.channels;
+				program->outputs.push_back({static_cast<int>(i), output, channelCount(node.format)});
+				output += channelCount(node.format);
 			}
 		}
 		m_revision = snapshot.revision;
@@ -329,13 +292,23 @@ namespace gnubase::engine
 			const auto kept = m_channelStates.find(channel.id);
 			const std::shared_ptr<ChannelState> state =
 				kept != m_channelStates.end() ? kept->second : std::make_shared<ChannelState>();
-			std::unique_ptr<ChannelAutomation> automation = channelAutomation(channel);
+			std::unique_ptr<ChannelAutomation> automation = channelAutomation(channel, snapshot.maxVolume);
+			if (kept != m_channelStates.end())
+			{
+				// A fader set to another value glides there.
+				for (PlayedLane& lane : automation->lanes)
+					for (const PlayedLane& old : state->automation.latest().lanes)
+						lane.smooth = lane.smooth ||
+							(lane.kind == PlayedLane::Kind::Fader && lane.target == old.target && lane.points.empty() &&
+								old.points.empty() && lane.staticValue != old.staticValue);
+			}
 			if (kept == m_channelStates.end() || !automation->sameContent(state->automation.latest()))
 				state->automation.setAutomation(std::move(automation));
 			states[channel.id] = state;
+			const Panning panning{channel.panner, channel.stereoPanner, channel.panBypass, snapshot.panLaw};
 			for (graph::NodeDesc& node : desc.nodes)
 				if (node.kind == graph::NodeKind::Channel && node.object == channel.id)
-					node.processor = std::make_shared<ChannelStrip>(state, node.processor);
+					node.processor = std::make_shared<ChannelStrip>(state, node.processor, panning);
 		}
 		m_channelStates = std::move(states);
 	}

@@ -311,9 +311,9 @@ namespace
 		{
 			m_slot->setProcessMode(mode);
 			engine::graph::GraphDesc desc;
-			desc.nodes = {{engine::graph::NodeKind::InputBus, 1, 2, nullptr},
-				{engine::graph::NodeKind::PluginSlot, 2, 2, m_slot},
-				{engine::graph::NodeKind::OutputBus, 3, 2, nullptr}};
+			desc.nodes = {{engine::graph::NodeKind::InputBus, 1, engine::ChannelFormat::Stereo, nullptr},
+				{engine::graph::NodeKind::PluginSlot, 2, engine::ChannelFormat::Stereo, m_slot},
+				{engine::graph::NodeKind::OutputBus, 3, engine::ChannelFormat::Stereo, nullptr}};
 			desc.audio = {{0, 1}, {1, 2}};
 			m_graph = std::make_unique<engine::graph::CompiledGraph>(desc, g_sampleRate, g_maxFrames);
 		}

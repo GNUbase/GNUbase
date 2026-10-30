@@ -22,6 +22,7 @@ add_executable(gnubase-tests
 	audiofile_tests.cpp
 	automation_tests.cpp
 	backup_tests.cpp
+	channelformat_tests.cpp
 	coverage_tests.cpp
 	dawproject_tests.cpp
 	debugreports.cpp
@@ -30,6 +31,7 @@ add_executable(gnubase-tests
 	effects_tests.cpp
 	engine_tests.cpp
 	fade_tests.cpp
+	fonts_tests.cpp
 	graph_tests.cpp
 	history_tests.cpp
 	ipc_process_tests.cpp
@@ -44,6 +46,7 @@ add_executable(gnubase-tests
 	midiedit_tests.cpp
 	midifile_tests.cpp
 	midifunctions_tests.cpp
+	mixer_tests.cpp
 	multicore_tests.cpp
 	peaks_tests.cpp
 	performance_tests.cpp
@@ -81,6 +84,13 @@ target_link_libraries(gnubase-tests PRIVATE
 
 # The UI's tests (#48, #49) use SDL directly.
 target_link_libraries(gnubase-tests PRIVATE gnubase-ui SDL3::SDL3)
+# The effects test (#285) draws the render spike's features document, with its waveform elements.
+target_sources(gnubase-tests PRIVATE
+	"${PROJECT_SOURCE_DIR}/spikes/render-backend/elements.cpp")
+target_include_directories(gnubase-tests PRIVATE
+	"${PROJECT_SOURCE_DIR}/spikes/render-backend")
+target_compile_definitions(gnubase-tests PRIVATE
+	GNUBASE_SPIKE_DOCUMENTS="${PROJECT_SOURCE_DIR}/spikes/render-backend/documents")
 
 # IPC tests run a helper process that plays a plugin host (tests/ipcpeer.cpp).
 add_executable(gnubase-ipcpeer ipcpeer.cpp)
@@ -156,8 +166,6 @@ endforeach()
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}"
 	GNUBASE_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs"
 	GNUBASE_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources"
-	# Lato (SIL OFL) from RmlUi's samples, for text in tests until GNUbase bundles its own fonts (#207).
-	GNUBASE_TEST_FONTS_DIR="${PROJECT_SOURCE_DIR}/ext/RmlUi/Samples/assets"
 	$<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>
 	GNUBASE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 if(WIN32)

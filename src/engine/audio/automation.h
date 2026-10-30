@@ -19,6 +19,10 @@ namespace gnubase::engine
 	// their value at each of these frames, and MIDI controllers get theirs where their MIDI 1.0 value changes.
 	inline constexpr uint32_t g_automationInterval = 64;
 
+	// How long the fader glides to a new static value, e.g. when the volume is set during playback, so it doesn't
+	// click: 5 ms.
+	inline constexpr double g_faderSmoothing = 0.005;
+
 	// One parameter's automation as the audio thread plays it.
 	struct PlayedLane
 	{
@@ -36,6 +40,9 @@ namespace gnubase::engine
 		double minimum = 0.0;     // values are kept in this range
 		double maximum = 1.0;
 		std::vector<RenderAutomationPoint> points; // sorted by position; none: the static value
+		// A fader lane whose static value changed while it has no points: it glides there over g_faderSmoothing.
+		// Not compared: it only says how the new value arrives.
+		bool smooth = false;
 
 		bool operator==(const PlayedLane& other) const;
 	};
@@ -54,6 +61,11 @@ namespace gnubase::engine
 			return instrument == other.instrument && lanes == other.lanes;
 		}
 	};
+
+	// What a channel's automation plays: the fader's and the instrument's parameters with their static values or
+	// curves, a MIDI channel's volume and pan as controllers 7 and 10 on MIDI channel 1 when it has them, and the
+	// MIDI controllers that have curves. maxVolume is the project's, in dB.
+	std::unique_ptr<ChannelAutomation> channelAutomation(const RenderChannel& channel, double maxVolume);
 
 	// The value of a curve at a project position (see AutomationLane): before the first point its value, after the
 	// last one its value, and where several points share a position the last one's.
@@ -76,9 +88,10 @@ namespace gnubase::engine
 		const ChannelAutomation& latest() const { return m_automation.latest(); }
 
 		// Audio thread: adds the block's events for the fader to fader and the others to source, for the source
-		// processor processor (only compared, to send every value again to a new one).
+		// processor processor (only compared, to send every value again to a new one). New automation's smooth
+		// lanes glide to their values over smoothing frames.
 		void play(const graph::TransportBlock& transport, const void* processor, graph::EventBuffer& source,
-			graph::EventBuffer& fader) noexcept;
+			graph::EventBuffer& fader, uint32_t smoothing = 0) noexcept;
 
 	private:
 		rt::SnapshotPublisher<ChannelAutomation> m_automation;
@@ -91,21 +104,37 @@ namespace gnubase::engine
 		int64_t m_stoppedAt = -1;          // the cursor while stopped
 	};
 
-	// A channel's fader: a linear gain and, on stereo channels, a balance as in the built-in gainPan (the side
-	// panned away from is lowered, the center is unity gain). Both glide along ramps sample by sample, so automation
-	// ramps have no steps.
-	class ChannelFader : public graph::Processor
+	// How a channel's fader pans, fixed for one graph: the panner its routing gives it (pannerFor), a stereo
+	// channel's panner, pan bypass and the project's pan law.
+	struct Panning
+	{
+		Panner panner = Panner::None;
+		StereoPanner stereo = StereoPanner::Balance;
+		bool bypass = false;
+		PanLaw law = PanLaw::Minus3;
+	};
+
+	// A channel's fader: a linear gain, then its panner. A mono channel on a stereo destination is placed with the
+	// pan law and becomes stereo; a stereo channel has a balance as in the built-in gainPan (the side panned away from
+	// is lowered, the center is unity gain) or the combined panner, which places its left and its right channel each
+	// with the pan law. Bypassed, mono plays at the center and stereo hard left and right. Every value glides along
+	// ramps sample by sample, so automation ramps have no steps.
+	class ChannelFader
 	{
 	public:
 		enum Parameter : uint8_t
 		{
-			Volume, // a linear gain, 0 to 2
-			Pan,    // -1 left, 0 center, 1 right
+			Volume,   // a linear gain, 0 to 4
+			Pan,      // -1 left, 0 center, 1 right
+			PanLeft,  // the combined panner's position of the left channel
+			PanRight, // and of the right one
 		};
 
 		ChannelFader();
 
-		void process(const graph::ProcessContext& context) noexcept override;
+		// Audio thread. The context has the channel's own channels; a mono panner writes the second one of its
+		// stereo output after them.
+		void process(const graph::ProcessContext& context, const Panning& panning) noexcept;
 
 	private:
 		struct Ramp
@@ -120,10 +149,13 @@ namespace gnubase::engine
 			double next() noexcept; // the value for this frame; moves on by one frame
 		};
 
-		void render(const graph::ProcessContext& context, uint32_t begin, uint32_t end) noexcept;
+		void render(
+			const graph::ProcessContext& context, const Panning& panning, uint32_t begin, uint32_t end) noexcept;
 
 		Ramp m_volume;
 		Ramp m_pan;
+		Ramp m_panLeft;
+		Ramp m_panRight;
 	};
 
 	// What a channel keeps across graph rebuilds: its automation and its fader.
@@ -134,12 +166,13 @@ namespace gnubase::engine
 	};
 
 	// The processor of a channel node: the channel's source (a track player, a sequencer or an instrument, or
-	// nothing for a group or effect channel) with the automation events added to its input, then the fader. A new
-	// strip is made for every graph, around the source and the state that the channel keeps.
+	// nothing for a group or effect channel) with the automation events added to its input, then the fader and its
+	// panner. A new strip is made for every graph, around the source and the state that the channel keeps.
 	class ChannelStrip : public graph::Processor
 	{
 	public:
-		ChannelStrip(std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source);
+		ChannelStrip(
+			std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source, Panning panning = {});
 
 		void process(const graph::ProcessContext& context) noexcept override;
 		uint32_t latency() const override { return m_source ? m_source->latency() : 0; }
@@ -150,6 +183,8 @@ namespace gnubase::engine
 	private:
 		std::shared_ptr<ChannelState> m_state;
 		std::shared_ptr<graph::Processor> m_source;
+		Panning m_panning;
+		uint32_t m_smoothing = 0; // g_faderSmoothing in frames
 		graph::EventBuffer m_sourceEvents;
 		graph::EventBuffer m_faderEvents;
 		graph::EventBuffer m_faderOut;

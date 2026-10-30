@@ -43,7 +43,7 @@ namespace gnubase::engine
 
 	double volumeGain(double decibels)
 	{
-		return std::pow(10.0, decibels / 20.0);
+		return decibels <= g_minChannelVolume ? 0.0 : std::pow(10.0, decibels / 20.0);
 	}
 
 	std::unique_ptr<const RenderSnapshot> compile(const Project& project, uint64_t revision)
@@ -52,12 +52,14 @@ namespace gnubase::engine
 		snapshot->revision = revision;
 		snapshot->sampleRate = project.sampleRate;
 		snapshot->tempo = project.tempo;
+		snapshot->panLaw = project.panLaw;
+		snapshot->maxVolume = project.maxVolume;
 
 		std::map<ObjectId, int> busIndex;
 		for (const Bus& bus : project.busses)
 		{
 			busIndex[bus.id] = static_cast<int>(snapshot->busses.size());
-			snapshot->busses.push_back({bus.id, bus.direction, bus.channels});
+			snapshot->busses.push_back({bus.id, bus.direction, bus.format});
 		}
 		std::map<ObjectId, int> mediaIndex;
 		for (const auto& [id, media] : project.media)
@@ -80,10 +82,16 @@ namespace gnubase::engine
 			render.id = channel.id;
 			render.track = trackId;
 			render.type = track.type;
-			render.channels = channel.channels;
+			render.format = channel.format;
 			render.instrument = channel.instrument;
 			render.volume = volumeGain(channel.volume);
 			render.pan = channel.pan;
+			render.stereoPanner = channel.panner;
+			render.panLeft = channel.panLeft;
+			render.panRight = channel.panRight;
+			render.panBypass = channel.panBypass;
+			render.midiVolume = channel.midiVolume;
+			render.midiPan = channel.midiPan;
 			render.autoFades = track.autoFades.value_or(project.autoFades);
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;
@@ -95,9 +103,16 @@ namespace gnubase::engine
 		{
 			const ObjectId output = project.channels.at(render.id).output;
 			if (const auto bus = busIndex.find(output); bus != busIndex.end())
+			{
 				render.output = {RenderTarget::Kind::Bus, bus->second};
+				render.panner = pannerFor(render.format, snapshot->busses[static_cast<size_t>(bus->second)].format);
+			}
 			else if (const auto channel = channelIndex.find(output); channel != channelIndex.end())
+			{
 				render.output = {RenderTarget::Kind::Channel, channel->second};
+				render.panner =
+					pannerFor(render.format, snapshot->channels[static_cast<size_t>(channel->second)].format);
+			}
 		}
 
 		for (const auto& [id, event] : project.audioEvents)

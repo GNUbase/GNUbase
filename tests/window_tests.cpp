@@ -3,13 +3,17 @@
 // SDL's offscreen video driver unless SDL_VIDEO_DRIVER names another, so they need no display, only a Vulkan driver
 // (Mesa's lavapipe in CI). Where SDL_GPU has no device, such as CI's macOS Intel runner, they are skipped, unless
 // GNUBASE_REQUIRE_GPU=1 says this machine must have one. On Apple Silicon they run in .github/workflows/ui-macos.yml.
+#include "elements.h"
 #include "testutils/goldenimage.h"
 #include "testutils/testutils.h"
+#include "ui/fonts.h"
 #include "ui/gpurenderer.h"
+#include "ui/pseudolocale.h"
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
 
+#include <RmlUi/Core/Box.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControlInput.h>
@@ -68,6 +72,12 @@ namespace
 
 	// SDL's video, the GPU renderer, RmlUi and the shell, made and destroyed in the app's order. Skips the test if
 	// this machine has no SDL_GPU device.
+	// GNUbase's bundled fonts (ui/fonts.h); RmlUi must be initialised.
+	void loadFonts()
+	{
+		ui::Fonts(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "fonts").load();
+	}
+
 	struct Gpu
 	{
 		Gpu()
@@ -78,7 +88,9 @@ namespace
 			windows = std::make_unique<ui::SdlWindowSystem>();
 			try
 			{
-				renderer = std::make_unique<ui::GpuRenderer>(*windows);
+				// Four samples per pixel, which every platform has, at the same positions: Mesa's rasterizers, which
+				// made the golden images, have no two.
+				renderer = std::make_unique<ui::GpuRenderer>(*windows, 4);
 			}
 			catch (const ui::GpuUnavailable& error)
 			{
@@ -198,15 +210,18 @@ namespace
 		std::string files;
 	};
 
-	// The top left of the image.
-	ui::Image crop(const ui::Image& image, int width, int height)
+	// A rectangle of the image.
+	ui::Image crop(const ui::Image& image, int x, int y, int width, int height)
 	{
-		REQUIRE(image.width >= width);
-		REQUIRE(image.height >= height);
+		REQUIRE(x >= 0);
+		REQUIRE(y >= 0);
+		REQUIRE(image.width >= x + width);
+		REQUIRE(image.height >= y + height);
 		ui::Image cropped{width, height, {}};
-		for (int row = 0; row < height; ++row)
+		for (int row = y; row < y + height; ++row)
 		{
-			const auto begin = image.pixels.begin() + (static_cast<ptrdiff_t>(row) * image.width * 4);
+			const auto begin =
+				image.pixels.begin() + (((static_cast<ptrdiff_t>(row) * image.width) + x) * static_cast<ptrdiff_t>(4));
 			cropped.pixels.insert(cropped.pixels.end(), begin, begin + (static_cast<ptrdiff_t>(width) * 4));
 		}
 		return cropped;
@@ -226,7 +241,9 @@ TEST_CASE("windows draw their RmlUi documents through SDL_GPU at their dp ratio"
 	const ui::Window& window = gpu.open("boxes.rml");
 	gpu.shell->step(milliseconds(0));
 	CHECK(window.frames() == 1);
-	INFO("SDL_GPU " << gpu.renderer->driver() << " on SDL's " << ui::SdlWindowSystem::driver() << " video driver");
+	CHECK(gpu.renderer->msaaSamples() == 4); // as the tests ask for
+	INFO("SDL_GPU " << gpu.renderer->driver() << " with " << gpu.renderer->msaaSamples() << "x MSAA on SDL's "
+					<< ui::SdlWindowSystem::driver() << " video driver");
 
 	for (const float uiScale : {1.0F, 2.0F})
 	{
@@ -250,21 +267,124 @@ TEST_CASE("windows draw their RmlUi documents through SDL_GPU at their dp ratio"
 TEST_CASE("a sample document looks the same on every platform", "[ui]")
 {
 	Gpu gpu;
-	for (const char* face : {"LatoLatin-Regular.ttf", "LatoLatin-Bold.ttf"})
-		REQUIRE(ui::RmlUi::loadFont(std::filesystem::path(GNUBASE_TEST_FONTS_DIR) / face));
+	loadFonts();
 	const ui::Window& window = gpu.open("sample.rml", 640, 480);
-	INFO("SDL_GPU " << gpu.renderer->driver() << " on SDL's " << ui::SdlWindowSystem::driver() << " video driver");
+	INFO("SDL_GPU " << gpu.renderer->driver() << " with " << gpu.renderer->msaaSamples() << "x MSAA on SDL's "
+					<< ui::SdlWindowSystem::driver() << " video driver");
 	const float monitorScale = window.dpRatio() / gpu.shell->uiScale();
 	for (const int ratio : {1, 2})
 	{
 		// The same dp ratio gives the same pixels, whatever the monitor's scale.
 		gpu.shell->setUiScale(static_cast<float>(ratio) / monitorScale);
 		const std::string name = "sample-" + std::to_string(ratio) + "x";
-		const ui::Image image = crop(gpu.screenshot(window, name), 320 * ratio, 240 * ratio);
+		const ui::Image image = crop(gpu.screenshot(window, name), 0, 0, 320 * ratio, 240 * ratio);
 		// GPUs may round a few edge pixels differently: one in 500 may differ by more than 8 of 255.
-		const test::ImageDiff diff = test::compareWithGolden("ui/" + name, image, 8, image.pixels.size() / 4 / 500);
+		const test::ImageDiff diff = test::compareWithGolden("ui/" + name, image, {8, image.pixels.size() / 4 / 500});
 		INFO(diff.report);
 		CHECK(diff.equal);
+	}
+}
+
+TEST_CASE("GNUbase's fonts look the same on every platform", "[ui]")
+{
+	Gpu gpu;
+	loadFonts();
+	const ui::Window& window = gpu.open("fonts.rml", 720, 500);
+	Rml::Element* pseudo = window.context().GetDocument(0)->GetElementById("pseudo");
+	REQUIRE(pseudo != nullptr);
+	pseudo->SetInnerRML(ui::pseudoLocalize("Open Project… Save As…"));
+	const float monitorScale = window.dpRatio() / gpu.shell->uiScale();
+	for (const int ratio : {1, 2})
+	{
+		// FreeType renders the glyphs at each dp ratio's pixel size, built from the same sources everywhere.
+		gpu.shell->setUiScale(static_cast<float>(ratio) / monitorScale);
+		const std::string name = "fonts-" + std::to_string(ratio) + "x";
+		const ui::Image image = crop(gpu.screenshot(window, name), 0, 0, 360 * ratio, 250 * ratio);
+		const test::ImageDiff diff = test::compareWithGolden("ui/" + name, image, {8, image.pixels.size() / 4 / 500});
+		INFO(diff.report);
+		CHECK(diff.equal);
+	}
+}
+
+TEST_CASE("effects at a window's edges draw as in a context of the window's size", "[ui]")
+{
+	// A context can be larger than the frame it draws, e.g. for a frame while its window shrinks. A box shadow wider
+	// than the frame then comes out as with a context of the frame's size, and a blur outside the frame draws nothing.
+	// Each drawing has its own RmlUi, which would otherwise share the shadow's texture between the two.
+	const auto draw = [](bool larger)
+	{
+		const Gpu gpu;
+		const ui::Window& window = gpu.open("edges.rml", 200, 150);
+		const ui::Size pixels = window.pixelSize();
+		if (larger)
+			window.context().SetDimensions({pixels.width + 100, pixels.height + 100});
+		return gpu.screenshot(window, larger ? "edges-larger" : "edges");
+	};
+	const ui::Image expected = draw(false);
+	const test::ImageDiff diff = test::compareImages(draw(true), expected, {2});
+	INFO(diff.report);
+	CHECK(diff.equal);
+}
+
+TEST_CASE("RmlUi's effects look as RmlUi's OpenGL 3 renderer draws them", "[ui]")
+{
+	// The render spike's features document (#47): one tile per thing a renderer draws. Each tile is compared with what
+	// RmlUi's OpenGL 3 renderer drew in it (tests/golden/ui/effects, made with
+	// spikes/render-backend/reference-tiles.py).
+	Gpu gpu;
+	spike::registerElements();
+	ui::WindowSpec spec;
+	spec.title = "features";
+	spec.size = {960, 640}; // SDL's offscreen video driver has a 1024x768 monitor, which the shell fits windows into
+	spec.hidden = true;
+	const ui::Window& window = gpu.shell->open(spec);
+	Rml::ElementDocument* document = window.context().LoadDocument(GNUBASE_SPIKE_DOCUMENTS "/features.rml");
+	REQUIRE(document != nullptr);
+	document->Show();
+	Rml::Element* grid = document->GetChild(0);
+	REQUIRE(grid != nullptr);
+	const std::array<const char*, 12> tiles{"shapes", "linear", "radial", "shadow", "blur", "drop", "clip", "mask",
+		"transform", "meters", "waveform", "waveform-image"};
+	REQUIRE(grid->GetNumChildren() == static_cast<int>(tiles.size()));
+	INFO("SDL_GPU " << gpu.renderer->driver() << " with " << gpu.renderer->msaaSamples() << "x MSAA on SDL's "
+					<< ui::SdlWindowSystem::driver() << " video driver");
+
+	const float monitorScale = window.dpRatio() / gpu.shell->uiScale();
+	for (const int ratio : {1, 2})
+	{
+		gpu.shell->setUiScale(static_cast<float>(ratio) / monitorScale);
+		for (size_t i = 0; i < tiles.size(); ++i)
+		{
+			// One tile at a time, as far from the window's top left, modulo 64 pixels, as in the references: four
+			// columns 216 dp apart, rows 146 dp apart. Blurs downscale in steps that round to even pixels, so their
+			// pixels depend on where they are, modulo a power of two.
+			for (size_t other = 0; other < tiles.size(); ++other)
+				grid->GetChild(static_cast<int>(other))->SetProperty("display", other == i ? "block" : "none");
+			const int column = static_cast<int>(i % 4);
+			const int row = static_cast<int>(i / 4);
+			const int shiftX = ((ratio * 216 * column) % 64) / ratio; // dp beyond the first tile's place
+			const int shiftY = ((ratio * 146 * row) % 64) / ratio;
+			Rml::Element* tile = grid->GetChild(static_cast<int>(i));
+			tile->SetProperty("margin-left", std::to_string(8 + shiftX) + "dp");
+			tile->SetProperty("margin-top", std::to_string(8 + shiftY) + "dp");
+
+			const std::string name = std::string(tiles.at(i)) + "-" + std::to_string(ratio) + "x";
+			const ui::Image image = gpu.screenshot(window, "features-" + name);
+			const Rml::Vector2f offset = tile->GetAbsoluteOffset(Rml::BoxArea::Border);
+			const Rml::Vector2f size = tile->GetBox().GetSize(Rml::BoxArea::Border);
+			const ui::Image actual =
+				crop(image, static_cast<int>(std::lround(offset.x)), static_cast<int>(std::lround(offset.y)),
+					static_cast<int>(std::lround(size.x)), static_cast<int>(std::lround(size.y)));
+			// Averaged over 3x3 pixels within 16 of 255, and one pixel in 500 beyond that: OpenGL draws bottom-up, so
+			// its multisampling covers edges with mirrored sample positions, and GPUs round blends a little
+			// differently.
+			const test::ImageDiff diff =
+				test::compareWithGolden("ui/effects/" + name, actual, {16, actual.pixels.size() / 4 / 500, 1});
+			INFO(name << ": " << diff.report);
+			CHECK(diff.equal);
+			tile->RemoveProperty("margin-left");
+			tile->RemoveProperty("margin-top");
+		}
 	}
 }
 

@@ -15,11 +15,13 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <deque>
 #include <functional>
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -35,6 +37,12 @@ namespace gnubase::audio
 	{
 		constexpr std::array<double, 6> g_sampleRates{44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0};
 		constexpr size_t g_maxBlockSizes = 64; // listed for drivers with a fine granularity
+		constexpr std::chrono::seconds g_firstBufferTimeout{2};
+		constexpr int g_createBuffersTries = 3;
+		constexpr std::chrono::milliseconds g_createBuffersRetryDelay{50};
+
+		// Per driver name: whether the driver changes its sample rate when asked (see AsioDevice::open).
+		using RateSwitching = std::map<std::string, bool>;
 
 		using Handle = std::unique_ptr<std::remove_pointer_t<HANDLE>, decltype(&CloseHandle)>;
 
@@ -174,14 +182,15 @@ namespace gnubase::audio
 		class AsioDevice : public Device
 		{
 		public:
-			AsioDevice(const AsioDrivers& drivers, const std::string& name, const DeviceConfig& config)
+			AsioDevice(const AsioDrivers& drivers, const std::string& name, const DeviceConfig& config,
+				RateSwitching& switching)
 			{
 				AsioDevice* none = nullptr;
 				if (!g_open.compare_exchange_strong(none, this))
 					throw DeviceError("ASIO: another driver is open, and only one can be");
 				try
 				{
-					m_thread.call([this, &drivers, &name, &config] { open(drivers, name, config); });
+					m_thread.call([&] { open(drivers, name, config, switching); });
 				}
 				catch (...)
 				{
@@ -219,7 +228,20 @@ namespace gnubase::audio
 				if (m_running)
 					throw std::logic_error("the ASIO device is already running");
 				m_callback.store(&callback, std::memory_order_release);
+				const uint64_t position = m_position.load(std::memory_order_acquire);
 				m_thread.call([this] { check(m_driver->start(), "start"); });
+				// Some drivers start without their hardware, e.g. when it isn't plugged in, and never call back.
+				const auto deadline = std::chrono::steady_clock::now() + g_firstBufferTimeout;
+				while (m_position.load(std::memory_order_acquire) == position)
+				{
+					if (std::chrono::steady_clock::now() > deadline)
+					{
+						m_thread.call([this] { m_driver->stop(); });
+						m_callback.store(nullptr, std::memory_order_release);
+						throw DeviceError("ASIO: " + m_info.name + " starts, but doesn't process audio");
+					}
+					std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				}
 				m_running = true;
 			}
 
@@ -273,7 +295,8 @@ namespace gnubase::audio
 
 		private:
 			// The driver thread.
-			void open(const AsioDrivers& drivers, const std::string& name, const DeviceConfig& config)
+			void open(const AsioDrivers& drivers, const std::string& name, const DeviceConfig& config,
+				RateSwitching& switching)
 			{
 				m_driver = drivers.create(name);
 				if (m_driver == nullptr)
@@ -287,30 +310,43 @@ namespace gnubase::audio
 				long inputs = 0;
 				long outputs = 0;
 				check(m_driver->getChannels(&inputs, &outputs), "getChannels");
+
+				ASIOSampleRate current = 0.0;
+				check(m_driver->getSampleRate(&current), "getSampleRate");
+				std::vector<double> others; // the other rates it says it runs at
+				for (const double rate : g_sampleRates)
+					if (rate != current && m_driver->canSampleRate(rate) == ASE_OK)
+						others.push_back(rate);
+				// Some drivers, like those following another program's clock, claim rates they then refuse. Whether
+				// a driver switches is tried once per driver, as switching can take a while.
+				// ponytail: one rate stands for all; try each if a driver turns up that refuses only some.
+				auto switches = switching.find(name);
+				if (switches == switching.end() && !others.empty())
+				{
+					const bool switched = m_driver->setSampleRate(others.front()) == ASE_OK;
+					if (switched)
+						m_driver->setSampleRate(current);
+					switches = switching.emplace(name, switched).first;
+				}
+				m_info.sampleRates = {current};
+				if (switches != switching.end() && switches->second)
+				{
+					m_info.sampleRates.insert(m_info.sampleRates.end(), others.begin(), others.end());
+					std::sort(m_info.sampleRates.begin(), m_info.sampleRates.end());
+				}
+				const double rate = config.sampleRate != 0.0 ? config.sampleRate : current;
+				if (std::find(m_info.sampleRates.begin(), m_info.sampleRates.end(), rate) == m_info.sampleRates.end())
+					throw DeviceError("ASIO: " + name + " doesn't run at " + std::to_string(std::lround(rate)) + " Hz");
+				if (rate != current)
+					check(m_driver->setSampleRate(rate), "setSampleRate");
+
+				// At the new rate: some drivers allow other sizes at other rates.
 				long minimum = 0;
 				long maximum = 0;
 				long preferred = 0;
 				long granularity = 0;
 				check(m_driver->getBufferSize(&minimum, &maximum, &preferred, &granularity), "getBufferSize");
 				m_info.blockSizes = blockSizes(minimum, maximum, preferred, granularity);
-
-				ASIOSampleRate current = 0.0;
-				check(m_driver->getSampleRate(&current), "getSampleRate");
-				for (const double rate : g_sampleRates)
-					if (rate == current || m_driver->canSampleRate(rate) == ASE_OK)
-						m_info.sampleRates.push_back(rate);
-				if (std::find(m_info.sampleRates.begin(), m_info.sampleRates.end(), current) ==
-					m_info.sampleRates.end())
-					m_info.sampleRates.insert(
-						std::lower_bound(m_info.sampleRates.begin(), m_info.sampleRates.end(), current), current);
-				const double rate = config.sampleRate != 0.0 ? config.sampleRate : current;
-				if (rate != current)
-				{
-					if (m_driver->canSampleRate(rate) != ASE_OK)
-						throw DeviceError(
-							"ASIO: " + name + " doesn't run at " + std::to_string(std::lround(rate)) + " Hz");
-					check(m_driver->setSampleRate(rate), "setSampleRate");
-				}
 
 				std::array<ASIOClockSource, 32> clocks{};
 				long count = static_cast<long>(clocks.size());
@@ -352,9 +388,18 @@ namespace gnubase::audio
 					m_buffers.push_back({channel.isInput, channel.channel, {nullptr, nullptr}});
 				}
 				m_callbacks = {&bufferSwitch, &sampleRateDidChange, &asioMessage, &bufferSwitchTimeInfo};
-				check(m_driver->createBuffers(
-						  m_buffers.data(), inputs + outputs, static_cast<long>(blockSize), &m_callbacks),
-					"createBuffers");
+				// Some drivers refuse now and then, e.g. right after the previous device closed.
+				ASIOError created = ASE_OK;
+				for (int tries = 0; tries < g_createBuffersTries; ++tries)
+				{
+					if (tries > 0)
+						std::this_thread::sleep_for(g_createBuffersRetryDelay);
+					created = m_driver->createBuffers(
+						m_buffers.data(), inputs + outputs, static_cast<long>(blockSize), &m_callbacks);
+					if (created == ASE_OK)
+						break;
+				}
+				check(created, "createBuffers");
 				m_buffersCreated = true;
 				long inputLatency = 0;
 				long outputLatency = 0;
@@ -386,9 +431,12 @@ namespace gnubase::audio
 				m_driver = nullptr;
 			}
 
+			// Why init failed. Other calls leave the message as it was, or garbage.
 			std::string errorMessage() const
 			{
-				std::array<char, 124> message{};
+				// ASIO allows 124 characters, but some drivers write more.
+				// ponytail: a driver writing past 4 KiB still overruns the stack; only a guard page would stop that.
+				std::array<char, 4096> message{};
 				m_driver->getErrorMessage(message.data());
 				return text(message.data(), message.size());
 			}
@@ -396,8 +444,7 @@ namespace gnubase::audio
 			void check(ASIOError error, const char* what) const
 			{
 				if (error != ASE_OK)
-					throw DeviceError("ASIO: " + m_info.name + ": " + what + " failed (" + std::to_string(error) +
-						"): " + errorMessage());
+					throw DeviceError("ASIO: " + m_info.name + ": " + what + " failed (" + std::to_string(error) + ")");
 			}
 
 			DriverThread m_thread;
@@ -534,11 +581,12 @@ namespace gnubase::audio
 				const std::string& name = config.device.empty() ? names.front() : config.device;
 				if (std::find(names.begin(), names.end(), name) == names.end())
 					throw DeviceError("no ASIO driver " + name);
-				return std::make_unique<AsioDevice>(m_drivers, name, config);
+				return std::make_unique<AsioDevice>(m_drivers, name, config, m_switching);
 			}
 
 		private:
 			AsioDrivers m_drivers;
+			RateSwitching m_switching;
 		};
 	}
 

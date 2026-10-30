@@ -22,13 +22,17 @@ namespace gnubase::ui
 		using std::runtime_error::runtime_error;
 	};
 
+	// Multisampling of the UI, in samples per pixel, as in RmlUi's OpenGL 3 renderer.
+	constexpr int g_defaultMsaaSamples = 2;
+
 	// Draws through SDL_GPU (docs/render-backend.md): one device for all windows, a swapchain per window, and
 	// RmlUi's SDL_GPU renderer as the render interface they share.
 	class GpuRenderer final : public Renderer
 	{
 	public:
-		// Throws GpuUnavailable if this machine has no SDL_GPU device.
-		explicit GpuRenderer(SdlWindowSystem& windows);
+		// Throws GpuUnavailable if this machine has no SDL_GPU device. msaaSamples: samples per pixel, 1 for none; a
+		// device that lacks the count takes the next larger one it has.
+		explicit GpuRenderer(SdlWindowSystem& windows, int msaaSamples = g_defaultMsaaSamples);
 		~GpuRenderer() override;
 		GpuRenderer(const GpuRenderer&) = delete;
 		GpuRenderer& operator=(const GpuRenderer&) = delete;
@@ -37,6 +41,9 @@ namespace gnubase::ui
 
 		// The graphics API: "metal", "direct3d12" or "vulkan".
 		std::string driver() const;
+
+		// The samples per pixel that the device gave, once a window is attached; 0 before.
+		int msaaSamples() const;
 
 		// Throws std::runtime_error if the device can't draw into the window.
 		void attach(WindowId window) override;
@@ -49,6 +56,7 @@ namespace gnubase::ui
 	private:
 		SdlWindowSystem& m_windows;
 		SDL_GPUDevice* m_device = nullptr;
+		int m_msaaSamples;
 		std::unique_ptr<RenderInterface_SDL_GPU> m_interface;
 		std::set<WindowId> m_attached;
 		int m_format = 0; // the swapchain texture format of the first window, which RmlUi's pipelines are made for

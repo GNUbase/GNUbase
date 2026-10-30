@@ -8,8 +8,9 @@ Backends, both from RmlUi's own `Backends` folder (`ext/RmlUi`, RmlUi 6.3):
 
 - `gl3`: OpenGL 3.3 core through `RmlUi_Renderer_GL3`, which implements RmlUi's whole render interface.
 - `gpu`: SDL_GPU through `RmlUi_Renderer_SDL_GPU`, which uses Metal on macOS, Direct3D 12 on Windows and Vulkan on
-  Linux, or another driver with `--gpu-driver`. Its renderer draws geometry and textures with scissoring and transforms
-  only: no clip masks, layers, filters or shaders.
+  Linux, or another driver with `--gpu-driver`. RmlUi 6.3's renderer drew geometry and textures with scissoring and
+  transforms only; GNUbase's fork has since given it the rest of the render interface, as `gl3` has it (#285).
+  It multisamples twice per pixel, as `gl3` does; `--msaa N` asks for N samples, 1 for none.
 
 ## Build and run
 
@@ -36,7 +37,7 @@ that changes the spike and uploads the results as artifacts.
   Every frame moves every meter and scrolls every waveform, which rebuilds its geometry, as during playback. The levels
   are solid, so both backends draw the same. The timings are milliseconds per frame without vsync: the mean over the
   whole run, including the GPU's work, the median and 95th percentile per frame, and the median CPU time until the
-  frame is submitted.
+  frame is submitted. RmlUi 6.3's SDL_GPU renderer didn't multisample: compare it with `--msaa 1`.
 
 On CI runners without a GPU, OpenGL and Vulkan come from Mesa's software rasterizers and Direct3D 12 from WARP, so the
 timings there compare the backends' CPU cost more than real GPUs. Run the benchmark on your own machine for those.

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/document/channelformat.h"
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
@@ -19,7 +20,7 @@ namespace gnubase::engine
 	// Identifies an object in a project. Ids are never reused within a project; 0 means none.
 	using ObjectId = uint64_t;
 
-	// The most audio channels a bus or channel can have: 9.1.6 surround.
+	// The most audio channels a media file can have: 9.1.6 surround. Busses and channels have a ChannelFormat.
 	inline constexpr int g_maxAudioChannels = 16;
 
 	enum class BusDirection : uint8_t
@@ -34,7 +35,7 @@ namespace gnubase::engine
 		ObjectId id = 0;
 		std::string name;
 		BusDirection direction = BusDirection::Output;
-		int channels = 2;
+		ChannelFormat format = ChannelFormat::Stereo;
 	};
 
 	enum class TrackType : uint8_t
@@ -51,22 +52,37 @@ namespace gnubase::engine
 	// A project has at most this many marker tracks.
 	inline constexpr int g_maxMarkerTracks = 10;
 
+	enum class StereoPanner : uint8_t
+	{
+		Balance,  // turns down the side panned away from
+		Combined, // pans the left and the right channel each on its own, linked or apart
+	};
+
 	// The mixer channel of a track. MIDI tracks have a MIDI channel: no audio channels, and their output is an
 	// instrument track's channel.
 	struct Channel
 	{
 		ObjectId id = 0;
 		ObjectId track = 0;
-		int channels = 2;       // audio channels: 1 mono, 2 stereo, more for surround; 0 for MIDI
-		ObjectId input = 0;     // audio tracks: an input bus, or 0
+		ChannelFormat format = ChannelFormat::Stereo; // the speaker arrangement; None for MIDI
+		ObjectId input = 0;                           // audio tracks: an input bus, or 0
 		ObjectId output = 0;    // an output bus or a group channel; MIDI: an instrument channel; or 0
 		std::string instrument; // instrument tracks: the built-in instrument that plays, or empty (plugins: M05)
 		double volume = 0.0;    // the fader, in dB from g_minChannelVolume to g_maxChannelVolume
-		double pan = 0.0;       // stereo channels' balance: -1 left, 0 center, 1 right
+		double pan = 0.0;       // mono channels' position, stereo channels' balance: -1 left, 0 center, 1 right
+		StereoPanner panner = StereoPanner::Balance; // stereo channels
+		double panLeft = -1.0; // the combined panner's positions of the left and the right channel, -1 to 1
+		double panRight = 1.0;
+		bool panBypass = false; // mono channels play at the center, stereo ones hard left and right
+		// MIDI channels: the MIDI volume (CC 7) and pan (CC 10, 64 is the center) sent to the instrument, 0 to 127;
+		// none sends nothing, which leaves the instrument's own.
+		std::optional<int> midiVolume = std::nullopt;
+		std::optional<int> midiPan = std::nullopt;
 	};
 
+	// The fader's range: its bottom is silence, its top the project's maximum volume, at most this.
 	inline constexpr double g_minChannelVolume = -144.0;
-	inline constexpr double g_maxChannelVolume = 6.0;
+	inline constexpr double g_maxChannelVolume = 12.0;
 
 	// An audio file on disk.
 	struct MediaFile
@@ -274,7 +290,9 @@ namespace gnubase::engine
 	enum class AutomationTargetType : uint8_t
 	{
 		Volume,          // the channel's fader, in dB
-		Pan,             // the channel's balance, -1 to 1
+		Pan,             // the channel's pan, -1 to 1
+		PanLeft,         // the combined panner's position of the left channel, -1 to 1
+		PanRight,        // and of the right channel
 		Instrument,      // a parameter of the channel's built-in instrument, in its range
 		Controller,      // a MIDI control change: number and channel; 0 to 1
 		PitchBend,       // channel; 0 to 1, 0.5 is no bend
@@ -327,6 +345,8 @@ namespace gnubase::engine
 		time::TempoMap tempo{120.0};
 		time::SignatureMap signatures;
 		AutoFades autoFades; // for audio tracks without settings of their own
+		PanLaw panLaw = PanLaw::Minus3;
+		double maxVolume = 6.0; // the top of the faders, in dB: 6 or 12
 		ObjectId nextId = 1;
 
 		std::vector<Bus> busses;      // in the order they are shown
@@ -365,13 +385,15 @@ namespace gnubase::engine
 	// Equality compares every member; the undo history uses it to find what a command changed.
 	inline bool operator==(const Bus& a, const Bus& b)
 	{
-		return std::tie(a.id, a.name, a.direction, a.channels) == std::tie(b.id, b.name, b.direction, b.channels);
+		return std::tie(a.id, a.name, a.direction, a.format) == std::tie(b.id, b.name, b.direction, b.format);
 	}
 
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
-		return std::tie(a.id, a.track, a.channels, a.input, a.output, a.instrument, a.volume, a.pan) ==
-			std::tie(b.id, b.track, b.channels, b.input, b.output, b.instrument, b.volume, b.pan);
+		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
+				   a.panRight, a.panBypass, a.midiVolume, a.midiPan) ==
+			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
+				b.panRight, b.panBypass, b.midiVolume, b.midiPan);
 	}
 
 	inline bool operator==(const MediaFile& a, const MediaFile& b)

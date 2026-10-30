@@ -320,8 +320,10 @@ TEST_CASE("automation lanes hold points on tracks, with checks, events and undo"
 		ContainsSubstring("no automation point 12345"));
 	CHECK_THAT(reject(client, "channel.set", {{"channel", channelOf(client, midi)}, {"volume", -3.0}}),
 		ContainsSubstring("no volume or pan"));
-	CHECK_THAT(reject(client, "channel.set", {{"channel", channelOf(client, audio)}, {"volume", 6.5}}),
-		ContainsSubstring("volume must be"));
+	// The fader stops at the project's maximum volume.
+	CHECK(run(client, "channel.set", {{"channel", channelOf(client, audio)}, {"volume", 6.5}})
+			  .at("channel")
+			  .at("volume") == 6.0);
 }
 
 TEST_CASE("automation points are compiled to the project's samples, following the tempo map", "[unit]")
@@ -333,7 +335,7 @@ TEST_CASE("automation points are compiled to the project's samples, following th
 	project.trackById[track] = {
 		track, TrackType::Audio, "Audio", "", gnubase::time::TimeBase::Musical, 0, channel, {}, {}};
 	project.tracks.push_back(track);
-	project.channels[channel] = {channel, track, 2, 0, 0, {}, -6.0, 0.5};
+	project.channels[channel] = {channel, track, ChannelFormat::Stereo, 0, 0, {}, -6.0, 0.5};
 	AutomationLane volume;
 	volume.id = project.newId();
 	volume.track = track;
@@ -379,7 +381,7 @@ TEST_CASE("automation points on linear tracks keep their time when the tempo cha
 		const ObjectId channel = project.newId();
 		project.trackById[track] = {track, TrackType::Audio, "Audio", "", base, 0, channel, {}, {}};
 		project.tracks.push_back(track);
-		project.channels[channel] = {channel, track, 2, 0, 0, {}, 0.0, 0.0};
+		project.channels[channel] = {channel, track, ChannelFormat::Stereo, 0, 0, {}, 0.0, 0.0};
 		AutomationLane lane;
 		lane.id = project.newId();
 		lane.track = track;

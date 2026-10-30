@@ -14,16 +14,16 @@ namespace gnubase::engine
 	{
 		bool operator==(const ProjectSettings& a, const ProjectSettings& b)
 		{
-			return std::tie(a.name, a.sampleRate, a.tempo, a.signatures, a.autoFades, a.busses, a.tracks,
-					   a.activeMarkerTrack) ==
-				std::tie(
-					b.name, b.sampleRate, b.tempo, b.signatures, b.autoFades, b.busses, b.tracks, b.activeMarkerTrack);
+			return std::tie(a.name, a.sampleRate, a.tempo, a.signatures, a.autoFades, a.panLaw, a.maxVolume, a.busses,
+					   a.tracks, a.activeMarkerTrack) ==
+				std::tie(b.name, b.sampleRate, b.tempo, b.signatures, b.autoFades, b.panLaw, b.maxVolume, b.busses,
+					b.tracks, b.activeMarkerTrack);
 		}
 
 		ProjectSettings settings(const Project& project)
 		{
 			return {project.name, project.sampleRate, project.tempo, project.signatures, project.autoFades,
-				project.busses, project.tracks, project.activeMarkerTrack};
+				project.panLaw, project.maxVolume, project.busses, project.tracks, project.activeMarkerTrack};
 		}
 
 		// Walks two maps in id order and calls visit(id, before, after) with nullptr for a missing object.
@@ -172,6 +172,8 @@ namespace gnubase::engine
 			project.tempo = target.tempo;
 			project.signatures = target.signatures;
 			project.autoFades = target.autoFades;
+			project.panLaw = target.panLaw;
+			project.maxVolume = target.maxVolume;
 			project.busses = target.busses;
 			project.tracks = target.tracks;
 			project.activeMarkerTrack = target.activeMarkerTrack;

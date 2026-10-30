@@ -26,7 +26,7 @@ using namespace gnubase::audio;
 namespace
 {
 	// Two inputs of 32-bit integers and two outputs of 32-bit floats, 44.1 or 48 kHz, blocks of 64 to 1024 frames in
-	// powers of two (256 preferred), two clock sources. Its inputs count frames.
+	// powers of two (to 512 at 44.1 kHz; 256 preferred), two clock sources. Its inputs count frames.
 	class FakeDriver : public IASIO
 	{
 	public:
@@ -45,16 +45,18 @@ namespace
 		{
 			rate = 48000.0;
 			clock = 0;
-			return ASIOTrue;
+			return initFails ? ASIOFalse : ASIOTrue;
 		}
 		void getDriverName(char* name) override { std::snprintf(name, 32, "Fake"); }
 		long getDriverVersion() override { return 1; }
-		void getErrorMessage(char* text) override { std::snprintf(text, 124, "fake failure"); }
+		// Like some drivers, without minding ASIO's limit of 124 characters.
+		void getErrorMessage(char* text) override { std::memcpy(text, errorText.c_str(), errorText.size() + 1); }
 
 		ASIOError start() override
 		{
 			running = true;
-			thread = std::thread([this] { run(); });
+			if (!silent)
+				thread = std::thread([this] { run(); });
 			return ASE_OK;
 		}
 
@@ -84,7 +86,7 @@ namespace
 		ASIOError getBufferSize(long* minimum, long* maximum, long* preferred, long* granularity) override
 		{
 			*minimum = 64;
-			*maximum = 1024;
+			*maximum = rate == 44100.0 ? 512 : 1024;
 			*preferred = 256;
 			*granularity = -1;
 			return ASE_OK;
@@ -103,6 +105,8 @@ namespace
 
 		ASIOError setSampleRate(ASIOSampleRate sampleRate) override
 		{
+			if (refuseRates)
+				return ASE_NoClock;
 			rate = sampleRate;
 			return ASE_OK;
 		}
@@ -141,6 +145,13 @@ namespace
 
 		ASIOError createBuffers(ASIOBufferInfo* infos, long channels, long size, ASIOCallbacks* asioCallbacks) override
 		{
+			if (size == refusedBlockSize)
+				return ASE_HWMalfunction;
+			if (flakyCreates > 0)
+			{
+				--flakyCreates;
+				return ASE_HWMalfunction;
+			}
 			buffers.assign(static_cast<size_t>(channels) * 2, std::vector<int32_t>(static_cast<size_t>(size)));
 			for (long c = 0; c < channels; ++c)
 				for (size_t half = 0; half < 2; ++half)
@@ -200,6 +211,12 @@ namespace
 		std::atomic<int> readies{0};
 		std::atomic<bool> running{false};
 		ASIOSampleType sampleType = ASIOSTInt32LSB;
+		bool initFails = false;
+		std::string errorText = "fake failure";
+		bool silent = false;       // starts, but never calls back
+		bool refuseRates = false;  // says it runs at 44.1 kHz, but doesn't switch
+		long refusedBlockSize = 0; // allowed, but createBuffers fails
+		int flakyCreates = 0;      // createBuffers fails this often first, then works
 		double rate = 48000.0;
 		long clock = 0;
 		long blockSize = 0;
@@ -305,5 +322,84 @@ TEST_CASE("the ASIO backend refuses sample types it doesn't convert", "[unit]")
 	{
 		CHECK(std::string(error.what()).find("sample type") != std::string::npos);
 	}
+	CHECK(driver.references == 0);
+}
+
+TEST_CASE("the ASIO backend lists the block sizes of the sample rate it opens at", "[unit]")
+{
+	FakeDriver driver;
+	const std::unique_ptr<Backend> backend = makeAsioBackend(fake(driver));
+	DeviceConfig config;
+	config.sampleRate = 44100.0;
+	CHECK(backend->open(config)->info().blockSizes.back() == 512);
+	config.blockSize = 1024;
+	CHECK_THROWS_AS(backend->open(config), DeviceError);
+}
+
+TEST_CASE("the ASIO backend stays usable after a driver refuses what it offered", "[unit]")
+{
+	FakeDriver driver;
+	driver.errorText = std::string(200, 'x'); // past ASIO's limit, and not about these failures
+	driver.refusedBlockSize = 128;
+	driver.refuseRates = true;
+	const std::unique_ptr<Backend> backend = makeAsioBackend(fake(driver));
+
+	// A driver that doesn't switch its sample rate lists only the current one.
+	std::unique_ptr<Device> device = backend->open({});
+	CHECK(device->info().sampleRates == std::vector<double>{48000.0});
+	device.reset();
+	DeviceConfig config;
+	config.sampleRate = 44100.0;
+	CHECK_THROWS_AS(backend->open(config), DeviceError);
+
+	config = {};
+	config.blockSize = 128;
+	try
+	{
+		backend->open(config);
+		FAIL("opened");
+	}
+	catch (const DeviceError& error)
+	{
+		CHECK(std::string(error.what()).find("createBuffers") != std::string::npos);
+		CHECK(std::string(error.what()).find("xxx") == std::string::npos);
+	}
+
+	driver.initFails = true;
+	try
+	{
+		backend->open({});
+		FAIL("opened");
+	}
+	catch (const DeviceError& error)
+	{
+		CHECK(std::string(error.what()).find(driver.errorText) != std::string::npos); // why init failed
+	}
+	driver.initFails = false;
+	CHECK(driver.references == 0);
+
+	driver.flakyCreates = 1; // e.g. still busy closing the previous device
+	device = backend->open({});
+	Copy copy;
+	device->start(copy);
+	device->stop();
+	CHECK(copy.blocks > 0);
+}
+
+TEST_CASE("the ASIO backend refuses to start a driver that never calls back", "[unit]")
+{
+	FakeDriver driver;
+	driver.silent = true;
+	const std::unique_ptr<Backend> backend = makeAsioBackend(fake(driver));
+	std::unique_ptr<Device> device = backend->open({});
+	Copy copy;
+	CHECK_THROWS_AS(device->start(copy), DeviceError);
+	CHECK(!device->running());
+
+	driver.silent = false; // e.g. its hardware was plugged in
+	device->start(copy);
+	CHECK(device->running());
+	device.reset();
+	CHECK(copy.blocks > 0);
 	CHECK(driver.references == 0);
 }

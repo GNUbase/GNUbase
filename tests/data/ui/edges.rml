@@ -1,0 +1,26 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Effects at a window's edges (#285), in 200x150 dp: a box whose shadow is wider than the window, and a blurred
+     box outside the window. -->
+<rml>
+<head>
+	<title>Edges</title>
+	<style>
+		body {
+			display: block; position: absolute; left: 0; top: 0; width: 100%; height: 100%; margin: 0;
+			background-color: #1d2127;
+		}
+		.shadow {
+			position: absolute; left: 20dp; top: 60dp; width: 220dp; height: 40dp; background-color: #3d7eff;
+			box-shadow: #000000cc 8dp 8dp 12dp 4dp;
+		}
+		.outside {
+			position: absolute; left: -200dp; top: 20dp; width: 60dp; height: 40dp; background-color: #e8b44a;
+			filter: blur(4dp);
+		}
+	</style>
+</head>
+<body>
+	<div class="shadow"/>
+	<div class="outside"/>
+</body>
+</rml>

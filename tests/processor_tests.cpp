@@ -242,10 +242,10 @@ TEST_CASE("a MIDI track driving the test synth renders the expected audio", "[in
 {
 	// MIDI channel -> test synth -> gain and pan -> stereo output, as plugin slots on an instrument track will be.
 	GraphDesc desc;
-	desc.nodes.push_back({NodeKind::Channel, 1, 0, nullptr});
-	desc.nodes.push_back({NodeKind::Builtin, 0, 2, createBuiltin("testSynth")});
-	desc.nodes.push_back({NodeKind::Builtin, 0, 2, createBuiltin("gainPan")});
-	desc.nodes.push_back({NodeKind::OutputBus, 2, 2, nullptr});
+	desc.nodes.push_back({NodeKind::Channel, 1, ChannelFormat::None, nullptr});
+	desc.nodes.push_back({NodeKind::Builtin, 0, ChannelFormat::Stereo, createBuiltin("testSynth")});
+	desc.nodes.push_back({NodeKind::Builtin, 0, ChannelFormat::Stereo, createBuiltin("gainPan")});
+	desc.nodes.push_back({NodeKind::OutputBus, 2, ChannelFormat::Stereo, nullptr});
 	desc.events = {{0, 1}};
 	desc.audio = {{1, 2}, {2, 3}};
 	constexpr uint32_t blockSize = 128;

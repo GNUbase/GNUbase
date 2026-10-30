@@ -15,20 +15,21 @@
 # Logs: build/ci-local/<job>.log. Exit status: 0 every job passed, 1 a job failed, 2 error.
 set -u
 
-# Started by Windows inside WSL: moves the clone to the Windows checkout's HEAD, with the same submodules and test
-# audio, runs the Linux jobs there and copies their logs back.
+# Started by Windows inside WSL with the checkout, its repository and HEAD's commit: moves the clone to that commit,
+# with the same submodules and test audio, runs the Linux jobs there and copies their logs back. It fetches from the
+# repository, not the checkout: a worktree's .git file holds a Windows path, which git in WSL can't follow.
 if [ "${1:-}" = --wsl ]; then
-	source=$2
-	shift 2
+	source=$2 repository=$3 commit=$4
+	shift 4
 	mirror=$HOME/gnubase-ci/$(basename "$source")
-	export GIT_LFS_SKIP_SMUDGE=1 # as in CI: only the test audio comes from Git LFS
+	export GIT_LFS_SKIP_SMUDGE=1 # as in CI: only the test audio and the fonts come from Git LFS
 	mkdir -p "$source/build/ci-local"
-	if ! { { [ -d "$mirror/.git" ] || git clone -q --no-checkout "$source" "$mirror"; } && cd "$mirror" &&
-		git fetch -q --no-tags "$source" HEAD && git checkout -q --force --detach FETCH_HEAD &&
+	if ! { { [ -d "$mirror/.git" ] || git clone -q --no-checkout "$repository" "$mirror"; } && cd "$mirror" &&
+		git fetch -q --no-tags "$repository" "$commit" && git checkout -q --force --detach FETCH_HEAD &&
 		git submodule sync -q && git submodule update -q --init --recursive &&
 		git submodule update -q --init --checkout ext/vst3sdk &&
 		git -C ext/vst3sdk submodule update -q --init base cmake pluginterfaces public.sdk &&
-		git lfs pull --include "tests/data/**,tests/golden/**"; } > "$source/build/ci-local/wsl.log" 2>&1; then
+		git lfs pull --include "tests/data/**,tests/golden/**,resources/fonts/**"; } > "$source/build/ci-local/wsl.log" 2>&1; then
 		echo "Preparing the clone in WSL failed, see build/ci-local/wsl.log"
 		exit 1
 	fi
@@ -188,19 +189,24 @@ if $here || [ $os != windows ]; then
 fi
 
 # Windows: the Linux jobs go to WSL (see --wsl above). The Windows jobs build this folder, so its submodules move to
-# the commits HEAD records, as in CI's checkout; after a merge they often lag behind.
-if git submodule status --recursive | grep -q '^+'; then
+# the commits HEAD records, as in CI's checkout; after a merge they often lag behind, and a new worktree has none. The
+# test audio comes from Git LFS, which a new worktree has only as pointers; WSL's clone then takes it from this
+# repository.
+if git submodule status --recursive | grep -q '^+' || git submodule status | grep -q '^-'; then
 	echo "Moving submodules to the commits HEAD records."
 	git submodule update -q --init --recursive && git submodule update -q --init --checkout ext/vst3sdk &&
 		git -C ext/vst3sdk submodule update -q --init base cmake pluginterfaces public.sdk || exit 2
 fi
+git lfs pull --include "tests/data/**,tests/golden/**,resources/fonts/**" || exit 2
 [ -z "$(git status --porcelain --untracked-files=no)" ] ||
 	echo "Note: uncommitted changes are not checked, only HEAD $(git rev-parse --short HEAD)." >&2
 started=$SECONDS
 status=0
 if [ ${#linuxJobs[@]} -gt 0 ]; then
-	source=$(cygpath -m "$root" | sed -E 's|^([A-Za-z]):|/mnt/\L\1|')
+	wslPath() { cygpath -m "$1" | sed -E 's|^([A-Za-z]):|/mnt/\L\1|'; }
+	source=$(wslPath "$root")
 	MSYS_NO_PATHCONV=1 wsl.exe -d "${GNUBASE_WSL:-Ubuntu}" -- bash "$source/tools/ci-local.sh" --wsl "$source" \
+		"$(wslPath "$(git rev-parse --path-format=absolute --git-common-dir)")" "$(git rev-parse HEAD)" \
 		"${linuxJobs[@]}" &
 	wslPid=$!
 fi
