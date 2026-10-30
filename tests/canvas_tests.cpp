@@ -283,7 +283,7 @@ TEST_CASE("a ruler's default scale counts in decimal steps of 1, 2 and 5", "[uni
 	// Labelled marks at every step from the first at or after the start, minor ones between them.
 	std::vector<ui::RulerMark> marks;
 	ui::RulerScale().marks(-120.0, 401.0, 150.0, marks);
-	REQUIRE(marks.size() == size_t{3 * 4});
+	REQUIRE(marks.size() == size_t{12}); // 3 labelled marks with 3 minor ones each
 	CHECK(marks[0].position == 0.0);
 	CHECK(marks[0].label == "0");
 	CHECK(marks[1].position == 50.0);

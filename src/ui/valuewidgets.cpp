@@ -132,6 +132,9 @@ namespace gnubase::ui
 						change(value() + (step() * fineness(event)));
 					else if (key == Rml::Input::KI_DOWN || key == Rml::Input::KI_LEFT)
 						change(value() - (step() * fineness(event)));
+					else
+						break;
+					event.StopPropagation(); // the widget used the key: no key command runs for it
 					break;
 				}
 				default:
