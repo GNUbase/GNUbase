@@ -274,6 +274,31 @@ TEST_CASE("worker threads join the audio workgroup of a CoreAudio device", "[.ha
 	const gnubase::rt::WorkerPool alone(2);
 	CHECK(alone.workgroupWorkers() == 0);
 }
+
+// Hidden: opens every device at every listed rate ("[hardware]"). GNUbase's own rate change must not make the device
+// ask for a reset, and its channels are those it has at the rate it opened at, as the listing then shows them.
+TEST_CASE("a CoreAudio device opened at another rate keeps still and has that rate's channels", "[.hardware]")
+{
+	const std::unique_ptr<Backend> backend = makeCoreAudioBackend();
+	for (const DeviceInfo& listed : backend->devices())
+		for (const double rate : listed.sampleRates)
+		{
+			INFO("device " << listed.id << " at " << rate << " Hz");
+			std::atomic<int> resets{0};
+			const std::unique_ptr<Device> device = backend->open(config(listed.id, rate));
+			device->onReset([&resets] { resets.fetch_add(1); });
+			std::this_thread::sleep_for(std::chrono::milliseconds(300));
+			CHECK(resets.load() == 0);
+			const std::vector<DeviceInfo> now = backend->devices();
+			const auto found = std::find_if(
+				now.begin(), now.end(), [&listed](const DeviceInfo& info) { return info.id == listed.id; });
+			REQUIRE(found != now.end());
+			CHECK(device->format().inputChannels == static_cast<int>(found->inputs.size()));
+			CHECK(device->format().outputChannels == static_cast<int>(found->outputs.size()));
+			CHECK(device->info().inputs == found->inputs);
+			CHECK(device->info().outputs == found->outputs);
+		}
+}
 #endif
 
 TEST_CASE("the backends of this build come with the dummy backend last", "[unit]")

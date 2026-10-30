@@ -351,6 +351,11 @@ namespace gnubase::audio
 			CoreAudioDevice(AudioObjectID object, DeviceInfo info, double rate, uint32_t blockSize)
 				: m_object(object), m_info(std::move(info)), m_rate(object, rate)
 			{
+				// Channels and buffer sizes as they are at the new rate: some interfaces have fewer at higher rates.
+				std::optional<DeviceInfo> now = describe(object);
+				if (!now)
+					throw DeviceError(m_info.name + " has no channels at " + std::to_string(std::lround(rate)) + " Hz");
+				m_info = std::move(*now);
 				if (blockSize != 0)
 				{
 					// Blocks split larger I/O cycles: ask for the size nearest to the block size the device allows.
@@ -482,8 +487,8 @@ namespace gnubase::audio
 				m_inside.store(false, std::memory_order_seq_cst);
 			}
 
-			// Asks for a reset when the device goes away, its channels change or another program changes its rate.
-			// Notifications come on a queue of the device's own, so that none is still running once it's gone.
+			// Asks for a reset when the device goes away, its channel counts change or another program changes its
+			// rate. Notifications come on a queue of the device's own, so that none is still running once it's gone.
 			void listen()
 			{
 				m_queue = dispatch_queue_create("gnubase.coreaudio", DISPATCH_QUEUE_SERIAL);
@@ -498,8 +503,10 @@ namespace gnubase::audio
 					  }
 					  else if (addresses[i].mSelector == kAudioDevicePropertyNominalSampleRate)
 						  reset = reset || nominalRate(m_object) != m_format.sampleRate;
-					  else
-						  reset = true;
+					  else // the stream configuration, which also notifies about GNUbase's own rate change
+						  reset = reset ||
+							  channelCount(m_object, kAudioObjectPropertyScopeInput) != m_format.inputChannels ||
+							  channelCount(m_object, kAudioObjectPropertyScopeOutput) != m_format.outputChannels;
 				  }
 				  if (reset)
 					  requestReset();
