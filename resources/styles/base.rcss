@@ -594,3 +594,75 @@ meter .meter-peak
 {
 	display: block;
 }
+
+/* Menus (ui/widgets.h): hidden until they open, over the document. A menu inside an item is its submenu, shown
+   beside the item while the mouse is over it. */
+menu
+{
+	display: none;
+	position: absolute;
+	z-index: 100;
+	min-width: 160dp;
+	padding: 4dp 0;
+}
+
+menu.open, menuitem:hover > menu
+{
+	display: block;
+}
+
+menuitem
+{
+	display: block;
+	position: relative;
+	padding: 3dp 12dp;
+	white-space: nowrap;
+	tab-index: auto;
+}
+
+menuitem:disabled
+{
+	pointer-events: none;
+	tab-index: none;
+}
+
+menuitem > menu
+{
+	left: 100%;
+	top: -4dp;
+}
+
+menuseparator
+{
+	display: block;
+	height: 8dp;
+}
+
+/* Every document's tooltip, under the mouse; it lets the mouse through. */
+tooltip
+{
+	display: none;
+	position: absolute;
+	z-index: 1000;
+	padding: 4dp 8dp;
+	pointer-events: none;
+	white-space: nowrap;
+}
+
+tooltip.shown
+{
+	display: block;
+}
+
+/* Dialogs open in the middle of the window, and their title bar moves them. */
+dialog
+{
+	display: block;
+	position: absolute;
+	padding-bottom: 12dp;
+}
+
+dialog .dialog-titlebar
+{
+	drag: drag;
+}

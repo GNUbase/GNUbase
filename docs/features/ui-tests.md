@@ -12,7 +12,8 @@ UI setup as the app, and drive it with the interface behind MCP's UI tools ([ui-
   - loads documents into the main window (`show`);
   - runs engine commands (`call`), e.g. `settings.set`, and steps the shell as the app's event loop does until the UI
     has followed (`waitUntil`);
-  - clicks, types and reads the DOM through `ui()`, the `ui::Automation` that MCP's UI tools use;
+  - clicks, types and reads the DOM through `ui()`, the `ui::Automation` that MCP's UI tools use. What the mouse is
+    over stays while the shell steps: a hidden window ignores the OS's word that the mouse left it;
   - lays the UI out at a fixed dp ratio, whatever the monitor's scale (`setDpRatio`), and compares screenshots with
     golden images in `tests/golden/ui/` (`screenshot`, `checkGolden`). Each channel of a pixel may differ by 8 of 255,
     and one pixel in 500 by more, for GPUs that round an edge or a blend differently. `GNUBASE_UPDATE_GOLDEN=1`
