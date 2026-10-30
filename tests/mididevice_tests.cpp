@@ -356,6 +356,7 @@ TEST_CASE("the CoreMIDI backend keeps the port contract and notices virtual port
 TEST_CASE("the CoreMIDI backend receives MIDI 2.0 sources as MIDI 1.0 messages", "[integration]")
 {
 	const std::unique_ptr<Backend> backend = makeCoreMidiBackend();
+	backend->ports(); // the backend's client comes first, as in the application, so notifications reach it
 	const CFStringRef text = CFSTR("GNUbase test MIDI 2.0");
 	MIDIClientRef client = 0;
 	MIDIEndpointRef source = 0;

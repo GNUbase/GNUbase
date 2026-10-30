@@ -208,7 +208,9 @@ namespace gnubase::midi
 
 		// One CoreMIDI client for the process, since CoreMIDI advises against disposing clients. It starts with the
 		// first listing or port, so an engine that doesn't use MIDI leaves CoreMIDI alone. Its notifications arrive on
-		// the run loop of a thread of its own, which runs until the process ends.
+		// the run loop of a thread of its own, which runs until the process ends. CoreMIDI sends every client's
+		// notifications to the run loop of the process's first client, so this one has to come first, or the first
+		// client's thread has to run its loop (the main thread does in the application).
 		class Client
 		{
 		public:

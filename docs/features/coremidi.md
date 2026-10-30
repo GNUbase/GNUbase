@@ -16,7 +16,9 @@ other backends are in [architecture.md](../architecture.md#midi-ports).
   mach time and leave the scheduling to CoreMIDI.
 - **One client.** The process has one CoreMIDI client, since CoreMIDI advises against disposing clients. It starts with
   the first listing or port, so an engine that never uses MIDI leaves CoreMIDI alone. Its notifications arrive on the
-  run loop of a thread of its own; each setup change makes every CoreMIDI backend report changed ports.
+  run loop of a thread of its own; each setup change makes every CoreMIDI backend report changed ports, shortly after
+  the listing changed. CoreMIDI sends all of a process's notifications to the run loop of its first client, so tests
+  that create CoreMIDI clients of their own list the backend's ports first.
 - **Tests** (`tests/mididevice_tests.cpp`, macOS only): the port contract runs against a loopback of virtual ports the
   test creates itself (a virtual destination that passes everything on to a virtual source of the same name), checks
   that the ports are noticed coming and going, and also loops through "IAC Driver Bus 1" when the IAC driver is
