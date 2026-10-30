@@ -45,6 +45,10 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"}}, ""},
 				{"audio.blockSize", "Frames per audio block.",
 					Json{{"type", "integer"}, {"minimum", 16}, {"maximum", 8192}}, 256},
+				{"audio.busPresets",
+					"The user's own bus presets, per direction (input, output) by name: each a list of busses with "
+					"their name, format, ports and child busses (bus.savePreset).",
+					Json{{"type", "object"}}, Json{{"input", Json::object()}, {"output", Json::object()}}},
 				{"audio.device", "The audio device's id, or empty for the backend's default device.",
 					Json{{"type", "string"}}, ""},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",

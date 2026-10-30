@@ -53,8 +53,14 @@ namespace gnubase::engine::graph
 	{
 		int from = 0;
 		int to = 0;
+		// For each channel of from, the channel of to it adds to, or -1, instead of converting the format: a child
+		// bus and its parent. Empty: converted.
+		std::vector<int> channels{};
 
-		bool operator==(const Connection& other) const { return from == other.from && to == other.to; }
+		bool operator==(const Connection& other) const
+		{
+			return from == other.from && to == other.to && channels == other.channels;
+		}
 	};
 
 	struct GraphDesc
@@ -67,7 +73,8 @@ namespace gnubase::engine::graph
 
 	// The graph of a render snapshot: a node per bus in bus order, then a node per channel in track order. Channels
 	// receive audio from their input bus and send it to their output bus or group channel; MIDI channels send events
-	// to their instrument channel instead.
+	// to their instrument channel instead. Output child busses add their channels to their parent's, input child
+	// busses take theirs from their parent's.
 	GraphDesc describe(const RenderSnapshot& snapshot);
 
 	// The order in which nodes are processed: every node after the nodes it receives audio or events from, and

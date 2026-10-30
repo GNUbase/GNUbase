@@ -77,6 +77,60 @@ namespace gnubase::engine
 				{"clockSource", clockSource}, {"controlPanel", info.controlPanel}};
 		}
 
+		// A device's port names: its channel names, "Input 3" or "Output 3" where it has none, " #2" and so on after
+		// names that repeat, so that each one names one port.
+		std::vector<std::string> portNames(std::vector<std::string> names, int channels, const std::string& generic)
+		{
+			names.resize(static_cast<size_t>(std::max(channels, 0)));
+			for (size_t i = 0; i < names.size(); ++i)
+			{
+				if (names[i].empty())
+					names[i] = generic + std::to_string(i + 1);
+				const auto before = names.begin() + static_cast<std::ptrdiff_t>(i);
+				const std::string base = names[i];
+				for (int n = 2; std::find(names.begin(), before, names[i]) != before; ++n)
+					names[i] = base + " #" + std::to_string(n);
+			}
+			return names;
+		}
+
+		// The device channel each channel of each bus uses, or -1: ports by name; a bus without ports the next ones
+		// in bus order, as many as the busses of its direction before it have channels are skipped; a child bus its
+		// parent's.
+		std::vector<std::vector<int>> devicePorts(const std::vector<RenderBus>& busses,
+			const std::vector<std::string>& inputs, const std::vector<std::string>& outputs)
+		{
+			std::vector<std::vector<int>> result(busses.size());
+			std::array<int, 2> next{}; // per direction, the first port of the next bus without ports
+			for (size_t b = 0; b < busses.size(); ++b)
+			{
+				const RenderBus& bus = busses[b];
+				if (bus.parent >= 0)
+					continue;
+				const bool input = bus.direction == BusDirection::Input;
+				const std::vector<std::string>& names = input ? inputs : outputs;
+				int& first = next[input ? 0 : 1];
+				const int channels = channelCount(bus.format);
+				for (int c = 0; c < channels; ++c)
+				{
+					int port = first + c < static_cast<int>(names.size()) ? first + c : -1;
+					if (!bus.ports.empty())
+					{
+						const auto found = std::find(names.begin(), names.end(), bus.ports[static_cast<size_t>(c)]);
+						port = found != names.end() ? static_cast<int>(found - names.begin()) : -1;
+					}
+					result[b].push_back(port);
+				}
+				first += channels;
+			}
+			for (size_t b = 0; b < busses.size(); ++b)
+				if (busses[b].parent >= 0)
+					for (const int channel : busses[b].parentChannels)
+						result[b].push_back(
+							result[static_cast<size_t>(busses[b].parent)][static_cast<size_t>(channel)]);
+			return result;
+		}
+
 		const processors::BuiltinInfo& generatorInfo(const std::string& id)
 		{
 			for (const processors::BuiltinInfo& info : processors::builtins())
@@ -203,22 +257,12 @@ namespace gnubase::engine
 		program->sampleRate = snapshot.sampleRate;
 		program->generation = generation;
 		program->releases = releases();
-		int input = 0;
-		int output = 0;
-		for (size_t i = 0; i < desc.nodes.size(); ++i)
-		{
-			const graph::NodeDesc& node = desc.nodes[i];
-			if (node.kind == graph::NodeKind::InputBus)
-			{
-				program->inputs.push_back({static_cast<int>(i), input, channelCount(node.format)});
-				input += channelCount(node.format);
-			}
-			else if (node.kind == graph::NodeKind::OutputBus)
-			{
-				program->outputs.push_back({static_cast<int>(i), output, channelCount(node.format)});
-				output += channelCount(node.format);
-			}
-		}
+		// Bus nodes come first, in bus order (graph::describe); child busses reach the device through their parent.
+		std::vector<std::vector<int>> ports = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
+		for (size_t b = 0; b < snapshot.busses.size(); ++b)
+			if (snapshot.busses[b].parent < 0)
+				(snapshot.busses[b].direction == BusDirection::Input ? program->inputs : program->outputs)
+					.push_back({static_cast<int>(b), std::move(ports[b])});
 		m_revision = snapshot.revision;
 		if (m_programs)
 			m_programs->publish(std::move(program));
@@ -358,11 +402,11 @@ namespace gnubase::engine
 		for (const BusLink& link : program.inputs)
 		{
 			float* const* bus = program.graph.audio(link.node);
-			for (int c = 0; c < link.channels; ++c)
+			for (size_t c = 0; c < link.ports.size(); ++c)
 			{
-				const int device = link.firstChannel + c;
-				if (device < format.inputChannels)
-					std::memcpy(bus[c], block.inputs[device], bytes);
+				const int port = link.ports[c];
+				if (port >= 0 && port < format.inputChannels)
+					std::memcpy(bus[c], block.inputs[port], bytes);
 				else
 					std::memset(bus[c], 0, bytes);
 			}
@@ -372,11 +416,20 @@ namespace gnubase::engine
 		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
 		program.graph.process(block.frames, transport, m_workers.get());
 		m_playback.endBlock();
+		// Outputs start silent; busses that share a port add up there, in bus order.
 		for (const BusLink& link : program.outputs)
 		{
 			float* const* bus = program.graph.audio(link.node);
-			for (int c = 0; c < link.channels && link.firstChannel + c < format.outputChannels; ++c)
-				std::memcpy(block.outputs[link.firstChannel + c], bus[c], bytes);
+			for (size_t c = 0; c < link.ports.size(); ++c)
+			{
+				const int port = link.ports[c];
+				if (port < 0 || port >= format.outputChannels)
+					continue;
+				float* out = block.outputs[port];
+				const float* in = bus[c];
+				for (uint32_t i = 0; i < block.frames; ++i)
+					out[i] += in[i];
+			}
 		}
 
 		const std::chrono::duration<double> busy = std::chrono::steady_clock::now() - start;
@@ -403,6 +456,8 @@ namespace gnubase::engine
 		clearPerformance(); // the old device's numbers would stay up until the new one processes a block
 		m_device.reset();
 		m_dummy = nullptr;
+		m_inputPorts.clear();
+		m_outputPorts.clear();
 		m_programs.reset();
 	}
 
@@ -442,6 +497,9 @@ namespace gnubase::engine
 		}
 		m_backend = name;
 		m_parameters = parameters;
+		const audio::DeviceInfo info = m_device->info();
+		m_inputPorts = portNames(info.inputs, m_device->format().inputChannels, "Input ");
+		m_outputPorts = portNames(info.outputs, m_device->format().outputChannels, "Output ");
 		m_device->onReset(
 			[engine = m_engine]
 			{
@@ -485,6 +543,57 @@ namespace gnubase::engine
 			backends.push_back(std::move(entry));
 		}
 		return {{"backends", std::move(backends)}};
+	}
+
+	Json AudioEngine::ports() const
+	{
+		const RenderSnapshot& snapshot = m_snapshots.latest();
+		const std::vector<std::vector<int>> used = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
+		const auto list = [](const std::vector<std::string>& names)
+		{
+			Json ports = Json::array();
+			for (const std::string& name : names)
+				ports.push_back({{"name", name}, {"busses", Json::array()}});
+			return ports;
+		};
+		Json inputs = list(m_inputPorts);
+		Json outputs = list(m_outputPorts);
+		Json busses = Json::array();
+		Json missing = Json::array();
+		for (size_t b = 0; b < snapshot.busses.size(); ++b)
+		{
+			const RenderBus& bus = snapshot.busses[b];
+			const bool input = bus.direction == BusDirection::Input;
+			const std::vector<std::string>& names = input ? m_inputPorts : m_outputPorts;
+			Json ports = Json::array();
+			for (const int port : used[b])
+				ports.push_back(port >= 0 ? Json(names[static_cast<size_t>(port)]) : Json(nullptr));
+			busses.push_back({{"bus", bus.id}, {"ports", std::move(ports)}});
+			if (bus.parent >= 0)
+				continue; // child busses use their parent's
+			for (const int port : used[b])
+			{
+				if (port < 0)
+					continue;
+				Json& users = (input ? inputs : outputs)[static_cast<size_t>(port)]["busses"];
+				if (users.empty() || users.back() != bus.id)
+					users.push_back(bus.id);
+			}
+			for (const std::string& name : bus.ports)
+			{
+				if (name.empty() || std::find(names.begin(), names.end(), name) != names.end())
+					continue;
+				const auto entry = std::find_if(missing.begin(), missing.end(), [&name, input](const Json& port)
+					{ return port.at("name") == name && (port.at("direction") == "input") == input; });
+				if (entry == missing.end())
+					missing.push_back(
+						{{"name", name}, {"direction", input ? "input" : "output"}, {"busses", {bus.id}}});
+				else if (entry->at("busses").back() != bus.id)
+					entry->at("busses").push_back(bus.id);
+			}
+		}
+		return {{"inputs", std::move(inputs)}, {"outputs", std::move(outputs)}, {"busses", std::move(busses)},
+			{"missing", std::move(missing)}};
 	}
 
 	void AudioEngine::openDummy(const Json& parameters)
@@ -751,6 +860,17 @@ namespace gnubase::engine
 				context.emit("audio.changed", result);
 				return result;
 			});
+		engine.registerCommand(
+			{"audio.ports", 1,
+				"The audio device's ports by name, in order, each with the busses that use it (the bus ids); each "
+				"bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing "
+				"ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts "
+				"re-routes them. Without a device there are no ports.",
+				noParameters(), Json::parse(R"({"type": "object", "properties": {"inputs": {"type": "array"},
+					"outputs": {"type": "array"}, "busses": {"type": "array"}, "missing": {"type": "array"}},
+					"required": ["inputs", "outputs", "busses", "missing"]})"),
+				true},
+			[this](CommandContext&) { return ports(); });
 		engine.registerCommand(
 			{"audio.setProcessing", 1,
 				"Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; "

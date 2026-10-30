@@ -745,10 +745,8 @@ namespace gnubase::engine
 			if (hasChannel)
 			{
 				channel = Channel{project.newId(), track.id, format, 0, 0, {}, 0.0, 0.0};
-				const auto mainOutput = std::find_if(project.busses.begin(), project.busses.end(),
-					[](const Bus& bus) { return bus.direction == BusDirection::Output; });
-				if (hasAudio && mainOutput != project.busses.end())
-					channel->output = mainOutput->id;
+				if (hasAudio)
+					channel->output = mainMix(project);
 				if (hasAudio && parent != 0 && project.trackById.at(parent).channel != 0)
 					channel->output = project.trackById.at(parent).channel;
 				if (type == TrackType::Audio)
@@ -949,17 +947,107 @@ namespace gnubase::engine
 			return result;
 		}
 
+		BusDirection busDirection(const Json& name)
+		{
+			return name.get<std::string>() == "input" ? BusDirection::Input : BusDirection::Output;
+		}
+
+		void announceBusses(const std::vector<Bus>& previous, const std::vector<Bus>& current, CommandContext& context)
+		{
+			const auto find = [](const std::vector<Bus>& busses, ObjectId id)
+			{ return std::find_if(busses.begin(), busses.end(), [id](const Bus& bus) { return bus.id == id; }); };
+			for (const Bus& bus : current)
+			{
+				const auto match = find(previous, bus.id);
+				if (match == previous.end())
+					context.emit("bus.added", {{"bus", toJson(bus)}});
+				else if (!(*match == bus))
+					context.emit("bus.changed", {{"bus", toJson(bus)}});
+			}
+			for (const Bus& bus : previous)
+				if (find(current, bus.id) == current.end())
+					context.emit("bus.removed", {{"bus", bus.id}});
+		}
+
+		void checkBus(const Project& project, const Bus& bus)
+		{
+			const std::string problem = busProblem(project, bus);
+			require(problem.empty(), problem);
+		}
+
+		// "Stereo In", then "Stereo In 2" and so on.
+		std::string uniqueBusName(const Project& project, const std::string& base)
+		{
+			const auto taken = [&project](const std::string& name)
+			{
+				return std::any_of(
+					project.busses.begin(), project.busses.end(), [&name](const Bus& bus) { return bus.name == name; });
+			};
+			std::string name = base;
+			for (int n = 2; taken(name); ++n)
+				name = base + " " + std::to_string(n);
+			return name;
+		}
+
+		// A format at the start of a bus name: "Mono", "Stereo", "5.1".
+		std::string formatLabel(ChannelFormat format)
+		{
+			std::string label = formatName(format);
+			label[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(label[0])));
+			return label;
+		}
+
 		Json addBus(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
 			Bus bus;
-			bus.direction =
-				parameters.at("direction").get<std::string>() == "input" ? BusDirection::Input : BusDirection::Output;
-			bus.name = parameters.at("name").get<std::string>();
+			bus.parent = parameters.value("parent", ObjectId{0});
+			const Bus* parent = bus.parent != 0 ? &findBus(project, bus.parent) : nullptr;
+			require(parameters.contains("direction") || parent != nullptr, "a bus needs a direction: input or output");
+			bus.direction = parent != nullptr && !parameters.contains("direction")
+				? parent->direction
+				: busDirection(parameters.at("direction"));
 			bus.format = channelFormat(parameters, ChannelFormat::Stereo);
+			bus.ports = parameters.value("ports", std::vector<std::string>());
+			if (parent != nullptr)
+			{
+				require(parent->parent == 0, "a child bus's parent must be a top-level bus");
+				if (parameters.contains("parentChannels"))
+					bus.parentChannels = parameters.at("parentChannels").get<std::vector<int>>();
+				else
+					// The speakers both formats have.
+					for (const Speaker speaker : speakers(bus.format))
+					{
+						const std::vector<Speaker>& available = speakers(parent->format);
+						const auto found = std::find(available.begin(), available.end(), speaker);
+						require(found != available.end(),
+							std::string("the parent doesn't have the speakers of a ") + formatName(bus.format) +
+								" bus; give parentChannels");
+						bus.parentChannels.push_back(static_cast<int>(found - available.begin()));
+					}
+			}
+			checkBus(project, bus);
+			if (parameters.contains("name"))
+			{
+				bus.name = parameters.at("name").get<std::string>();
+			}
+			else if (parent != nullptr)
+			{
+				std::string names;
+				for (const int channel : bus.parentChannels)
+					names.append(names.empty() ? "" : " ")
+						.append(speakerName(speakers(parent->format)[static_cast<size_t>(channel)]));
+				bus.name = uniqueBusName(project, formatLabel(bus.format) + " (" + names + ")");
+			}
+			else
+			{
+				bus.name = uniqueBusName(
+					project, formatLabel(bus.format) + (bus.direction == BusDirection::Input ? " In" : " Out"));
+			}
 			bus.id = project.newId();
 			project.busses.push_back(bus);
-			Json result = {{"bus", toJson(bus)}};
+			keepMainMix(project); // the first output bus
+			Json result = {{"bus", toJson(project.busses.back())}};
 			context.emit("bus.added", result);
 			return result;
 		}
@@ -967,23 +1055,278 @@ namespace gnubase::engine
 		Json setBus(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
+			const std::vector<Bus> previous = project.busses;
 			Bus& bus = findBus(project, parameters.at("bus").get<ObjectId>());
 			if (parameters.contains("name"))
 				bus.name = parameters.at("name").get<std::string>();
-			Json result = {{"bus", toJson(bus)}};
-			context.emit("bus.changed", result);
-			return result;
+			if (parameters.contains("ports"))
+				bus.ports = parameters.at("ports").get<std::vector<std::string>>();
+			if (parameters.contains("mainMix"))
+			{
+				require(parameters.at("mainMix").get<bool>(), "make another bus the main mix instead");
+				require(bus.direction == BusDirection::Output, "only an output bus can be the main mix");
+				for (Bus& other : project.busses)
+					other.mainMix = false;
+				bus.mainMix = true;
+			}
+			checkBus(project, bus);
+			announceBusses(previous, project.busses, context);
+			return {{"bus", toJson(bus)}};
 		}
 
 		Json removeBus(Project& project, CommandContext& context)
 		{
 			const ObjectId id = context.parameters().at("bus").get<ObjectId>();
 			findBus(project, id);
-			project.busses.erase(std::find_if(
-				project.busses.begin(), project.busses.end(), [id](const Bus& bus) { return bus.id == id; }));
-			disconnect(project, {id}, context);
-			context.emit("bus.removed", {{"bus", id}});
+			const std::vector<Bus> previous = project.busses;
+			std::vector<ObjectId> gone; // the bus and its children
+			for (const Bus& bus : project.busses)
+				if (bus.id == id || bus.parent == id)
+					gone.push_back(bus.id);
+			project.busses.erase(std::remove_if(project.busses.begin(), project.busses.end(),
+									 [id](const Bus& bus) { return bus.id == id || bus.parent == id; }),
+				project.busses.end());
+			keepMainMix(project);
+			disconnect(project, gone, context);
+			announceBusses(previous, project.busses, context);
 			return Json::object();
+		}
+
+		// The names bus.rename gives: the name as given, then counting up its number or its capital letter.
+		std::vector<std::string> nameSeries(const std::string& name, size_t count)
+		{
+			size_t digits = name.size();
+			while (digits > 0 && std::isdigit(static_cast<unsigned char>(name[digits - 1])) != 0)
+				--digits;
+			std::vector<std::string> names;
+			if (digits < name.size())
+			{
+				const size_t width = name.size() - digits;
+				require(width <= 18, "the number at the end of name is too long");
+				const uint64_t first = std::stoull(name.substr(digits));
+				for (size_t i = 0; i < count; ++i)
+				{
+					std::string number = std::to_string(first + i);
+					if (number.size() < width)
+						number.insert(0, width - number.size(), '0');
+					names.push_back(name.substr(0, digits) + number);
+				}
+				return names;
+			}
+			const char last = name.empty() ? '\0' : name.back();
+			require(name.size() >= 2 && name[name.size() - 2] == ' ' && last >= 'A' && last <= 'Z',
+				"name must end in a number, or in a space and a capital letter");
+			require(static_cast<size_t>(last - 'A') + count <= 26, "letters only go up to Z");
+			for (size_t i = 0; i < count; ++i)
+				names.push_back(name.substr(0, name.size() - 1) + static_cast<char>(last + static_cast<int>(i)));
+			return names;
+		}
+
+		Json renameBusses(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			const auto ids = parameters.at("busses").get<std::vector<ObjectId>>();
+			require(!ids.empty(), "busses must not be empty");
+			std::vector<size_t> places; // in project.busses
+			for (const ObjectId id : ids)
+				places.push_back(static_cast<size_t>(&findBus(project, id) - project.busses.data()));
+			// From the first one given down the list, then from the top.
+			const size_t start = places.front();
+			const size_t size = project.busses.size();
+			const auto distance = [start, size](size_t place) { return (place + size - start) % size; };
+			std::sort(
+				places.begin(), places.end(), [&distance](size_t a, size_t b) { return distance(a) < distance(b); });
+			places.erase(std::unique(places.begin(), places.end()), places.end());
+			const std::vector<std::string> names = nameSeries(parameters.at("name").get<std::string>(), places.size());
+			const std::vector<Bus> previous = project.busses;
+			Json renamed = Json::array();
+			for (size_t i = 0; i < places.size(); ++i)
+			{
+				project.busses[places[i]].name = names[i];
+				renamed.push_back(toJson(project.busses[places[i]]));
+			}
+			announceBusses(previous, project.busses, context);
+			return {{"busses", std::move(renamed)}};
+		}
+
+		Json remapPorts(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			const BusDirection direction = busDirection(parameters.at("direction"));
+			const Json& ports = parameters.at("ports");
+			for (const auto& [from, to] : ports.items())
+				require(to.is_string(), "ports." + from + " must be a string: the name of a port");
+			const std::vector<Bus> previous = project.busses;
+			Json changed = Json::array();
+			for (Bus& bus : project.busses)
+			{
+				if (bus.direction != direction)
+					continue;
+				const std::vector<std::string> before = bus.ports;
+				for (std::string& port : bus.ports)
+					if (const auto to = ports.find(port); to != ports.end())
+						port = to->get<std::string>();
+				if (bus.ports != before)
+					changed.push_back(toJson(bus));
+			}
+			announceBusses(previous, project.busses, context);
+			return {{"busses", std::move(changed)}};
+		}
+
+		// The busses of a direction as a preset has them: top-level busses with their child busses.
+		Json presetBusses(const Project& project, BusDirection direction)
+		{
+			Json busses = Json::array();
+			for (const Bus& bus : project.busses)
+			{
+				if (bus.direction != direction || bus.parent != 0)
+					continue;
+				Json children = Json::array();
+				for (const Bus& child : project.busses)
+					if (child.parent == bus.id)
+						children.push_back({{"name", child.name}, {"format", formatName(child.format)},
+							{"parentChannels", child.parentChannels}});
+				busses.push_back({{"name", bus.name}, {"format", formatName(bus.format)}, {"ports", bus.ports},
+					{"children", std::move(children)}});
+			}
+			return busses;
+		}
+
+		const char* directionKey(BusDirection direction)
+		{
+			return direction == BusDirection::Input ? "input" : "output";
+		}
+
+		// The user's own presets of a direction, by name.
+		Json userPresets(BusDirection direction, CommandContext& context)
+		{
+			const Json presets = context.call("settings.get", {{"key", "audio.busPresets"}}).at("value");
+			const Json mine = presets.value(directionKey(direction), Json::object());
+			return mine.is_object() ? mine : Json::object();
+		}
+
+		// Standard presets, those from the device's ports, then the user's own, which hide the others of their name.
+		Json busPresets(BusDirection direction, CommandContext& context)
+		{
+			const Json user = userPresets(direction, context);
+			const bool input = direction == BusDirection::Input;
+			const std::string suffix = input ? " In" : " Out";
+			Json presets = Json::array();
+			const auto add = [&user, &presets](const std::string& name, const std::string& kind, Json busses)
+			{
+				if (kind == "user" || !user.contains(name))
+					presets.push_back({{"name", name}, {"kind", kind}, {"busses", std::move(busses)}});
+			};
+			for (const ChannelFormat format :
+				{ChannelFormat::Mono, ChannelFormat::Stereo, ChannelFormat::Surround51, ChannelFormat::Surround71})
+				add(formatLabel(format), "standard",
+					Json::array({{{"name", formatLabel(format) + suffix}, {"format", formatName(format)},
+						{"ports", Json::array()}, {"children", Json::array()}}}));
+
+			const Json device = context.call("audio.ports");
+			std::vector<std::string> ports;
+			for (const Json& port : device.at(input ? "inputs" : "outputs"))
+				ports.push_back(port.at("name").get<std::string>());
+			for (const size_t width : {size_t{1}, size_t{2}})
+			{
+				const size_t count = ports.size() / width;
+				if (count == 0)
+					continue;
+				const ChannelFormat format = width == 1 ? ChannelFormat::Mono : ChannelFormat::Stereo;
+				Json busses = Json::array();
+				for (size_t i = 0; i < count; ++i)
+					busses.push_back({{"name", formatLabel(format) + suffix + " " + std::to_string(i + 1)},
+						{"format", formatName(format)},
+						{"ports",
+							std::vector<std::string>(ports.begin() + static_cast<std::ptrdiff_t>(i * width),
+								ports.begin() + static_cast<std::ptrdiff_t>((i + 1) * width))},
+						{"children", Json::array()}});
+				add(std::to_string(count) + " " + formatLabel(format) + suffix + (count == 1 ? "" : "s"), "hardware",
+					std::move(busses));
+			}
+			for (const auto& [name, busses] : user.items())
+				add(name, "user", busses);
+			return presets;
+		}
+
+		// Replaces the project's busses of a direction with a preset's, as busPresets lists them. Channels that used
+		// the old busses move to the new bus at the same place among those of the direction, or to none (inputs) or
+		// the main mix (outputs) if there is none. Returns the channels that changed.
+		std::vector<ObjectId> applyPreset(Project& project, BusDirection direction, const Json& busses)
+		{
+			std::vector<Bus> created;
+			try
+			{
+				const auto format = [](const Json& item)
+				{ return formatFromName(item.at("format").get<std::string>()).value_or(ChannelFormat::None); };
+				for (const Json& item : busses)
+				{
+					const ObjectId parent = project.newId();
+					created.push_back({parent, item.at("name").get<std::string>(), direction, format(item),
+						item.value("ports", std::vector<std::string>())});
+					for (const Json& child : item.value("children", Json::array()))
+						created.push_back({project.newId(), child.at("name").get<std::string>(), direction,
+							format(child), {}, parent, child.at("parentChannels").get<std::vector<int>>()});
+				}
+			}
+			catch (const Json::exception& error)
+			{
+				throw CommandError(std::string("the preset is invalid: ") + error.what());
+			}
+
+			std::vector<ObjectId> old; // the busses of the direction, in order
+			for (const Bus& bus : project.busses)
+				if (bus.direction == direction)
+					old.push_back(bus.id);
+			const auto first = std::find_if(project.busses.begin(), project.busses.end(),
+				[direction](const Bus& bus) { return bus.direction == direction; });
+			const auto at = first - project.busses.begin();
+			project.busses.erase(std::remove_if(project.busses.begin(), project.busses.end(),
+									 [direction](const Bus& bus) { return bus.direction == direction; }),
+				project.busses.end());
+			project.busses.insert(project.busses.begin() + at, created.begin(), created.end());
+			for (const Bus& bus : created)
+			{
+				const std::string problem = busProblem(project, bus);
+				require(problem.empty(), "the preset is invalid: " + problem);
+			}
+			keepMainMix(project);
+
+			std::vector<ObjectId> changed;
+			for (auto& [id, channel] : project.channels)
+				for (ObjectId* end : {&channel.input, &channel.output})
+				{
+					const auto place = std::find(old.begin(), old.end(), *end);
+					if (place == old.end())
+						continue;
+					const auto index = static_cast<size_t>(place - old.begin());
+					const ObjectId fallback = end == &channel.output ? mainMix(project) : 0;
+					*end = index < created.size() ? created[index].id : fallback;
+					if (changed.empty() || changed.back() != id)
+						changed.push_back(id);
+				}
+			return changed;
+		}
+
+		Json applyBusPreset(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			const BusDirection direction = busDirection(parameters.at("direction"));
+			const auto name = parameters.at("name").get<std::string>();
+			const Json presets = busPresets(direction, context);
+			const auto preset = std::find_if(
+				presets.begin(), presets.end(), [&name](const Json& entry) { return entry.at("name") == name; });
+			require(preset != presets.end(), std::string("no ") + directionKey(direction) + " bus preset " + name);
+			const std::vector<Bus> previous = project.busses;
+			const std::vector<ObjectId> channels = applyPreset(project, direction, preset->at("busses"));
+			announceBusses(previous, project.busses, context);
+			for (const ObjectId id : channels)
+				context.emit("channel.changed", {{"channel", toJson(project.channels.at(id))}});
+			Json result = Json::array();
+			for (const Bus& bus : project.busses)
+				if (bus.direction == direction)
+					result.push_back(toJson(bus));
+			return {{"busses", std::move(result)}};
 		}
 
 		// mediaFolder is where media are copied to with copy, or empty if the project has no file yet.
@@ -1566,8 +1909,11 @@ namespace gnubase::engine
 		constexpr ActionName g_actions[] = {
 			{"project.set", "Change project"},
 			{"bus.add", "Add bus"},
-			{"bus.set", "Rename bus"},
+			{"bus.set", "Change bus"},
 			{"bus.remove", "Remove bus"},
+			{"bus.rename", "Rename busses"},
+			{"bus.remapPorts", "Remap ports"},
+			{"bus.applyPreset", "Apply bus preset"},
 			{"track.add", "Add track"},
 			{"track.set", "Change track"},
 			{"track.move", "Move track"},
@@ -1649,23 +1995,6 @@ namespace gnubase::engine
 				else
 					context.emit(kind + (previous ? ".changed" : ".added"), {{key, toJson(*current)}});
 			}
-		}
-
-		void announceBusses(const std::vector<Bus>& previous, const std::vector<Bus>& current, CommandContext& context)
-		{
-			const auto find = [](const std::vector<Bus>& busses, ObjectId id)
-			{ return std::find_if(busses.begin(), busses.end(), [id](const Bus& bus) { return bus.id == id; }); };
-			for (const Bus& bus : current)
-			{
-				const auto match = find(previous, bus.id);
-				if (match == previous.end())
-					context.emit("bus.added", {{"bus", toJson(bus)}});
-				else if (!(*match == bus))
-					context.emit("bus.changed", {{"bus", toJson(bus)}});
-			}
-			for (const Bus& bus : previous)
-				if (find(current, bus.id) == current.end())
-					context.emit("bus.removed", {{"bus", bus.id}});
 		}
 
 		// Called after the change was applied to project in the given direction.
@@ -2007,12 +2336,16 @@ namespace gnubase::engine
 			});
 		addControl(engine,
 			{"project.new", 1,
-				"Replaces the project with an empty one that has a stereo input and output bus, and clears the undo "
-				"history.",
+				"Replaces the project with an empty one that has a stereo input and output bus, or the busses of the "
+				"user's bus presets named Default (see bus.savePreset), and clears the undo history.",
 				objectSchema({}), noResult, false},
 			[this](CommandContext& context)
 			{
-				m_project = newProject();
+				Project project = newProject();
+				for (const BusDirection direction : {BusDirection::Input, BusDirection::Output})
+					if (const Json presets = userPresets(direction, context); presets.contains("Default"))
+						applyPreset(project, direction, presets.at("Default"));
+				m_project = std::move(project);
 				m_file.clear();
 				m_history.clear();
 				context.emit("project.reset");
@@ -2033,24 +2366,115 @@ namespace gnubase::engine
 				noResult, false},
 			setProject);
 
+		const Json directions = enumSchema({"input", "output"});
+		const Json portNames = arraySchema(stringSchema);
+		const Json presetName =
+			objectSchema({{"direction", directions}, {"name", stringSchema}}, {"direction", "name"});
 		add(engine,
 			{"bus.add", 1,
 				"Adds an input or output bus. format is its speaker arrangement (default stereo): mono, stereo, or a "
 				"surround format with a fixed speaker order, e.g. 5.1 as L R C LFE Ls Rs. channels (1 to 8) picks "
-				"mono, stereo, LRC, quadro, 5.0, 5.1, 7.0 or 7.1 instead.",
-				objectSchema({{"direction", enumSchema({"input", "output"})}, {"name", stringSchema},
-								 {"format", formats}, {"channels", integerSchema}},
-					{"direction", "name"}),
+				"mono, stereo, LRC, quadro, 5.0, 5.1, 7.0 or 7.1 instead. Without a name it is named after its format "
+				"and direction, e.g. \"Stereo In 2\". ports: the device port of each channel by name (see "
+				"audio.ports), an empty name for none; without ports the bus takes consecutive device ports in bus "
+				"order. A port can serve several busses. The first output bus becomes the main mix. A child bus "
+				"routes to some channels of its parent, a top-level bus of the same direction with more channels "
+				"(direction may be left out): parentChannels are the parent's channel indices, one per channel of the "
+				"child, by default the speakers both formats have; it uses its parent's ports.",
+				objectSchema({{"direction", directions}, {"name", stringSchema}, {"format", formats},
+					{"channels", integerSchema}, {"ports", portNames}, {"parent", idSchema},
+					{"parentChannels", arraySchema(integerSchema)}}),
 				resultSchema({"bus"}), false},
 			addBus);
 		add(engine,
-			{"bus.set", 1, "Renames a bus.", objectSchema({{"bus", idSchema}, {"name", stringSchema}}, {"bus"}),
+			{"bus.set", 1,
+				"Renames a bus, changes its ports (as in bus.add; [] for consecutive ports in bus order) or makes it "
+				"the main mix (mainMix: true), the output bus new channels are routed to and that is monitored.",
+				objectSchema(
+					{{"bus", idSchema}, {"name", stringSchema}, {"ports", portNames}, {"mainMix", booleanSchema}},
+					{"bus"}),
 				resultSchema({"bus"}), false},
 			setBus);
 		add(engine,
-			{"bus.remove", 1, "Removes a bus; channels connected to it are disconnected.",
+			{"bus.remove", 1,
+				"Removes a bus and its child busses; channels connected to them are disconnected. Removing the main "
+				"mix "
+				"makes the next output bus the main mix.",
 				objectSchema({{"bus", idSchema}}, {"bus"}), noResult, false},
 			removeBus);
+		add(engine,
+			{"bus.rename", 1,
+				"Renames several busses with an incrementing number or letter: name ends in a number (\"Out 1\", "
+				"\"Out 01\") or in a space and a capital letter (\"Bus A\", up to Z). The first bus given gets the "
+				"name "
+				"as given, the others follow in bus order from there, continuing from the top.",
+				objectSchema({{"busses", arraySchema(idSchema)}, {"name", stringSchema}}, {"busses", "name"}),
+				{{"type", "object"}, {"properties", {{"busses", {{"type", "array"}}}}}, {"required", {"busses"}}},
+				false},
+			renameBusses);
+		add(engine,
+			{"bus.remapPorts", 1,
+				"Re-routes ports, e.g. missing ones (see audio.ports) after opening a project made on other hardware: "
+				"ports maps port names to the names that replace them in every bus of the direction. Returns the "
+				"busses that changed.",
+				objectSchema({{"direction", directions},
+								 {"ports", {{"type", "object"}, {"additionalProperties", stringSchema}}}},
+					{"direction", "ports"}),
+				{{"type", "object"}, {"properties", {{"busses", {{"type", "array"}}}}}, {"required", {"busses"}}},
+				false},
+			remapPorts);
+		add(engine,
+			{"bus.presets", 1,
+				"The bus presets of a direction: standard ones with one bus of a common format, hardware ones made "
+				"from the audio device's ports (all mono, or stereo pairs), and the user's own (bus.savePreset), "
+				"which hide others of their name. Each has a name, a kind and its busses: name, format, ports and "
+				"children (name, format, parentChannels).",
+				objectSchema({{"direction", directions}}, {"direction"}),
+				{{"type", "object"}, {"properties", {{"presets", {{"type", "array"}}}}}, {"required", {"presets"}}},
+				true},
+			[](Project&, CommandContext& context)
+			{ return Json{{"presets", busPresets(busDirection(context.parameters().at("direction")), context)}}; });
+		add(engine,
+			{"bus.applyPreset", 1,
+				"Replaces the project's busses of a direction with a preset's (see bus.presets). Channels that used "
+				"the old busses move to the new bus at the same place, or to none (inputs) or the main mix "
+				"(outputs). Returns the new busses.",
+				presetName,
+				{{"type", "object"}, {"properties", {{"busses", {{"type", "array"}}}}}, {"required", {"busses"}}},
+				false},
+			applyBusPreset);
+		addControl(engine,
+			{"bus.savePreset", 1,
+				"Saves the project's busses of a direction as a user preset, for every project (the user setting "
+				"audio.busPresets), replacing one of the same name. A preset named Default is applied to new projects.",
+				presetName, noResult, false},
+			[this](CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				const auto name = parameters.at("name").get<std::string>();
+				require(!name.empty(), "name must not be empty");
+				const BusDirection direction = busDirection(parameters.at("direction"));
+				Json presets = context.call("settings.get", {{"key", "audio.busPresets"}}).at("value");
+				Json mine = userPresets(direction, context);
+				mine[name] = presetBusses(m_project, direction);
+				presets[directionKey(direction)] = std::move(mine);
+				context.call("settings.set", {{"key", "audio.busPresets"}, {"value", std::move(presets)}});
+				return Json::object();
+			});
+		addControl(engine,
+			{"bus.removePreset", 1, "Removes one of the user's own bus presets.", presetName, noResult, false},
+			[](CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				const auto name = parameters.at("name").get<std::string>();
+				const BusDirection direction = busDirection(parameters.at("direction"));
+				Json presets = context.call("settings.get", {{"key", "audio.busPresets"}}).at("value");
+				Json mine = userPresets(direction, context);
+				require(mine.erase(name) == 1, "no user bus preset " + name + "; only the user's own presets go");
+				presets[directionKey(direction)] = std::move(mine);
+				context.call("settings.set", {{"key", "audio.busPresets"}, {"value", std::move(presets)}});
+				return Json::object();
+			});
 
 		add(engine,
 			{"track.add", 1,
