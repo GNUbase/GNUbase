@@ -40,6 +40,7 @@ add_executable(gnubase-tests
 	history_tests.cpp
 	ipc_process_tests.cpp
 	ipc_tests.cpp
+	keycommands_tests.cpp
 	latency_tests.cpp
 	log_tests.cpp
 	marker_tests.cpp
