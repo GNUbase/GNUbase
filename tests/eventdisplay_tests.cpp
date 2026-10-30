@@ -36,11 +36,6 @@ namespace
 {
 	constexpr int64_t g_quarter = time::g_ticksPerQuarter;
 
-	ui::Target at(const char* selector)
-	{
-		return {selector, 0, std::nullopt};
-	}
-
 	ui::Target point(double x, double y)
 	{
 		return {"", 0, ui::Point{static_cast<int>(x), static_cast<int>(y)}};
