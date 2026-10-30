@@ -41,7 +41,9 @@ namespace gnubase::audio
 		{
 			std::string name; // node.name: what device ids use
 			std::string description;
-			bool audio = false; // media.class Audio/...: a sink, source or duplex device, not a stream
+			// By media class: Audio/Sink..., Audio/Source... or Audio/Duplex, not a stream or filter.
+			bool sink = false;
+			bool source = false;
 		};
 
 		struct Port
@@ -185,13 +187,6 @@ namespace gnubase::audio
 			pw_core* core() const { return m_core; }
 			pw_thread_loop* loop() const { return m_loop; }
 
-			for (pw_proxy* metadata : {m_defaults, m_settings})
-				if (metadata != nullptr)
-					pw_proxy_destroy(metadata);
-			if (m_registry != nullptr)
-				pw_proxy_destroy(reinterpret_cast<pw_proxy*>(m_registry));
-			if (m_core != nullptr)
-				pw_core_disconnect(m_core);
 			// Waits for the daemon to handle everything sent so far. Throws if it reports an error meanwhile.
 			void sync()
 			{
@@ -215,21 +210,24 @@ namespace gnubase::audio
 
 			const std::map<uint32_t, Node>& nodes() const { return m_nodes; }
 
-			// The node of this name that is an audio device, or 0.
-			uint32_t find(const std::string& name) const
+			// The sink (or source) of this name, or 0.
+			uint32_t find(const std::string& name, bool sink) const
 			{
 				for (const auto& [id, node] : m_nodes)
-					if (node.audio && node.name == name)
+					if ((sink ? node.sink : node.source) && node.name == name)
 						return id;
 				return 0;
 			}
 
-			// A node's playback (input) or capture (output) ports in their order, without monitor ports.
+			// A node's playback (input) or capture (output) ports in their order. A sink's monitor ports are no capture
+			// ports, but a virtual source's capture ports are monitor ports.
 			std::vector<std::pair<uint32_t, Port>> ports(uint32_t node, bool output) const
 			{
 				std::vector<std::pair<uint32_t, Port>> result;
+				const auto found = m_nodes.find(node);
+				const bool source = found != m_nodes.end() && found->second.source;
 				for (const auto& [id, port] : m_ports)
-					if (port.node == node && port.output == output && !port.monitor)
+					if (port.node == node && port.output == output && (!port.monitor || source))
 						result.emplace_back(id, port);
 				std::sort(result.begin(), result.end(),
 					[](const auto& a, const auto& b) { return a.second.index < b.second.index; });
@@ -332,7 +330,10 @@ namespace gnubase::audio
 					node.description = property(props, PW_KEY_NODE_DESCRIPTION);
 					if (node.description.empty())
 						node.description = node.name;
-					node.audio = property(props, PW_KEY_MEDIA_CLASS).rfind("Audio/", 0) == 0;
+					const std::string mediaClass = property(props, PW_KEY_MEDIA_CLASS);
+					const bool duplex = mediaClass == "Audio/Duplex";
+					node.sink = duplex || mediaClass.rfind("Audio/Sink", 0) == 0;
+					node.source = duplex || mediaClass.rfind("Audio/Source", 0) == 0;
 					self.m_nodes[id] = std::move(node);
 				}
 				else if (std::strcmp(type, PW_TYPE_INTERFACE_Port) == 0)
@@ -352,9 +353,11 @@ namespace gnubase::audio
 				else if (std::strcmp(type, PW_TYPE_INTERFACE_Metadata) == 0)
 				{
 					const std::string name = property(props, PW_KEY_METADATA_NAME);
-					pw_proxy** proxy = name == "default" ? &self.m_defaults
-						: name == "settings"             ? &self.m_settings
-														 : nullptr;
+					pw_proxy** proxy = nullptr;
+					if (name == "default")
+						proxy = &self.m_defaults;
+					else if (name == "settings")
+						proxy = &self.m_settings;
 					if (proxy == nullptr || *proxy != nullptr)
 						return;
 					*proxy = static_cast<pw_proxy*>(
@@ -506,18 +509,18 @@ namespace gnubase::audio
 			Endpoints endpoints;
 			endpoints.id = "default";
 			endpoints.name = "Default output and input";
-			endpoints.sink = connection.find(connection.defaultSink());
+			endpoints.sink = connection.find(connection.defaultSink(), true);
 			if (endpoints.sink == 0 || connection.ports(endpoints.sink, false).empty())
 			{
 				endpoints.sink = 0;
 				for (const auto& [id, node] : connection.nodes())
-					if (node.audio && !connection.ports(id, false).empty())
+					if (node.sink && !connection.ports(id, false).empty())
 					{
 						endpoints.sink = id;
 						break;
 					}
 			}
-			endpoints.source = connection.find(connection.defaultSource());
+			endpoints.source = connection.find(connection.defaultSource(), false);
 			if (endpoints.source != 0 && connection.ports(endpoints.source, true).empty())
 				endpoints.source = 0;
 			return endpoints;
@@ -577,6 +580,13 @@ namespace gnubase::audio
 				m_format.inputChannels = static_cast<int>(capture.size());
 				m_info.outputs = channels(playback);
 				m_info.inputs = channels(capture);
+				const size_t block = m_format.blockSize;
+				m_silence.resize(block);
+				m_scratch.resize(block * static_cast<size_t>(m_format.outputChannels));
+				m_inputs.resize(static_cast<size_t>(m_format.inputChannels));
+				m_outputs.resize(static_cast<size_t>(m_format.outputChannels));
+				m_inputBuffers.resize(m_inputs.size());
+				m_outputBuffers.resize(m_outputs.size());
 
 				createFilter();
 				try
@@ -590,14 +600,6 @@ namespace gnubase::audio
 				}
 				m_connection.watch(
 					{endpoints.sink, endpoints.source}, m_info.id == "default", [this] { requestReset(); });
-
-				const size_t block = m_format.blockSize;
-				m_silence.resize(block);
-				m_scratch.resize(block * static_cast<size_t>(m_format.outputChannels));
-				m_inputs.resize(static_cast<size_t>(m_format.inputChannels));
-				m_outputs.resize(static_cast<size_t>(m_format.outputChannels));
-				m_inputBuffers.resize(m_inputs.size());
-				m_outputBuffers.resize(m_outputs.size());
 			}
 
 			~PipeWireDevice() override
@@ -684,11 +686,10 @@ namespace gnubase::audio
 						pw_properties_set(portProps, PW_KEY_AUDIO_CHANNEL, channel.c_str());
 						pw_properties_set(portProps, PW_KEY_PORT_NAME,
 							((direction == PW_DIRECTION_INPUT ? "input_" : "output_") + channel).c_str());
-						void* port = pw_filter_add_port(
-							m_filter, direction, PW_FILTER_PORT_FLAG_MAP_BUFFERS, 0, portProps, nullptr, 0);
-						if (port == nullptr)
+						ports.push_back(pw_filter_add_port(
+							m_filter, direction, PW_FILTER_PORT_FLAG_MAP_BUFFERS, 0, portProps, nullptr, 0));
+						if (ports.back() == nullptr)
 							throw DeviceError("PipeWire: cannot add a port");
-						ports.push_back(port);
 					}
 					return ports;
 				};
@@ -696,9 +697,12 @@ namespace gnubase::audio
 				{
 					m_inputPorts = addPorts(PW_DIRECTION_INPUT, m_info.inputs);
 					m_outputPorts = addPorts(PW_DIRECTION_OUTPUT, m_info.outputs);
-					if (pw_filter_connect(m_filter,
-							static_cast<pw_filter_flags>(PW_FILTER_FLAG_RT_PROCESS | PW_FILTER_FLAG_INACTIVE), nullptr,
-							0) < 0)
+					// pw_filter_flags are bit flags, which the enum doesn't list combined.
+					// NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange)
+					const auto flags =
+						static_cast<pw_filter_flags>(PW_FILTER_FLAG_RT_PROCESS | PW_FILTER_FLAG_INACTIVE);
+					// NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
+					if (pw_filter_connect(m_filter, flags, nullptr, 0) < 0)
 						throw DeviceError("PipeWire: cannot connect the filter node");
 					m_connection.waitFor([this] { return pw_filter_get_node_id(m_filter) != SPA_ID_INVALID; });
 					m_connection.sync(); // so that the registry has the node's ports
@@ -777,7 +781,9 @@ namespace gnubase::audio
 				const bool rate = static_cast<double>(position->clock.rate.denom) == m_format.sampleRate &&
 					position->clock.rate.num == 1;
 				if (callback != nullptr && rate)
+				{
 					run(*callback, frames);
+				}
 				else if (callback != nullptr && !m_rateWarned.exchange(true))
 				{
 					const rt::ScopedRealtimeContext realtime;
@@ -900,9 +906,9 @@ namespace gnubase::audio
 				std::vector<uint32_t> sources;
 				for (const auto& [id, node] : connection.nodes())
 				{
-					if (node.audio && !connection.ports(id, false).empty())
+					if (node.sink && !connection.ports(id, false).empty())
 						sinks.push_back(id);
-					if (node.audio && !connection.ports(id, true).empty())
+					if (node.source && !connection.ports(id, true).empty())
 						sources.push_back(id);
 				}
 				std::vector<DeviceInfo> devices;
@@ -939,9 +945,9 @@ namespace gnubase::audio
 				{
 					const size_t bar = config.device.find('|');
 					endpoints.id = config.device;
-					endpoints.sink = connection->find(config.device.substr(0, bar));
+					endpoints.sink = connection->find(config.device.substr(0, bar), true);
 					if (bar != std::string::npos)
-						endpoints.source = connection->find(config.device.substr(bar + 1));
+						endpoints.source = connection->find(config.device.substr(bar + 1), false);
 					if (endpoints.sink == 0 || connection->ports(endpoints.sink, false).empty() ||
 						(bar != std::string::npos &&
 							(endpoints.source == 0 || connection->ports(endpoints.source, true).empty())))
