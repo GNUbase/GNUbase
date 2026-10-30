@@ -6,7 +6,9 @@
 #include "elements.h"
 #include "testutils/goldenimage.h"
 #include "testutils/testutils.h"
+#include "ui/fonts.h"
 #include "ui/gpurenderer.h"
+#include "ui/pseudolocale.h"
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
@@ -70,6 +72,12 @@ namespace
 
 	// SDL's video, the GPU renderer, RmlUi and the shell, made and destroyed in the app's order. Skips the test if
 	// this machine has no SDL_GPU device.
+	// GNUbase's bundled fonts (ui/fonts.h); RmlUi must be initialised.
+	void loadFonts()
+	{
+		ui::Fonts(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "fonts").load();
+	}
+
 	struct Gpu
 	{
 		Gpu()
@@ -259,8 +267,7 @@ TEST_CASE("windows draw their RmlUi documents through SDL_GPU at their dp ratio"
 TEST_CASE("a sample document looks the same on every platform", "[ui]")
 {
 	Gpu gpu;
-	for (const char* face : {"LatoLatin-Regular.ttf", "LatoLatin-Bold.ttf"})
-		REQUIRE(ui::RmlUi::loadFont(std::filesystem::path(GNUBASE_TEST_FONTS_DIR) / face));
+	loadFonts();
 	const ui::Window& window = gpu.open("sample.rml", 640, 480);
 	INFO("SDL_GPU " << gpu.renderer->driver() << " with " << gpu.renderer->msaaSamples() << "x MSAA on SDL's "
 					<< ui::SdlWindowSystem::driver() << " video driver");
@@ -272,6 +279,27 @@ TEST_CASE("a sample document looks the same on every platform", "[ui]")
 		const std::string name = "sample-" + std::to_string(ratio) + "x";
 		const ui::Image image = crop(gpu.screenshot(window, name), 0, 0, 320 * ratio, 240 * ratio);
 		// GPUs may round a few edge pixels differently: one in 500 may differ by more than 8 of 255.
+		const test::ImageDiff diff = test::compareWithGolden("ui/" + name, image, {8, image.pixels.size() / 4 / 500});
+		INFO(diff.report);
+		CHECK(diff.equal);
+	}
+}
+
+TEST_CASE("GNUbase's fonts look the same on every platform", "[ui]")
+{
+	Gpu gpu;
+	loadFonts();
+	const ui::Window& window = gpu.open("fonts.rml", 720, 500);
+	Rml::Element* pseudo = window.context().GetDocument(0)->GetElementById("pseudo");
+	REQUIRE(pseudo != nullptr);
+	pseudo->SetInnerRML(ui::pseudoLocalize("Open Project… Save As…"));
+	const float monitorScale = window.dpRatio() / gpu.shell->uiScale();
+	for (const int ratio : {1, 2})
+	{
+		// FreeType renders the glyphs at each dp ratio's pixel size, built from the same sources everywhere.
+		gpu.shell->setUiScale(static_cast<float>(ratio) / monitorScale);
+		const std::string name = "fonts-" + std::to_string(ratio) + "x";
+		const ui::Image image = crop(gpu.screenshot(window, name), 0, 0, 360 * ratio, 250 * ratio);
 		const test::ImageDiff diff = test::compareWithGolden("ui/" + name, image, {8, image.pixels.size() / 4 / 500});
 		INFO(diff.report);
 		CHECK(diff.equal);
