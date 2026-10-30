@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The project window: for now the event display (#84) alone, filling the main window, until the docking system
-     (#56) and the track list (#81) give it zones, a toolbar and track controls. ui::EventDisplay fills the element. -->
+     (#56) and the track list (#81) give it zones, a toolbar and track controls. ui::EventDisplay fills the element.
+     The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
 <head>
 	<title>Project</title>
@@ -24,7 +25,7 @@
 		}
 	</style>
 </head>
-<body>
+<body focuszone="project">
 	<div id="event-display" class="event-display"/>
 </body>
 </rml>

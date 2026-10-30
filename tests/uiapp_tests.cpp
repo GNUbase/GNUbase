@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 using namespace gnubase;
 using engine::Json;
@@ -153,4 +154,35 @@ TEST_CASE("a UI test written in Lua passes", "[.][ui][lua-ui]")
 	INFO(error.value_or(""));
 	// Not CHECK_FALSE: Catch2's ContinueOnFailure | FalseTest trips clang-analyzer's EnumCastOutOfRange check
 	CHECK(!error.has_value());
+}
+
+TEST_CASE("keys zoom the project window", "[ui]")
+{
+	test::UiApp app({800, 300});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const double scale = display.view().scale;
+
+	// The reference's keys in the project zone, which the project window has when it opens.
+	app.ui().key(std::nullopt, "H");
+	CHECK(display.view().scale == scale / 2);
+	app.ui().key(std::nullopt, "Shift+H");
+	CHECK(display.view().trackZoom > 1.0);
+	app.ui().key(std::nullopt, "Shift+G");
+	CHECK(display.view().trackZoom == 1.0);
+
+	// And after a click into the event display.
+	app.ui().click(std::nullopt, {".event-area", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	app.ui().key(std::nullopt, "G");
+	CHECK(display.view().scale == scale);
+
+	// Zoom undo through its command, as a menu item runs it.
+	app.keys().run("zoom.undo", Json::object(), app.main(), nullptr);
+	CHECK(display.view().scale == scale / 2);
+	CHECK(app.keys().keysFor("zoom.in") == std::vector<std::string>{"H"});
+
+	app.ui().key(std::nullopt, "Shift+F");
+	CHECK(display.view().start == 0.0);
+	CHECK(std::abs(display.visibleLength() - display.projectLength()) < 1e-9);
+	app.ui().key(std::nullopt, "F");
+	CHECK(display.autoScroll());
 }
