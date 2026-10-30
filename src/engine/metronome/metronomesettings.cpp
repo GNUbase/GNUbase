@@ -49,7 +49,7 @@ namespace gnubase::engine::metronome
 			explicit Reader(bool strict) : m_strict(strict) {}
 
 			// The property if the object has it, or nullptr.
-			const Json* find(const Json& object, const char* name) const
+			static const Json* find(const Json& object, const char* name)
 			{
 				if (!object.is_object())
 					return nullptr;
@@ -274,10 +274,10 @@ namespace gnubase::engine::metronome
 		read.boolean(json, "whilePlaying", result.whilePlaying);
 		read.boolean(json, "whileRecording", result.whileRecording);
 
-		if (const Json* audio = read.find(json, "audio"); audio != nullptr)
+		if (const Json* audio = Reader::find(json, "audio"); audio != nullptr)
 		{
 			read.boolean(*audio, "enabled", result.audio);
-			if (const Json* outputs = read.find(*audio, "outputs"); outputs != nullptr)
+			if (const Json* outputs = Reader::find(*audio, "outputs"); outputs != nullptr)
 			{
 				const bool valid = outputs->is_array() &&
 					std::all_of(outputs->begin(), outputs->end(),
@@ -288,7 +288,7 @@ namespace gnubase::engine::metronome
 					read.fail("outputs must be an array of output bus ids");
 			}
 			read.number(*audio, "level", result.level, g_minLevel, g_maxLevel);
-			if (const Json* sounds = read.find(*audio, "sounds"); sounds != nullptr)
+			if (const Json* sounds = Reader::find(*audio, "sounds"); sounds != nullptr)
 			{
 				if (*sounds == "beeps" || *sounds == "samples")
 					result.sounds = *sounds == "samples" ? Sounds::Samples : Sounds::Beeps;
@@ -304,7 +304,7 @@ namespace gnubase::engine::metronome
 			read.accents(*audio, "samples", result.samples,
 				[&read](const Json& item, Sample& sample)
 				{
-					if (const Json* path = read.find(item, "path"); path != nullptr)
+					if (const Json* path = Reader::find(item, "path"); path != nullptr)
 					{
 						if (path->is_null() || path->is_string())
 							sample.path = path->is_null() ? std::string() : path->get<std::string>();
@@ -315,10 +315,10 @@ namespace gnubase::engine::metronome
 				});
 		}
 
-		if (const Json* midi = read.find(json, "midi"); midi != nullptr)
+		if (const Json* midi = Reader::find(json, "midi"); midi != nullptr)
 		{
 			read.boolean(*midi, "enabled", result.midi);
-			if (const Json* destination = read.find(*midi, "destination"); destination != nullptr)
+			if (const Json* destination = Reader::find(*midi, "destination"); destination != nullptr)
 			{
 				if (destination->is_null())
 					result.destination = 0;
@@ -336,11 +336,11 @@ namespace gnubase::engine::metronome
 				});
 		}
 
-		if (const Json* countIn = read.find(json, "countIn"); countIn != nullptr)
+		if (const Json* countIn = Reader::find(json, "countIn"); countIn != nullptr)
 		{
 			read.boolean(*countIn, "enabled", result.countIn);
 			read.integer(*countIn, "bars", result.countInBars, 1, g_maxCountInBars);
-			if (const Json* signature = read.find(*countIn, "signature"); signature != nullptr)
+			if (const Json* signature = Reader::find(*countIn, "signature"); signature != nullptr)
 			{
 				if (*signature == "start")
 					result.countInSignature = CountInSignature::Start;
@@ -351,11 +351,11 @@ namespace gnubase::engine::metronome
 				else
 					read.fail("the count-in's signature must be start, project or custom");
 			}
-			if (const Json* custom = read.find(*countIn, "customSignature"); custom != nullptr)
+			if (const Json* custom = Reader::find(*countIn, "customSignature"); custom != nullptr)
 				read.signature(*custom, "customSignature", result.customSignature);
 		}
 
-		if (const Json* patterns = read.find(json, "patterns"); patterns != nullptr)
+		if (const Json* patterns = Reader::find(json, "patterns"); patterns != nullptr)
 		{
 			if (patterns->is_array())
 			{

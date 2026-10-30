@@ -4,6 +4,7 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
 #include "engine/dsp/dsp.h"
+#include "platform/log.h"
 
 #include <algorithm>
 #include <cmath>
@@ -139,9 +140,10 @@ namespace gnubase::engine::metronome
 				{
 					sound = sounds.sample(sample.path, dsp::dbToGain(settings.level + sample.level), deviceRate);
 				}
-				catch (const std::exception&)
+				catch (const std::exception& error)
 				{
 					// A file that is gone or broken plays the beep.
+					logging::warning("The metronome plays a beep for accent {}: {}", accent + 1, error.what());
 				}
 			}
 			if (!sound)

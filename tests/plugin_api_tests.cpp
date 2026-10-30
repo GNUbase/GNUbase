@@ -269,7 +269,7 @@ TEST_CASE("a built-in plugin plays from where a block's stopped segment ends, as
 	std::vector<float*> outPointers{out.data(), out.data() + g_frames};
 	const AudioBuffer input{inPointers.data(), 2, 0};
 	AudioBuffer output{outPointers.data(), 2, 0};
-	EventList eventsIn{4};
+	const EventList eventsIn{4};
 	EventList eventsOut{4};
 	std::vector<TransportSegment> transport(2);
 	transport[0].transport.position = 5000; // stopped until frame 20
