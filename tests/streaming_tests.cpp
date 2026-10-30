@@ -91,10 +91,13 @@ namespace
 	}
 
 	// Reads the whole stream the way an audio thread does: blockFrames at a time, at the pace of real time if
-	// realTime is set. Like a device after an overrun, it doesn't catch up when it was held up: reading the late
-	// blocks all at once would empty the buffer faster than real time, which no device does.
+	// realTime is set. It catches up on the scheduler's lateness (a sleep can overshoot by a 15.6 ms tick on
+	// Windows, far more than a block), so it keeps real time on average. Like a device after an overrun, it doesn't
+	// catch up after a stall: reading the late blocks all at once would empty the buffer faster than real time,
+	// which no device does.
 	std::vector<float> play(DiskStream& stream, gnubase::time::Samples frames, size_t blockFrames, bool realTime)
 	{
+		constexpr auto stall = std::chrono::milliseconds(50);
 		using Clock = std::chrono::steady_clock;
 		const auto channels = static_cast<size_t>(stream.channels());
 		std::vector<float> output(static_cast<size_t>(frames) * channels);
@@ -108,7 +111,7 @@ namespace
 			{
 				const auto due = start + std::chrono::duration_cast<Clock::duration>(period * (block - first));
 				const auto now = Clock::now();
-				if (now - due > period)
+				if (now - due > stall)
 				{
 					start = now;
 					first = block;
