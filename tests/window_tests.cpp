@@ -547,9 +547,9 @@ TEST_CASE("canvas elements draw their data where the view puts it, clipped to th
 		CHECK(near(at(image, r, 45.0F, 18.0F), g_black));
 		CHECK(near(at(image, r, 40.0F, 5.0F), g_black));
 		bool label = false;
-		for (float x = 51.0F; x < 75.0F; x += 0.5F)
-			for (float y = 0.0F; y < 15.0F; y += 0.5F)
-				label = label || lit(at(image, r, x, y));
+		for (int x = 51 * ratio; x < 75 * ratio; ++x) // pixels
+			for (int y = 0; y < 15 * ratio; ++y)
+				label = label || lit(image.pixel(x, y));
 		CHECK(label);
 
 		// Event lanes: fills inside 2 dp outlines, but no outline where the box cuts an event off.
