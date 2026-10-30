@@ -5,6 +5,9 @@
 #ifdef _WIN32
 #include "platform/audio/wasapi.h"
 #endif
+#ifdef __linux__
+#include "platform/audio/pipewire.h"
+#endif
 #include "devicecontract.h"
 #include "platform/hosttime.h"
 #include "platform/rt/realtime.h"
@@ -16,6 +19,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <set>
@@ -241,11 +245,72 @@ TEST_CASE("the WASAPI backends list their devices and refuse unknown ones", "[un
 }
 #endif
 
+#ifdef __linux__
+namespace
+{
+	// The PipeWire backend, or nothing if no PipeWire daemon runs here. GNUBASE_REQUIRE_PIPEWIRE=1 says one must, with
+	// a sink: CI starts one with a null sink and a null source (tools/start-pipewire.sh).
+	std::unique_ptr<Backend> pipeWireOrSkip()
+	{
+		std::unique_ptr<Backend> backend = makePipeWireBackend();
+		const char* require = std::getenv("GNUBASE_REQUIRE_PIPEWIRE");
+		const bool required = require != nullptr && std::string(require) == "1";
+		try
+		{
+			if (backend->devices().empty() && required)
+				FAIL("the PipeWire daemon has no sink");
+		}
+		catch (const DeviceError& error)
+		{
+			if (required)
+				FAIL(error.what());
+			return nullptr;
+		}
+		return backend;
+	}
+}
+
+TEST_CASE("the PipeWire backend keeps the device contract", "[integration]")
+{
+	const std::unique_ptr<Backend> backend = pipeWireOrSkip();
+	if (!backend)
+		SKIP("no PipeWire daemon runs here");
+	checkDeviceContract(*backend);
+}
+
+TEST_CASE("the PipeWire backend lists sinks with sources and names their channels", "[integration]")
+{
+	const std::unique_ptr<Backend> backend = pipeWireOrSkip();
+	if (!backend)
+		SKIP("no PipeWire daemon runs here");
+	const std::vector<DeviceInfo> devices = backend->devices();
+	for (const DeviceInfo& device : devices)
+	{
+		INFO("device " << device.id);
+		CHECK(!device.outputs.empty());
+		CHECK(std::none_of(
+			device.outputs.begin(), device.outputs.end(), [](const std::string& name) { return name.empty(); }));
+		CHECK(!device.sampleRates.empty());
+		CHECK(device.clockSources.empty());
+		if (device.id.find('|') != std::string::npos)
+			CHECK(!device.inputs.empty()); // the source's capture channels
+		else if (device.id != "default")
+			CHECK(device.inputs.empty()); // a sink alone
+	}
+	CHECK(std::any_of(devices.begin(), devices.end(), [](const DeviceInfo& device) { return device.id == "default"; }));
+	CHECK_THROWS_AS(backend->open(config("no such sink|no such source")), DeviceError);
+	CHECK_THROWS_AS(backend->open(config("", 0.0, 0, "no such clock")), DeviceError);
+}
+#endif
+
 TEST_CASE("the backends of this build come with the dummy backend last", "[unit]")
 {
 	const std::vector<std::unique_ptr<Backend>> backends = makeBackends();
 	REQUIRE(!backends.empty());
 	CHECK(backends.back()->name() == "dummy");
+#ifdef __linux__
+	CHECK(backends.front()->name() == "pipewire");
+#endif
 	std::set<std::string> names;
 	for (const std::unique_ptr<Backend>& backend : backends)
 		CHECK(names.insert(backend->name()).second);
