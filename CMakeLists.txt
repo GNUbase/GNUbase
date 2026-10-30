@@ -17,6 +17,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 option(GNUBASE_WARNINGS_AS_ERRORS "Treat compiler warnings in GNUbase code as errors" ON)
 set(GNUBASE_SANITIZERS "" CACHE STRING "Sanitizers for GNUbase code (GCC/Clang), e.g. address,undefined or thread")
 option(GNUBASE_CLANG_TIDY "Run clang-tidy on GNUbase code while compiling" OFF)
+# Release builds are optimized across files, as they ship. tools/ci-local.sh turns it off: it makes every link of the
+# tests take minutes.
+option(GNUBASE_LTO "Link-time optimization in Release builds, where the compiler supports it" ON)
 option(GNUBASE_TEST_PLUGINS "Build the test plugins (tests/plugins) and the tests that load them" ON)
 option(GNUBASE_RENDER_SPIKE "Build the render backend spike (spikes/render-backend, #47)" OFF)
 
@@ -27,10 +30,12 @@ if(GNUBASE_CLANG_TIDY)
 	find_program(GNUBASE_CLANG_TIDY_EXE NAMES clang-tidy REQUIRED)
 endif()
 
-include(CheckIPOSupported)
-check_ipo_supported(RESULT GNUBASE_IPO_SUPPORTED)
-if(GNUBASE_IPO_SUPPORTED)
-	set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+if(GNUBASE_LTO)
+	include(CheckIPOSupported)
+	check_ipo_supported(RESULT GNUBASE_IPO_SUPPORTED)
+	if(GNUBASE_IPO_SUPPORTED)
+		set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+	endif()
 endif()
 
 # Third-party code: static libraries, no tests or samples. SYSTEM keeps their warnings out of our builds.

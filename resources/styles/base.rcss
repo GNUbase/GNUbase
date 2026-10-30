@@ -26,6 +26,12 @@ svg.icon
 	height: 16dp;
 }
 
+/* Canvas elements (docs/features/canvas.md): documents give them their size. */
+event-lanes, waveform, curve, ruler
+{
+	display: block;
+}
+
 /* Buttons, also with an icon, and the small toggle buttons of tracks and channels (mute, solo, record, monitor). */
 button
 {
