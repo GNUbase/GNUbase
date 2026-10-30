@@ -527,6 +527,7 @@ namespace gnubase::testplugins
 			// Host: the latency plugin asks for a restart on the audio thread, or on the main thread while a state
 			// loads. It is passed on from the main thread, in setParamNormalized or setState.
 			void requestRestart() override { m_restartPending.store(true); }
+			void requestValuesRescan() override {} // only test:stall asks, which only the test format has
 
 		private:
 			// Main thread: calls restartComponent with these flags, plus kLatencyChanged if a restart is pending.

@@ -177,9 +177,12 @@ namespace gnubase::plugin::remote
 		bool loadIn(Binding& binding, const std::vector<uint8_t>& state, PluginInfo& info, std::string& error);
 		void release(Binding& binding);
 		void publish(Binding* binding);
+		void idle() noexcept;   // [audio] ends a block's use of m_live
+		void awaitIdle() const; // [main] waits until the block under way, if any, has ended
 		void notified(Notification notification, uint32_t detail);
-		void applyInfo(PluginInfo info, bool keepDirtyValues);
+		void applyInfo(PluginInfo info, bool keepValues);
 		void setParams(const PluginInfo& info);
+		void rescanValues(const std::vector<double>& values);
 		void mirror(const Event& event, bool markDirty = false) noexcept;
 		bool has(std::string_view extension) const;
 		bool resync(Binding& binding, const EventList* in, uint32_t& count) noexcept;
@@ -233,6 +236,10 @@ namespace gnubase::plugin::remote
 		std::unique_ptr<std::atomic<double>[]> m_values;
 		std::unique_ptr<std::atomic<bool>[]> m_dirty;
 		std::atomic<bool> m_tracking{false};
+		// While a rescan runs, every parameter that changes is marked, so the values it fetched don't replace newer
+		// ones.
+		std::unique_ptr<std::atomic<bool>[]> m_changed;
+		std::atomic<bool> m_rescanning{false};
 
 		// Notifications that wait for refresh(): a bit per Notification, and the rescans' flags.
 		std::atomic<uint32_t> m_notifications{0};
@@ -240,9 +247,10 @@ namespace gnubase::plugin::remote
 		std::atomic<uint32_t> m_notePortRescan{0};
 
 		// The binding the audio thread uses: m_busy is set while it does, so the main thread knows when an old
-		// binding is free.
+		// binding is free. m_idled counts the blocks that ended, so a wait can't miss the short pause between two.
 		std::atomic<Binding*> m_live{nullptr};
 		std::atomic<bool> m_busy{false};
+		std::atomic<uint64_t> m_idled{0};
 
 		// Audio thread.
 		uint64_t m_sequence = 0;
