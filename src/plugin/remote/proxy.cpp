@@ -234,18 +234,30 @@ namespace gnubase::plugin::remote
 	bool RemotePlugin::setProcessMode(ProcessMode mode)
 	{
 		rt::assertNotRealtime("RemotePlugin::setProcessMode");
-		// A quick query: it doesn't wait longer than its own deadline for a slow call, e.g. a state transfer.
-		const std::unique_lock calls(m_callMutex, m_deadlines.query);
+		// A quick query: it waits for a slow call of this plugin, e.g. a state transfer, only until its own deadline.
+		// Then the instance gets the mode when it activates.
+		const auto deadline = std::chrono::steady_clock::now() + m_deadlines.query;
+		m_wantedMode.store(mode, std::memory_order_relaxed);
+		const std::unique_lock calls(m_callMutex, deadline);
 		if (!calls.owns_lock())
+			return true;
+		const auto left =
+			std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+		return applyMode(*binding(), std::max(left, std::chrono::milliseconds(0)));
+	}
+
+	bool RemotePlugin::applyMode(Binding& binding, std::chrono::milliseconds timeout)
+	{
+		if (binding.active)
 			return false;
-		const std::shared_ptr<Binding> current = binding();
-		if (current->active)
-			return false;
-		if (current->created)
+		const ProcessMode mode = m_wantedMode.load(std::memory_order_relaxed);
+		if (mode == m_mode)
+			return true;
+		if (binding.created)
 		{
 			Writer writer;
 			writer.u8(static_cast<uint8_t>(mode));
-			if (!call(*current, Message::SetProcessMode, writer.data(), m_deadlines.query).ok)
+			if (!call(binding, Message::SetProcessMode, writer.data(), timeout).ok)
 				return false;
 		}
 		m_mode = mode;
@@ -308,6 +320,11 @@ namespace gnubase::plugin::remote
 		const std::shared_ptr<Binding> current = binding();
 		if (!current->created || current->active || failure() != Failure::None)
 			return false;
+		if (!applyMode(*current, m_deadlines.job))
+		{
+			logging::warning("Cannot set the process mode of the plugin {}", m_id);
+			return false;
+		}
 		m_sampleRate = sampleRate;
 		m_minFrames = minFrames;
 		m_maxFrames = maxFrames;
@@ -655,6 +672,8 @@ namespace gnubase::plugin::remote
 			m_busy.store(true);
 			if (Binding* live = m_live.load(); live != nullptr && live->started)
 				exchange(*live, nullptr, Flush, in, &out);
+			else if (live != nullptr)
+				keep(*live, in); // the Start goes with the next block, and so do the changes
 			idle();
 			return;
 		}

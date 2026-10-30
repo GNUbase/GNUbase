@@ -38,6 +38,7 @@ namespace gnubase::plugin::remote
 			throw LaunchError(std::string("Cannot start the plugin host: ") + error.what());
 		}
 		host->m_processId = host->m_process.id();
+		host->m_logFile = options.logFile;
 		host->m_writer = std::make_unique<MessageWriter>(host->m_control);
 
 		// Wait for the host to open the connection, unless it exits first, e.g. because its IPC version differs.
@@ -100,23 +101,30 @@ namespace gnubase::plugin::remote
 			m_listeners.erase(instance);
 	}
 
+	std::chrono::steady_clock::duration HostConnection::silence() const noexcept
+	{
+		const int64_t since = m_silentSince.load(std::memory_order_acquire);
+		if (since == 0)
+			return std::chrono::steady_clock::duration::zero();
+		return std::chrono::steady_clock::now().time_since_epoch() - std::chrono::steady_clock::duration(since);
+	}
+
 	bool HostConnection::send(Message type, uint32_t instance, uint32_t request, const std::vector<uint8_t>& body,
-		std::chrono::milliseconds timeout, std::string& error)
+		std::chrono::steady_clock::time_point deadline, std::string& error)
 	{
 		ControlHeader header;
 		header.request = request;
 		header.instance = instance;
-		// A large message, e.g. a state, may take its whole timeout to go out: a quick request waits for it only as
-		// long as its own timeout allows.
-		const auto start = std::chrono::steady_clock::now();
-		std::unique_lock lock(m_sendMutex, timeout);
+		// A large message, e.g. a state, may take its whole timeout to go out: a quick request waits for it only
+		// until its own deadline.
+		std::unique_lock lock(m_sendMutex, deadline);
 		if (!lock.owns_lock())
 		{
 			error = "the plugin host is still busy receiving another request";
 			return false;
 		}
 		const auto left =
-			std::chrono::duration_cast<std::chrono::milliseconds>(timeout - (std::chrono::steady_clock::now() - start));
+			std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
 		const SendResult result = m_writer->send(type, header, body, std::max(left, std::chrono::milliseconds(0)));
 		lock.unlock();
 		switch (result)
@@ -141,6 +149,9 @@ namespace gnubase::plugin::remote
 		Message type, uint32_t instance, const std::vector<uint8_t>& body, std::chrono::milliseconds timeout)
 	{
 		rt::assertNotRealtime("HostConnection::request");
+		// One deadline for sending the request and for its reply.
+		const auto sentAt = std::chrono::steady_clock::now();
+		const auto deadline = sentAt + timeout;
 		Pending pending;
 		uint32_t id = 0;
 		{
@@ -153,20 +164,21 @@ namespace gnubase::plugin::remote
 			m_pending[id] = &pending;
 		}
 		std::string error;
-		const bool sent = send(type, instance, id, body, timeout, error);
+		const bool sent = send(type, instance, id, body, deadline, error);
 
 		std::unique_lock lock(m_mutex);
 		if (sent)
-			m_replied.wait_for(lock, timeout, [&] { return pending.done; });
+			m_replied.wait_until(lock, deadline, [&] { return pending.done; });
 		m_pending.erase(id);
 		if (pending.done)
 			return std::move(pending.reply);
-		if (sent)
-			m_unresponsive.store(true, std::memory_order_release);
-		// A reply that comes later finds no request and is dropped.
-		if (sent)
-			return {false, "the plugin host did not answer in time", {}, true};
-		return {false, error, {}, false};
+		if (!sent)
+			return {false, error, {}, false};
+		// The host is silent from this request on, unless it was already, until it answers any request. A reply that
+		// comes later finds no request and is dropped.
+		int64_t none = 0;
+		m_silentSince.compare_exchange_strong(none, sentAt.time_since_epoch().count(), std::memory_order_acq_rel);
+		return {false, "the plugin host did not answer in time", {}, true};
 	}
 
 	bool HostConnection::post(
@@ -183,14 +195,13 @@ namespace gnubase::plugin::remote
 				id = m_nextRequest++;
 		}
 		std::string error;
-		return send(type, instance, id, body, timeout, error);
+		return send(type, instance, id, body, std::chrono::steady_clock::now() + timeout, error);
 	}
 
 	void HostConnection::received(const ControlMessage& message)
 	{
 		if (message.type == Message::Reply)
 		{
-			m_unresponsive.store(false, std::memory_order_release); // a late reply too: the main thread is back
 			Reply reply;
 			if (message.tooLarge)
 			{
@@ -207,7 +218,8 @@ namespace gnubase::plugin::remote
 					reply.body.assign(
 						message.body.end() - static_cast<std::ptrdiff_t>(replyReader.remaining()), message.body.end());
 			}
-			const std::scoped_lock lock(m_mutex);
+			const std::scoped_lock lock(m_mutex); // so a request that times out meanwhile doesn't make it silent again
+			m_silentSince.store(0, std::memory_order_release); // a late reply too: the main thread is back
 			if (const auto found = m_pending.find(message.header.request); found != m_pending.end())
 			{
 				found->second->reply = std::move(reply);

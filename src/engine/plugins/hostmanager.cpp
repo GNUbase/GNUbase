@@ -35,6 +35,11 @@ namespace gnubase::engine::plugins
 			return platform::currentExecutablePath().parent_path() / name;
 		}
 
+		std::string logName(int number)
+		{
+			return "gnubase-pluginhost-" + std::to_string(number) + ".log";
+		}
+
 		const char* stateOf(const HostConnection& host)
 		{
 			if (host.exited())
@@ -57,9 +62,9 @@ namespace gnubase::engine::plugins
 			return Json::parse(R"({"type": "object", "required": ["mode", "defaultMode", "overrides", "hosts"],
 				"properties": {"mode": {"type": "string"}, "defaultMode": {"type": "string"},
 					"overrides": {"type": "object"}, "hosts": {"type": "array", "items": {"type": "object",
-						"required": ["process", "group", "state", "instances"], "properties": {
+						"required": ["process", "group", "state", "log", "instances"], "properties": {
 							"process": {"type": "integer"}, "group": {"type": "string"}, "state": {"type": "string"},
-							"instances": {"type": "array"}}}},
+							"log": {"type": "string"}, "instances": {"type": "array"}}}},
 					"errors": {"type": "array", "items": {"type": "string"}}}})");
 		}
 	}
@@ -123,7 +128,7 @@ namespace gnubase::engine::plugins
 
 		// Remote plugins that outlive the manager fail: on Linux their processes ended with the job thread. The rest of
 		// the processes end now, without the lock.
-		std::map<std::string, Host> hosts;
+		decltype(m_shared->hosts) hosts;
 		{
 			const std::scoped_lock lock(m_shared->mutex);
 			m_shared->closed = true;
@@ -211,28 +216,70 @@ namespace gnubase::engine::plugins
 		return "shared";
 	}
 
+	bool HostManager::answers(const HostConnection& host) const
+	{
+		// Silence longer than any job may take is a stuck main thread, not a slow call.
+		return !host.exited() && !host.hung() && host.silence() <= m_options.deadlines.job;
+	}
+
+	bool HostManager::awayFromGroup(const Instance& instance) const
+	{
+		// In a process its group started while the group's own was silent, which answers again.
+		const auto found = m_shared->hosts.find(instance.group);
+		if (found == m_shared->hosts.end())
+			return false;
+		for (const std::shared_ptr<HostConnection>& connection : found->second)
+		{
+			if (connection == instance.host)
+				return false;
+			if (answers(*connection))
+				return true;
+		}
+		return false;
+	}
+
 	std::shared_ptr<HostConnection> HostManager::hostFor(const std::string& group)
 	{
 		// [job thread] Only this thread starts processes, so none of a group starts meanwhile.
 		int log = 1;
 		plugin::remote::LaunchOptions options;
+		std::vector<std::shared_ptr<HostConnection>> replaced; // hung or exited: their failed plugins keep them
 		{
 			const std::scoped_lock lock(m_shared->mutex);
 			options.executable = m_shared->executable.empty() ? defaultExecutable() : m_shared->executable;
-			if (const auto found = m_shared->hosts.find(group); found != m_shared->hosts.end())
+			// The group's first process that answers. A silent one stays in the group, so its plugins go there again
+			// once it answers.
+			std::vector<std::shared_ptr<HostConnection>>& connections = m_shared->hosts[group];
+			for (auto it = connections.begin(); it != connections.end();)
 			{
-				const std::shared_ptr<HostConnection>& connection = found->second.connection;
-				if (connection && !connection->exited() && !connection->hung() && !connection->unresponsive())
-					return connection;
+				if ((*it)->exited() || (*it)->hung())
+				{
+					replaced.push_back(std::move(*it));
+					it = connections.erase(it);
+				}
+				else if (answers(**it))
+				{
+					return *it;
+				}
+				else
+				{
+					++it;
+				}
 			}
-			// A new process, with the lowest log file number no other process of this manager uses.
-			std::set<int> used;
-			for (const auto& [name, other] : m_shared->hosts)
-				used.insert(other.log);
-			while (used.count(log) != 0)
+			// A new process, with the lowest log file number no process of this manager uses, of a group or of a
+			// plugin: a silent, hung or crashed one still runs or has its messages there.
+			std::set<std::string> used;
+			for (const auto& [name, others] : m_shared->hosts)
+			{
+				for (const std::shared_ptr<HostConnection>& other : others)
+					used.insert(other->logFile());
+			}
+			for (const auto& [id, instance] : m_shared->instances)
+				used.insert(instance.host->logFile());
+			while (used.count(logName(log)) != 0)
 				++log;
 		}
-		options.logFile = "gnubase-pluginhost-" + std::to_string(log) + ".log";
+		options.logFile = logName(log);
 		// What a plugin writes to standard error, e.g. a crash message, goes next to the log, from this launch on.
 		std::error_code error;
 		const std::filesystem::path directory = logging::defaultDirectory();
@@ -241,13 +288,9 @@ namespace gnubase::engine::plugins
 		std::ofstream(options.errorOutput, std::ios::trunc).close();
 		options.timeout = m_options.launchTimeout;
 		std::shared_ptr<HostConnection> connection = HostConnection::launch(options);
-		std::shared_ptr<HostConnection> replaced; // a hung or exited one: its failed plugins keep it
 		{
 			const std::scoped_lock lock(m_shared->mutex);
-			Host& host = m_shared->hosts[group];
-			replaced = std::move(host.connection);
-			host.connection = connection;
-			host.log = log;
+			m_shared->hosts[group].push_back(connection);
 		}
 		logging::info("Plugin host {} runs the group {}", connection->processId(), group);
 		return connection;
@@ -256,19 +299,24 @@ namespace gnubase::engine::plugins
 	std::vector<std::shared_ptr<HostConnection>> HostManager::dropUnused(Shared& shared)
 	{
 		std::vector<std::shared_ptr<HostConnection>> dropped;
-		for (auto it = shared.hosts.begin(); it != shared.hosts.end();)
+		for (auto group = shared.hosts.begin(); group != shared.hosts.end();)
 		{
-			const bool used = std::any_of(shared.instances.begin(), shared.instances.end(),
-				[&](const auto& entry) { return entry.second.host == it->second.connection; });
-			if (used)
+			std::vector<std::shared_ptr<HostConnection>>& connections = group->second;
+			for (auto it = connections.begin(); it != connections.end();)
 			{
-				++it;
+				const bool used = std::any_of(shared.instances.begin(), shared.instances.end(),
+					[&](const auto& entry) { return entry.second.host == *it; });
+				if (used)
+				{
+					++it;
+				}
+				else
+				{
+					dropped.push_back(std::move(*it));
+					it = connections.erase(it);
+				}
 			}
-			else
-			{
-				dropped.push_back(std::move(it->second.connection));
-				it = shared.hosts.erase(it);
-			}
+			group = connections.empty() ? shared.hosts.erase(group) : std::next(group);
 		}
 		return dropped; // the caller destroys them without the lock: closing waits for the process
 	}
@@ -479,7 +527,7 @@ namespace gnubase::engine::plugins
 				if (found == m_shared->instances.end() || found->second.plugin->failure() != Failure::None)
 					continue;
 				group = groupOf(*m_shared, id, found->second.ref);
-				if (group == found->second.group)
+				if (group == found->second.group && !awayFromGroup(found->second))
 					continue;
 				// The plugin stays while it moves: its destruction waits.
 				found->second.busy = true;
@@ -526,12 +574,16 @@ namespace gnubase::engine::plugins
 	{
 		const std::scoped_lock lock(m_shared->mutex);
 		std::map<HostConnection*, HostStatus> hosts;
-		for (const auto& [group, host] : m_shared->hosts)
+		for (const auto& [group, connections] : m_shared->hosts)
 		{
-			HostStatus& status = hosts[host.connection.get()];
-			status.process = host.connection->processId();
-			status.group = group;
-			status.state = stateOf(*host.connection);
+			for (const std::shared_ptr<HostConnection>& connection : connections)
+			{
+				HostStatus& status = hosts[connection.get()];
+				status.process = connection->processId();
+				status.group = group;
+				status.state = stateOf(*connection);
+				status.log = connection->logFile();
+			}
 		}
 		for (const auto& [id, instance] : m_shared->instances)
 		{
@@ -539,6 +591,7 @@ namespace gnubase::engine::plugins
 			status.process = instance.host->processId();
 			status.group = instance.group;
 			status.state = stateOf(*instance.host);
+			status.log = instance.host->logFile();
 			status.instances.push_back({id, instance.ref.id, instance.plugin->failure() != Failure::None});
 		}
 		std::vector<HostStatus> list;
@@ -599,10 +652,13 @@ namespace gnubase::engine::plugins
 				if (instance.host->processId() == process)
 					host = instance.host;
 			}
-			for (const auto& [group, candidate] : m_shared->hosts)
+			for (const auto& [group, connections] : m_shared->hosts)
 			{
-				if (candidate.connection->processId() == process)
-					host = candidate.connection;
+				for (const std::shared_ptr<HostConnection>& candidate : connections)
+				{
+					if (candidate->processId() == process)
+						host = candidate;
+				}
 			}
 		}
 		if (!host)
@@ -671,7 +727,7 @@ namespace gnubase::engine::plugins
 					instances.push_back(
 						{{"instance", instance.instance}, {"plugin", instance.plugin}, {"failed", instance.failed}});
 				hostList.push_back({{"process", host.process}, {"group", host.group}, {"state", host.state},
-					{"instances", std::move(instances)}});
+					{"log", host.log}, {"instances", std::move(instances)}});
 			}
 			Json result = {{"mode", toString(mode())}, {"defaultMode", toString(g_defaultHostingMode)},
 				{"overrides", std::move(overrides)}, {"hosts", std::move(hostList)}};
@@ -686,8 +742,8 @@ namespace gnubase::engine::plugins
 				"\"shared\" (one process for every plugin), \"perVendor\", \"perPlugin\" or \"perInstance\"; "
 				"defaultMode: the mode GNUbase starts with; overrides: plugin ids with a mode of their own. hosts: "
 				"each process with its id (process), its group (\"shared\", \"vendor:<vendor>\", \"plugin:<id>\" or "
-				"\"instance:<instance>\"), its state (\"running\", \"hung\" or \"exited\") and its plugin instances, "
-				"whether they failed.",
+				"\"instance:<instance>\"), its state (\"running\", \"hung\" or \"exited\"), its log file's name in "
+				"the log folder (log) and its plugin instances, whether they failed.",
 				Json{{"type", "object"}, {"additionalProperties", false}}, statusSchema(), true},
 			[status](CommandContext&) { return status({}); });
 		engine.registerCommand(

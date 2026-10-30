@@ -137,6 +137,7 @@ namespace gnubase::engine::plugins
 			uint32_t process = 0;
 			std::string group; // what its plugins have in common: "shared", "vendor:<vendor>", "plugin:<id>", ...
 			std::string state; // "running", "hung" or "exited"
+			std::string log;   // its log file's name in the log folder
 			std::vector<InstanceStatus> instances;
 		};
 
@@ -172,19 +173,14 @@ namespace gnubase::engine::plugins
 			bool busy = false; // a job uses the plugin: it isn't destroyed meanwhile
 		};
 
-		struct Host
-		{
-			std::shared_ptr<plugin::remote::HostConnection> connection;
-			int log = 0; // its log file's number
-		};
-
 		// What the remote plugins share with the manager; they unregister themselves, even after it is gone.
 		struct Shared
 		{
 			mutable std::mutex mutex;
 			std::condition_variable idle; // an instance is no longer busy
 			std::map<uint64_t, Instance> instances;
-			std::map<std::string, Host> hosts; // by group
+			// By group: the group's process, then any that started while the ones before were silent.
+			std::map<std::string, std::vector<std::shared_ptr<plugin::remote::HostConnection>>> hosts;
 			std::vector<PluginFailure> failures;
 			std::vector<std::vector<std::string>> moves;
 			HostingMode mode = g_defaultHostingMode;
@@ -202,6 +198,8 @@ namespace gnubase::engine::plugins
 
 		static std::string groupOf(const Shared& shared, uint64_t instance, const PluginRef& plugin);
 		std::shared_ptr<plugin::remote::HostConnection> hostFor(const std::string& group);
+		bool answers(const plugin::remote::HostConnection& host) const; // new plugins may go there
+		bool awayFromGroup(const Instance& instance) const;              // with Shared::mutex locked
 		static void post(Shared& shared, std::function<void()> job);
 		static std::vector<std::shared_ptr<plugin::remote::HostConnection>> dropUnused(Shared& shared);
 		static void refresh(Shared& shared, uint64_t id);
