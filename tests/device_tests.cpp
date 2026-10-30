@@ -16,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -102,8 +103,8 @@ namespace
 	}
 
 	// Opens and starts a device once, whether it can or not: some backends learn only that way that a device is
-	// unavailable.
-	void tryDevice(Backend& backend, const std::string& id)
+	// unavailable. Returns why it can't, or nothing.
+	std::string tryDevice(Backend& backend, const std::string& id)
 	{
 		try
 		{
@@ -111,9 +112,11 @@ namespace
 			ContractCallback callback(device->format());
 			device->start(callback);
 			device->stop(); // while the callback is still there
+			return {};
 		}
-		catch (const DeviceError&)
+		catch (const DeviceError& error)
 		{
+			return error.what();
 		}
 	}
 }
@@ -121,9 +124,10 @@ namespace
 void checkDeviceContract(Backend& backend, bool openFirst)
 {
 	INFO("backend " << backend.name());
+	std::map<std::string, std::string> failures; // per device id, why it didn't open or start
 	if (openFirst)
 		for (const DeviceInfo& listed : backend.devices())
-			tryDevice(backend, listed.id);
+			failures[listed.id] = tryDevice(backend, listed.id);
 	const std::vector<DeviceInfo> devices = backend.devices();
 	std::set<std::string> ids;
 	for (const DeviceInfo& listed : devices)
@@ -142,6 +146,11 @@ void checkDeviceContract(Backend& backend, bool openFirst)
 		{
 			WARN("skipped device " << listed.id << ", which is unavailable: " << listed.unavailableReason);
 			continue;
+		}
+		if (const std::string& failure = failures[listed.id]; !failure.empty())
+		{
+			FAIL_CHECK("listed as available, but doesn't open or start: " << failure);
+			continue; // on to the next device
 		}
 
 		// With its defaults the device describes itself completely.
