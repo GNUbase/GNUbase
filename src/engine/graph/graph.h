@@ -57,17 +57,28 @@ namespace gnubase::engine::graph
 		bool operator==(const Connection& other) const { return from == other.from && to == other.to; }
 	};
 
+	// An audio connection whose channels are mapped instead of converted between formats: a child bus and its
+	// parent. For each channel of from, the channel of to it adds to, or -1.
+	struct ChannelMap
+	{
+		int from = 0;
+		int to = 0;
+		std::vector<int> channels;
+	};
+
 	struct GraphDesc
 	{
 		std::vector<NodeDesc> nodes;
 		std::vector<Connection> audio;           // audio from one node is added to another's input
 		std::vector<Connection> events;          // events one node outputs reach another
+		std::vector<ChannelMap> channelMaps;     // audio connections that map channels
 		double centerGain = 0.70794578438413791; // where mono reaches L and R without C: -3 dB, or the pan law's
 	};
 
 	// The graph of a render snapshot: a node per bus in bus order, then a node per channel in track order. Channels
 	// receive audio from their input bus and send it to their output bus or group channel; MIDI channels send events
-	// to their instrument channel instead.
+	// to their instrument channel instead. Output child busses add their channels to their parent's, input child
+	// busses take theirs from their parent's.
 	GraphDesc describe(const RenderSnapshot& snapshot);
 
 	// The order in which nodes are processed: every node after the nodes it receives audio or events from, and

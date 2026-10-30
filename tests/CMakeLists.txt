@@ -22,6 +22,7 @@ add_executable(gnubase-tests
 	audiofile_tests.cpp
 	automation_tests.cpp
 	backup_tests.cpp
+	bus_tests.cpp
 	channelformat_tests.cpp
 	coverage_tests.cpp
 	dawproject_tests.cpp

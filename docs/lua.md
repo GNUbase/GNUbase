@@ -203,6 +203,19 @@ Returns:
 - `peak`: number, required
 - `threads`: array of number, required
 
+#### `gnubase.audio.ports`
+
+The audio device's ports by name, in order, each with the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. Without a device there are no ports.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `busses`: array, required
+- `inputs`: array, required
+- `missing`: array, required
+- `outputs`: array, required
+
 #### `gnubase.audio.record`
 
 Writes the captured output of channels (default: every output) from frame start for frames frames (default: to the end of the capture) to a WAV file at path, with samples in format (default float32). Returns the file's absolute path.
@@ -543,35 +556,111 @@ Returns:
 
 #### `gnubase.bus.add`
 
-Adds an input or output bus. format is its speaker arrangement (default stereo): mono, stereo, or a surround format with a fixed speaker order, e.g. 5.1 as L R C LFE Ls Rs. channels (1 to 8) picks mono, stereo, LRC, quadro, 5.0, 5.1, 7.0 or 7.1 instead.
+Adds an input or output bus. format is its speaker arrangement (default stereo): mono, stereo, or a surround format with a fixed speaker order, e.g. 5.1 as L R C LFE Ls Rs. channels (1 to 8) picks mono, stereo, LRC, quadro, 5.0, 5.1, 7.0 or 7.1 instead. Without a name it is named after its format and direction, e.g. "Stereo In 2". ports: the device port of each channel by name (see audio.ports), an empty name for none; without ports the bus takes consecutive device ports in bus order. A port can serve several busses. The first output bus becomes the main mix. A child bus routes to some channels of its parent, a top-level bus of the same direction with more channels (direction may be left out): parentChannels are the parent's channel indices, one per channel of the child, by default the speakers both formats have; it uses its parent's ports.
 
 Parameters:
 
 - `channels`: integer
-- `direction`: one of "input" | "output", required
+- `direction`: one of "input" | "output"
 - `format`: one of "mono" | "stereo" | "LRC" | "LRS" | "LRC+LFE" | "LRS+LFE" | "LRCS" | "LRCS+LFE" | "quadro" | "quadro+LFE" | "5.0" | "5.1" | "6.0 cine" | "6.0 music" | "7.0" | "7.1"
-- `name`: string, required
+- `name`: string
+- `parent`: integer
+- `parentChannels`: array of integer
+- `ports`: array of string
 
 Returns:
 
 - `bus`: object, required
 
+#### `gnubase.bus.applyPreset`
+
+Replaces the project's busses of a direction with a preset's (see bus.presets). Channels that used the old busses move to the new bus at the same place, or to none (inputs) or the main mix (outputs). Returns the new busses.
+
+Parameters:
+
+- `direction`: one of "input" | "output", required
+- `name`: string, required
+
+Returns:
+
+- `busses`: array, required
+
+#### `gnubase.bus.presets`
+
+The bus presets of a direction: standard ones with one bus of a common format, hardware ones made from the audio device's ports (all mono, or stereo pairs), and the user's own (bus.savePreset), which hide others of their name. Each has a name, a kind and its busses: name, format, ports and children (name, format, parentChannels).
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `direction`: one of "input" | "output", required
+
+Returns:
+
+- `presets`: array, required
+
+#### `gnubase.bus.remapPorts`
+
+Re-routes ports, e.g. missing ones (see audio.ports) after opening a project made on other hardware: ports maps port names to the names that replace them in every bus of the direction. Returns the busses that changed.
+
+Parameters:
+
+- `direction`: one of "input" | "output", required
+- `ports`: object, required
+
+Returns:
+
+- `busses`: array, required
+
 #### `gnubase.bus.remove`
 
-Removes a bus; channels connected to it are disconnected.
+Removes a bus and its child busses; channels connected to them are disconnected. Removing the main mix makes the next output bus the main mix.
 
 Parameters:
 
 - `bus`: integer, required
+
+#### `gnubase.bus.removePreset`
+
+Removes one of the user's own bus presets.
+
+Parameters:
+
+- `direction`: one of "input" | "output", required
+- `name`: string, required
+
+#### `gnubase.bus.rename`
+
+Renames several busses with an incrementing number or letter: name ends in a number ("Out 1", "Out 01") or in a space and a capital letter ("Bus A", up to Z). The first bus given gets the name as given, the others follow in bus order from there, continuing from the top.
+
+Parameters:
+
+- `busses`: array of integer, required
+- `name`: string, required
+
+Returns:
+
+- `busses`: array, required
+
+#### `gnubase.bus.savePreset`
+
+Saves the project's busses of a direction as a user preset, for every project (the user setting audio.busPresets), replacing one of the same name. A preset named Default is applied to new projects.
+
+Parameters:
+
+- `direction`: one of "input" | "output", required
+- `name`: string, required
 
 #### `gnubase.bus.set`
 
-Renames a bus.
+Renames a bus, changes its ports (as in bus.add; [] for consecutive ports in bus order) or makes it the main mix (mainMix: true), the output bus new channels are routed to and that is monitored.
 
 Parameters:
 
 - `bus`: integer, required
+- `mainMix`: boolean
 - `name`: string
+- `ports`: array of string
 
 Returns:
 
@@ -1641,7 +1730,7 @@ Returns:
 
 #### `gnubase.project.new`
 
-Replaces the project with an empty one that has a stereo input and output bus, and clears the undo history.
+Replaces the project with an empty one that has a stereo input and output bus, or the busses of the user's bus presets named Default (see bus.savePreset), and clears the undo history.
 
 #### `gnubase.project.revision`
 
@@ -1767,17 +1856,20 @@ Returns:
 
 #### `gnubase.quantize.presets`
 
-The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings.
+The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings. The user's presets are kept in the settings folder, so they come back when GNUbase starts again: file is where (null if they are kept in memory only), readOnly whether changes are saved (not while the file belongs to a newer GNUbase), and problems what was wrong with it, such as presets that this GNUbase can't read and skips; they stay in the file.
 
 Only reads; changes nothing.
 
 Returns:
 
+- `file`: string or null, required
 - `presets`: array, required
+- `problems`: array, required
+- `readOnly`: boolean, required
 
 #### `gnubase.quantize.removePreset`
 
-Removes one of the user's quantize presets.
+Removes one of the user's quantize presets, and the presets of that name that this GNUbase can't read (see quantize.presets).
 
 Parameters:
 
@@ -1808,7 +1900,7 @@ Returns:
 
 #### `gnubase.quantize.savePreset`
 
-Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset of that name. Factory presets can't be replaced. Presets belong to GNUbase, not to the project.
+Saves the project's quantize settings, changed by settings, as a preset, replacing the user's preset of that name. Factory presets can't be replaced. Presets belong to the user, not to the project: they are saved in the settings folder.
 
 Parameters:
 
@@ -1844,7 +1936,7 @@ Only reads; changes nothing.
 
 Parameters:
 
-- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
 
 Returns:
 
@@ -1870,7 +1962,7 @@ Puts a user setting back to its default, or every one without key, and saves the
 
 Parameters:
 
-- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme". The setting.
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme". The setting.
 
 Returns:
 
@@ -1878,11 +1970,11 @@ Returns:
 
 #### `gnubase.settings.set`
 
-Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes.
+Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.busPresets` (object, default {"input":{},"output":{}}): The user's own bus presets, per direction (input, output) by name: each a list of busses with their name, format, ports and child busses (bus.savePreset); `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes.
 
 Parameters:
 
-- `key`: one of "audio.backend" | "audio.blockSize" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
+- `key`: one of "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "ui.scale" | "ui.theme", required. The setting.
 - `value`: any, required. The new value; it must fit the setting's schema.
 
 Returns:

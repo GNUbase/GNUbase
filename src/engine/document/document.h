@@ -29,13 +29,19 @@ namespace gnubase::engine
 		Output,
 	};
 
-	// A connection to the audio hardware, e.g. "Stereo Out".
+	// A connection to the audio hardware, e.g. "Stereo Out" (docs/features/busses.md).
 	struct Bus
 	{
 		ObjectId id = 0;
 		std::string name;
 		BusDirection direction = BusDirection::Output;
 		ChannelFormat format = ChannelFormat::Stereo;
+		// The device port each channel uses, by name; empty for none. No ports at all: the bus takes consecutive
+		// device ports in bus order. Child busses have none: they use their parent's.
+		std::vector<std::string> ports;
+		ObjectId parent = 0;             // child busses: a top-level bus of the same direction
+		std::vector<int> parentChannels; // child busses: the parent's channel each of its channels is
+		bool mainMix = false;            // the default output; exactly one top-level output bus has it
 	};
 
 	enum class TrackType : uint8_t
@@ -375,6 +381,15 @@ namespace gnubase::engine
 	// An empty project with a stereo input and a stereo output bus.
 	Project newProject();
 
+	// The main mix, or 0 if the project has no output bus.
+	ObjectId mainMix(const Project& project);
+
+	// Makes the first top-level output bus the main mix if no bus is.
+	void keepMainMix(Project& project);
+
+	// What is wrong with a bus of the project, or empty: its number of ports, a child bus's parent and channels.
+	std::string busProblem(const Project& project, const Bus& bus);
+
 	// Whether a marker is long enough: a cycle marker ends at least one sample after its position.
 	bool hasMinimumLength(const Project& project, const Marker& marker);
 
@@ -385,7 +400,8 @@ namespace gnubase::engine
 	// Equality compares every member; the undo history uses it to find what a command changed.
 	inline bool operator==(const Bus& a, const Bus& b)
 	{
-		return std::tie(a.id, a.name, a.direction, a.format) == std::tie(b.id, b.name, b.direction, b.format);
+		return std::tie(a.id, a.name, a.direction, a.format, a.ports, a.parent, a.parentChannels, a.mainMix) ==
+			std::tie(b.id, b.name, b.direction, b.format, b.ports, b.parent, b.parentChannels, b.mainMix);
 	}
 
 	inline bool operator==(const Channel& a, const Channel& b)
