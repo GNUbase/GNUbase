@@ -454,6 +454,10 @@ namespace gnubase::ui
 			const auto target = m_inputTargets.find(id);
 			if (target == m_inputTargets.end())
 				return std::nullopt;
+			// A hidden window has no mouse to lose: the OS may still say so, e.g. for UI tests' windows, which would
+			// take the hover from what the tests point at.
+			if (event.type == SDL_EVENT_WINDOW_MOUSE_LEAVE && (SDL_GetWindowFlags(window) & SDL_WINDOW_HIDDEN) != 0)
+				return std::nullopt;
 			RmlSDL::InputEventHandler(target->second, window, event);
 			return WindowEvent{WindowEventKind::Input, id};
 		}
