@@ -185,6 +185,19 @@ namespace
 		const std::vector<PortInfo> ports = backend.ports();
 		return std::any_of(ports.begin(), ports.end(), [&name](const PortInfo& port) { return port.name == name; });
 	}
+
+	// False if the condition isn't true within two seconds.
+	template <typename Condition> bool eventually(Condition condition)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+		while (!condition())
+		{
+			if (std::chrono::steady_clock::now() > deadline)
+				return false;
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		return true;
+	}
 #endif
 
 	struct Taken
@@ -325,20 +338,13 @@ TEST_CASE("the CoreMIDI backend keeps the port contract and notices virtual port
 	backend->onPortsChanged([&changes] { ++changes; });
 	const std::string name = "GNUbase test loopback";
 	CHECK(!hasPort(*backend, name));
-	const auto waitFor = [&backend, &name](bool present)
-	{
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-		while (hasPort(*backend, name) != present && std::chrono::steady_clock::now() < deadline)
-			std::this_thread::sleep_for(std::chrono::milliseconds(10));
-		return hasPort(*backend, name) == present;
-	};
 	{
 		const VirtualLoopback loopback(name.c_str());
-		REQUIRE(waitFor(true));
+		REQUIRE(eventually([&] { return hasPort(*backend, name); }));
 		checkContract(*backend, name, name);
 	}
-	CHECK(waitFor(false));
-	CHECK(changes > 0);
+	CHECK(eventually([&] { return !hasPort(*backend, name); }));
+	CHECK(eventually([&changes] { return changes > 0; })); // notifications come after the listing changed
 
 	const std::string iac = "IAC Driver Bus 1";
 	if (hasPort(*backend, iac))
@@ -364,7 +370,7 @@ TEST_CASE("the CoreMIDI backend receives MIDI 2.0 sources as MIDI 1.0 messages",
 	Inbox inbox;
 	const auto input = backend->openInput(port->id, inbox.receiver());
 	// A MIDI 2.0 note on, group 0, channel 2, pitch 60, full velocity.
-	const std::array<UInt32, 2> words{0x40916000, 0xffff0000};
+	const std::array<UInt32, 2> words{0x40913c00, 0xffff0000};
 	MIDIEventList list{};
 	MIDIEventListAdd(&list, sizeof(list), MIDIEventListInit(&list, kMIDIProtocol_2_0), 0, words.size(), words.data());
 	REQUIRE(MIDIReceivedEventList(source, &list) == noErr);
