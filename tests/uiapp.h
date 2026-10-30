@@ -66,7 +66,7 @@ namespace gnubase::test
 
 		// Checks the image against tests/golden/ui/<name>.png, allowing what GPUs round differently: one pixel in 500
 		// may differ by more than 8 of 255.
-		void checkGolden(const std::string& name, const ui::Image& image);
+		static void checkGolden(const std::string& name, const ui::Image& image);
 
 	private:
 		TempDir m_settings;

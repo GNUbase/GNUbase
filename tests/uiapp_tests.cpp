@@ -94,5 +94,5 @@ TEST_CASE("settings changed through the engine restyle GNUbase's UI", "[ui]")
 	const float monitorScale = app.main().dpRatio() / app.shell().uiScale();
 	app.call("settings.set", {{"key", "ui.scale"}, {"value", 2.0}});
 	REQUIRE(
-		app.waitUntil([&app, monitorScale] { return std::abs(app.main().dpRatio() - 2.0F * monitorScale) < 0.01F; }));
+		app.waitUntil([&app, monitorScale] { return std::abs(app.main().dpRatio() - (2.0F * monitorScale)) < 0.01F; }));
 }
