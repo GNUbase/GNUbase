@@ -41,6 +41,13 @@ namespace gnubase::app
 				{"description", "The window's id from ui_windows; the main window if left out."}};
 		}
 
+		// Keys held while using the mouse.
+		Json modifiersProperty(const std::string& description)
+		{
+			return {{"type", "array"}, {"items", {{"enum", {"ctrl", "shift", "alt", "meta"}}}},
+				{"description", description}};
+		}
+
 		// Where the mouse goes: an element by selector, or a point.
 		Json targetProperties()
 		{
@@ -224,8 +231,7 @@ namespace gnubase::app
 		clickProperties["button"] = {{"enum", {"left", "right", "middle"}}, {"description", "Left if left out."}};
 		clickProperties["count"] = {{"type", "integer"}, {"minimum", 1}, {"maximum", 3},
 			{"description", "2 for a double click; 1 if left out."}};
-		clickProperties["modifiers"] = {{"type", "array"}, {"items", {{"enum", {"ctrl", "shift", "alt", "meta"}}}},
-			{"description", "Keys held while clicking."}};
+		clickProperties["modifiers"] = modifiersProperty("Keys held while clicking.");
 		tools.push_back({"ui_click",
 			"Clicks the centre of the element that the CSS selector matches, or a point. The element must be visible. "
 			"Returns the element under the mouse, the one that got the click unless another covers it.",
@@ -244,27 +250,32 @@ namespace gnubase::app
 		Json to = object(dragTarget);
 		to["description"] = "Where to release it, the same way.";
 		tools.push_back({"ui_drag",
-			"Drags with the left button from one element or point to another and drops there. Returns the element "
-			"under the mouse at the end.",
-			object({{"window", windowProperty()}, {"from", std::move(from)}, {"to", std::move(to)}}, {"from", "to"}),
+			"Drags with the left button from one element or point to another and drops there, e.g. a fader's cap, "
+			"finer with shift held. Returns the element under the mouse at the end.",
+			object({{"window", windowProperty()}, {"from", std::move(from)}, {"to", std::move(to)},
+					   {"modifiers", modifiersProperty("Keys held while dragging.")}},
+				{"from", "to"}),
 			elementResult, false,
 			run(
 				[](ui::Automation& ui, const Json& arguments)
 				{
-					return ui.drag(windowOf(arguments), targetOf(arguments.at("from")), targetOf(arguments.at("to")));
+					return ui.drag(windowOf(arguments), targetOf(arguments.at("from")), targetOf(arguments.at("to")),
+						arguments.value("modifiers", std::vector<std::string>()));
 				})});
 
 		Json wheelProperties = targetProperties();
 		wheelProperties["dx"] = {{"type", "number"}, {"description", "Lines to the right; 0 if left out."}};
 		wheelProperties["dy"] = {{"type", "number"}, {"description", "Lines down; 0 if left out."}};
+		wheelProperties["modifiers"] = modifiersProperty("Keys held while turning the wheel.");
 		tools.push_back({"ui_wheel",
-			"Turns the mouse wheel over an element or a point, or where the mouse is, e.g. to scroll a list.",
+			"Turns the mouse wheel over an element or a point, or where the mouse is, e.g. to scroll a list or turn "
+			"a knob.",
 			object(std::move(wheelProperties)), elementResult, false,
 			run(
 				[](ui::Automation& ui, const Json& arguments)
 				{
 					return ui.wheel(windowOf(arguments), targetOf(arguments), arguments.value("dx", 0.0F),
-						arguments.value("dy", 0.0F));
+						arguments.value("dy", 0.0F), arguments.value("modifiers", std::vector<std::string>()));
 				})});
 
 		tools.push_back({"ui_key",
