@@ -199,3 +199,44 @@ TEST_CASE("midi.inject takes MIDI 1.0 channel messages for MIDI and instrument t
 	CHECK_THAT(inject(instrument, message(-1, {0x90, 60, 100})), ContainsSubstring("position"));
 	CHECK(run(client, "midi.inject", {{"channel", instrument}, {"messages", Json::array()}}) == Json::object());
 }
+
+TEST_CASE("midi.inject injects all messages or none when too many wait for the audio device", "[unit]")
+{
+	Probe probe(64);
+	Json waiting = Json::array(); // the device processes no block meanwhile
+	for (int i = 0; i < 4095; ++i)
+		waiting.push_back(message(1000000, {0xB0, 7, 100}));
+	run(probe.client, "midi.inject", {{"channel", probe.instrument}, {"messages", waiting}});
+
+	// One more fits, two don't: the call fails and injects neither, so a client can retry without playing any twice.
+	CHECK_THAT(
+		reject(probe.client, "midi.inject",
+			{{"channel", probe.instrument}, {"messages", {message(0, {0x90, 60, 100}), message(64, {0x80, 60, 0})}}}),
+		ContainsSubstring("none were injected"));
+	run(probe.client, "audio.render", {{"frames", 128}});
+	CHECK(wrongFrames(probe.capture(0, 0, 128), 0, 0, 0.0f) == 0);
+	CHECK(run(probe.client, "midi.capture").at("captured").empty());
+}
+
+TEST_CASE("midi.capture with start returns what was played since, after a long stretch without reads", "[unit]")
+{
+	Probe probe(64);
+	for (int round = 0; round < 3; ++round) // 9000 messages that nobody reads
+	{
+		Json messages = Json::array();
+		for (int i = 0; i < 3000; ++i)
+			messages.push_back(message((round * 3000) + i, {0xB0, 7, i % 128}));
+		run(probe.client, "midi.inject", {{"channel", probe.instrument}, {"messages", messages}});
+		run(probe.client, "audio.render", {{"frames", 3000}});
+	}
+
+	// start drops what was captured so far; the next call returns only what was played after it.
+	CHECK(run(probe.client, "midi.capture", {{"start", true}}) == Json{{"captured", Json::array()}, {"dropped", 0}});
+	probe.note(probe.instrument, 9100, 9200, 60);
+	run(probe.client, "audio.render", {{"frames", 300}});
+	CHECK(run(probe.client, "midi.capture", {{"start", false}}) ==
+		Json{{"captured",
+				 {{{"channel", probe.instrument}, {"position", 9100}, {"bytes", {0x90, 60, 100}}},
+					 {{"channel", probe.instrument}, {"position", 9200}, {"bytes", {0x80, 60, 0}}}}},
+			{"dropped", 0}});
+}

@@ -209,6 +209,7 @@ namespace gnubase::engine
 		void execute(Request& request);
 		std::shared_ptr<const Command> find(const std::string& name) const; // throws CommandError if unknown
 		Json runInside(const std::string& command, const Json& parameters, CommandContext& outer);
+		void applySettings(); // hands the user settings to the parts of the engine that use them
 
 		const std::filesystem::path m_settingsDirectory;
 		mutable std::mutex m_mutex; // guards everything below except the thread

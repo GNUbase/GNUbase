@@ -732,9 +732,14 @@ TEST_CASE("playing MIDI parts through an instrument, with edits, stops and cycle
 		{{"part", parts[1]},
 			{"notes", {{{"position", 0}, {"length", quarter / 2}, {"pitch", 72}, {"velocity", 1.0}}}}});
 	run("audio.render", {{"frames", 4800}});
-	run("transport.locate", {{"position", 3000}}); // a locate ends the sounding notes
+	run("transport.locate", {{"position", 3000}}); // a locate ends the sounding notes and chases the held ones
 	run("audio.render", {{"frames", 4800}});
 	run("transport.stop", Json::object());
+	run("audio.render", {{"frames", 960}});
+	run("settings.set", {{"key", "midi.chaseBeyondParts"}, {"value", false}});
+	run("transport.locate", {{"position", 2000}}); // chases the controllers while stopped
+	run("audio.render", {{"frames", 960}});
+	run("transport.play", Json::object());
 	run("audio.render", {{"frames", 960}});
 	CHECK(g_violations == 0);
 }

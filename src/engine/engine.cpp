@@ -126,13 +126,14 @@ namespace gnubase::engine
 		m_project = std::make_unique<ProjectModel>();
 		m_project->registerCommands(*this, *m_jobs);
 		m_settings = std::make_unique<settings::Store>(settings::userFormat(), settingsDirectory);
-		settings::registerCommands(*this, *m_settings);
+		settings::registerCommands(*this, *m_settings, [this] { applySettings(); });
 		m_audio = std::make_unique<AudioEngine>(
 			m_project->snapshots(), *m_settings, std::move(backends), std::move(midiBackends));
 		m_audio->registerCommands(*this);
 		m_peaks = std::make_unique<peaks::PeakCache>(
 			[this](const std::string& name, const Json& data) { broadcast(name, data); });
 		m_peaks->registerCommands(*this);
+		applySettings();
 		m_thread = std::thread([this] { run(); });
 	}
 
@@ -147,6 +148,17 @@ namespace gnubase::engine
 		m_thread.join(); // fails the commands that didn't run, which jobs may wait for
 		m_peaks.reset(); // stops its worker while the clients can still be reached
 		m_jobs.reset();  // no command starts a job anymore; cancels the running ones and waits for them
+	}
+
+	void Engine::applySettings()
+	{
+		MidiChase chase;
+		chase.notes = m_settings->get(settings::g_midiChaseNotes);
+		chase.controllers = m_settings->get(settings::g_midiChaseControllers);
+		chase.programs = m_settings->get(settings::g_midiChasePrograms);
+		chase.pitchBend = m_settings->get(settings::g_midiChasePitchBend);
+		chase.beyondParts = m_settings->get(settings::g_midiChaseBeyondParts);
+		m_audio->setChase(chase);
 	}
 
 	void Engine::registerCommand(CommandInfo info, CommandHandler handler)

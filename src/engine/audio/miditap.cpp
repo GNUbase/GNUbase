@@ -126,6 +126,15 @@ namespace gnubase::engine
 	{
 	}
 
+	bool MidiTap::inject(const std::vector<Message>& messages)
+	{
+		if (m_injected.space() < messages.size())
+			return false;
+		for (const Message& message : messages)
+			m_injected.tryPush(message); // fits: the audio thread only makes room
+		return true;
+	}
+
 	std::vector<MidiTap::Message> MidiTap::take(size_t& dropped)
 	{
 		std::vector<Message> result;
@@ -196,7 +205,8 @@ namespace gnubase::engine
 				"message's frame on the audio device, as audio.capture and midi.monitor count them; messages for "
 				"frames the device has processed already play at the start of its next block, those for one frame in "
 				"the order they came. They wait until the device processes their block, at most 4096 at a time, and "
-				"are dropped when the device changes. midi.capture returns what instruments played.",
+				"are dropped when the device changes; a call whose messages don't all fit fails and injects none. "
+				"midi.capture returns what instruments played.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["channel", "messages"],
 					"properties": {"channel": {"type": "integer"}, "messages": {"type": "array", "items": {
 						"type": "object", "additionalProperties": false, "required": ["position", "bytes"],
@@ -230,10 +240,8 @@ namespace gnubase::engine
 					std::copy(bytes.begin(), bytes.end(), message.message.bytes.begin());
 					injected.push_back(message);
 				}
-				for (size_t i = 0; i < injected.size(); ++i)
-					require(m_tap.inject(injected[i]),
-						"too many MIDI messages wait for the audio device; only the first " + std::to_string(i) +
-							" were injected");
+				require(m_tap.inject(injected),
+					"too many MIDI messages wait for the audio device; none were injected, try again later");
 				return Json::object();
 			});
 		engine.registerCommand(
@@ -243,16 +251,25 @@ namespace gnubase::engine
 				"the track's parts, of the MIDI tracks routed to it and what midi.inject played into them, with "
 				"controller automation and the note-offs of a stop. A program change with a bank comes as bank "
 				"select MSB and LSB, then the program change; SysEx isn't captured. dropped counts the messages that "
-				"didn't fit.",
-				CommandInfo{}.parameters,
+				"didn't fit: while nobody reads, newer messages are dropped. start: true starts a fresh capture; it "
+				"drops what was captured so far and returns nothing. Each call empties what it returns, so a repeated "
+				"call doesn't return the same messages again.",
+				Json::parse(R"({"type": "object", "additionalProperties": false,
+					"properties": {"start": {"type": "boolean"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"captured": {"type": "array"},
 					"dropped": {"type": "integer"}}, "required": ["captured", "dropped"]})"),
 				true},
-			[this](CommandContext&)
+			[this](CommandContext& context)
 			{
 				size_t dropped = 0;
+				std::vector<MidiTap::Message> messages = m_tap.take(dropped);
+				if (context.parameters().value("start", false))
+				{
+					messages.clear();
+					dropped = 0;
+				}
 				Json captured = Json::array();
-				for (const MidiTap::Message& message : m_tap.take(dropped))
+				for (const MidiTap::Message& message : messages)
 					captured.push_back({{"channel", message.channel}, {"position", message.position},
 						{"bytes",
 							std::vector<uint8_t>(

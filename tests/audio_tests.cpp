@@ -620,4 +620,10 @@ TEST_CASE("MIDI input reaches the monitor at its frame position once the device 
 		Json::array({{{"backend", "dummy"}, {"id", "Keys"}, {"position", 0}, {"bytes", {0x90, 60, 100}}}}));
 	CHECK(monitor.at("dropped") == 0);
 	CHECK(run(client, "midi.monitor").at("received").empty()); // each message once
+
+	// start drops what was received so far, for a fresh start.
+	keys->send(noteOn(64), gnubase::hostTime() - second);
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(run(client, "midi.monitor", {{"start", true}}) == Json{{"received", Json::array()}, {"dropped", 0}});
+	CHECK(run(client, "midi.monitor").at("received").empty());
 }

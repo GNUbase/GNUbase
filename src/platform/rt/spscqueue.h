@@ -43,6 +43,13 @@ namespace gnubase::rt
 			return true;
 		}
 
+		// Producer thread only: how many values tryPush takes now at least. The consumer only adds to that.
+		size_t space()
+		{
+			m_cachedTail = m_tail.load(std::memory_order_acquire);
+			return m_slots.size() - (m_head.load(std::memory_order_relaxed) - m_cachedTail);
+		}
+
 		// Consumer thread only. Returns false if the queue is empty.
 		bool tryPop(T& value)
 		{
