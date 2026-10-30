@@ -74,7 +74,9 @@ namespace gnubase::engine
 				clockSource = info.clockSources[static_cast<size_t>(info.clockSource)];
 			return {{"id", info.id}, {"name", info.name}, {"inputs", info.inputs}, {"outputs", info.outputs},
 				{"sampleRates", info.sampleRates}, {"blockSizes", info.blockSizes}, {"clockSources", info.clockSources},
-				{"clockSource", clockSource}, {"controlPanel", info.controlPanel}};
+				{"clockSource", clockSource}, {"controlPanel", info.controlPanel},
+				{"available", info.unavailableReason.empty()},
+				{"unavailableReason", info.unavailableReason.empty() ? Json() : Json(info.unavailableReason)}};
 		}
 
 		const processors::BuiltinInfo& generatorInfo(const std::string& id)
@@ -719,8 +721,11 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"audio.devices", 1,
 				"The audio backends of this build, the preferred one first, and the devices each has now: their ids, "
-				"names, channel names, sample rates, block sizes, clock sources (and the current one), and whether "
-				"the driver has a control panel. A backend that can't list its devices has an error instead.",
+				"names, channel names, sample rates, block sizes, clock sources (and the current one), whether the "
+				"driver has a control panel, and whether the device is available. An unavailable device, e.g. one "
+				"whose hardware isn't connected, has an unavailableReason; audio.setDevice still tries it. Some "
+				"backends only learn that by opening or starting the device (ASIO). A backend that can't list its "
+				"devices has an error instead.",
 				noParameters(), Json::parse(R"({"type": "object", "properties": {"backends": {"type": "array"}},
 					"required": ["backends"]})"),
 				true},

@@ -25,6 +25,8 @@ namespace gnubase::engine
 			std::condition_variable arrived;
 			std::deque<Message> messages;
 			std::function<void(const Event&)> listener; // a Listener's mailbox hands events to it instead
+			std::string name;                           // the client's, for the command log
+			std::function<void()> onArrival;            // called after a message was queued
 
 			void post(Message message)
 			{
@@ -38,6 +40,8 @@ namespace gnubase::engine
 						return;
 					}
 					messages.push_back(std::move(message));
+					if (onArrival)
+						onArrival(); // under the lock too, so a client that goes away waits for a call that runs
 				}
 				arrived.notify_all();
 			}
@@ -64,6 +68,9 @@ namespace gnubase::engine
 
 	namespace
 	{
+		// How many commands engine.commandLog keeps.
+		constexpr size_t g_commandLogSize = 256;
+
 		Json toJson(const CommandInfo& info)
 		{
 			return {{"name", info.name}, {"version", info.version}, {"description", info.description},
@@ -98,6 +105,18 @@ namespace gnubase::engine
 					list.push_back(toJson(info));
 				return Json{{"commands", list}};
 			});
+		registerCommand({"engine.commandLog", 1,
+							"The last 256 commands that ran, oldest first, without queries: what the UI and other "
+							"clients did. Each with its request id (events name it too), the client that sent it (ui, "
+							"mcp, lua, app for the command line, engine for the engine's own commands), the command, "
+							"its parameters, and the error if it failed.",
+							CommandInfo{}.parameters, Json::parse(R"({"type": "object", "properties": {"commands":
+								{"type": "array", "items": {"type": "object", "properties": {"request": {"type":
+								"integer"}, "client": {"type": "string"}, "command": {"type": "string"}, "parameters":
+								{}, "error": {"type": "string"}}, "required": ["request", "client", "command",
+								"parameters"]}}}, "required": ["commands"]})"),
+							true},
+			[this](CommandContext&) { return Json{{"commands", Json(m_commandLog)}}; });
 		processors::registerCommands(*this);
 		m_plugins = std::make_unique<plugins::HostManager>();
 		m_plugins->registerCommands(*this);
@@ -189,6 +208,11 @@ namespace gnubase::engine
 		return *m_plugins;
 	}
 
+	int64_t Engine::playbackPosition() const
+	{
+		return m_audio->position();
+	}
+
 	std::vector<CommandInfo> Engine::commands() const
 	{
 		const std::scoped_lock lock(m_mutex);
@@ -277,9 +301,11 @@ namespace gnubase::engine
 		Result result;
 		result.request = request.id;
 		std::vector<std::shared_ptr<detail::Mailbox>> clients;
+		bool query = false;
 		try
 		{
 			const std::shared_ptr<const Command> command = find(request.command);
+			query = command->info.query;
 			if (const std::string problem = validate(request.parameters, command->info.parameters); !problem.empty())
 				throw CommandError(problem);
 			Json value = command->handler(context);
@@ -292,6 +318,16 @@ namespace gnubase::engine
 		{
 			result.error = error.what();
 			context.m_events.clear(); // a failed command changes nothing
+		}
+		if (!query)
+		{
+			Json entry = {{"request", request.id}, {"client", request.sender ? request.sender->name : "engine"},
+				{"command", request.command}, {"parameters", request.parameters}};
+			if (!result.ok())
+				entry["error"] = result.error;
+			m_commandLog.push_back(std::move(entry));
+			if (m_commandLog.size() > g_commandLogSize)
+				m_commandLog.pop_front();
 		}
 
 		{
@@ -321,17 +357,25 @@ namespace gnubase::engine
 			logging::error("{} failed: {}", request.command, result.error);
 	}
 
-	Client::Client(Engine& engine) : m_engine(engine), m_mailbox(std::make_shared<detail::Mailbox>())
+	Client::Client(Engine& engine, std::string name, std::function<void()> arrived)
+		: m_engine(engine), m_mailbox(std::make_shared<detail::Mailbox>())
 	{
+		m_mailbox->name = std::move(name);
+		m_mailbox->onArrival = std::move(arrived);
 		const std::scoped_lock lock(m_engine.m_mutex);
 		m_engine.m_clients.push_back(m_mailbox);
 	}
 
 	Client::~Client()
 	{
-		const std::scoped_lock lock(m_engine.m_mutex);
-		auto& clients = m_engine.m_clients;
-		clients.erase(std::remove(clients.begin(), clients.end(), m_mailbox), clients.end());
+		{
+			const std::scoped_lock lock(m_engine.m_mutex);
+			auto& clients = m_engine.m_clients;
+			clients.erase(std::remove(clients.begin(), clients.end(), m_mailbox), clients.end());
+		}
+		// The command thread may still hold the mailbox; from here on it calls nobody.
+		const std::scoped_lock lock(m_mailbox->mutex);
+		m_mailbox->onArrival = nullptr;
 	}
 
 	Listener::Listener(Engine& engine, std::function<void(const Event&)> function)

@@ -342,6 +342,37 @@ TEST_CASE("a window keeps drawing while its document animates", "[unit]")
 	CHECK_FALSE(ui.shell.idleTimeout().has_value());
 }
 
+TEST_CASE("step tasks run in every step, and once a frame while they have values to follow", "[unit]")
+{
+	Ui ui({primary()});
+	const ui::Window& window = ui.shell.open(at({100, 100, 800, 600}));
+	ui.shell.step(milliseconds(0));
+	int runs = 0;
+	bool following = false;
+	ui.shell.eachStep(
+		[&]
+		{
+			++runs;
+			return following;
+		});
+	ui.shell.step(milliseconds(0));
+	ui.shell.step(milliseconds(0));
+	CHECK(runs == 2);
+	CHECK_FALSE(ui.shell.idleTimeout().has_value()); // nothing to follow: sleep until the next event
+	CHECK(window.frames() == 1);                     // and nothing to draw
+
+	following = true;
+	ui.shell.step(milliseconds(0));
+	const std::optional<milliseconds> timeout = ui.shell.idleTimeout();
+	REQUIRE(timeout.has_value());
+	CHECK(timeout.value_or(milliseconds::max()) <= ui::g_framePeriod);
+	CHECK(window.frames() == 1); // following values draws nothing by itself
+
+	following = false;
+	ui.shell.step(milliseconds(0));
+	CHECK_FALSE(ui.shell.idleTimeout().has_value());
+}
+
 TEST_CASE("files dropped on a window go to the element under the mouse", "[unit]")
 {
 	DropListener listener; // outlives the documents it listens to

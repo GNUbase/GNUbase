@@ -163,7 +163,7 @@ Returns:
 
 #### `gnubase.audio.devices`
 
-The audio backends of this build, the preferred one first, and the devices each has now: their ids, names, channel names, sample rates, block sizes, clock sources (and the current one), and whether the driver has a control panel. A backend that can't list its devices has an error instead.
+The audio backends of this build, the preferred one first, and the devices each has now: their ids, names, channel names, sample rates, block sizes, clock sources (and the current one), whether the driver has a control panel, and whether the device is available. An unavailable device, e.g. one whose hardware isn't connected, has an unavailableReason; audio.setDevice still tries it. Some backends only learn that by opening or starting the device (ASIO). A backend that can't list its devices has an error instead.
 
 Only reads; changes nothing.
 
@@ -707,6 +707,16 @@ Returns:
 - `event`: object, required
 
 ### engine
+
+#### `gnubase.engine.commandLog`
+
+The last 256 commands that ran, oldest first, without queries: what the UI and other clients did. Each with its request id (events name it too), the client that sent it (ui, mcp, lua, app for the command line, engine for the engine's own commands), the command, its parameters, and the error if it failed.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `commands`: array of object, required
 
 #### `gnubase.engine.commands`
 

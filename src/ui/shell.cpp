@@ -314,6 +314,13 @@ namespace gnubase::ui
 			const std::function<void()> task = m_tasks[i].run;
 			task();
 		}
+		bool following = false;
+		for (size_t i = 0; i < m_stepTasks.size() && m_running; ++i)
+		{
+			const std::function<bool()> task = m_stepTasks[i];
+			following = task() || following;
+		}
+		m_nextFrame = following ? Clock::now() + g_framePeriod : Clock::time_point::max();
 
 		now = Clock::now();
 		for (auto& [id, window] : m_open)
@@ -326,10 +333,15 @@ namespace gnubase::ui
 		m_tasks.push_back({interval, std::move(task), Clock::now() + interval});
 	}
 
+	void Shell::eachStep(std::function<bool()> task)
+	{
+		m_stepTasks.push_back(std::move(task));
+	}
+
 	std::optional<std::chrono::milliseconds> Shell::idleTimeout() const
 	{
 		const Clock::time_point now = Clock::now();
-		Clock::time_point next = Clock::time_point::max();
+		Clock::time_point next = m_nextFrame;
 		for (const auto& [id, window] : m_open)
 		{
 			if (window->m_renderRequested)

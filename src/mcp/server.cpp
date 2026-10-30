@@ -277,7 +277,7 @@ namespace gnubase::mcp
 		if (command == commands.end())
 			throw ProtocolError(g_invalidParams, "no tool " + name);
 
-		const engine::Result result = engine::Client(m_engine).call(command->name, arguments, g_callTimeout);
+		const engine::Result result = engine::Client(m_engine, "mcp").call(command->name, arguments, g_callTimeout);
 		if (!result.ok())
 			return {{"content", textContent(result.error)}, {"isError", true}};
 		Json response = {{"content", textContent(text(result.value))}, {"isError", false}};
@@ -324,7 +324,8 @@ namespace gnubase::mcp
 		if (command == commands.end())
 			throw ProtocolError(g_resourceNotFound, "no resource " + uri);
 
-		const engine::Result result = engine::Client(m_engine).call(command->name, Json::object(), g_callTimeout);
+		const engine::Result result =
+			engine::Client(m_engine, "mcp").call(command->name, Json::object(), g_callTimeout);
 		if (!result.ok())
 			throw ProtocolError(g_internalError, result.error);
 		return {{"contents",

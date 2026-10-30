@@ -23,6 +23,9 @@ namespace gnubase::ui
 {
 	class Shell;
 
+	// About a frame at 60 Hz: how often the shell steps while a step task follows values that change without events.
+	inline constexpr std::chrono::milliseconds g_framePeriod{16};
+
 	class Window
 	{
 	public:
@@ -118,6 +121,14 @@ namespace gnubase::ui
 		// Runs task in the steps after each interval has passed, e.g. to look for changed files.
 		void every(std::chrono::milliseconds interval, std::function<void()> task);
 
+		// Runs task in every step, after the periodic tasks and before drawing, e.g. to take what the engine sent
+		// (ui/enginebinding.h). While it returns true, because it follows values that change without events such as
+		// the playback position, the shell steps at least once a frame (g_framePeriod).
+		void eachStep(std::function<bool()> task);
+
+		// From any thread: makes the shell step soon, e.g. when the engine sent the UI something.
+		void wake() { m_windows.wake(); }
+
 		// How long run() may wait for events before a window needs drawing or a task is due; empty to wait for the
 		// next event.
 		std::optional<std::chrono::milliseconds> idleTimeout() const;
@@ -150,5 +161,7 @@ namespace gnubase::ui
 		std::vector<Task> m_tasks;
 		std::mutex m_postedMutex; // guards m_posted, which other threads add to
 		std::vector<std::function<void()>> m_posted;
+		std::vector<std::function<bool()>> m_stepTasks;
+		Clock::time_point m_nextFrame = Clock::time_point::max(); // when a step task that follows values runs again
 	};
 }
