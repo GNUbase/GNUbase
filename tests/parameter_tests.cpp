@@ -77,7 +77,8 @@ namespace
 		return run(client, "parameter.set", {{"channel", channel}, {"target", target}, {key, value}}).at("parameter");
 	}
 
-	const processors::ParameterInfo& builtinParameter(const std::string& processor, const std::string& name)
+	// A copy: GCC warns about references from a function that takes temporaries.
+	processors::ParameterInfo builtinParameter(const std::string& processor, const std::string& name)
 	{
 		const processors::BuiltinInfo* info = processors::findBuiltin(processor);
 		REQUIRE(info != nullptr);
@@ -302,19 +303,19 @@ TEST_CASE("parameter values set on an instrument play", "[integration]")
 
 TEST_CASE("parameter values convert to display text and back", "[unit]")
 {
-	const processors::ParameterInfo& detection = builtinParameter("compressor", "Detection");
+	const processors::ParameterInfo detection = builtinParameter("compressor", "Detection");
 	CHECK(processors::valueToText(detection, 1.0) == "RMS");
 	CHECK(processors::textToValue(detection, "rms") == std::optional<double>(1.0));
 	CHECK(processors::textToValue(detection, " Peak ") == std::optional<double>(0.0));
 	CHECK(processors::textToValue(detection, "1") == std::optional<double>(1.0));
 	CHECK(!processors::textToValue(detection, "loud").has_value());
 
-	const processors::ParameterInfo& bits = builtinParameter("dither", "Bits");
+	const processors::ParameterInfo bits = builtinParameter("dither", "Bits");
 	CHECK(processors::valueToText(bits, 16.0) == "16");
 	CHECK(processors::textToValue(bits, "20.4") == std::optional<double>(20.0));
 	CHECK(processors::textToValue(bits, "99") == std::optional<double>(24.0));
 
-	const processors::ParameterInfo& decay = builtinParameter("reverb", "Decay");
+	const processors::ParameterInfo decay = builtinParameter("reverb", "Decay");
 	CHECK(processors::valueToText(decay, 2.5) == "2.50 s");
 	CHECK(processors::textToValue(decay, "2.5 s") == std::optional<double>(2.5));
 	CHECK(processors::textToValue(decay, "2.5s") == std::optional<double>(2.5));
@@ -332,7 +333,7 @@ TEST_CASE("parameter values convert to display text and back", "[unit]")
 	CHECK(!processors::textToValue(decay, "1e s").has_value());
 	CHECK(!processors::textToValue(decay, "2..5").has_value());
 
-	const processors::ParameterInfo& pan = builtinParameter("gainPan", "Pan");
+	const processors::ParameterInfo pan = builtinParameter("gainPan", "Pan");
 	CHECK(processors::valueToText(pan, -0.001) == "0.00");
 	CHECK(processors::valueToText(pan, -0.005) == "-0.01");
 }
