@@ -13,6 +13,6 @@
 <body id="rename" data-model="rename">
 	<p id="message">Enter a new name for the track.</p>
 	<input type="text" id="name" data-value="name"/>
-	<div><button id="ok" onclick="renameTrack(document)">OK</button><button id="cancel" onclick="document:Close()">Cancel</button></div>
+	<div><button id="ok" onclick="closeRename(document, true)">OK</button><button id="cancel" onclick="closeRename(document, false)">Cancel</button></div>
 </body>
 </rml>

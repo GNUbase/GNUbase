@@ -18,21 +18,22 @@
 			error("no track " .. tostring(id))
 		end
 
-		-- The dialog's data model, opened once and filled each time the dialog opens.
+		-- The open dialog's data model. It opens and closes with the dialog: RmlUi's Lua plugin frees a data model
+		-- only when it is closed.
 		local model
 
 		function openRename(context, id)
-			if model then
-				model.track, model.name = id, trackName(id)
-			else
-				model = context:OpenDataModel("rename", {track = id, name = trackName(id)})
-			end
+			model = context:OpenDataModel("rename", {track = id, name = trackName(id)})
 			context:LoadDocument("tests/data/ui/lua-rename.rml"):Show(DocumentModal.Modal)
 		end
 
-		function renameTrack(dialog)
-			gnubase.track.set{track = model.track, name = model.name}
+		-- Closes the dialog; OK renames the track first.
+		function closeRename(dialog, ok)
+			if ok then
+				gnubase.track.set{track = model.track, name = model.name}
+			end
 			dialog:Close()
+			dialog.context:CloseDataModel("rename")
 		end
 	</script>
 </head>

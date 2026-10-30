@@ -11,8 +11,10 @@ Lua reaches the engine only through the engine API, like every other client.
   `lua_as_cxx` in `CMakeLists.txt`), run on that runtime: a document's `<script>` runs when the document loads, and
   event attributes such as `onclick="..."` are Lua with `event`, `element` and `document`. Lua reads and changes the
   DOM, adds event listeners and opens data models (`context:OpenDataModel(name, table)`), through the global `rmlui`
-  (`rmlui.contexts[1]` is the main window's context). The plugin's own `print`, which writes into RmlUi's log, is
-  replaced by GNUbase's again. Styling stays in RCSS: Lua sets classes and attributes, not style properties.
+  (`rmlui.contexts[1]` is the main window's context). Lua closes the data models it opens
+  (`context:CloseDataModel(name)`), since the plugin frees a model only then. The plugin's own `print`, which writes
+  into RmlUi's log, is replaced by GNUbase's again. Styling stays in RCSS: Lua sets classes and attributes, not style
+  properties.
 - **The engine.** `gnubase.<area>.<name>` sends a command and waits for its result, so a long command, such as a
   render, holds the UI until it is done. `gnubase.on` handlers get the engine's events in each step of the shell; a
   handler that fails is logged.
