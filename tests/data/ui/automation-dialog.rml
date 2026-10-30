@@ -1,0 +1,18 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The rename dialog that automation.rml's button opens. -->
+<rml>
+<head>
+	<title>Rename track</title>
+	<style>
+		body { display: block; position: absolute; left: 100dp; top: 60dp; width: 300dp; height: 140dp; margin: 0; font-family: Inter; font-size: 14dp; }
+		div, p { display: block; }
+		#name { display: block; width: 200dp; height: 20dp; }
+		button { display: inline-block; width: 80dp; height: 24dp; }
+	</style>
+</head>
+<body id="rename">
+	<p id="message">Enter a new name for Audio 01.</p>
+	<input type="text" id="name" value="Audio 01"/>
+	<div><button id="ok">OK</button><button id="cancel">Cancel</button></div>
+</body>
+</rml>

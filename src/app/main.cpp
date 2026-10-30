@@ -53,7 +53,7 @@ namespace
 				return app::runHeadless(options, std::cin, std::cout, std::cerr);
 			}
 
-			return app::runWindowed(options, std::cerr);
+			return app::runWindowed(options, std::cout, std::cerr);
 		}
 		catch (const app::UsageError& error)
 		{

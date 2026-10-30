@@ -6,6 +6,7 @@
 #include "elements.h"
 #include "testutils/goldenimage.h"
 #include "testutils/testutils.h"
+#include "ui/automation.h"
 #include "ui/fonts.h"
 #include "ui/gpurenderer.h"
 #include "ui/pseudolocale.h"
@@ -553,6 +554,28 @@ TEST_CASE("mouse input reaches the document of the window it happened in", "[ui]
 	gpu.shell->step(milliseconds(0));
 	CHECK(window.frames() == frames + 1);
 	CHECK(near(at(gpu.screenshot(window, "hover-after"), window.dpRatio(), 60.0F, 45.0F), g_green));
+}
+
+TEST_CASE("UI automation takes screenshots of single elements and hovers over them", "[ui]")
+{
+	Gpu gpu;
+	const ui::Window& window = gpu.open("boxes.rml");
+	gpu.shell->step(milliseconds(0));
+	ui::Automation automation(*gpu.shell);
+	const ui::Target box{"#box", 0, std::nullopt};
+
+	// The box is 100 by 50 dp; its screenshot has just its pixels.
+	const ui::Image red = automation.screenshot(window.id(), box);
+	CHECK(red.width == static_cast<int>(std::lround(100.0F * window.dpRatio())));
+	CHECK(red.height == static_cast<int>(std::lround(50.0F * window.dpRatio())));
+	CHECK(near(red.pixel(red.width / 2, red.height / 2), g_red));
+	CHECK(near(red.pixel(2, 2), g_red));
+	CHECK(near(red.pixel(red.width - 3, red.height - 3), g_red));
+
+	CHECK(automation.move(window.id(), box).at("element").at("id") == "box");
+	gpu.shell->step(milliseconds(0));
+	const ui::Image green = automation.screenshot(window.id(), box);
+	CHECK(near(green.pixel(green.width / 2, green.height / 2), g_green));
 }
 
 TEST_CASE("closing the main window or a quit request ends the shell", "[ui]")
