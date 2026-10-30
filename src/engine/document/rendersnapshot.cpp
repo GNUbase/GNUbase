@@ -26,6 +26,7 @@ namespace gnubase::engine
 			const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate);
 			const time::Position endPosition{part.position.base, part.position.value + part.length};
 			const time::Ticks end = time::toTicks(endPosition, project.tempo, project.sampleRate);
+			const auto index = static_cast<uint32_t>(channel.midiParts.size());
 			channel.midiParts.push_back({toSamples(project, start), toSamples(project, end)});
 			for (const auto& [id, note] : part.notes)
 			{
@@ -38,7 +39,7 @@ namespace gnubase::engine
 			for (const auto& [id, controller] : part.controllers)
 				if (controller.position < end - start)
 					channel.controllers.push_back({toSamples(project, start + controller.position), controller.type,
-						controller.number, controller.value, controller.channel, controller.data});
+						controller.number, controller.value, controller.channel, controller.data, index});
 		}
 	}
 
@@ -157,8 +158,6 @@ namespace gnubase::engine
 				{ return std::tie(a.start, a.pitch) < std::tie(b.start, b.pitch); });
 			std::stable_sort(channel.controllers.begin(), channel.controllers.end(),
 				[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
-			std::stable_sort(channel.midiParts.begin(), channel.midiParts.end(),
-				[](const RenderPart& a, const RenderPart& b) { return a.start < b.start; });
 		}
 		return snapshot;
 	}

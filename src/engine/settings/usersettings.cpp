@@ -61,23 +61,23 @@ namespace gnubase::engine::settings
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
 				{"midi.chaseBeyondParts",
-					"Chases controller events from the whole track, not just from the MIDI part under the position. "
-					"Off makes locating in tracks with many controller events faster.",
+					"Chases controller events from the whole track. Off, only those of the MIDI parts under the "
+					"position are chased.",
 					Json{{"type", "boolean"}}, true},
 				{"midi.chaseControllers",
 					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each control "
-					"change's last value before that position.",
+					"change's last value up to that position.",
 					Json{{"type", "boolean"}}, true},
 				{"midi.chaseNotes",
 					"Where playback starts or jumps, MIDI tracks start the notes that sound at that position.",
 					Json{{"type", "boolean"}}, true},
 				{"midi.chasePitchBend",
 					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "
-					"channel's last pitch bend before that position.",
+					"channel's last pitch bend up to that position.",
 					Json{{"type", "boolean"}}, true},
 				{"midi.chasePrograms",
 					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "
-					"channel's last program change before that position.",
+					"channel's last program change up to that position.",
 					Json{{"type", "boolean"}}, true},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},

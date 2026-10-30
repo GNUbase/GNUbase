@@ -78,6 +78,7 @@ namespace gnubase::engine
 		uint32_t value = 0;
 		uint8_t channel = 0;
 		std::vector<uint8_t> data; // SysEx
+		uint32_t part = 0;         // its MIDI part, in RenderChannel::midiParts
 	};
 
 	struct RenderPart
@@ -132,7 +133,7 @@ namespace gnubase::engine
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
 		std::vector<RenderNote> notes;                // sorted by start, then pitch
 		std::vector<RenderController> controllers;    // sorted by position
-		std::vector<RenderPart> midiParts;            // sorted by start
+		std::vector<RenderPart> midiParts;            // in the order of the parts' ids
 		std::vector<RenderAutomationLane> automation; // in the order of the lanes' ids
 	};
 

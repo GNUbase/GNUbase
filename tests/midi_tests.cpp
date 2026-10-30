@@ -706,8 +706,10 @@ TEST_CASE("only the chosen event types are chased", "[unit]")
 
 TEST_CASE("chasing limited to parts takes only the part under the position", "[unit]")
 {
-	const std::vector<RenderController> controllers = {
+	std::vector<RenderController> controllers = {
 		control(10, 7, 1), control(50, 1, 3), controller(110, ControllerType::Program, 4, 0), control(150, 7, 2)};
+	controllers[2].part = 1;
+	controllers[3].part = 1;
 	const std::vector<RenderPart> parts = {{0, 100}, {100, 200}, {300, 400}};
 	MidiChase chase = chaseAll();
 	chase.beyondParts = false;
@@ -731,6 +733,21 @@ TEST_CASE("chasing limited to parts takes only the part under the position", "[u
 	CHECK(beyond.heard == all);
 }
 
+TEST_CASE("chasing limited to parts takes each part's own events, also where parts overlap", "[unit]")
+{
+	// Part 1 lies within part 0 and has ended at 500, so its CC 7 isn't chased there; at 160 both parts are.
+	std::vector<RenderController> controllers = {control(10, 7, 1), control(150, 7, 2)};
+	controllers[1].part = 1;
+	MidiChase chase = chaseAll();
+	chase.beyondParts = false;
+	Player player(chasing(chase, {}, controllers, {{0, 1000}, {100, 200}}), 16);
+	player.locate(500);
+	player.play(16);
+	player.locate(160);
+	player.play(16);
+	CHECK(player.heard == std::vector<Heard>{{0, Type::Controller, 0, 7, 1, {}}, {16, Type::Controller, 0, 7, 2, {}}});
+}
+
 TEST_CASE("a locate while stopped chases the controllers but no notes", "[unit]")
 {
 	Player player(chasing(chaseAll(), {note(0, 500, 60)}, {control(10, 7, 1), control(100, 7, 2)}), 16);
@@ -741,9 +758,21 @@ TEST_CASE("a locate while stopped chases the controllers but no notes", "[unit]"
 	player.play(16); // frame 48: starting playback chases again, with the notes
 	player.stop();
 	player.stop(); // where playback stopped: nothing
-	const std::vector<Heard> expected = {
-		{16, Type::Controller, 0, 7, 2, {}}, {48, Type::Controller, 0, 7, 2, {}}, on(48, 60), off(64, 60)};
+	player.locate(100);
+	player.stop(); // frame 96: at an event, that event too
+	const std::vector<Heard> expected = {{16, Type::Controller, 0, 7, 2, {}}, {48, Type::Controller, 0, 7, 2, {}},
+		on(48, 60), off(64, 60), {96, Type::Controller, 0, 7, 2, {}}};
 	CHECK(player.heard == expected);
+}
+
+TEST_CASE("a new sequencer chases the controllers where the stopped transport stands", "[unit]")
+{
+	// As in a project just loaded, with the cursor at a part's first program change.
+	Player player(
+		chasing(chaseAll(), {note(0, 500, 60)}, {controller(0, ControllerType::Program, 5, 0), control(20, 7, 1)}), 16);
+	player.stop();
+	player.stop(); // the same position: nothing more
+	CHECK(player.heard == std::vector<Heard>{{0, Type::Program, 0, 5, 0, {}}});
 }
 
 TEST_CASE("cycle playback chases at every jump to the left locator", "[unit]")
@@ -793,6 +822,37 @@ TEST_CASE("an instrument chases its MIDI tracks' controller events with its own,
 	player.locate(100);
 	player.play(16);
 	CHECK(player.heard == std::vector<Heard>{{0, Type::Controller, 0, 1, 2, {}}, {0, Type::Controller, 0, 7, 30, {}}});
+}
+
+TEST_CASE(
+	"an instrument doesn't chase a kind that a MIDI track routed to it has an event of where playback lands", "[unit]")
+{
+	// The MIDI track's CC 7 at 100 reaches the instrument before the instrument's own events at that offset, so a
+	// chased CC 7 from 50 would override it. CC 1 has no event at 100 and is chased.
+	const std::vector<RenderController> routed = {control(50, 7, 100), control(60, 1, 9), control(100, 7, 50)};
+	auto track = std::make_shared<MidiSequencer>();
+	auto trackSequence = std::make_unique<MidiSequence>();
+	trackSequence->controllers = routed;
+	track->setSequence(std::move(trackSequence));
+	track->setChase(chaseAll());
+	auto sequence = std::make_unique<MidiSequence>();
+	sequence->chase.push_back(makeChaseTrack({}, {}));
+	sequence->chase.push_back(makeChaseTrack(routed, {}));
+	auto instrument = std::make_shared<MidiSequencer>();
+	instrument->setSequence(std::move(sequence));
+	instrument->setChase(chaseAll());
+
+	auto recorder = std::make_shared<Recorder>();
+	graph::GraphDesc desc;
+	desc.nodes.push_back({graph::NodeKind::Channel, 0, ChannelFormat::None, track});
+	desc.nodes.push_back({graph::NodeKind::Channel, 0, ChannelFormat::Stereo,
+		std::make_shared<InstrumentChannel>(instrument, recorder)});
+	desc.events = {{0, 1}};
+	const graph::CompiledGraph compiled(desc, 48000.0, 16);
+	const graph::TransportSegment segment{0, 16, 100};
+	compiled.process(16, {true, 100, &segment, 1});
+	CHECK(
+		recorder->heard == std::vector<Heard>{{0, Type::Controller, 0, 7, 50, {}}, {0, Type::Controller, 0, 1, 9, {}}});
 }
 
 TEST_CASE("a chase that doesn't fit into the event buffer goes on in the next blocks, each event once", "[unit]")
