@@ -103,6 +103,8 @@ namespace gnubase::ui
 		}
 		window->m_dpRatio = m_windows.scale(window->m_id) * m_uiScale;
 		window->m_context->SetDensityIndependentPixelRatio(window->m_dpRatio);
+		if (!m_theme.empty())
+			window->m_context->ActivateTheme(m_theme, true);
 		m_windows.setInputTarget(window->m_id, window->m_context);
 		m_running = true;
 
@@ -148,6 +150,31 @@ namespace gnubase::ui
 			refresh(*window);
 	}
 
+	void Shell::setTheme(const std::string& name)
+	{
+		if (name == m_theme)
+			return;
+		for (auto& [id, window] : m_open)
+		{
+			if (!m_theme.empty())
+				window->m_context->ActivateTheme(m_theme, false);
+			if (!name.empty())
+				window->m_context->ActivateTheme(name, true);
+			window->m_renderRequested = true;
+		}
+		m_theme = name;
+		logging::info("Theme {}", name.empty() ? "none" : name);
+	}
+
+	void Shell::post(std::function<void()> task)
+	{
+		{
+			const std::scoped_lock lock(m_postedMutex);
+			m_posted.push_back(std::move(task));
+		}
+		m_windows.wake();
+	}
+
 	void Shell::quit()
 	{
 		// The main window last, since it was opened first.
@@ -181,6 +208,9 @@ namespace gnubase::ui
 		case WindowEventKind::Quit:
 			quit();
 			return;
+		case WindowEventKind::Wake:
+			return; // step runs the posted work
+
 		case WindowEventKind::FileDialogClosed:
 		{
 			const auto it = m_dialogs.find(event.dialog);
@@ -266,6 +296,14 @@ namespace gnubase::ui
 			handle(*event);
 			event = m_windows.nextEvent(std::chrono::milliseconds(0));
 		}
+
+		std::vector<std::function<void()>> posted;
+		{
+			const std::scoped_lock lock(m_postedMutex);
+			posted.swap(m_posted);
+		}
+		for (const std::function<void()>& task : posted)
+			task();
 
 		Clock::time_point now = Clock::now();
 		for (size_t i = 0; i < m_tasks.size() && m_running; ++i) // a task may add tasks

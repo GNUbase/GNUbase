@@ -35,8 +35,12 @@ add_library(gnubase-ui STATIC
 	sdlwindowsystem.h
 	shell.cpp
 	shell.h
+	themes.cpp
+	themes.h
 	ui.cpp
 	ui.h
+	uisettings.cpp
+	uisettings.h
 	windowsystem.h)
 target_link_libraries(gnubase-ui
 	PUBLIC gnubase-engine RmlUi::RmlUi

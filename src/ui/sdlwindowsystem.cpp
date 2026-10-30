@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/sdlwindowsystem.h"
 
+#include "platform/log.h"
+
 #include <RmlUi/Core/TextInputContext.h>
 #include <RmlUi_Platform_SDL.h>
 #include <SDL3/SDL.h>
@@ -192,8 +194,8 @@ namespace gnubase::ui
 	{
 		if (!SDL_InitSubSystem(SDL_INIT_VIDEO))
 			throw sdlError("SDL cannot start its video subsystem");
-		m_dialogEvent = SDL_RegisterEvents(2);
-		m_wakeEvent = m_dialogEvent != 0 ? m_dialogEvent + 1 : 0;
+		m_dialogEvent = SDL_RegisterEvents(1);
+		m_wakeEvent = SDL_RegisterEvents(1);
 	}
 
 	SdlWindowSystem::~SdlWindowSystem()
@@ -382,21 +384,17 @@ namespace gnubase::ui
 
 	void SdlWindowSystem::wake()
 	{
-		if (m_wakeEvent == 0 || m_woken.exchange(true))
-			return;
+		// SDL's event queue takes events from any thread.
 		SDL_Event event{};
 		event.type = m_wakeEvent;
-		if (!SDL_PushEvent(&event))
-			m_woken = false;
+		if (m_wakeEvent == 0 || !SDL_PushEvent(&event))
+			logging::warning("Cannot wake the UI thread: {}", SDL_GetError());
 	}
 
 	std::optional<WindowEvent> SdlWindowSystem::translate(SDL_Event& event)
 	{
 		if (event.type == m_wakeEvent && m_wakeEvent != 0)
-		{
-			m_woken = false; // before the shell looks at what woke it, so a later wake pushes again
-			return WindowEvent{WindowEventKind::Woken};
-		}
+			return WindowEvent{WindowEventKind::Wake};
 		if (event.type == m_dialogEvent)
 		{
 			const std::unique_ptr<DialogResult> result(static_cast<DialogResult*>(event.user.data1));

@@ -54,6 +54,7 @@ namespace
 	constexpr uint32_t g_stateSize = 2; // test:stateblob, bytes
 	constexpr uint32_t g_stall = 1;     // test:stall, ms
 	constexpr uint32_t g_value = 2;     // test:stall
+	constexpr uint32_t g_rescan = 4;    // test:stall
 	constexpr uint32_t g_resets = 3;    // test:stall
 
 	plugins::HostManager::Options testOptions()
@@ -773,6 +774,41 @@ TEST_CASE("parameter changes while a plugin moves reach its new instance", "[int
 	CHECK(!graph.slot().failed());
 }
 
+TEST_CASE("the engine's parameter values stay the latest over many moves", "[integration][slow]")
+{
+	// The new instance's first block can run before the move takes over the new instance's info: its values must not
+	// replace the newer ones the engine sent meanwhile. The window is short, so it takes many moves to hit it.
+	plugins::HostManager manager(testOptions());
+	SlotGraph graph(createRemote(manager));
+	Noise noise;
+	const std::vector<float> input = noise.block(16);
+	graph.render(input);
+
+	double last = 0.0;
+	int changes = 0;
+	for (int move = 0; move < 100; ++move)
+	{
+		std::future<std::vector<std::string>> moved =
+			manager.setMode(move % 2 == 0 ? plugins::HostingMode::PerInstance : plugins::HostingMode::Shared);
+		while (moved.wait_for(0s) != std::future_status::ready)
+		{
+			last = -40.0 + static_cast<double>(changes++ % 50);
+			graph.render(input, {parameter(0, g_gain, last)});
+		}
+		REQUIRE(moved.get().empty());
+		INFO("move " << move);
+		REQUIRE(valueOf(graph.slot().plugin(), g_gain) == last);
+	}
+	CHECK(changes > 0);
+
+	// The plugin has the last value too.
+	LocalHost host;
+	SlotGraph reference(localPlugin("test:gain", host));
+	reference.render(input, {parameter(0, g_gain, last)});
+	CHECK(graph.render(input) == reference.render(input));
+	CHECK(!graph.slot().failed());
+}
+
 TEST_CASE("a remote plugin's requests and changes reach the engine", "[integration]")
 {
 	plugins::HostManager manager(testOptions());
@@ -982,6 +1018,46 @@ TEST_CASE("a block its host can't take yet passes its parameter changes on, and 
 	CHECK(plugin.failure() == plugin::remote::Failure::None);
 	CHECK(savedValue(plugin, "test:stall", g_value) == 0.75);
 	CHECK(savedValue(plugin, "test:stall", g_resets) > resets);
+}
+
+TEST_CASE("a values rescan keeps the parameter changes of a block its host can't take yet", "[integration]")
+{
+	plugins::HostManager::Options options = testOptions();
+	options.deadlines.realtimeMinimum = 20ms;
+	options.deadlines.realtimeMaximum = 20ms;
+	options.deadlines.hang = 10s;
+	plugins::HostManager manager(options);
+	EngineHost engineHost;
+	std::unique_ptr<plugin::remote::RemotePlugin> remote =
+		manager.load({"test:stall", "", "GNUbase"}, &engineHost).get();
+	REQUIRE(remote);
+	plugin::remote::RemotePlugin& plugin = *remote;
+	SlotGraph stalling(std::move(remote), plugin::ProcessMode::Realtime);
+	LocalHost host;
+	SlotGraph reference(localPlugin("test:stall", host), plugin::ProcessMode::Realtime);
+	Noise noise;
+	const std::vector<float> input = noise.block(128);
+	REQUIRE(stalling.render(input, {parameter(0, g_rescan, 1.0)}) == reference.render(input));
+
+	// The plugin takes 300 ms, then asks for a values rescan: that block and the next are late, and the one after,
+	// with the new value, doesn't fit. The rescan comes while that value waits for the next block, and the plugin
+	// still reports the old one.
+	CHECK(silent(stalling.render(input, {parameter(0, g_stall, 300.0)})));
+	CHECK(silent(stalling.render(input)));
+	CHECK(silent(stalling.render(input, {parameter(0, g_value, 0.75)})));
+	CHECK(eventually([&] { return engineHost.valueRescans == 1; }));
+	CHECK(valueOf(plugin, g_value) == 0.75);
+
+	// The next block takes it to the plugin.
+	CHECK(eventually(
+		[&]
+		{
+			std::this_thread::sleep_for(5ms);
+			return stalling.render(input) == reference.render(input);
+		}));
+	CHECK(plugin.failure() == plugin::remote::Failure::None);
+	CHECK(valueOf(plugin, g_value) == 0.75);
+	CHECK(savedValue(plugin, "test:stall", g_value) == 0.75);
 }
 
 TEST_CASE("late blocks before a pause or a new start don't count towards the hang timeout", "[integration]")

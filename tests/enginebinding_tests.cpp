@@ -102,6 +102,15 @@ TEST_CASE("command results reach the UI thread when the binding updates, after w
 	CHECK(version.value.at("version") == engine::version());
 	CHECK(answeredOn == std::this_thread::get_id());
 
+	// Messages that arrive before the next update wake the UI once.
+	engine::Client other(engine);
+	REQUIRE(other.call("transport.locate", {{"position", 1}}).ok()); // its event reaches the binding first
+	REQUIRE(other.call("transport.locate", {{"position", 2}}).ok());
+	CHECK(wakes == 2);
+	binding.update();
+	REQUIRE(other.call("transport.locate", {{"position", 3}}).ok());
+	CHECK(wakes == 3);
+
 	// A failure reaches its handler too; one without a handler is only logged.
 	std::optional<engine::Result> failure;
 	binding.send("test.unknown", Json::object(), [&failure](const engine::Result& result) { failure = result; });

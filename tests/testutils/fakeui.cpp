@@ -115,13 +115,16 @@ namespace gnubase::test
 	void FakeWindowSystem::wake()
 	{
 		++m_wakes;
-		m_woken = true;
+		++m_pendingWakes;
 	}
 
 	std::optional<ui::WindowEvent> FakeWindowSystem::nextEvent(std::optional<std::chrono::milliseconds> /*timeout*/)
 	{
-		if (m_events.empty() && m_woken.exchange(false))
-			return ui::WindowEvent{ui::WindowEventKind::Woken};
+		if (m_pendingWakes > 0)
+		{
+			--m_pendingWakes;
+			return ui::WindowEvent{ui::WindowEventKind::Wake};
+		}
 		if (m_events.empty())
 			return std::nullopt; // nothing else will happen, so don't wait
 		ui::WindowEvent event = std::move(m_events.front());
@@ -159,8 +162,9 @@ namespace gnubase::test
 	}
 
 	Rml::CompiledGeometryHandle NullRenderer::CompileGeometry(
-		Rml::Span<const Rml::Vertex> /*vertices*/, Rml::Span<const int> /*indices*/)
+		Rml::Span<const Rml::Vertex> vertices, Rml::Span<const int> /*indices*/)
 	{
+		m_geometry.emplace_back(vertices.begin(), vertices.end());
 		return m_nextGeometry++;
 	}
 }

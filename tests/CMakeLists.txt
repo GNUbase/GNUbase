@@ -62,6 +62,7 @@ add_executable(gnubase-tests
 	settings_tests.cpp
 	shell_tests.cpp
 	streaming_tests.cpp
+	stylerules_tests.cpp
 	svg_tests.cpp
 	testing_tests.cpp
 	testutils_tests.cpp
@@ -69,6 +70,8 @@ add_executable(gnubase-tests
 	time_tests.cpp
 	timestretch_tests.cpp
 	transport_tests.cpp
+	uisettings_tests.cpp
+	uithemes_tests.cpp
 	window_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE
 	Catch2::Catch2WithMain

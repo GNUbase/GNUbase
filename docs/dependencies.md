@@ -9,7 +9,7 @@ SDL and RmlUi are forked to the GNUbase account so we can carry our own changes.
 | Submodule | Fork | Upstream | Branch | Pinned at |
 |---|---|---|---|---|
 | `ext/SDL` | [GNUbase/SDL](https://github.com/GNUbase/SDL) | [libsdl-org/SDL](https://github.com/libsdl-org/SDL) | `gnubase` | `release-3.4.18` |
-| `ext/RmlUi` | [GNUbase/RmlUi](https://github.com/GNUbase/RmlUi) | [mikke89/RmlUi](https://github.com/mikke89/RmlUi) | `gnubase` | `6.3`, plus upstream's fix for vector indexing (e74ad4ed), which GCC's optimizer broke transforms without, the effects in the SDL_GPU renderer ([render-backend.md](render-backend.md#effects-in-sdl_gpu-285)), and `currentColor` drawn white in the SVG plugin ([features/svg.md](features/svg.md)) |
+| `ext/RmlUi` | [GNUbase/RmlUi](https://github.com/GNUbase/RmlUi) | [mikke89/RmlUi](https://github.com/mikke89/RmlUi) | `gnubase` | `6.3`, plus upstream's fix for vector indexing (e74ad4ed), which GCC's optimizer broke transforms without, the effects in the SDL_GPU renderer ([render-backend.md](render-backend.md#effects-in-sdl_gpu-285)), `currentColor` drawn white in the SVG plugin ([features/svg.md](features/svg.md)), and the SVG plugin's 9-slice decorator with file names relative to the style sheet ([features/themes.md](features/themes.md)) |
 
 Rules:
 - GNUbase changes are commits on the fork's `gnubase` branch: small, focused and written so they could be sent upstream.

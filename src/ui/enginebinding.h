@@ -3,6 +3,7 @@
 
 #include "engine/engine.h"
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -42,8 +43,9 @@ namespace gnubase::ui
 	class EngineBinding
 	{
 	public:
-		// woken is called on the engine's thread whenever a result or an event waits for update(), e.g. Shell::wake.
-		// It must be quick, must not block and must not call the engine or the binding.
+		// woken is called on the engine's thread when results or events start to wait for update(), once until
+		// update() runs, e.g. Shell::wake. It must be quick, must not block and must not call the engine or the
+		// binding.
 		explicit EngineBinding(engine::Engine& engine, std::function<void()> woken = {});
 
 		// Sends a command. done runs in update() with its result; without done, a failure is logged.
@@ -95,6 +97,7 @@ namespace gnubase::ui
 		void answer(const engine::Result& result);
 		void dispatch(const engine::Event& event);
 
+		std::atomic<bool> m_woken{false}; // woken was called and update() hasn't run since
 		engine::Client m_client;
 		std::map<engine::RequestId, Waiting> m_waiting; // commands sent, until their results arrive
 		std::map<uint64_t, Handler> m_handlers;

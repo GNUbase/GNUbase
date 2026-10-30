@@ -207,6 +207,7 @@ namespace gnubase::testplugins
 			const clap_plugin_t* plugin() const { return &m_plugin; }
 
 			void requestRestart() override { m_host->request_restart(m_host); }
+			void requestValuesRescan() override {} // only test:stall asks, which only the test format has
 
 		private:
 			static ClapPlugin* self(const clap_plugin_t* plugin)

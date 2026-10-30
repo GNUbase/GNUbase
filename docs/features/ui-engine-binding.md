@@ -14,11 +14,11 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   change made through MCP, Lua or another window reaches the UI the same way as the UI's own. The returned
   `Subscription` ends the handler when it goes, so a view that closes stops listening; subscriptions must not outlive
   the binding. A handler may end its own subscription or others.
-- **Waking the UI.** The UI thread sleeps until something happens (docs/architecture.md, "UI shell"). The binding's
-  client calls `Shell::wake` on the engine's thread whenever it queues a result or an event: the window system pushes
-  one wake-up event (SDL's own event queue, so the UI thread wakes from its wait), and more calls before the UI took
-  it push no more. In each step the shell calls `EngineBinding::update` (`Shell::eachStep`), which hands everything
-  that arrived to its handlers, in the order the engine sent it.
+- **Waking the UI.** The UI thread sleeps until something happens (docs/architecture.md, "UI shell"). When the
+  binding's client queues a result or an event, the engine's thread calls `Shell::wake`, which pushes a wake-up event
+  into SDL's event queue; more messages before the next update don't wake it again, so a burst of events can't fill
+  SDL's queue. In each step the shell calls `EngineBinding::update` (`Shell::eachStep`), which hands everything that
+  arrived to its handlers, in the order the engine sent it.
 - **Frame rate.** Views update data models in their handlers; the window draws once in the step, after all of them,
   and drawing waits for vsync. However many events arrive between two frames, the UI lays out and draws once.
 - **High-rate values.** Meters and the playback position change faster than the UI draws, and they never become
@@ -27,15 +27,14 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   While the binding watches values, the shell steps at least once a frame (`ui::g_framePeriod`, 16 ms) even without
   events; without watches it sleeps. `Engine::playbackPosition` reads the project cursor without a command and
   without waiting; the meters follow with #111. MCP and Lua get the same values through queries (`transport.get`).
-- **What the app follows.** The user setting `ui.scale`: changing it through MCP, Lua or settings in the UI rescales
-  every window at once (`settings.changed`).
 - **Command log.** `engine.commandLog` returns the last 256 commands that ran, oldest first, without queries: each
   with its request id, the client that sent it (`ui`, `mcp`, `lua`, `app` for the command line, `engine` for the
   engine's own commands such as a driver's reset), the command, its parameters, and the error if it failed. An MCP
   client or a Lua test sees there what a click in the UI did; events name the same request id.
 - **Checks.** `tests/enginebinding_tests.cpp`: results and events reach the UI thread only in `update`, after the
-  binding woke it; subscriptions end with their objects, also from inside a handler; watched values arrive once an
-  update, only when they changed. The last test changes the transport through MCP and checks a document shows it,
-  then clicks the document's button and finds the command in `engine.commandLog`, sent by `ui`.
+  binding woke it, once for any number of messages; subscriptions end with their objects, also from inside a handler;
+  watched values arrive once an update, only when they changed. The last test changes the transport through MCP and
+  checks a document shows it, then clicks the document's button and finds the command in `engine.commandLog`, sent by
+  `ui`.
   `tests/engine_tests.cpp` checks the command log and the clients' wake-up, `tests/shell_tests.cpp` the step tasks
-  and the frame rate, and `tests/window_tests.cpp` that waking SDL from another thread ends the shell's wait.
+  and the frame rate.

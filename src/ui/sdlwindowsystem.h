@@ -3,7 +3,6 @@
 
 #include "ui/windowsystem.h"
 
-#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -63,8 +62,7 @@ namespace gnubase::ui
 		std::map<WindowId, Rml::Context*> m_inputTargets;
 		std::map<WindowId, std::unique_ptr<SdlTextInput>> m_textInputs;
 		std::map<WindowId, Drop> m_drops;
-		uint32_t m_dialogEvent = 0;       // the SDL event type that brings file dialog results to the main thread
-		uint32_t m_wakeEvent = 0;         // the SDL event type that wake pushes
-		std::atomic<bool> m_woken{false}; // a wake event is queued, so more calls needn't push another
+		uint32_t m_dialogEvent = 0; // the SDL event type that brings file dialog results to the main thread
+		uint32_t m_wakeEvent = 0;   // the SDL event type that wake pushes
 	};
 }

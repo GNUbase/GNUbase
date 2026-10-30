@@ -37,7 +37,12 @@ namespace gnubase::ui
 	}
 
 	EngineBinding::EngineBinding(engine::Engine& engine, std::function<void()> woken)
-		: m_client(engine, "ui", std::move(woken))
+		: m_client(engine, "ui",
+			  [this, woken = std::move(woken)]
+			  {
+				  if (woken && !m_woken.exchange(true))
+					  woken();
+			  })
 	{
 	}
 
@@ -71,6 +76,7 @@ namespace gnubase::ui
 
 	bool EngineBinding::update()
 	{
+		m_woken = false; // before taking the messages, so one that arrives meanwhile wakes the UI again
 		while (std::optional<engine::Message> message = m_client.poll())
 		{
 			if (const auto* result = std::get_if<engine::Result>(&*message))

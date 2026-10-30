@@ -12,6 +12,7 @@
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
+#include "ui/themes.h"
 
 #include <RmlUi/Core/Box.h>
 #include <RmlUi/Core/Context.h>
@@ -27,6 +28,7 @@
 #include <link.h>
 #endif
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -335,6 +337,87 @@ TEST_CASE("icons are sharp at 100 %, 150 % and 200 % UI scale, in the colors ima
 	}
 }
 
+TEST_CASE("every theme looks the same on every platform, and switches without loading documents again", "[ui]")
+{
+	Gpu gpu;
+	loadFonts();
+	const ui::Themes themes(std::filesystem::path(GNUBASE_RESOURCES_DIR));
+	gpu.shell->setTheme(ui::g_defaultTheme);
+	// Small enough for SDL's offscreen display (1024 x 768) and CI's macOS screen, which shrinks taller windows.
+	const ui::Window& window = gpu.open("widgets.rml", 1024, 640);
+	Rml::ElementDocument* document = window.context().GetDocument(0);
+	REQUIRE(document != nullptr);
+	// The states the mouse and the keyboard would cause. The text field shows its focus without a blinking caret.
+	for (const char* id : {"hovered", "list-hovered", "menu-hovered"})
+	{
+		Rml::Element* element = document->GetElementById(id);
+		REQUIRE(element != nullptr);
+		element->SetPseudoClass("hover", true);
+	}
+	Rml::Element* focused = document->GetElementById("focused");
+	REQUIRE(focused != nullptr);
+	focused->SetPseudoClass("focus", true);
+
+	const float monitorScale = window.dpRatio() / gpu.shell->uiScale();
+	gpu.shell->setUiScale(1.0F / monitorScale);
+	// The page, 560 x 360 dp, or as much of it as the window shows.
+	const auto compare = [&](const std::string& name, int ratio)
+	{
+		const ui::Image image =
+			crop(gpu.screenshot(window, name), 0, 0, std::min(560 * ratio, 1024), std::min(360 * ratio, 640));
+		const test::ImageDiff diff = test::compareWithGolden("ui/" + name, image, {8, image.pixels.size() / 4 / 500});
+		INFO(diff.report);
+		CHECK(diff.equal);
+		return image;
+	};
+	std::optional<ui::Image> first;
+	for (const std::string theme : {"gnubase", "dark", "light"})
+	{
+		INFO("theme " << theme);
+		gpu.shell->setTheme(theme);
+		CHECK(window.context().GetDocument(0) == document);
+		const ui::Image image = compare("theme-" + theme, 1);
+		if (!first)
+			first = image;
+	}
+
+	// Back to the first theme: the same pixels as before.
+	gpu.shell->setTheme("gnubase");
+	const ui::Image again = crop(gpu.screenshot(window, "theme-gnubase-again"), 0, 0, 560, 360);
+	const test::ImageDiff same = test::compareImages(again, first.value_or(ui::Image{}), {0});
+	INFO(same.report);
+	CHECK(same.equal);
+
+	// At dp ratio 2 the skins are rasterized at twice their size; their corners stay sharp. The window shows 512 x 320
+	// dp of the page.
+	gpu.shell->setUiScale(2.0F / monitorScale);
+	compare("theme-gnubase-2x", 2);
+}
+
+TEST_CASE("another thread wakes SDL's event loop while it waits", "[ui]")
+{
+#ifdef __linux__
+	SDL_SetHintWithPriority(SDL_HINT_VIDEO_DRIVER, "offscreen", SDL_HINT_DEFAULT); // SDL_VIDEO_DRIVER wins
+#endif
+	ui::SdlWindowSystem windows;
+	const auto started = std::chrono::steady_clock::now();
+	std::thread engine(
+		[&]
+		{
+			std::this_thread::sleep_for(milliseconds(50));
+			windows.wake();
+		});
+	// Events from earlier tests may come first.
+	std::optional<ui::WindowEvent> event;
+	do
+		event = windows.nextEvent(std::chrono::seconds(10));
+	while (event && event->kind != ui::WindowEventKind::Wake);
+	engine.join();
+	REQUIRE(event.has_value());
+	CHECK(event.value_or(ui::WindowEvent{ui::WindowEventKind::Quit}).kind == ui::WindowEventKind::Wake);
+	CHECK(std::chrono::steady_clock::now() - started < std::chrono::seconds(5));
+}
+
 TEST_CASE("effects at a window's edges draw as in a context of the window's size", "[ui]")
 {
 	// A context can be larger than the frame it draws, e.g. for a frame while its window shrinks. A box shadow wider
@@ -595,26 +678,6 @@ TEST_CASE("text fields copy to and paste from SDL's clipboard", "[ui]")
 
 	SDL_SetClipboardText(saved);
 	SDL_free(saved);
-}
-
-TEST_CASE("waking the shell from another thread ends its wait for events", "[ui]")
-{
-	Gpu gpu;
-	gpu.open("boxes.rml");
-	gpu.shell->step(milliseconds(0));
-	const auto start = std::chrono::steady_clock::now();
-	std::thread waker(
-		[&gpu]
-		{
-			std::this_thread::sleep_for(milliseconds(50));
-			gpu.shell->wake();
-		});
-	std::optional<ui::WindowEvent> event = gpu.windows->nextEvent(std::chrono::seconds(10));
-	while (event && event->kind != ui::WindowEventKind::Woken) // e.g. the window being shown
-		event = gpu.windows->nextEvent(std::chrono::seconds(10));
-	waker.join();
-	CHECK(event.has_value());
-	CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(5));
 }
 
 TEST_CASE("a file dialog's answer reaches its caller on the UI thread", "[ui]")
