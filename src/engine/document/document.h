@@ -91,6 +91,9 @@ namespace gnubase::engine
 		// the members above with default values.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::map<uint32_t, double> instrumentParameters = {};
+		// Audio tracks: the monitor and record enable buttons (docs/features/latency-and-monitoring.md).
+		bool monitor = false;
+		bool recordEnable = false;
 	};
 
 	// The fader's range: its bottom is silence, its top the project's maximum volume, at most this.
@@ -414,9 +417,10 @@ namespace gnubase::engine
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
-				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters) ==
+				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor,
+				   a.recordEnable) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
-				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters);
+				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable);
 	}
 
 	inline bool operator==(const MediaFile& a, const MediaFile& b)

@@ -229,14 +229,15 @@ namespace
 	}
 
 	// A project whose output depends on routing: the input through an audio track and a group to the output, and a
-	// second audio track straight to the output.
+	// second audio track straight to the output, both monitoring it.
 	void buildProject(Client& client)
 	{
 		const Json group = run(client, "track.add", {{"type", "group"}});
 		const Json first = run(client, "track.add", {{"type", "audio"}});
-		run(client, "track.add", {{"type", "audio"}});
+		const Json second = run(client, "track.add", {{"type", "audio"}});
 		run(client, "channel.set",
-			{{"channel", first.at("channel").at("id")}, {"output", group.at("channel").at("id")}});
+			{{"channel", first.at("channel").at("id")}, {"output", group.at("channel").at("id")}, {"monitor", true}});
+		run(client, "channel.set", {{"channel", second.at("channel").at("id")}, {"monitor", true}});
 	}
 }
 
@@ -363,7 +364,8 @@ TEST_CASE("busses take consecutive device channels, and channels no bus reaches 
 {
 	Engine engine;
 	Client client(engine);
-	run(client, "track.add", {{"type", "audio"}});
+	const Json track = run(client, "track.add", {{"type", "audio"}});
+	run(client, "channel.set", {{"channel", track.at("channel").at("id")}, {"monitor", true}});
 	run(client, "audio.setDevice",
 		{{"blockSize", 64}, {"inputChannels", 1}, {"outputChannels", 4}, {"captureSeconds", 0.01},
 			{"input", {{"processor", "impulse"}, {"parameters", {{"Interval", 0.001}}}}}});
@@ -530,7 +532,8 @@ TEST_CASE("audio.reset keeps the dummy device's settings", "[unit]")
 	Engine engine;
 	Client client(engine);
 	CHECK_THAT(reject(client, "audio.reset"), ContainsSubstring("no audio device"));
-	run(client, "track.add", {{"type", "audio"}}); // plays the input
+	const Json track = run(client, "track.add", {{"type", "audio"}});
+	run(client, "channel.set", {{"channel", track.at("channel").at("id")}, {"monitor", true}}); // hears the input
 	run(client, "audio.setDevice", {{"blockSize", 64}, {"outputChannels", 4}, {"input", {{"processor", "sine"}}}});
 	run(client, "audio.render", {{"frames", 64}});
 	const Json status = run(client, "audio.reset");
