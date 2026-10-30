@@ -182,8 +182,8 @@ namespace gnubase::audio
 		}
 
 	protected:
-		// For backends, when their driver asks for a reset. Not on the audio thread. The handler runs on a copy, outside
-		// the lock: what it sets off may destroy this device before it returns.
+		// For backends, when their driver asks for a reset. Not on the audio thread. The handler runs on a copy,
+		// outside the lock: what it sets off may destroy this device before it returns.
 		void requestReset() const
 		{
 			std::function<void()> handler;
