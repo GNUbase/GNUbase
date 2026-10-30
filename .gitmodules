@@ -56,3 +56,6 @@
 [submodule "ext/asio"]
 	path = ext/asio
 	url = https://github.com/GNUbase/asio.git
+[submodule "ext/lunasvg"]
+	path = ext/lunasvg
+	url = https://github.com/sammycage/lunasvg.git

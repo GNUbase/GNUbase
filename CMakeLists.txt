@@ -50,6 +50,17 @@ add_subdirectory(ext/freetype EXCLUDE_FROM_ALL SYSTEM)
 add_library(Freetype::Freetype ALIAS freetype)
 set(CMAKE_DISABLE_FIND_PACKAGE_Freetype ON) # RmlUi takes the target above, never a FreeType installed on the system
 set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "RmlUi font engine" FORCE) # also in build folders made before FreeType
+# LunaSVG for RmlUi's SVG plugin: icons and UI graphics are SVG files (#210). The graphics have no text, so it loads no
+# fonts from the system and draws the same everywhere, and an SVG can't make it read other files: images inside one
+# must be data: URIs.
+foreach(lunasvgOption LUNASVG_DISABLE_LOAD_SYSTEM_FONTS LUNASVG_DISABLE_EXTERNAL_RESOURCES
+	PLUTOVG_DISABLE_FONT_FACE_CACHE_LOAD)
+	set(${lunasvgOption} ON CACHE BOOL "Set by GNUbase for LunaSVG")
+endforeach()
+set(LUNASVG_BUILD_EXAMPLES OFF CACHE BOOL "Set by GNUbase for LunaSVG")
+add_subdirectory(ext/lunasvg EXCLUDE_FROM_ALL SYSTEM)
+set(CMAKE_DISABLE_FIND_PACKAGE_lunasvg ON) # RmlUi takes the target above, never a LunaSVG installed on the system
+set(RMLUI_SVG_PLUGIN ON CACHE BOOL "Enable plugin for SVG images" FORCE)
 add_subdirectory(ext/RmlUi EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/Catch2 EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/json EXCLUDE_FROM_ALL SYSTEM)

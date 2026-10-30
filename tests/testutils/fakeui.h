@@ -8,6 +8,7 @@
 
 #include <RmlUi/Core/RenderInterface.h>
 
+#include <cstddef>
 #include <deque>
 #include <map>
 #include <memory>
@@ -107,6 +108,11 @@ namespace gnubase::test
 
 		bool attached(ui::WindowId window) const { return m_attached.count(window) != 0; }
 		int presents(ui::WindowId window) const;
+		// The textures RmlUi generated so far, such as fonts' glyphs and rasterized SVG graphics, in order, with
+		// their premultiplied RGBA pixels.
+		const std::vector<ui::Image>& generatedTextures() const { return m_textures; }
+		// How many textures RmlUi released.
+		size_t releasedTextures() const { return m_released; }
 
 	private:
 		Rml::CompiledGeometryHandle CompileGeometry(
@@ -120,11 +126,8 @@ namespace gnubase::test
 		{
 			return 0;
 		}
-		Rml::TextureHandle GenerateTexture(Rml::Span<const Rml::byte> /*source*/, Rml::Vector2i /*dimensions*/) override
-		{
-			return 1;
-		}
-		void ReleaseTexture(Rml::TextureHandle /*texture*/) override {}
+		Rml::TextureHandle GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector2i dimensions) override;
+		void ReleaseTexture(Rml::TextureHandle /*texture*/) override { ++m_released; }
 		void EnableScissorRegion(bool /*enable*/) override {}
 		void SetScissorRegion(Rml::Rectanglei /*region*/) override {}
 
@@ -132,6 +135,8 @@ namespace gnubase::test
 		std::map<ui::WindowId, int> m_attached;
 		std::map<ui::WindowId, int> m_presents;
 		Rml::CompiledGeometryHandle m_nextGeometry = 1;
+		std::vector<ui::Image> m_textures;
+		size_t m_released = 0;
 	};
 
 	// The fake window system, the null renderer, RmlUi and the shell, made and destroyed in the app's order.

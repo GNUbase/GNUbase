@@ -9,7 +9,7 @@ SDL and RmlUi are forked to the GNUbase account so we can carry our own changes.
 | Submodule | Fork | Upstream | Branch | Pinned at |
 |---|---|---|---|---|
 | `ext/SDL` | [GNUbase/SDL](https://github.com/GNUbase/SDL) | [libsdl-org/SDL](https://github.com/libsdl-org/SDL) | `gnubase` | `release-3.4.18` |
-| `ext/RmlUi` | [GNUbase/RmlUi](https://github.com/GNUbase/RmlUi) | [mikke89/RmlUi](https://github.com/mikke89/RmlUi) | `gnubase` | `6.3`, plus upstream's fix for vector indexing (e74ad4ed), which GCC's optimizer broke transforms without, and the effects in the SDL_GPU renderer ([render-backend.md](render-backend.md#effects-in-sdl_gpu-285)) |
+| `ext/RmlUi` | [GNUbase/RmlUi](https://github.com/GNUbase/RmlUi) | [mikke89/RmlUi](https://github.com/mikke89/RmlUi) | `gnubase` | `6.3`, plus upstream's fix for vector indexing (e74ad4ed), which GCC's optimizer broke transforms without, the effects in the SDL_GPU renderer ([render-backend.md](render-backend.md#effects-in-sdl_gpu-285)), and `currentColor` drawn white in the SVG plugin ([features/svg.md](features/svg.md)) |
 
 Rules:
 - GNUbase changes are commits on the fork's `gnubase` branch: small, focused and written so they could be sent upstream.
@@ -56,6 +56,7 @@ Used unchanged, pinned to an upstream release tag.
 | `ext/miniz` | [richgel999/miniz](https://github.com/richgel999/miniz) | `3.1.2` |
 | `ext/cpp-httplib` | [yhirose/cpp-httplib](https://github.com/yhirose/cpp-httplib) | `v0.61.0` |
 | `ext/lua` | [lua/lua](https://github.com/lua/lua) (the Lua team's repository) | `v5.4.9` |
+| `ext/lunasvg` | [sammycage/lunasvg](https://github.com/sammycage/lunasvg) | commit `470e78e`, `v3.5.0` and its fixes since, among them the build option that keeps SVGs from reading files |
 | `ext/clap` | [free-audio/clap](https://github.com/free-audio/clap) | `1.2.10` |
 | `ext/asio` | [GNUbase/asio](https://github.com/GNUbase/asio), a mirror of [audiosdk/asio](https://github.com/audiosdk/asio), a copy of the ASIO SDK's download | commit `496a076` (SDK 2.3.4) |
 

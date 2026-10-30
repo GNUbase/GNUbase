@@ -61,6 +61,7 @@ add_executable(gnubase-tests
 	settings_tests.cpp
 	shell_tests.cpp
 	streaming_tests.cpp
+	svg_tests.cpp
 	testing_tests.cpp
 	testutils_tests.cpp
 	theme_tests.cpp
