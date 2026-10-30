@@ -63,7 +63,12 @@ namespace
 		{
 			for (const char* id : {"test.project", "test.editor", "test.lower", "test.anywhere"})
 				keys.add({id, "Records that it ran.", [this, id](ui::Window& /*window*/, Rml::Element* zone)
-					{ ran.push_back(std::string(id) + (zone != nullptr ? " in " + zone->GetId() : "")); }});
+					{
+						std::string what = id;
+						if (zone != nullptr)
+							what += " in " + zone->GetId();
+						ran.push_back(std::move(what));
+					}});
 		}
 
 		// What ran since the last call.
@@ -111,7 +116,7 @@ TEST_CASE("the default key map binds the engine's commands as the reference does
 	for (const Platform platform : {Platform::Windows, Platform::Mac, Platform::Linux})
 	{
 		// Binding checks every command and its parameters against the engine's schemas.
-		ui::KeyCommands keys(engine, binding, platform);
+		const ui::KeyCommands keys(engine, binding, platform);
 		CHECK(keys.keysFor("transport.toggle") == Strings{"Space"});
 		CHECK(keys.keysFor("transport.stop") == Strings{"Num0"});
 		CHECK(keys.keysFor("transport.locate", {{"target", "leftLocator"}}) == Strings{"Num1"});

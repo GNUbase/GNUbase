@@ -87,9 +87,9 @@ namespace gnubase::ui
 				if (named.key == key)
 					return named.name;
 			if (key >= KI_A && key <= KI_Z)
-				return std::string(1, static_cast<char>('A' + (key - KI_A)));
+				return {static_cast<char>('A' + (key - KI_A))};
 			if (key >= KI_0 && key <= KI_9)
-				return std::string(1, static_cast<char>('0' + (key - KI_0)));
+				return {static_cast<char>('0' + (key - KI_0))};
 			if (key >= KI_NUMPAD0 && key <= KI_NUMPAD9)
 				return "Num" + std::to_string(key - KI_NUMPAD0);
 			if (key >= KI_F1 && key <= KI_F24)
@@ -100,7 +100,7 @@ namespace gnubase::ui
 
 	Platform buildPlatform()
 	{
-#if defined(_WIN32)
+#ifdef _WIN32
 		return Platform::Windows;
 #elif defined(__APPLE__)
 		return Platform::Mac;
@@ -146,7 +146,10 @@ namespace gnubase::ui
 		std::string name;
 		for (const auto& [flag, text] : modifiers)
 			if ((keys.modifiers & flag) != 0)
-				name += std::string(text) + '+';
+			{
+				name += text;
+				name += '+';
+			}
 		return name + keyText(keys.key);
 	}
 
