@@ -12,6 +12,7 @@
 #include "engine/midi/functioncommands.h"
 #include "engine/midi/quantizecommands.h"
 #include "engine/processors/builtin.h"
+#include "platform/log.h"
 
 #include <algorithm>
 #include <array>
@@ -1006,12 +1007,12 @@ namespace gnubase::engine
 				: busDirection(parameters.at("direction"));
 			bus.format = channelFormat(parameters, ChannelFormat::Stereo);
 			bus.ports = parameters.value("ports", std::vector<std::string>());
+			if (parameters.contains("parentChannels")) // without a parent, checkBus refuses them
+				bus.parentChannels = parentChannelsFromJson(parameters.at("parentChannels"));
 			if (parent != nullptr)
 			{
 				require(parent->parent == 0, "a child bus's parent must be a top-level bus");
-				if (parameters.contains("parentChannels"))
-					bus.parentChannels = parameters.at("parentChannels").get<std::vector<int>>();
-				else
+				if (!parameters.contains("parentChannels"))
 					// The speakers both formats have.
 					for (const Speaker speaker : speakers(bus.format))
 					{
@@ -1189,16 +1190,11 @@ namespace gnubase::engine
 			return busses;
 		}
 
-		const char* directionKey(BusDirection direction)
-		{
-			return direction == BusDirection::Input ? "input" : "output";
-		}
-
 		// The user's own presets of a direction, by name.
 		Json userPresets(BusDirection direction, CommandContext& context)
 		{
 			const Json presets = context.call("settings.get", {{"key", "audio.busPresets"}}).at("value");
-			const Json mine = presets.value(directionKey(direction), Json::object());
+			const Json mine = presets.value(directionName(direction), Json::object());
 			return mine.is_object() ? mine : Json::object();
 		}
 
@@ -1263,7 +1259,7 @@ namespace gnubase::engine
 						item.value("ports", std::vector<std::string>()), 0, {}, false});
 					for (const Json& child : item.value("children", Json::array()))
 						created.push_back({project.newId(), child.at("name").get<std::string>(), direction,
-							format(child), {}, parent, child.at("parentChannels").get<std::vector<int>>(), false});
+							format(child), {}, parent, parentChannelsFromJson(child.at("parentChannels")), false});
 				}
 			}
 			catch (const Json::exception& error)
@@ -1313,7 +1309,7 @@ namespace gnubase::engine
 			const Json presets = busPresets(direction, context);
 			const auto preset = std::find_if(
 				presets.begin(), presets.end(), [&name](const Json& entry) { return entry.at("name") == name; });
-			require(preset != presets.end(), std::string("no ") + directionKey(direction) + " bus preset " + name);
+			require(preset != presets.end(), std::string("no ") + directionName(direction) + " bus preset " + name);
 			const std::vector<Bus> previous = project.busses;
 			const std::vector<ObjectId> channels = applyPreset(project, direction, preset->at("busses"));
 			announceBusses(previous, project.busses, context);
@@ -2342,7 +2338,20 @@ namespace gnubase::engine
 				Project project = newProject();
 				for (const BusDirection direction : {BusDirection::Input, BusDirection::Output})
 					if (const Json presets = userPresets(direction, context); presets.contains("Default"))
-						applyPreset(project, direction, presets.at("Default"));
+					{
+						// A preset that doesn't work, e.g. edited by hand, leaves the standard busses.
+						Project withPreset = project;
+						try
+						{
+							applyPreset(withPreset, direction, presets.at("Default"));
+							project = std::move(withPreset);
+						}
+						catch (const CommandError& error)
+						{
+							logging::warning(
+								"The {} bus preset Default isn't applied: {}", directionName(direction), error.what());
+						}
+					}
 				m_project = std::move(project);
 				m_file.clear();
 				m_history.clear();
@@ -2455,7 +2464,7 @@ namespace gnubase::engine
 				Json presets = context.call("settings.get", {{"key", "audio.busPresets"}}).at("value");
 				Json mine = userPresets(direction, context);
 				mine[name] = presetBusses(m_project, direction);
-				presets[directionKey(direction)] = std::move(mine);
+				presets[directionName(direction)] = std::move(mine);
 				context.call("settings.set", {{"key", "audio.busPresets"}, {"value", std::move(presets)}});
 				return Json::object();
 			});
@@ -2469,7 +2478,7 @@ namespace gnubase::engine
 				Json presets = context.call("settings.get", {{"key", "audio.busPresets"}}).at("value");
 				Json mine = userPresets(direction, context);
 				require(mine.erase(name) == 1, "no user bus preset " + name + "; only the user's own presets go");
-				presets[directionKey(direction)] = std::move(mine);
+				presets[directionName(direction)] = std::move(mine);
 				context.call("settings.set", {{"key", "audio.busPresets"}, {"value", std::move(presets)}});
 				return Json::object();
 			});

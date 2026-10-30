@@ -205,12 +205,13 @@ Returns:
 
 #### `gnubase.audio.ports`
 
-The audio device's ports by name, in order, each with the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. Without a device there are no ports.
+The audio device's ports by name, in order, each with the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) whose channels run past the device's ports, with those channels, which are silent; bus.set gives them ports. Without a device there are no ports.
 
 Only reads; changes nothing.
 
 Returns:
 
+- `beyondDevice`: array, required
 - `busses`: array, required
 - `inputs`: array, required
 - `missing`: array, required
