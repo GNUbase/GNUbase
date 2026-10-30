@@ -1247,6 +1247,17 @@ Returns:
 - `removedParts`: array of integer, required
 - `tracks`: array of integer, required
 
+#### `gnubase.midi.capture`
+
+What instruments played since the last call, at most 4096 MIDI 1.0 messages, oldest first, each with its instrument track's channel, its frame position on the audio device and its bytes: the events of the track's parts, of the MIDI tracks routed to it and what midi.inject played into them, with controller automation and the note-offs of a stop. A program change with a bank comes as bank select MSB and LSB, then the program change; SysEx isn't captured. dropped counts the messages that didn't fit.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `captured`: array, required
+- `dropped`: integer, required
+
 #### `gnubase.midi.deleteContinuousControllers`
 
 Removes the control changes of continuous controllers. Bank select, data entry, the switches 64-69 (such as the sustain pedal), data increment and decrement, NRPN, RPN and channel mode messages stay. Works on the MIDI parts in parts. Returns the parts it changed.
@@ -1358,6 +1369,15 @@ Parameters:
 Returns:
 
 - `parts`: array of integer, required
+
+#### `gnubase.midi.inject`
+
+Plays MIDI 1.0 channel messages into a MIDI or instrument track's channel as if they came from the track's MIDI input: the track sends them on to its instrument, before the events of its parts, also while the transport stands. bytes: a status byte from 0x80 to 0xEF and its data bytes. position: the message's frame on the audio device, as audio.capture and midi.monitor count them; messages for frames the device has processed already play at the start of its next block, those for one frame in the order they came. They wait until the device processes their block, at most 4096 at a time, and are dropped when the device changes. midi.capture returns what instruments played.
+
+Parameters:
+
+- `channel`: integer, required
+- `messages`: array of object, required
 
 #### `gnubase.midi.invert`
 

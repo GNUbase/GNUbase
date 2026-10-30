@@ -533,6 +533,41 @@ TEST_CASE("rendering a project through the dummy device passes the RT checker", 
 	CHECK(g_violations == 0);
 }
 
+TEST_CASE("MIDI injected into tracks and captured from instruments passes the RT checker", "[unit]")
+{
+	using gnubase::engine::Json;
+	gnubase::engine::Engine engine;
+	gnubase::engine::Client client(engine);
+	const auto run = [&client](const std::string& command, const Json& parameters)
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	run("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	const Json instrument = run("track.add", {{"type", "instrument"}}).at("channel").at("id");
+	const Json midi = run("track.add", {{"type", "midi"}}).at("channel").at("id");
+	run("channel.set", {{"channel", instrument}, {"instrument", "testSynth"}});
+	run("channel.set", {{"channel", midi}, {"output", instrument}});
+	Json messages = Json::array();
+	for (int i = 0; i < 64; ++i)
+	{
+		messages.push_back({{"position", i * 50}, {"bytes", {0x90, 48 + i, 100}}});
+		messages.push_back({{"position", (i * 50) + 300}, {"bytes", {0x80, 48 + i, 0}}});
+		messages.push_back({{"position", i * 50}, {"bytes", {0xB0, 1, i}}});
+	}
+	run("midi.inject", {{"channel", instrument}, {"messages", messages}});
+	run("midi.inject", {{"channel", midi}, {"messages", messages}});
+
+	const RecordViolations record;
+	run("audio.render", {{"frames", 2400}});
+	run("track.add", {{"type", "midi"}}); // a new graph, swapped in between blocks
+	run("audio.render", {{"frames", 2400}});
+	run("midi.capture", Json::object());
+	CHECK(g_violations == 0);
+}
+
 TEST_CASE("playing audio events, with overlaps and cycle jumps, passes the RT checker", "[integration]")
 {
 	using gnubase::engine::Json;

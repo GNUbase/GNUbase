@@ -3,6 +3,7 @@
 
 #include "engine/audio/automation.h"
 #include "engine/audio/midiports.h"
+#include "engine/audio/miditap.h"
 #include "engine/audio/performance.h"
 #include "engine/audio/playback.h"
 #include "engine/audio/sequencer.h"
@@ -69,7 +70,7 @@ namespace gnubase::engine
 		// audio.capture and audio.captureInput, the transport commands transport.play, transport.stop,
 		// transport.toggle, transport.record, transport.locate, transport.set, transport.exchangeLocators and
 		// transport.get, and the MIDI port commands (MidiPorts). audio.analyze, audio.compare and audio.record are in
-		// analysiscommands.cpp.
+		// analysiscommands.cpp, midi.inject and midi.capture in miditap.cpp.
 		void registerCommands(Engine& engine);
 
 		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
@@ -119,6 +120,8 @@ namespace gnubase::engine
 			double sampleRate = 48000.0; // the project's: transport positions are in its samples
 			uint64_t generation = 0;     // counts up from 1
 			std::vector<Release> releases;
+			MidiTap::Sequencers sequencers;   // of the MIDI and instrument channels, for midi.inject
+			MidiTap::Instruments instruments; // for midi.capture
 		};
 
 		// A release waiting for the audio thread to start a program that has it.
@@ -155,6 +158,7 @@ namespace gnubase::engine
 		audio::DummyDevice& requireDummy();
 		void registerTransportCommands(Engine& engine);
 		void registerAnalysisCommands(Engine& engine); // analysiscommands.cpp
+		void registerMidiTapCommands(Engine& engine);  // miditap.cpp
 		void setTransport(const Json& parameters);
 		void locate(const Json& parameters);
 		void sent(bool accepted); // after a transport request
@@ -229,6 +233,7 @@ namespace gnubase::engine
 		Transport m_transport;              // advanced by the audio thread
 		MidiPorts m_midi;
 		audio::MidiBuffer m_midiInput; // the block's messages from all MIDI inputs, for MIDI recording (#97)
+		MidiTap m_tap;                 // midi.inject and midi.capture
 
 		// Changed only while the device is stopped.
 		enum class Limit : uint8_t
