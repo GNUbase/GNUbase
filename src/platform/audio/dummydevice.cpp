@@ -46,6 +46,7 @@ namespace gnubase::audio
 			throw DeviceError("the dummy device needs a block size and a sample rate");
 		m_inputs = channelPointers(m_inputSamples, format.inputChannels, format.blockSize);
 		m_outputs = channelPointers(m_outputSamples, format.outputChannels, format.blockSize);
+		m_monitors = std::make_unique<Monitor[]>(static_cast<size_t>(std::max(format.inputChannels, 0)));
 	}
 
 	DummyDevice::~DummyDevice()
@@ -66,12 +67,37 @@ namespace gnubase::audio
 		info.blockSizes = {32, 64, 128, 256, 512, 1024, 2048};
 		include(info.sampleRates, m_format.sampleRate);
 		include(info.blockSizes, m_format.blockSize);
+		info.canMonitorDirectly = true;
 		return info;
 	}
 
 	void DummyDevice::setInput(InputSource source)
 	{
 		m_input = std::move(source);
+	}
+
+	void DummyDevice::setLatency(DeviceLatency latency, bool loopback)
+	{
+		const uint64_t roundTrip = uint64_t{latency.input} + latency.output;
+		if (loopback && roundTrip < m_format.blockSize)
+			throw DeviceError("the dummy device's loopback needs a round trip of at least a block");
+		m_latency = latency;
+		m_loopback.assign(loopback ? static_cast<size_t>(std::max(m_format.outputChannels, 0)) : 0,
+			std::vector<float>(static_cast<size_t>(roundTrip + m_format.blockSize)));
+	}
+
+	void DummyDevice::monitorInput(const InputMonitor& monitor)
+	{
+		if (monitor.input < 0 || monitor.input >= m_format.inputChannels)
+			return;
+		Monitor& entry = m_monitors[static_cast<size_t>(monitor.input)];
+		const auto share = static_cast<float>((monitor.pan + 1.0) / 2.0); // split linearly between the two outputs
+		const auto gain = static_cast<float>(std::clamp(monitor.gain, 0.0, 4.0));
+		entry.output.store(-1, std::memory_order_release); // while the gains change
+		entry.gain.store(gain * (1.0f - share), std::memory_order_relaxed);
+		entry.nextGain.store(gain * share, std::memory_order_relaxed);
+		if (monitor.on && monitor.output >= 0 && monitor.output < m_format.outputChannels)
+			entry.output.store(monitor.output, std::memory_order_release);
 	}
 
 	void DummyDevice::injectMidi(uint64_t position, const MidiMessage& message)
@@ -144,9 +170,47 @@ namespace gnubase::audio
 
 		{
 			const rt::ScopedRealtimeContext realtime;
-			if (m_input)
+			const uint64_t roundTrip = uint64_t{m_latency.input} + m_latency.output;
+			if (!m_loopback.empty())
+			{
+				const size_t channels = std::min(m_loopback.size(), m_inputs.size());
+				for (size_t c = 0; c < channels; ++c)
+				{
+					const std::vector<float>& ring = m_loopback[c];
+					for (uint32_t i = 0; i < frames; ++i)
+						if (position + i >= roundTrip)
+							m_inputs[c][i] = ring[(position + i - roundTrip) % ring.size()];
+				}
+			}
+			else if (m_input)
+			{
 				m_input(m_inputs.data(), m_format.inputChannels, frames, position);
+			}
 			callback.process({m_inputs.data(), m_outputs.data(), frames, position, hostTime(), m_midiIn, m_midiOut});
+
+			// What the hardware plays: the callback's output and the inputs monitored directly.
+			for (size_t in = 0; in < m_inputs.size(); ++in)
+			{
+				const Monitor& monitor = m_monitors[in];
+				const int output = monitor.output.load(std::memory_order_acquire);
+				if (output < 0)
+					continue;
+				const auto first = static_cast<size_t>(output);
+				const size_t second = first + 1 < m_outputs.size() ? first + 1 : first;
+				const float gain = monitor.gain.load(std::memory_order_relaxed);
+				const float nextGain = monitor.nextGain.load(std::memory_order_relaxed);
+				for (uint32_t i = 0; i < frames; ++i)
+				{
+					m_outputs[first][i] += m_inputs[in][i] * gain;
+					m_outputs[second][i] += m_inputs[in][i] * nextGain;
+				}
+			}
+			for (size_t c = 0; c < m_loopback.size(); ++c)
+			{
+				std::vector<float>& ring = m_loopback[c];
+				for (uint32_t i = 0; i < frames; ++i)
+					ring[(position + i) % ring.size()] = m_outputs[c][i];
+			}
 		}
 
 		// Capture, then publish what was captured.

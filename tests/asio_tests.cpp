@@ -175,7 +175,14 @@ namespace
 			return ASE_OK;
 		}
 
-		ASIOError future(long /*selector*/, void* /*opt*/) override { return ASE_NotPresent; }
+		ASIOError future(long selector, void* opt) override
+		{
+			if (!inputMonitor)
+				return ASE_NotPresent;
+			if (selector == kAsioSetInputMonitor)
+				monitors.push_back(*static_cast<ASIOInputMonitor*>(opt));
+			return selector == kAsioCanInputMonitor || selector == kAsioSetInputMonitor ? ASE_SUCCESS : ASE_NotPresent;
+		}
 
 		ASIOError outputReady() override
 		{
@@ -215,11 +222,13 @@ namespace
 		ASIOSampleType sampleType = ASIOSTInt32LSB;
 		bool initFails = false;
 		std::string errorText = "fake failure";
-		std::string inputName = "In"; // the inputs are this and their number
-		bool silent = false;          // starts, but never calls back
-		bool refuseRates = false;     // says it runs at 44.1 kHz, but doesn't switch
-		long refusedBlockSize = 0;    // allowed, but createBuffers fails
-		int flakyCreates = 0;         // createBuffers fails this often first, then works
+		std::string inputName = "In";           // the inputs are this and their number
+		bool silent = false;                    // starts, but never calls back
+		bool refuseRates = false;               // says it runs at 44.1 kHz, but doesn't switch
+		long refusedBlockSize = 0;              // allowed, but createBuffers fails
+		int flakyCreates = 0;                   // createBuffers fails this often first, then works
+		bool inputMonitor = false;              // monitors directly
+		std::vector<ASIOInputMonitor> monitors; // what it was asked to monitor, on the driver thread
 		double rate = 48000.0;
 		long clock = 0;
 		long blockSize = 0;
@@ -229,19 +238,22 @@ namespace
 	};
 
 	// Drivers by name.
-	AsioDrivers fakes(const std::map<std::string, FakeDriver*>& drivers)
+	AsioDrivers fakes(const std::map<std::string, FakeDriver*>& byName)
 	{
+		// Shared: the closures get copied, and copying a map can throw, copying a shared pointer can't.
+		const auto drivers = std::make_shared<const std::map<std::string, FakeDriver*>>(byName);
 		return {[drivers]
 			{
 				std::vector<std::string> names;
-				for (const auto& driver : drivers)
+				names.reserve(drivers->size());
+				for (const auto& driver : *drivers)
 					names.push_back(driver.first);
 				return names;
 			},
 			[drivers](const std::string& name)
 			{
-				const auto found = drivers.find(name);
-				if (found == drivers.end())
+				const auto found = drivers->find(name);
+				if (found == drivers->end())
 					return static_cast<IASIO*>(nullptr);
 				found->second->AddRef();
 				return static_cast<IASIO*>(found->second);
@@ -320,6 +332,41 @@ TEST_CASE("the ASIO backend converts the driver's samples and passes its request
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	CHECK(driver.panels == 1);
 
+	device.reset();
+	CHECK(driver.references == 0);
+}
+
+TEST_CASE("the ASIO backend monitors directly where the driver can, and resets when latencies change", "[unit]")
+{
+	FakeDriver driver;
+	const std::unique_ptr<Backend> backend = makeAsioBackend(fake(driver));
+	std::unique_ptr<Device> device = backend->open({});
+	CHECK(!device->info().canMonitorDirectly);
+	device->monitorInput({1, 0, true, 1.0, 1.0}); // ignored
+	device.reset();
+
+	driver.inputMonitor = true;
+	device = backend->open({});
+	CHECK(device->info().canMonitorDirectly);
+	device->monitorInput({1, 0, true, 1.0, 1.0});
+	device->monitorInput({0, 2, false, 4.0, -1.0});
+	REQUIRE(driver.monitors.size() == 2);
+	CHECK(driver.monitors[0].input == 1);
+	CHECK(driver.monitors[0].output == 0);
+	CHECK(driver.monitors[0].gain == 0x20000000); // 0 dB: a quarter of the range up to +12 dB
+	CHECK(driver.monitors[0].state == ASIOTrue);
+	CHECK(driver.monitors[0].pan == 0x7fffffff); // right
+	CHECK(driver.monitors[1].gain == 0x7fffffff);
+	CHECK(driver.monitors[1].state == ASIOFalse);
+	CHECK(driver.monitors[1].pan == 0);
+
+	int resets = 0;
+	device->onReset([&resets] { ++resets; });
+	CHECK(driver.callbacks->asioMessage(kAsioSelectorSupported, kAsioLatenciesChanged, nullptr, nullptr) == 1);
+	CHECK(driver.callbacks->asioMessage(kAsioSelectorSupported, kAsioSupportsInputMonitor, nullptr, nullptr) == 1);
+	CHECK(driver.callbacks->asioMessage(kAsioSupportsInputMonitor, 0, nullptr, nullptr) == 1);
+	driver.callbacks->asioMessage(kAsioLatenciesChanged, 0, nullptr, nullptr);
+	CHECK(resets == 1);
 	device.reset();
 	CHECK(driver.references == 0);
 }
@@ -454,7 +501,7 @@ TEST_CASE("the ASIO backend lists drivers it couldn't open or start as unavailab
 			result[info.id] = info.unavailableReason;
 		return result;
 	};
-	const auto openAndStart = [&backend](const std::string& name)
+	const auto starts = [&backend](const std::string& name)
 	{
 		DeviceConfig config;
 		config.device = name;
@@ -462,16 +509,19 @@ TEST_CASE("the ASIO backend lists drivers it couldn't open or start as unavailab
 		try
 		{
 			backend->open(config)->start(copy);
+			return true;
 		}
 		catch (const DeviceError&) // listed as unavailable from now on
 		{
+			return false;
 		}
 	};
 	// The backend learns about a driver only by loading it.
 	CHECK(reasons() == std::map<std::string, std::string>{{"Silent", ""}, {"Unplugged", ""}, {"Working", ""}});
 
-	for (const char* name : {"Unplugged", "Silent", "Working"})
-		openAndStart(name);
+	CHECK(!starts("Unplugged"));
+	CHECK(!starts("Silent"));
+	CHECK(starts("Working"));
 	std::map<std::string, std::string> unavailable = reasons();
 	CHECK_THAT(unavailable["Unplugged"], Catch::Matchers::ContainsSubstring("No device is connected to the PC"));
 	CHECK_THAT(unavailable["Silent"], Catch::Matchers::ContainsSubstring("doesn't process audio"));
@@ -480,8 +530,8 @@ TEST_CASE("the ASIO backend lists drivers it couldn't open or start as unavailab
 	// Their hardware was plugged in.
 	unplugged.initFails = false;
 	silent.silent = false;
-	openAndStart("Unplugged");
-	openAndStart("Silent");
+	CHECK(starts("Unplugged"));
+	CHECK(starts("Silent"));
 	CHECK(reasons() == std::map<std::string, std::string>{{"Silent", ""}, {"Unplugged", ""}, {"Working", ""}});
 	CHECK(unplugged.references + silent.references + working.references == 0);
 }

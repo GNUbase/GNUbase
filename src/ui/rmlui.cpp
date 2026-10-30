@@ -2,6 +2,7 @@
 #include "ui/rmlui.h"
 
 #include "platform/log.h"
+#include "ui/canvas.h"
 #include "ui/windowsystem.h"
 
 #include <RmlUi/Core/Core.h>
@@ -185,6 +186,7 @@ namespace gnubase::ui
 		if (!Rml::Initialise())
 			throw std::runtime_error("RmlUi cannot start");
 		Rml::RegisterEventType(g_fileDropEvent, true, true, Rml::DefaultActionPhase::None);
+		registerCanvas(*this);
 	}
 
 	RmlUi::~RmlUi()

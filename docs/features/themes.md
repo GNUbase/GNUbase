@@ -51,6 +51,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
 - **Mixer and editor parts** for the widget library (#54): `.knob`, `.knob-pointer`, `.fader`, `.fader-cap`, `.meter`,
   `.meter-fill`, `.meter-peak`, `.splitter-grip-vertical`, `.splitter-grip-horizontal`, `.dropdown-arrow`,
   `.focus-ring`.
+- **Canvas elements** ([canvas.md](canvas.md)) by their tags: `event-lanes`, `waveform`, `curve` and `ruler`, with
+  `color` and the canvas properties `stroke-color` and `stroke-width`.
 
 ## Checks
 

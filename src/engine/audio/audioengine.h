@@ -56,10 +56,10 @@ namespace gnubase::engine
 		~AudioEngine() override; // stops the device
 
 		// Registers audio.devices, audio.setDevice, audio.ports, audio.setProcessing, audio.get, audio.performance,
-		// audio.resetPerformance, audio.reset, audio.controlPanel, audio.render, audio.start, audio.stop and
-		// audio.capture, the transport commands transport.play, transport.stop, transport.toggle, transport.locate,
-		// transport.set, transport.exchangeLocators and transport.get, and the MIDI port commands (MidiPorts).
-		// audio.analyze, audio.compare and audio.record are in analysiscommands.cpp.
+		// audio.resetPerformance, audio.reset, audio.controlPanel, audio.render, audio.start, audio.stop,
+		// audio.capture and audio.captureInput, the transport commands transport.play, transport.stop,
+		// transport.toggle, transport.locate, transport.set, transport.exchangeLocators and transport.get, and the MIDI
+		// port commands (MidiPorts). audio.analyze, audio.compare and audio.record are in analysiscommands.cpp.
 		void registerCommands(Engine& engine);
 
 		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
@@ -162,6 +162,13 @@ namespace gnubase::engine
 		std::vector<Release> releases();
 		// Puts every channel's processor into a channel strip with the channel's fader and automation.
 		void attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
+		// Direct monitoring: audio tracks that play into an output bus hear their input bus through the device
+		// instead of the graph. ports: the device channels of each bus (devicePorts).
+		void monitorDirectly(
+			const RenderSnapshot& snapshot, graph::GraphDesc& desc, const std::vector<std::vector<int>>& ports);
+		void stopMonitoringDirectly();
+		// Audio thread: the dummy device's input where recording places it (audio.captureInput).
+		void captureInput(const audio::DeviceBlock& block) noexcept;
 
 		rt::SnapshotPublisher<RenderSnapshot>& m_snapshots;
 		uint64_t m_revision = 0;
@@ -174,6 +181,16 @@ namespace gnubase::engine
 		audio::DummyDevice* m_dummy = nullptr; // m_device, if it is the dummy device
 		std::vector<std::string> m_inputPorts; // the device's port names, each one once
 		std::vector<std::string> m_outputPorts;
+
+		// Latency compensation and monitoring (docs/features/latency-and-monitoring.md), set with the device.
+		int64_t m_recordShift = 0;
+		int64_t m_recordOffset = 0; // input + output latency - record shift, at least 0
+		PlayedPositions m_played;   // audio thread
+		bool m_directMonitoring = false;
+		std::map<int, audio::InputMonitor> m_monitors; // by input port, those the device monitors directly
+		// The dummy device's: per input channel, what it recorded at each project position from 0. Written by the
+		// audio thread, read while the device stands.
+		std::vector<std::vector<float>> m_capturedInput;
 		Playback m_playback; // before m_programs: their track players use it
 
 		struct Instrument

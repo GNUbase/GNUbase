@@ -33,7 +33,8 @@ namespace gnubase::audio
 	// and simulated real time, where its own thread processes one block per block duration.
 	//
 	// Capture memory is allocated up front; what doesn't fit is dropped and counted. Captured audio and MIDI can be
-	// read while the device runs. Its latency is zero, and it has no clock sources and no control panel.
+	// read while the device runs. Its latency is zero unless set, and it has no clock sources and no control panel.
+	// It monitors directly by adding inputs to the outputs it captures, as hardware adds them to what it plays.
 	class DummyDevice : public Device
 	{
 	public:
@@ -46,13 +47,20 @@ namespace gnubase::audio
 
 		const DeviceFormat& format() const override { return m_format; }
 		DeviceInfo info() const override;
-		DeviceLatency latency() const override { return {}; }
+		DeviceLatency latency() const override { return m_latency; }
+		void monitorInput(const InputMonitor& monitor) override;
 
 		// Simulates the driver asking for a reset.
 		using Device::requestReset;
 
 		// While stopped. Without a source the inputs are silent.
 		void setInput(InputSource source);
+
+		// While stopped: the latency it reports. With loopback its inputs carry its outputs back, input + output
+		// latency frames later, as a cable from each output to the input of the same number would; that replaces the
+		// input source. Throws DeviceError if that round trip is shorter than a block, as the outputs aren't there
+		// yet.
+		void setLatency(DeviceLatency latency, bool loopback = false);
 
 		// While stopped. Messages at positions that have already been processed are dropped.
 		void injectMidi(uint64_t position, const MidiMessage& message);
@@ -79,9 +87,21 @@ namespace gnubase::audio
 	private:
 		void processBlock(AudioCallback& callback, uint32_t frames);
 
+		// Where an input is monitored directly: the gains to an output and the one after it. Set by any thread, read
+		// by the one that processes.
+		struct Monitor
+		{
+			std::atomic<int> output{-1}; // or -1
+			std::atomic<float> gain{0.0f};
+			std::atomic<float> nextGain{0.0f};
+		};
+
 		DeviceFormat m_format;
+		DeviceLatency m_latency;
 		InputSource m_input;
-		std::vector<TimedMidi> m_pendingMidi; // sorted by position
+		std::vector<std::vector<float>> m_loopback; // per output channel a ring of what it output, if it loops back
+		std::unique_ptr<Monitor[]> m_monitors;      // per input
+		std::vector<TimedMidi> m_pendingMidi;       // sorted by position
 		size_t m_nextMidi = 0;
 
 		// Block memory, allocated in the constructor.
