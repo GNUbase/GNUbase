@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/headless.h"
 #include "app/options.h"
+#include "app/resources.h"
 #include "app/scripttool.h"
 #include "engine/engine.h"
 #include "mcp/server.h"
@@ -121,6 +122,26 @@ TEST_CASE("the command line chooses the settings folder, by default the user's",
 	CHECK(settingsDirectory(parseOptions({"--settings", "portable"})) == std::filesystem::u8path("portable"));
 	CHECK(settingsDirectory(parseOptions({})) == gnubase::files::settingsDirectory());
 	CHECK_THAT(usage(), ContainsSubstring("--settings"));
+}
+
+TEST_CASE("GNUbase finds its resources next to the program, else in the source tree it was built from", "[unit]")
+{
+	const gnubase::test::TempDir temp;
+	const std::filesystem::path program = temp.path() / "bin" / "gnubase";
+	const std::filesystem::path source = temp.path() / "source" / "resources";
+	CHECK_FALSE(findResources(program, source).has_value());
+
+	std::filesystem::create_directories(source);
+	CHECK(findResources(program, source) == source);
+
+	// An installation's resources win over the source tree's.
+	std::filesystem::create_directories(temp.path() / "bin" / "resources");
+	CHECK(findResources(program, source) == temp.path() / "bin" / "resources");
+
+	// The tests have none next to them, so they find the source tree's, with the fonts' manifest.
+	const std::optional<std::filesystem::path> own = findResources();
+	REQUIRE(own.has_value());
+	CHECK(std::filesystem::is_regular_file(*own / "fonts" / "fonts.json"));
 }
 
 TEST_CASE("MCP clients run Lua scripts in a sandbox with script_run", "[unit]")
