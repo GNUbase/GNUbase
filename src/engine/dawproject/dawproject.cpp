@@ -1363,7 +1363,7 @@ namespace gnubase::engine
 				}
 				media.channels = std::clamp(media.channels, 1, g_maxAudioChannels);
 				m_project.media[media.id] = media;
-				const Clip clip{m_project.newId(), pathOf(xmlPath).stem().u8string(), media.id, {}, {}};
+				const Clip clip{m_project.newId(), pathOf(xmlPath).stem().u8string(), media.id, {}, {}, 0};
 				m_project.clips[clip.id] = clip;
 				return m_clips[xmlPath] = clip.id;
 			}

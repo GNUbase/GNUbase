@@ -184,6 +184,16 @@ namespace gnubase::engine
 		ObjectId media = 0;
 		Fade fadeIn;
 		Fade fadeOut;
+		ObjectId folder = 0; // the pool folder it is in; 0: the pool's Audio folder itself
+	};
+
+	// A folder of the pool that clips are organized in (#93, reference manual p. 757). It only organizes the pool:
+	// the files stay where they are.
+	struct PoolFolder
+	{
+		ObjectId id = 0;
+		std::string name;
+		ObjectId parent = 0; // 0: in the pool's Audio folder
 	};
 
 	// Plays a section of a clip on an audio track.
@@ -388,6 +398,7 @@ namespace gnubase::engine
 		std::map<ObjectId, Channel> channels;
 		std::map<ObjectId, MediaFile> media;
 		std::map<ObjectId, Clip> clips;
+		std::map<ObjectId, PoolFolder> poolFolders;
 		std::map<ObjectId, AudioEvent> audioEvents;
 		std::map<ObjectId, MidiPart> midiParts;
 		std::map<ObjectId, Marker> markers;
@@ -425,6 +436,10 @@ namespace gnubase::engine
 	// Moves the end of a cycle marker that isn't long enough, e.g. after a new time base or sample rate, to one sample
 	// after its position. Returns whether it moved it.
 	bool keepMinimumLength(const Project& project, Marker& marker);
+
+	// Whether folder is the pool's Audio folder (0) or a pool folder whose parents lead there without passing
+	// excluded: false for a folder that isn't there, one in a loop, and excluded or a folder inside it.
+	bool poolFolderOutside(const Project& project, ObjectId folder, ObjectId excluded);
 
 	// Equality compares every member; the undo history uses it to find what a command changed.
 	inline bool operator==(const Bus& a, const Bus& b)
@@ -469,8 +484,13 @@ namespace gnubase::engine
 
 	inline bool operator==(const Clip& a, const Clip& b)
 	{
-		return std::tie(a.id, a.name, a.media, a.fadeIn, a.fadeOut) ==
-			std::tie(b.id, b.name, b.media, b.fadeIn, b.fadeOut);
+		return std::tie(a.id, a.name, a.media, a.fadeIn, a.fadeOut, a.folder) ==
+			std::tie(b.id, b.name, b.media, b.fadeIn, b.fadeOut, b.folder);
+	}
+
+	inline bool operator==(const PoolFolder& a, const PoolFolder& b)
+	{
+		return std::tie(a.id, a.name, a.parent) == std::tie(b.id, b.name, b.parent);
 	}
 
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)

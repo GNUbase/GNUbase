@@ -410,7 +410,12 @@ namespace gnubase::engine
 	Json toJson(const Clip& clip)
 	{
 		return {{"id", clip.id}, {"name", clip.name}, {"media", clip.media}, {"fadeIn", toJson(clip.fadeIn)},
-			{"fadeOut", toJson(clip.fadeOut)}};
+			{"fadeOut", toJson(clip.fadeOut)}, {"folder", clip.folder}};
+	}
+
+	Json toJson(const PoolFolder& folder)
+	{
+		return {{"id", folder.id}, {"name", folder.name}, {"parent", folder.parent}};
 	}
 
 	Json toJson(const AudioEvent& event)
@@ -564,11 +569,11 @@ namespace gnubase::engine
 			{"signatures", signatures}, {"autoFades", toJson(project.autoFades)},
 			{"panLaw", panLawName(project.panLaw)}, {"maxVolume", project.maxVolume}, {"busses", busses},
 			{"tracks", tracks}, {"channels", toJsonArray(project.channels)}, {"media", toJsonArray(project.media)},
-			{"clips", toJsonArray(project.clips)}, {"audioEvents", toJsonArray(project.audioEvents)},
-			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
-			{"automation", toJsonArray(project.automation)}, {"quantize", midi::toJson(project.quantize)},
-			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
-			{"snap", toJson(project.snap)}};
+			{"clips", toJsonArray(project.clips)}, {"poolFolders", toJsonArray(project.poolFolders)},
+			{"audioEvents", toJsonArray(project.audioEvents)}, {"midiParts", toJsonArray(project.midiParts)},
+			{"markers", toJsonArray(project.markers)}, {"automation", toJsonArray(project.automation)},
+			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
+			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)}};
 	}
 
 	namespace
@@ -883,9 +888,22 @@ namespace gnubase::engine
 		{
 			const auto id = item.at("id").get<ObjectId>();
 			project.clips[id] = {id, item.at("name").get<std::string>(), item.at("media").get<ObjectId>(),
-				fadeFromJson(item.value("fadeIn", Json::object())),
-				fadeFromJson(item.value("fadeOut", Json::object()))};
+				fadeFromJson(item.value("fadeIn", Json::object())), fadeFromJson(item.value("fadeOut", Json::object())),
+				item.value("folder", ObjectId{0})};
 		}
+		// Files from before the pool's folders have none. Folders inside folders that aren't there, or inside
+		// themselves, go to the top; clips in folders that aren't there to the Audio folder.
+		for (const Json& item : json.value("poolFolders", Json::array()))
+		{
+			const auto id = item.at("id").get<ObjectId>();
+			project.poolFolders[id] = {id, item.at("name").get<std::string>(), item.value("parent", ObjectId{0})};
+		}
+		for (auto& [id, folder] : project.poolFolders)
+			if (!poolFolderOutside(project, folder.parent, id))
+				folder.parent = 0;
+		for (auto& [id, clip] : project.clips)
+			if (project.poolFolders.count(clip.folder) == 0)
+				clip.folder = 0;
 		const auto base = [&project](ObjectId track) { return project.trackById.at(track).timeBase; };
 		for (const Json& item : json.at("audioEvents"))
 		{
@@ -988,6 +1006,8 @@ namespace gnubase::engine
 		for (const auto& [id, media] : project.media)
 			see(id);
 		for (const auto& [id, clip] : project.clips)
+			see(id);
+		for (const auto& [id, folder] : project.poolFolders)
 			see(id);
 		for (const auto& [id, event] : project.audioEvents)
 			see(id);
