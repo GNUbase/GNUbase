@@ -457,6 +457,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
         (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),
         (".docking .strip", {"background-color": c["surface"]}),
+        # The main menu bar (docs/features/main-menu.md): flat menu titles, lit under the mouse, and the items' keys
+        (".menubar", {"background-color": c["surface"]}),
+        (".menubar button", {"decorator": "none", "color": c["text"]}),
+        (".menubar button:hover", {"decorator": skin("menu-item-hover")}),
+        ("menuitem .menu-keys", {"color": c["textMuted"]}),
     ]
 
     lines = ["/* SPDX-License-Identifier: GPL-3.0-or-later */",

@@ -95,6 +95,8 @@ namespace gnubase::ui
 		void moveTab(const std::string& id, const std::string& before);             // to that panel's place
 		void setTabHidden(const std::string& id, bool hidden);
 		void setFloating(const std::string& id, bool floating);
+		// Shows the panel as its zone's active tab, with the zone shown, unless it is in a window of its own.
+		void open(const std::string& id);
 
 		// The window a panel shows in on its own, or null while it is docked.
 		Window* windowOf(const std::string& panel);

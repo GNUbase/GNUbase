@@ -700,6 +700,29 @@ menuseparator
 	height: 8dp;
 }
 
+/* The main menu bar (docs/features/main-menu.md): the menus' titles in a row, and an item's key on its right. */
+.menubar
+{
+	display: flex;
+	align-items: center;
+	height: 24dp;
+	padding: 0 4dp;
+	box-sizing: border-box;
+}
+
+.menubar button
+{
+	min-width: 0;
+	height: 22dp;
+	padding: 3dp 8dp;
+}
+
+menuitem .menu-keys
+{
+	float: right;
+	padding-left: 24dp;
+}
+
 /* Every document's tooltip, under the mouse; it lets the mouse through. */
 tooltip
 {
@@ -915,6 +938,39 @@ splitter.column .splitter-grip-horizontal
 {
 	position: relative;
 	flex: 1 1 0;
+}
+
+/* The edit history panel (ui/historypanel.h): a table of the undo steps that fills its panel. Rows of undone steps
+   have the state class .undone. */
+listview.history
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.history td
+{
+	padding: 3dp 4dp;
+	overflow: hidden;
+}
+
+.history td.time
+{
+	width: 60dp;
+}
+
+.history td.state
+{
+	width: 56dp;
+}
+
+.history td.details input
+{
+	width: 100%;
+	box-sizing: border-box;
 }
 
 /* The color picker: the saturation and value field, the hue strip, the old and new colors' swatches, and the value

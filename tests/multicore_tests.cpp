@@ -17,6 +17,10 @@
 #include <string>
 #include <vector>
 
+#ifdef __linux__
+#include "testutils/fakertkit.h"
+#endif
+
 using namespace gnubase::engine;
 using namespace gnubase::engine::graph;
 using Catch::Matchers::ContainsSubstring;
@@ -392,6 +396,31 @@ TEST_CASE("only workers with real-time priority help the audio thread", "[unit]"
 	run(client, "transport.play");
 	run(client, "audio.render", {{"frames", 4800}}); // and it plays
 }
+
+#ifdef __linux__
+TEST_CASE("Linux workers that rtkit makes real-time help the audio thread", "[unit]")
+{
+	using gnubase::test::FakeRtkit;
+	if (gnubase::rt::hardwareThreads() < 2)
+		SKIP("one hardware thread: no workers to start");
+	const Faults faults({SIZE_MAX, false, false, true}); // the workers may not take real-time priority themselves
+	const FakeRtkit missing(FakeRtkit::Mode::Missing);   // a system bus without rtkit, not this machine's
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"captureSeconds", 1}});
+	{
+		const FakeRtkit rtkit;
+		const Json processing = run(client, "audio.setProcessing", {{"threads", 2}}).at("processing");
+		CHECK(processing.at("activeThreads") == 2);
+		CHECK(processing.at("limitedBy") == nullptr);
+		CHECK(run(client, "audio.get").at("processing") == processing);
+		CHECK(rtkit.requests().size() == 1);
+	}
+	const Json alone = run(client, "audio.setProcessing", {{"threads", 3}}).at("processing");
+	CHECK(alone.at("activeThreads") == 1);
+	CHECK(alone.at("limitedBy") == "realtime");
+}
+#endif
 
 TEST_CASE("processing threads the system refuses to start are a command error, not a crash", "[unit]")
 {

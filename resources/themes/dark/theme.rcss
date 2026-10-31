@@ -493,4 +493,21 @@
 	{
 		background-color: #1e2022;
 	}
+	.menubar
+	{
+		background-color: #1e2022;
+	}
+	.menubar button
+	{
+		decorator: none;
+		color: #f3f4f5;
+	}
+	.menubar button:hover
+	{
+		decorator: svg-ninepatch(menu-item-hover.svg, 6 6 6 6);
+	}
+	menuitem .menu-keys
+	{
+		color: #b7bbc0;
+	}
 }

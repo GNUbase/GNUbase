@@ -62,7 +62,7 @@ Binary releases must include the copyright notices and license texts of the MIT,
 
 ## Not part of GNUbase
 
-- **System libraries:** SDL uses the operating system's audio, graphics and input libraries (for example ALSA, PulseAudio, PipeWire, X11 and Wayland on Linux). They come with the operating system and are not shipped with GNUbase.
+- **System libraries:** SDL uses the operating system's audio, graphics and input libraries (for example ALSA, PulseAudio, PipeWire, X11 and Wayland on Linux). On Linux, GNUbase links libdbus (AFL-2.1 or GPL-2.0-or-later) to ask rtkit for real-time priority. They come with the operating system and are not shipped with GNUbase.
 - **Build and CI tools:** CMake, Ninja, compilers, clang-format, clang-tidy, ccache and Git LFS are used to build and check GNUbase, not included in it.
 - **Shader compilers:** SDL_shadercross, with DXC and SPIRV-Cross, compiles the shaders of RmlUi's SDL_GPU renderer when one changes ([render-backend.md](render-backend.md#effects-in-sdl_gpu-285)). Only their output, the compiled shaders in RmlUi's `ShadersCompiledSPV.h`, is in the repository.
 

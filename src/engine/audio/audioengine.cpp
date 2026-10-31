@@ -188,8 +188,9 @@ namespace gnubase::engine
 			{
 				std::unique_lock lock(m_reconnectMutex);
 				while (!m_reconnectWake.wait_for(lock, g_reconnectInterval, [this] { return m_stopReconnecting; }))
-					if (m_waitingForDevice && m_engine != nullptr)
-						m_engine->post("audio.reset");
+					if (m_waitingForDevice && m_engine != nullptr && !m_reconnecting.exchange(true))
+						m_engine->post(
+							"audio.reconnect", Json::object(), [this](const Result&) { m_reconnecting = false; });
 			});
 	}
 
@@ -232,6 +233,21 @@ namespace gnubase::engine
 					std::this_thread::sleep_for(g_cueInterval);
 				}
 			});
+	}
+
+	void AudioEngine::startDevice()
+	{
+		m_midi.clear(); // input that waited while no device ran is stale
+		startCueing();
+		try
+		{
+			m_device->start(*this);
+		}
+		catch (...)
+		{
+			stopCueing(); // a later start would start a second cue thread
+			throw;
+		}
 	}
 
 	void AudioEngine::stopCueing()
@@ -329,6 +345,14 @@ namespace gnubase::engine
 		program->sequencers.assign(m_sequencers.begin(), m_sequencers.end()); // ordered by channel id
 		for (const auto& [channel, instrument] : m_instruments)
 			program->instruments.emplace_back(channel, instrument.channel);
+		for (const auto& [channel, sequencer] : program->sequencers)
+		{
+			uint64_t destination = 0; // its own instrument, or the one it is routed to
+			for (const auto& [id, instrument] : m_instruments)
+				if (id == channel || instrument.sources.count(channel) != 0)
+					destination = instrument.channel->serial();
+			program->destinations.push_back(destination);
+		}
 		// Bus nodes come first, in bus order (graph::describe); child busses reach the device through their parent.
 		for (size_t b = 0; b < snapshot.busses.size(); ++b)
 			if (snapshot.busses[b].parent < 0)
@@ -398,7 +422,8 @@ namespace gnubase::engine
 					instrument.id = channel.instrument;
 					instrument.channel = std::make_shared<InstrumentChannel>(sequencer,
 						processors::isInstrument(channel.instrument) ? processors::createBuiltin(channel.instrument)
-																	 : nullptr);
+																	 : nullptr,
+						++m_instrumentSerial);
 				}
 				instrument.sources = from;
 				processor = instrument.channel;
@@ -551,6 +576,8 @@ namespace gnubase::engine
 			m_running = program.generation;
 			for (const Release& release : program.releases)
 				release.channel->releaseNotesOf(*release.departed, release.staying);
+			for (size_t i = 0; i < program.sequencers.size(); ++i)
+				program.sequencers[i].second->playOn(program.destinations[i]);
 			m_started.store(program.generation, std::memory_order_release);
 		}
 		const audio::DeviceFormat& format = m_device->format();
@@ -629,6 +656,8 @@ namespace gnubase::engine
 
 	void AudioEngine::closeDevice()
 	{
+		if (m_device || m_lost)
+			++m_closed;
 		stopDevice();
 		if (m_device)
 			stopMonitoringDirectly(); // the hardware would go on monitoring
@@ -744,7 +773,8 @@ namespace gnubase::engine
 			id = lost->device;
 		if (!lost)
 			logging::info("Resetting the audio device ({} {})", m_backend, id);
-		// The measurement goes on across the restart, which is a dropout (the reference manual, p. 1589).
+		// The measurement goes on across the restart. Only a restart for a dropout is one (the reference manual,
+		// p. 1589), and backends report that dropout before they ask for the reset; the restart itself adds nothing.
 		std::optional<PerformanceData> measured;
 		uint64_t dropouts = 0;
 		if (m_device)
@@ -753,7 +783,7 @@ namespace gnubase::engine
 			if (m_resetPerformance.exchange(false, std::memory_order_acq_rel))
 				m_meter.reset();
 			measured = m_meter.data();
-			dropouts = m_deviceOverloadsKept + (m_device->overloads() - m_deviceOverloadsBefore) + 1;
+			dropouts = m_deviceOverloadsKept + (m_device->overloads() - m_deviceOverloadsBefore);
 		}
 		const Json parameters = m_parameters;
 		try
@@ -780,11 +810,7 @@ namespace gnubase::engine
 		if (lost)
 			logging::info("The audio device ({} {}) is back", m_backend, id);
 		if (running)
-		{
-			m_midi.clear();
-			startCueing();
-			m_device->start(*this);
-		}
+			startDevice();
 		return true;
 	}
 
@@ -792,11 +818,7 @@ namespace gnubase::engine
 	{
 		setDevice(parameters);
 		if (running)
-		{
-			m_midi.clear();
-			startCueing();
-			m_device->start(*this);
-		}
+			startDevice();
 	}
 
 	void AudioEngine::set(const Json& changes)
@@ -860,11 +882,7 @@ namespace gnubase::engine
 		m_recordOffset = offset;
 		m_played = PlayedPositions(static_cast<size_t>(m_recordOffset) + m_device->format().blockSize);
 		if (running)
-		{
-			m_midi.clear();
-			startCueing();
-			m_device->start(*this);
-		}
+			startDevice();
 		return true;
 	}
 
@@ -1236,6 +1254,22 @@ namespace gnubase::engine
 	void AudioEngine::registerCommands(Engine& engine)
 	{
 		m_engine = &engine;
+		// A failed command's events go nowhere: if it closed the device or opened it again before it failed, clients
+		// still learn the status it left.
+		const auto announcingFailure = [this](const std::function<void()>& change)
+		{
+			const uint64_t closed = m_closed;
+			try
+			{
+				change();
+			}
+			catch (...)
+			{
+				if (m_closed != closed)
+					m_engine->broadcast("audio.changed", status());
+				throw;
+			}
+		};
 		engine.registerCommand(
 			{"audio.devices", 1,
 				"The audio backends of this build, the preferred one first, and the devices each has now: their ids, "
@@ -1284,11 +1318,12 @@ namespace gnubase::engine
 				"built-in generator (see processor.list) with parameters by name. It reports inputLatency and "
 				"outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that "
 				"much later, as a cable from each output to the input of the same number would, which needs at least "
-				"a block. It monitors directly by adding inputs to its outputs.",
+				"a block. It monitors directly by adding inputs to its outputs.\n"
+				"Sends audio.changed, also when it fails after closing the old device.",
 				deviceSchema, statusSchema(), false},
-			[this](CommandContext& context)
+			[this, announcingFailure](CommandContext& context)
 			{
-				setDevice(context.parameters());
+				announcingFailure([this, &context] { setDevice(context.parameters()); });
 				Json result = status();
 				context.emit("audio.changed", result);
 				return result;
@@ -1301,11 +1336,13 @@ namespace gnubase::engine
 				"Changes the audio device's settings and keeps the others: the parameters of audio.setDevice except "
 				"backend and device, e.g. sampleRate, blockSize, clockSource, recordShift or directMonitoring. The "
 				"device opens again with them, as for audio.reset, and runs on if it ran. If it can't open with them, "
-				"it opens again with the settings it had and the command fails.",
+				"it opens again with the settings it had and the command fails; if those fail too, there is no device. "
+				"Sends audio.changed, also when it fails after the device closed: with the device opened again with "
+				"its old settings, at position 0, or with none.",
 				settingsSchema, statusSchema(), false},
-			[this](CommandContext& context)
+			[this, announcingFailure](CommandContext& context)
 			{
-				set(context.parameters());
+				announcingFailure([this, &context] { set(context.parameters()); });
 				Json result = status();
 				context.emit("audio.changed", result);
 				return result;
@@ -1351,9 +1388,9 @@ namespace gnubase::engine
 				"default: half the hardware threads, about one per core). Independent tracks then run in parallel; "
 				"the output is the same for any number of threads. The device must be stopped. activeThreads in the "
 				"result is how many process, and limitedBy why that is fewer: multiProcessing is off, the hardware has "
-				"fewer threads, worker threads didn't get real-time priority (on Linux: no real-time privileges), or "
-				"the system refused to start them (system). Fails, keeping the previous settings, if threads can't be "
-				"started.",
+				"fewer threads, worker threads didn't get real-time priority (on Linux: no real-time privileges and no "
+				"rtkit), or the system refused to start them (system). Fails, keeping the previous settings, if "
+				"threads can't be started.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
 					"multiProcessing": {"type": "boolean"}, "threads": {"type": "integer"}}})"),
 				statusSchema(), false},
@@ -1374,8 +1411,9 @@ namespace gnubase::engine
 			{"audio.performance", 1,
 				"Performance data for the performance monitor. Loads are the share of a block's duration spent "
 				"processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest "
-				"block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported and the "
-				"device's restarts by audio.reset (a block that was both counts twice); cycles: blocks measured; "
+				"block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported, also those "
+				"it recovers from with a reset (a block that was both counts twice; a reset after a settings change "
+				"counts nothing); cycles: blocks measured; "
 				"threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles "
 				"count since the last audio.resetPerformance, also across audio.reset; everything starts over with "
 				"a new device or new processing threads. "
@@ -1428,18 +1466,39 @@ namespace gnubase::engine
 				"Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this "
 				"when their settings change, e.g. in their control panel, or when their device goes away; the engine "
 				"then resets on its own. A device that can't be opened, e.g. because it was unplugged, is lost (lost "
-				"in audio.get): the engine goes on without it and resets again about every half second until it "
-				"opens, then restarts it if it ran, so playback goes on where it stopped. audio.setDevice ends the "
-				"wait. The performance measurement goes on across a reset, which counts as a dropout (see "
-				"audio.performance); one that loses the device ends it. Sends audio.changed when the device closes, "
-				"opens or is lost.",
+				"in audio.get): the engine goes on without it and tries again about every half second until it "
+				"opens (audio.reconnect), then restarts it if it ran, so playback goes on where it stopped; "
+				"audio.start and audio.stop meanwhile decide whether it does. audio.setDevice ends the wait. The "
+				"performance measurement goes on across a reset, which itself counts nothing: a driver that resets "
+				"because of a dropout reports the dropout (see audio.performance). A reset that loses the device ends "
+				"the measurement. Sends audio.changed when the device closes, opens or is lost, also when it fails "
+				"after the device opened again.",
 				noParameters(), statusSchema(), false},
-			[this](CommandContext& context)
+			[this, announcingFailure](CommandContext& context)
 			{
-				const bool changed = reset();
+				bool changed = false;
+				announcingFailure([this, &changed] { changed = reset(); });
 				Json result = status();
 				if (changed)
 					context.emit("audio.changed", result);
+				return result;
+			});
+		engine.registerCommand(
+			{"audio.reconnect", 1,
+				"Tries once to open the lost audio device again (lost in audio.get), as audio.reset does; does nothing "
+				"unless a device is lost. While one is, the engine runs it on its own about every half second, one "
+				"try at a time. Tries that find the device still gone change nothing and are left out of "
+				"engine.commandLog. Sends audio.changed when the device opens.",
+				noParameters(), statusSchema(), false},
+			[this, announcingFailure](CommandContext& context)
+			{
+				bool changed = false;
+				announcingFailure([this, &changed] { changed = m_lost && reset(); });
+				Json result = status();
+				if (changed)
+					context.emit("audio.changed", result);
+				else
+					context.leaveOutOfLog();
 				return result;
 			});
 		engine.registerCommand(
@@ -1514,26 +1573,44 @@ namespace gnubase::engine
 				return result;
 			});
 		engine.registerCommand(
-			{"audio.start", 1, "Simulated real time: the device processes one block per block duration until stopped.",
+			{"audio.start", 1,
+				"Starts the audio device; the dummy device processes one block per block duration (simulated real "
+				"time) until stopped. While the device is lost (see audio.reset), it starts once it returns (restart "
+				"in lost), and audio.changed announces that.",
 				noParameters(), statusSchema(), false},
 			[this](CommandContext& context)
 			{
+				if (m_lost)
+				{
+					if (!m_lost->restart)
+					{
+						m_lost->restart = true;
+						context.emit("audio.changed", status());
+					}
+					return status();
+				}
 				require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
 				require(!m_device->running(), "the audio device is already running");
-				m_midi.clear(); // input that waited while no device ran is stale
-				startCueing();
-				m_device->start(*this);
+				startDevice();
 				Json result = status();
 				context.emit("audio.changed", result);
 				return result;
 			});
-		engine.registerCommand({"audio.stop", 1, "Stops simulated real time. Does nothing if the device isn't running.",
-								   noParameters(), statusSchema(), false},
+		engine.registerCommand(
+			{"audio.stop", 1,
+				"Stops the audio device. Does nothing if it isn't running. While the device is lost (see audio.reset), "
+				"it stays stopped once it returns (restart in lost), and audio.changed announces that.",
+				noParameters(), statusSchema(), false},
 			[this](CommandContext& context)
 			{
 				if (m_device && m_device->running())
 				{
 					stopDevice();
+					context.emit("audio.changed", status());
+				}
+				else if (m_lost && m_lost->restart)
+				{
+					m_lost->restart = false;
 					context.emit("audio.changed", status());
 				}
 				return status();
