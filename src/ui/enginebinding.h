@@ -52,6 +52,10 @@ namespace gnubase::ui
 		void send(std::string command, engine::Json parameters = engine::Json::object(),
 			std::function<void(const engine::Result&)> done = {});
 
+		// How many commands of that name were sent and their results not handed on yet, e.g. for tests of how many
+		// queries a view keeps open.
+		size_t waiting(const std::string& command) const;
+
 		// Calls handler in update() with every event of that name while the subscription exists.
 		[[nodiscard]] Subscription on(std::string event, std::function<void(const engine::Event&)> handler);
 
