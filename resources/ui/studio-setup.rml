@@ -1,0 +1,467 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The studio setup dialog (#79, docs/features/studio-setup.md): the audio system, the audio device with its ports and
+     the MIDI ports, each a page that the devices list on the left selects. app::AppUi opens it (the UI command
+     window.studioSetup). Its Lua reads everything from the engine when the dialog loads and after Apply, and changes
+     it only through engine commands: Apply and OK send what the pages changed, Cancel drops it. -->
+<rml>
+<head>
+	<title>Studio Setup</title>
+	<style>
+		dialog
+		{
+			width: 780dp;
+		}
+
+		.content
+		{
+			display: flex;
+			height: 460dp;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#studio-devices
+		{
+			width: 160dp;
+			margin-right: 12dp;
+		}
+
+		.page
+		{
+			display: none;
+			flex: 1;
+			overflow-y: auto;
+		}
+
+		.page.shown
+		{
+			display: block;
+		}
+
+		.field
+		{
+			display: flex;
+			align-items: center;
+			height: 28dp;
+		}
+
+		.field .label
+		{
+			width: 160dp;
+		}
+
+		.ports
+		{
+			margin-top: 8dp;
+		}
+
+		#driver
+		{
+			width: 320dp;
+		}
+
+		.ports td
+		{
+			padding: 2dp 6dp 2dp 0;
+			vertical-align: middle;
+		}
+
+		/* I/O, Port System Name, Show As, Visible, State and, for MIDI, In 'All MIDI Inputs' */
+		.ports td:nth-child(1)
+		{
+			width: 36dp;
+		}
+
+		.ports td:nth-child(2)
+		{
+			width: 130dp;
+		}
+
+		.ports td:nth-child(3)
+		{
+			width: 136dp;
+		}
+
+		.ports td:nth-child(4)
+		{
+			width: 52dp;
+		}
+
+		.ports td:nth-child(5)
+		{
+			width: 80dp;
+		}
+
+		.ports input.text
+		{
+			width: 130dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#studio-setup-message
+		{
+			flex: 1;
+		}
+
+		.row button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		-- The dialog's state, in the UI's Lua: what the engine said when the dialog loaded, to send only what changed.
+		StudioSetup = {}
+		local setup = StudioSetup
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local function option(value, text, selected)
+			return '<option value="' .. escape(value) .. '"' .. (selected and " selected" or "") .. ">" ..
+				escape(text) .. "</option>"
+		end
+
+		-- attributes: what tells the check box apart, e.g. 'id="multi-processing"'.
+		local function checkbox(attributes, checked, disabled)
+			return '<input type="checkbox" ' .. attributes .. (checked and " checked" or "") ..
+				(disabled and " disabled" or "") .. "/>"
+		end
+
+		local function field(label, control)
+			return '<div class="field"><span class="label">' .. escape(label) .. "</span>" .. control .. "</div>"
+		end
+
+		local function milliseconds(frames, sampleRate)
+			return string.format("%.1f ms", frames * 1000 / sampleRate)
+		end
+
+		local function numberText(value)
+			return math.tointeger(value) and tostring(math.tointeger(value)) or tostring(value)
+		end
+
+		-- A form control's value: the value attribute that RmlUi keeps up to date.
+		local function valueOf(element)
+			local value = element and element:GetAttribute("value")
+			return value ~= nil and tostring(value) or nil
+		end
+
+		local function checked(element)
+			return element ~= nil and element:HasAttribute("checked")
+		end
+
+		-- The device's entry in audio.devices, for its sample rates, block sizes and clock sources.
+		local function deviceInfo(devices, device)
+			for _, backend in ipairs(devices.backends) do
+				if backend.name == device.backend then
+					for _, info in ipairs(backend.devices) do
+						if info.id == device.id then
+							return info
+						end
+					end
+				end
+			end
+			return device
+		end
+
+		local function audioSystemPage(devices, status)
+			local device = status.device
+			local options = {}
+			setup.drivers = {}
+			if device == nil then
+				options[1] = option("", "No Driver", true)
+			end
+			for _, backend in ipairs(devices.backends) do
+				for _, info in ipairs(backend.devices or {}) do
+					setup.drivers[#setup.drivers + 1] = {backend = backend.name, device = info.id}
+					local text = backend.name .. " - " .. info.name .. (info.available == false and " (unavailable)" or "")
+					local selected = device ~= nil and device.backend == backend.name and device.id == info.id
+					options[#options + 1] = option(#setup.drivers, text, selected)
+				end
+			end
+			local rml = field("Audio Driver", '<select id="driver">' .. table.concat(options) .. "</select>")
+			if device ~= nil then
+				rml = rml .. field("Input Latency", '<span id="input-latency">' ..
+					milliseconds(device.inputLatency, device.sampleRate) .. "</span>") ..
+					field("Output Latency", '<span id="output-latency">' ..
+					milliseconds(device.outputLatency, device.sampleRate) .. "</span>") ..
+					field("HW Sample Rate", "<span>" .. numberText(device.sampleRate) .. " Hz</span>") ..
+					field("Record Shift (samples)", '<input type="text" id="record-shift" value="' ..
+					device.recordShift .. '"/>')
+			end
+			return rml ..
+				field("Activate Multi Processing", checkbox('id="multi-processing"', status.processing.multiProcessing))
+		end
+
+		local function choices(id, values, current)
+			if #values == 0 then
+				values = {current}
+			end
+			local options = {}
+			for _, value in ipairs(values) do
+				options[#options + 1] = option(numberText(value), numberText(value), value == current)
+			end
+			return '<select id="' .. id .. '">' .. table.concat(options) .. "</select>"
+		end
+
+		local function portRows(ports, input)
+			local rows = {}
+			for _, port in ipairs(ports) do
+				rows[#rows + 1] = '<tr class="port" name="' .. escape(port.name) .. '" input="' .. tostring(input) ..
+					'"><td>' .. (input and "In" or "Out") .. "</td><td>" .. escape(port.name) ..
+					'</td><td><input type="text" class="show-as" value="' .. escape(port.showAs) .. '"/></td><td>' ..
+					checkbox('class="visible"', port.visible) .. "</td><td>" .. (port.visible and "Active" or "Inactive") ..
+					"</td></tr>"
+			end
+			return table.concat(rows)
+		end
+
+		-- Above a ports table: its Reset button, #reset-audio-ports or #reset-midi-ports.
+		local function portsTitle(id)
+			return field("Ports", '<button id="reset-' .. id .. '" onclick="StudioSetup.resetPorts(document, \'' .. id ..
+				'\')">Reset</button>')
+		end
+
+		local function audioDevicePage(devices, status, ports)
+			local device = status.device
+			if device == nil then
+				return "<p>No audio device.</p>"
+			end
+			local info = deviceInfo(devices, device)
+			local clockSources = info.clockSources or {}
+			local clock = ""
+			if #clockSources > 0 then
+				local options = {}
+				for _, name in ipairs(clockSources) do
+					options[#options + 1] = option(name, name, name == device.clockSource)
+				end
+				clock = field("Clock Source", '<select id="clock-source">' .. table.concat(options) .. "</select>")
+			end
+			return '<div class="field"><button id="control-panel" onclick="StudioSetup.controlPanel(document)"' ..
+				(device.controlPanel and "" or " disabled") .. ">Control Panel</button></div>" ..
+				field("Input Latency", "<span>" .. milliseconds(device.inputLatency, device.sampleRate) .. "</span>") ..
+				field("Output Latency", "<span>" .. milliseconds(device.outputLatency, device.sampleRate) .. "</span>") ..
+				field("Sample Rate", choices("sample-rate", info.sampleRates or {}, device.sampleRate)) ..
+				field("Buffer Size", choices("block-size", info.blockSizes or {}, device.blockSize)) .. clock ..
+				field("Direct Monitoring",
+					checkbox('id="direct-monitoring"', device.directMonitoring, not info.canMonitorDirectly)) ..
+				portsTitle("audio-ports") ..
+				'<table class="ports"><thead><tr><td>I/O</td><td>Port System Name</td><td>Show As</td><td>Visible</td>' ..
+				'<td>State</td></tr></thead><tbody id="audio-ports">' .. portRows(ports.inputs, true) ..
+				portRows(ports.outputs, false) .. "</tbody></table>"
+		end
+
+		local function midiPage(ports)
+			local rows = {}
+			for index, port in ipairs(ports) do
+				local state = not port.present and "Not Present" or (port.visible and "Active" or "Inactive")
+				rows[#rows + 1] = '<tr class="port" index="' .. index .. '" name="' .. escape(port.name) .. '"><td>' ..
+					(port.input and "In" or "Out") ..
+					"</td><td>" .. escape(port.name) .. '</td><td><input type="text" class="show-as" value="' ..
+					escape(port.showAs) .. '"/></td><td>' .. checkbox('class="visible"', port.visible) .. "</td><td>" ..
+					state .. "</td><td>" .. (port.input and checkbox('class="all-inputs"', port.inAllInputs) or "") ..
+					"</td></tr>"
+			end
+			return portsTitle("midi-ports") ..
+				'<table class="ports"><thead><tr><td>I/O</td><td>Port System Name</td><td>Show As</td>' ..
+				"<td>Visible</td><td>State</td><td>In 'All MIDI Inputs'</td></tr></thead><tbody id=\"midi-ports\">" ..
+				table.concat(rows) .. "</tbody></table>"
+		end
+
+		-- Reads everything from the engine and fills the pages.
+		function setup.load(document)
+			local devices = gnubase.audio.devices()
+			setup.status = gnubase.audio.get()
+			setup.audioPorts = gnubase.audio.ports()
+			setup.midiPorts = gnubase.midi.ports().ports
+			local device = setup.status.device
+			document:GetElementById("devices-device").inner_rml = escape(device and device.name or "Audio Device")
+			document:GetElementById("page-system").inner_rml = audioSystemPage(devices, setup.status)
+			document:GetElementById("page-device").inner_rml = audioDevicePage(devices, setup.status, setup.audioPorts)
+			document:GetElementById("page-midi").inner_rml = midiPage(setup.midiPorts)
+		end
+
+		-- Shows the page that the devices list selects.
+		function setup.show(document, page)
+			for _, name in ipairs{"system", "device", "midi"} do
+				document:GetElementById("page-" .. name):SetClass("shown", name == page)
+			end
+		end
+
+		-- Runs an engine command; a failure goes into errors instead of raising.
+		local function call(errors, command, parameters)
+			local ok, result = pcall(command, parameters)
+			if not ok then
+				errors[#errors + 1] = tostring(result)
+			end
+			return ok
+		end
+
+		-- The rows of a ports table with what they show now.
+		local function rowsOf(document, id)
+			local rows = {}
+			for _, row in ipairs(document:QuerySelectorAll("#" .. id .. " tr")) do
+				local allInputs = row:QuerySelector("input.all-inputs")
+				rows[#rows + 1] = {row = row, showAs = valueOf(row:QuerySelector("input.show-as")) or "",
+					visible = checked(row:QuerySelector("input.visible")), inAllInputs = allInputs and checked(allInputs)}
+			end
+			return rows
+		end
+
+		local function applyAudioDevice(document, errors, device)
+			local changes = {}
+			local sampleRate = tonumber(valueOf(document:GetElementById("sample-rate")))
+			if sampleRate ~= nil and sampleRate ~= device.sampleRate then
+				changes.sampleRate = sampleRate
+			end
+			local blockSize = math.tointeger(tonumber(valueOf(document:GetElementById("block-size"))))
+			if blockSize ~= nil and blockSize ~= device.blockSize then
+				changes.blockSize = blockSize
+			end
+			local clockSource = valueOf(document:GetElementById("clock-source"))
+			if clockSource ~= nil and clockSource ~= "" and clockSource ~= device.clockSource then
+				changes.clockSource = clockSource
+			end
+			local directMonitoring = checked(document:GetElementById("direct-monitoring"))
+			if directMonitoring ~= device.directMonitoring then
+				changes.directMonitoring = directMonitoring
+			end
+			local recordShift = math.tointeger(tonumber(valueOf(document:GetElementById("record-shift"))))
+			if recordShift == nil then
+				errors[#errors + 1] = "Record Shift must be a whole number of samples"
+			elseif recordShift ~= device.recordShift then
+				changes.recordShift = recordShift
+			end
+			if next(changes) ~= nil then
+				call(errors, gnubase.audio.set, changes)
+			end
+
+			local byName = {}
+			for _, input in ipairs{true, false} do
+				for _, port in ipairs(setup.audioPorts[input and "inputs" or "outputs"]) do
+					byName[tostring(input) .. "/" .. port.name] = port
+				end
+			end
+			for _, row in ipairs(rowsOf(document, "audio-ports")) do
+				local name = tostring(row.row:GetAttribute("name"))
+				local input = row.row:GetAttribute("input") == "true"
+				local port = byName[tostring(input) .. "/" .. name]
+				if port ~= nil and (row.showAs ~= port.showAs or row.visible ~= port.visible) then
+					call(errors, gnubase.audio.setPort, {input = input, name = name,
+						showAs = row.showAs == name and "" or row.showAs, visible = row.visible})
+				end
+			end
+		end
+
+		-- Sends what the pages changed. Returns the errors of the commands that failed.
+		function setup.apply(document)
+			local errors = {}
+			local device = setup.status.device
+			local driver = setup.drivers[tonumber(valueOf(document:GetElementById("driver")))]
+			if driver ~= nil and (device == nil or driver.backend ~= device.backend or driver.device ~= device.id) then
+				-- Another driver: the pages showed the old device, whose settings don't apply to the new one.
+				call(errors, gnubase.audio.setDevice, {backend = driver.backend, device = driver.device})
+			elseif device ~= nil then
+				applyAudioDevice(document, errors, device)
+			end
+
+			local multiProcessing = checked(document:GetElementById("multi-processing"))
+			if multiProcessing ~= setup.status.processing.multiProcessing then
+				-- Processing threads change while the device stands.
+				local running = gnubase.audio.get().running
+				if running then
+					call(errors, gnubase.audio.stop)
+				end
+				call(errors, gnubase.audio.setProcessing, {multiProcessing = multiProcessing})
+				if running then
+					call(errors, gnubase.audio.start)
+				end
+			end
+
+			for _, row in ipairs(rowsOf(document, "midi-ports")) do
+				local port = setup.midiPorts[tonumber(row.row:GetAttribute("index"))]
+				local inAllInputs = nil -- outputs don't belong to all MIDI inputs
+				if port.input then
+					inAllInputs = row.inAllInputs
+				end
+				if row.showAs ~= port.showAs or row.visible ~= port.visible or
+					(port.input and inAllInputs ~= port.inAllInputs) then
+					call(errors, gnubase.midi.setPort, {backend = port.backend, id = port.id, input = port.input,
+						showAs = row.showAs == port.name and "" or row.showAs, visible = row.visible,
+						inAllInputs = inAllInputs})
+				end
+			end
+			return errors
+		end
+
+		local function report(document, errors)
+			document:GetElementById("studio-setup-message").inner_rml = escape(table.concat(errors, "; "))
+		end
+
+		-- Apply: sends the changes and shows what the engine made of them.
+		function setup.applyAndLoad(document)
+			local errors = setup.apply(document)
+			setup.load(document)
+			report(document, errors)
+		end
+
+		-- OK: sends the changes and closes, unless a command failed.
+		function setup.ok(document)
+			local errors = setup.apply(document)
+			if #errors == 0 then
+				document:Close()
+			else
+				setup.load(document)
+				report(document, errors)
+			end
+		end
+
+		function setup.reset(document)
+			local errors = {}
+			call(errors, gnubase.audio.reset)
+			setup.load(document)
+			report(document, errors)
+		end
+
+		function setup.controlPanel(document)
+			local errors = {}
+			call(errors, gnubase.audio.controlPanel)
+			report(document, errors)
+		end
+
+		-- The ports' Reset: their system names and every port visible, sent with Apply or OK.
+		function setup.resetPorts(document, id)
+			for _, row in ipairs(document:QuerySelectorAll("#" .. id .. " tr")) do
+				row:QuerySelector("input.show-as"):SetAttribute("value", row:GetAttribute("name"))
+				row:QuerySelector("input.visible"):SetAttribute("checked", "")
+			end
+		end
+	</script>
+</head>
+<body onload="StudioSetup.load(document)">
+	<dialog id="studio-setup">
+		<div class="dialog-titlebar">Studio Setup</div>
+		<div class="content">
+			<listview id="studio-devices" value="system" onchange="StudioSetup.show(document, element:GetAttribute('value'))">
+				<listitem id="devices-system" value="system" class="selected">Audio System</listitem>
+				<listitem id="devices-device" value="device">Audio Device</listitem>
+				<listitem id="devices-midi" value="midi">MIDI Port Setup</listitem>
+			</listview>
+			<div class="page shown" id="page-system"/>
+			<div class="page" id="page-device"/>
+			<div class="page" id="page-midi"/>
+		</div>
+		<div class="row">
+			<div id="studio-setup-message"/>
+			<button id="reset-device" title="Opens the audio device again" onclick="StudioSetup.reset(document)">Reset</button>
+			<button id="apply" onclick="StudioSetup.applyAndLoad(document)">Apply</button>
+			<button id="cancel" result="cancel">Cancel</button>
+			<button id="ok" class="primary" onclick="StudioSetup.ok(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>
