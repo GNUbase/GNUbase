@@ -17,6 +17,8 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace gnubase::ui
 {
@@ -74,23 +76,30 @@ namespace gnubase::ui
 		m_presetsMenu = m_document->GetElementById("zoom-presets-menu");
 		m_autoScrollButton = m_document->GetElementById("auto-scroll");
 		m_autoScrollMenu = m_document->GetElementById("auto-scroll-menu");
+		m_snapButton = m_document->GetElementById("snap");
+		m_snapTypeButton = m_document->GetElementById("snap-type");
+		m_snapTypeMenu = m_document->GetElementById("snap-type-menu");
+		m_gridTypeButton = m_document->GetElementById("grid-type");
+		m_gridTypeMenu = m_document->GetElementById("grid-type-menu");
+		m_zeroCrossingButton = m_document->GetElementById("snap-zero-crossing");
 		if (m_formatMenu != nullptr)
 			m_ruler->SetAttribute("contextmenu", m_formatMenu->GetId()); // a right click in the ruler opens it
 	}
 
-	// The cycle markers of the active marker track, for the zoom presets menu.
+	// The cycle markers of the active marker track, for the zoom presets menu; its markers, for snapping.
 	void EventDisplay::requestMarkers()
 	{
-		if (m_presetsMenu == nullptr)
-			return;
 		m_binding.send("marker.list", Json::object(),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (alive.expired() || !result.ok())
 					return;
 				m_cycleMarkers.clear();
+				m_markers.clear();
 				for (const Json& marker : result.value.at("markers"))
 				{
+					m_markers.push_back(marker.at("positionSamples").get<int64_t>());
+					m_markers.push_back(marker.at("endSamples").get<int64_t>());
 					if (marker.at("type") != "cycle")
 						continue;
 					std::string name = marker.at("name").get<std::string>();
@@ -129,6 +138,14 @@ namespace gnubase::ui
 				openDialog("zoom-preset.rml");
 			else if (id == "zoom-presets-organize")
 				openDialog("zoom-presets.rml");
+		}
+		else if (menu == m_snapTypeMenu)
+		{
+			setSnap({{"type", item->GetAttribute<Rml::String>("snap-type", "")}});
+		}
+		else if (menu == m_gridTypeMenu)
+		{
+			setSnap({{"grid", item->GetAttribute<Rml::String>("grid-type", "")}});
 		}
 		else if (menu == m_autoScrollMenu)
 		{
@@ -250,6 +267,91 @@ namespace gnubase::ui
 			m_presetsMenu->InsertBefore(
 				menuElement(*m_presetsMenu, "menuitem", "cycle-marker", std::to_string(i), m_cycleMarkers[i].name),
 				next);
+	}
+
+	namespace
+	{
+		struct GridItem
+		{
+			engine::GridType grid;
+			const char* text;
+		};
+
+		// The grid types of each time format (reference manual pp. 107-108).
+		std::vector<GridItem> gridItems(TimeFormat format)
+		{
+			using engine::GridType;
+			switch (format)
+			{
+			case TimeFormat::BarsBeats:
+				return {{GridType::Bar, "Bar"}, {GridType::Beat, "Beat"}, {GridType::Quantize, "Use Quantize"},
+					{GridType::AdaptToZoom, "Adapt to Zoom"}};
+			case TimeFormat::Seconds:
+				return {{GridType::Ms1, "1ms"}, {GridType::Ms10, "10ms"}, {GridType::Ms100, "100ms"},
+					{GridType::Ms1000, "1000ms"}};
+			case TimeFormat::Samples:
+				return {{GridType::Samples1, "1 Sample"}, {GridType::Samples10, "10 Samples"},
+					{GridType::Samples100, "100 Samples"}, {GridType::Samples44100, "44100 Samples"}};
+			default:
+				return {{GridType::Subframe, "Subframe"}, {GridType::QuarterFrame, "1/4 Frame"},
+					{GridType::HalfFrame, "1/2 Frame"}, {GridType::Frame, "1 Frame"}, {GridType::TwoFrames, "2 Frames"},
+					{GridType::Second, "1 Second"}};
+			}
+		}
+
+		std::string gridText(engine::GridType grid)
+		{
+			for (const TimeFormat format :
+				{TimeFormat::BarsBeats, TimeFormat::Seconds, TimeFormat::Samples, TimeFormat::Timecode})
+				for (const GridItem& item : gridItems(format))
+					if (item.grid == grid)
+						return item.text;
+			return engine::gridTypeName(grid);
+		}
+	}
+
+	void EventDisplay::setSnap(const Json& settings)
+	{
+		m_binding.send("snap.set", settings,
+			[](const engine::Result& result)
+			{
+				if (!result.ok())
+					logging::warning("The event display can't change the snap settings: {}", result.error);
+			});
+	}
+
+	// The buttons show the settings, the snap type menu checks the type, the grid type menu has the format's grid
+	// types with the grid checked.
+	void EventDisplay::showSnap()
+	{
+		if (!alive())
+			return;
+		if (m_snapButton != nullptr)
+			check(*m_snapButton, m_snap.on);
+		if (m_zeroCrossingButton != nullptr)
+			check(*m_zeroCrossingButton, m_snap.zeroCrossing);
+		if (m_snapTypeMenu != nullptr)
+			for (int i = 0; i < m_snapTypeMenu->GetNumChildren(); ++i)
+			{
+				Rml::Element* item = m_snapTypeMenu->GetChild(i);
+				const bool chosen = item->GetAttribute<Rml::String>("snap-type", "") == snapTypeName(m_snap.type);
+				check(*item, chosen);
+				if (chosen && m_snapTypeButton != nullptr)
+					m_snapTypeButton->SetInnerRML(item->GetInnerRML());
+			}
+		if (m_gridTypeButton != nullptr)
+			m_gridTypeButton->SetInnerRML(Rml::StringUtilities::EncodeRml(gridText(m_snap.grid)));
+		if (m_gridTypeMenu == nullptr)
+			return;
+		while (m_gridTypeMenu->GetNumChildren() > 0)
+			m_gridTypeMenu->RemoveChild(m_gridTypeMenu->GetChild(0));
+		for (const GridItem& grid : gridItems(m_format))
+		{
+			Rml::ElementPtr item =
+				menuElement(*m_gridTypeMenu, "menuitem", "grid-type", engine::gridTypeName(grid.grid), grid.text);
+			check(*item, grid.grid == m_snap.grid);
+			m_gridTypeMenu->AppendChild(std::move(item));
+		}
 	}
 
 	void EventDisplay::showAutoScroll()

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Editing parts and events in the event display (#85) on the fake window system, following a real engine: selecting,
 // moving, copying, resizing and splitting with the mouse, adding parts with a double click, and the edit commands on
-// the selection. tests/eventedit_tests.cpp checks the event.* commands themselves.
+// the selection; snapping them (#87). tests/eventedit_tests.cpp checks the event.* commands themselves.
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "testutils/fakeui.h"
@@ -17,7 +17,9 @@
 #include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -270,7 +272,10 @@ TEST_CASE("the edit commands act on the selection", "[unit]")
 	f.run("edit.delete");
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents().empty(); }));
 
-	// Nudging moves the part a quarter; duplicating selects the copy right after it; moving its start to the cursor.
+	// Nudging moves the part a grid step, here a beat; duplicating selects the copy right after it; moving its start
+	// to the cursor.
+	f.call("snap.set", {{"grid", "beat"}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().grid == engine::GridType::Beat; }));
 	f.display.select({f.part});
 	f.run("edit.nudgeRight");
 	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 3 * g_quarter; }));
@@ -333,4 +338,92 @@ TEST_CASE("fill loop, convert to real copy and split loop act on the selection",
 	f.run("edit.splitLoop");
 	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 7; }));
 	CHECK(f.audioEvents().size() == 2);
+}
+
+TEST_CASE("with snap on, moving, resizing, splitting and nudging follow the grid, events and the cursor", "[unit]")
+{
+	Fixture f;
+	const auto audioPosition = [&f] { return f.audioEvents()[0].at("position").get<int64_t>(); };
+	// Whether the display shows an event starting at seconds on the lane, before the next gesture.
+	const auto shown = [&f](size_t lane, double seconds)
+	{
+		return f.waitUntil(
+			[&f, lane, seconds]
+			{
+				const std::vector<ui::TimeSpan>& events = f.lanes("events")[lane].events;
+				return std::any_of(events.begin(), events.end(),
+					[seconds](const ui::TimeSpan& event) { return std::abs(event.start - seconds) < 1e-9; });
+			});
+	};
+	f.call("snap.set", {{"on", true}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().on; }));
+
+	// Grid, bars (two seconds at 120 BPM): the part dragged from 1 to 1.7 seconds starts on the bar at 2 seconds,
+	// exactly, in ticks; its end dragged to 5.3 seconds ends on the bar at 6.
+	f.drag(150, 60, 220, 60);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 4 * g_quarter; }));
+	REQUIRE(shown(1, 2.0));
+	f.drag(398, 60, 528, 60);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("length") == 8 * g_quarter; }));
+	// Alt and a click at 3.3 seconds splits it on the bar at 4 seconds.
+	f.click(330, 60, {"alt"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+	CHECK(f.parts()[1].at("position") == 8 * g_quarter);
+
+	// Shuffle: the first half dragged past the middle of the second trades places with it.
+	f.call("snap.set", {{"type", "shuffle"}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().type == engine::SnapType::Shuffle; }));
+	f.drag(300, 60, 450, 60);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 8 * g_quarter; }));
+	CHECK(f.parts()[1].at("position") == 4 * g_quarter);
+
+	// Events: the audio event dragged to 3.95 seconds starts where the parts meet, at 4 seconds (8 dp attract).
+	f.call("snap.set", {{"type", "events"}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().type == engine::SnapType::Events; }));
+	f.drag(225, 20, 420, 20);
+	REQUIRE(f.waitUntil([&audioPosition] { return audioPosition() == 192000; }));
+	// Cursor: dragged to 6.96 seconds, it starts at the cursor at 7.
+	f.call("transport.locate", {{"position", 336000}});
+	f.call("snap.set", {{"type", "cursor"}});
+	REQUIRE(
+		f.waitUntil([&f] { return f.display.snap().type == engine::SnapType::Cursor && f.display.cursor() == 7.0; }));
+	REQUIRE(shown(0, 4.0));
+	f.drag(425, 20, 721, 20);
+	REQUIRE(f.waitUntil([&audioPosition] { return audioPosition() == 336000; }));
+
+	// Snap point to cursor at 7.25 seconds; then the snap point, not the start, snaps to the bar at 8 seconds.
+	f.call("transport.locate", {{"position", 348000}});
+	f.call("snap.set", {{"type", "grid"}});
+	REQUIRE(
+		f.waitUntil([&f] { return f.display.snap().type == engine::SnapType::Grid && f.display.cursor() == 7.25; }));
+	f.display.select({f.event});
+	f.run("edit.snapPointToCursor");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("snapPoint") == 12000; }));
+	REQUIRE(shown(0, 7.0));
+	f.step();
+	f.call("project.get"); // the display has asked for the snap point
+	f.step();
+	f.drag(710, 20, 760, 20);
+	REQUIRE(f.waitUntil([&audioPosition] { return audioPosition() == 372000; }));
+
+	// Grid relative in beats: dragged 0.6 seconds, the part keeps its place on the beat and moves a beat.
+	f.call("snap.set", {{"type", "gridRelative"}, {"grid", "beat"}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().grid == engine::GridType::Beat; }));
+	f.drag(500, 60, 560, 60);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 9 * g_quarter; }));
+
+	// Nudging moves a grid step, snap on or off: a beat, then a bar.
+	f.display.select({f.part});
+	f.run("edit.nudgeLeft");
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 8 * g_quarter; }));
+	f.run("edit.snap");
+	REQUIRE(f.waitUntil([&f] { return !f.display.snap().on; }));
+	f.call("snap.set", {{"grid", "bar"}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().grid == engine::GridType::Bar; }));
+	f.run("edit.nudgeRight");
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 12 * g_quarter; }));
+	// Off, a drag doesn't snap: 0.3 seconds is 0.6 quarters.
+	REQUIRE(shown(1, 6.0));
+	f.drag(650, 60, 680, 60);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 12 * g_quarter + ((3 * g_quarter) / 5); }));
 }

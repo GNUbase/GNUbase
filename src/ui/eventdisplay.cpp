@@ -110,6 +110,14 @@ namespace gnubase::ui
 				}));
 		m_subscriptions.push_back(
 			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
+		m_subscriptions.push_back(m_binding.on("snap.changed",
+			[this](const engine::Event& event)
+			{
+				m_snap = engine::snapSettingsFrom(event.data, m_snap);
+				showSnap();
+			}));
+		m_subscriptions.push_back(m_binding.on("quantize.changed", [this](const engine::Event& event)
+			{ m_quantize = engine::midi::quantizeSettingsFromJson(event.data.at("settings")); }));
 		m_subscriptions.push_back(m_binding.on("settings.changed",
 			[this](const engine::Event& event)
 			{
@@ -238,6 +246,9 @@ namespace gnubase::ui
 		{
 			logging::warning("The event display can't read the project's tempo or signatures: {}", error.what());
 		}
+		m_snap = engine::snapSettingsFrom(project.at("snap"), m_snap);
+		m_quantize = engine::midi::quantizeSettingsFromJson(project.at("quantize"));
+		showSnap();
 
 		// A lane per track, in the project's order.
 		std::map<uint64_t, size_t> lanes;
@@ -283,6 +294,13 @@ namespace gnubase::ui
 			const double start = seconds(event.at("position").get<int64_t>(), linear[track]);
 			const double length = rate > 0.0 ? event.at("length").get<double>() / rate : 0.0;
 			addEvent(event, start, start + length);
+			// The snap point counts while it is inside the event.
+			const Json& snapPoint = event.at("snapPoint");
+			const double into = snapPoint.is_null() || rate <= 0.0
+				? -1.0
+				: (snapPoint.get<double>() - event.at("offset").get<double>()) / rate;
+			if (!m_events.empty() && m_events.back().id == event.at("id") && into >= 0.0 && into < length)
+				m_events.back().snapPoint = start + into;
 			if (file != media.end() && rate > 0.0 && lanes.count(track) != 0)
 				waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {start, length}, file->first, rate,
 					file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});
@@ -559,6 +577,7 @@ namespace gnubase::ui
 		m_ruler->setScale(rulerScale(format, m_time));
 		m_ruler->SetAttribute("format", timeFormatName(format));
 		showFormat();
+		showSnap(); // the grid types are the format's
 	}
 
 	void EventDisplay::setCrossHair(bool shown)
@@ -664,6 +683,10 @@ namespace gnubase::ui
 			// A click on the auto-scroll button switches it off, or on again while it's suspended.
 			if (target != nullptr && target == m_autoScrollButton)
 				setAutoScroll(m_suspended || event.GetParameter<bool>("value", false));
+			else if (target != nullptr && target == m_snapButton)
+				setSnap({{"on", event.GetParameter<bool>("value", false)}});
+			else if (target != nullptr && target == m_zeroCrossingButton)
+				setSnap({{"zeroCrossing", event.GetParameter<bool>("value", false)}});
 			break;
 		default:
 			break;
