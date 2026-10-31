@@ -328,7 +328,7 @@ namespace gnubase::ui
 				R"("><span class="track-name"/><input type="text" class="track-name-field"/>)"
 				R"(<div class="track-controls"/></listitem>)";
 		finishRename(false);
-		const Rml::String selected = m_view->GetAttribute<Rml::String>("value", "");
+		const auto selected = m_view->GetAttribute<Rml::String>("value", "");
 		m_view->SetInnerRML(rml);
 		m_view->SetAttribute("value", selected); // the list view keeps those that are still there
 	}
@@ -626,7 +626,8 @@ namespace gnubase::ui
 			return;
 		const std::vector<uint64_t> tracks = selection();
 		const auto at = tracks.empty() ? lanes.end() : std::find(lanes.begin(), lanes.end(), tracks.front());
-		std::ptrdiff_t index = at == lanes.end() ? (direction > 0 ? -1 : 0) : at - lanes.begin();
+		const std::ptrdiff_t before = direction > 0 ? -1 : 0; // nothing selected: start from an end
+		std::ptrdiff_t index = at == lanes.end() ? before : at - lanes.begin();
 		index = std::clamp<std::ptrdiff_t>(index + direction, 0, static_cast<std::ptrdiff_t>(lanes.size()) - 1);
 		const uint64_t track = lanes[static_cast<size_t>(index)];
 		select({track});
@@ -699,7 +700,7 @@ namespace gnubase::ui
 			select({row->id});
 		if (event.GetParameter<int>("button", 0) != 0)
 			return;
-		for (Rml::Element* part = target; part != nullptr && part->GetTagName() != "listitem";
+		for (const Rml::Element* part = target; part != nullptr && part->GetTagName() != "listitem";
 			part = part->GetParentNode())
 			if (part->HasAttribute("control") || part->GetTagName() == "input" || part->IsClassSet("tree-toggle"))
 				return; // the control's
