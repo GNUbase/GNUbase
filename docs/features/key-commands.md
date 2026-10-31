@@ -14,7 +14,8 @@ it up in `app::AppUi`.
   keys bound again in the same zone replace what they did there. A command may have several keys, as in the reference
   ("Assign Additional Key"). `keysFor(command, parameters)` returns the keys bound to a command as the platform writes
   them, in the order they were bound, for menus (#54) and tooltips; `run` runs a command as a key would, for a menu
-  item.
+  item. `enableWhen(command, enabled)` says when a command can run and `canRun` asks, so that the main menu disables
+  its items ([main-menu.md](main-menu.md)); keys run their commands either way.
 - **Writing keys.** `ui::parseKeys` reads `Space`, `Mod+Z`, `Shift+Alt+F5` or `Ctrl+Num+`, in any case: letters,
   digits, F1 to F24, the named keys (Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, the
   arrows Up, Down, Left, Right, Space), the punctuation keys `. , - +`, and the keypad's own keys Num0 to Num9,
@@ -83,8 +84,8 @@ UI commands are added after the key map, so their keys are bound where the app a
 
 The other edit commands ([parts-and-events.md](parts-and-events.md)) have no default keys in the reference.
 
-Commands that come with their tickets bring their keys: opening windows such as the mixer (F3), cycle, record and the
-rest of the reference's tables.
+The UI command `file.quit` (Quit, in the main menu's File menu) has Mod+Q, everywhere. Commands that come with their
+tickets bring their keys: opening windows such as the mixer (F3), cycle, record and the rest of the reference's tables.
 
 ## Checks
 

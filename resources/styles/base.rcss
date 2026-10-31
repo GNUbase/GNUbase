@@ -685,6 +685,29 @@ menuseparator
 	height: 8dp;
 }
 
+/* The main menu bar (docs/features/main-menu.md): the menus' titles in a row, and an item's key on its right. */
+.menubar
+{
+	display: flex;
+	align-items: center;
+	height: 24dp;
+	padding: 0 4dp;
+	box-sizing: border-box;
+}
+
+.menubar button
+{
+	min-width: 0;
+	height: 22dp;
+	padding: 3dp 8dp;
+}
+
+menuitem .menu-keys
+{
+	float: right;
+	padding-left: 24dp;
+}
+
 /* Every document's tooltip, under the mouse; it lets the mouse through. */
 tooltip
 {

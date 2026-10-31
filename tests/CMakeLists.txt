@@ -46,6 +46,7 @@ add_executable(gnubase-tests
 	keycommands_tests.cpp
 	latency_tests.cpp
 	log_tests.cpp
+	mainmenu_tests.cpp
 	marker_tests.cpp
 	mcp_tests.cpp
 	mcpevents_tests.cpp
