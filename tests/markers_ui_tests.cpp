@@ -161,10 +161,10 @@ TEST_CASE("marker lines show the active marker track's markers, every track's or
 	fixture.addMarkers();
 
 	// Behind the events of every track, on the event display's timeline.
-	Rml::Element& area = fixture.element(".event-area");
+	const Rml::Element& area = fixture.element(".event-area");
 	CHECK(area.GetChild(0)->IsClassSet("marker-lines"));
 	CHECK(area.GetChild(1)->IsClassSet("events"));
-	Rml::Element& lines = fixture.element("event-lanes.marker-lines");
+	const Rml::Element& lines = fixture.element("event-lanes.marker-lines");
 	CHECK(lines.GetAttribute<double>("scale", -1.0) == fixture.display.view().scale);
 	fixture.display.zoomIn();
 	fixture.step();
