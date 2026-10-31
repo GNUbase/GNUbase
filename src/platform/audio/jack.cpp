@@ -2,12 +2,11 @@
 #include "platform/audio/jack.h"
 
 #include "platform/hosttime.h"
+#include "platform/jacklibrary.h"
 #include "platform/log.h"
 #include "platform/rt/denormals.h"
 #include "platform/rt/realtime.h"
 
-#include <dlfcn.h>
-#include <jack/jack.h>
 #include <pthread.h>
 
 #include <algorithm>
@@ -16,7 +15,6 @@
 #include <cerrno>
 #include <chrono>
 #include <cmath>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -32,107 +30,11 @@ namespace gnubase::audio
 		constexpr std::array<uint32_t, 7> g_blockSizes{32, 64, 128, 256, 512, 1024, 2048};
 		constexpr uint32_t g_maxBlockSize = 8192;
 
-		// libjack's functions. Loaded once per library and never unloaded: libjack keeps threads and globals of its
-		// own.
-		class Library
-		{
-		public:
-			explicit Library(const std::string& path)
-			{
-				m_handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
-				if (m_handle == nullptr)
-				{
-					const char* error = dlerror();
-					throw DeviceError("JACK: cannot load " + path + " (" + (error != nullptr ? error : "") + ")");
-				}
-				try
-				{
-					load(activate, "jack_activate");
-					load(clientClose, "jack_client_close");
-					load(clientOpen, "jack_client_open");
-					load(connect, "jack_connect");
-					load(deactivate, "jack_deactivate");
-					load(free, "jack_free");
-					load(getBufferSize, "jack_get_buffer_size");
-					load(getPorts, "jack_get_ports");
-					load(getSampleRate, "jack_get_sample_rate");
-					load(onInfoShutdown, "jack_on_info_shutdown");
-					load(portByName, "jack_port_by_name");
-					load(portGetBuffer, "jack_port_get_buffer");
-					load(portGetLatencyRange, "jack_port_get_latency_range");
-					load(portName, "jack_port_name");
-					load(portRegister, "jack_port_register");
-					load(setBufferSize, "jack_set_buffer_size");
-					load(setErrorFunction, "jack_set_error_function");
-					load(setInfoFunction, "jack_set_info_function");
-					load(setLatencyCallback, "jack_set_latency_callback");
-					load(setPortRegistrationCallback, "jack_set_port_registration_callback");
-					load(setProcessCallback, "jack_set_process_callback");
-					load(setSampleRateCallback, "jack_set_sample_rate_callback");
-					load(setXrunCallback, "jack_set_xrun_callback");
-				}
-				catch (...)
-				{
-					dlclose(m_handle);
-					throw;
-				}
-				// libjack's messages go to the log, not to stderr: it explains at length that no server runs.
-				setErrorFunction([](const char* message) { logging::debug("libjack: {}", message); });
-				setInfoFunction([](const char* message) { logging::debug("libjack: {}", message); });
-			}
-
-			// The library at this path, loaded once.
-			static const Library& get(const std::string& path)
-			{
-				static std::mutex mutex;
-				static std::map<std::string, std::unique_ptr<Library>> libraries;
-				const std::scoped_lock lock(mutex);
-				std::unique_ptr<Library>& library = libraries[path];
-				if (!library)
-					library = std::make_unique<Library>(path);
-				return *library;
-			}
-
-			decltype(&jack_activate) activate = nullptr;
-			decltype(&jack_client_close) clientClose = nullptr;
-			decltype(&jack_client_open) clientOpen = nullptr;
-			decltype(&jack_connect) connect = nullptr;
-			decltype(&jack_deactivate) deactivate = nullptr;
-			decltype(&jack_free) free = nullptr;
-			decltype(&jack_get_buffer_size) getBufferSize = nullptr;
-			decltype(&jack_get_ports) getPorts = nullptr;
-			decltype(&jack_get_sample_rate) getSampleRate = nullptr;
-			decltype(&jack_on_info_shutdown) onInfoShutdown = nullptr;
-			decltype(&jack_port_by_name) portByName = nullptr;
-			decltype(&jack_port_get_buffer) portGetBuffer = nullptr;
-			decltype(&jack_port_get_latency_range) portGetLatencyRange = nullptr;
-			decltype(&jack_port_name) portName = nullptr;
-			decltype(&jack_port_register) portRegister = nullptr;
-			decltype(&jack_set_buffer_size) setBufferSize = nullptr;
-			decltype(&jack_set_error_function) setErrorFunction = nullptr;
-			decltype(&jack_set_info_function) setInfoFunction = nullptr;
-			decltype(&jack_set_latency_callback) setLatencyCallback = nullptr;
-			decltype(&jack_set_port_registration_callback) setPortRegistrationCallback = nullptr;
-			decltype(&jack_set_process_callback) setProcessCallback = nullptr;
-			decltype(&jack_set_sample_rate_callback) setSampleRateCallback = nullptr;
-			decltype(&jack_set_xrun_callback) setXrunCallback = nullptr;
-
-		private:
-			template <typename Function> void load(Function& function, const char* name)
-			{
-				function = reinterpret_cast<Function>(dlsym(m_handle, name));
-				if (function == nullptr)
-					throw DeviceError(std::string("JACK: libjack has no ") + name);
-			}
-
-			void* m_handle = nullptr;
-		};
-
 		// A connection to the server as client "gnubase" (or "gnubase-2" and so on, if that name is taken).
 		class Client
 		{
 		public:
-			explicit Client(const Library& jack) : m_jack(jack)
+			explicit Client(const JackLibrary& jack) : m_jack(jack)
 			{
 				m_client = jack.clientOpen("gnubase", JackNoStartServer, nullptr);
 				if (m_client == nullptr)
@@ -160,11 +62,11 @@ namespace gnubase::audio
 			}
 
 		private:
-			const Library& m_jack;
+			const JackLibrary& m_jack;
 			jack_client_t* m_client = nullptr;
 		};
 
-		DeviceInfo makeInfo(const Library& jack, const Client& client)
+		DeviceInfo makeInfo(const JackLibrary& jack, const Client& client)
 		{
 			DeviceInfo info;
 			info.id = "default";
@@ -185,7 +87,7 @@ namespace gnubase::audio
 		class JackDevice : public Device
 		{
 		public:
-			JackDevice(const Library& jack, std::unique_ptr<Client> client, DeviceInfo info, uint32_t blockSize)
+			JackDevice(const JackLibrary& jack, std::unique_ptr<Client> client, DeviceInfo info, uint32_t blockSize)
 				: m_jack(jack), m_client(std::move(client)), m_info(std::move(info))
 			{
 				jack_client_t* const handle = m_client->get();
@@ -455,7 +357,7 @@ namespace gnubase::audio
 				return nullptr;
 			}
 
-			const Library& m_jack;
+			const JackLibrary& m_jack;
 			std::unique_ptr<Client> m_client;
 			DeviceInfo m_info;
 			DeviceFormat m_format;
@@ -494,7 +396,7 @@ namespace gnubase::audio
 
 			std::vector<DeviceInfo> devices() override
 			{
-				const Library& jack = Library::get(m_library);
+				const JackLibrary& jack = JackLibrary::get(m_library);
 				const Client client(jack);
 				return {makeInfo(jack, client)};
 			}
@@ -507,7 +409,7 @@ namespace gnubase::audio
 					throw DeviceError("JACK devices have no clock sources");
 				if (config.blockSize > g_maxBlockSize)
 					throw DeviceError("JACK blocks have at most 8192 frames");
-				const Library& jack = Library::get(m_library);
+				const JackLibrary& jack = JackLibrary::get(m_library);
 				auto client = std::make_unique<Client>(jack);
 				DeviceInfo info = makeInfo(jack, *client);
 				if (config.sampleRate != 0.0 && config.sampleRate != info.sampleRates.front())
