@@ -133,7 +133,8 @@ namespace gnubase::engine
 					clip.fadeIn, clip.fadeOut, crossfadeApplies(project, event) ? event.crossfade : Crossfade()});
 		}
 		for (const auto& [id, part] : project.midiParts)
-			compilePart(project, part, snapshot->channels[trackChannel.at(part.track)]);
+			if (!part.mute)
+				compilePart(project, part, snapshot->channels[trackChannel.at(part.track)]);
 
 		for (const auto& [id, lane] : project.automation)
 		{

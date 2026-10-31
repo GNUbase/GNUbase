@@ -190,6 +190,7 @@ namespace gnubase::engine
 		time::Samples length = 0; // in the clip's sample frames
 		double volume = 0.0;      // dB, from g_minEventVolume to g_maxEventVolume
 		bool mute = false;
+		bool lock = false;   // event.* commands don't move, resize, split, glue or remove it
 		Fade fadeIn;         // from the event's start
 		Fade fadeOut;        // up to the event's end
 		Crossfade crossfade; // from the event before; replaces the fade in, and from's fade out
@@ -265,6 +266,11 @@ namespace gnubase::engine
 		std::string name;
 		time::Position position; // in the track's time base
 		int64_t length = 0;      // in the unit of the position's time base: ticks or samples
+		bool mute = false;       // doesn't play
+		bool lock = false;       // event.* commands don't move, resize, split, glue or remove it
+		// Shared copies (docs/features/parts-and-events.md) have the same id here and the same notes and controllers,
+		// with the same ids: a change to one goes to the others. 0: not shared.
+		ObjectId shared = 0;
 		std::map<ObjectId, Note> notes;
 		std::map<ObjectId, Controller> controllers;
 	};
@@ -456,10 +462,10 @@ namespace gnubase::engine
 
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
-		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.fadeIn, a.fadeOut,
-				   a.crossfade) ==
-			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.fadeIn, b.fadeOut,
-				b.crossfade);
+		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
+				   a.fadeOut, a.crossfade) ==
+			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
+				b.fadeOut, b.crossfade);
 	}
 
 	inline bool operator==(const NoteTiming& a, const NoteTiming& b)
@@ -487,8 +493,8 @@ namespace gnubase::engine
 	// A MIDI part's own properties, without its notes and controllers.
 	inline bool sameProperties(const MidiPart& a, const MidiPart& b)
 	{
-		return std::tie(a.id, a.track, a.name, a.position, a.length) ==
-			std::tie(b.id, b.track, b.name, b.position, b.length);
+		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared) ==
+			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared);
 	}
 
 	inline bool operator==(const Marker& a, const Marker& b)

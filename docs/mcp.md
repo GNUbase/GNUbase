@@ -1165,6 +1165,178 @@ Result:
 
 - `version`: string, required
 
+### event
+
+#### `event_copy`
+
+Engine command `event.copy`.
+
+Copies audio events and MIDI parts, moved by delta project samples or by ticks and onto track as event.move moves them. Copies of audio events play the same clip; shared copies of MIDI parts share their notes and controllers with the original, so that editing one edits all. Returns the copies.
+
+Arguments:
+
+- `delta`: integer
+- `events`: array of integer, required
+- `shared`: boolean
+- `ticks`: integer
+- `track`: integer
+
+Result:
+
+- `events`: array of integer, required
+
+#### `event_duplicate`
+
+Engine command `event.duplicate`.
+
+Duplicates audio events and MIDI parts count times (default 1, at most 1000; Edit > Repeat) one after the other, from the end of the last one, keeping their positions relative to each other; shared makes shared copies of MIDI parts. Returns the copies.
+
+Arguments:
+
+- `count`: integer
+- `events`: array of integer, required
+- `shared`: boolean
+
+Result:
+
+- `events`: array of integer, required
+
+#### `event_fillLoop`
+
+Engine command `event.fillLoop`.
+
+Fills the range from start to end (project samples, default the locators) with copies of audio events and MIDI parts, one after the other on the grid of their length, cutting the last one at end. shared makes shared copies of MIDI parts. Returns the copies.
+
+Arguments:
+
+- `end`: integer
+- `events`: array of integer, required
+- `shared`: boolean
+- `start`: integer
+
+Result:
+
+- `events`: array of integer, required
+
+#### `event_get`
+
+Engine command `event.get`. Read-only.
+
+Tells where audio events and MIDI parts are, as the info line shows them: for each its kind (audio or midi), track, name (an audio event's clip's), start, end and length in project samples, start and end in ticks, mute, lock and its shared copies' group (0: none).
+
+Arguments:
+
+- `events`: array of integer, required
+
+Result:
+
+- `events`: array of object, required
+
+#### `event_glue`
+
+Engine command `event.glue`.
+
+Glues audio events or MIDI parts of one track into the first of them. Audio events glue where one continues the other in the same clip, as after a split; MIDI parts become one part from the first start to the last end, with all their notes and controllers. Returns the event.
+
+Arguments:
+
+- `events`: array of integer, required
+
+Result:
+
+- `event`: integer, required
+
+#### `event_move`
+
+Engine command `event.move`.
+
+Moves audio events and MIDI parts (events, by id) by delta project samples or by ticks, which are exact on musical tracks, keeping their positions relative to each other, and onto track if given, which must be of their type. Locked events don't move. Returns the events.
+
+Arguments:
+
+- `delta`: integer
+- `events`: array of integer, required
+- `ticks`: integer
+- `track`: integer
+
+Result:
+
+- `events`: array of integer, required
+
+#### `event_remove`
+
+Engine command `event.remove`.
+
+Removes audio events and MIDI parts. Locked ones can't be removed.
+
+Arguments:
+
+- `events`: array of integer, required
+
+#### `event_resize`
+
+Engine command `event.resize`.
+
+Moves the start or the end (edge) of audio events and MIDI parts by delta project samples or by ticks, within the clip and at least a sample frame or a tick long. normal sizing (the default) reveals or hides content; moveContents moves the content with the edge. A MIDI part's notes and controllers that end up before its start are removed. Locked events don't change. Returns the events.
+
+Arguments:
+
+- `delta`: integer
+- `edge`: one of "start" | "end", required
+- `events`: array of integer, required
+- `mode`: one of "normal" | "moveContents"
+- `ticks`: integer
+
+Result:
+
+- `events`: array of integer, required
+
+#### `event_set`
+
+Engine command `event.set`.
+
+Mutes or unmutes and locks or unlocks audio events and MIDI parts. Muted ones don't play; locked ones can't be moved, resized, split, glued or removed by the event commands. Returns the events.
+
+Arguments:
+
+- `events`: array of integer, required
+- `lock`: boolean
+- `mute`: boolean
+
+Result:
+
+- `events`: array of integer, required
+
+#### `event_split`
+
+Engine command `event.split`.
+
+Splits audio events and MIDI parts at positions (project samples): events, or without it every unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with splitNotes are cut in two. Returns the new events after the splits.
+
+Arguments:
+
+- `events`: array of integer
+- `positions`: array of integer, required
+- `splitNotes`: boolean
+
+Result:
+
+- `events`: array of integer, required
+
+#### `event_toRealCopy`
+
+Engine command `event.toRealCopy`.
+
+Converts shared copies to real copies: a MIDI part gets notes and controllers of its own, an audio event a clip of its own. Returns the events.
+
+Arguments:
+
+- `events`: array of integer, required
+
+Result:
+
+- `events`: array of integer, required
+
 ### events
 
 #### `events_take`

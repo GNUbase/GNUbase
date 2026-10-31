@@ -103,6 +103,7 @@ add_library(gnubase-engine STATIC
 	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/channelformat.cpp document/channelformat.h
 	document/document.cpp document/document.h
+	document/eventedits.cpp
 	document/fadeedits.cpp
 	document/history.cpp document/history.h
 	document/markers.cpp
