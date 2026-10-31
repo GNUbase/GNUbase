@@ -243,9 +243,20 @@ namespace gnubase::app
 		return *m_eventDisplay;
 	}
 
-	Rml::ElementDocument& AppUi::openStudioSetup(ui::Window& window) const
+	Rml::ElementDocument& AppUi::openStudioSetup(ui::Window& window)
 	{
-		return openDialog(window, "studio-setup.rml");
+		// One dialog: a second document would share the first one's StudioSetup table in the UI's Lua. A closed
+		// document has left its context, until the context releases it.
+		auto* open = dynamic_cast<Rml::ElementDocument*>(m_studioSetup.get());
+		if (open != nullptr && open->GetParentNode() != nullptr)
+		{
+			open->Show(Rml::ModalFlag::Modal, Rml::FocusFlag::Keep);
+			open->PullToFront();
+			return *open;
+		}
+		Rml::ElementDocument& document = openDialog(window, "studio-setup.rml");
+		m_studioSetup = document.GetObserverPtr();
+		return document;
 	}
 
 	Rml::ElementDocument& AppUi::openDialog(ui::Window& window, const char* name) const

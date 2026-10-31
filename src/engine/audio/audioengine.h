@@ -17,6 +17,7 @@
 #include "platform/rt/workerpool.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <map>
@@ -55,7 +56,8 @@ namespace gnubase::engine
 	// The device comes from one of the audio backends (audio.devices, audio.setDevice). When its driver asks for a
 	// reset, the engine opens it again with the same settings and restarts it if it ran (audio.reset); when it reports
 	// a new latency, the engine reads it into the record offset (audio.updateLatency). A device that can't be opened
-	// again, e.g. because it was unplugged, is lost: the engine goes on without it and tries again until it returns.
+	// again, e.g. because it was unplugged, is lost: the engine goes on without it, or on the fallback device the user
+	// setting audio.fallbackDevice names, and tries again until it returns.
 	// The device runs at the project's sample rate where it can (docs/features/audio-devices.md). The dummy
 	// device also renders offline and captures its output; its input can be one of the built-in generators.
 	//
@@ -147,8 +149,24 @@ namespace gnubase::engine
 		void setDevice(const Json& parameters);
 		void openDummy(const Json& parameters);
 		void closeDevice();
-		// audio.reset; a device that can't be opened is lost. True if the status changed.
+		// audio.reset; a device that can't be opened is lost. While one is, opens the lost device instead of the
+		// fallback that plays. True if the status changed.
 		bool reset();
+		// audio.reconnect: while a fallback plays, only once the lost device is listed as available again, so that
+		// tries don't interrupt the fallback, or every g_uncertainReconnectInterval while it is listed as unavailable
+		// by a backend that doesn't know whether it is there. True if the status changed.
+		bool reconnect();
+		// Whether the lost device is available again, as far as its backend's device list says: Maybe if it is listed
+		// as unavailable by a backend whose list doesn't say whether it is there (Backend::listsPresence).
+		enum class Listed : uint8_t
+		{
+			No,
+			Yes,
+			Maybe,
+		};
+		Listed lostDeviceListed() const;
+		// Opens the fallback device for the lost device (audio.fallbackDevice) and starts it if the lost one ran.
+		void failOver();
 		// Starts trying to open the lost device again, every g_reconnectInterval, with audio.reconnect: one try at a
 		// time, so that tries don't queue up behind a long command and reset the device again once it is back.
 		void waitForDevice();
@@ -227,15 +245,21 @@ namespace gnubase::engine
 		std::vector<std::string> m_outputPorts;
 		double m_projectRate = 0.0; // the project's sample rate the device last followed
 
-		// The device that couldn't be opened again (audio.reset), while the engine waits for it to return.
+		// The device that couldn't be opened again (audio.reset), while the engine waits for it to return. A device
+		// that plays meanwhile is the fallback (failOver).
 		struct Lost
 		{
+			std::string backend;
+			Json parameters;    // what audio.setDevice opened it with
 			std::string device; // its id
 			std::string reason;
-			bool restart = false; // it ran
+			bool restart = false; // it ran, or the fallback runs
 		};
 		std::optional<Lost> m_lost;
 		bool m_dummyUnplugged = false; // audio.simulateDeviceLoss
+		bool m_failingOver = false;    // the fallback dummy device can't be unplugged
+		// When reconnect next tries a Listed::Maybe device while a fallback plays.
+		std::chrono::steady_clock::time_point m_nextUncertainTry;
 		// The thread that tries to open a lost device again, started with the first loss.
 		std::mutex m_reconnectMutex; // guards m_stopReconnecting
 		bool m_stopReconnecting = false;
@@ -255,8 +279,10 @@ namespace gnubase::engine
 
 		// Latency compensation and monitoring (docs/features/latency-and-monitoring.md), set with the device.
 		int64_t m_recordShift = 0;
-		int64_t m_recordOffset = 0; // input + output latency - record shift, at least 0
-		PlayedPositions m_played;   // audio thread
+		// input + output latency - record shift, from 0 to g_maxRecordOffset. Written by the command thread, taken by
+		// the audio thread at the start of each block.
+		std::atomic<int64_t> m_recordOffset{0};
+		PlayedPositions m_played; // audio thread; for any record offset
 		bool m_directMonitoring = false;
 		std::map<int, audio::InputMonitor> m_monitors; // by input port, those the device monitors directly
 		// Per input channel of the device, what it recorded at each project position from 0, for captureSeconds.
