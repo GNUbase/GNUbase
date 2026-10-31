@@ -379,7 +379,8 @@ namespace gnubase::engine
 	{
 		Json json = {{"id", track.id}, {"type", trackTypeName(track.type)}, {"name", track.name},
 			{"color", colorJson(track.color)}, {"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent},
-			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)}};
+			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)},
+			{"enabled", track.enabled}};
 		if (track.type == TrackType::Ruler)
 			json["timeFormat"] = track.timeFormat;
 		return json;
@@ -398,7 +399,7 @@ namespace gnubase::engine
 			{"panRight", channel.panRight}, {"panBypass", channel.panBypass},
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
 			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
-			{"recordEnable", channel.recordEnable}};
+			{"recordEnable", channel.recordEnable}, {"mute", channel.mute}, {"solo", channel.solo}};
 	}
 
 	Json toJson(const MediaFile& media)
@@ -826,6 +827,8 @@ namespace gnubase::engine
 			track.timeBase = timeBaseFromName(item.at("timeBase").get<std::string>());
 			track.parent = item.at("parent").get<ObjectId>();
 			track.channel = item.at("channel").get<ObjectId>();
+			// Files from before disabled tracks have every track enabled; only some types can be disabled.
+			track.enabled = !canDisable(track.type) || item.value("enabled", true);
 			if (const Json autoFades = item.value("autoFades", Json()); !autoFades.is_null())
 				track.autoFades = autoFadesFromJson(autoFades);
 			if (track.type == TrackType::Ruler)
@@ -871,6 +874,8 @@ namespace gnubase::engine
 			const bool audio = track != project.trackById.end() && track->second.type == TrackType::Audio;
 			channel.monitor = audio && item.value("monitor", false);
 			channel.recordEnable = audio && item.value("recordEnable", false);
+			channel.mute = item.value("mute", false); // files from before mute and solo have neither
+			channel.solo = item.value("solo", false);
 			project.channels[id] = std::move(channel);
 		}
 		for (const Json& item : json.at("media"))

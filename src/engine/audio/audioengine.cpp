@@ -469,7 +469,8 @@ namespace gnubase::engine
 				monitoring = Monitoring{channel.monitor, channel.recordEnable, m_autoMonitoring};
 			for (graph::NodeDesc& node : desc.nodes)
 				if (node.kind == graph::NodeKind::Channel && node.object == channel.id)
-					node.processor = std::make_shared<ChannelStrip>(state, node.processor, panning, monitoring);
+					node.processor =
+						std::make_shared<ChannelStrip>(state, node.processor, panning, monitoring, channel.silent);
 		}
 		m_channelStates = std::move(states);
 	}
@@ -511,7 +512,8 @@ namespace gnubase::engine
 		for (const RenderChannel& channel : snapshot.channels)
 		{
 			const Monitoring monitoring{channel.monitor, channel.recordEnable, m_autoMonitoring};
-			if (!monitoredDirectly(channel) || !monitoring.active(m_transport.playing(), m_transport.recording()))
+			if (!monitoredDirectly(channel) || channel.silent ||
+				!monitoring.active(m_transport.playing(), m_transport.recording()))
 				continue;
 			const std::vector<int>& inputs = ports[static_cast<size_t>(channel.input)];
 			const std::vector<int>& outputs = ports[static_cast<size_t>(channel.output.index)];

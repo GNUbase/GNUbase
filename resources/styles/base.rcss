@@ -642,6 +642,120 @@ meter .meter-peak
 	display: block;
 }
 
+/* The track list (docs/features/track-list.md): the global track controls over a row per track, level with the
+   event display's lanes under its overview line and ruler. Code sets the rows' heights from the tracks' and where the
+   list is scrolled to; the line where dragged tracks go shows while they are dragged. */
+.track-list
+{
+	overflow: hidden;
+}
+
+.track-list .track-list-header
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 44dp;
+	padding: 2dp 4dp;
+	box-sizing: border-box;
+}
+
+.track-list .track-list-header button
+{
+	margin-right: 2dp;
+}
+
+.track-list .track-rows
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 44dp;
+	bottom: 0;
+	overflow: hidden;
+	clip: always;
+}
+
+.no-overviewLine .track-list .track-list-header
+{
+	height: 24dp;
+}
+
+.no-overviewLine .track-list .track-rows
+{
+	top: 24dp;
+}
+
+.track-list listview
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	padding: 0;
+	overflow: visible;
+}
+
+.track-list listitem
+{
+	display: flex;
+	flex-direction: row;
+	align-items: flex-start;
+	padding: 3dp 4dp 0 4dp;
+	overflow: hidden;
+}
+
+.track-list .track-name
+{
+	flex: 1 1 0;
+	overflow: hidden;
+	white-space: nowrap;
+	height: 18dp;
+}
+
+.track-list .track-name-field,
+.track-list listitem.renaming .track-name
+{
+	display: none;
+}
+
+.track-list listitem.renaming .track-name-field
+{
+	display: block;
+	flex: 1 1 0;
+	height: 18dp;
+}
+
+.track-list .track-controls button
+{
+	width: 22dp;
+	height: 18dp;
+	margin-left: 2dp;
+	padding: 0;
+	text-align: center;
+}
+
+.track-list .track-controls svg.icon
+{
+	width: 14dp;
+	height: 14dp;
+}
+
+.track-list .drop-line
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 2dp;
+	display: none;
+	pointer-events: none;
+}
+
+.track-list .drop-line.shown
+{
+	display: block;
+}
+
 /* Menus (ui/widgets.h): hidden until they open, over the document. A menu inside an item is its submenu, shown
    beside the item while the mouse is over it. */
 menu

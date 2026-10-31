@@ -10,9 +10,9 @@ exactly the same tracks.
 ([ui-lua.md](ui-lua.md)) reads what it offers from the engine and adds the tracks through engine commands, like the
 studio setup dialog ([studio-setup.md](studio-setup.md)).
 
-- **Opening it.** The UI command `project.addTrack` opens it, modal, in the window it runs in. The project window's
-  toolbar has an Add Track button (`#add-track`) that runs it, until the track list's global track controls take it
-  over (#81); the main menu's Project > Add Track will run it too.
+- **Opening it.** The UI command `project.addTrack` opens it, modal, in the window it runs in. The track list's
+  global track controls have an Add Track button (`#add-track`) that runs it ([track-list.md](track-list.md)), and so
+  do the main menu's Project > Add Track and the track list's context menu.
 - **Pages.** The list on the left selects a track type, as the reference's dialog does; each page has the reference's
   settings for it that GNUbase has so far:
 
@@ -33,7 +33,7 @@ studio setup dialog ([studio-setup.md](studio-setup.md)).
   bars and beats. An empty name takes the engine's default name ("Audio 01", "Audio 02" and so on).
 - **Add Track** adds Count tracks (1 to 100, as in the reference) with the page's settings, all with the same
   parameters, in one `history.transaction` named "Add Track", so one undo removes them. New tracks go to the end of
-  the project; below the selected track comes with track selection (#81). The dialog closes, unless Keep Dialog Open
+  the project; below the selected track comes with #448. The dialog closes, unless Keep Dialog Open
   is checked: then it shows the page again, with the new group and instrument channels among the outputs, for adding
   more of another type. A track the engine refuses, such as an eleventh marker track, adds nothing, and the dialog
   stays open with the engine's message. Cancel and Escape close it.
@@ -42,7 +42,7 @@ studio setup dialog ([studio-setup.md](studio-setup.md)).
 
 A double click in the event display below the last track adds a MIDI track, as a double click in the empty part of
 the reference's track list does without a selected track (p. 198). Its other case, a track like the selected one
-with its input and output, comes with track selection and the track list (#81), which gets the same double click.
+with its input and output, and the same double click in the track list come with #448.
 
 ## In the engine
 
@@ -61,7 +61,7 @@ The track color (the default color until the color picker joins the dialog), the
 (sampler, drum, VCA, and the tempo, signature, arranger, transpose, chord and video tracks with their tickets), an
 instrument or effect plugin chosen on the page (M05), MIDI inputs and MIDI 2.0 output groups, the event type
 (pattern events), the project's Group, FX and VCA folders, a ruler track's time offset and the ruler track's own
-display and controls (#81), and track presets.
+display and controls (#447), and track presets.
 
 ## Checks
 

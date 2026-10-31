@@ -1,0 +1,249 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The track controls settings dialog (#81, docs/features/track-list.md, reference manual pp. 189-191): which
+     controls the track list shows for each track type, and in which order. app::AppUi opens it (the UI command
+     track.controlsSettings, the track list's settings button and context menu). Its Lua edits a copy of the user
+     setting ui.trackControls and OK saves it with settings.set, which the track list follows. Mute and solo can't be
+     hidden. -->
+<rml>
+<head>
+	<title>Track Controls Settings</title>
+	<style>
+		dialog
+		{
+			width: 520dp;
+		}
+
+		.content
+		{
+			display: flex;
+			height: 220dp;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#controls-types
+		{
+			width: 110dp;
+			margin-right: 12dp;
+		}
+
+		.controls-list
+		{
+			flex: 1;
+		}
+
+		.controls-list listview
+		{
+			height: 190dp;
+		}
+
+		.controls-buttons
+		{
+			display: flex;
+			flex-direction: column;
+			justify-content: center;
+			margin: 0 8dp;
+		}
+
+		.controls-buttons button
+		{
+			margin-bottom: 6dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			justify-content: flex-end;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		TrackControls = {}
+		local dialog = TrackControls
+
+		-- The controls each type can show (ui/tracklist.h applies the same), and how the dialog names them.
+		local available = {
+			audio = {"mute", "solo", "record", "monitor", "read", "timeBase"},
+			instrument = {"mute", "solo", "read", "timeBase"},
+			midi = {"mute", "solo", "read", "timeBase"},
+			group = {"mute", "solo", "read"},
+			effect = {"mute", "solo", "read"},
+			folder = {"mute", "solo", "read"},
+		}
+		local names = {mute = "Mute", solo = "Solo", record = "Record Enable", monitor = "Monitor",
+			read = "Read Automation", timeBase = "Switch Time Base"}
+		local always = {mute = true, solo = true} -- reference manual p. 190
+
+		local settings = {} -- the setting as the dialog edits it, by type
+		local defaults = {}
+
+		local function copy(list)
+			local result = {}
+			for index, value in ipairs(list or {}) do
+				result[index] = value
+			end
+			return result
+		end
+
+		local function contains(list, value)
+			for _, item in ipairs(list) do
+				if item == value then
+					return true
+				end
+			end
+			return false
+		end
+
+		local function valueOf(document, id)
+			local value = document:GetElementById(id):GetAttribute("value")
+			return value ~= nil and tostring(value) or ""
+		end
+
+		local function rows(controls)
+			local rml = {}
+			for _, control in ipairs(controls) do
+				rml[#rml + 1] = '<listitem value="' .. control .. '">' .. names[control] .. "</listitem>"
+			end
+			return table.concat(rml)
+		end
+
+		-- The type's visible controls, with mute and solo, which always show.
+		local function visible(type)
+			local shown = copy(settings[type])
+			for _, control in ipairs({"solo", "mute"}) do
+				if not contains(shown, control) then
+					table.insert(shown, 1, control)
+				end
+			end
+			return shown
+		end
+
+		function dialog.load(document)
+			for key, value in pairs(gnubase.settings.get{key = "ui.trackControls"}.value) do
+				settings[key] = copy(value)
+			end
+			for _, setting in ipairs(gnubase.settings.list().settings) do
+				if setting.key == "ui.trackControls" then
+					defaults = setting.default
+				end
+			end
+			dialog.show(document)
+		end
+
+		-- Shows the selected type's lists, keeping the selected control selected.
+		function dialog.show(document, selected)
+			local type = valueOf(document, "controls-types")
+			local shown = visible(type)
+			local hidden = {}
+			for _, control in ipairs(available[type]) do
+				if not contains(shown, control) then
+					hidden[#hidden + 1] = control
+				end
+			end
+			local hiddenList = document:GetElementById("hidden-controls")
+			local visibleList = document:GetElementById("visible-controls")
+			hiddenList.inner_rml = rows(hidden)
+			visibleList.inner_rml = rows(shown)
+			hiddenList:SetAttribute("value", contains(hidden, selected) and selected or "")
+			visibleList:SetAttribute("value", contains(shown, selected) and selected or "")
+		end
+
+		function dialog.add(document)
+			local type = valueOf(document, "controls-types")
+			local control = valueOf(document, "hidden-controls")
+			if control == "" then
+				return
+			end
+			settings[type] = visible(type)
+			table.insert(settings[type], control)
+			dialog.show(document, control)
+		end
+
+		function dialog.remove(document)
+			local type = valueOf(document, "controls-types")
+			local control = valueOf(document, "visible-controls")
+			if control == "" or always[control] then
+				return
+			end
+			local shown = visible(type)
+			for index, item in ipairs(shown) do
+				if item == control then
+					table.remove(shown, index)
+				end
+			end
+			settings[type] = shown
+			dialog.show(document, control)
+		end
+
+		function dialog.move(document, by)
+			local type = valueOf(document, "controls-types")
+			local control = valueOf(document, "visible-controls")
+			local shown = visible(type)
+			for index, item in ipairs(shown) do
+				local to = index + by
+				if item == control and to >= 1 and to <= #shown then
+					shown[index], shown[to] = shown[to], shown[index]
+					break
+				end
+			end
+			settings[type] = shown
+			dialog.show(document, control)
+		end
+
+		function dialog.reset(document)
+			local type = valueOf(document, "controls-types")
+			settings[type] = copy(defaults[type])
+			dialog.show(document)
+		end
+
+		function dialog.apply(document)
+			-- Marker and ruler tracks show no controls, which leaving them out says.
+			local value = {}
+			for type in pairs(available) do
+				value[type] = visible(type)
+			end
+			gnubase.settings.set{key = "ui.trackControls", value = value}
+			document:Close()
+		end
+	</script>
+</head>
+<body onload="TrackControls.load(document)">
+	<dialog id="track-controls-dialog">
+		<div class="dialog-titlebar">Track Controls Settings</div>
+		<div class="content">
+			<listview id="controls-types" value="audio" onchange="TrackControls.show(document)">
+				<listitem value="audio" class="selected">Audio</listitem>
+				<listitem value="instrument">Instrument</listitem>
+				<listitem value="midi">MIDI</listitem>
+				<listitem value="group">Group</listitem>
+				<listitem value="effect">Effect</listitem>
+				<listitem value="folder">Folder</listitem>
+			</listview>
+			<div class="controls-list">
+				<div>Hidden Controls</div>
+				<listview id="hidden-controls"/>
+			</div>
+			<div class="controls-buttons">
+				<button id="controls-add" onclick="TrackControls.add(document)">Add</button>
+				<button id="controls-remove" onclick="TrackControls.remove(document)">Remove</button>
+				<button id="controls-up" onclick="TrackControls.move(document, -1)">Move Up</button>
+				<button id="controls-down" onclick="TrackControls.move(document, 1)">Move Down</button>
+				<button id="controls-reset" onclick="TrackControls.reset(document)">Reset</button>
+			</div>
+			<div class="controls-list">
+				<div>Visible Controls</div>
+				<listview id="visible-controls"/>
+			</div>
+		</div>
+		<div class="row">
+			<button id="controls-cancel" result="cancel">Cancel</button>
+			<button id="controls-ok" class="primary" onclick="TrackControls.apply(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

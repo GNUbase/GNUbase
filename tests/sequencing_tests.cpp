@@ -308,6 +308,31 @@ TEST_CASE("notes reach the instrument at their exact sample, from instrument and
 	song.check(positions(0, 1500));
 }
 
+TEST_CASE("a muted or disabled MIDI track's notes don't reach its instrument; a soloed one's do", "[integration]")
+{
+	Song song(64);
+	const auto [other, otherTrack] = song.addMidiTrack();
+	song.add(0, {100, 400, 60});
+	song.add(1, {200, 500, 64});
+	song.add(other, {300, 600, 67});
+	run(song.client, "channel.set", {{"channel", channelOf(song.client, song.midi)}, {"mute", true}});
+	run(song.client, "track.set", {{"track", otherTrack}, {"enabled", false}});
+	song.notes = {{100, 400, 60}};
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 700}});
+	song.check(positions(0, 700));
+
+	// Soloed, a MIDI track plays through its instrument, with the instrument track's own notes.
+	Song soloed(64);
+	soloed.add(0, {100, 400, 60});
+	soloed.add(1, {200, 500, 64});
+	soloed.addMidiTrack();
+	run(soloed.client, "channel.set", {{"channel", channelOf(soloed.client, soloed.midi)}, {"solo", true}});
+	run(soloed.client, "transport.play");
+	run(soloed.client, "audio.render", {{"frames", 700}});
+	soloed.check(positions(0, 700));
+}
+
 TEST_CASE("a note that starts where another track's note of the same pitch ends sounds", "[integration]")
 {
 	const int blockSize = GENERATE(1, 64, 333);

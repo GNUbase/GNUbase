@@ -169,6 +169,7 @@ namespace gnubase::engine
 		AutomationPlayer automation;
 		std::shared_ptr<ChannelFader> fader = std::make_shared<ChannelFader>();
 		float monitorGain = -1.0f; // audio thread: the input's gain after the last block, -1 before the first
+		float outputGain = -1.0f;  // and the output's, 0 while the channel is silent (mute, solo)
 	};
 
 	// The user setting audio.autoMonitoring: when record-enabled tracks monitor their input.
@@ -194,12 +195,13 @@ namespace gnubase::engine
 	// The processor of a channel node: the channel's source (a track player, a sequencer or an instrument, or
 	// nothing for a group or effect channel) with the automation events added to its input, then the fader and its
 	// panner. A new strip is made for every graph, around the source and the state that the channel keeps. With
-	// monitoring, the input reaches the source only while the track monitors it, gliding in and out over a block.
+	// monitoring, the input reaches the source only while the track monitors it, gliding in and out over a block. A
+	// silent strip (mute, solo, a disabled track) glides its output to silence over a block, and back.
 	class ChannelStrip : public graph::Processor
 	{
 	public:
 		ChannelStrip(std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source,
-			Panning panning = {}, std::optional<Monitoring> monitoring = std::nullopt);
+			Panning panning = {}, std::optional<Monitoring> monitoring = std::nullopt, bool silent = false);
 
 		void process(const graph::ProcessContext& context) noexcept override;
 		uint32_t latency() const override { return m_source ? m_source->latency() : 0; }
@@ -208,10 +210,15 @@ namespace gnubase::engine
 		void prepare(double sampleRate, uint32_t maxFrames) override;
 
 	private:
+		// Scales the block from gain to target, frame by frame, and keeps target as the gain; a gain below 0 (before
+		// the first block) starts at the target.
+		static void glide(const graph::ProcessContext& context, float& gain, float target) noexcept;
+
 		std::shared_ptr<ChannelState> m_state;
 		std::shared_ptr<graph::Processor> m_source;
 		Panning m_panning;
 		std::optional<Monitoring> m_monitoring;
+		bool m_silent = false;
 		uint32_t m_smoothing = 0; // g_faderSmoothing in frames
 		graph::EventBuffer m_sourceEvents;
 		graph::EventBuffer m_faderEvents;
