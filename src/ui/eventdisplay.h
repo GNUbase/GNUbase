@@ -109,6 +109,10 @@ namespace gnubase::ui
 		// The project as project.get last returned it, or null before the first answer; loads() counts the answers.
 		const engine::Json& project() const { return m_project; }
 		uint64_t loads() const { return m_loads; }
+		// Folder tracks' data blocks (reference manual p. 226, docs/features/folder-tracks.md): per lane, the events
+		// and parts of the tracks inside a folder's lane, by the user setting ui.folderData (always, never, or
+		// hideWhenExpanded: while the folder is folded); empty for the other lanes.
+		const std::vector<EventLanes::Lane>& folderData() const { return m_folderData; }
 		// Called after the lanes or the view changed.
 		void onLayout(std::function<void()> listener) { m_layoutListener = std::move(listener); }
 
@@ -211,6 +215,7 @@ namespace gnubase::ui
 
 		void requestProject();
 		void loadProject(const engine::Json& project);
+		void setFolderMode(const std::string& mode); // ui.folderData
 		void setLanes();
 		void followTransport(const engine::Json& status);
 		void setCursor(int64_t sample);
@@ -306,7 +311,10 @@ namespace gnubase::ui
 		std::vector<uint64_t> m_selection;
 		EventLanes* m_mutedLanes = nullptr;    // muted events over the others
 		EventLanes* m_selectedLanes = nullptr; // selected events over those
-		int64_t m_left = 0;                    // the locators, in samples
+		EventLanes* m_folderLanes = nullptr;   // folders' data blocks, under the events
+		std::vector<EventLanes::Lane> m_folderData;
+		std::string m_folderMode = "always"; // ui.folderData
+		int64_t m_left = 0;                  // the locators, in samples
 		int64_t m_right = 0;
 		bool m_sizingMovesContents = false;
 		uint64_t m_dragEvent = 0; // pressed on

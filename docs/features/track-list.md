@@ -98,8 +98,9 @@ Lanes and comping (#99), write automation (#122), track colors and the color str
 recording from instrument and MIDI tracks (#97), dividing the track list, track visibility agents and the track type
 filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
 the settings dialog's groups, widths and presets, the track height presets menu, snap track heights, Shift-click to
-deselect, the warning before removing tracks that aren't empty, Move Selected Tracks to New Folder (with folders,
-#82), and the ruler and marker tracks' own controls (#447, #91). Adding a track below the selected one is #448.
+deselect, the warning before removing tracks that aren't empty, and the ruler and marker tracks' own controls (#447,
+#91). Adding a track below the selected one is #448. Folders' group channels, data blocks and Move Selected Tracks to
+New Folder are in [folder-tracks.md](folder-tracks.md).
 
 ## Checks
 

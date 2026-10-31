@@ -14,7 +14,9 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <set>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace gnubase::ui
@@ -79,6 +81,7 @@ namespace gnubase::ui
 		Rml::Element& timeline = add(root, "div", "timeline");
 		m_ruler = &addCanvas<Ruler>(timeline, "ruler", "timeline-ruler");
 		m_area = &add(timeline, "div", "event-area");
+		m_folderLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "folder-data");
 		m_lanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "events");
 		m_mutedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "muted-events");
 		m_selectedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "selected-events");
@@ -130,6 +133,8 @@ namespace gnubase::ui
 					m_presetsKnown = true;
 					showPresets();
 				}
+				if (const auto mode = values.find("ui.folderData"); mode != values.end())
+					setFolderMode(mode->get<std::string>());
 			}));
 		const std::weak_ptr<bool> alive = m_alive;
 		requestProject();
@@ -147,6 +152,12 @@ namespace gnubase::ui
 					m_presets = result.value.at("value");
 					showPresets();
 				}
+			});
+		m_binding.send("settings.get", {{"key", "ui.folderData"}},
+			[this, alive](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok())
+					setFolderMode(result.value.at("value").get<std::string>());
 			});
 		requestMarkers();
 		showAutoScroll();
@@ -260,6 +271,8 @@ namespace gnubase::ui
 		// A lane per track that isn't hidden, in the project's order.
 		std::map<uint64_t, size_t> lanes;
 		std::map<uint64_t, bool> linear;
+		std::map<uint64_t, uint64_t> parents;
+		std::set<uint64_t> folded; // folders whose tracks are hidden
 		m_tracks.clear();
 		m_laneTracks.clear();
 		m_laneTypes.clear();
@@ -269,8 +282,12 @@ namespace gnubase::ui
 		{
 			const auto id = track.at("id").get<uint64_t>();
 			linear[id] = track.at("timeBase") == "linear";
+			parents[id] = track.at("parent").get<uint64_t>();
 			if (m_hidden.count(id) != 0)
+			{
+				folded.insert(parents[id]);
 				continue;
+			}
 			lanes[id] = lanes.size();
 			m_tracks.push_back({static_cast<float>(trackHeight(id)), {}});
 			m_laneTracks.push_back(id);
@@ -285,10 +302,16 @@ namespace gnubase::ui
 		std::map<uint64_t, uint64_t> clipMedia;
 		for (const Json& clip : project.at("clips"))
 			clipMedia[clip.at("id").get<uint64_t>()] = clip.at("media").get<uint64_t>();
+		m_folderData.assign(m_tracks.size(), {});
 		m_end = 0.0;
 		const auto addEvent = [&](const Json& event, double start, double end)
 		{
 			const auto track = event.at("track").get<uint64_t>();
+			// The folders around the track show it as a data block.
+			for (uint64_t folder = parents[track]; folder != 0; folder = parents[folder])
+				if (const auto lane = lanes.find(folder); lane != lanes.end() &&
+					(m_folderMode == "always" || (m_folderMode == "hideWhenExpanded" && folded.count(folder) != 0)))
+					m_folderData[lane->second].events.push_back({start, end - start});
 			if (lanes.count(track) == 0)
 				return;
 			m_tracks[lanes[track]].events.push_back({start, end - start});
@@ -324,9 +347,10 @@ namespace gnubase::ui
 			addEvent(part, seconds(position, linear[track]),
 				seconds(position + part.at("length").get<int64_t>(), linear[track]));
 		}
-		for (EventLanes::Lane& lane : m_tracks)
-			std::sort(lane.events.begin(), lane.events.end(),
-				[](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
+		for (std::vector<EventLanes::Lane>* list : {&m_tracks, &m_folderData})
+			for (EventLanes::Lane& lane : *list)
+				std::sort(lane.events.begin(), lane.events.end(),
+					[](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
 		// Events that are gone leave the selection.
 		std::vector<uint64_t> selection;
 		for (const uint64_t id : m_selection)
@@ -358,6 +382,9 @@ namespace gnubase::ui
 			all.insert(all.end(), lanes[i].events.begin(), lanes[i].events.end());
 		}
 		std::vector<EventLanes::Lane> selected = muted;
+		std::vector<EventLanes::Lane> folders = m_folderData;
+		for (size_t i = 0; i < folders.size() && i < lanes.size(); ++i)
+			folders[i].height = lanes[i].height;
 		const double shift = m_drag == Drag::Events && m_dragMoved ? m_dragDx * m_view.scale : 0.0;
 		for (const Shown& shown : m_events)
 		{
@@ -374,6 +401,7 @@ namespace gnubase::ui
 					[](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
 		m_mutedLanes->setLanes(std::move(muted));
 		m_selectedLanes->setLanes(std::move(selected));
+		m_folderLanes->setLanes(std::move(folders));
 		m_lanes->setLanes(std::move(lanes));
 		// The overview line has every event in one row, as high as the line is.
 		std::sort(all.begin(), all.end(), [](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
@@ -589,6 +617,15 @@ namespace gnubase::ui
 		if (tracks == m_hidden)
 			return;
 		m_hidden = std::move(tracks);
+		if (m_project.is_object())
+			loadProject(m_project);
+	}
+
+	void EventDisplay::setFolderMode(const std::string& mode)
+	{
+		if (mode == m_folderMode)
+			return;
+		m_folderMode = mode;
 		if (m_project.is_object())
 			loadProject(m_project);
 	}
