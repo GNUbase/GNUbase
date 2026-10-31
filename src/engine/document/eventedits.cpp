@@ -36,10 +36,20 @@ namespace gnubase::engine
 			MidiPart* part = nullptr;
 
 			explicit operator bool() const { return audio != nullptr || part != nullptr; }
-			ObjectId id() const { return audio != nullptr ? audio->id : part->id; }
-			ObjectId track() const { return audio != nullptr ? audio->track : part->track; }
-			bool locked() const { return audio != nullptr ? audio->lock : part != nullptr && part->lock; }
-			time::Position& position() const { return audio != nullptr ? audio->position : part->position; }
+			ObjectId id() const { return audio != nullptr ? audio->id : midi().id; }
+			ObjectId track() const { return audio != nullptr ? audio->track : midi().track; }
+			bool locked() const { return audio != nullptr ? audio->lock : midi().lock; }
+			time::Position& position() const { return audio != nullptr ? audio->position : midi().position; }
+
+		private:
+			// The MIDI part of an item that isn't an audio event. Checked, so the static analyzer sees that one of the
+			// two is always set.
+			MidiPart& midi() const
+			{
+				if (part == nullptr)
+					throw CommandError("an event is neither an audio event nor a MIDI part");
+				return *part;
+			}
 		};
 
 		Item findItem(Project& project, ObjectId id)
