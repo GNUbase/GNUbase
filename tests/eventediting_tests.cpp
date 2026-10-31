@@ -233,6 +233,24 @@ TEST_CASE("a drag at an edge resizes, Alt and a click splits, a double click add
 	CHECK(f.parts().size() == 4);
 }
 
+TEST_CASE("the object selection tool's modifiers act on events whatever keys they are set to", "[unit]")
+{
+	Fixture f;
+	f.call("settings.set",
+		{{"key", "ui.toolModifiers"}, {"value", {{"select.splitEvent", "shift"}, {"dragDrop.copy", "ctrl"}}}});
+	f.step();
+	// Shift and a click at 2 seconds splits the part there rather than adding it to the selection.
+	f.click(200, 60, {"shift"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+	CHECK(f.parts()[1].at("position") == 4 * g_quarter);
+	// Ctrl and a drag of the piece from 2 to 3 seconds copies it two seconds later.
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[1].events.size() == 2; }));
+	f.drag(250, 60, 450, 60, {"ctrl"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+	CHECK(f.parts()[2].at("position") == 8 * g_quarter);
+	CHECK(f.parts()[2].at("shared") == 0);
+}
+
 TEST_CASE("the edit commands act on the selection", "[unit]")
 {
 	Fixture f;

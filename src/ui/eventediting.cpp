@@ -350,8 +350,12 @@ namespace gnubase::ui
 		const bool wide = right - left > 3.0 * g_edge;
 		const bool atStart = wide && x - left <= g_edge;
 		const bool atEnd = wide && !atStart && right - x <= g_edge;
-		// An edge with the modifier Disable Snapping resizes rather than adding to the selection.
-		if (add && !held(event, "alt_key") && !((atStart || atEnd) && modifiers("sizeObjects.disableSnapping")))
+		// The tool modifiers for a press on an event (Set Cursor Position, Split Event, Copy, Shared Copy, and Disable
+		// Snapping at an edge) act on it rather than adding it to the selection, whatever keys they are set to.
+		const bool toolModifier = modifiers("select.setCursorPosition") || modifiers("select.splitEvent") ||
+			modifiers("dragDrop.copy") || modifiers("dragDrop.sharedCopy") ||
+			((atStart || atEnd) && modifiers("sizeObjects.disableSnapping"));
+		if (add && !toolModifier)
 		{
 			// Ctrl or Shift and a click adds an event to the selection or takes it out.
 			std::vector<uint64_t> events = m_selection;
