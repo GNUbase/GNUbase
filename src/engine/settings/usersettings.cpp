@@ -56,6 +56,19 @@ namespace gnubase::engine::settings
 					{{"windows", {{"type", "object"}, {"additionalProperties", window}}},
 						{"panels", {{"type", "object"}, {"additionalProperties", panel}}}}}};
 		}
+
+		// ui.toolModifiers: by action, the modifier keys (docs/features/tools.md).
+		Json toolModifiersSchema()
+		{
+			const Json keys = {{"type", "string"},
+				{"enum", {"", "ctrl", "alt", "shift", "ctrl+alt", "ctrl+shift", "alt+shift", "ctrl+alt+shift"}}};
+			Json properties = Json::object();
+			for (const char* action : {"dragDrop.copy", "dragDrop.sharedCopy", "erase.deleteLaterEvents",
+					 "glue.glueAllFollowing", "range.selectFullVertical", "select.setCursorPosition",
+					 "select.splitEvent", "sizeObjects.disableSnapping", "split.splitRepeated"})
+				properties[action] = keys;
+			return {{"type", "object"}, {"properties", properties}, {"additionalProperties", false}};
+		}
 	}
 
 	const Format& userFormat()
@@ -114,6 +127,14 @@ namespace gnubase::engine::settings
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
+				{"ui.toolModifiers",
+					"The modifier keys of the project window's tools, by action (docs/features/tools.md), each ctrl "
+					"(Cmd on macOS), alt and shift joined with +, or empty for none: dragDrop.copy (default alt), "
+					"dragDrop.sharedCopy (alt+shift), erase.deleteLaterEvents (alt), glue.glueAllFollowing (alt), "
+					"range.selectFullVertical (alt+shift), select.setCursorPosition (alt+shift), select.splitEvent "
+					"(alt), sizeObjects.disableSnapping (ctrl) and split.splitRepeated (alt). What it leaves out has "
+					"its default.",
+					toolModifiersSchema(), Json::object()},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "
 					"seconds the view shows.",
