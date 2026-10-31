@@ -19,6 +19,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 
 namespace gnubase::test
 {
@@ -51,7 +52,8 @@ namespace gnubase::test
 #endif
 	}
 
-	UiApp::UiApp(ui::Size size) : m_engine(audio::makeBackends(), m_settings.path())
+	UiApp::UiApp(ui::Size size, std::vector<std::unique_ptr<midi::Backend>> midiBackends)
+		: m_engine(audio::makeBackends(), m_settings.path(), std::move(midiBackends))
 	{
 		std::ostringstream problems;
 		const bool ready = app::setUpEngine(m_engine, app::Options{}, problems); // the dummy device, the app's default

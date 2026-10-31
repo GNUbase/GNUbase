@@ -69,6 +69,8 @@ namespace gnubase::app
 				return m_binding.update();
 			});
 		m_shell.onUnusedKey([this](ui::Window& window, const ui::KeyPress& keys) { m_keys.press(window, keys); });
+		m_keys.add({"window.studioSetup", "Opens the studio setup dialog for the audio and MIDI devices.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { openStudioSetup(window); }});
 		for (const ProjectCommand& command : g_projectCommands)
 		{
 			m_keys.add(
@@ -96,5 +98,15 @@ namespace gnubase::app
 		document->Show();
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
 		return *m_eventDisplay;
+	}
+
+	Rml::ElementDocument& AppUi::openStudioSetup(ui::Window& window) const
+	{
+		const std::filesystem::path file = m_resources / "ui" / "studio-setup.rml";
+		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
+		if (document == nullptr)
+			throw std::runtime_error("cannot load the studio setup dialog from " + file.u8string());
+		document->Show(Rml::ModalFlag::Modal);
+		return *document;
 	}
 }

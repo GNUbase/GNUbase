@@ -148,10 +148,16 @@ namespace gnubase::engine
 		bool reset();
 		// Starts trying to open the lost device again, every g_reconnectInterval, with audio.reset.
 		void waitForDevice();
+		// Opens the device again with the parameters, and starts it again if it was running.
+		void reopen(const Json& parameters, bool running);
+		void set(const Json& changes);              // audio.set
 		int64_t recordOffset() const;               // from the device's latency and the record shift
 		bool updateLatency(const Json& parameters); // audio.updateLatency; true if anything changed
 		Json devices() const;
-		Json ports() const; // audio.ports
+		Json ports() const;                   // audio.ports
+		Json setPort(const Json& parameters); // audio.setPort
+		// Where m_portSettings keeps a port of the device: its backend, device id, direction and name.
+		std::string portKey(bool input, const std::string& name) const;
 		void setProcessing(const Json& parameters);
 		// Workers for the device's format and the processing settings, as many as get real-time priority. Throws
 		// std::system_error if threads can't be started; the fallback processes on the audio thread only.
@@ -230,6 +236,14 @@ namespace gnubase::engine
 		std::atomic<bool> m_waitingForDevice{false}; // m_lost, for that thread
 		std::condition_variable m_reconnectWake;
 		std::thread m_reconnectThread;
+
+		// The user's names for ports and which ones they see (audio.setPort), by portKey, for every device opened.
+		struct PortSettings
+		{
+			std::string showAs; // empty: the system name
+			bool visible = true;
+		};
+		std::map<std::string, PortSettings> m_portSettings;
 
 		// Latency compensation and monitoring (docs/features/latency-and-monitoring.md), set with the device.
 		int64_t m_recordShift = 0;

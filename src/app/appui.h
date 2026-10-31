@@ -17,6 +17,11 @@
 #include <iosfwd>
 #include <memory>
 
+namespace Rml
+{
+	class ElementDocument;
+}
+
 namespace gnubase::app
 {
 	// GNUbase's UI for an engine: SDL3 windows drawn through SDL_GPU, RmlUi with GNUbase's fonts, themes and widgets,
@@ -43,6 +48,11 @@ namespace gnubase::app
 		// commands are key commands in the focus zone "project". Throws std::runtime_error if the document can't be
 		// loaded.
 		ui::EventDisplay& showProject();
+
+		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
+		// window.studioSetup, which the main menu's Studio menu will run. Throws std::runtime_error if the document
+		// can't be loaded.
+		Rml::ElementDocument& openStudioSetup(ui::Window& window) const;
 
 		ui::Shell& shell() { return m_shell; }
 		ui::Window& mainWindow() { return m_main; }

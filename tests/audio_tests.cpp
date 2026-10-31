@@ -547,6 +547,86 @@ TEST_CASE("audio.reset keeps the dummy device's settings", "[unit]")
 	CHECK(capture(client, 0, 64) != std::vector<float>(64, 0.0f)); // with its input
 }
 
+TEST_CASE("audio.set changes the device's settings and keeps the others", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	CHECK_THAT(reject(client, "audio.set", {{"blockSize", 128}}), ContainsSubstring("no audio device"));
+	run(client, "audio.setDevice", {{"blockSize", 64}, {"outputChannels", 4}, {"outputLatency", 300}});
+	Json device = run(client, "audio.set", {{"sampleRate", 44100}, {"blockSize", 128}}).at("device");
+	CHECK(device.at("sampleRate") == 44100.0);
+	CHECK(device.at("blockSize") == 128);
+	CHECK(device.at("outputChannels") == 4); // the dummy device's own settings stay
+	CHECK(device.at("outputLatency") == 300);
+
+	// A running device runs on with the new settings.
+	run(client, "audio.start");
+	const Json status = run(client, "audio.set", {{"recordShift", 10}});
+	CHECK(status.at("running") == true);
+	CHECK(status.at("device").at("recordShift") == 10);
+	CHECK(status.at("device").at("blockSize") == 128);
+	run(client, "audio.stop");
+
+	// Settings the device can't take leave it as it was.
+	CHECK_THAT(reject(client, "audio.set", {{"blockSize", 0}}), ContainsSubstring("blockSize"));
+	CHECK(run(client, "audio.get").at("device").at("blockSize") == 128);
+	CHECK_THAT(reject(client, "audio.set", {{"backend", "dummy"}}), ContainsSubstring("backend"));
+}
+
+TEST_CASE("audio.set opens a driver's device again with the old settings if it can't take the new", "[unit]")
+{
+	Engine engine(fakeBackends(std::make_shared<FakeDriver>()));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "fake"}, {"sampleRate", 44100}});
+	Json device = run(client, "audio.set", {{"clockSource", "Word clock"}}).at("device");
+	CHECK(device.at("id") == "fake-1");
+	CHECK(device.at("sampleRate") == 44100.0);
+	CHECK(device.at("clockSource") == "Word clock");
+
+	CHECK_THAT(reject(client, "audio.set", {{"sampleRate", 96000}}), ContainsSubstring("sample rate"));
+	device = run(client, "audio.get").at("device");
+	REQUIRE(device.is_object());
+	CHECK(device.at("sampleRate") == 44100.0);
+	CHECK(device.at("clockSource") == "Word clock");
+}
+
+TEST_CASE("audio.setPort renames and hides the device's ports, per device", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	CHECK_THAT(
+		reject(client, "audio.setPort", {{"input", true}, {"name", "Input 1"}}), ContainsSubstring("no audio device"));
+	run(client, "audio.setDevice");
+	Json ports = run(client, "audio.ports");
+	CHECK(ports.at("inputs")[0].at("showAs") == "Input 1");
+	CHECK(ports.at("inputs")[0].at("visible") == true);
+
+	const Json port =
+		run(client, "audio.setPort", {{"input", true}, {"name", "Input 1"}, {"showAs", "Mic"}, {"visible", false}});
+	CHECK(port.at("name") == "Input 1");
+	CHECK(port.at("showAs") == "Mic");
+	CHECK(port.at("visible") == false);
+	CHECK(waitForEvent(
+		client, "audio.portsChanged", [](const Json& data) { return data.at("inputs")[0].at("showAs") == "Mic"; }));
+	ports = run(client, "audio.ports");
+	CHECK(ports.at("inputs")[0].at("showAs") == "Mic");
+	CHECK(ports.at("inputs")[1].at("showAs") == "Input 2");
+	CHECK(ports.at("outputs")[0].at("showAs") == "Output 1"); // outputs are other ports
+
+	CHECK_THAT(reject(client, "audio.setPort", {{"input", false}, {"name", "Input 1"}}),
+		ContainsSubstring("no output port Input 1"));
+
+	// The device keeps them when it opens again, also with other settings.
+	run(client, "audio.setDevice", {{"inputChannels", 4}});
+	ports = run(client, "audio.ports");
+	CHECK(ports.at("inputs")[0].at("showAs") == "Mic");
+	CHECK(ports.at("inputs")[0].at("visible") == false);
+
+	// An empty name shows the system name again.
+	CHECK(
+		run(client, "audio.setPort", {{"input", true}, {"name", "Input 1"}, {"showAs", ""}}).at("showAs") == "Input 1");
+}
+
 namespace
 {
 	// Waits until the transport has played past a position; false after five seconds.
