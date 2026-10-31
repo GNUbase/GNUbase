@@ -611,9 +611,12 @@ namespace gnubase::audio
 					throw;
 				}
 				// The node is inactive until start, so process() sees the events once it runs.
-				pw_loop* loop = pw_thread_loop_get_loop(m_connection.loop());
-				m_latencyEvent = pw_loop_add_event(loop, &PipeWireDevice::onLatencyEvent, this);
-				m_resetEvent = pw_loop_add_event(loop, &PipeWireDevice::onResetEvent, this);
+				// No local for the loop: older headers make pw_loop_add_event a macro, so tidy asks for a const
+				// pointee that newer headers, where it is a function taking pw_loop*, would reject.
+				m_latencyEvent = pw_loop_add_event(
+					pw_thread_loop_get_loop(m_connection.loop()), &PipeWireDevice::onLatencyEvent, this);
+				m_resetEvent = pw_loop_add_event(
+					pw_thread_loop_get_loop(m_connection.loop()), &PipeWireDevice::onResetEvent, this);
 				// The linked ports too: the session manager may give a sink other ports, e.g. for another channel
 				// count, which unlinks the node from it.
 				std::vector<uint32_t> watched{endpoints.sink, endpoints.source};
