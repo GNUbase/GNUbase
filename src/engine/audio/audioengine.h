@@ -189,6 +189,7 @@ namespace gnubase::engine
 		void cue(time::Samples position, bool playing, time::Samples window, bool wait);
 		void startCueing();
 		void stopCueing();
+		void startDevice();
 		void stopDevice();
 		// Gives MIDI and instrument channels their sequencers and instruments, and notes the MIDI tracks that left an
 		// instrument track for the program of the generation.

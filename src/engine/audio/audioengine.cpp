@@ -235,6 +235,21 @@ namespace gnubase::engine
 			});
 	}
 
+	void AudioEngine::startDevice()
+	{
+		m_midi.clear(); // input that waited while no device ran is stale
+		startCueing();
+		try
+		{
+			m_device->start(*this);
+		}
+		catch (...)
+		{
+			stopCueing(); // a later start would start a second cue thread
+			throw;
+		}
+	}
+
 	void AudioEngine::stopCueing()
 	{
 		m_cueing = false;
@@ -784,11 +799,7 @@ namespace gnubase::engine
 		if (lost)
 			logging::info("The audio device ({} {}) is back", m_backend, id);
 		if (running)
-		{
-			m_midi.clear();
-			startCueing();
-			m_device->start(*this);
-		}
+			startDevice();
 		return true;
 	}
 
@@ -796,11 +807,7 @@ namespace gnubase::engine
 	{
 		setDevice(parameters);
 		if (running)
-		{
-			m_midi.clear();
-			startCueing();
-			m_device->start(*this);
-		}
+			startDevice();
 	}
 
 	void AudioEngine::set(const Json& changes)
@@ -864,11 +871,7 @@ namespace gnubase::engine
 		m_recordOffset = offset;
 		m_played = PlayedPositions(static_cast<size_t>(m_recordOffset) + m_device->format().blockSize);
 		if (running)
-		{
-			m_midi.clear();
-			startCueing();
-			m_device->start(*this);
-		}
+			startDevice();
 		return true;
 	}
 
@@ -1476,9 +1479,10 @@ namespace gnubase::engine
 				"try at a time. Tries that find the device still gone change nothing and are left out of "
 				"engine.commandLog. Sends audio.changed when the device opens.",
 				noParameters(), statusSchema(), false},
-			[this](CommandContext& context)
+			[this, announcingFailure](CommandContext& context)
 			{
-				const bool changed = m_lost && reset();
+				bool changed = false;
+				announcingFailure([this, &changed] { changed = m_lost && reset(); });
 				Json result = status();
 				if (changed)
 					context.emit("audio.changed", result);
@@ -1576,9 +1580,7 @@ namespace gnubase::engine
 				}
 				require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
 				require(!m_device->running(), "the audio device is already running");
-				m_midi.clear(); // input that waited while no device ran is stale
-				startCueing();
-				m_device->start(*this);
+				startDevice();
 				Json result = status();
 				context.emit("audio.changed", result);
 				return result;

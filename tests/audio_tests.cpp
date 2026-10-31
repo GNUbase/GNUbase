@@ -119,6 +119,7 @@ namespace
 		std::atomic<int> controlPanels{0};
 		std::atomic<DummyDevice*> device{nullptr}; // the device opened last
 		std::atomic<bool> connected{true};         // fake-1's hardware; opening fails without it
+		std::atomic<bool> failStart{false};        // starting fails, as with a driver that doesn't process audio
 	};
 
 	DeviceInfo fakeInfo()
@@ -154,6 +155,13 @@ namespace
 
 		DeviceLatency latency() const override { return {format().blockSize, 2 * format().blockSize}; }
 		void openControlPanel() override { ++m_driver.controlPanels; }
+
+		void start(AudioCallback& callback) override
+		{
+			if (m_driver.failStart)
+				throw DeviceError("the driver starts, but doesn't process audio");
+			DummyDevice::start(callback);
+		}
 
 	private:
 		int m_clockSource;
@@ -614,6 +622,36 @@ TEST_CASE("a failed audio.set or audio.setDevice still announces the device it r
 	run(client, "audio.setDevice");
 	reject(client, "audio.setDevice", {{"backend", "fake"}});
 	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return data.at("device").is_null(); }));
+}
+
+TEST_CASE("a reset or a returning device that opens but fails to start still announces the device", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "audio.start");
+	while (client.wait(std::chrono::milliseconds(0))) // the commands' own audio.changed
+		;
+	const auto openAndStopped = [](const Json& data)
+	{ return data.at("device").is_object() && data.at("running") == false && data.at("lost").is_null(); };
+
+	// audio.reset opens the device again, then starting it fails.
+	driver->failStart = true;
+	reject(client, "audio.reset");
+	CHECK(waitForEvent(client, "audio.changed", openAndStopped));
+	driver->failStart = false;
+	run(client, "audio.start");
+
+	// The running device goes away and returns, then starting it fails: the automatic try still announces it.
+	driver->connected = false;
+	driver->device.load()->requestReset();
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
+	CHECK(run(client, "audio.get").at("lost").at("restart") == true);
+	driver->failStart = true;
+	driver->connected = true;
+	CHECK(waitForEvent(client, "audio.changed", openAndStopped));
+	CHECK(openAndStopped(run(client, "audio.get")));
 }
 
 TEST_CASE("audio.setPort renames and hides the device's ports, per device", "[unit]")
