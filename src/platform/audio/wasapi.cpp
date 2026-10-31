@@ -542,6 +542,7 @@ namespace gnubase::audio
 				}
 				check(started, "starting the output");
 				ResetEvent(m_stop.get());
+				m_firstPacket = true;
 				m_thread = std::thread([this, &callback] { run(callback); });
 			}
 
@@ -614,6 +615,10 @@ namespace gnubase::audio
 					DWORD flags = 0;
 					if (FAILED(m_capture->GetBuffer(&data, &frames, &flags, nullptr, nullptr)))
 						return false;
+					// A glitch, except on the first packet after starting, which may have the flag for the start.
+					const bool first = std::exchange(m_firstPacket, false);
+					if ((flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) != 0 && !first)
+						reportOverload();
 					const uint32_t kept = std::min<uint32_t>(frames, m_input->bufferFrames);
 					if ((flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0)
 						std::fill(m_captureSamples.begin(), m_captureSamples.end(), 0.0f);
@@ -687,7 +692,8 @@ namespace gnubase::audio
 			std::optional<InputFifo> m_fifo;
 			MidiBuffer m_midiIn;
 			MidiBuffer m_midiOut;
-			HostTime m_lastTime = 0; // of the last block
+			HostTime m_lastTime = 0;   // of the last block
+			bool m_firstPacket = true; // the input's first since starting
 
 			std::atomic<uint64_t> m_position{0};
 			Event m_stop{true};
