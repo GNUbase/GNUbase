@@ -538,8 +538,7 @@ TEST_CASE("a loopback records sample-aligned after the dummy device's latency ch
 	CHECK(status.at("device").at("inputLatency") == 100);
 	CHECK(status.at("device").at("outputLatency") == 157);
 	CHECK(status.at("device").at("recordOffset") == 257);
-	CHECK(status.at("position") == 640);                                      // the same device
-	CHECK(run(client, "audio.reset").at("device").at("recordOffset") == 257); // which a reset keeps
+	CHECK(status.at("position") == 640); // the same device, which records the ramp below
 
 	addRamp(client, writeRamp(dir, 500), 1000, 500);
 	run(client, "transport.play");
@@ -553,5 +552,6 @@ TEST_CASE("a loopback records sample-aligned after the dummy device's latency ch
 	run(client, "audio.start");
 	CHECK_THAT(reject(client, "audio.updateLatency", {{"inputLatency", 200}}), ContainsSubstring("running"));
 	run(client, "audio.stop");
-	CHECK(run(client, "audio.get").at("device").at("inputLatency") == 100); // the rejected ones changed nothing
+	CHECK(run(client, "audio.get").at("device").at("inputLatency") == 100);   // the rejected ones changed nothing
+	CHECK(run(client, "audio.reset").at("device").at("recordOffset") == 257); // which a reset keeps
 }
