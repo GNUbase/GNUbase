@@ -631,44 +631,76 @@ TEST_CASE("the PipeWire backend keeps the device contract and asks for a reset w
 	checkUnplug(backend);
 }
 
-// While another client forces the graph to another rate, a device would only play silence: it asks for a reset, and
-// opens at its rate again once the rate is no longer forced. Until then the listing has the forced rate only, and
-// opening at another one says why it can't.
+// While another client forces the graph to another rate, a device would only play silence: it asks for a reset. Until
+// the force is lifted the listing has the forced rate only, and opening at another one says why it can't; a device
+// opened without a rate opens at the forced one. When the force is lifted, the device asks for a reset again.
 TEST_CASE("a PipeWire device asks for a reset when another client forces the graph to another rate", "[integration]")
 {
-	const std::unique_ptr<Backend> backend = pipeWireOrSkip();
+	std::unique_ptr<Backend> backend = pipeWireOrSkip();
 	if (!backend)
 		SKIP("no PipeWire daemon runs here");
 	if (!havePipeWireTools())
 		return;
-	std::unique_ptr<Device> device = backend->open(config("default"));
-	const double rate = device->format().sampleRate;
-	const uint32_t other = rate != 44100.0 ? 44100 : 48000;
-	std::atomic<int> resets{0};
-	device->onReset([&resets] { ++resets; });
-	ContractCallback callback(device->format());
-	device->start(callback);
-	REQUIRE(callback.waitFor(8));
+	SECTION("the device")
 	{
-		const ForcedSetting forced("clock.force-rate", other);
-		CHECK(eventually([&resets] { return resets > 0; }));
-		device.reset();
-		CHECK(backend->devices().front().sampleRates == std::vector<double>{static_cast<double>(other)});
-		CHECK_THROWS_WITH(backend->open(config("default", rate)), Catch::Matchers::ContainsSubstring("forces"));
-	}
-	CHECK(eventually(
-		[&backend, rate]
+		std::unique_ptr<Device> device = backend->open(config("default"));
+		const double rate = device->format().sampleRate;
+		const uint32_t other = rate != 44100.0 ? 44100 : 48000;
+		std::atomic<int> resets{0};
+		device->onReset([&resets] { ++resets; });
+		ContractCallback callback(device->format());
+		device->start(callback);
+		REQUIRE(callback.waitFor(8));
 		{
-			try
+			const ForcedSetting forced("clock.force-rate", other);
+			CHECK(eventually([&resets] { return resets > 0; }));
+			device.reset();
+			CHECK(backend->devices().front().sampleRates == std::vector<double>{static_cast<double>(other)});
+			CHECK_THROWS_WITH(backend->open(config("default", rate)), Catch::Matchers::ContainsSubstring("forces"));
+			CHECK(backend->open(config("default"))->format().sampleRate == other);
+		}
+		CHECK(eventually(
+			[&backend, rate]
 			{
-				return backend->open(config("default", rate))->format().sampleRate == rate;
-			}
-			catch (const DeviceError&)
-			{
-				return false;
-			}
-		}));
-	CHECK(callback.violations() == 0);
+				try
+				{
+					return backend->open(config("default", rate))->format().sampleRate == rate;
+				}
+				catch (const DeviceError&)
+				{
+					return false;
+				}
+			}));
+		CHECK(callback.violations() == 0);
+	}
+	SECTION("the engine, with the device set as the studio setup sets it")
+	{
+		std::vector<std::unique_ptr<Backend>> backends;
+		backends.push_back(std::move(backend));
+		gnubase::engine::Engine engine(std::move(backends));
+		Client client(engine);
+		// Backend and device only, without a sample rate: the device opens at the graph's rate, the project's.
+		run(client, "audio.setDevice", {{"backend", "pipewire"}, {"device", "default"}});
+		run(client, "audio.start");
+		const auto status = [&client] { return run(client, "audio.get"); };
+		const Json before = status().at("device");
+		REQUIRE(before.at("sampleRateMismatch") == false);
+		const double rate = before.at("sampleRate").get<double>();
+		const double other = rate != 44100.0 ? 44100.0 : 48000.0;
+		const auto runsAt = [&status](double expected, bool mismatch)
+		{
+			const Json current = status();
+			return current.at("running") == true && current.at("lost").is_null() &&
+				current.at("device").at("sampleRate").get<double>() == expected &&
+				current.at("device").at("sampleRateMismatch") == mismatch;
+		};
+		{
+			// Like any device that doesn't run at the project's rate, it runs at the forced one meanwhile.
+			const ForcedSetting forced("clock.force-rate", static_cast<uint32_t>(other));
+			CHECK(eventually([&runsAt, other] { return runsAt(other, true); }));
+		}
+		CHECK(eventually([&runsAt, rate] { return runsAt(rate, false); }));
+	}
 }
 
 // The latency counts in quanta: when another client changes the graph's quantum while a device runs, the device

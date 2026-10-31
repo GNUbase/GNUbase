@@ -267,8 +267,9 @@ namespace gnubase::audio
 				return forced != 0 ? forced : number(setting("clock.quantum"), 1024);
 			}
 
-			// Called on the loop thread when one of these globals (nodes, ports) goes away, when the daemon does and,
-			// if followsDefault, when the default sink or source changes.
+			// Called on the loop thread when one of these globals (nodes, ports) goes away, when the daemon does, when
+			// another client forces a rate or lifts the force (clock.force-rate) and, if followsDefault, when the
+			// default sink or source changes.
 			void watch(std::vector<uint32_t> globals, bool followsDefault, std::function<void()> changed)
 			{
 				m_watched = std::move(globals);
@@ -412,12 +413,16 @@ namespace gnubase::audio
 				auto& self = *static_cast<Connection*>(data);
 				if (subject != PW_ID_CORE)
 					return 0;
+				const uint32_t forced = self.forcedRate();
 				if (key == nullptr)
 					self.m_settingsValues.clear();
 				else if (value == nullptr)
 					self.m_settingsValues.erase(key);
 				else
 					self.m_settingsValues[key] = value;
+				// Another client forces a rate or lifts the force: the device opens at the graph's rate again.
+				if (self.forcedRate() != forced)
+					self.changed();
 				return 0;
 			}
 
@@ -802,8 +807,8 @@ namespace gnubase::audio
 				m_busy.fetch_add(1);
 				AudioCallback* callback = m_callback.load();
 				// The graph runs at another rate if another client forced one: then the device plays silence rather
-				// than at the wrong speed, and asks for a reset if that lasts, so that the engine opens it again and
-				// learns why it can't play (open refuses a rate while another is forced).
+				// than at the wrong speed, and asks for a reset if that lasts, so that the engine opens it again at the
+				// graph's rate or learns why it can't (open refuses a rate it asks for while another is forced).
 				const bool rate = static_cast<double>(position->clock.rate.denom) == m_format.sampleRate &&
 					position->clock.rate.num == 1;
 				if (callback != nullptr && rate)
