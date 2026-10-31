@@ -4,9 +4,11 @@
      track list (#81) joins it. ui::Docking lays out the elements with zone, splitter for, strip and toggle
      attributes and fills the other zones with their panels' tabs. ui::EventDisplay fills the element #event-display
      and drives the controls and menus with these ids (docs/features/event-display.md): the ruler's arrow button
-     .ruler-format, #ruler-format-menu, #zoom-presets-menu, #auto-scroll and #auto-scroll-menu. Its dialogs are
-     zoom-preset.rml and zoom-presets.rml, next to this file. ui::StatusLine fills the status line's #record-format
-     and #lost-device (docs/features/status-line.md).
+     .ruler-format, #ruler-format-menu, #zoom-presets-menu, #auto-scroll and #auto-scroll-menu, and the snap controls
+     #snap, #snap-type, #snap-type-menu, #grid-type, #grid-type-menu (which the display fills with the ruler format's
+     grid types) and #snap-zero-crossing (docs/features/snap.md). Its dialogs are zoom-preset.rml and
+     zoom-presets.rml, next to this file. ui::StatusLine fills the status line's #record-format and #lost-device
+     (docs/features/status-line.md).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
 <head>
@@ -63,6 +65,10 @@
 		<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
 		<button id="auto-scroll-settings" class="icon-only" menu="auto-scroll-menu" title="Select Auto-Scroll Settings"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 		<button id="zoom-presets" class="icon-only" menu="zoom-presets-menu" title="Horizontal Zoom Presets"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
+		<button id="snap" type="toggle" class="icon-only" title="Snap On/Off"><svg class="icon" src="../icons/general-snap.svg"/></button>
+		<button id="snap-type" menu="snap-type-menu" title="Snap Type">Grid</button>
+		<button id="grid-type" menu="grid-type-menu" title="Grid Type">Bar</button>
+		<button id="snap-zero-crossing" type="toggle" class="icon-only" title="Snap to Zero Crossing"><svg class="icon" src="../icons/general-zero-crossing.svg"/></button>
 		<div class="spacer"/>
 		<button id="show-left-zone" type="toggle" toggle="left" title="Show/Hide Left Zone">Left</button>
 		<button id="show-lower-zone" type="toggle" toggle="lower" title="Show/Hide Lower Zone">Lower</button>
@@ -116,6 +122,17 @@
 		<menuitem id="zoom-preset-add">Add...</menuitem>
 		<menuitem id="zoom-presets-organize">Organize...</menuitem>
 	</menu>
+	<menu id="snap-type-menu">
+		<menuitem snap-type="grid">Grid</menuitem>
+		<menuitem snap-type="gridRelative">Grid Relative</menuitem>
+		<menuitem snap-type="events">Events</menuitem>
+		<menuitem snap-type="shuffle">Shuffle</menuitem>
+		<menuitem snap-type="cursor">Cursor</menuitem>
+		<menuitem snap-type="gridCursor">Grid + Cursor</menuitem>
+		<menuitem snap-type="eventsCursor">Events + Cursor</menuitem>
+		<menuitem snap-type="eventsGridCursor">Events + Grid + Cursor</menuitem>
+	</menu>
+	<menu id="grid-type-menu"/>
 	<menu id="auto-scroll-menu">
 		<menuitem id="page-scroll">Page Scroll</menuitem>
 		<menuitem id="stationary-cursor">Stationary Cursor</menuitem>

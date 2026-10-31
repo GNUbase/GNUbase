@@ -2761,6 +2761,7 @@ namespace gnubase::engine
 		registerMidiFileCommands(engine);
 		registerFadeCommands(engine);
 		registerEventEditCommands(engine);
+		registerSnapCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 	}
