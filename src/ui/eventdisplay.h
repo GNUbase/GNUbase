@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/document/snap.h"
 #include "engine/engine.h"
+#include "engine/midi/quantizesettings.h"
 #include "ui/canvas.h"
 #include "ui/enginebinding.h"
 #include "ui/eventwaveforms.h"
@@ -16,6 +18,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Rml
@@ -126,13 +129,20 @@ namespace gnubase::ui
 		// The selection count times one after the other; shared copies of MIDI parts with shared.
 		void repeat(int count, bool shared);
 
+		// Snap and grid (#87, docs/features/snap.md): the project's settings (snap.get), which moving, copying,
+		// resizing and splitting with the mouse follow, and the nudges' step. The document's toolbar may have a snap
+		// toggle button #snap, menus #snap-type-menu and #grid-type-menu (the grid types of the ruler's time format),
+		// whose buttons #snap-type and #grid-type show the choice, and a toggle button #snap-zero-crossing.
+		const engine::SnapSettings& snap() const { return m_snap; }
+
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
 		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); and the edits of parts and events:
 		// edit.delete, edit.mute, edit.unmute, edit.lock, edit.unlock, edit.splitAtCursor, edit.splitLoop, edit.glue,
 		// edit.duplicate, edit.repeat (opens the Repeat Events dialog), edit.fillLoop, edit.toRealCopy, edit.nudgeLeft,
 		// edit.nudgeRight, edit.nudgeStartLeft, edit.nudgeStartRight, edit.nudgeEndLeft, edit.nudgeEndRight,
 		// edit.moveStartToCursor, edit.moveEndToCursor, edit.selectAll, edit.selectNone, edit.invertSelection,
-		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd and edit.selectUnderCursor.
+		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd and edit.selectUnderCursor; and
+		// edit.snap (snap on or off) and edit.snapPointToCursor (the selected audio events' snap points).
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
 
 	private:
@@ -156,6 +166,7 @@ namespace gnubase::ui
 			double start = 0.0; // seconds
 			double end = 0.0;
 			bool mute = false;
+			std::optional<double> snapPoint; // audio events, inside them, in seconds
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -202,6 +213,8 @@ namespace gnubase::ui
 		void showFormat();
 		void showPresets();
 		void showAutoScroll();
+		void showSnap();
+		void setSnap(const engine::Json& settings); // sends snap.set
 
 		// Editing parts and events (eventediting.cpp).
 		void addEditActions();
@@ -215,6 +228,14 @@ namespace gnubase::ui
 		void edit(const std::string& command, engine::Json parameters, bool selectResult = false);
 		void selectWhere(const std::function<bool(const Shown&)>& selected);
 		int64_t samples(double seconds) const;
+		// Snapping (eventediting.cpp): where a point at seconds goes, from where it was for grid relative; the
+		// selection's edges and snap points don't attract.
+		engine::SnapGrid snapGrid() const;
+		time::Position snapAt(double seconds, std::optional<double> from) const;
+		// The distance from seconds to a snapped position as event.move and event.resize take it: ticks when the grid
+		// is musical and every selected event is on a musical track, else samples. Also in seconds.
+		std::pair<engine::Json, double> shiftTo(const time::Position& to, double from) const;
+		std::pair<engine::Json, double> moveShift(double dx) const; // a drag of the selection, dx dp across
 
 		engine::Engine& m_engine;
 		EngineBinding& m_binding;
@@ -246,7 +267,7 @@ namespace gnubase::ui
 		bool m_sizingMovesContents = false;
 		uint64_t m_dragEvent = 0; // pressed on
 		bool m_dragMoved = false;
-		double m_dragDx = 0.0; // dp, while moving
+		double m_dragDx = 0.0; // dp, while moving, snapped
 		int m_dragLanes = 0;
 		double m_end = 0.0; // of the last event
 		bool m_loading = false;
@@ -281,6 +302,15 @@ namespace gnubase::ui
 		Rml::Element* m_autoScrollButton = nullptr;
 		Rml::Element* m_autoScrollMenu = nullptr;
 		std::vector<CycleMarker> m_cycleMarkers;
+		std::vector<int64_t> m_markers; // every marker's position and end, in samples, for snapping
+		engine::SnapSettings m_snap;
+		engine::midi::QuantizeSettings m_quantize;
+		Rml::Element* m_snapButton = nullptr;
+		Rml::Element* m_snapTypeButton = nullptr;
+		Rml::Element* m_snapTypeMenu = nullptr;
+		Rml::Element* m_gridTypeButton = nullptr;
+		Rml::Element* m_gridTypeMenu = nullptr;
+		Rml::Element* m_zeroCrossingButton = nullptr;
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the dialog document open now
 		engine::Json m_organized;                // the presets that the organize dialog lists, by index
 

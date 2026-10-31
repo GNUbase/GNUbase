@@ -188,6 +188,46 @@ TEST_CASE("event.copy and event.duplicate make real and shared copies", "[unit]"
 	CHECK(f.audio(copies[0]).at("clip") != f.audio(event).at("clip"));
 }
 
+TEST_CASE("A transaction keeps every shared copy's edit, as one undo step", "[unit]")
+{
+	Fixture f;
+	const int64_t original = f.part(f.track("midi"));
+	const int64_t copy = f.call("event.copy", {{"events", {original}}, {"ticks", g_bar}, {"shared", true}})
+							 .at("events")[0]
+							 .get<int64_t>();
+	const Json notes = f.midi(original).at("notes");
+	const Json added = {{"position", 0}, {"length", 10}, {"pitch", 30}, {"velocity", 1.0}};
+	const auto edit = [](const char* command, int64_t part, const Json& changes)
+	{ return Json{{"command", command}, {"parameters", {{"part", part}, {"notes", changes}}}}; };
+
+	// Different notes in each copy, then a note added to one copy that the next command edits in the other.
+	const Json result = f.call("history.transaction",
+		{{"description", "Edit both"},
+			{"commands",
+				{edit("note.set", original, {{{"id", notes[0].at("id")}, {"pitch", 72}}}),
+					edit("note.set", copy, {{{"id", notes[1].at("id")}, {"pitch", 73}}}),
+					edit("note.add", copy, Json::array({added})),
+					{{"command", "midi.fixVelocities"}, {"parameters", {{"parts", {original}}, {"velocity", 0.5}}}}}}});
+	const Json newNote = result.at("results")[2].at("notes")[0].at("id");
+
+	for (const int64_t part : {original, copy})
+	{
+		const Json now = f.midi(part).at("notes");
+		REQUIRE(now.size() == 5);
+		CHECK(now[0].at("pitch") == 72);
+		CHECK(now[1].at("pitch") == 73);
+		CHECK(now[4].at("id") == newNote);
+		for (const Json& note : now)
+			CHECK(note.at("velocity").get<double>() < 0.6);
+	}
+	CHECK(f.midi(original).at("notes") == f.midi(copy).at("notes"));
+
+	// One step undoes both copies' edits.
+	f.call("history.undo");
+	CHECK(f.midi(original).at("notes") == notes);
+	CHECK(f.midi(copy).at("notes") == notes);
+}
+
 TEST_CASE("event.resize moves the start or the end, revealing content or moving it", "[unit]")
 {
 	Fixture f;
