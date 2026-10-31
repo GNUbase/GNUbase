@@ -371,6 +371,15 @@ TEST_CASE("values are checked against their JSON schema", "[unit]")
 	CHECK(validate(Json::parse("[]"), schema, "result") == "result must be object");
 }
 
+TEST_CASE("properties that the schema doesn't name are checked against additionalProperties", "[unit]")
+{
+	const Json schema = Json::parse(R"({"type": "object", "properties": {"name": {"type": "string"}},
+		"additionalProperties": {"type": "object", "properties": {"size": {"type": "number"}}}})");
+	CHECK(validate(Json::parse(R"({"name": "a", "left": {"size": 240}, "right": {}})"), schema).empty());
+	CHECK(validate(Json::parse(R"({"left": 3})"), schema) == "parameters.left must be object");
+	CHECK(validate(Json::parse(R"({"left": {"size": "big"}})"), schema) == "parameters.left.size must be number");
+}
+
 TEST_CASE("numbers are checked against the schema's minimum and maximum", "[unit]")
 {
 	const Json schema = Json::parse(R"({"type": "number", "minimum": 0.5, "maximum": 4})");

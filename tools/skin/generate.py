@@ -455,6 +455,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                            "stroke-width": f"{widths['hairline']}dp"}),
         (".event-display .marker-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
         (".event-display .marker-label.active", {"color": c["text"]}),
+        # Docking windows (docs/features/docking.md): zones, the frame of the zone with the keyboard focus, and strips
+        (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
+        (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),
+        (".docking .strip", {"background-color": c["surface"]}),
     ]
 
     lines = ["/* SPDX-License-Identifier: GPL-3.0-or-later */",
