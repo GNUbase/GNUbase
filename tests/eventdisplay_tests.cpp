@@ -17,6 +17,7 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/ElementUtilities.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -327,6 +328,52 @@ TEST_CASE("audio events show their waveforms from the engine's waveform overview
 	// Removing the event removes its waveform, through any client.
 	fixture.call("history.undo");
 	REQUIRE(fixture.waitUntil([&] { return waveforms(fixture.document).empty(); }));
+}
+
+TEST_CASE("waveforms of lanes scrolled out of view are clipped to the event area", "[unit]")
+{
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "take.wav";
+	test::Audio audio;
+	audio.samples.assign(4800, 0.5F);
+	test::writeWav(file, audio);
+
+	// Sixteen audio tracks of 40 dp, more than the 356 dp the event area shows, each with an event.
+	Fixture fixture;
+	const Json media = fixture.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = fixture.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	constexpr size_t tracks = 16;
+	for (size_t i = 0; i < tracks; ++i)
+	{
+		const Json track = fixture.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
+		fixture.call(
+			"audioEvent.add", {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 0}, {"length", 4800}});
+	}
+	REQUIRE(fixture.waitUntil([&] { return fixture.lanes().size() == tracks; }));
+
+	// Scrolled down by one and a half lanes: there are waveforms above the view and below it.
+	fixture.display.scrollVertically(1.5 * ui::g_trackHeight);
+	fixture.step();
+	Rml::Element& area = fixture.element(".event-area");
+	const Rml::Vector2f offset = area.GetAbsoluteOffset(Rml::BoxArea::Padding).Round();
+	const Rml::Vector2f size = area.GetBox().GetSize(Rml::BoxArea::Padding);
+	const std::vector<ui::Waveform*> list = waveforms(fixture.document);
+	REQUIRE(list.size() > 10);
+	bool above = false;
+	bool below = false;
+	for (ui::Waveform* wave : list)
+	{
+		above = above || wave->GetAbsoluteTop() < offset.y;
+		below = below || wave->GetAbsoluteTop() + wave->GetClientHeight() > offset.y + size.y;
+		Rml::Rectanglei region;
+		REQUIRE(Rml::ElementUtilities::GetClippingRegion(wave, region));
+		CHECK(region.Left() == static_cast<int>(offset.x));
+		CHECK(region.Top() == static_cast<int>(offset.y));
+		CHECK(region.Width() == static_cast<int>(std::round(size.x)));
+		CHECK(region.Height() == static_cast<int>(std::round(size.y)));
+	}
+	CHECK(above);
+	CHECK(below);
 }
 
 TEST_CASE("the waveform of a one-hour file draws at once when its peak file exists", "[integration][slow]")

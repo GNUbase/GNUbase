@@ -594,6 +594,7 @@ meter .meter-peak
 	top: 24dp;
 	bottom: 0;
 	overflow: hidden;
+	clip: always; /* RmlUi clips only content that overflows in flow, not the absolute parts */
 }
 
 .event-display .project-cursor, .event-display .cross-hair-vertical
