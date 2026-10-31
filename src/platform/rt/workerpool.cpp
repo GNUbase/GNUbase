@@ -292,6 +292,11 @@ namespace gnubase::rt
 		// refuses. Blocks for up to seconds, so never on an audio thread.
 		bool makeRealtimeThroughRtkit() noexcept
 		{
+			// libdbus sets up its global locks on first use, racing when several workers start at once; once per
+			// process instead, before any of them touches the bus.
+			static const bool threadsReady = dbus_threads_init_default() != 0;
+			if (!threadsReady)
+				return false;
 			// Where libdbus finds the system bus, read each time rather than once per process as libdbus does.
 			const char* address = std::getenv("DBUS_SYSTEM_BUS_ADDRESS");
 			DBusError error;
