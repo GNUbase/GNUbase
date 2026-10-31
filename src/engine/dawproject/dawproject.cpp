@@ -668,6 +668,8 @@ namespace gnubase::engine
 				element.append_attribute("duration") = laneTime(track, part.length);
 				element.append_attribute("playStart") = 0.0;
 				element.append_attribute("contentTimeUnit") = "beats";
+				if (part.mute)
+					element.append_attribute("enable") = false;
 				element.append_attribute("name") = part.name.c_str();
 				// Notes alone, or a lane each for the notes and every controller.
 				pugi::xml_node content = element;
@@ -1206,7 +1208,10 @@ namespace gnubase::engine
 				const auto partFor = [&]() -> MidiPart&
 				{
 					if (part == nullptr)
+					{
 						part = &addPart(context, start, duration, clip.attribute("name").as_string(""));
+						part->mute = !content.enabled;
+					}
 					return *part;
 				};
 				readContent(clip, context, content, start, duration, playStart, type, partFor);

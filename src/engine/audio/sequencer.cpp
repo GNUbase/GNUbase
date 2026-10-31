@@ -212,12 +212,20 @@ namespace gnubase::engine
 		for (const graph::ProcessEvent& event : context.eventsIn)
 			context.eventsOut.add(event);
 		context.eventsOut.nextSource();
+		const graph::TransportBlock& transport = context.transport;
+		if (!transport.playing && m_next >= 0) // a stop: the instrument ends what the input held
+			m_inputHeld.fill(false);
 		for (const graph::ProcessEvent& event : m_input)
+		{
 			context.eventsOut.add(event);
+			if (event.type != graph::ProcessEvent::Type::NoteOn && event.type != graph::ProcessEvent::Type::NoteOff)
+				continue;
+			const size_t index = ((event.channel % 16) * 128) + (event.key % 128);
+			m_inputHeld[index] = event.type == graph::ProcessEvent::Type::NoteOn;
+		}
 		context.eventsOut.nextSource();
 
 		const uint8_t chase = m_chase.load(std::memory_order_relaxed);
-		const graph::TransportBlock& transport = context.transport;
 		if (!transport.playing)
 		{
 			endAll(0, context.eventsOut);
@@ -484,12 +492,11 @@ namespace gnubase::engine
 	void InstrumentChannel::releaseNotesOf(
 		MidiSequencer& departed, const std::vector<std::shared_ptr<MidiSequencer>>& staying) noexcept
 	{
-		for (const uint16_t* note = departed.soundingBegin(); note != departed.soundingEnd(); ++note)
+		for (uint16_t index = 0; index < MidiSequencer::g_notes; ++index)
 		{
-			const uint16_t index = *note;
-			if (!m_held[index] || m_ending[index] || m_sequencer->sounds(index) ||
+			if (!m_held[index] || m_ending[index] || !departed.holds(index) || m_sequencer->holds(index) ||
 				std::any_of(staying.begin(), staying.end(),
-					[index](const std::shared_ptr<MidiSequencer>& source) { return source->sounds(index); }))
+					[index](const std::shared_ptr<MidiSequencer>& source) { return source->holds(index); }))
 				continue;
 			m_ending[index] = true;
 			++m_endingCount;

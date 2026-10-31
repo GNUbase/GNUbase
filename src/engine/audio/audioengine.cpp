@@ -32,6 +32,7 @@ namespace gnubase::engine
 		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20;   // frames one audio.capture returns at most
 		constexpr int64_t g_maxThreads = 64;
 		constexpr int64_t g_maxLatency = 65536; // frames: the dummy device's latencies and the record shift
+		constexpr auto g_reconnectInterval = std::chrono::milliseconds(500); // between tries to open a lost device
 
 		Json statusSchema()
 		{
@@ -43,9 +44,17 @@ namespace gnubase::engine
 					"threads": {"type": "integer"}, "activeThreads": {"type": "integer"},
 					"limitedBy": {"type": ["string", "null"],
 						"enum": [null, "multiProcessing", "hardware", "realtime", "system"]}},
-					"required": ["multiProcessing", "threads", "activeThreads", "limitedBy"]}},
+					"required": ["multiProcessing", "threads", "activeThreads", "limitedBy"]},
+				"lost": {"type": ["object", "null"], "properties": {"backend": {"type": "string"},
+					"device": {"type": "string"}, "reason": {"type": "string"}, "restart": {"type": "boolean"}},
+					"required": ["backend", "device", "reason", "restart"]}},
 			"required": ["device", "running", "position", "capturedFrames", "droppedFrames", "playbackDropouts",
-				"processing"]})");
+				"processing", "lost"]})");
+		}
+
+		bool supports(const audio::DeviceInfo& info, double sampleRate)
+		{
+			return std::find(info.sampleRates.begin(), info.sampleRates.end(), sampleRate) != info.sampleRates.end();
 		}
 
 		Json transportSchema()
@@ -158,7 +167,30 @@ namespace gnubase::engine
 
 	AudioEngine::~AudioEngine()
 	{
+		{
+			const std::scoped_lock lock(m_reconnectMutex);
+			m_stopReconnecting = true;
+		}
+		m_reconnectWake.notify_all();
+		if (m_reconnectThread.joinable())
+			m_reconnectThread.join();
 		stopDevice();
+	}
+
+	void AudioEngine::waitForDevice()
+	{
+		m_waitingForDevice = true;
+		if (m_reconnectThread.joinable())
+			return;
+		// ponytail: polls every backend the same way; a backend that announces returning devices could post at once.
+		m_reconnectThread = std::thread(
+			[this]
+			{
+				std::unique_lock lock(m_reconnectMutex);
+				while (!m_reconnectWake.wait_for(lock, g_reconnectInterval, [this] { return m_stopReconnecting; }))
+					if (m_waitingForDevice && m_engine != nullptr)
+						m_engine->post("audio.reset");
+			});
 	}
 
 	void AudioEngine::stopDevice()
@@ -226,6 +258,23 @@ namespace gnubase::engine
 
 	void AudioEngine::sync()
 	{
+		// A new project sample rate: the device changes to it if it can, otherwise it plays faster or slower.
+		const double rate = m_snapshots.latest().sampleRate;
+		if (rate != m_projectRate)
+		{
+			m_projectRate = rate;
+			if (m_device && m_device->format().sampleRate != rate && supports(m_device->info(), rate))
+			{
+				m_parameters["sampleRate"] = rate;
+				reset();
+				if (m_engine != nullptr)
+					m_engine->broadcast("audio.changed", status());
+			}
+			else if (m_lost)
+			{
+				m_parameters.erase("sampleRate"); // it returns at the new rate if it supports it
+			}
+		}
 		if (m_device && (m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring))
 			rebuild();
 	}
@@ -557,7 +606,7 @@ namespace gnubase::engine
 
 	void AudioEngine::captureInput(const audio::DeviceBlock& block) noexcept
 	{
-		if (m_capturedInput.empty())
+		if (m_capturedInput.empty() || m_capturedInput[0].empty())
 			return;
 		const auto frames = static_cast<int64_t>(m_capturedInput[0].size());
 		const size_t channels = std::min(m_capturedInput.size(), static_cast<size_t>(m_device->format().inputChannels));
@@ -594,6 +643,8 @@ namespace gnubase::engine
 		m_played = PlayedPositions();
 		m_capturedInput.clear();
 		m_tap.clear(); // the next device starts at position 0
+		m_lost.reset();
+		m_waitingForDevice = false;
 	}
 
 	void AudioEngine::setDevice(const Json& parameters)
@@ -613,14 +664,16 @@ namespace gnubase::engine
 		require(
 			recordShift >= -g_maxLatency && recordShift <= g_maxLatency, "recordShift must be from -65536 to 65536");
 		const bool directMonitoring = parameters.value("directMonitoring", false);
+		const double captureSeconds = parameters.value("captureSeconds", name == "dummy" ? 60.0 : 0.0);
+		require(captureSeconds >= 0.0 && captureSeconds <= g_maxCaptureSeconds, "captureSeconds must be from 0 to 600");
 		if (name == "dummy")
 		{
 			openDummy(parameters);
 		}
 		else
 		{
-			for (const char* key : {"inputChannels", "outputChannels", "captureSeconds", "input", "inputLatency",
-					 "outputLatency", "loopback"})
+			for (const char* key :
+				{"inputChannels", "outputChannels", "input", "inputLatency", "outputLatency", "loopback"})
 				require(!parameters.contains(key), std::string("only the dummy device takes ") + key);
 			audio::DeviceConfig config;
 			config.device = parameters.value("device", std::string());
@@ -642,13 +695,31 @@ namespace gnubase::engine
 			closeDevice();
 			throw CommandError("the driver of " + device + " can't monitor directly");
 		}
+		// Without a sample rate asked for, the device runs at the project's if it can.
+		m_projectRate = m_snapshots.latest().sampleRate;
+		if (!parameters.contains("sampleRate") && m_device->format().sampleRate != m_projectRate &&
+			supports(info, m_projectRate))
+		{
+			Json atProjectRate = parameters;
+			atProjectRate["sampleRate"] = m_projectRate;
+			setDevice(atProjectRate);
+			return;
+		}
 		m_backend = name;
 		m_parameters = parameters;
 		m_directMonitoring = directMonitoring;
 		m_recordShift = recordShift;
-		const audio::DeviceLatency latency = m_device->latency();
-		m_recordOffset = std::max<int64_t>(int64_t{latency.input} + latency.output - recordShift, 0);
+		// Before the latency is read, so that a change the driver reports in between isn't lost.
+		m_device->onLatencyChange(
+			[engine = m_engine]
+			{
+				if (engine != nullptr)
+					engine->post("audio.updateLatency");
+			});
+		m_recordOffset = recordOffset();
 		m_played = PlayedPositions(static_cast<size_t>(m_recordOffset) + m_device->format().blockSize);
+		m_capturedInput.assign(static_cast<size_t>(m_device->format().inputChannels),
+			std::vector<float>(static_cast<size_t>(std::llround(captureSeconds * m_device->format().sampleRate))));
 		m_inputPorts = portNames(info.inputs, m_device->format().inputChannels, "Input ");
 		m_outputPorts = portNames(info.outputs, m_device->format().outputChannels, "Output ");
 		m_device->onReset(
@@ -661,12 +732,64 @@ namespace gnubase::engine
 		rebuild();
 	}
 
-	void AudioEngine::reset()
+	bool AudioEngine::reset()
 	{
-		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
-		const bool running = m_device->running();
-		logging::info("Resetting the audio device ({} {})", m_backend, m_device->info().id);
+		require(m_device != nullptr || m_lost, "there is no audio device; set one with audio.setDevice");
+		const std::optional<Lost> lost = m_lost;
+		const bool running = m_device ? m_device->running() : lost && lost->restart;
+		std::string id;
+		if (m_device)
+			id = m_device->info().id;
+		else if (lost)
+			id = lost->device;
+		if (!lost)
+			logging::info("Resetting the audio device ({} {})", m_backend, id);
+		// The measurement goes on across the restart, which is a dropout (the reference manual, p. 1589).
+		std::optional<PerformanceData> measured;
+		uint64_t dropouts = 0;
+		if (m_device)
+		{
+			stopDevice(); // the audio thread leaves the meter
+			if (m_resetPerformance.exchange(false, std::memory_order_acq_rel))
+				m_meter.reset();
+			measured = m_meter.data();
+			dropouts = m_deviceOverloadsKept + (m_device->overloads() - m_deviceOverloadsBefore) + 1;
+		}
 		const Json parameters = m_parameters;
+		try
+		{
+			setDevice(parameters);
+			if (measured)
+			{
+				m_meter.resume(*measured);
+				m_deviceOverloadsKept = dropouts;
+				publishPerformance(m_meter.data());
+			}
+		}
+		catch (const std::exception& error)
+		{
+			// E.g. unplugged: the engine goes on without it and tries again until it returns.
+			closeDevice();
+			if (!lost)
+				logging::warning(
+					"The audio device ({} {}) is lost, trying again until it returns: {}", m_backend, id, error.what());
+			m_lost = Lost{id, error.what(), running};
+			waitForDevice();
+			return !lost;
+		}
+		if (lost)
+			logging::info("The audio device ({} {}) is back", m_backend, id);
+		if (running)
+		{
+			m_midi.clear();
+			startCueing();
+			m_device->start(*this);
+		}
+		return true;
+	}
+
+	void AudioEngine::reopen(const Json& parameters, bool running)
+	{
 		setDevice(parameters);
 		if (running)
 		{
@@ -674,6 +797,75 @@ namespace gnubase::engine
 			startCueing();
 			m_device->start(*this);
 		}
+	}
+
+	void AudioEngine::set(const Json& changes)
+	{
+		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
+		const bool running = m_device->running();
+		const Json old = m_parameters;
+		Json parameters = old;
+		parameters.update(changes);
+		try
+		{
+			reopen(parameters, running);
+		}
+		catch (const std::exception&)
+		{
+			try
+			{
+				reopen(old, running);
+			}
+			catch (const std::exception& error)
+			{
+				logging::warning("Cannot open the audio device again with its old settings: {}", error.what());
+			}
+			throw;
+		}
+	}
+
+	int64_t AudioEngine::recordOffset() const
+	{
+		const audio::DeviceLatency latency = m_device->latency();
+		return std::max<int64_t>(int64_t{latency.input} + latency.output - m_recordShift, 0);
+	}
+
+	bool AudioEngine::updateLatency(const Json& parameters)
+	{
+		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
+		const bool set = parameters.contains("inputLatency") || parameters.contains("outputLatency");
+		if (set)
+		{
+			require(m_dummy != nullptr, "only the dummy device takes inputLatency and outputLatency");
+			require(!m_device->running(), "the audio device is running");
+			const audio::DeviceLatency current = m_dummy->latency();
+			const auto input = parameters.value("inputLatency", int64_t{current.input});
+			const auto output = parameters.value("outputLatency", int64_t{current.output});
+			require(input >= 0 && input <= g_maxLatency && output >= 0 && output <= g_maxLatency,
+				"inputLatency and outputLatency must be from 0 to 65536");
+			const bool loopback = m_parameters.value("loopback", false);
+			require(!loopback || input + output >= m_device->format().blockSize,
+				"the dummy device's loopback needs inputLatency + outputLatency of at least a block");
+			m_dummy->setLatency({static_cast<uint32_t>(input), static_cast<uint32_t>(output)}, loopback);
+			m_parameters["inputLatency"] = input; // for audio.reset
+			m_parameters["outputLatency"] = output;
+		}
+		const int64_t offset = recordOffset();
+		if (offset == m_recordOffset)
+			return set;
+		// The audio thread reads the offset and the positions it keeps: they change while it stands.
+		const bool running = m_device->running();
+		if (running)
+			stopDevice();
+		m_recordOffset = offset;
+		m_played = PlayedPositions(static_cast<size_t>(m_recordOffset) + m_device->format().blockSize);
+		if (running)
+		{
+			m_midi.clear();
+			startCueing();
+			m_device->start(*this);
+		}
+		return true;
 	}
 
 	Json AudioEngine::devices() const
@@ -700,15 +892,20 @@ namespace gnubase::engine
 	{
 		const RenderSnapshot& snapshot = m_snapshots.latest();
 		const std::vector<std::vector<int>> used = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
-		const auto list = [](const std::vector<std::string>& names)
+		const auto list = [this](const std::vector<std::string>& names, bool input)
 		{
 			Json ports = Json::array();
 			for (const std::string& name : names)
-				ports.push_back({{"name", name}, {"busses", Json::array()}});
+			{
+				const auto found = m_portSettings.find(portKey(input, name));
+				const PortSettings settings = found != m_portSettings.end() ? found->second : PortSettings{};
+				ports.push_back({{"name", name}, {"showAs", settings.showAs.empty() ? name : settings.showAs},
+					{"visible", settings.visible}, {"busses", Json::array()}});
+			}
 			return ports;
 		};
-		Json inputs = list(m_inputPorts);
-		Json outputs = list(m_outputPorts);
+		Json inputs = list(m_inputPorts, true);
+		Json outputs = list(m_outputPorts, false);
 		Json busses = Json::array();
 		Json missing = Json::array();
 		Json beyond = Json::array();
@@ -756,6 +953,25 @@ namespace gnubase::engine
 			{"missing", std::move(missing)}, {"beyondDevice", std::move(beyond)}};
 	}
 
+	std::string AudioEngine::portKey(bool input, const std::string& name) const
+	{
+		return m_backend + '/' + m_device->info().id + (input ? "/in/" : "/out/") + name;
+	}
+
+	Json AudioEngine::setPort(const Json& parameters)
+	{
+		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
+		const bool input = parameters.at("input").get<bool>();
+		const auto name = parameters.at("name").get<std::string>();
+		const std::vector<std::string>& names = input ? m_inputPorts : m_outputPorts;
+		const auto found = std::find(names.begin(), names.end(), name);
+		require(found != names.end(), std::string(input ? "no input port " : "no output port ") + name);
+		PortSettings& settings = m_portSettings[portKey(input, name)];
+		settings.showAs = parameters.value("showAs", settings.showAs);
+		settings.visible = parameters.value("visible", settings.visible);
+		return ports().at(input ? "inputs" : "outputs").at(static_cast<size_t>(found - names.begin()));
+	}
+
 	void AudioEngine::openDummy(const Json& parameters)
 	{
 		if (const auto device = parameters.find("device"); device != parameters.end())
@@ -763,13 +979,15 @@ namespace gnubase::engine
 				device->get<std::string>() == "dummy", "the dummy backend has no device " + device->get<std::string>());
 		if (const auto clock = parameters.find("clockSource"); clock != parameters.end())
 			throw CommandError("the dummy device has no clock source " + clock->get<std::string>());
+		if (m_dummyUnplugged)
+			throw audio::DeviceError("the dummy device is unplugged (audio.simulateDeviceLoss)");
 
 		audio::DeviceFormat format;
 		format.sampleRate = parameters.value("sampleRate", format.sampleRate);
 		const auto blockSize = parameters.value("blockSize", int64_t{format.blockSize});
 		const auto inputs = parameters.value("inputChannels", int64_t{format.inputChannels});
 		const auto outputs = parameters.value("outputChannels", int64_t{format.outputChannels});
-		const double seconds = parameters.value("captureSeconds", 60.0);
+		const double seconds = parameters.value("captureSeconds", 60.0); // checked by setDevice
 		const auto inputLatency = parameters.value("inputLatency", int64_t{0});
 		const auto outputLatency = parameters.value("outputLatency", int64_t{0});
 		const bool loopback = parameters.value("loopback", false);
@@ -777,7 +995,6 @@ namespace gnubase::engine
 		require(blockSize >= 1 && blockSize <= 8192, "blockSize must be from 1 to 8192");
 		require(inputs >= 0 && inputs <= 64, "inputChannels must be from 0 to 64");
 		require(outputs >= 0 && outputs <= 64, "outputChannels must be from 0 to 64");
-		require(seconds >= 0.0 && seconds <= g_maxCaptureSeconds, "captureSeconds must be from 0 to 600");
 		require(
 			inputLatency >= 0 && inputLatency <= g_maxLatency && outputLatency >= 0 && outputLatency <= g_maxLatency,
 			"inputLatency and outputLatency must be from 0 to 65536");
@@ -822,7 +1039,6 @@ namespace gnubase::engine
 		device->setLatency({static_cast<uint32_t>(inputLatency), static_cast<uint32_t>(outputLatency)}, loopback);
 		m_dummy = device.get();
 		m_device = std::move(device);
-		m_capturedInput.assign(static_cast<size_t>(format.inputChannels), std::vector<float>(captureFrames));
 		if (m_generator)
 			m_dummy->setInput(
 				[this](float* const* channels, int count, uint32_t frames, uint64_t /*position*/)
@@ -939,19 +1155,28 @@ namespace gnubase::engine
 	{
 		const Json processing = processingStatus();
 		if (!m_device)
+		{
+			Json lost = nullptr;
+			if (m_lost)
+				lost = {{"backend", m_backend}, {"device", m_lost->device}, {"reason", m_lost->reason},
+					{"restart", m_lost->restart}};
 			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"capturedFrames", 0},
-				{"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()}, {"processing", processing}};
+				{"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()}, {"processing", processing},
+				{"lost", std::move(lost)}};
+		}
 		const audio::DeviceFormat& format = m_device->format();
 		const audio::DeviceLatency latency = m_device->latency();
+		const double projectRate = m_snapshots.latest().sampleRate;
 		Json device = toJson(m_device->info());
 		device.update({{"backend", m_backend}, {"sampleRate", format.sampleRate}, {"blockSize", format.blockSize},
 			{"inputChannels", format.inputChannels}, {"outputChannels", format.outputChannels},
 			{"inputLatency", latency.input}, {"outputLatency", latency.output}, {"recordShift", m_recordShift},
-			{"recordOffset", m_recordOffset}, {"directMonitoring", m_directMonitoring}});
+			{"recordOffset", m_recordOffset}, {"directMonitoring", m_directMonitoring},
+			{"projectSampleRate", projectRate}, {"sampleRateMismatch", format.sampleRate != projectRate}});
 		return {{"device", std::move(device)}, {"running", m_device->running()}, {"position", m_device->position()},
 			{"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
 			{"droppedFrames", m_dummy != nullptr ? m_dummy->droppedFrames() : 0},
-			{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}};
+			{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", nullptr}};
 	}
 
 	void AudioEngine::publishPerformance(const PerformanceData& data)
@@ -965,13 +1190,17 @@ namespace gnubase::engine
 		m_meter = PerformanceMeter();
 		m_resetPerformance.store(false, std::memory_order_release);
 		m_deviceOverloadsBefore = m_device ? m_device->overloads() : 0;
+		m_deviceOverloadsKept = 0;
 		publishPerformance(PerformanceData{});
 	}
 
 	Json AudioEngine::resetPerformance()
 	{
-		Json ended = performance();
-		m_deviceOverloadsBefore = m_device ? m_device->overloads() : 0;
+		// Read once, so that a dropout reported meanwhile counts in the measurement that ends or in the new one.
+		const uint64_t deviceOverloads = m_device ? m_device->overloads() : 0;
+		Json ended = performance(deviceOverloads);
+		m_deviceOverloadsBefore = deviceOverloads;
+		m_deviceOverloadsKept = 0;
 		if (m_device && m_device->running())
 		{
 			m_resetPerformance.store(true, std::memory_order_release); // the audio thread owns the meter
@@ -987,14 +1216,19 @@ namespace gnubase::engine
 
 	Json AudioEngine::performance()
 	{
+		return performance(m_device ? m_device->overloads() : 0);
+	}
+
+	Json AudioEngine::performance(uint64_t deviceOverloads)
+	{
 		m_performance.update();
 		const PerformanceData& data = m_performance.readBuffer();
 		Json threads = Json::array();
 		for (size_t t = 0; t < data.threads; ++t)
 			threads.push_back(data.threadLoad[t]);
-		const uint64_t deviceOverloads = m_device ? m_device->overloads() - m_deviceOverloadsBefore : 0;
-		return {{"load", data.load}, {"peak", data.peak}, {"overloads", data.overloads + deviceOverloads},
-			{"deviceOverloads", deviceOverloads}, {"cycles", data.cycles}, {"threads", threads},
+		const uint64_t dropouts = m_deviceOverloadsKept + (deviceOverloads - m_deviceOverloadsBefore);
+		return {{"load", data.load}, {"peak", data.peak}, {"overloads", data.overloads + dropouts},
+			{"deviceOverloads", dropouts}, {"cycles", data.cycles}, {"threads", threads},
 			{"diskLoad", m_playback.diskLoad()}, {"diskDropouts", m_playback.dropouts()},
 			{"blockSize", m_device ? m_device->format().blockSize : 0}};
 	}
@@ -1014,28 +1248,7 @@ namespace gnubase::engine
 					"required": ["backends"]})"),
 				true},
 			[this](CommandContext&) { return devices(); });
-		engine.registerCommand(
-			{"audio.setDevice", 1,
-				"Replaces the audio device. backend: one from audio.devices, by default \"dummy\". device: its id, by "
-				"default the backend's default device. sampleRate and blockSize: by default the driver's current "
-				"rate and preferred size. clockSource: a name from the device's clockSources. The device starts "
-				"stopped at position 0. Another backend's device is closed before the new one opens, since drivers "
-				"often allow only one; if opening fails, there is no device.\n"
-				"Recorded input goes where the transport played the device's input + output latency before it "
-				"arrived, so what is played along to or looped back lines up with what played (recordOffset in "
-				"audio.get). recordShift (frames, -65536 to 65536) moves recordings that much later, for drivers that "
-				"report their latency wrong. directMonitoring: the driver monitors audio tracks' inputs itself, "
-				"without the engine's latency, for tracks that play into an output bus (canMonitorDirectly in "
-				"audio.devices says which can); their fader and pan set its level and position, automation doesn't "
-				"reach it.\n"
-				"The dummy device has no hardware: its output is captured in memory (audio.capture) and it renders "
-				"offline (audio.render). Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs "
-				"(inputChannels, outputChannels), 60 s of capture (captureSeconds). Its input is silent, or a "
-				"built-in generator (see processor.list) with parameters by name. It reports inputLatency and "
-				"outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that "
-				"much later, as a cable from each output to the input of the same number would, which needs at least "
-				"a block. It monitors directly by adding inputs to its outputs.",
-				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
+		const Json deviceSchema = Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
 					"backend": {"type": "string"}, "device": {"type": "string"}, "clockSource": {"type": "string"},
 					"sampleRate": {"type": "number"}, "blockSize": {"type": "integer"},
 					"recordShift": {"type": "integer"}, "directMonitoring": {"type": "boolean"},
@@ -1043,8 +1256,36 @@ namespace gnubase::engine
 					"captureSeconds": {"type": "number"}, "inputLatency": {"type": "integer"},
 					"outputLatency": {"type": "integer"}, "loopback": {"type": "boolean"},
 					"input": {"type": "object", "additionalProperties": false, "required": ["processor"],
-						"properties": {"processor": {"type": "string"}, "parameters": {"type": "object"}}}}})"),
-				statusSchema(), false},
+						"properties": {"processor": {"type": "string"}, "parameters": {"type": "object"}}}}})");
+		engine.registerCommand(
+			{"audio.setDevice", 1,
+				"Replaces the audio device. backend: one from audio.devices, by default \"dummy\". device: its id, by "
+				"default the backend's default device. sampleRate: by default the project's if the device supports "
+				"it, otherwise the driver's current rate; when the project's sample rate changes, the device follows "
+				"it where it can. blockSize: by default the driver's preferred size. clockSource: a name from the "
+				"device's clockSources. The device starts "
+				"stopped at position 0. Another backend's device is closed before the new one opens, since drivers "
+				"often allow only one; if opening fails, there is no device.\n"
+				"Recorded input goes where the transport played the device's input + output latency before it "
+				"arrived, so what is played along to or looped back lines up with what played (recordOffset in "
+				"audio.get). recordShift (frames, -65536 to 65536) moves recordings that much later, for drivers that "
+				"report their latency wrong. captureSeconds (0 to 600, by default 0, or 60 for the dummy device) keeps "
+				"that much of what the inputs record in memory for audio.captureInput, e.g. for a loopback test. "
+				"directMonitoring: the driver monitors audio tracks' inputs itself, "
+				"without the engine's latency, for tracks that play into an output bus (canMonitorDirectly in "
+				"audio.devices says which can); their fader and pan set its level and position, automation doesn't "
+				"reach it.\n"
+				"The dummy device has no hardware: its output is captured in memory (audio.capture) and it renders "
+				"offline (audio.render). It supports 44100, 48000, 88200, 96000, 176400 and 192000 Hz "
+				"and opens with any rate from 8000 Hz. Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 "
+				"outputs "
+				"(inputChannels, outputChannels), 60 s of capture (captureSeconds, also of its output). Its input is "
+				"silent, or a "
+				"built-in generator (see processor.list) with parameters by name. It reports inputLatency and "
+				"outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that "
+				"much later, as a cable from each output to the input of the same number would, which needs at least "
+				"a block. It monitors directly by adding inputs to its outputs.",
+				deviceSchema, statusSchema(), false},
 			[this](CommandContext& context)
 			{
 				setDevice(context.parameters());
@@ -1052,9 +1293,27 @@ namespace gnubase::engine
 				context.emit("audio.changed", result);
 				return result;
 			});
+		Json settingsSchema = deviceSchema;
+		settingsSchema.at("properties").erase("backend");
+		settingsSchema.at("properties").erase("device");
+		engine.registerCommand(
+			{"audio.set", 1,
+				"Changes the audio device's settings and keeps the others: the parameters of audio.setDevice except "
+				"backend and device, e.g. sampleRate, blockSize, clockSource, recordShift or directMonitoring. The "
+				"device opens again with them, as for audio.reset, and runs on if it ran. If it can't open with them, "
+				"it opens again with the settings it had and the command fails.",
+				settingsSchema, statusSchema(), false},
+			[this](CommandContext& context)
+			{
+				set(context.parameters());
+				Json result = status();
+				context.emit("audio.changed", result);
+				return result;
+			});
 		engine.registerCommand(
 			{"audio.ports", 1,
-				"The audio device's ports by name, in order, each with the busses that use it (the bus ids); each "
+				"The audio device's ports by name, in order, each with the name it is shown as and whether it is "
+				"visible (audio.setPort), and the busses that use it (the bus ids); each "
 				"bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing "
 				"ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts "
 				"re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) "
@@ -1066,6 +1325,26 @@ namespace gnubase::engine
 					"required": ["inputs", "outputs", "busses", "missing", "beyondDevice"]})"),
 				true},
 			[this](CommandContext&) { return ports(); });
+		engine.registerCommand(
+			{"audio.setPort", 1,
+				"Changes how a port of the audio device is shown, given by whether it is an input and its system name "
+				"(name in audio.ports). showAs: the name routing menus show; empty shows the system name. visible: "
+				"whether routing menus offer it; busses on a hidden port keep it. The settings are kept per device "
+				"while GNUbase runs. Returns the port as audio.ports lists it, and sends audio.ports as the event "
+				"audio.portsChanged.",
+				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["input", "name"],
+					"properties": {"input": {"type": "boolean"}, "name": {"type": "string"},
+					"showAs": {"type": "string"}, "visible": {"type": "boolean"}}})"),
+				Json::parse(R"({"type": "object", "properties": {"name": {"type": "string"},
+					"showAs": {"type": "string"}, "visible": {"type": "boolean"}, "busses": {"type": "array"}},
+					"required": ["name", "showAs", "visible", "busses"]})"),
+				false},
+			[this](CommandContext& context)
+			{
+				Json port = setPort(context.parameters());
+				context.emit("audio.portsChanged", ports());
+				return port;
+			});
 		engine.registerCommand(
 			{"audio.setProcessing", 1,
 				"Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; "
@@ -1095,10 +1374,11 @@ namespace gnubase::engine
 			{"audio.performance", 1,
 				"Performance data for the performance monitor. Loads are the share of a block's duration spent "
 				"processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest "
-				"block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported (a block "
-				"that was both counts twice); cycles: blocks measured; threads: the load of each processing "
-				"thread, the audio thread first. Peak, overloads and cycles count since the last "
-				"audio.resetPerformance; everything starts over with a new device or new processing threads. "
+				"block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported and the "
+				"device's restarts by audio.reset (a block that was both counts twice); cycles: blocks measured; "
+				"threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles "
+				"count since the last audio.resetPerformance, also across audio.reset; everything starts over with "
+				"a new device or new processing threads. "
 				"diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of "
 				"audio track playback that were silent because a disk stream was late. blockSize: the device's "
 				"block size in frames, 0 without a device.",
@@ -1136,19 +1416,72 @@ namespace gnubase::engine
 				"record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether "
 				"it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames "
 				"of audio track playback were silent because a disk stream "
-				"was late, and the processing threads (see audio.setProcessing).",
+				"was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's "
+				"sample rate; with sampleRateMismatch the device runs at another one, as it doesn't support the "
+				"project's or was asked for another, and plays faster or slower. lost: the device that went away "
+				"(its backend, device id, the reason it can't be opened and whether it ran and restarts), while the "
+				"engine waits for it to return (see audio.reset); otherwise null.",
 				noParameters(), statusSchema(), true},
 			[this](CommandContext&) { return status(); });
 		engine.registerCommand(
 			{"audio.reset", 1,
 				"Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this "
-				"when their settings change, e.g. in their control panel; the engine then resets on its own.",
+				"when their settings change, e.g. in their control panel, or when their device goes away; the engine "
+				"then resets on its own. A device that can't be opened, e.g. because it was unplugged, is lost (lost "
+				"in audio.get): the engine goes on without it and resets again about every half second until it "
+				"opens, then restarts it if it ran, so playback goes on where it stopped. audio.setDevice ends the "
+				"wait. The performance measurement goes on across a reset, which counts as a dropout (see "
+				"audio.performance); one that loses the device ends it. Sends audio.changed when the device closes, "
+				"opens or is lost.",
 				noParameters(), statusSchema(), false},
 			[this](CommandContext& context)
 			{
-				reset();
+				const bool changed = reset();
 				Json result = status();
-				context.emit("audio.changed", result);
+				if (changed)
+					context.emit("audio.changed", result);
+				return result;
+			});
+		engine.registerCommand(
+			{"audio.simulateDeviceLoss", 1,
+				"Only the dummy device: simulates its hardware being unplugged (connected false) and its driver "
+				"asking for a reset, after which the device is lost (see audio.reset), or plugged in again (connected "
+				"true), after which the engine opens it again on its own. While it is unplugged, audio.setDevice "
+				"can't open it either.",
+				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["connected"],
+					"properties": {"connected": {"type": "boolean"}}})"),
+				statusSchema(), false},
+			[this](CommandContext& context)
+			{
+				if (context.parameters().at("connected").get<bool>())
+				{
+					m_dummyUnplugged = false; // always, even after another backend replaced the lost dummy device
+					return status();
+				}
+				require(m_dummy != nullptr || (m_lost && m_backend == "dummy"),
+					"only the dummy device simulates device loss");
+				m_dummyUnplugged = true;
+				if (m_dummy != nullptr)
+					m_dummy->requestReset(); // as a driver does whose device went away
+				return status();
+			});
+		engine.registerCommand(
+			{"audio.updateLatency", 1,
+				"Reads the audio device's latencies again and places recordings by the new record offset (see "
+				"audio.get); a running device stops for that and starts again. Drivers that learn their latency "
+				"after the device opens, or whose latency changes with the graph, report the change; the engine then "
+				"runs this on its own. Only for the dummy device, and only while it is stopped: inputLatency and "
+				"outputLatency (default: as they are) first change what it reports, and with loopback its round "
+				"trip, as such a driver's would. Sends audio.changed if anything changed.",
+				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
+					"inputLatency": {"type": "integer"}, "outputLatency": {"type": "integer"}}})"),
+				statusSchema(), false},
+			[this](CommandContext& context)
+			{
+				const bool changed = updateLatency(context.parameters());
+				Json result = status();
+				if (changed)
+					context.emit("audio.changed", result);
 				return result;
 			});
 		engine.registerCommand(
@@ -1232,10 +1565,11 @@ namespace gnubase::engine
 			});
 		engine.registerCommand(
 			{"audio.captureInput", 1,
-				"What an input channel of the dummy device recorded at project positions from start, at most 1048576 "
+				"What an input channel of the audio device recorded at project positions from start, at most 1048576 "
 				"frames: its input goes where the transport played the record offset before it arrived (see "
-				"audio.get), only while the transport plays, and the last cycle lap over the ones before. Up to "
-				"captureSeconds from position 0; positions not recorded are silent. Only while the device stands.",
+				"audio.get), only while the transport plays, and the last cycle lap over the ones before. Up to the "
+				"device's captureSeconds (audio.setDevice) from position 0; positions not recorded are silent. Only "
+				"while the device stands.",
 				Json::parse(R"({"type": "object", "additionalProperties": false,
 					"required": ["channel", "start", "frames"], "properties": {"channel": {"type": "integer"},
 					"start": {"type": "integer"}, "frames": {"type": "integer"}}})"),
@@ -1244,13 +1578,13 @@ namespace gnubase::engine
 				true},
 			[this](CommandContext& context)
 			{
-				const audio::DummyDevice& device = requireDummy();
-				require(!device.running(), "the audio device is running");
+				require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
+				require(!m_device->running(), "the audio device is running");
 				const Json& parameters = context.parameters();
 				const auto channel = parameters.at("channel").get<int64_t>();
 				const auto start = parameters.at("start").get<int64_t>();
 				const auto frames = parameters.at("frames").get<int64_t>();
-				require(channel >= 0 && channel < device.format().inputChannels,
+				require(channel >= 0 && channel < m_device->format().inputChannels,
 					"no input channel " + std::to_string(channel));
 				require(start >= 0, "start must not be negative");
 				require(frames >= 0 && frames <= g_maxCaptureRead, "frames must be from 0 to 1048576");

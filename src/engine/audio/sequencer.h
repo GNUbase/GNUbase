@@ -114,9 +114,17 @@ namespace gnubase::engine
 		const uint16_t* soundingBegin() const noexcept { return m_sounding.data(); }
 		const uint16_t* soundingEnd() const noexcept { return m_sounding.data() + m_soundingCount; }
 
-		// Audio thread: forgets the sounding notes without ending them, after the instrument they sounded on ended
+		// Audio thread: whether the note sounds, from the track's parts or held through its input (a note-on came in
+		// and no note-off yet; a stop ends those too).
+		bool holds(uint16_t index) const noexcept { return m_inputHeld[index] || sounds(index); }
+
+		// Audio thread: forgets the notes it holds without ending them, after the instrument they sounded on ended
 		// them (InstrumentChannel::releaseNotesOf).
-		void forget() noexcept { m_soundingCount = 0; }
+		void forget() noexcept
+		{
+			m_soundingCount = 0;
+			m_inputHeld.fill(false);
+		}
 
 		// Audio thread: the events played into the track in this block (midi.inject), as from its MIDI input. They go
 		// out after the events it receives and before its parts' events, also while the transport stands. The audio
@@ -169,6 +177,7 @@ namespace gnubase::engine
 		size_t m_chasedSent = 0;
 		std::array<uint32_t, g_notes> m_chasedNotes{}; // while chasing: the notes to start, as indices into notes
 		graph::EventBuffer m_input;
+		std::array<bool, g_notes> m_inputHeld{}; // notes its input sent a note-on for and no note-off since
 	};
 
 	// An instrument track's channel: its own parts' events and those of the MIDI tracks routed to it, played by its
@@ -181,8 +190,9 @@ namespace gnubase::engine
 		void process(const graph::ProcessContext& context) noexcept override;
 
 		// Audio thread, before the first block of the graph without a MIDI track that was routed here (removed or
-		// rerouted): ends the notes that track's sequencer started here at the next block, except those this
-		// channel's own sequencer or one of the staying tracks' also holds. The departed sequencer forgets them.
+		// rerouted): ends the notes that track's sequencer started here, from its parts or its input, at the next
+		// block, except those this channel's own sequencer or one of the staying tracks' also holds. The departed
+		// sequencer forgets them.
 		void releaseNotesOf(
 			MidiSequencer& departed, const std::vector<std::shared_ptr<MidiSequencer>>& staying) noexcept;
 

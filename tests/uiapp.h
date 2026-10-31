@@ -3,6 +3,7 @@
 
 #include "app/appui.h"
 #include "engine/engine.h"
+#include "platform/midi/port.h"
 #include "testutils/goldenimage.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
@@ -14,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 // The harness for UI tests (#59), and what they share with tests/window_tests.cpp: the display and the GPU.
 namespace gnubase::test
@@ -39,8 +41,10 @@ namespace gnubase::test
 	class UiApp
 	{
 	public:
-		// The main window's size in desktop coordinates; in pixels at a monitor scale of 1.
-		explicit UiApp(ui::Size size = {640, 480});
+		// The main window's size in desktop coordinates; in pixels at a monitor scale of 1. The engine takes MIDI from
+		// these backends, by default the system's.
+		explicit UiApp(ui::Size size = {640, 480},
+			std::vector<std::unique_ptr<midi::Backend>> midiBackends = midi::makeBackends());
 
 		engine::Engine& engine() { return *m_engine; }
 		app::AppUi& appUi() { return *m_ui; }
@@ -51,7 +55,7 @@ namespace gnubase::test
 		ui::KeyCommands& keys() { return m_ui->keyCommands(); }
 
 		// Quits the UI and the engine and starts them again with the same user settings, as a user restarting GNUbase
-		// would, with the main window as it was first opened.
+		// would, with the main window as it was first opened. The engine takes MIDI from the system's backends then.
 		void restart();
 
 		// Runs an engine command that must succeed; returns its result.
@@ -76,7 +80,7 @@ namespace gnubase::test
 		static void checkGolden(const std::string& name, const ui::Image& image);
 
 	private:
-		void start();
+		void start(std::vector<std::unique_ptr<midi::Backend>> midiBackends);
 
 		TempDir m_settings;
 		ui::Size m_size;

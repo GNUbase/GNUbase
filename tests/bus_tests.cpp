@@ -370,10 +370,13 @@ TEST_CASE("audio.ports lists the device's ports with their busses, and missing p
 
 	const Json ports = run(client, "audio.ports");
 	REQUIRE(ports.at("inputs").size() == 2);
-	CHECK(ports.at("inputs")[0] == Json{{"name", "Input 1"}, {"busses", {stereoIn}}});
+	CHECK(ports.at("inputs")[0] ==
+		Json{{"name", "Input 1"}, {"showAs", "Input 1"}, {"visible", true}, {"busses", {stereoIn}}});
 	REQUIRE(ports.at("outputs").size() == 4);
-	CHECK(ports.at("outputs")[0] == Json{{"name", "Output 1"}, {"busses", {stereoOut, cue}}});
-	CHECK(ports.at("outputs")[2] == Json{{"name", "Output 3"}, {"busses", Json::array()}});
+	CHECK(ports.at("outputs")[0] ==
+		Json{{"name", "Output 1"}, {"showAs", "Output 1"}, {"visible", true}, {"busses", {stereoOut, cue}}});
+	CHECK(ports.at("outputs")[2] ==
+		Json{{"name", "Output 3"}, {"showAs", "Output 3"}, {"visible", true}, {"busses", Json::array()}});
 	CHECK(ports.at("busses") ==
 		Json::array({{{"bus", stereoIn}, {"ports", names({"Input 1", "Input 2"})}},
 			{{"bus", stereoOut}, {"ports", names({"Output 1", "Output 2"})}},

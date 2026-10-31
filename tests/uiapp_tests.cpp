@@ -410,3 +410,82 @@ TEST_CASE("keys zoom the project window", "[ui]")
 	app.ui().key(std::nullopt, "F");
 	CHECK(display.autoScroll());
 }
+
+TEST_CASE("keys edit the selected events in the project window", "[ui]")
+{
+	test::UiApp app({800, 300});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	const auto part = app.call("midiPart.add", {{"track", track.at("id")}, {"position", 0}, {"length", 4 * 1720320}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	const auto parts = [&app] { return app.call("project.get").at("midiParts"); };
+
+	// The reference's keys (manual p. 1564): select all, duplicate, mute, nudge, delete with Backspace.
+	// Until the display shows the part.
+	REQUIRE(app.waitUntil(
+		[&app, &display, part]
+		{
+			app.ui().key(std::nullopt, "Mod+A");
+			return display.selection() == std::vector<uint64_t>{part};
+		}));
+	app.ui().key(std::nullopt, "Mod+D");
+	REQUIRE(app.waitUntil([&parts] { return parts().size() == 2; }));
+	REQUIRE(
+		app.waitUntil([&display, part] { return display.selection().size() == 1 && display.selection()[0] != part; }));
+	app.ui().key(std::nullopt, "Shift+M");
+	REQUIRE(app.waitUntil([&parts] { return parts()[1].at("mute") == true; }));
+	app.ui().key(std::nullopt, "Mod+Right");
+	REQUIRE(app.waitUntil([&parts] { return parts()[1].at("position") == 5 * 1720320; }));
+	app.ui().key(std::nullopt, "Backspace");
+	REQUIRE(app.waitUntil([&parts] { return parts().size() == 1; }));
+	CHECK(app.keys().keysFor("edit.delete") == std::vector<std::string>{"Delete", "Backspace"});
+}
+
+TEST_CASE("Mod+K opens the Repeat Events dialog, which repeats the selected events", "[ui]")
+{
+	test::UiApp app({800, 300});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	const auto part = app.call("midiPart.add", {{"track", track.at("id")}, {"position", 0}, {"length", 4 * 1720320}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	const auto parts = [&app] { return app.call("project.get").at("midiParts"); };
+	REQUIRE(app.waitUntil(
+		[&app, &display, part]
+		{
+			app.ui().key(std::nullopt, "Mod+A");
+			return display.selection() == std::vector<uint64_t>{part};
+		}));
+
+	// Escape cancels it.
+	app.ui().key(std::nullopt, "Mod+K");
+	REQUIRE(app.waitUntil([&app] { return count(app, "#repeat-events-dialog") == 1; }));
+	app.ui().key(std::nullopt, "Escape");
+	REQUIRE(app.waitUntil([&app] { return count(app, "#repeat-events-dialog") == 0; }));
+	CHECK(parts().size() == 1);
+	click(app, selector(".timeline-ruler")); // the project window has the focus again, for its keys
+
+	// A count of 3, typed into the field, and Shared Copies: three shared copies, one after the other.
+	app.ui().key(std::nullopt, "Mod+K");
+	REQUIRE(app.waitUntil([&app] { return count(app, "#repeat-events-dialog") == 1; }));
+	app.ui().click(std::nullopt, selector("#repeat-count"), ui::MouseButton::Left, 2, {});
+	app.ui().text(std::nullopt, "3");
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(element(app, "#repeat-count").at("attributes").at("value") == "3");
+	click(app, selector("#repeat-shared"));
+	click(app, selector("#repeat-events-dialog button.primary"));
+	REQUIRE(app.waitUntil([&app] { return count(app, "#repeat-events-dialog") == 0; }));
+	REQUIRE(app.waitUntil([&parts] { return parts().size() == 4; }));
+	const Json all = parts();
+	CHECK(all[0].at("shared") != 0);
+	for (size_t i = 1; i < 4; ++i)
+	{
+		CHECK(all[i].at("position") == static_cast<int64_t>(i) * 4 * 1720320);
+		CHECK(all[i].at("shared") == all[0].at("shared"));
+	}
+	REQUIRE(app.waitUntil([&display] { return display.selection().size() == 3; }));
+	CHECK(app.keys().keysFor("edit.repeat").size() == 1); // Ctrl+K, Cmd+K on macOS
+}

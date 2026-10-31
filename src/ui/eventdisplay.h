@@ -4,6 +4,7 @@
 #include "engine/engine.h"
 #include "ui/canvas.h"
 #include "ui/enginebinding.h"
+#include "ui/eventwaveforms.h"
 #include "ui/timeformat.h"
 
 #include <RmlUi/Core/EventListener.h>
@@ -112,8 +113,26 @@ namespace gnubase::ui
 		void renameZoomPreset(const std::string& from, const std::string& to);
 		const engine::Json& zoomPresets() const { return m_presets; }
 
+		// Editing parts and events (#85, eventediting.cpp, docs/features/parts-and-events.md). The selection is the
+		// display's, not the project's: audio event and MIDI part ids, ascending, also in the root's attribute
+		// selection. Edits go to the engine as event.* commands; a click selects, a drag moves, Alt and a drag copies
+		// (with Shift too, shared copies), a drag at an event's left or right edge resizes it, Alt and a click splits
+		// there, and a double click on an empty MIDI or instrument lane adds a one-bar part, or one between the
+		// locators when the click is between them.
+		const std::vector<uint64_t>& selection() const { return m_selection; }
+		void select(std::vector<uint64_t> events);
+		// Sizing moves contents instead of normal sizing when resizing with the mouse (reference manual p. 265).
+		void setSizingMovesContents(bool moves) { m_sizingMovesContents = moves; }
+		// The selection count times one after the other; shared copies of MIDI parts with shared.
+		void repeat(int count, bool shared);
+
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
-		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off).
+		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); and the edits of parts and events:
+		// edit.delete, edit.mute, edit.unmute, edit.lock, edit.unlock, edit.splitAtCursor, edit.splitLoop, edit.glue,
+		// edit.duplicate, edit.repeat (opens the Repeat Events dialog), edit.fillLoop, edit.toRealCopy, edit.nudgeLeft,
+		// edit.nudgeRight, edit.nudgeStartLeft, edit.nudgeStartRight, edit.nudgeEndLeft, edit.nudgeEndRight,
+		// edit.moveStartToCursor, edit.moveEndToCursor, edit.selectAll, edit.selectNone, edit.invertSelection,
+		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd and edit.selectUnderCursor.
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
 
 	private:
@@ -124,6 +143,19 @@ namespace gnubase::ui
 			OverviewMove,  // scrolls
 			OverviewStart, // the rectangle's left edge
 			OverviewEnd,   // its right edge
+			Events,        // moves or copies the selection
+			ResizeStart,   // the start of the selection
+			ResizeEnd,     // its end
+		};
+
+		// An audio event or a MIDI part as the display shows it.
+		struct Shown
+		{
+			uint64_t id = 0;
+			size_t lane = 0;
+			double start = 0.0; // seconds
+			double end = 0.0;
+			bool mute = false;
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -171,6 +203,19 @@ namespace gnubase::ui
 		void showPresets();
 		void showAutoScroll();
 
+		// Editing parts and events (eventediting.cpp).
+		void addEditActions();
+		const Shown* eventAt(double x, double y) const; // dp in the event lanes
+		void areaDown(Rml::Event& event, double x, double y);
+		void areaMove(double dx, double dy);
+		void areaUp(Rml::Event& event);
+		void doubleClick(Rml::Event& event);
+		void showSelection();
+		// Sends an event.* command for the selection; with selectResult, the events it returns become the selection.
+		void edit(const std::string& command, engine::Json parameters, bool selectResult = false);
+		void selectWhere(const std::function<bool(const Shown&)>& selected);
+		int64_t samples(double seconds) const;
+
 		engine::Engine& m_engine;
 		EngineBinding& m_binding;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for the binding's answers after it went
@@ -182,13 +227,28 @@ namespace gnubase::ui
 		Ruler* m_ruler = nullptr;
 		Rml::Element* m_area = nullptr;
 		EventLanes* m_lanes = nullptr;
+		std::unique_ptr<EventWaveforms> m_waveforms; // over the lanes
 		Rml::Element* m_crossVertical = nullptr;
 		Rml::Element* m_crossHorizontal = nullptr;
 		Rml::Element* m_cursorLine = nullptr;
 
 		TimeContext m_time;
 		std::vector<EventLanes::Lane> m_tracks; // events in seconds, heights before zoom
-		double m_end = 0.0;                     // of the last event
+		std::vector<uint64_t> m_laneTracks;     // the track of each lane
+		std::vector<std::string> m_laneTypes;   // and its type
+		std::vector<bool> m_laneLinear;         // and whether its time base is linear
+		std::vector<Shown> m_events;
+		std::vector<uint64_t> m_selection;
+		EventLanes* m_mutedLanes = nullptr;    // muted events over the others
+		EventLanes* m_selectedLanes = nullptr; // selected events over those
+		int64_t m_left = 0;                    // the locators, in samples
+		int64_t m_right = 0;
+		bool m_sizingMovesContents = false;
+		uint64_t m_dragEvent = 0; // pressed on
+		bool m_dragMoved = false;
+		double m_dragDx = 0.0; // dp, while moving
+		int m_dragLanes = 0;
+		double m_end = 0.0; // of the last event
 		bool m_loading = false;
 		bool m_stale = false;
 		int64_t m_cursorSample = 0;

@@ -57,7 +57,7 @@ The install script sets up the repository's Git hooks; [CONTRIBUTING.md](CONTRIB
 
 ```bash
 sudo apt-get install pkg-config ninja-build ccache \
-  libasound2-dev libpulse-dev libpipewire-0.3-dev libjack-dev \
+  libasound2-dev libpulse-dev libpipewire-0.3-dev libjack-jackd2-dev \
   libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
   libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev \
   libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev \
