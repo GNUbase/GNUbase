@@ -83,6 +83,16 @@ namespace gnubase::engine::settings
 					Json{{"type", "object"}}, Json{{"input", Json::object()}, {"output", Json::object()}}},
 				{"audio.device", "The audio device's id, or empty for the backend's default device.",
 					Json{{"type", "string"}}, ""},
+				{"audio.portSettings",
+					"How the audio devices' ports are shown (audio.setPort), by backend/device id/in or out/system "
+					"name, also for devices that aren't connected: the name shown (showAs) and whether it is "
+					"visible. Ports without an entry show their system name and are visible.",
+					Json{{"type", "object"},
+						{"additionalProperties",
+							{{"type", "object"},
+								{"properties", {{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}}}},
+								{"additionalProperties", false}}}},
+					Json::object()},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
 				{"midi.chaseBeyondParts",
@@ -104,6 +114,19 @@ namespace gnubase::engine::settings
 					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "
 					"channel's last program change before that position.",
 					Json{{"type", "boolean"}}, true},
+				{"midi.portSettings",
+					"The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't "
+					"connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to "
+					"all MIDI inputs (inAllInputs). Ports without an entry show their system name, are visible and "
+					"belong to all MIDI inputs.",
+					Json{{"type", "object"},
+						{"additionalProperties",
+							{{"type", "object"},
+								{"properties",
+									{{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}},
+										{"inAllInputs", {{"type", "boolean"}}}}},
+								{"additionalProperties", false}}}},
+					Json::object()},
 				{"ui.layout",
 					"The layout of the windows with zones: under windows, by window (project), its zones (left, "
 					"right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs "
@@ -129,6 +152,23 @@ namespace gnubase::engine::settings
 			return result;
 		}();
 		return format;
+	}
+
+	Json changeEntry(Json map, const std::string& key, const Json& changes, const Json& defaults)
+	{
+		Json& entry = map[key];
+		if (entry.is_null())
+			entry = Json::object();
+		for (const auto& [name, value] : changes.items())
+		{
+			if (value == defaults.at(name))
+				entry.erase(name);
+			else
+				entry[name] = value;
+		}
+		if (entry.empty())
+			map.erase(key);
+		return map;
 	}
 
 	void registerCommands(Engine& engine, Store& store, std::function<void()> changed)

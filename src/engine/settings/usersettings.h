@@ -34,6 +34,11 @@ namespace gnubase::engine::settings
 	// migration, and tests/data/settings gets a file of the new version.
 	const Format& userFormat();
 
+	// A setting that maps keys to objects, such as audio.portSettings, with the entry for key changed: members of
+	// changes that equal their defaults are removed, the others set, and an entry left empty is removed, so the file
+	// keeps only what the user changed.
+	Json changeEntry(Json map, const std::string& key, const Json& changes, const Json& defaults);
+
 	// settings.get, settings.set, settings.reset and settings.list for the store, which only the command thread uses.
 	// changed runs after settings.set or settings.reset changed a value.
 	void registerCommands(Engine& engine, Store& store, std::function<void()> changed);

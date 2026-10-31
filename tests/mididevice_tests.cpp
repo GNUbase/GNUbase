@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/midiports.h"
+#include "engine/settings/usersettings.h"
 #include "platform/hosttime.h"
 #include "platform/midi/dummyport.h"
 #include "platform/midi/inputqueue.h"
@@ -736,10 +737,10 @@ TEST_CASE("only inputs that belong to all MIDI inputs reach them", "[unit]")
 	backend.addLoopback("Pads");
 	std::vector<std::unique_ptr<Backend>> backends;
 	backends.push_back(std::move(dummy));
-	gnubase::engine::MidiPorts ports(std::move(backends));
-	CHECK(ports.refresh());
-	CHECK(!ports.refresh()); // nothing changed
-	ports.setPort({{"id", "Pads"}, {"input", true}, {"inAllInputs", false}});
+	gnubase::engine::settings::Store settings(gnubase::engine::settings::userFormat());
+	settings.set("midi.portSettings", gnubase::engine::Json{{"dummy/in/Pads", {{"inAllInputs", false}}}});
+	gnubase::engine::MidiPorts ports(settings, std::move(backends));
+	CHECK(ports.refresh()); // a single listing opens the inputs with their all MIDI inputs flags
 
 	const auto keys = backend.openOutput("Keys");
 	const auto pads = backend.openOutput("Pads");
@@ -754,4 +755,31 @@ TEST_CASE("only inputs that belong to all MIDI inputs reach them", "[unit]")
 	REQUIRE(allInputs.size() == 1);
 	CHECK(allInputs[0].bytes[1] == 60);
 	CHECK(allInputs[0].offset == 432); // 9 ms into the 10 ms before the block
+}
+
+TEST_CASE("a hidden input that becomes visible reaches all MIDI inputs", "[unit]")
+{
+	auto dummy = std::make_unique<DummyBackend>();
+	DummyBackend& backend = *dummy;
+	backend.addLoopback("Keys");
+	std::vector<std::unique_ptr<Backend>> backends;
+	backends.push_back(std::move(dummy));
+	gnubase::engine::settings::Store settings(gnubase::engine::settings::userFormat());
+	settings.set("midi.portSettings", gnubase::engine::Json{{"dummy/in/Keys", {{"visible", false}}}});
+	gnubase::engine::MidiPorts ports(settings, std::move(backends));
+	CHECK(ports.refresh()); // lists the hidden input, doesn't open it
+
+	settings.set("midi.portSettings", gnubase::engine::Json::object());
+	ports.applySettings(); // opens the input for the first time, no further listing
+
+	const auto keys = backend.openOutput("Keys");
+	const HostTime now = hostTime();
+	keys->send(noteOn(60), now - g_ms);
+	MidiBuffer midiIn(8);
+	MidiBuffer midiOut(8);
+	MidiBuffer allInputs(8);
+	const DeviceBlock block{nullptr, nullptr, 480, 1000, now, midiIn, midiOut};
+	ports.take(block, 48000.0, allInputs);
+	REQUIRE(allInputs.size() == 1);
+	CHECK(allInputs[0].bytes[1] == 60);
 }

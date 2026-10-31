@@ -160,7 +160,7 @@ namespace gnubase::engine
 		std::vector<std::unique_ptr<audio::Backend>> backends,
 		std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends)
 		: m_snapshots(snapshots), m_settings(settings), m_backends(std::move(backends)),
-		  m_midi(std::move(midiBackends)), m_midiInput(graph::g_maxEventsPerBlock),
+		  m_midi(settings, std::move(midiBackends)), m_midiInput(graph::g_maxEventsPerBlock),
 		  m_generatorEvents(graph::g_maxEventsPerBlock), m_generatorOut(graph::g_maxEventsPerBlock)
 	{
 	}
@@ -892,15 +892,16 @@ namespace gnubase::engine
 	{
 		const RenderSnapshot& snapshot = m_snapshots.latest();
 		const std::vector<std::vector<int>> used = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
-		const auto list = [this](const std::vector<std::string>& names, bool input)
+		const Json& saved = m_settings.value("audio.portSettings");
+		const auto list = [this, &saved](const std::vector<std::string>& names, bool input)
 		{
 			Json ports = Json::array();
 			for (const std::string& name : names)
 			{
-				const auto found = m_portSettings.find(portKey(input, name));
-				const PortSettings settings = found != m_portSettings.end() ? found->second : PortSettings{};
-				ports.push_back({{"name", name}, {"showAs", settings.showAs.empty() ? name : settings.showAs},
-					{"visible", settings.visible}, {"busses", Json::array()}});
+				const Json setting = saved.value(portKey(input, name), Json::object());
+				const std::string showAs = setting.value("showAs", std::string());
+				ports.push_back({{"name", name}, {"showAs", showAs.empty() ? name : showAs},
+					{"visible", setting.value("visible", true)}, {"busses", Json::array()}});
 			}
 			return ports;
 		};
@@ -958,17 +959,22 @@ namespace gnubase::engine
 		return m_backend + '/' + m_device->info().id + (input ? "/in/" : "/out/") + name;
 	}
 
-	Json AudioEngine::setPort(const Json& parameters)
+	Json AudioEngine::setPort(CommandContext& context)
 	{
 		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
-		const bool input = parameters.at("input").get<bool>();
-		const auto name = parameters.at("name").get<std::string>();
+		Json changes = context.parameters();
+		const bool input = changes.at("input").get<bool>();
+		const auto name = changes.at("name").get<std::string>();
 		const std::vector<std::string>& names = input ? m_inputPorts : m_outputPorts;
 		const auto found = std::find(names.begin(), names.end(), name);
 		require(found != names.end(), std::string(input ? "no input port " : "no output port ") + name);
-		PortSettings& settings = m_portSettings[portKey(input, name)];
-		settings.showAs = parameters.value("showAs", settings.showAs);
-		settings.visible = parameters.value("visible", settings.visible);
+		changes.erase("input");
+		changes.erase("name");
+		context.call("settings.set",
+			{{"key", "audio.portSettings"},
+				{"value",
+					settings::changeEntry(m_settings.value("audio.portSettings"), portKey(input, name), changes,
+						{{"showAs", ""}, {"visible", true}})}});
 		return ports().at(input ? "inputs" : "outputs").at(static_cast<size_t>(found - names.begin()));
 	}
 
@@ -1330,8 +1336,8 @@ namespace gnubase::engine
 				"Changes how a port of the audio device is shown, given by whether it is an input and its system name "
 				"(name in audio.ports). showAs: the name routing menus show; empty shows the system name. visible: "
 				"whether routing menus offer it; busses on a hidden port keep it. The settings are kept per device "
-				"while GNUbase runs. Returns the port as audio.ports lists it, and sends audio.ports as the event "
-				"audio.portsChanged.",
+				"in the user setting audio.portSettings, so they come back with the device, also after a restart. "
+				"Returns the port as audio.ports lists it, and sends audio.ports as the event audio.portsChanged.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["input", "name"],
 					"properties": {"input": {"type": "boolean"}, "name": {"type": "string"},
 					"showAs": {"type": "string"}, "visible": {"type": "boolean"}}})"),
@@ -1341,7 +1347,7 @@ namespace gnubase::engine
 				false},
 			[this](CommandContext& context)
 			{
-				Json port = setPort(context.parameters());
+				Json port = setPort(context);
 				context.emit("audio.portsChanged", ports());
 				return port;
 			});
