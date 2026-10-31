@@ -348,6 +348,42 @@ TEST_CASE("value fields are dragged like knobs, and a double click edits them as
 	CHECK_FALSE(has(element(app, "#locked"), "classes", "editing"));
 }
 
+TEST_CASE("text displays show their value, and a double click edits it as text", "[ui]")
+{
+	test::UiApp app;
+	const ValuesPage page(app);
+	const auto text = [&app] { return element(app, "#position .textdisplay-text").at("text").get<std::string>(); };
+	CHECK(text() == "1.1.1.0");
+	const auto type = [&app](const std::string& typed, const std::string& key)
+	{
+		app.ui().click(std::nullopt, at("#position"), ui::MouseButton::Left, 2, {});
+		CHECK(has(element(app, "#position"), "classes", "editing"));
+		app.ui().key(std::nullopt, "Ctrl+A");
+		app.ui().text(std::nullopt, typed);
+		app.ui().key(std::nullopt, key);
+		CHECK_FALSE(has(element(app, "#position"), "classes", "editing"));
+	};
+
+	// Enter sends the text typed; the document decides what the display shows.
+	type("5.1", "Enter");
+	std::vector<std::string> changes;
+	for (const auto& [id, value] : page.events->changes)
+		if (id == "position")
+			changes.push_back(value.Get<Rml::String>());
+	CHECK(changes == std::vector<std::string>{"5.1"});
+	CHECK(text() == "1.1.1.0");
+	page.document->GetElementById("position")->SetAttribute("value", "5.1.1.0");
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(text() == "5.1.1.0");
+
+	// Escape sends nothing.
+	type("9", "Escape");
+	size_t count = 0;
+	for (const auto& change : page.events->changes)
+		count += change.first == "position" ? 1 : 0;
+	CHECK(count == 1);
+}
+
 TEST_CASE("meters show the level and the peak in dB", "[ui]")
 {
 	test::UiApp app;

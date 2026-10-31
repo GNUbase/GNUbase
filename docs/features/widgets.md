@@ -50,6 +50,11 @@ The widgets:
   or text that isn't a number, keeps the value. While the user types, the field's text field sends RmlUi's own
   `change` events with the text; the field's `change`, with the field as its target, has the number.
 
+`<textdisplay>` shows text, its `value` attribute, such as a position in a time format; documents give it the look of
+a display with the class `.display`. A double click edits it as text (`.editing`): Enter, or leaving the field, sends
+`change` with the text typed as `value`, a string, and the document reads it and sets the value it takes; Escape
+keeps the value. The transport controls use it for positions ([transport-bar.md](transport-bar.md)).
+
 Code places the parts from the value (the pointer's rotation, the cap's and the thumb's position, the fill's width),
 which is geometry from data; the shared style sheet lays out the rest. Value fields parse and print numbers in the C
 locale, "-6.5", whatever the system's. Not yet: the reference's other knob and slider modes (circular, jump, ramp),
@@ -148,7 +153,8 @@ picker next to their OK and Cancel buttons. Not yet: the reference's context men
 buttons that turn on and off, look different when on, and follow a data model. Knobs, faders, sliders and value
 fields are dragged (also with Shift), turned with the wheel, stepped with the arrow keys and reset with Ctrl-click,
 their parts placed where the value says; data-value binds them both ways; the wheel turns them instead of scrolling
-the page; value fields take typed numbers and leave bad ones. Meters show their level and peak at the right heights.
+the page; value fields take typed numbers and leave bad ones. Text displays send the text typed with Enter and nothing
+with Escape. Meters show their level and peak at the right heights.
 Menus open under their button and at the mouse, inside the window, show submenus on hover, close on an item, a click
 elsewhere and Escape, skip disabled items, and work with the keys. Tooltips show after a rest and go with the mouse.
 Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result.
