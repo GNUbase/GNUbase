@@ -367,3 +367,80 @@ TEST_CASE("the track controls settings dialog chooses and orders each track type
 	tracks.click(row(audio) + " button.timeBase");
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(audio).at("timeBase") == "linear"; }));
 }
+
+TEST_CASE("folder tracks: new folders for the selected tracks, group channels and data blocks", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t audio = tracks.add({{"type", "audio"}});
+	const uint64_t other = tracks.add({{"type", "audio"}});
+	const uint64_t marker = tracks.add({{"type", "marker"}});
+	const uint64_t media =
+		tracks.app
+			.call(
+				"media.add", {{"path", "/audio/loop.wav"}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 96000}})
+			.at("media")
+			.at("id")
+			.get<uint64_t>();
+	tracks.app.call("audioEvent.add",
+		{{"track", other}, {"clip", tracks.app.call("clip.add", {{"media", media}}).at("clip").at("id")},
+			{"position", 0}});
+	tracks.rows(3);
+	const Json main = tracks.app.call("project.get").at("busses")[1].at("id");
+
+	// Move Selected Tracks to New Folder with Group Channel (reference manual p. 223): the folder takes the first
+	// one's place, the marker track stays at the top level, and the tracks play through the group channel.
+	tracks.click(row(other) + " .track-name");
+	tracks.click(row(audio) + " .track-name", {"ctrl"});
+	tracks.click(row(marker) + " .track-name", {"ctrl"});
+	tracks.app.keys().run("track.moveSelectedToNewFolderWithGroupChannel", Json::object(), tracks.app.main(), nullptr);
+	tracks.rows(4);
+	const std::vector<uint64_t> order = tracks.order();
+	const uint64_t folder = order[0];
+	CHECK(order == std::vector<uint64_t>{folder, audio, other, marker});
+	CHECK(tracks.track(folder).at("type") == "folder");
+	const Json group = tracks.track(folder).at("channel");
+	REQUIRE(group != 0);
+	CHECK(tracks.channel(audio).at("output") == group);
+	CHECK(tracks.channel(other).at("output") == group);
+	// A folder with a group channel shows mute and solo.
+	REQUIRE(tracks.app.waitUntil([&] { return elements(tracks.app, row(folder) + " button.mute").size() == 1; }));
+
+	// The folder's lane shows the event inside it as a data block (p. 226), by ui.folderData, which the context menu
+	// sets with settings.set.
+	const auto blocks = [&tracks] { return tracks.display.folderData().at(0).events.size(); };
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.display.folderData().size() == 4 && blocks() == 1; }));
+	CHECK(tracks.display.folderData().at(2).events.empty());
+	CHECK(elements(tracks.app, "#track-list-menu [command=\"settings.set\"]").size() == 3);
+	tracks.app.keys().run(
+		"settings.set", {{"key", "ui.folderData"}, {"value", "hideWhenExpanded"}}, tracks.app.main(), nullptr);
+	REQUIRE(tracks.app.waitUntil([&] { return blocks() == 0; }));
+	tracks.list.setFolded(folder, true);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.display.laneTracks().size() == 2 && blocks() == 1; }));
+	tracks.list.setFolded(folder, false);
+
+	// The context menu turns the selected folders' group channels off and on (p. 224).
+	const auto menu = [&tracks](uint64_t track, const char* command)
+	{
+		tracks.app.ui().click(
+			std::nullopt, {row(track) + " .track-name", 0, std::nullopt}, ui::MouseButton::Right, 1, {});
+		tracks.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(elements(tracks.app, "#track-list-menu").at(0).at("visible").get<bool>());
+		tracks.click(std::string("#track-list-menu > [command=\"") + command + "\"]");
+	};
+	menu(folder, "track.disableSelectedGroupChannels");
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(folder).at("channel") == 0; }));
+	CHECK(tracks.channel(audio).at("output") == main);
+	REQUIRE(tracks.app.waitUntil([&] { return elements(tracks.app, row(folder) + " button.mute").empty(); }));
+	menu(folder, "track.enableSelectedGroupChannels");
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(folder).at("channel") != 0; }));
+	CHECK(tracks.channel(other).at("output") == tracks.track(folder).at("channel"));
+
+	// Move Selected Tracks to New Folder puts one into a folder inside it, without a group channel.
+	tracks.click(row(other) + " .track-name");
+	tracks.app.keys().run("track.moveSelectedToNewFolder", Json::object(), tracks.app.main(), nullptr);
+	tracks.rows(5);
+	const auto inner = tracks.track(other).at("parent").get<uint64_t>();
+	CHECK(tracks.track(inner).at("parent") == folder);
+	CHECK(tracks.track(inner).at("channel") == 0);
+	CHECK(tracks.channel(other).at("output") == tracks.track(folder).at("channel"));
+}

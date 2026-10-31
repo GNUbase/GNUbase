@@ -100,7 +100,7 @@ namespace gnubase::app
 		}};
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 13> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 17> g_trackCommands{{
 			{"track.selectPrevious", "Selects the track above the selected one.", "Up"},
 			{"track.selectNext", "Selects the track below the selected one.", "Down"},
 			{"track.rename", "Renames the first selected track.", "Alt+F2"},
@@ -114,6 +114,12 @@ namespace gnubase::app
 			{"track.unfoldAll", "Unfolds every folder.", nullptr},
 			{"track.flipFolding", "Folds the unfolded folders and unfolds the folded ones.", nullptr},
 			{"track.controlsSettings", "Opens the track controls settings dialog.", nullptr},
+			// Folder tracks (docs/features/folder-tracks.md).
+			{"track.enableSelectedGroupChannels", "Turns on the group channels of the selected folders.", nullptr},
+			{"track.disableSelectedGroupChannels", "Turns off the group channels of the selected folders.", nullptr},
+			{"track.moveSelectedToNewFolder", "Moves the selected tracks into a new folder.", nullptr},
+			{"track.moveSelectedToNewFolderWithGroupChannel",
+				"Moves the selected tracks into a new folder with a group channel, which they play through.", nullptr},
 		}};
 	}
 

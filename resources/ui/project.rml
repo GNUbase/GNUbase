@@ -174,6 +174,9 @@
 				<menuitem command="track.foldAll">Fold Tracks</menuitem>
 				<menuitem command="track.unfoldAll">Unfold Tracks</menuitem>
 				<menuitem command="track.flipFolding">Flip Fold States</menuitem>
+				<menuseparator/>
+				<menuitem command="track.moveSelectedToNewFolder">Move Selected Tracks to New Folder</menuitem>
+				<menuitem command="track.moveSelectedToNewFolderWithGroupChannel">Move Selected Tracks to New Folder with Group Channel</menuitem>
 			</menu>
 		</menuitem>
 	</menu>
@@ -185,6 +188,17 @@
 		<menuseparator/>
 		<menuitem command="track.disableSelected">Disable Selected Tracks</menuitem>
 		<menuitem command="track.enableSelected">Enable Selected Tracks</menuitem>
+		<menuseparator/>
+		<!-- Folder tracks (reference manual pp. 222-224) -->
+		<menuitem command="track.enableSelectedGroupChannels">Enable Group Channel</menuitem>
+		<menuitem command="track.disableSelectedGroupChannels">Disable Group Channel</menuitem>
+		<menuitem id="folder-data-submenu">Show Data on Folder Tracks
+			<menu>
+				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "always"}'>Always Show Data</menuitem>
+				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "never"}'>Never Show Data</menuitem>
+				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "hideWhenExpanded"}'>Hide Data When Expanded</menuitem>
+			</menu>
+		</menuitem>
 		<menuseparator/>
 		<menuitem command="track.controlsSettings">Track Controls Settings...</menuitem>
 	</menu>

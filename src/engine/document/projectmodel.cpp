@@ -253,6 +253,104 @@ namespace gnubase::engine
 			return type == TrackType::Group || type == TrackType::Folder;
 		}
 
+		// Whether routing a channel to output would lead back to it.
+		bool loops(const Project& project, ObjectId channel, ObjectId output)
+		{
+			for (ObjectId next = output; next != 0 && project.channels.count(next) != 0;
+				next = project.channels.at(next).output)
+				if (next == channel)
+					return true;
+			return false;
+		}
+
+		// Where the audio of the tracks in a folder goes unless routed elsewhere (reference manual p. 222): the group
+		// channel of the nearest folder around them that has one, else the main mix.
+		ObjectId folderOutput(const Project& project, ObjectId parent)
+		{
+			for (; parent != 0; parent = project.trackById.at(parent).parent)
+				if (const ObjectId channel = project.trackById.at(parent).channel; channel != 0)
+					return channel;
+			return mainMix(project);
+		}
+
+		// The folder output of the track and every track inside it whose audio channel has an output.
+		std::map<ObjectId, ObjectId> folderOutputs(const Project& project, ObjectId root)
+		{
+			std::map<ObjectId, ObjectId> outputs;
+			for (const ObjectId id : subtree(project, root))
+			{
+				const Track& track = project.trackById.at(id);
+				if (track.channel != 0 && track.type != TrackType::Midi)
+					outputs[id] = folderOutput(project, track.parent);
+			}
+			return outputs;
+		}
+
+		// After tracks moved or a group channel went on or off: routes the channels of the tracks whose folder
+		// output changed from before to the new one, unless that would make a loop.
+		void reroute(Project& project, const std::map<ObjectId, ObjectId>& before, CommandContext& context)
+		{
+			for (const auto& [id, output] : before)
+			{
+				const Track& track = project.trackById.at(id);
+				const ObjectId now = folderOutput(project, track.parent);
+				if (track.channel == 0 || now == output || loops(project, track.channel, now))
+					continue;
+				Channel& channel = project.channels.at(track.channel);
+				channel.output = now;
+				context.emit("channel.changed", {{"channel", toJson(channel)}});
+			}
+		}
+
+		// The color the tracks in a folder take: with the user setting editing.applyFolderColor the folder's own
+		// (p. 221), else none (empty).
+		std::string folderColor(const Project& project, ObjectId folder, CommandContext& context)
+		{
+			if (folder == 0 ||
+				!context.call("settings.get", {{"key", "editing.applyFolderColor"}}).at("value").get<bool>())
+				return {};
+			return project.trackById.at(folder).color;
+		}
+
+		// Gives a folder color to the tracks inside root, and to root itself with paintRoot.
+		void paint(Project& project, ObjectId root, const std::string& color, bool paintRoot, CommandContext& context)
+		{
+			if (color.empty())
+				return;
+			for (const ObjectId id : subtree(project, root))
+			{
+				Track& track = project.trackById.at(id);
+				if ((id == root && !paintRoot) || track.color == color)
+					continue;
+				track.color = color;
+				context.emit("track.changed", {{"track", toJson(track)}});
+			}
+		}
+
+		// Moves a track, with what it contains, to index among the tracks of the folder parent (0: the top level),
+		// counted without it. Its audio and that of the tracks inside it follow the folders' group channels.
+		void moveInto(Project& project, ObjectId id, ObjectId parent, int64_t index, CommandContext& context)
+		{
+			Track& track = find(project.trackById, id, "track");
+			require(track.type != TrackType::Marker || parent == 0, "marker tracks can't be inside a folder");
+			const std::vector<ObjectId> moved = subtree(project, id);
+			require(std::find(moved.begin(), moved.end(), parent) == moved.end(),
+				"can't move a folder into itself or a folder inside it");
+			const std::map<ObjectId, ObjectId> outputs = folderOutputs(project, id);
+
+			std::vector<ObjectId>& from = siblings(project, track.parent);
+			from.erase(std::find(from.begin(), from.end(), id));
+			std::vector<ObjectId>& to = siblings(project, parent);
+			requireRange(index, 0, static_cast<int64_t>(to.size()), "index");
+			to.insert(to.begin() + index, id);
+			const bool changed = track.parent != parent;
+			track.parent = parent;
+			context.emit("track.moved", {{"track", id}, {"parent", parent}, {"index", index}});
+			reroute(project, outputs, context);
+			if (changed)
+				paint(project, id, folderColor(project, parent, context), true, context);
+		}
+
 		void checkOutput(const Project& project, const Channel& channel, ObjectId output)
 		{
 			if (output == 0)
@@ -271,10 +369,8 @@ namespace gnubase::engine
 				return;
 			}
 			require(isGroupChannel(project, output), "output must be an output bus or a group channel");
-			for (ObjectId next = output; next != 0 && project.channels.count(next) != 0;
-				next = project.channels.at(next).output)
-				require(next != channel.id,
-					"routing channel " + idText(channel.id) + " to " + idText(output) + " would make a loop");
+			require(!loops(project, channel.id, output),
+				"routing channel " + idText(channel.id) + " to " + idText(output) + " would make a loop");
 		}
 
 		// Time.
@@ -781,15 +877,13 @@ namespace gnubase::engine
 			if (type == TrackType::Ruler)
 				track.timeFormat = parameters.value("timeFormat", g_rulerTimeFormats[0]);
 
-			// New tracks play through the main output, or through the folder's group channel when added to one.
+			// New tracks play through the main output, or through the group channel of the folder they are added to.
 			std::optional<Channel> channel;
 			if (hasChannel)
 			{
 				channel = Channel{project.newId(), track.id, format, 0, 0, {}, 0.0, 0.0};
 				if (hasAudio)
-					channel->output = mainMix(project);
-				if (hasAudio && parent != 0 && project.trackById.at(parent).channel != 0)
-					channel->output = project.trackById.at(parent).channel;
+					channel->output = folderOutput(project, parent);
 				if (type == TrackType::Audio)
 				{
 					const auto mainInput = std::find_if(project.busses.begin(), project.busses.end(),
@@ -810,11 +904,76 @@ namespace gnubase::engine
 				channel = project.channels.at(channel->id);
 			}
 
-			Json result = {{"track", toJson(track)}, {"channel", channel ? toJson(*channel) : Json(nullptr)}};
+			if (parent != 0 && !parameters.contains("color"))
+				project.trackById.at(track.id).color = folderColor(project, parent, context);
+
+			Json result = {{"track", toJson(project.trackById.at(track.id))},
+				{"channel", channel ? toJson(*channel) : Json(nullptr)}};
 			context.emit("track.added", result);
 			if (type == TrackType::Marker) // a new marker track is the active one
 				activateMarkerTrack(project, track.id, context);
+			// Move Selected Tracks to New Folder (p. 223).
+			if (parameters.contains("tracks"))
+			{
+				require(type == TrackType::Folder, "only folders take tracks");
+				for (const Json& moved : parameters.at("tracks"))
+					moveInto(project, moved.get<ObjectId>(), track.id,
+						static_cast<int64_t>(project.trackById.at(track.id).children.size()), context);
+			}
 			return result;
+		}
+
+		// Disconnects every channel whose input or output is one of the given objects.
+		void disconnect(Project& project, const std::vector<ObjectId>& gone, CommandContext& context)
+		{
+			const auto isGone = [&gone](ObjectId id) { return std::find(gone.begin(), gone.end(), id) != gone.end(); };
+			for (auto& [id, channel] : project.channels)
+			{
+				const bool input = channel.input != 0 && isGone(channel.input);
+				const bool output = channel.output != 0 && isGone(channel.output);
+				if (input)
+					channel.input = 0;
+				if (output)
+					channel.output = 0;
+				if (input || output)
+					context.emit("channel.changed", {{"channel", toJson(channel)}});
+			}
+		}
+
+		// Turns a folder's group channel on or off (reference manual pp. 222, 224): a new one plays through the
+		// folder's own folder output; the tracks inside follow it. Without it, the folder's automation goes and the
+		// channels routed to it from outside are disconnected.
+		void setGroupChannel(Project& project, Track& folder, bool on, CommandContext& context)
+		{
+			require(folder.type == TrackType::Folder, "only folder tracks have an optional group channel");
+			if (on == (folder.channel != 0))
+				return;
+			const std::map<ObjectId, ObjectId> outputs = folderOutputs(project, folder.id);
+			if (on)
+			{
+				const Channel channel{project.newId(), folder.id, ChannelFormat::Stereo, 0,
+					folderOutput(project, folder.parent), {}, 0.0, 0.0};
+				project.channels[channel.id] = channel;
+				folder.channel = channel.id;
+				context.emit("channel.added", {{"channel", toJson(channel)}});
+				reroute(project, outputs, context);
+				return;
+			}
+			const ObjectId gone = std::exchange(folder.channel, 0);
+			project.channels.erase(gone);
+			context.emit("channel.removed", {{"channel", gone}});
+			for (auto lane = project.automation.begin(); lane != project.automation.end();)
+			{
+				if (lane->second.track != folder.id)
+				{
+					++lane;
+					continue;
+				}
+				context.emit("automationLane.removed", {{"lane", lane->first}});
+				lane = project.automation.erase(lane);
+			}
+			reroute(project, outputs, context);
+			disconnect(project, {gone}, context);
 		}
 
 		Json setTrack(Project& project, CommandContext& context)
@@ -840,8 +999,12 @@ namespace gnubase::engine
 				if (base != track.timeBase)
 					rebaseTrack(project, track, base, context);
 			}
+			if (parameters.contains("groupChannel"))
+				setGroupChannel(project, track, parameters.at("groupChannel").get<bool>(), context);
 			Json result = {{"track", toJson(track)}};
 			context.emit("track.changed", result);
+			if (track.type == TrackType::Folder && parameters.contains("color"))
+				paint(project, track.id, folderColor(project, track.id, context), false, context);
 			return result;
 		}
 
@@ -969,45 +1132,9 @@ namespace gnubase::engine
 		Json moveTrack(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
-			const ObjectId id = parameters.at("track").get<ObjectId>();
-			Track& track = find(project.trackById, id, "track");
-			const ObjectId parent = folderParent(project, parameters);
-			require(track.type != TrackType::Marker || parent == 0, "marker tracks can't be inside a folder");
-			const std::vector<ObjectId> moved = subtree(project, id);
-			require(std::find(moved.begin(), moved.end(), parent) == moved.end(),
-				"can't move a folder into itself or a folder inside it");
-
-			std::vector<ObjectId>& from = siblings(project, track.parent);
-			const auto current = std::find(from.begin(), from.end(), id);
-			const auto oldIndex = current - from.begin();
-			std::vector<ObjectId>& to = siblings(project, parent);
-			// The index counts the siblings without the moved track.
-			const size_t size = to.size() - (track.parent == parent ? 1 : 0);
-			const auto index = parameters.at("index").get<int64_t>();
-			requireRange(index, 0, static_cast<int64_t>(size), "index");
-
-			from.erase(from.begin() + oldIndex);
-			to.insert(to.begin() + index, id);
-			track.parent = parent;
-			context.emit("track.moved", {{"track", id}, {"parent", parent}, {"index", index}});
+			moveInto(project, parameters.at("track").get<ObjectId>(), folderParent(project, parameters),
+				parameters.at("index").get<int64_t>(), context);
 			return Json::object();
-		}
-
-		// Disconnects every channel whose input or output is one of the given objects.
-		void disconnect(Project& project, const std::vector<ObjectId>& gone, CommandContext& context)
-		{
-			const auto isGone = [&gone](ObjectId id) { return std::find(gone.begin(), gone.end(), id) != gone.end(); };
-			for (auto& [id, channel] : project.channels)
-			{
-				const bool input = channel.input != 0 && isGone(channel.input);
-				const bool output = channel.output != 0 && isGone(channel.output);
-				if (input)
-					channel.input = 0;
-				if (output)
-					channel.output = 0;
-				if (input || output)
-					context.emit("channel.changed", {{"channel", toJson(channel)}});
-			}
 		}
 
 		Json removeTrack(Project& project, CommandContext& context)
@@ -2601,14 +2728,18 @@ namespace gnubase::engine
 				"Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks "
 				"(default: last). Audio channels default to stereo; format or channels set another format, as in "
 				"bus.add. Folders get a channel only with groupChannel. New channels play through the main output, "
-				"or through the folder's group channel, and audio tracks record from the first input bus; input, "
-				"output and instrument set them as channel.set does. Marker tracks have no channel and stay at the "
-				"top level; a project has at most 10, and a new one becomes the active marker track. Ruler tracks "
-				"have no channel either; timeFormat is the time format their ruler shows (default barsBeats).",
+				"or through the group channel of the nearest folder around them that has one, and audio tracks record "
+				"from the first input bus; input, output and instrument set them as channel.set does. tracks moves "
+				"those tracks into a new folder, in that order, as track.move does (Move Selected Tracks to New "
+				"Folder). With the user setting editing.applyFolderColor, a track added to a folder without a color "
+				"takes the folder's. Marker tracks have no channel and stay at the top level; a project has at most "
+				"10, and a new one becomes the active marker track. Ruler tracks have no channel either; timeFormat "
+				"is the time format their ruler shows (default barsBeats).",
 				objectSchema({{"type", trackTypes}, {"name", stringSchema}, {"color", color}, {"parent", idSchema},
 								 {"index", integerSchema}, {"format", formats}, {"channels", integerSchema},
 								 {"timeBase", timeBases}, {"groupChannel", booleanSchema}, {"input", idSchema},
-								 {"output", idSchema}, {"instrument", stringSchema}, {"timeFormat", timeFormats}},
+								 {"output", idSchema}, {"instrument", stringSchema}, {"timeFormat", timeFormats},
+								 {"tracks", arraySchema(idSchema)}},
 					{"type"}),
 				{{"type", "object"},
 					{"properties", {{"track", {{"type", "object"}}}, {"channel", {{"type", {"object", "null"}}}}}},
@@ -2620,14 +2751,24 @@ namespace gnubase::engine
 				"Changes a track's name, color (#rrggbb, or null for the default), time base or, for ruler tracks, "
 				"time format. A new time base keeps its events, parts and markers at the same time. enabled false "
 				"disables an audio, instrument or MIDI track: it keeps its events and channel settings but plays "
-				"nothing and is silent.",
-				objectSchema({{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
-								 {"timeFormat", timeFormats}, {"enabled", booleanSchema}},
+				"nothing and is silent. groupChannel turns a folder's group channel on or off: a new one is stereo "
+				"and plays through the main output, or the group channel of the folder around it; the audio of the "
+				"tracks inside then plays through it, or without it through the main output, and its automation "
+				"and the routing of other channels to it go. With the user setting editing.applyFolderColor, a "
+				"folder's new color goes to the tracks inside it.",
+				objectSchema(
+					{{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
+						{"timeFormat", timeFormats}, {"enabled", booleanSchema}, {"groupChannel", booleanSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);
 		add(engine,
-			{"track.move", 1, "Moves a track, with what it contains, into a folder (parent, 0 for the top level).",
+			{"track.move", 1,
+				"Moves a track, with what it contains, into a folder (parent, 0 for the top level) at index among its "
+				"tracks. Where the group channel of the nearest folder around a moved track changes, its audio and "
+				"that of the tracks inside it follows: into a folder with a group channel it plays through that, out "
+				"of it through the main output, unless that would make a loop. With the user setting "
+				"editing.applyFolderColor, tracks moved into a folder with a color take it.",
 				objectSchema({{"track", idSchema}, {"parent", idSchema}, {"index", integerSchema}},
 					{"track", "parent", "index"}),
 				noResult, false},
