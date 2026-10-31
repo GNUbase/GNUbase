@@ -89,7 +89,9 @@ The reference's defaults (p. 1572), bound everywhere; they act on the docking wi
 | Mod+Alt+Left, Mod+Alt+Right | `window.previousTab`, `window.nextTab` | Show Previous/Next Tab, in the zone with the focus |
 
 `window.toolbar` and `window.statusLine` have no keys. Each zone is a focus zone (`focuszone` `left`, `right`, `lower`,
-and `project` for the main zone), so key commands can depend on it ([key-commands.md](key-commands.md)).
+and `project` for the main zone), so key commands can depend on it ([key-commands.md](key-commands.md)). The document
+is the focus zone `project` too, so the project window's keys, such as zooming, work from the toolbar and from a side
+zone that doesn't bind them itself.
 
 ## Not yet
 
