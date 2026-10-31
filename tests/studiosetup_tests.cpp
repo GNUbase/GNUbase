@@ -4,6 +4,7 @@
 // changes in it reaches the engine.
 #include "uiapp.h"
 
+#include "platform/audio/dummydevice.h"
 #include "platform/midi/dummyport.h"
 #include "ui/automation.h"
 
@@ -34,6 +35,62 @@ namespace
 		std::vector<std::unique_ptr<midi::Backend>> backends;
 		backends.push_back(std::move(backend));
 		return backends;
+	}
+
+	// An audio interface without hardware, fake-1: it runs like the dummy device and lists two clock sources, none of
+	// them current, as some ASIO drivers report them.
+	audio::DeviceInfo fakeInfo()
+	{
+		audio::DeviceInfo info;
+		info.id = "fake-1";
+		info.name = "Fake interface";
+		info.inputs = {"In 1", "In 2"};
+		info.outputs = {"Out 1", "Out 2"};
+		info.sampleRates = {48000.0};
+		info.blockSizes = {256};
+		info.clockSources = {"Internal", "Word clock"};
+		return info;
+	}
+
+	class FakeDevice : public audio::DummyDevice
+	{
+	public:
+		FakeDevice() : DummyDevice(audio::DeviceFormat{}, 0) {}
+		audio::DeviceInfo info() const override { return fakeInfo(); }
+	};
+
+	class FakeBackend : public audio::Backend
+	{
+	public:
+		std::string name() const override { return "fake"; }
+		std::vector<audio::DeviceInfo> devices() override { return {fakeInfo()}; }
+
+		std::unique_ptr<audio::Device> open(const audio::DeviceConfig& config) override
+		{
+			if (!config.device.empty() && config.device != "fake-1")
+				throw audio::DeviceError("no device " + config.device);
+			return std::make_unique<FakeDevice>();
+		}
+	};
+
+	// The fake interface's driver before the dummy device's.
+	std::vector<std::unique_ptr<audio::Backend>> fakeInterface()
+	{
+		std::vector<std::unique_ptr<audio::Backend>> backends;
+		backends.push_back(std::make_unique<FakeBackend>());
+		backends.push_back(std::make_unique<audio::DummyBackend>());
+		return backends;
+	}
+
+	// The parameters the engine last ran the command with, or null if it didn't.
+	Json lastRun(test::UiApp& app, const std::string& command)
+	{
+		Json parameters;
+		const Json log = app.call("engine.commandLog");
+		for (const Json& entry : log.at("commands"))
+			if (entry.at("command") == command)
+				parameters = entry.at("parameters");
+		return parameters;
 	}
 
 	Json elements(test::UiApp& app, const std::string& selector)
@@ -225,7 +282,65 @@ TEST_CASE("the studio setup dialog keeps a sample rate and buffer size that the 
 	const Json device = app.call("audio.get").at("device");
 	CHECK(device.at("sampleRate") == 22050.0);
 	CHECK(device.at("blockSize") == 100);
-	const Json log = app.call("engine.commandLog");
-	for (const Json& entry : log.at("commands"))
-		CHECK(entry.at("command") != "audio.set");
+	CHECK(lastRun(app, "audio.set").is_null());
+}
+
+TEST_CASE("the studio setup dialog switches the audio driver through the engine", "[ui]")
+{
+	test::UiApp app({900, 640}, keyboard(), fakeInterface());
+	openDialog(app);
+	CHECK(selected(app, "driver") == "dummy - Dummy device");
+	choose(app, "#driver", 1); // the fake interface, listed before the dummy device
+	CHECK(selected(app, "driver") == "fake - Fake interface");
+	click(app, "#apply");
+	CHECK(open(app));
+	CHECK(lastRun(app, "audio.setDevice") == Json{{"backend", "fake"}, {"device", "fake-1"}});
+	CHECK(app.call("audio.get").at("device").at("id") == "fake-1");
+	CHECK(element(app, "#devices-device").at("text") == "Fake interface");
+	CHECK(element(app, "#studio-setup-message").value("text", "").empty());
+}
+
+TEST_CASE("the studio setup dialog leaves the clock source alone when the device reports none as current", "[ui]")
+{
+	test::UiApp app({900, 640}, keyboard(), fakeInterface());
+	app.call("audio.setDevice", {{"backend", "fake"}, {"device", "fake-1"}});
+	REQUIRE(app.call("audio.get").at("device").at("clockSource").is_null());
+	openDialog(app);
+	click(app, "#devices-device");
+	CHECK(selected(app, "clock-source").empty());
+	click(app, "#ok");
+	CHECK(closed(app));
+	CHECK(lastRun(app, "audio.set").is_null());
+
+	// A clock source the user picks is sent.
+	openDialog(app);
+	click(app, "#devices-device");
+	click(app, "#clock-source");
+	app.ui().key(std::nullopt, "Down");
+	click(app, "#clock-source");
+	CHECK(selected(app, "clock-source") == "Internal");
+	click(app, "#ok");
+	CHECK(closed(app));
+	CHECK(lastRun(app, "audio.set") == Json{{"clockSource", "Internal"}});
+}
+
+TEST_CASE("the studio setup command brings the open dialog to the front instead of opening another", "[ui]")
+{
+	test::UiApp app({900, 640}, keyboard());
+	openDialog(app);
+	click(app, "#devices-device");
+	type(app, "#audio-ports input.show-as", 0, "Mic");
+
+	// MCP and Lua can run it while the dialog is open; the dialog keeps what the user changed in it.
+	app.keys().run("window.studioSetup", Json::object(), app.main(), nullptr);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(elements(app, "#studio-setup").size() == 1);
+	CHECK(elements(app, "#audio-ports input.show-as")[0].at("value") == "Mic");
+	click(app, "#ok");
+	CHECK(closed(app));
+	CHECK(app.call("audio.ports").at("inputs")[0].at("showAs") == "Mic");
+
+	// Once closed, it opens again.
+	openDialog(app);
+	CHECK(elements(app, "#studio-setup").size() == 1);
 }
