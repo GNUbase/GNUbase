@@ -6,6 +6,7 @@
 #include "ui/eventdisplay.h"
 
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/Property.h>
 
 #include <algorithm>
 #include <cmath>
