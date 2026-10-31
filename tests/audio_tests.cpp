@@ -4,6 +4,7 @@
 #include "platform/hosttime.h"
 #include "platform/midi/dummyport.h"
 #include "platform/rt/realtime.h"
+#include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -841,6 +842,64 @@ TEST_CASE("midi.ports lists the MIDI ports and keeps their settings while they a
 	// Hidden inputs are closed.
 	CHECK(run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"visible", false}}).at("open") == false);
 	CHECK(run(client, "midi.refresh").at("ports").size() == 2);
+}
+
+TEST_CASE("port settings are user settings: they survive a restart and wait for unplugged devices", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	{
+		auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+		dummy->addLoopback("Keys");
+		dummy->addLoopback("Remote");
+		Engine engine(fakeBackends(std::make_shared<FakeDriver>()), dir.path(), midiBackends(std::move(dummy)));
+		Client client(engine);
+		run(client, "audio.setDevice");
+		run(client, "audio.setPort", {{"input", true}, {"name", "Input 1"}, {"showAs", "Mic"}, {"visible", false}});
+		run(client, "audio.setDevice", {{"backend", "fake"}});
+		run(client, "audio.setPort", {{"input", false}, {"name", "Main L"}, {"showAs", "Left"}});
+		run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", "My keys"}});
+		run(client, "midi.setPort", {{"id", "Remote"}, {"input", true}, {"visible", false}, {"inAllInputs", false}});
+		// Only what differs from the defaults is kept, per backend, direction and port id.
+		CHECK(run(client, "settings.get", {{"key", "midi.portSettings"}}).at("value") ==
+			Json{{"dummy/in/Keys", {{"showAs", "My keys"}}},
+				{"dummy/in/Remote", {{"visible", false}, {"inAllInputs", false}}}});
+	}
+
+	// Started again with the same settings folder, while the keyboard is unplugged.
+	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+	gnubase::midi::DummyBackend& backend = *dummy;
+	backend.addLoopback("Remote");
+	Engine engine(fakeBackends(std::make_shared<FakeDriver>()), dir.path(), midiBackends(std::move(dummy)));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	CHECK(run(client, "audio.ports").at("outputs")[0].at("showAs") == "Left");
+	run(client, "audio.setDevice");
+	const Json input = run(client, "audio.ports").at("inputs")[0];
+	CHECK(input.at("showAs") == "Mic");
+	CHECK(input.at("visible") == false);
+
+	Json remote = run(client, "midi.ports").at("ports")[0];
+	CHECK(remote.at("id") == "Remote");
+	CHECK(remote.at("visible") == false);
+	CHECK(remote.at("inAllInputs") == false);
+	CHECK(remote.at("open") == false); // hidden inputs stay closed
+
+	// The keyboard's settings come back with it.
+	backend.addLoopback("Keys");
+	CHECK(waitForEvent(client, "midi.changed", [](const Json& data) { return data.at("ports").size() == 4; }));
+	const Json ports = run(client, "midi.ports").at("ports");
+	const auto keys = std::find_if(ports.begin(), ports.end(),
+		[](const Json& port) { return port.at("id") == "Keys" && port.at("input") == true; });
+	REQUIRE(keys != ports.end());
+	CHECK(keys->at("showAs") == "My keys");
+	CHECK(keys->at("open") == true);
+
+	// Resetting the setting shows every MIDI port again, as it is, and opens the hidden input.
+	run(client, "settings.reset", {{"key", "midi.portSettings"}});
+	remote = run(client, "midi.ports").at("ports")[0];
+	CHECK(remote.at("visible") == true);
+	CHECK(remote.at("inAllInputs") == true);
+	CHECK(remote.at("open") == true);
 }
 
 TEST_CASE("MIDI input reaches the monitor at its frame position once the device processes blocks", "[unit]")

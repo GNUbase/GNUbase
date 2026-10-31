@@ -30,6 +30,7 @@
 
 namespace gnubase::engine
 {
+	class CommandContext;
 	class Engine;
 	struct RenderSnapshot;
 
@@ -81,6 +82,9 @@ namespace gnubase::engine
 
 		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
 		void setChase(const MidiChase& chase);
+
+		// Command thread, after the user settings changed: the MIDI ports follow their settings (MidiPorts).
+		void applyPortSettings() { m_midi.applySettings(); }
 
 		// Any thread but the audio thread, without waiting: the project cursor (Transport::position).
 		time::Samples position() const { return m_transport.position(); }
@@ -154,9 +158,10 @@ namespace gnubase::engine
 		int64_t recordOffset() const;               // from the device's latency and the record shift
 		bool updateLatency(const Json& parameters); // audio.updateLatency; true if anything changed
 		Json devices() const;
-		Json ports() const;                   // audio.ports
-		Json setPort(const Json& parameters); // audio.setPort
-		// Where m_portSettings keeps a port of the device: its backend, device id, direction and name.
+		Json ports() const;                    // audio.ports
+		Json setPort(CommandContext& context); // audio.setPort
+		// Where the user setting audio.portSettings keeps a port of the device: its backend, device id, direction and
+		// name.
 		std::string portKey(bool input, const std::string& name) const;
 		void setProcessing(const Json& parameters);
 		// Workers for the device's format and the processing settings, as many as get real-time priority. Throws
@@ -237,14 +242,6 @@ namespace gnubase::engine
 		std::atomic<bool> m_waitingForDevice{false}; // m_lost, for that thread
 		std::condition_variable m_reconnectWake;
 		std::thread m_reconnectThread;
-
-		// The user's names for ports and which ones they see (audio.setPort), by portKey, for every device opened.
-		struct PortSettings
-		{
-			std::string showAs; // empty: the system name
-			bool visible = true;
-		};
-		std::map<std::string, PortSettings> m_portSettings;
 
 		// Latency compensation and monitoring (docs/features/latency-and-monitoring.md), set with the device.
 		int64_t m_recordShift = 0;

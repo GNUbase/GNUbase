@@ -159,6 +159,7 @@ namespace gnubase::engine
 		chase.pitchBend = m_settings->get(settings::g_midiChasePitchBend);
 		chase.beyondParts = m_settings->get(settings::g_midiChaseBeyondParts);
 		m_audio->setChase(chase);
+		m_audio->applyPortSettings();
 	}
 
 	void Engine::registerCommand(CommandInfo info, CommandHandler handler)

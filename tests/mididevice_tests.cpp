@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/midiports.h"
+#include "engine/settings/usersettings.h"
 #include "platform/hosttime.h"
 #include "platform/midi/dummyport.h"
 #include "platform/midi/inputqueue.h"
@@ -678,10 +679,11 @@ TEST_CASE("only inputs that belong to all MIDI inputs reach them", "[unit]")
 	backend.addLoopback("Pads");
 	std::vector<std::unique_ptr<Backend>> backends;
 	backends.push_back(std::move(dummy));
-	gnubase::engine::MidiPorts ports(std::move(backends));
+	gnubase::engine::settings::Store settings(gnubase::engine::settings::userFormat());
+	settings.set("midi.portSettings", gnubase::engine::Json{{"dummy/in/Pads", {{"inAllInputs", false}}}});
+	gnubase::engine::MidiPorts ports(settings, std::move(backends));
 	CHECK(ports.refresh());
 	CHECK(!ports.refresh()); // nothing changed
-	ports.setPort({{"id", "Pads"}, {"input", true}, {"inAllInputs", false}});
 
 	const auto keys = backend.openOutput("Keys");
 	const auto pads = backend.openOutput("Pads");
