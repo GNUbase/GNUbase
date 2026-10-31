@@ -54,7 +54,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 37> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 50> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -95,6 +95,20 @@ namespace gnubase::app
 			{"edit.snap", "Switches snap on or off.", "J"},
 			{"edit.snapPointToCursor", "Sets the snap point of the selected audio events at the project cursor.",
 				nullptr},
+			// The tools (docs/features/tools.md), with the reference's keys (manual p. 1569).
+			{"tool.objectSelection", "Chooses the object selection tool in the project window.", "1"},
+			{"tool.rangeSelection", "Chooses the range selection tool in the project window.", "2"},
+			{"tool.split", "Chooses the split tool in the project window.", "3"},
+			{"tool.glue", "Chooses the glue tool in the project window.", "4"},
+			{"tool.erase", "Chooses the erase tool in the project window.", "5"},
+			{"tool.zoom", "Chooses the zoom tool in the project window.", "6"},
+			{"tool.mute", "Chooses the mute tool in the project window.", "7"},
+			{"tool.draw", "Chooses the draw tool in the project window.", "8"},
+			{"tool.play", "Chooses the play tool in the project window.", "9"},
+			{"tool.line", "Chooses the line tool in the project window.", nullptr},
+			{"tool.previous", "Chooses the project window's previous tool.", "F9"},
+			{"tool.next", "Chooses the project window's next tool.", "F10"},
+			{"tool.combineSelectionTools", "Switches combining the selection tools on or off.", "Alt+Shift+1"},
 		}};
 	}
 
