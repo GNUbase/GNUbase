@@ -132,7 +132,7 @@ TEST_CASE("the pool panel lists folders and clips, renames them and moves clips 
 	// A clip dragged onto a folder goes into it.
 	app.ui().drag(std::nullopt, {"#pool listitem span.used", rowIndex(app, k), std::nullopt},
 		{"#pool listitem span.used", rowIndex(app, d), std::nullopt});
-	REQUIRE(app.waitUntil([&app, &d, &k] { return rows(app).size() == 5 && rows(app)[2] == k; }));
+	REQUIRE(app.waitUntil([&app, &k] { return rows(app).size() == 5 && rows(app)[2] == k; }));
 	CHECK(rows(app)[1] == d);
 
 	// New Folder adds a folder inside the selected one; Remove Unused Media removes the clips no event plays.
