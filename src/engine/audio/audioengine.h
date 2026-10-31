@@ -72,10 +72,11 @@ namespace gnubase::engine
 
 		// Registers audio.devices, audio.setDevice, audio.ports, audio.setProcessing, audio.get, audio.performance,
 		// audio.resetPerformance, audio.simulateOverload, audio.simulateDeviceLoss, audio.reset, audio.updateLatency,
-		// audio.controlPanel, audio.render, audio.start, audio.stop, audio.capture and audio.captureInput, the transport commands
-		// transport.play, transport.stop, transport.toggle, transport.record, transport.locate, transport.set,
-		// transport.exchangeLocators and transport.get, and the MIDI port commands (MidiPorts). audio.analyze,
-		// audio.compare and audio.record are in analysiscommands.cpp, midi.inject and midi.capture in miditap.cpp.
+		// audio.controlPanel, audio.render, audio.start, audio.stop, audio.capture and audio.captureInput, the
+		// transport commands transport.play, transport.stop, transport.toggle, transport.record, transport.locate,
+		// transport.set, transport.exchangeLocators and transport.get, and the MIDI port commands (MidiPorts).
+		// audio.analyze, audio.compare and audio.record are in analysiscommands.cpp, midi.inject and midi.capture in
+		// miditap.cpp.
 		void registerCommands(Engine& engine);
 
 		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).

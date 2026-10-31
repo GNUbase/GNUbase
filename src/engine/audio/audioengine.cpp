@@ -270,6 +270,8 @@ namespace gnubase::engine
 				if (m_engine != nullptr)
 					m_engine->broadcast("audio.changed", status());
 			}
+			else if (m_lost)
+				m_parameters.erase("sampleRate"); // it returns at the new rate if it supports it
 		}
 		if (m_device && (m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring))
 			rebuild();
@@ -1313,10 +1315,15 @@ namespace gnubase::engine
 				statusSchema(), false},
 			[this](CommandContext& context)
 			{
+				if (context.parameters().at("connected").get<bool>())
+				{
+					m_dummyUnplugged = false; // always, even after another backend replaced the lost dummy device
+					return status();
+				}
 				require(m_dummy != nullptr || (m_lost && m_backend == "dummy"),
 					"only the dummy device simulates device loss");
-				m_dummyUnplugged = !context.parameters().at("connected").get<bool>();
-				if (m_dummyUnplugged && m_dummy != nullptr)
+				m_dummyUnplugged = true;
+				if (m_dummy != nullptr)
 					m_dummy->requestReset(); // as a driver does whose device went away
 				return status();
 			});

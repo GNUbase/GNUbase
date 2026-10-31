@@ -632,6 +632,39 @@ TEST_CASE("a backend's device that went away is opened again with its settings o
 	CHECK(run(client, "audio.get").at("device").at("backend") == "dummy");
 }
 
+TEST_CASE("the unplugged dummy device plugs in again after another backend replaced it", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "audio.setDevice");
+	run(client, "audio.simulateDeviceLoss", {{"connected", false}});
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
+	driver->connected = false;
+	reject(client, "audio.setDevice", {{"backend", "fake"}}); // closes the lost dummy device, then fails
+	CHECK(run(client, "audio.get").at("lost").is_null());
+	run(client, "audio.simulateDeviceLoss", {{"connected", true}});
+	CHECK(run(client, "audio.setDevice").at("device").at("backend") == "dummy");
+}
+
+TEST_CASE("a device lost while the project's sample rate changes returns at the new rate", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "fake"}, {"sampleRate", 48000.0}});
+	driver->connected = false;
+	driver->device.load()->requestReset();
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
+	run(client, "project.set", {{"sampleRate", 44100.0}});
+	driver->connected = true;
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("lost").is_null() && !data.at("device").is_null(); }));
+	const Json device = run(client, "audio.get").at("device");
+	CHECK(device.at("sampleRate") == 44100.0);
+	CHECK(device.at("sampleRateMismatch") == false);
+}
+
 TEST_CASE("the device follows the project's sample rate where it can and reports a mismatch where it can't", "[unit]")
 {
 	Engine engine(fakeBackends(std::make_shared<FakeDriver>()));
