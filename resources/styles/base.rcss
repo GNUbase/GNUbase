@@ -971,6 +971,93 @@ listview.history
 	box-sizing: border-box;
 }
 
+/* The pool (ui/poolpanel.h): a toolbar, the info line, the column headers and a tree of folders and clips that fills
+   the rest of its panel. The Media column takes the room the others leave. Rows have the state classes .folder or
+   .clip, and clips .missing and .unused. */
+.pool
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.pool-toolbar button
+{
+	margin-right: 4dp;
+}
+
+.pool-info, .pool-header
+{
+	display: flex;
+	flex-shrink: 0;
+	padding: 2dp 10dp;
+	white-space: nowrap;
+}
+
+.pool-info span
+{
+	margin-right: 16dp;
+}
+
+listview.pool-list
+{
+	flex: 1;
+}
+
+.pool-list listitem
+{
+	display: flex;
+	padding-top: 1dp;
+}
+
+.pool-header span, .pool-list listitem span
+{
+	display: block;
+	padding-top: 1dp;
+	flex-shrink: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	padding-right: 6dp;
+}
+
+.pool-header span.name, .pool-list listitem span.name
+{
+	flex: 1;
+	min-width: 80dp;
+}
+
+.pool-list span.name input
+{
+	width: 100%;
+	height: 20dp;
+	padding-top: 2dp;
+	padding-bottom: 2dp;
+}
+
+.pool-header span.used, .pool-list span.used
+{
+	width: 40dp;
+}
+
+.pool-header span.status, .pool-list span.status
+{
+	width: 64dp;
+}
+
+.pool-header span.info, .pool-list span.info
+{
+	width: 160dp;
+}
+
+.pool-header span.path, .pool-list span.path
+{
+	width: 260dp;
+}
+
 /* The color picker: the saturation and value field, the hue strip, the old and new colors' swatches, and the value
    fields with their labels. Code places the thumbs and gives the field and the swatches their data's colors. */
 colorpicker
