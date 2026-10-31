@@ -67,8 +67,7 @@ namespace gnubase::test
 
 	void UiApp::start(std::vector<std::unique_ptr<midi::Backend>> midiBackends)
 	{
-		m_engine =
-			std::make_unique<engine::Engine>(audio::makeBackends(), m_settings.path(), std::move(midiBackends));
+		m_engine = std::make_unique<engine::Engine>(audio::makeBackends(), m_settings.path(), std::move(midiBackends));
 		std::ostringstream problems;
 		const bool ready = app::setUpEngine(*m_engine, app::Options{}, problems); // the dummy device, the app's default
 		INFO(problems.str());
