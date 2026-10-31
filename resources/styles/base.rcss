@@ -925,6 +925,19 @@ splitter.column .splitter-grip-horizontal
 	flex: 1 1 0;
 }
 
+/* A setup pane: a menu of toggle buttons that stays open while they are clicked; those of sections are dragged onto
+   each other to reorder the sections. */
+.setup-pane button
+{
+	display: block;
+	margin: 2dp 8dp;
+}
+
+.setup-pane [setup-section]
+{
+	drag: drag-drop;
+}
+
 /* The edit history panel (ui/historypanel.h): a table of the undo steps that fills its panel. Rows of undone steps
    have the state class .undone. */
 listview.history

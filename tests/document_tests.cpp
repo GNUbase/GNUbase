@@ -144,6 +144,81 @@ TEST_CASE("tracks get ids, default names and channels routed to the main output"
 	CHECK(renderChannel(snapshot, group).type == TrackType::Group);
 }
 
+TEST_CASE("track.add routes the new channel as channel.set would: input, output and instrument", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId mic = run(client, "bus.add", {{"direction", "input"}, {"name", "Mic"}, {"channels", 1}})
+							 .at("bus")
+							 .at("id")
+							 .get<ObjectId>();
+	const ObjectId cue = run(client, "bus.add", {{"direction", "output"}, {"name", "Cue"}, {"channels", 2}})
+							 .at("bus")
+							 .at("id")
+							 .get<ObjectId>();
+	const Json group = channelOf(client, addTrack(client, {{"type", "group"}, {"output", cue}}));
+	CHECK(group.at("output") == cue);
+
+	const Json audio =
+		run(client, "track.add", {{"type", "audio"}, {"input", mic}, {"output", group.at("id")}}).at("channel");
+	CHECK(audio.at("input") == mic);
+	CHECK(audio.at("output") == group.at("id"));
+	CHECK(channelOf(client, audio.at("track").get<ObjectId>()) == audio);
+	CHECK(run(client, "track.add", {{"type", "audio"}, {"input", 0}}).at("channel").at("input") == 0);
+
+	const Json instrument =
+		run(client, "track.add", {{"type", "instrument"}, {"instrument", "testSynth"}}).at("channel");
+	CHECK(instrument.at("instrument") == "testSynth");
+	const Json midi = run(client, "track.add", {{"type", "midi"}, {"output", instrument.at("id")}}).at("channel");
+	CHECK(midi.at("output") == instrument.at("id"));
+	const Json folder =
+		run(client, "track.add", {{"type", "folder"}, {"groupChannel", true}, {"output", cue}}).at("channel");
+	CHECK(folder.at("output") == cue);
+
+	// What channel.set refuses, track.add refuses too, and adds nothing.
+	const Json before = run(client, "project.get");
+	CHECK_THAT(reject(client, "track.add", {{"type", "midi"}, {"input", mic}}), ContainsSubstring("input"));
+	CHECK_THAT(reject(client, "track.add", {{"type", "audio"}, {"output", mic}}), ContainsSubstring("input bus"));
+	CHECK_THAT(reject(client, "track.add", {{"type", "audio"}, {"output", audio.at("id")}}),
+		ContainsSubstring("group channel"));
+	CHECK_THAT(reject(client, "track.add", {{"type", "midi"}, {"output", group.at("id")}}),
+		ContainsSubstring("instrument channel"));
+	CHECK_THAT(
+		reject(client, "track.add", {{"type", "audio"}, {"instrument", "testSynth"}}), ContainsSubstring("instrument"));
+	CHECK_THAT(reject(client, "track.add", {{"type", "folder"}, {"output", cue}}), ContainsSubstring("no channel"));
+	CHECK_THAT(reject(client, "track.add", {{"type", "marker"}, {"output", cue}}), ContainsSubstring("no channel"));
+	CHECK(run(client, "project.get") == before);
+}
+
+TEST_CASE("ruler tracks have a time format and no channel", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const Json ruler = run(client, "track.add", {{"type", "ruler"}});
+	CHECK(ruler.at("channel").is_null());
+	CHECK(ruler.at("track").at("name") == "Ruler 01");
+	CHECK(ruler.at("track").at("timeFormat") == "barsBeats");
+	CHECK(ruler.at("track").at("channel") == 0);
+
+	const ObjectId folder = addTrack(client, {{"type", "folder"}});
+	const ObjectId timecode = addTrack(client, {{"type", "ruler"}, {"timeFormat", "timecode"}, {"parent", folder}});
+	CHECK(track(client, timecode).at("timeFormat") == "timecode");
+	CHECK(track(client, timecode).at("name") == "Ruler 02");
+	run(client, "track.set", {{"track", timecode}, {"timeFormat", "seconds"}});
+	CHECK(track(client, timecode).at("timeFormat") == "seconds");
+	run(client, "history.undo"); // a change of the time format alone is an undo step
+	CHECK(track(client, timecode).at("timeFormat") == "timecode");
+	run(client, "history.redo");
+	CHECK(track(client, timecode).at("timeFormat") == "seconds");
+	CHECK_FALSE(track(client, folder).contains("timeFormat")); // only ruler tracks have one
+
+	CHECK_THAT(reject(client, "track.add", {{"type", "audio"}, {"timeFormat", "seconds"}}), ContainsSubstring("ruler"));
+	CHECK_THAT(reject(client, "track.set", {{"track", folder}, {"timeFormat", "seconds"}}), ContainsSubstring("ruler"));
+	reject(client, "track.add", {{"type", "ruler"}, {"timeFormat", "minutes"}});
+	CHECK_THAT(reject(client, "track.add", {{"type", "ruler"}, {"format", "mono"}}), ContainsSubstring("no audio"));
+	CHECK(engine.renderSnapshots().acquire().channels.empty());
+}
+
 TEST_CASE("every change is announced to every client", "[unit]")
 {
 	Engine engine;

@@ -246,6 +246,10 @@ namespace gnubase::audio
 		// The devices there are now. Throws DeviceError if the driver can't list them.
 		virtual std::vector<DeviceInfo> devices() = 0;
 
+		// False if a device's unavailableReason says only why it last failed to open, not whether its hardware is
+		// there now (ASIO, whose drivers tell that only when they are opened).
+		virtual bool listsPresence() const { return true; }
+
 		// Opens a device stopped. Throws DeviceError if it can't, e.g. for an unknown device or an unsupported sample
 		// rate, block size or clock source.
 		virtual std::unique_ptr<Device> open(const DeviceConfig& config) = 0;

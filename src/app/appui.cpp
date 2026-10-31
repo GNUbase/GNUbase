@@ -158,6 +158,17 @@ namespace gnubase::app
 			}});
 		for (const char* command : {"file.importAudio", "file.importMidi"})
 			m_keys.enableWhen(command, [this](ui::Window&, Rml::Element*) { return m_eventDisplay != nullptr; });
+		m_keys.add({"project.addTrack", "Opens the add track dialog.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "add-track.rml"); }});
+		// For documents' buttons and menu items: gnubase.ui.command{command = "project.addTrack"} runs a key command
+		// in the main window, as its keys would.
+		m_lua.addFunction("ui.command",
+			[this](const engine::Json& parameters)
+			{
+				m_keys.run(parameters.at("command").get<std::string>(),
+					parameters.value("parameters", engine::Json::object()), m_main, nullptr);
+				return engine::Json::object();
+			});
 		// Quitting closes every window, so it waits until the event that asked for it is done with them.
 		m_keys.add({"file.quit", "Quits GNUbase.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { m_shell.quit(); }); }});
@@ -230,12 +241,28 @@ namespace gnubase::app
 			});
 	}
 
-	Rml::ElementDocument& AppUi::openStudioSetup(ui::Window& window) const
+	Rml::ElementDocument& AppUi::openStudioSetup(ui::Window& window)
 	{
-		const std::filesystem::path file = m_resources / "ui" / "studio-setup.rml";
+		// One dialog: a second document would share the first one's StudioSetup table in the UI's Lua. A closed
+		// document has left its context, until the context releases it.
+		auto* open = dynamic_cast<Rml::ElementDocument*>(m_studioSetup.get());
+		if (open != nullptr && open->GetParentNode() != nullptr)
+		{
+			open->Show(Rml::ModalFlag::Modal, Rml::FocusFlag::Keep);
+			open->PullToFront();
+			return *open;
+		}
+		Rml::ElementDocument& document = openDialog(window, "studio-setup.rml");
+		m_studioSetup = document.GetObserverPtr();
+		return document;
+	}
+
+	Rml::ElementDocument& AppUi::openDialog(ui::Window& window, const char* name) const
+	{
+		const std::filesystem::path file = m_resources / "ui" / name;
 		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
 		if (document == nullptr)
-			throw std::runtime_error("cannot load the studio setup dialog from " + file.u8string());
+			throw std::runtime_error("cannot load the dialog " + file.u8string());
 		document->Show(Rml::ModalFlag::Modal);
 		return *document;
 	}

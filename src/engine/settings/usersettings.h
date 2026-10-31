@@ -21,6 +21,7 @@ namespace gnubase::engine::settings
 	inline constexpr Key<std::string> g_audioAutoMonitoring{"audio.autoMonitoring"};
 	inline constexpr Key<std::string> g_audioBackend{"audio.backend"};
 	inline constexpr Key<std::string> g_audioDevice{"audio.device"};
+	inline constexpr Key<std::string> g_audioFallbackDevice{"audio.fallbackDevice"};
 	inline constexpr Key<double> g_audioSampleRate{"audio.sampleRate"};
 	inline constexpr Key<int64_t> g_audioBlockSize{"audio.blockSize"};
 	inline constexpr Key<bool> g_midiChaseNotes{"midi.chaseNotes"};

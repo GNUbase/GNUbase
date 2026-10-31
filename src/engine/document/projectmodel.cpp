@@ -53,6 +53,7 @@ namespace gnubase::engine
 			{TrackType::Group, "group", "Group"},
 			{TrackType::Effect, "effect", "FX"},
 			{TrackType::Marker, "marker", "Marker"},
+			{TrackType::Ruler, "ruler", "Ruler"},
 		};
 
 		const TrackTypeName& trackTypeEntry(TrackType type)
@@ -706,6 +707,40 @@ namespace gnubase::engine
 				{time::TimeBase::Linear, start + length}, event.position.base, project.tempo, project.sampleRate);
 		}
 
+		// The input, output and instrument in the parameters, if any, for channel.set and track.add.
+		void route(const Project& project, const Channel& channel, Channel& changed, const Json& parameters)
+		{
+			const TrackType type = project.trackById.at(channel.track).type;
+			if (parameters.contains("input"))
+			{
+				changed.input = parameters.at("input").get<ObjectId>();
+				require(type == TrackType::Audio || changed.input == 0, "only audio tracks have an input");
+				const Bus* bus = busOrNull(project, changed.input);
+				require(changed.input == 0 || (bus != nullptr && bus->direction == BusDirection::Input),
+					"input must be an input bus");
+			}
+			if (parameters.contains("output"))
+			{
+				changed.output = parameters.at("output").get<ObjectId>();
+				checkOutput(project, changed, changed.output);
+			}
+			if (parameters.contains("instrument"))
+			{
+				changed.instrument = parameters.at("instrument").get<std::string>();
+				require(type == TrackType::Instrument || changed.instrument.empty(),
+					"only an instrument track's channel plays an instrument");
+				if (!changed.instrument.empty())
+				{
+					const processors::BuiltinInfo* info = processors::findBuiltin(changed.instrument);
+					require(info != nullptr, "no built-in processor " + changed.instrument);
+					require(info->instrument, changed.instrument + " is not an instrument");
+				}
+				// Another instrument starts with its parameters at their defaults.
+				if (changed.instrument != channel.instrument)
+					changed.instrumentParameters.clear();
+			}
+		}
+
 		// Commands.
 
 		Json addTrack(Project& project, CommandContext& context)
@@ -722,10 +757,17 @@ namespace gnubase::engine
 				require(countTracks(project, TrackType::Marker) < g_maxMarkerTracks,
 					"a project has at most " + std::to_string(g_maxMarkerTracks) + " marker tracks");
 			}
-			const bool hasChannel = (type != TrackType::Folder && type != TrackType::Marker) || groupChannel;
+			const bool hasChannel =
+				(type != TrackType::Folder && type != TrackType::Marker && type != TrackType::Ruler) || groupChannel;
 			const bool hasAudio = hasChannel && type != TrackType::Midi;
 			require(hasAudio || (!parameters.contains("channels") && !parameters.contains("format")),
 				"this track has no audio channels");
+			require(hasChannel ||
+					(!parameters.contains("input") && !parameters.contains("output") &&
+						!parameters.contains("instrument")),
+				"this track has no channel");
+			require(
+				type == TrackType::Ruler || !parameters.contains("timeFormat"), "only ruler tracks have a time format");
 			const ChannelFormat format =
 				hasAudio ? channelFormat(parameters, ChannelFormat::Stereo) : ChannelFormat::None;
 
@@ -736,6 +778,8 @@ namespace gnubase::engine
 			track.color = color(parameters, {});
 			track.timeBase = timeBaseFromName(parameters.value("timeBase", "musical"));
 			track.parent = parent;
+			if (type == TrackType::Ruler)
+				track.timeFormat = parameters.value("timeFormat", g_rulerTimeFormats[0]);
 
 			// New tracks play through the main output, or through the folder's group channel when added to one.
 			std::optional<Channel> channel;
@@ -759,6 +803,12 @@ namespace gnubase::engine
 			std::vector<ObjectId>& list = siblings(project, parent);
 			list.insert(list.begin() + static_cast<std::ptrdiff_t>(index), track.id);
 			project.trackById[track.id] = track;
+			// Routing is checked with the track in place; a failure restores the project.
+			if (channel)
+			{
+				route(project, *channel, project.channels.at(channel->id), parameters);
+				channel = project.channels.at(channel->id);
+			}
 
 			Json result = {{"track", toJson(track)}, {"channel", channel ? toJson(*channel) : Json(nullptr)}};
 			context.emit("track.added", result);
@@ -772,9 +822,12 @@ namespace gnubase::engine
 			const Json& parameters = context.parameters();
 			Track& track = find(project.trackById, parameters.at("track").get<ObjectId>(), "track");
 			const std::string newColor = color(parameters, track.color);
+			require(track.type == TrackType::Ruler || !parameters.contains("timeFormat"),
+				"only ruler tracks have a time format");
 			if (parameters.contains("name"))
 				track.name = parameters.at("name").get<std::string>();
 			track.color = newColor;
+			track.timeFormat = parameters.value("timeFormat", track.timeFormat);
 			if (parameters.contains("timeBase"))
 			{
 				const time::TimeBase base = timeBaseFromName(parameters.at("timeBase").get<std::string>());
@@ -877,34 +930,7 @@ namespace gnubase::engine
 				require(type != TrackType::Midi, "a MIDI channel has no audio channels");
 				changed.format = channelFormat(parameters, channel.format);
 			}
-			if (parameters.contains("input"))
-			{
-				changed.input = parameters.at("input").get<ObjectId>();
-				require(type == TrackType::Audio || changed.input == 0, "only audio tracks have an input");
-				const Bus* bus = busOrNull(project, changed.input);
-				require(changed.input == 0 || (bus != nullptr && bus->direction == BusDirection::Input),
-					"input must be an input bus");
-			}
-			if (parameters.contains("output"))
-			{
-				changed.output = parameters.at("output").get<ObjectId>();
-				checkOutput(project, changed, changed.output);
-			}
-			if (parameters.contains("instrument"))
-			{
-				changed.instrument = parameters.at("instrument").get<std::string>();
-				require(type == TrackType::Instrument || changed.instrument.empty(),
-					"only an instrument track's channel plays an instrument");
-				if (!changed.instrument.empty())
-				{
-					const processors::BuiltinInfo* info = processors::findBuiltin(changed.instrument);
-					require(info != nullptr, "no built-in processor " + changed.instrument);
-					require(info->instrument, changed.instrument + " is not an instrument");
-				}
-				// Another instrument starts with its parameters at their defaults.
-				if (changed.instrument != channel.instrument)
-					changed.instrumentParameters.clear();
-			}
+			route(project, channel, changed, parameters);
 			for (const char* key : {"volume", "pan", "panner", "panLeft", "panRight", "panBypass"})
 				if (parameters.contains(key))
 					require(changed.format != ChannelFormat::None, "a MIDI channel has no volume or pan");
@@ -2209,8 +2235,11 @@ namespace gnubase::engine
 		const Json stringSchema = {{"type", "string"}};
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json noResult = Json::object();
-		const Json trackTypes = enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker"});
+		const Json trackTypes =
+			enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker", "ruler"});
 		const Json timeBases = enumSchema({"musical", "linear"});
+		const Json timeFormats =
+			enumSchema(std::vector<std::string>(g_rulerTimeFormats.begin(), g_rulerTimeFormats.end()));
 		const Json formats = enumSchema(formatNames());
 		const Json color = {{"type", {"string", "null"}}};
 
@@ -2440,15 +2469,16 @@ namespace gnubase::engine
 		add(engine,
 			{"track.add", 1,
 				"Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks "
-				"(default: "
-				"last). Audio channels default to stereo; format or channels set another format, as in bus.add. "
-				"Folders "
-				"get a channel only with groupChannel. New channels "
-				"play through the main output, or through the folder's group channel. Marker tracks have no channel "
-				"and stay at the top level; a project has at most 10, and a new one becomes the active marker track.",
+				"(default: last). Audio channels default to stereo; format or channels set another format, as in "
+				"bus.add. Folders get a channel only with groupChannel. New channels play through the main output, "
+				"or through the folder's group channel, and audio tracks record from the first input bus; input, "
+				"output and instrument set them as channel.set does. Marker tracks have no channel and stay at the "
+				"top level; a project has at most 10, and a new one becomes the active marker track. Ruler tracks "
+				"have no channel either; timeFormat is the time format their ruler shows (default barsBeats).",
 				objectSchema({{"type", trackTypes}, {"name", stringSchema}, {"color", color}, {"parent", idSchema},
 								 {"index", integerSchema}, {"format", formats}, {"channels", integerSchema},
-								 {"timeBase", timeBases}, {"groupChannel", booleanSchema}},
+								 {"timeBase", timeBases}, {"groupChannel", booleanSchema}, {"input", idSchema},
+								 {"output", idSchema}, {"instrument", stringSchema}, {"timeFormat", timeFormats}},
 					{"type"}),
 				{{"type", "object"},
 					{"properties", {{"track", {{"type", "object"}}}, {"channel", {{"type", {"object", "null"}}}}}},
@@ -2457,9 +2487,10 @@ namespace gnubase::engine
 			addTrack);
 		add(engine,
 			{"track.set", 1,
-				"Changes a track's name, color (#rrggbb, or null for the default) or time base. A new time base keeps "
-				"its events, parts and markers at the same time.",
-				objectSchema({{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases}},
+				"Changes a track's name, color (#rrggbb, or null for the default), time base or, for ruler tracks, "
+				"time format. A new time base keeps its events, parts and markers at the same time.",
+				objectSchema({{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
+								 {"timeFormat", timeFormats}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);
