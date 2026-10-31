@@ -228,7 +228,12 @@
 			local clockSources = device.clockSources or {}
 			local clock = ""
 			if #clockSources > 0 then
+				-- Some drivers flag none as current: an empty option then, which Apply doesn't send, instead of the
+				-- select falling back to the first source.
 				local options = {}
+				if device.clockSource == nil then
+					options[1] = option("", "", true)
+				end
 				for _, name in ipairs(clockSources) do
 					options[#options + 1] = option(name, name, name == device.clockSource)
 				end

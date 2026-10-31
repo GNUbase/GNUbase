@@ -192,13 +192,23 @@ namespace gnubase::app
 		return *m_eventDisplay;
 	}
 
-	Rml::ElementDocument& AppUi::openStudioSetup(ui::Window& window) const
+	Rml::ElementDocument& AppUi::openStudioSetup(ui::Window& window)
 	{
+		// One dialog: a second document would share the first one's StudioSetup table in the UI's Lua. A closed
+		// document has left its context, until the context releases it.
+		auto* open = dynamic_cast<Rml::ElementDocument*>(m_studioSetup.get());
+		if (open != nullptr && open->GetParentNode() != nullptr)
+		{
+			open->Show(Rml::ModalFlag::Modal, Rml::FocusFlag::Keep);
+			open->PullToFront();
+			return *open;
+		}
 		const std::filesystem::path file = m_resources / "ui" / "studio-setup.rml";
 		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
 		if (document == nullptr)
 			throw std::runtime_error("cannot load the studio setup dialog from " + file.u8string());
 		document->Show(Rml::ModalFlag::Modal);
+		m_studioSetup = document->GetObserverPtr();
 		return *document;
 	}
 }
