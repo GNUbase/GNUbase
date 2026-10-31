@@ -185,7 +185,7 @@ namespace gnubase::engine
 		{
 			RenderChannel& channel = snapshot->channels[static_cast<size_t>(trackChannel.at(part.track))];
 			// A silent MIDI track's notes would still reach its instrument.
-			if (!part.mute && plays(part.track) && !(channel.silent && channel.type == TrackType::Midi))
+			if (!part.mute && plays(part.track) && (!channel.silent || channel.type != TrackType::Midi))
 				compilePart(project, part, channel);
 		}
 
