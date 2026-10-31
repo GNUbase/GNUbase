@@ -12,6 +12,15 @@
 
 #include <CoreMIDI/CoreMIDI.h>
 #endif
+#ifdef __linux__
+#include "platform/audio/jack.h"
+#include "platform/jacklibrary.h"
+#include "platform/midi/alsaseq.h"
+#include "platform/midi/jackmidi.h"
+
+#include <alsa/asoundlib.h>
+#include <poll.h>
+#endif
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -20,6 +29,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -52,6 +62,9 @@ namespace
 	class Inbox
 	{
 	public:
+		// Room for what tests send: receivers may run in real-time code, which doesn't allocate.
+		Inbox() { m_messages.reserve(64); }
+
 		Receiver receiver()
 		{
 			return [this](const MidiMessage& message, HostTime time)
@@ -179,7 +192,9 @@ namespace
 		MIDIEndpointRef m_source = 0;
 		MIDIEndpointRef m_destination = 0;
 	};
+#endif
 
+#if defined(__APPLE__) || defined(__linux__)
 	bool hasPort(Backend& backend, const std::string& name)
 	{
 		const std::vector<PortInfo> ports = backend.ports();
@@ -198,6 +213,125 @@ namespace
 		}
 		return true;
 	}
+#endif
+
+#ifdef __linux__
+	bool required(const char* variable)
+	{
+		const char* value = std::getenv(variable);
+		return value != nullptr && std::string(value) == "1";
+	}
+
+	// A sequencer client with a port that passes what it receives on to its subscribers, as the kernel's Midi Through
+	// port does, without snd-seq-dummy.
+	class SeqLoopback
+	{
+	public:
+		explicit SeqLoopback(const char* name)
+		{
+			REQUIRE(snd_seq_open(&m_seq, "default", SND_SEQ_OPEN_DUPLEX, SND_SEQ_NONBLOCK) >= 0);
+			snd_seq_set_client_name(m_seq, name);
+			m_port = snd_seq_create_simple_port(m_seq, name,
+				SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ | SND_SEQ_PORT_CAP_WRITE |
+					SND_SEQ_PORT_CAP_SUBS_WRITE,
+				SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
+			REQUIRE(m_port >= 0);
+			m_thread = std::thread([this] { pass(); });
+		}
+
+		~SeqLoopback()
+		{
+			m_stopping = true;
+			m_thread.join();
+			snd_seq_close(m_seq);
+		}
+
+		SeqLoopback(const SeqLoopback&) = delete;
+		SeqLoopback& operator=(const SeqLoopback&) = delete;
+
+	private:
+		void pass()
+		{
+			std::vector<pollfd> descriptors(static_cast<size_t>(snd_seq_poll_descriptors_count(m_seq, POLLIN)));
+			snd_seq_poll_descriptors(m_seq, descriptors.data(), static_cast<unsigned>(descriptors.size()), POLLIN);
+			while (!m_stopping)
+			{
+				poll(descriptors.data(), descriptors.size(), 10);
+				snd_seq_event_t* event = nullptr;
+				while (snd_seq_event_input(m_seq, &event) >= 0 && event != nullptr)
+				{
+					snd_seq_ev_set_source(event, m_port);
+					snd_seq_ev_set_subs(event);
+					snd_seq_ev_set_direct(event);
+					snd_seq_event_output_direct(m_seq, event);
+				}
+			}
+		}
+
+		snd_seq_t* m_seq = nullptr;
+		int m_port = 0;
+		std::atomic<bool> m_stopping{false};
+		std::thread m_thread;
+	};
+
+	// A JACK client "gnubase-test-midi" that passes what its MIDI input "in" receives on to its MIDI output "out", in
+	// the same cycle.
+	class JackLoopback
+	{
+	public:
+		// Null if libjack is missing or no JACK server runs.
+		static std::unique_ptr<JackLoopback> start()
+		{
+			const gnubase::JackLibrary* jack = nullptr;
+			try
+			{
+				jack = &gnubase::JackLibrary::get("libjack.so.0");
+			}
+			catch (const std::exception&)
+			{
+				return nullptr;
+			}
+			jack_client_t* client = jack->clientOpen("gnubase-test-midi", JackNoStartServer, nullptr);
+			return client != nullptr ? std::make_unique<JackLoopback>(*jack, client) : nullptr;
+		}
+
+		JackLoopback(const gnubase::JackLibrary& jack, jack_client_t* client) : m_jack(jack), m_client(client)
+		{
+			m_in = jack.portRegister(m_client, "in", JACK_DEFAULT_MIDI_TYPE, JackPortIsInput, 0);
+			m_out = jack.portRegister(m_client, "out", JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput, 0);
+			REQUIRE(m_in != nullptr);
+			REQUIRE(m_out != nullptr);
+			jack.setProcessCallback(m_client, &JackLoopback::process, this);
+			REQUIRE(jack.activate(m_client) == 0);
+		}
+
+		~JackLoopback() { m_jack.clientClose(m_client); } // removes its ports
+
+		JackLoopback(const JackLoopback&) = delete;
+		JackLoopback& operator=(const JackLoopback&) = delete;
+
+	private:
+		static int process(jack_nframes_t frames, void* data)
+		{
+			const auto& self = *static_cast<JackLoopback*>(data);
+			void* in = self.m_jack.portGetBuffer(self.m_in, frames);
+			void* out = self.m_jack.portGetBuffer(self.m_out, frames);
+			self.m_jack.midiClearBuffer(out);
+			const uint32_t count = self.m_jack.midiGetEventCount(in);
+			for (uint32_t i = 0; i < count; ++i)
+			{
+				jack_midi_event_t event{};
+				if (self.m_jack.midiEventGet(&event, in, i) == 0)
+					self.m_jack.midiEventWrite(out, event.time, event.buffer, event.size);
+			}
+			return 0;
+		}
+
+		const gnubase::JackLibrary& m_jack;
+		jack_client_t* m_client = nullptr;
+		jack_port_t* m_in = nullptr;
+		jack_port_t* m_out = nullptr;
+	};
 #endif
 
 	struct Taken
@@ -383,6 +517,131 @@ TEST_CASE("the CoreMIDI backend receives MIDI 2.0 sources as MIDI 1.0 messages",
 }
 #endif
 
+#ifdef __linux__
+// Loops back through a sequencer client the test creates itself, and through the kernel's Midi Through port when
+// snd-seq-dummy is loaded. Skipped without a sequencer (/dev/snd/seq), as in WSL and containers, unless
+// GNUBASE_REQUIRE_ALSA_SEQ=1: CI loads the sequencer's modules and requires it.
+TEST_CASE("the ALSA sequencer backend keeps the port contract and notices ports coming and going", "[integration]")
+{
+	if (!std::filesystem::exists("/dev/snd/seq"))
+	{
+		if (required("GNUBASE_REQUIRE_ALSA_SEQ"))
+			FAIL("there is no ALSA sequencer (/dev/snd/seq)");
+		SKIP("there is no ALSA sequencer here (/dev/snd/seq): sudo modprobe snd-seq-dummy");
+	}
+	const std::unique_ptr<Backend> backend = makeAlsaSeqBackend();
+	CHECK(backend->name() == "alsa");
+	std::atomic<int> changes{0};
+	backend->onPortsChanged([&changes] { ++changes; });
+	const std::string name = "GNUbase test loopback";
+	CHECK(!hasPort(*backend, name));
+	{
+		const SeqLoopback loopback(name.c_str());
+		REQUIRE(eventually([&] { return hasPort(*backend, name); }));
+		CHECK(eventually([&changes] { return changes > 0; }));
+		const std::vector<PortInfo> ports = backend->ports();
+		const auto port =
+			std::find_if(ports.begin(), ports.end(), [&name](const PortInfo& info) { return info.name == name; });
+		REQUIRE(port != ports.end());
+		CHECK(port->id == name + ":" + name);
+		checkContract(*backend, name, name);
+	}
+	CHECK(eventually([&] { return !hasPort(*backend, name); }));
+
+	const std::string through = "Midi Through Port-0";
+	if (hasPort(*backend, through))
+		checkContract(*backend, through, through);
+	else
+		WARN("snd-seq-dummy isn't loaded: the Midi Through loopback isn't checked");
+}
+
+// Against jackd; skipped where no JACK server runs, unless GNUBASE_REQUIRE_JACK=1 (CI starts jackd with its dummy
+// driver, tools/start-jack.sh).
+TEST_CASE("the JACK MIDI backend keeps the port contract and notices ports coming and going", "[integration]")
+{
+	std::unique_ptr<JackLoopback> loopback = JackLoopback::start();
+	if (!loopback)
+	{
+		if (required("GNUBASE_REQUIRE_JACK"))
+			FAIL("no JACK server runs here");
+		SKIP("no JACK server runs here");
+	}
+	const std::unique_ptr<gnubase::audio::Device> device = gnubase::audio::makeJackBackend()->open({});
+	const std::unique_ptr<Backend> backend = makeJackMidiBackend();
+	CHECK(backend->name() == "jack");
+	std::atomic<int> changes{0};
+	backend->onPortsChanged([&changes] { ++changes; });
+	const std::string in = "gnubase-test-midi:in";
+	const std::string out = "gnubase-test-midi:out";
+	REQUIRE(hasPort(*backend, in));
+	loopback.reset(); // before GNUbase's client has ports of its own, which would report changes too
+	CHECK(eventually([&] { return !hasPort(*backend, in); }));
+	CHECK(eventually([&changes] { return changes > 0; }));
+
+	loopback = JackLoopback::start();
+	REQUIRE(loopback);
+	REQUIRE(eventually([&] { return hasPort(*backend, in) && hasPort(*backend, out); }));
+	checkContract(*backend, in, out);
+}
+
+// Where libjack is PipeWire's, a server always answers, and its MIDI ports are the ALSA backend's too: JACK MIDI is on
+// only while a JACK audio device is open.
+TEST_CASE("the JACK MIDI backend has ports only while a JACK audio device is open", "[integration]")
+{
+	const std::unique_ptr<JackLoopback> loopback = JackLoopback::start();
+	if (!loopback)
+	{
+		if (required("GNUBASE_REQUIRE_JACK"))
+			FAIL("no JACK server runs here");
+		SKIP("no JACK server runs here");
+	}
+	const std::unique_ptr<Backend> backend = makeJackMidiBackend();
+	std::atomic<int> changes{0};
+	backend->onPortsChanged([&changes] { ++changes; });
+	const std::string in = "gnubase-test-midi:in";
+	CHECK(backend->ports().empty());
+	Inbox inbox;
+	CHECK_THROWS_AS(backend->openInput(in, inbox.receiver()), std::runtime_error);
+	CHECK_THROWS_AS(backend->openOutput(in), std::runtime_error);
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	CHECK(changes == 0);
+
+	std::unique_ptr<gnubase::audio::Device> device = gnubase::audio::makeJackBackend()->open({});
+	CHECK(hasPort(*backend, in));
+	CHECK(eventually([&changes] { return changes > 0; }));
+
+	const int before = changes;
+	device.reset();
+	CHECK(backend->ports().empty());
+	CHECK(eventually([&] { return changes > before; }));
+
+	// Reopening the device, as audio.setDevice and audio.reset do, keeps the client and its open ports, and the refresh
+	// the change report causes runs once the device is open again: GNUbase's own ports never come back as listed ones.
+	device = gnubase::audio::makeJackBackend()->open({});
+	const auto input = backend->openInput("gnubase-test-midi:out", inbox.receiver());
+	const auto output = backend->openOutput(in);
+	std::this_thread::sleep_for(std::chrono::milliseconds(100)); // the ports' registrations are reported
+	const int opened = changes;
+	device.reset();
+	REQUIRE(eventually([&] { return changes > opened; }));
+	std::this_thread::sleep_for(std::chrono::milliseconds(50)); // the watcher has seen no device open
+	device = gnubase::audio::makeJackBackend()->open({});
+	for (const PortInfo& port : backend->ports())
+		CHECK(port.id.rfind("gnubase-midi", 0) != 0);
+	output->send(noteOn(60), hostTime());
+	CHECK(inbox.waitFor(1));
+}
+
+TEST_CASE("the JACK MIDI backend has no ports without libjack", "[unit]")
+{
+	const std::unique_ptr<Backend> backend = makeJackMidiBackend("libjack-that-isnt-there.so");
+	CHECK(backend->ports().empty());
+	Inbox inbox;
+	CHECK_THROWS_AS(backend->openInput("system:midi_capture_1", inbox.receiver()), std::runtime_error);
+	CHECK_THROWS_AS(backend->openOutput("system:midi_playback_1"), std::runtime_error);
+}
+#endif
+
 TEST_CASE("MIDI status bytes tell how long their message is", "[unit]")
 {
 	CHECK(messageSize(0x90) == 3); // note on
@@ -404,6 +663,11 @@ TEST_CASE("the MIDI backends of this build come with the dummy backend last", "[
 	const std::vector<std::unique_ptr<Backend>> backends = makeBackends();
 	REQUIRE(!backends.empty());
 	CHECK(backends.back()->name() == "dummy");
+#ifdef __linux__
+	REQUIRE(backends.size() == 3);
+	CHECK(backends[0]->name() == "alsa");
+	CHECK(backends[1]->name() == "jack");
+#endif
 }
 
 TEST_CASE("only inputs that belong to all MIDI inputs reach them", "[unit]")
