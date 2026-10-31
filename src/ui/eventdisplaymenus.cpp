@@ -205,7 +205,7 @@ namespace gnubase::ui
 		}
 		else if (menu == m_lineMenu)
 		{
-			const std::string mode = item->GetAttribute<Rml::String>("line-mode", "");
+			const auto mode = item->GetAttribute<Rml::String>("line-mode", "");
 			for (size_t i = 0; i < g_lineModes.size(); ++i)
 				if (mode == g_lineModes[i])
 					setLineMode(static_cast<LineMode>(i));

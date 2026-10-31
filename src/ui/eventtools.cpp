@@ -140,7 +140,7 @@ namespace gnubase::ui
 		m_pressTool = m_tool;
 		// Combined, the object selection tool selects ranges in a lane's upper half (reference manual p. 253).
 		if (m_combine && m_tool == Tool::ObjectSelection && lane &&
-			(y + m_view.top) / (g_trackHeight * m_view.trackZoom) - static_cast<double>(*lane) < 0.5)
+			((y + m_view.top) / (g_trackHeight * m_view.trackZoom)) - static_cast<double>(*lane) < 0.5)
 			m_pressTool = Tool::RangeSelection;
 		const Shown* shown = eventAt(x, y);
 		m_dragEvent = shown == nullptr ? 0 : shown->id;
@@ -232,14 +232,18 @@ namespace gnubase::ui
 			if (!moved)
 			{
 				if (m_pressTool == Tool::ObjectSelection && modifiers("select.setCursorPosition"))
+				{
 					m_binding.send("transport.locate", {{"position", samples(pressTime)}});
+				}
 				else if (m_pressTool == Tool::Zoom) // Alt zooms out (reference manual p. 101)
 				{
 					remember();
 					zoomAround(m_pressed == "alt" ? 2.0 : 0.5, pressTime, m_pressX);
 				}
 				else if (m_pressTool == Tool::Mute && onEvent)
+				{
 					edit("event.set", {{"events", {pressed->id}}, {"mute", !pressed->mute}});
+				}
 				break;
 			}
 			const double from = m_view.start + (std::min(m_pressX, x) * m_view.scale);
