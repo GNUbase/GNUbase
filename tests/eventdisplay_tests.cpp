@@ -386,7 +386,7 @@ namespace
 		if (list.size() != count || fixture.binding.waiting("media.peaks") != 0)
 			return false;
 		const auto ratio = static_cast<double>(fixture.window.dpRatio());
-		for (ui::Waveform* wave : list)
+		for (const ui::Waveform* wave : list)
 		{
 			if (wave->channels().empty())
 				return false;
@@ -441,14 +441,15 @@ TEST_CASE("a waveform asks media.peaks again only when the view needs other colu
 		if (from + (end - from) < end)
 			start = x;
 	}
-	REQUIRE(start);
-	fixture.display.scrollTo(*start);
+	REQUIRE(start.has_value());
+	const double at = start.value_or(0.0);
+	fixture.display.scrollTo(at);
 	REQUIRE(fixture.waitUntil([&] { return settled(fixture, 1); }));
 
 	// Views that show the same, as auto-scroll sets them while playing, ask nothing.
 	for (int i = 0; i < 5; ++i)
 	{
-		fixture.display.scrollTo(*start);
+		fixture.display.scrollTo(at);
 		CHECK(fixture.binding.waiting("media.peaks") == 0);
 		REQUIRE(fixture.waitUntil([&] { return fixture.binding.waiting("media.peaks") == 0; }));
 	}
