@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/document/channelformat.h"
+#include "engine/document/snap.h"
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
@@ -194,6 +195,9 @@ namespace gnubase::engine
 		Fade fadeIn;         // from the event's start
 		Fade fadeOut;        // up to the event's end
 		Crossfade crossfade; // from the event before; replaces the fade in, and from's fade out
+		// Where in the clip (its sample frames) the event snaps (reference manual p. 105); none, or outside the
+		// event: its start.
+		std::optional<time::Samples> snapPoint;
 	};
 
 	inline constexpr double g_minEventVolume = -144.0;
@@ -387,6 +391,8 @@ namespace gnubase::engine
 		// not part of undo.
 		midi::QuantizeSettings quantize;
 		bool autoQuantize = false;
+		// Snap and grid (#87): settings, not part of undo.
+		SnapSettings snap;
 
 		ObjectId newId() { return nextId++; }
 
@@ -463,9 +469,9 @@ namespace gnubase::engine
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
-				   a.fadeOut, a.crossfade) ==
+				   a.fadeOut, a.crossfade, a.snapPoint) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
-				b.fadeOut, b.crossfade);
+				b.fadeOut, b.crossfade, b.snapPoint);
 	}
 
 	inline bool operator==(const NoteTiming& a, const NoteTiming& b)

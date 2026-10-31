@@ -1,0 +1,36 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- A panel in a window of its own (docs/features/docking.md): ui::Docking gives the document the panel's title and
+     fills #panel-content with it. Dock, or closing the window, puts the panel back into its zone. -->
+<rml>
+<head>
+	<title>Panel</title>
+	<style>
+		body
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+
+		#toolbar .spacer
+		{
+			flex: 1 1 0;
+		}
+
+		#panel-content
+		{
+			position: relative;
+			flex: 1 1 0;
+		}
+	</style>
+</head>
+<body class="docking">
+	<div id="toolbar" class="toolbar">
+		<div class="spacer"/>
+		<button id="dock" title="Dock the panel in its zone">Dock</button>
+	</div>
+	<div id="panel-content" class="panel-content"/>
+</body>
+</rml>

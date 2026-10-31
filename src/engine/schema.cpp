@@ -85,6 +85,11 @@ namespace gnubase::engine
 				{
 					return member + " is not allowed";
 				}
+				else if (additional != schema.end() && additional->is_object())
+				{
+					if (std::string problem = validate(item, *additional, member); !problem.empty())
+						return problem;
+				}
 			}
 		}
 
