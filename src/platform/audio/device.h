@@ -202,8 +202,9 @@ namespace gnubase::audio
 
 	protected:
 		// For backends, when their driver asks for a reset. Not on the audio thread. The handler runs on a copy,
-		// outside the lock: what it sets off may destroy this device before it returns.
-		void requestReset() const { call(m_reset); }
+		// outside the lock: what it sets off may destroy this device before it returns. False if no handler is set
+		// yet, as before the engine has read a device it just opened: a backend asks again later then (#371).
+		bool requestReset() const { return call(m_reset); }
 
 		// For backends, when the latency they report changes. Not on the audio thread; the same as requestReset.
 		void reportLatencyChange() const { call(m_latencyChange); }
@@ -212,15 +213,17 @@ namespace gnubase::audio
 		void reportOverload() noexcept { m_overloads.fetch_add(1, std::memory_order_relaxed); }
 
 	private:
-		void call(const std::function<void()>& slot) const
+		bool call(const std::function<void()>& slot) const
 		{
 			std::function<void()> handler;
 			{
 				const std::scoped_lock lock(m_handlerMutex);
 				handler = slot;
 			}
-			if (handler)
-				handler();
+			if (!handler)
+				return false;
+			handler();
+			return true;
 		}
 
 		mutable std::mutex m_handlerMutex; // guards m_reset and m_latencyChange

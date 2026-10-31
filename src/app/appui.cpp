@@ -54,7 +54,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 36> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 38> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -92,6 +92,10 @@ namespace gnubase::app
 			{"edit.selectFromCursorToEnd", "Selects the events that start after the project cursor.", nullptr},
 			{"edit.selectUnderCursor", "Selects the events at the project cursor.", nullptr},
 			{"edit.locatorsToSelection", "Sets the locators around the selected events.", "P"},
+			// Snap and grid (docs/features/snap.md).
+			{"edit.snap", "Switches snap on or off.", "J"},
+			{"edit.snapPointToCursor", "Sets the snap point of the selected audio events at the project cursor.",
+				nullptr},
 		}};
 
 		// The transport controls' displays that the enter.* commands edit, with the reference's keys (manual

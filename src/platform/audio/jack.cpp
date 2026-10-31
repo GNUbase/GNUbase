@@ -149,8 +149,7 @@ namespace gnubase::audio
 				JackDevice::stop(); // not virtually: a derived device would be gone already
 				m_watching = false;
 				m_watcher.join();
-				if (m_requestedBufferSize != m_previousBufferSize)
-					m_jack.setBufferSize(m_client->get(), m_previousBufferSize); // as GNUbase found it
+				giveBufferSizeBack();
 				m_client.reset(); // before the members its callbacks use go
 			}
 
@@ -215,6 +214,22 @@ namespace gnubase::audio
 			}
 
 		private:
+			// Undoes the device's buffer size request, unless another client has set a size since (#371). jackd gets
+			// the size it had back. PipeWire's JACK layer may have turned the request into the graph's
+			// clock.force-quantum, which would outlast the client, so a size of 0 clears it instead (#389); it may not
+			// have followed the request yet, and an inactive client sees the size it saw last.
+			void giveBufferSizeBack() const
+			{
+				if (m_requestedBufferSize == m_previousBufferSize)
+					return;
+				jack_client_t* const handle = m_client->get();
+				const uint32_t size = m_jack.getBufferSize(handle);
+				if (m_jack.pipeWire && (size == m_requestedBufferSize || size == m_previousBufferSize))
+					m_jack.setBufferSize(handle, 0);
+				else if (!m_jack.pipeWire && size == m_requestedBufferSize)
+					m_jack.setBufferSize(handle, m_previousBufferSize);
+			}
+
 			// PipeWire hides the ports of a node while it is suspended, as for a moment when the graph follows the
 			// device's buffer size request on activation: such ports come back within a few cycles.
 			void connect(const std::string& from, const std::string& to)
@@ -258,7 +273,7 @@ namespace gnubase::audio
 
 				const rt::ScopedRealtimeContext realtime;
 				const rt::ScopedDenormalsDisabled denormals;
-				const HostTime started = hostTime();
+				const HostTime started = m_jack.cycle(m_client->get()).start;
 				for (uint32_t done = 0; done < frames;)
 				{
 					const uint32_t block = std::min(frames - done, m_format.blockSize);
@@ -313,19 +328,24 @@ namespace gnubase::audio
 				static_cast<JackDevice*>(data)->m_shutdown = true;
 			}
 
-			// Asks for a reset once, when the server goes away, changes its sample rate or buffer size, a physical port
-			// goes away or the latency changes.
+			// Asks for a reset when the server goes away, changes its sample rate or buffer size, a physical port goes
+			// away or the latency changes: once a handler took it, and until then every 20 ms, since the engine sets
+			// the handler only after it has read the device it opened (#371).
 			void watch()
 			{
+				const char* reason = nullptr;
 				while (m_watching)
 				{
 					std::this_thread::sleep_for(std::chrono::milliseconds(20));
-					const char* reason = whyReset();
 					if (reason == nullptr)
-						continue;
-					logging::info("The JACK device asks for a reset: {}", reason);
-					requestReset();
-					return;
+					{
+						reason = whyReset();
+						if (reason == nullptr)
+							continue;
+						logging::info("The JACK device asks for a reset: {}", reason);
+					}
+					if (requestReset())
+						return; // the handler may have closed the device
 				}
 			}
 
@@ -334,10 +354,13 @@ namespace gnubase::audio
 				if (m_shutdown)
 					return "the server went away";
 				// Polled too, as PipeWire calls the callbacks only once the graph runs at a new rate or size. It says 0
-				// while the client is inactive.
+				// while the client is inactive. The process callback plays silence from now on.
 				const uint32_t rate = m_jack.getSampleRate(m_client->get());
 				if (m_rateChanged || (rate != 0 && static_cast<double>(rate) != m_format.sampleRate))
+				{
+					m_rateChanged = true;
 					return "the sample rate changed";
+				}
 				const uint32_t size = m_jack.getBufferSize(m_client->get());
 				if (size != 0 && size != m_openedBufferSize)
 				{

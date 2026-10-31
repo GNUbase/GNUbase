@@ -174,13 +174,16 @@ namespace gnubase::midi
 			void process(uint32_t frames) noexcept
 			{
 				const rt::ScopedRealtimeContext realtime;
-				const HostTime start = hostTime();
+				const JackLibrary::Cycle cycle = m_jack.cycle(m_client);
+				const HostTime start = cycle.start;
 				const double rate = m_jack.getSampleRate(m_client);
 				if (frames == 0 || rate <= 0.0)
 					return;
-				// What arrived during the cycle before: its frames span the time from that cycle's start to this one's.
-				const HostTime previous =
-					m_lastStart != 0 ? m_lastStart : start - static_cast<HostTime>(frames * 1e9 / rate);
+				// What arrived during the cycle before: its frames span the time from that cycle's start to this one's,
+				// a period as the server's filtered clock has it (#402), or the time since the callback last ran.
+				HostTime previous = start - cycle.period;
+				if (cycle.period == 0)
+					previous = m_lastStart != 0 ? m_lastStart : start - static_cast<HostTime>(frames * 1e9 / rate);
 				m_lastStart = start;
 				const size_t inputs = m_inputsUsed.load();
 				for (size_t i = 0; i < inputs; ++i)

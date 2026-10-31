@@ -24,9 +24,10 @@ namespace gnubase::engine
 	void followAutomation(Project& project, ObjectId track, const time::Position& from, const time::Position& end,
 		const time::Position& to, CommandContext& context);
 
-	// After a command (eventedits.cpp): the first shared copy of a MIDI part whose notes or controllers changed gives
-	// them to its other copies, and a copy without others is no longer shared.
-	void syncSharedParts(const Project& before, Project& project, CommandContext& context);
+	// After a command, and after each command of a transaction (eventedits.cpp): the first shared copy of a MIDI part
+	// whose notes or controllers changed since before gives them to its other copies, and a copy without others is no
+	// longer shared.
+	void syncSharedParts(const std::map<ObjectId, MidiPart>& before, Project& project, CommandContext& context);
 
 	// The project document, its commands, its undo history and its render snapshots. The commands run on the engine's
 	// command thread, the only thread that touches the document; every command that changes it records an undo step

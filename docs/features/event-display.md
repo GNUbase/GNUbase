@@ -31,7 +31,8 @@ joins it there. Hiding the overview line, a strip of the window, hides the displ
     .project-cursor             across the ruler and the lanes
 ```
 
-Selecting and editing events, with the mouse and with the edit commands, is in [parts-and-events.md](parts-and-events.md).
+Selecting and editing events, with the mouse and with the edit commands, is in [parts-and-events.md](parts-and-events.md);
+snapping them, with the toolbar's snap controls, in [snap.md](snap.md).
 
 `resources/styles/base.rcss` lays it out; the themes color it ([themes.md](themes.md)). Code sets only what comes from
 data: the canvas elements' attributes `start` (seconds at the left edge), `scale` (seconds per dp) and `scroll-top`,

@@ -36,10 +36,20 @@ namespace gnubase::engine
 			MidiPart* part = nullptr;
 
 			explicit operator bool() const { return audio != nullptr || part != nullptr; }
-			ObjectId id() const { return audio != nullptr ? audio->id : part->id; }
-			ObjectId track() const { return audio != nullptr ? audio->track : part->track; }
-			bool locked() const { return audio != nullptr ? audio->lock : part->lock; }
-			time::Position& position() const { return audio != nullptr ? audio->position : part->position; }
+			ObjectId id() const { return audio != nullptr ? audio->id : midi().id; }
+			ObjectId track() const { return audio != nullptr ? audio->track : midi().track; }
+			bool locked() const { return audio != nullptr ? audio->lock : midi().lock; }
+			time::Position& position() const { return audio != nullptr ? audio->position : midi().position; }
+
+		private:
+			// The MIDI part of an item that isn't an audio event. Checked, so the static analyzer sees that one of the
+			// two is always set.
+			MidiPart& midi() const
+			{
+				if (part == nullptr)
+					throw CommandError("an event is neither an audio event nor a MIDI part");
+				return *part;
+			}
 		};
 
 		Item findItem(Project& project, ObjectId id)
@@ -566,12 +576,17 @@ namespace gnubase::engine
 			const Shift shift = shiftFrom(parameters);
 			const bool start = parameters.at("edge").get<std::string>() == "start";
 			const bool moveContents = parameters.value("mode", std::string("normal")) == "moveContents";
+			// Normal sizing of audio events cuts the audio at the edge: there it can snap to a zero crossing.
+			const bool zero = parameters.value("zeroCrossing", false) && !moveContents;
 			for (const Item& item : items)
 			{
+				time::Position to = shifted(project, start ? item.position() : endOf(project, item), shift, false);
+				if (zero && item.audio != nullptr)
+					to = {time::TimeBase::Linear, zeroCrossing(project, *item.audio, samples(project, to))};
 				if (start)
-					setStart(project, item, shifted(project, item.position(), shift, false), moveContents);
+					setStart(project, item, to, moveContents);
 				else
-					setEnd(project, item, shifted(project, endOf(project, item), shift, false), moveContents);
+					setEnd(project, item, to, moveContents);
 				announce(context, item, "changed");
 			}
 			return {{"events", idsOf(items)}};
@@ -585,6 +600,7 @@ namespace gnubase::engine
 			positions.erase(std::unique(positions.begin(), positions.end()), positions.end());
 			require(!positions.empty(), "positions must not be empty");
 			const bool splitNotes = parameters.value("splitNotes", false);
+			const bool zero = parameters.value("zeroCrossing", false);
 			// Without events, every unlocked event and part that a position cuts.
 			std::vector<Item> items;
 			if (parameters.contains("events"))
@@ -605,7 +621,16 @@ namespace gnubase::engine
 			{
 				Item current = item;
 				bool split = false;
-				for (const time::Samples at : positions)
+				for (const time::Samples position : positions)
+				{
+					// Only a position that cuts the event moves to a zero crossing, one that still cuts it.
+					time::Samples at = position;
+					if (zero && current.audio != nullptr)
+					{
+						const EventSpan span = eventSpan(project, *current.audio);
+						if (position > span.start && position < span.end)
+							at = zeroCrossing(project, *current.audio, position, true);
+					}
 					if (const Item right = splitAt(project, current, at, splitNotes, context))
 					{
 						announce(context, right, "added");
@@ -613,6 +638,7 @@ namespace gnubase::engine
 						current = right;
 						split = true;
 					}
+				}
 				if (split)
 					announce(context, item, "changed");
 			}
@@ -746,6 +772,113 @@ namespace gnubase::engine
 			return {{"events", std::move(result)}};
 		}
 
+		// Snap Point to Cursor (reference manual p. 105): audio events snap at position, which must be inside them.
+		Json setSnapPoints(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			const std::vector<Item> items = itemsFrom(project, parameters, false);
+			const time::Samples at = parameters.contains("position")
+				? parameters.at("position").get<time::Samples>()
+				: context.call("transport.get").at("position").get<time::Samples>();
+			for (const Item& item : items)
+			{
+				require(item.audio != nullptr, "only audio events have snap points");
+				const EventSpan span = eventSpan(project, *item.audio);
+				require(
+					at >= span.start && at < span.end, "the position isn't inside event " + std::to_string(item.id()));
+				item.audio->snapPoint =
+					item.audio->offset + std::llround(static_cast<double>(at - span.start) / span.ratio);
+				announce(context, item, "changed");
+			}
+			return {{"events", idsOf(items)}};
+		}
+
+		// Shuffle (reference manual p. 106): the events, one after the other on a track, go to where position puts
+		// them among the events that adjoin them, which close up and make room, so the row keeps its start and has
+		// no gaps.
+		Json shuffleEvents(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			const std::vector<Item> moved = itemsFrom(project, parameters, true);
+			const ObjectId track = moved[0].track();
+			require(
+				std::all_of(moved.begin(), moved.end(), [track](const Item& item) { return item.track() == track; }),
+				"shuffled events must be on one track");
+			const bool musical = project.trackById.at(track).timeBase == time::TimeBase::Musical;
+			// The track's events by start.
+			std::vector<Item> row;
+			for (auto& [id, event] : project.audioEvents)
+				if (event.track == track)
+					row.push_back({&event, nullptr});
+			for (auto& [id, part] : project.midiParts)
+				if (part.track == track)
+					row.push_back({nullptr, &part});
+			std::sort(row.begin(), row.end(), [&project, musical](const Item& a, const Item& b)
+				{ return inUnit(project, a.position(), musical) < inUnit(project, b.position(), musical); });
+			const auto isMoved = [&moved](const Item& item)
+			{ return std::any_of(moved.begin(), moved.end(), [&item](const Item& m) { return m.id() == item.id(); }); };
+			size_t first = row.size();
+			size_t last = 0;
+			for (size_t i = 0; i < row.size(); ++i)
+				if (isMoved(row[i]))
+				{
+					first = std::min(first, i);
+					last = i;
+				}
+			const auto adjoin = [&project](const Item& before, const Item& after)
+			{
+				return !before.locked() && !after.locked() &&
+					std::abs(samples(project, endOf(project, before)) - samples(project, after.position())) <= 1;
+			};
+			for (size_t i = first; i < last; ++i)
+				require(isMoved(row[i + 1]) && adjoin(row[i], row[i + 1]), "shuffled events must adjoin each other");
+			// The row of adjoining events around them.
+			while (first > 0 && adjoin(row[first - 1], row[first]))
+				--first;
+			while (last + 1 < row.size() && adjoin(row[last], row[last + 1]))
+				++last;
+			const int64_t rowStart = inUnit(project, row[first].position(), musical);
+			const int64_t at =
+				inUnit(project, {time::TimeBase::Linear, parameters.at("position").get<time::Samples>()}, musical);
+			const auto length = [&project, musical](const Item& item)
+			{ return inUnit(project, endOf(project, item), musical) - inUnit(project, item.position(), musical); };
+			// The others close up; the moved events go after each one whose middle they start past. An empty slot
+			// stands for them.
+			std::vector<Item> order;
+			std::vector<Item> block;
+			int64_t x = rowStart;
+			bool placed = false;
+			for (size_t i = first; i <= last; ++i)
+			{
+				if (isMoved(row[i]))
+				{
+					block.push_back(row[i]);
+					continue;
+				}
+				if (!placed && at < x + (length(row[i]) / 2))
+				{
+					order.emplace_back();
+					placed = true;
+				}
+				order.push_back(row[i]);
+				x += length(row[i]);
+			}
+			if (!placed)
+				order.emplace_back();
+			x = rowStart;
+			for (const Item& slot : order)
+				for (const Item& item : slot ? std::vector<Item>{slot} : block)
+				{
+					const int64_t delta = x - inUnit(project, item.position(), musical);
+					x += length(item);
+					if (delta == 0)
+						continue;
+					place(project, item, {delta, musical}, track);
+					announce(context, item, "changed");
+				}
+			return {{"events", idsOf(moved)}};
+		}
+
 		// Schemas.
 
 		Json integer()
@@ -775,7 +908,7 @@ namespace gnubase::engine
 		}
 	}
 
-	void syncSharedParts(const Project& before, Project& project, CommandContext& context)
+	void syncSharedParts(const std::map<ObjectId, MidiPart>& before, Project& project, CommandContext& context)
 	{
 		// The first part of each group whose notes or controllers changed is what the group now holds.
 		std::map<ObjectId, const MidiPart*> sources;
@@ -785,8 +918,8 @@ namespace gnubase::engine
 			if (part.shared == 0)
 				continue;
 			++members[part.shared];
-			const auto old = before.midiParts.find(id);
-			if (old != before.midiParts.end() && old->second.shared == part.shared && sources.count(part.shared) == 0 &&
+			const auto old = before.find(id);
+			if (old != before.end() && old->second.shared == part.shared && sources.count(part.shared) == 0 &&
 				(old->second.notes != part.notes || old->second.controllers != part.controllers))
 				sources[part.shared] = &part;
 		}
@@ -861,12 +994,15 @@ namespace gnubase::engine
 		resizeParameters["events"] = events();
 		resizeParameters["edge"] = {{"type", "string"}, {"enum", {"start", "end"}}};
 		resizeParameters["mode"] = {{"type", "string"}, {"enum", {"normal", "moveContents"}}};
+		resizeParameters["zeroCrossing"] = boolean();
 		addEdit(engine,
 			{"event.resize", 1,
 				"Moves the start or the end (edge) of audio events and MIDI parts by delta project samples or by "
 				"ticks, within the clip and at least a sample frame or a tick long. normal sizing (the default) "
 				"reveals or hides content; moveContents moves the content with the edge. A MIDI part's notes and "
-				"controllers that end up before its start are removed. Locked events don't change. Returns the events.",
+				"controllers that end up before its start are removed. With zeroCrossing, normal sizing moves audio "
+				"events' edges to the nearest point within 50 ms where the audio crosses zero. Locked events don't "
+				"change. Returns the events.",
 				schema(resizeParameters, {"events", "edge"}), eventsResult(), false},
 			"Resize", resizeEvents);
 
@@ -874,9 +1010,10 @@ namespace gnubase::engine
 			{"event.split", 1,
 				"Splits audio events and MIDI parts at positions (project samples): events, or without it every "
 				"unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with "
-				"splitNotes are cut in two. Returns the new events after the splits.",
+				"splitNotes are cut in two. With zeroCrossing, audio events split at the nearest point within 50 ms "
+				"and inside the event where their audio crosses zero. Returns the new events after the splits.",
 				schema({{"events", events()}, {"positions", {{"type", "array"}, {"items", integer()}}},
-						   {"splitNotes", boolean()}},
+						   {"splitNotes", boolean()}, {"zeroCrossing", boolean()}},
 					{"positions"}),
 				eventsResult(), false},
 			"Split", splitEvents);
@@ -910,6 +1047,24 @@ namespace gnubase::engine
 				schema({{"events", events()}}, {"events"}),
 				schema({{"events", {{"type", "array"}, {"items", {{"type", "object"}}}}}}, {"events"}), true},
 			{}, eventInfo);
+
+		addEdit(engine,
+			{"event.setSnapPoint", 1,
+				"Sets audio events' snap point at position (project samples, default the project cursor), which "
+				"must be inside each of them (Snap Point to Cursor): where the event snaps to the grid when it moves, "
+				"and attracts other events. It is a point in the clip, so it stays with the audio when the event is "
+				"resized or split. Returns the events.",
+				schema({{"events", events()}, {"position", integer()}}, {"events"}), eventsResult(), false},
+			"Snap Point to Cursor", setSnapPoints);
+
+		addEdit(engine,
+			{"event.shuffle", 1,
+				"Shuffle (snap type shuffle): events that adjoin each other on one track change places with the "
+				"events that adjoin them. They go where position (project samples, where the first of them would "
+				"start) puts them: after each other event whose middle it is past. The others close up and make room, "
+				"so the row keeps its start and has no gaps. Locked events end the row. Returns the events.",
+				schema({{"events", events()}, {"position", integer()}}, {"events", "position"}), eventsResult(), false},
+			"Shuffle", shuffleEvents);
 
 		addEdit(engine,
 			{"event.toRealCopy", 1,

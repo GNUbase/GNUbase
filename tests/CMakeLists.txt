@@ -72,6 +72,7 @@ add_executable(gnubase-tests
 	sequencing_tests.cpp
 	settings_tests.cpp
 	shell_tests.cpp
+	snap_tests.cpp
 	streaming_tests.cpp
 	studiosetup_tests.cpp
 	stylerules_tests.cpp
