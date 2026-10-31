@@ -301,6 +301,31 @@ Result:
 
 - `event`: object, required
 
+### audioFile
+
+#### `audioFile_import`
+
+Engine command `audioFile.import`.
+
+Imports audio files (WAV, RF64, Wave64, AIFF, FLAC, Ogg Vorbis or MP3) as audio events at position, in sample frames from the project start (default 0). Each file goes on a new audio track named after it, with its channels; with oneTrack, they go one after another on one new track, and with track, one after another on that audio track. copy copies files from outside the project folder into its media folder (see project.location) as a job, returned as job (null without one) with the result media.add's copy job has; the media are pointed at the copies as an undo step of its own. convert writes files at another sample rate than the project's, and MP3 and Ogg Vorbis files, into the media folder as 32-bit float WAV files at the project's sample rate. splitChannels writes each channel of a file with several into the media folder as a mono WAV file, named after the file and its speaker (such as take-L.wav), on a new mono track of its own. copy, convert and splitChannels need a saved project. One undo step. Returns the new tracks, and per file (per channel when split) the media files and events, in the order of files.
+
+Arguments:
+
+- `convert`: boolean
+- `copy`: boolean
+- `files`: array of string, required
+- `oneTrack`: boolean
+- `position`: integer
+- `splitChannels`: boolean
+- `track`: integer
+
+Result:
+
+- `events`: array of integer, required
+- `job`: object or null, required
+- `media`: array of integer, required
+- `tracks`: array of integer, required
+
 ### audio
 
 #### `audio_analyze`

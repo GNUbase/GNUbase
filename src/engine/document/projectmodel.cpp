@@ -1404,72 +1404,6 @@ namespace gnubase::engine
 				require(!sameFile(path, media.path), "path is media file " + idText(id) + "; choose a new file");
 		}
 
-		// Copies media files into the media folder as a job, then points the media at their copies with one
-		// command, a transaction named action, so that it is one undo step. Media whose path changed while the job
-		// copied, or that were removed, keep their path, and their copies are removed. The job's result is
-		// {copied: [{media, from, to}], missing: [{media, path}], changed: [media]}. Returns the job.
-		Json startMediaCopy(Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder,
-			std::string action)
-		{
-			return jobs.start(std::move(kind),
-				[files = std::move(files), folder = std::move(folder), action = std::move(action)](
-					JobContext& job) mutable
-				{
-					copyMedia(files, folder, job);
-					Json relink = Json::array();
-					Json missing = Json::array();
-					std::vector<std::string> made;
-					for (const MediaCopy& file : files)
-					{
-						if (file.to.empty())
-						{
-							missing.push_back({{"media", file.media}, {"path", file.from}});
-							continue;
-						}
-						relink.push_back({{"media", file.media}, {"from", file.from}, {"path", file.to}});
-						made.push_back(file.to);
-					}
-
-					std::set<ObjectId> skipped;
-					try
-					{
-						job.checkCancelled();
-						if (!relink.empty())
-						{
-							const Json command = {{"command", "media.relink"}, {"parameters", {{"files", relink}}}};
-							const Json result = job.command(
-								"history.transaction", {{"description", action}, {"commands", Json::array({command})}});
-							for (const Json& media : result.at("results").at(0).at("skipped"))
-								skipped.insert(media.get<ObjectId>());
-						}
-					}
-					catch (...)
-					{
-						removeFiles(made);
-						throw;
-					}
-
-					Json copied = Json::array();
-					Json changed = Json::array();
-					std::vector<std::string> unused;
-					for (const MediaCopy& file : files)
-					{
-						if (file.to.empty())
-							continue;
-						if (skipped.count(file.media) != 0)
-						{
-							changed.push_back(file.media);
-							unused.push_back(file.to);
-							continue;
-						}
-						copied.push_back({{"media", file.media}, {"from", file.from}, {"to", file.to}});
-					}
-					removeFiles(unused);
-					return Json{{"copied", std::move(copied)}, {"missing", std::move(missing)},
-						{"changed", std::move(changed)}};
-				});
-		}
-
 		Json relinkMedia(Project& project, CommandContext& context)
 		{
 			Json relinked = Json::array();
@@ -1521,7 +1455,7 @@ namespace gnubase::engine
 			require(sampleRate > 0.0, "sampleRate must be positive");
 			try
 			{
-				const AudioFileInfo info = convertSampleRate(source.path, media.path, sampleRate);
+				const AudioFileInfo info = convertSampleRate(source.path, {media.path}, sampleRate);
 				media.sampleRate = info.sampleRate;
 				media.channels = info.channels;
 				media.length = info.frames;
@@ -1963,6 +1897,7 @@ namespace gnubase::engine
 			{"automationPoint.set", "Change automation points"},
 			{"automationPoint.remove", "Remove automation points"},
 			{"midiFile.import", "Import MIDI file"},
+			{"audioFile.import", "Import audio files"},
 		};
 
 		// Empty for commands without a fixed name, such as transactions.
@@ -2759,6 +2694,7 @@ namespace gnubase::engine
 		midi::registerQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
 		registerMidiFileCommands(engine);
+		registerAudioFileCommands(engine, jobs);
 		registerFadeCommands(engine);
 		registerEventEditCommands(engine);
 		registerSnapCommands(*this, engine);

@@ -5,6 +5,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace gnubase::engine
 {
@@ -91,30 +94,48 @@ namespace gnubase::engine
 		return std::llround(static_cast<double>(inputFrames) * toRate / fromRate);
 	}
 
-	AudioFileInfo convertSampleRate(const std::string& input, const std::string& output, double sampleRate)
+	AudioFileInfo convertSampleRate(
+		const std::string& input, const std::vector<std::string>& outputs, double sampleRate)
 	{
 		const auto reader = AudioFileReader::open(input);
 		const AudioFileInfo& source = reader->info();
+		const auto channels = static_cast<size_t>(source.channels);
+		const bool split = outputs.size() != 1;
+		if (split && outputs.size() != channels)
+			throw AudioFileError(
+				input + " has " + std::to_string(channels) + " channels, not " + std::to_string(outputs.size()));
 		WriteOptions options;
 		options.sampleFormat = SampleFormat::Float32;
 		options.sampleRate = sampleRate;
-		options.channels = source.channels;
-		const auto writer = AudioFileWriter::create(output, options);
+		options.channels = split ? 1 : source.channels;
+		std::vector<std::unique_ptr<AudioFileWriter>> writers;
+		for (const std::string& output : outputs)
+			writers.push_back(AudioFileWriter::create(output, options));
 
 		constexpr size_t piece = 8192;
 		Resampler resampler(source.sampleRate, sampleRate, source.channels, piece);
-		std::vector<float> in(piece * static_cast<size_t>(source.channels));
+		std::vector<float> in(piece * channels);
 		std::vector<float> out;
+		std::vector<float> mono;
 		AudioFileInfo written = source;
 		written.format = AudioFormat::Wav;
 		written.sampleFormat = SampleFormat::Float32;
 		written.sampleRate = sampleRate;
+		written.channels = options.channels;
 		written.frames = 0;
 		written.broadcast.reset();
 		const auto flush = [&]
 		{
-			const size_t frames = out.size() / static_cast<size_t>(source.channels);
-			writer->write(out.data(), frames);
+			const size_t frames = out.size() / channels;
+			if (!split)
+				writers.front()->write(out.data(), frames);
+			for (size_t channel = 0; split && channel < channels; ++channel)
+			{
+				mono.resize(frames);
+				for (size_t frame = 0; frame < frames; ++frame)
+					mono[frame] = out[(frame * channels) + channel];
+				writers[channel]->write(mono.data(), frames);
+			}
 			written.frames += static_cast<time::Samples>(frames);
 			out.clear();
 		};
@@ -125,7 +146,8 @@ namespace gnubase::engine
 		}
 		resampler.finish(out);
 		flush();
-		writer->close();
+		for (const auto& writer : writers)
+			writer->close();
 		return written;
 	}
 }
