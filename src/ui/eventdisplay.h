@@ -4,6 +4,7 @@
 #include "engine/engine.h"
 #include "ui/canvas.h"
 #include "ui/enginebinding.h"
+#include "ui/eventwaveforms.h"
 #include "ui/timeformat.h"
 
 #include <RmlUi/Core/EventListener.h>
@@ -182,6 +183,7 @@ namespace gnubase::ui
 		Ruler* m_ruler = nullptr;
 		Rml::Element* m_area = nullptr;
 		EventLanes* m_lanes = nullptr;
+		std::unique_ptr<EventWaveforms> m_waveforms; // over the lanes
 		Rml::Element* m_crossVertical = nullptr;
 		Rml::Element* m_crossHorizontal = nullptr;
 		Rml::Element* m_cursorLine = nullptr;

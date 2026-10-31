@@ -143,6 +143,8 @@ namespace gnubase::ui
 
 		// The columns cover span evenly.
 		void setPeaks(TimeSpan span, std::vector<PeakColumns> channels);
+		const TimeSpan& span() const { return m_span; }
+		const std::vector<PeakColumns>& channels() const { return m_channels; }
 
 	protected:
 		void build(const Frame& frame, Rml::TexturedMeshList& meshes) override;

@@ -452,6 +452,25 @@ Returns:
 - `processing`: object, required
 - `running`: boolean, required
 
+#### `gnubase.audio.updateLatency`
+
+Reads the audio device's latencies again and places recordings by the new record offset (see audio.get); a running device stops for that and starts again. Drivers that learn their latency after the device opens, or whose latency changes with the graph, report the change; the engine then runs this on its own. Only for the dummy device, and only while it is stopped: inputLatency and outputLatency (default: as they are) first change what it reports, and with loopback its round trip, as such a driver's would. Sends audio.changed if anything changed.
+
+Parameters:
+
+- `inputLatency`: integer
+- `outputLatency`: integer
+
+Returns:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `playbackDropouts`: integer, required
+- `position`: integer, required
+- `processing`: object, required
+- `running`: boolean, required
+
 ### audioEvent
 
 #### `gnubase.audioEvent.add`

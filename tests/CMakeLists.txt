@@ -208,6 +208,13 @@ if(WIN32)
 	target_sources(gnubase-tests PRIVATE asio_tests.cpp devicecontract.h)
 	target_include_directories(gnubase-tests SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/ext/asio/common)
 endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	# The JACK tests load libjack to add a client with physical ports, as a sound card has them.
+	find_package(PkgConfig REQUIRED)
+	pkg_check_modules(JACK REQUIRED jack)
+	target_include_directories(gnubase-tests SYSTEM PRIVATE ${JACK_INCLUDE_DIRS})
+	target_link_libraries(gnubase-tests PRIVATE ${CMAKE_DL_LIBS})
+endif()
 gnubase_target_defaults(gnubase-tests)
 # Sanitizer builds are too slow for benchmarks.
 if(GNUBASE_SANITIZERS)

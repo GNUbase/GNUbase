@@ -646,8 +646,14 @@ namespace gnubase::engine
 		m_parameters = parameters;
 		m_directMonitoring = directMonitoring;
 		m_recordShift = recordShift;
-		const audio::DeviceLatency latency = m_device->latency();
-		m_recordOffset = std::max<int64_t>(int64_t{latency.input} + latency.output - recordShift, 0);
+		// Before the latency is read, so that a change the driver reports in between isn't lost.
+		m_device->onLatencyChange(
+			[engine = m_engine]
+			{
+				if (engine != nullptr)
+					engine->post("audio.updateLatency");
+			});
+		m_recordOffset = recordOffset();
 		m_played = PlayedPositions(static_cast<size_t>(m_recordOffset) + m_device->format().blockSize);
 		m_inputPorts = portNames(info.inputs, m_device->format().inputChannels, "Input ");
 		m_outputPorts = portNames(info.outputs, m_device->format().outputChannels, "Output ");
@@ -703,6 +709,50 @@ namespace gnubase::engine
 			}
 			throw;
 		}
+	}
+
+	int64_t AudioEngine::recordOffset() const
+	{
+		const audio::DeviceLatency latency = m_device->latency();
+		return std::max<int64_t>(int64_t{latency.input} + latency.output - m_recordShift, 0);
+	}
+
+	bool AudioEngine::updateLatency(const Json& parameters)
+	{
+		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
+		const bool set = parameters.contains("inputLatency") || parameters.contains("outputLatency");
+		if (set)
+		{
+			require(m_dummy != nullptr, "only the dummy device takes inputLatency and outputLatency");
+			require(!m_device->running(), "the audio device is running");
+			const audio::DeviceLatency current = m_dummy->latency();
+			const auto input = parameters.value("inputLatency", int64_t{current.input});
+			const auto output = parameters.value("outputLatency", int64_t{current.output});
+			require(input >= 0 && input <= g_maxLatency && output >= 0 && output <= g_maxLatency,
+				"inputLatency and outputLatency must be from 0 to 65536");
+			const bool loopback = m_parameters.value("loopback", false);
+			require(!loopback || input + output >= m_device->format().blockSize,
+				"the dummy device's loopback needs inputLatency + outputLatency of at least a block");
+			m_dummy->setLatency({static_cast<uint32_t>(input), static_cast<uint32_t>(output)}, loopback);
+			m_parameters["inputLatency"] = input; // for audio.reset
+			m_parameters["outputLatency"] = output;
+		}
+		const int64_t offset = recordOffset();
+		if (offset == m_recordOffset)
+			return set;
+		// The audio thread reads the offset and the positions it keeps: they change while it stands.
+		const bool running = m_device->running();
+		if (running)
+			stopDevice();
+		m_recordOffset = offset;
+		m_played = PlayedPositions(static_cast<size_t>(m_recordOffset) + m_device->format().blockSize);
+		if (running)
+		{
+			m_midi.clear();
+			startCueing();
+			m_device->start(*this);
+		}
+		return true;
 	}
 
 	Json AudioEngine::devices() const
@@ -1240,6 +1290,25 @@ namespace gnubase::engine
 				reset();
 				Json result = status();
 				context.emit("audio.changed", result);
+				return result;
+			});
+		engine.registerCommand(
+			{"audio.updateLatency", 1,
+				"Reads the audio device's latencies again and places recordings by the new record offset (see "
+				"audio.get); a running device stops for that and starts again. Drivers that learn their latency "
+				"after the device opens, or whose latency changes with the graph, report the change; the engine then "
+				"runs this on its own. Only for the dummy device, and only while it is stopped: inputLatency and "
+				"outputLatency (default: as they are) first change what it reports, and with loopback its round "
+				"trip, as such a driver's would. Sends audio.changed if anything changed.",
+				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
+					"inputLatency": {"type": "integer"}, "outputLatency": {"type": "integer"}}})"),
+				statusSchema(), false},
+			[this](CommandContext& context)
+			{
+				const bool changed = updateLatency(context.parameters());
+				Json result = status();
+				if (changed)
+					context.emit("audio.changed", result);
 				return result;
 			});
 		engine.registerCommand(
