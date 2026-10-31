@@ -251,6 +251,17 @@ TEST_CASE("the object selection tool's modifiers act on events whatever keys the
 	CHECK(f.parts()[2].at("shared") == 0);
 }
 
+TEST_CASE("a double click below the tracks adds a MIDI track", "[unit]")
+{
+	Fixture f;
+	const auto tracks = [&f] { return f.call("project.get").at("tracks"); };
+	f.click(500, 200, {}, 2); // the lanes end 80 dp down
+	REQUIRE(f.waitUntil([&tracks] { return tracks().size() == 3; }));
+	CHECK(tracks()[2].at("type") == "midi");
+	CHECK(tracks()[2].at("name") == "MIDI 02");
+	CHECK(f.parts().size() == 1);
+}
+
 TEST_CASE("the edit commands act on the selection", "[unit]")
 {
 	Fixture f;

@@ -351,8 +351,7 @@ namespace gnubase::engine
 
 				pugi::xml_node structure = root.append_child("Structure");
 				for (const ObjectId id : m_project.tracks)
-					if (m_project.trackById.at(id).type != TrackType::Marker) // markers go into the arrangement
-						writeTrack(structure, m_project.trackById.at(id));
+					writeTrack(structure, m_project.trackById.at(id));
 				// The main mix first: other applications take the first master channel as their main output.
 				std::vector<const Bus*> masters;
 				for (const Bus& bus : m_project.busses)
@@ -422,6 +421,9 @@ namespace gnubase::engine
 
 			void writeTrack(pugi::xml_node parent, const Track& track)
 			{
+				// Markers go into the arrangement; ruler tracks only into GNUbase's entry.
+				if (track.type == TrackType::Marker || track.type == TrackType::Ruler)
+					return;
 				pugi::xml_node node = parent.append_child("Track");
 				node.append_attribute("id") = xmlId("t", track.id).c_str();
 				node.append_attribute("name") = track.name.c_str();

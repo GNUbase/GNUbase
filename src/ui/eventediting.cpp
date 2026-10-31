@@ -524,9 +524,15 @@ namespace gnubase::ui
 				m_drag = Drag::None; // the second press's release does nothing more
 			return;
 		}
-		const std::optional<size_t> found = laneAt(y);
-		if (!found || eventAt(x, y) != nullptr)
+		if (y + m_view.top < 0.0 || eventAt(x, y) != nullptr)
 			return;
+		const std::optional<size_t> found = laneAt(y);
+		// Below the tracks, a new MIDI track (reference manual p. 198, the track list's empty area, #80).
+		if (!found)
+		{
+			m_binding.send("track.add", {{"type", "midi"}});
+			return;
+		}
 		const size_t lane = *found;
 		if (m_laneTypes[lane] != "midi" && m_laneTypes[lane] != "instrument")
 			return;

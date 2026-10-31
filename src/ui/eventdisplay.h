@@ -159,7 +159,7 @@ namespace gnubase::ui
 		// selection. Edits go to the engine as event.* commands; a click selects, a drag moves, Alt and a drag copies
 		// (with Shift too, shared copies), a drag at an event's left or right edge resizes it, Alt and a click splits
 		// there, and a double click on an empty MIDI or instrument lane adds a one-bar part, or one between the
-		// locators when the click is between them.
+		// locators when the click is between them; one below the tracks adds a MIDI track.
 		const std::vector<uint64_t>& selection() const { return m_selection; }
 		void select(std::vector<uint64_t> events);
 		// Sizing moves contents instead of normal sizing when resizing with the mouse (reference manual p. 265).

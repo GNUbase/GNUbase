@@ -10,7 +10,7 @@
      grid types) and #snap-zero-crossing (docs/features/snap.md), and the tools: a button[tool] per tool, whose
      tool-menu opens on a second click (#object-selection-menu, #line-menu), and #combine-selection-tools
      (docs/features/tools.md). Its dialogs are zoom-preset.rml and
-     zoom-presets.rml, next to this file.
+     zoom-presets.rml, next to this file. #add-track opens the add track dialog (add-track.rml).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
 <head>
@@ -30,7 +30,7 @@
 			margin-right: 2dp;
 		}
 
-		#toolbar #auto-scroll-settings, #toolbar #play-tool
+		#toolbar #add-track, #toolbar #auto-scroll-settings, #toolbar #play-tool
 		{
 			margin-right: 12dp;
 		}
@@ -60,6 +60,8 @@
 		<button menu="studio-menu">Studio</button>
 	</div>
 	<div id="toolbar" class="toolbar" strip="toolbar">
+		<!-- Until the track list (#81) has the global track controls, the toolbar has Add Track. -->
+		<button id="add-track" class="icon-only" title="Add Track" onclick="gnubase.ui.command{command = 'project.addTrack'}"><svg class="icon" src="../icons/general-add.svg"/></button>
 		<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
 		<button tool="objectSelection" tool-menu="object-selection-menu" class="icon-only" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
 		<button tool="rangeSelection" class="icon-only" title="Range Selection"><svg class="icon" src="../icons/tool-range.svg"/></button>
