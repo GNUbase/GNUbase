@@ -298,3 +298,45 @@ TEST_CASE("audio.performance counts simulated device overloads and reports the b
 	CHECK(run(client, "audio.performance").at("deviceOverloads") == 1);
 	run(client, "audio.stop");
 }
+
+TEST_CASE("audio.reset keeps the performance measurement and counts the restart as an overload", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}});
+	run(client, "audio.simulateOverload");
+	run(client, "audio.simulateOverload");
+	run(client, "audio.render", {{"frames", 640}});
+	const Json before = run(client, "audio.performance");
+	REQUIRE(before.at("cycles") == 10);
+
+	// The reference manual, p. 1589: a restart of the audio engine is a dropout.
+	run(client, "audio.reset");
+	const Json after = run(client, "audio.performance");
+	CHECK(after.at("deviceOverloads") == 3);
+	CHECK(after.at("overloads") == before.at("overloads").get<uint64_t>() + 1);
+	CHECK(after.at("cycles") == 10);
+	CHECK(after.at("peak") == before.at("peak"));
+
+	// The new device's dropouts add to them, and so does the next restart, also while the device runs.
+	run(client, "audio.simulateOverload");
+	run(client, "audio.render", {{"frames", 640}});
+	const Json more = run(client, "audio.performance");
+	CHECK(more.at("deviceOverloads") == 4);
+	CHECK(more.at("cycles") == 20);
+	run(client, "audio.start");
+	run(client, "audio.reset");
+	CHECK(run(client, "audio.get").at("running") == true);
+	CHECK(run(client, "audio.performance").at("deviceOverloads") == 5);
+	run(client, "audio.stop");
+
+	// Resetting the measurement or choosing a device starts over.
+	CHECK(run(client, "audio.resetPerformance").at("deviceOverloads") == 5);
+	CHECK(run(client, "audio.performance").at("deviceOverloads") == 0);
+	run(client, "audio.reset");
+	CHECK(run(client, "audio.performance").at("deviceOverloads") == 1);
+	run(client, "audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}});
+	const Json fresh = run(client, "audio.performance");
+	CHECK(fresh.at("deviceOverloads") == 0);
+	CHECK(fresh.at("cycles") == 0);
+}
