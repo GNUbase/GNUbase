@@ -163,6 +163,8 @@ namespace
 			{{"track", markers}, {"position", 16 * g_ticksPerQuarter}, {"name", "Bridge"}, {"number", 5}});
 		run(client, "marker.add", {{"track", linear}, {"position", 44100}, {"name", "Take"}}); // 2 beats
 		run(client, "marker.activateTrack", {{"track", markers}});
+		// A ruler track, which only GNUbase's entry keeps.
+		run(client, "track.add", {{"type", "ruler"}, {"timeFormat", "timecode"}});
 		// Channel volume and pan, and automation of each kind.
 		run(client, "channel.set", {{"channel", vocals.at("channel").at("id")}, {"volume", -4.5}});
 		run(client, "channel.set", {{"channel", piano.at("channel").at("id")}, {"volume", 3.0}, {"pan", -0.25}});
@@ -434,12 +436,12 @@ TEST_CASE("without GNUbase's entry, a project is read from project.xml", "[integ
 
 	run(client, "project.load", {{"path", other}});
 	const Json after = run(client, "project.get");
-	// Tracks, their order, types, folders and colors. Marker tracks aren't DAWproject tracks.
+	// Tracks, their order, types, folders and colors. Marker and ruler tracks aren't DAWproject tracks.
 	const auto withoutMarkerTracks = [](const Json& list)
 	{
 		Json tracks = Json::array();
 		for (const Json& track : list)
-			if (track.at("type") != "marker")
+			if (track.at("type") != "marker" && track.at("type") != "ruler")
 				tracks.push_back(track);
 		return tracks;
 	};

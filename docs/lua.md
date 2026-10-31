@@ -2456,7 +2456,7 @@ Returns:
 
 #### `gnubase.track.add`
 
-Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; format or channels set another format, as in bus.add. Folders get a channel only with groupChannel. New channels play through the main output, or through the folder's group channel. Marker tracks have no channel and stay at the top level; a project has at most 10, and a new one becomes the active marker track.
+Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; format or channels set another format, as in bus.add. Folders get a channel only with groupChannel. New channels play through the main output, or through the folder's group channel, and audio tracks record from the first input bus; input, output and instrument set them as channel.set does. Marker tracks have no channel and stay at the top level; a project has at most 10, and a new one becomes the active marker track. Ruler tracks have no channel either; timeFormat is the time format their ruler shows (default barsBeats).
 
 Parameters:
 
@@ -2465,10 +2465,14 @@ Parameters:
 - `format`: one of "mono" | "stereo" | "LRC" | "LRS" | "LRC+LFE" | "LRS+LFE" | "LRCS" | "LRCS+LFE" | "quadro" | "quadro+LFE" | "5.0" | "5.1" | "6.0 cine" | "6.0 music" | "7.0" | "7.1"
 - `groupChannel`: boolean
 - `index`: integer
+- `input`: integer
+- `instrument`: string
 - `name`: string
+- `output`: integer
 - `parent`: integer
 - `timeBase`: one of "musical" | "linear"
-- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect" | "marker", required
+- `timeFormat`: one of "barsBeats" | "seconds" | "timecode" | "samples" | "userFrames"
+- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect" | "marker" | "ruler", required
 
 Returns:
 
@@ -2495,13 +2499,14 @@ Parameters:
 
 #### `gnubase.track.set`
 
-Changes a track's name, color (#rrggbb, or null for the default) or time base. A new time base keeps its events, parts and markers at the same time.
+Changes a track's name, color (#rrggbb, or null for the default), time base or, for ruler tracks, time format. A new time base keeps its events, parts and markers at the same time.
 
 Parameters:
 
 - `color`: string or null
 - `name`: string
 - `timeBase`: one of "musical" | "linear"
+- `timeFormat`: one of "barsBeats" | "seconds" | "timecode" | "samples" | "userFrames"
 - `track`: integer, required
 
 Returns:
