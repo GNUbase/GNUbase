@@ -80,7 +80,6 @@ namespace
 				if (item.at("id") == id)
 					return item;
 			FAIL("no " << kind << " " << id);
-			return {};
 		}
 
 		Json audio(const Json& id) { return object("audioEvents", id); }
