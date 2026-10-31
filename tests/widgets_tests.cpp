@@ -378,10 +378,23 @@ TEST_CASE("text displays show their value, and a double click edits it as text",
 
 	// Escape sends nothing.
 	type("9", "Escape");
-	size_t count = 0;
-	for (const auto& change : page.events->changes)
-		count += change.first == "position" ? 1 : 0;
-	CHECK(count == 1);
+	const auto count = [&page]
+	{
+		size_t found = 0;
+		for (const auto& change : page.events->changes)
+			found += change.first == "position" ? 1 : 0;
+		return found;
+	};
+	CHECK(count() == 1);
+
+	// Nor do Enter or leaving the field while the text is still what the field started with.
+	app.ui().click(std::nullopt, at("#position"), ui::MouseButton::Left, 2, {});
+	app.ui().key(std::nullopt, "Enter");
+	CHECK_FALSE(has(element(app, "#position"), "classes", "editing"));
+	app.ui().click(std::nullopt, at("#position"), ui::MouseButton::Left, 2, {});
+	click(app, "#left");
+	CHECK_FALSE(has(element(app, "#position"), "classes", "editing"));
+	CHECK(count() == 1);
 }
 
 TEST_CASE("meters show the level and the peak in dB", "[ui]")

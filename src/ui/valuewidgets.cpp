@@ -355,12 +355,14 @@ namespace gnubase::ui
 
 			Rml::Element* m_text = nullptr;
 			Rml::ElementFormControlInput* m_input = nullptr;
+			Rml::String m_started; // the text the field started with
 			bool m_editing = false;
 		};
 
 		// <textdisplay>: its value attribute as text, drawn like a display, such as a position in a time format. A
 		// double click edits it as text, with the state class .editing: Enter, or leaving the field, sends change with
-		// the text typed as value (a string), for the document to read and set; Escape keeps the value.
+		// the text typed as value (a string), for the document to read and set, unless the text is still what the field
+		// started with; Escape keeps the value.
 		class TextDisplay final : public Rml::Element
 		{
 		public:
@@ -402,7 +404,8 @@ namespace gnubase::ui
 				{
 					m_editing = true;
 					SetClass("editing", true);
-					m_input->SetValue(GetAttribute<Rml::String>("value", ""));
+					m_started = GetAttribute<Rml::String>("value", "");
+					m_input->SetValue(m_started);
 					m_input->Focus(true);
 					m_input->Select();
 				}
@@ -439,7 +442,7 @@ namespace gnubase::ui
 				SetClass("editing", false);
 				if (GetContext() != nullptr && GetContext()->GetFocusElement() == m_input)
 					m_input->Blur(); // the field keeps the focus
-				if (take)
+				if (take && m_input->GetValue() != m_started)
 				{
 					Rml::Dictionary parameters;
 					parameters["value"] = m_input->GetValue();
@@ -450,6 +453,7 @@ namespace gnubase::ui
 			widgets::Listener m_listener{[this](Rml::Event& event) { listen(event); }};
 			Rml::Element* m_text = nullptr;
 			Rml::ElementFormControlInput* m_input = nullptr;
+			Rml::String m_started; // the text the field started with
 			bool m_editing = false;
 		};
 

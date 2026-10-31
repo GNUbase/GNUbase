@@ -200,6 +200,20 @@ TEST_CASE("the time displays show the cursor in their formats and take positions
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "1.4.1.0"; }));
 	CHECK(shows(app, "#secondary-time") == "00:00:01:12");
 
+	// Leaving a display without typing changes nothing, also at a position off its rounded value.
+	app.call("transport.locate", {{"position", 72001}});
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 72001; }));
+	app.ui().click(std::nullopt, at("#primary-time"), ui::MouseButton::Left, 2, {});
+	CHECK(element(app, "#primary-time").value("classes", Json::array()).dump().find("editing") != std::string::npos);
+	click(app, "#signature");
+	app.ui().click(std::nullopt, at("#left-locator"), ui::MouseButton::Left, 2, {});
+	app.ui().key(std::nullopt, "Enter");
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(transport(app).at("position") == 72001);
+	CHECK(transport(app).at("left") == 0);
+	app.call("transport.locate", {{"position", 72000}});
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 72000; }));
+
 	// The format menus, saved in ui.timeFormats.
 	click(app, "#primary-format");
 	click(app, "menuitem[slot=primary][format=seconds]");
@@ -215,6 +229,16 @@ TEST_CASE("the time displays show the cursor in their formats and take positions
 	CHECK(shows(app, "#secondary-time") == "0:00:01.500");
 	app.ui().key(std::nullopt, ".");
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "0:00:01.500"; }));
+
+	// The secondary format menu.
+	click(app, "#secondary-format");
+	click(app, "menuitem[slot=secondary][format=barsBeats]");
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#secondary-time") == "1.4.1.0"; }));
+	CHECK(element(app, "menuitem[slot=secondary][format=barsBeats]").at("attributes").contains("checked"));
+	CHECK_FALSE(element(app, "menuitem[slot=secondary][format=timecode]").at("attributes").contains("checked"));
+	REQUIRE(app.waitUntil([&app]
+		{ return app.call("settings.get", {{"key", "ui.timeFormats"}}).at("value").at("secondary") == "barsBeats"; }));
+	CHECK(shows(app, "#primary-time") == "0:00:01.500");
 
 	// Another client's change of the setting.
 	app.call("settings.set",
@@ -243,6 +267,36 @@ TEST_CASE("the time displays show the cursor in their formats and take positions
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(transport(app).at("left") == 96000);
 	CHECK(shows(app, "#left-locator") == "2.1.1.0");
+}
+
+TEST_CASE("the transport bar and the transport panel show the same time formats", "[ui]")
+{
+	test::UiApp app({1400, 700});
+	showBar(app);
+	app.ui().key(std::nullopt, "F2");
+	REQUIRE(app.appUi().transportPanel() != nullptr);
+	const ui::WindowId panel = app.appUi().transportPanel()->id();
+	app.call("transport.locate", {{"position", 72000}}); // 1.5 seconds
+	REQUIRE(app.waitUntil([&app, panel] { return shows(app, "#secondary-time", panel) == "00:00:01:12"; }));
+
+	// A format picked in the panel, then exchanged twice with the key, which the bar's controls run.
+	click(app, "#primary-format", panel);
+	click(app, "menuitem[slot=primary][format=seconds]", panel);
+	REQUIRE(app.waitUntil([&app, panel] { return shows(app, "#primary-time", panel) == "0:00:01.500"; }));
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "0:00:01.500"; }));
+	app.ui().key(std::nullopt, ".");
+	REQUIRE(app.waitUntil([&app, panel] { return shows(app, "#primary-time", panel) == "00:00:01:12"; }));
+	app.ui().key(std::nullopt, ".");
+	REQUIRE(app.waitUntil([&app, panel] { return shows(app, "#primary-time", panel) == "0:00:01.500"; }));
+	CHECK(shows(app, "#secondary-time", panel) == "00:00:01:12");
+	CHECK(element(app, "menuitem[slot=primary][format=seconds]", panel).at("attributes").contains("checked"));
+	CHECK(element(app, "menuitem[slot=secondary][format=timecode]", panel).at("attributes").contains("checked"));
+	CHECK_FALSE(element(app, "menuitem[slot=primary][format=timecode]", panel).at("attributes").contains("checked"));
+	CHECK(shows(app, "#primary-time") == "0:00:01.500");
+	CHECK(shows(app, "#secondary-time") == "00:00:01:12");
+	const Json formats = app.call("settings.get", {{"key", "ui.timeFormats"}}).at("value");
+	CHECK(formats.at("primary") == "seconds");
+	CHECK(formats.at("secondary") == "timecode");
 }
 
 TEST_CASE("the tempo and signature fields set the project's first tempo and signature", "[ui]")
