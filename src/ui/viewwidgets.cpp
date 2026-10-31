@@ -227,10 +227,12 @@ namespace gnubase::ui
 				DispatchEvent(Rml::EventId::Change, parameters);
 			}
 
-			// Selects the rows whose values the comma-separated list has.
+			// Selects the rows whose values the comma-separated list has. The keys then move from the first of them,
+			// also when the rows were rebuilt or the selection was set from code, e.g. after an engine event.
 			void select(const std::vector<Rml::Element*>& all, const std::string& value)
 			{
 				m_value = value;
+				m_current = m_anchor = nullptr;
 				std::vector<std::string> values;
 				std::istringstream split(value);
 				for (std::string one; std::getline(split, one, ',');)

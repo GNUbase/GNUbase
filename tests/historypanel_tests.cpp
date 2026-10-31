@@ -118,6 +118,22 @@ TEST_CASE("the edit history panel lists the undo steps and undoes and redoes up 
 	REQUIRE(app.waitUntil([&app]
 		{ return elements(app, "#history tbody tr input").at(2).at("attributes").value("value", "") == "renamed"; }));
 
+	// The arrow keys step from the position another client undid to, also after a new action rebuilt the rows.
+	click(app, "#history tbody tr", 2);
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 2); }));
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 1); }));
+	app.ui().key(std::nullopt, "Down");
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 2); }));
+	CHECK(position(app) == 2);
+	app.call("history.undo");
+	app.call("project.set", {{"name", "Rebuilt"}});
+	REQUIRE(app.waitUntil(
+		[&app] { return elements(app, "#history tbody tr").size() == 3 && has(row(app, 2), "selected"); }));
+	app.ui().key(std::nullopt, "Up");
+	REQUIRE(app.waitUntil([&app] { return position(app) == 1; }));
+	CHECK(app.call("project.get").at("tracks").size() == 1);
+
 	// A new project clears the history.
 	app.call("project.new");
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#history tbody tr").size() == 1; }));
