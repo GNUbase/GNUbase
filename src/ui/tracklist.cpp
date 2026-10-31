@@ -120,8 +120,8 @@ namespace gnubase::ui
 				[this]
 				{
 					// Audio, instrument, MIDI and marker tracks without events, parts, markers or automation, and
-					// folders without tracks; groups and effects are where other tracks play through, ruler tracks
-					// never hold anything.
+					// folders without tracks, unless other tracks play into them; groups and effects are where other
+					// tracks play through, ruler tracks never hold anything.
 					Json commands = Json::array();
 					for (const Row& row : m_tracks)
 						if (row.empty && row.type != "group" && row.type != "effect" && row.type != "ruler")
@@ -306,6 +306,13 @@ namespace gnubase::ui
 			for (const Json& item : project.at(kind))
 				if (const auto track = index.find(item.at("track").get<uint64_t>()); track != index.end())
 					tracks[track->second].empty = false;
+		// Tracks that others play into, e.g. an instrument track that MIDI tracks play, aren't empty either.
+		std::set<uint64_t> outputs;
+		for (const Json& channel : project.at("channels"))
+			outputs.insert(channel.at("output").get<uint64_t>());
+		for (Row& row : tracks)
+			if (row.channel != 0 && outputs.count(row.channel) != 0)
+				row.empty = false;
 		// Folded folders that went stay folded if they come back, e.g. by undo; that's harmless.
 		const bool same = tracks.size() == m_tracks.size() &&
 			std::equal(tracks.begin(), tracks.end(), m_tracks.begin(), [](const Row& a, const Row& b)

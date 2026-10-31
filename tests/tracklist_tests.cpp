@@ -306,6 +306,21 @@ TEST_CASE("folders fold in the list and the event display; the menus duplicate, 
 	tracks.rows(3);
 }
 
+TEST_CASE("Remove Empty Tracks keeps an instrument track without parts that a MIDI track plays", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t instrument = tracks.add({{"type", "instrument"}});
+	const Json synth = tracks.track(instrument).at("channel");
+	const uint64_t midi = tracks.add({{"type", "midi"}, {"output", synth}});
+	tracks.app.call("midiPart.add", {{"track", midi}, {"position", 0}, {"length", 1000}});
+	tracks.add({{"type", "audio"}}); // empty, goes
+	tracks.rows(3);
+
+	tracks.app.keys().run("track.removeEmpty", Json::object(), tracks.app.main(), nullptr);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.order() == std::vector<uint64_t>{instrument, midi}; }));
+	CHECK(tracks.channel(midi).at("output") == synth);
+}
+
 TEST_CASE("the track controls settings dialog chooses and orders each track type's controls", "[ui]")
 {
 	Tracks tracks;

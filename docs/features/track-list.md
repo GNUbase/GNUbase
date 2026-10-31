@@ -78,7 +78,8 @@ sends engine commands, so whatever another client changes shows at once.
   the context menu also Disable and Enable Selected Tracks (`track.removeSelected`, `track.removeEmpty`,
   `track.duplicateSelected`, `track.disableSelected`, `track.enableSelected`), each one `history.transaction`. Empty
   tracks are audio, instrument, MIDI and marker tracks without events, parts, markers or automation, and folders
-  without tracks; group and effect tracks are where others play through and stay, ruler tracks never hold anything.
+  without tracks, unless other tracks' channels output to theirs; group and effect tracks are where others play
+  through and stay, ruler tracks never hold anything.
 - **Key commands.** `AppUi` adds the track list's commands (`TrackList::actions`) as key commands in the project
   window's focus zone, enabled while the list exists and, for those of selected tracks, while tracks are selected,
   so the menus disable them otherwise.
