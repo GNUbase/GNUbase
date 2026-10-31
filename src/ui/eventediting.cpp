@@ -15,6 +15,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -166,13 +167,19 @@ namespace gnubase::ui
 				edit(command, std::move(withEvents), selectResult);
 			};
 		};
-		// The selection's earliest start or latest end, in seconds.
+		// The selection's earliest start or latest end, in seconds; none while the display doesn't show it yet.
 		const auto edge = [this](bool end)
 		{
-			double result = end ? 0.0 : 1e300;
+			std::optional<double> result;
 			for (const Shown& shown : m_events)
 				if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
-					result = end ? std::max(result, shown.end) : std::min(result, shown.start);
+				{
+					const double at = end ? shown.end : shown.start;
+					if (!result)
+						result = at;
+					else
+						result = end ? std::max(*result, at) : std::min(*result, at);
+				}
 			return result;
 		};
 		// Without a selection, a split cuts every event at the positions (reference manual p. 268).
@@ -190,7 +197,9 @@ namespace gnubase::ui
 			{
 				if (m_selection.empty())
 					return;
-				const time::Position step = engine::gridStep(m_snap.grid, snapGrid(), samples(edge(false)));
+				// A selection the display doesn't show yet takes the step at the project's start.
+				const time::Position step =
+					engine::gridStep(m_snap.grid, snapGrid(), samples(edge(false).value_or(0.0)));
 				Json parameters = {{"events", m_selection},
 					{step.base == time::TimeBase::Musical ? "ticks" : "delta", direction * step.value}};
 				if (edgeName != nullptr)
@@ -238,14 +247,14 @@ namespace gnubase::ui
 			{"edit.moveStartToCursor",
 				[this, edge]
 				{
-					if (!m_selection.empty())
-						edit("event.move", {{"events", m_selection}, {"delta", m_cursorSample - samples(edge(false))}});
+					if (const std::optional<double> at = edge(false))
+						edit("event.move", {{"events", m_selection}, {"delta", m_cursorSample - samples(*at)}});
 				}},
 			{"edit.moveEndToCursor",
 				[this, edge]
 				{
-					if (!m_selection.empty())
-						edit("event.move", {{"events", m_selection}, {"delta", m_cursorSample - samples(edge(true))}});
+					if (const std::optional<double> at = edge(true))
+						edit("event.move", {{"events", m_selection}, {"delta", m_cursorSample - samples(*at)}});
 				}},
 			// The select submenu (reference manual pp. 254-255); without track selection (#81), on every track.
 			{"edit.selectAll", [this] { selectWhere([](const Shown&) { return true; }); }},

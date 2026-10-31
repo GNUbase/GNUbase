@@ -38,7 +38,7 @@ namespace gnubase::engine
 			explicit operator bool() const { return audio != nullptr || part != nullptr; }
 			ObjectId id() const { return audio != nullptr ? audio->id : part->id; }
 			ObjectId track() const { return audio != nullptr ? audio->track : part->track; }
-			bool locked() const { return audio != nullptr ? audio->lock : part->lock; }
+			bool locked() const { return audio != nullptr ? audio->lock : part != nullptr && part->lock; }
 			time::Position& position() const { return audio != nullptr ? audio->position : part->position; }
 		};
 
