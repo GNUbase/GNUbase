@@ -466,6 +466,18 @@ TEST_CASE("a waveform asks again for a column per pixel when the monitor scale c
 	CHECK(waveforms(fixture.document)[0]->channels()[0].high.size() == 200);
 }
 
+TEST_CASE("a waveform asks again for a column per pixel when the UI scale changes", "[unit]")
+{
+	// The same second on a monitor of scale 1: the UI scale alone changes the dp ratio, not the window's pixel size.
+	const test::TempDir dir;
+	Fixture fixture;
+	addLoudEvents(fixture, dir.path(), 48000, 1);
+	CHECK(waveforms(fixture.document)[0]->channels()[0].high.size() == 100);
+	fixture.ui.shell.setUiScale(2.0F);
+	REQUIRE(fixture.waitUntil([&] { return fixture.window.dpRatio() == 2.0F && settled(fixture, 1); }));
+	CHECK(waveforms(fixture.document)[0]->channels()[0].high.size() == 200);
+}
+
 TEST_CASE("zooming keeps at most one media.peaks in flight per waveform", "[unit]")
 {
 	const test::TempDir dir;
