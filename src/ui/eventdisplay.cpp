@@ -82,10 +82,11 @@ namespace gnubase::ui
 		m_mutedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "muted-events");
 		m_selectedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "selected-events");
 		m_waveforms = std::make_unique<EventWaveforms>(binding, add(*m_area, "div", "waveforms"));
+		m_rangeElement = &add(*m_area, "div", "range-selection");
+		m_rectangle = &add(*m_area, "div", "tool-rectangle");
 		m_crossVertical = &add(*m_area, "div", "cross-hair-vertical");
 		m_crossHorizontal = &add(*m_area, "div", "cross-hair-horizontal");
 		m_cursorLine = &add(timeline, "div", "project-cursor");
-		root.SetClass("cross-hair", m_crossHair);
 		for (const Rml::EventId id : g_rootEvents)
 			root.AddEventListener(id, this);
 		for (const Rml::EventId id : g_documentEvents)
@@ -99,6 +100,8 @@ namespace gnubase::ui
 			{"zoom.undo", [this] { undoZoom(); }}, {"zoom.redo", [this] { redoZoom(); }},
 			{"view.autoScroll", [this] { setAutoScroll(!m_autoScroll); }}};
 		addEditActions();
+		addToolActions();
+		setToolModifiers(Json::object());
 
 		// Every change to the project is an undo step or a new project; the display shows the project as it is then.
 		for (const char* event : {"history.changed", "project.reset"})
@@ -128,6 +131,11 @@ namespace gnubase::ui
 					m_presetsKnown = true;
 					showPresets();
 				}
+				if (const auto modifiers = values.find("ui.toolModifiers"); modifiers != values.end())
+				{
+					setToolModifiers(*modifiers);
+					m_modifiersKnown = true;
+				}
 			}));
 		const std::weak_ptr<bool> alive = m_alive;
 		requestProject();
@@ -146,8 +154,15 @@ namespace gnubase::ui
 					showPresets();
 				}
 			});
+		m_binding.send("settings.get", {{"key", "ui.toolModifiers"}},
+			[this, alive](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok() && !m_modifiersKnown) // newer changes win
+					setToolModifiers(result.value.at("value"));
+			});
 		requestMarkers();
 		showAutoScroll();
+		showTools();
 
 		root.GetOwnerDocument()->UpdateDocument(); // lays it out, so that it knows its size
 		apply();
@@ -537,6 +552,7 @@ namespace gnubase::ui
 		m_waveforms->show(
 			{m_view.start, m_view.scale, m_view.top, g_trackHeight * m_view.trackZoom, width(), height(), dpRatio()});
 		setCursor(m_cursorSample);
+		showRange();
 
 		// The overview line shows the whole project, and the view as a rectangle.
 		const double across = m_overview->GetClientWidth() / dpRatio();
@@ -584,8 +600,7 @@ namespace gnubase::ui
 	void EventDisplay::setCrossHair(bool shown)
 	{
 		m_crossHair = shown;
-		if (alive())
-			m_root->SetClass("cross-hair", shown);
+		showTools(); // and only with the tools that use it
 	}
 
 	void EventDisplay::addZoomPreset(const std::string& name)
@@ -688,6 +703,8 @@ namespace gnubase::ui
 				setSnap({{"on", event.GetParameter<bool>("value", false)}});
 			else if (target != nullptr && target == m_zeroCrossingButton)
 				setSnap({{"zeroCrossing", event.GetParameter<bool>("value", false)}});
+			else if (target != nullptr && target == m_combineButton)
+				setCombineSelectionTools(event.GetParameter<bool>("value", false));
 			break;
 		default:
 			break;
@@ -796,6 +813,11 @@ namespace gnubase::ui
 		case Drag::Events:
 		case Drag::ResizeStart:
 		case Drag::ResizeEnd:
+		case Drag::Rectangle:
+		case Drag::Range:
+		case Drag::DrawPart:
+		case Drag::Play:
+		case Drag::Click:
 			areaMove(dx, dy);
 			return;
 		case Drag::None:

@@ -636,6 +636,21 @@ meter .meter-peak
 	display: none;
 }
 
+/* The tools (docs/features/tools.md): the selection range, at least a line wide, and the rectangle a tool drags. Code
+   sets where they are and the state class .shown. */
+.event-display .range-selection, .event-display .tool-rectangle
+{
+	display: none;
+	position: absolute;
+	box-sizing: border-box;
+	pointer-events: none;
+}
+
+.event-display .range-selection.shown, .event-display .tool-rectangle.shown
+{
+	display: block;
+}
+
 .event-display.cross-hair .event-area:hover .cross-hair-vertical,
 .event-display.cross-hair .event-area:hover .cross-hair-horizontal
 {

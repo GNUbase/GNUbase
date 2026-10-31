@@ -6,7 +6,9 @@
      and drives the controls and menus with these ids (docs/features/event-display.md): the ruler's arrow button
      .ruler-format, #ruler-format-menu, #zoom-presets-menu, #auto-scroll and #auto-scroll-menu, and the snap controls
      #snap, #snap-type, #snap-type-menu, #grid-type, #grid-type-menu (which the display fills with the ruler format's
-     grid types) and #snap-zero-crossing (docs/features/snap.md). Its dialogs are zoom-preset.rml and
+     grid types) and #snap-zero-crossing (docs/features/snap.md), and the tools: a button[tool] per tool, whose
+     tool-menu opens on a second click (#object-selection-menu, #line-menu), and #combine-selection-tools
+     (docs/features/tools.md). Its dialogs are zoom-preset.rml and
      zoom-presets.rml, next to this file.
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
@@ -27,7 +29,7 @@
 			margin-right: 2dp;
 		}
 
-		#auto-scroll-settings
+		#toolbar #auto-scroll-settings, #toolbar #play-tool
 		{
 			margin-right: 12dp;
 		}
@@ -49,6 +51,17 @@
 </head>
 <body class="docking" focuszone="project">
 	<div id="toolbar" class="toolbar" strip="toolbar">
+		<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
+		<button tool="objectSelection" tool-menu="object-selection-menu" class="icon-only" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
+		<button tool="rangeSelection" class="icon-only" title="Range Selection"><svg class="icon" src="../icons/tool-range.svg"/></button>
+		<button tool="draw" class="icon-only" title="Draw"><svg class="icon" src="../icons/tool-draw.svg"/></button>
+		<button tool="erase" class="icon-only" title="Erase"><svg class="icon" src="../icons/tool-erase.svg"/></button>
+		<button tool="split" class="icon-only" title="Split"><svg class="icon" src="../icons/tool-split.svg"/></button>
+		<button tool="glue" class="icon-only" title="Glue"><svg class="icon" src="../icons/tool-glue.svg"/></button>
+		<button tool="mute" class="icon-only" title="Mute"><svg class="icon" src="../icons/tool-mute.svg"/></button>
+		<button tool="zoom" class="icon-only" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
+		<button tool="line" tool-menu="line-menu" class="icon-only" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></button>
+		<button id="play-tool" tool="play" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
 		<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
 		<button id="auto-scroll-settings" class="icon-only" menu="auto-scroll-menu" title="Select Auto-Scroll Settings"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 		<button id="zoom-presets" class="icon-only" menu="zoom-presets-menu" title="Horizontal Zoom Presets"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
@@ -57,9 +70,9 @@
 		<button id="grid-type" menu="grid-type-menu" title="Grid Type">Bar</button>
 		<button id="snap-zero-crossing" type="toggle" class="icon-only" title="Snap to Zero Crossing"><svg class="icon" src="../icons/general-zero-crossing.svg"/></button>
 		<div class="spacer"/>
-		<button id="show-left-zone" type="toggle" toggle="left" title="Show/Hide Left Zone">Left</button>
-		<button id="show-lower-zone" type="toggle" toggle="lower" title="Show/Hide Lower Zone">Lower</button>
-		<button id="show-right-zone" type="toggle" toggle="right" title="Show/Hide Right Zone">Right</button>
+		<button id="show-left-zone" type="toggle" toggle="left" class="icon-only" title="Show/Hide Left Zone"><svg class="icon" src="../icons/layout-left-zone.svg"/></button>
+		<button id="show-lower-zone" type="toggle" toggle="lower" class="icon-only" title="Show/Hide Lower Zone"><svg class="icon" src="../icons/layout-lower-zone.svg"/></button>
+		<button id="show-right-zone" type="toggle" toggle="right" class="icon-only" title="Show/Hide Right Zone"><svg class="icon" src="../icons/layout-right-zone.svg"/></button>
 		<button id="window-layout" class="icon-only" menu="window-layout-menu" title="Set up Window Layout"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 	</div>
 	<div id="info-line" class="strip" strip="infoLine" default="hidden"/>
@@ -117,6 +130,19 @@
 		<menuitem snap-type="eventsGridCursor">Events + Grid + Cursor</menuitem>
 	</menu>
 	<menu id="grid-type-menu"/>
+	<!-- The tools' modes, which a second click on the tool's button opens (reference manual pp. 265, 873) -->
+	<menu id="object-selection-menu">
+		<menuitem sizing="normal">Normal Sizing</menuitem>
+		<menuitem sizing="moveContents">Sizing Moves Contents</menuitem>
+		<menuitem disabled="">Sizing Applies Time Stretch</menuitem>
+	</menu>
+	<menu id="line-menu">
+		<menuitem line-mode="line">Line</menuitem>
+		<menuitem line-mode="parabola">Parabola</menuitem>
+		<menuitem line-mode="sine">Sine</menuitem>
+		<menuitem line-mode="triangle">Triangle</menuitem>
+		<menuitem line-mode="square">Square</menuitem>
+	</menu>
 	<menu id="auto-scroll-menu">
 		<menuitem id="page-scroll">Page Scroll</menuitem>
 		<menuitem id="stationary-cursor">Stationary Cursor</menuitem>

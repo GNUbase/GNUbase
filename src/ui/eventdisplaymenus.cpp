@@ -13,9 +13,11 @@
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
 
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -68,6 +70,41 @@ namespace gnubase::ui
 			element->SetInnerRML(Rml::StringUtilities::EncodeRml(text));
 			return element;
 		}
+
+		struct ToolInfo
+		{
+			Tool tool;
+			const char* name;
+			bool crossHair; // whether the tool uses the cross-hair cursor (reference manual p. 110)
+		};
+
+		constexpr std::array<ToolInfo, 10> g_tools{{
+			{Tool::ObjectSelection, "objectSelection", true},
+			{Tool::RangeSelection, "rangeSelection", true},
+			{Tool::Draw, "draw", true},
+			{Tool::Erase, "erase", false},
+			{Tool::Split, "split", true},
+			{Tool::Glue, "glue", false},
+			{Tool::Mute, "mute", false},
+			{Tool::Zoom, "zoom", false},
+			{Tool::Line, "line", true},
+			{Tool::Play, "play", false},
+		}};
+
+		constexpr std::array<const char*, 5> g_lineModes = {"line", "parabola", "sine", "triangle", "square"};
+	}
+
+	const char* toolName(Tool tool)
+	{
+		return g_tools.at(static_cast<size_t>(tool)).name;
+	}
+
+	std::optional<Tool> toolFromName(const std::string& name)
+	{
+		for (const ToolInfo& info : g_tools)
+			if (name == info.name)
+				return info.tool;
+		return std::nullopt;
 	}
 
 	void EventDisplay::findControls()
@@ -82,6 +119,12 @@ namespace gnubase::ui
 		m_gridTypeButton = m_document->GetElementById("grid-type");
 		m_gridTypeMenu = m_document->GetElementById("grid-type-menu");
 		m_zeroCrossingButton = m_document->GetElementById("snap-zero-crossing");
+		Rml::ElementList buttons;
+		m_document->QuerySelectorAll(buttons, "button[tool]");
+		m_toolButtons.assign(buttons.begin(), buttons.end());
+		m_combineButton = m_document->GetElementById("combine-selection-tools");
+		m_objectMenu = m_document->GetElementById("object-selection-menu");
+		m_lineMenu = m_document->GetElementById("line-menu");
 		if (m_formatMenu != nullptr)
 			m_ruler->SetAttribute("contextmenu", m_formatMenu->GetId()); // a right click in the ruler opens it
 	}
@@ -115,6 +158,13 @@ namespace gnubase::ui
 
 	void EventDisplay::click(Rml::Element* target)
 	{
+		// A tool button chooses its tool; once it has, a second click opens its menu (showTools).
+		if (const Rml::Element* button = closest(target, "button"); button != nullptr && button->HasAttribute("tool"))
+		{
+			if (const std::optional<Tool> tool = toolFromName(button->GetAttribute<Rml::String>("tool", "")))
+				setTool(*tool);
+			return;
+		}
 		const Rml::Element* item = closest(target, "menuitem");
 		if (item == nullptr || item->HasAttribute("disabled"))
 			return;
@@ -147,6 +197,18 @@ namespace gnubase::ui
 		else if (menu == m_gridTypeMenu)
 		{
 			setSnap({{"grid", item->GetAttribute<Rml::String>("grid-type", "")}});
+		}
+		else if (menu == m_objectMenu)
+		{
+			if (item->HasAttribute("sizing"))
+				setSizingMovesContents(item->GetAttribute<Rml::String>("sizing", "") == "moveContents");
+		}
+		else if (menu == m_lineMenu)
+		{
+			const std::string mode = item->GetAttribute<Rml::String>("line-mode", "");
+			for (size_t i = 0; i < g_lineModes.size(); ++i)
+				if (mode == g_lineModes[i])
+					setLineMode(static_cast<LineMode>(i));
 		}
 		else if (menu == m_autoScrollMenu)
 		{
@@ -353,6 +415,40 @@ namespace gnubase::ui
 			check(*item, grid.grid == m_snap.grid);
 			m_gridTypeMenu->AppendChild(std::move(item));
 		}
+	}
+
+	// The root names the tool and shows the cross-hair cursor if the tool uses it; the tool's button is checked and
+	// opens its menu (tool-menu) on the next click; the menus check the modes.
+	void EventDisplay::showTools()
+	{
+		if (!alive())
+			return;
+		m_root->SetAttribute("tool", toolName(m_tool));
+		m_root->SetAttribute("line-mode", g_lineModes.at(static_cast<size_t>(m_lineMode)));
+		m_root->SetClass("cross-hair", m_crossHair && g_tools.at(static_cast<size_t>(m_tool)).crossHair);
+		for (Rml::Element* button : m_toolButtons)
+		{
+			const bool chosen = button->GetAttribute<Rml::String>("tool", "") == toolName(m_tool);
+			check(*button, chosen);
+			if (chosen && button->HasAttribute("tool-menu"))
+				button->SetAttribute("menu", button->GetAttribute<Rml::String>("tool-menu", ""));
+			else
+				button->RemoveAttribute("menu");
+		}
+		if (m_combineButton != nullptr)
+			check(*m_combineButton, m_combine);
+		if (m_objectMenu != nullptr)
+			for (int i = 0; i < m_objectMenu->GetNumChildren(); ++i)
+				if (Rml::Element* item = m_objectMenu->GetChild(i); item->HasAttribute("sizing"))
+					check(*item,
+						item->GetAttribute<Rml::String>("sizing", "") ==
+							(m_sizingMovesContents ? "moveContents" : "normal"));
+		if (m_lineMenu != nullptr)
+			for (int i = 0; i < m_lineMenu->GetNumChildren(); ++i)
+				if (Rml::Element* item = m_lineMenu->GetChild(i); item->HasAttribute("line-mode"))
+					check(*item,
+						item->GetAttribute<Rml::String>("line-mode", "") ==
+							g_lineModes.at(static_cast<size_t>(m_lineMode)));
 	}
 
 	void EventDisplay::showAutoScroll()

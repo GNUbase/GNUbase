@@ -468,6 +468,18 @@
 	{
 		background-color: #a2aab4;
 	}
+	.event-display .range-selection
+	{
+		border-width: 1dp;
+		border-color: #17202d;
+		background-color: #17202d33;
+	}
+	.event-display .tool-rectangle
+	{
+		border-width: 1dp;
+		border-color: #0969da;
+		background-color: #0969da1a;
+	}
 	.docking [zone]
 	{
 		background-color: #f6f8fa;

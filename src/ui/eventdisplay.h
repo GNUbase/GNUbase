@@ -51,6 +51,44 @@ namespace gnubase::ui
 		Stationary, // the cursor stays in the middle and the timeline moves
 	};
 
+	// The project window's tools (#86, reference manual pp. 57-65), in the toolbar's order: what a press in the event
+	// lanes does. docs/features/tools.md describes them.
+	enum class Tool : uint8_t
+	{
+		ObjectSelection,
+		RangeSelection,
+		Draw,
+		Erase,
+		Split,
+		Glue,
+		Mute,
+		Zoom,
+		Line,
+		Play,
+	};
+	// The tool's name, as the display's attribute tool and the toolbar's buttons name it: objectSelection, split, ...
+	const char* toolName(Tool tool);
+	std::optional<Tool> toolFromName(const std::string& name);
+
+	// The line tool's modes (reference manual p. 873), for automation tracks (#121).
+	enum class LineMode : uint8_t
+	{
+		Line,
+		Parabola,
+		Sine,
+		Triangle,
+		Square,
+	};
+
+	// A selection range (reference manual p. 285): from start to end in project samples, on these tracks (by id, in
+	// the project's order). A click makes one of no length.
+	struct RangeSelection
+	{
+		int64_t start = 0;
+		int64_t end = 0;
+		std::vector<uint64_t> tracks;
+	};
+
 	// Fills an element of a document with the event display and follows the project through the engine binding: an
 	// overview line, the ruler, a lane of events per track, the project cursor and the cross-hair cursor, classed for
 	// the style sheets. While playing it reads the playback position once a frame. Use it on the UI thread; the
@@ -125,7 +163,8 @@ namespace gnubase::ui
 		const std::vector<uint64_t>& selection() const { return m_selection; }
 		void select(std::vector<uint64_t> events);
 		// Sizing moves contents instead of normal sizing when resizing with the mouse (reference manual p. 265).
-		void setSizingMovesContents(bool moves) { m_sizingMovesContents = moves; }
+		void setSizingMovesContents(bool moves);
+		bool sizingMovesContents() const { return m_sizingMovesContents; }
 		// The selection count times one after the other; shared copies of MIDI parts with shared.
 		void repeat(int count, bool shared);
 
@@ -135,6 +174,24 @@ namespace gnubase::ui
 		// whose buttons #snap-type and #grid-type show the choice, and a toggle button #snap-zero-crossing.
 		const engine::SnapSettings& snap() const { return m_snap; }
 
+		// The tools (#86, eventtools.cpp, docs/features/tools.md), also in the root's attribute tool. The object
+		// selection tool edits as above; the others send the same event.* commands (split, glue, erase, mute), zoom,
+		// draw MIDI parts, play from where they press, or select a range. With the selection tools combined, the
+		// object selection tool selects ranges in a lane's upper half. Their tool modifiers are the user setting
+		// ui.toolModifiers. The document's toolbar may have a button per tool, button[tool=<name>], whose attribute
+		// tool-menu names a menu of its modes that a second click opens (#object-selection-menu with the sizing modes,
+		// #line-menu with the line modes), and a toggle button #combine-selection-tools.
+		void setTool(Tool tool);
+		Tool tool() const { return m_tool; }
+		void setCombineSelectionTools(bool on);
+		bool combineSelectionTools() const { return m_combine; }
+		void setLineMode(LineMode mode);
+		LineMode lineMode() const { return m_lineMode; }
+		// The selection range, also in the root's attributes range ("start end") and range-tracks (ids); none
+		// without the range selection tool. Choosing another tool selects the events in the range instead.
+		const std::optional<RangeSelection>& range() const { return m_range; }
+		void setRange(std::optional<RangeSelection> range);
+
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
 		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); and the edits of parts and events:
 		// edit.delete, edit.mute, edit.unmute, edit.lock, edit.unlock, edit.splitAtCursor, edit.splitLoop, edit.glue,
@@ -142,7 +199,9 @@ namespace gnubase::ui
 		// edit.nudgeRight, edit.nudgeStartLeft, edit.nudgeStartRight, edit.nudgeEndLeft, edit.nudgeEndRight,
 		// edit.moveStartToCursor, edit.moveEndToCursor, edit.selectAll, edit.selectNone, edit.invertSelection,
 		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd and edit.selectUnderCursor; and
-		// edit.snap (snap on or off) and edit.snapPointToCursor (the selected audio events' snap points).
+		// edit.snap (snap on or off) and edit.snapPointToCursor (the selected audio events' snap points); and the
+		// tools: tool.objectSelection, tool.rangeSelection, tool.draw, tool.erase, tool.split, tool.glue, tool.mute,
+		// tool.zoom, tool.line, tool.play, tool.next, tool.previous and tool.combineSelectionTools (on or off).
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
 
 	private:
@@ -156,6 +215,11 @@ namespace gnubase::ui
 			Events,        // moves or copies the selection
 			ResizeStart,   // the start of the selection
 			ResizeEnd,     // its end
+			Rectangle,     // a rectangle that selects, mutes or zooms
+			Range,         // a selection range
+			DrawPart,      // a new MIDI part
+			Play,          // plays until the mouse is released
+			Click,         // splits, glues or erases where it is released, unless it moved
 		};
 
 		// An audio event or a MIDI part as the display shows it.
@@ -236,6 +300,27 @@ namespace gnubase::ui
 		// is musical and every selected event is on a musical track, else samples. Also in seconds.
 		std::pair<engine::Json, double> shiftTo(const time::Position& to, double from) const;
 		std::pair<engine::Json, double> moveShift(double dx) const; // a drag of the selection, dx dp across
+		// Adds a MIDI part on the lane from start to end, ticks, and selects it.
+		void addPart(size_t lane, time::Ticks start, time::Ticks end);
+		// The lane at y dp down the event lanes, if there is one there.
+		std::optional<size_t> laneAt(double y) const;
+
+		// The tools (eventtools.cpp).
+		void addToolActions();
+		void showTools();
+		// Whether the pressed modifiers are the ones the user setting ui.toolModifiers gives the action.
+		bool modifiers(const char* action) const;
+		// What a press at x and y dp in the event lanes does with the tool, unless the object selection tool takes it.
+		bool toolDown(double x, double y);
+		void toolMove(double x, double y);
+		void toolUp(double x, double y);
+		bool toolDoubleClick(double x, double y); // whether it took the double click
+		void setRangeFrom(double x, double y);    // from the drag's start
+		void selectRange();                       // the events in it, when another tool takes over
+		void showRange();
+		// The rectangle that a tool drags, dp in the event lanes; hidden when not shown.
+		void showRectangle(bool shown, double left = 0.0, double top = 0.0, double right = 0.0, double bottom = 0.0);
+		void setToolModifiers(const engine::Json& value);
 
 		engine::Engine& m_engine;
 		EngineBinding& m_binding;
@@ -301,6 +386,23 @@ namespace gnubase::ui
 		Rml::Element* m_presetsMenu = nullptr;
 		Rml::Element* m_autoScrollButton = nullptr;
 		Rml::Element* m_autoScrollMenu = nullptr;
+		Tool m_tool = Tool::ObjectSelection;
+		Tool m_pressTool = Tool::ObjectSelection; // the tool of the press now, upper or lower half when combined
+		bool m_combine = false;
+		LineMode m_lineMode = LineMode::Line;
+		std::optional<RangeSelection> m_range;
+		std::optional<RangeSelection> m_rangeBase; // what a drag with Shift adds to
+		double m_pressX = 0.0;                     // dp in the event lanes
+		double m_pressY = 0.0;
+		std::string m_pressed; // the modifiers held at the press: ctrl, alt and shift joined with +
+		std::map<std::string, std::string> m_toolModifiers;
+		bool m_modifiersKnown = false; // changed since they were asked for
+		Rml::Element* m_rangeElement = nullptr;
+		Rml::Element* m_rectangle = nullptr;
+		std::vector<Rml::Element*> m_toolButtons; // the document's
+		Rml::Element* m_combineButton = nullptr;
+		Rml::Element* m_objectMenu = nullptr;
+		Rml::Element* m_lineMenu = nullptr;
 		std::vector<CycleMarker> m_cycleMarkers;
 		std::vector<int64_t> m_markers; // every marker's position and end, in samples, for snapping
 		engine::SnapSettings m_snap;

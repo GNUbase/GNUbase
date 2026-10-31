@@ -36,6 +36,22 @@ namespace gnubase::ui
 			return event.GetParameter<int>(key, 0) != 0;
 		}
 
+		// The modifiers held, as the user setting ui.toolModifiers writes them: ctrl (Ctrl, Cmd on macOS), alt and
+		// shift, joined with +.
+		std::string modifiersOf(Rml::Event& event)
+		{
+			std::string keys;
+			const auto add = [&keys](bool on, const char* key)
+			{
+				if (on)
+					keys += (keys.empty() ? "" : "+") + std::string(key);
+			};
+			add(held(event, "ctrl_key") || held(event, "meta_key"), "ctrl");
+			add(held(event, "alt_key"), "alt");
+			add(held(event, "shift_key"), "shift");
+			return keys;
+		}
+
 		bool inside(const Rml::Element* element, const Rml::Element* ancestor)
 		{
 			for (; element != nullptr; element = element->GetParentNode())
@@ -299,22 +315,43 @@ namespace gnubase::ui
 		return found;
 	}
 
+	std::optional<size_t> EventDisplay::laneAt(double y) const
+	{
+		const double row = (y + m_view.top) / (g_trackHeight * m_view.trackZoom);
+		if (row < 0.0 || row >= static_cast<double>(m_laneTracks.size()))
+			return std::nullopt;
+		return static_cast<size_t>(row);
+	}
+
 	void EventDisplay::areaDown(Rml::Event& event, double x, double y)
 	{
 		m_dragMoved = false;
 		m_dragDx = 0.0;
 		m_dragLanes = 0;
+		m_pressX = x;
+		m_pressY = y;
+		m_pressed = modifiersOf(event);
+		if (toolDown(x, y))
+			return;
 		const bool add = held(event, "ctrl_key") || held(event, "meta_key") || held(event, "shift_key");
 		const Shown* shown = eventAt(x, y);
 		if (shown == nullptr)
 		{
+			// A rectangle selects what it touches (with Ctrl or Shift, adds it); a click selects nothing.
 			if (!add)
 				select({});
+			m_drag = Drag::Rectangle;
 			return;
 		}
 		m_dragEvent = shown->id;
 		const bool selected = std::binary_search(m_selection.begin(), m_selection.end(), shown->id);
-		if (add && !held(event, "alt_key"))
+		const double left = (shown->start - m_view.start) / m_view.scale;
+		const double right = (shown->end - m_view.start) / m_view.scale;
+		const bool wide = right - left > 3.0 * g_edge;
+		const bool atStart = wide && x - left <= g_edge;
+		const bool atEnd = wide && !atStart && right - x <= g_edge;
+		// An edge with the modifier Disable Snapping resizes rather than adding to the selection.
+		if (add && !held(event, "alt_key") && !((atStart || atEnd) && modifiers("sizeObjects.disableSnapping")))
 		{
 			// Ctrl or Shift and a click adds an event to the selection or takes it out.
 			std::vector<uint64_t> events = m_selection;
@@ -327,12 +364,9 @@ namespace gnubase::ui
 		}
 		if (!selected)
 			select({shown->id});
-		const double left = (shown->start - m_view.start) / m_view.scale;
-		const double right = (shown->end - m_view.start) / m_view.scale;
-		const bool wide = right - left > 3.0 * g_edge;
-		if (wide && x - left <= g_edge)
+		if (atStart)
 			m_drag = Drag::ResizeStart;
-		else if (wide && right - x <= g_edge)
+		else if (atEnd)
 			m_drag = Drag::ResizeEnd;
 		else
 			m_drag = Drag::Events;
@@ -343,6 +377,8 @@ namespace gnubase::ui
 		if (!m_dragMoved && std::abs(dx) < g_dragThreshold && std::abs(dy) < g_dragThreshold)
 			return;
 		m_dragMoved = true;
+		if (m_drag != Drag::Events && m_drag != Drag::ResizeStart && m_drag != Drag::ResizeEnd)
+			toolMove(m_pressX + dx, m_pressY + dy);
 		if (m_drag != Drag::Events)
 			return;
 		m_dragDx = moveShift(dx).second / m_view.scale;
@@ -364,6 +400,18 @@ namespace gnubase::ui
 	void EventDisplay::areaUp(Rml::Event& event)
 	{
 		const Drag drag = m_drag;
+		if (!alive())
+			return;
+		m_pressed = modifiersOf(event); // what is held now decides, e.g. whether a drag copies
+		if (drag == Drag::Rectangle || drag == Drag::Range || drag == Drag::DrawPart || drag == Drag::Play ||
+			drag == Drag::Click)
+		{
+			toolUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
+				(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
+			m_dragMoved = false;
+			m_drag = Drag::None;
+			return;
+		}
 		if (drag != Drag::Events && drag != Drag::ResizeStart && drag != Drag::ResizeEnd)
 			return;
 		const bool moved = std::exchange(m_dragMoved, false);
@@ -373,14 +421,21 @@ namespace gnubase::ui
 		setLanes(); // without the drag's preview
 		if (!moved)
 		{
-			const bool alt = held(event, "alt_key");
-			// Alt and a click splits the event there (reference manual p. 268), snapped.
-			if (alt && alive())
+			const double at = m_view.start + (dpFrom(*m_lanes, m_dragX) * m_view.scale);
+			// The tool modifier Set Cursor Position moves the project cursor there.
+			if (modifiers("select.setCursorPosition"))
 			{
-				const time::Position at =
-					snapAt(m_view.start + (dpFrom(*m_lanes, m_dragX) * m_view.scale), std::nullopt);
+				m_binding.send("transport.locate", {{"position", samples(at)}});
+				return;
+			}
+			// The tool modifier Split Event (Alt) and a click splits the event there (reference manual p. 268),
+			// snapped.
+			if (modifiers("select.splitEvent"))
+			{
+				const time::Position snapped = snapAt(at, std::nullopt);
 				edit("event.split",
-					{{"events", {m_dragEvent}}, {"positions", {time::toSamples(at, m_time.tempo, m_time.sampleRate)}},
+					{{"events", {m_dragEvent}},
+						{"positions", {time::toSamples(snapped, m_time.tempo, m_time.sampleRate)}},
 						{"zeroCrossing", m_snap.zeroCrossing}});
 			}
 			return;
@@ -388,13 +443,19 @@ namespace gnubase::ui
 		const double dx = (event.GetParameter<float>("mouse_x", 0.0F) - m_dragX) / dpRatio();
 		if (drag != Drag::Events)
 		{
-			// The pressed event's edge snaps; the selection's edges move as far.
+			// The pressed event's edge snaps, unless the tool modifier Disable Snapping is held; the selection's
+			// edges move as far.
 			const auto pressed = std::find_if(
 				m_events.begin(), m_events.end(), [this](const Shown& shown) { return shown.id == m_dragEvent; });
 			if (pressed == m_events.end())
 				return;
 			const double from = drag == Drag::ResizeStart ? pressed->start : pressed->end;
-			Json parameters = shiftTo(snapAt(from + (dx * m_view.scale), from), from).first;
+			const double to = from + (dx * m_view.scale);
+			Json parameters =
+				shiftTo(modifiers("sizeObjects.disableSnapping") ? time::Position{time::TimeBase::Linear, samples(to)}
+																 : snapAt(to, from),
+					from)
+					.first;
 			parameters["events"] = m_selection;
 			parameters["edge"] = drag == Drag::ResizeStart ? "start" : "end";
 			parameters["mode"] = m_sizingMovesContents ? "moveContents" : "normal";
@@ -402,9 +463,10 @@ namespace gnubase::ui
 			edit("event.resize", std::move(parameters));
 			return;
 		}
-		const bool alt = held(event, "alt_key");
+		const bool shared = modifiers("dragDrop.sharedCopy");
+		const bool copy = shared || modifiers("dragDrop.copy");
 		// Shuffle (reference manual p. 106): the selection trades places with the events it is dragged among.
-		if (m_snap.on && m_snap.type == engine::SnapType::Shuffle && !alt && lanes == 0)
+		if (m_snap.on && m_snap.type == engine::SnapType::Shuffle && !copy && lanes == 0)
 		{
 			double start = 1e300;
 			for (const Shown& shown : m_events)
@@ -433,10 +495,10 @@ namespace gnubase::ui
 			if (oneLane && target >= 0 && target < static_cast<int64_t>(m_laneTracks.size()))
 				parameters["track"] = m_laneTracks[static_cast<size_t>(target)];
 		}
-		// Alt and a drag copies, with Shift too shared copies (reference manual pp. 270-271).
-		if (alt)
+		// The tool modifiers Copy (Alt) and Shared Copy (Alt and Shift) copy (reference manual pp. 270-271).
+		if (copy)
 		{
-			parameters["shared"] = held(event, "shift_key");
+			parameters["shared"] = shared;
 			edit("event.copy", std::move(parameters), true);
 		}
 		else
@@ -451,11 +513,18 @@ namespace gnubase::ui
 			return;
 		const double x = dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F));
 		const double y = (event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio();
-		const double row = (y + m_view.top) / (g_trackHeight * m_view.trackZoom);
-		if (row < 0.0 || eventAt(x, y) != nullptr)
+		m_pressed = modifiersOf(event);
+		if (m_pressTool != Tool::ObjectSelection)
+		{
+			if (toolDoubleClick(x, y))
+				m_drag = Drag::None; // the second press's release does nothing more
 			return;
-		const auto lane = static_cast<size_t>(row);
-		if (lane >= m_laneTypes.size() || (m_laneTypes[lane] != "midi" && m_laneTypes[lane] != "instrument"))
+		}
+		const std::optional<size_t> found = laneAt(y);
+		if (!found || eventAt(x, y) != nullptr)
+			return;
+		const size_t lane = *found;
+		if (m_laneTypes[lane] != "midi" && m_laneTypes[lane] != "instrument")
 			return;
 		// A one-bar part where the click is (reference manual p. 251), or one between the locators.
 		const double seconds = m_view.start + (x * m_view.scale);
@@ -473,6 +542,12 @@ namespace gnubase::ui
 			start = m_time.signatures.barStart(bar);
 			end = m_time.signatures.barStart(bar + 1);
 		}
+		m_drag = Drag::None;
+		addPart(lane, start, end);
+	}
+
+	void EventDisplay::addPart(size_t lane, time::Ticks start, time::Ticks end)
+	{
 		int64_t position = start;
 		int64_t length = end - start;
 		if (m_laneLinear[lane])

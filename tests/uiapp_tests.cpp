@@ -417,6 +417,90 @@ TEST_CASE("the snap buttons, the snap and grid type menus and J change the proje
 	app.ui().key(std::nullopt, "Escape");
 }
 
+TEST_CASE("the toolbar's tool buttons and the keys choose the tools, a second click opens a tool's modes", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	ui::EventDisplay& display = window.display;
+
+	// A tool button chooses its tool and shows it checked.
+	click(app, selector("button[tool=split]"));
+	CHECK(display.tool() == ui::Tool::Split);
+	CHECK(hasClass(app, "button[tool=split]", "checked"));
+	CHECK(!hasClass(app, "button[tool=objectSelection]", "checked"));
+	CHECK(element(app, "#event-display").at("attributes").at("tool") == "split");
+
+	// The reference's keys (manual p. 1569): 1 to 9 and F9 and F10 go through the tools.
+	const std::vector<std::pair<const char*, ui::Tool>> keys = {{"1", ui::Tool::ObjectSelection},
+		{"2", ui::Tool::RangeSelection}, {"3", ui::Tool::Split}, {"4", ui::Tool::Glue}, {"5", ui::Tool::Erase},
+		{"6", ui::Tool::Zoom}, {"7", ui::Tool::Mute}, {"8", ui::Tool::Draw}, {"9", ui::Tool::Play},
+		{"F9", ui::Tool::Line}, {"F10", ui::Tool::Play}};
+	for (const auto& [key, tool] : keys)
+	{
+		INFO(key);
+		app.ui().key(std::nullopt, key);
+		CHECK(display.tool() == tool);
+	}
+	app.ui().key(std::nullopt, "Alt+Shift+1");
+	CHECK(display.combineSelectionTools());
+	REQUIRE(app.waitUntil([&app] { return hasClass(app, "#combine-selection-tools", "checked"); }));
+	click(app, selector("#combine-selection-tools"));
+	CHECK(!display.combineSelectionTools());
+
+	// A second click on the object selection tool opens its modes: sizing moves contents.
+	app.ui().key(std::nullopt, "1");
+	choose(app, "button[tool=objectSelection]", "#object-selection-menu", "Sizing Moves Contents");
+	CHECK(display.sizingMovesContents());
+	click(app, selector("button[tool=objectSelection]"));
+	CHECK(hasClass(app, "#object-selection-menu > menuitem[sizing=moveContents]", "checked"));
+	CHECK(!hasClass(app, "#object-selection-menu > menuitem[sizing=normal]", "checked"));
+	app.ui().key(std::nullopt, "Escape");
+	// The line tool's: the first click chooses it, the second opens its modes.
+	click(app, selector("button[tool=line]"));
+	CHECK(display.tool() == ui::Tool::Line);
+	CHECK(!visible(app, "#line-menu"));
+	choose(app, "button[tool=line]", "#line-menu", "Parabola");
+	CHECK(display.lineMode() == ui::LineMode::Parabola);
+}
+
+TEST_CASE("the split and range selection tools edit and select in the project window", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	ui::EventDisplay& display = window.display;
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	app.call("midiPart.add", // from 1 to 3 seconds at 120 BPM
+		{{"track", track.at("id")}, {"position", 2 * time::g_ticksPerQuarter},
+			{"length", 4 * time::g_ticksPerQuarter}});
+	const auto parts = [&app] { return app.call("project.get").at("midiParts"); };
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			auto* lanes =
+				dynamic_cast<ui::EventLanes*>(app.main().context().GetDocument(0)->QuerySelector("event-lanes.events"));
+			return lanes != nullptr && !lanes->lanes().empty() && !lanes->lanes()[0].events.empty();
+		}));
+	const Json lanes = element(app, "event-lanes.events");
+	const auto at = [&lanes](int x, int y)
+	{
+		return ui::Target{
+			"", 0, ui::Point{lanes.at("box").at("x").get<int>() + x, lanes.at("box").at("y").get<int>() + y}};
+	};
+
+	// 3 and a click at 2 seconds splits the part there.
+	app.ui().key(std::nullopt, "3");
+	click(app, at(200, 20));
+	REQUIRE(app.waitUntil([&parts] { return parts().size() == 2; }));
+	CHECK(parts()[1].at("position") == 4 * time::g_ticksPerQuarter);
+
+	// The range selection tool's button, and a drag from 1.5 to 2.5 seconds.
+	click(app, selector("button[tool=rangeSelection]"));
+	app.ui().drag(std::nullopt, at(150, 20), at(250, 20), {});
+	REQUIRE(display.range().has_value());
+	CHECK(element(app, "#event-display").at("attributes").at("range") == "72000 120000");
+	CHECK(hasClass(app, ".range-selection", "shown"));
+}
+
 // UI tests in Lua (#208): ctest runs each tests/lua/ui/*.lua through this test case, which GNUBASE_LUA_UI_TEST tells
 // which file, in the source folder. The file runs in the app's UI Lua on the UI thread, and prints its report.
 TEST_CASE("a UI test written in Lua passes", "[.][ui][lua-ui]")
