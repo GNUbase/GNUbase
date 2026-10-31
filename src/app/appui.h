@@ -67,6 +67,9 @@ namespace gnubase::app
 		const ui::GpuRenderer& renderer() const { return m_renderer; }
 
 	private:
+		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
+		Rml::ElementDocument& openDialog(ui::Window& window, const char* name) const;
+
 		// Made in this order and destroyed in the reverse: RmlUi releases its resources through the renderer and
 		// its Lua plugin's in Lua, the shell's windows need all of them, the settings and the binding tell the shell,
 		// key commands send through the binding, and the docking system follows the binding and opens windows.
