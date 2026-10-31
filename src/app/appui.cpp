@@ -104,7 +104,13 @@ namespace gnubase::app
 		  m_themes(fontsAndThemes(resources)), m_shell(m_windows, m_renderer), m_settings(engine, m_shell, m_themes),
 		  m_binding(engine, [this] { m_shell.wake(); }), m_keys(engine, m_binding), m_main(m_shell.open(main)),
 		  m_docking(engine, m_binding, m_shell, resources / "ui" / "panel-window.rml", main.hidden), m_engine(engine),
-		  m_resources(resources)
+		  m_resources(resources), m_history(m_binding.on("history.changed",
+									  [this](const engine::Event& event)
+									  {
+										  const auto position = event.data.at("position").get<size_t>();
+										  m_canUndo = position > 0;
+										  m_canRedo = position < event.data.at("steps").get<size_t>();
+									  }))
 	{
 		ui::registerWidgets(m_rmlui);
 		lua_State* state = m_lua.state();
@@ -117,7 +123,10 @@ namespace gnubase::app
 			{
 				if (const std::optional<std::string> error = m_lua.dispatchEvents())
 					logging::warning("A Lua event handler of the UI failed: {}", *error);
-				return m_binding.update();
+				const bool follows = m_binding.update();
+				if (m_menu)
+					m_menu->update();
+				return follows;
 			});
 		m_shell.onUnusedKey([this](ui::Window& window, const ui::KeyPress& keys) { m_keys.press(window, keys); });
 
@@ -133,6 +142,10 @@ namespace gnubase::app
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("history"); }});
 		m_keys.add({"window.studioSetup", "Opens the studio setup dialog for the audio and MIDI devices.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openStudioSetup(window); }});
+		// Quitting closes every window, so it waits until the event that asked for it is done with them.
+		m_keys.add({"file.quit", "Quits GNUbase.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { m_shell.quit(); }); }});
+		m_keys.bind({"Mod+Q", "file.quit"});
 		for (const ProjectCommand& command : g_projectCommands)
 		{
 			m_keys.add(
@@ -141,10 +154,24 @@ namespace gnubase::app
 						if (m_eventDisplay)
 							m_eventDisplay->actions().at(id)();
 					}});
+			m_keys.enableWhen(command.id, [this](ui::Window&, Rml::Element*) { return m_eventDisplay != nullptr; });
 			if (command.keys != nullptr)
 				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
 		}
 		m_keys.bind({"Backspace", "edit.delete", engine::Json::object(), "project"});
+
+		// Undo and Redo in the menus while the history has a step to undo or redo.
+		m_keys.enableWhen("history.undo", [this](ui::Window&, Rml::Element*) { return m_canUndo; });
+		m_keys.enableWhen("history.redo", [this](ui::Window&, Rml::Element*) { return m_canRedo; });
+		m_binding.send("history.get", engine::Json::object(),
+			[this](const engine::Result& result)
+			{
+				if (!result.ok())
+					return;
+				const auto position = result.value.at("position").get<size_t>();
+				m_canUndo = position > 0;
+				m_canRedo = position < result.value.at("steps").size();
+			});
 	}
 
 	ui::EventDisplay& AppUi::showProject()
@@ -161,6 +188,7 @@ namespace gnubase::app
 		document->Show();
 		m_docking.attach("project", *document);
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
+		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 		return *m_eventDisplay;
 	}
 

@@ -271,4 +271,20 @@ namespace gnubase::ui
 		}
 		m_binding.send(command, parameters);
 	}
+
+	void KeyCommands::enableWhen(
+		const std::string& command, std::function<bool(Window& window, Rml::Element* zone)> enabled)
+	{
+		if (m_engineCommands.count(command) == 0 && m_uiCommands.count(command) == 0)
+			throw std::invalid_argument("there is no command " + command);
+		m_enabled[command] = std::move(enabled);
+	}
+
+	bool KeyCommands::canRun(const std::string& command, Window& window, Rml::Element* zone) const
+	{
+		if (m_engineCommands.count(command) == 0 && m_uiCommands.count(command) == 0)
+			return false;
+		const auto enabled = m_enabled.find(command);
+		return enabled == m_enabled.end() || !enabled->second || enabled->second(window, zone);
+	}
 }
