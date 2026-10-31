@@ -39,6 +39,7 @@ add_executable(gnubase-tests
 	eventedit_tests.cpp
 	eventediting_tests.cpp
 	fade_tests.cpp
+	fileimport_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
 	history_tests.cpp

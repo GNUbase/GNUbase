@@ -91,6 +91,13 @@
 	<div id="transport-bar" class="strip" strip="transportBar" default="hidden"/>
 
 	<menu id="file-menu">
+		<menuitem id="import-submenu">Import
+			<menu>
+				<menuitem command="file.importAudio">Audio File...</menuitem>
+				<menuitem command="file.importMidi">MIDI File...</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
 		<menuitem command="file.quit">Quit</menuitem>
 	</menu>
 	<menu id="edit-menu">

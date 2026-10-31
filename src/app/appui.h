@@ -18,6 +18,8 @@
 #include <filesystem>
 #include <iosfwd>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace Rml
 {
@@ -65,6 +67,9 @@ namespace gnubase::app
 		const ui::GpuRenderer& renderer() const { return m_renderer; }
 
 	private:
+		// File > Import: the OS's file dialog for the window, then the event display imports what the user chose.
+		void chooseImport(ui::Window& window, std::string title, std::vector<ui::FileFilter> filters, bool many);
+
 		// Made in this order and destroyed in the reverse: RmlUi releases its resources through the renderer and
 		// its Lua plugin's in Lua, the shell's windows need all of them, the settings and the binding tell the shell,
 		// key commands send through the binding, and the docking system follows the binding and opens windows.

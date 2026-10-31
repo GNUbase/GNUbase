@@ -17,6 +17,8 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace gnubase::app
 {
@@ -142,6 +144,20 @@ namespace gnubase::app
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("history"); }});
 		m_keys.add({"window.studioSetup", "Opens the studio setup dialog for the audio and MIDI devices.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openStudioSetup(window); }});
+		// File > Import (docs/features/file-import.md): the OS's file dialog, then the event display imports the files.
+		m_keys.add({"file.importAudio", "Imports audio files into the project window at the project cursor.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				chooseImport(window, "Import Audio Files",
+					{{"Audio files", "wav;w64;rf64;bwf;aif;aiff;aifc;flac;ogg;mp3"}, {"All files", "*"}}, true);
+			}});
+		m_keys.add({"file.importMidi", "Imports a standard MIDI file into new tracks.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				chooseImport(window, "Import MIDI File", {{"MIDI files", "mid;midi;smf"}, {"All files", "*"}}, false);
+			}});
+		for (const char* command : {"file.importAudio", "file.importMidi"})
+			m_keys.enableWhen(command, [this](ui::Window&, Rml::Element*) { return m_eventDisplay != nullptr; });
 		// Quitting closes every window, so it waits until the event that asked for it is done with them.
 		m_keys.add({"file.quit", "Quits GNUbase.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { m_shell.quit(); }); }});
@@ -190,6 +206,27 @@ namespace gnubase::app
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 		return *m_eventDisplay;
+	}
+
+	void AppUi::chooseImport(ui::Window& window, std::string title, std::vector<ui::FileFilter> filters, bool many)
+	{
+		ui::FileDialog dialog;
+		dialog.title = std::move(title);
+		dialog.filters = std::move(filters);
+		dialog.many = many;
+		dialog.parent = window.id();
+		m_shell.showFileDialog(dialog,
+			[this](const ui::FileDialogResult& result)
+			{
+				if (!result.error.empty())
+					logging::warning("The file dialog failed: {}", result.error);
+				if (result.files.empty() || !m_eventDisplay)
+					return;
+				std::vector<std::string> files;
+				for (const std::filesystem::path& file : result.files)
+					files.push_back(file.u8string());
+				m_eventDisplay->importFiles(files);
+			});
 	}
 
 	Rml::ElementDocument& AppUi::openStudioSetup(ui::Window& window) const
