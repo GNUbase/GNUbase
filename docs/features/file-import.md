@@ -39,7 +39,7 @@ and the files the import wrote are removed. Undo leaves written files on disk, a
   `ui::EventDisplay::importFiles` (`src/ui/fileimport.cpp`), at the project cursor.
 - **Drag and drop**: files dropped on the event display (the shell's `filedrop` event) go to the track of the lane
   under the mouse if it is an audio track, else to new tracks, at the time under the mouse (dropped outside the lanes:
-  at the project cursor).
+  at the project cursor). Agents and UI tests drop files with `ui_drop` (`ui::Automation::drop`).
 - MIDI files (`.mid`, `.midi`, `.smf`) are imported at once with `midiFile.import`'s defaults. Audio files open the
   **Import Options** dialog (`resources/ui/import-options.rml`): Copy Files to Project Folder, Convert to Project
   Sample Rate, Split Channels and Import Files on One Track. The first three are disabled while the project has no
@@ -55,10 +55,11 @@ until the track list (#81) selects tracks.
 
 ## Checks
 
-`tests/audioimport_tests.cpp` imports files of every supported format onto new tracks at a position and undoes it in
+`tests/audioimport_tests.cpp` imports files of every supported format (WAV, RF64, Wave64, AIFF, FLAC, Ogg Vorbis and
+MP3) onto new tracks at a position and undoes it in
 one step, lays files out one after another with `oneTrack` and `track`, converts a 44.1 kHz WAV file and an MP3 file
 into the media folder and leaves a 48 kHz file where it is, splits stereo and 5.1 files into mono files per speaker,
 copies with one job, and rejects what it can't do, removing converted files when a later file fails.
-`tests/fileimport_tests.cpp` drives the app's UI: the File > Import items, the Import Options dialog with its disabled
+`tests/fileimport_tests.cpp` drives the app's UI through the automation API: the File > Import items, the Import Options dialog with its disabled
 options, Cancel and Import Files on One Track at the project cursor, an audio file dropped on an audio track's lane,
 and MIDI files of type 0 and 1 dropped below the tracks.

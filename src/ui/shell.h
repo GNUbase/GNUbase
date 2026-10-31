@@ -69,6 +69,11 @@ namespace gnubase::ui
 		bool cancelled() const { return files.empty() && error.empty(); }
 	};
 
+	// Tells the element under the point, in the window's pixels, that the files were dropped on it: a g_fileDropEvent
+	// (ui/rmlui.h) with the files as UTF-8 lines in "files", their "count", and "mouse_x" and "mouse_y". The shell
+	// calls it for the window system's drops, and ui::Automation for the files it drops.
+	void dropFiles(Window& window, Point at, const std::vector<std::filesystem::path>& files);
+
 	class Shell
 	{
 	public:

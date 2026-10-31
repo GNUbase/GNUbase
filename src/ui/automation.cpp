@@ -336,6 +336,21 @@ namespace gnubase::ui
 		return under(shown);
 	}
 
+	Json Automation::drop(
+		std::optional<WindowId> window, const Target& target, const std::vector<std::filesystem::path>& files)
+	{
+		if (files.empty())
+			throw std::invalid_argument("needs files to drop");
+		Window& shown = resolve(window);
+		const Point at = targetPoint(shown, target);
+		Rml::Context& context = updated(shown);
+		// Read before the drop, whose handlers may change the element or remove it.
+		Json result = {
+			{"element", nodeOrNull(context.GetElementAtPoint({static_cast<float>(at.x), static_cast<float>(at.y)}))}};
+		dropFiles(shown, at, files);
+		return result;
+	}
+
 	Json Automation::key(std::optional<WindowId> window, const std::string& keys)
 	{
 		const KeyPress pressed = parseKeys(keys);

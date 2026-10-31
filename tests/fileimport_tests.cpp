@@ -7,7 +7,6 @@
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
-#include "ui/rmlui.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
@@ -85,17 +84,19 @@ namespace
 		return path.u8string();
 	}
 
-	// Drops files on the event lanes x and y dp from their top left corner, as the shell does.
-	void drop(test::UiApp& app, const std::string& files, double x, double y)
+	// Drops files on the event lanes x and y dp from their top left corner, through the automation API (ui_drop).
+	void drop(test::UiApp& app, const std::vector<std::string>& files, double x, double y)
 	{
-		Rml::Element* lanes = app.main().context().GetDocument(0)->QuerySelector("event-lanes.events");
-		REQUIRE(lanes != nullptr);
+		const Json lanes = elements(app, "event-lanes.events");
+		REQUIRE(lanes.size() == 1);
+		const Json& box = lanes[0].at("box");
 		const float ratio = app.main().context().GetDensityIndependentPixelRatio();
-		const auto mouseX = static_cast<int>(std::lround(lanes->GetAbsoluteLeft() + (x * ratio)));
-		const auto mouseY = static_cast<int>(std::lround(lanes->GetAbsoluteTop() + (y * ratio)));
-		lanes->DispatchEvent(ui::g_fileDropEvent,
-			{{"files", Rml::Variant(files)}, {"count", Rml::Variant(1)}, {"mouse_x", Rml::Variant(mouseX)},
-				{"mouse_y", Rml::Variant(mouseY)}});
+		const ui::Point at{box.at("x").get<int>() + static_cast<int>(std::lround(x * ratio)),
+			box.at("y").get<int>() + static_cast<int>(std::lround(y * ratio))};
+		std::vector<std::filesystem::path> paths;
+		for (const std::string& file : files)
+			paths.push_back(std::filesystem::u8path(file));
+		CHECK(!app.ui().drop(std::nullopt, {"", 0, at}, paths).at("element").is_null());
 		app.shell().step(std::chrono::milliseconds(0));
 	}
 }
@@ -163,7 +164,7 @@ TEST_CASE("files dropped on the event display are imported where they are droppe
 
 	// An audio file on the audio track's lane, two seconds in: an event there on that track.
 	const double x = (2.0 - display.view().start) / display.view().scale;
-	drop(app, take, x, 20.0);
+	drop(app, {take}, x, 20.0);
 	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
 	CHECK(disabled(app, "#import-one-track"));
 	click(app, "#import-options-dialog button.primary");
@@ -175,7 +176,7 @@ TEST_CASE("files dropped on the event display are imported where they are droppe
 
 	// MIDI files of type 0 and 1, dropped below the tracks, become MIDI tracks without a dialog: a track per channel
 	// of the type 0 file, a track per track of the type 1 file.
-	drop(app, writeMidi(dir.path() / "type0.mid", 0) + "\n" + writeMidi(dir.path() / "type1.mid", 1), x, 300.0);
+	drop(app, {writeMidi(dir.path() / "type0.mid", 0), writeMidi(dir.path() / "type1.mid", 1)}, x, 300.0);
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tracks").size() == 5; }));
 	CHECK(!dialogShown(app));
 	const Json project = app.call("project.get");

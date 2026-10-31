@@ -14,6 +14,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <utility>
@@ -64,7 +66,8 @@ namespace
 	}
 
 	void writeFile(const fs::path& path, int64_t frames, int channels = 2, double sampleRate = 48000.0,
-		AudioFormat format = AudioFormat::Wav, SampleFormat sampleFormat = SampleFormat::Float32)
+		AudioFormat format = AudioFormat::Wav, SampleFormat sampleFormat = SampleFormat::Float32,
+		Rf64 rf64 = Rf64::Auto)
 	{
 		fs::create_directories(path.parent_path());
 		WriteOptions options;
@@ -72,10 +75,53 @@ namespace
 		options.sampleFormat = sampleFormat;
 		options.sampleRate = sampleRate;
 		options.channels = channels;
+		options.rf64 = rf64;
 		const auto writer = AudioFileWriter::create(utf8(path), options);
 		const std::vector<float> samples = rampSamples(channels, frames);
 		writer->write(samples.data(), static_cast<size_t>(frames));
 		writer->close();
+	}
+
+	// A Wave64 file of 16-bit mono PCM at 48 kHz, which AudioFileWriter doesn't write: a riff GUID with the file's
+	// size, the wave GUID, and fmt and data chunks, each a GUID and a 64-bit size that counts the chunk's 24-byte
+	// header, padded to 8 bytes.
+	void writeWave64(const fs::path& path, int64_t frames)
+	{
+		std::vector<uint8_t> bytes;
+		const auto integer = [&bytes](uint64_t value, unsigned size)
+		{
+			for (unsigned i = 0; i < size; ++i)
+				bytes.push_back(static_cast<uint8_t>(value >> (8U * i)));
+		};
+		const auto guid = [&bytes](const char* fourcc, bool riff)
+		{
+			static constexpr uint8_t riffTail[12] = {0x2e, 0x91, 0xcf, 0x11, 0xa5, 0xd6, 0x28, 0xdb, 0x04, 0xc1, 0, 0};
+			static constexpr uint8_t tail[12] = {
+				0xf3, 0xac, 0xd3, 0x11, 0x8c, 0xd1, 0x00, 0xc0, 0x4f, 0x8e, 0xdb, 0x8a};
+			bytes.insert(bytes.end(), fourcc, fourcc + 4);
+			bytes.insert(bytes.end(), riff ? std::begin(riffTail) : std::begin(tail),
+				riff ? std::end(riffTail) : std::end(tail));
+		};
+		const auto dataSize = static_cast<uint64_t>(frames) * 2;
+		const uint64_t padding = (8 - (dataSize % 8)) % 8;
+		guid("riff", true);
+		integer(40 + 40 + 24 + dataSize + padding, 8);
+		guid("wave", false);
+		guid("fmt ", false);
+		integer(24 + 16, 8);
+		integer(1, 2); // PCM
+		integer(1, 2); // channels
+		integer(48000, 4);
+		integer(48000 * 2, 4); // bytes per second
+		integer(2, 2);         // bytes per frame
+		integer(16, 2);        // bits per sample
+		guid("data", false);
+		integer(24 + dataSize, 8);
+		for (int64_t frame = 0; frame < frames; ++frame)
+			integer(static_cast<uint64_t>((frame % 100) * 100), 2);
+		bytes.resize(bytes.size() + padding);
+		std::ofstream(path, std::ios::binary)
+			.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
 	}
 
 	std::vector<float> readAll(const std::string& path)
@@ -153,6 +199,11 @@ TEST_CASE("audioFile.import puts files of every supported format on new tracks a
 		writeFile(dir.path() / file.name, 4800, file.channels, 48000.0, file.format, file.sampleFormat);
 		files.push_back(utf8(dir.path() / file.name));
 	}
+	writeFile(dir.path() / "rf64.wav", 4800, 2, 48000.0, AudioFormat::Wav, SampleFormat::Int24, Rf64::Always);
+	files.push_back(utf8(dir.path() / "rf64.wav"));
+	writeWave64(dir.path() / "take.w64", 4800);
+	REQUIRE(AudioFileReader::open(utf8(dir.path() / "take.w64"))->info().frames == 4800);
+	files.push_back(utf8(dir.path() / "take.w64"));
 	files.push_back(dataFile("sine440.ogg"));
 	files.push_back(dataFile("sine440.mp3"));
 
