@@ -9,6 +9,7 @@
 #include "ui/gpurenderer.h"
 #include "ui/keycommands.h"
 #include "ui/mainmenu.h"
+#include "ui/projectfiles.h"
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
@@ -56,6 +57,10 @@ namespace gnubase::app
 		// be loaded.
 		Rml::ElementDocument& openStudioSetup(ui::Window& window) const;
 
+		// Opens the start screen in the main window (ui/projectfiles.h, #77), as the app does when it starts without
+		// a project.
+		void openStartScreen() { m_files.openStartScreen(m_main); }
+
 		ui::Shell& shell() { return m_shell; }
 		ui::Window& mainWindow() { return m_main; }
 		ui::RmlUi& rmlui() { return m_rmlui; }
@@ -86,6 +91,7 @@ namespace gnubase::app
 		bool m_canUndo = false;
 		bool m_canRedo = false;
 		ui::Subscription m_history;
+		ui::ProjectFiles m_files;             // the File menu's project commands
 		std::unique_ptr<ui::MainMenu> m_menu; // the project window's
 	};
 }

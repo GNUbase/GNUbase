@@ -46,6 +46,8 @@ add_library(gnubase-ui STATIC
 	mainmenu.cpp
 	mainmenu.h
 	popupwidgets.cpp
+	projectfiles.cpp
+	projectfiles.h
 	pseudolocale.cpp
 	pseudolocale.h
 	renderer.h

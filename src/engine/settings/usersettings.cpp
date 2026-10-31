@@ -104,6 +104,14 @@ namespace gnubase::engine::settings
 					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "
 					"channel's last program change before that position.",
 					Json{{"type", "boolean"}}, true},
+				{"project.autoSave",
+					"Saves a copy of a project with unsaved changes every project.autoSaveInterval minutes into the "
+					"folder Auto Saves of its project folder (see project.autoSave).",
+					Json{{"type", "boolean"}}, true},
+				{"project.autoSaveFiles", "How many auto saves a project keeps; the next one overwrites the oldest.",
+					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 100}}, 5},
+				{"project.autoSaveInterval", "Minutes between auto saves.",
+					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 120}}, 15},
 				{"ui.layout",
 					"The layout of the windows with zones: under windows, by window (project), its zones (left, "
 					"right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs "

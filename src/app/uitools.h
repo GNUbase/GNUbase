@@ -20,7 +20,8 @@ namespace gnubase::app
 	};
 
 	// The UI tools (#58) for that caller, as MCP tools: ui_windows, ui_dom, ui_screenshot, ui_wait and the input tools
-	// ui_move, ui_click, ui_drag, ui_wheel, ui_key and ui_text, through ui::Automation. The shell must outlive them.
+	// ui_move, ui_click, ui_drag, ui_wheel, ui_key and ui_text, through ui::Automation, and ui_file_dialog, which
+	// answers file dialogs. The shell must outlive them.
 	std::vector<mcp::Server::Tool> uiTools(ui::Shell& shell, Caller caller);
 
 	// Adds the MCP tools for the UI (#58): ui_windows, ui_dom, ui_screenshot, ui_wait and the input tools ui_move,

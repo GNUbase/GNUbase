@@ -110,6 +110,7 @@ add_library(gnubase-engine STATIC
 	document/midiedits.cpp
 	document/midifilecommands.cpp
 	document/parameters.cpp
+	document/projectfiles.cpp
 	document/projectmodel.cpp document/projectmodel.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/serialize.cpp document/serialize.h

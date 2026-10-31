@@ -110,7 +110,8 @@ namespace gnubase::app
 										  const auto position = event.data.at("position").get<size_t>();
 										  m_canUndo = position > 0;
 										  m_canRedo = position < event.data.at("steps").get<size_t>();
-									  }))
+									  })),
+		  m_files(m_keys, m_binding, m_shell, resources / "ui")
 	{
 		ui::registerWidgets(m_rmlui);
 		lua_State* state = m_lua.state();
@@ -142,10 +143,6 @@ namespace gnubase::app
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("history"); }});
 		m_keys.add({"window.studioSetup", "Opens the studio setup dialog for the audio and MIDI devices.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openStudioSetup(window); }});
-		// Quitting closes every window, so it waits until the event that asked for it is done with them.
-		m_keys.add({"file.quit", "Quits GNUbase.",
-			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { m_shell.quit(); }); }});
-		m_keys.bind({"Mod+Q", "file.quit"});
 		for (const ProjectCommand& command : g_projectCommands)
 		{
 			m_keys.add(
