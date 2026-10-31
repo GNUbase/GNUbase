@@ -260,7 +260,8 @@ namespace gnubase::ui
 			std::vector<std::string> parts(1);
 			const size_t first = text.find_first_not_of(' ');
 			const size_t last = text.find_last_not_of(' ');
-			const std::string trimmed = first == std::string::npos ? std::string() : text.substr(first, last - first + 1);
+			const std::string trimmed =
+				first == std::string::npos ? std::string() : text.substr(first, last - first + 1);
 			for (const char c : trimmed)
 				if (separators.find(c) != std::string::npos)
 					parts.emplace_back();
