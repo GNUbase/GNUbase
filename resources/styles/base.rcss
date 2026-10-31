@@ -902,6 +902,19 @@ splitter.column .splitter-grip-horizontal
 	flex: 1 1 0;
 }
 
+/* A setup pane: a menu of toggle buttons that stays open while they are clicked; those of sections are dragged onto
+   each other to reorder the sections. */
+.setup-pane button
+{
+	display: block;
+	margin: 2dp 8dp;
+}
+
+.setup-pane [setup-section]
+{
+	drag: drag-drop;
+}
+
 /* The color picker: the saturation and value field, the hue strip, the old and new colors' swatches, and the value
    fields with their labels. Code places the thumbs and gives the field and the swatches their data's colors. */
 colorpicker

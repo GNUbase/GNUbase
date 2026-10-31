@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// UI tests of the docking system (#56, ui/docking.h): the project window's zones, splitters, tab groups and strips, and
-// panels in windows of their own, driven through ui::Automation as MCP's UI tools drive them (tests/uiapp.h), through
-// key commands and through the user setting ui.layout, and the layout after a restart.
+// UI tests of the docking system (#56, #372, ui/docking.h): the project window's zones, splitters, tab groups and
+// strips, panels in windows of their own and a test window's sections in a setup pane, driven through ui::Automation as
+// MCP's UI tools drive them (tests/uiapp.h), through key commands and through the user setting ui.layout, and the
+// layout after a restart.
 #include "uiapp.h"
 
 #include "ui/automation.h"
@@ -111,6 +112,35 @@ namespace
 
 		std::shared_ptr<int> alive = std::make_shared<int>(0);
 	};
+
+	// tests/data/ui/sections.rml as the docking window "test".
+	void showSections(test::UiApp& app)
+	{
+		app.appUi().docking().attach("test", app.show("sections.rml"));
+		app.shell().step(std::chrono::milliseconds(0));
+	}
+
+	// The sections of the element, in order: those shown, or with all, the hidden ones too.
+	std::vector<std::string> sections(test::UiApp& app, const std::string& selector, bool all = false)
+	{
+		std::vector<std::string> result;
+		for (const Json& section : elements(app, selector + " [section]"))
+			if (all || section.at("visible").get<bool>())
+				result.push_back(section.at("attributes").at("section").get<std::string>());
+		return result;
+	}
+
+	// The setup pane's items, in order, with the checked ones marked by a *.
+	std::vector<std::string> paneItems(test::UiApp& app)
+	{
+		std::vector<std::string> result;
+		for (const Json& item : elements(app, "[setup=channel] [setup-section]"))
+			result.push_back(item.at("attributes").at("setup-section").get<std::string>() +
+				(item.at("attributes").contains("checked") ? "*" : ""));
+		return result;
+	}
+
+	using Names = std::vector<std::string>;
 
 	void closeRequest(ui::WindowId window)
 	{
@@ -368,4 +398,90 @@ TEST_CASE("the layout comes back exactly after a restart", "[ui]")
 	ui::Window* mixer = app.appUi().docking().windowOf("mixer");
 	REQUIRE(mixer != nullptr);
 	CHECK(app.shell().bounds(mixer->id()) == bounds);
+}
+
+TEST_CASE("a setup pane shows, hides and reorders a window's sections, as ui.layout does", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	showSections(app);
+	CHECK(sections(app, "#channel-1") == Names{"routing", "inserts", "sends", "fader"}); // eq is hidden by default
+	CHECK(sections(app, "#channel-2", true) == Names{"routing", "inserts", "eq", "sends", "fader"});
+	CHECK(paneItems(app) == Names{"routing*", "inserts*", "eq", "sends*", "fader*"});
+	CHECK(element(app, "[setup-section=eq]").at("text") == "EQ");
+
+	// The pane stays open while its items show and hide sections.
+	app.ui().click(std::nullopt, at("#window-layout"), ui::MouseButton::Left, 1, {});
+	REQUIRE(has(element(app, "#layout-pane"), "open"));
+	app.ui().click(std::nullopt, at("[setup-section=eq]"), ui::MouseButton::Left, 1, {});
+	app.ui().click(std::nullopt, at("[setup-section=inserts]"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&app] { return sections(app, "#channel-1") == Names{"routing", "eq", "sends", "fader"}; }));
+	CHECK(sections(app, "#channel-2") == Names{"routing", "eq", "sends", "fader"});
+	CHECK(paneItems(app) == Names{"routing*", "inserts", "eq*", "sends*", "fader*"});
+	CHECK(has(element(app, "#layout-pane"), "open"));
+
+	// An item dragged onto another takes its place, in the pane and in every channel, between the channel's name and
+	// its footer.
+	app.ui().drag(std::nullopt, middle(app, "[setup-section=fader]"), middle(app, "[setup-section=routing]"));
+	REQUIRE(app.waitUntil(
+		[&app] { return sections(app, "#channel-1", true) == Names{"fader", "routing", "inserts", "eq", "sends"}; }));
+	CHECK(sections(app, "#channel-2", true) == Names{"fader", "routing", "inserts", "eq", "sends"});
+	CHECK(paneItems(app) == Names{"fader*", "routing*", "inserts", "eq*", "sends*"});
+	CHECK(has(element(app, "#layout-pane"), "open"));
+	const Json children = elements(app, "#channel-1 > *");
+	CHECK(has(children.front(), "channel-name"));
+	CHECK(has(children.back(), "channel-footer"));
+
+	// The pane's other items show and hide strips and zones.
+	app.ui().click(std::nullopt, at("#layout-pane [toggle=left]"), ui::MouseButton::Left, 1, {});
+	app.ui().click(std::nullopt, at("#layout-pane [toggle=meterBridge]"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#left-zone") && !shown(app, "#meter-bridge"); }));
+
+	waitUntilSaved(app);
+	CHECK(savedLayout(app).at("windows").at("test").at("sections").at("channel") ==
+		Json{{"order", {"fader", "routing", "inserts", "eq", "sends"}}, {"hidden", {"inserts"}}});
+
+	// Any client changes them through the user setting, as MCP and Lua do. Sections it leaves out follow in the
+	// document's order, and names that aren't sections are ignored.
+	Json layout = savedLayout(app);
+	layout["windows"]["test"]["sections"]["channel"] = {
+		{"order", {"sends", "mixer", "fader"}}, {"hidden", {"routing"}}};
+	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+	REQUIRE(app.waitUntil(
+		[&app] { return sections(app, "#channel-1", true) == Names{"sends", "fader", "routing", "inserts", "eq"}; }));
+	CHECK(sections(app, "#channel-2") == Names{"sends", "fader", "inserts", "eq"});
+	CHECK(paneItems(app) == Names{"sends*", "fader*", "routing", "inserts*", "eq*"});
+
+	// The engine API checks the setting's shape.
+	Json bad = layout;
+	bad["windows"]["test"]["sections"]["channel"]["order"] = "fader";
+	CHECK(!engine::Client(app.engine()).call("settings.set", {{"key", "ui.layout"}, {"value", bad}}).ok());
+
+	// Back to the defaults.
+	app.call("settings.reset", {{"key", "ui.layout"}});
+	REQUIRE(
+		app.waitUntil([&app] { return sections(app, "#channel-1") == Names{"routing", "inserts", "sends", "fader"}; }));
+	CHECK(paneItems(app) == Names{"routing*", "inserts*", "eq", "sends*", "fader*"});
+}
+
+TEST_CASE("the order and visibility of sections come back after a restart", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	showSections(app);
+	ui::Docking& docking = app.appUi().docking();
+	docking.moveSection("test", "channel", "sends", "routing");
+	docking.setSectionHidden("test", "channel", "fader", true);
+	docking.setSectionHidden("test", "channel", "eq", false);
+	CHECK(docking.sections("test", "channel") == Names{"sends", "routing", "inserts", "eq", "fader"});
+	const Names shownBefore = sections(app, "#channel-2");
+	CHECK(shownBefore == Names{"sends", "routing", "inserts", "eq"});
+	const Names itemsBefore = paneItems(app);
+	waitUntilSaved(app);
+	const Json layout = docking.layout();
+
+	app.restart();
+	showSections(app);
+	CHECK(app.appUi().docking().layout() == layout);
+	CHECK(sections(app, "#channel-1") == shownBefore);
+	CHECK(sections(app, "#channel-2") == shownBefore);
+	CHECK(paneItems(app) == itemsBefore);
 }
