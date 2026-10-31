@@ -36,6 +36,9 @@ namespace gnubase::engine
 		// thread keeps the played positions for it, so a new offset applies without resizing them.
 		constexpr int64_t g_maxRecordOffset = 3 * g_maxLatency;
 		constexpr auto g_reconnectInterval = std::chrono::milliseconds(500); // between tries to open a lost device
+		// While a fallback plays, between tries of a lost device that its backend lists as unavailable without knowing
+		// whether it is there (Backend::listsPresence): each try interrupts the fallback.
+		constexpr auto g_uncertainReconnectInterval = std::chrono::seconds(3);
 
 		Json statusSchema()
 		{
@@ -808,15 +811,22 @@ namespace gnubase::engine
 
 	bool AudioEngine::reconnect()
 	{
-		if (!m_lost || (m_device && !lostDeviceListed()))
+		if (!m_lost)
 			return false;
+		if (m_device) // a fallback plays, which every try closes first
+		{
+			const Listed listed = lostDeviceListed();
+			if (listed == Listed::No ||
+				(listed == Listed::Maybe && std::chrono::steady_clock::now() < m_nextUncertainTry))
+				return false;
+		}
 		return reset();
 	}
 
-	bool AudioEngine::lostDeviceListed() const
+	AudioEngine::Listed AudioEngine::lostDeviceListed() const
 	{
 		if (m_lost->backend == "dummy")
-			return !m_dummyUnplugged;
+			return m_dummyUnplugged ? Listed::No : Listed::Yes;
 		for (const std::unique_ptr<audio::Backend>& backend : m_backends)
 		{
 			if (backend->name() != m_lost->backend)
@@ -824,15 +834,20 @@ namespace gnubase::engine
 			try
 			{
 				const std::vector<audio::DeviceInfo> devices = backend->devices();
-				return std::any_of(devices.begin(), devices.end(), [this](const audio::DeviceInfo& info)
-					{ return info.id == m_lost->device && info.unavailableReason.empty(); });
+				const auto found = std::find_if(devices.begin(), devices.end(),
+					[this](const audio::DeviceInfo& info) { return info.id == m_lost->device; });
+				if (found == devices.end())
+					return Listed::No;
+				if (found->unavailableReason.empty())
+					return Listed::Yes;
+				return backend->listsPresence() ? Listed::No : Listed::Maybe;
 			}
 			catch (const std::exception&)
 			{
-				return false;
+				return Listed::No;
 			}
 		}
-		return false;
+		return Listed::No;
 	}
 
 	void AudioEngine::failOver()
@@ -854,6 +869,7 @@ namespace gnubase::engine
 				setDevice(parameters); // which ends the loss
 				m_failingOver = false;
 				m_lost = lost;
+				m_nextUncertainTry = std::chrono::steady_clock::now() + g_uncertainReconnectInterval;
 				if (lost.restart)
 					startDevice();
 				logging::info("Playing on {} {} until the audio device returns", m_backend, m_device->info().id);
@@ -1547,7 +1563,8 @@ namespace gnubase::engine
 				"Tries once to open the lost audio device again (lost in audio.get), as audio.reset does; does nothing "
 				"unless a device is lost. While one is, the engine runs it on its own about every half second, one "
 				"try at a time. While a fallback device plays, it tries only once the backend lists the lost device "
-				"as available again, so that the fallback isn't interrupted. Tries that find the device still gone "
+				"as available again, so that the fallback isn't interrupted, or every few seconds if the backend "
+				"learns only by opening it whether it is there (ASIO). Tries that find the device still gone "
 				"change nothing and are left out of engine.commandLog. Sends audio.changed when the device opens.",
 				noParameters(), statusSchema(), false},
 			[this, announcingFailure](CommandContext& context)

@@ -17,6 +17,7 @@
 #include "platform/rt/workerpool.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <map>
@@ -150,9 +151,18 @@ namespace gnubase::engine
 		// fallback that plays. True if the status changed.
 		bool reset();
 		// audio.reconnect: while a fallback plays, only once the lost device is listed as available again, so that
-		// tries don't interrupt the fallback. True if the status changed.
+		// tries don't interrupt the fallback, or every g_uncertainReconnectInterval while it is listed as unavailable
+		// by a backend that doesn't know whether it is there. True if the status changed.
 		bool reconnect();
-		bool lostDeviceListed() const; // available again, as far as its backend's device list says
+		// Whether the lost device is available again, as far as its backend's device list says: Maybe if it is listed
+		// as unavailable by a backend whose list doesn't say whether it is there (Backend::listsPresence).
+		enum class Listed : uint8_t
+		{
+			No,
+			Yes,
+			Maybe,
+		};
+		Listed lostDeviceListed() const;
 		// Opens the fallback device for the lost device (audio.fallbackDevice) and starts it if the lost one ran.
 		void failOver();
 		// Starts trying to open the lost device again, every g_reconnectInterval, with audio.reconnect: one try at a
@@ -246,6 +256,8 @@ namespace gnubase::engine
 		std::optional<Lost> m_lost;
 		bool m_dummyUnplugged = false; // audio.simulateDeviceLoss
 		bool m_failingOver = false;    // the fallback dummy device can't be unplugged
+		// When reconnect next tries a Listed::Maybe device while a fallback plays.
+		std::chrono::steady_clock::time_point m_nextUncertainTry;
 		// The thread that tries to open a lost device again, started with the first loss.
 		std::mutex m_reconnectMutex; // guards m_stopReconnecting
 		bool m_stopReconnecting = false;

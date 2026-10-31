@@ -120,6 +120,10 @@ namespace
 		std::atomic<DummyDevice*> device{nullptr}; // the device opened last
 		std::atomic<bool> connected{true};         // fake-1's hardware; opening fails without it
 		std::atomic<bool> failStart{false};        // starting fails, as with a driver that doesn't process audio
+		// Like an ASIO driver: fake-1 is listed as unavailable from a failed open until an open succeeds, whether it
+		// is connected or not, and the backend doesn't list presence.
+		std::atomic<bool> asioLike{false};
+		std::atomic<bool> failedOpen{false};
 	};
 
 	DeviceInfo fakeInfo()
@@ -176,11 +180,12 @@ namespace
 		explicit FakeBackend(std::shared_ptr<FakeDriver> driver) : m_driver(std::move(driver)) {}
 
 		std::string name() const override { return "fake"; }
+		bool listsPresence() const override { return !m_driver->asioLike; }
 
 		std::vector<DeviceInfo> devices() override
 		{
 			DeviceInfo first = fakeInfo();
-			if (!m_driver->connected)
+			if (m_driver->asioLike ? m_driver->failedOpen.load() : !m_driver->connected)
 				first.unavailableReason = "not connected";
 			DeviceInfo unplugged;
 			unplugged.id = "fake-2";
@@ -195,7 +200,10 @@ namespace
 			if (!config.device.empty() && config.device != info.id)
 				throw DeviceError("no device " + config.device);
 			if (!m_driver->connected)
+			{
+				m_driver->failedOpen = true;
 				throw DeviceError("fake-1 is not connected");
+			}
 			DeviceFormat format;
 			format.sampleRate = config.sampleRate == 0.0 ? 48000.0 : config.sampleRate;
 			format.blockSize = config.blockSize == 0 ? m_driver->preferredBlockSize.load() : config.blockSize;
@@ -213,6 +221,7 @@ namespace
 			}
 			auto device = std::make_unique<FakeDevice>(format, clockSource, *m_driver);
 			m_driver->device = device.get();
+			m_driver->failedOpen = false;
 			return device;
 		}
 
@@ -931,6 +940,38 @@ TEST_CASE("the default fallback is the lost device's backend's default device, e
 	CHECK(status.at("device").at("backend") == "fake");
 	CHECK(status.at("device").at("blockSize") == 128);
 	CHECK(status.at("running") == false);
+}
+
+TEST_CASE("a fallback gives way to a lost device whose backend learns only by opening it whether it is there",
+	"[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	driver->asioLike = true;
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "settings.set", {{"key", "audio.fallbackDevice"}, {"value", "dummy"}});
+	run(client, "audio.setDevice", {{"backend", "fake"}, {"blockSize", 128}});
+	run(client, "audio.start");
+	driver->connected = false;
+	driver->device.load()->requestReset();
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return !data.at("lost").is_null() && data.at("device").is_object(); }));
+	CHECK(driver->failedOpen); // listed as unavailable from now on, until an open succeeds
+
+	// Tries come every few seconds, not every half second, as each one closes the fallback, which starts over at 0.
+	const int64_t position = run(client, "audio.get").at("position").get<int64_t>();
+	std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+	CHECK(run(client, "audio.get").at("position").get<int64_t>() > position + 36000);
+
+	// Plugged in again, though still listed as unavailable: a try opens it and the fallback gives way.
+	driver->connected = true;
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("lost").is_null() && data.at("device").is_object(); }));
+	const Json status = run(client, "audio.get");
+	CHECK(status.at("device").at("backend") == "fake");
+	CHECK(status.at("device").at("blockSize") == 128);
+	CHECK(status.at("running") == true);
+	run(client, "audio.stop");
 }
 
 TEST_CASE("a device lost while the project's sample rate changes returns at the new rate", "[integration]")
