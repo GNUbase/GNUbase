@@ -143,6 +143,15 @@ namespace gnubase::ui
 		return result;
 	}
 
+	void Shell::setBounds(WindowId id, const Rect& bounds)
+	{
+		Window* window = find(id);
+		if (window == nullptr)
+			return;
+		m_windows.setBounds(id, place(bounds, m_windows.displays()));
+		refresh(*window);
+	}
+
 	void Shell::setUiScale(float scale)
 	{
 		m_uiScale = scale;
@@ -256,9 +265,15 @@ namespace gnubase::ui
 		{
 		case WindowEventKind::CloseRequested:
 			if (window->m_main)
+			{
 				quit();
+			}
 			else
+			{
+				if (m_closeRequest)
+					m_closeRequest(*window); // may close it
 				close(event.window);
+			}
 			break;
 		case WindowEventKind::Moved:
 		case WindowEventKind::Resized:

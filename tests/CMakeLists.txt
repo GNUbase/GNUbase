@@ -29,6 +29,7 @@ add_executable(gnubase-tests
 	dawproject_tests.cpp
 	debugreports.cpp
 	device_tests.cpp
+	docking_tests.cpp
 	document_tests.cpp
 	effects_tests.cpp
 	engine_tests.cpp
@@ -217,6 +218,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	pkg_check_modules(JACK REQUIRED jack)
 	target_include_directories(gnubase-tests SYSTEM PRIVATE ${JACK_INCLUDE_DIRS})
 	target_link_libraries(gnubase-tests PRIVATE ${CMAKE_DL_LIBS})
+	# The ALSA sequencer test makes a sequencer client of its own as a loopback.
+	pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
+	target_link_libraries(gnubase-tests PRIVATE PkgConfig::ALSA)
 endif()
 gnubase_target_defaults(gnubase-tests)
 # Sanitizer builds are too slow for benchmarks.

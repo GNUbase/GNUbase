@@ -17,10 +17,12 @@
 #include "platform/rt/workerpool.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -52,7 +54,9 @@ namespace gnubase::engine
 	//
 	// The device comes from one of the audio backends (audio.devices, audio.setDevice). When its driver asks for a
 	// reset, the engine opens it again with the same settings and restarts it if it ran (audio.reset); when it reports
-	// a new latency, the engine reads it into the record offset (audio.updateLatency). The dummy
+	// a new latency, the engine reads it into the record offset (audio.updateLatency). A device that can't be opened
+	// again, e.g. because it was unplugged, is lost: the engine goes on without it and tries again until it returns.
+	// The device runs at the project's sample rate where it can (docs/features/audio-devices.md). The dummy
 	// device also renders offline and captures its output; its input can be one of the built-in generators.
 	//
 	// Audio tracks hear their input bus while they monitor it: with the monitor button, or record-enabled by the user
@@ -67,11 +71,12 @@ namespace gnubase::engine
 		~AudioEngine() override; // stops the device
 
 		// Registers audio.devices, audio.setDevice, audio.ports, audio.setProcessing, audio.get, audio.performance,
-		// audio.resetPerformance, audio.simulateOverload, audio.reset, audio.updateLatency, audio.controlPanel,
-		// audio.render, audio.start, audio.stop, audio.capture and audio.captureInput, the transport commands
-		// transport.play, transport.stop, transport.toggle, transport.record, transport.locate, transport.set,
-		// transport.exchangeLocators and transport.get, and the MIDI port commands (MidiPorts). audio.analyze,
-		// audio.compare and audio.record are in analysiscommands.cpp, midi.inject and midi.capture in miditap.cpp.
+		// audio.resetPerformance, audio.simulateOverload, audio.simulateDeviceLoss, audio.reset, audio.updateLatency,
+		// audio.controlPanel, audio.render, audio.start, audio.stop, audio.capture and audio.captureInput, the
+		// transport commands transport.play, transport.stop, transport.toggle, transport.record, transport.locate,
+		// transport.set, transport.exchangeLocators and transport.get, and the MIDI port commands (MidiPorts).
+		// audio.analyze, audio.compare and audio.record are in analysiscommands.cpp, midi.inject and midi.capture in
+		// miditap.cpp.
 		void registerCommands(Engine& engine);
 
 		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
@@ -80,8 +85,8 @@ namespace gnubase::engine
 		// Any thread but the audio thread, without waiting: the project cursor (Transport::position).
 		time::Samples position() const { return m_transport.position(); }
 
-		// Command thread: compiles a new graph if the project or the automatic monitoring mode changed since the last
-		// one.
+		// Command thread: opens the device again at a new project sample rate if it supports it, and compiles a new
+		// graph if the project or the automatic monitoring mode changed since the last one.
 		void sync();
 
 		// Audio thread.
@@ -139,7 +144,10 @@ namespace gnubase::engine
 		void setDevice(const Json& parameters);
 		void openDummy(const Json& parameters);
 		void closeDevice();
-		void reset();
+		// audio.reset; a device that can't be opened is lost. True if the status changed.
+		bool reset();
+		// Starts trying to open the lost device again, every g_reconnectInterval, with audio.reset.
+		void waitForDevice();
 		// Opens the device again with the parameters, and starts it again if it was running.
 		void reopen(const Json& parameters, bool running);
 		void set(const Json& changes);              // audio.set
@@ -160,6 +168,7 @@ namespace gnubase::engine
 		Json processingStatus() const;
 		Json status() const;
 		Json performance();
+		Json performance(uint64_t deviceOverloads); // with what the device's overloads() returned
 		Json resetPerformance();
 		// Command thread, while no block runs: the next measurement starts from nothing.
 		void clearPerformance();
@@ -195,7 +204,7 @@ namespace gnubase::engine
 		// transport command, since monitoring may follow the transport.
 		void routeDirectly(const RenderSnapshot& snapshot, const std::vector<std::vector<int>>& ports);
 		void stopMonitoringDirectly();
-		// Audio thread: the dummy device's input where recording places it (audio.captureInput).
+		// Audio thread: the device's input where recording places it (audio.captureInput).
 		void captureInput(const audio::DeviceBlock& block) noexcept;
 
 		rt::SnapshotPublisher<RenderSnapshot>& m_snapshots;
@@ -211,6 +220,24 @@ namespace gnubase::engine
 		audio::DummyDevice* m_dummy = nullptr; // m_device, if it is the dummy device
 		std::vector<std::string> m_inputPorts; // the device's port names, each one once
 		std::vector<std::string> m_outputPorts;
+		double m_projectRate = 0.0; // the project's sample rate the device last followed
+
+		// The device that couldn't be opened again (audio.reset), while the engine waits for it to return.
+		struct Lost
+		{
+			std::string device; // its id
+			std::string reason;
+			bool restart = false; // it ran
+		};
+		std::optional<Lost> m_lost;
+		bool m_dummyUnplugged = false; // audio.simulateDeviceLoss
+		// The thread that tries to open a lost device again, started with the first loss.
+		std::mutex m_reconnectMutex; // guards m_stopReconnecting
+		bool m_stopReconnecting = false;
+		std::atomic<bool> m_waitingForDevice{false}; // m_lost, for that thread
+		std::condition_variable m_reconnectWake;
+		std::thread m_reconnectThread;
+
 		// The user's names for ports and which ones they see (audio.setPort), by portKey, for every device opened.
 		struct PortSettings
 		{
@@ -225,8 +252,8 @@ namespace gnubase::engine
 		PlayedPositions m_played;   // audio thread
 		bool m_directMonitoring = false;
 		std::map<int, audio::InputMonitor> m_monitors; // by input port, those the device monitors directly
-		// The dummy device's: per input channel, what it recorded at each project position from 0. Written by the
-		// audio thread, read while the device stands.
+		// Per input channel of the device, what it recorded at each project position from 0, for captureSeconds.
+		// Written by the audio thread, read while the device stands.
 		std::vector<std::vector<float>> m_capturedInput;
 		Playback m_playback; // before m_programs: their track players use it
 
@@ -268,6 +295,7 @@ namespace gnubase::engine
 		rt::TripleBuffer<PerformanceData> m_performance;
 		std::atomic<bool> m_resetPerformance{false};
 		uint64_t m_deviceOverloadsBefore = 0; // the device's overloads when the measurement started
+		uint64_t m_deviceOverloadsKept = 0;   // the dropouts of the devices before an audio.reset, and the resets
 
 		// The cue thread, while the device runs in real time. It reads the transport's settings and play state from
 		// m_cueState, which the command thread updates.

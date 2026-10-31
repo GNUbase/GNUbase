@@ -11,9 +11,9 @@ buttons, menus and dialogs ([widgets.md](widgets.md)).
 
 `EventDisplay` fills an element of a document and follows the project through the engine binding
 ([ui-engine-binding.md](ui-engine-binding.md)): it is one more client of the engine API, and shows what any client
-changed. The app shows it in the main window (`resources/ui/project.rml`, `AppUi::showProject`), under a toolbar with
-the auto-scroll and zoom presets buttons, until the docking system (#56) and the track list (#81) give the project
-window its zones and its toolbar.
+changed. The app shows it in the main zone of the project window (`resources/ui/project.rml`, `AppUi::showProject`,
+[docking.md](docking.md)), under the toolbar with the auto-scroll and zoom presets buttons, until the track list (#81)
+joins it there. Hiding the overview line, a strip of the window, hides the display's `.overview`.
 
 ```
 .event-display                  the element the document gives it

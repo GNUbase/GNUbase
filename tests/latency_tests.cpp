@@ -387,8 +387,7 @@ TEST_CASE("recorded input lines up across cycle jumps", "[integration]")
 	CHECK(silent(recorded(client, 0, 400, 100)));
 }
 
-TEST_CASE(
-	"only the transport's playing frames are recorded, and only from the dummy device while it stands", "[integration]")
+TEST_CASE("only the transport's playing frames are recorded, and only while the device stands", "[integration]")
 {
 	Engine engine;
 	Client client(engine);
@@ -492,6 +491,21 @@ TEST_CASE("direct monitoring needs a driver that can do it", "[integration]")
 	CHECK(
 		run(client, "audio.setDevice", {{"backend", "plain"}, {"recordShift", -20}}).at("device").at("recordOffset") ==
 		20);
+}
+
+// The loopback tests record through hardware this way (checkRoundTrip in tests/device_tests.cpp).
+TEST_CASE("any device keeps what its inputs record for captureSeconds", "[integration]")
+{
+	std::vector<std::unique_ptr<Backend>> backends;
+	backends.push_back(std::make_unique<PlainBackend>());
+	Engine engine(std::move(backends));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "plain"}});
+	CHECK(recorded(client, 0, 0, 10).empty()); // by default, nothing
+	run(client, "audio.setDevice", {{"backend", "plain"}, {"captureSeconds", 1}});
+	CHECK(recorded(client, 1, 47990, 100) == std::vector<float>(10, 0.0f));
+	CHECK_THAT(reject(client, "audio.setDevice", {{"backend", "plain"}, {"captureSeconds", 601}}),
+		ContainsSubstring("captureSeconds"));
 }
 
 TEST_CASE("the record offset follows latency a device reports after it opens", "[integration]")

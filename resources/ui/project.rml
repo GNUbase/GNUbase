@@ -1,11 +1,13 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- The project window: for now a toolbar and the event display (#84), filling the main window, until the docking
-     system (#56) and the track list (#81) give it zones, a toolbar and track controls. ui::EventDisplay fills the
-     element #event-display and drives the controls and menus with these ids (docs/features/event-display.md): the
-     ruler's arrow button .ruler-format, #ruler-format-menu, #zoom-presets-menu, #auto-scroll and #auto-scroll-menu,
-     and the snap controls #snap, #snap-type, #snap-type-menu, #grid-type, #grid-type-menu (which the display fills with
-     the ruler format's grid types) and #snap-zero-crossing (docs/features/snap.md).
-     Its dialogs are zoom-preset.rml and zoom-presets.rml, next to this file.
+<!-- The project window: a docking window (docs/features/docking.md) with the toolbar, the info line, the zones and
+     their splitters, the status line and the transport bar. The main zone shows the event display (#84) until the
+     track list (#81) joins it. ui::Docking lays out the elements with zone, splitter for, strip and toggle
+     attributes and fills the other zones with their panels' tabs. ui::EventDisplay fills the element #event-display
+     and drives the controls and menus with these ids (docs/features/event-display.md): the ruler's arrow button
+     .ruler-format, #ruler-format-menu, #zoom-presets-menu, #auto-scroll and #auto-scroll-menu, and the snap controls
+     #snap, #snap-type, #snap-type-menu, #grid-type, #grid-type-menu (which the display fills with the ruler format's
+     grid types) and #snap-zero-crossing (docs/features/snap.md). Its dialogs are zoom-preset.rml and
+     zoom-presets.rml, next to this file.
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
 <head>
@@ -20,17 +22,6 @@
 			bottom: 0;
 		}
 
-		#toolbar
-		{
-			position: absolute;
-			left: 0;
-			top: 0;
-			right: 0;
-			height: 32dp;
-			box-sizing: border-box;
-			padding: 4dp;
-		}
-
 		#toolbar button
 		{
 			margin-right: 2dp;
@@ -41,18 +32,23 @@
 			margin-right: 12dp;
 		}
 
+		#toolbar .spacer
+		{
+			flex: 1 1 0;
+		}
+
 		#event-display
 		{
 			position: absolute;
 			left: 0;
-			top: 32dp;
+			top: 0;
 			right: 0;
 			bottom: 0;
 		}
 	</style>
 </head>
-<body focuszone="project">
-	<div id="toolbar" class="toolbar">
+<body class="docking" focuszone="project">
+	<div id="toolbar" class="toolbar" strip="toolbar">
 		<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
 		<button id="auto-scroll-settings" class="icon-only" menu="auto-scroll-menu" title="Select Auto-Scroll Settings"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 		<button id="zoom-presets" class="icon-only" menu="zoom-presets-menu" title="Horizontal Zoom Presets"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
@@ -60,11 +56,42 @@
 		<button id="snap-type" menu="snap-type-menu" title="Snap Type">Grid</button>
 		<button id="grid-type" menu="grid-type-menu" title="Grid Type">Bar</button>
 		<button id="snap-zero-crossing" type="toggle" class="icon-only" title="Snap to Zero Crossing"><svg class="icon" src="../icons/general-zero-crossing.svg"/></button>
+		<div class="spacer"/>
+		<button id="show-left-zone" type="toggle" toggle="left" title="Show/Hide Left Zone">Left</button>
+		<button id="show-lower-zone" type="toggle" toggle="lower" title="Show/Hide Lower Zone">Lower</button>
+		<button id="show-right-zone" type="toggle" toggle="right" title="Show/Hide Right Zone">Right</button>
+		<button id="window-layout" class="icon-only" menu="window-layout-menu" title="Set up Window Layout"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 	</div>
-	<div id="event-display" class="event-display">
-		<button class="ruler-format icon-only" menu="ruler-format-menu" title="Ruler Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
+	<div id="info-line" class="strip" strip="infoLine" default="hidden"/>
+	<div class="zones">
+		<div id="left-zone" zone="left" focuszone="left" size="240" default="hidden"/>
+		<splitter for="left"/>
+		<div class="zone-column">
+			<div id="main-zone" zone="main" focuszone="project">
+				<div id="event-display" class="event-display">
+					<button class="ruler-format icon-only" menu="ruler-format-menu" title="Ruler Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
+				</div>
+			</div>
+			<splitter for="lower" resize="next"/>
+			<div id="lower-zone" zone="lower" focuszone="lower" size="240" default="hidden"/>
+		</div>
+		<splitter for="right" resize="next"/>
+		<div id="right-zone" zone="right" focuszone="right" size="240" default="hidden"/>
 	</div>
+	<div id="status-line" class="strip" strip="statusLine" default="hidden"/>
+	<div id="transport-bar" class="strip" strip="transportBar" default="hidden"/>
 
+	<!-- Set up Window Layout (reference manual p. 65) -->
+	<menu id="window-layout-menu">
+		<menuitem type="toggle" toggle="left">Left Zone</menuitem>
+		<menuitem type="toggle" toggle="lower">Lower Zone</menuitem>
+		<menuitem type="toggle" toggle="right">Right Zone</menuitem>
+		<menuseparator/>
+		<menuitem type="toggle" toggle="infoLine">Info Line</menuitem>
+		<menuitem type="toggle" toggle="overviewLine">Overview Line</menuitem>
+		<menuitem type="toggle" toggle="statusLine">Status Line</menuitem>
+		<menuitem type="toggle" toggle="transportBar">Transport Bar</menuitem>
+	</menu>
 	<menu id="ruler-format-menu">
 		<menuitem format="barsBeats">Bars+Beats</menuitem>
 		<menuitem format="seconds">Seconds</menuitem>

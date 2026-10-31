@@ -3,6 +3,7 @@
 
 #include "engine/engine.h"
 #include "scripting/runtime.h"
+#include "ui/docking.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/gpurenderer.h"
@@ -44,9 +45,9 @@ namespace gnubase::app
 		AppUi& operator=(AppUi&&) = delete;
 		~AppUi() = default;
 
-		// Shows the project window in the main window (resources/ui/project.rml) with the event display, whose
-		// commands are key commands in the focus zone "project". Throws std::runtime_error if the document can't be
-		// loaded.
+		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the event
+		// display in its main zone, whose commands are key commands in the focus zone "project". Throws
+		// std::runtime_error if the document can't be loaded.
 		ui::EventDisplay& showProject();
 
 		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
@@ -59,12 +60,13 @@ namespace gnubase::app
 		ui::RmlUi& rmlui() { return m_rmlui; }
 		scripting::Runtime& lua() { return m_lua; }
 		ui::KeyCommands& keyCommands() { return m_keys; }
+		ui::Docking& docking() { return m_docking; }
 		const ui::GpuRenderer& renderer() const { return m_renderer; }
 
 	private:
 		// Made in this order and destroyed in the reverse: RmlUi releases its resources through the renderer and
 		// its Lua plugin's in Lua, the shell's windows need all of them, the settings and the binding tell the shell,
-		// and key commands send through the binding.
+		// key commands send through the binding, and the docking system follows the binding and opens windows.
 		ui::SdlWindowSystem m_windows;
 		ui::GpuRenderer m_renderer;
 		scripting::Runtime m_lua;
@@ -75,6 +77,7 @@ namespace gnubase::app
 		ui::EngineBinding m_binding;
 		ui::KeyCommands m_keys;
 		ui::Window& m_main;
+		ui::Docking m_docking;
 		engine::Engine& m_engine;
 		std::filesystem::path m_resources;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding

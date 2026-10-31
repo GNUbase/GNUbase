@@ -134,7 +134,7 @@ Returns:
 
 #### `gnubase.audio.captureInput`
 
-What an input channel of the dummy device recorded at project positions from start, at most 1048576 frames: its input goes where the transport played the record offset before it arrived (see audio.get), only while the transport plays, and the last cycle lap over the ones before. Up to captureSeconds from position 0; positions not recorded are silent. Only while the device stands.
+What an input channel of the audio device recorded at project positions from start, at most 1048576 frames: its input goes where the transport played the record offset before it arrived (see audio.get), only while the transport plays, and the last cycle lap over the ones before. Up to the device's captureSeconds (audio.setDevice) from position 0; positions not recorded are silent. Only while the device stands.
 
 Only reads; changes nothing.
 
@@ -177,6 +177,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -194,7 +195,7 @@ Returns:
 
 #### `gnubase.audio.get`
 
-The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing).
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate; with sampleRateMismatch the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower. lost: the device that went away (its backend, device id, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null.
 
 Only reads; changes nothing.
 
@@ -203,6 +204,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -210,7 +212,7 @@ Returns:
 
 #### `gnubase.audio.performance`
 
-Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported (a block that was both counts twice); cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late. blockSize: the device's block size in frames, 0 without a device.
+Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported and the device's restarts by audio.reset (a block that was both counts twice); cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance, also across audio.reset; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late. blockSize: the device's block size in frames, 0 without a device.
 
 Only reads; changes nothing.
 
@@ -274,6 +276,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -281,13 +284,14 @@ Returns:
 
 #### `gnubase.audio.reset`
 
-Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this when their settings change, e.g. in their control panel; the engine then resets on its own.
+Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this when their settings change, e.g. in their control panel, or when their device goes away; the engine then resets on its own. A device that can't be opened, e.g. because it was unplugged, is lost (lost in audio.get): the engine goes on without it and resets again about every half second until it opens, then restarts it if it ran, so playback goes on where it stopped. audio.setDevice ends the wait. The performance measurement goes on across a reset, which counts as a dropout (see audio.performance); one that loses the device ends it. Sends audio.changed when the device closes, opens or is lost.
 
 Returns:
 
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -333,6 +337,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -340,9 +345,9 @@ Returns:
 
 #### `gnubase.audio.setDevice`
 
-Replaces the audio device. backend: one from audio.devices, by default "dummy". device: its id, by default the backend's default device. sampleRate and blockSize: by default the driver's current rate and preferred size. clockSource: a name from the device's clockSources. The device starts stopped at position 0. Another backend's device is closed before the new one opens, since drivers often allow only one; if opening fails, there is no device.
-Recorded input goes where the transport played the device's input + output latency before it arrived, so what is played along to or looped back lines up with what played (recordOffset in audio.get). recordShift (frames, -65536 to 65536) moves recordings that much later, for drivers that report their latency wrong. directMonitoring: the driver monitors audio tracks' inputs itself, without the engine's latency, for tracks that play into an output bus (canMonitorDirectly in audio.devices says which can); their fader and pan set its level and position, automation doesn't reach it.
-The dummy device has no hardware: its output is captured in memory (audio.capture) and it renders offline (audio.render). Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs (inputChannels, outputChannels), 60 s of capture (captureSeconds). Its input is silent, or a built-in generator (see processor.list) with parameters by name. It reports inputLatency and outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that much later, as a cable from each output to the input of the same number would, which needs at least a block. It monitors directly by adding inputs to its outputs.
+Replaces the audio device. backend: one from audio.devices, by default "dummy". device: its id, by default the backend's default device. sampleRate: by default the project's if the device supports it, otherwise the driver's current rate; when the project's sample rate changes, the device follows it where it can. blockSize: by default the driver's preferred size. clockSource: a name from the device's clockSources. The device starts stopped at position 0. Another backend's device is closed before the new one opens, since drivers often allow only one; if opening fails, there is no device.
+Recorded input goes where the transport played the device's input + output latency before it arrived, so what is played along to or looped back lines up with what played (recordOffset in audio.get). recordShift (frames, -65536 to 65536) moves recordings that much later, for drivers that report their latency wrong. captureSeconds (0 to 600, by default 0, or 60 for the dummy device) keeps that much of what the inputs record in memory for audio.captureInput, e.g. for a loopback test. directMonitoring: the driver monitors audio tracks' inputs itself, without the engine's latency, for tracks that play into an output bus (canMonitorDirectly in audio.devices says which can); their fader and pan set its level and position, automation doesn't reach it.
+The dummy device has no hardware: its output is captured in memory (audio.capture) and it renders offline (audio.render). It supports 44100, 48000, 88200, 96000, 176400 and 192000 Hz and opens with any rate from 8000 Hz. Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs (inputChannels, outputChannels), 60 s of capture (captureSeconds, also of its output). Its input is silent, or a built-in generator (see processor.list) with parameters by name. It reports inputLatency and outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that much later, as a cable from each output to the input of the same number would, which needs at least a block. It monitors directly by adding inputs to its outputs.
 
 Parameters:
 
@@ -366,6 +371,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -403,6 +409,26 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
+- `playbackDropouts`: integer, required
+- `position`: integer, required
+- `processing`: object, required
+- `running`: boolean, required
+
+#### `gnubase.audio.simulateDeviceLoss`
+
+Only the dummy device: simulates its hardware being unplugged (connected false) and its driver asking for a reset, after which the device is lost (see audio.reset), or plugged in again (connected true), after which the engine opens it again on its own. While it is unplugged, audio.setDevice can't open it either.
+
+Parameters:
+
+- `connected`: boolean, required
+
+Returns:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -433,6 +459,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -447,6 +474,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -466,6 +494,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -2306,7 +2335,7 @@ Only reads; changes nothing.
 
 Parameters:
 
-- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "ui.scale" | "ui.theme" | "ui.zoomPresets", required. The setting.
+- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "ui.layout" | "ui.scale" | "ui.theme" | "ui.zoomPresets", required. The setting.
 
 Returns:
 
@@ -2332,7 +2361,7 @@ Puts a user setting back to its default, or every one without key, and saves the
 
 Parameters:
 
-- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "ui.scale" | "ui.theme" | "ui.zoomPresets". The setting.
+- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "ui.layout" | "ui.scale" | "ui.theme" | "ui.zoomPresets". The setting.
 
 Returns:
 
@@ -2340,11 +2369,11 @@ Returns:
 
 #### `gnubase.settings.set`
 
-Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.autoMonitoring` (one of ["manual","whileRecordEnabled","whileRecording","tapeMachine"], default "tapeMachine"): When record-enabled audio tracks monitor their input, besides the monitor button: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records; `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.busPresets` (object, default {"input":{},"output":{}}): The user's own bus presets, per direction (input, output) by name: each a list of busses with their name, format, ports and child busses (bus.savePreset); `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `midi.chaseBeyondParts` (boolean, default true): Chases controller events from the whole track; off, only from the MIDI parts under the position, so none outside parts; `midi.chaseControllers` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each control change's last value before that position; `midi.chaseNotes` (boolean, default true): Where playback starts or jumps, MIDI tracks start the notes that sound at that position; `midi.chasePitchBend` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last pitch bend before that position; `midi.chasePrograms` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last program change before that position; `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes; `ui.zoomPresets` (array, default []): The horizontal zoom presets of the event display, for every project: each a name and the seconds the view shows.
+Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.autoMonitoring` (one of ["manual","whileRecordEnabled","whileRecording","tapeMachine"], default "tapeMachine"): When record-enabled audio tracks monitor their input, besides the monitor button: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records; `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.busPresets` (object, default {"input":{},"output":{}}): The user's own bus presets, per direction (input, output) by name: each a list of busses with their name, format, ports and child busses (bus.savePreset); `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `midi.chaseBeyondParts` (boolean, default true): Chases controller events from the whole track; off, only from the MIDI parts under the position, so none outside parts; `midi.chaseControllers` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each control change's last value before that position; `midi.chaseNotes` (boolean, default true): Where playback starts or jumps, MIDI tracks start the notes that sound at that position; `midi.chasePitchBend` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last pitch bend before that position; `midi.chasePrograms` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last program change before that position; `ui.layout` (object, default {}): The layout of the windows with zones: under windows, by window (project), its zones (left, right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs hidden and the active one, and its strips (toolbar, infoLine, overviewLine, statusLine, transportBar) with whether each is shown; under panels, by panel, whether it is in a window of its own and that window's bounds. What it leaves out has its default; `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes; `ui.zoomPresets` (array, default []): The horizontal zoom presets of the event display, for every project: each a name and the seconds the view shows.
 
 Parameters:
 
-- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "ui.scale" | "ui.theme" | "ui.zoomPresets", required. The setting.
+- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "ui.layout" | "ui.scale" | "ui.theme" | "ui.zoomPresets", required. The setting.
 - `value`: any, required. The new value; it must fit the setting's schema.
 
 Returns:

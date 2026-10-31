@@ -27,6 +27,22 @@ namespace gnubase::app
 			return ui::Themes(resources);
 		}
 
+		struct ProjectPanel
+		{
+			const char* id;
+			const char* title;
+			const char* zone;
+		};
+
+		constexpr std::array<ProjectPanel, 6> g_projectPanels{{
+			{"inspector", "Inspector", "left"},
+			{"visibility", "Visibility", "left"},
+			{"editor", "Editor", "lower"},
+			{"mixer", "Mixer", "lower"},
+			{"media", "Media", "right"},
+			{"meter", "Meter", "right"},
+		}};
+
 		// The event display's commands (ui::EventDisplay::actions) and the reference's keys for them in the project
 		// window (manual p. 1573), if it has any.
 		struct ProjectCommand
@@ -85,7 +101,8 @@ namespace gnubase::app
 		: m_renderer(m_windows, msaaSamples), m_lua(engine, scripting::Trust::Trusted, output), m_rmlui(m_windows),
 		  m_themes(fontsAndThemes(resources)), m_shell(m_windows, m_renderer), m_settings(engine, m_shell, m_themes),
 		  m_binding(engine, [this] { m_shell.wake(); }), m_keys(engine, m_binding), m_main(m_shell.open(main)),
-		  m_engine(engine), m_resources(resources)
+		  m_docking(engine, m_binding, m_shell, resources / "ui" / "panel-window.rml", main.hidden), m_engine(engine),
+		  m_resources(resources)
 	{
 		ui::registerWidgets(m_rmlui);
 		lua_State* state = m_lua.state();
@@ -101,6 +118,12 @@ namespace gnubase::app
 				return m_binding.update();
 			});
 		m_shell.onUnusedKey([this](ui::Window& window, const ui::KeyPress& keys) { m_keys.press(window, keys); });
+
+		// The project window's panels (reference manual pp. 54, 75-98), which their tickets fill.
+		for (const ProjectPanel& panel : g_projectPanels)
+			m_docking.add({panel.id, panel.title, "project", panel.zone, {}});
+		m_docking.addKeyCommands(m_keys);
+
 		m_keys.add({"window.studioSetup", "Opens the studio setup dialog for the audio and MIDI devices.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openStudioSetup(window); }});
 		for (const ProjectCommand& command : g_projectCommands)
@@ -129,6 +152,7 @@ namespace gnubase::app
 			throw std::runtime_error("cannot load the project window from " + file.u8string());
 		}
 		document->Show();
+		m_docking.attach("project", *document);
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
 		return *m_eventDisplay;
 	}
