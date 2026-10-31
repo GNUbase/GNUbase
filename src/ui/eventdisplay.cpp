@@ -81,6 +81,7 @@ namespace gnubase::ui
 		m_lanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "events");
 		m_mutedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "muted-events");
 		m_selectedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "selected-events");
+		m_waveforms = std::make_unique<EventWaveforms>(binding, add(*m_area, "div", "waveforms"));
 		m_crossVertical = &add(*m_area, "div", "cross-hair-vertical");
 		m_crossHorizontal = &add(*m_area, "div", "cross-hair-horizontal");
 		m_cursorLine = &add(timeline, "div", "project-cursor");
@@ -257,12 +258,12 @@ namespace gnubase::ui
 		}
 		const auto seconds = [this](int64_t position, bool isLinear)
 		{ return isLinear ? static_cast<double>(position) / m_time.sampleRate : m_time.tempo.toSeconds(position); };
-		std::map<uint64_t, double> clipRates;
-		std::map<uint64_t, double> mediaRates;
-		for (const Json& media : project.at("media"))
-			mediaRates[media.at("id").get<uint64_t>()] = media.at("sampleRate").get<double>();
+		std::map<uint64_t, const Json*> media;
+		for (const Json& file : project.at("media"))
+			media[file.at("id").get<uint64_t>()] = &file;
+		std::map<uint64_t, uint64_t> clipMedia;
 		for (const Json& clip : project.at("clips"))
-			clipRates[clip.at("id").get<uint64_t>()] = mediaRates[clip.at("media").get<uint64_t>()];
+			clipMedia[clip.at("id").get<uint64_t>()] = clip.at("media").get<uint64_t>();
 		m_end = 0.0;
 		const auto addEvent = [&](const Json& event, double start, double end)
 		{
@@ -273,13 +274,20 @@ namespace gnubase::ui
 			m_events.push_back({event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false)});
 			m_end = std::max(m_end, end);
 		};
+		std::vector<EventWaveforms::Event> waves;
 		for (const Json& event : project.at("audioEvents"))
 		{
 			const auto track = event.at("track").get<uint64_t>();
-			const double rate = clipRates[event.at("clip").get<uint64_t>()];
+			const auto file = media.find(clipMedia[event.at("clip").get<uint64_t>()]);
+			const double rate = file == media.end() ? 0.0 : file->second->at("sampleRate").get<double>();
 			const double start = seconds(event.at("position").get<int64_t>(), linear[track]);
-			addEvent(event, start, start + (rate > 0.0 ? event.at("length").get<double>() / rate : 0.0));
+			const double length = rate > 0.0 ? event.at("length").get<double>() / rate : 0.0;
+			addEvent(event, start, start + length);
+			if (file != media.end() && rate > 0.0 && lanes.count(track) != 0)
+				waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {start, length}, file->first, rate,
+					file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});
 		}
+		m_waveforms->setEvents(waves);
 		for (const Json& part : project.at("midiParts"))
 		{
 			const auto track = part.at("track").get<uint64_t>();
@@ -507,6 +515,8 @@ namespace gnubase::ui
 		}
 		for (Rml::Element* canvas : {m_lanes, m_mutedLanes, m_selectedLanes})
 			canvas->SetAttribute("scroll-top", m_view.top);
+		m_waveforms->show(
+			{m_view.start, m_view.scale, m_view.top, g_trackHeight * m_view.trackZoom, width(), height(), dpRatio()});
 		setCursor(m_cursorSample);
 
 		// The overview line shows the whole project, and the view as a rectangle.

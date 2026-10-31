@@ -26,6 +26,7 @@ window its zones and its toolbar.
       event-lanes.events        a lane per track
       event-lanes.muted-events  muted events again, over them (parts-and-events.md)
       event-lanes.selected-events  selected events again, over those
+      .waveforms                a waveform per audio event near the view (peaks.md)
       .cross-hair-vertical, .cross-hair-horizontal
     .project-cursor             across the ruler and the lanes
 ```

@@ -13,11 +13,15 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase::audio;
@@ -25,7 +29,9 @@ using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::WithinAbs;
 using gnubase::engine::Client;
 using gnubase::engine::Engine;
+using gnubase::engine::Event;
 using gnubase::engine::Json;
+using gnubase::engine::Message;
 using gnubase::engine::ObjectId;
 using gnubase::engine::Result;
 
@@ -174,6 +180,65 @@ namespace
 			return std::make_unique<PlainDevice>();
 		}
 	};
+
+	// A device that learns its latency after it opens, as PipeWire does from its ports' latency parameters: it
+	// reports a block each way until learn() tells it more and reports the change.
+	class SettlingDevice : public DummyDevice
+	{
+	public:
+		SettlingDevice() : DummyDevice(DeviceFormat{48000.0, 64, 2, 2}, 0) {}
+
+		DeviceInfo info() const override
+		{
+			DeviceInfo info = DummyDevice::info();
+			info.id = "settling";
+			return info;
+		}
+
+		DeviceLatency latency() const override { return {m_input.load(), m_output.load()}; }
+
+		void learn(DeviceLatency latency)
+		{
+			m_input = latency.input;
+			m_output = latency.output;
+			reportLatencyChange();
+		}
+
+	private:
+		std::atomic<uint32_t> m_input{64};
+		std::atomic<uint32_t> m_output{64};
+	};
+
+	class SettlingBackend : public Backend
+	{
+	public:
+		explicit SettlingBackend(std::atomic<SettlingDevice*>& opened) : m_opened(opened) {}
+		std::string name() const override { return "settling"; }
+		std::vector<DeviceInfo> devices() override { return {SettlingDevice().info()}; }
+		std::unique_ptr<Device> open(const DeviceConfig& /*config*/) override
+		{
+			auto device = std::make_unique<SettlingDevice>();
+			m_opened = device.get();
+			return device;
+		}
+
+	private:
+		std::atomic<SettlingDevice*>& m_opened;
+	};
+
+	// Waits for an event whose data matches; false after five seconds.
+	template <typename Match> bool waitForEvent(Client& client, const std::string& name, Match match)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		while (std::chrono::steady_clock::now() < deadline)
+		{
+			const std::optional<Message> message = client.wait(std::chrono::milliseconds(50));
+			const auto* event = message ? std::get_if<Event>(&*message) : nullptr;
+			if (event != nullptr && event->name == name && match(event->data))
+				return true;
+		}
+		return false;
+	}
 }
 
 TEST_CASE("the dummy device reports its latency and loops its outputs back a round trip later", "[unit]")
@@ -427,4 +492,66 @@ TEST_CASE("direct monitoring needs a driver that can do it", "[integration]")
 	CHECK(
 		run(client, "audio.setDevice", {{"backend", "plain"}, {"recordShift", -20}}).at("device").at("recordOffset") ==
 		20);
+}
+
+TEST_CASE("the record offset follows latency a device reports after it opens", "[integration]")
+{
+	std::atomic<SettlingDevice*> opened{nullptr};
+	std::vector<std::unique_ptr<Backend>> backends;
+	backends.push_back(std::make_unique<SettlingBackend>(opened));
+	backends.push_back(std::make_unique<DummyBackend>());
+	Engine engine(std::move(backends));
+	Client client(engine);
+	CHECK_THAT(reject(client, "audio.updateLatency"), ContainsSubstring("no audio device"));
+	const Json device = run(client, "audio.setDevice", {{"backend", "settling"}, {"recordShift", 10}}).at("device");
+	CHECK(device.at("recordOffset") == 118); // a block each way
+	run(client, "audio.start");
+
+	// The driver learns its latency while the device runs: the engine reads it again and keeps the device running.
+	opened.load()->learn({100, 157});
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("device").at("recordOffset") == 247 && data.at("running") == true; }));
+	const Json status = run(client, "audio.get");
+	CHECK(status.at("device").at("inputLatency") == 100);
+	CHECK(status.at("device").at("outputLatency") == 157);
+	CHECK(status.at("running") == true);
+
+	// Nothing changed: the same device, stopped, which keeps its position.
+	const Json stopped = run(client, "audio.stop");
+	const Json same = run(client, "audio.updateLatency");
+	CHECK(same.at("device").at("recordOffset") == 247);
+	CHECK(same.at("position") == stopped.at("position"));
+	CHECK_THAT(reject(client, "audio.updateLatency", {{"inputLatency", 100}}), ContainsSubstring("dummy device"));
+}
+
+TEST_CASE("a loopback records sample-aligned after the dummy device's latency changes", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice",
+		{{"blockSize", 64}, {"captureSeconds", 1}, {"inputLatency", 32}, {"outputLatency", 32}, {"loopback", true}});
+	run(client, "audio.render", {{"frames", 640}});
+
+	// As a driver whose latency settles after it opens: the loopback's round trip grows, and so does the offset.
+	const Json status = run(client, "audio.updateLatency", {{"inputLatency", 100}, {"outputLatency", 157}});
+	CHECK(status.at("device").at("inputLatency") == 100);
+	CHECK(status.at("device").at("outputLatency") == 157);
+	CHECK(status.at("device").at("recordOffset") == 257);
+	CHECK(status.at("position") == 640); // the same device, which records the ramp below
+
+	addRamp(client, writeRamp(dir, 500), 1000, 500);
+	run(client, "transport.play");
+	run(client, "audio.render", {{"frames", 4800}});
+	CHECK(rampMismatches(client, 0, 1000, 500) == 0);
+	CHECK(rampMismatches(client, 1, 1000, 500) == 0);
+
+	CHECK_THAT(reject(client, "audio.updateLatency", {{"inputLatency", 10}, {"outputLatency", 10}}),
+		ContainsSubstring("at least a block"));
+	CHECK_THAT(reject(client, "audio.updateLatency", {{"inputLatency", 70000}}), ContainsSubstring("65536"));
+	run(client, "audio.start");
+	CHECK_THAT(reject(client, "audio.updateLatency", {{"inputLatency", 200}}), ContainsSubstring("running"));
+	run(client, "audio.stop");
+	CHECK(run(client, "audio.get").at("device").at("inputLatency") == 100);   // the rejected ones changed nothing
+	CHECK(run(client, "audio.reset").at("device").at("recordOffset") == 257); // which a reset keeps
 }
