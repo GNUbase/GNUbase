@@ -212,6 +212,7 @@ TEST_CASE(
 {
 	Tracks tracks;
 	std::vector<uint64_t> ids;
+	ids.reserve(30);
 	for (int i = 0; i < 30; ++i)
 		ids.push_back(tracks.add({{"type", "audio"}}));
 	tracks.rows(30);
