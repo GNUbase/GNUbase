@@ -13,6 +13,7 @@
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
 #include "ui/themes.h"
+#include "ui/tracklist.h"
 #include "ui/uisettings.h"
 
 #include <filesystem>
@@ -47,9 +48,11 @@ namespace gnubase::app
 		~AppUi() = default;
 
 		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the main menu
-		// bar (ui/mainmenu.h) and the event display in its main zone, whose commands are key commands in the focus
-		// zone "project". Throws std::runtime_error if the document can't be loaded.
+		// bar (ui/mainmenu.h) and the track list beside the event display in its main zone, whose commands are key
+		// commands in the focus zone "project". Throws std::runtime_error if the document can't be loaded.
 		ui::EventDisplay& showProject();
+		// The project window's track list, null before showProject.
+		ui::TrackList* trackList() { return m_trackList.get(); }
 
 		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
 		// window.studioSetup, which the main menu's Studio menu runs. Throws std::runtime_error if the document can't
@@ -85,6 +88,7 @@ namespace gnubase::app
 		engine::Engine& m_engine;
 		std::filesystem::path m_resources;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
+		std::unique_ptr<ui::TrackList> m_trackList;       // and before the display
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
 		bool m_canUndo = false;
 		bool m_canRedo = false;

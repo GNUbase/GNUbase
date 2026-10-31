@@ -220,7 +220,11 @@ namespace gnubase::ui
 					return;
 				m_loading = false;
 				if (result.ok())
-					loadProject(result.value);
+				{
+					m_project = result.value;
+					++m_loads;
+					loadProject(m_project);
+				}
 				if (std::exchange(m_stale, false))
 					requestProject();
 			});
@@ -250,10 +254,10 @@ namespace gnubase::ui
 		m_quantize = engine::midi::quantizeSettingsFromJson(project.at("quantize"));
 		showSnap();
 
-		// A lane per track, in the project's order.
+		// A lane per track that isn't hidden, in the project's order.
 		std::map<uint64_t, size_t> lanes;
 		std::map<uint64_t, bool> linear;
-		m_tracks.assign(project.at("tracks").size(), EventLanes::Lane{g_trackHeight, {}});
+		m_tracks.clear();
 		m_laneTracks.clear();
 		m_laneTypes.clear();
 		m_laneLinear.clear();
@@ -261,8 +265,11 @@ namespace gnubase::ui
 		for (const Json& track : project.at("tracks"))
 		{
 			const auto id = track.at("id").get<uint64_t>();
-			lanes[id] = lanes.size();
 			linear[id] = track.at("timeBase") == "linear";
+			if (m_hidden.count(id) != 0)
+				continue;
+			lanes[id] = lanes.size();
+			m_tracks.push_back({static_cast<float>(trackHeight(id)), {}});
 			m_laneTracks.push_back(id);
 			m_laneTypes.push_back(track.at("type").get<std::string>());
 			m_laneLinear.push_back(linear[id]);
@@ -336,14 +343,17 @@ namespace gnubase::ui
 			return;
 		std::vector<EventLanes::Lane> lanes = m_tracks;
 		std::vector<TimeSpan> all;
-		for (EventLanes::Lane& lane : lanes)
-		{
-			lane.height = static_cast<float>(g_trackHeight * m_view.trackZoom);
-			all.insert(all.end(), lane.events.begin(), lane.events.end());
-		}
+		m_laneTops.assign(1, 0.0);
 		// Muted and selected events again over them, for the style sheets to show; selected ones where a drag
 		// moves them.
-		std::vector<EventLanes::Lane> muted(lanes.size(), EventLanes::Lane{lanes.empty() ? 0.0F : lanes[0].height, {}});
+		std::vector<EventLanes::Lane> muted;
+		for (size_t i = 0; i < lanes.size(); ++i)
+		{
+			lanes[i].height = static_cast<float>(trackHeight(m_laneTracks[i]) * m_view.trackZoom);
+			m_laneTops.push_back(m_laneTops.back() + lanes[i].height);
+			muted.push_back({lanes[i].height, {}});
+			all.insert(all.end(), lanes[i].events.begin(), lanes[i].events.end());
+		}
 		std::vector<EventLanes::Lane> selected = muted;
 		const double shift = m_drag == Drag::Events && m_dragMoved ? m_dragDx * m_view.scale : 0.0;
 		for (const Shown& shown : m_events)
@@ -513,12 +523,12 @@ namespace gnubase::ui
 	void EventDisplay::setView(TimelineView view)
 	{
 		view.start = std::max(view.start, 0.0); // nothing before the project start
-		const double content = static_cast<double>(m_tracks.size()) * g_trackHeight * view.trackZoom;
-		view.top = std::clamp(view.top, 0.0, std::max(0.0, content - height()));
 		const bool heights = view.trackZoom != m_view.trackZoom;
-		m_view = view;
+		m_view.trackZoom = view.trackZoom;
 		if (heights)
 			setLanes();
+		view.top = std::clamp(view.top, 0.0, std::max(0.0, m_laneTops.back() - height()));
+		m_view = view;
 		apply();
 	}
 
@@ -534,8 +544,7 @@ namespace gnubase::ui
 		}
 		for (Rml::Element* canvas : {m_lanes, m_mutedLanes, m_selectedLanes})
 			canvas->SetAttribute("scroll-top", m_view.top);
-		m_waveforms->show(
-			{m_view.start, m_view.scale, m_view.top, g_trackHeight * m_view.trackZoom, width(), height(), dpRatio()});
+		m_waveforms->show({m_view.start, m_view.scale, m_view.top, m_laneTops, width(), height(), dpRatio()});
 		setCursor(m_cursorSample);
 
 		// The overview line shows the whole project, and the view as a rectangle.
@@ -547,6 +556,38 @@ namespace gnubase::ui
 			m_overviewView->SetProperty(Rml::PropertyId::Left, dp(m_view.start / length * across));
 			m_overviewView->SetProperty(Rml::PropertyId::Width, dp(visibleLength() / length * across));
 		}
+		if (m_layoutListener)
+			m_layoutListener();
+	}
+
+	double EventDisplay::trackHeight(uint64_t track) const
+	{
+		const auto height = m_heights.find(track);
+		return height == m_heights.end() ? g_trackHeight : height->second;
+	}
+
+	void EventDisplay::setTrackHeight(uint64_t track, double height)
+	{
+		m_heights[track] = std::clamp(height, g_minTrackHeight, g_maxTrackHeight);
+		setLanes();
+		setView(m_view);
+	}
+
+	void EventDisplay::setTrackHeights(double height)
+	{
+		for (const uint64_t track : m_laneTracks)
+			m_heights[track] = std::clamp(height, g_minTrackHeight, g_maxTrackHeight);
+		setLanes();
+		setView(m_view);
+	}
+
+	void EventDisplay::setHiddenTracks(std::set<uint64_t> tracks)
+	{
+		if (tracks == m_hidden)
+			return;
+		m_hidden = std::move(tracks);
+		if (m_project.is_object())
+			loadProject(m_project);
 	}
 
 	void EventDisplay::setAutoScroll(bool on)

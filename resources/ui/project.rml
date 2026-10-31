@@ -1,14 +1,16 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The project window: a docking window (docs/features/docking.md) with the main menu bar, whose items
      ui::MainMenu runs (docs/features/main-menu.md), the toolbar, the info line, the zones and
-     their splitters, the status line and the transport bar. The main zone shows the event display (#84) until the
-     track list (#81) joins it. ui::Docking lays out the elements with zone, splitter for, strip and toggle
+     their splitters, the status line and the transport bar. The main zone shows the track list (#81) beside the
+     event display (#84). ui::Docking lays out the elements with zone, splitter for, strip and toggle
      attributes and fills the other zones with their panels' tabs. ui::EventDisplay fills the element #event-display
      and drives the controls and menus with these ids (docs/features/event-display.md): the ruler's arrow button
      .ruler-format, #ruler-format-menu, #zoom-presets-menu, #auto-scroll and #auto-scroll-menu, and the snap controls
      #snap, #snap-type, #snap-type-menu, #grid-type, #grid-type-menu (which the display fills with the ruler format's
      grid types) and #snap-zero-crossing (docs/features/snap.md). Its dialogs are zoom-preset.rml and
-     zoom-presets.rml, next to this file. #add-track opens the add track dialog (add-track.rml).
+     zoom-presets.rml, next to this file. ui::TrackList fills #track-list under its global track controls
+     (docs/features/track-list.md): #add-track opens the add track dialog (add-track.rml), #track-controls-settings
+     the track controls settings dialog (track-controls.rml); #track-list-menu is its context menu.
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
 <head>
@@ -28,7 +30,6 @@
 			margin-right: 2dp;
 		}
 
-		#add-track,
 		#auto-scroll-settings
 		{
 			margin-right: 12dp;
@@ -39,10 +40,19 @@
 			flex: 1 1 0;
 		}
 
-		#event-display
+		#track-list
 		{
 			position: absolute;
 			left: 0;
+			top: 0;
+			width: 280dp;
+			bottom: 0;
+		}
+
+		#event-display
+		{
+			position: absolute;
+			left: 280dp;
 			top: 0;
 			right: 0;
 			bottom: 0;
@@ -55,12 +65,11 @@
 	<div id="menu-bar" class="menubar" strip="menuBar">
 		<button menu="file-menu">File</button>
 		<button menu="edit-menu">Edit</button>
+		<button menu="project-menu">Project</button>
 		<button menu="transport-menu">Transport</button>
 		<button menu="studio-menu">Studio</button>
 	</div>
 	<div id="toolbar" class="toolbar" strip="toolbar">
-		<!-- Until the track list (#81) has the global track controls, the toolbar has Add Track. -->
-		<button id="add-track" class="icon-only" title="Add Track" onclick="gnubase.ui.command{command = 'project.addTrack'}"><svg class="icon" src="../icons/general-add.svg"/></button>
 		<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
 		<button id="auto-scroll-settings" class="icon-only" menu="auto-scroll-menu" title="Select Auto-Scroll Settings"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 		<button id="zoom-presets" class="icon-only" menu="zoom-presets-menu" title="Horizontal Zoom Presets"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
@@ -80,6 +89,13 @@
 		<splitter for="left"/>
 		<div class="zone-column">
 			<div id="main-zone" zone="main" focuszone="project">
+				<div id="track-list" class="track-list" contextmenu="track-list-menu">
+					<!-- The global track controls (reference manual p. 67) -->
+					<div class="track-list-header">
+						<button id="add-track" class="icon-only" title="Add Track" onclick="gnubase.ui.command{command = 'project.addTrack'}"><svg class="icon" src="../icons/general-add.svg"/></button>
+						<button id="track-controls-settings" class="icon-only" title="Open Track Controls Settings Dialog" onclick="gnubase.ui.command{command = 'track.controlsSettings'}"><svg class="icon" src="../icons/general-settings.svg"/></button>
+					</div>
+				</div>
 				<div id="event-display" class="event-display">
 					<button class="ruler-format icon-only" menu="ruler-format-menu" title="Ruler Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 				</div>
@@ -136,6 +152,34 @@
 		<menuitem command="edit.unmute">Unmute</menuitem>
 		<menuitem command="edit.lock">Lock</menuitem>
 		<menuitem command="edit.unlock">Unlock</menuitem>
+	</menu>
+	<!-- Track handling (reference manual pp. 213-225) -->
+	<menu id="project-menu">
+		<menuitem command="project.addTrack">Add Track...</menuitem>
+		<menuseparator/>
+		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
+		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
+		<menuitem command="track.duplicateSelected">Duplicate Tracks</menuitem>
+		<menuseparator/>
+		<menuitem id="track-folding-submenu">Track Folding
+			<menu>
+				<menuitem command="track.toggleFolding">Toggle Selected Track</menuitem>
+				<menuitem command="track.foldAll">Fold Tracks</menuitem>
+				<menuitem command="track.unfoldAll">Unfold Tracks</menuitem>
+				<menuitem command="track.flipFolding">Flip Fold States</menuitem>
+			</menu>
+		</menuitem>
+	</menu>
+	<menu id="track-list-menu">
+		<menuitem command="project.addTrack">Add Track...</menuitem>
+		<menuitem command="track.duplicateSelected">Duplicate Tracks</menuitem>
+		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
+		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
+		<menuseparator/>
+		<menuitem command="track.disableSelected">Disable Selected Tracks</menuitem>
+		<menuitem command="track.enableSelected">Enable Selected Tracks</menuitem>
+		<menuseparator/>
+		<menuitem command="track.controlsSettings">Track Controls Settings...</menuitem>
 	</menu>
 	<menu id="transport-menu">
 		<menuitem command="transport.play">Start</menuitem>

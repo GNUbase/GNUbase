@@ -84,8 +84,8 @@ there), `edit.glue`, `edit.duplicate`, `edit.repeat`, `edit.fillLoop`, `edit.toR
 `edit.moveEndToCursor`, the nudges `edit.nudgeLeft`, `edit.nudgeRight`, `edit.nudgeStartLeft`, `edit.nudgeStartRight`,
 `edit.nudgeEndLeft` and `edit.nudgeEndRight` (a step of the snap grid, [snap.md](snap.md)), and the select
 submenu `edit.selectAll`, `edit.selectNone`, `edit.invertSelection`, `edit.selectInLoop`,
-`edit.selectFromStartToCursor`, `edit.selectFromCursorToEnd` and `edit.selectUnderCursor` (on every track until the
-track list, #81, selects tracks). `edit.repeat` opens the Repeat Events dialog (`resources/ui/repeat-events.rml`,
+`edit.selectFromStartToCursor`, `edit.selectFromCursorToEnd` and `edit.selectUnderCursor` (on every track, not yet only on
+the track list's selected tracks). `edit.repeat` opens the Repeat Events dialog (`resources/ui/repeat-events.rml`,
 reference manual pp. 271–272): a count from 1 to 1000 and Shared Copies, which OK passes to `repeat(count, shared)`.
 Copies, duplicates and new parts become the selection. `app::AppUi` binds the reference's keys for them in the project
 window ([key-commands.md](key-commands.md)): Delete and Backspace delete, Mod+D duplicates, Mod+K repeats, Alt+X splits

@@ -96,6 +96,23 @@ namespace gnubase::app
 			{"edit.snapPointToCursor", "Sets the snap point of the selected audio events at the project cursor.",
 				nullptr},
 		}};
+
+		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
+		constexpr std::array<ProjectCommand, 13> g_trackCommands{{
+			{"track.selectPrevious", "Selects the track above the selected one.", "Up"},
+			{"track.selectNext", "Selects the track below the selected one.", "Down"},
+			{"track.rename", "Renames the first selected track.", "Alt+F2"},
+			{"track.removeSelected", "Removes the selected tracks.", nullptr},
+			{"track.removeEmpty", "Removes the tracks that hold nothing.", nullptr},
+			{"track.duplicateSelected", "Duplicates the selected tracks with their contents.", nullptr},
+			{"track.disableSelected", "Disables the selected audio, instrument and MIDI tracks.", nullptr},
+			{"track.enableSelected", "Enables the selected tracks again.", nullptr},
+			{"track.toggleFolding", "Folds or unfolds the selected folders.", nullptr},
+			{"track.foldAll", "Folds every folder.", nullptr},
+			{"track.unfoldAll", "Unfolds every folder.", nullptr},
+			{"track.flipFolding", "Folds the unfolded folders and unfolds the folded ones.", nullptr},
+			{"track.controlsSettings", "Opens the track controls settings dialog.", nullptr},
+		}};
 	}
 
 	AppUi::AppUi(engine::Engine& engine, const std::filesystem::path& resources, const ui::WindowSpec& main,
@@ -170,6 +187,26 @@ namespace gnubase::app
 				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
 		}
 		m_keys.bind({"Backspace", "edit.delete", engine::Json::object(), "project"});
+		for (const ProjectCommand& command : g_trackCommands)
+		{
+			const std::string id = command.id;
+			if (id == "track.controlsSettings")
+				m_keys.add({command.id, command.description,
+					[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "track-controls.rml"); }});
+			else
+				m_keys.add({command.id, command.description, [this, id](ui::Window&, Rml::Element*)
+					{
+						if (m_trackList)
+							m_trackList->actions().at(id)();
+					}});
+			// The commands for selected tracks wait for a selection.
+			const bool selected =
+				id.find("Selected") != std::string::npos || id == "track.rename" || id == "track.toggleFolding";
+			m_keys.enableWhen(command.id, [this, selected](ui::Window&, Rml::Element*)
+				{ return m_trackList != nullptr && (!selected || !m_trackList->selection().empty()); });
+			if (command.keys != nullptr)
+				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
+		}
 
 		// Undo and Redo in the menus while the history has a step to undo or redo.
 		m_keys.enableWhen("history.undo", [this](ui::Window&, Rml::Element*) { return m_canUndo; });
@@ -198,7 +235,10 @@ namespace gnubase::app
 		}
 		document->Show();
 		m_docking.attach("project", *document);
+		m_trackList.reset();
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
+		if (Rml::Element* tracks = document->GetElementById("track-list"))
+			m_trackList = std::make_unique<ui::TrackList>(*m_eventDisplay, m_binding, *tracks);
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 		return *m_eventDisplay;
 	}

@@ -17,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -30,8 +31,10 @@ namespace Rml
 // cursor, a cross-hair cursor, zoom and scrolling. docs/features/event-display.md describes it.
 namespace gnubase::ui
 {
-	// A track's height before vertical zoom, in dp; tracks get heights of their own with the track list (#81).
+	// A track's height before vertical zoom, in dp, until it gets one of its own (setTrackHeight), and the limits.
 	inline constexpr double g_trackHeight = 40.0;
+	inline constexpr double g_minTrackHeight = 20.0;
+	inline constexpr double g_maxTrackHeight = 400.0;
 	// What zoom full and the overview line show at least, in seconds, until projects have a length (#78).
 	inline constexpr double g_minimumProjectLength = 60.0;
 
@@ -93,6 +96,21 @@ namespace gnubase::ui
 		// Scrolling: the seconds at the left edge, the dp scrolled down.
 		void scrollTo(double start);
 		void scrollVertically(double top);
+
+		// The lanes, which the track list (ui/tracklist.h) shows beside them: a lane per track that isn't hidden, in
+		// the project's order. Heights are per track, before vertical zoom; lane tops count from the top of the first
+		// lane, in dp, with vertical zoom, and the last one is the bottom of the last lane.
+		const std::vector<uint64_t>& laneTracks() const { return m_laneTracks; }
+		const std::vector<double>& laneTops() const { return m_laneTops; }
+		double trackHeight(uint64_t track) const;
+		void setTrackHeight(uint64_t track, double height);
+		void setTrackHeights(double height); // every track's
+		void setHiddenTracks(std::set<uint64_t> tracks);
+		// The project as project.get last returned it, or null before the first answer; loads() counts the answers.
+		const engine::Json& project() const { return m_project; }
+		uint64_t loads() const { return m_loads; }
+		// Called after the lanes or the view changed.
+		void onLayout(std::function<void()> listener) { m_layoutListener = std::move(listener); }
 
 		// Auto-scroll (reference manual pp. 316-317). Suspended when editing: a click in the event display while
 		// playing suspends it until playback stops or auto-scroll is switched on again.
@@ -219,6 +237,7 @@ namespace gnubase::ui
 		// Editing parts and events (eventediting.cpp).
 		void addEditActions();
 		const Shown* eventAt(double x, double y) const; // dp in the event lanes
+		size_t laneAt(double y) const; // dp from the top of the first lane; 0 above it, the lane count below the last
 		void areaDown(Rml::Event& event, double x, double y);
 		void areaMove(double dx, double dy);
 		void areaUp(Rml::Event& event);
@@ -256,8 +275,14 @@ namespace gnubase::ui
 		TimeContext m_time;
 		std::vector<EventLanes::Lane> m_tracks; // events in seconds, heights before zoom
 		std::vector<uint64_t> m_laneTracks;     // the track of each lane
-		std::vector<std::string> m_laneTypes;   // and its type
-		std::vector<bool> m_laneLinear;         // and whether its time base is linear
+		std::vector<double> m_laneTops = {0.0};
+		std::map<uint64_t, double> m_heights; // set by setTrackHeight, before zoom
+		std::set<uint64_t> m_hidden;
+		engine::Json m_project;
+		uint64_t m_loads = 0;
+		std::function<void()> m_layoutListener;
+		std::vector<std::string> m_laneTypes; // and its type
+		std::vector<bool> m_laneLinear;       // and whether its time base is linear
 		std::vector<Shown> m_events;
 		std::vector<uint64_t> m_selection;
 		EventLanes* m_mutedLanes = nullptr;    // muted events over the others
@@ -269,7 +294,8 @@ namespace gnubase::ui
 		bool m_dragMoved = false;
 		double m_dragDx = 0.0; // dp, while moving, snapped
 		int m_dragLanes = 0;
-		double m_end = 0.0; // of the last event
+		double m_dragLaneY = 0.0; // where a drag of events started, in dp from the top of the first lane
+		double m_end = 0.0;       // of the last event
 		bool m_loading = false;
 		bool m_stale = false;
 		int64_t m_cursorSample = 0;
