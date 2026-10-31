@@ -421,7 +421,7 @@ TEST_CASE("the toolbar's tool buttons and the keys choose the tools, a second cl
 {
 	ProjectWindow window;
 	test::UiApp& app = window.app;
-	ui::EventDisplay& display = window.display;
+	const ui::EventDisplay& display = window.display;
 
 	// A tool button chooses its tool and shows it checked.
 	click(app, selector("button[tool=split]"));
@@ -467,7 +467,7 @@ TEST_CASE("the split and range selection tools edit and select in the project wi
 {
 	ProjectWindow window;
 	test::UiApp& app = window.app;
-	ui::EventDisplay& display = window.display;
+	const ui::EventDisplay& display = window.display;
 	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
 	app.call("midiPart.add", // from 1 to 3 seconds at 120 BPM
 		{{"track", track.at("id")}, {"position", 2 * time::g_ticksPerQuarter},

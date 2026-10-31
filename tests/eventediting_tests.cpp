@@ -476,7 +476,7 @@ TEST_CASE("with snap to events, a position marker attracts a dragged event", "[u
 TEST_CASE("the tools are chosen by command, and the display names the one chosen", "[unit]")
 {
 	Fixture f;
-	Rml::Element* root = f.document.GetElementById("display");
+	const Rml::Element* root = f.document.GetElementById("display");
 	CHECK(f.display.tool() == ui::Tool::ObjectSelection);
 	CHECK(root->GetAttribute<std::string>("tool", "") == "objectSelection");
 	f.run("tool.split");
@@ -681,7 +681,7 @@ TEST_CASE("the range selection tool selects ranges, snapped, by dragging and dou
 	const Json tracks = f.call("project.get").at("tracks");
 	const auto audio = tracks[0].at("id").get<uint64_t>();
 	const auto midi = tracks[1].at("id").get<uint64_t>();
-	Rml::Element* root = f.document.GetElementById("display");
+	const Rml::Element* root = f.document.GetElementById("display");
 	const auto range = [&f]
 	{
 		REQUIRE(f.display.range().has_value());
