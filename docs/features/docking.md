@@ -17,10 +17,11 @@ strips above and below a row of zones, where the main zone takes what the others
 | `strip="infoLine"` | A strip; `default="hidden"` hides it by default. |
 | `toggle="left"` | A toggle button or menu item that shows or hides that zone or strip. |
 
-The project window (`resources/ui/project.rml`) has the toolbar, the info line, the left zone, the main zone with the
-event display, the lower and right zones, the status line and the transport bar, which come in that order in the
-reference (pp. 54–56). Its toolbar has Show/Hide Left, Lower and Right Zone and the Set up Window Layout menu, which
-shows or hides the zones and the info line, overview line, status line and transport bar (p. 65). The overview line is
+The project window (`resources/ui/project.rml`) has the menu bar ([main-menu.md](main-menu.md)), the toolbar, the info
+line, the left zone, the main zone with the event display, the lower and right zones, the status line and the transport
+bar, which come in that order in the reference (pp. 54–56). Its toolbar has Show/Hide Left, Lower and Right Zone and the
+Set up Window Layout menu, which shows or hides the menu bar (the reference's Show Menu Bar, p. 55), the zones and the
+info line, overview line, status line and transport bar (p. 65). The overview line is
 part of the event display: while a strip is hidden, the body has the class `no-<strip>`, which the style sheet uses to
 hide it. The info line, status line and transport bar are empty until their tickets fill them.
 
@@ -33,7 +34,8 @@ frame (p. 99). Code only sets the zones' sizes, which come from data.
 A panel (`ui::Panel`) has an id, a title, the docking window and the zone it docks in, and a function that fills the
 element it shows in, wherever that is; what the function returns lives as long as the panel shows there. `add`
 registers panels; the project window has Inspector and Visibility on the left, Editor and Mixer in the lower zone, and
-Media and Meter on the right (pp. 75–98), empty until their tickets fill them.
+Media and Meter on the right (pp. 75–98), empty until their tickets fill them, and the edit history on the right
+([edit-history.md](edit-history.md)). `open` shows a panel as its zone's active tab, with the zone shown.
 
 - **Tabs.** A zone's tab group shows its panels' tabs in the user's order. A tab dragged onto another takes its place.
   A right click on the tabs opens the zone's tab menu: Open in Separate Window for the tab clicked (or the active one),
@@ -88,7 +90,7 @@ The reference's defaults (p. 1572), bound everywhere; they act on the docking wi
 | Alt+O | `window.overviewLine` | Show/Hide Overview |
 | Mod+Alt+Left, Mod+Alt+Right | `window.previousTab`, `window.nextTab` | Show Previous/Next Tab, in the zone with the focus |
 
-`window.toolbar` and `window.statusLine` have no keys. Each zone is a focus zone (`focuszone` `left`, `right`, `lower`,
+`window.menuBar`, `window.toolbar` and `window.statusLine` have no keys. Each zone is a focus zone (`focuszone` `left`, `right`, `lower`,
 and `project` for the main zone), so key commands can depend on it ([key-commands.md](key-commands.md)). The document
 is the focus zone `project` too, so the project window's keys, such as zooming, work from the toolbar and from a side
 zone that doesn't bind them itself.

@@ -356,7 +356,7 @@ TEST_CASE("the layout comes back exactly after a restart", "[ui]")
 	const Json layout = docking.layout();
 	CHECK(before["left"] == Json{"visibility", "inspector"});
 	CHECK(before["lower"] == Json{"editor"});
-	CHECK(before["right"] == Json{"media"});
+	CHECK(before["right"] == Json{"media", "history"});
 	CHECK(before["active"] == "inspector");
 
 	app.restart();

@@ -7,8 +7,8 @@ and the driver's control panel. It is `resources/ui/studio-setup.rml`, a `<dialo
 MCP and Lua scripts can do all it does.
 
 - **Opening it.** The UI command `window.studioSetup` opens it, modal, in the window it runs in
-  (`app::AppUi::openStudioSetup`). The reference opens it from its Studio menu and has no key for it; GNUbase's main
-  menu will run the command too.
+  (`app::AppUi::openStudioSetup`). As in the reference, Studio > Studio Setup in the main menu runs it
+  ([main-menu.md](main-menu.md)), and it has no key.
 - **Pages.** The devices list on the left selects a page, as in the reference:
   - *Audio System*: the audio driver, a device of any backend in `audio.devices` (unavailable devices say so), the
     device's input and output latency in ms, its sample rate, the record shift in samples and multi-processing

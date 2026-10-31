@@ -646,6 +646,13 @@ TEST_CASE("list views select rows with clicks and keys, and data-value binds the
 	page.model.changed("selection");
 	CHECK(app.waitUntil(
 		[&app] { return selected(app, "#drums") && selected(app, "#keys") && !selected(app, "#vocals"); }));
+
+	// The keys then move from the first row the data model selected, not from the row last clicked or keyed.
+	page.selection = "1";
+	page.model.changed("selection");
+	CHECK(app.waitUntil([&app] { return selected(app, "#drums") && !selected(app, "#keys"); }));
+	app.ui().key(std::nullopt, "Down");
+	CHECK(page.selection == "2");
 }
 
 TEST_CASE("tree views show the children of expanded rows, toggled by click or by the arrow keys", "[ui]")

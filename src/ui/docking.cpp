@@ -230,7 +230,8 @@ namespace gnubase::ui
 			const char* description;
 			std::vector<const char*> keys; // the reference's (manual p. 1572)
 		};
-		const std::array<Toggle, 8> toggles = {{
+		const std::array<Toggle, 9> toggles = {{
+			{"window.menuBar", "menuBar", "Shows or hides the menu bar.", {}},
 			{"window.leftZone", "left", "Shows or hides the left zone.", {"Mod+Alt+L", "Alt+I"}},
 			{"window.rightZone", "right", "Shows or hides the right zone.", {"Mod+Alt+R"}},
 			{"window.lowerZone", "lower", "Shows or hides the lower zone.", {"Mod+Alt+E", "Mod+Alt+B"}},
@@ -440,6 +441,24 @@ namespace gnubase::ui
 		json["floating"] = floating;
 		if (const Shown& shown = m_shown[id]; shown.window != 0 && !floating)
 			json["bounds"] = boundsJson(m_shell.bounds(shown.window));
+		save();
+		apply();
+	}
+
+	void Docking::open(const std::string& id)
+	{
+		const Panel* shown = panel(id);
+		const Json* floating = find(m_layout, {"panels", id, "floating"});
+		if (shown == nullptr || (floating != nullptr && floating->is_boolean() && floating->get<bool>()))
+			return;
+		Json& json = zone(shown->window, shown->zone);
+		if (std::vector<std::string> hidden = strings(find(json, {"hidden"})); contains(hidden, id))
+		{
+			hidden.erase(std::remove(hidden.begin(), hidden.end(), id), hidden.end());
+			json["hidden"] = hidden;
+		}
+		json["active"] = id;
+		json["visible"] = true;
 		save();
 		apply();
 	}
