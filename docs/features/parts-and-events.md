@@ -50,9 +50,11 @@ events. Each is one undo step and changes nothing if it fails.
 ## Shared copies
 
 Shared copies of a MIDI part (p. 272) have the same `shared` group id and the same notes and controllers, with the
-same ids. After every command (`ProjectModel::addEdit`, also inside transactions), the first part of a group whose
-notes or controllers changed gives them to the others (`syncSharedParts`), so any command that edits notes, `note.set`
-as much as a MIDI function or quantizing, edits all copies, as one undo step. A part whose contents change for its own
+same ids. After every command (`ProjectModel::addEdit`, and after each command of a `history.transaction`), the first
+part of a group whose notes or controllers changed gives them to the others (`syncSharedParts`), so any command that
+edits notes, `note.set` as much as a MIDI function or quantizing, edits all copies, as one undo step. A transaction
+that edits two copies of a group keeps both edits, and a later command in it sees what an earlier one did to another
+copy. A part whose contents change for its own
 sake, by a resize that moves its notes, a split or a glue, first leaves its group with new note ids; so does
 `event.toRealCopy`. A group's last part is no longer shared. The position, length, name, mute and lock stay each
 part's own. Shared copies are saved in `gnubase.json`; `project.xml` gets them as ordinary clips.
