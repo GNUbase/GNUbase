@@ -62,7 +62,8 @@ namespace gnubase::ui
 		// at the tempo at the left edge; zoomed out, bars.
 		const double quarter = 60.0 / m_time.tempo.bpmAt(m_time.tempo.toTicks(m_view.start)); // seconds
 		for (time::Ticks step = 2 * time::g_ticksPerQuarter; step >= time::g_ticksPerQuarter / 16; step /= 2)
-			if (static_cast<double>(step) / time::g_ticksPerQuarter * quarter / m_view.scale >= g_minGridWidth)
+			if (static_cast<double>(step) / static_cast<double>(time::g_ticksPerQuarter) * quarter / m_view.scale >=
+				g_minGridWidth)
 				grid.zoomStep = step;
 		return grid;
 	}
@@ -100,7 +101,7 @@ namespace gnubase::ui
 		if (musical)
 			return {{{"ticks", to.value - m_time.tempo.toTicks(from)}}, m_time.tempo.toSeconds(to.value) - from};
 		const int64_t sample = time::toSamples(to, m_time.tempo, m_time.sampleRate);
-		return {{{"delta", sample - samples(from)}}, static_cast<double>(sample) / m_time.sampleRate - from};
+		return {{{"delta", sample - samples(from)}}, (static_cast<double>(sample) / m_time.sampleRate) - from};
 	}
 
 	void EventDisplay::select(std::vector<uint64_t> events)

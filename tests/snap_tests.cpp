@@ -126,11 +126,11 @@ TEST_CASE("bar and beat grids follow tempo and signature changes", "[unit]")
 	const engine::SnapGrid grid = slowingDown();
 	// At 6.1 seconds the next bar, at 8 seconds, is nearer than bar 2 at 4 seconds; at a constant 120 BPM it would be
 	// bar 3 at 6 seconds.
-	CHECK(engine::nearestGridLine(GridType::Bar, grid, 6 * g_second + 4800) == ticks(3 * g_bar));
-	CHECK(engine::nearestGridLine(GridType::Bar, grid, 6 * g_second - 4800) == ticks(2 * g_bar));
+	CHECK(engine::nearestGridLine(GridType::Bar, grid, (6 * g_second) + 4800) == ticks(3 * g_bar));
+	CHECK(engine::nearestGridLine(GridType::Bar, grid, (6 * g_second) - 4800) == ticks(2 * g_bar));
 	CHECK(engine::nearestGridLine(GridType::Bar, grid, 1000) == ticks(0));
 	// Beats are a second long after the change, half a second before it.
-	CHECK(engine::nearestGridLine(GridType::Beat, grid, 5 * g_second - 4800) == ticks((2 * g_bar) + g_quarter));
+	CHECK(engine::nearestGridLine(GridType::Beat, grid, (5 * g_second) - 4800) == ticks((2 * g_bar) + g_quarter));
 	CHECK(engine::nearestGridLine(GridType::Beat, grid, g_second + 4800) == ticks(2 * g_quarter));
 
 	// 3/4 from bar 1, 6/8 from bar 3: bars of three quarters, then beats of an eighth.

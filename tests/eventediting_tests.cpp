@@ -425,5 +425,5 @@ TEST_CASE("with snap on, moving, resizing, splitting and nudging follow the grid
 	// Off, a drag doesn't snap: 0.3 seconds is 0.6 quarters.
 	REQUIRE(shown(1, 6.0));
 	f.drag(650, 60, 680, 60);
-	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 12 * g_quarter + ((3 * g_quarter) / 5); }));
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == (12 * g_quarter) + ((3 * g_quarter) / 5); }));
 }
