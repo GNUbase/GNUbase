@@ -150,6 +150,7 @@ namespace gnubase::app
 		document->Show();
 		m_docking.attach("project", *document);
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
+		m_statusLine = std::make_unique<ui::StatusLine>(m_binding, *document);
 		return *m_eventDisplay;
 	}
 

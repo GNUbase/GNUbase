@@ -452,6 +452,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
         (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),
         (".docking .strip", {"background-color": c["surface"]}),
+        # The status line (docs/features/status-line.md): a sample rate mismatch and a lost audio device stand out
+        (".status-line .status-field", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        (".status-line .mismatch", {"color": c["warning"]}),
+        ("#lost-device", {"color": c["danger"]}),
     ]
 
     lines = ["/* SPDX-License-Identifier: GPL-3.0-or-later */",

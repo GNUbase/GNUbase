@@ -789,6 +789,25 @@ TEST_CASE("the device follows the project's sample rate where it can and reports
 	CHECK(run(client, "audio.get").at("device").at("sampleRate") == 96000.0);
 }
 
+TEST_CASE("audio.changed announces every new project sample rate, for the status line's record format", "[unit]")
+{
+	Engine engine(fakeBackends(std::make_shared<FakeDriver>()));
+	Client client(engine);
+	CHECK(run(client, "audio.get").at("projectSampleRate") == 48000.0); // without a device too
+	run(client, "project.set", {{"sampleRate", 44100.0}});
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("projectSampleRate") == 44100.0 && data.at("device").is_null(); }));
+
+	// A rate the device doesn't support: the mismatch begins, and ends with a rate it runs at.
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "project.set", {{"sampleRate", 96000.0}});
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data)
+		{ return data.at("projectSampleRate") == 96000.0 && data.at("device").at("sampleRateMismatch") == true; }));
+	run(client, "project.set", {{"sampleRate", 44100.0}});
+	CHECK(waitForEvent(
+		client, "audio.changed", [](const Json& data) { return data.at("device").at("sampleRateMismatch") == false; }));
+}
+
 namespace
 {
 	std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends(

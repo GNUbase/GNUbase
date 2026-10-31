@@ -11,6 +11,7 @@
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
+#include "ui/statusline.h"
 #include "ui/themes.h"
 #include "ui/uisettings.h"
 
@@ -46,8 +47,8 @@ namespace gnubase::app
 		~AppUi() = default;
 
 		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the event
-		// display in its main zone, whose commands are key commands in the focus zone "project". Throws
-		// std::runtime_error if the document can't be loaded.
+		// display in its main zone, whose commands are key commands in the focus zone "project", and the status
+		// line (ui::StatusLine). Throws std::runtime_error if the document can't be loaded.
 		ui::EventDisplay& showProject();
 
 		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
@@ -81,5 +82,6 @@ namespace gnubase::app
 		engine::Engine& m_engine;
 		std::filesystem::path m_resources;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
+		std::unique_ptr<ui::StatusLine> m_statusLine;     // too
 	};
 }

@@ -391,6 +391,7 @@ Result:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `audio_devices`
@@ -407,7 +408,7 @@ Result:
 
 Engine command `audio.get`. Read-only.
 
-The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate; with sampleRateMismatch the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower. lost: the device that went away (its backend, device id, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null.
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower; a new project sample rate sends audio.changed. lost: the device that went away (its backend, device id, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null.
 
 Result:
 
@@ -418,6 +419,7 @@ Result:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `audio_performance`
@@ -492,6 +494,7 @@ Result:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `audio_reset`
@@ -509,6 +512,7 @@ Result:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `audio_resetPerformance`
@@ -559,6 +563,7 @@ Result:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `audio_setDevice`
@@ -595,6 +600,7 @@ Result:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `audio_setPort`
@@ -637,6 +643,7 @@ Result:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `audio_simulateDeviceLoss`
@@ -658,6 +665,7 @@ Result:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `audio_simulateOverload`
@@ -693,6 +701,7 @@ Result:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `audio_stop`
@@ -710,6 +719,7 @@ Result:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `audio_updateLatency`
@@ -732,6 +742,7 @@ Result:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 ### autoFades
@@ -3144,7 +3155,7 @@ Queries without required arguments can also be read as resources:
 
 - `gnubase://audio.analyze`: Measures the captured output of channels (default: every output) from frame start for frames frames (default: to the end of the capture). Per channel: the peak and RMS level, and a spectrum summary with the strongest frequencies (at most peaks, default 5, up to 20) and the power of octave bands. For the channels together: the integrated loudness in LUFS (ITU-R BS.1770), null below 400 ms. Levels are linear and in dBFS (a full-scale sine's peak is 0 dBFS, its RMS -3 dBFS); dBFS is null for silence.
 - `gnubase://audio.devices`: The audio backends of this build, the preferred one first, and the devices each has now: their ids, names, channel names, sample rates, block sizes, clock sources (and the current one), whether the driver has a control panel, whether it can monitor inputs directly (canMonitorDirectly), and whether the device is available. An unavailable device, e.g. one whose hardware isn't connected, has an unavailableReason; audio.setDevice still tries it. Some backends only learn that by opening or starting the device (ASIO). A backend that can't list its devices has an error instead.
-- `gnubase://audio.get`: The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate; with sampleRateMismatch the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower. lost: the device that went away (its backend, device id, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null.
+- `gnubase://audio.get`: The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower; a new project sample rate sends audio.changed. lost: the device that went away (its backend, device id, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null.
 - `gnubase://audio.performance`: Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported and the device's restarts by audio.reset (a block that was both counts twice); cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance, also across audio.reset; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late. blockSize: the device's block size in frames, 0 without a device.
 - `gnubase://audio.ports`: The audio device's ports by name, in order, each with the name it is shown as and whether it is visible (audio.setPort), and the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) whose channels run past the device's ports, with those channels, which are silent; bus.set gives them ports. Without a device there are no ports.
 - `gnubase://automation.get`: The automation settings. followsEvents (default false): when an audio event or MIDI part moves, the automation of its track in its range moves with it and replaces the points where it lands.
