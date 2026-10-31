@@ -304,6 +304,160 @@ TEST_CASE("tracks move between folders, and removing a folder removes what it co
 	CHECK(engine.renderSnapshots().acquire().channels.size() == 1);
 }
 
+TEST_CASE(
+	"tracks moved into a folder with its group channel play through it, and moved out through the main mix", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId main = run(client, "project.get").at("busses")[1].at("id").get<ObjectId>();
+	const ObjectId folder = addTrack(client, {{"type", "folder"}, {"groupChannel", true}});
+	const ObjectId group = channelOf(client, folder).at("id").get<ObjectId>();
+	const ObjectId audio = addTrack(client, {{"type", "audio"}});
+	const ObjectId instrument = addTrack(client, {{"type", "instrument"}});
+	const ObjectId midi = addTrack(client, {{"type", "midi"}, {"output", channelOf(client, instrument).at("id")}});
+	const ObjectId plain = addTrack(client, {{"type", "folder"}});
+	const ObjectId inside = addTrack(client, {{"type", "audio"}, {"parent", plain}});
+	const auto output = [&client](ObjectId track) { return channelOf(client, track).at("output").get<ObjectId>(); };
+
+	// Into it (reference manual p. 222): its tracks' audio goes to the group channel, a MIDI track's stays with its
+	// instrument, and so does the audio of tracks in a folder without a group channel inside it.
+	run(client, "track.move", {{"track", audio}, {"parent", folder}, {"index", 0}});
+	CHECK(output(audio) == group);
+	run(client, "track.move", {{"track", midi}, {"parent", folder}, {"index", 1}});
+	CHECK(output(midi) == channelOf(client, instrument).at("id").get<ObjectId>());
+	run(client, "track.move", {{"track", plain}, {"parent", folder}, {"index", 2}});
+	CHECK(output(inside) == group);
+	// Moving within it changes nothing, and one undo step takes the move and the routing back.
+	run(client, "track.move", {{"track", audio}, {"parent", folder}, {"index", 1}});
+	CHECK(output(audio) == group);
+	run(client, "history.undo");
+	run(client, "history.undo");
+	CHECK(track(client, plain).at("parent").get<ObjectId>() == 0);
+	CHECK(output(inside) == main);
+	run(client, "history.redo");
+	CHECK(output(inside) == group);
+
+	// Out of it, to the main mix; between places without a group channel, a track keeps its routing.
+	run(client, "track.move", {{"track", audio}, {"parent", 0}, {"index", 0}});
+	CHECK(output(audio) == main);
+	const ObjectId cue = channelOf(client, addTrack(client, {{"type", "group"}})).at("id").get<ObjectId>();
+	run(client, "channel.set", {{"channel", channelOf(client, audio).at("id")}, {"output", cue}});
+	const ObjectId empty = addTrack(client, {{"type", "folder"}});
+	run(client, "track.move", {{"track", audio}, {"parent", empty}, {"index", 0}});
+	CHECK(output(audio) == cue);
+	// A folder with a group channel inside another one plays through the outer one; its tracks stay with it.
+	const ObjectId nested = addTrack(client, {{"type", "folder"}, {"groupChannel", true}});
+	const ObjectId deep = addTrack(client, {{"type", "audio"}, {"parent", nested}});
+	run(client, "track.move", {{"track", nested}, {"parent", folder}, {"index", 0}});
+	CHECK(output(nested) == group);
+	CHECK(output(deep) == channelOf(client, nested).at("id").get<ObjectId>());
+	// A track added to a folder inside one with a group channel plays through that group channel.
+	CHECK(output(addTrack(client, {{"type", "audio"}, {"parent", plain}})) == group);
+}
+
+TEST_CASE("a folder's group channel goes on and off, and the tracks inside follow it", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId main = run(client, "project.get").at("busses")[1].at("id").get<ObjectId>();
+	const ObjectId folder = addTrack(client, {{"type", "folder"}, {"name", "Band"}});
+	const ObjectId audio = addTrack(client, {{"type", "audio"}, {"parent", folder}});
+	const ObjectId nested = addTrack(client, {{"type", "folder"}, {"parent", folder}, {"groupChannel", true}});
+	const ObjectId deep = addTrack(client, {{"type", "audio"}, {"parent", nested}});
+	const ObjectId outside = addTrack(client, {{"type", "audio"}});
+	const auto output = [&client](ObjectId track) { return channelOf(client, track).at("output").get<ObjectId>(); };
+
+	// On (reference manual p. 224): the folder gets a channel on the main mix, which its tracks play through.
+	const Json on = run(client, "track.set", {{"track", folder}, {"groupChannel", true}});
+	const ObjectId group = on.at("track").at("channel").get<ObjectId>();
+	REQUIRE(group != 0);
+	CHECK(output(folder) == main);
+	CHECK(output(audio) == group);
+	CHECK(output(nested) == group);
+	CHECK(output(deep) == channelOf(client, nested).at("id").get<ObjectId>());
+	CHECK(renderChannel(engine.renderSnapshots().acquire(), folder).track == folder);
+	CHECK(run(client, "history.get").at("steps").size() == 6);
+
+	// Off: the channel and its automation go, the tracks inside play through the main mix, and other channels
+	// routed to it are disconnected.
+	run(client, "channel.set", {{"channel", channelOf(client, outside).at("id")}, {"output", group}});
+	run(client, "automationLane.add", {{"track", folder}, {"target", {{"type", "volume"}}}});
+	run(client, "track.set", {{"track", folder}, {"groupChannel", false}});
+	CHECK(track(client, folder).at("channel").get<ObjectId>() == 0);
+	CHECK(track(client, folder).at("name") == "Band");
+	CHECK(output(audio) == main);
+	CHECK(output(nested) == main);
+	CHECK(output(outside) == 0);
+	CHECK(run(client, "project.get").at("automation").empty());
+	CHECK(run(client, "project.get").at("channels").size() == 4);
+	run(client, "history.undo");
+	CHECK(track(client, folder).at("channel").get<ObjectId>() == group);
+	CHECK(output(audio) == group);
+	CHECK(run(client, "project.get").at("automation").size() == 1);
+
+	CHECK_THAT(reject(client, "track.set", {{"track", audio}, {"groupChannel", false}}),
+		ContainsSubstring("only folder tracks"));
+}
+
+TEST_CASE("track.add with tracks moves them into a new folder", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId first = addTrack(client, {{"type", "audio"}});
+	const ObjectId second = addTrack(client, {{"type", "audio"}});
+	const ObjectId third = addTrack(client, {{"type", "group"}});
+
+	// Move Selected Tracks to New Folder with Group Channel (reference manual p. 223), where the first one was.
+	const Json added = run(
+		client, "track.add", {{"type", "folder"}, {"index", 1}, {"groupChannel", true}, {"tracks", {third, second}}});
+	const ObjectId folder = added.at("track").at("id").get<ObjectId>();
+	const ObjectId group = added.at("channel").at("id").get<ObjectId>();
+	const Json tracks = run(client, "project.get").at("tracks");
+	REQUIRE(tracks.size() == 4);
+	CHECK(tracks[0].at("id").get<ObjectId>() == first);
+	CHECK(tracks[1].at("id").get<ObjectId>() == folder);
+	CHECK(tracks[2].at("id").get<ObjectId>() == third);
+	CHECK(tracks[3].at("id").get<ObjectId>() == second);
+	CHECK(channelOf(client, second).at("output").get<ObjectId>() == group);
+	CHECK(channelOf(client, third).at("output").get<ObjectId>() == group);
+	run(client, "history.undo"); // one step
+	CHECK(run(client, "project.get").at("tracks").size() == 3);
+	CHECK(track(client, second).at("parent").get<ObjectId>() == 0);
+
+	CHECK_THAT(
+		reject(client, "track.add", {{"type", "audio"}, {"tracks", {first}}}), ContainsSubstring("only folders"));
+	const ObjectId outer = addTrack(client, {{"type", "folder"}});
+	CHECK_THAT(reject(client, "track.add", {{"type", "folder"}, {"parent", outer}, {"tracks", {outer}}}),
+		ContainsSubstring("into itself"));
+	CHECK(run(client, "project.get").at("tracks").size() == 4);
+}
+
+TEST_CASE("with editing.applyFolderColor, folders give their color to the tracks inside them", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId folder = addTrack(client, {{"type", "folder"}});
+	const ObjectId inside = addTrack(client, {{"type", "audio"}, {"parent", folder}, {"color", "#102030"}});
+	const ObjectId outside = addTrack(client, {{"type", "audio"}});
+
+	// Off, the default: a folder's color is its own.
+	run(client, "track.set", {{"track", folder}, {"color", "#c08020"}});
+	CHECK(track(client, inside).at("color") == "#102030");
+	run(client, "track.move", {{"track", outside}, {"parent", folder}, {"index", 0}});
+	CHECK(track(client, outside).at("color").is_null());
+	run(client, "track.move", {{"track", outside}, {"parent", 0}, {"index", 0}});
+
+	// On (reference manual p. 221): the tracks inside take a new color, and so do tracks moved or added there.
+	run(client, "settings.set", {{"key", "editing.applyFolderColor"}, {"value", true}});
+	run(client, "track.set", {{"track", folder}, {"color", "#2080c0"}});
+	CHECK(track(client, inside).at("color") == "#2080c0");
+	run(client, "track.move", {{"track", outside}, {"parent", folder}, {"index", 0}});
+	CHECK(track(client, outside).at("color") == "#2080c0");
+	CHECK(track(client, addTrack(client, {{"type", "midi"}, {"parent", folder}})).at("color") == "#2080c0");
+	CHECK(track(client, addTrack(client, {{"type", "midi"}, {"parent", folder}, {"color", "#ffffff"}})).at("color") ==
+		"#ffffff");
+}
+
 TEST_CASE("audio events play sections of clips at sample positions", "[unit]")
 {
 	Engine engine;
