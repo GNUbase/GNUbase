@@ -20,10 +20,13 @@ Lua reaches the engine only through the engine API, like every other client.
   handler that fails is logged.
 - **UI automation.** `gnubase.ui` has the MCP UI tools as functions (`app::addUiFunctions`, `src/app/uitools.h`):
   `ui_click` is `gnubase.ui.click`, with the tool's arguments as a table and its result as a table, a screenshot as the
-  PNG file's bytes. Both come from one list of tools, and the arguments are checked against the same schemas, so Lua
-  and MCP behave the same ([ui-automation.md](ui-automation.md), [mcp.md](../mcp.md#ui-tools)). On the UI thread the
-  functions run at once; `gnubase.ui.wait` steps the shell between its checks. A step can't run inside a step
-  (`Shell::step` throws), so waiting fails inside the UI's own event handlers, instead of handling events within one.
+  PNG file's bytes. Both come from one list of tools, and the arguments are checked against the same schemas, so Lua and
+  MCP behave the same ([ui-automation.md](ui-automation.md), [mcp.md](../mcp.md#ui-tools)). The app adds
+  `gnubase.ui.command`, which runs a key command in the main window as its keys would, by `command` and optional
+  `parameters` ([key-commands.md](key-commands.md)), for documents' buttons such as the project window's Add Track
+  (`gnubase.ui.command{command = "project.addTrack"}`). On the UI thread the functions run at once;
+  `gnubase.ui.wait` steps the shell between its checks. A step can't run inside a step (`Shell::step` throws), so
+  waiting fails inside the UI's own event handlers, instead of handling events within one.
 - **Lua UI tests.** Every `tests/lua/ui/*.lua` is a ctest test with the labels `ui` and `lua`. It runs in
   `test::UiApp`, the UI test harness ([ui-tests.md](ui-tests.md)), through the hidden Catch2 test case
   `[lua-ui]` (`tests/uiapp_tests.cpp`), which `GNUBASE_LUA_UI_TEST` tells which file, in the source folder. The file

@@ -61,6 +61,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	target_sources(gnubase-platform PRIVATE
 		midi/alsaseq.cpp midi/alsaseq.h)
 	target_link_libraries(gnubase-platform PRIVATE PkgConfig::ALSA)
+	# Worker threads ask rtkit for real-time priority over the system bus; GLOBAL for the tests' fake rtkit.
+	pkg_check_modules(DBUS REQUIRED IMPORTED_TARGET GLOBAL dbus-1)
+	target_link_libraries(gnubase-platform PRIVATE PkgConfig::DBUS)
 endif()
 if(APPLE)
 	target_sources(gnubase-platform PRIVATE

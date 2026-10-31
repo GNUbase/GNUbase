@@ -21,6 +21,18 @@
 #include <utility>
 #include <vector>
 
+#ifdef __linux__
+#include "testutils/fakertkit.h"
+
+#include <sys/resource.h>
+#include <unistd.h>
+
+#include <filesystem>
+#include <fstream>
+#include <set>
+#include <string>
+#endif
+
 using namespace gnubase::rt;
 
 TEST_CASE("SpscQueue delivers values in order and reports full and empty", "[unit]")
@@ -613,6 +625,102 @@ TEST_CASE("Linux workers take the priority one below their audio thread's", "[un
 	STATIC_CHECK(workerPriority(1, 1) == 1);
 	STATIC_CHECK(workerPriority(0, 1) == 1);
 }
+
+#ifdef __linux__
+TEST_CASE("Linux workers that may not take real-time priority themselves get it through rtkit", "[unit]")
+{
+	using gnubase::test::FakeRtkit;
+	const Faults refusingDirect({SIZE_MAX, false, false, true}); // as without RLIMIT_RTPRIO
+	{
+		const FakeRtkit rtkit;
+		const WorkerPool pool(3);
+		CHECK(pool.realtime());
+		const std::vector<FakeRtkit::Request> requests = rtkit.requests();
+		REQUIRE(requests.size() == 3);
+		std::set<uint64_t> threads;
+		for (const FakeRtkit::Request& request : requests)
+		{
+			// One below the highest priority rtkit grants, where the audio threads it serves are.
+			CHECK(request.priority == FakeRtkit::g_maxPriority - 1);
+			CHECK(std::filesystem::exists("/proc/self/task/" + std::to_string(request.thread)));
+			CHECK(request.thread != static_cast<uint64_t>(getpid()));
+			threads.insert(request.thread);
+		}
+		CHECK(threads.size() == 3); // each worker asked for itself
+		// rtkit serves processes whose real-time threads can't run longer than its maximum without sleeping.
+		rlimit limit{};
+		REQUIRE(getrlimit(RLIMIT_RTTIME, &limit) == 0);
+		CHECK(limit.rlim_max <= static_cast<rlim_t>(FakeRtkit::g_rttimeMax));
+	}
+	{
+		const FakeRtkit refusing(FakeRtkit::Mode::Refuses);
+		CHECK(WorkerPool(2).realtimeWorkers() == 0);
+		CHECK(refusing.requests().size() == 2);
+	}
+	{
+		const FakeRtkit missing(FakeRtkit::Mode::Missing); // a system bus without rtkit
+		CHECK(WorkerPool(2).realtimeWorkers() == 0);
+	}
+	{
+		const FakeRtkit noBus(FakeRtkit::Mode::NoBus);
+		CHECK(WorkerPool(2).realtimeWorkers() == 0);
+	}
+	const Faults refusingAll({SIZE_MAX, true, false, false});
+	const FakeRtkit rtkit;
+	CHECK(WorkerPool(2).realtimeWorkers() == 0); // a refused worker doesn't ask rtkit either
+	CHECK(rtkit.requests().empty());
+}
+
+namespace
+{
+	// Both threads meet in every run: the worker leaves only when the caller is there too.
+	struct Meeting : ParallelJob
+	{
+		void work(size_t thread) noexcept override
+		{
+			if (thread == 1)
+				worker.store(gettid());
+			arrived.fetch_add(1);
+			const auto giveUp = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+			while (arrived.load() < 2 && std::chrono::steady_clock::now() < giveUp)
+				cpuPause();
+		}
+
+		std::atomic<int> arrived{0};
+		std::atomic<pid_t> worker{0};
+	};
+
+	// The times the thread slept, from the kernel's count of voluntary context switches.
+	long sleeps(pid_t thread)
+	{
+		std::ifstream status("/proc/self/task/" + std::to_string(thread) + "/status");
+		std::string line;
+		while (std::getline(status, line))
+			if (line.rfind("voluntary_ctxt_switches:", 0) == 0)
+				return std::stol(line.substr(line.find(':') + 1));
+		return -1;
+	}
+}
+
+TEST_CASE("Linux workers sleep now and then even when jobs keep them busy", "[unit]")
+{
+	// RLIMIT_RTTIME, which rtkit requires (200 ms by default), kills a real-time thread that runs that long without
+	// sleeping. A worker that spins from one job to the next would never sleep.
+	WorkerPool pool(1, 0.01);
+	Meeting first;
+	pool.run(first);
+	const pid_t worker = first.worker.load();
+	REQUIRE(worker != 0);
+	const long before = sleeps(worker);
+	const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+	while (std::chrono::steady_clock::now() < end)
+	{
+		Meeting meeting;
+		pool.run(meeting);
+	}
+	CHECK(sleeps(worker) - before >= 3);
+}
+#endif
 
 TEST_CASE("hardwareThreads counts at least one thread", "[unit]")
 {
