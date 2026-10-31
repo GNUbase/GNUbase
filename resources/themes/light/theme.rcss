@@ -481,4 +481,17 @@
 	{
 		background-color: #ffffff;
 	}
+	.status-line .status-field
+	{
+		color: #566273;
+		font-size: 11dp;
+	}
+	.status-line .mismatch
+	{
+		color: #9a6500;
+	}
+	#lost-device
+	{
+		color: #c92d42;
+	}
 }

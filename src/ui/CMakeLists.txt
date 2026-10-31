@@ -51,6 +51,8 @@ add_library(gnubase-ui STATIC
 	sdlwindowsystem.h
 	shell.cpp
 	shell.h
+	statusline.cpp
+	statusline.h
 	themes.cpp
 	themes.h
 	timeformat.cpp
