@@ -1041,7 +1041,7 @@ Parameters:
 
 #### `gnubase.event.resize`
 
-Moves the start or the end (edge) of audio events and MIDI parts by delta project samples or by ticks, within the clip and at least a sample frame or a tick long. normal sizing (the default) reveals or hides content; moveContents moves the content with the edge. A MIDI part's notes and controllers that end up before its start are removed. Locked events don't change. Returns the events.
+Moves the start or the end (edge) of audio events and MIDI parts by delta project samples or by ticks, within the clip and at least a sample frame or a tick long. normal sizing (the default) reveals or hides content; moveContents moves the content with the edge. A MIDI part's notes and controllers that end up before its start are removed. With zeroCrossing, normal sizing moves audio events' edges to the nearest point within 50 ms where the audio crosses zero. Locked events don't change. Returns the events.
 
 Parameters:
 
@@ -1050,6 +1050,7 @@ Parameters:
 - `events`: array of integer, required
 - `mode`: one of "normal" | "moveContents"
 - `ticks`: integer
+- `zeroCrossing`: boolean
 
 Returns:
 
@@ -1069,15 +1070,42 @@ Returns:
 
 - `events`: array of integer, required
 
+#### `gnubase.event.setSnapPoint`
+
+Sets audio events' snap point at position (project samples, default the project cursor), which must be inside each of them (Snap Point to Cursor): where the event snaps to the grid when it moves, and attracts other events. It is a point in the clip, so it stays with the audio when the event is resized or split. Returns the events.
+
+Parameters:
+
+- `events`: array of integer, required
+- `position`: integer
+
+Returns:
+
+- `events`: array of integer, required
+
+#### `gnubase.event.shuffle`
+
+Shuffle (snap type shuffle): events that adjoin each other on one track change places with the events that adjoin them. They go where position (project samples, where the first of them would start) puts them: after each other event whose middle it is past. The others close up and make room, so the row keeps its start and has no gaps. Locked events end the row. Returns the events.
+
+Parameters:
+
+- `events`: array of integer, required
+- `position`: integer, required
+
+Returns:
+
+- `events`: array of integer, required
+
 #### `gnubase.event.split`
 
-Splits audio events and MIDI parts at positions (project samples): events, or without it every unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with splitNotes are cut in two. Returns the new events after the splits.
+Splits audio events and MIDI parts at positions (project samples): events, or without it every unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with splitNotes are cut in two. With zeroCrossing, audio events split at the nearest point within 50 ms where their audio crosses zero. Returns the new events after the splits.
 
 Parameters:
 
 - `events`: array of integer
 - `positions`: array of integer, required
 - `splitNotes`: boolean
+- `zeroCrossing`: boolean
 
 Returns:
 
@@ -2323,6 +2351,61 @@ Returns:
 
 - `key`: string, required
 - `value`: any, required. The setting's value.
+
+### snap
+
+#### `gnubase.snap.get`
+
+The project's snap settings. on: whether snap is on. type: grid (the nearest grid line), gridRelative (moves in grid steps, keeping the distance to the grid), events (the starts and ends of other events, audio events' snap points and markers, when near), shuffle (events trade places with their neighbours, see event.shuffle), cursor (the project cursor, when near), or the combinations gridCursor, eventsCursor and eventsGridCursor. grid: bar, beat, quantize (the project's quantize grid) or adaptToZoom (a note value that the view chooses); 1ms, 10ms, 100ms, 1000ms; subframe, quarterFrame, halfFrame, frame, twoFrames, second; 1sample, 10samples, 100samples, 44100samples. zeroCrossing: splitting and resizing audio events in the project window cut where the audio crosses zero.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `grid`: one of "bar" | "beat" | "quantize" | "adaptToZoom" | "1ms" | "10ms" | "100ms" | "1000ms" | "subframe" | "quarterFrame" | "halfFrame" | "frame" | "twoFrames" | "second" | "1sample" | "10samples" | "100samples" | "44100samples", required
+- `on`: boolean, required
+- `type`: one of "grid" | "gridRelative" | "events" | "shuffle" | "cursor" | "gridCursor" | "eventsCursor" | "eventsGridCursor", required
+- `zeroCrossing`: boolean, required
+
+#### `gnubase.snap.position`
+
+Snaps a position (project samples) as editing in the project window does, with the project's snap settings, changed by settings: where a point that would go to position goes. from is where it was, for gridRelative; events are the events being edited, whose edges and snap points don't attract; range is how near (project samples, default a tenth of a second) events, markers and the cursor attract; zoomStep is adaptToZoom's note value in ticks (default: bars); framesPerSecond the frame grids' rate (default 25). Returns position in project samples, and ticks, which are exact when musical, that is when a bar, beat, quantize or zoom grid line put it there.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `events`: array of integer
+- `framesPerSecond`: integer
+- `from`: integer
+- `position`: integer, required
+- `range`: integer
+- `settings`: object
+- `zoomStep`: integer
+
+Returns:
+
+- `musical`: boolean, required
+- `position`: integer, required
+- `ticks`: integer, required
+
+#### `gnubase.snap.set`
+
+Changes the project's snap settings; what isn't given stays. on: whether snap is on. type: grid (the nearest grid line), gridRelative (moves in grid steps, keeping the distance to the grid), events (the starts and ends of other events, audio events' snap points and markers, when near), shuffle (events trade places with their neighbours, see event.shuffle), cursor (the project cursor, when near), or the combinations gridCursor, eventsCursor and eventsGridCursor. grid: bar, beat, quantize (the project's quantize grid) or adaptToZoom (a note value that the view chooses); 1ms, 10ms, 100ms, 1000ms; subframe, quarterFrame, halfFrame, frame, twoFrames, second; 1sample, 10samples, 100samples, 44100samples. zeroCrossing: splitting and resizing audio events in the project window cut where the audio crosses zero. Settings are not undo steps; they are saved with the project. Emits snap.changed.
+
+Parameters:
+
+- `grid`: one of "bar" | "beat" | "quantize" | "adaptToZoom" | "1ms" | "10ms" | "100ms" | "1000ms" | "subframe" | "quarterFrame" | "halfFrame" | "frame" | "twoFrames" | "second" | "1sample" | "10samples" | "100samples" | "44100samples"
+- `on`: boolean
+- `type`: one of "grid" | "gridRelative" | "events" | "shuffle" | "cursor" | "gridCursor" | "eventsCursor" | "eventsGridCursor"
+- `zeroCrossing`: boolean
+
+Returns:
+
+- `grid`: one of "bar" | "beat" | "quantize" | "adaptToZoom" | "1ms" | "10ms" | "100ms" | "1000ms" | "subframe" | "quarterFrame" | "halfFrame" | "frame" | "twoFrames" | "second" | "1sample" | "10samples" | "100samples" | "44100samples", required
+- `on`: boolean, required
+- `type`: one of "grid" | "gridRelative" | "events" | "shuffle" | "cursor" | "gridCursor" | "eventsCursor" | "eventsGridCursor", required
+- `zeroCrossing`: boolean, required
 
 ### track
 
