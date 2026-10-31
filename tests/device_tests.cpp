@@ -464,12 +464,12 @@ namespace
 		return {};
 	}
 
-	// A JACK client with two physical capture and two physical playback ports, as a sound card's driver has them.
+	// A JACK client with two capture and two playback ports. Physical, they are a sound card's, as its driver has them:
 	// PipeWire marks only hardware ports physical, and in CI it has null sinks only.
-	class FakeHardware
+	class TestClient
 	{
 	public:
-		explicit FakeHardware(const std::string& library)
+		TestClient(const std::string& library, const char* name, bool physical)
 		{
 			m_library = dlopen(library.c_str(), RTLD_NOW | RTLD_LOCAL);
 			REQUIRE(m_library != nullptr);
@@ -477,21 +477,25 @@ namespace
 			const auto add = function<decltype(&jack_port_register)>("jack_port_register");
 			m_close = function<decltype(&jack_client_close)>("jack_client_close");
 			jack_status_t status{};
-			m_client = open("gnubase-test-hardware", JackNoStartServer, &status);
+			m_bufferSize = function<decltype(&jack_get_buffer_size)>("jack_get_buffer_size");
+			m_client = open(name, JackNoStartServer, &status);
 			REQUIRE(m_client != nullptr);
-			for (const char* name : {"capture_1", "capture_2", "playback_1", "playback_2"})
+			for (const char* port : {"capture_1", "capture_2", "playback_1", "playback_2"})
 			{
-				const unsigned long direction = name[0] == 'c' ? JackPortIsOutput : JackPortIsInput;
-				REQUIRE(add(m_client, name, JACK_DEFAULT_AUDIO_TYPE,
-							direction | JackPortIsPhysical | JackPortIsTerminal, 0) != nullptr);
+				const unsigned long direction = port[0] == 'c' ? JackPortIsOutput : JackPortIsInput;
+				REQUIRE(add(m_client, port, JACK_DEFAULT_AUDIO_TYPE,
+							direction | (physical ? JackPortIsPhysical : 0) | JackPortIsTerminal, 0) != nullptr);
 			}
 			REQUIRE(function<decltype(&jack_activate)>("jack_activate")(m_client) == 0);
 		}
 
-		~FakeHardware() { m_close(m_client); } // unplugs it; the library stays loaded, as the backend's
+		~TestClient() { m_close(m_client); } // removes its ports; the library stays loaded, as the backend's
 
-		FakeHardware(const FakeHardware&) = delete;
-		FakeHardware& operator=(const FakeHardware&) = delete;
+		TestClient(const TestClient&) = delete;
+		TestClient& operator=(const TestClient&) = delete;
+
+		// The server's buffer size, as this client sees it.
+		uint32_t bufferSize() const { return m_bufferSize(m_client); }
 
 	private:
 		template <typename Function> Function function(const char* name)
@@ -504,6 +508,7 @@ namespace
 		void* m_library = nullptr;
 		jack_client_t* m_client = nullptr;
 		decltype(&jack_client_close) m_close = nullptr;
+		decltype(&jack_get_buffer_size) m_bufferSize = nullptr;
 	};
 
 	// Takes longer than a cycle once, a few blocks in, so that the server reports an xrun.
@@ -521,6 +526,8 @@ namespace
 			{
 			}
 		}
+
+		int blocks() const { return m_blocks.load(); }
 
 	private:
 		gnubase::HostTime m_late;
@@ -562,6 +569,27 @@ namespace
 		CHECK(callback.violations() == 0);
 	}
 
+	// A device opened at a block size other than the server's asks the server for it and doesn't reset itself once the
+	// server follows, which PipeWire's JACK layer does a few cycles late, not even when the graph changes afterwards:
+	// the latency, which may follow the buffer size, is the device's new baseline then.
+	void checkJackOwnBufferSize(Backend& backend, const std::string& library)
+	{
+		auto other = std::make_unique<TestClient>(library, "gnubase-test-client", false);
+		const uint32_t own = other->bufferSize() != 512 ? 512 : 1024;
+		const std::unique_ptr<Device> device = backend.open(config("default", 0.0, own));
+		std::atomic<int> resets{0};
+		device->onReset([&resets] { ++resets; });
+		ContractCallback callback(device->format());
+		device->start(callback);
+		REQUIRE(callback.waitFor(8));
+		REQUIRE(waitUntil([&other, own] { return other->bufferSize() == own; }));
+		std::this_thread::sleep_for(std::chrono::milliseconds(100)); // the device's watcher sees the new size
+		other.reset();                                               // removes the client's ports: the graph changes
+		std::this_thread::sleep_for(std::chrono::milliseconds(300));
+		CHECK(resets == 0);
+		CHECK(callback.violations() == 0);
+	}
+
 	// The server reports a cycle the device took too long for as an xrun, which the device counts as an overload.
 	void checkJackXruns(Backend& backend)
 	{
@@ -570,10 +598,13 @@ namespace
 		LateCallback callback(cycle * 2); // much longer, and jackd drops the client
 		device->start(callback);
 		CHECK(waitUntil([&device] { return device->overloads() > 0; }));
+		// jackd2 cancels the process thread when the device deactivates its client, which must not be in the late
+		// block then: cancelled inside the noexcept callback, it would end the tests.
+		CHECK(waitUntil([&callback] { return callback.blocks() > 5; }));
 	}
 
 	// A device that uses the fake hardware's ports asks for a reset when it is unplugged.
-	void checkJackUnplug(Backend& backend, std::unique_ptr<FakeHardware> hardware)
+	void checkJackUnplug(Backend& backend, std::unique_ptr<TestClient> hardware)
 	{
 		const std::unique_ptr<Device> device = backend.open(config("default"));
 		const std::vector<std::string> outputs = device->info().outputs;
@@ -595,8 +626,9 @@ TEST_CASE("the JACK backend keeps the device contract with jackd", "[integration
 		SKIP("no JACK server runs here");
 	checkDeviceContract(*backend);
 	checkJackResets(*backend, true);
+	checkJackOwnBufferSize(*backend, "libjack.so.0");
 	checkJackXruns(*backend);
-	checkJackUnplug(*backend, std::make_unique<FakeHardware>("libjack.so.0"));
+	checkJackUnplug(*backend, std::make_unique<TestClient>("libjack.so.0", "gnubase-test-hardware", true));
 }
 
 TEST_CASE("the JACK backend keeps the device contract with PipeWire's JACK layer", "[integration]")
@@ -608,9 +640,10 @@ TEST_CASE("the JACK backend keeps the device contract with PipeWire's JACK layer
 		library.empty() ? nullptr : jackOrSkip(library, "GNUBASE_REQUIRE_PIPEWIRE");
 	if (!backend)
 		SKIP("no PipeWire daemon with its JACK layer runs here");
-	auto hardware = std::make_unique<FakeHardware>(library);
+	auto hardware = std::make_unique<TestClient>(library, "gnubase-test-hardware", true);
 	checkDeviceContract(*backend);
 	checkJackResets(*backend, false);
+	checkJackOwnBufferSize(*backend, library);
 	checkJackUnplug(*backend, std::move(hardware));
 }
 

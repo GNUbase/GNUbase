@@ -236,7 +236,7 @@ namespace gnubase::audio
 						logging::warning("The JACK server doesn't take a buffer size of {} frames", blockSize);
 				}
 				m_openedBufferSize = jack.getBufferSize(handle);
-				m_openedLatency = latency();
+				m_openedLatency = JackDevice::latency(); // not virtually, as in the destructor
 				m_watcher = std::thread([this] { watch(); });
 			}
 
@@ -311,14 +311,19 @@ namespace gnubase::audio
 			}
 
 		private:
+			// PipeWire hides the ports of a node while it is suspended, as for a moment when the graph follows the
+			// device's buffer size request on activation: such ports come back within a few cycles.
 			void connect(const std::string& from, const std::string& to)
 			{
-				const int error = m_jack.connect(m_client->get(), from.c_str(), to.c_str());
-				if (error != 0 && error != EEXIST)
+				for (int attempt = 0; attempt < 50; ++attempt)
 				{
-					stop();
-					throw DeviceError("JACK: cannot connect " + from + " to " + to);
+					const int error = m_jack.connect(m_client->get(), from.c_str(), to.c_str());
+					if (error == 0 || error == EEXIST)
+						return;
+					std::this_thread::sleep_for(std::chrono::milliseconds(10));
 				}
+				stop();
+				throw DeviceError("JACK: cannot connect " + from + " to " + to);
 			}
 
 			static int onProcess(jack_nframes_t frames, void* data)
@@ -424,8 +429,14 @@ namespace gnubase::audio
 				if (m_rateChanged || (rate != 0 && static_cast<double>(rate) != m_format.sampleRate))
 					return "the sample rate changed";
 				const uint32_t size = m_jack.getBufferSize(m_client->get());
-				if (size != 0 && size != m_openedBufferSize && size != m_requestedBufferSize)
-					return "the buffer size changed";
+				if (size != 0 && size != m_openedBufferSize)
+				{
+					if (size != m_requestedBufferSize)
+						return "the buffer size changed";
+					// The device's own request took effect late (PipeWire), and the latency may follow the buffer.
+					m_openedBufferSize = size;
+					m_openedLatency = latency();
+				}
 				if (!m_graphChanged.exchange(false))
 					return nullptr;
 				for (const std::vector<std::string>* names : {&m_info.inputs, &m_info.outputs})
