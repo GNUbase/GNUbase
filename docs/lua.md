@@ -181,6 +181,7 @@ Returns:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `gnubase.audio.devices`
@@ -195,7 +196,7 @@ Returns:
 
 #### `gnubase.audio.get`
 
-The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate; with sampleRateMismatch the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower. lost: the device that went away (its backend, device id, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null.
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower; a new project sample rate sends audio.changed. lost: the device that went away (its backend, device id, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null.
 
 Only reads; changes nothing.
 
@@ -208,6 +209,7 @@ Returns:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `gnubase.audio.performance`
@@ -280,6 +282,7 @@ Returns:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `gnubase.audio.reset`
@@ -295,6 +298,7 @@ Returns:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `gnubase.audio.resetPerformance`
@@ -341,6 +345,7 @@ Returns:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `gnubase.audio.setDevice`
@@ -375,6 +380,7 @@ Returns:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `gnubase.audio.setPort`
@@ -413,6 +419,7 @@ Returns:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `gnubase.audio.simulateDeviceLoss`
@@ -432,6 +439,7 @@ Returns:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `gnubase.audio.simulateOverload`
@@ -463,6 +471,7 @@ Returns:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `gnubase.audio.stop`
@@ -478,6 +487,7 @@ Returns:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 #### `gnubase.audio.updateLatency`
@@ -498,6 +508,7 @@ Returns:
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
+- `projectSampleRate`: number, required
 - `running`: boolean, required
 
 ### audioEvent
