@@ -17,10 +17,12 @@
 #include "platform/rt/workerpool.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -52,7 +54,9 @@ namespace gnubase::engine
 	//
 	// The device comes from one of the audio backends (audio.devices, audio.setDevice). When its driver asks for a
 	// reset, the engine opens it again with the same settings and restarts it if it ran (audio.reset); when it reports
-	// a new latency, the engine reads it into the record offset (audio.updateLatency). The dummy
+	// a new latency, the engine reads it into the record offset (audio.updateLatency). A device that can't be opened
+	// again, e.g. because it was unplugged, is lost: the engine goes on without it and tries again until it returns.
+	// The device runs at the project's sample rate where it can (docs/features/audio-devices.md). The dummy
 	// device also renders offline and captures its output; its input can be one of the built-in generators.
 	//
 	// Audio tracks hear their input bus while they monitor it: with the monitor button, or record-enabled by the user
@@ -67,8 +71,8 @@ namespace gnubase::engine
 		~AudioEngine() override; // stops the device
 
 		// Registers audio.devices, audio.setDevice, audio.ports, audio.setProcessing, audio.get, audio.performance,
-		// audio.resetPerformance, audio.simulateOverload, audio.reset, audio.updateLatency, audio.controlPanel,
-		// audio.render, audio.start, audio.stop, audio.capture and audio.captureInput, the transport commands
+		// audio.resetPerformance, audio.simulateOverload, audio.simulateDeviceLoss, audio.reset, audio.updateLatency,
+		// audio.controlPanel, audio.render, audio.start, audio.stop, audio.capture and audio.captureInput, the transport commands
 		// transport.play, transport.stop, transport.toggle, transport.record, transport.locate, transport.set,
 		// transport.exchangeLocators and transport.get, and the MIDI port commands (MidiPorts). audio.analyze,
 		// audio.compare and audio.record are in analysiscommands.cpp, midi.inject and midi.capture in miditap.cpp.
@@ -80,8 +84,8 @@ namespace gnubase::engine
 		// Any thread but the audio thread, without waiting: the project cursor (Transport::position).
 		time::Samples position() const { return m_transport.position(); }
 
-		// Command thread: compiles a new graph if the project or the automatic monitoring mode changed since the last
-		// one.
+		// Command thread: opens the device again at a new project sample rate if it supports it, and compiles a new
+		// graph if the project or the automatic monitoring mode changed since the last one.
 		void sync();
 
 		// Audio thread.
@@ -139,7 +143,10 @@ namespace gnubase::engine
 		void setDevice(const Json& parameters);
 		void openDummy(const Json& parameters);
 		void closeDevice();
-		void reset();
+		// audio.reset; a device that can't be opened is lost. True if the status changed.
+		bool reset();
+		// Starts trying to open the lost device again, every g_reconnectInterval, with audio.reset.
+		void waitForDevice();
 		int64_t recordOffset() const;               // from the device's latency and the record shift
 		bool updateLatency(const Json& parameters); // audio.updateLatency; true if anything changed
 		Json devices() const;
@@ -205,6 +212,23 @@ namespace gnubase::engine
 		audio::DummyDevice* m_dummy = nullptr; // m_device, if it is the dummy device
 		std::vector<std::string> m_inputPorts; // the device's port names, each one once
 		std::vector<std::string> m_outputPorts;
+		double m_projectRate = 0.0; // the project's sample rate the device last followed
+
+		// The device that couldn't be opened again (audio.reset), while the engine waits for it to return.
+		struct Lost
+		{
+			std::string device; // its id
+			std::string reason;
+			bool restart = false; // it ran
+		};
+		std::optional<Lost> m_lost;
+		bool m_dummyUnplugged = false; // audio.simulateDeviceLoss
+		// The thread that tries to open a lost device again, started with the first loss.
+		std::mutex m_reconnectMutex; // guards m_stopReconnecting
+		bool m_stopReconnecting = false;
+		std::atomic<bool> m_waitingForDevice{false}; // m_lost, for that thread
+		std::condition_variable m_reconnectWake;
+		std::thread m_reconnectThread;
 
 		// Latency compensation and monitoring (docs/features/latency-and-monitoring.md), set with the device.
 		int64_t m_recordShift = 0;

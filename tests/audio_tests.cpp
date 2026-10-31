@@ -118,6 +118,7 @@ namespace
 		std::atomic<uint32_t> preferredBlockSize{256};
 		std::atomic<int> controlPanels{0};
 		std::atomic<DummyDevice*> device{nullptr}; // the device opened last
+		std::atomic<bool> connected{true};         // fake-1's hardware; opening fails without it
 	};
 
 	DeviceInfo fakeInfo()
@@ -182,6 +183,8 @@ namespace
 			const DeviceInfo info = fakeInfo();
 			if (!config.device.empty() && config.device != info.id)
 				throw DeviceError("no device " + config.device);
+			if (!m_driver->connected)
+				throw DeviceError("fake-1 is not connected");
 			DeviceFormat format;
 			format.sampleRate = config.sampleRate == 0.0 ? 48000.0 : config.sampleRate;
 			format.blockSize = config.blockSize == 0 ? m_driver->preferredBlockSize.load() : config.blockSize;
@@ -542,6 +545,135 @@ TEST_CASE("audio.reset keeps the dummy device's settings", "[unit]")
 	CHECK(status.at("position") == 0); // a new device
 	run(client, "audio.render", {{"frames", 64}});
 	CHECK(capture(client, 0, 64) != std::vector<float>(64, 0.0f)); // with its input
+}
+
+namespace
+{
+	// Waits until the transport has played past a position; false after five seconds.
+	bool waitForTransport(Client& client, int64_t past)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		while (run(client, "transport.get").at("position").get<int64_t>() <= past)
+		{
+			if (std::chrono::steady_clock::now() > deadline)
+				return false;
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		return true;
+	}
+}
+
+TEST_CASE("a device unplugged during playback leaves the engine running and plays on once it returns", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	CHECK_THAT(reject(client, "audio.simulateDeviceLoss", {{"connected", false}}), ContainsSubstring("dummy device"));
+	run(client, "track.add", {{"type", "audio"}});
+	run(client, "audio.setDevice", {{"blockSize", 64}});
+	run(client, "transport.play");
+	run(client, "audio.start");
+	CHECK(waitForTransport(client, 0));
+
+	// The hardware goes away: the driver asks for a reset, which fails, and the engine waits for the device.
+	CHECK(run(client, "audio.simulateDeviceLoss", {{"connected", false}}).at("lost").is_null()); // not yet
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
+	Json status = run(client, "audio.get");
+	CHECK(status.at("device").is_null());
+	CHECK(status.at("running") == false);
+	CHECK(status.at("lost").at("backend") == "dummy");
+	CHECK(status.at("lost").at("restart") == true);
+	CHECK_THAT(status.at("lost").at("reason").get<std::string>(), ContainsSubstring("unplugged"));
+	const Json transport = run(client, "transport.get");
+	CHECK(transport.at("playing") == true);                                // the engine goes on
+	CHECK(run(client, "audio.reset").at("lost").at("backend") == "dummy"); // still gone, without an error
+	CHECK_THAT(reject(client, "audio.setDevice"), ContainsSubstring("unplugged"));
+	CHECK(run(client, "audio.get").at("lost").at("restart") == true); // a failed audio.setDevice changes nothing
+
+	// Plugged in again: the engine opens it on its own, with its settings, and plays on from where it was.
+	run(client, "audio.simulateDeviceLoss", {{"connected", true}});
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("lost").is_null() && data.at("running") == true; }));
+	status = run(client, "audio.get");
+	CHECK(status.at("device").at("blockSize") == 64);
+	CHECK(waitForTransport(client, transport.at("position").get<int64_t>()));
+	run(client, "audio.stop");
+}
+
+TEST_CASE("a backend's device that went away is opened again with its settings once it returns", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "fake"}, {"blockSize", 128}});
+	CHECK_THAT(reject(client, "audio.simulateDeviceLoss", {{"connected", false}}), ContainsSubstring("dummy device"));
+
+	driver->connected = false;
+	driver->device.load()->requestReset(); // as drivers do when their device goes away
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
+	const Json lost = run(client, "audio.get").at("lost");
+	CHECK(lost.at("backend") == "fake");
+	CHECK(lost.at("restart") == false); // it was stopped
+	CHECK_THAT(lost.at("reason").get<std::string>(), ContainsSubstring("not connected"));
+
+	driver->connected = true;
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("lost").is_null() && !data.at("device").is_null(); }));
+	const Json status = run(client, "audio.get");
+	CHECK(status.at("device").at("blockSize") == 128);
+	CHECK(status.at("running") == false);
+
+	// Picking another device ends the wait for the lost one.
+	driver->connected = false;
+	driver->device.load()->requestReset();
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
+	CHECK(run(client, "audio.setDevice").at("lost").is_null());
+	driver->connected = true;
+	std::this_thread::sleep_for(std::chrono::seconds(1));
+	CHECK(run(client, "audio.get").at("device").at("backend") == "dummy");
+}
+
+TEST_CASE("the device follows the project's sample rate where it can and reports a mismatch where it can't", "[unit]")
+{
+	Engine engine(fakeBackends(std::make_shared<FakeDriver>()));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "audio.start");
+	Json device = run(client, "audio.get").at("device");
+	CHECK(device.at("sampleRate") == 48000.0);
+	CHECK(device.at("projectSampleRate") == 48000.0);
+	CHECK(device.at("sampleRateMismatch") == false);
+
+	// A new project sample rate that the device supports: the device changes to it and keeps running.
+	run(client, "project.set", {{"sampleRate", 44100.0}});
+	Json status = run(client, "audio.get");
+	CHECK(status.at("device").at("sampleRate") == 44100.0);
+	CHECK(status.at("device").at("sampleRateMismatch") == false);
+	CHECK(status.at("running") == true);
+
+	// One it doesn't: the device stays, and plays faster or slower.
+	run(client, "project.set", {{"sampleRate", 96000.0}});
+	device = run(client, "audio.get").at("device");
+	CHECK(device.at("sampleRate") == 44100.0);
+	CHECK(device.at("projectSampleRate") == 96000.0);
+	CHECK(device.at("sampleRateMismatch") == true);
+	run(client, "audio.stop");
+
+	// A device opened without a sample rate runs at the project's; one asked for wins until the project's changes.
+	run(client, "project.set", {{"sampleRate", 44100.0}});
+	CHECK(run(client, "audio.setDevice", {{"backend", "fake"}}).at("device").at("sampleRate") == 44100.0);
+	device = run(client, "audio.setDevice", {{"backend", "fake"}, {"sampleRate", 48000.0}}).at("device");
+	CHECK(device.at("sampleRate") == 48000.0);
+	CHECK(device.at("sampleRateMismatch") == true);
+	run(client, "project.set", {{"name", "Song"}});
+	CHECK(run(client, "audio.get").at("device").at("sampleRate") == 48000.0);
+
+	// The dummy device lists the usual rates only.
+	run(client, "project.set", {{"sampleRate", 16000.0}});
+	device = run(client, "audio.setDevice").at("device");
+	CHECK(device.at("sampleRate") == 48000.0);
+	CHECK(device.at("sampleRateMismatch") == true);
+	run(client, "project.set", {{"sampleRate", 96000.0}});
+	CHECK(run(client, "audio.get").at("device").at("sampleRate") == 96000.0);
 }
 
 namespace

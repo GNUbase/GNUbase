@@ -177,6 +177,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -194,7 +195,7 @@ Returns:
 
 #### `gnubase.audio.get`
 
-The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing).
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate; with sampleRateMismatch the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower. lost: the device that went away (its backend, device id, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null.
 
 Only reads; changes nothing.
 
@@ -203,6 +204,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -274,6 +276,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -281,13 +284,14 @@ Returns:
 
 #### `gnubase.audio.reset`
 
-Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this when their settings change, e.g. in their control panel; the engine then resets on its own.
+Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this when their settings change, e.g. in their control panel, or when their device goes away; the engine then resets on its own. A device that can't be opened, e.g. because it was unplugged, is lost (lost in audio.get): the engine goes on without it and resets again about every half second until it opens, then restarts it if it ran, so playback goes on where it stopped. audio.setDevice ends the wait. Sends audio.changed when the device closes, opens or is lost.
 
 Returns:
 
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -311,9 +315,9 @@ Returns:
 
 #### `gnubase.audio.setDevice`
 
-Replaces the audio device. backend: one from audio.devices, by default "dummy". device: its id, by default the backend's default device. sampleRate and blockSize: by default the driver's current rate and preferred size. clockSource: a name from the device's clockSources. The device starts stopped at position 0. Another backend's device is closed before the new one opens, since drivers often allow only one; if opening fails, there is no device.
+Replaces the audio device. backend: one from audio.devices, by default "dummy". device: its id, by default the backend's default device. sampleRate: by default the project's if the device supports it, otherwise the driver's current rate; when the project's sample rate changes, the device follows it where it can. blockSize: by default the driver's preferred size. clockSource: a name from the device's clockSources. The device starts stopped at position 0. Another backend's device is closed before the new one opens, since drivers often allow only one; if opening fails, there is no device.
 Recorded input goes where the transport played the device's input + output latency before it arrived, so what is played along to or looped back lines up with what played (recordOffset in audio.get). recordShift (frames, -65536 to 65536) moves recordings that much later, for drivers that report their latency wrong. directMonitoring: the driver monitors audio tracks' inputs itself, without the engine's latency, for tracks that play into an output bus (canMonitorDirectly in audio.devices says which can); their fader and pan set its level and position, automation doesn't reach it.
-The dummy device has no hardware: its output is captured in memory (audio.capture) and it renders offline (audio.render). Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs (inputChannels, outputChannels), 60 s of capture (captureSeconds). Its input is silent, or a built-in generator (see processor.list) with parameters by name. It reports inputLatency and outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that much later, as a cable from each output to the input of the same number would, which needs at least a block. It monitors directly by adding inputs to its outputs.
+The dummy device has no hardware: its output is captured in memory (audio.capture) and it renders offline (audio.render). It supports 44100, 48000, 88200, 96000, 176400 and 192000 Hz and opens with any rate from 8000 Hz. Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs (inputChannels, outputChannels), 60 s of capture (captureSeconds). Its input is silent, or a built-in generator (see processor.list) with parameters by name. It reports inputLatency and outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that much later, as a cable from each output to the input of the same number would, which needs at least a block. It monitors directly by adding inputs to its outputs.
 
 Parameters:
 
@@ -337,6 +341,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -356,6 +361,26 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
+- `playbackDropouts`: integer, required
+- `position`: integer, required
+- `processing`: object, required
+- `running`: boolean, required
+
+#### `gnubase.audio.simulateDeviceLoss`
+
+Only the dummy device: simulates its hardware being unplugged (connected false) and its driver asking for a reset, after which the device is lost (see audio.reset), or plugged in again (connected true), after which the engine opens it again on its own. While it is unplugged, audio.setDevice can't open it either.
+
+Parameters:
+
+- `connected`: boolean, required
+
+Returns:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -386,6 +411,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -400,6 +426,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -419,6 +446,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required

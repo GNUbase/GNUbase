@@ -178,7 +178,8 @@ namespace gnubase::audio
 		// (rt::WorkerPool), or null if it has none. Valid while the device is open.
 		virtual void* workgroup() const { return nullptr; }
 
-		// Called when the driver asks to be opened again, e.g. because its settings changed in its control panel. Never
+		// Called when the driver asks to be opened again, e.g. because its settings changed in its control panel or its
+		// device went away (opening it again then fails until it returns). Never
 		// called on the audio thread, but possibly on a driver's thread while this is set.
 		void onReset(std::function<void()> handler)
 		{
