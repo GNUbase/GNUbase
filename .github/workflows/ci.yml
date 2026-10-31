@@ -131,6 +131,22 @@ jobs:
           tools/start-jack.sh
           echo "GNUBASE_REQUIRE_JACK=1" >> "$GITHUB_ENV"
 
+      # The ALSA sequencer for the ALSA MIDI tests: snd-seq-dummy loads it and adds the Midi Through port. The runner's
+      # kernel has them in linux-modules-extra. GNUBASE_REQUIRE_ALSA_SEQ makes the tests fail instead of skipping once
+      # it is loaded; where it can't be, they skip with a warning here. Other jobs skip them.
+      - name: Load the ALSA sequencer (Linux)
+        if: matrix.name == 'linux-x64-gcc'
+        timeout-minutes: 5
+        run: |
+          if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              "linux-modules-extra-$(uname -r)" && sudo modprobe snd-seq-dummy; then
+            for _ in $(seq 50); do [ -e /dev/snd/seq ] && break; sleep 0.1; done
+            sudo chmod a+rw /dev/snd/seq
+            echo "GNUBASE_REQUIRE_ALSA_SEQ=1" >> "$GITHUB_ENV"
+          else
+            echo "::warning::The ALSA sequencer can't be loaded on this runner: the ALSA MIDI tests are skipped"
+          fi
+
       - name: Test
         # The window tests need SDL_GPU. Every runner has it except the macOS Intel one, whose virtual GPU doesn't meet
         # SDL_GPU's requirements (docs/render-backend.md): there they are skipped, everywhere else a missing GPU fails.
