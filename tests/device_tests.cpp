@@ -18,8 +18,11 @@
 #include <jack/jack.h>
 #endif
 #include "devicecontract.h"
+#include "engine/document/document.h"
+#include "engine/engine.h"
 #include "platform/hosttime.h"
 #include "platform/rt/realtime.h"
+#include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -29,6 +32,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -216,11 +220,197 @@ void checkDeviceContract(Backend& backend, bool openFirst)
 	}
 }
 
+namespace
+{
+	using gnubase::engine::Client;
+	using gnubase::engine::Json;
+
+	Json run(Client& client, const std::string& command, Json parameters = Json::object())
+	{
+		const gnubase::engine::Result result = client.call(command, std::move(parameters));
+		INFO(command << " failed: " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	}
+
+	gnubase::engine::ObjectId idOf(const Json& result, const char* kind)
+	{
+		return result.at(kind).at("id").get<gnubase::engine::ObjectId>();
+	}
+}
+
+int64_t checkRoundTrip(std::vector<std::unique_ptr<Backend>> backends, const Loopback& loopback)
+{
+	constexpr int64_t burst = 4800;  // frames of noise
+	constexpr int64_t window = 8192; // how far off the recording is looked for, each way
+	constexpr int64_t start = 24000; // where the burst plays: playback has settled by then
+	const std::string backend = loopback.device.value("backend", std::string("dummy"));
+	INFO("backend " << backend << ", device \"" << loopback.device.value("device", std::string()) << "\", output "
+					<< loopback.output << " into input " << loopback.input);
+
+	gnubase::engine::Engine engine(std::move(backends));
+	Client client(engine);
+	Json parameters = loopback.device;
+	parameters["captureSeconds"] = 4; // the input, recorded where it played
+	const Json device = run(client, "audio.setDevice", parameters).at("device");
+	REQUIRE(loopback.output < device.at("outputChannels").get<int>());
+	REQUIRE(loopback.input < device.at("inputChannels").get<int>());
+
+	// A mono track plays the burst on a bus of the output alone. No track monitors, so nothing feeds back.
+	const gnubase::test::TempDir dir;
+	gnubase::test::Audio noise;
+	noise.sampleRate = static_cast<int>(run(client, "project.get").at("sampleRate").get<double>());
+	uint32_t state = 367; // the same noise on every platform: a linear congruential generator, from -0.5 to 0.5
+	for (int64_t i = 0; i < burst; ++i)
+	{
+		state = (state * 1664525U) + 1013904223U;
+		noise.samples.push_back((static_cast<float>(state >> 8U) / 16777216.0f) - 0.5f);
+	}
+	const std::filesystem::path file = dir.path() / "noise.wav";
+	gnubase::test::writeWav(file, noise);
+	const Json port = run(client, "audio.ports").at("outputs").at(static_cast<size_t>(loopback.output)).at("name");
+	const gnubase::engine::ObjectId bus = idOf(
+		run(client, "bus.add", {{"direction", "output"}, {"format", "mono"}, {"ports", Json::array({port})}}), "bus");
+	const Json track = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 1}});
+	run(client, "channel.set", {{"channel", track.at("channel").at("id")}, {"input", 0}, {"output", bus}});
+	const gnubase::engine::ObjectId media = idOf(run(client, "media.add", {{"path", file.u8string()}}), "media");
+	run(client, "audioEvent.add",
+		{{"track", idOf(track, "track")}, {"clip", idOf(run(client, "clip.add", {{"media", media}}), "clip")},
+			{"position", start}, {"offset", 0}, {"length", burst}});
+
+	// Recorded in real time, once the device runs and knows its latency.
+	run(client, "audio.start");
+	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	run(client, "transport.record");
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+	for (;;)
+	{
+		const Json status = run(client, "audio.get").at("device");
+		const int64_t end = start + burst + window + status.at("recordOffset").get<int64_t>() +
+			(2 * status.at("blockSize").get<int64_t>());
+		if (run(client, "transport.get").at("position").get<int64_t>() > end)
+			break;
+		REQUIRE(std::chrono::steady_clock::now() < deadline);
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	}
+	run(client, "transport.stop");
+	const Json stopped = run(client, "audio.stop").at("device");
+	const std::vector<float> recorded = run(client, "audio.captureInput",
+		{{"channel", loopback.input}, {"start", start - window}, {"frames", burst + (2 * window)}})
+											.at("samples")
+											.get<std::vector<float>>();
+	REQUIRE(recorded.size() == static_cast<size_t>(burst + (2 * window)));
+
+	// The burst is where the recording correlates best with it.
+	int64_t offset = 0;
+	double best = -1.0;
+	for (int64_t lag = -window; lag <= window; ++lag)
+	{
+		double sum = 0.0;
+		for (int64_t i = 0; i < burst; ++i)
+			sum += static_cast<double>(recorded[static_cast<size_t>(window + lag + i)]) *
+				noise.samples[static_cast<size_t>(i)];
+		if (sum > best)
+		{
+			best = sum;
+			offset = lag;
+		}
+	}
+	double energy = 0.0;
+	double recordedEnergy = 0.0;
+	for (int64_t i = 0; i < burst; ++i)
+	{
+		energy += static_cast<double>(noise.samples[static_cast<size_t>(i)]) * noise.samples[static_cast<size_t>(i)];
+		const double sample = recorded[static_cast<size_t>(window + offset + i)];
+		recordedEnergy += sample * sample;
+	}
+	const double gain = best / energy;
+	const double similarity = recordedEnergy > 0.0 ? best / std::sqrt(energy * recordedEnergy) : 0.0;
+	const int64_t recordOffset = stopped.at("recordOffset").get<int64_t>();
+	const int64_t expected = loopback.inGraph ? stopped.at("blockSize").get<int64_t>() - recordOffset : 0;
+	const double rate = stopped.at("sampleRate").get<double>();
+	INFO("recorded " << offset << " frames (" << static_cast<double>(offset) * 1000.0 / rate
+					 << " ms) later than it played, expected " << expected << " +- " << loopback.tolerance
+					 << "; record offset " << recordOffset << ", gain " << gain << ", similarity " << similarity);
+	REQUIRE(similarity > 0.9); // the burst came back, and not just noise
+	CHECK(gain > 0.5);
+	CHECK(gain < 2.0);
+	CHECK(std::abs(offset - expected) <= loopback.tolerance);
+	WARN(backend << " round trip: recorded " << offset << " frames later than it played, record offset "
+				 << recordOffset);
+	return offset;
+}
+
 TEST_CASE("the dummy backend keeps the device contract", "[unit]")
 {
 	DummyBackend backend;
 	REQUIRE(backend.devices().size() == 1);
 	checkDeviceContract(backend);
+}
+
+namespace
+{
+	// A sound card with a cable from each output to the input of the same number and latencies that say so: the dummy
+	// device's loopback, behind a backend of its own, so that the engine takes it for hardware.
+	class CableBackend : public Backend
+	{
+	public:
+		std::string name() const override { return "cable"; }
+		std::vector<DeviceInfo> devices() override { return {open(DeviceConfig{})->info()}; }
+		std::unique_ptr<Device> open(const DeviceConfig& /*config*/) override
+		{
+			auto device = std::make_unique<DummyDevice>(DeviceFormat{48000.0, 64, 4, 4}, 0);
+			device->setLatency({100, 157}, true);
+			return device;
+		}
+	};
+
+	std::vector<std::unique_ptr<Backend>> cable()
+	{
+		std::vector<std::unique_ptr<Backend>> backends;
+		backends.push_back(std::make_unique<CableBackend>());
+		return backends;
+	}
+}
+
+TEST_CASE("a project plays and records over a loopback cable, and the round trip says how far off", "[integration]")
+{
+	Loopback loopback;
+	loopback.device = {{"backend", "cable"}};
+	loopback.output = 2;
+	loopback.input = 2;
+	CHECK(checkRoundTrip(cable(), loopback) == 0);
+	loopback.device["recordShift"] = 10; // as for a driver that reports its latency 10 frames short
+	loopback.tolerance = 10;
+	CHECK(checkRoundTrip(cable(), loopback) == 10);
+}
+
+// Hidden: plays a project through a hardware loopback and records it back (checkRoundTrip), for a machine with a cable
+// from an output to an input, or a virtual loopback device. GNUBASE_LOOPBACK names them as
+// <backend>,<device id>,<output>,<input>, with channels from 0 and an empty id for the default device, e.g.
+// "asio,<driver>,0,0" or "wasapi-exclusive,,2,0" (the id may hold commas); GNUBASE_LOOPBACK_TOLERANCE allows the
+// recording that many frames off (default 64). Run it with each backend: ASIO, WASAPI shared and exclusive, CoreAudio.
+TEST_CASE("a project plays and records over a hardware loopback", "[.hardware]")
+{
+	const char* variable = std::getenv("GNUBASE_LOOPBACK");
+	if (variable == nullptr)
+		SKIP("GNUBASE_LOOPBACK names no loopback");
+	const std::string value = variable;
+	const size_t afterBackend = value.find(',');
+	const size_t beforeInput = value.rfind(',');
+	const size_t beforeOutput =
+		beforeInput == std::string::npos || beforeInput == 0 ? std::string::npos : value.rfind(',', beforeInput - 1);
+	if (afterBackend == std::string::npos || beforeOutput == std::string::npos || beforeOutput <= afterBackend)
+		FAIL("GNUBASE_LOOPBACK must be <backend>,<device id>,<output>,<input>, not " << value);
+	Loopback loopback;
+	loopback.device = {{"backend", value.substr(0, afterBackend)}};
+	if (beforeOutput > afterBackend + 1)
+		loopback.device["device"] = value.substr(afterBackend + 1, beforeOutput - afterBackend - 1);
+	loopback.output = std::stoi(value.substr(beforeOutput + 1, beforeInput - beforeOutput - 1));
+	loopback.input = std::stoi(value.substr(beforeInput + 1));
+	const char* tolerance = std::getenv("GNUBASE_LOOPBACK_TOLERANCE");
+	loopback.tolerance = tolerance != nullptr ? std::stoll(tolerance) : 64;
+	checkRoundTrip(makeBackends(), loopback);
 }
 
 // Hidden: opens real devices and plays silence through them. Run it on a machine with audio hardware:
@@ -396,6 +586,32 @@ TEST_CASE("the PipeWire backend keeps the device contract and asks for a reset w
 	checkUnplug(backend);
 }
 
+// tools/start-pipewire.sh adds the loopback: a null sink of media class Audio/Duplex, a device of its own
+// (<node>|<node>) whose capture ports are the monitor ports of its playback ports.
+TEST_CASE("a project plays and records over a loopback in the PipeWire graph", "[integration]")
+{
+	std::unique_ptr<Backend> backend = pipeWireOrSkip();
+	if (!backend)
+		SKIP("no PipeWire daemon runs here");
+	const std::string id = "gnubase-test-loopback|gnubase-test-loopback";
+	const std::vector<DeviceInfo> devices = backend->devices();
+	if (std::none_of(devices.begin(), devices.end(), [&id](const DeviceInfo& device) { return device.id == id; }))
+	{
+		const char* require = std::getenv("GNUBASE_REQUIRE_PIPEWIRE");
+		if (require != nullptr && std::string(require) == "1")
+			FAIL("the PipeWire daemon has no loopback node gnubase-test-loopback (tools/start-pipewire.sh)");
+		SKIP("the PipeWire daemon has no loopback node gnubase-test-loopback (tools/start-pipewire.sh)");
+	}
+	Loopback loopback;
+	loopback.device = {{"backend", "pipewire"}, {"device", id}};
+	loopback.output = 1;
+	loopback.input = 1;
+	loopback.inGraph = true;
+	std::vector<std::unique_ptr<Backend>> backends;
+	backends.push_back(std::move(backend));
+	checkRoundTrip(std::move(backends), loopback);
+}
+
 TEST_CASE("the PipeWire backend lists sinks with sources and names their channels", "[integration]")
 {
 	const std::unique_ptr<Backend> backend = pipeWireOrSkip();
@@ -467,11 +683,12 @@ namespace
 	}
 
 	// A JACK client with two capture and two playback ports. Physical, they are a sound card's, as its driver has them:
-	// PipeWire marks only hardware ports physical, and in CI it has null sinks only.
+	// PipeWire marks only hardware ports physical, and in CI it has null sinks only. With a cable, each playback port
+	// plays into the capture port of the same number, as a loopback cable would.
 	class TestClient
 	{
 	public:
-		TestClient(const std::string& library, const char* name, bool physical)
+		TestClient(const std::string& library, const char* name, bool physical, bool cable = false)
 		{
 			m_library = dlopen(library.c_str(), RTLD_NOW | RTLD_LOCAL);
 			REQUIRE(m_library != nullptr);
@@ -479,14 +696,21 @@ namespace
 			const auto add = function<decltype(&jack_port_register)>("jack_port_register");
 			m_close = function<decltype(&jack_client_close)>("jack_client_close");
 			m_bufferSize = function<decltype(&jack_get_buffer_size)>("jack_get_buffer_size");
+			m_buffer = function<decltype(&jack_port_get_buffer)>("jack_port_get_buffer");
 			m_client = open(name, JackNoStartServer, nullptr);
 			REQUIRE(m_client != nullptr);
+			size_t i = 0;
 			for (const char* port : {"capture_1", "capture_2", "playback_1", "playback_2"})
 			{
 				const unsigned long direction = port[0] == 'c' ? JackPortIsOutput : JackPortIsInput;
-				REQUIRE(add(m_client, port, JACK_DEFAULT_AUDIO_TYPE,
-							direction | (physical ? JackPortIsPhysical : 0) | JackPortIsTerminal, 0) != nullptr);
+				m_ports.at(i) = add(m_client, port, JACK_DEFAULT_AUDIO_TYPE,
+					direction | (physical ? JackPortIsPhysical : 0) | JackPortIsTerminal, 0);
+				REQUIRE(m_ports.at(i) != nullptr);
+				++i;
 			}
+			if (cable)
+				REQUIRE(function<decltype(&jack_set_process_callback)>("jack_set_process_callback")(
+							m_client, &TestClient::loop, this) == 0);
 			REQUIRE(function<decltype(&jack_activate)>("jack_activate")(m_client) == 0);
 		}
 
@@ -506,10 +730,22 @@ namespace
 			return result;
 		}
 
+		// The cable, on the server's process thread.
+		static int loop(jack_nframes_t frames, void* data)
+		{
+			const auto& self = *static_cast<TestClient*>(data);
+			for (size_t c = 0; c < 2; ++c)
+				std::memcpy(self.m_buffer(self.m_ports[c], frames), self.m_buffer(self.m_ports[c + 2], frames),
+					frames * sizeof(float));
+			return 0;
+		}
+
 		void* m_library = nullptr;
 		jack_client_t* m_client = nullptr;
+		std::array<jack_port_t*, 4> m_ports{}; // capture, then playback
 		decltype(&jack_client_close) m_close = nullptr;
 		decltype(&jack_get_buffer_size) m_bufferSize = nullptr;
+		decltype(&jack_port_get_buffer) m_buffer = nullptr;
 	};
 
 	// Takes longer than a cycle once, a few blocks in, so that the server reports an xrun.
@@ -640,11 +876,35 @@ namespace
 		hardware.reset();
 		CHECK(waitUntil([&resets] { return resets > 0; }));
 	}
+
+	// Plays a project over a sound card whose outputs are cabled to its inputs: a client with physical ports, which the
+	// device connects to as to any sound card. The cable is inside the server's graph.
+	void checkJackRoundTrip(std::unique_ptr<Backend> backend, const std::string& library)
+	{
+		const TestClient card(library, "gnubase-test-cable", true, true);
+		const DeviceInfo device = backend->devices().front();
+		const auto index = [](const std::vector<std::string>& names, const char* name)
+		{
+			const auto found = std::find(names.begin(), names.end(), name);
+			REQUIRE(found != names.end());
+			return static_cast<int>(found - names.begin());
+		};
+		Loopback loopback;
+		loopback.device = {{"backend", "jack"}, {"device", "default"}};
+		loopback.output = index(device.outputs, "gnubase-test-cable:playback_2");
+		loopback.input = index(device.inputs, "gnubase-test-cable:capture_2");
+		loopback.inGraph = true;
+		std::vector<std::unique_ptr<Backend>> backends;
+		backends.push_back(std::move(backend));
+		checkRoundTrip(std::move(backends), loopback);
+	}
 }
 
-TEST_CASE("the JACK backend keeps the device contract with jackd", "[integration]")
+// The tests that add and remove physical ports run in the contract's test case, so that the contract never meets
+// ports that come and go when ctest runs tests in parallel.
+TEST_CASE("the JACK backend keeps the device contract and plays a project over a loopback with jackd", "[integration]")
 {
-	const std::unique_ptr<Backend> backend = jackOrSkip("libjack.so.0", "GNUBASE_REQUIRE_JACK");
+	std::unique_ptr<Backend> backend = jackOrSkip("libjack.so.0", "GNUBASE_REQUIRE_JACK");
 	if (!backend)
 		SKIP("no JACK server runs here");
 	checkDeviceContract(*backend);
@@ -653,15 +913,16 @@ TEST_CASE("the JACK backend keeps the device contract with jackd", "[integration
 	checkJackXruns(*backend);
 	checkJackStopWhileLate(*backend);
 	checkJackUnplug(*backend, std::make_unique<TestClient>("libjack.so.0", "gnubase-test-hardware", true));
+	checkJackRoundTrip(std::move(backend), "libjack.so.0");
 }
 
-TEST_CASE("the JACK backend keeps the device contract with PipeWire's JACK layer", "[integration]")
+TEST_CASE("the JACK backend keeps the device contract and plays a project over a loopback with PipeWire's JACK layer",
+	"[integration]")
 {
 	const std::string library = pipeWireJack();
 	if (library.empty() && required("GNUBASE_REQUIRE_PIPEWIRE"))
 		FAIL("PipeWire's libjack isn't installed (pipewire-jack)");
-	const std::unique_ptr<Backend> backend =
-		library.empty() ? nullptr : jackOrSkip(library, "GNUBASE_REQUIRE_PIPEWIRE");
+	std::unique_ptr<Backend> backend = library.empty() ? nullptr : jackOrSkip(library, "GNUBASE_REQUIRE_PIPEWIRE");
 	if (!backend)
 		SKIP("no PipeWire daemon with its JACK layer runs here");
 	auto hardware = std::make_unique<TestClient>(library, "gnubase-test-hardware", true);
@@ -669,6 +930,7 @@ TEST_CASE("the JACK backend keeps the device contract with PipeWire's JACK layer
 	checkJackResets(*backend, false);
 	checkJackOwnBufferSize(*backend, library);
 	checkJackUnplug(*backend, std::move(hardware));
+	checkJackRoundTrip(std::move(backend), library);
 }
 
 TEST_CASE("the JACK backend lists the server's physical ports and refuses what the server doesn't do", "[integration]")
