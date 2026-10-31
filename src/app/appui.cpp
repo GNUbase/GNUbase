@@ -11,6 +11,7 @@
 #include <RmlUi/Lua.h>
 #include <lua.h>
 
+#include <array>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -25,6 +26,26 @@ namespace gnubase::app
 			ui::Fonts(resources / "fonts").load();
 			return ui::Themes(resources);
 		}
+
+		// The event display's commands (ui::EventDisplay::actions) and the reference's keys for them in the project
+		// window (manual p. 1573), if it has any.
+		struct ProjectCommand
+		{
+			const char* id;
+			const char* description;
+			const char* keys;
+		};
+
+		constexpr std::array<ProjectCommand, 8> g_projectCommands{{
+			{"zoom.in", "Zooms the project window in.", "H"},
+			{"zoom.out", "Zooms the project window out.", "G"},
+			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
+			{"zoom.outVertically", "Makes the project window's tracks lower.", "Shift+G"},
+			{"zoom.full", "Shows the whole project in the project window.", "Shift+F"},
+			{"zoom.undo", "Undoes the project window's last zoom.", nullptr},
+			{"zoom.redo", "Redoes the project window's last undone zoom.", nullptr},
+			{"view.autoScroll", "Switches the project window's auto-scroll on or off.", "F"},
+		}};
 	}
 
 	AppUi::AppUi(engine::Engine& engine, const std::filesystem::path& resources, const ui::WindowSpec& main,
@@ -52,6 +73,17 @@ namespace gnubase::app
 			// Later in the step: the key may be the markers window's own, which closing it would destroy.
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleMarkers(); }); }});
 		m_keys.bind({"Mod+M", "window.markers"});
+		for (const ProjectCommand& command : g_projectCommands)
+		{
+			m_keys.add(
+				{command.id, command.description, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
+					{
+						if (m_eventDisplay)
+							m_eventDisplay->actions().at(id)();
+					}});
+			if (command.keys != nullptr)
+				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
+		}
 	}
 
 	ui::EventDisplay& AppUi::showProject()

@@ -9,6 +9,10 @@
 #include "platform/audio/coreaudio.h"
 #include "platform/rt/workerpool.h"
 #endif
+#ifdef __linux__
+#include "platform/audio/pipewire.h"
+#include "platform/process.h"
+#endif
 #include "devicecontract.h"
 #include "platform/hosttime.h"
 #include "platform/rt/realtime.h"
@@ -20,6 +24,8 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <set>
@@ -301,11 +307,123 @@ TEST_CASE("a CoreAudio device opened at another rate keeps still and has that ra
 }
 #endif
 
+#ifdef __linux__
+namespace
+{
+	// The PipeWire backend, or nothing if no PipeWire daemon runs here. GNUBASE_REQUIRE_PIPEWIRE=1 says one must, with
+	// a sink: CI starts one with a null sink and a null source (tools/start-pipewire.sh).
+	std::unique_ptr<Backend> pipeWireOrSkip()
+	{
+		std::unique_ptr<Backend> backend = makePipeWireBackend();
+		const char* require = std::getenv("GNUBASE_REQUIRE_PIPEWIRE");
+		const bool required = require != nullptr && std::string(require) == "1";
+		try
+		{
+			if (backend->devices().empty() && required)
+				FAIL("the PipeWire daemon has no sink");
+		}
+		catch (const DeviceError& error)
+		{
+			if (required)
+				FAIL(error.what());
+			return nullptr;
+		}
+		return backend;
+	}
+
+	// Runs PipeWire's command line tool. True if it succeeds.
+	bool pwCli(const std::vector<std::string>& arguments)
+	{
+		gnubase::platform::ChildProcess process =
+			gnubase::platform::ChildProcess::start("/usr/bin/pw-cli", arguments, "/dev/null");
+		return process.wait(std::chrono::seconds(10)) == 0;
+	}
+
+	// Removes a node when it goes out of scope, also when a check fails.
+	struct NodeRemover
+	{
+		~NodeRemover() { pwCli({"destroy", name}); } // fails if it was removed already
+
+		std::string name;
+	};
+
+	// In the contract's test case, so that the contract never meets the sink that comes and goes when ctest runs
+	// tests in parallel.
+	void checkUnplug(const std::unique_ptr<Backend>& backend)
+	{
+		if (!std::filesystem::exists("/usr/bin/pw-cli"))
+		{
+			WARN("no pw-cli to add and remove a sink with");
+			return;
+		}
+		const std::string sink = "gnubase-test-unplug";
+		REQUIRE(pwCli({"create-node", "adapter",
+			"{ factory.name=support.null-audio-sink node.name=" + sink +
+				" media.class=Audio/Sink audio.position=[ FL FR ] object.linger=true }"}));
+		const NodeRemover remover{sink};
+		const auto listed = [&backend, &sink]
+		{
+			const std::vector<DeviceInfo> devices = backend->devices();
+			return std::any_of(
+				devices.begin(), devices.end(), [&sink](const DeviceInfo& device) { return device.id == sink; });
+		};
+		for (int i = 0; i < 100 && !listed(); ++i)
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		REQUIRE(listed()); // with ports, which the session manager adds
+		std::unique_ptr<Device> device = backend->open(config(sink));
+		std::atomic<int> resets{0};
+		device->onReset([&resets] { ++resets; });
+		REQUIRE(pwCli({"destroy", sink}));
+		for (int i = 0; i < 100 && resets == 0; ++i)
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		CHECK(resets > 0);
+		device.reset();
+		CHECK(!listed());
+	}
+}
+
+TEST_CASE("the PipeWire backend keeps the device contract and asks for a reset when a sink goes away", "[integration]")
+{
+	const std::unique_ptr<Backend> backend = pipeWireOrSkip();
+	if (!backend)
+		SKIP("no PipeWire daemon runs here");
+	checkDeviceContract(*backend);
+	checkUnplug(backend);
+}
+
+TEST_CASE("the PipeWire backend lists sinks with sources and names their channels", "[integration]")
+{
+	const std::unique_ptr<Backend> backend = pipeWireOrSkip();
+	if (!backend)
+		SKIP("no PipeWire daemon runs here");
+	const std::vector<DeviceInfo> devices = backend->devices();
+	for (const DeviceInfo& device : devices)
+	{
+		INFO("device " << device.id);
+		CHECK(!device.outputs.empty());
+		CHECK(std::none_of(
+			device.outputs.begin(), device.outputs.end(), [](const std::string& name) { return name.empty(); }));
+		CHECK(!device.sampleRates.empty());
+		CHECK(device.clockSources.empty());
+		if (device.id.find('|') != std::string::npos)
+			CHECK(!device.inputs.empty()); // the source's capture channels
+		else if (device.id != "default")
+			CHECK(device.inputs.empty()); // a sink alone
+	}
+	CHECK(std::any_of(devices.begin(), devices.end(), [](const DeviceInfo& device) { return device.id == "default"; }));
+	CHECK_THROWS_AS(backend->open(config("no such sink|no such source")), DeviceError);
+	CHECK_THROWS_AS(backend->open(config("", 0.0, 0, "no such clock")), DeviceError);
+}
+#endif
+
 TEST_CASE("the backends of this build come with the dummy backend last", "[unit]")
 {
 	const std::vector<std::unique_ptr<Backend>> backends = makeBackends();
 	REQUIRE(!backends.empty());
 	CHECK(backends.back()->name() == "dummy");
+#ifdef __linux__
+	CHECK(backends.front()->name() == "pipewire");
+#endif
 	std::set<std::string> names;
 	for (const std::unique_ptr<Backend>& backend : backends)
 		CHECK(names.insert(backend->name()).second);

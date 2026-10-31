@@ -41,7 +41,8 @@ namespace gnubase::app
 		~AppUi() = default;
 
 		// Shows the project window in the main window (resources/ui/project.rml) with the event display and its
-		// markers. Throws std::runtime_error if the document can't be loaded.
+		// markers, whose commands are key commands in the focus zone "project". Throws std::runtime_error if the
+		// document can't be loaded.
 		ui::EventDisplay& showProject();
 
 		// Opens the markers window in a window of its own (resources/ui/markers.rml), hidden like the main window, or
