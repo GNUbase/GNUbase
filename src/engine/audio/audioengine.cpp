@@ -606,7 +606,7 @@ namespace gnubase::engine
 
 	void AudioEngine::captureInput(const audio::DeviceBlock& block) noexcept
 	{
-		if (m_capturedInput.empty())
+		if (m_capturedInput.empty() || m_capturedInput[0].empty())
 			return;
 		const auto frames = static_cast<int64_t>(m_capturedInput[0].size());
 		const size_t channels = std::min(m_capturedInput.size(), static_cast<size_t>(m_device->format().inputChannels));
@@ -664,14 +664,16 @@ namespace gnubase::engine
 		require(
 			recordShift >= -g_maxLatency && recordShift <= g_maxLatency, "recordShift must be from -65536 to 65536");
 		const bool directMonitoring = parameters.value("directMonitoring", false);
+		const double captureSeconds = parameters.value("captureSeconds", name == "dummy" ? 60.0 : 0.0);
+		require(captureSeconds >= 0.0 && captureSeconds <= g_maxCaptureSeconds, "captureSeconds must be from 0 to 600");
 		if (name == "dummy")
 		{
 			openDummy(parameters);
 		}
 		else
 		{
-			for (const char* key : {"inputChannels", "outputChannels", "captureSeconds", "input", "inputLatency",
-					 "outputLatency", "loopback"})
+			for (const char* key :
+				{"inputChannels", "outputChannels", "input", "inputLatency", "outputLatency", "loopback"})
 				require(!parameters.contains(key), std::string("only the dummy device takes ") + key);
 			audio::DeviceConfig config;
 			config.device = parameters.value("device", std::string());
@@ -716,6 +718,8 @@ namespace gnubase::engine
 			});
 		m_recordOffset = recordOffset();
 		m_played = PlayedPositions(static_cast<size_t>(m_recordOffset) + m_device->format().blockSize);
+		m_capturedInput.assign(static_cast<size_t>(m_device->format().inputChannels),
+			std::vector<float>(static_cast<size_t>(std::llround(captureSeconds * m_device->format().sampleRate))));
 		m_inputPorts = portNames(info.inputs, m_device->format().inputChannels, "Input ");
 		m_outputPorts = portNames(info.outputs, m_device->format().outputChannels, "Output ");
 		m_device->onReset(
@@ -983,7 +987,7 @@ namespace gnubase::engine
 		const auto blockSize = parameters.value("blockSize", int64_t{format.blockSize});
 		const auto inputs = parameters.value("inputChannels", int64_t{format.inputChannels});
 		const auto outputs = parameters.value("outputChannels", int64_t{format.outputChannels});
-		const double seconds = parameters.value("captureSeconds", 60.0);
+		const double seconds = parameters.value("captureSeconds", 60.0); // checked by setDevice
 		const auto inputLatency = parameters.value("inputLatency", int64_t{0});
 		const auto outputLatency = parameters.value("outputLatency", int64_t{0});
 		const bool loopback = parameters.value("loopback", false);
@@ -991,7 +995,6 @@ namespace gnubase::engine
 		require(blockSize >= 1 && blockSize <= 8192, "blockSize must be from 1 to 8192");
 		require(inputs >= 0 && inputs <= 64, "inputChannels must be from 0 to 64");
 		require(outputs >= 0 && outputs <= 64, "outputChannels must be from 0 to 64");
-		require(seconds >= 0.0 && seconds <= g_maxCaptureSeconds, "captureSeconds must be from 0 to 600");
 		require(
 			inputLatency >= 0 && inputLatency <= g_maxLatency && outputLatency >= 0 && outputLatency <= g_maxLatency,
 			"inputLatency and outputLatency must be from 0 to 65536");
@@ -1036,7 +1039,6 @@ namespace gnubase::engine
 		device->setLatency({static_cast<uint32_t>(inputLatency), static_cast<uint32_t>(outputLatency)}, loopback);
 		m_dummy = device.get();
 		m_device = std::move(device);
-		m_capturedInput.assign(static_cast<size_t>(format.inputChannels), std::vector<float>(captureFrames));
 		if (m_generator)
 			m_dummy->setInput(
 				[this](float* const* channels, int count, uint32_t frames, uint64_t /*position*/)
@@ -1267,7 +1269,9 @@ namespace gnubase::engine
 				"Recorded input goes where the transport played the device's input + output latency before it "
 				"arrived, so what is played along to or looped back lines up with what played (recordOffset in "
 				"audio.get). recordShift (frames, -65536 to 65536) moves recordings that much later, for drivers that "
-				"report their latency wrong. directMonitoring: the driver monitors audio tracks' inputs itself, "
+				"report their latency wrong. captureSeconds (0 to 600, by default 0, or 60 for the dummy device) keeps "
+				"that much of what the inputs record in memory for audio.captureInput, e.g. for a loopback test. "
+				"directMonitoring: the driver monitors audio tracks' inputs itself, "
 				"without the engine's latency, for tracks that play into an output bus (canMonitorDirectly in "
 				"audio.devices says which can); their fader and pan set its level and position, automation doesn't "
 				"reach it.\n"
@@ -1275,7 +1279,8 @@ namespace gnubase::engine
 				"offline (audio.render). It supports 44100, 48000, 88200, 96000, 176400 and 192000 Hz "
 				"and opens with any rate from 8000 Hz. Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 "
 				"outputs "
-				"(inputChannels, outputChannels), 60 s of capture (captureSeconds). Its input is silent, or a "
+				"(inputChannels, outputChannels), 60 s of capture (captureSeconds, also of its output). Its input is "
+				"silent, or a "
 				"built-in generator (see processor.list) with parameters by name. It reports inputLatency and "
 				"outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that "
 				"much later, as a cable from each output to the input of the same number would, which needs at least "
@@ -1560,10 +1565,11 @@ namespace gnubase::engine
 			});
 		engine.registerCommand(
 			{"audio.captureInput", 1,
-				"What an input channel of the dummy device recorded at project positions from start, at most 1048576 "
+				"What an input channel of the audio device recorded at project positions from start, at most 1048576 "
 				"frames: its input goes where the transport played the record offset before it arrived (see "
-				"audio.get), only while the transport plays, and the last cycle lap over the ones before. Up to "
-				"captureSeconds from position 0; positions not recorded are silent. Only while the device stands.",
+				"audio.get), only while the transport plays, and the last cycle lap over the ones before. Up to the "
+				"device's captureSeconds (audio.setDevice) from position 0; positions not recorded are silent. Only "
+				"while the device stands.",
 				Json::parse(R"({"type": "object", "additionalProperties": false,
 					"required": ["channel", "start", "frames"], "properties": {"channel": {"type": "integer"},
 					"start": {"type": "integer"}, "frames": {"type": "integer"}}})"),
@@ -1572,13 +1578,13 @@ namespace gnubase::engine
 				true},
 			[this](CommandContext& context)
 			{
-				const audio::DummyDevice& device = requireDummy();
-				require(!device.running(), "the audio device is running");
+				require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
+				require(!m_device->running(), "the audio device is running");
 				const Json& parameters = context.parameters();
 				const auto channel = parameters.at("channel").get<int64_t>();
 				const auto start = parameters.at("start").get<int64_t>();
 				const auto frames = parameters.at("frames").get<int64_t>();
-				require(channel >= 0 && channel < device.format().inputChannels,
+				require(channel >= 0 && channel < m_device->format().inputChannels,
 					"no input channel " + std::to_string(channel));
 				require(start >= 0, "start must not be negative");
 				require(frames >= 0 && frames <= g_maxCaptureRead, "frames must be from 0 to 1048576");
