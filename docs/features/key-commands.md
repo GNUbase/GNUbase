@@ -33,7 +33,7 @@ it up in `app::AppUi`.
   the shell hands it to its handler (`Shell::onUnusedKey`, `KeyCommands::press`). `ui::Automation::key`, and so MCP's
   `ui_key` and the UI tests, does the same. Widgets that act on keys must stop them, or the key commands run too.
 - **Focus zones.** An element with a `focuszone` attribute is a focus zone, e.g. `focuszone="project"` on the project
-  window's event display or `focuszone="keyEditor"` on an editor. Clicking an element gives it the focus, so the zone
+  window's document or `focuszone="keyEditor"` on an editor. Clicking an element gives it the focus, so the zone
   is where the user last clicked or tabbed to. Keys are looked up in the innermost zone around the focus first, then
   in the zones around it, then among the bindings for everywhere: the arrow keys can select events in the project
   window and move notes in an editor (the reference's Navigate commands). A UI command gets the zone element its
@@ -59,9 +59,18 @@ The reference's defaults for the commands GNUbase has so far (`ui::defaultKeyMap
 | Mod+Z | `history.undo` | Undo |
 | Mod+Shift+Z | `history.redo` | Redo |
 
-Commands that come with their tickets bring their keys: zooming (#84), showing and hiding zones and strips
-([docking.md](docking.md#key-commands)), opening windows such as the mixer (F3), cycle, record, nudging and the rest of
-the reference's tables.
+UI commands are added after the key map, so their keys are bound where the app adds them. The project window's
+(`app::AppUi`, [event-display.md](event-display.md)), in the zone `project`:
+
+| Keys | Command | Reference |
+|---|---|---|
+| H, G | `zoom.in`, `zoom.out` | Zoom In, Zoom Out |
+| Shift+H, Shift+G | `zoom.inVertically`, `zoom.outVertically` | Zoom In/Out Vertically |
+| Shift+F | `zoom.full` | Zoom Full |
+| F | `view.autoScroll` | Auto-Scroll On/Off |
+
+Commands that come with their tickets bring their keys: opening windows such as the mixer (F3), cycle, record, nudging
+and the rest of the reference's tables.
 
 ## Checks
 

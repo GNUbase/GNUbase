@@ -41,7 +41,8 @@ namespace gnubase::app
 		~AppUi() = default;
 
 		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the event
-		// display in its main zone. Throws std::runtime_error if the document can't be loaded.
+		// display in its main zone, whose commands are key commands in the focus zone "project". Throws
+		// std::runtime_error if the document can't be loaded.
 		ui::EventDisplay& showProject();
 
 		ui::Shell& shell() { return m_shell; }

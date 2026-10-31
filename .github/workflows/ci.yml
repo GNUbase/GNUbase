@@ -110,6 +110,16 @@ jobs:
         if: runner.os == 'Windows'
         run: sccache --stop-server
 
+      # A headless sound server with a null sink and source, so that the PipeWire tests open real devices here.
+      # GNUBASE_REQUIRE_PIPEWIRE makes them fail instead of skipping when it can't be reached. Other jobs skip them.
+      - name: Start PipeWire (Linux)
+        if: matrix.name == 'linux-x64-gcc'
+        timeout-minutes: 5
+        run: |
+          sudo apt-get install -y --no-install-recommends pipewire pipewire-bin wireplumber dbus-daemon
+          tools/start-pipewire.sh >> "$GITHUB_ENV"
+          echo "GNUBASE_REQUIRE_PIPEWIRE=1" >> "$GITHUB_ENV"
+
       - name: Test
         # The window tests need SDL_GPU. Every runner has it except the macOS Intel one, whose virtual GPU doesn't meet
         # SDL_GPU's requirements (docs/render-backend.md): there they are skipped, everywhere else a missing GPU fails.
