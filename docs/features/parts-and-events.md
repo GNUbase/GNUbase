@@ -65,7 +65,8 @@ The display keeps a selection (`EventDisplay::selection`, ascending ids, also in
 for MCP's `ui_dom`); it isn't part of the project or of undo. Selected events show again over the others in
 `event-lanes.selected-events`, muted ones in `event-lanes.muted-events`, which the themes color (lit and greyed out).
 
-The object selection tool's gestures (#86 brings the other tools):
+The object selection tool's gestures ([tools.md](tools.md) has the other tools, the selection rectangle and the tool
+modifiers, which change the keys below):
 
 | Gesture | Does | Reference |
 |---|---|---|
@@ -90,7 +91,7 @@ Copies, duplicates and new parts become the selection. `app::AppUi` binds the re
 window ([key-commands.md](key-commands.md)): Delete and Backspace delete, Mod+D duplicates, Mod+K repeats, Alt+X splits
 at the cursor, Mod and the arrows nudge, and so on.
 
-Not yet: the info line (#89, which `event.get` feeds), a selection rectangle, the arrow keys' selection, the drag
+Not yet: the info line (#89, which `event.get` feeds), the arrow keys' selection, the drag
 delay, a lock and a shared copy icon on events, and moving a selection on several tracks to other tracks.
 
 ## Checks

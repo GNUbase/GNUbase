@@ -67,8 +67,9 @@ what it is given and emits `snap.changed`.
 - **Commands:** `edit.snap` switches snap on or off (J, the reference's key), `edit.snapPointToCursor` sets the snap
   point of the selected audio events that the cursor is in.
 
-Not yet: grid lines and snap point lines in the event display, snapping ranges and drawing (they come with the tools,
-#86), the editors' own grids, and a frame rate of the project's (#78; timecode grids use 25 fps until then).
+The tools snap too: selection ranges, drawn parts and the split tool ([tools.md](tools.md)).
+
+Not yet: grid lines and snap point lines in the event display, the editors' own grids, and a frame rate of the project's (#78; timecode grids use 25 fps until then).
 
 ## Checks
 
