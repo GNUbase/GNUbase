@@ -331,10 +331,10 @@ namespace gnubase::engine
 			program->instruments.emplace_back(channel, instrument.channel);
 		for (const auto& [channel, sequencer] : program->sequencers)
 		{
-			const InstrumentChannel* destination = nullptr; // its own instrument, or the one it is routed to
+			uint64_t destination = 0; // its own instrument, or the one it is routed to
 			for (const auto& [id, instrument] : m_instruments)
 				if (id == channel || instrument.sources.count(channel) != 0)
-					destination = instrument.channel.get();
+					destination = instrument.channel->serial();
 			program->destinations.push_back(destination);
 		}
 		// Bus nodes come first, in bus order (graph::describe); child busses reach the device through their parent.
@@ -406,7 +406,8 @@ namespace gnubase::engine
 					instrument.id = channel.instrument;
 					instrument.channel = std::make_shared<InstrumentChannel>(sequencer,
 						processors::isInstrument(channel.instrument) ? processors::createBuiltin(channel.instrument)
-																	 : nullptr);
+																	 : nullptr,
+						++m_instrumentSerial);
 				}
 				instrument.sources = from;
 				processor = instrument.channel;

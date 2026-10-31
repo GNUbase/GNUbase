@@ -127,9 +127,9 @@ namespace gnubase::engine
 			double sampleRate = 48000.0; // the project's: transport positions are in its samples
 			uint64_t generation = 0;     // counts up from 1
 			std::vector<Release> releases;
-			MidiTap::Sequencers sequencers;                     // of the MIDI and instrument channels, for midi.inject
-			std::vector<const InstrumentChannel*> destinations; // per sequencer, where it plays (MidiSequencer::playOn)
-			MidiTap::Instruments instruments;                   // for midi.capture
+			MidiTap::Sequencers sequencers;     // of the MIDI and instrument channels, for midi.inject
+			std::vector<uint64_t> destinations; // per sequencer, where it plays (MidiSequencer::playOn)
+			MidiTap::Instruments instruments;   // for midi.capture
 		};
 
 		// A release waiting for the audio thread to start a program that has it.
@@ -270,6 +270,7 @@ namespace gnubase::engine
 		std::map<ObjectId, Instrument> m_instruments;                      // per instrument channel
 		std::map<ObjectId, std::shared_ptr<ChannelState>> m_channelStates; // per channel
 		std::vector<PendingRelease> m_releases;
+		uint64_t m_instrumentSerial = 0; // the last InstrumentChannel::serial given, counting up from 1
 
 		std::unique_ptr<rt::SnapshotPublisher<Program>> m_programs;
 		uint64_t m_generation = 0;          // the newest program's
