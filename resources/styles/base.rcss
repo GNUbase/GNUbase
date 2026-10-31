@@ -597,6 +597,22 @@ meter .meter-peak
 	clip: always; /* RmlUi clips only content that overflows in flow, not the absolute parts */
 }
 
+/* Without the overview line, a strip of docking windows (docs/features/docking.md). */
+.no-overviewLine .event-display .overview
+{
+	display: none;
+}
+
+.no-overviewLine .event-display .timeline
+{
+	top: 0;
+}
+
+.no-overviewLine .event-display .ruler-format
+{
+	top: 0;
+}
+
 .event-display .project-cursor, .event-display .cross-hair-vertical
 {
 	position: absolute;
@@ -789,6 +805,101 @@ splitter .splitter-grip-horizontal, splitter.column .splitter-grip-vertical
 splitter.column .splitter-grip-horizontal
 {
 	display: block;
+}
+
+/* Docking windows (docs/features/docking.md): strips above and below a row of zones, where the main zone takes what
+   the left, right and lower zones leave. Code sets the zones' sizes and hides zones, their splitters and strips. */
+.docking
+{
+	display: flex;
+	flex-direction: column;
+}
+
+.docking .zones
+{
+	display: flex;
+	flex: 1 1 0;
+	min-height: 0;
+}
+
+.docking .zone-column
+{
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 0;
+	min-width: 200dp;
+}
+
+.docking [zone]
+{
+	position: relative;
+	flex: 0 0 auto;
+	overflow: hidden;
+	min-width: 120dp;
+	min-height: 80dp;
+}
+
+.docking [zone=main]
+{
+	flex: 1 1 0;
+	min-width: 0;
+}
+
+.docking .hidden
+{
+	display: none;
+}
+
+/* The frame of the zone with the keyboard focus, over what the zone shows. */
+.docking .zone-frame
+{
+	display: none;
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 10;
+	pointer-events: none;
+}
+
+.docking .focused > .zone-frame
+{
+	display: block;
+}
+
+.docking .strip
+{
+	height: 24dp;
+}
+
+.docking [zone] tabset
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.docking [zone] tabset tab
+{
+	drag: drag-drop;
+}
+
+.docking [zone] tabset panels, .docking [zone] tabset panel
+{
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 0;
+}
+
+.docking .panel-content
+{
+	position: relative;
+	flex: 1 1 0;
 }
 
 /* The color picker: the saturation and value field, the hue strip, the old and new colors' swatches, and the value

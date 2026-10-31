@@ -31,6 +31,31 @@ namespace gnubase::engine::settings
 				description.pop_back(); // the settings are separated by semicolons
 			return text + ", default " + definition.defaultValue.dump() + "): " + description;
 		}
+
+		// ui.layout: the windows' zones and strips, and the panels in windows of their own (docs/features/docking.md).
+		Json layoutSchema()
+		{
+			const Json strings = {{"type", "array"}, {"items", {{"type", "string"}}}};
+			const Json zone = {{"type", "object"},
+				{"properties",
+					{{"visible", {{"type", "boolean"}}}, {"size", {{"type", "number"}, {"minimum", 0}}},
+						{"active", {{"type", "string"}}}, {"tabs", strings}, {"hidden", strings}}}};
+			const Json window = {{"type", "object"},
+				{"properties",
+					{{"zones", {{"type", "object"}, {"additionalProperties", zone}}},
+						{"strips", {{"type", "object"}, {"additionalProperties", {{"type", "boolean"}}}}}}}};
+			const Json integer = {{"type", "integer"}};
+			const Json size = {{"type", "integer"}, {"minimum", 1}};
+			const Json bounds = {{"type", "object"},
+				{"properties", {{"x", integer}, {"y", integer}, {"width", size}, {"height", size}}},
+				{"required", Json::array({"x", "y", "width", "height"})}};
+			const Json panel = {
+				{"type", "object"}, {"properties", {{"floating", {{"type", "boolean"}}}, {"bounds", bounds}}}};
+			return {{"type", "object"},
+				{"properties",
+					{{"windows", {{"type", "object"}, {"additionalProperties", window}}},
+						{"panels", {{"type", "object"}, {"additionalProperties", panel}}}}}};
+		}
 	}
 
 	const Format& userFormat()
@@ -79,6 +104,13 @@ namespace gnubase::engine::settings
 					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "
 					"channel's last program change before that position.",
 					Json{{"type", "boolean"}}, true},
+				{"ui.layout",
+					"The layout of the windows with zones: under windows, by window (project), its zones (left, "
+					"right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs "
+					"hidden and the active one, and its strips (toolbar, infoLine, overviewLine, statusLine, "
+					"transportBar) with whether each is shown; under panels, by panel, whether it is in a window of "
+					"its own and that window's bounds. What it leaves out has its default.",
+					layoutSchema(), Json::object()},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},

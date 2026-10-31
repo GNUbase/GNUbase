@@ -123,9 +123,10 @@ The theme draws them; the widget library adds nothing.
 ## Splitters
 
 `<splitter>` between two elements of a flex row or column moves the boundary between them when dragged: it sets the
-width or height of the element before it (without its padding and borders), from nothing to taking all of the element
-after it, and sends `change` with that size in dp, e.g. for a workspace to keep. In a column it has the state class
-`.column`; the theme's grip shows which way it moves.
+width or height of the element before it, or with `resize="next"` of the element after it (without its padding and
+borders), from its `min-width` or `min-height` to taking all of the other element down to that one's minimum, and
+sends `change` with that size in dp, e.g. for a workspace to keep. In a column it has the state class `.column`; the
+theme's grip shows which way it moves. The docking system's zones are sized with splitters ([docking.md](docking.md)).
 
 ## Color picker
 

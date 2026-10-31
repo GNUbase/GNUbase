@@ -468,4 +468,17 @@
 	{
 		background-color: #66686c;
 	}
+	.docking [zone]
+	{
+		background-color: #1a1b1c;
+	}
+	.docking .zone-frame
+	{
+		border-width: 2dp;
+		border-color: #5ea7b3;
+	}
+	.docking .strip
+	{
+		background-color: #1e2022;
+	}
 }

@@ -291,10 +291,10 @@ namespace gnubase::ui
 		};
 
 		// <splitter>: between two elements of a flex row or column, dragging it moves the boundary between them. It
-		// sets the size of the element before it (its width or height in a row or a column, without padding and
-		// borders), between none and taking all of the element after it, and sends a change event with that size in
-		// dp, e.g. for a workspace to keep. A splitter in a
-		// column has the state class .column; the theme's grip shows the direction.
+		// sets the size of the element before it, or with resize="next" of the element after it (its width or height
+		// in a row or a column, without padding and borders), between its min-width or min-height and taking all of
+		// the other element down to that one's minimum, and sends a change event with that size in dp, e.g. for a
+		// workspace to keep. A splitter in a column has the state class .column; the theme's grip shows the direction.
 		class Splitter final : public Rml::Element
 		{
 		public:
@@ -307,28 +307,33 @@ namespace gnubase::ui
 			void ProcessDefaultAction(Rml::Event& event) override
 			{
 				Rml::Element::ProcessDefaultAction(event);
-				Rml::Element* before = GetPreviousSibling();
-				Rml::Element* after = GetNextSibling();
-				if (before == nullptr || after == nullptr || GetContext() == nullptr)
+				const bool next = GetAttribute<Rml::String>("resize", "") == "next";
+				Rml::Element* sized = next ? GetNextSibling() : GetPreviousSibling();
+				Rml::Element* other = next ? GetPreviousSibling() : GetNextSibling();
+				if (sized == nullptr || other == nullptr || GetContext() == nullptr)
 					return;
 				const bool column = IsClassSet("column");
 				const float mouse = event.GetParameter(column ? "mouse_y" : "mouse_x", 0.0F);
 				if (event == Rml::EventId::Dragstart)
 				{
 					m_start = mouse;
-					m_size = size(*before, column, Rml::BoxArea::Content);
-					// Its size can grow by what the element after it has, padding and borders included.
-					m_most = m_size + size(*after, column, Rml::BoxArea::Border);
+					m_size = size(*sized, column, Rml::BoxArea::Content);
+					m_least = least(*sized, column);
+					// Its size can grow by what the other element has, padding and borders included, down to its
+					// minimum.
+					m_most =
+						std::max(m_least, m_size + size(*other, column, Rml::BoxArea::Border) - least(*other, column));
 				}
 				else if (event == Rml::EventId::Drag)
 				{
 					const float dpRatio = GetContext()->GetDensityIndependentPixelRatio();
-					const float pixels = std::clamp(m_size + mouse - m_start, 0.0F, m_most);
+					const float moved = next ? m_start - mouse : mouse - m_start;
+					const float pixels = std::clamp(m_size + moved, m_least, m_most);
 					const std::string size = format(pixels / dpRatio) + "dp";
 					if (column)
-						before->SetProperty("height", size);
+						sized->SetProperty("height", size);
 					else
-						before->SetProperty("width", size);
+						sized->SetProperty("width", size);
 					Rml::Dictionary parameters;
 					parameters["value"] = pixels / dpRatio;
 					DispatchEvent(Rml::EventId::Change, parameters);
@@ -355,8 +360,18 @@ namespace gnubase::ui
 				return column ? box.y : box.x;
 			}
 
+			// The element's min-width or min-height in pixels.
+			static float least(Rml::Element& element, bool column)
+			{
+				Rml::Element* parent = element.GetParentNode();
+				const float base = parent == nullptr ? 0.0F : size(*parent, column, Rml::BoxArea::Content);
+				const Rml::Style::ComputedValues& values = element.GetComputedValues();
+				return Rml::ResolveValue(column ? values.min_height() : values.min_width(), base);
+			}
+
 			float m_start = 0.0F; // where the drag started
-			float m_size = 0.0F;  // the size of the element before, then, without padding and borders
+			float m_size = 0.0F;  // the size of the sized element, then, without padding and borders
+			float m_least = 0.0F; // the least it can have
 			float m_most = 0.0F;  // the most it can have
 		};
 	}

@@ -22,6 +22,8 @@ add_library(gnubase-ui STATIC
 	datamodel.h
 	displays.cpp
 	displays.h
+	docking.cpp
+	docking.h
 	enginebinding.cpp
 	enginebinding.h
 	eventdisplay.cpp
