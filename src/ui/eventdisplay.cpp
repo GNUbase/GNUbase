@@ -282,7 +282,8 @@ namespace gnubase::ui
 			if (lanes.count(track) == 0)
 				return;
 			m_tracks[lanes[track]].events.push_back({start, end - start});
-			m_events.push_back({event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false)});
+			m_events.push_back(
+				{event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false), std::nullopt});
 			m_end = std::max(m_end, end);
 		};
 		std::vector<EventWaveforms::Event> waves;
