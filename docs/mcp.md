@@ -440,7 +440,7 @@ Result:
 
 Engine command `audio.ports`. Read-only.
 
-The audio device's ports by name, in order, each with the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) whose channels run past the device's ports, with those channels, which are silent; bus.set gives them ports. Without a device there are no ports.
+The audio device's ports by name, in order, each with the name it is shown as and whether it is visible (audio.setPort), and the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) whose channels run past the device's ports, with those channels, which are silent; bus.set gives them ports. Without a device there are no ports.
 
 Result:
 
@@ -525,6 +525,37 @@ Result:
 - `peak`: number, required
 - `threads`: array of number, required
 
+#### `audio_set`
+
+Engine command `audio.set`.
+
+Changes the audio device's settings and keeps the others: the parameters of audio.setDevice except backend and device, e.g. sampleRate, blockSize, clockSource, recordShift or directMonitoring. The device opens again with them, as for audio.reset, and runs on if it ran. If it can't open with them, it opens again with the settings it had and the command fails.
+
+Arguments:
+
+- `blockSize`: integer
+- `captureSeconds`: number
+- `clockSource`: string
+- `directMonitoring`: boolean
+- `input`: object
+- `inputChannels`: integer
+- `inputLatency`: integer
+- `loopback`: boolean
+- `outputChannels`: integer
+- `outputLatency`: integer
+- `recordShift`: integer
+- `sampleRate`: number
+
+Result:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `playbackDropouts`: integer, required
+- `position`: integer, required
+- `processing`: object, required
+- `running`: boolean, required
+
 #### `audio_setDevice`
 
 Engine command `audio.setDevice`.
@@ -559,6 +590,26 @@ Result:
 - `position`: integer, required
 - `processing`: object, required
 - `running`: boolean, required
+
+#### `audio_setPort`
+
+Engine command `audio.setPort`.
+
+Changes how a port of the audio device is shown, given by whether it is an input and its system name (name in audio.ports). showAs: the name routing menus show; empty shows the system name. visible: whether routing menus offer it; busses on a hidden port keep it. The settings are kept per device while GNUbase runs. Returns the port as audio.ports lists it, and sends audio.ports as the event audio.portsChanged.
+
+Arguments:
+
+- `input`: boolean, required
+- `name`: string, required
+- `showAs`: string
+- `visible`: boolean
+
+Result:
+
+- `busses`: array, required
+- `name`: string, required
+- `showAs`: string, required
+- `visible`: boolean, required
 
 #### `audio_setProcessing`
 
@@ -2871,7 +2922,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://audio.devices`: The audio backends of this build, the preferred one first, and the devices each has now: their ids, names, channel names, sample rates, block sizes, clock sources (and the current one), whether the driver has a control panel, whether it can monitor inputs directly (canMonitorDirectly), and whether the device is available. An unavailable device, e.g. one whose hardware isn't connected, has an unavailableReason; audio.setDevice still tries it. Some backends only learn that by opening or starting the device (ASIO). A backend that can't list its devices has an error instead.
 - `gnubase://audio.get`: The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing).
 - `gnubase://audio.performance`: Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported (a block that was both counts twice); cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late. blockSize: the device's block size in frames, 0 without a device.
-- `gnubase://audio.ports`: The audio device's ports by name, in order, each with the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) whose channels run past the device's ports, with those channels, which are silent; bus.set gives them ports. Without a device there are no ports.
+- `gnubase://audio.ports`: The audio device's ports by name, in order, each with the name it is shown as and whether it is visible (audio.setPort), and the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) whose channels run past the device's ports, with those channels, which are silent; bus.set gives them ports. Without a device there are no ports.
 - `gnubase://automation.get`: The automation settings. followsEvents (default false): when an audio event or MIDI part moves, the automation of its track in its range moves with it and replaces the points where it lands.
 - `gnubase://automationLane.list`: The automation lanes of a track, or of every track in track order, with their points sorted by position.
 - `gnubase://engine.commandLog`: The last 256 commands that ran, oldest first, without queries: what the UI and other clients did. Each with its request id (events name it too), the client that sent it (ui, mcp, lua, app for the command line, engine for the engine's own commands), the command, its parameters, and the error if it failed.

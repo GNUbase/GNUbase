@@ -139,8 +139,14 @@ namespace gnubase::engine
 		void openDummy(const Json& parameters);
 		void closeDevice();
 		void reset();
+		// Opens the device again with the parameters, and starts it again if it was running.
+		void reopen(const Json& parameters, bool running);
+		void set(const Json& changes); // audio.set
 		Json devices() const;
-		Json ports() const; // audio.ports
+		Json ports() const;                   // audio.ports
+		Json setPort(const Json& parameters); // audio.setPort
+		// Where m_portSettings keeps a port of the device: its backend, device id, direction and name.
+		std::string portKey(bool input, const std::string& name) const;
 		void setProcessing(const Json& parameters);
 		// Workers for the device's format and the processing settings, as many as get real-time priority. Throws
 		// std::system_error if threads can't be started; the fallback processes on the audio thread only.
@@ -202,6 +208,13 @@ namespace gnubase::engine
 		audio::DummyDevice* m_dummy = nullptr; // m_device, if it is the dummy device
 		std::vector<std::string> m_inputPorts; // the device's port names, each one once
 		std::vector<std::string> m_outputPorts;
+		// The user's names for ports and which ones they see (audio.setPort), by portKey, for every device opened.
+		struct PortSettings
+		{
+			std::string showAs; // empty: the system name
+			bool visible = true;
+		};
+		std::map<std::string, PortSettings> m_portSettings;
 
 		// Latency compensation and monitoring (docs/features/latency-and-monitoring.md), set with the device.
 		int64_t m_recordShift = 0;

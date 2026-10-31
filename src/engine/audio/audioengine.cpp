@@ -664,15 +664,44 @@ namespace gnubase::engine
 	void AudioEngine::reset()
 	{
 		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
-		const bool running = m_device->running();
 		logging::info("Resetting the audio device ({} {})", m_backend, m_device->info().id);
 		const Json parameters = m_parameters;
+		reopen(parameters, m_device->running());
+	}
+
+	void AudioEngine::reopen(const Json& parameters, bool running)
+	{
 		setDevice(parameters);
 		if (running)
 		{
 			m_midi.clear();
 			startCueing();
 			m_device->start(*this);
+		}
+	}
+
+	void AudioEngine::set(const Json& changes)
+	{
+		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
+		const bool running = m_device->running();
+		const Json old = m_parameters;
+		Json parameters = old;
+		parameters.update(changes);
+		try
+		{
+			reopen(parameters, running);
+		}
+		catch (const std::exception&)
+		{
+			try
+			{
+				reopen(old, running);
+			}
+			catch (const std::exception& error)
+			{
+				logging::warning("Cannot open the audio device again with its old settings: {}", error.what());
+			}
+			throw;
 		}
 	}
 
@@ -700,15 +729,20 @@ namespace gnubase::engine
 	{
 		const RenderSnapshot& snapshot = m_snapshots.latest();
 		const std::vector<std::vector<int>> used = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
-		const auto list = [](const std::vector<std::string>& names)
+		const auto list = [this](const std::vector<std::string>& names, bool input)
 		{
 			Json ports = Json::array();
 			for (const std::string& name : names)
-				ports.push_back({{"name", name}, {"busses", Json::array()}});
+			{
+				const auto found = m_portSettings.find(portKey(input, name));
+				const PortSettings settings = found != m_portSettings.end() ? found->second : PortSettings{};
+				ports.push_back({{"name", name}, {"showAs", settings.showAs.empty() ? name : settings.showAs},
+					{"visible", settings.visible}, {"busses", Json::array()}});
+			}
 			return ports;
 		};
-		Json inputs = list(m_inputPorts);
-		Json outputs = list(m_outputPorts);
+		Json inputs = list(m_inputPorts, true);
+		Json outputs = list(m_outputPorts, false);
 		Json busses = Json::array();
 		Json missing = Json::array();
 		Json beyond = Json::array();
@@ -754,6 +788,25 @@ namespace gnubase::engine
 		}
 		return {{"inputs", std::move(inputs)}, {"outputs", std::move(outputs)}, {"busses", std::move(busses)},
 			{"missing", std::move(missing)}, {"beyondDevice", std::move(beyond)}};
+	}
+
+	std::string AudioEngine::portKey(bool input, const std::string& name) const
+	{
+		return m_backend + '/' + m_device->info().id + (input ? "/in/" : "/out/") + name;
+	}
+
+	Json AudioEngine::setPort(const Json& parameters)
+	{
+		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
+		const bool input = parameters.at("input").get<bool>();
+		const auto name = parameters.at("name").get<std::string>();
+		const std::vector<std::string>& names = input ? m_inputPorts : m_outputPorts;
+		const auto found = std::find(names.begin(), names.end(), name);
+		require(found != names.end(), std::string(input ? "no input port " : "no output port ") + name);
+		PortSettings& settings = m_portSettings[portKey(input, name)];
+		settings.showAs = parameters.value("showAs", settings.showAs);
+		settings.visible = parameters.value("visible", settings.visible);
+		return ports().at(input ? "inputs" : "outputs").at(static_cast<size_t>(found - names.begin()));
 	}
 
 	void AudioEngine::openDummy(const Json& parameters)
@@ -1014,6 +1067,15 @@ namespace gnubase::engine
 					"required": ["backends"]})"),
 				true},
 			[this](CommandContext&) { return devices(); });
+		const Json deviceSchema = Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
+					"backend": {"type": "string"}, "device": {"type": "string"}, "clockSource": {"type": "string"},
+					"sampleRate": {"type": "number"}, "blockSize": {"type": "integer"},
+					"recordShift": {"type": "integer"}, "directMonitoring": {"type": "boolean"},
+					"inputChannels": {"type": "integer"}, "outputChannels": {"type": "integer"},
+					"captureSeconds": {"type": "number"}, "inputLatency": {"type": "integer"},
+					"outputLatency": {"type": "integer"}, "loopback": {"type": "boolean"},
+					"input": {"type": "object", "additionalProperties": false, "required": ["processor"],
+						"properties": {"processor": {"type": "string"}, "parameters": {"type": "object"}}}}})");
 		engine.registerCommand(
 			{"audio.setDevice", 1,
 				"Replaces the audio device. backend: one from audio.devices, by default \"dummy\". device: its id, by "
@@ -1035,16 +1097,7 @@ namespace gnubase::engine
 				"outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that "
 				"much later, as a cable from each output to the input of the same number would, which needs at least "
 				"a block. It monitors directly by adding inputs to its outputs.",
-				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
-					"backend": {"type": "string"}, "device": {"type": "string"}, "clockSource": {"type": "string"},
-					"sampleRate": {"type": "number"}, "blockSize": {"type": "integer"},
-					"recordShift": {"type": "integer"}, "directMonitoring": {"type": "boolean"},
-					"inputChannels": {"type": "integer"}, "outputChannels": {"type": "integer"},
-					"captureSeconds": {"type": "number"}, "inputLatency": {"type": "integer"},
-					"outputLatency": {"type": "integer"}, "loopback": {"type": "boolean"},
-					"input": {"type": "object", "additionalProperties": false, "required": ["processor"],
-						"properties": {"processor": {"type": "string"}, "parameters": {"type": "object"}}}}})"),
-				statusSchema(), false},
+				deviceSchema, statusSchema(), false},
 			[this](CommandContext& context)
 			{
 				setDevice(context.parameters());
@@ -1052,9 +1105,27 @@ namespace gnubase::engine
 				context.emit("audio.changed", result);
 				return result;
 			});
+		Json settingsSchema = deviceSchema;
+		settingsSchema.at("properties").erase("backend");
+		settingsSchema.at("properties").erase("device");
+		engine.registerCommand(
+			{"audio.set", 1,
+				"Changes the audio device's settings and keeps the others: the parameters of audio.setDevice except "
+				"backend and device, e.g. sampleRate, blockSize, clockSource, recordShift or directMonitoring. The "
+				"device opens again with them, as for audio.reset, and runs on if it ran. If it can't open with them, "
+				"it opens again with the settings it had and the command fails.",
+				settingsSchema, statusSchema(), false},
+			[this](CommandContext& context)
+			{
+				set(context.parameters());
+				Json result = status();
+				context.emit("audio.changed", result);
+				return result;
+			});
 		engine.registerCommand(
 			{"audio.ports", 1,
-				"The audio device's ports by name, in order, each with the busses that use it (the bus ids); each "
+				"The audio device's ports by name, in order, each with the name it is shown as and whether it is "
+				"visible (audio.setPort), and the busses that use it (the bus ids); each "
 				"bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing "
 				"ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts "
 				"re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) "
@@ -1066,6 +1137,26 @@ namespace gnubase::engine
 					"required": ["inputs", "outputs", "busses", "missing", "beyondDevice"]})"),
 				true},
 			[this](CommandContext&) { return ports(); });
+		engine.registerCommand(
+			{"audio.setPort", 1,
+				"Changes how a port of the audio device is shown, given by whether it is an input and its system name "
+				"(name in audio.ports). showAs: the name routing menus show; empty shows the system name. visible: "
+				"whether routing menus offer it; busses on a hidden port keep it. The settings are kept per device "
+				"while GNUbase runs. Returns the port as audio.ports lists it, and sends audio.ports as the event "
+				"audio.portsChanged.",
+				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["input", "name"],
+					"properties": {"input": {"type": "boolean"}, "name": {"type": "string"},
+					"showAs": {"type": "string"}, "visible": {"type": "boolean"}}})"),
+				Json::parse(R"({"type": "object", "properties": {"name": {"type": "string"},
+					"showAs": {"type": "string"}, "visible": {"type": "boolean"}, "busses": {"type": "array"}},
+					"required": ["name", "showAs", "visible", "busses"]})"),
+				false},
+			[this](CommandContext& context)
+			{
+				Json port = setPort(context.parameters());
+				context.emit("audio.portsChanged", ports());
+				return port;
+			});
 		engine.registerCommand(
 			{"audio.setProcessing", 1,
 				"Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; "
