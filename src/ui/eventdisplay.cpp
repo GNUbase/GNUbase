@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/eventdisplay.h"
 
-#include "platform/log.h"
-
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
@@ -228,24 +226,7 @@ namespace gnubase::ui
 
 	void EventDisplay::loadProject(const Json& project)
 	{
-		m_time.sampleRate = project.at("sampleRate").get<double>();
-		std::vector<time::TempoPoint> tempo;
-		for (const Json& point : project.at("tempo"))
-			tempo.push_back(
-				{point.at("position").get<time::Ticks>(), point.at("bpm").get<double>(), point.at("ramp").get<bool>()});
-		std::vector<time::SignatureChange> signatures;
-		for (const Json& change : project.at("signatures"))
-			signatures.push_back({change.at("bar").get<int64_t>(),
-				{change.at("numerator").get<int>(), change.at("denominator").get<int>()}});
-		try
-		{
-			m_time.tempo = time::TempoMap(tempo);
-			m_time.signatures = time::SignatureMap(signatures);
-		}
-		catch (const std::invalid_argument& error)
-		{
-			logging::warning("The event display can't read the project's tempo or signatures: {}", error.what());
-		}
+		m_time = projectTime(project);
 		m_snap = engine::snapSettingsFrom(project.at("snap"), m_snap);
 		m_quantize = engine::midi::quantizeSettingsFromJson(project.at("quantize"));
 		showSnap();
@@ -547,6 +528,8 @@ namespace gnubase::ui
 			m_overviewView->SetProperty(Rml::PropertyId::Left, dp(m_view.start / length * across));
 			m_overviewView->SetProperty(Rml::PropertyId::Width, dp(visibleLength() / length * across));
 		}
+		for (const std::function<void()>& listener : m_viewListeners)
+			listener();
 	}
 
 	void EventDisplay::setAutoScroll(bool on)

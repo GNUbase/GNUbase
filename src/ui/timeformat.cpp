@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/timeformat.h"
 
+#include "platform/log.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <functional>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -231,6 +234,30 @@ namespace gnubase::ui
 			if (timeFormatName(format) == name)
 				return format;
 		return std::nullopt;
+	}
+
+	TimeContext projectTime(const engine::Json& project)
+	{
+		TimeContext context;
+		context.sampleRate = project.at("sampleRate").get<double>();
+		std::vector<time::TempoPoint> tempo;
+		for (const engine::Json& point : project.at("tempo"))
+			tempo.push_back(
+				{point.at("position").get<time::Ticks>(), point.at("bpm").get<double>(), point.at("ramp").get<bool>()});
+		std::vector<time::SignatureChange> signatures;
+		for (const engine::Json& change : project.at("signatures"))
+			signatures.push_back({change.at("bar").get<int64_t>(),
+				{change.at("numerator").get<int>(), change.at("denominator").get<int>()}});
+		try
+		{
+			context.tempo = time::TempoMap(tempo);
+			context.signatures = time::SignatureMap(signatures);
+		}
+		catch (const std::invalid_argument& error)
+		{
+			logging::warning("The UI can't read the project's tempo or signatures: {}", error.what());
+		}
+		return context;
 	}
 
 	std::string formatTime(TimeFormat format, double seconds, const TimeContext& context)

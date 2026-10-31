@@ -489,6 +489,47 @@ TEST_CASE("cycle markers set the locators, and markers bound range selections", 
 	CHECK_THAT(reject(client, "marker.range", {{"position", 21 * g_quarterSamples}}), ContainsSubstring("after"));
 }
 
+TEST_CASE("marker.put puts position marker N at the cursor, moving it or adding it", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+
+	// Without a marker track it adds one, then the marker with that number at the cursor, in one undo step.
+	run(client, "transport.locate", {{"position", 2 * g_quarterSamples}});
+	const auto steps = run(client, "history.get").at("steps").size();
+	Json three = run(client, "marker.put", {{"number", 3}}).at("marker");
+	CHECK(three.at("number") == 3);
+	CHECK(three.at("type") == "position");
+	CHECK(three.at("position") == 2 * g_ticksPerQuarter);
+	CHECK(run(client, "history.get").at("steps").size() == steps + 1);
+	CHECK(run(client, "project.get").at("activeMarkerTrack") == three.at("track"));
+
+	// Again elsewhere, the same marker moves there and keeps its name; another number adds another marker.
+	run(client, "marker.set", {{"marker", idOf(three)}, {"name", "Bridge"}});
+	run(client, "transport.locate", {{"position", 6 * g_quarterSamples}});
+	const Json moved = run(client, "marker.put", {{"number", 3}}).at("marker");
+	CHECK(idOf(moved) == idOf(three));
+	CHECK(moved.at("position") == 6 * g_ticksPerQuarter);
+	CHECK(moved.at("name") == "Bridge");
+	const Json one = run(client, "marker.put", {{"number", 1}}).at("marker");
+	CHECK(idOf(one) != idOf(three));
+	CHECK(one.at("position") == 6 * g_ticksPerQuarter);
+	CHECK(markerNames(client).size() == 2);
+
+	// Cycle markers with the number don't count; on another marker track (the active one now) it adds one there.
+	addCycle(client, 0, 1);
+	run(client, "transport.locate", {{"position", 8 * g_quarterSamples}});
+	CHECK(idOf(run(client, "marker.put", {{"number", 1}}).at("marker")) == idOf(one));
+	const ObjectId other = addMarkerTrack(client);
+	const Json added = run(client, "marker.put", {{"number", 1}}).at("marker");
+	CHECK(added.at("track") == other);
+	CHECK(idOf(added) != idOf(one));
+	const ObjectId first = one.at("track").get<ObjectId>();
+	CHECK(idOf(run(client, "marker.put", {{"number", 1}, {"track", first}}).at("marker")) == idOf(one));
+	CHECK_THAT(reject(client, "marker.put", {{"number", 0}}), ContainsSubstring("number"));
+	CHECK_THAT(reject(client, "marker.put"), ContainsSubstring("number"));
+}
+
 TEST_CASE("every marker edit is one undo step that undo announces", "[unit]")
 {
 	Engine engine;

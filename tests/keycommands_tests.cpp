@@ -121,6 +121,11 @@ TEST_CASE("the default key map binds the engine's commands as the reference does
 		CHECK(keys.keysFor("transport.stop") == Strings{"Num0"});
 		CHECK(keys.keysFor("transport.locate", {{"target", "leftLocator"}}) == Strings{"Num1"});
 		CHECK(keys.keysFor("marker.locate", {{"number", 3}}) == Strings{"Shift+3", "Num3"});
+		CHECK(keys.keysFor("marker.add") == Strings{"Insert"});
+		const std::string mod = platform == Platform::Mac ? "Cmd" : "Ctrl";
+		CHECK(keys.keysFor("marker.put", {{"number", 1}}) == Strings{mod + "+1"});
+		CHECK(keys.keysFor("marker.put", {{"number", 3}}) == Strings{mod + "+3", mod + "+Num3"});
+		CHECK(keys.keysFor("marker.setLocators", {{"number", 2}}) == Strings{"Shift+Num2"});
 		CHECK(keys.keysFor("transport.locate").empty()); // not without parameters
 		const Strings redo = keys.keysFor("history.redo");
 		CHECK(redo == (platform == Platform::Mac ? Strings{"Shift+Cmd+Z"} : Strings{"Ctrl+Shift+Z"}));

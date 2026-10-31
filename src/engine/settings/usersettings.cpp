@@ -111,6 +111,10 @@ namespace gnubase::engine::settings
 					"transportBar) with whether each is shown; under panels, by panel, whether it is in a window of "
 					"its own and that window's bounds. What it leaves out has its default.",
 					layoutSchema(), Json::object()},
+				{"ui.markerLines",
+					"Which markers the event display shows as lines across every track: the active marker track's "
+					"(active), every marker track's (all), or none (off).",
+					Json{{"type", "string"}, {"enum", Json::array({"active", "all", "off"})}}, "active"},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},

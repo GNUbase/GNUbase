@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Markers (#91): position and cycle markers on marker tracks, and locating with them. marker.add, marker.set,
-// marker.remove, marker.renumber and marker.activateTrack change the project, so each is one undo step and changes
-// nothing if it fails (ProjectModel::add). marker.list and marker.range are queries. marker.locate,
+// Markers (#91): position and cycle markers on marker tracks, and locating with them. marker.add, marker.put,
+// marker.set, marker.remove, marker.renumber and marker.activateTrack change the project, so each is one undo step and
+// changes nothing if it fails (ProjectModel::add). marker.list and marker.range are queries. marker.locate,
 // marker.locateNext, marker.locatePrevious and marker.setLocators move the transport through transport.locate and
 // transport.set: what key commands for markers call.
 #include "engine/document/document.h"
@@ -464,6 +464,38 @@ namespace gnubase::engine
 					track = m_edits.at("track.add").handler(project, inner).at("track").at("id").get<ObjectId>();
 				}
 				return addMarker(project, context, track);
+			});
+		add(engine,
+			{"marker.put", 1,
+				"Puts position marker number N of a marker track (default: the active one; without a marker track one "
+				"is added) at the cursor: moves it there, or adds it with that number. What the key commands Set "
+				"Marker 1 to 9 do.",
+				objectSchema({{"number", integerSchema}, {"track", idSchema}}, {"number"}), markerResult, false},
+			[this](Project& project, CommandContext& context)
+			{
+				ObjectId track = trackFor(project, context.parameters());
+				if (track == 0)
+				{
+					const Json parameters = {{"type", "marker"}};
+					CommandContext inner(parameters, &context);
+					track = m_edits.at("track.add").handler(project, inner).at("track").at("id").get<ObjectId>();
+				}
+				const auto number = context.parameters().at("number").get<int64_t>();
+				const auto found = std::find_if(project.markers.begin(), project.markers.end(),
+					[track, number](const auto& entry)
+					{
+						const Marker& marker = entry.second;
+						return marker.track == track && marker.type == MarkerType::Position && marker.number == number;
+					});
+				if (found != project.markers.end())
+				{
+					const Json parameters = {{"marker", found->first}, {"position", "cursor"}};
+					CommandContext inner(parameters, &context);
+					return setMarker(project, inner);
+				}
+				const Json parameters = {{"number", number}};
+				CommandContext inner(parameters, &context);
+				return addMarker(project, inner, track);
 			});
 		add(engine,
 			{"marker.set", 1,

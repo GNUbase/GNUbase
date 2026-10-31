@@ -468,6 +468,26 @@
 	{
 		background-color: #a2aab4;
 	}
+	.event-display .marker-lines
+	{
+		stroke-color: #aaa2da;
+		stroke-width: 1dp;
+	}
+	.event-display .marker-events
+	{
+		color: #6554c040;
+		stroke-color: #6554c0;
+		stroke-width: 1dp;
+	}
+	.event-display .marker-label
+	{
+		color: #566273;
+		font-size: 11dp;
+	}
+	.event-display .marker-label.active
+	{
+		color: #17202d;
+	}
 	.docking [zone]
 	{
 		background-color: #f6f8fa;

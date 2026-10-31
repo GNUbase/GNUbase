@@ -48,6 +48,7 @@ attributes show the view to MCP's `ui_dom`.
 - **Time axis.** Seconds from the project start, so that the view keeps its time when the sample rate changes. Nothing
   scrolls before the project start.
 - **Live reload** loads `project.rml` again without the display in it; reopen the app.
+- **Markers** draw into the event area, with lanes of their own, through `onViewChanged` ([markers.md](markers.md)).
 
 ## Ruler and time formats
 
