@@ -332,7 +332,13 @@ namespace gnubase::ui
 		if (row < 0.0 || eventAt(x, y) != nullptr)
 			return;
 		const auto lane = static_cast<size_t>(row);
-		if (lane >= m_laneTypes.size() || (m_laneTypes[lane] != "midi" && m_laneTypes[lane] != "instrument"))
+		// Below the tracks, a new MIDI track (reference manual p. 198, the track list's empty area, #80).
+		if (lane >= m_laneTypes.size())
+		{
+			m_binding.send("track.add", {{"type", "midi"}});
+			return;
+		}
+		if (m_laneTypes[lane] != "midi" && m_laneTypes[lane] != "instrument")
 			return;
 		// A one-bar part where the click is (reference manual p. 251), or one between the locators.
 		const double seconds = m_view.start + (x * m_view.scale);

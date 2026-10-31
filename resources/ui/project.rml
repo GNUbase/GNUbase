@@ -5,7 +5,7 @@
      attributes and fills the other zones with their panels' tabs. ui::EventDisplay fills the element #event-display
      and drives the controls and menus with these ids (docs/features/event-display.md): the ruler's arrow button
      .ruler-format, #ruler-format-menu, #zoom-presets-menu, #auto-scroll and #auto-scroll-menu. Its dialogs are
-     zoom-preset.rml and zoom-presets.rml, next to this file.
+     zoom-preset.rml and zoom-presets.rml, next to this file. #add-track opens the add track dialog (add-track.rml).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
 <head>
@@ -25,6 +25,7 @@
 			margin-right: 2dp;
 		}
 
+		#add-track,
 		#auto-scroll-settings
 		{
 			margin-right: 12dp;
@@ -47,6 +48,8 @@
 </head>
 <body class="docking" focuszone="project">
 	<div id="toolbar" class="toolbar" strip="toolbar">
+		<!-- Until the track list (#81) has the global track controls, the toolbar has Add Track. -->
+		<button id="add-track" class="icon-only" title="Add Track" onclick="gnubase.ui.command{command = 'project.addTrack'}"><svg class="icon" src="../icons/general-add.svg"/></button>
 		<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
 		<button id="auto-scroll-settings" class="icon-only" menu="auto-scroll-menu" title="Select Auto-Scroll Settings"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 		<button id="zoom-presets" class="icon-only" menu="zoom-presets-menu" title="Horizontal Zoom Presets"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
