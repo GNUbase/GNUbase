@@ -206,6 +206,10 @@ TEST_CASE("ruler tracks have a time format and no channel", "[unit]")
 	CHECK(track(client, timecode).at("name") == "Ruler 02");
 	run(client, "track.set", {{"track", timecode}, {"timeFormat", "seconds"}});
 	CHECK(track(client, timecode).at("timeFormat") == "seconds");
+	run(client, "history.undo"); // a change of the time format alone is an undo step
+	CHECK(track(client, timecode).at("timeFormat") == "timecode");
+	run(client, "history.redo");
+	CHECK(track(client, timecode).at("timeFormat") == "seconds");
 	CHECK_FALSE(track(client, folder).contains("timeFormat")); // only ruler tracks have one
 
 	CHECK_THAT(reject(client, "track.add", {{"type", "audio"}, {"timeFormat", "seconds"}}), ContainsSubstring("ruler"));
