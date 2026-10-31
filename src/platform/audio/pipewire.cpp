@@ -598,6 +598,9 @@ namespace gnubase::audio
 					destroyFilter();
 					throw;
 				}
+				// The node is inactive until start, so process() sees the event once it runs.
+				m_latencyEvent = pw_loop_add_event(
+					pw_thread_loop_get_loop(m_connection.loop()), &PipeWireDevice::onLatencyEvent, this);
 				m_connection.watch(
 					{endpoints.sink, endpoints.source}, m_info.id == "default", [this] { requestReset(); });
 			}
@@ -608,6 +611,8 @@ namespace gnubase::audio
 				const Connection::Lock lock(m_connection);
 				m_connection.watch({}, false, nullptr);
 				destroyFilter();
+				if (m_latencyEvent != nullptr)
+					pw_loop_destroy_source(pw_thread_loop_get_loop(m_connection.loop()), m_latencyEvent);
 			}
 
 			const DeviceFormat& format() const override { return m_format; }
@@ -764,7 +769,10 @@ namespace gnubase::audio
 				if (position == nullptr)
 					return;
 				const auto frames = static_cast<uint32_t>(position->clock.duration);
-				m_quantum.store(frames, std::memory_order_relaxed);
+				// The latency counts in quanta: a new quantum is a new latency, which the loop thread reports
+				// (signalling the event only writes to an eventfd).
+				if (m_quantum.exchange(frames, std::memory_order_relaxed) != frames && m_latencyEvent != nullptr)
+					pw_loop_signal_event(pw_thread_loop_get_loop(m_connection.loop()), m_latencyEvent);
 				for (size_t c = 0; c < m_inputPorts.size(); ++c)
 					m_inputBuffers[c] = static_cast<const float*>(pw_filter_get_dsp_buffer(m_inputPorts[c], frames));
 				for (size_t c = 0; c < m_outputPorts.size(); ++c)
@@ -831,10 +839,23 @@ namespace gnubase::audio
 				// An output port learns the latency downstream to the sink, an input port upstream from the source.
 				const bool output =
 					std::find(self.m_outputPorts.begin(), self.m_outputPorts.end(), port) != self.m_outputPorts.end();
+				std::optional<spa_latency_info>* known = nullptr;
 				if (output && latency.direction == SPA_DIRECTION_INPUT)
-					self.m_playbackLatency = latency;
+					known = &self.m_playbackLatency;
 				else if (!output && latency.direction == SPA_DIRECTION_OUTPUT)
-					self.m_captureLatency = latency;
+					known = &self.m_captureLatency;
+				if (known == nullptr)
+					return;
+				const bool changed = !*known || (*known)->min_quantum != latency.min_quantum ||
+					(*known)->min_rate != latency.min_rate || (*known)->min_ns != latency.min_ns;
+				*known = latency;
+				if (changed)
+					self.reportLatencyChange();
+			}
+
+			static void onLatencyEvent(void* data, uint64_t /*count*/)
+			{
+				static_cast<PipeWireDevice*>(data)->reportLatencyChange();
 			}
 
 			static void onStateChanged(void* data, pw_filter_state /*old*/, pw_filter_state state, const char* error)
@@ -873,6 +894,7 @@ namespace gnubase::audio
 			std::vector<pw_proxy*> m_links;
 			std::optional<spa_latency_info> m_playbackLatency; // with the loop locked
 			std::optional<spa_latency_info> m_captureLatency;
+			spa_source* m_latencyEvent = nullptr; // process() signals it when the quantum changes
 			bool m_running = false;
 
 			// Audio thread memory, allocated when opened.

@@ -51,7 +51,8 @@ namespace gnubase::engine
 	// hardware threads, the audio thread included, and only workers that got real-time priority.
 	//
 	// The device comes from one of the audio backends (audio.devices, audio.setDevice). When its driver asks for a
-	// reset, the engine opens it again with the same settings and restarts it if it ran (audio.reset). The dummy
+	// reset, the engine opens it again with the same settings and restarts it if it ran (audio.reset); when it reports
+	// a new latency, the engine reads it into the record offset (audio.updateLatency). The dummy
 	// device also renders offline and captures its output; its input can be one of the built-in generators.
 	//
 	// Audio tracks hear their input bus while they monitor it: with the monitor button, or record-enabled by the user
@@ -66,11 +67,11 @@ namespace gnubase::engine
 		~AudioEngine() override; // stops the device
 
 		// Registers audio.devices, audio.setDevice, audio.ports, audio.setProcessing, audio.get, audio.performance,
-		// audio.resetPerformance, audio.simulateOverload, audio.reset, audio.controlPanel, audio.render, audio.start,
-		// audio.stop, audio.capture and audio.captureInput, the transport commands transport.play, transport.stop,
-		// transport.toggle, transport.record, transport.locate, transport.set, transport.exchangeLocators and
-		// transport.get, and the MIDI port commands (MidiPorts). audio.analyze, audio.compare and audio.record are in
-		// analysiscommands.cpp, midi.inject and midi.capture in miditap.cpp.
+		// audio.resetPerformance, audio.simulateOverload, audio.reset, audio.updateLatency, audio.controlPanel,
+		// audio.render, audio.start, audio.stop, audio.capture and audio.captureInput, the transport commands
+		// transport.play, transport.stop, transport.toggle, transport.record, transport.locate, transport.set,
+		// transport.exchangeLocators and transport.get, and the MIDI port commands (MidiPorts). audio.analyze,
+		// audio.compare and audio.record are in analysiscommands.cpp, midi.inject and midi.capture in miditap.cpp.
 		void registerCommands(Engine& engine);
 
 		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
@@ -139,6 +140,8 @@ namespace gnubase::engine
 		void openDummy(const Json& parameters);
 		void closeDevice();
 		void reset();
+		int64_t recordOffset() const;               // from the device's latency and the record shift
+		bool updateLatency(const Json& parameters); // audio.updateLatency; true if anything changed
 		Json devices() const;
 		Json ports() const; // audio.ports
 		void setProcessing(const Json& parameters);
