@@ -2,9 +2,11 @@
 // The event display (#84) on the fake window system, following a real engine: events and the project cursor where
 // the engine has them, zoom, its history and presets, scrolling with the wheel, the ruler and the overview line,
 // auto-scroll and the cross-hair cursor. tests/uiapp_tests.cpp checks it in the app's own window through SDL_GPU.
+#include "engine/audiofile/audiofile.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "testutils/fakeui.h"
+#include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
 #include "ui/enginebinding.h"
@@ -15,10 +17,13 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/ElementUtilities.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -208,6 +213,227 @@ TEST_CASE("the event display shows events and the project cursor where the engin
 	fixture.call("transport.locate", {{"position", 480000}}); // 10 s: right of the view
 	REQUIRE(fixture.waitUntil([&fixture] { return fixture.display.cursor() == Approx(10.0); }));
 	CHECK(fixture.left(".project-cursor") == Approx(1000.0).margin(0.5));
+}
+
+namespace
+{
+	// The <waveform> elements over the audio events (#83).
+	std::vector<ui::Waveform*> waveforms(Rml::ElementDocument& document)
+	{
+		Rml::ElementList found;
+		document.QuerySelectorAll(found, ".waveforms waveform");
+		std::vector<ui::Waveform*> list;
+		for (Rml::Element* element : found)
+			list.push_back(dynamic_cast<ui::Waveform*>(element));
+		return list;
+	}
+
+	// The columns of media.peaks, as a waveform takes them.
+	std::vector<ui::PeakColumns> columnsOf(const Json& peaks)
+	{
+		std::vector<ui::PeakColumns> channels;
+		for (const Json& channel : peaks.at("channels"))
+			channels.push_back(
+				{channel.at("min").get<std::vector<int16_t>>(), channel.at("max").get<std::vector<int16_t>>()});
+		return channels;
+	}
+
+	bool same(const std::vector<ui::PeakColumns>& a, const std::vector<ui::PeakColumns>& b)
+	{
+		if (a.size() != b.size())
+			return false;
+		for (size_t i = 0; i < a.size(); ++i)
+			if (a[i].low != b[i].low || a[i].high != b[i].high)
+				return false;
+		return true;
+	}
+}
+
+TEST_CASE("audio events show their waveforms from the engine's waveform overviews", "[unit]")
+{
+	// Two seconds of stereo audio: a loud sine on the left in the first second, a quiet one on the right throughout.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "take.wav";
+	test::Audio audio;
+	audio.channels = 2;
+	for (int frame = 0; frame < 96000; ++frame)
+	{
+		const auto sine = static_cast<float>(std::sin(frame / 50.0));
+		audio.samples.push_back(frame < 48000 ? 0.9F * sine : 0.0F);
+		audio.samples.push_back(0.2F * sine);
+	}
+	test::writeWav(file, audio);
+
+	Fixture fixture;
+	const Json track = fixture.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
+	const Json media = fixture.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = fixture.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	// From 1 to 2 seconds, playing the file from half a second: half of it loud on the left.
+	fixture.call("audioEvent.add",
+		{{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 48000}, {"offset", 24000},
+			{"length", 48000}});
+
+	// At 0.01 seconds per dp the event is 100 dp wide: a column per pixel, as media.peaks has them once they're ready.
+	engine::Client client(fixture.engine);
+	const auto peaks = [&](int64_t pixels)
+	{
+		Json result;
+		REQUIRE(fixture.waitUntil(
+			[&]
+			{
+				result = client
+							 .call("media.peaks",
+								 {{"media", media.at("id")}, {"start", 24000}, {"frames", 48000}, {"pixels", pixels}})
+							 .value;
+				return result.at("status") == "ready";
+			}));
+		return columnsOf(result);
+	};
+	const std::vector<ui::PeakColumns> expected = peaks(100);
+	REQUIRE(fixture.waitUntil(
+		[&]
+		{
+			return waveforms(fixture.document).size() == 1 &&
+				same(waveforms(fixture.document)[0]->channels(), expected);
+		}));
+	ui::Waveform& wave = *waveforms(fixture.document)[0];
+	CHECK(wave.span().start == Approx(1.0));
+	CHECK(wave.span().length == Approx(1.0));
+	CHECK(wave.GetAttribute<int64_t>("media", 0) == media.at("id").get<int64_t>());
+	// Over the event's lane, on the same timeline.
+	for (const char* attribute : {"start", "scale"})
+		CHECK(wave.GetAttribute<double>(attribute, -1.0) ==
+			fixture.element("event-lanes.events").GetAttribute<double>(attribute, -2.0));
+	CHECK(wave.GetAbsoluteTop() == Approx(fixture.element("event-lanes.events").GetAbsoluteTop()));
+	CHECK(wave.GetBox().GetSize(Rml::BoxArea::Border).y == Approx(ui::g_trackHeight));
+	CHECK(expected[0].high[10] > 20000); // loud
+	CHECK(expected[0].high[90] == 0);    // silent
+	CHECK(expected[1].high[90] > 5000);
+
+	// Zooming in asks for more columns: 2000 pixels for the second the event lasts.
+	fixture.display.zoomTo(1.0, 1.5);
+	const std::vector<ui::PeakColumns> fine = peaks(2000);
+	REQUIRE(fixture.waitUntil([&] { return same(wave.channels(), fine); }));
+	CHECK(wave.span().start == Approx(1.0));
+	CHECK(wave.GetAttribute<double>("scale", 0.0) == Approx(0.0005));
+
+	// Scrolled far away, the event has no waveform element; scrolled back, it has one again.
+	fixture.display.scrollTo(100.0);
+	fixture.step();
+	CHECK(waveforms(fixture.document).empty());
+	fixture.display.scrollTo(1.0);
+	REQUIRE(fixture.waitUntil([&]
+		{ return waveforms(fixture.document).size() == 1 && same(waveforms(fixture.document)[0]->channels(), fine); }));
+
+	// Removing the event removes its waveform, through any client.
+	fixture.call("history.undo");
+	REQUIRE(fixture.waitUntil([&] { return waveforms(fixture.document).empty(); }));
+}
+
+TEST_CASE("waveforms of lanes scrolled out of view are clipped to the event area", "[unit]")
+{
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "take.wav";
+	test::Audio audio;
+	audio.samples.assign(4800, 0.5F);
+	test::writeWav(file, audio);
+
+	// Sixteen audio tracks of 40 dp, more than the 356 dp the event area shows, each with an event.
+	Fixture fixture;
+	const Json media = fixture.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = fixture.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	constexpr size_t tracks = 16;
+	for (size_t i = 0; i < tracks; ++i)
+	{
+		const Json track = fixture.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
+		fixture.call(
+			"audioEvent.add", {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 0}, {"length", 4800}});
+	}
+	REQUIRE(fixture.waitUntil([&] { return fixture.lanes().size() == tracks; }));
+
+	// Scrolled down by one and a half lanes: there are waveforms above the view and below it.
+	fixture.display.scrollVertically(1.5 * ui::g_trackHeight);
+	fixture.step();
+	Rml::Element& area = fixture.element(".event-area");
+	const Rml::Vector2f offset = area.GetAbsoluteOffset(Rml::BoxArea::Padding).Round();
+	const Rml::Vector2f size = area.GetBox().GetSize(Rml::BoxArea::Padding);
+	const std::vector<ui::Waveform*> list = waveforms(fixture.document);
+	REQUIRE(list.size() > 10);
+	bool above = false;
+	bool below = false;
+	for (ui::Waveform* wave : list)
+	{
+		above = above || wave->GetAbsoluteTop() < offset.y;
+		below = below || wave->GetAbsoluteTop() + wave->GetClientHeight() > offset.y + size.y;
+		Rml::Rectanglei region;
+		REQUIRE(Rml::ElementUtilities::GetClippingRegion(wave, region));
+		CHECK(region.Left() == static_cast<int>(offset.x));
+		CHECK(region.Top() == static_cast<int>(offset.y));
+		CHECK(region.Width() == static_cast<int>(std::round(size.x)));
+		CHECK(region.Height() == static_cast<int>(std::round(size.y)));
+	}
+	CHECK(above);
+	CHECK(below);
+}
+
+TEST_CASE("the waveform of a one-hour file draws at once when its peak file exists", "[integration][slow]")
+{
+#ifdef GNUBASE_SANITIZED
+	SKIP("sanitizer builds are too slow to measure this");
+#endif
+	// One hour of a mono 100 Hz sine at 48 kHz, 16 bits: 345 MB, never committed.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "hour.wav";
+	constexpr int64_t hour = 3600LL * 48000;
+	{
+		engine::WriteOptions options;
+		options.channels = 1;
+		options.sampleFormat = engine::SampleFormat::Int16;
+		const auto writer = engine::AudioFileWriter::create(file.u8string(), options);
+		std::vector<float> second(48000);
+		for (size_t i = 0; i < second.size(); ++i)
+			second[i] =
+				static_cast<float>(0.5 * std::sin(2.0 * 3.14159265358979 * 100.0 * static_cast<double>(i) / 48000.0));
+		for (int i = 0; i < 3600; ++i)
+			writer->write(second.data(), second.size());
+		writer->close();
+	}
+	{
+		// The first time, the engine generates the peaks and writes the peak file.
+		engine::Engine engine;
+		engine::Client client(engine);
+		REQUIRE(client.call("media.add", {{"path", file.u8string()}}).ok());
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
+		const auto ready = [&client]
+		{ return client.call("media.peakStatus").value.at("media").at(0).at("status") == "ready"; };
+		while (!ready() && std::chrono::steady_clock::now() < deadline)
+			std::this_thread::sleep_for(milliseconds(100));
+		REQUIRE(ready());
+	}
+
+	// The next time, the whole hour draws as soon as the event is added.
+	Fixture fixture;
+	const Json track = fixture.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
+	const auto before = std::chrono::steady_clock::now();
+	const Json media = fixture.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = fixture.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	fixture.call(
+		"audioEvent.add", {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 0}, {"length", hour}});
+	REQUIRE(fixture.waitUntil([&fixture] { return fixture.display.projectLength() == Approx(3600.0); }));
+	fixture.display.zoomFull();
+	const auto drawn = [&fixture]
+	{
+		const std::vector<ui::Waveform*> list = waveforms(fixture.document);
+		if (list.size() != 1 || list[0]->channels().empty() || list[0]->span().length != Approx(3600.0))
+			return false;
+		const std::vector<int16_t>& high = list[0]->channels()[0].high;
+		return !high.empty() && std::all_of(high.begin(), high.end(), [](int16_t peak) { return peak > 10000; });
+	};
+	REQUIRE(fixture.waitUntil(drawn));
+	const auto took = std::chrono::duration_cast<milliseconds>(std::chrono::steady_clock::now() - before);
+	WARN("the waveform of a one-hour file drew after " << took.count() << " ms");
+	CHECK(took < std::chrono::seconds(2));
+	CHECK(waveforms(fixture.document)[0]->channels()[0].high.size() == 1000); // a column per pixel
 }
 
 TEST_CASE("zooming in and out keeps the project cursor in place, and zoom steps can be undone", "[unit]")
