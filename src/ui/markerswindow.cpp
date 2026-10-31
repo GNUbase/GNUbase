@@ -210,7 +210,7 @@ namespace gnubase::ui
 		case Rml::EventId::Change:
 			if (target != nullptr && target == m_tracks)
 			{
-				const std::string track = event.GetParameter<Rml::String>("value", "");
+				const auto track = event.GetParameter<Rml::String>("value", "");
 				if (!track.empty() && track != std::to_string(m_markers.active))
 					m_binding.send("marker.activateTrack", {{"track", std::stoull(track)}});
 			}
@@ -248,7 +248,7 @@ namespace gnubase::ui
 			return;
 		const auto on = [target](const char* id)
 		{
-			for (Rml::Element* element = target; element != nullptr; element = element->GetParentNode())
+			for (const Rml::Element* element = target; element != nullptr; element = element->GetParentNode())
 				if (element->GetId() == id)
 					return !element->HasAttribute("disabled");
 			return false;

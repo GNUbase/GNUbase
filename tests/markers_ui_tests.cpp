@@ -310,12 +310,12 @@ TEST_CASE("the markers window lists the active marker track's markers to locate,
 
 	// Descriptions and id numbers are edited in place, Enter taking them.
 	app.ui().click(window, at("#marker-rows .description input", 0), ui::MouseButton::Left, 1, {});
-	app.ui().key(window, "Mod+A");
+	app.ui().key(window, "Ctrl+A");
 	app.ui().text(window, "Start");
 	app.ui().key(window, "Enter");
 	REQUIRE(app.waitUntil([&markers] { return markers.markers()[0].name == "Start"; })); // the rows again
 	app.ui().click(window, at("#marker-rows .number input", 1), ui::MouseButton::Left, 1, {});
-	app.ui().key(window, "Mod+A");
+	app.ui().key(window, "Ctrl+A");
 	app.ui().text(window, "4");
 	app.ui().key(window, "Enter");
 	REQUIRE(app.waitUntil([&markers] { return markers.markers()[1].number == 4; }));
