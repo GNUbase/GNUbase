@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <stdexcept>
 #include <utility>
 
@@ -79,13 +80,12 @@ namespace gnubase::ui
 		{
 			std::vector<Rml::Element*> children; // in the document's order
 			for (int i = 0; i < container.GetNumChildren(); ++i)
-				if (Rml::Element* child = container.GetChild(i); contains(order, attribute(*child, name)))
-					children.push_back(child);
+				if (contains(order, attribute(*container.GetChild(i), name)))
+					children.push_back(container.GetChild(i));
 			std::vector<Rml::Element*> sorted;
 			for (const std::string& id : order)
-				for (Rml::Element* child : children)
-					if (attribute(*child, name) == id)
-						sorted.push_back(child);
+				std::copy_if(children.begin(), children.end(), std::back_inserter(sorted),
+					[&](const Rml::Element* child) { return attribute(*child, name) == id; });
 			if (sorted == children)
 				return;
 			Rml::Element* end = children.back()->GetNextSibling();
@@ -187,7 +187,7 @@ namespace gnubase::ui
 			listen(*old, false);
 		attached = Attached{document.GetObserverPtr(), {}, {}};
 		// The first container of a set says which sections it has, before the user's order changes it.
-		for (Rml::Element* container : elements(document, "[sections]"))
+		for (const Rml::Element* container : elements(document, "[sections]"))
 		{
 			std::vector<Section>& known = attached.sections[attribute(*container, "sections")];
 			if (!known.empty())
