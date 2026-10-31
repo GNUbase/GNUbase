@@ -6,6 +6,7 @@
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -53,7 +54,12 @@ namespace gnubase::engine
 		Group,  // sums the channels routed to it; holds no events
 		Effect, // receives sends; holds no events
 		Marker, // holds markers; has no channel and stays at the top level
+		Ruler,  // shows a ruler in a time format of its own; has no channel
 	};
+
+	// The time formats of ruler tracks, as the event display's ruler names them.
+	inline constexpr std::array<const char*, 5> g_rulerTimeFormats = {
+		"barsBeats", "seconds", "timecode", "samples", "userFrames"};
 
 	// A project has at most this many marker tracks.
 	inline constexpr int g_maxMarkerTracks = 10;
@@ -286,6 +292,7 @@ namespace gnubase::engine
 		ObjectId channel = 0;               // 0 for folders without a group channel
 		std::vector<ObjectId> children;     // folders: the tracks inside, from top to bottom
 		std::optional<AutoFades> autoFades; // audio tracks: settings of their own instead of the project's
+		std::string timeFormat;             // ruler tracks: one of g_rulerTimeFormats
 	};
 
 	enum class MarkerType : uint8_t

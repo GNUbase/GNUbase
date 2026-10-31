@@ -31,6 +31,7 @@ namespace gnubase::engine
 			{TrackType::Group, "group"},
 			{TrackType::Effect, "effect"},
 			{TrackType::Marker, "marker"},
+			{TrackType::Ruler, "ruler"},
 		};
 
 		constexpr struct
@@ -376,9 +377,12 @@ namespace gnubase::engine
 
 	Json toJson(const Track& track)
 	{
-		return {{"id", track.id}, {"type", trackTypeName(track.type)}, {"name", track.name},
+		Json json = {{"id", track.id}, {"type", trackTypeName(track.type)}, {"name", track.name},
 			{"color", colorJson(track.color)}, {"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent},
 			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)}};
+		if (track.type == TrackType::Ruler)
+			json["timeFormat"] = track.timeFormat;
+		return json;
 	}
 
 	Json toJson(const Channel& channel)
@@ -823,6 +827,13 @@ namespace gnubase::engine
 			track.channel = item.at("channel").get<ObjectId>();
 			if (const Json autoFades = item.value("autoFades", Json()); !autoFades.is_null())
 				track.autoFades = autoFadesFromJson(autoFades);
+			if (track.type == TrackType::Ruler)
+			{
+				track.timeFormat = item.at("timeFormat").get<std::string>();
+				if (std::find(g_rulerTimeFormats.begin(), g_rulerTimeFormats.end(), track.timeFormat) ==
+					g_rulerTimeFormats.end())
+					throw std::invalid_argument("unknown ruler time format " + track.timeFormat);
+			}
 			(track.parent == 0 ? project.tracks : project.trackById.at(track.parent).children).push_back(track.id);
 			project.trackById[track.id] = track;
 		}
