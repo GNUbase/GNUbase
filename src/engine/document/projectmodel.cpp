@@ -2116,7 +2116,7 @@ namespace gnubase::engine
 				try
 				{
 					result = handler(m_project, context);
-					syncSharedParts(before, m_project, context);
+					syncSharedParts(before.midiParts, m_project, context);
 				}
 				catch (...)
 				{
@@ -2211,7 +2211,11 @@ namespace gnubase::engine
 			CommandContext inner(parameters, &context);
 			try
 			{
+				// Each command's edit reaches the other shared copies before the next command runs, so that edits of
+				// several copies of a group all stay and a command sees what an earlier one did to another copy.
+				const std::map<ObjectId, MidiPart> parts = project.midiParts;
 				results.push_back(edit->second.handler(project, inner));
+				syncSharedParts(parts, project, inner);
 			}
 			catch (const std::exception& error)
 			{
@@ -2788,6 +2792,7 @@ namespace gnubase::engine
 		registerMidiFileCommands(engine);
 		registerFadeCommands(engine);
 		registerEventEditCommands(engine);
+		registerSnapCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 	}

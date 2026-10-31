@@ -418,7 +418,7 @@ namespace gnubase::engine
 		return {{"id", event.id}, {"track", event.track}, {"clip", event.clip}, {"position", event.position.value},
 			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute},
 			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
-			{"crossfade", toJson(event.crossfade)}};
+			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()}};
 	}
 
 	Json toJson(const Note& note)
@@ -567,7 +567,8 @@ namespace gnubase::engine
 			{"clips", toJsonArray(project.clips)}, {"audioEvents", toJsonArray(project.audioEvents)},
 			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
 			{"automation", toJsonArray(project.automation)}, {"quantize", midi::toJson(project.quantize)},
-			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack}};
+			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
+			{"snap", toJson(project.snap)}};
 	}
 
 	namespace
@@ -901,6 +902,8 @@ namespace gnubase::engine
 			event.fadeIn = fadeFromJson(item.value("fadeIn", Json::object()));
 			event.fadeOut = fadeFromJson(item.value("fadeOut", Json::object()));
 			event.crossfade = crossfadeFrom(item.value("crossfade", Json()));
+			if (const Json snapPoint = item.value("snapPoint", Json()); !snapPoint.is_null()) // files from before #87
+				event.snapPoint = snapPoint.get<time::Samples>();
 			project.audioEvents[event.id] = event;
 		}
 		for (const Json& item : json.at("midiParts"))
@@ -971,6 +974,7 @@ namespace gnubase::engine
 		if (json.contains("quantize"))
 			project.quantize = midi::quantizeSettingsFromJson(json.at("quantize"));
 		project.autoQuantize = json.value("autoQuantize", false);
+		project.snap = snapSettingsFrom(json.value("snap", Json::object()), SnapSettings()); // files from before #87
 
 		// Without a counter, ids continue after the highest one.
 		ObjectId highest = 0;
