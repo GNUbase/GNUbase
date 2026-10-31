@@ -614,6 +614,22 @@ TEST_CASE("the JACK MIDI backend has ports only while a JACK audio device is ope
 	device.reset();
 	CHECK(backend->ports().empty());
 	CHECK(eventually([&] { return changes > before; }));
+
+	// Reopening the device, as audio.setDevice and audio.reset do, keeps the client and its open ports, and the refresh
+	// the change report causes runs once the device is open again: GNUbase's own ports never come back as listed ones.
+	device = gnubase::audio::makeJackBackend()->open({});
+	const auto input = backend->openInput("gnubase-test-midi:out", inbox.receiver());
+	const auto output = backend->openOutput(in);
+	std::this_thread::sleep_for(std::chrono::milliseconds(100)); // the ports' registrations are reported
+	const int opened = changes;
+	device.reset();
+	REQUIRE(eventually([&] { return changes > opened; }));
+	std::this_thread::sleep_for(std::chrono::milliseconds(50)); // the watcher has seen no device open
+	device = gnubase::audio::makeJackBackend()->open({});
+	for (const PortInfo& port : backend->ports())
+		CHECK(port.id.rfind("gnubase-midi", 0) != 0);
+	output->send(noteOn(60), hostTime());
+	CHECK(inbox.waitFor(1));
 }
 
 TEST_CASE("the JACK MIDI backend has no ports without libjack", "[unit]")

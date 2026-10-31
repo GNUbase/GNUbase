@@ -304,7 +304,7 @@ namespace gnubase::midi
 		};
 
 		// JACK MIDI is on only while one of GNUbase's JACK audio devices is open. A session lasts until the server goes
-		// away or the last JACK audio device closes; open ports keep theirs, and the next listing starts another.
+		// away or a listing finds no JACK audio device open; open ports keep theirs, the next listing starts another.
 		class JackMidiBackend : public Backend
 		{
 		public:
@@ -386,9 +386,10 @@ namespace gnubase::midi
 					bool changed = on != wasOn;
 					wasOn = on;
 					{
+						// The session stays: the device may only be reopening (audio.setDevice, audio.reset), and its
+						// open ports keep it anyway. The listing of the refresh this report causes drops it if no
+						// device is open by then.
 						const std::scoped_lock lock(m_mutex);
-						if (!on)
-							m_session.reset(); // leaves the graph once open ports are closed too
 						changed = (m_session && m_session->takeChange()) || changed;
 					}
 					if (changed)
