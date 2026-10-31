@@ -306,7 +306,7 @@ namespace gnubase::ui
 			const Row& data = all[i];
 			row->SetClass("missing", data.missing);
 			row->SetClass("unused", data.value[0] == 'c' && data.used.empty());
-			Rml::Element* name = row->QuerySelector("span.name");
+			const Rml::Element* name = row->QuerySelector("span.name");
 			// What the user is typing stays until it is sent.
 			if (Rml::Element* field = name->GetFirstChild();
 				field != nullptr && field->GetTagName() == "input" && !field->IsPseudoClassSet("focus"))
