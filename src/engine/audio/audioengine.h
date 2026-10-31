@@ -168,6 +168,7 @@ namespace gnubase::engine
 		Json processingStatus() const;
 		Json status() const;
 		Json performance();
+		Json performance(uint64_t deviceOverloads); // with what the device's overloads() returned
 		Json resetPerformance();
 		// Command thread, while no block runs: the next measurement starts from nothing.
 		void clearPerformance();
@@ -294,6 +295,7 @@ namespace gnubase::engine
 		rt::TripleBuffer<PerformanceData> m_performance;
 		std::atomic<bool> m_resetPerformance{false};
 		uint64_t m_deviceOverloadsBefore = 0; // the device's overloads when the measurement started
+		uint64_t m_deviceOverloadsKept = 0;   // the dropouts of the devices before an audio.reset, and the resets
 
 		// The cue thread, while the device runs in real time. It reads the transport's settings and play state from
 		// m_cueState, which the command thread updates.

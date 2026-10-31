@@ -314,6 +314,9 @@ namespace gnubase::audio
 			// ever glitches.
 			void driverReset() const { requestReset(); }
 
+			// From the driver's callbacks, when it dropped out (kAsioOverload). Real-time safe.
+			void driverOverload() noexcept { reportOverload(); }
+
 		private:
 			// The driver thread.
 			void open(const AsioDrivers& drivers, const std::string& name, const DeviceConfig& config,
@@ -525,17 +528,21 @@ namespace gnubase::audio
 			case kAsioSelectorSupported:
 				return value == kAsioEngineVersion || value == kAsioResetRequest || value == kAsioBufferSizeChange ||
 						value == kAsioResyncRequest || value == kAsioLatenciesChanged ||
-						value == kAsioSupportsTimeInfo || value == kAsioSupportsInputMonitor
+						value == kAsioSupportsTimeInfo || value == kAsioSupportsInputMonitor || value == kAsioOverload
 					? 1
 					: 0;
 			case kAsioEngineVersion:
 				return 2;
 			case kAsioResetRequest:
 			case kAsioBufferSizeChange:
-			case kAsioResyncRequest:
+			case kAsioResyncRequest:    // a dropout too, which the engine counts when it resets
 			case kAsioLatenciesChanged: // opening the driver again reads them
 				if (const AsioDevice* device = g_open.load(std::memory_order_acquire); device != nullptr)
 					device->driverReset();
+				return 1;
+			case kAsioOverload:
+				if (AsioDevice* device = g_open.load(std::memory_order_acquire); device != nullptr)
+					device->driverOverload();
 				return 1;
 			case kAsioSupportsTimeInfo:
 			case kAsioSupportsInputMonitor:

@@ -34,4 +34,11 @@ namespace gnubase::engine
 		m_data.overloads = 0;
 		m_data.cycles = 0;
 	}
+
+	void PerformanceMeter::resume(const PerformanceData& earlier) noexcept
+	{
+		m_data.peak = earlier.peak;
+		m_data.overloads = earlier.overloads;
+		m_data.cycles = earlier.cycles;
+	}
 }

@@ -212,7 +212,7 @@ Returns:
 
 #### `gnubase.audio.performance`
 
-Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported (a block that was both counts twice); cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late. blockSize: the device's block size in frames, 0 without a device.
+Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported and the device's restarts by audio.reset (a block that was both counts twice); cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance, also across audio.reset; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late. blockSize: the device's block size in frames, 0 without a device.
 
 Only reads; changes nothing.
 
@@ -284,7 +284,7 @@ Returns:
 
 #### `gnubase.audio.reset`
 
-Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this when their settings change, e.g. in their control panel, or when their device goes away; the engine then resets on its own. A device that can't be opened, e.g. because it was unplugged, is lost (lost in audio.get): the engine goes on without it and resets again about every half second until it opens, then restarts it if it ran, so playback goes on where it stopped. audio.setDevice ends the wait. Sends audio.changed when the device closes, opens or is lost.
+Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this when their settings change, e.g. in their control panel, or when their device goes away; the engine then resets on its own. A device that can't be opened, e.g. because it was unplugged, is lost (lost in audio.get): the engine goes on without it and resets again about every half second until it opens, then restarts it if it ran, so playback goes on where it stopped. audio.setDevice ends the wait. The performance measurement goes on across a reset, which counts as a dropout (see audio.performance); one that loses the device ends it. Sends audio.changed when the device closes, opens or is lost.
 
 Returns:
 
