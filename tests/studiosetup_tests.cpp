@@ -207,3 +207,25 @@ TEST_CASE("the studio setup dialog's Cancel drops the changes, Apply sends them 
 	CHECK(closed(app));
 	app.call("audio.stop");
 }
+
+TEST_CASE("the studio setup dialog keeps a sample rate and buffer size that the driver's standard lists lack", "[ui]")
+{
+	test::UiApp app({900, 640}, keyboard());
+	app.call("audio.setDevice", {{"sampleRate", 22050}, {"blockSize", 100}});
+	openDialog(app);
+	click(app, "#devices-device");
+	CHECK(element(app, "#sample-rate").at("value") == "22050");
+	CHECK(element(app, "#block-size").at("value") == "100");
+
+	// Something else changes, and OK leaves the device as it is.
+	click(app, "#devices-midi");
+	type(app, "#midi-ports input.show-as", 0, "My keys");
+	click(app, "#ok");
+	CHECK(closed(app));
+	const Json device = app.call("audio.get").at("device");
+	CHECK(device.at("sampleRate") == 22050.0);
+	CHECK(device.at("blockSize") == 100);
+	const Json log = app.call("engine.commandLog");
+	for (const Json& entry : log.at("commands"))
+		CHECK(entry.at("command") != "audio.set");
+}

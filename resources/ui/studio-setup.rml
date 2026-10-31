@@ -154,20 +154,6 @@
 			return element ~= nil and element:HasAttribute("checked")
 		end
 
-		-- The device's entry in audio.devices, for its sample rates, block sizes and clock sources.
-		local function deviceInfo(devices, device)
-			for _, backend in ipairs(devices.backends) do
-				if backend.name == device.backend then
-					for _, info in ipairs(backend.devices) do
-						if info.id == device.id then
-							return info
-						end
-					end
-				end
-			end
-			return device
-		end
-
 		local function audioSystemPage(devices, status)
 			local device = status.device
 			local options = {}
@@ -197,9 +183,15 @@
 				field("Activate Multi Processing", checkbox('id="multi-processing"', status.processing.multiProcessing))
 		end
 
+		-- A select of values with current selected; current is added when values lack it, so that the select never
+		-- falls back to another value the user didn't choose.
 		local function choices(id, values, current)
-			if #values == 0 then
-				values = {current}
+			local found = false
+			for _, value in ipairs(values) do
+				found = found or value == current
+			end
+			if not found then
+				values = {current, table.unpack(values)}
 			end
 			local options = {}
 			for _, value in ipairs(values) do
@@ -226,13 +218,14 @@
 				'\')">Reset</button>')
 		end
 
-		local function audioDevicePage(devices, status, ports)
+		-- The open device's page. audio.get's device lists its sample rates, block sizes and clock sources, current
+		-- ones included, unlike its entry in audio.devices.
+		local function audioDevicePage(status, ports)
 			local device = status.device
 			if device == nil then
 				return "<p>No audio device.</p>"
 			end
-			local info = deviceInfo(devices, device)
-			local clockSources = info.clockSources or {}
+			local clockSources = device.clockSources or {}
 			local clock = ""
 			if #clockSources > 0 then
 				local options = {}
@@ -245,10 +238,10 @@
 				(device.controlPanel and "" or " disabled") .. ">Control Panel</button></div>" ..
 				field("Input Latency", "<span>" .. milliseconds(device.inputLatency, device.sampleRate) .. "</span>") ..
 				field("Output Latency", "<span>" .. milliseconds(device.outputLatency, device.sampleRate) .. "</span>") ..
-				field("Sample Rate", choices("sample-rate", info.sampleRates or {}, device.sampleRate)) ..
-				field("Buffer Size", choices("block-size", info.blockSizes or {}, device.blockSize)) .. clock ..
+				field("Sample Rate", choices("sample-rate", device.sampleRates or {}, device.sampleRate)) ..
+				field("Buffer Size", choices("block-size", device.blockSizes or {}, device.blockSize)) .. clock ..
 				field("Direct Monitoring",
-					checkbox('id="direct-monitoring"', device.directMonitoring, not info.canMonitorDirectly)) ..
+					checkbox('id="direct-monitoring"', device.directMonitoring, not device.canMonitorDirectly)) ..
 				portsTitle("audio-ports") ..
 				'<table class="ports"><thead><tr><td>I/O</td><td>Port System Name</td><td>Show As</td><td>Visible</td>' ..
 				'<td>State</td></tr></thead><tbody id="audio-ports">' .. portRows(ports.inputs, true) ..
@@ -281,7 +274,7 @@
 			local device = setup.status.device
 			document:GetElementById("devices-device").inner_rml = escape(device and device.name or "Audio Device")
 			document:GetElementById("page-system").inner_rml = audioSystemPage(devices, setup.status)
-			document:GetElementById("page-device").inner_rml = audioDevicePage(devices, setup.status, setup.audioPorts)
+			document:GetElementById("page-device").inner_rml = audioDevicePage(setup.status, setup.audioPorts)
 			document:GetElementById("page-midi").inner_rml = midiPage(setup.midiPorts)
 		end
 
