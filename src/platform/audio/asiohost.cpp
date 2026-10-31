@@ -533,9 +533,12 @@ namespace gnubase::audio
 					: 0;
 			case kAsioEngineVersion:
 				return 2;
+			case kAsioResyncRequest: // a dropout the driver recovers from with a reset; the others are settings changes
+				if (AsioDevice* device = g_open.load(std::memory_order_acquire); device != nullptr)
+					device->driverOverload();
+				[[fallthrough]];
 			case kAsioResetRequest:
 			case kAsioBufferSizeChange:
-			case kAsioResyncRequest:    // a dropout too, which the engine counts when it resets
 			case kAsioLatenciesChanged: // opening the driver again reads them
 				if (const AsioDevice* device = g_open.load(std::memory_order_acquire); device != nullptr)
 					device->driverReset();

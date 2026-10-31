@@ -71,7 +71,8 @@ namespace gnubase::engine
 		~AudioEngine() override; // stops the device
 
 		// Registers audio.devices, audio.setDevice, audio.ports, audio.setProcessing, audio.get, audio.performance,
-		// audio.resetPerformance, audio.simulateOverload, audio.simulateDeviceLoss, audio.reset, audio.updateLatency,
+		// audio.resetPerformance, audio.simulateOverload, audio.simulateDeviceLoss, audio.reset, audio.reconnect,
+		// audio.updateLatency,
 		// audio.controlPanel, audio.render, audio.start, audio.stop, audio.capture and audio.captureInput, the
 		// transport commands transport.play, transport.stop, transport.toggle, transport.record, transport.locate,
 		// transport.set, transport.exchangeLocators and transport.get, and the MIDI port commands (MidiPorts).
@@ -110,8 +111,9 @@ namespace gnubase::engine
 		};
 
 		// What the audio thread runs: the graph and its links to the device, and the releases to do before its first
-		// block. A program carries the releases of the programs before it until the audio thread started one of them,
-		// as it may skip programs that follow each other quickly.
+		// block, then each sequencer's instrument channel (MidiSequencer::playOn). A program carries the releases of
+		// the programs before it until the audio thread started one of them, as it may skip programs that follow each
+		// other quickly.
 		struct Program
 		{
 			Program(const graph::GraphDesc& desc, double sampleRate, uint32_t maxFrames)
@@ -126,8 +128,9 @@ namespace gnubase::engine
 			double sampleRate = 48000.0; // the project's: transport positions are in its samples
 			uint64_t generation = 0;     // counts up from 1
 			std::vector<Release> releases;
-			MidiTap::Sequencers sequencers;   // of the MIDI and instrument channels, for midi.inject
-			MidiTap::Instruments instruments; // for midi.capture
+			MidiTap::Sequencers sequencers;     // of the MIDI and instrument channels, for midi.inject
+			std::vector<uint64_t> destinations; // per sequencer, where it plays (MidiSequencer::playOn)
+			MidiTap::Instruments instruments;   // for midi.capture
 		};
 
 		// A release waiting for the audio thread to start a program that has it.
@@ -146,7 +149,8 @@ namespace gnubase::engine
 		void closeDevice();
 		// audio.reset; a device that can't be opened is lost. True if the status changed.
 		bool reset();
-		// Starts trying to open the lost device again, every g_reconnectInterval, with audio.reset.
+		// Starts trying to open the lost device again, every g_reconnectInterval, with audio.reconnect: one try at a
+		// time, so that tries don't queue up behind a long command and reset the device again once it is back.
 		void waitForDevice();
 		// Opens the device again with the parameters, and starts it again if it was running.
 		void reopen(const Json& parameters, bool running);
@@ -187,6 +191,7 @@ namespace gnubase::engine
 		void cue(time::Samples position, bool playing, time::Samples window, bool wait);
 		void startCueing();
 		void stopCueing();
+		void startDevice();
 		void stopDevice();
 		// Gives MIDI and instrument channels their sequencers and instruments, and notes the MIDI tracks that left an
 		// instrument track for the program of the generation.
@@ -235,7 +240,9 @@ namespace gnubase::engine
 		std::mutex m_reconnectMutex; // guards m_stopReconnecting
 		bool m_stopReconnecting = false;
 		std::atomic<bool> m_waitingForDevice{false}; // m_lost, for that thread
+		std::atomic<bool> m_reconnecting{false};     // a try it posted hasn't run yet
 		std::condition_variable m_reconnectWake;
+		uint64_t m_closed = 0; // counts the devices closed and the losses ended, to announce what a failed command did
 		std::thread m_reconnectThread;
 
 		// The user's names for ports and which ones they see (audio.setPort), by portKey, for every device opened.
@@ -268,6 +275,7 @@ namespace gnubase::engine
 		std::map<ObjectId, Instrument> m_instruments;                      // per instrument channel
 		std::map<ObjectId, std::shared_ptr<ChannelState>> m_channelStates; // per channel
 		std::vector<PendingRelease> m_releases;
+		uint64_t m_instrumentSerial = 0; // the last InstrumentChannel::serial given, counting up from 1
 
 		std::unique_ptr<rt::SnapshotPublisher<Program>> m_programs;
 		uint64_t m_generation = 0;          // the newest program's
@@ -295,7 +303,7 @@ namespace gnubase::engine
 		rt::TripleBuffer<PerformanceData> m_performance;
 		std::atomic<bool> m_resetPerformance{false};
 		uint64_t m_deviceOverloadsBefore = 0; // the device's overloads when the measurement started
-		uint64_t m_deviceOverloadsKept = 0;   // the dropouts of the devices before an audio.reset, and the resets
+		uint64_t m_deviceOverloadsKept = 0;   // the dropouts of the devices before an audio.reset
 
 		// The cue thread, while the device runs in real time. It reads the transport's settings and play state from
 		// m_cueState, which the command thread updates.
