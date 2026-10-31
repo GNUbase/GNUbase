@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/historypanel.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
 
@@ -127,6 +128,10 @@ namespace gnubase::ui
 				field->SetAttribute("value", step.at("details").get<std::string>());
 		}
 		view->SetAttribute("value", std::to_string(m_position));
+		// Answers arrive outside input handling: ask the window to update and draw, also so that the list view moves
+		// its selection before the next key.
+		if (Rml::Context* context = view->GetContext())
+			context->RequestNextUpdate(0);
 	}
 
 	void HistoryPanel::jump(int position)

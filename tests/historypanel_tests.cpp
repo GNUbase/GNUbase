@@ -5,6 +5,8 @@
 
 #include "ui/automation.h"
 
+#include <RmlUi/Core/Context.h>
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -138,4 +140,40 @@ TEST_CASE("the edit history panel lists the undo steps and undoes and redoes up 
 	app.call("project.new");
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#history tbody tr").size() == 1; }));
 	CHECK(has(row(app, 0), "selected"));
+}
+
+TEST_CASE("the edit history panel is drawn again when another client changes the history", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "audio"}});
+	app.call("track.add", {{"type", "midi"}});
+	app.call("project.set", {{"name", "History"}});
+	// In a window of its own, where no other element asks for frames when the project changes.
+	ui::Docking& docking = app.appUi().docking();
+	docking.setFloating("history", true);
+	const ui::Window* window = docking.windowOf("history");
+	REQUIRE(window != nullptr);
+
+	// Without ui::Automation, which updates the context before it reads the DOM: the shell alone has to draw the
+	// window, as in the app, where keys reach the panel before its next draw. The list view moves its selection,
+	// which the arrow keys step from, to the engine's position only then.
+	const auto selected = [window](size_t index)
+	{
+		Rml::ElementList rows;
+		Rml::Context& context = window->context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			context.GetDocument(i)->QuerySelectorAll(rows, "#history tbody tr");
+		return rows.size() == 4 && rows[index]->IsClassSet("selected");
+	};
+	REQUIRE(app.waitUntil([&selected] { return selected(3); }));
+	REQUIRE(app.waitUntil([window] { return !window->renderRequested(); }));
+	uint64_t frames = window->frames();
+	app.call("history.undo");
+	CHECK(app.waitUntil([&] { return selected(2) && window->frames() > frames; }));
+
+	REQUIRE(app.waitUntil([window] { return !window->renderRequested(); }));
+	frames = window->frames();
+	app.call("history.describe", {{"step", 1}, {"details", "drawn"}});
+	CHECK(app.waitUntil([&] { return window->frames() > frames; }));
 }
