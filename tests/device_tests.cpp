@@ -396,6 +396,20 @@ TEST_CASE("the PipeWire backend keeps the device contract and asks for a reset w
 	checkUnplug(backend);
 }
 
+TEST_CASE("a PipeWire device counts each xrun its driver's clock adds up as a dropout", "[unit]")
+{
+	gnubase::audio::XrunCounter xruns;
+	CHECK(!xruns.cycle(7, 500)); // the baseline: xruns from before the device ran
+	CHECK(!xruns.cycle(7, 500));
+	CHECK(xruns.cycle(7, 756));
+	CHECK(!xruns.cycle(7, 756));
+	CHECK(!xruns.cycle(9, 2000)); // another driver's clock
+	CHECK(xruns.cycle(9, 2001));
+	xruns.restart(); // stopped and started again
+	CHECK(!xruns.cycle(9, 3000));
+	CHECK(xruns.cycle(9, 3100));
+}
+
 TEST_CASE("the PipeWire backend lists sinks with sources and names their channels", "[integration]")
 {
 	const std::unique_ptr<Backend> backend = pipeWireOrSkip();

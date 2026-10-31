@@ -638,6 +638,7 @@ namespace gnubase::audio
 				if (m_running)
 					throw std::logic_error("the PipeWire device is already running");
 				m_callback.store(&callback);
+				m_xruns.restart(); // xruns while stopped aren't the device's
 				const Connection::Lock lock(m_connection);
 				if (pw_filter_set_active(m_filter, true) < 0)
 				{
@@ -768,6 +769,8 @@ namespace gnubase::audio
 			{
 				if (position == nullptr)
 					return;
+				if (m_xruns.cycle(position->clock.id, position->clock.xrun))
+					reportOverload();
 				const auto frames = static_cast<uint32_t>(position->clock.duration);
 				// The latency counts in quanta: a new quantum is a new latency, which the loop thread reports
 				// (signalling the event only writes to an eventfd).
@@ -913,6 +916,7 @@ namespace gnubase::audio
 			std::atomic<uint32_t> m_quantum{0};
 			std::atomic<uint64_t> m_position{0};
 			std::atomic<bool> m_rateWarned{false};
+			XrunCounter m_xruns;
 		};
 
 		class PipeWireBackend : public Backend

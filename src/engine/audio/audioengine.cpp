@@ -740,10 +740,27 @@ namespace gnubase::engine
 			id = lost->device;
 		if (!lost)
 			logging::info("Resetting the audio device ({} {})", m_backend, id);
+		// The measurement goes on across the restart, which is a dropout (the reference manual, p. 1589).
+		std::optional<PerformanceData> measured;
+		uint64_t dropouts = 0;
+		if (m_device)
+		{
+			stopDevice(); // the audio thread leaves the meter
+			if (m_resetPerformance.exchange(false, std::memory_order_acq_rel))
+				m_meter.reset();
+			measured = m_meter.data();
+			dropouts = m_deviceOverloadsKept + (m_device->overloads() - m_deviceOverloadsBefore) + 1;
+		}
 		const Json parameters = m_parameters;
 		try
 		{
 			setDevice(parameters);
+			if (measured)
+			{
+				m_meter.resume(*measured);
+				m_deviceOverloadsKept = dropouts;
+				publishPerformance(m_meter.data());
+			}
 		}
 		catch (const std::exception& error)
 		{
@@ -1171,13 +1188,17 @@ namespace gnubase::engine
 		m_meter = PerformanceMeter();
 		m_resetPerformance.store(false, std::memory_order_release);
 		m_deviceOverloadsBefore = m_device ? m_device->overloads() : 0;
+		m_deviceOverloadsKept = 0;
 		publishPerformance(PerformanceData{});
 	}
 
 	Json AudioEngine::resetPerformance()
 	{
-		Json ended = performance();
-		m_deviceOverloadsBefore = m_device ? m_device->overloads() : 0;
+		// Read once, so that a dropout reported meanwhile counts in the measurement that ends or in the new one.
+		const uint64_t deviceOverloads = m_device ? m_device->overloads() : 0;
+		Json ended = performance(deviceOverloads);
+		m_deviceOverloadsBefore = deviceOverloads;
+		m_deviceOverloadsKept = 0;
 		if (m_device && m_device->running())
 		{
 			m_resetPerformance.store(true, std::memory_order_release); // the audio thread owns the meter
@@ -1193,14 +1214,19 @@ namespace gnubase::engine
 
 	Json AudioEngine::performance()
 	{
+		return performance(m_device ? m_device->overloads() : 0);
+	}
+
+	Json AudioEngine::performance(uint64_t deviceOverloads)
+	{
 		m_performance.update();
 		const PerformanceData& data = m_performance.readBuffer();
 		Json threads = Json::array();
 		for (size_t t = 0; t < data.threads; ++t)
 			threads.push_back(data.threadLoad[t]);
-		const uint64_t deviceOverloads = m_device ? m_device->overloads() - m_deviceOverloadsBefore : 0;
-		return {{"load", data.load}, {"peak", data.peak}, {"overloads", data.overloads + deviceOverloads},
-			{"deviceOverloads", deviceOverloads}, {"cycles", data.cycles}, {"threads", threads},
+		const uint64_t dropouts = m_deviceOverloadsKept + (deviceOverloads - m_deviceOverloadsBefore);
+		return {{"load", data.load}, {"peak", data.peak}, {"overloads", data.overloads + dropouts},
+			{"deviceOverloads", dropouts}, {"cycles", data.cycles}, {"threads", threads},
 			{"diskLoad", m_playback.diskLoad()}, {"diskDropouts", m_playback.dropouts()},
 			{"blockSize", m_device ? m_device->format().blockSize : 0}};
 	}
@@ -1343,10 +1369,11 @@ namespace gnubase::engine
 			{"audio.performance", 1,
 				"Performance data for the performance monitor. Loads are the share of a block's duration spent "
 				"processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest "
-				"block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported (a block "
-				"that was both counts twice); cycles: blocks measured; threads: the load of each processing "
-				"thread, the audio thread first. Peak, overloads and cycles count since the last "
-				"audio.resetPerformance; everything starts over with a new device or new processing threads. "
+				"block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported and the "
+				"device's restarts by audio.reset (a block that was both counts twice); cycles: blocks measured; "
+				"threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles "
+				"count since the last audio.resetPerformance, also across audio.reset; everything starts over with "
+				"a new device or new processing threads. "
 				"diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of "
 				"audio track playback that were silent because a disk stream was late. blockSize: the device's "
 				"block size in frames, 0 without a device.",
@@ -1398,7 +1425,9 @@ namespace gnubase::engine
 				"then resets on its own. A device that can't be opened, e.g. because it was unplugged, is lost (lost "
 				"in audio.get): the engine goes on without it and resets again about every half second until it "
 				"opens, then restarts it if it ran, so playback goes on where it stopped. audio.setDevice ends the "
-				"wait. Sends audio.changed when the device closes, opens or is lost.",
+				"wait. The performance measurement goes on across a reset, which counts as a dropout (see "
+				"audio.performance); one that loses the device ends it. Sends audio.changed when the device closes, "
+				"opens or is lost.",
 				noParameters(), statusSchema(), false},
 			[this](CommandContext& context)
 			{
