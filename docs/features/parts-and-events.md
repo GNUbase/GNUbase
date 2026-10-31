@@ -76,6 +76,7 @@ The object selection tool's gestures (#86 brings the other tools):
 | Drag within 6 dp of an event's left or right edge | Resizes the selection: normal sizing, or sizing moves contents (`setSizingMovesContents`) | p. 265 |
 | Alt and a click | Splits the event there | p. 268 |
 | Double click on an empty MIDI or instrument lane | Adds a one-bar part at the bar, or one between the locators when the click is between them | p. 251 |
+| Double click below the tracks | Adds a MIDI track ([add-track.md](add-track.md)) | p. 198 |
 
 The edit commands are in `actions()`, for the key command system to bind (#57): `edit.delete`, `edit.mute`,
 `edit.unmute`, `edit.lock`, `edit.unlock`, `edit.splitAtCursor` and `edit.splitLoop` (the selection, or every event

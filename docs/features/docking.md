@@ -1,8 +1,9 @@
 # Docking
 
 Windows built from zones, tab groups, splitters and strips, and panels that dock in a zone or open in a window of
-their own (#56, reference manual pp. 54–100, 439–440, 1575–1578). The code is `ui::Docking` (`src/ui/docking.h`);
-`app::AppUi` makes the project window a docking window, and the mixer and the editors will be the next ones.
+their own (#56), and setup panes that show, hide and reorder sections (#372) (reference manual pp. 54–100, 439–440,
+1575–1578). The code is `ui::Docking` (`src/ui/docking.h`); `app::AppUi` makes the project window a docking window,
+and the mixer and the editors will be the next ones.
 
 ## Structure
 
@@ -16,11 +17,14 @@ strips above and below a row of zones, where the main zone takes what the others
 | `splitter for="left"` | The splitter that sizes that zone; `resize="next"` for a zone after it. It hides with its zone. |
 | `strip="infoLine"` | A strip; `default="hidden"` hides it by default. |
 | `toggle="left"` | A toggle button or menu item that shows or hides that zone or strip. |
+| `sections="channel"` | A container of the set of sections `channel`, such as each of the mixer's channels. Its children with `section="eq"` are the sections, with a `label` for the setup pane and `default="hidden"` to hide one by default. |
+| `setup="channel"` | A setup pane's list of that set's sections, which the docking system fills. |
 
-The project window (`resources/ui/project.rml`) has the toolbar, the info line, the left zone, the main zone with the
-event display, the lower and right zones, the status line and the transport bar, which come in that order in the
-reference (pp. 54–56). Its toolbar has Show/Hide Left, Lower and Right Zone and the Set up Window Layout menu, which
-shows or hides the zones and the info line, overview line, status line and transport bar (p. 65). The overview line is
+The project window (`resources/ui/project.rml`) has the menu bar ([main-menu.md](main-menu.md)), the toolbar, the info
+line, the left zone, the main zone with the event display, the lower and right zones, the status line and the transport
+bar, which come in that order in the reference (pp. 54–56). Its toolbar has Show/Hide Left, Lower and Right Zone and the
+Set up Window Layout menu, which shows or hides the menu bar (the reference's Show Menu Bar, p. 55), the zones and the
+info line, overview line, status line and transport bar (p. 65). The overview line is
 part of the event display: while a strip is hidden, the body has the class `no-<strip>`, which the style sheet uses to
 hide it. The info line, status line and transport bar are empty until their tickets fill them.
 
@@ -33,7 +37,8 @@ frame (p. 99). Code only sets the zones' sizes, which come from data.
 A panel (`ui::Panel`) has an id, a title, the docking window and the zone it docks in, and a function that fills the
 element it shows in, wherever that is; what the function returns lives as long as the panel shows there. `add`
 registers panels; the project window has Inspector and Visibility on the left, Editor and Mixer in the lower zone, and
-Media and Meter on the right (pp. 75–98), empty until their tickets fill them.
+Media and Meter on the right (pp. 75–98), empty until their tickets fill them, and the edit history on the right
+([edit-history.md](edit-history.md)). `open` shows a panel as its zone's active tab, with the zone shown.
 
 - **Tabs.** A zone's tab group shows its panels' tabs in the user's order. A tab dragged onto another takes its place.
   A right click on the tabs opens the zone's tab menu: Open in Separate Window for the tab clicked (or the active one),
@@ -44,6 +49,24 @@ Media and Meter on the right (pp. 75–98), empty until their tickets fill them.
   (architecture.md, "UI shell"). Its bounds are read twice a second and kept when they changed.
 - **Contents.** Rebuilding a tab group, e.g. after a tab moved, keeps what the panels that stay in it show. A panel
   that moves to a window, or whose tab is hidden, gets its element made again where it shows next.
+
+## Setup panes and sections
+
+A setup pane shows and hides the parts of a docking window and reorders its sections, as the mixer's Set up Window
+Layout pane does (pp. 439–440: the channel overview, the meter bridge, the left and right zones, and the channel
+sections such as routing, inserts, EQ, sends and the fader). The pane is a `<menu class="setup-pane">` that a button
+opens; its items are toggle buttons, so it stays open while they are clicked. Toggle buttons with a `toggle` attribute
+show and hide zones and strips as elsewhere, and an element with `setup="channel"` gets a toggle button per section of
+the set `channel` (`setup-section="eq"`, with the section's label), in the user's order.
+
+- **Show and hide.** A section's button shows or hides that section in every container of its set; hidden sections
+  get the state class `.hidden`.
+- **Reorder.** A button dragged onto another moves its section to that one's place, in the pane and in every container.
+  The sections stay where they were among the container's other children, such as a channel's name above them.
+- **Defaults.** The set's first container in the document says which sections there are, their default order and which
+  are hidden by default; the other containers are expected to have the same sections.
+
+The sections of the mixer come with the mixer window; `tests/data/ui/sections.rml` is a test window with sections.
 
 ## Splitters
 
@@ -64,6 +87,9 @@ their way to the engine it ignores the echoes, so a quick second change doesn't 
     "project": {
       "zones": {"lower": {"visible": true, "size": 280, "tabs": ["mixer", "editor"], "hidden": [], "active": "mixer"}},
       "strips": {"overviewLine": false, "infoLine": true}
+    },
+    "mixer": {
+      "sections": {"channel": {"order": ["fader", "routing", "inserts"], "hidden": ["inserts"]}}
     }
   },
   "panels": {"mixer": {"floating": true, "bounds": {"x": 200, "y": 150, "width": 800, "height": 500}}}
@@ -71,7 +97,9 @@ their way to the engine it ignores the echoes, so a quick second change doesn't 
 ```
 
 The setting has only what the user changed; what it leaves out has its default from the document's attributes and the
-panels' order. Panels and zones it names that don't exist are ignored, so a layout from a newer GNUbase still loads.
+panels' order. A set's `order` puts the sections it names first, the others follow in the document's order; once a set
+has `hidden`, it lists every hidden section, so the defaults no longer count. Panels, zones and sections it names that
+don't exist are ignored, so a layout from a newer GNUbase still loads.
 Workspaces (#163) will store such layouts by name, with the main windows' bounds.
 
 ## Key commands
@@ -88,15 +116,16 @@ The reference's defaults (p. 1572), bound everywhere; they act on the docking wi
 | Alt+O | `window.overviewLine` | Show/Hide Overview |
 | Mod+Alt+Left, Mod+Alt+Right | `window.previousTab`, `window.nextTab` | Show Previous/Next Tab, in the zone with the focus |
 
-`window.toolbar` and `window.statusLine` have no keys. Each zone is a focus zone (`focuszone` `left`, `right`, `lower`,
+`window.menuBar`, `window.toolbar` and `window.statusLine` have no keys. Each zone is a focus zone (`focuszone` `left`, `right`, `lower`,
 and `project` for the main zone), so key commands can depend on it ([key-commands.md](key-commands.md)). The document
 is the focus zone `project` too, so the project window's keys, such as zooming, work from the toolbar and from a side
 zone that doesn't bind them itself.
 
 ## Not yet
 
-The setup panes that reorder sections, such as the mixer's window layout (p. 439), come with the mixer window; the
-Channel tab (p. 73) with the track inspector; tabs at the bottom of the lower zone, as in the reference; dragging a tab
+The mixer's window layout pane and its sections (p. 439) come with the mixer window; until then, containers of
+sections added after `attach`, such as a new channel, take the user's order and visibility only with the next change
+to the layout; the Channel tab (p. 73) with the track inspector; tabs at the bottom of the lower zone, as in the reference; dragging a tab
 out of its zone to open it in a window; Tab and Shift+Tab to move the focus between zones (p. 100), which RmlUi keeps
 for moving between controls for now; and live reload keeps the panels' contents only when the app opens again.
 
@@ -110,4 +139,7 @@ into a new order, hidden through the tab menu, stepped through with the keys in 
 the focus frame, and the active tab remembered; a panel moved into a window of its own through the tab menu, with its
 contents made there and gone from the zone, docked with the Dock button and by closing its window, which reopens where
 it was; and the complete layout, with zone sizes, tab orders, hidden and active tabs, strips and a panel's window,
-back exactly after a restart.
+back exactly after a restart. On a test window with sections, the setup pane shows and hides sections in every
+channel and stays open, reorders them by drag and drop between the channel's other elements, and shows and hides a
+strip and a zone; `ui.layout` from the engine reorders and hides them too, ignores names that aren't sections, is
+refused in the wrong shape and resets to the defaults; and the order and visibility come back after a restart.

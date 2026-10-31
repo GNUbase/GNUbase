@@ -350,6 +350,14 @@ namespace gnubase::engine
 		program->sequencers.assign(m_sequencers.begin(), m_sequencers.end()); // ordered by channel id
 		for (const auto& [channel, instrument] : m_instruments)
 			program->instruments.emplace_back(channel, instrument.channel);
+		for (const auto& [channel, sequencer] : program->sequencers)
+		{
+			uint64_t destination = 0; // its own instrument, or the one it is routed to
+			for (const auto& [id, instrument] : m_instruments)
+				if (id == channel || instrument.sources.count(channel) != 0)
+					destination = instrument.channel->serial();
+			program->destinations.push_back(destination);
+		}
 		// Bus nodes come first, in bus order (graph::describe); child busses reach the device through their parent.
 		for (size_t b = 0; b < snapshot.busses.size(); ++b)
 			if (snapshot.busses[b].parent < 0)
@@ -419,7 +427,8 @@ namespace gnubase::engine
 					instrument.id = channel.instrument;
 					instrument.channel = std::make_shared<InstrumentChannel>(sequencer,
 						processors::isInstrument(channel.instrument) ? processors::createBuiltin(channel.instrument)
-																	 : nullptr);
+																	 : nullptr,
+						++m_instrumentSerial);
 				}
 				instrument.sources = from;
 				processor = instrument.channel;
@@ -572,6 +581,8 @@ namespace gnubase::engine
 			m_running = program.generation;
 			for (const Release& release : program.releases)
 				release.channel->releaseNotesOf(*release.departed, release.staying);
+			for (size_t i = 0; i < program.sequencers.size(); ++i)
+				program.sequencers[i].second->playOn(program.destinations[i]);
 			m_started.store(program.generation, std::memory_order_release);
 		}
 		const audio::DeviceFormat& format = m_device->format();
@@ -1460,9 +1471,9 @@ namespace gnubase::engine
 				"default: half the hardware threads, about one per core). Independent tracks then run in parallel; "
 				"the output is the same for any number of threads. The device must be stopped. activeThreads in the "
 				"result is how many process, and limitedBy why that is fewer: multiProcessing is off, the hardware has "
-				"fewer threads, worker threads didn't get real-time priority (on Linux: no real-time privileges), or "
-				"the system refused to start them (system). Fails, keeping the previous settings, if threads can't be "
-				"started.",
+				"fewer threads, worker threads didn't get real-time priority (on Linux: no real-time privileges and no "
+				"rtkit), or the system refused to start them (system). Fails, keeping the previous settings, if "
+				"threads can't be started.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
 					"multiProcessing": {"type": "boolean"}, "threads": {"type": "integer"}}})"),
 				statusSchema(), false},

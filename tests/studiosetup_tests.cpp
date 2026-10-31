@@ -91,7 +91,7 @@ namespace
 		return !elements(app, "#studio-setup").empty();
 	}
 
-	// Opens the dialog through its UI command, as the main menu will.
+	// Opens the dialog through its UI command, as the main menu does.
 	void openDialog(test::UiApp& app)
 	{
 		app.keys().run("window.studioSetup", Json::object(), app.main(), nullptr);
