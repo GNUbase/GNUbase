@@ -59,5 +59,6 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `general-save.svg` — Save the project.
 - `general-open.svg` — Open a project or file.
 - `general-snap.svg` — Toggle snapping to the grid.
+- `general-zero-crossing.svg` — Toggle snapping to zero crossings.
 - `general-lock.svg` — Lock the selected item.
 - `general-link.svg` — Link selected items.

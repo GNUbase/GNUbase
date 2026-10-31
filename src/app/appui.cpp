@@ -52,7 +52,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 35> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 37> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -89,6 +89,10 @@ namespace gnubase::app
 			{"edit.selectFromStartToCursor", "Selects the events that end before the project cursor.", nullptr},
 			{"edit.selectFromCursorToEnd", "Selects the events that start after the project cursor.", nullptr},
 			{"edit.selectUnderCursor", "Selects the events at the project cursor.", nullptr},
+			// Snap and grid (docs/features/snap.md).
+			{"edit.snap", "Switches snap on or off.", "J"},
+			{"edit.snapPointToCursor", "Sets the snap point of the selected audio events at the project cursor.",
+				nullptr},
 		}};
 	}
 
