@@ -94,6 +94,7 @@ namespace
 		const ui::Point at{box.at("x").get<int>() + static_cast<int>(std::lround(x * ratio)),
 			box.at("y").get<int>() + static_cast<int>(std::lround(y * ratio))};
 		std::vector<std::filesystem::path> paths;
+		paths.reserve(files.size());
 		for (const std::string& file : files)
 			paths.push_back(std::filesystem::u8path(file));
 		CHECK(!app.ui().drop(std::nullopt, {"", 0, at}, paths).at("element").is_null());
@@ -152,7 +153,7 @@ TEST_CASE("files dropped on the event display are imported where they are droppe
 	const test::TempDir dir;
 	const std::string take = writeAudio(dir.path() / "take.wav", 4800);
 	test::UiApp app({900, 640});
-	ui::EventDisplay& display = app.appUi().showProject();
+	const ui::EventDisplay& display = app.appUi().showProject();
 	const Json track = app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
 	REQUIRE(app.waitUntil(
 		[&app]

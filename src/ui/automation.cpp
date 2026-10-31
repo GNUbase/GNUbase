@@ -343,7 +343,7 @@ namespace gnubase::ui
 			throw std::invalid_argument("needs files to drop");
 		Window& shown = resolve(window);
 		const Point at = targetPoint(shown, target);
-		Rml::Context& context = updated(shown);
+		const Rml::Context& context = updated(shown);
 		// Read before the drop, whose handlers may change the element or remove it.
 		Json result = {
 			{"element", nodeOrNull(context.GetElementAtPoint({static_cast<float>(at.x), static_cast<float>(at.y)}))}};

@@ -109,6 +109,7 @@ namespace gnubase::engine
 		options.sampleRate = sampleRate;
 		options.channels = split ? 1 : source.channels;
 		std::vector<std::unique_ptr<AudioFileWriter>> writers;
+		writers.reserve(outputs.size());
 		for (const std::string& output : outputs)
 			writers.push_back(AudioFileWriter::create(output, options));
 

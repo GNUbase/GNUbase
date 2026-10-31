@@ -112,9 +112,9 @@ namespace
 		integer(1, 2); // PCM
 		integer(1, 2); // channels
 		integer(48000, 4);
-		integer(48000 * 2, 4); // bytes per second
-		integer(2, 2);         // bytes per frame
-		integer(16, 2);        // bits per sample
+		integer(96000, 4); // bytes per second
+		integer(2, 2);     // bytes per frame
+		integer(16, 2);    // bits per sample
 		guid("data", false);
 		integer(24 + dataSize, 8);
 		for (int64_t frame = 0; frame < frames; ++frame)

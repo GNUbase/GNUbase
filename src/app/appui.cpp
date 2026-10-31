@@ -223,6 +223,7 @@ namespace gnubase::app
 				if (result.files.empty() || !m_eventDisplay)
 					return;
 				std::vector<std::string> files;
+				files.reserve(result.files.size());
 				for (const std::filesystem::path& file : result.files)
 					files.push_back(file.u8string());
 				m_eventDisplay->importFiles(files);
