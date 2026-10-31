@@ -775,7 +775,7 @@ namespace gnubase::engine
 		}
 	}
 
-	void syncSharedParts(const Project& before, Project& project, CommandContext& context)
+	void syncSharedParts(const std::map<ObjectId, MidiPart>& before, Project& project, CommandContext& context)
 	{
 		// The first part of each group whose notes or controllers changed is what the group now holds.
 		std::map<ObjectId, const MidiPart*> sources;
@@ -785,8 +785,8 @@ namespace gnubase::engine
 			if (part.shared == 0)
 				continue;
 			++members[part.shared];
-			const auto old = before.midiParts.find(id);
-			if (old != before.midiParts.end() && old->second.shared == part.shared && sources.count(part.shared) == 0 &&
+			const auto old = before.find(id);
+			if (old != before.end() && old->second.shared == part.shared && sources.count(part.shared) == 0 &&
 				(old->second.notes != part.notes || old->second.controllers != part.controllers))
 				sources[part.shared] = &part;
 		}
