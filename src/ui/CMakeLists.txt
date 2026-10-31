@@ -32,6 +32,7 @@ add_library(gnubase-ui STATIC
 	eventediting.cpp
 	eventwaveforms.cpp
 	eventwaveforms.h
+	fileimport.cpp
 	fonts.cpp
 	fonts.h
 	gpurenderer.cpp

@@ -166,7 +166,7 @@ GNUbase started with its UI and `--mcp-http` also has tools to look at the UI an
 - `ui_windows` lists the windows: their ids, which is the main window, their size in pixels and their dp ratio, and the documents each shows. The other tools take a `window`; without one they use the main window.
 - `ui_dom` reads the DOM: every element's tag, id, classes, other attributes, a form control's value, pseudo-classes such as `hover`, `focus` or `checked`, whether it's visible and its box. With a `selector` it returns the elements that match; `depth` limits how many levels of children come with them, and `depth: 0` returns the elements with their text.
 - `ui_screenshot` returns a PNG of the window, or with a `selector` of one element.
-- `ui_click`, `ui_move`, `ui_drag` and `ui_wheel` use the mouse on an element, by `selector` (and `index` among its matches), or on a point `x`, `y`. `ui_key` presses keys such as `Enter` or `Ctrl+S`; `ui_text` types text into the focused field. Each answers with the element it reached, so the agent sees what it hit.
+- `ui_click`, `ui_move`, `ui_drag` and `ui_wheel` use the mouse on an element, by `selector` (and `index` among its matches), or on a point `x`, `y`. `ui_key` presses keys such as `Enter` or `Ctrl+S`; `ui_text` types text into the focused field. `ui_drop` drops files on an element or a point, as if dragged there from the OS's file manager, e.g. audio files on the event display to import them. Each answers with the element it reached, so the agent sees what it hit.
 - `ui_wait` waits until an element is visible, or has a text, or until none is, e.g. for a dialog that a click opens.
 
 Boxes and points are in the window's pixels, as in its screenshots; on a monitor with a scale of 200 %, 1 dp is 2 pixels. An agent opening a dialog and reading it back:
@@ -300,6 +300,31 @@ Arguments:
 Result:
 
 - `event`: object, required
+
+### audioFile
+
+#### `audioFile_import`
+
+Engine command `audioFile.import`.
+
+Imports audio files (WAV, RF64, Wave64, AIFF, FLAC, Ogg Vorbis or MP3) as audio events at position, in sample frames from the project start (default 0). Each file goes on a new audio track named after it, with its channels; with oneTrack, they go one after another on one new track, and with track, one after another on that audio track. copy copies files from outside the project folder into its media folder (see project.location) as a job, returned as job (null without one) with the result media.add's copy job has; the media are pointed at the copies as an undo step of its own. convert writes files at another sample rate than the project's, and MP3 and Ogg Vorbis files, into the media folder as 32-bit float WAV files at the project's sample rate. splitChannels writes each channel of a file with several into the media folder as a mono WAV file, named after the file and its speaker (such as take-L.wav), on a new mono track of its own. copy, convert and splitChannels need a saved project. One undo step. Returns the new tracks, and per file (per channel when split) the media files and events, in the order of files.
+
+Arguments:
+
+- `convert`: boolean
+- `copy`: boolean
+- `files`: array of string, required
+- `oneTrack`: boolean
+- `position`: integer
+- `splitChannels`: boolean
+- `track`: integer
+
+Result:
+
+- `events`: array of integer, required
+- `job`: object or null, required
+- `media`: array of integer, required
+- `tracks`: array of integer, required
 
 ### audio
 
@@ -3144,6 +3169,23 @@ Arguments:
 - `modifiers`: array of one of "ctrl" | "shift" | "alt" | "meta". Keys held while dragging.
 - `to`: object, required. Where to release it, the same way.
 - `window`: integer. The window's id from ui_windows; the main window if left out.
+
+Result:
+
+- `element`: object or null, required
+
+#### `ui_drop`
+
+Drops files on an element or a point, as if dragged there from the OS's file manager, e.g. audio or MIDI files on the project window's event display to import them. Returns the element they were dropped on.
+
+Arguments:
+
+- `files`: array of string, required. The files' paths, at least one.
+- `index`: integer. Which of the elements the selector matches; 0, the first, if left out.
+- `selector`: string. A CSS selector; the mouse goes to the centre of the element it matches.
+- `window`: integer. The window's id from ui_windows; the main window if left out.
+- `x`: integer. Instead of a selector: the point in the window's pixels, with y.
+- `y`: integer. The point's y, with x.
 
 Result:
 

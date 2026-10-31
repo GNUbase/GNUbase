@@ -20,12 +20,13 @@ namespace gnubase::app
 	};
 
 	// The UI tools (#58) for that caller, as MCP tools: ui_windows, ui_dom, ui_screenshot, ui_wait and the input tools
-	// ui_move, ui_click, ui_drag, ui_wheel, ui_key and ui_text, through ui::Automation. The shell must outlive them.
+	// ui_move, ui_click, ui_drag, ui_drop, ui_wheel, ui_key and ui_text, through ui::Automation. The shell must outlive
+	// them.
 	std::vector<mcp::Server::Tool> uiTools(ui::Shell& shell, Caller caller);
 
 	// Adds the MCP tools for the UI (#58): ui_windows, ui_dom, ui_screenshot, ui_wait and the input tools ui_move,
-	// ui_click, ui_drag, ui_wheel, ui_key and ui_text, through ui::Automation. Their work runs on the UI thread, so it
-	// must step the shell while the server handles requests. The shell must outlive the server.
+	// ui_click, ui_drag, ui_drop, ui_wheel, ui_key and ui_text, through ui::Automation. Their work runs on the UI
+	// thread, so it must step the shell while the server handles requests. The shell must outlive the server.
 	void addUiTools(mcp::Server& server, ui::Shell& shell);
 
 	// Adds the same tools as Lua functions, for a runtime on the UI thread such as the UI's (app/appui.h): ui_click
