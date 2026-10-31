@@ -185,7 +185,7 @@ namespace gnubase::ui
 					row->SetClass("deleted", true);
 			return;
 		}
-		if (Rml::Element* count = dialog->GetElementById("repeat-count"))
+		if (const Rml::Element* count = dialog->GetElementById("repeat-count"))
 		{
 			const Rml::Element* shared = dialog->GetElementById("repeat-shared");
 			repeat(static_cast<int>(std::lround(count->GetAttribute<float>("value", 1.0F))),
