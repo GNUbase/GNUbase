@@ -825,6 +825,8 @@ namespace gnubase::engine
 
 	AudioEngine::Listed AudioEngine::lostDeviceListed() const
 	{
+		if (!m_lost)
+			return Listed::No;
 		if (m_lost->backend == "dummy")
 			return m_dummyUnplugged ? Listed::No : Listed::Yes;
 		for (const std::unique_ptr<audio::Backend>& backend : m_backends)
@@ -853,7 +855,7 @@ namespace gnubase::engine
 	void AudioEngine::failOver()
 	{
 		const std::string fallback = m_settings.get(settings::g_audioFallbackDevice);
-		if (fallback == "none")
+		if (fallback == "none" || !m_lost)
 			return;
 		const Lost lost = *m_lost;
 		// The dummy device without capture memory, which it would only fill with what can't be heard.
