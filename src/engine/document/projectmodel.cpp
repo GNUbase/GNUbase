@@ -1898,6 +1898,12 @@ namespace gnubase::engine
 		}
 	}
 
+	void followAutomation(Project& project, ObjectId track, const time::Position& from, const time::Position& end,
+		const time::Position& to, CommandContext& context)
+	{
+		followEvent(project, track, from, end, to, context);
+	}
+
 	namespace
 	{
 		// The undo step each command records, as shown in the history.
@@ -2085,6 +2091,7 @@ namespace gnubase::engine
 				try
 				{
 					result = handler(m_project, context);
+					syncSharedParts(before, m_project, context);
 				}
 				catch (...)
 				{
@@ -2750,6 +2757,7 @@ namespace gnubase::engine
 		midi::registerFunctionCommands(*this, engine);
 		registerMidiFileCommands(engine);
 		registerFadeCommands(engine);
+		registerEventEditCommands(engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 	}

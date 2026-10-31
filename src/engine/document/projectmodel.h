@@ -19,6 +19,15 @@ namespace gnubase::engine
 	// with messages that start with name, e.g. "controllers[0]".
 	Controller controllerFrom(const Json& item, const std::string& name);
 
+	// Automation follows events (projectmodel.cpp): moves the automation of a track from where an event or part was
+	// (from to end) to where it is now (to), if automation follows events.
+	void followAutomation(Project& project, ObjectId track, const time::Position& from, const time::Position& end,
+		const time::Position& to, CommandContext& context);
+
+	// After a command (eventedits.cpp): the first shared copy of a MIDI part whose notes or controllers changed gives
+	// them to its other copies, and a copy without others is no longer shared.
+	void syncSharedParts(const Project& before, Project& project, CommandContext& context);
+
 	// The project document, its commands, its undo history and its render snapshots. The commands run on the engine's
 	// command thread, the only thread that touches the document; every command that changes it records an undo step
 	// and publishes a new render snapshot for the audio thread.
@@ -62,6 +71,7 @@ namespace gnubase::engine
 		Json importMidiFile(Project& project, CommandContext& context);
 		void registerFadeCommands(Engine& engine);      // fadeedits.cpp: fades, crossfades and auto fades
 		void registerParameterCommands(Engine& engine); // parameters.cpp: parameter.list, parameter.get, parameter.set
+		void registerEventEditCommands(Engine& engine); // eventedits.cpp: event.*, parts and events (#85)
 		void record(std::string action, const Project& before, CommandContext& context);
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);

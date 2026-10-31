@@ -413,7 +413,7 @@ namespace gnubase::engine
 	{
 		return {{"id", event.id}, {"track", event.track}, {"clip", event.clip}, {"position", event.position.value},
 			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute},
-			{"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
+			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
 			{"crossfade", toJson(event.crossfade)}};
 	}
 
@@ -480,8 +480,8 @@ namespace gnubase::engine
 	Json toJson(const MidiPart& part)
 	{
 		return {{"id", part.id}, {"track", part.track}, {"name", part.name}, {"position", part.position.value},
-			{"length", part.length}, {"notes", toJsonArray(part.notes)},
-			{"controllers", toJsonArray(part.controllers)}};
+			{"length", part.length}, {"mute", part.mute}, {"lock", part.lock}, {"shared", part.shared},
+			{"notes", toJsonArray(part.notes)}, {"controllers", toJsonArray(part.controllers)}};
 	}
 
 	Json toJson(const Marker& marker)
@@ -886,6 +886,7 @@ namespace gnubase::engine
 			event.length = item.at("length").get<time::Samples>();
 			event.volume = item.value("volume", 0.0); // files from before event volume and mute
 			event.mute = item.value("mute", false);
+			event.lock = item.value("lock", false); // files from before #85 have neither lock nor shared copies
 			event.fadeIn = fadeFromJson(item.value("fadeIn", Json::object()));
 			event.fadeOut = fadeFromJson(item.value("fadeOut", Json::object()));
 			event.crossfade = crossfadeFrom(item.value("crossfade", Json()));
@@ -899,6 +900,9 @@ namespace gnubase::engine
 			part.name = item.at("name").get<std::string>();
 			part.position = {base(part.track), item.at("position").get<int64_t>()};
 			part.length = item.at("length").get<int64_t>();
+			part.mute = item.value("mute", false);
+			part.lock = item.value("lock", false);
+			part.shared = item.value("shared", ObjectId{0});
 			for (const Json& n : item.at("notes"))
 			{
 				Note note;

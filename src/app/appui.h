@@ -18,6 +18,11 @@
 #include <iosfwd>
 #include <memory>
 
+namespace Rml
+{
+	class ElementDocument;
+}
+
 namespace gnubase::app
 {
 	// GNUbase's UI for an engine: SDL3 windows drawn through SDL_GPU, RmlUi with GNUbase's fonts, themes and widgets,
@@ -52,6 +57,10 @@ namespace gnubase::app
 		// The markers window while it is open, or null.
 		ui::MarkersWindow* markers() { return m_shell.find(m_markersWindow) != nullptr ? m_markers.get() : nullptr; }
 		ui::WindowId markersWindow() const { return m_markersWindow; }
+		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
+		// window.studioSetup, which the main menu's Studio menu will run. Throws std::runtime_error if the document
+		// can't be loaded.
+		Rml::ElementDocument& openStudioSetup(ui::Window& window) const;
 
 		ui::Shell& shell() { return m_shell; }
 		ui::Window& mainWindow() { return m_main; }

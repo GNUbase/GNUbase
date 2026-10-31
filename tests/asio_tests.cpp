@@ -326,6 +326,16 @@ TEST_CASE("the ASIO backend converts the driver's samples and passes its request
 	driver.callbacks->sampleRateDidChange(44100.0);
 	CHECK(resets == 3);
 
+	// An overload is a dropout; a resync is one the driver recovers from with a reset, which the engine counts.
+	CHECK(device->overloads() == 0);
+	CHECK(driver.callbacks->asioMessage(kAsioSelectorSupported, kAsioOverload, nullptr, nullptr) == 1);
+	CHECK(driver.callbacks->asioMessage(kAsioOverload, 0, nullptr, nullptr) == 1);
+	CHECK(device->overloads() == 1);
+	CHECK(resets == 3);
+	driver.callbacks->asioMessage(kAsioResyncRequest, 0, nullptr, nullptr);
+	CHECK(resets == 4);
+	CHECK(device->overloads() == 1);
+
 	device->openControlPanel();
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 	while (driver.panels == 0 && std::chrono::steady_clock::now() < deadline)

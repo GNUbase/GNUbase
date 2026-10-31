@@ -134,7 +134,7 @@ Returns:
 
 #### `gnubase.audio.captureInput`
 
-What an input channel of the dummy device recorded at project positions from start, at most 1048576 frames: its input goes where the transport played the record offset before it arrived (see audio.get), only while the transport plays, and the last cycle lap over the ones before. Up to captureSeconds from position 0; positions not recorded are silent. Only while the device stands.
+What an input channel of the audio device recorded at project positions from start, at most 1048576 frames: its input goes where the transport played the record offset before it arrived (see audio.get), only while the transport plays, and the last cycle lap over the ones before. Up to the device's captureSeconds (audio.setDevice) from position 0; positions not recorded are silent. Only while the device stands.
 
 Only reads; changes nothing.
 
@@ -177,6 +177,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -194,7 +195,7 @@ Returns:
 
 #### `gnubase.audio.get`
 
-The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing).
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate; with sampleRateMismatch the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower. lost: the device that went away (its backend, device id, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null.
 
 Only reads; changes nothing.
 
@@ -203,6 +204,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -210,7 +212,7 @@ Returns:
 
 #### `gnubase.audio.performance`
 
-Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported (a block that was both counts twice); cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late. blockSize: the device's block size in frames, 0 without a device.
+Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported and the device's restarts by audio.reset (a block that was both counts twice); cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance, also across audio.reset; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late. blockSize: the device's block size in frames, 0 without a device.
 
 Only reads; changes nothing.
 
@@ -228,7 +230,7 @@ Returns:
 
 #### `gnubase.audio.ports`
 
-The audio device's ports by name, in order, each with the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) whose channels run past the device's ports, with those channels, which are silent; bus.set gives them ports. Without a device there are no ports.
+The audio device's ports by name, in order, each with the name it is shown as and whether it is visible (audio.setPort), and the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) whose channels run past the device's ports, with those channels, which are silent; bus.set gives them ports. Without a device there are no ports.
 
 Only reads; changes nothing.
 
@@ -274,6 +276,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -281,13 +284,14 @@ Returns:
 
 #### `gnubase.audio.reset`
 
-Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this when their settings change, e.g. in their control panel; the engine then resets on its own.
+Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this when their settings change, e.g. in their control panel, or when their device goes away; the engine then resets on its own. A device that can't be opened, e.g. because it was unplugged, is lost (lost in audio.get): the engine goes on without it and resets again about every half second until it opens, then restarts it if it ran, so playback goes on where it stopped. audio.setDevice ends the wait. The performance measurement goes on across a reset, which counts as a dropout (see audio.performance); one that loses the device ends it. Sends audio.changed when the device closes, opens or is lost.
 
 Returns:
 
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -309,11 +313,41 @@ Returns:
 - `peak`: number, required
 - `threads`: array of number, required
 
+#### `gnubase.audio.set`
+
+Changes the audio device's settings and keeps the others: the parameters of audio.setDevice except backend and device, e.g. sampleRate, blockSize, clockSource, recordShift or directMonitoring. The device opens again with them, as for audio.reset, and runs on if it ran. If it can't open with them, it opens again with the settings it had and the command fails.
+
+Parameters:
+
+- `blockSize`: integer
+- `captureSeconds`: number
+- `clockSource`: string
+- `directMonitoring`: boolean
+- `input`: object
+- `inputChannels`: integer
+- `inputLatency`: integer
+- `loopback`: boolean
+- `outputChannels`: integer
+- `outputLatency`: integer
+- `recordShift`: integer
+- `sampleRate`: number
+
+Returns:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `lost`: object or null, required
+- `playbackDropouts`: integer, required
+- `position`: integer, required
+- `processing`: object, required
+- `running`: boolean, required
+
 #### `gnubase.audio.setDevice`
 
-Replaces the audio device. backend: one from audio.devices, by default "dummy". device: its id, by default the backend's default device. sampleRate and blockSize: by default the driver's current rate and preferred size. clockSource: a name from the device's clockSources. The device starts stopped at position 0. Another backend's device is closed before the new one opens, since drivers often allow only one; if opening fails, there is no device.
-Recorded input goes where the transport played the device's input + output latency before it arrived, so what is played along to or looped back lines up with what played (recordOffset in audio.get). recordShift (frames, -65536 to 65536) moves recordings that much later, for drivers that report their latency wrong. directMonitoring: the driver monitors audio tracks' inputs itself, without the engine's latency, for tracks that play into an output bus (canMonitorDirectly in audio.devices says which can); their fader and pan set its level and position, automation doesn't reach it.
-The dummy device has no hardware: its output is captured in memory (audio.capture) and it renders offline (audio.render). Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs (inputChannels, outputChannels), 60 s of capture (captureSeconds). Its input is silent, or a built-in generator (see processor.list) with parameters by name. It reports inputLatency and outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that much later, as a cable from each output to the input of the same number would, which needs at least a block. It monitors directly by adding inputs to its outputs.
+Replaces the audio device. backend: one from audio.devices, by default "dummy". device: its id, by default the backend's default device. sampleRate: by default the project's if the device supports it, otherwise the driver's current rate; when the project's sample rate changes, the device follows it where it can. blockSize: by default the driver's preferred size. clockSource: a name from the device's clockSources. The device starts stopped at position 0. Another backend's device is closed before the new one opens, since drivers often allow only one; if opening fails, there is no device.
+Recorded input goes where the transport played the device's input + output latency before it arrived, so what is played along to or looped back lines up with what played (recordOffset in audio.get). recordShift (frames, -65536 to 65536) moves recordings that much later, for drivers that report their latency wrong. captureSeconds (0 to 600, by default 0, or 60 for the dummy device) keeps that much of what the inputs record in memory for audio.captureInput, e.g. for a loopback test. directMonitoring: the driver monitors audio tracks' inputs itself, without the engine's latency, for tracks that play into an output bus (canMonitorDirectly in audio.devices says which can); their fader and pan set its level and position, automation doesn't reach it.
+The dummy device has no hardware: its output is captured in memory (audio.capture) and it renders offline (audio.render). It supports 44100, 48000, 88200, 96000, 176400 and 192000 Hz and opens with any rate from 8000 Hz. Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs (inputChannels, outputChannels), 60 s of capture (captureSeconds, also of its output). Its input is silent, or a built-in generator (see processor.list) with parameters by name. It reports inputLatency and outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that much later, as a cable from each output to the input of the same number would, which needs at least a block. It monitors directly by adding inputs to its outputs.
 
 Parameters:
 
@@ -337,10 +371,29 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
 - `running`: boolean, required
+
+#### `gnubase.audio.setPort`
+
+Changes how a port of the audio device is shown, given by whether it is an input and its system name (name in audio.ports). showAs: the name routing menus show; empty shows the system name. visible: whether routing menus offer it; busses on a hidden port keep it. The settings are kept per device while GNUbase runs. Returns the port as audio.ports lists it, and sends audio.ports as the event audio.portsChanged.
+
+Parameters:
+
+- `input`: boolean, required
+- `name`: string, required
+- `showAs`: string
+- `visible`: boolean
+
+Returns:
+
+- `busses`: array, required
+- `name`: string, required
+- `showAs`: string, required
+- `visible`: boolean, required
 
 #### `gnubase.audio.setProcessing`
 
@@ -356,6 +409,26 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
+- `playbackDropouts`: integer, required
+- `position`: integer, required
+- `processing`: object, required
+- `running`: boolean, required
+
+#### `gnubase.audio.simulateDeviceLoss`
+
+Only the dummy device: simulates its hardware being unplugged (connected false) and its driver asking for a reset, after which the device is lost (see audio.reset), or plugged in again (connected true), after which the engine opens it again on its own. While it is unplugged, audio.setDevice can't open it either.
+
+Parameters:
+
+- `connected`: boolean, required
+
+Returns:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -386,6 +459,7 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -400,6 +474,27 @@ Returns:
 - `capturedFrames`: integer, required
 - `device`: object or null, required
 - `droppedFrames`: integer, required
+- `lost`: object or null, required
+- `playbackDropouts`: integer, required
+- `position`: integer, required
+- `processing`: object, required
+- `running`: boolean, required
+
+#### `gnubase.audio.updateLatency`
+
+Reads the audio device's latencies again and places recordings by the new record offset (see audio.get); a running device stops for that and starts again. Drivers that learn their latency after the device opens, or whose latency changes with the graph, report the change; the engine then runs this on its own. Only for the dummy device, and only while it is stopped: inputLatency and outputLatency (default: as they are) first change what it reports, and with loopback its round trip, as such a driver's would. Sends audio.changed if anything changed.
+
+Parameters:
+
+- `inputLatency`: integer
+- `outputLatency`: integer
+
+Returns:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `lost`: object or null, required
 - `playbackDropouts`: integer, required
 - `position`: integer, required
 - `processing`: object, required
@@ -876,6 +971,158 @@ Only reads; changes nothing.
 Returns:
 
 - `version`: string, required
+
+### event
+
+#### `gnubase.event.copy`
+
+Copies audio events and MIDI parts, moved by delta project samples or by ticks and onto track as event.move moves them. Copies of audio events play the same clip; shared copies of MIDI parts share their notes and controllers with the original, so that editing one edits all. Returns the copies.
+
+Parameters:
+
+- `delta`: integer
+- `events`: array of integer, required
+- `shared`: boolean
+- `ticks`: integer
+- `track`: integer
+
+Returns:
+
+- `events`: array of integer, required
+
+#### `gnubase.event.duplicate`
+
+Duplicates audio events and MIDI parts count times (default 1, at most 1000; Edit > Repeat) one after the other, from the end of the last one, keeping their positions relative to each other; shared makes shared copies of MIDI parts. Returns the copies.
+
+Parameters:
+
+- `count`: integer
+- `events`: array of integer, required
+- `shared`: boolean
+
+Returns:
+
+- `events`: array of integer, required
+
+#### `gnubase.event.fillLoop`
+
+Fills the range from start to end (project samples, default the locators) with copies of audio events and MIDI parts, one after the other on the grid of their length, cutting the last one at end. shared makes shared copies of MIDI parts. Returns the copies.
+
+Parameters:
+
+- `end`: integer
+- `events`: array of integer, required
+- `shared`: boolean
+- `start`: integer
+
+Returns:
+
+- `events`: array of integer, required
+
+#### `gnubase.event.get`
+
+Tells where audio events and MIDI parts are, as the info line shows them: for each its kind (audio or midi), track, name (an audio event's clip's), start, end and length in project samples, start and end in ticks, mute, lock and its shared copies' group (0: none).
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `events`: array of integer, required
+
+Returns:
+
+- `events`: array of object, required
+
+#### `gnubase.event.glue`
+
+Glues audio events or MIDI parts of one track into the first of them. Audio events glue where one continues the other in the same clip, as after a split; MIDI parts become one part from the first start to the last end, with all their notes and controllers. Returns the event.
+
+Parameters:
+
+- `events`: array of integer, required
+
+Returns:
+
+- `event`: integer, required
+
+#### `gnubase.event.move`
+
+Moves audio events and MIDI parts (events, by id) by delta project samples or by ticks, which are exact on musical tracks, keeping their positions relative to each other, and onto track if given, which must be of their type. Locked events don't move. Returns the events.
+
+Parameters:
+
+- `delta`: integer
+- `events`: array of integer, required
+- `ticks`: integer
+- `track`: integer
+
+Returns:
+
+- `events`: array of integer, required
+
+#### `gnubase.event.remove`
+
+Removes audio events and MIDI parts. Locked ones can't be removed.
+
+Parameters:
+
+- `events`: array of integer, required
+
+#### `gnubase.event.resize`
+
+Moves the start or the end (edge) of audio events and MIDI parts by delta project samples or by ticks, within the clip and at least a sample frame or a tick long. normal sizing (the default) reveals or hides content; moveContents moves the content with the edge. A MIDI part's notes and controllers that end up before its start are removed. Locked events don't change. Returns the events.
+
+Parameters:
+
+- `delta`: integer
+- `edge`: one of "start" | "end", required
+- `events`: array of integer, required
+- `mode`: one of "normal" | "moveContents"
+- `ticks`: integer
+
+Returns:
+
+- `events`: array of integer, required
+
+#### `gnubase.event.set`
+
+Mutes or unmutes and locks or unlocks audio events and MIDI parts. Muted ones don't play; locked ones can't be moved, resized, split, glued or removed by the event commands. Returns the events.
+
+Parameters:
+
+- `events`: array of integer, required
+- `lock`: boolean
+- `mute`: boolean
+
+Returns:
+
+- `events`: array of integer, required
+
+#### `gnubase.event.split`
+
+Splits audio events and MIDI parts at positions (project samples): events, or without it every unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with splitNotes are cut in two. Returns the new events after the splits.
+
+Parameters:
+
+- `events`: array of integer
+- `positions`: array of integer, required
+- `splitNotes`: boolean
+
+Returns:
+
+- `events`: array of integer, required
+
+#### `gnubase.event.toRealCopy`
+
+Converts shared copies to real copies: a MIDI part gets notes and controllers of its own, an audio event a clip of its own. Returns the events.
+
+Parameters:
+
+- `events`: array of integer, required
+
+Returns:
+
+- `events`: array of integer, required
 
 ### graph
 

@@ -8,6 +8,10 @@
 #ifdef __APPLE__
 #include "platform/midi/coremidi.h"
 #endif
+#ifdef __linux__
+#include "platform/midi/alsaseq.h"
+#include "platform/midi/jackmidi.h"
+#endif
 
 namespace gnubase::midi
 {
@@ -19,6 +23,10 @@ namespace gnubase::midi
 #endif
 #ifdef __APPLE__
 		backends.push_back(makeCoreMidiBackend());
+#endif
+#ifdef __linux__
+		backends.push_back(makeAlsaSeqBackend());
+		backends.push_back(makeJackMidiBackend());
 #endif
 		backends.push_back(std::make_unique<DummyBackend>());
 		return backends;

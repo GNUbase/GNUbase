@@ -49,6 +49,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	# clang's -Wpedantic reports at the call site.
 	set_source_files_properties(audio/pipewire.cpp PROPERTIES COMPILE_OPTIONS
 		$<$<CXX_COMPILER_ID:Clang>:-Wno-gnu-statement-expression-from-macro-expansion>)
+	# libjack's headers only: the JACK backend loads libjack when it is first used, so GNUbase runs without it.
+	pkg_check_modules(JACK REQUIRED jack)
+	target_sources(gnubase-platform PRIVATE
+		audio/jack.cpp audio/jack.h
+		jacklibrary.cpp jacklibrary.h
+		midi/jackmidi.cpp midi/jackmidi.h)
+	target_include_directories(gnubase-platform SYSTEM PRIVATE ${JACK_INCLUDE_DIRS})
+	target_link_libraries(gnubase-platform PRIVATE ${CMAKE_DL_LIBS})
+	pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
+	target_sources(gnubase-platform PRIVATE
+		midi/alsaseq.cpp midi/alsaseq.h)
+	target_link_libraries(gnubase-platform PRIVATE PkgConfig::ALSA)
 endif()
 if(APPLE)
 	target_sources(gnubase-platform PRIVATE

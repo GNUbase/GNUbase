@@ -446,6 +446,16 @@
 		border-color: #0969da;
 		background-color: #0969da26;
 	}
+	.event-display event-lanes.muted-events
+	{
+		color: #d5d8dc;
+		stroke-color: #a2aab4;
+	}
+	.event-display event-lanes.selected-events
+	{
+		color: #5094e4;
+		stroke-color: #17202d;
+	}
 	.event-display ruler
 	{
 		background-color: #ffffff;
