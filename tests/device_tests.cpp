@@ -25,6 +25,7 @@
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <array>
@@ -526,35 +527,68 @@ namespace
 		return backend;
 	}
 
-	// Runs PipeWire's command line tool. True if it succeeds.
-	bool pwCli(const std::vector<std::string>& arguments)
+	// Runs one of PipeWire's command line tools (pw-cli, pw-metadata). True if it succeeds.
+	bool pw(const std::string& tool, const std::vector<std::string>& arguments)
 	{
 		gnubase::platform::ChildProcess process =
-			gnubase::platform::ChildProcess::start("/usr/bin/pw-cli", arguments, "/dev/null");
+			gnubase::platform::ChildProcess::start("/usr/bin/" + tool, arguments, "/dev/null");
 		return process.wait(std::chrono::seconds(10)) == 0;
+	}
+
+	// True once done() holds, false if it doesn't within five seconds.
+	bool eventually(const std::function<bool()>& done)
+	{
+		for (int i = 0; i < 100 && !done(); ++i)
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		return done();
 	}
 
 	// Removes a node when it goes out of scope, also when a check fails.
 	struct NodeRemover
 	{
-		~NodeRemover() { pwCli({"destroy", name}); } // fails if it was removed already
+		~NodeRemover() { pw("pw-cli", {"destroy", name}); } // fails if it was removed already
 
 		std::string name;
 	};
 
+	// Forces a setting of the graph (clock.force-rate, clock.force-quantum) as another client would, and clears it
+	// again when it goes out of scope, also when a check fails.
+	class ForcedSetting
+	{
+	public:
+		ForcedSetting(std::string key, uint32_t value) : m_key(std::move(key))
+		{
+			REQUIRE(pw("pw-metadata", {"-n", "settings", "0", m_key, std::to_string(value)}));
+		}
+		~ForcedSetting() { pw("pw-metadata", {"-n", "settings", "0", m_key, "0"}); }
+		ForcedSetting(const ForcedSetting&) = delete;
+		ForcedSetting& operator=(const ForcedSetting&) = delete;
+
+	private:
+		std::string m_key;
+	};
+
+	// The tests that change the graph need PipeWire's command line tools, which come with the daemon.
+	bool havePipeWireTools()
+	{
+		if (std::filesystem::exists("/usr/bin/pw-cli") && std::filesystem::exists("/usr/bin/pw-metadata"))
+			return true;
+		WARN("no pw-cli and pw-metadata to change the graph with");
+		return false;
+	}
+
 	// In the contract's test case, so that the contract never meets the sink that comes and goes when ctest runs
-	// tests in parallel.
+	// tests in parallel. A device asks for a reset when the sink gets other ports, e.g. for another channel count,
+	// and opens again with those; then when the sink goes away.
 	void checkUnplug(const std::unique_ptr<Backend>& backend)
 	{
-		if (!std::filesystem::exists("/usr/bin/pw-cli"))
-		{
-			WARN("no pw-cli to add and remove a sink with");
+		if (!havePipeWireTools())
 			return;
-		}
 		const std::string sink = "gnubase-test-unplug";
-		REQUIRE(pwCli({"create-node", "adapter",
-			"{ factory.name=support.null-audio-sink node.name=" + sink +
-				" media.class=Audio/Sink audio.position=[ FL FR ] object.linger=true }"}));
+		REQUIRE(pw("pw-cli",
+			{"create-node", "adapter",
+				"{ factory.name=support.null-audio-sink node.name=" + sink +
+					" media.class=Audio/Sink audio.position=[ FL FR ] object.linger=true }"}));
 		const NodeRemover remover{sink};
 		const auto listed = [&backend, &sink]
 		{
@@ -562,28 +596,79 @@ namespace
 			return std::any_of(
 				devices.begin(), devices.end(), [&sink](const DeviceInfo& device) { return device.id == sink; });
 		};
-		for (int i = 0; i < 100 && !listed(); ++i)
-			std::this_thread::sleep_for(std::chrono::milliseconds(50));
-		REQUIRE(listed()); // with ports, which the session manager adds
+		REQUIRE(eventually(listed)); // with ports, which the session manager adds
 		std::unique_ptr<Device> device = backend->open(config(sink));
+		CHECK(device->format().outputChannels == 2);
 		std::atomic<int> resets{0};
 		device->onReset([&resets] { ++resets; });
-		REQUIRE(pwCli({"destroy", sink}));
-		for (int i = 0; i < 100 && resets == 0; ++i)
-			std::this_thread::sleep_for(std::chrono::milliseconds(50));
-		CHECK(resets > 0);
+		REQUIRE(pw("pw-cli",
+			{"set-param", sink, "PortConfig",
+				"{ direction: Input, mode: dsp, format: { mediaType: audio, mediaSubtype: raw, format: F32P, rate: "
+				"48000, "
+				"channels: 1, position: [ MONO ] } }"}));
+		CHECK(eventually([&resets] { return resets > 0; }));
+		device.reset();
+
+		device = backend->open(config(sink));
+		CHECK(device->info().outputs == std::vector<std::string>{"MONO"});
+		resets = 0;
+		device->onReset([&resets] { ++resets; });
+		REQUIRE(pw("pw-cli", {"destroy", sink}));
+		CHECK(eventually([&resets] { return resets > 0; }));
 		device.reset();
 		CHECK(!listed());
 	}
 }
 
-TEST_CASE("the PipeWire backend keeps the device contract and asks for a reset when a sink goes away", "[integration]")
+TEST_CASE("the PipeWire backend keeps the device contract and asks for a reset when a sink's ports change or it goes "
+		  "away",
+	"[integration]")
 {
 	const std::unique_ptr<Backend> backend = pipeWireOrSkip();
 	if (!backend)
 		SKIP("no PipeWire daemon runs here");
 	checkDeviceContract(*backend);
 	checkUnplug(backend);
+}
+
+// While another client forces the graph to another rate, a device would only play silence: it asks for a reset, and
+// opens at its rate again once the rate is no longer forced. Until then the listing has the forced rate only, and
+// opening at another one says why it can't.
+TEST_CASE("a PipeWire device asks for a reset when another client forces the graph to another rate", "[integration]")
+{
+	const std::unique_ptr<Backend> backend = pipeWireOrSkip();
+	if (!backend)
+		SKIP("no PipeWire daemon runs here");
+	if (!havePipeWireTools())
+		return;
+	std::unique_ptr<Device> device = backend->open(config("default"));
+	const double rate = device->format().sampleRate;
+	const uint32_t other = rate != 44100.0 ? 44100 : 48000;
+	std::atomic<int> resets{0};
+	device->onReset([&resets] { ++resets; });
+	ContractCallback callback(device->format());
+	device->start(callback);
+	REQUIRE(callback.waitFor(8));
+	{
+		const ForcedSetting forced("clock.force-rate", other);
+		CHECK(eventually([&resets] { return resets > 0; }));
+		device.reset();
+		CHECK(backend->devices().front().sampleRates == std::vector<double>{static_cast<double>(other)});
+		CHECK_THROWS_WITH(backend->open(config("default", rate)), Catch::Matchers::ContainsSubstring("forces"));
+	}
+	CHECK(eventually(
+		[&backend, rate]
+		{
+			try
+			{
+				return backend->open(config("default", rate))->format().sampleRate == rate;
+			}
+			catch (const DeviceError&)
+			{
+				return false;
+			}
+		}));
+	CHECK(callback.violations() == 0);
 }
 
 // tools/start-pipewire.sh adds the loopback: a null sink of media class Audio/Duplex, a device of its own

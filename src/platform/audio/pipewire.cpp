@@ -36,6 +36,7 @@ namespace gnubase::audio
 	{
 		constexpr std::array<uint32_t, 7> g_blockSizes{32, 64, 128, 256, 512, 1024, 2048};
 		constexpr auto g_timeout = std::chrono::seconds(5); // for the daemon's answers
+		constexpr double g_offRateSeconds = 0.5;            // at another rate for this long, a device asks for a reset
 
 		struct Node
 		{
@@ -238,15 +239,21 @@ namespace gnubase::audio
 			const std::string& defaultSink() const { return m_defaultSink; }
 			const std::string& defaultSource() const { return m_defaultSource; }
 
-			// The rate the graph runs at when nobody asks for another, and the rates it may switch to.
+			// The rate another client forces the graph to run at (clock.force-rate), or 0.
+			uint32_t forcedRate() const { return number(setting("clock.force-rate"), 0); }
+
+			// The rate the graph runs at when nobody asks for another, and the rates it may switch to: only the forced
+			// one while a rate is forced.
 			double rate() const
 			{
-				const uint32_t forced = number(setting("clock.force-rate"), 0);
+				const uint32_t forced = forcedRate();
 				return forced != 0 ? forced : number(setting("clock.rate"), 48000);
 			}
 
 			std::vector<double> rates() const
 			{
+				if (forcedRate() != 0)
+					return {rate()};
 				std::vector<double> result = numbersIn(setting("clock.allowed-rates"));
 				result.push_back(rate());
 				std::sort(result.begin(), result.end());
@@ -260,11 +267,11 @@ namespace gnubase::audio
 				return forced != 0 ? forced : number(setting("clock.quantum"), 1024);
 			}
 
-			// Called on the loop thread when one of these nodes goes away, when the daemon does and, if followsDefault,
-			// when the default sink or source changes.
-			void watch(std::vector<uint32_t> nodes, bool followsDefault, std::function<void()> changed)
+			// Called on the loop thread when one of these globals (nodes, ports) goes away, when the daemon does and,
+			// if followsDefault, when the default sink or source changes.
+			void watch(std::vector<uint32_t> globals, bool followsDefault, std::function<void()> changed)
 			{
-				m_watched = std::move(nodes);
+				m_watched = std::move(globals);
 				m_followsDefault = followsDefault;
 				m_changed = std::move(changed);
 			}
@@ -598,11 +605,17 @@ namespace gnubase::audio
 					destroyFilter();
 					throw;
 				}
-				// The node is inactive until start, so process() sees the event once it runs.
-				m_latencyEvent = pw_loop_add_event(
-					pw_thread_loop_get_loop(m_connection.loop()), &PipeWireDevice::onLatencyEvent, this);
-				m_connection.watch(
-					{endpoints.sink, endpoints.source}, m_info.id == "default", [this] { requestReset(); });
+				// The node is inactive until start, so process() sees the events once it runs.
+				pw_loop* loop = pw_thread_loop_get_loop(m_connection.loop());
+				m_latencyEvent = pw_loop_add_event(loop, &PipeWireDevice::onLatencyEvent, this);
+				m_resetEvent = pw_loop_add_event(loop, &PipeWireDevice::onResetEvent, this);
+				// The linked ports too: the session manager may give a sink other ports, e.g. for another channel
+				// count, which unlinks the node from it.
+				std::vector<uint32_t> watched{endpoints.sink, endpoints.source};
+				for (const auto* ports : {&playback, &capture})
+					for (const auto& entry : *ports)
+						watched.push_back(entry.first);
+				m_connection.watch(std::move(watched), m_info.id == "default", [this] { requestReset(); });
 			}
 
 			~PipeWireDevice() override
@@ -611,8 +624,9 @@ namespace gnubase::audio
 				const Connection::Lock lock(m_connection);
 				m_connection.watch({}, false, nullptr);
 				destroyFilter();
-				if (m_latencyEvent != nullptr)
-					pw_loop_destroy_source(pw_thread_loop_get_loop(m_connection.loop()), m_latencyEvent);
+				for (spa_source* event : {m_latencyEvent, m_resetEvent})
+					if (event != nullptr)
+						pw_loop_destroy_source(pw_thread_loop_get_loop(m_connection.loop()), event);
 			}
 
 			const DeviceFormat& format() const override { return m_format; }
@@ -788,18 +802,27 @@ namespace gnubase::audio
 				m_busy.fetch_add(1);
 				AudioCallback* callback = m_callback.load();
 				// The graph runs at another rate if another client forced one: then the device plays silence rather
-				// than at the wrong speed.
+				// than at the wrong speed, and asks for a reset if that lasts, so that the engine opens it again and
+				// learns why it can't play (open refuses a rate while another is forced).
 				const bool rate = static_cast<double>(position->clock.rate.denom) == m_format.sampleRate &&
 					position->clock.rate.num == 1;
 				if (callback != nullptr && rate)
 				{
+					m_offRateFrames = 0;
 					run(*callback, frames);
 				}
-				else if (callback != nullptr && !m_rateWarned.exchange(true))
+				else if (callback != nullptr)
 				{
-					const rt::ScopedRealtimeContext realtime;
-					logging::warning("PipeWire runs at {} Hz, not at the device's {} Hz: playing silence",
-						position->clock.rate.denom, m_format.sampleRate);
+					const auto limit = static_cast<uint64_t>(m_format.sampleRate * g_offRateSeconds);
+					if (m_offRateFrames < limit && m_offRateFrames + frames >= limit && m_resetEvent != nullptr)
+						pw_loop_signal_event(pw_thread_loop_get_loop(m_connection.loop()), m_resetEvent);
+					m_offRateFrames += frames;
+					if (!m_rateWarned.exchange(true))
+					{
+						const rt::ScopedRealtimeContext realtime;
+						logging::warning("PipeWire runs at {} Hz, not at the device's {} Hz: playing silence",
+							position->clock.rate.denom, m_format.sampleRate);
+					}
 				}
 				m_busy.fetch_sub(1);
 			}
@@ -861,6 +884,11 @@ namespace gnubase::audio
 				static_cast<PipeWireDevice*>(data)->reportLatencyChange();
 			}
 
+			static void onResetEvent(void* data, uint64_t /*count*/)
+			{
+				static_cast<PipeWireDevice*>(data)->requestReset();
+			}
+
 			static void onStateChanged(void* data, pw_filter_state /*old*/, pw_filter_state state, const char* error)
 			{
 				auto& self = *static_cast<PipeWireDevice*>(data);
@@ -898,6 +926,7 @@ namespace gnubase::audio
 			std::optional<spa_latency_info> m_playbackLatency; // with the loop locked
 			std::optional<spa_latency_info> m_captureLatency;
 			spa_source* m_latencyEvent = nullptr; // process() signals it when the quantum changes
+			spa_source* m_resetEvent = nullptr;   // and this one when the graph stays at another rate
 			bool m_running = false;
 
 			// Audio thread memory, allocated when opened.
@@ -910,6 +939,7 @@ namespace gnubase::audio
 			MidiBuffer m_midiIn;
 			MidiBuffer m_midiOut;
 			HostTime m_lastTime = 0;
+			uint64_t m_offRateFrames = 0; // processed in a row while the graph runs at another rate
 
 			std::atomic<AudioCallback*> m_callback{nullptr};
 			std::atomic<int> m_busy{0};
@@ -985,6 +1015,9 @@ namespace gnubase::audio
 				}
 				DeviceInfo info = makeInfo(*connection, endpoints);
 				const double rate = config.sampleRate != 0.0 ? config.sampleRate : connection->rate();
+				if (const uint32_t forced = connection->forcedRate(); forced != 0 && rate != forced)
+					throw DeviceError("PipeWire runs at " + std::to_string(forced) +
+						" Hz, which another client forces (clock.force-rate)");
 				if (std::find(info.sampleRates.begin(), info.sampleRates.end(), rate) == info.sampleRates.end())
 					throw DeviceError("PipeWire doesn't run at " + std::to_string(std::lround(rate)) + " Hz");
 				lock.reset(); // the thread loop's lock nests, but waiting in it would keep the outer level locked
