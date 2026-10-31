@@ -140,10 +140,12 @@ namespace gnubase::audio
 				m_openedBufferSize = jack.getBufferSize(handle);
 				m_openedLatency = JackDevice::latency(); // not virtually, as in the destructor
 				m_watcher = std::thread([this] { watch(); });
+				++g_jackAudioDevicesOpen;
 			}
 
 			~JackDevice() override
 			{
+				--g_jackAudioDevicesOpen;
 				JackDevice::stop(); // not virtually: a derived device would be gone already
 				m_watching = false;
 				m_watcher.join();

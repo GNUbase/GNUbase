@@ -13,6 +13,7 @@
 #include <CoreMIDI/CoreMIDI.h>
 #endif
 #ifdef __linux__
+#include "platform/audio/jack.h"
 #include "platform/jacklibrary.h"
 #include "platform/midi/alsaseq.h"
 #include "platform/midi/jackmidi.h"
@@ -565,6 +566,7 @@ TEST_CASE("the JACK MIDI backend keeps the port contract and notices ports comin
 			FAIL("no JACK server runs here");
 		SKIP("no JACK server runs here");
 	}
+	const std::unique_ptr<gnubase::audio::Device> device = gnubase::audio::makeJackBackend()->open({});
 	const std::unique_ptr<Backend> backend = makeJackMidiBackend();
 	CHECK(backend->name() == "jack");
 	std::atomic<int> changes{0};
@@ -580,6 +582,38 @@ TEST_CASE("the JACK MIDI backend keeps the port contract and notices ports comin
 	REQUIRE(loopback);
 	REQUIRE(eventually([&] { return hasPort(*backend, in) && hasPort(*backend, out); }));
 	checkContract(*backend, in, out);
+}
+
+// Where libjack is PipeWire's, a server always answers, and its MIDI ports are the ALSA backend's too: JACK MIDI is on
+// only while a JACK audio device is open.
+TEST_CASE("the JACK MIDI backend has ports only while a JACK audio device is open", "[integration]")
+{
+	const std::unique_ptr<JackLoopback> loopback = JackLoopback::start();
+	if (!loopback)
+	{
+		if (required("GNUBASE_REQUIRE_JACK"))
+			FAIL("no JACK server runs here");
+		SKIP("no JACK server runs here");
+	}
+	const std::unique_ptr<Backend> backend = makeJackMidiBackend();
+	std::atomic<int> changes{0};
+	backend->onPortsChanged([&changes] { ++changes; });
+	const std::string in = "gnubase-test-midi:in";
+	CHECK(backend->ports().empty());
+	Inbox inbox;
+	CHECK_THROWS_AS(backend->openInput(in, inbox.receiver()), std::runtime_error);
+	CHECK_THROWS_AS(backend->openOutput(in), std::runtime_error);
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	CHECK(changes == 0);
+
+	std::unique_ptr<gnubase::audio::Device> device = gnubase::audio::makeJackBackend()->open({});
+	CHECK(hasPort(*backend, in));
+	CHECK(eventually([&changes] { return changes > 0; }));
+
+	const int before = changes;
+	device.reset();
+	CHECK(backend->ports().empty());
+	CHECK(eventually([&] { return changes > before; }));
 }
 
 TEST_CASE("the JACK MIDI backend has no ports without libjack", "[unit]")

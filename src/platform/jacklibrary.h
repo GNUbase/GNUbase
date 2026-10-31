@@ -4,10 +4,15 @@
 #include <jack/jack.h>
 #include <jack/midiport.h>
 
+#include <atomic>
 #include <string>
 
 namespace gnubase
 {
+	// How many of GNUbase's JACK audio devices are open in this process. JACK MIDI has ports only while one is (#42):
+	// where libjack is PipeWire's, a server always answers, and its MIDI ports are the ALSA backend's too.
+	inline std::atomic<int> g_jackAudioDevicesOpen{0};
+
 	// libjack's functions, for the JACK audio and MIDI backends. libjack is loaded when it is first used, so GNUbase
 	// runs where it isn't installed, once per library and never unloaded: libjack keeps threads and globals of its
 	// own. Its messages go to the debug log, not to stderr: it explains at length that no server runs.

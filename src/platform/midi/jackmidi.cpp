@@ -303,7 +303,8 @@ namespace gnubase::midi
 			size_t m_slot;
 		};
 
-		// A session lasts until the server goes away; open ports keep theirs, and the next listing starts another.
+		// JACK MIDI is on only while one of GNUbase's JACK audio devices is open. A session lasts until the server goes
+		// away or the last JACK audio device closes; open ports keep theirs, and the next listing starts another.
 		class JackMidiBackend : public Backend
 		{
 		public:
@@ -331,7 +332,7 @@ namespace gnubase::midi
 			{
 				std::shared_ptr<Session> current = session();
 				if (!current)
-					throw std::runtime_error("no MIDI input " + id + ": no JACK server runs");
+					throw std::runtime_error("no MIDI input " + id + ": JACK MIDI needs an open JACK audio device");
 				const size_t slot = current->open(id, true, std::move(receiver));
 				return std::make_unique<JackMidiInput>(std::move(current), slot);
 			}
@@ -340,16 +341,25 @@ namespace gnubase::midi
 			{
 				std::shared_ptr<Session> current = session();
 				if (!current)
-					throw std::runtime_error("no MIDI output " + id + ": no JACK server runs");
+					throw std::runtime_error("no MIDI output " + id + ": JACK MIDI needs an open JACK audio device");
 				const size_t slot = current->open(id, false, nullptr);
 				return std::make_unique<JackMidiOutput>(std::move(current), slot);
 			}
 
 		private:
-			// The running session, or null without libjack or a server: JACK is optional, so that isn't an error.
+			// The running session, or null without an open JACK audio device, libjack or a server: JACK is optional, so
+			// that isn't an error.
 			std::shared_ptr<Session> session()
 			{
 				const std::scoped_lock lock(m_mutex);
+				const bool on = g_jackAudioDevicesOpen > 0;
+				if (!m_watcher.joinable())
+					m_watcher = std::thread([this, on] { watch(on); });
+				if (!on)
+				{
+					m_session.reset();
+					return nullptr;
+				}
 				if (m_session && !m_session->shutDown())
 					return m_session;
 				m_session.reset();
@@ -362,21 +372,24 @@ namespace gnubase::midi
 					logging::debug("No JACK MIDI ports: {}", error.what());
 					return nullptr;
 				}
-				if (!m_watcher.joinable())
-					m_watcher = std::thread([this] { watch(); });
 				return m_session;
 			}
 
-			// Reports what the session's callbacks noted, from a thread that may call into the engine.
-			void watch()
+			// Reports what the session's callbacks noted, and JACK audio devices opening or closing since the first
+			// listing, which found them as wasOn says, from a thread that may call into the engine.
+			void watch(bool wasOn)
 			{
 				while (m_watching)
 				{
 					std::this_thread::sleep_for(std::chrono::milliseconds(20));
-					bool changed = false;
+					const bool on = g_jackAudioDevicesOpen > 0;
+					bool changed = on != wasOn;
+					wasOn = on;
 					{
 						const std::scoped_lock lock(m_mutex);
-						changed = m_session && m_session->takeChange();
+						if (!on)
+							m_session.reset(); // leaves the graph once open ports are closed too
+						changed = (m_session && m_session->takeChange()) || changed;
 					}
 					if (changed)
 						portsChanged();
