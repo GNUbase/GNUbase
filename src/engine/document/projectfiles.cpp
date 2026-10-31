@@ -6,6 +6,7 @@
 #include "engine/document/projectmodel.h"
 #include "engine/media/backup.h"
 #include "engine/settings/store.h"
+#include "platform/log.h"
 
 #include <algorithm>
 #include <chrono>
@@ -136,17 +137,26 @@ namespace gnubase::engine
 		context.emit("project.saved", {{"file", m_file}});
 	}
 
+	// Bookkeeping only: the project was saved or opened already, so a recent list that can't be written doesn't make
+	// the command fail.
 	void ProjectModel::remember(const std::string& file)
 	{
-		m_recent->modify(g_recentKey,
-			[&file](const Json& value)
-			{
-				Json files = Json::array({file});
-				for (const Json& other : value)
-					if (other != file && files.size() < g_recentCount)
-						files.push_back(other);
-				return files;
-			});
+		try
+		{
+			m_recent->modify(g_recentKey,
+				[&file](const Json& value)
+				{
+					Json files = Json::array({file});
+					for (const Json& other : value)
+						if (other != file && files.size() < g_recentCount)
+							files.push_back(other);
+					return files;
+				});
+		}
+		catch (const settings::SettingsError& error)
+		{
+			logging::warning("Cannot add {} to the recent projects: {}", file, error.what());
+		}
 	}
 
 	Project ProjectModel::loadTemplate(const std::string& name) const
