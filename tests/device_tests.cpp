@@ -31,6 +31,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -710,7 +711,10 @@ namespace
 			const auto add = function<decltype(&jack_port_register)>("jack_port_register");
 			m_close = function<decltype(&jack_client_close)>("jack_client_close");
 			m_bufferSize = function<decltype(&jack_get_buffer_size)>("jack_get_buffer_size");
+			m_setBufferSize = function<decltype(&jack_set_buffer_size)>("jack_set_buffer_size");
 			m_buffer = function<decltype(&jack_port_get_buffer)>("jack_port_get_buffer");
+			m_cycleTimes = function<decltype(&jack_get_cycle_times)>("jack_get_cycle_times");
+			m_time = function<decltype(&jack_get_time)>("jack_get_time");
 			m_client = open(name, JackNoStartServer, nullptr);
 			REQUIRE(m_client != nullptr);
 			size_t i = 0;
@@ -736,6 +740,23 @@ namespace
 		// The server's buffer size, as this client sees it.
 		uint32_t bufferSize() const { return m_bufferSize(m_client); }
 
+		// Asks the server for a buffer size, as another application would. 0 if it takes it.
+		int setBufferSize(uint32_t frames) const { return m_setBufferSize(m_client, frames); }
+
+		// The start of the server's current cycle on the host clock, or 0 if the server doesn't tell. A cycle is every
+		// client's, so this works on another client's process thread too (jackd).
+		gnubase::HostTime cycleStart() const
+		{
+			jack_nframes_t frames = 0;
+			jack_time_t current = 0;
+			jack_time_t next = 0;
+			float period = 0.0f;
+			if (m_cycleTimes(m_client, &frames, &current, &next, &period) != 0)
+				return 0;
+			const gnubase::HostTime now = gnubase::hostTime();
+			return now - (static_cast<gnubase::HostTime>(m_time() - current) * 1000);
+		}
+
 	private:
 		template <typename Function> Function function(const char* name)
 		{
@@ -759,8 +780,62 @@ namespace
 		std::array<jack_port_t*, 4> m_ports{}; // capture, then playback
 		decltype(&jack_client_close) m_close = nullptr;
 		decltype(&jack_get_buffer_size) m_bufferSize = nullptr;
+		decltype(&jack_set_buffer_size) m_setBufferSize = nullptr;
 		decltype(&jack_port_get_buffer) m_buffer = nullptr;
+		decltype(&jack_get_cycle_times) m_cycleTimes = nullptr;
+		decltype(&jack_get_time) m_time = nullptr;
 	};
+
+	// Counts the blocks, a cycle long, that start within 20 µs of the start of the server's cycle: the two clocks are
+	// read at slightly different times, and a thread may be preempted between the two reads now and then.
+	class CycleCallback : public AudioCallback
+	{
+	public:
+		explicit CycleCallback(const TestClient& clock) : m_clock(clock) {}
+
+		void process(const DeviceBlock& block) noexcept override
+		{
+			const gnubase::HostTime start = m_clock.cycleStart();
+			if (start == 0)
+				return;
+			if (std::llabs(block.time - start) < 20000)
+				m_close.fetch_add(1);
+			m_blocks.fetch_add(1);
+		}
+
+		int blocks() const { return m_blocks.load(); }
+		int close() const { return m_close.load(); }
+
+	private:
+		const TestClient& m_clock;
+		std::atomic<int> m_blocks{0};
+		std::atomic<int> m_close{0};
+	};
+
+	// Sets one of PipeWire's settings, e.g. clock.force-rate. True if it succeeds.
+	bool pwSetting(const std::string& key, const std::string& value)
+	{
+		gnubase::platform::ChildProcess process = gnubase::platform::ChildProcess::start(
+			"/usr/bin/pw-metadata", {"-n", "settings", "0", key, value}, "/dev/null");
+		return process.wait(std::chrono::seconds(10)) == 0;
+	}
+
+	// The graph's forced quantum (PipeWire's setting clock.force-quantum), 0 if none is forced.
+	uint32_t forcedQuantum()
+	{
+		// NOLINTNEXTLINE(bugprone-command-processor): a constant command, whose output ChildProcess can't capture
+		FILE* pipe = popen("pw-metadata -n settings 0 clock.force-quantum 2>/dev/null", "r");
+		if (pipe == nullptr)
+			return 0;
+		std::string output;
+		std::array<char, 256> chunk{};
+		while (fgets(chunk.data(), static_cast<int>(chunk.size()), pipe) != nullptr)
+			output += chunk.data();
+		pclose(pipe);
+		const std::string key = "key:'clock.force-quantum' value:'";
+		const size_t at = output.find(key);
+		return at == std::string::npos ? 0 : static_cast<uint32_t>(std::strtoul(&output[at + key.size()], nullptr, 10));
+	}
 
 	// Takes longer than a cycle once, a few blocks in, so that the server reports an xrun.
 	class LateCallback : public AudioCallback
@@ -812,39 +887,122 @@ namespace
 		REQUIRE(callback.waitFor(8));
 		std::this_thread::sleep_for(std::chrono::milliseconds(300));
 		CHECK(resets == 0);
-		if (!bufferSizeChanges)
-			return;
-
-		const std::vector<uint32_t> sizes = device->info().blockSizes;
-		const uint32_t other = sizes.back() != device->format().blockSize ? sizes.back() : sizes.front();
+		if (bufferSizeChanges)
 		{
-			const std::unique_ptr<Device> changer = backend.open(config("default", 0.0, other));
-			CHECK(changer->format().blockSize == other);
-			CHECK(waitUntil([&resets] { return resets > 0; }));
-			CHECK(callback.waitFor(4));
+			const std::vector<uint32_t> sizes = device->info().blockSizes;
+			const uint32_t other = sizes.back() != device->format().blockSize ? sizes.back() : sizes.front();
+			{
+				const std::unique_ptr<Device> changer = backend.open(config("default", 0.0, other));
+				CHECK(changer->format().blockSize == other);
+				CHECK(waitUntil([&resets] { return resets > 0; }));
+				CHECK(callback.waitFor(4));
+			}
+			CHECK(callback.violations() == 0);
 		}
-		CHECK(callback.violations() == 0);
+		device->stop(); // before the callback goes
 	}
 
 	// A device opened at a block size other than the server's asks the server for it and doesn't reset itself once the
 	// server follows, which PipeWire's JACK layer does a few cycles late, not even when the graph changes afterwards:
-	// the latency, which may follow the buffer size, is the device's new baseline then.
-	void checkJackOwnBufferSize(Backend& backend, const std::string& library)
+	// the latency, which may follow the buffer size, is the device's new baseline then. Under PipeWire, where the
+	// request forces the graph's quantum, closing leaves none forced (#389).
+	void checkJackOwnBufferSize(Backend& backend, const std::string& library, bool pipeWire)
 	{
 		auto other = std::make_unique<TestClient>(library, "gnubase-test-client", false);
 		const uint32_t own = other->bufferSize() != 512 ? 512 : 1024;
-		const std::unique_ptr<Device> device = backend.open(config("default", 0.0, own));
-		std::atomic<int> resets{0};
-		device->onReset([&resets] { ++resets; });
+		{
+			const std::unique_ptr<Device> device = backend.open(config("default", 0.0, own));
+			std::atomic<int> resets{0};
+			device->onReset([&resets] { ++resets; });
+			ContractCallback callback(device->format());
+			device->start(callback);
+			REQUIRE(callback.waitFor(8));
+			REQUIRE(waitUntil([&other, own] { return other->bufferSize() == own; }));
+			if (pipeWire)
+				CHECK(forcedQuantum() == own);
+			std::this_thread::sleep_for(std::chrono::milliseconds(100)); // the device's watcher sees the new size
+			other.reset(); // removes the client's ports: the graph changes
+			std::this_thread::sleep_for(std::chrono::milliseconds(300));
+			CHECK(resets == 0);
+			CHECK(callback.violations() == 0);
+			device->stop();
+		}
+		if (pipeWire)
+			CHECK(waitUntil([] { return forcedQuantum() == 0; }));
+	}
+
+	// Closing gives the server its buffer size back only while it still runs at the size the device asked for: a size
+	// another client set meanwhile stays (#371).
+	void checkJackOtherClientsBufferSize(Backend& backend, const std::string& library)
+	{
+		const TestClient other(library, "gnubase-test-client", false);
+		const uint32_t found = other.bufferSize();
+		const uint32_t own = found != 512 ? 512 : 1024;
+		const uint32_t theirs = found != 128 ? 128 : 64;
+		{
+			const std::unique_ptr<Device> device = backend.open(config("default", 0.0, own));
+			REQUIRE(waitUntil([&other, own] { return other.bufferSize() == own; }));
+			REQUIRE(other.setBufferSize(theirs) == 0);
+			REQUIRE(waitUntil([&other, theirs] { return other.bufferSize() == theirs; }));
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		CHECK(other.bufferSize() == theirs);
+		CHECK(other.setBufferSize(found) == 0);
+	}
+
+	// A reset the device finds before it has a handler, as between the engine opening it and reading its info and
+	// latency, comes once the handler is set (#371).
+	void checkJackResetBeforeHandler(Backend& backend, std::unique_ptr<TestClient> hardware)
+	{
+		const std::unique_ptr<Device> device = backend.open(config("default"));
 		ContractCallback callback(device->format());
 		device->start(callback);
-		REQUIRE(callback.waitFor(8));
-		REQUIRE(waitUntil([&other, own] { return other->bufferSize() == own; }));
-		std::this_thread::sleep_for(std::chrono::milliseconds(100)); // the device's watcher sees the new size
-		other.reset();                                               // removes the client's ports: the graph changes
-		std::this_thread::sleep_for(std::chrono::milliseconds(300));
-		CHECK(resets == 0);
-		CHECK(callback.violations() == 0);
+		REQUIRE(callback.waitFor(4));
+		hardware.reset();
+		std::this_thread::sleep_for(std::chrono::milliseconds(300)); // the device's watcher finds the ports gone
+		std::atomic<int> resets{0};
+		device->onReset([&resets] { ++resets; });
+		CHECK(waitUntil([&resets] { return resets > 0; }));
+		device->stop();
+	}
+
+	// The device asks for a reset when the server's sample rate changes, and plays silence rather than calling the
+	// engine at the wrong rate (#389). jackd can't change its rate while it runs; PipeWire can (clock.force-rate).
+	void checkJackRateChange(Backend& backend)
+	{
+		const double rate = backend.devices().front().sampleRates.front();
+		{
+			const std::unique_ptr<Device> device = backend.open(config("default"));
+			std::atomic<int> resets{0};
+			device->onReset([&resets] { ++resets; });
+			ContractCallback callback(device->format());
+			device->start(callback);
+			REQUIRE(callback.waitFor(4));
+			struct RateRestorer
+			{
+				~RateRestorer() { pwSetting("clock.force-rate", "0"); }
+			} const restorer;
+			REQUIRE(pwSetting("clock.force-rate", rate != 44100.0 ? "44100" : "48000"));
+			CHECK(waitUntil([&resets] { return resets > 0; }));
+			const size_t blocks = callback.blocks();
+			std::this_thread::sleep_for(std::chrono::milliseconds(200));
+			CHECK(callback.blocks() <= blocks + 1); // one may have been under way
+			device->stop();
+		}
+		CHECK(waitUntil([&backend, rate] { return backend.devices().front().sampleRates.front() == rate; }));
+	}
+
+	// Blocks are stamped with the start of the server's cycle as its filtered clock has it, not with the time the
+	// process callback happens to run at (#402).
+	void checkJackCycleTimes(Backend& backend, const std::string& library)
+	{
+		const TestClient clock(library, "gnubase-test-clock", false);
+		const std::unique_ptr<Device> device = backend.open(config("default")); // a block per cycle
+		CycleCallback callback(clock);
+		device->start(callback);
+		CHECK(waitUntil([&callback] { return callback.blocks() >= 50; }));
+		device->stop();
+		CHECK(callback.close() >= callback.blocks() * 9 / 10); // the callback runs tens of µs late
 	}
 
 	// The server reports a cycle the device took too long for as an xrun, which the device counts as an overload.
@@ -889,6 +1047,7 @@ namespace
 		REQUIRE(callback.waitFor(4));
 		hardware.reset();
 		CHECK(waitUntil([&resets] { return resets > 0; }));
+		device->stop();
 	}
 
 	// Plays a project over a sound card whose outputs are cabled to its inputs: a client with physical ports, which the
@@ -923,16 +1082,28 @@ TEST_CASE("the JACK backend keeps the device contract and plays a project over a
 		SKIP("no JACK server runs here");
 	checkDeviceContract(*backend);
 	checkJackResets(*backend, true);
-	checkJackOwnBufferSize(*backend, "libjack.so.0");
+	checkJackOwnBufferSize(*backend, "libjack.so.0", false);
+	checkJackOtherClientsBufferSize(*backend, "libjack.so.0");
 	checkJackXruns(*backend);
 	checkJackStopWhileLate(*backend);
+	checkJackCycleTimes(*backend, "libjack.so.0");
 	checkJackUnplug(*backend, std::make_unique<TestClient>("libjack.so.0", "gnubase-test-hardware", true));
+	checkJackResetBeforeHandler(*backend, std::make_unique<TestClient>("libjack.so.0", "gnubase-test-hardware", true));
 	checkJackRoundTrip(std::move(backend), "libjack.so.0");
 }
 
 TEST_CASE("the JACK backend keeps the device contract and plays a project over a loopback with PipeWire's JACK layer",
 	"[integration]")
 {
+	// GNUbase's clients ask for buffer sizes the way jack_bufsize does, through the graph's clock.force-quantum, which
+	// outlasts the client (#389); by default each client forces its own node's quantum, which goes with it.
+	struct GlobalBufferSize
+	{
+		GlobalBufferSize() { setenv("PIPEWIRE_PROPS", "{ jack.global-buffer-size = true }", 1); }
+		~GlobalBufferSize() { unsetenv("PIPEWIRE_PROPS"); }
+		GlobalBufferSize(const GlobalBufferSize&) = delete;
+		GlobalBufferSize& operator=(const GlobalBufferSize&) = delete;
+	} const globalBufferSize;
 	const std::string library = pipeWireJack();
 	if (library.empty() && required("GNUBASE_REQUIRE_PIPEWIRE"))
 		FAIL("PipeWire's libjack isn't installed (pipewire-jack)");
@@ -942,8 +1113,10 @@ TEST_CASE("the JACK backend keeps the device contract and plays a project over a
 	auto hardware = std::make_unique<TestClient>(library, "gnubase-test-hardware", true);
 	checkDeviceContract(*backend);
 	checkJackResets(*backend, false);
-	checkJackOwnBufferSize(*backend, library);
+	checkJackOwnBufferSize(*backend, library, true);
+	checkJackRateChange(*backend);
 	checkJackUnplug(*backend, std::move(hardware));
+	checkJackResetBeforeHandler(*backend, std::make_unique<TestClient>(library, "gnubase-test-hardware", true));
 	checkJackRoundTrip(std::move(backend), library);
 }
 
@@ -1007,10 +1180,10 @@ TEST_CASE("the dummy device names its channels and keeps the format it was given
 TEST_CASE("a device passes its driver's reset requests on", "[unit]")
 {
 	DummyDevice device(DeviceFormat{}, 0);
-	device.requestReset(); // nobody listens: nothing happens
+	CHECK(!device.requestReset()); // nobody listens: nothing happens, and the driver learns so
 	int resets = 0;
 	device.onReset([&resets] { ++resets; });
-	device.requestReset();
+	CHECK(device.requestReset());
 	CHECK(resets == 1);
 }
 

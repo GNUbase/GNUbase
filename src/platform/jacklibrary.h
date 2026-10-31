@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "platform/hosttime.h"
+
 #include <jack/jack.h>
 #include <jack/midiport.h>
 
@@ -57,8 +59,28 @@ namespace gnubase
 		decltype(&jack_set_sample_rate_callback) setSampleRateCallback = nullptr;
 		decltype(&jack_set_xrun_callback) setXrunCallback = nullptr;
 
+		// Null where the library lacks them.
+		decltype(&jack_get_cycle_times) getCycleTimes = nullptr;
+		decltype(&jack_get_time) getTime = nullptr;
+
+		// True for PipeWire's JACK layer (pipewire-jack), which says so in its version string.
+		bool pipeWire = false;
+
+		// The current cycle: when it started, on the host clock, and how long it lasts in nanoseconds.
+		struct Cycle
+		{
+			HostTime start = 0;
+			HostTime period = 0;
+		};
+
+		// The current cycle as the server's filtered clock has it (jack_get_cycle_times), free of the jitter of when
+		// the process callback happens to run; or the time now and a period of 0 where the library doesn't tell
+		// (#402). On the process thread, where it neither allocates nor locks.
+		Cycle cycle(jack_client_t* client) const noexcept;
+
 	private:
 		template <typename Function> void load(Function& function, const char* name);
+		template <typename Function> void loadOptional(Function& function, const char* name);
 
 		void* m_handle = nullptr;
 	};
