@@ -271,7 +271,9 @@ namespace gnubase::engine
 					m_engine->broadcast("audio.changed", status());
 			}
 			else if (m_lost)
+			{
 				m_parameters.erase("sampleRate"); // it returns at the new rate if it supports it
+			}
 		}
 		if (m_device && (m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring))
 			rebuild();
@@ -731,7 +733,11 @@ namespace gnubase::engine
 		require(m_device != nullptr || m_lost, "there is no audio device; set one with audio.setDevice");
 		const std::optional<Lost> lost = m_lost;
 		const bool running = m_device ? m_device->running() : lost && lost->restart;
-		const std::string id = m_device ? m_device->info().id : lost ? lost->device : std::string();
+		std::string id;
+		if (m_device)
+			id = m_device->info().id;
+		else if (lost)
+			id = lost->device;
 		if (!lost)
 			logging::info("Resetting the audio device ({} {})", m_backend, id);
 		const Json parameters = m_parameters;
