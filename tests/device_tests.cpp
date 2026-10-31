@@ -671,6 +671,76 @@ TEST_CASE("a PipeWire device asks for a reset when another client forces the gra
 	CHECK(callback.violations() == 0);
 }
 
+// The latency counts in quanta: when another client changes the graph's quantum while a device runs, the device
+// reports a latency change, and the engine moves the record offset with it once, without restarting the device over
+// and over (#386).
+TEST_CASE("a running PipeWire device reports a latency change when the graph's quantum changes", "[integration]")
+{
+	std::unique_ptr<Backend> backend = pipeWireOrSkip();
+	if (!backend)
+		SKIP("no PipeWire daemon runs here");
+	if (!havePipeWireTools())
+		return;
+	SECTION("the device")
+	{
+		const std::unique_ptr<Device> device = backend->open(config("default"));
+		std::atomic<int> changes{0};
+		device->onLatencyChange([&changes] { ++changes; });
+		ContractCallback callback(device->format());
+		device->start(callback);
+		REQUIRE(callback.waitFor(8));
+		const DeviceLatency before = device->latency();
+		const uint32_t quantum = device->format().blockSize != 256 ? 256 : 512;
+		const ForcedSetting forced("clock.force-quantum", quantum);
+		CHECK(eventually([&changes] { return changes > 0; }));
+		CHECK(callback.waitFor(8));
+		const DeviceLatency after = device->latency();
+		INFO("latency at block size " << device->format().blockSize << ": " << before.input << " in, " << before.output
+									  << " out; at quantum " << quantum << ": " << after.input << " in, "
+									  << after.output << " out");
+		CHECK(after.output != before.output);
+		if (device->format().inputChannels > 0)
+			CHECK(after.input != before.input);
+		CHECK(callback.violations() == 0);
+	}
+	SECTION("the engine")
+	{
+		std::vector<std::unique_ptr<Backend>> backends;
+		backends.push_back(std::move(backend));
+		gnubase::engine::Engine engine(std::move(backends));
+		Client client(engine);
+		run(client, "audio.setDevice", {{"backend", "pipewire"}, {"device", "default"}, {"recordShift", 10}});
+		run(client, "audio.start");
+		const auto status = [&client] { return run(client, "audio.get").at("device"); };
+		const auto settled = [&status]
+		{
+			const Json device = status();
+			return device.at("recordOffset").get<int64_t>() ==
+				device.at("inputLatency").get<int64_t>() + device.at("outputLatency").get<int64_t>() - 10;
+		};
+		REQUIRE(eventually(settled));
+		const int64_t before = status().at("recordOffset").get<int64_t>();
+		const uint32_t quantum = status().at("blockSize").get<uint32_t>() != 256 ? 256 : 512;
+		const ForcedSetting forced("clock.force-quantum", quantum);
+		CHECK(eventually(
+			[&settled, &status, before] { return settled() && status().at("recordOffset").get<int64_t>() != before; }));
+
+		// Settled: no more restarts, each of which would send audio.changed.
+		while (client.poll())
+		{
+		}
+		std::this_thread::sleep_for(std::chrono::seconds(1));
+		int changes = 0;
+		while (const std::optional<gnubase::engine::Message> message = client.poll())
+		{
+			const auto* event = std::get_if<gnubase::engine::Event>(&*message);
+			changes += event != nullptr && event->name == "audio.changed" ? 1 : 0;
+		}
+		CHECK(changes == 0);
+		CHECK(run(client, "audio.get").at("running") == true);
+	}
+}
+
 // tools/start-pipewire.sh adds the loopback: a null sink of media class Audio/Duplex, a device of its own
 // (<node>|<node>) whose capture ports are the monitor ports of its playback ports.
 TEST_CASE("a project plays and records over a loopback in the PipeWire graph", "[integration]")
