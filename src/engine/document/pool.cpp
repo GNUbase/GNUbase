@@ -115,7 +115,7 @@ namespace gnubase::engine
 		const Json boolean = {{"type", "boolean"}};
 		const Json string = {{"type", "string"}};
 		const Json ids = {{"type", "array"}, {"items", integer}};
-		const auto result = [](std::vector<std::string> names)
+		const auto result = [](const std::vector<std::string>& names)
 		{
 			Json properties = Json::object();
 			for (const std::string& name : names)

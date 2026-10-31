@@ -89,6 +89,14 @@ namespace gnubase::ui
 			return {};
 		}
 
+		// The Status column: Missing, or External for a file outside the project folder.
+		std::string status(const Json& clip)
+		{
+			if (clip.at("missing").get<bool>())
+				return "Missing";
+			return clip.at("external").get<bool>() ? "External" : "";
+		}
+
 		uint64_t idOf(const std::string& value)
 		{
 			return value.size() > 1 ? std::stoull(value.substr(1)) : 0;
@@ -257,9 +265,8 @@ namespace gnubase::ui
 					const bool missing = clip->at("missing").get<bool>();
 					const int used = clip->at("used").get<int>();
 					result.push_back({"c" + std::to_string(clip->at("id").get<uint64_t>()), level,
-						clip->at("name").get<std::string>(), used == 0 ? "" : std::to_string(used),
-						missing ? "Missing" : (clip->at("external").get<bool>() ? "External" : ""), info(*clip),
-						clip->at("path").get<std::string>(), missing});
+						clip->at("name").get<std::string>(), used == 0 ? "" : std::to_string(used), status(*clip),
+						info(*clip), clip->at("path").get<std::string>(), missing});
 				}
 			};
 			add(0, 1);
