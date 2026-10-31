@@ -228,7 +228,7 @@ Returns:
 
 #### `gnubase.audio.ports`
 
-The audio device's ports by name, in order, each with the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) whose channels run past the device's ports, with those channels, which are silent; bus.set gives them ports. Without a device there are no ports.
+The audio device's ports by name, in order, each with the name it is shown as and whether it is visible (audio.setPort), and the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) whose channels run past the device's ports, with those channels, which are silent; bus.set gives them ports. Without a device there are no ports.
 
 Only reads; changes nothing.
 
@@ -309,6 +309,35 @@ Returns:
 - `peak`: number, required
 - `threads`: array of number, required
 
+#### `gnubase.audio.set`
+
+Changes the audio device's settings and keeps the others: the parameters of audio.setDevice except backend and device, e.g. sampleRate, blockSize, clockSource, recordShift or directMonitoring. The device opens again with them, as for audio.reset, and runs on if it ran. If it can't open with them, it opens again with the settings it had and the command fails.
+
+Parameters:
+
+- `blockSize`: integer
+- `captureSeconds`: number
+- `clockSource`: string
+- `directMonitoring`: boolean
+- `input`: object
+- `inputChannels`: integer
+- `inputLatency`: integer
+- `loopback`: boolean
+- `outputChannels`: integer
+- `outputLatency`: integer
+- `recordShift`: integer
+- `sampleRate`: number
+
+Returns:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `playbackDropouts`: integer, required
+- `position`: integer, required
+- `processing`: object, required
+- `running`: boolean, required
+
 #### `gnubase.audio.setDevice`
 
 Replaces the audio device. backend: one from audio.devices, by default "dummy". device: its id, by default the backend's default device. sampleRate and blockSize: by default the driver's current rate and preferred size. clockSource: a name from the device's clockSources. The device starts stopped at position 0. Another backend's device is closed before the new one opens, since drivers often allow only one; if opening fails, there is no device.
@@ -341,6 +370,24 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `running`: boolean, required
+
+#### `gnubase.audio.setPort`
+
+Changes how a port of the audio device is shown, given by whether it is an input and its system name (name in audio.ports). showAs: the name routing menus show; empty shows the system name. visible: whether routing menus offer it; busses on a hidden port keep it. The settings are kept per device while GNUbase runs. Returns the port as audio.ports lists it, and sends audio.ports as the event audio.portsChanged.
+
+Parameters:
+
+- `input`: boolean, required
+- `name`: string, required
+- `showAs`: string
+- `visible`: boolean
+
+Returns:
+
+- `busses`: array, required
+- `name`: string, required
+- `showAs`: string, required
+- `visible`: boolean, required
 
 #### `gnubase.audio.setProcessing`
 
