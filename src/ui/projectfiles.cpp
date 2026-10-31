@@ -254,7 +254,7 @@ namespace gnubase::ui
 		dialog->RemoveEventListener(g_dialogCloseEvent, this);
 		m_dialog.reset();
 		// Before the document closes, so that the callback can read its fields; m_dialog is free for another dialog.
-		Closed closed = std::move(m_closed);
+		const Closed closed = std::move(m_closed);
 		closed(*dialog, result);
 	}
 
