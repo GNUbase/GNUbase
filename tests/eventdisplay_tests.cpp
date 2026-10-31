@@ -376,6 +376,119 @@ TEST_CASE("waveforms of lanes scrolled out of view are clipped to the event area
 	CHECK(below);
 }
 
+namespace
+{
+	// Whether there are count waveforms, each with a loud column per pixel of what it was asked for at the scale it
+	// is drawn with, and no media.peaks waits for its answer.
+	bool settled(Fixture& fixture, size_t count)
+	{
+		const std::vector<ui::Waveform*> list = waveforms(fixture.document);
+		if (list.size() != count || fixture.binding.waiting("media.peaks") != 0)
+			return false;
+		const auto ratio = static_cast<double>(fixture.window.dpRatio());
+		for (ui::Waveform* wave : list)
+		{
+			if (wave->channels().empty())
+				return false;
+			const std::vector<int16_t>& high = wave->channels()[0].high;
+			const int64_t columns =
+				std::llround(wave->span().length / wave->GetAttribute<double>("scale", 0.0) * ratio);
+			if (static_cast<int64_t>(high.size()) != columns ||
+				!std::all_of(high.begin(), high.end(), [](int16_t peak) { return peak > 10000; }))
+				return false;
+		}
+		return true;
+	}
+
+	// Writes frames of a constant 0.5 at 48 kHz to dir, adds count audio tracks with an event playing all of it from
+	// the project start, and waits until their waveforms have settled.
+	void addLoudEvents(Fixture& fixture, const std::filesystem::path& dir, int64_t frames, size_t count)
+	{
+		test::Audio audio;
+		audio.samples.assign(static_cast<size_t>(frames), 0.5F);
+		const std::filesystem::path file = dir / "loud.wav";
+		test::writeWav(file, audio);
+		const Json media = fixture.call("media.add", {{"path", file.u8string()}}).at("media");
+		const Json clip = fixture.call("clip.add", {{"media", media.at("id")}}).at("clip");
+		for (size_t i = 0; i < count; ++i)
+		{
+			const Json track = fixture.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
+			fixture.call("audioEvent.add",
+				{{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 0}, {"length", frames}});
+		}
+		REQUIRE(fixture.waitUntil([&] { return settled(fixture, count); }));
+	}
+}
+
+TEST_CASE("a waveform asks media.peaks again only when the view needs other columns", "[unit]")
+{
+	// An event from 0 to 3.3007 seconds, which ends in view at 1.5 seconds per view. Where the part around the view
+	// starts after 0, at from, and before half the event's end, from + (end - from) can round below the end.
+	const test::TempDir dir;
+	Fixture fixture;
+	constexpr int64_t frames = 158432;
+	addLoudEvents(fixture, dir.path(), frames, 1);
+	fixture.display.zoomTo(0.0, 1.5);
+	const double visible = fixture.display.visibleLength();
+	const double end = static_cast<double>(frames) / 48000.0;
+	std::optional<double> start;
+	for (int i = 1; i < 10000 && !start; ++i)
+	{
+		const double x = std::max(visible, end - visible) + (i * 0.000731);
+		const double from = x - visible; // as the waveforms compute it
+		if (x > end || from >= end / 2.0)
+			break;
+		if (from + (end - from) < end)
+			start = x;
+	}
+	REQUIRE(start);
+	fixture.display.scrollTo(*start);
+	REQUIRE(fixture.waitUntil([&] { return settled(fixture, 1); }));
+
+	// Views that show the same, as auto-scroll sets them while playing, ask nothing.
+	for (int i = 0; i < 5; ++i)
+	{
+		fixture.display.scrollTo(*start);
+		CHECK(fixture.binding.waiting("media.peaks") == 0);
+		REQUIRE(fixture.waitUntil([&] { return fixture.binding.waiting("media.peaks") == 0; }));
+	}
+}
+
+TEST_CASE("a waveform asks again for a column per pixel when the monitor scale changes", "[unit]")
+{
+	// One second: 100 dp at 0.01 seconds per dp, 100 pixels at a monitor scale of 1 and 200 at 2.
+	const test::TempDir dir;
+	Fixture fixture;
+	addLoudEvents(fixture, dir.path(), 48000, 1);
+	CHECK(waveforms(fixture.document)[0]->channels()[0].high.size() == 100);
+	fixture.ui.windows.setDisplays({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 2.0F}});
+	REQUIRE(fixture.waitUntil([&] { return fixture.window.dpRatio() == 2.0F && settled(fixture, 1); }));
+	CHECK(waveforms(fixture.document)[0]->channels()[0].high.size() == 200);
+}
+
+TEST_CASE("zooming keeps at most one media.peaks in flight per waveform", "[unit]")
+{
+	const test::TempDir dir;
+	Fixture fixture;
+	constexpr size_t count = 4;
+	addLoudEvents(fixture, dir.path(), 48000, count);
+
+	// Many zoom steps before the answers come back, as a fast zoom drag on the ruler makes them: each waveform asks
+	// once, and once more after its answer with the final scale, whose columns it then shows.
+	for (int i = 0; i < 12; ++i)
+	{
+		fixture.display.zoomIn();
+		CHECK(fixture.binding.waiting("media.peaks") <= count);
+	}
+	CHECK(fixture.binding.waiting("media.peaks") == count);
+	REQUIRE(fixture.waitUntil(
+		[&]
+		{
+			CHECK(fixture.binding.waiting("media.peaks") <= count);
+			return settled(fixture, count);
+		}));
+}
+
 TEST_CASE("the waveform of a one-hour file draws at once when its peak file exists", "[integration][slow]")
 {
 #ifdef GNUBASE_SANITIZED

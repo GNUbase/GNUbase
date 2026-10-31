@@ -20,9 +20,10 @@ namespace Rml
 namespace gnubase::ui
 {
 	// Fills a container over the event lanes with a <waveform> per audio event around the view, over the event's
-	// lane, and asks media.peaks for the columns of the part around the view whenever the zoom changes, the view
-	// leaves that part, or the media file's peaks grow or become ready. Use it on the UI thread; the binding must
-	// outlive it. If the container goes, it shows nothing more.
+	// lane, and asks media.peaks for the columns of the part around the view whenever the zoom or the dp ratio
+	// changes, the view leaves that part, or the media file's peaks grow or become ready. Each waveform has at most
+	// one question in flight: what the view needs meanwhile is asked once the answer is in. Use it on the UI thread;
+	// the binding must outlive it. If the container goes, it shows nothing more.
 	class EventWaveforms
 	{
 	public:
@@ -57,15 +58,28 @@ namespace gnubase::ui
 		void show(const View& view);
 
 	private:
+		// A media.peaks question: the seconds from and to, at a zoom and dp ratio.
+		struct Question
+		{
+			double from = 0.0;
+			double to = 0.0;
+			double scale = 0.0; // 0 when nothing was asked
+			float dpRatio = 0.0F;
+		};
+
 		struct Wave
 		{
 			Event event;
 			Waveform* element = nullptr; // while the event is around the view
-			TimeSpan asked;              // the seconds last asked for, at askedScale; 0 to ask again
-			double askedScale = 0.0;
+			Question asked;              // the latest question, in flight or answered
+			bool pending = false;        // asked is in flight
+			bool stale = false;          // the file's peaks changed since asked
 		};
 
-		void ask(Wave& wave, TimeSpan range);
+		void update(Wave& wave);
+		bool covers(const Wave& wave, const Question& question) const; // what the view shows of the event
+		void ask(Wave& wave, double from, double to);
+		void answered(const Event& event, const Question& question, const engine::Result& result);
 
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_container;
