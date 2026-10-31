@@ -16,6 +16,8 @@
 #include "ui/themes.h"
 #include "ui/uisettings.h"
 
+#include <RmlUi/Core/ObserverPtr.h>
+
 #include <filesystem>
 #include <iosfwd>
 #include <memory>
@@ -53,9 +55,9 @@ namespace gnubase::app
 		ui::EventDisplay& showProject();
 
 		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
-		// window.studioSetup, which the main menu's Studio menu runs. Throws std::runtime_error if the document can't
-		// be loaded.
-		Rml::ElementDocument& openStudioSetup(ui::Window& window) const;
+		// window.studioSetup, which the main menu's Studio menu runs. While it is open, this brings it to the front
+		// instead: MCP and Lua can run the command then. Throws std::runtime_error if the document can't be loaded.
+		Rml::ElementDocument& openStudioSetup(ui::Window& window);
 
 		// Opens the start screen in the main window (ui/projectfiles.h, #77), as the app does when it starts without
 		// a project.
@@ -94,7 +96,8 @@ namespace gnubase::app
 		bool m_canUndo = false;
 		bool m_canRedo = false;
 		ui::Subscription m_history;
-		ui::ProjectFiles m_files;             // the File menu's project commands
-		std::unique_ptr<ui::MainMenu> m_menu; // the project window's
+		ui::ProjectFiles m_files;                     // the File menu's project commands
+		std::unique_ptr<ui::MainMenu> m_menu;         // the project window's
+		Rml::ObserverPtr<Rml::Element> m_studioSetup; // the open studio setup dialog's document
 	};
 }

@@ -601,6 +601,7 @@ namespace gnubase::audio
 			}
 
 			std::string name() const override { return "asio"; }
+			bool listsPresence() const override { return false; }
 
 			// Names only: a driver tells more once it is loaded, and loading one would close the open one. Drivers are
 			// unavailable if they didn't load or start the last time they were opened or started.
