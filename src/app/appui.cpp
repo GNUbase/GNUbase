@@ -117,7 +117,7 @@ namespace gnubase::app
 		spec.title = "Markers";
 		spec.size = {720, 360};
 		spec.hidden = m_hidden;
-		ui::Window& window = m_shell.open(spec);
+		const ui::Window& window = m_shell.open(spec);
 		m_markersWindow = window.id();
 		const std::filesystem::path file = m_resources / "ui" / "markers.rml";
 		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
