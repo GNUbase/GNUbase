@@ -33,7 +33,8 @@ frame (p. 99). Code only sets the zones' sizes, which come from data.
 A panel (`ui::Panel`) has an id, a title, the docking window and the zone it docks in, and a function that fills the
 element it shows in, wherever that is; what the function returns lives as long as the panel shows there. `add`
 registers panels; the project window has Inspector and Visibility on the left, Editor and Mixer in the lower zone, and
-Media and Meter on the right (pp. 75–98), empty until their tickets fill them.
+Media and Meter on the right (pp. 75–98), empty until their tickets fill them, and the edit history on the right
+([edit-history.md](edit-history.md)). `open` shows a panel as its zone's active tab, with the zone shown.
 
 - **Tabs.** A zone's tab group shows its panels' tabs in the user's order. A tab dragged onto another takes its place.
   A right click on the tabs opens the zone's tab menu: Open in Separate Window for the tab clicked (or the active one),

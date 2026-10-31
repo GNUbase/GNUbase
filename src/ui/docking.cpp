@@ -444,6 +444,24 @@ namespace gnubase::ui
 		apply();
 	}
 
+	void Docking::open(const std::string& id)
+	{
+		const Panel* shown = panel(id);
+		const Json* floating = find(m_layout, {"panels", id, "floating"});
+		if (shown == nullptr || (floating != nullptr && floating->is_boolean() && floating->get<bool>()))
+			return;
+		Json& json = zone(shown->window, shown->zone);
+		if (std::vector<std::string> hidden = strings(find(json, {"hidden"})); contains(hidden, id))
+		{
+			hidden.erase(std::remove(hidden.begin(), hidden.end(), id), hidden.end());
+			json["hidden"] = hidden;
+		}
+		json["active"] = id;
+		json["visible"] = true;
+		save();
+		apply();
+	}
+
 	Window* Docking::windowOf(const std::string& panel)
 	{
 		const auto it = m_shown.find(panel);

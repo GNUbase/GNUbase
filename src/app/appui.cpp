@@ -4,6 +4,7 @@
 #include "app/uitools.h"
 #include "platform/log.h"
 #include "ui/fonts.h"
+#include "ui/historypanel.h"
 #include "ui/widgets.h"
 
 #include <RmlUi/Core/Context.h>
@@ -12,6 +13,7 @@
 #include <lua.h>
 
 #include <array>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -122,8 +124,13 @@ namespace gnubase::app
 		// The project window's panels (reference manual pp. 54, 75-98), which their tickets fill.
 		for (const ProjectPanel& panel : g_projectPanels)
 			m_docking.add({panel.id, panel.title, "project", panel.zone, {}});
+		// The edit history (reference manual pp. 110-111), a dialog there, which Edit > History opens.
+		m_docking.add({"history", "History", "project", "right",
+			[this](Rml::Element& element) { return std::make_shared<ui::HistoryPanel>(m_binding, element); }});
 		m_docking.addKeyCommands(m_keys);
 
+		m_keys.add({"window.history", "Shows the edit history, where steps are undone and redone.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("history"); }});
 		m_keys.add({"window.studioSetup", "Opens the studio setup dialog for the audio and MIDI devices.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openStudioSetup(window); }});
 		for (const ProjectCommand& command : g_projectCommands)
