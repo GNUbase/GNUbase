@@ -220,24 +220,8 @@ namespace gnubase::ui
 
 	void EventDisplay::loadProject(const Json& project)
 	{
-		m_time.sampleRate = project.at("sampleRate").get<double>();
-		std::vector<time::TempoPoint> tempo;
-		for (const Json& point : project.at("tempo"))
-			tempo.push_back(
-				{point.at("position").get<time::Ticks>(), point.at("bpm").get<double>(), point.at("ramp").get<bool>()});
-		std::vector<time::SignatureChange> signatures;
-		for (const Json& change : project.at("signatures"))
-			signatures.push_back({change.at("bar").get<int64_t>(),
-				{change.at("numerator").get<int>(), change.at("denominator").get<int>()}});
-		try
-		{
-			m_time.tempo = time::TempoMap(tempo);
-			m_time.signatures = time::SignatureMap(signatures);
-		}
-		catch (const std::invalid_argument& error)
-		{
-			logging::warning("The event display can't read the project's tempo or signatures: {}", error.what());
-		}
+		if (!readTimeContext(project, m_time))
+			logging::warning("The event display can't read the project's tempo or signatures");
 
 		// A lane per track, in the project's order.
 		std::map<uint64_t, size_t> lanes;

@@ -1,0 +1,57 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The transport controls (docs/features/transport-bar.md, reference manual pp. 295-310): not a document of its own,
+     but what app::AppUi fills into the project window's transport bar and the transport panel, one per document, where
+     ui::TransportControls drives the controls by their command, state, time and field attributes. The sections come
+     in the transport bar's order. -->
+<div class="transport-section" title="Locators">
+	<button id="go-to-left" command="transport.locate" parameters='{"target": "leftLocator"}' title="Go to Left Locator Position">L</button>
+	<textdisplay id="left-locator" class="display" time="left" title="Left Locator Position"/>
+	<button id="go-to-right" command="transport.locate" parameters='{"target": "rightLocator"}' title="Go to Right Locator Position">R</button>
+	<textdisplay id="right-locator" class="display" time="right" title="Right Locator Position"/>
+</div>
+<div class="transport-section" title="Locator Range Duration">
+	<button id="locators-to-selection" command="edit.locatorsToSelection" title="Locators to Selection">Sel</button>
+	<textdisplay id="locator-range" class="display" time="length" title="Locator Range Duration"/>
+</div>
+<div class="transport-section" title="Punch Points">
+	<button id="punch-in" class="icon-only" command="transport.toggle" parameters='{"setting": "punchIn"}' state="punchIn" title="Punch In"><svg class="icon" src="../icons/transport-punch-in.svg"/></button>
+	<button id="punch-out" class="icon-only" command="transport.toggle" parameters='{"setting": "punchOut"}' state="punchOut" title="Punch Out"><svg class="icon" src="../icons/transport-punch-out.svg"/></button>
+</div>
+<div class="transport-section" title="Transport Controls">
+	<button id="previous-marker" class="icon-only" command="locate.previousMarker" title="Go to Previous Marker/Zero"><svg class="icon" src="../icons/transport-to-start.svg"/></button>
+	<button id="next-marker" class="icon-only" command="locate.nextMarker" title="Go to Next Marker/Project End"><svg class="icon" src="../icons/transport-to-end.svg"/></button>
+	<button id="rewind" class="icon-only" command="transport.locate" parameters='{"by": -1}' title="Rewind"><svg class="icon" src="../icons/transport-rewind.svg"/></button>
+	<button id="forward" class="icon-only" command="transport.locate" parameters='{"by": 1}' title="Forward"><svg class="icon" src="../icons/transport-forward.svg"/></button>
+	<button id="cycle" class="icon-only" command="transport.toggle" parameters='{"setting": "cycle"}' state="cycle" title="Cycle"><svg class="icon" src="../icons/transport-loop.svg"/></button>
+	<button id="stop" class="icon-only" command="transport.stop" title="Stop"><svg class="icon" src="../icons/transport-stop.svg"/></button>
+	<button id="start" class="icon-only" command="transport.play" state="playing" title="Start"><svg class="icon" src="../icons/transport-play.svg"/></button>
+	<button id="record" class="icon-only" command="transport.toggle" parameters='{"setting": "record"}' state="recording" title="Record"><svg class="icon" src="../icons/transport-record.svg"/></button>
+</div>
+<div class="transport-section" title="Time Displays">
+	<button id="primary-format" class="icon-only" menu="primary-format-menu" title="Select Primary Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
+	<textdisplay id="primary-time" class="display primary-time" time="position" format="primary" title="Primary Time Display"/>
+	<button id="exchange-formats" class="icon-only" command="time.exchangeFormats" title="Exchange Time Formats"><svg class="icon" src="../icons/general-redo.svg"/></button>
+	<button id="secondary-format" class="icon-only" menu="secondary-format-menu" title="Select Secondary Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
+	<textdisplay id="secondary-time" class="display" time="position" format="secondary" title="Secondary Time Display"/>
+</div>
+<div class="transport-section" title="Tempo &amp; Time Signature">
+	<valuefield id="tempo" field="tempo" min="1" max="999" step="1" decimals="3" title="Tempo"/>
+	<textdisplay id="signature" class="display" field="signature" title="Time Signature"/>
+</div>
+<div class="transport-section" title="Click">
+	<button id="metronome" class="icon-only" command="transport.toggle" parameters='{"setting": "metronome"}' state="metronome" title="Activate Metronome Click"><svg class="icon" src="../icons/transport-metronome.svg"/></button>
+</div>
+<menu id="primary-format-menu">
+	<menuitem slot="primary" format="barsBeats">Bars+Beats</menuitem>
+	<menuitem slot="primary" format="seconds">Seconds</menuitem>
+	<menuitem slot="primary" format="timecode">Timecode</menuitem>
+	<menuitem slot="primary" format="samples">Samples</menuitem>
+	<menuitem slot="primary" format="userFrames">fps (User)</menuitem>
+</menu>
+<menu id="secondary-format-menu">
+	<menuitem slot="secondary" format="barsBeats">Bars+Beats</menuitem>
+	<menuitem slot="secondary" format="seconds">Seconds</menuitem>
+	<menuitem slot="secondary" format="timecode">Timecode</menuitem>
+	<menuitem slot="secondary" format="samples">Samples</menuitem>
+	<menuitem slot="secondary" format="userFrames">fps (User)</menuitem>
+</menu>

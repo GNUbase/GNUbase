@@ -54,6 +54,9 @@ The reference's defaults for the commands GNUbase has so far (`ui::defaultKeyMap
 | Num1, Num2 | `transport.locate` to the left, right locator | Go to Left/Right Locator |
 | Num. | `transport.locate` to the project start | Go to Project Start |
 | Mod+Num1, Mod+Num2 | `transport.set` left, right to the cursor | Set Left/Right Locator to Project Cursor Position |
+| Num/, Num* | `transport.toggle` cycle, record | Cycle, Record |
+| C, I, O | `transport.toggle` metronome, punchIn, punchOut | Activate Metronome, Punch In, Punch Out |
+| Num-, Num+ (Shift for faster) | `transport.locate` by seconds | Rewind, Forward (Fast Rewind, Fast Forward) |
 | Shift+N, Shift+B | `marker.locateNext`, `marker.locatePrevious` | Locate Next/Previous Marker |
 | Shift+1 to Shift+9, Num3 to Num9 | `marker.locate` with the number | To Marker 1 to 9 |
 | Mod+Z | `history.undo` | Undo |
@@ -81,7 +84,9 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Mod+A, Mod+Shift+A | `edit.selectAll`, `edit.selectNone` | Select All, Select None |
 | Mod+Alt+I | `edit.invertSelection` | Invert Selection |
 
-The other edit commands ([parts-and-events.md](parts-and-events.md)) have no default keys in the reference.
+The other edit commands ([parts-and-events.md](parts-and-events.md)) have no default keys in the reference. The
+transport controls' commands (F2, the enter commands, Exchange Time Formats, P for Locators to Selection) are in
+[transport-bar.md](transport-bar.md).
 
 Commands that come with their tickets bring their keys: opening windows such as the mixer (F3), cycle, record and the
 rest of the reference's tables.

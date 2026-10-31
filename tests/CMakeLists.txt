@@ -83,6 +83,7 @@ add_executable(gnubase-tests
 	timeformat_tests.cpp
 	timestretch_tests.cpp
 	transport_tests.cpp
+	transportbar_tests.cpp
 	uiapp.cpp
 	uiapp.h
 	uiapp_tests.cpp

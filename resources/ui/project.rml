@@ -5,7 +5,8 @@
      attributes and fills the other zones with their panels' tabs. ui::EventDisplay fills the element #event-display
      and drives the controls and menus with these ids (docs/features/event-display.md): the ruler's arrow button
      .ruler-format, #ruler-format-menu, #zoom-presets-menu, #auto-scroll and #auto-scroll-menu. Its dialogs are
-     zoom-preset.rml and zoom-presets.rml, next to this file.
+     zoom-preset.rml and zoom-presets.rml, next to this file. app::AppUi fills the transport bar with the transport
+     controls (transport.rml).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
 <head>
@@ -73,7 +74,7 @@
 		<div id="right-zone" zone="right" focuszone="right" size="240" default="hidden"/>
 	</div>
 	<div id="status-line" class="strip" strip="statusLine" default="hidden"/>
-	<div id="transport-bar" class="strip" strip="transportBar" default="hidden"/>
+	<div id="transport-bar" class="strip transport" strip="transportBar" default="hidden"/>
 
 	<!-- Set up Window Layout (reference manual p. 65) -->
 	<menu id="window-layout-menu">

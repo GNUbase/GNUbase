@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Time formats for rulers and position displays (#84): positions read as the engine converts them, and ruler marks
 // at the positions the engine has for bars, beats, seconds, frames and samples, also across tempo and signature
-// changes.
+// changes; positions and lengths typed into position displays.
+#include "engine/schema.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
 #include "engine/time/timecode.h"
@@ -11,6 +12,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -180,4 +182,74 @@ TEST_CASE("labelled ruler marks are never closer than asked, across a tempo chan
 			for (size_t i = 1; i < majors.size(); ++i)
 				CHECK(majors[i].position - majors[i - 1].position >= minimum * (1.0 - 1e-6));
 		}
+}
+
+TEST_CASE("positions typed in every time format read back as the engine converts them", "[unit]")
+{
+	const ui::TimeContext context = changingContext();
+	for (const ui::TimeFormat format : {ui::TimeFormat::BarsBeats, ui::TimeFormat::Seconds, ui::TimeFormat::Timecode,
+			 ui::TimeFormat::Samples, ui::TimeFormat::UserFrames})
+		for (const double seconds : {0.0, 4.0, 5.4, 61.2}) // on frames and display ticks
+		{
+			INFO(ui::timeFormatName(format) << " at " << seconds);
+			const std::optional<double> typed =
+				ui::parseTime(format, ui::formatTime(format, seconds, context), context);
+			REQUIRE(typed.has_value());
+			CHECK(*typed == Catch::Approx(seconds).margin(1e-6));
+		}
+
+	// What is left out counts from the start of the bar, minute or second.
+	CHECK(ui::parseTime(ui::TimeFormat::BarsBeats, "3", context) == Catch::Approx(4.0));
+	CHECK(ui::parseTime(ui::TimeFormat::BarsBeats, "3.2", context) == Catch::Approx(5.0));
+	CHECK(ui::parseTime(ui::TimeFormat::BarsBeats, " 3 2 1 0 ", context) == Catch::Approx(5.0));
+	CHECK(ui::parseTime(ui::TimeFormat::Seconds, "5", context) == Catch::Approx(5.0));
+	CHECK(ui::parseTime(ui::TimeFormat::Seconds, "1:30.5", context) == Catch::Approx(90.5));
+	CHECK(ui::parseTime(ui::TimeFormat::Timecode, "00:00:05:12", context) == Catch::Approx(5.48));
+	CHECK(ui::parseTime(ui::TimeFormat::Timecode, "1:00", context) == Catch::Approx(1.0));
+	CHECK(ui::parseTime(ui::TimeFormat::Samples, "88200", context) == Catch::Approx(2.0));
+
+	// Text that isn't a position.
+	for (const char* text : {"", "abc", "0.1.1.0", "1.0", "-5", "1..2", "1.2.3.4.5"})
+	{
+		INFO(text);
+		CHECK(!ui::parseTime(ui::TimeFormat::BarsBeats, text, context).has_value());
+	}
+	CHECK(!ui::parseTime(ui::TimeFormat::Seconds, "1:2:3:4", context).has_value());
+	CHECK(!ui::parseTime(ui::TimeFormat::Timecode, "00:00:01:25", context).has_value()); // 25 fps: frames 0 to 24
+	CHECK(!ui::parseTime(ui::TimeFormat::Samples, "12.5", context).has_value());
+}
+
+TEST_CASE("lengths read as bars and beats from their start, or as times in the other formats", "[unit]")
+{
+	const ui::TimeContext context = changingContext();
+	// Five quarters from the third one: a bar and a beat of 4/4 at 120 BPM.
+	CHECK(ui::formatLength(ui::TimeFormat::BarsBeats, 1.0, 3.5, context) == "1.1.0.0");
+	CHECK(ui::formatLength(ui::TimeFormat::BarsBeats, 1.0, 1.0, context) == "0.0.0.0");
+	CHECK(ui::formatLength(ui::TimeFormat::Seconds, 1.0, 3.5, context) == "0:00:02.500");
+	CHECK(ui::formatLength(ui::TimeFormat::Samples, 1.0, 3.5, context) == "110250");
+	CHECK(ui::parseLength(ui::TimeFormat::BarsBeats, "1.1.0.0", 1.0, context) == Catch::Approx(2.5));
+	CHECK(ui::parseLength(ui::TimeFormat::BarsBeats, "1", 1.0, context) == Catch::Approx(2.0));
+	// Past the tempo change at bar 3 a beat takes a second.
+	CHECK(ui::parseLength(ui::TimeFormat::BarsBeats, "0.3", 3.0, context) == Catch::Approx(1.0 + 1.0));
+	CHECK(ui::parseLength(ui::TimeFormat::Seconds, "2.5", 2.0, context) == Catch::Approx(2.5));
+	CHECK(ui::parseLength(ui::TimeFormat::Timecode, "00:00:01:00", 2.0, context) == Catch::Approx(1.0));
+	CHECK(!ui::parseLength(ui::TimeFormat::BarsBeats, "x", 2.0, context).has_value());
+}
+
+TEST_CASE("the time context comes from the project as project.get returns it", "[unit]")
+{
+	const engine::Json project = {{"sampleRate", 44100.0},
+		{"tempo",
+			{{{"position", 0}, {"bpm", 120.0}, {"ramp", false}},
+				{{"position", 8 * g_ticksPerQuarter}, {"bpm", 60.0}, {"ramp", false}}}},
+		{"signatures",
+			{{{"bar", 0}, {"numerator", 4}, {"denominator", 4}}, {{"bar", 2}, {"numerator", 3}, {"denominator", 4}}}}};
+	ui::TimeContext context;
+	REQUIRE(ui::readTimeContext(project, context));
+	CHECK(context.sampleRate == 44100.0);
+	CHECK(context.tempo == changingContext().tempo);
+	CHECK(context.signatures == changingContext().signatures);
+	CHECK(!ui::readTimeContext(
+		{{"sampleRate", 48000.0}, {"tempo", engine::Json::array()}, {"signatures", engine::Json::array()}}, context));
+	CHECK(context.sampleRate == 44100.0); // unchanged
 }

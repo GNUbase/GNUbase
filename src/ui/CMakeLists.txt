@@ -55,6 +55,8 @@ add_library(gnubase-ui STATIC
 	themes.h
 	timeformat.cpp
 	timeformat.h
+	transport.cpp
+	transport.h
 	ui.cpp
 	ui.h
 	uisettings.cpp

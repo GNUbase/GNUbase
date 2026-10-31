@@ -114,6 +114,15 @@ namespace gnubase::engine::settings
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
+				{"ui.timeFormats",
+					"The time formats of the transport controls' displays: primary and secondary in the transport bar "
+					"and panel, timeDisplay in the time display window; each barsBeats, seconds, timecode, samples or "
+					"userFrames.",
+					Json{{"type", "object"},
+						{"additionalProperties",
+							{{"type", "string"},
+								{"enum", {"barsBeats", "seconds", "timecode", "samples", "userFrames"}}}}},
+					Json{{"primary", "barsBeats"}, {"secondary", "timecode"}, {"timeDisplay", "barsBeats"}}},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "
 					"seconds the view shows.",

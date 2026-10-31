@@ -64,9 +64,10 @@ namespace gnubase::engine
 				"position": {"type": "integer"},
 				"left": {"type": "integer"}, "right": {"type": "integer"}, "cycle": {"type": "boolean"},
 				"startMode": {"type": "string", "enum": ["cursor", "cycleStart"]},
-				"returnToStart": {"type": "boolean"}},
+				"returnToStart": {"type": "boolean"}, "punchIn": {"type": "boolean"},
+				"punchOut": {"type": "boolean"}, "metronome": {"type": "boolean"}},
 			"required": ["playing", "recording", "position", "left", "right", "cycle", "startMode",
-				"returnToStart"]})");
+				"returnToStart", "punchIn", "punchOut", "metronome"]})");
 		}
 
 		Json noParameters()
@@ -1630,7 +1631,8 @@ namespace gnubase::engine
 			{"position", m_transport.position()}, {"left", settings.left}, {"right", settings.right},
 			{"cycle", settings.cycle},
 			{"startMode", settings.startMode == StartMode::CycleStart ? "cycleStart" : "cursor"},
-			{"returnToStart", settings.returnToStart}};
+			{"returnToStart", settings.returnToStart}, {"punchIn", settings.punchIn}, {"punchOut", settings.punchOut},
+			{"metronome", settings.metronome}};
 	}
 
 	void AudioEngine::setChase(const MidiChase& chase)
@@ -1671,6 +1673,14 @@ namespace gnubase::engine
 			position = value->get<time::Samples>();
 			require(position >= 0, "position must not be negative");
 		}
+		else if (const auto by = parameters.find("by"); by != parameters.end())
+		{
+			const double seconds = by->get<double>();
+			require(std::isfinite(seconds), "by must be a number of seconds");
+			const double rate = m_snapshots.latest().sampleRate;
+			position = std::max<time::Samples>(
+				0, m_transport.position() + static_cast<time::Samples>(std::llround(seconds * rate)));
+		}
 		else if (const auto target = parameters.find("target"); target != parameters.end())
 		{
 			const auto name = target->get<std::string>();
@@ -1687,7 +1697,7 @@ namespace gnubase::engine
 		}
 		else
 		{
-			throw CommandError("give a position or target");
+			throw CommandError("give a position, by or target");
 		}
 		if (m_device)
 			cue(position, false, m_device->format().blockSize, true); // exactly there, like a start
@@ -1715,6 +1725,9 @@ namespace gnubase::engine
 		locator("right", settings.right);
 		settings.cycle = parameters.value("cycle", settings.cycle);
 		settings.returnToStart = parameters.value("returnToStart", settings.returnToStart);
+		settings.punchIn = parameters.value("punchIn", settings.punchIn);
+		settings.punchOut = parameters.value("punchOut", settings.punchOut);
+		settings.metronome = parameters.value("metronome", settings.metronome);
 		if (const auto mode = parameters.find("startMode"); mode != parameters.end())
 		{
 			const auto name = mode->get<std::string>();
@@ -1766,28 +1779,60 @@ namespace gnubase::engine
 					play();
 				sent(m_transport.record(record));
 			});
-		command("transport.toggle", "Stops playback if it plays, otherwise starts it.", nullptr,
-			[this](const Json&)
+		command("transport.toggle",
+			"Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, "
+			"punchIn, punchOut, metronome (see transport.set), or record (on as transport.record, off punches out).",
+			R"({"type": "object", "additionalProperties": false, "properties": {"setting": {"type": "string",
+				"enum": ["cycle", "punchIn", "punchOut", "metronome", "record"]}}})",
+			[this](const Json& parameters)
 			{
+				const std::string setting = parameters.value("setting", "");
+				if (setting == "record")
+				{
+					const bool record = !m_transport.recording();
+					if (record && !m_transport.playing())
+						play();
+					sent(m_transport.record(record));
+					return;
+				}
+				if (!setting.empty())
+				{
+					TransportSettings settings = m_transport.settings();
+					bool* value = &settings.metronome;
+					if (setting == "cycle")
+						value = &settings.cycle;
+					else if (setting == "punchIn")
+						value = &settings.punchIn;
+					else if (setting == "punchOut")
+						value = &settings.punchOut;
+					*value = !*value;
+					sent(m_transport.set(settings));
+					return;
+				}
 				if (m_transport.playing())
 					sent(m_transport.stop());
 				else
 					play();
 			});
 		command("transport.locate",
-			"Moves the project cursor to a position in samples, or to a target: projectStart, projectEnd (the end of "
-			"the last event), leftLocator or rightLocator. While playing, playback continues from there.",
+			"Moves the project cursor to a position in samples, by seconds from where it is (back if negative, not "
+			"before the project start: the transport bar's rewind and forward), or to a target: projectStart, "
+			"projectEnd (the end of the last event), leftLocator or rightLocator. While playing, playback continues "
+			"from there.",
 			R"({"type": "object", "additionalProperties": false, "properties": {"position": {"type": "integer"},
-				"target": {"type": "string"}}})",
+				"by": {"type": "number"}, "target": {"type": "string"}}})",
 			[this](const Json& parameters) { locate(parameters); });
 		command("transport.set",
 			"Changes the given settings and keeps the rest. left and right: the locators, in samples, or \"cursor\" "
 			"for the cursor position. cycle: cycle playback between the locators; with the right locator before the "
 			"left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). "
-			"returnToStart: on stop, return to where playback started.",
+			"returnToStart: on stop, return to where playback started. punchIn, punchOut and metronome are the "
+			"transport bar's switches; punching in and out at the locators and the click come with recording and the "
+			"metronome.",
 			R"({"type": "object", "additionalProperties": false, "properties": {
 				"left": {"type": ["integer", "string"]}, "right": {"type": ["integer", "string"]},
-				"cycle": {"type": "boolean"}, "startMode": {"type": "string"}, "returnToStart": {"type": "boolean"}}})",
+				"cycle": {"type": "boolean"}, "startMode": {"type": "string"}, "returnToStart": {"type": "boolean"},
+				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "metronome": {"type": "boolean"}}})",
 			[this](const Json& parameters) { setTransport(parameters); });
 		command("transport.exchangeLocators", "Swaps the left and right locators.", nullptr,
 			[this](const Json&)

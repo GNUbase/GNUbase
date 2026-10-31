@@ -7,6 +7,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -249,6 +250,191 @@ namespace gnubase::ui
 			return timecode(seconds, userRate(context));
 		}
 		return {};
+	}
+
+	namespace
+	{
+		// The text between separators, without the spaces around it; nothing if a part is empty.
+		std::optional<std::vector<std::string>> split(const std::string& text, const std::string& separators)
+		{
+			std::vector<std::string> parts(1);
+			const size_t first = text.find_first_not_of(' ');
+			const size_t last = text.find_last_not_of(' ');
+			const std::string trimmed =
+				first == std::string::npos ? std::string() : text.substr(first, last - first + 1);
+			for (const char c : trimmed)
+				if (separators.find(c) != std::string::npos)
+					parts.emplace_back();
+				else if (c != ' ')
+					parts.back() += c;
+			for (const std::string& part : parts)
+				if (part.empty())
+					return std::nullopt;
+			return parts;
+		}
+
+		std::optional<int64_t> integer(const std::string& text)
+		{
+			if (text.empty() || text.size() > 15 || text.find_first_not_of("0123456789") != std::string::npos)
+				return std::nullopt;
+			return std::stoll(text);
+		}
+
+		// Up to count integers, the last ones of the text's parts first: {frames, seconds, minutes, hours}.
+		std::optional<std::vector<int64_t>> fromRight(
+			const std::string& text, const std::string& separators, size_t count)
+		{
+			const auto parts = split(text, separators);
+			if (!parts || parts->size() > count)
+				return std::nullopt;
+			std::vector<int64_t> numbers(count, 0);
+			for (size_t i = 0; i < parts->size(); ++i)
+			{
+				const auto number = integer((*parts)[parts->size() - 1 - i]);
+				if (!number)
+					return std::nullopt;
+				numbers[i] = *number;
+			}
+			return numbers;
+		}
+
+		std::optional<double> timecodeSeconds(const std::string& text, time::FrameRate rate)
+		{
+			const auto numbers = fromRight(text, ":;", 4);
+			if (!numbers || (*numbers)[0] >= rate.framesPerSecond || (*numbers)[1] >= 60 || (*numbers)[2] >= 60)
+				return std::nullopt;
+			return time::toSeconds({false, static_cast<int>((*numbers)[3]), static_cast<int>((*numbers)[2]),
+									   static_cast<int>((*numbers)[1]), static_cast<int>((*numbers)[0])},
+				rate);
+		}
+
+		// Bars, beats, sixteenths and display ticks, as many as typed; the rest are zero.
+		std::optional<time::BarsBeats> barsBeats(const std::string& text)
+		{
+			const auto parts = split(text, " .,:;");
+			if (!parts || parts->size() > 4)
+				return std::nullopt;
+			std::array<int64_t, 4> numbers{};
+			for (size_t i = 0; i < parts->size(); ++i)
+			{
+				const auto number = integer((*parts)[i]);
+				if (!number || *number > std::numeric_limits<int>::max())
+					return std::nullopt;
+				numbers.at(i) = *number;
+			}
+			return time::BarsBeats{
+				numbers[0], static_cast<int>(numbers[1]), static_cast<int>(numbers[2]), static_cast<int>(numbers[3])};
+		}
+	}
+
+	std::optional<double> parseTime(TimeFormat format, const std::string& text, const TimeContext& context)
+	{
+		switch (format)
+		{
+		case TimeFormat::BarsBeats:
+		{
+			const auto parts = split(text, " .,:;");
+			std::optional<time::BarsBeats> position = barsBeats(text);
+			if (!parts || !position || position->bar < 1)
+				return std::nullopt;
+			// One-based, but for display ticks; what is left out is the first.
+			const size_t typed = parts->size();
+			if ((typed > 1 && position->beat < 1) || (typed > 2 && position->sixteenth < 1))
+				return std::nullopt;
+			position->bar -= 1;
+			position->beat = std::max(position->beat - 1, 0);
+			position->sixteenth = std::max(position->sixteenth - 1, 0);
+			return context.tempo.toSeconds(context.signatures.toTicks(*position));
+		}
+		case TimeFormat::Seconds:
+		{
+			const auto parts = split(text, ":");
+			if (!parts || parts->size() > 3)
+				return std::nullopt;
+			const std::string& last = parts->back();
+			const size_t point = last.find('.');
+			const auto whole = integer(last.substr(0, point));
+			const auto fraction =
+				point == std::string::npos ? std::optional<int64_t>(0) : integer(last.substr(point + 1));
+			if (!whole || !fraction)
+				return std::nullopt;
+			double seconds = static_cast<double>(*whole);
+			if (point != std::string::npos)
+				seconds +=
+					static_cast<double>(*fraction) / std::pow(10.0, static_cast<double>(last.size() - point - 1));
+			double unit = 60.0;
+			for (size_t i = parts->size() - 1; i-- > 0; unit *= 60.0)
+			{
+				const auto number = integer((*parts)[i]);
+				if (!number)
+					return std::nullopt;
+				seconds += static_cast<double>(*number) * unit;
+			}
+			return seconds;
+		}
+		case TimeFormat::Timecode:
+			return timecodeSeconds(text, context.frameRate);
+		case TimeFormat::Samples:
+		{
+			const auto parts = split(text, "");
+			const auto samples = parts ? integer(parts->front()) : std::nullopt;
+			if (!samples)
+				return std::nullopt;
+			return static_cast<double>(*samples) / context.sampleRate;
+		}
+		case TimeFormat::UserFrames:
+			return timecodeSeconds(text, userRate(context));
+		}
+		return std::nullopt;
+	}
+
+	std::string formatLength(TimeFormat format, double from, double to, const TimeContext& context)
+	{
+		if (format != TimeFormat::BarsBeats)
+			return formatTime(format, to - from, context);
+		// ponytail: counts in the first signature's bars, wrong across signature changes; measure from the start's
+		// bar when signature tracks (#156) make that common.
+		const time::BarsBeats length =
+			context.signatures.toBarsBeats(context.tempo.toTicks(to) - context.tempo.toTicks(from));
+		return std::to_string(length.bar) + "." + std::to_string(length.beat) + "." + std::to_string(length.sixteenth) +
+			"." + std::to_string(length.tick);
+	}
+
+	std::optional<double> parseLength(
+		TimeFormat format, const std::string& text, double from, const TimeContext& context)
+	{
+		if (format != TimeFormat::BarsBeats)
+			return parseTime(format, text, context);
+		const std::optional<time::BarsBeats> length = barsBeats(text);
+		if (!length)
+			return std::nullopt;
+		const time::Ticks ticks = context.tempo.toTicks(from) + context.signatures.toTicks(*length);
+		return context.tempo.toSeconds(ticks) - from;
+	}
+
+	bool readTimeContext(const engine::Json& project, TimeContext& context)
+	{
+		try
+		{
+			std::vector<time::TempoPoint> tempo;
+			for (const engine::Json& point : project.at("tempo"))
+				tempo.push_back({point.at("position").get<time::Ticks>(), point.at("bpm").get<double>(),
+					point.at("ramp").get<bool>()});
+			std::vector<time::SignatureChange> signatures;
+			for (const engine::Json& change : project.at("signatures"))
+				signatures.push_back({change.at("bar").get<int64_t>(),
+					{change.at("numerator").get<int>(), change.at("denominator").get<int>()}});
+			time::TempoMap tempoMap(tempo);
+			time::SignatureMap signatureMap(signatures);
+			context.sampleRate = project.at("sampleRate").get<double>();
+			context.tempo = std::move(tempoMap);
+			context.signatures = std::move(signatureMap);
+			return true;
+		}
+		catch (const std::exception&)
+		{
+			return false;
+		}
 	}
 
 	RulerScale rulerScale(TimeFormat format, const TimeContext& context)

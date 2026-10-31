@@ -358,6 +358,101 @@ namespace gnubase::ui
 			bool m_editing = false;
 		};
 
+		// <textdisplay>: its value attribute as text, drawn like a display, such as a position in a time format. A
+		// double click edits it as text, with the state class .editing: Enter, or leaving the field, sends change with
+		// the text typed as value (a string), for the document to read and set; Escape keeps the value.
+		class TextDisplay final : public Rml::Element
+		{
+		public:
+			explicit TextDisplay(const Rml::String& tag) : Rml::Element(tag)
+			{
+				m_text = appendPart(*this, "textdisplay-text");
+				Rml::XMLAttributes attributes;
+				attributes["type"] = "text";
+				m_input = rmlui_dynamic_cast<Rml::ElementFormControlInput*>(
+					AppendChild(Rml::Factory::InstanceElement(this, "input", "input", attributes)));
+				for (const Rml::EventId id : g_inputEvents)
+					m_input->AddEventListener(id, &m_listener);
+				show();
+			}
+
+			~TextDisplay() override
+			{
+				for (const Rml::EventId id : g_inputEvents)
+					m_input->RemoveEventListener(id, &m_listener);
+			}
+
+			TextDisplay(const TextDisplay&) = delete;
+			TextDisplay& operator=(const TextDisplay&) = delete;
+			TextDisplay(TextDisplay&&) = delete;
+			TextDisplay& operator=(TextDisplay&&) = delete;
+
+		protected:
+			void OnAttributeChange(const Rml::ElementAttributes& changed) override
+			{
+				Rml::Element::OnAttributeChange(changed);
+				if (changed.count("value") != 0)
+					show();
+			}
+
+			void ProcessDefaultAction(Rml::Event& event) override
+			{
+				Rml::Element::ProcessDefaultAction(event);
+				if (event == Rml::EventId::Dblclick && !m_editing && !HasAttribute("disabled"))
+				{
+					m_editing = true;
+					SetClass("editing", true);
+					m_input->SetValue(GetAttribute<Rml::String>("value", ""));
+					m_input->Focus(true);
+					m_input->Select();
+				}
+			}
+
+		private:
+			void listen(Rml::Event& event)
+			{
+				if (event == Rml::EventId::Blur)
+				{
+					finishEditing(true);
+					return;
+				}
+				// Before the text field, which keeps Enter to itself.
+				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
+				if (key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER || key == Rml::Input::KI_ESCAPE)
+				{
+					finishEditing(key != Rml::Input::KI_ESCAPE);
+					event.StopPropagation();
+				}
+			}
+
+			void show()
+			{
+				if (m_text != nullptr)
+					m_text->SetInnerRML(Rml::StringUtilities::EncodeRml(GetAttribute<Rml::String>("value", "")));
+			}
+
+			void finishEditing(bool take)
+			{
+				if (!m_editing)
+					return;
+				m_editing = false;
+				SetClass("editing", false);
+				if (GetContext() != nullptr && GetContext()->GetFocusElement() == m_input)
+					m_input->Blur(); // the field keeps the focus
+				if (take)
+				{
+					Rml::Dictionary parameters;
+					parameters["value"] = m_input->GetValue();
+					DispatchEvent(Rml::EventId::Change, parameters);
+				}
+			}
+
+			widgets::Listener m_listener{[this](Rml::Event& event) { listen(event); }};
+			Rml::Element* m_text = nullptr;
+			Rml::ElementFormControlInput* m_input = nullptr;
+			bool m_editing = false;
+		};
+
 		// <meter>: a level meter, value and peak in dB between min (-60) and max (6). The level shows the lower part
 		// of the theme's meter fill, and the peak sits at its height. Engine meters arrive once a frame (#111).
 		class Meter final : public Rml::Element
@@ -416,5 +511,6 @@ namespace gnubase::ui
 		rmlui.registerElement<Slider>("slider");
 		rmlui.registerElement<ValueField>("valuefield");
 		rmlui.registerElement<Meter>("meter");
+		rmlui.registerElement<TextDisplay>("textdisplay");
 	}
 }

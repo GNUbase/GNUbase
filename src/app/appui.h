@@ -12,6 +12,7 @@
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
 #include "ui/themes.h"
+#include "ui/transport.h"
 #include "ui/uisettings.h"
 
 #include <filesystem>
@@ -20,6 +21,7 @@
 
 namespace Rml
 {
+	class Element;
 	class ElementDocument;
 }
 
@@ -55,6 +57,15 @@ namespace gnubase::app
 		// can't be loaded.
 		Rml::ElementDocument& openStudioSetup(ui::Window& window) const;
 
+		// The transport controls (#90, docs/features/transport-bar.md): the project window's transport bar, once it
+		// shows, and the transport panel and the time display window, windows of their own that the UI commands
+		// window.transportPanel (F2) and window.timeDisplay show and hide. Null or none while they don't show.
+		ui::TransportControls* transportBar() { return m_transportBar.get(); }
+		void toggleTransportPanel();
+		void toggleTimeDisplay();
+		ui::Window* transportPanel() { return m_transportPanel.shown(m_shell); }
+		ui::Window* timeDisplay() { return m_timeDisplay.shown(m_shell); }
+
 		ui::Shell& shell() { return m_shell; }
 		ui::Window& mainWindow() { return m_main; }
 		ui::RmlUi& rmlui() { return m_rmlui; }
@@ -64,6 +75,22 @@ namespace gnubase::app
 		const ui::GpuRenderer& renderer() const { return m_renderer; }
 
 	private:
+		// A window of its own with transport controls.
+		struct TransportWindow
+		{
+			ui::WindowId window = 0;
+			std::unique_ptr<ui::TransportControls> controls;
+
+			// The window, or null if it is closed, also when the user closed it.
+			ui::Window* shown(ui::Shell& shell) { return window == 0 ? nullptr : shell.find(window); }
+		};
+
+		// Fills an element with the transport controls (resources/ui/transport.rml) and drives them.
+		std::unique_ptr<ui::TransportControls> transportControls(Rml::Element& root, ui::Window& window, bool fill);
+		void toggle(TransportWindow& shown, const char* file, const char* title, ui::Size size);
+		// Edits a display of the transport bar, or of the transport panel, which opens if the bar doesn't show.
+		void enter(const std::string& field);
+
 		// Made in this order and destroyed in the reverse: RmlUi releases its resources through the renderer and
 		// its Lua plugin's in Lua, the shell's windows need all of them, the settings and the binding tell the shell,
 		// key commands send through the binding, and the docking system follows the binding and opens windows.
@@ -80,6 +107,10 @@ namespace gnubase::app
 		ui::Docking m_docking;
 		engine::Engine& m_engine;
 		std::filesystem::path m_resources;
+		bool m_hiddenWindows = false;                     // tests open every window hidden
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
+		std::unique_ptr<ui::TransportControls> m_transportBar;
+		TransportWindow m_transportPanel;
+		TransportWindow m_timeDisplay;
 	};
 }

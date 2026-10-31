@@ -185,6 +185,22 @@ namespace gnubase::ui
 					const double right = static_cast<double>(m_right) / m_time.sampleRate;
 					selectWhere([left, right](const Shown& shown) { return shown.end > left && shown.start < right; });
 				}},
+			{"edit.locatorsToSelection",
+				[this]
+				{
+					bool any = false;
+					double start = 0.0;
+					double end = 0.0;
+					for (const Shown& shown : m_events)
+						if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+						{
+							start = any ? std::min(start, shown.start) : shown.start;
+							end = any ? std::max(end, shown.end) : shown.end;
+							any = true;
+						}
+					if (any)
+						m_binding.send("transport.set", {{"left", samples(start)}, {"right", samples(end)}});
+				}},
 			{"edit.selectFromStartToCursor",
 				[this] { selectWhere([this](const Shown& shown) { return shown.end <= m_cursor; }); }},
 			{"edit.selectFromCursorToEnd",

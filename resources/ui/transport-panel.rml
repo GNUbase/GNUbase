@@ -1,0 +1,21 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The transport panel (reference manual p. 295), a window of its own that F2 shows and hides: app::AppUi fills
+     #transport with the transport controls (transport.rml) and ui::TransportControls drives them. -->
+<rml>
+<head>
+	<title>Transport</title>
+	<style>
+		body
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+	</style>
+</head>
+<body>
+	<div id="transport" class="transport toolbar"/>
+</body>
+</rml>

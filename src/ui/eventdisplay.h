@@ -132,7 +132,9 @@ namespace gnubase::ui
 		// edit.duplicate, edit.repeat (opens the Repeat Events dialog), edit.fillLoop, edit.toRealCopy, edit.nudgeLeft,
 		// edit.nudgeRight, edit.nudgeStartLeft, edit.nudgeStartRight, edit.nudgeEndLeft, edit.nudgeEndRight,
 		// edit.moveStartToCursor, edit.moveEndToCursor, edit.selectAll, edit.selectNone, edit.invertSelection,
-		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd and edit.selectUnderCursor.
+		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd and edit.selectUnderCursor; and
+		// edit.locatorsToSelection, which sets the locators around the selected events (the transport bar's Locators
+		// to Selection).
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
 
 	private:
