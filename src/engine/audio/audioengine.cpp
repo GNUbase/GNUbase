@@ -329,6 +329,14 @@ namespace gnubase::engine
 		program->sequencers.assign(m_sequencers.begin(), m_sequencers.end()); // ordered by channel id
 		for (const auto& [channel, instrument] : m_instruments)
 			program->instruments.emplace_back(channel, instrument.channel);
+		for (const auto& [channel, sequencer] : program->sequencers)
+		{
+			const InstrumentChannel* destination = nullptr; // its own instrument, or the one it is routed to
+			for (const auto& [id, instrument] : m_instruments)
+				if (id == channel || instrument.sources.count(channel) != 0)
+					destination = instrument.channel.get();
+			program->destinations.push_back(destination);
+		}
 		// Bus nodes come first, in bus order (graph::describe); child busses reach the device through their parent.
 		for (size_t b = 0; b < snapshot.busses.size(); ++b)
 			if (snapshot.busses[b].parent < 0)
@@ -551,6 +559,8 @@ namespace gnubase::engine
 			m_running = program.generation;
 			for (const Release& release : program.releases)
 				release.channel->releaseNotesOf(*release.departed, release.staying);
+			for (size_t i = 0; i < program.sequencers.size(); ++i)
+				program.sequencers[i].second->playOn(program.destinations[i]);
 			m_started.store(program.generation, std::memory_order_release);
 		}
 		const audio::DeviceFormat& format = m_device->format();

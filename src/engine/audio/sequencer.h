@@ -47,6 +47,8 @@ namespace gnubase::engine
 	// part in parts) and MIDI parts (sorted by start).
 	ChaseTrack makeChaseTrack(const std::vector<RenderController>& controllers, const std::vector<RenderPart>& parts);
 
+	class InstrumentChannel;
+
 	// What a MIDI or instrument track plays, in the project's samples.
 	struct MidiSequence
 	{
@@ -126,6 +128,18 @@ namespace gnubase::engine
 			m_inputHeld.fill(false);
 		}
 
+		// Audio thread, before the first block of a graph, after its releases: the instrument channel its track plays
+		// on in that graph, or null. When that changes (the instrument replaced, the instrument track removed, routed
+		// from nowhere), the notes its input holds sounded on another instrument or none, so it forgets them: they
+		// mustn't keep the same notes of other sources from ending on this one (#391). Its parts' notes still end.
+		void playOn(const InstrumentChannel* instrument) noexcept
+		{
+			if (instrument == m_instrument)
+				return;
+			m_inputHeld.fill(false);
+			m_instrument = instrument;
+		}
+
 		// Audio thread: the events played into the track in this block (midi.inject), as from its MIDI input. They go
 		// out after the events it receives and before its parts' events, also while the transport stands. The audio
 		// engine fills them before the graph processes a block.
@@ -177,7 +191,8 @@ namespace gnubase::engine
 		size_t m_chasedSent = 0;
 		std::array<uint32_t, g_notes> m_chasedNotes{}; // while chasing: the notes to start, as indices into notes
 		graph::EventBuffer m_input;
-		std::array<bool, g_notes> m_inputHeld{}; // notes its input sent a note-on for and no note-off since
+		std::array<bool, g_notes> m_inputHeld{};         // notes its input sent a note-on for and no note-off since
+		const InstrumentChannel* m_instrument = nullptr; // playOn: where its notes went in the graph that runs
 	};
 
 	// An instrument track's channel: its own parts' events and those of the MIDI tracks routed to it, played by its
