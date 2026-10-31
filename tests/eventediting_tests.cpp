@@ -236,8 +236,8 @@ TEST_CASE("the edit commands act on the selection", "[unit]")
 	Fixture f;
 	const std::map<std::string, std::function<void()>>& actions = f.display.actions();
 	for (const char* id : {"edit.delete", "edit.mute", "edit.unmute", "edit.lock", "edit.unlock", "edit.splitAtCursor",
-			 "edit.splitLoop", "edit.glue", "edit.duplicate", "edit.fillLoop", "edit.toRealCopy", "edit.nudgeLeft",
-			 "edit.nudgeRight", "edit.nudgeStartLeft", "edit.nudgeStartRight", "edit.nudgeEndLeft",
+			 "edit.splitLoop", "edit.glue", "edit.duplicate", "edit.repeat", "edit.fillLoop", "edit.toRealCopy",
+			 "edit.nudgeLeft", "edit.nudgeRight", "edit.nudgeStartLeft", "edit.nudgeStartRight", "edit.nudgeEndLeft",
 			 "edit.nudgeEndRight", "edit.moveStartToCursor", "edit.moveEndToCursor", "edit.selectAll",
 			 "edit.selectNone", "edit.invertSelection", "edit.selectInLoop", "edit.selectFromStartToCursor",
 			 "edit.selectFromCursorToEnd", "edit.selectUnderCursor"})
@@ -294,4 +294,43 @@ TEST_CASE("the edit commands act on the selection", "[unit]")
 	f.run("edit.glue");
 	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
 	CHECK(f.parts()[0].at("length") == 3 * g_quarter);
+}
+
+TEST_CASE("fill loop, convert to real copy and split loop act on the selection", "[unit]")
+{
+	Fixture f;
+	// The locators from 1 to 7.5 seconds: copies of the part (1 to 3 seconds) at 3 and 5 seconds, and one at 7
+	// seconds cut at the right locator.
+	f.call("transport.set", {{"left", 48000}, {"right", 360000}});
+	f.display.select({f.part});
+	f.run("edit.fillLoop");
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 4; }));
+	for (size_t i = 1; i < 4; ++i)
+	{
+		CHECK(f.parts()[i].at("position") == static_cast<int64_t>(2 + (4 * i)) * g_quarter);
+		CHECK(f.parts()[i].at("shared") == 0);
+	}
+	CHECK(f.parts()[1].at("length") == 4 * g_quarter);
+	CHECK(f.parts()[3].at("length") == g_quarter);
+
+	// Alt, Shift and a drag makes a shared copy of the last one, 1.5 seconds later; convert to real copy unshares it.
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[1].events.size() == 4; }));
+	f.drag(725, 60, 875, 60, {"alt", "shift"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 5; }));
+	const auto copy = f.parts()[4].at("id").get<uint64_t>();
+	CHECK(f.parts()[4].at("position") == 17 * g_quarter);
+	CHECK(f.parts()[4].at("shared") != 0);
+	REQUIRE(f.waitUntil([&f, copy] { return f.display.selection() == std::vector<uint64_t>{copy}; }));
+	f.run("edit.toRealCopy");
+	REQUIRE(f.waitUntil([&f] { return f.parts()[4].at("shared") == 0; }));
+
+	// Split loop without a selection cuts everything at the locators, here 2.25 and 4 seconds: the part, its first
+	// copy and the audio event. Locating the cursor afterwards tells when the display knows the locators.
+	f.run("edit.selectNone");
+	f.call("transport.set", {{"left", 108000}, {"right", 192000}});
+	f.call("transport.locate", {{"position", 24000}});
+	REQUIRE(f.waitUntil([&f] { return f.display.cursor() == 0.5; }));
+	f.run("edit.splitLoop");
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 7; }));
+	CHECK(f.audioEvents().size() == 2);
 }

@@ -36,7 +36,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 34> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 35> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -55,6 +55,7 @@ namespace gnubase::app
 			{"edit.splitLoop", "Splits the selected events, or all there, at the locators.", nullptr},
 			{"edit.glue", "Glues the selected events together.", nullptr},
 			{"edit.duplicate", "Duplicates the selected events.", "Mod+D"},
+			{"edit.repeat", "Opens the Repeat Events dialog for the selected events.", "Mod+K"},
 			{"edit.fillLoop", "Fills the locator range with copies of the selected events.", nullptr},
 			{"edit.toRealCopy", "Converts the selected shared copies to real copies.", nullptr},
 			{"edit.nudgeLeft", "Moves the selected events left.", "Mod+Left"},

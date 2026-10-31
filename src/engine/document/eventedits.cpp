@@ -532,6 +532,7 @@ namespace gnubase::engine
 			const bool musical = allMusical(items);
 			const auto [start, end] = block(project, items, musical);
 			const int64_t length = end - start;
+			require(length > 0, "the events are too short to fill the range with");
 			const int64_t from = inUnit(project, {time::TimeBase::Linear, left}, musical);
 			const int64_t to = inUnit(project, {time::TimeBase::Linear, right}, musical);
 			require((to - from) / length <= 1000, "the range holds more than 1000 copies");

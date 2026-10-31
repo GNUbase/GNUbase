@@ -128,10 +128,10 @@ namespace gnubase::ui
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
 		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); and the edits of parts and events:
 		// edit.delete, edit.mute, edit.unmute, edit.lock, edit.unlock, edit.splitAtCursor, edit.splitLoop, edit.glue,
-		// edit.duplicate, edit.fillLoop, edit.toRealCopy, edit.nudgeLeft, edit.nudgeRight, edit.nudgeStartLeft,
-		// edit.nudgeStartRight, edit.nudgeEndLeft, edit.nudgeEndRight, edit.moveStartToCursor, edit.moveEndToCursor,
-		// edit.selectAll, edit.selectNone, edit.invertSelection, edit.selectInLoop, edit.selectFromStartToCursor,
-		// edit.selectFromCursorToEnd and edit.selectUnderCursor.
+		// edit.duplicate, edit.repeat (opens the Repeat Events dialog), edit.fillLoop, edit.toRealCopy, edit.nudgeLeft,
+		// edit.nudgeRight, edit.nudgeStartLeft, edit.nudgeStartRight, edit.nudgeEndLeft, edit.nudgeEndRight,
+		// edit.moveStartToCursor, edit.moveEndToCursor, edit.selectAll, edit.selectNone, edit.invertSelection,
+		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd and edit.selectUnderCursor.
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
 
 	private:

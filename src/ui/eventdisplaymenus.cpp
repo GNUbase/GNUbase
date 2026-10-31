@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The event display's menus, buttons and dialogs in its document (ui/eventdisplay.h): the ruler's time format menu,
-// the horizontal zoom presets menu with its dialogs, and the auto-scroll button with its settings menu.
+// the horizontal zoom presets menu with its dialogs, the auto-scroll button with its settings menu, and the Repeat
+// Events dialog.
 #include "ui/eventdisplay.h"
 
 #include "platform/log.h"
@@ -12,6 +13,7 @@
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
 
+#include <cmath>
 #include <filesystem>
 #include <map>
 #include <string>
@@ -183,7 +185,13 @@ namespace gnubase::ui
 					row->SetClass("deleted", true);
 			return;
 		}
-		if (Rml::Element* name = dialog->GetElementById("zoom-preset-name"))
+		if (Rml::Element* count = dialog->GetElementById("repeat-count"))
+		{
+			const Rml::Element* shared = dialog->GetElementById("repeat-shared");
+			repeat(static_cast<int>(std::lround(count->GetAttribute<float>("value", 1.0F))),
+				shared != nullptr && shared->HasAttribute("checked"));
+		}
+		else if (Rml::Element* name = dialog->GetElementById("zoom-preset-name"))
 		{
 			if (const std::string text = valueOf(name); !text.empty())
 				addZoomPreset(text);

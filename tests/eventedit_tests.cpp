@@ -356,6 +356,19 @@ TEST_CASE("event.fillLoop fills the locators with copies, cutting the last one",
 	REQUIRE(shared.size() == 1);
 	CHECK(f.midi(shared[0]).at("position") == 0);
 	CHECK(f.midi(shared[0]).at("shared") == f.midi(part).at("shared"));
+
+	// One frame of a 192 kHz clip is no samples long at 48 kHz: nothing to fill the range with.
+	const Json media =
+		f.call("media.add", {{"path", "fast.wav"}, {"sampleRate", 192000}, {"channels", 1}, {"length", 192000}})
+			.at("media");
+	const Json clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const Json tiny =
+		f.call("audioEvent.add",
+			 {{"track", f.track("audio", "linear")}, {"clip", clip.at("id")}, {"position", 0}, {"length", 1}})
+			.at("event")
+			.at("id");
+	CHECK(f.fails("event.fillLoop", {{"events", {tiny}}, {"start", 0}, {"end", g_second}}).find("too short") !=
+		std::string::npos);
 }
 
 TEST_CASE("event.get tells where events and parts are, in samples and ticks", "[unit]")

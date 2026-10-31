@@ -77,19 +77,19 @@ The object selection tool's gestures (#86 brings the other tools):
 
 The edit commands are in `actions()`, for the key command system to bind (#57): `edit.delete`, `edit.mute`,
 `edit.unmute`, `edit.lock`, `edit.unlock`, `edit.splitAtCursor` and `edit.splitLoop` (the selection, or every event
-there), `edit.glue`, `edit.duplicate`, `edit.fillLoop`, `edit.toRealCopy`, `edit.moveStartToCursor`,
+there), `edit.glue`, `edit.duplicate`, `edit.repeat`, `edit.fillLoop`, `edit.toRealCopy`, `edit.moveStartToCursor`,
 `edit.moveEndToCursor`, the nudges `edit.nudgeLeft`, `edit.nudgeRight`, `edit.nudgeStartLeft`, `edit.nudgeStartRight`,
 `edit.nudgeEndLeft` and `edit.nudgeEndRight` (a quarter note until the snap grid, #87, sets the step), and the select
 submenu `edit.selectAll`, `edit.selectNone`, `edit.invertSelection`, `edit.selectInLoop`,
 `edit.selectFromStartToCursor`, `edit.selectFromCursorToEnd` and `edit.selectUnderCursor` (on every track until the
-track list, #81, selects tracks). `repeat(count, shared)` is the Repeat Events dialog's action. Copies, duplicates
-and new parts become the selection. `app::AppUi` binds the reference's keys for them in the project window
-([key-commands.md](key-commands.md)): Delete and Backspace delete, Mod+D duplicates, Alt+X splits at the cursor, Mod
-and the arrows nudge, and so on.
+track list, #81, selects tracks). `edit.repeat` opens the Repeat Events dialog (`resources/ui/repeat-events.rml`,
+reference manual pp. 271–272): a count from 1 to 1000 and Shared Copies, which OK passes to `repeat(count, shared)`.
+Copies, duplicates and new parts become the selection. `app::AppUi` binds the reference's keys for them in the project
+window ([key-commands.md](key-commands.md)): Delete and Backspace delete, Mod+D duplicates, Mod+K repeats, Alt+X splits
+at the cursor, Mod and the arrows nudge, and so on.
 
 Not yet: the info line (#89, which `event.get` feeds), a selection rectangle, the arrow keys' selection, the drag
-delay, the Repeat Events dialog, a lock and a shared copy icon on events, and
-moving a selection on several tracks to other tracks.
+delay, a lock and a shared copy icon on events, and moving a selection on several tracks to other tracks.
 
 ## Checks
 
@@ -99,9 +99,11 @@ moving a selection on several tracks to other tracks.
   splitting notes; gluing; filling the locators; `event.get`.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): selecting with clicks and Ctrl, moving and copying
   with drags, shared copies with Alt and Shift, onto another track; resizing at the edges, splitting with Alt, adding
-  parts with a double click at a bar and between the locators; every edit command on the selection, the select
-  submenu, muted events shown greyed out and locked ones kept.
+  parts with a double click at a bar and between the locators; the edit commands on the selection (delete, mute,
+  lock, nudging, duplicating, moving to the cursor, splitting at the cursor and the locators, gluing, filling the
+  locators with the last copy cut, converting a shared copy to a real one), the select submenu, muted events shown
+  greyed out and locked ones kept.
 - `tests/uiapp_tests.cpp` presses the default keys in the app's project window: select all, duplicate, mute, nudge
-  and Backspace.
+  and Backspace; and Mod+K, whose Repeat Events dialog makes three shared copies.
 - `tests/lua/events.lua`: a muted part is silent and plays again after undo; duplicating, shared copies, splitting and
   gluing from Lua.

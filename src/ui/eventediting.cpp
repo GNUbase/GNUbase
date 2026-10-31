@@ -143,6 +143,12 @@ namespace gnubase::ui
 			{"edit.splitLoop", [this, split] { split(Json::array({m_left, m_right})); }},
 			{"edit.glue", onSelection("event.glue", Json::object())},
 			{"edit.duplicate", [this] { repeat(1, false); }},
+			{"edit.repeat",
+				[this]
+				{
+					if (!m_selection.empty())
+						openDialog("repeat-events.rml");
+				}},
 			{"edit.fillLoop", onSelection("event.fillLoop", Json::object())},
 			{"edit.toRealCopy", onSelection("event.toRealCopy", Json::object())},
 			{"edit.nudgeLeft", nudge(nullptr, -g_nudge)},
