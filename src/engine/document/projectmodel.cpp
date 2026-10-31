@@ -1878,6 +1878,32 @@ namespace gnubase::engine
 			require(sampleRate > 0.0, "sampleRate must be positive");
 			const double maxVolume = parameters.value("maxVolume", project.maxVolume);
 			require(maxVolume == 6.0 || maxVolume == 12.0, "maxVolume must be 6 or 12 dB");
+			// The first tempo and signature, which the transport bar shows; tempo and signature tracks edit the rest.
+			std::vector<time::TempoPoint> tempo = project.tempo.points();
+			tempo.front().bpm = parameters.value("tempo", tempo.front().bpm);
+			require(tempo.front().bpm >= time::g_minBpm && tempo.front().bpm <= time::g_maxBpm,
+				"tempo must be from 1 to 999 BPM");
+			std::vector<time::SignatureChange> signatures = project.signatures.changes();
+			if (const auto signature = parameters.find("signature"); signature != parameters.end())
+			{
+				const int numerator = signature->at("numerator").get<int>();
+				const int denominator = signature->at("denominator").get<int>();
+				require(numerator >= 1 && numerator <= 99, "the signature's numerator must be from 1 to 99");
+				require(
+					denominator == 1 || denominator == 2 || denominator == 4 || denominator == 8 || denominator == 16,
+					"the signature's denominator must be 1, 2, 4, 8 or 16");
+				signatures.front().signature = {numerator, denominator};
+			}
+			const time::TempoMap tempoMap(tempo);
+			const time::SignatureMap signatureMap(signatures);
+			const bool retimed = tempoMap != project.tempo || signatureMap != project.signatures;
+			project.tempo = tempoMap;
+			project.signatures = signatureMap;
+			if (retimed)
+				// A cycle marker in ticks can get shorter than a sample at a faster tempo.
+				for (auto& [id, marker] : project.markers)
+					if (keepMinimumLength(project, marker))
+						context.emit("marker.changed", {{"marker", toJson(marker)}});
 			project.name = parameters.value("name", project.name);
 			if (parameters.contains("panLaw"))
 				project.panLaw = panLawFromName(parameters.at("panLaw").get<std::string>()).value_or(project.panLaw);
@@ -2382,9 +2408,15 @@ namespace gnubase::engine
 				"time at a new sample rate. panLaw is how much a mono channel panned to the center is turned down on "
 				"each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same "
 				"wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the "
-				"faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it.",
+				"faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it. tempo (1 to 999 BPM) "
+				"and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} are the project's first tempo and "
+				"time signature, as the transport bar sets them; later changes stay, and musical positions keep their "
+				"ticks.",
 				objectSchema({{"name", stringSchema}, {"sampleRate", numberSchema},
-					{"panLaw", enumSchema(panLawNames())}, {"maxVolume", numberSchema}}),
+					{"panLaw", enumSchema(panLawNames())}, {"maxVolume", numberSchema}, {"tempo", numberSchema},
+					{"signature",
+						objectSchema({{"numerator", {{"type", "integer"}}}, {"denominator", {{"type", "integer"}}}},
+							{"numerator", "denominator"})}}),
 				noResult, false},
 			setProject);
 

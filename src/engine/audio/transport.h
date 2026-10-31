@@ -25,6 +25,11 @@ namespace gnubase::engine
 		bool cycle = false;      // cycle playback between the locators, or skips them if the right comes first
 		StartMode startMode = StartMode::Cursor;
 		bool returnToStart = false; // on stop the cursor goes back to where playback started
+		// Switches of the transport bar whose behaviour comes with their tickets: punching in and out at the locators
+		// (#102) and the metronome click (#101).
+		bool punchIn = false;
+		bool punchOut = false;
+		bool metronome = false;
 	};
 
 	// The project cursor, play and stop, recording, and cycle playback. The command thread sends requests; the audio
