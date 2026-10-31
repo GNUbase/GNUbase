@@ -167,7 +167,7 @@ namespace gnubase::ui
 		Rml::Element* m_functions = nullptr;
 		ProjectMarkers m_markers;
 		std::vector<MarkerItem> m_listed;
-		double m_cursor = 0.0; // seconds
+		int64_t m_cursorSample = 0; // showCursor converts it at the project's current sample rate
 		bool m_loading = false;
 		bool m_stale = false;
 		std::vector<Subscription> m_subscriptions;

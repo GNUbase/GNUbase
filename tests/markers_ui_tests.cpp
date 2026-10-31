@@ -364,6 +364,25 @@ TEST_CASE("the markers window lists the active marker track's markers to locate,
 	CHECK(app.shell().find(window) == nullptr);
 }
 
+TEST_CASE("the markers window's locate arrow follows the project's sample rate", "[ui]")
+{
+	// The window learns the cursor before the project; the arrow converts it at the project's rate, not at 48 kHz.
+	test::UiApp app;
+	app.call("track.add", {{"type", "marker"}});
+	app.call("project.set", {{"sampleRate", 44100.0}});
+	app.call("marker.add", {{"position", g_quarter}});
+	app.call("marker.add", {{"position", 2 * g_quarter}}); // one second: sample 44100
+	app.call("transport.locate", {{"position", 44100}});
+
+	app.ui().key(std::nullopt, "Mod+M");
+	REQUIRE(app.waitUntil(
+		[&app] { return app.appUi().markers() != nullptr && app.appUi().markers()->markers().size() == 2; }));
+	Rml::ElementDocument& document = markersDocument(app);
+	REQUIRE(app.waitUntil([&document] { return document.QuerySelector("#marker-rows tr.at-cursor") != nullptr; }));
+	CHECK(document.QuerySelector("#marker-rows tr.at-cursor")->GetAttribute<uint64_t>("value", 0) ==
+		app.appUi().markers()->markers()[1].id);
+}
+
 TEST_CASE("key commands locate to markers, set them and recall cycle markers", "[ui]")
 {
 	test::UiApp app;

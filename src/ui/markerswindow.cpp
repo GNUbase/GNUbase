@@ -176,7 +176,7 @@ namespace gnubase::ui
 
 	void MarkersWindow::setCursor(int64_t sample)
 	{
-		m_cursor = static_cast<double>(sample) / m_markers.time.sampleRate;
+		m_cursorSample = sample;
 		showCursor();
 	}
 
@@ -185,9 +185,10 @@ namespace gnubase::ui
 	{
 		if (!alive() || m_rows == nullptr)
 			return;
+		const double cursor = static_cast<double>(m_cursorSample) / m_markers.time.sampleRate;
 		uint64_t at = 0;
 		for (const MarkerItem& marker : m_listed)
-			if (marker.start <= m_cursor + 1e-9)
+			if (marker.start <= cursor + 1e-9)
 				at = marker.id;
 		for (int i = 0; i < m_rows->GetNumChildren(); ++i)
 		{
