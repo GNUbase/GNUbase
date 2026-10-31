@@ -6,6 +6,7 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlInput.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/Property.h>
@@ -655,6 +656,8 @@ namespace gnubase::ui
 		element->SetClass("renaming", true);
 		field->SetAttribute("value", m_renamed);
 		field->Focus();
+		if (auto* input = dynamic_cast<Rml::ElementFormControlInput*>(field))
+			input->Select(); // typing replaces the name
 		if (Rml::Context* context = field->GetContext())
 			context->RequestNextUpdate(0);
 	}

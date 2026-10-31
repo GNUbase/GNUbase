@@ -182,7 +182,6 @@ TEST_CASE("tracks are selected with clicks and the arrow keys, renamed with a do
 	tracks.click(row(b) + " .track-name", {}, 2);
 	REQUIRE(hasClass(elements(tracks.app, row(b)).at(0), "renaming"));
 	CHECK(elements(tracks.app, row(b) + " input").at(0).at("visible").get<bool>());
-	tracks.app.ui().key(std::nullopt, "Ctrl+A");
 	tracks.app.ui().text(std::nullopt, "Bass");
 	tracks.app.ui().key(std::nullopt, "Enter");
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(b).at("name") == "Bass"; }));

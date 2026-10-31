@@ -63,7 +63,7 @@ sends engine commands, so whatever another client changes shows at once.
   track that isn't selected selects it for the context menu. The selection is the UI's, not the project's
   (`TrackList::selection`), like the event display's.
 - **Renaming** (p. 214): a double click on a name, or `track.rename` (Alt+F2) for the first selected track, shows a
-  text field; Enter or leaving it sends `track.set` `name`, Escape keeps the name.
+  text field with the name selected; Enter or leaving it sends `track.set` `name`, Escape keeps the name.
 - **Moving** (pp. 213–214): dragging a row moves the selected tracks (or the dragged one, if it isn't selected) to
   where the line shows: before the track in the upper half of a row, after it in the lower half, and into a folder,
   last, on the middle of the folder's row. The moves are `track.move` commands in one `history.transaction`, "Move
