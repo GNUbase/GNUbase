@@ -71,7 +71,8 @@ namespace gnubase::engine
 		~AudioEngine() override; // stops the device
 
 		// Registers audio.devices, audio.setDevice, audio.ports, audio.setProcessing, audio.get, audio.performance,
-		// audio.resetPerformance, audio.simulateOverload, audio.simulateDeviceLoss, audio.reset, audio.updateLatency,
+		// audio.resetPerformance, audio.simulateOverload, audio.simulateDeviceLoss, audio.reset, audio.reconnect,
+		// audio.updateLatency,
 		// audio.controlPanel, audio.render, audio.start, audio.stop, audio.capture and audio.captureInput, the
 		// transport commands transport.play, transport.stop, transport.toggle, transport.record, transport.locate,
 		// transport.set, transport.exchangeLocators and transport.get, and the MIDI port commands (MidiPorts).
@@ -146,7 +147,8 @@ namespace gnubase::engine
 		void closeDevice();
 		// audio.reset; a device that can't be opened is lost. True if the status changed.
 		bool reset();
-		// Starts trying to open the lost device again, every g_reconnectInterval, with audio.reset.
+		// Starts trying to open the lost device again, every g_reconnectInterval, with audio.reconnect: one try at a
+		// time, so that tries don't queue up behind a long command and reset the device again once it is back.
 		void waitForDevice();
 		// Opens the device again with the parameters, and starts it again if it was running.
 		void reopen(const Json& parameters, bool running);
@@ -235,7 +237,9 @@ namespace gnubase::engine
 		std::mutex m_reconnectMutex; // guards m_stopReconnecting
 		bool m_stopReconnecting = false;
 		std::atomic<bool> m_waitingForDevice{false}; // m_lost, for that thread
+		std::atomic<bool> m_reconnecting{false};     // a try it posted hasn't run yet
 		std::condition_variable m_reconnectWake;
+		uint64_t m_closed = 0; // counts the devices closed and the losses ended, to announce what a failed command did
 		std::thread m_reconnectThread;
 
 		// The user's names for ports and which ones they see (audio.setPort), by portKey, for every device opened.
@@ -295,7 +299,7 @@ namespace gnubase::engine
 		rt::TripleBuffer<PerformanceData> m_performance;
 		std::atomic<bool> m_resetPerformance{false};
 		uint64_t m_deviceOverloadsBefore = 0; // the device's overloads when the measurement started
-		uint64_t m_deviceOverloadsKept = 0;   // the dropouts of the devices before an audio.reset, and the resets
+		uint64_t m_deviceOverloadsKept = 0;   // the dropouts of the devices before an audio.reset
 
 		// The cue thread, while the device runs in real time. It reads the transport's settings and play state from
 		// m_cueState, which the command thread updates.

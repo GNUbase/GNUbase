@@ -590,6 +590,32 @@ TEST_CASE("audio.set opens a driver's device again with the old settings if it c
 	CHECK(device.at("clockSource") == "Word clock");
 }
 
+TEST_CASE("a failed audio.set or audio.setDevice still announces the device it reopened or closed", "[unit]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "fake"}, {"sampleRate", 44100}});
+	while (client.wait(std::chrono::milliseconds(0))) // audio.setDevice's own audio.changed
+		;
+
+	// Opened again with the old settings: the device is back at position 0, and clients hear of it.
+	reject(client, "audio.set", {{"sampleRate", 96000}});
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data)
+		{ return data.at("device").is_object() && data.at("device").at("sampleRate") == 44100.0; }));
+
+	// Neither the new nor the old settings open it: there is no device.
+	driver->connected = false;
+	reject(client, "audio.set", {{"blockSize", 128}});
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return data.at("device").is_null(); }));
+	CHECK(run(client, "audio.get").at("device").is_null());
+
+	// audio.setDevice closes the old device before it opens the new one.
+	run(client, "audio.setDevice");
+	reject(client, "audio.setDevice", {{"backend", "fake"}});
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return data.at("device").is_null(); }));
+}
+
 TEST_CASE("audio.setPort renames and hides the device's ports, per device", "[unit]")
 {
 	Engine engine;
@@ -725,6 +751,72 @@ TEST_CASE("the unplugged dummy device plugs in again after another backend repla
 	CHECK(run(client, "audio.get").at("lost").is_null());
 	run(client, "audio.simulateDeviceLoss", {{"connected", true}});
 	CHECK(run(client, "audio.setDevice").at("device").at("backend") == "dummy");
+}
+
+TEST_CASE("tries to open a lost device again run one at a time and stay out of the command log", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice");
+	run(client, "audio.simulateDeviceLoss", {{"connected", false}});
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
+
+	// Tries that find the device still gone leave the log to what clients did.
+	std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+	Json log = run(client, "engine.commandLog").at("commands");
+	CHECK(std::count_if(log.begin(), log.end(), [](const Json& entry) { return entry.at("client") == "engine"; }) ==
+		1); // the driver's audio.reset that lost the device
+
+	// The command thread is busy for over a second and the device returns meanwhile: tries don't queue up behind
+	// it, so the device opens once, announced once, instead of every further try resetting it again.
+	engine.post("audio.get", Json::object(),
+		[](const Result&) { std::this_thread::sleep_for(std::chrono::milliseconds(1200)); }); // a long command
+	run(client, "audio.simulateDeviceLoss", {{"connected", true}});
+	int changes = 0;
+	const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+	while (std::chrono::steady_clock::now() < until)
+	{
+		const std::optional<Message> message = client.wait(std::chrono::milliseconds(50));
+		const auto* event = message ? std::get_if<Event>(&*message) : nullptr;
+		if (event != nullptr && event->name == "audio.changed")
+		{
+			CHECK(event->data.at("device").is_object());
+			++changes;
+		}
+	}
+	CHECK(changes == 1);
+	log = run(client, "engine.commandLog").at("commands");
+	CHECK(std::count_if(log.begin(), log.end(), [](const Json& entry)
+			  { return entry.at("command") == "audio.reconnect"; }) == 1); // the try that opened it
+}
+
+TEST_CASE("audio.stop and audio.start while a device is lost decide whether it starts again", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice");
+	run(client, "audio.start");
+	run(client, "audio.simulateDeviceLoss", {{"connected", false}});
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
+
+	// Stopped while it is gone: it returns stopped.
+	CHECK(run(client, "audio.stop").at("lost").at("restart") == false);
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return !data.at("lost").is_null() && data.at("lost").at("restart") == false; }));
+	run(client, "audio.simulateDeviceLoss", {{"connected", true}});
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return data.at("device").is_object(); }));
+	CHECK(run(client, "audio.get").at("running") == false);
+
+	// Started while it is gone: it returns running.
+	run(client, "audio.simulateDeviceLoss", {{"connected", false}});
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
+	CHECK(run(client, "audio.start").at("lost").at("restart") == true);
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return !data.at("lost").is_null() && data.at("lost").at("restart") == true; }));
+	run(client, "audio.simulateDeviceLoss", {{"connected", true}});
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return data.at("device").is_object(); }));
+	CHECK(run(client, "audio.get").at("running") == true);
+	run(client, "audio.stop");
 }
 
 TEST_CASE("a device lost while the project's sample rate changes returns at the new rate", "[integration]")
