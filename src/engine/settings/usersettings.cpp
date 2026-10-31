@@ -119,6 +119,20 @@ namespace gnubase::engine::settings
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
+				{"ui.trackControls",
+					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
+					"folder, marker, ruler), in order: mute, solo, record, monitor (audio tracks), read (automation) "
+					"and timeBase. Mute and solo always show on tracks with a channel; a type left out shows none.",
+					Json{{"type", "object"},
+						{"additionalProperties",
+							{{"type", "array"},
+								{"items",
+									{{"type", "string"},
+										{"enum", {"mute", "solo", "record", "monitor", "read", "timeBase"}}}}}}},
+					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
+						{"instrument", {"mute", "solo", "read"}}, {"midi", {"mute", "solo", "read"}},
+						{"group", {"mute", "solo", "read"}}, {"effect", {"mute", "solo", "read"}},
+						{"folder", {"mute", "solo", "read"}}, {"marker", Json::array()}, {"ruler", Json::array()}}},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "
 					"seconds the view shows.",

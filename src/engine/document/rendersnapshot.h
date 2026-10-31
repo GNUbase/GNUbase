@@ -129,6 +129,9 @@ namespace gnubase::engine
 		std::optional<int> midiPan;
 		bool monitor = false; // audio tracks: the monitor and record enable buttons
 		bool recordEnable = false;
+		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A silent MIDI channel
+		// has no notes or controllers, and a disabled track no events or parts.
+		bool silent = false;
 		AutoFades autoFades;                          // audio tracks: their own settings or the project's
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
 		std::vector<RenderNote> notes;                // sorted by start, then pitch
