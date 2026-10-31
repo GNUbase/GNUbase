@@ -112,4 +112,19 @@ namespace gnubase::engine
 			++marker.end.value;
 		return true;
 	}
+
+	bool poolFolderOutside(const Project& project, ObjectId folder, ObjectId excluded)
+	{
+		// More steps than there are folders means a loop.
+		for (size_t steps = 0; steps <= project.poolFolders.size(); ++steps)
+		{
+			if (folder == 0)
+				return true;
+			const auto found = project.poolFolders.find(folder);
+			if (folder == excluded || found == project.poolFolders.end())
+				return false;
+			folder = found->second.parent;
+		}
+		return false;
+	}
 }

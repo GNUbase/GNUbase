@@ -307,10 +307,11 @@ Result:
 
 Engine command `audioFile.import`.
 
-Imports audio files (WAV, RF64, Wave64, AIFF, FLAC, Ogg Vorbis or MP3) as audio events at position, in sample frames from the project start (default 0). Each file goes on a new audio track named after it, with its channels; with oneTrack, they go one after another on one new track, and with track, one after another on that audio track. copy copies files from outside the project folder into its media folder (see project.location) as a job, returned as job (null without one) with the result media.add's copy job has; the media are pointed at the copies as an undo step of its own. convert writes files at another sample rate than the project's, and MP3 and Ogg Vorbis files, into the media folder as 32-bit float WAV files at the project's sample rate. splitChannels writes each channel of a file with several into the media folder as a mono WAV file, named after the file and its speaker (such as take-L.wav), on a new mono track of its own. copy, convert and splitChannels need a saved project. One undo step. Returns the new tracks, and per file (per channel when split) the media files and events, in the order of files.
+Imports audio files (WAV, RF64, Wave64, AIFF, FLAC, Ogg Vorbis or MP3) as audio events at position, in sample frames from the project start (default 0). Each file goes on a new audio track named after it, with its channels; with oneTrack, they go one after another on one new track, and with track, one after another on that audio track. copy copies files from outside the project folder into its media folder (see project.location) as a job, returned as job (null without one) with the result media.add's copy job has; the media are pointed at the copies as an undo step of its own. convert writes files at another sample rate than the project's, and MP3 and Ogg Vorbis files, into the media folder as 32-bit float WAV files at the project's sample rate. splitChannels writes each channel of a file with several into the media folder as a mono WAV file, named after the file and its speaker (such as take-L.wav), on a new mono track of its own. copy, convert and splitChannels need a saved project. clipsOnly adds the media files and clips to the pool without tracks or events (the pool's Import Medium). One undo step. Returns the new tracks, and per file (per channel when split) the media files and events, in the order of files.
 
 Arguments:
 
+- `clipsOnly`: boolean
 - `convert`: boolean
 - `copy`: boolean
 - `files`: array of string, required
@@ -1116,6 +1117,22 @@ Arguments:
 
 - `clip`: integer, required
 
+#### `clip_set`
+
+Engine command `clip.set`.
+
+Renames a clip or moves it into a pool folder (0: the pool's Audio folder). The file keeps its name.
+
+Arguments:
+
+- `clip`: integer, required
+- `folder`: integer
+- `name`: string
+
+Result:
+
+- `clip`: object, required
+
 #### `clip_setFades`
 
 Engine command `clip.setFades`.
@@ -1772,6 +1789,20 @@ Result:
 - `job`: object or null, required
 - `media`: object, required
 
+#### `media_conform`
+
+Engine command `media.conform`.
+
+Conforms media files to the project's sample rate (Convert Files with New + Replace in Pool, reference manual pp. 759-760): writes each one at another sample rate into the media folder as a 32-bit float WAV file at the project's sample rate and points the media file at it, as one undo step. The clip fades, offsets, lengths, fades, crossfades and snap points of what plays it move with the new sample frames, so events play the same section. The original files stay on disk. media limits it to those media files (default: every one that isn't missing). The project must have been saved. Returns the media files conformed.
+
+Arguments:
+
+- `media`: array of integer
+
+Result:
+
+- `media`: array of integer, required
+
 #### `media_convert`
 
 Engine command `media.convert`.
@@ -1787,6 +1818,22 @@ Arguments:
 Result:
 
 - `media`: object, required
+
+#### `media_locate`
+
+Engine command `media.locate`.
+
+Looks for missing media files in folder and the folders inside it (the Resolve Missing Files dialog's Browse Folder, reference manual pp. 750-752): a file with the same name, in any letter case, and the media file's sample rate and channel count. The files found are relinked as one undo step. media limits it to those media files (default: every missing one). Returns the media files relinked and the ones still missing.
+
+Arguments:
+
+- `folder`: string, required
+- `media`: array of integer
+
+Result:
+
+- `missing`: array of integer, required
+- `relinked`: array of integer, required
 
 #### `media_peakStatus`
 
@@ -1859,6 +1906,18 @@ Removes an audio file that no clip uses.
 Arguments:
 
 - `media`: integer, required
+
+#### `media_removeMissing`
+
+Engine command `media.removeMissing`.
+
+Removes the media files that are missing from the pool with their clips and the audio events that play them (reference manual p. 752), as one undo step. Returns the ids removed.
+
+Result:
+
+- `clips`: array of integer, required
+- `events`: array of integer, required
+- `media`: array of integer, required
 
 #### `media_stretch`
 
@@ -2478,6 +2537,78 @@ Result:
 - `hosts`: array of object, required
 - `mode`: string, required
 - `overrides`: object, required
+
+### poolFolder
+
+#### `poolFolder_add`
+
+Engine command `poolFolder.add`.
+
+Adds a pool folder (reference manual p. 757), named name (default New Folder), in the folder parent (default 0, the pool's Audio folder). Folders only organize the pool; files stay where they are.
+
+Arguments:
+
+- `name`: string
+- `parent`: integer
+
+Result:
+
+- `folder`: object, required
+
+#### `poolFolder_remove`
+
+Engine command `poolFolder.remove`.
+
+Removes a pool folder; the clips and folders in it go into its parent folder.
+
+Arguments:
+
+- `folder`: integer, required
+
+#### `poolFolder_set`
+
+Engine command `poolFolder.set`.
+
+Renames a pool folder or moves it into another one (parent; 0 is the pool's Audio folder), but not into itself or a folder inside it.
+
+Arguments:
+
+- `folder`: integer, required
+- `name`: string
+- `parent`: integer
+
+Result:
+
+- `folder`: object, required
+
+### pool
+
+#### `pool_get`
+
+Engine command `pool.get`. Read-only.
+
+The pool (reference manual pp. 739-744): its folders, and every clip with the folder it is in, the number of audio events that use it (used), its media file's path, sample rate, channel count and length in sample frames, whether the file is missing and whether it is external, outside the project folder (every file of a project that has no file yet). The totals of the info line: audioFiles, usedFiles (media files that an event plays), missingFiles, externalFiles and totalSize, the bytes of the files on disk.
+
+Result:
+
+- `audioFiles`: integer, required
+- `clips`: array of object, required
+- `externalFiles`: integer, required
+- `folders`: array of object, required
+- `missingFiles`: integer, required
+- `totalSize`: integer, required
+- `usedFiles`: integer, required
+
+#### `pool_removeUnused`
+
+Engine command `pool.removeUnused`.
+
+Removes the clips that no audio event uses, then the media files that no clip uses, from the pool (reference manual p. 747), as one undo step. The files stay on disk. Returns the ids removed.
+
+Result:
+
+- `clips`: array of integer, required
+- `media`: array of integer, required
 
 ### processor
 
@@ -3315,6 +3446,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://midi.monitor`: The MIDI input received since the last call from every open input, at most 4096 messages, each with its port, its frame position on the audio device and its bytes. dropped counts what didn't fit: while nobody reads, newer messages are dropped. start: true starts afresh; it drops what was received so far and returns nothing. Each call empties what it returns. Input reaches the monitor while an audio device processes blocks, which places it in time.
 - `gnubase://midi.ports`: The MIDI ports of every MIDI backend, inputs and outputs: backend, id, system name, the name they are shown as (showAs), whether they are visible, whether an input belongs to all MIDI inputs, whether the port is present now and open, and whether the system speaks MIDI 2.0 with it. Ports that were unplugged stay listed with their settings, not present.
 - `gnubase://pluginhost.get`: How plugins are grouped into plugin host processes, and the processes. mode: the hosting mode, "shared" (one process for every plugin), "perVendor", "perPlugin" or "perInstance"; defaultMode: the mode GNUbase starts with; overrides: plugin ids with a mode of their own. hosts: each process with its id (process), its group ("shared", "vendor:<vendor>", "plugin:<id>" or "instance:<instance>"), its state ("running", "hung" or "exited"), its log file's name in the log folder (log) and its plugin instances, whether they failed.
+- `gnubase://pool.get`: The pool (reference manual pp. 739-744): its folders, and every clip with the folder it is in, the number of audio events that use it (used), its media file's path, sample rate, channel count and length in sample frames, whether the file is missing and whether it is external, outside the project folder (every file of a project that has no file yet). The totals of the info line: audioFiles, usedFiles (media files that an event plays), missingFiles, externalFiles and totalSize, the bytes of the files on disk.
 - `gnubase://processor.list`: Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units. A stepped parameter takes whole numbers only; its options, if any, name its values from the minimum on.
 - `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts.
 - `gnubase://project.location`: Where the project is: its project file (set by project.save and project.load), the folder of that file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. All null for a project that has no file yet.

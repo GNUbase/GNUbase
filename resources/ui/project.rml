@@ -55,6 +55,7 @@
 	<div id="menu-bar" class="menubar" strip="menuBar">
 		<button menu="file-menu">File</button>
 		<button menu="edit-menu">Edit</button>
+		<button menu="media-menu">Media</button>
 		<button menu="transport-menu">Transport</button>
 		<button menu="studio-menu">Studio</button>
 	</div>
@@ -102,6 +103,17 @@
 		</menuitem>
 		<menuseparator/>
 		<menuitem command="file.quit">Quit</menuitem>
+	</menu>
+	<menu id="media-menu">
+		<menuitem command="window.pool">Open Pool Window</menuitem>
+		<menuseparator/>
+		<menuitem command="pool.import">Import Medium...</menuitem>
+		<menuitem command="poolFolder.add">Create Folder</menuitem>
+		<menuseparator/>
+		<menuitem command="pool.removeUnused">Remove Unused Media</menuitem>
+		<menuitem command="pool.findMissing">Find Missing Files...</menuitem>
+		<menuitem command="media.removeMissing">Remove Missing Files</menuitem>
+		<menuitem command="media.conform">Conform Files</menuitem>
 	</menu>
 	<menu id="edit-menu">
 		<menuitem command="history.undo">Undo</menuitem>

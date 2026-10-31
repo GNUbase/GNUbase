@@ -5,6 +5,7 @@
 #include "platform/log.h"
 #include "ui/fonts.h"
 #include "ui/historypanel.h"
+#include "ui/poolpanel.h"
 #include "ui/widgets.h"
 
 #include <RmlUi/Core/Context.h>
@@ -138,10 +139,27 @@ namespace gnubase::app
 		// The edit history (reference manual pp. 110-111), a dialog there, which Edit > History opens.
 		m_docking.add({"history", "History", "project", "right",
 			[this](Rml::Element& element) { return std::make_shared<ui::HistoryPanel>(m_binding, element); }});
+		// The pool (reference manual pp. 739-760, docs/features/pool.md), a window of its own there.
+		m_docking.add({"pool", "Pool", "project", "lower", [this](Rml::Element& element)
+			{
+				return std::make_shared<ui::PoolPanel>(m_binding, element, [this](const std::string& command)
+					{ m_keys.run(command, engine::Json::object(), m_main, nullptr); });
+			}});
 		m_docking.addKeyCommands(m_keys);
 
 		m_keys.add({"window.history", "Shows the edit history, where steps are undone and redone.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("history"); }});
+		m_keys.add({"window.pool", "Shows the pool, the project's clips and media files.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("pool"); }});
+		m_keys.bind({"Mod+P", "window.pool"});
+		m_keys.add({"pool.import", "Imports audio files into the pool, without events.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				chooseImport(window, "Import Medium",
+					{{"Audio files", "wav;w64;rf64;bwf;aif;aiff;aifc;flac;ogg;mp3"}, {"All files", "*"}}, true, true);
+			}});
+		m_keys.add({"pool.findMissing", "Chooses a folder to look for the pool's missing files in.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { chooseMissingFolder(window); }});
 		m_keys.add({"window.studioSetup", "Opens the studio setup dialog for the audio and MIDI devices.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openStudioSetup(window); }});
 		// File > Import (docs/features/file-import.md): the OS's file dialog, then the event display imports the files.
@@ -149,14 +167,15 @@ namespace gnubase::app
 			[this](ui::Window& window, Rml::Element* /*zone*/)
 			{
 				chooseImport(window, "Import Audio Files",
-					{{"Audio files", "wav;w64;rf64;bwf;aif;aiff;aifc;flac;ogg;mp3"}, {"All files", "*"}}, true);
+					{{"Audio files", "wav;w64;rf64;bwf;aif;aiff;aifc;flac;ogg;mp3"}, {"All files", "*"}}, true, false);
 			}});
 		m_keys.add({"file.importMidi", "Imports a standard MIDI file into new tracks.",
 			[this](ui::Window& window, Rml::Element* /*zone*/)
 			{
-				chooseImport(window, "Import MIDI File", {{"MIDI files", "mid;midi;smf"}, {"All files", "*"}}, false);
+				chooseImport(
+					window, "Import MIDI File", {{"MIDI files", "mid;midi;smf"}, {"All files", "*"}}, false, false);
 			}});
-		for (const char* command : {"file.importAudio", "file.importMidi"})
+		for (const char* command : {"file.importAudio", "file.importMidi", "pool.import"})
 			m_keys.enableWhen(command, [this](ui::Window&, Rml::Element*) { return m_eventDisplay != nullptr; });
 		m_keys.add({"project.addTrack", "Opens the add track dialog.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "add-track.rml"); }});
@@ -219,7 +238,8 @@ namespace gnubase::app
 		return *m_eventDisplay;
 	}
 
-	void AppUi::chooseImport(ui::Window& window, std::string title, std::vector<ui::FileFilter> filters, bool many)
+	void AppUi::chooseImport(
+		ui::Window& window, std::string title, std::vector<ui::FileFilter> filters, bool many, bool clipsOnly)
 	{
 		ui::FileDialog dialog;
 		dialog.title = std::move(title);
@@ -227,7 +247,7 @@ namespace gnubase::app
 		dialog.many = many;
 		dialog.parent = window.id();
 		m_shell.showFileDialog(dialog,
-			[this](const ui::FileDialogResult& result)
+			[this, clipsOnly](const ui::FileDialogResult& result)
 			{
 				if (!result.error.empty())
 					logging::warning("The file dialog failed: {}", result.error);
@@ -237,7 +257,23 @@ namespace gnubase::app
 				files.reserve(result.files.size());
 				for (const std::filesystem::path& file : result.files)
 					files.push_back(file.u8string());
-				m_eventDisplay->importFiles(files);
+				m_eventDisplay->importFiles(files, std::nullopt, std::nullopt, clipsOnly);
+			});
+	}
+
+	void AppUi::chooseMissingFolder(ui::Window& window)
+	{
+		ui::FileDialog dialog;
+		dialog.kind = ui::FileDialogKind::Folder;
+		dialog.title = "Find Missing Files";
+		dialog.parent = window.id();
+		m_shell.showFileDialog(dialog,
+			[this](const ui::FileDialogResult& result)
+			{
+				if (!result.error.empty())
+					logging::warning("The folder dialog failed: {}", result.error);
+				if (!result.files.empty())
+					m_binding.send("media.locate", {{"folder", result.files.front().u8string()}});
 			});
 	}
 

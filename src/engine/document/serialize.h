@@ -51,6 +51,7 @@ namespace gnubase::engine
 	Json toJson(const Channel& channel);
 	Json toJson(const MediaFile& media);
 	Json toJson(const Clip& clip);
+	Json toJson(const PoolFolder& folder);
 	Json toJson(const AudioEvent& event);
 	Json toJson(const Note& note);
 	Json toJson(const Controller& controller);

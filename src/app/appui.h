@@ -69,8 +69,12 @@ namespace gnubase::app
 		const ui::GpuRenderer& renderer() const { return m_renderer; }
 
 	private:
-		// File > Import: the OS's file dialog for the window, then the event display imports what the user chose.
-		void chooseImport(ui::Window& window, std::string title, std::vector<ui::FileFilter> filters, bool many);
+		// File > Import: the OS's file dialog for the window, then the event display imports what the user chose;
+		// with clipsOnly into the pool only (Media > Import Medium).
+		void chooseImport(
+			ui::Window& window, std::string title, std::vector<ui::FileFilter> filters, bool many, bool clipsOnly);
+		// Media > Find Missing Files: the OS's folder dialog, then media.locate looks for the missing files there.
+		void chooseMissingFolder(ui::Window& window);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name) const;
 

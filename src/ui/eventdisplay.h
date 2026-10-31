@@ -139,9 +139,10 @@ namespace gnubase::ui
 		// imported with midiFile.import. Audio files open the Import Options dialog (import-options.rml next to the
 		// document), which imports them with audioFile.import at sample (default: the project cursor), one after
 		// another onto track if it is an audio track, else onto new tracks. Files dropped on the display go to the
-		// track of the lane under the mouse, at the time there.
+		// track of the lane under the mouse, at the time there. With clipsOnly, audio files only go into the pool
+		// (#93), without tracks or events.
 		void importFiles(const std::vector<std::string>& files, std::optional<uint64_t> track = std::nullopt,
-			std::optional<int64_t> sample = std::nullopt);
+			std::optional<int64_t> sample = std::nullopt, bool clipsOnly = false);
 
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
 		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); and the edits of parts and events:
@@ -230,6 +231,7 @@ namespace gnubase::ui
 			std::vector<std::string> files; // audio files, waiting for the Import Options dialog
 			std::optional<uint64_t> track;
 			int64_t sample = 0;
+			bool clipsOnly = false;
 		};
 		void dropFiles(Rml::Event& event);
 		void openImportOptions(bool saved);

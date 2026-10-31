@@ -69,6 +69,7 @@ namespace gnubase::engine
 		std::vector<ObjectChange<Channel>> channels;
 		std::vector<ObjectChange<MediaFile>> media;
 		std::vector<ObjectChange<Clip>> clips;
+		std::vector<ObjectChange<PoolFolder>> poolFolders;
 		std::vector<ObjectChange<AudioEvent>> audioEvents;
 		std::vector<MidiPartChange> midiParts;
 		std::vector<ObjectChange<Marker>> markers;
