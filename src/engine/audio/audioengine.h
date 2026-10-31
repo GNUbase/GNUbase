@@ -203,7 +203,7 @@ namespace gnubase::engine
 		// transport command, since monitoring may follow the transport.
 		void routeDirectly(const RenderSnapshot& snapshot, const std::vector<std::vector<int>>& ports);
 		void stopMonitoringDirectly();
-		// Audio thread: the dummy device's input where recording places it (audio.captureInput).
+		// Audio thread: the device's input where recording places it (audio.captureInput).
 		void captureInput(const audio::DeviceBlock& block) noexcept;
 
 		rt::SnapshotPublisher<RenderSnapshot>& m_snapshots;
@@ -251,8 +251,8 @@ namespace gnubase::engine
 		PlayedPositions m_played;   // audio thread
 		bool m_directMonitoring = false;
 		std::map<int, audio::InputMonitor> m_monitors; // by input port, those the device monitors directly
-		// The dummy device's: per input channel, what it recorded at each project position from 0. Written by the
-		// audio thread, read while the device stands.
+		// Per input channel of the device, what it recorded at each project position from 0, for captureSeconds.
+		// Written by the audio thread, read while the device stands.
 		std::vector<std::vector<float>> m_capturedInput;
 		Playback m_playback; // before m_programs: their track players use it
 
