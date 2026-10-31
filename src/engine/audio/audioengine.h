@@ -142,7 +142,7 @@ namespace gnubase::engine
 		void reset();
 		// Opens the device again with the parameters, and starts it again if it was running.
 		void reopen(const Json& parameters, bool running);
-		void set(const Json& changes); // audio.set
+		void set(const Json& changes);              // audio.set
 		int64_t recordOffset() const;               // from the device's latency and the record shift
 		bool updateLatency(const Json& parameters); // audio.updateLatency; true if anything changed
 		Json devices() const;
