@@ -99,7 +99,8 @@ namespace gnubase::ui
 				for (const Json& marker : result.value.at("markers"))
 				{
 					m_markers.push_back(marker.at("positionSamples").get<int64_t>());
-					m_markers.push_back(marker.at("endSamples").get<int64_t>());
+					if (!marker.at("endSamples").is_null()) // position markers have no end
+						m_markers.push_back(marker.at("endSamples").get<int64_t>());
 					if (marker.at("type") != "cycle")
 						continue;
 					std::string name = marker.at("name").get<std::string>();

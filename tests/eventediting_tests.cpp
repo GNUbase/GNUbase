@@ -427,3 +427,18 @@ TEST_CASE("with snap on, moving, resizing, splitting and nudging follow the grid
 	f.drag(650, 60, 680, 60);
 	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == (12 * g_quarter) + ((3 * g_quarter) / 5); }));
 }
+
+TEST_CASE("with snap to events, a position marker attracts a dragged event", "[unit]")
+{
+	Fixture f;
+	// A position marker at 6 seconds has no end; the display lists the markers again after every change.
+	f.call("marker.add", {{"position", 12 * g_quarter}});
+	f.step();
+	f.call("marker.list"); // the display has asked for the markers
+	f.step();
+	f.call("snap.set", {{"on", true}, {"type", "events"}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().on && f.display.snap().type == engine::SnapType::Events; }));
+	// The audio event dragged from 2 to 5.95 seconds starts on the marker (8 dp attract).
+	f.drag(225, 20, 620, 20);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 288000; }));
+}

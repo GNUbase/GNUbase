@@ -45,7 +45,8 @@ what it is given and emits `snap.changed`.
   row keeps its start and has no gaps. Locked events end the row.
 - **Snap to zero crossing** (p. 105): `event.split` and normal sizing in `event.resize` with `zeroCrossing` move an
   audio event's cut to the nearest frame within 50 ms where the sum of its channels changes sign, the one of the two
-  nearer to zero. The file is read on the command thread; a file that can't be read leaves the position as it is.
+  nearer to zero. A split only looks inside the event, and only at events the position cuts. The file is read on the
+  command thread; a file that can't be read leaves the position as it is.
 
 ## The event display
 
@@ -77,10 +78,11 @@ Not yet: grid lines and snap point lines in the event display, snapping ranges a
   and on a linear grid; `snap.get` and `snap.set` saved with the project and not undone; `snap.position` with event
   edges, markers, snap points, the cursor, the zoom's note value, the frame rate and grid relative; snap points set and
   refused; shuffling forwards, backwards, to the end and to the front, its errors and a locked neighbour; splitting
-  and resizing at zero crossings of a real file, not when sizing moves the contents or the file is missing.
+  and resizing at zero crossings of a real file, not when sizing moves the contents or the file is missing; a split
+  near an event's start still splits it, and one just outside an event leaves it alone.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): with snap on, a drag, a resize and an Alt click land
-  on bars, shuffle swaps two parts, events and the cursor attract, a snap point set at the cursor snaps to a bar, grid
-  relative moves a beat, nudges move a beat and a bar, and with snap off a drag doesn't snap.
+  on bars, shuffle swaps two parts, events, a position marker and the cursor attract, a snap point set at the cursor
+  snaps to a bar, grid relative moves a beat, nudges move a beat and a bar, and with snap off a drag doesn't snap.
 - `tests/uiapp_tests.cpp`: the toolbar's snap and zero crossing buttons and J, the snap type menu checked and shown on
   its button, the grid type menu with the grid types of each ruler format; the project window's golden image shows the
   toolbar.

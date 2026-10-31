@@ -116,8 +116,9 @@ namespace gnubase::engine
 	SnapGrid snapGrid(const Project& project);
 
 	// The position nearest to at (project samples) where an audio event's audio crosses zero, within 50 ms and the
-	// clip, or at if there is none or the file can't be read. Reads the file: not on audio threads.
-	time::Samples zeroCrossing(const Project& project, const AudioEvent& event, time::Samples at);
+	// clip (with inside, strictly inside the event, for splitting it), or at if there is none or the file can't be
+	// read. Reads the file: not on audio threads.
+	time::Samples zeroCrossing(const Project& project, const AudioEvent& event, time::Samples at, bool inside = false);
 
 	// snap.get, snap.set and snap.position.
 	void registerSnapCommands(ProjectModel& model, Engine& engine);

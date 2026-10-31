@@ -612,16 +612,23 @@ namespace gnubase::engine
 				Item current = item;
 				bool split = false;
 				for (const time::Samples position : positions)
-					if (const Item right = splitAt(project, current,
-							zero && current.audio != nullptr ? zeroCrossing(project, *current.audio, position)
-															 : position,
-							splitNotes, context))
+				{
+					// Only a position that cuts the event moves to a zero crossing, one that still cuts it.
+					time::Samples at = position;
+					if (zero && current.audio != nullptr)
+					{
+						const EventSpan span = eventSpan(project, *current.audio);
+						if (position > span.start && position < span.end)
+							at = zeroCrossing(project, *current.audio, position, true);
+					}
+					if (const Item right = splitAt(project, current, at, splitNotes, context))
 					{
 						announce(context, right, "added");
 						added.push_back(right);
 						current = right;
 						split = true;
 					}
+				}
 				if (split)
 					announce(context, item, "changed");
 			}
@@ -994,7 +1001,7 @@ namespace gnubase::engine
 				"Splits audio events and MIDI parts at positions (project samples): events, or without it every "
 				"unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with "
 				"splitNotes are cut in two. With zeroCrossing, audio events split at the nearest point within 50 ms "
-				"where their audio crosses zero. Returns the new events after the splits.",
+				"and inside the event where their audio crosses zero. Returns the new events after the splits.",
 				schema({{"events", events()}, {"positions", {{"type", "array"}, {"items", integer()}}},
 						   {"splitNotes", boolean()}, {"zeroCrossing", boolean()}},
 					{"positions"}),

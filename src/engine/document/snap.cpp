@@ -280,14 +280,15 @@ namespace gnubase::engine
 		return grid;
 	}
 
-	time::Samples zeroCrossing(const Project& project, const AudioEvent& event, time::Samples at)
+	time::Samples zeroCrossing(const Project& project, const AudioEvent& event, time::Samples at, bool inside)
 	{
 		const MediaFile& media = project.media.at(project.clips.at(event.clip).media);
 		const EventSpan span = eventSpan(project, event);
 		const int64_t frame = event.offset + std::llround(static_cast<double>(at - span.start) / span.ratio);
 		const int64_t window = std::llround(g_zeroCrossingWindow * media.sampleRate);
-		const int64_t first = std::max<int64_t>(0, frame - window);
-		const int64_t last = std::min<int64_t>(media.length - 1, frame + window);
+		const int64_t first = std::max<int64_t>(inside ? event.offset + 1 : 0, frame - window);
+		const int64_t last =
+			std::min<int64_t>(inside ? event.offset + event.length - 1 : media.length - 1, frame + window);
 		if (last <= first)
 			return at;
 		std::vector<float> mix(static_cast<size_t>(last - first + 1));

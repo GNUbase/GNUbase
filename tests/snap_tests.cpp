@@ -411,4 +411,14 @@ TEST_CASE("splitting and resizing audio events snap to zero crossings", "[unit]"
 	const int64_t missing = f.audioEvent(audio, "missing.wav", 9600, 3 * g_second, 0, 4800);
 	f.call("event.split", {{"events", {missing}}, {"positions", {(3 * g_second) + 1030}}, {"zeroCrossing", true}});
 	CHECK(f.object("audioEvents", missing).at("length") == 1030);
+	// Near the start of an event playing from frame 10, the crossing at frame 0 is nearer but outside the event: it
+	// splits at the one at frame 100.
+	const int64_t early = f.audioEvent(audio, file.u8string(), 9600, 5 * g_second, 10, 4800);
+	f.call("event.split", {{"events", {early}}, {"positions", {(5 * g_second) + 5}}, {"zeroCrossing", true}});
+	CHECK(f.object("audioEvents", early).at("length") == 90);
+	// Without events, a position just before an event playing from frame 90 leaves it alone, although the crossing
+	// nearest to it, at frame 100, is inside.
+	const int64_t after = f.audioEvent(audio, file.u8string(), 9600, 7 * g_second, 90, 4800);
+	CHECK(f.call("event.split", {{"positions", {(7 * g_second) - 5}}, {"zeroCrossing", true}}).at("events").empty());
+	CHECK(f.object("audioEvents", after).at("length") == 4800);
 }
