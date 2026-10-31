@@ -238,7 +238,7 @@ namespace gnubase::ui
 			const auto it = m_dialogs.find(event.dialog);
 			if (it == m_dialogs.end())
 				return;
-			const std::function<void(const FileDialogResult&)> done = std::move(it->second);
+			const std::function<void(const FileDialogResult&)> done = std::move(it->second.done);
 			m_dialogs.erase(it);
 			if (!event.error.empty())
 				logging::warning("File dialog failed: {}", event.error);
@@ -413,8 +413,28 @@ namespace gnubase::ui
 	void Shell::showFileDialog(const FileDialog& dialog, std::function<void(const FileDialogResult&)> done)
 	{
 		const uint64_t id = m_nextDialog++;
-		m_dialogs.emplace(id, std::move(done));
-		m_windows.showFileDialog(id, dialog);
+		m_dialogs.emplace(id, OpenFileDialog{dialog, std::move(done)});
+		if (m_osFileDialogs)
+			m_windows.showFileDialog(id, dialog);
+	}
+
+	std::map<uint64_t, FileDialog> Shell::fileDialogs() const
+	{
+		std::map<uint64_t, FileDialog> dialogs;
+		for (const auto& [id, open] : m_dialogs)
+			dialogs.emplace(id, open.dialog);
+		return dialogs;
+	}
+
+	bool Shell::answerFileDialog(uint64_t id, std::vector<std::filesystem::path> files)
+	{
+		const auto it = m_dialogs.find(id);
+		if (it == m_dialogs.end())
+			return false;
+		const std::function<void(const FileDialogResult&)> done = std::move(it->second.done);
+		m_dialogs.erase(it);
+		done(FileDialogResult{std::move(files), {}});
+		return true;
 	}
 
 	std::optional<Image> Shell::screenshot(WindowId id)

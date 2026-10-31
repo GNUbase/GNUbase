@@ -2253,27 +2253,30 @@ namespace gnubase::engine
 				"they receive audio and events from, and the order they are processed in.",
 				objectSchema({}), {{"type", "object"}}, true},
 			[this](Project&, CommandContext&) { return graphToJson(graph::describe(m_snapshots.latest())); });
-		add(engine,
+		addControl(engine,
 			{"project.save", 1,
-				"Saves the project as a DAWproject file. Media files are copied into it unless embedMedia is false; "
-				"then the file refers to them where they are.",
-				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}, {"path"}), noResult, true},
-			[this](Project& project, CommandContext& context)
+				"Saves the project as a DAWproject file: as path, which is then the project's file (save as), or "
+				"without path to the project's file (save). Media files are copied into it unless embedMedia is "
+				"false; then the file refers to them where they are. The file becomes the first of the recent "
+				"projects (project.recent).",
+				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}), noResult, false},
+			[this](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				DawProjectSaveOptions options;
 				options.embedMedia = parameters.value("embedMedia", true);
-				const std::string path = parameters.at("path").get<std::string>();
+				require(
+					parameters.contains("path") || !m_file.empty(), "the project has no file yet: save it with a path");
+				const std::string path = parameters.value("path", m_file);
 				try
 				{
-					saveDawProject(project, path, options);
-					m_file = std::filesystem::absolute(std::filesystem::u8path(path)).u8string();
+					saveDawProject(m_project, path, options);
 				}
 				catch (const std::exception& error)
 				{
 					throw CommandError(error.what());
 				}
-				context.emit("project.saved", {{"file", m_file}});
+				saved(std::filesystem::absolute(std::filesystem::u8path(path)).u8string(), context);
 				return Json::object();
 			});
 		addControl(engine,
@@ -2296,28 +2299,32 @@ namespace gnubase::engine
 				const std::filesystem::path file = std::filesystem::u8path(path);
 				const std::string folder = parameters.value("mediaFolder",
 					(file.parent_path() / std::filesystem::u8path(file.stem().u8string() + " media")).u8string());
+				Project project;
 				try
 				{
-					m_project = loadDawProject(path, folder);
-					m_file = std::filesystem::absolute(file).u8string();
+					project = loadDawProject(path, folder);
 				}
 				catch (const std::exception& error)
 				{
 					throw CommandError(error.what());
 				}
-				m_history.clear();
-				context.emit("project.reset");
-				announceHistory(context);
-				publish();
+				opened(std::move(project), std::filesystem::absolute(file).u8string(), context);
 				return Json::object();
 			});
 		addControl(engine,
 			{"project.new", 1,
 				"Replaces the project with an empty one that has a stereo input and output bus, or the busses of the "
-				"user's bus presets named Default (see bus.savePreset), and clears the undo history.",
-				objectSchema({}), noResult, false},
+				"user's bus presets named Default (see bus.savePreset), or with template, a copy of the project "
+				"template of that name (see project.templates), and clears the undo history. The new project has no "
+				"file until it is saved.",
+				objectSchema({{"template", stringSchema}}), noResult, false},
 			[this](CommandContext& context)
 			{
+				if (context.parameters().contains("template"))
+				{
+					opened(loadTemplate(context.parameters().at("template").get<std::string>()), {}, context);
+					return Json::object();
+				}
 				Project project = newProject();
 				for (const BusDirection direction : {BusDirection::Input, BusDirection::Output})
 					if (const Json presets = userPresets(direction, context); presets.contains("Default"))
@@ -2335,12 +2342,7 @@ namespace gnubase::engine
 								"The {} bus preset Default isn't applied: {}", directionName(direction), error.what());
 						}
 					}
-				m_project = std::move(project);
-				m_file.clear();
-				m_history.clear();
-				context.emit("project.reset");
-				announceHistory(context);
-				publish();
+				opened(std::move(project), {}, context);
 				return Json::object();
 			});
 		add(engine,
@@ -2731,6 +2733,7 @@ namespace gnubase::engine
 		registerSnapCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
+		registerProjectFileCommands(engine);
 	}
 
 	void ProjectModel::registerAutomationCommands(Engine& engine)
@@ -2882,9 +2885,13 @@ namespace gnubase::engine
 		addControl(engine,
 			{"project.revision", 1,
 				"A number that grows with every change of the project: every edit, undo and redo, and loading or "
-				"starting a project. project.load with revision loads only if it hasn't changed.",
-				objectSchema({}), objectSchema({{"revision", integerSchema}}, {"revision"}), true},
-			[this](CommandContext&) { return Json{{"revision", m_revision}}; });
+				"starting a project. project.load with revision loads only if it hasn't changed. modified says "
+				"whether the project changed since it was last saved, loaded or started.",
+				objectSchema({}),
+				objectSchema({{"revision", integerSchema}, {"modified", booleanSchema}}, {"revision", "modified"}),
+				true},
+			[this](CommandContext&)
+			{ return Json{{"revision", m_revision}, {"modified", m_revision != m_savedRevision}}; });
 
 		engine.registerCommand(
 			{"project.backup", 1,

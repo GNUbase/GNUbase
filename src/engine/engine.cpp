@@ -12,6 +12,7 @@
 #include "platform/rt/realtime.h"
 
 #include <algorithm>
+#include <chrono>
 #include <utility>
 
 namespace gnubase::engine
@@ -70,6 +71,8 @@ namespace gnubase::engine
 	{
 		// How many commands engine.commandLog keeps.
 		constexpr size_t g_commandLogSize = 256;
+		// How often the engine asks whether an auto save is due (project.autoSave, docs/features/project-files.md).
+		constexpr std::chrono::seconds g_autoSaveCheck{30};
 
 		Json toJson(const CommandInfo& info)
 		{
@@ -137,6 +140,17 @@ namespace gnubase::engine
 		m_peaks->registerCommands(*this);
 		applySettings();
 		m_thread = std::thread([this] { run(); });
+		m_ticker = std::thread(
+			[this]
+			{
+				std::unique_lock lock(m_mutex);
+				while (!m_tickerWake.wait_for(lock, g_autoSaveCheck, [this] { return m_stopping; }))
+				{
+					lock.unlock();
+					post("project.autoSave", {{"due", true}});
+					lock.lock();
+				}
+			});
 	}
 
 	Engine::~Engine()
@@ -147,6 +161,8 @@ namespace gnubase::engine
 			m_stopping = true;
 		}
 		m_wake.notify_all();
+		m_tickerWake.notify_all();
+		m_ticker.join();
 		m_thread.join(); // fails the commands that didn't run, which jobs may wait for
 		m_peaks.reset(); // stops its worker while the clients can still be reached
 		m_jobs.reset();  // no command starts a job anymore; cancels the running ones and waits for them

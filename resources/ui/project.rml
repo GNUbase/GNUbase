@@ -94,6 +94,16 @@
 	<div id="transport-bar" class="strip" strip="transportBar" default="hidden"/>
 
 	<menu id="file-menu">
+		<menuitem command="file.new">New Project</menuitem>
+		<menuitem command="file.open">Open...</menuitem>
+		<menuseparator/>
+		<menuitem command="file.save">Save</menuitem>
+		<menuitem command="file.saveAs">Save As...</menuitem>
+		<menuitem command="file.backup">Back up Project...</menuitem>
+		<menuitem command="file.saveTemplate">Save as Template...</menuitem>
+		<menuitem command="file.saveNewVersion">Save New Version</menuitem>
+		<menuitem command="file.revert">Revert</menuitem>
+		<menuseparator/>
 		<menuitem id="import-submenu">Import
 			<menu>
 				<menuitem command="file.importAudio">Audio File...</menuitem>

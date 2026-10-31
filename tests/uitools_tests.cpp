@@ -208,7 +208,8 @@ TEST_CASE("the UI tools are listed, those that only read marked read-only", "[un
 		readOnly[tool.at("name").get<std::string>()] = tool.at("annotations").at("readOnlyHint");
 	for (const char* name : {"ui_windows", "ui_dom", "ui_screenshot", "ui_wait"})
 		CHECK(readOnly.value(name, false));
-	for (const char* name : {"ui_move", "ui_click", "ui_drag", "ui_drop", "ui_wheel", "ui_key", "ui_text"})
+	for (const char* name :
+		{"ui_move", "ui_click", "ui_drag", "ui_drop", "ui_wheel", "ui_key", "ui_text", "ui_file_dialog"})
 		CHECK(readOnly.value(name, true) == false);
 }
 
@@ -434,4 +435,36 @@ TEST_CASE("a UI tool fails at once when the UI quits before running it", "[unit]
 	const Json result = Json::parse(answer.get().value_or("{}")).at("result");
 	CHECK(result.at("isError") == true);
 	CHECK_THAT(result.at("content")[0].at("text").get<std::string>(), ContainsSubstring("closed"));
+}
+
+TEST_CASE("ui_file_dialog lists the file dialogs that wait and answers them as the user would", "[unit]")
+{
+	Fixture fixture;
+	CHECK(fixture.call("ui_file_dialog").at("dialogs").empty());
+	std::vector<ui::FileDialogResult> results;
+	const auto record = [&results](const ui::FileDialogResult& result) { results.push_back(result); };
+	ui::FileDialog open;
+	open.title = "Open Project";
+	open.filters = {{"DAWproject", "dawproject"}};
+	fixture.ui.shell.showFileDialog(open, record);
+	ui::FileDialog folder;
+	folder.kind = ui::FileDialogKind::Folder;
+	fixture.ui.shell.showFileDialog(folder, record);
+
+	const Json dialogs = fixture.call("ui_file_dialog").at("dialogs");
+	REQUIRE(dialogs.size() == 2);
+	CHECK(dialogs[0].at("kind") == "open");
+	CHECK(dialogs[0].at("title") == "Open Project");
+	CHECK(dialogs[0].at("filters") == Json::parse(R"([{"name": "DAWproject", "extensions": "dawproject"}])"));
+	CHECK(dialogs[1].at("kind") == "folder");
+
+	const Json left =
+		fixture.call("ui_file_dialog", {{"dialog", dialogs[0].at("id")}, {"files", {"song.dawproject"}}}).at("dialogs");
+	CHECK(left.size() == 1);
+	REQUIRE(results.size() == 1);
+	CHECK(results[0].files == std::vector<std::filesystem::path>{"song.dawproject"});
+	CHECK(fixture.call("ui_file_dialog", {{"dialog", dialogs[1].at("id")}}).at("dialogs").empty());
+	REQUIRE(results.size() == 2);
+	CHECK(results[1].cancelled());
+	CHECK_THAT(fixture.fail("ui_file_dialog", {{"dialog", 99}}), ContainsSubstring("99"));
 }

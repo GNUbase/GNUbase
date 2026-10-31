@@ -1,0 +1,41 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Asks before unsaved changes are lost (docs/features/project-files.md): ui::ProjectFiles opens it when the project
+     has unsaved changes and another project is to be opened, the project reverted or GNUbase quit, and goes on only
+     if it closes with Discard (the result ok). -->
+<rml>
+<head>
+	<title>Unsaved Changes</title>
+	<style>
+		dialog
+		{
+			width: 360dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="discard-changes-dialog">
+		<div class="dialog-titlebar">Unsaved Changes</div>
+		<div class="row">The project has changes that aren't saved. Discard them?</div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button id="discard-changes" class="primary" result="ok">Discard</button>
+		</div>
+	</dialog>
+</body>
+</rml>

@@ -1,0 +1,55 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Saves the project as a template (docs/features/project-files.md, reference manual pp. 126-127): ui::ProjectFiles
+     opens it with File > Save as Template and, when it closes with OK, saves the template under the name in
+     #template-name (project.saveTemplate). -->
+<rml>
+<head>
+	<title>Save as Template</title>
+	<style>
+		dialog
+		{
+			width: 300dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row label
+		{
+			margin-right: 8dp;
+		}
+
+		#template-name
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="save-template-dialog">
+		<div class="dialog-titlebar">Save as Template</div>
+		<div class="row">
+			<label for="template-name">New Preset</label>
+			<input type="text" id="template-name" autofocus="autofocus"/>
+		</div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>
