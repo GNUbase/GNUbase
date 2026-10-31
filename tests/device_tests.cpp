@@ -435,9 +435,10 @@ namespace
 	std::unique_ptr<Backend> jackOrSkip(const std::string& library, const char* requireVariable)
 	{
 		std::unique_ptr<Backend> backend = makeJackBackend(library);
+		size_t count = 0;
 		try
 		{
-			REQUIRE(backend->devices().size() == 1);
+			count = backend->devices().size(); // not inside REQUIRE, which would catch the error itself
 		}
 		catch (const DeviceError& error)
 		{
@@ -445,13 +446,14 @@ namespace
 				FAIL(error.what());
 			return nullptr;
 		}
+		REQUIRE(count == 1);
 		return backend;
 	}
 
 	// PipeWire's libjack, where Debian and Ubuntu (pipewire-jack) or Fedora install it; empty if it isn't there.
 	std::string pipeWireJack()
 	{
-#if defined(__x86_64__)
+#ifdef __x86_64__
 		const std::string debian = "/usr/lib/x86_64-linux-gnu/pipewire-0.3/jack/libjack.so.0";
 #elif defined(__aarch64__)
 		const std::string debian = "/usr/lib/aarch64-linux-gnu/pipewire-0.3/jack/libjack.so.0";
@@ -476,9 +478,8 @@ namespace
 			const auto open = function<decltype(&jack_client_open)>("jack_client_open");
 			const auto add = function<decltype(&jack_port_register)>("jack_port_register");
 			m_close = function<decltype(&jack_client_close)>("jack_client_close");
-			jack_status_t status{};
 			m_bufferSize = function<decltype(&jack_get_buffer_size)>("jack_get_buffer_size");
-			m_client = open(name, JackNoStartServer, &status);
+			m_client = open(name, JackNoStartServer, nullptr);
 			REQUIRE(m_client != nullptr);
 			for (const char* port : {"capture_1", "capture_2", "playback_1", "playback_2"})
 			{
@@ -521,17 +522,23 @@ namespace
 		{
 			if (m_blocks.fetch_add(1) != 4)
 				return;
+			m_lateStarted = true;
 			const gnubase::HostTime until = gnubase::hostTime() + m_late;
 			while (gnubase::hostTime() < until)
 			{
 			}
+			m_lateFinished = true;
 		}
 
 		int blocks() const { return m_blocks.load(); }
+		bool lateStarted() const { return m_lateStarted; }
+		bool lateFinished() const { return m_lateFinished; }
 
 	private:
 		gnubase::HostTime m_late;
 		std::atomic<int> m_blocks{0};
+		std::atomic<bool> m_lateStarted{false};
+		std::atomic<bool> m_lateFinished{false};
 	};
 
 	// Waits up to two seconds for done().
@@ -598,9 +605,25 @@ namespace
 		LateCallback callback(cycle * 2); // much longer, and jackd drops the client
 		device->start(callback);
 		CHECK(waitUntil([&device] { return device->overloads() > 0; }));
-		// jackd2 cancels the process thread when the device deactivates its client, which must not be in the late
-		// block then: cancelled inside the noexcept callback, it would end the tests.
-		CHECK(waitUntil([&callback] { return callback.blocks() > 5; }));
+		device->stop(); // before the callback goes out of scope
+	}
+
+	// Stopping while the callback is late returns after that block: jackd2 cancels the process thread on deactivation,
+	// which must not unwind through the callback.
+	void checkJackStopWhileLate(Backend& backend)
+	{
+		const std::unique_ptr<Device> device = backend.open(config("default"));
+		const double cycle = device->format().blockSize / device->format().sampleRate;
+		LateCallback callback(cycle * 2);
+		device->start(callback);
+		for (int i = 0; i < 2000 && !callback.lateStarted(); ++i)
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		REQUIRE(callback.lateStarted());
+		device->stop();
+		CHECK(callback.lateFinished());
+		const int blocks = callback.blocks();
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		CHECK(callback.blocks() == blocks);
 	}
 
 	// A device that uses the fake hardware's ports asks for a reset when it is unplugged.
@@ -628,6 +651,7 @@ TEST_CASE("the JACK backend keeps the device contract with jackd", "[integration
 	checkJackResets(*backend, true);
 	checkJackOwnBufferSize(*backend, "libjack.so.0");
 	checkJackXruns(*backend);
+	checkJackStopWhileLate(*backend);
 	checkJackUnplug(*backend, std::make_unique<TestClient>("libjack.so.0", "gnubase-test-hardware", true));
 }
 

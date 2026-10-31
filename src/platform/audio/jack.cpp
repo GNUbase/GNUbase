@@ -8,6 +8,7 @@
 
 #include <dlfcn.h>
 #include <jack/jack.h>
+#include <pthread.h>
 
 #include <algorithm>
 #include <array>
@@ -133,8 +134,7 @@ namespace gnubase::audio
 		public:
 			explicit Client(const Library& jack) : m_jack(jack)
 			{
-				jack_status_t status{};
-				m_client = jack.clientOpen("gnubase", JackNoStartServer, &status);
+				m_client = jack.clientOpen("gnubase", JackNoStartServer, nullptr);
 				if (m_client == nullptr)
 					throw DeviceError("JACK: no server to connect to");
 			}
@@ -326,9 +326,15 @@ namespace gnubase::audio
 				throw DeviceError("JACK: cannot connect " + from + " to " + to);
 			}
 
+			// jackd2 stops the process thread with an asynchronous pthread_cancel when the client is deactivated. A
+			// cancel inside the noexcept callback would end GNUbase, so it waits until the callback has returned:
+			// setting the cancel state is a flag in the thread, no system call.
 			static int onProcess(jack_nframes_t frames, void* data)
 			{
+				int state = 0;
+				pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &state);
 				static_cast<JackDevice*>(data)->process(frames);
+				pthread_setcancelstate(state, nullptr);
 				return 0;
 			}
 
