@@ -168,8 +168,8 @@ namespace
 		FakeDriver& m_driver;
 	};
 
-	// A backend with one device, fake-1, whose driver can change its preferred block size and ask for a reset. It also
-	// lists fake-2, whose hardware isn't connected.
+	// A backend with one device, fake-1, whose driver can change its preferred block size and ask for a reset; it is
+	// listed as unavailable while it isn't connected. It also lists fake-2, whose hardware isn't connected.
 	class FakeBackend : public Backend
 	{
 	public:
@@ -179,11 +179,14 @@ namespace
 
 		std::vector<DeviceInfo> devices() override
 		{
+			DeviceInfo first = fakeInfo();
+			if (!m_driver->connected)
+				first.unavailableReason = "not connected";
 			DeviceInfo unplugged;
 			unplugged.id = "fake-2";
 			unplugged.name = "Unplugged interface";
 			unplugged.unavailableReason = "not connected";
-			return {fakeInfo(), unplugged};
+			return {first, unplugged};
 		}
 
 		std::unique_ptr<Device> open(const DeviceConfig& config) override
@@ -855,6 +858,79 @@ TEST_CASE("audio.stop and audio.start while a device is lost decide whether it s
 	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return data.at("device").is_object(); }));
 	CHECK(run(client, "audio.get").at("running") == true);
 	run(client, "audio.stop");
+}
+
+TEST_CASE("with a fallback device, playback goes on there while the device is lost and returns to it", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "settings.set", {{"key", "audio.fallbackDevice"}, {"value", "dummy"}});
+	run(client, "track.add", {{"type", "audio"}});
+	run(client, "audio.setDevice", {{"blockSize", 64}});
+	run(client, "transport.play");
+	run(client, "audio.start");
+	CHECK(waitForTransport(client, 0));
+
+	// Unplugged: the engine opens the fallback, the dummy device with its defaults, which can't be unplugged, and
+	// plays on there. audio.get reports both.
+	run(client, "audio.simulateDeviceLoss", {{"connected", false}});
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return !data.at("lost").is_null() && data.at("device").is_object(); }));
+	Json status = run(client, "audio.get");
+	CHECK(status.at("device").at("backend") == "dummy");
+	CHECK(status.at("device").at("blockSize") == 256);
+	CHECK(status.at("running") == true);
+	CHECK(status.at("lost").at("backend") == "dummy");
+	CHECK(status.at("lost").at("restart") == true);
+	const Json transport = run(client, "transport.get");
+	CHECK(waitForTransport(client, transport.at("position").get<int64_t>()));
+
+	// Plugged in again: the engine switches back to it, with its settings, and plays on.
+	run(client, "audio.simulateDeviceLoss", {{"connected", true}});
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("lost").is_null() && data.at("running") == true; }));
+	status = run(client, "audio.get");
+	CHECK(status.at("device").at("blockSize") == 64);
+	CHECK(waitForTransport(client, run(client, "transport.get").at("position").get<int64_t>()));
+	run(client, "audio.stop");
+}
+
+TEST_CASE("the default fallback is the lost device's backend's default device, else the dummy device", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "settings.set", {{"key", "audio.fallbackDevice"}, {"value", "default"}});
+	run(client, "audio.setDevice", {{"backend", "fake"}, {"blockSize", 128}});
+	run(client, "audio.start");
+	driver->connected = false;
+	driver->device.load()->requestReset();
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return !data.at("lost").is_null() && data.at("device").is_object(); }));
+	Json status = run(client, "audio.get");
+	CHECK(status.at("device").at("backend") == "dummy"); // the fake backend's default device is the lost one
+	CHECK(status.at("lost").at("backend") == "fake");
+	CHECK(status.at("lost").at("device") == "fake-1");
+	CHECK(status.at("running") == true);
+	CHECK_THAT(reject(client, "audio.set", {{"blockSize", 512}}), ContainsSubstring("lost"));
+
+	// While the device isn't listed again, tries to open it don't reopen the fallback, which would start over at
+	// position 0 every half second.
+	const int64_t position = status.at("position").get<int64_t>();
+	std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+	CHECK(run(client, "audio.get").at("position").get<int64_t>() > position + 36000);
+
+	// Stopped while it plays on the fallback: the device returns stopped.
+	status = run(client, "audio.stop");
+	CHECK(status.at("running") == false);
+	CHECK(status.at("lost").at("restart") == false);
+	driver->connected = true;
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("lost").is_null() && data.at("device").is_object(); }));
+	status = run(client, "audio.get");
+	CHECK(status.at("device").at("backend") == "fake");
+	CHECK(status.at("device").at("blockSize") == 128);
+	CHECK(status.at("running") == false);
 }
 
 TEST_CASE("a device lost while the project's sample rate changes returns at the new rate", "[integration]")

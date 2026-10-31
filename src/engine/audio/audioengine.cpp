@@ -32,6 +32,9 @@ namespace gnubase::engine
 		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20;   // frames one audio.capture returns at most
 		constexpr int64_t g_maxThreads = 64;
 		constexpr int64_t g_maxLatency = 65536; // frames: the dummy device's latencies and the record shift
+		// Frames: the largest record offset, the latency each way and the record shift at their limits. The audio
+		// thread keeps the played positions for it, so a new offset applies without resizing them.
+		constexpr int64_t g_maxRecordOffset = 3 * g_maxLatency;
 		constexpr auto g_reconnectInterval = std::chrono::milliseconds(500); // between tries to open a lost device
 
 		Json statusSchema()
@@ -279,16 +282,15 @@ namespace gnubase::engine
 		if (rate != m_projectRate)
 		{
 			m_projectRate = rate;
+			if (m_lost)
+				m_lost->parameters.erase("sampleRate"); // it returns at the new rate if it supports it
 			if (m_device && m_device->format().sampleRate != rate && supports(m_device->info(), rate))
 			{
-				m_parameters["sampleRate"] = rate;
-				reset();
+				if (!m_lost)
+					m_parameters["sampleRate"] = rate;
+				reset(); // a fallback opens again at the new rate, after the lost device is tried
 				if (m_engine != nullptr)
 					m_engine->broadcast("audio.changed", status());
-			}
-			else if (m_lost)
-			{
-				m_parameters.erase("sampleRate"); // it returns at the new rate if it supports it
 			}
 		}
 		if (m_device && (m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring))
@@ -625,10 +627,11 @@ namespace gnubase::engine
 		if (m_capturedInput.empty() || m_capturedInput[0].empty())
 			return;
 		const auto frames = static_cast<int64_t>(m_capturedInput[0].size());
+		const int64_t offset = m_recordOffset.load(std::memory_order_relaxed); // for the whole block
 		const size_t channels = std::min(m_capturedInput.size(), static_cast<size_t>(m_device->format().inputChannels));
 		for (uint32_t i = 0; i < block.frames; ++i)
 		{
-			const time::Samples position = m_played.at(static_cast<int64_t>(block.position + i) - m_recordOffset);
+			const time::Samples position = m_played.at(static_cast<int64_t>(block.position + i) - offset);
 			if (position < 0 || position >= frames)
 				continue;
 			for (size_t c = 0; c < channels; ++c)
@@ -735,7 +738,7 @@ namespace gnubase::engine
 					engine->post("audio.updateLatency");
 			});
 		m_recordOffset = recordOffset();
-		m_played = PlayedPositions(static_cast<size_t>(m_recordOffset) + m_device->format().blockSize);
+		m_played = PlayedPositions(static_cast<size_t>(g_maxRecordOffset) + m_device->format().blockSize);
 		m_capturedInput.assign(static_cast<size_t>(m_device->format().inputChannels),
 			std::vector<float>(static_cast<size_t>(std::llround(captureSeconds * m_device->format().sampleRate))));
 		m_inputPorts = portNames(info.inputs, m_device->format().inputChannels, "Input ");
@@ -753,15 +756,15 @@ namespace gnubase::engine
 	bool AudioEngine::reset()
 	{
 		require(m_device != nullptr || m_lost, "there is no audio device; set one with audio.setDevice");
+		// While a device is lost, it is the one to open: a fallback that plays gives way to it.
 		const std::optional<Lost> lost = m_lost;
+		const bool fellBack = lost && m_device;
 		const bool running = m_device ? m_device->running() : lost && lost->restart;
-		std::string id;
-		if (m_device)
-			id = m_device->info().id;
-		else if (lost)
-			id = lost->device;
+		const std::string backend = lost ? lost->backend : m_backend;
+		const Json parameters = lost ? lost->parameters : m_parameters;
+		const std::string id = lost ? lost->device : m_device->info().id;
 		if (!lost)
-			logging::info("Resetting the audio device ({} {})", m_backend, id);
+			logging::info("Resetting the audio device ({} {})", backend, id);
 		// The measurement goes on across the restart. Only a restart for a dropout is one (the reference manual,
 		// p. 1589), and backends report that dropout before they ask for the reset; the restart itself adds nothing.
 		std::optional<PerformanceData> measured;
@@ -774,7 +777,6 @@ namespace gnubase::engine
 			measured = m_meter.data();
 			dropouts = m_deviceOverloadsKept + (m_device->overloads() - m_deviceOverloadsBefore);
 		}
-		const Json parameters = m_parameters;
 		try
 		{
 			setDevice(parameters);
@@ -787,20 +789,85 @@ namespace gnubase::engine
 		}
 		catch (const std::exception& error)
 		{
-			// E.g. unplugged: the engine goes on without it and tries again until it returns.
+			// E.g. unplugged: the engine goes on without it, or on the fallback, and tries again until it returns.
 			closeDevice();
 			if (!lost)
 				logging::warning(
-					"The audio device ({} {}) is lost, trying again until it returns: {}", m_backend, id, error.what());
-			m_lost = Lost{id, error.what(), running};
+					"The audio device ({} {}) is lost, trying again until it returns: {}", backend, id, error.what());
+			m_lost = Lost{backend, parameters, id, error.what(), running};
+			failOver();
 			waitForDevice();
-			return !lost;
+			return !lost || fellBack || m_device != nullptr;
 		}
 		if (lost)
-			logging::info("The audio device ({} {}) is back", m_backend, id);
+			logging::info("The audio device ({} {}) is back", backend, id);
 		if (running)
 			startDevice();
 		return true;
+	}
+
+	bool AudioEngine::reconnect()
+	{
+		if (!m_lost || (m_device && !lostDeviceListed()))
+			return false;
+		return reset();
+	}
+
+	bool AudioEngine::lostDeviceListed() const
+	{
+		if (m_lost->backend == "dummy")
+			return !m_dummyUnplugged;
+		for (const std::unique_ptr<audio::Backend>& backend : m_backends)
+		{
+			if (backend->name() != m_lost->backend)
+				continue;
+			try
+			{
+				const std::vector<audio::DeviceInfo> devices = backend->devices();
+				return std::any_of(devices.begin(), devices.end(), [this](const audio::DeviceInfo& info)
+					{ return info.id == m_lost->device && info.unavailableReason.empty(); });
+			}
+			catch (const std::exception&)
+			{
+				return false;
+			}
+		}
+		return false;
+	}
+
+	void AudioEngine::failOver()
+	{
+		const std::string fallback = m_settings.get(settings::g_audioFallbackDevice);
+		if (fallback == "none")
+			return;
+		const Lost lost = *m_lost;
+		// The dummy device without capture memory, which it would only fill with what can't be heard.
+		std::vector<Json> candidates;
+		if (fallback == "default" && lost.backend != "dummy")
+			candidates.push_back({{"backend", lost.backend}});
+		candidates.push_back({{"backend", "dummy"}, {"captureSeconds", 0}});
+		for (const Json& parameters : candidates)
+		{
+			try
+			{
+				m_failingOver = true;
+				setDevice(parameters); // which ends the loss
+				m_failingOver = false;
+				m_lost = lost;
+				if (lost.restart)
+					startDevice();
+				logging::info("Playing on {} {} until the audio device returns", m_backend, m_device->info().id);
+				return;
+			}
+			catch (const std::exception& error)
+			{
+				m_failingOver = false;
+				closeDevice();
+				logging::warning("Cannot play on the fallback device ({}): {}",
+					parameters.at("backend").get<std::string>(), error.what());
+			}
+		}
+		m_lost = lost;
 	}
 
 	void AudioEngine::reopen(const Json& parameters, bool running)
@@ -813,6 +880,9 @@ namespace gnubase::engine
 	void AudioEngine::set(const Json& changes)
 	{
 		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
+		require(!m_lost,
+			"the audio device is lost and a fallback plays (lost in audio.get); audio.setDevice picks "
+			"another one");
 		const bool running = m_device->running();
 		const Json old = m_parameters;
 		Json parameters = old;
@@ -838,7 +908,7 @@ namespace gnubase::engine
 	int64_t AudioEngine::recordOffset() const
 	{
 		const audio::DeviceLatency latency = m_device->latency();
-		return std::max<int64_t>(int64_t{latency.input} + latency.output - m_recordShift, 0);
+		return std::clamp<int64_t>(int64_t{latency.input} + latency.output - m_recordShift, 0, g_maxRecordOffset);
 	}
 
 	bool AudioEngine::updateLatency(const Json& parameters)
@@ -862,16 +932,10 @@ namespace gnubase::engine
 			m_parameters["outputLatency"] = output;
 		}
 		const int64_t offset = recordOffset();
-		if (offset == m_recordOffset)
+		if (offset == m_recordOffset.load(std::memory_order_relaxed))
 			return set;
-		// The audio thread reads the offset and the positions it keeps: they change while it stands.
-		const bool running = m_device->running();
-		if (running)
-			stopDevice();
-		m_recordOffset = offset;
-		m_played = PlayedPositions(static_cast<size_t>(m_recordOffset) + m_device->format().blockSize);
-		if (running)
-			startDevice();
+		// The audio thread takes it at its next block and keeps the positions it has, which cover any offset.
+		m_recordOffset.store(offset, std::memory_order_relaxed);
 		return true;
 	}
 
@@ -986,7 +1050,7 @@ namespace gnubase::engine
 				device->get<std::string>() == "dummy", "the dummy backend has no device " + device->get<std::string>());
 		if (const auto clock = parameters.find("clockSource"); clock != parameters.end())
 			throw CommandError("the dummy device has no clock source " + clock->get<std::string>());
-		if (m_dummyUnplugged)
+		if (m_dummyUnplugged && !m_failingOver)
 			throw audio::DeviceError("the dummy device is unplugged (audio.simulateDeviceLoss)");
 
 		audio::DeviceFormat format;
@@ -1161,12 +1225,12 @@ namespace gnubase::engine
 	Json AudioEngine::status() const
 	{
 		const Json processing = processingStatus();
+		Json lost = nullptr;
+		if (m_lost)
+			lost = {{"backend", m_lost->backend}, {"device", m_lost->device}, {"reason", m_lost->reason},
+				{"restart", m_lost->restart}};
 		if (!m_device)
 		{
-			Json lost = nullptr;
-			if (m_lost)
-				lost = {{"backend", m_backend}, {"device", m_lost->device}, {"reason", m_lost->reason},
-					{"restart", m_lost->restart}};
 			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"capturedFrames", 0},
 				{"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()}, {"processing", processing},
 				{"lost", std::move(lost)}};
@@ -1178,12 +1242,12 @@ namespace gnubase::engine
 		device.update({{"backend", m_backend}, {"sampleRate", format.sampleRate}, {"blockSize", format.blockSize},
 			{"inputChannels", format.inputChannels}, {"outputChannels", format.outputChannels},
 			{"inputLatency", latency.input}, {"outputLatency", latency.output}, {"recordShift", m_recordShift},
-			{"recordOffset", m_recordOffset}, {"directMonitoring", m_directMonitoring},
+			{"recordOffset", m_recordOffset.load(std::memory_order_relaxed)}, {"directMonitoring", m_directMonitoring},
 			{"projectSampleRate", projectRate}, {"sampleRateMismatch", format.sampleRate != projectRate}});
 		return {{"device", std::move(device)}, {"running", m_device->running()}, {"position", m_device->position()},
 			{"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
 			{"droppedFrames", m_dummy != nullptr ? m_dummy->droppedFrames() : 0},
-			{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", nullptr}};
+			{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", std::move(lost)}};
 	}
 
 	void AudioEngine::publishPerformance(const PerformanceData& data)
@@ -1326,6 +1390,7 @@ namespace gnubase::engine
 				"backend and device, e.g. sampleRate, blockSize, clockSource, recordShift or directMonitoring. The "
 				"device opens again with them, as for audio.reset, and runs on if it ran. If it can't open with them, "
 				"it opens again with the settings it had and the command fails; if those fail too, there is no device. "
+				"Fails while a fallback plays for a lost device (see audio.reset). "
 				"Sends audio.changed, also when it fails after the device closed: with the device opened again with "
 				"its old settings, at position 0, or with none.",
 				settingsSchema, statusSchema(), false},
@@ -1440,14 +1505,16 @@ namespace gnubase::engine
 			{"audio.get", 1,
 				"The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, "
 				"whether it has a control panel, whether it can monitor directly and does (directMonitoring), the "
-				"record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether "
-				"it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames "
+				"record shift and the record offset: inputLatency + outputLatency - recordShift, from 0 to 196608), "
+				"whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many "
+				"frames "
 				"of audio track playback were silent because a disk stream "
 				"was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's "
 				"sample rate; with sampleRateMismatch the device runs at another one, as it doesn't support the "
 				"project's or was asked for another, and plays faster or slower. lost: the device that went away "
 				"(its backend, device id, the reason it can't be opened and whether it ran and restarts), while the "
-				"engine waits for it to return (see audio.reset); otherwise null.",
+				"engine waits for it to return (see audio.reset); otherwise null. While a device is lost, device is "
+				"the fallback that plays meanwhile (the user setting audio.fallbackDevice), or null.",
 				noParameters(), statusSchema(), true},
 			[this](CommandContext&) { return status(); });
 		engine.registerCommand(
@@ -1457,7 +1524,10 @@ namespace gnubase::engine
 				"then resets on its own. A device that can't be opened, e.g. because it was unplugged, is lost (lost "
 				"in audio.get): the engine goes on without it and tries again about every half second until it "
 				"opens (audio.reconnect), then restarts it if it ran, so playback goes on where it stopped; "
-				"audio.start and audio.stop meanwhile decide whether it does. audio.setDevice ends the wait. The "
+				"audio.start and audio.stop meanwhile decide whether it does. With the user setting "
+				"audio.fallbackDevice, a fallback device plays meanwhile and the engine switches back once the lost "
+				"device opens; a reset while one plays tries the lost device and opens the fallback again if that "
+				"fails. audio.setDevice ends the wait. The "
 				"performance measurement goes on across a reset, which itself counts nothing: a driver that resets "
 				"because of a dropout reports the dropout (see audio.performance). A reset that loses the device ends "
 				"the measurement. Sends audio.changed when the device closes, opens or is lost, also when it fails "
@@ -1476,13 +1546,14 @@ namespace gnubase::engine
 			{"audio.reconnect", 1,
 				"Tries once to open the lost audio device again (lost in audio.get), as audio.reset does; does nothing "
 				"unless a device is lost. While one is, the engine runs it on its own about every half second, one "
-				"try at a time. Tries that find the device still gone change nothing and are left out of "
-				"engine.commandLog. Sends audio.changed when the device opens.",
+				"try at a time. While a fallback device plays, it tries only once the backend lists the lost device "
+				"as available again, so that the fallback isn't interrupted. Tries that find the device still gone "
+				"change nothing and are left out of engine.commandLog. Sends audio.changed when the device opens.",
 				noParameters(), statusSchema(), false},
 			[this, announcingFailure](CommandContext& context)
 			{
 				bool changed = false;
-				announcingFailure([this, &changed] { changed = m_lost && reset(); });
+				announcingFailure([this, &changed] { changed = reconnect(); });
 				Json result = status();
 				if (changed)
 					context.emit("audio.changed", result);
@@ -1495,7 +1566,7 @@ namespace gnubase::engine
 				"Only the dummy device: simulates its hardware being unplugged (connected false) and its driver "
 				"asking for a reset, after which the device is lost (see audio.reset), or plugged in again (connected "
 				"true), after which the engine opens it again on its own. While it is unplugged, audio.setDevice "
-				"can't open it either.",
+				"can't open it either. The dummy device as a fallback (audio.fallbackDevice) can't be unplugged.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["connected"],
 					"properties": {"connected": {"type": "boolean"}}})"),
 				statusSchema(), false},
@@ -1506,19 +1577,20 @@ namespace gnubase::engine
 					m_dummyUnplugged = false; // always, even after another backend replaced the lost dummy device
 					return status();
 				}
-				require(m_dummy != nullptr || (m_lost && m_backend == "dummy"),
+				require(m_dummy != nullptr || (m_lost && m_lost->backend == "dummy"),
 					"only the dummy device simulates device loss");
 				m_dummyUnplugged = true;
-				if (m_dummy != nullptr)
-					m_dummy->requestReset(); // as a driver does whose device went away
+				if (m_dummy != nullptr && !m_lost)
+					m_dummy->requestReset(); // as a driver does whose device went away; a fallback can't be unplugged
 				return status();
 			});
 		engine.registerCommand(
 			{"audio.updateLatency", 1,
 				"Reads the audio device's latencies again and places recordings by the new record offset (see "
-				"audio.get); a running device stops for that and starts again. Drivers that learn their latency "
-				"after the device opens, or whose latency changes with the graph, report the change; the engine then "
-				"runs this on its own. Only for the dummy device, and only while it is stopped: inputLatency and "
+				"audio.get); a running device keeps running and switches at its next block. Drivers that learn their "
+				"latency after the device opens, or whose latency changes with the graph, report the change; the "
+				"engine then runs this on its own. Only for the dummy device, and only while it is stopped: "
+				"inputLatency and "
 				"outputLatency (default: as they are) first change what it reports, and with loopback its round "
 				"trip, as such a driver's would. Sends audio.changed if anything changed.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
@@ -1569,7 +1641,7 @@ namespace gnubase::engine
 				noParameters(), statusSchema(), false},
 			[this](CommandContext& context)
 			{
-				if (m_lost)
+				if (m_lost && !m_device)
 				{
 					if (!m_lost->restart)
 					{
@@ -1581,6 +1653,8 @@ namespace gnubase::engine
 				require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
 				require(!m_device->running(), "the audio device is already running");
 				startDevice();
+				if (m_lost)
+					m_lost->restart = true; // a fallback runs
 				Json result = status();
 				context.emit("audio.changed", result);
 				return result;
@@ -1595,6 +1669,8 @@ namespace gnubase::engine
 				if (m_device && m_device->running())
 				{
 					stopDevice();
+					if (m_lost)
+						m_lost->restart = false;
 					context.emit("audio.changed", status());
 				}
 				else if (m_lost && m_lost->restart)

@@ -83,6 +83,12 @@ namespace gnubase::engine::settings
 					Json{{"type", "object"}}, Json{{"input", Json::object()}, {"output", Json::object()}}},
 				{"audio.device", "The audio device's id, or empty for the backend's default device.",
 					Json{{"type", "string"}}, ""},
+				{"audio.fallbackDevice",
+					"The device that plays while the chosen audio device is lost, until it returns: none, default (the "
+					"lost device's backend's default device, or the dummy device if that doesn't open), or dummy (the "
+					"dummy device: no sound, but the transport moves and the project plays on). The engine switches "
+					"back once the lost device returns.",
+					Json{{"type", "string"}, {"enum", {"none", "default", "dummy"}}}, "none"},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
 				{"midi.chaseBeyondParts",
