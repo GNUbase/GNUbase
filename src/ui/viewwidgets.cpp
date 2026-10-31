@@ -51,7 +51,7 @@ namespace gnubase::ui
 			void ProcessDefaultAction(Rml::Event& event) override
 			{
 				Rml::Element::ProcessDefaultAction(event);
-				if (HasAttribute("disabled"))
+				if (HasAttribute("disabled") || inControl(event.GetTargetElement()))
 					return;
 				if (event == Rml::EventId::Click)
 					click(event);
@@ -74,6 +74,17 @@ namespace gnubase::ui
 			}
 
 		private:
+			// Whether the element is in a form control in a row, such as a text field, whose clicks and keys are its
+			// own.
+			bool inControl(Rml::Element* element) const
+			{
+				for (; element != nullptr && element != this; element = element->GetParentNode())
+					if (const Rml::String& tag = element->GetTagName();
+						tag == "input" || tag == "select" || tag == "textarea")
+						return true;
+				return false;
+			}
+
 			std::vector<Rml::Element*> rows()
 			{
 				Rml::ElementList found;
