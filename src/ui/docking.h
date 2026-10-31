@@ -107,6 +107,8 @@ namespace gnubase::ui
 			const std::string& window, const std::string& set, const std::string& id, const std::string& before);
 		void setSectionHidden(const std::string& window, const std::string& set, const std::string& id, bool hidden);
 		std::vector<std::string> sections(const std::string& window, const std::string& set) const; // in order
+		// Shows the panel as its zone's active tab, with the zone shown, unless it is in a window of its own.
+		void open(const std::string& id);
 
 		// The window a panel shows in on its own, or null while it is docked.
 		Window* windowOf(const std::string& panel);

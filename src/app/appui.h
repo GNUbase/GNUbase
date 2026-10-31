@@ -8,6 +8,7 @@
 #include "ui/eventdisplay.h"
 #include "ui/gpurenderer.h"
 #include "ui/keycommands.h"
+#include "ui/mainmenu.h"
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
@@ -45,14 +46,14 @@ namespace gnubase::app
 		AppUi& operator=(AppUi&&) = delete;
 		~AppUi() = default;
 
-		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the event
-		// display in its main zone, whose commands are key commands in the focus zone "project". Throws
-		// std::runtime_error if the document can't be loaded.
+		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the main menu
+		// bar (ui/mainmenu.h) and the event display in its main zone, whose commands are key commands in the focus
+		// zone "project". Throws std::runtime_error if the document can't be loaded.
 		ui::EventDisplay& showProject();
 
 		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
-		// window.studioSetup, which the main menu's Studio menu will run. Throws std::runtime_error if the document
-		// can't be loaded.
+		// window.studioSetup, which the main menu's Studio menu runs. Throws std::runtime_error if the document can't
+		// be loaded.
 		Rml::ElementDocument& openStudioSetup(ui::Window& window) const;
 
 		ui::Shell& shell() { return m_shell; }
@@ -81,5 +82,10 @@ namespace gnubase::app
 		engine::Engine& m_engine;
 		std::filesystem::path m_resources;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
+		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
+		bool m_canUndo = false;
+		bool m_canRedo = false;
+		ui::Subscription m_history;
+		std::unique_ptr<ui::MainMenu> m_menu; // the project window's
 	};
 }

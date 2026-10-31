@@ -7,6 +7,7 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 
 #include <algorithm>
 #include <optional>
@@ -202,7 +203,8 @@ namespace gnubase::ui
 	{
 		const float ratio = m_windows.scale(window.m_id) * m_uiScale;
 		const Size pixels = m_windows.pixelSize(window.m_id);
-		if (ratio != window.m_dpRatio)
+		const bool ratioChanged = ratio != window.m_dpRatio;
+		if (ratioChanged)
 		{
 			window.m_dpRatio = ratio;
 			window.m_context->SetDensityIndependentPixelRatio(ratio);
@@ -213,6 +215,13 @@ namespace gnubase::ui
 			window.m_pixelSize = pixels;
 			window.m_context->SetDimensions({pixels.width, pixels.height});
 			window.m_renderRequested = true;
+		}
+		else if (ratioChanged)
+		{
+			// RmlUi sends Resize only when the pixel size changes. A new dp ratio alone, as from the UI scale, changes
+			// the documents' size in dp just as much, so they hear of it the same way.
+			for (int i = 0; i < window.m_context->GetNumDocuments(); ++i)
+				window.m_context->GetDocument(i)->DispatchEvent(Rml::EventId::Resize, Rml::Dictionary());
 		}
 	}
 

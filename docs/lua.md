@@ -212,7 +212,7 @@ Returns:
 
 #### `gnubase.audio.performance`
 
-Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported and the device's restarts by audio.reset (a block that was both counts twice); cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance, also across audio.reset; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late. blockSize: the device's block size in frames, 0 without a device.
+Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported, also those it recovers from with a reset (a block that was both counts twice; a reset after a settings change counts nothing); cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance, also across audio.reset; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late. blockSize: the device's block size in frames, 0 without a device.
 
 Only reads; changes nothing.
 
@@ -241,6 +241,21 @@ Returns:
 - `inputs`: array, required
 - `missing`: array, required
 - `outputs`: array, required
+
+#### `gnubase.audio.reconnect`
+
+Tries once to open the lost audio device again (lost in audio.get), as audio.reset does; does nothing unless a device is lost. While one is, the engine runs it on its own about every half second, one try at a time. Tries that find the device still gone change nothing and are left out of engine.commandLog. Sends audio.changed when the device opens.
+
+Returns:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `lost`: object or null, required
+- `playbackDropouts`: integer, required
+- `position`: integer, required
+- `processing`: object, required
+- `running`: boolean, required
 
 #### `gnubase.audio.record`
 
@@ -284,7 +299,7 @@ Returns:
 
 #### `gnubase.audio.reset`
 
-Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this when their settings change, e.g. in their control panel, or when their device goes away; the engine then resets on its own. A device that can't be opened, e.g. because it was unplugged, is lost (lost in audio.get): the engine goes on without it and resets again about every half second until it opens, then restarts it if it ran, so playback goes on where it stopped. audio.setDevice ends the wait. The performance measurement goes on across a reset, which counts as a dropout (see audio.performance); one that loses the device ends it. Sends audio.changed when the device closes, opens or is lost.
+Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this when their settings change, e.g. in their control panel, or when their device goes away; the engine then resets on its own. A device that can't be opened, e.g. because it was unplugged, is lost (lost in audio.get): the engine goes on without it and tries again about every half second until it opens (audio.reconnect), then restarts it if it ran, so playback goes on where it stopped; audio.start and audio.stop meanwhile decide whether it does. audio.setDevice ends the wait. The performance measurement goes on across a reset, which itself counts nothing: a driver that resets because of a dropout reports the dropout (see audio.performance). A reset that loses the device ends the measurement. Sends audio.changed when the device closes, opens or is lost, also when it fails after the device opened again.
 
 Returns:
 
@@ -315,7 +330,7 @@ Returns:
 
 #### `gnubase.audio.set`
 
-Changes the audio device's settings and keeps the others: the parameters of audio.setDevice except backend and device, e.g. sampleRate, blockSize, clockSource, recordShift or directMonitoring. The device opens again with them, as for audio.reset, and runs on if it ran. If it can't open with them, it opens again with the settings it had and the command fails.
+Changes the audio device's settings and keeps the others: the parameters of audio.setDevice except backend and device, e.g. sampleRate, blockSize, clockSource, recordShift or directMonitoring. The device opens again with them, as for audio.reset, and runs on if it ran. If it can't open with them, it opens again with the settings it had and the command fails; if those fail too, there is no device. Sends audio.changed, also when it fails after the device closed: with the device opened again with its old settings, at position 0, or with none.
 
 Parameters:
 
@@ -348,6 +363,7 @@ Returns:
 Replaces the audio device. backend: one from audio.devices, by default "dummy". device: its id, by default the backend's default device. sampleRate: by default the project's if the device supports it, otherwise the driver's current rate; when the project's sample rate changes, the device follows it where it can. blockSize: by default the driver's preferred size. clockSource: a name from the device's clockSources. The device starts stopped at position 0. Another backend's device is closed before the new one opens, since drivers often allow only one; if opening fails, there is no device.
 Recorded input goes where the transport played the device's input + output latency before it arrived, so what is played along to or looped back lines up with what played (recordOffset in audio.get). recordShift (frames, -65536 to 65536) moves recordings that much later, for drivers that report their latency wrong. captureSeconds (0 to 600, by default 0, or 60 for the dummy device) keeps that much of what the inputs record in memory for audio.captureInput, e.g. for a loopback test. directMonitoring: the driver monitors audio tracks' inputs itself, without the engine's latency, for tracks that play into an output bus (canMonitorDirectly in audio.devices says which can); their fader and pan set its level and position, automation doesn't reach it.
 The dummy device has no hardware: its output is captured in memory (audio.capture) and it renders offline (audio.render). It supports 44100, 48000, 88200, 96000, 176400 and 192000 Hz and opens with any rate from 8000 Hz. Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs (inputChannels, outputChannels), 60 s of capture (captureSeconds, also of its output). Its input is silent, or a built-in generator (see processor.list) with parameters by name. It reports inputLatency and outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that much later, as a cable from each output to the input of the same number would, which needs at least a block. It monitors directly by adding inputs to its outputs.
+Sends audio.changed, also when it fails after closing the old device.
 
 Parameters:
 
@@ -452,7 +468,7 @@ Returns:
 
 #### `gnubase.audio.start`
 
-Simulated real time: the device processes one block per block duration until stopped.
+Starts the audio device; the dummy device processes one block per block duration (simulated real time) until stopped. While the device is lost (see audio.reset), it starts once it returns (restart in lost), and audio.changed announces that.
 
 Returns:
 
@@ -467,7 +483,7 @@ Returns:
 
 #### `gnubase.audio.stop`
 
-Stops simulated real time. Does nothing if the device isn't running.
+Stops the audio device. Does nothing if it isn't running. While the device is lost (see audio.reset), it stays stopped once it returns (restart in lost), and audio.changed announces that.
 
 Returns:
 
@@ -944,7 +960,7 @@ Returns:
 
 #### `gnubase.engine.commandLog`
 
-The last 256 commands that ran, oldest first, without queries: what the UI and other clients did. Each with its request id (events name it too), the client that sent it (ui, mcp, lua, app for the command line, engine for the engine's own commands), the command, its parameters, and the error if it failed.
+The last 256 commands that ran, oldest first, without queries: what the UI and other clients did. Each with its request id (events name it too), the client that sent it (ui, mcp, lua, app for the command line, engine for the engine's own commands), the command, its parameters, and the error if it failed. Commands the engine ran on its own that changed nothing, such as tries to open a lost audio device again, are left out.
 
 Only reads; changes nothing.
 
@@ -1070,7 +1086,7 @@ Parameters:
 
 #### `gnubase.event.resize`
 
-Moves the start or the end (edge) of audio events and MIDI parts by delta project samples or by ticks, within the clip and at least a sample frame or a tick long. normal sizing (the default) reveals or hides content; moveContents moves the content with the edge. A MIDI part's notes and controllers that end up before its start are removed. Locked events don't change. Returns the events.
+Moves the start or the end (edge) of audio events and MIDI parts by delta project samples or by ticks, within the clip and at least a sample frame or a tick long. normal sizing (the default) reveals or hides content; moveContents moves the content with the edge. A MIDI part's notes and controllers that end up before its start are removed. With zeroCrossing, normal sizing moves audio events' edges to the nearest point within 50 ms where the audio crosses zero. Locked events don't change. Returns the events.
 
 Parameters:
 
@@ -1079,6 +1095,7 @@ Parameters:
 - `events`: array of integer, required
 - `mode`: one of "normal" | "moveContents"
 - `ticks`: integer
+- `zeroCrossing`: boolean
 
 Returns:
 
@@ -1098,15 +1115,42 @@ Returns:
 
 - `events`: array of integer, required
 
+#### `gnubase.event.setSnapPoint`
+
+Sets audio events' snap point at position (project samples, default the project cursor), which must be inside each of them (Snap Point to Cursor): where the event snaps to the grid when it moves, and attracts other events. It is a point in the clip, so it stays with the audio when the event is resized or split. Returns the events.
+
+Parameters:
+
+- `events`: array of integer, required
+- `position`: integer
+
+Returns:
+
+- `events`: array of integer, required
+
+#### `gnubase.event.shuffle`
+
+Shuffle (snap type shuffle): events that adjoin each other on one track change places with the events that adjoin them. They go where position (project samples, where the first of them would start) puts them: after each other event whose middle it is past. The others close up and make room, so the row keeps its start and has no gaps. Locked events end the row. Returns the events.
+
+Parameters:
+
+- `events`: array of integer, required
+- `position`: integer, required
+
+Returns:
+
+- `events`: array of integer, required
+
 #### `gnubase.event.split`
 
-Splits audio events and MIDI parts at positions (project samples): events, or without it every unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with splitNotes are cut in two. Returns the new events after the splits.
+Splits audio events and MIDI parts at positions (project samples): events, or without it every unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with splitNotes are cut in two. With zeroCrossing, audio events split at the nearest point within 50 ms and inside the event where their audio crosses zero. Returns the new events after the splits.
 
 Parameters:
 
 - `events`: array of integer
 - `positions`: array of integer, required
 - `splitNotes`: boolean
+- `zeroCrossing`: boolean
 
 Returns:
 
@@ -2352,6 +2396,61 @@ Returns:
 
 - `key`: string, required
 - `value`: any, required. The setting's value.
+
+### snap
+
+#### `gnubase.snap.get`
+
+The project's snap settings. on: whether snap is on. type: grid (the nearest grid line), gridRelative (moves in grid steps, keeping the distance to the grid), events (the starts and ends of other events, audio events' snap points and markers, when near), shuffle (events trade places with their neighbours, see event.shuffle), cursor (the project cursor, when near), or the combinations gridCursor, eventsCursor and eventsGridCursor. grid: bar, beat, quantize (the project's quantize grid) or adaptToZoom (a note value that the view chooses); 1ms, 10ms, 100ms, 1000ms; subframe, quarterFrame, halfFrame, frame, twoFrames, second; 1sample, 10samples, 100samples, 44100samples. zeroCrossing: splitting and resizing audio events in the project window cut where the audio crosses zero.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `grid`: one of "bar" | "beat" | "quantize" | "adaptToZoom" | "1ms" | "10ms" | "100ms" | "1000ms" | "subframe" | "quarterFrame" | "halfFrame" | "frame" | "twoFrames" | "second" | "1sample" | "10samples" | "100samples" | "44100samples", required
+- `on`: boolean, required
+- `type`: one of "grid" | "gridRelative" | "events" | "shuffle" | "cursor" | "gridCursor" | "eventsCursor" | "eventsGridCursor", required
+- `zeroCrossing`: boolean, required
+
+#### `gnubase.snap.position`
+
+Snaps a position (project samples) as editing in the project window does, with the project's snap settings, changed by settings: where a point that would go to position goes. from is where it was, for gridRelative; events are the events being edited, whose edges and snap points don't attract; range is how near (project samples, default a tenth of a second) events, markers and the cursor attract; zoomStep is adaptToZoom's note value in ticks (default: bars); framesPerSecond the frame grids' rate (default 25). Returns position in project samples, and ticks, which are exact when musical, that is when a bar, beat, quantize or zoom grid line put it there.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `events`: array of integer
+- `framesPerSecond`: integer
+- `from`: integer
+- `position`: integer, required
+- `range`: integer
+- `settings`: object
+- `zoomStep`: integer
+
+Returns:
+
+- `musical`: boolean, required
+- `position`: integer, required
+- `ticks`: integer, required
+
+#### `gnubase.snap.set`
+
+Changes the project's snap settings; what isn't given stays. on: whether snap is on. type: grid (the nearest grid line), gridRelative (moves in grid steps, keeping the distance to the grid), events (the starts and ends of other events, audio events' snap points and markers, when near), shuffle (events trade places with their neighbours, see event.shuffle), cursor (the project cursor, when near), or the combinations gridCursor, eventsCursor and eventsGridCursor. grid: bar, beat, quantize (the project's quantize grid) or adaptToZoom (a note value that the view chooses); 1ms, 10ms, 100ms, 1000ms; subframe, quarterFrame, halfFrame, frame, twoFrames, second; 1sample, 10samples, 100samples, 44100samples. zeroCrossing: splitting and resizing audio events in the project window cut where the audio crosses zero. Settings are not undo steps; they are saved with the project. Emits snap.changed.
+
+Parameters:
+
+- `grid`: one of "bar" | "beat" | "quantize" | "adaptToZoom" | "1ms" | "10ms" | "100ms" | "1000ms" | "subframe" | "quarterFrame" | "halfFrame" | "frame" | "twoFrames" | "second" | "1sample" | "10samples" | "100samples" | "44100samples"
+- `on`: boolean
+- `type`: one of "grid" | "gridRelative" | "events" | "shuffle" | "cursor" | "gridCursor" | "eventsCursor" | "eventsGridCursor"
+- `zeroCrossing`: boolean
+
+Returns:
+
+- `grid`: one of "bar" | "beat" | "quantize" | "adaptToZoom" | "1ms" | "10ms" | "100ms" | "1000ms" | "subframe" | "quarterFrame" | "halfFrame" | "frame" | "twoFrames" | "second" | "1sample" | "10samples" | "100samples" | "44100samples", required
+- `on`: boolean, required
+- `type`: one of "grid" | "gridRelative" | "events" | "shuffle" | "cursor" | "gridCursor" | "eventsCursor" | "eventsGridCursor", required
+- `zeroCrossing`: boolean, required
 
 ### track
 

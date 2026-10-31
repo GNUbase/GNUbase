@@ -36,11 +36,15 @@ add_library(gnubase-ui STATIC
 	fonts.h
 	gpurenderer.cpp
 	gpurenderer.h
+	historypanel.cpp
+	historypanel.h
 	image.cpp
 	keycommands.cpp
 	keycommands.h
 	livereload.cpp
 	livereload.h
+	mainmenu.cpp
+	mainmenu.h
 	popupwidgets.cpp
 	pseudolocale.cpp
 	pseudolocale.h
