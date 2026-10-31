@@ -135,6 +135,14 @@ namespace gnubase::ui
 		// whose buttons #snap-type and #grid-type show the choice, and a toggle button #snap-zero-crossing.
 		const engine::SnapSettings& snap() const { return m_snap; }
 
+		// Importing files (#92, fileimport.cpp, docs/features/file-import.md). MIDI files (.mid, .midi, .smf) are
+		// imported with midiFile.import. Audio files open the Import Options dialog (import-options.rml next to the
+		// document), which imports them with audioFile.import at sample (default: the project cursor), one after
+		// another onto track if it is an audio track, else onto new tracks. Files dropped on the display go to the
+		// track of the lane under the mouse, at the time there.
+		void importFiles(const std::vector<std::string>& files, std::optional<uint64_t> track = std::nullopt,
+			std::optional<int64_t> sample = std::nullopt);
+
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
 		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); and the edits of parts and events:
 		// edit.delete, edit.mute, edit.unmute, edit.lock, edit.unlock, edit.splitAtCursor, edit.splitLoop, edit.glue,
@@ -215,6 +223,17 @@ namespace gnubase::ui
 		void showAutoScroll();
 		void showSnap();
 		void setSnap(const engine::Json& settings); // sends snap.set
+
+		// Importing files (fileimport.cpp).
+		struct Import
+		{
+			std::vector<std::string> files; // audio files, waiting for the Import Options dialog
+			std::optional<uint64_t> track;
+			int64_t sample = 0;
+		};
+		void dropFiles(Rml::Event& event);
+		void openImportOptions(bool saved);
+		void importAudio(Rml::Element& dialog);
 
 		// Editing parts and events (eventediting.cpp).
 		void addEditActions();
@@ -313,6 +332,11 @@ namespace gnubase::ui
 		Rml::Element* m_zeroCrossingButton = nullptr;
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the dialog document open now
 		engine::Json m_organized;                // the presets that the organize dialog lists, by index
+		Import m_import;
+		bool m_importCopy = true; // the import options chosen last
+		bool m_importConvert = true;
+		bool m_importSplit = false;
+		bool m_importOneTrack = false;
 
 		std::map<std::string, std::function<void()>> m_actions;
 		std::vector<Subscription> m_subscriptions;

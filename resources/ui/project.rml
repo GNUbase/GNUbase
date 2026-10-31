@@ -104,6 +104,13 @@
 		<menuitem command="file.saveNewVersion">Save New Version</menuitem>
 		<menuitem command="file.revert">Revert</menuitem>
 		<menuseparator/>
+		<menuitem id="import-submenu">Import
+			<menu>
+				<menuitem command="file.importAudio">Audio File...</menuitem>
+				<menuitem command="file.importMidi">MIDI File...</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
 		<menuitem command="file.quit">Quit</menuitem>
 	</menu>
 	<menu id="edit-menu">

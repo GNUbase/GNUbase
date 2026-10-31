@@ -13,7 +13,7 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
   by value, since it may still run after the caller gave up. When the shell quits, work it hasn't run yet is dropped,
   and whoever waits for it gets an error at once.
 - **MCP tools.** `app::addUiTools` adds `ui_windows`, `ui_dom`, `ui_screenshot`, `ui_wait`, `ui_move`, `ui_click`,
-  `ui_drag`, `ui_wheel`, `ui_key`, `ui_text` and `ui_file_dialog`, which answers file dialogs (`Shell::answerFileDialog`), to the MCP server; the windowed app serves them with `--mcp-http`, next
+  `ui_drag`, `ui_drop`, `ui_wheel`, `ui_key`, `ui_text` and `ui_file_dialog`, which answers file dialogs (`Shell::answerFileDialog`), to the MCP server; the windowed app serves them with `--mcp-http`, next
   to the engine's tools and `script_run`. Headless GNUbase has no UI and no UI tools. A screenshot comes back as MCP
   image content, a PNG: a tool returns the PNG as `Json::binary`, which `mcp::Server` sends as an image. PNG encoding
   runs on the server's thread. `app::addUiFunctions` adds the same tools to the UI's Lua as `gnubase.ui.click` and so
@@ -29,7 +29,9 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
   button; a double click is two clicks, which RmlUi recognises by their timing, with the UI updated between them as
   frames would be, so a first click that opens a field leaves the second to the field. A drag presses at the start,
   moves in eight steps and releases at the end, so RmlUi sends `dragstart`, `drag` and `dragdrop`. Wheel turns are in
-  lines, positive to the right and down. Clicks, drags and wheel turns can hold modifiers, e.g. Shift for a fine drag. Keys are pressed and released with modifiers; they don't type text, which `ui_text`
+  lines, positive to the right and down. A file drop hands files to the element under the target as the window system
+  hands the user's drops from the OS's file manager (`ui::dropFiles`: a `filedrop` event with the files, their count
+  and the point), e.g. audio files on the event display to import them. Clicks, drags and wheel turns can hold modifiers, e.g. Shift for a fine drag. Keys are pressed and released with modifiers; they don't type text, which `ui_text`
   sends as text input, as the OS's text input does after a key press. A key that no element uses runs its key command,
   as the user's does ([key-commands.md](key-commands.md)). Each input tool answers with the element under
   the mouse or with the focus, so a client sees what it hit.

@@ -26,6 +26,7 @@ add_executable(gnubase-tests
 	app_tests.cpp
 	audio_tests.cpp
 	audiofile_tests.cpp
+	audioimport_tests.cpp
 	automation_tests.cpp
 	backup_tests.cpp
 	bus_tests.cpp
@@ -44,6 +45,7 @@ add_executable(gnubase-tests
 	eventedit_tests.cpp
 	eventediting_tests.cpp
 	fade_tests.cpp
+	fileimport_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
 	history_tests.cpp

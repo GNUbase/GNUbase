@@ -2,6 +2,7 @@
 #include "ui/eventdisplay.h"
 
 #include "platform/log.h"
+#include "ui/rmlui.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
@@ -88,6 +89,7 @@ namespace gnubase::ui
 		root.SetClass("cross-hair", m_crossHair);
 		for (const Rml::EventId id : g_rootEvents)
 			root.AddEventListener(id, this);
+		root.AddEventListener(g_fileDropEvent, this);
 		for (const Rml::EventId id : g_documentEvents)
 			m_document->AddEventListener(id, this);
 		findControls();
@@ -164,6 +166,7 @@ namespace gnubase::ui
 			return;
 		for (const Rml::EventId id : g_rootEvents)
 			m_root->RemoveEventListener(id, this);
+		m_root->RemoveEventListener(g_fileDropEvent, this);
 		for (const Rml::EventId id : g_documentEvents)
 			m_document->RemoveEventListener(id, this);
 	}
@@ -641,6 +644,11 @@ namespace gnubase::ui
 		if (event.GetCurrentElement()->GetOwnerDocument() != m_document)
 		{
 			dialogEvent(event);
+			return;
+		}
+		if (event.GetType() == g_fileDropEvent)
+		{
+			dropFiles(event);
 			return;
 		}
 		Rml::Element* target = event.GetTargetElement();
