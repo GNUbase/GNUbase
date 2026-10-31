@@ -150,7 +150,7 @@ TEST_CASE("the quantize grid and adapt to zoom snap to note values", "[unit]")
 {
 	engine::SnapGrid grid = slowingDown();
 	// Eighth triplets: three per quarter, a sixth of a second apart at 120 BPM.
-	grid.quantize.grid = *engine::midi::noteValueFromString("1/8T");
+	grid.quantize.grid = engine::midi::NoteValue{8, engine::midi::NoteValueKind::Triplet};
 	CHECK(engine::nearestGridLine(GridType::Quantize, grid, 9000) == ticks(g_quarter / 3));
 	CHECK(engine::gridStep(GridType::Quantize, grid, 0) == ticks(g_quarter / 3));
 	// After the tempo change a triplet eighth is a third of a second.
