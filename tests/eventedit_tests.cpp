@@ -34,7 +34,8 @@ namespace
 		std::string fails(const std::string& command, const Json& parameters)
 		{
 			const gnubase::engine::Result result = client.call(command, parameters);
-			REQUIRE_FALSE(result.ok());
+			// Not REQUIRE_FALSE: Catch2's Normal | FalseTest trips clang-analyzer's EnumCastOutOfRange check
+			REQUIRE(!result.ok());
 			return result.error;
 		}
 
