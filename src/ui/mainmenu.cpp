@@ -28,12 +28,15 @@ namespace gnubase::ui
 		document.QuerySelectorAll(found, "menuitem[command]");
 		for (Rml::Element* element : found)
 		{
-			std::string command = element->GetAttribute<Rml::String>("command", "");
+			auto command = element->GetAttribute<Rml::String>("command", "");
 			const auto text = element->GetAttribute<Rml::String>("parameters", "{}");
 			engine::Json parameters = engine::Json::parse(text, nullptr, false);
 			if (!parameters.is_object())
-				throw std::invalid_argument(
-					"the parameters of the menu item for " + command + " aren't a JSON object: " + text);
+			{
+				std::string message = "the parameters of the menu item for ";
+				message.append(command).append(" aren't a JSON object: ").append(text);
+				throw std::invalid_argument(message);
+			}
 			// First, so that it floats right of the item's text.
 			Rml::Element* shown = element->InsertBefore(document.CreateElement("span"), element->GetFirstChild());
 			shown->SetClass("menu-keys", true);
