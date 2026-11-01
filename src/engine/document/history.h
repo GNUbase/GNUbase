@@ -14,6 +14,7 @@
 namespace gnubase::engine
 {
 	// One object before and after a change. Without before it was added; without after it was removed.
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	template <typename T> struct ObjectChange
 	{
 		ObjectId id = 0;

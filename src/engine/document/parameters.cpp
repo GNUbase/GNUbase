@@ -251,7 +251,9 @@ namespace gnubase::engine
 				context.emit("plugin.changed", {{"slot", std::move(slot)}});
 			}
 			else
+			{
 				context.emit("channel.changed", {{"channel", toJson(channel)}});
+			}
 			return {{"parameter", describe(project, channel, parameter)}};
 		}
 	}
