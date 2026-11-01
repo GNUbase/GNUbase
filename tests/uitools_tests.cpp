@@ -8,6 +8,7 @@
 #include "testutils/fakeui.h"
 #include "ui/fonts.h"
 #include "ui/renderer.h"
+#include "ui/rmlui.h"
 #include "ui/shell.h"
 
 #include <RmlUi/Core/Context.h>
@@ -207,7 +208,7 @@ TEST_CASE("the UI tools are listed, those that only read marked read-only", "[un
 		readOnly[tool.at("name").get<std::string>()] = tool.at("annotations").at("readOnlyHint");
 	for (const char* name : {"ui_windows", "ui_dom", "ui_screenshot", "ui_wait"})
 		CHECK(readOnly.value(name, false));
-	for (const char* name : {"ui_move", "ui_click", "ui_drag", "ui_wheel", "ui_key", "ui_text"})
+	for (const char* name : {"ui_move", "ui_click", "ui_drag", "ui_drop", "ui_wheel", "ui_key", "ui_text"})
 		CHECK(readOnly.value(name, true) == false);
 }
 
@@ -346,6 +347,23 @@ TEST_CASE("ui_move hovers, ui_wheel scrolls and ui_drag drops one element on ano
 		fixture.call("ui_drag", {{"from", {{"selector", "#handle"}}}, {"to", {{"selector", "#target"}}}});
 	CHECK(dropped.at("element").at("id") == "target");
 	CHECK(recorder.events.at("dragdrop").at("target") == "target");
+}
+
+TEST_CASE("ui_drop drops files on an element, as the window system does", "[unit]")
+{
+	Fixture fixture;
+	Recorder recorder;
+	fixture.main->AddEventListener(ui::g_fileDropEvent, &recorder);
+	const Json dropped = fixture.call("ui_drop", {{"selector", "#target"}, {"files", {"a.wav", "b.mid"}}});
+	CHECK(dropped.at("element").at("id") == "target");
+	const Json& event = recorder.events.at(ui::g_fileDropEvent);
+	CHECK(event.at("target") == "target");
+	CHECK(event.at("files") == "a.wav\nb.mid");
+	CHECK(event.at("count") == "2");
+	CHECK(event.at("mouse_x") == "290"); // the centre of #target, 250 to 330 by 100 to 180
+	CHECK(event.at("mouse_y") == "140");
+	CHECK_THAT(
+		fixture.fail("ui_drop", {{"selector", "#target"}, {"files", Json::array()}}), ContainsSubstring("needs files"));
 }
 
 TEST_CASE("ui_screenshot returns a PNG of a window or of one element", "[unit]")

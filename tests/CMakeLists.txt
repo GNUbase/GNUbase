@@ -5,6 +5,11 @@ add_library(gnubase-testutils STATIC
 	testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	target_sources(gnubase-testutils PRIVATE
+		testutils/fakertkit.cpp testutils/fakertkit.h)
+	target_link_libraries(gnubase-testutils PRIVATE PkgConfig::DBUS)
+endif()
 target_compile_definitions(gnubase-testutils PRIVATE
 	GNUBASE_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden"
 	GNUBASE_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/output"
@@ -16,10 +21,12 @@ set(settingsEnvironment "GNUBASE_SETTINGS_DIR=${CMAKE_CURRENT_BINARY_DIR}/output
 
 # One file per line, sorted, so that pull requests adding tests rarely touch the same lines.
 add_executable(gnubase-tests
+	addtrack_tests.cpp
 	analysis_tests.cpp
 	app_tests.cpp
 	audio_tests.cpp
 	audiofile_tests.cpp
+	audioimport_tests.cpp
 	automation_tests.cpp
 	backup_tests.cpp
 	bus_tests.cpp
@@ -38,14 +45,17 @@ add_executable(gnubase-tests
 	eventedit_tests.cpp
 	eventediting_tests.cpp
 	fade_tests.cpp
+	fileimport_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
 	history_tests.cpp
+	historypanel_tests.cpp
 	ipc_process_tests.cpp
 	ipc_tests.cpp
 	keycommands_tests.cpp
 	latency_tests.cpp
 	log_tests.cpp
+	mainmenu_tests.cpp
 	marker_tests.cpp
 	mcp_tests.cpp
 	mcpevents_tests.cpp
@@ -84,6 +94,7 @@ add_executable(gnubase-tests
 	time_tests.cpp
 	timeformat_tests.cpp
 	timestretch_tests.cpp
+	tracklist_tests.cpp
 	transport_tests.cpp
 	uiapp.cpp
 	uiapp.h

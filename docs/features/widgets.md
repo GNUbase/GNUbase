@@ -110,7 +110,8 @@ The theme draws them; the widget library adds nothing.
   a row and Shift-click selects the rows from the last one clicked. Up and Down move the selection, Shift extends it,
   Home and End go to the first and last row. Selected rows have the state class `.selected`. The view's `value`
   attribute is the selected rows' values separated by commas, and `change` sends it, so `data-value` binds the
-  selection both ways, also when `data-for` makes the rows.
+  selection both ways, also when `data-for` makes the rows. Clicks and keys in a form control in a row, such as a text
+  field, are the control's and don't change the selection.
 - **Trees.** Rows with a `level` attribute (0 at the top) make a tree: the rows that follow a row with a higher level
   are its children, shown while it has the `expanded` attribute. The view gives tree rows a `.tree-indent`, sized from
   the level (16 dp a level), and a `.tree-toggle`, which the theme draws as an arrow; parents get the state classes
