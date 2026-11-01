@@ -17,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -30,8 +31,10 @@ namespace Rml
 // cursor, a cross-hair cursor, zoom and scrolling. docs/features/event-display.md describes it.
 namespace gnubase::ui
 {
-	// A track's height before vertical zoom, in dp; tracks get heights of their own with the track list (#81).
+	// A track's height before vertical zoom, in dp, until it gets one of its own (setTrackHeight), and the limits.
 	inline constexpr double g_trackHeight = 40.0;
+	inline constexpr double g_minTrackHeight = 20.0;
+	inline constexpr double g_maxTrackHeight = 400.0;
 	// What zoom full and the overview line show at least, in seconds, until projects have a length (#78).
 	inline constexpr double g_minimumProjectLength = 60.0;
 
@@ -94,6 +97,21 @@ namespace gnubase::ui
 		void scrollTo(double start);
 		void scrollVertically(double top);
 
+		// The lanes, which the track list (ui/tracklist.h) shows beside them: a lane per track that isn't hidden, in
+		// the project's order. Heights are per track, before vertical zoom; lane tops count from the top of the first
+		// lane, in dp, with vertical zoom, and the last one is the bottom of the last lane.
+		const std::vector<uint64_t>& laneTracks() const { return m_laneTracks; }
+		const std::vector<double>& laneTops() const { return m_laneTops; }
+		double trackHeight(uint64_t track) const;
+		void setTrackHeight(uint64_t track, double height);
+		void setTrackHeights(double height); // every track's
+		void setHiddenTracks(std::set<uint64_t> tracks);
+		// The project as project.get last returned it, or null before the first answer; loads() counts the answers.
+		const engine::Json& project() const { return m_project; }
+		uint64_t loads() const { return m_loads; }
+		// Called after the lanes or the view changed.
+		void onLayout(std::function<void()> listener) { m_layoutListener = std::move(listener); }
+
 		// Auto-scroll (reference manual pp. 316-317). Suspended when editing: a click in the event display while
 		// playing suspends it until playback stops or auto-scroll is switched on again.
 		void setAutoScroll(bool on);
@@ -121,7 +139,7 @@ namespace gnubase::ui
 		// selection. Edits go to the engine as event.* commands; a click selects, a drag moves, Alt and a drag copies
 		// (with Shift too, shared copies), a drag at an event's left or right edge resizes it, Alt and a click splits
 		// there, and a double click on an empty MIDI or instrument lane adds a one-bar part, or one between the
-		// locators when the click is between them.
+		// locators when the click is between them; one below the tracks adds a MIDI track.
 		const std::vector<uint64_t>& selection() const { return m_selection; }
 		void select(std::vector<uint64_t> events);
 		// Sizing moves contents instead of normal sizing when resizing with the mouse (reference manual p. 265).
@@ -134,6 +152,14 @@ namespace gnubase::ui
 		// toggle button #snap, menus #snap-type-menu and #grid-type-menu (the grid types of the ruler's time format),
 		// whose buttons #snap-type and #grid-type show the choice, and a toggle button #snap-zero-crossing.
 		const engine::SnapSettings& snap() const { return m_snap; }
+
+		// Importing files (#92, fileimport.cpp, docs/features/file-import.md). MIDI files (.mid, .midi, .smf) are
+		// imported with midiFile.import. Audio files open the Import Options dialog (import-options.rml next to the
+		// document), which imports them with audioFile.import at sample (default: the project cursor), one after
+		// another onto track if it is an audio track, else onto new tracks. Files dropped on the display go to the
+		// track of the lane under the mouse, at the time there.
+		void importFiles(const std::vector<std::string>& files, std::optional<uint64_t> track = std::nullopt,
+			std::optional<int64_t> sample = std::nullopt);
 
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
 		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); and the edits of parts and events:
@@ -216,9 +242,21 @@ namespace gnubase::ui
 		void showSnap();
 		void setSnap(const engine::Json& settings); // sends snap.set
 
+		// Importing files (fileimport.cpp).
+		struct Import
+		{
+			std::vector<std::string> files; // audio files, waiting for the Import Options dialog
+			std::optional<uint64_t> track;
+			int64_t sample = 0;
+		};
+		void dropFiles(Rml::Event& event);
+		void openImportOptions(bool saved);
+		void importAudio(Rml::Element& dialog);
+
 		// Editing parts and events (eventediting.cpp).
 		void addEditActions();
 		const Shown* eventAt(double x, double y) const; // dp in the event lanes
+		size_t laneAt(double y) const; // dp from the top of the first lane; 0 above it, the lane count below the last
 		void areaDown(Rml::Event& event, double x, double y);
 		void areaMove(double dx, double dy);
 		void areaUp(Rml::Event& event);
@@ -256,8 +294,14 @@ namespace gnubase::ui
 		TimeContext m_time;
 		std::vector<EventLanes::Lane> m_tracks; // events in seconds, heights before zoom
 		std::vector<uint64_t> m_laneTracks;     // the track of each lane
-		std::vector<std::string> m_laneTypes;   // and its type
-		std::vector<bool> m_laneLinear;         // and whether its time base is linear
+		std::vector<double> m_laneTops = {0.0};
+		std::map<uint64_t, double> m_heights; // set by setTrackHeight, before zoom
+		std::set<uint64_t> m_hidden;
+		engine::Json m_project;
+		uint64_t m_loads = 0;
+		std::function<void()> m_layoutListener;
+		std::vector<std::string> m_laneTypes; // and its type
+		std::vector<bool> m_laneLinear;       // and whether its time base is linear
 		std::vector<Shown> m_events;
 		std::vector<uint64_t> m_selection;
 		EventLanes* m_mutedLanes = nullptr;    // muted events over the others
@@ -269,7 +313,8 @@ namespace gnubase::ui
 		bool m_dragMoved = false;
 		double m_dragDx = 0.0; // dp, while moving, snapped
 		int m_dragLanes = 0;
-		double m_end = 0.0; // of the last event
+		double m_dragLaneY = 0.0; // where a drag of events started, in dp from the top of the first lane
+		double m_end = 0.0;       // of the last event
 		bool m_loading = false;
 		bool m_stale = false;
 		int64_t m_cursorSample = 0;
@@ -313,6 +358,11 @@ namespace gnubase::ui
 		Rml::Element* m_zeroCrossingButton = nullptr;
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the dialog document open now
 		engine::Json m_organized;                // the presets that the organize dialog lists, by index
+		Import m_import;
+		bool m_importCopy = true; // the import options chosen last
+		bool m_importConvert = true;
+		bool m_importSplit = false;
+		bool m_importOneTrack = false;
 
 		std::map<std::string, std::function<void()>> m_actions;
 		std::vector<Subscription> m_subscriptions;

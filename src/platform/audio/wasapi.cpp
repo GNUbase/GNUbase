@@ -594,6 +594,7 @@ namespace gnubase::audio
 				if (lost)
 				{
 					logging::warning("The audio device {} stopped working", m_info.name);
+					reportOverload(); // a dropout, before the reset that recovers from it
 					requestReset();
 				}
 			}
