@@ -1,0 +1,53 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Repeats the selected events (docs/features/parts-and-events.md, reference manual pp. 271-272): ui::EventDisplay
+     opens it with edit.repeat, and on OK makes #repeat-count copies, shared ones when #repeat-shared is checked. -->
+<rml>
+<head>
+	<title>Repeat Events</title>
+	<style>
+		dialog
+		{
+			width: 260dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row label
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="repeat-events-dialog">
+		<div class="dialog-titlebar">Repeat Events</div>
+		<div class="row">
+			<label for="repeat-count">Count</label>
+			<valuefield id="repeat-count" value="1" min="1" max="1000" step="1" decimals="0"/>
+		</div>
+		<div class="row">
+			<label for="repeat-shared">Shared Copies</label>
+			<input type="checkbox" id="repeat-shared"/>
+		</div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

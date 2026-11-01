@@ -31,6 +31,10 @@ namespace gnubase::engine
 		// Starts a new measurement: clears the peak, the overloads and the cycle count.
 		void reset() noexcept;
 
+		// Goes on with the peak, the overloads and the cycle count of an earlier measurement, e.g. of the device
+		// before it restarted.
+		void resume(const PerformanceData& earlier) noexcept;
+
 		const PerformanceData& data() const { return m_data; }
 
 	private:
