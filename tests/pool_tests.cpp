@@ -9,9 +9,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -90,6 +93,22 @@ namespace
 			return run(client, "clip.add", {{"media", added.at("id")}}).at("clip").at("id").get<uint64_t>();
 		}
 
+		// Waits until the peak worker is done with every media file before a test moves or removes one: Windows
+		// can't while the worker has it open.
+		void settle()
+		{
+			const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+			for (;;)
+			{
+				const Json statuses = run(client, "media.peakStatus").at("media");
+				if (std::none_of(statuses.begin(), statuses.end(), [](const Json& status)
+						{ return status.at("status") == "pending" || status.at("status") == "generating"; }))
+					return;
+				REQUIRE(std::chrono::steady_clock::now() < until);
+				std::this_thread::sleep_for(std::chrono::milliseconds(5));
+			}
+		}
+
 		uint64_t mediaOf(uint64_t clip)
 		{
 			return byId(run(client, "project.get").at("clips"), clip).at("media").get<uint64_t>();
@@ -110,6 +129,7 @@ TEST_CASE("pool.get lists the clips with their use, status and info, and the poo
 	run(song.client, "audioEvent.add", {{"track", track}, {"clip", kick}, {"position", 0}});
 	run(song.client, "audioEvent.add", {{"track", track}, {"clip", kick}, {"position", 48000}});
 	run(song.client, "audioEvent.add", {{"track", track}, {"clip", gone}, {"position", 96000}});
+	song.settle();
 	fs::remove(song.library / "gone.wav");
 
 	const Json pool = run(song.client, "pool.get");
@@ -251,6 +271,7 @@ TEST_CASE("media.locate finds missing files in a folder by name and relinks them
 	// other letters, and pad as a file with another channel count, which doesn't fit the media file.
 	const fs::path moved = song.dir.path() / "moved";
 	fs::create_directories(moved / "drums");
+	song.settle();
 	fs::rename(song.library / "kick.wav", moved / "drums" / "KICK.wav");
 	fs::remove(song.library / "pad.wav");
 	writeFile(moved / "pad.wav", 9600, 1);
@@ -286,6 +307,7 @@ TEST_CASE("media.locate finds missing files in a folder by name and relinks them
 	// Only the files given are looked for; relinking is one undo step.
 	const fs::path other = song.dir.path() / "other";
 	fs::create_directories(other);
+	song.settle();
 	fs::rename(moved / "drums" / "KICK.wav", other / "kick.wav");
 	CHECK(byId(run(song.client, "pool.get").at("clips"), kick).at("missing") == true);
 	CHECK(run(song.client, "media.locate", {{"folder", utf8(other)}, {"media", {song.mediaOf(pad)}}})
@@ -312,6 +334,7 @@ TEST_CASE("media.removeMissing removes missing files with their clips and events
 	run(song.client, "audioEvent.add", {{"track", track}, {"clip", gone}, {"position", 0}});
 	run(song.client, "audioEvent.add", {{"track", track}, {"clip", here}, {"position", 48000}});
 	const uint64_t goneMedia = song.mediaOf(gone);
+	song.settle();
 	fs::remove(song.library / "gone.wav");
 
 	const Json removed = run(song.client, "media.removeMissing");
