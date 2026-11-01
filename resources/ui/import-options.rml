@@ -1,0 +1,63 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Import options for audio files (docs/features/file-import.md, reference manual pp. 357-359): ui::EventDisplay
+     opens it for audio files chosen with File > Import > Audio File or dropped on it, and on OK imports them with
+     audioFile.import and these options. Copying, converting and splitting are disabled until the project is saved;
+     #import-one-track is disabled for a single file and for files dropped on a track. -->
+<rml>
+<head>
+	<title>Import Options</title>
+	<style>
+		dialog
+		{
+			width: 320dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row label
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="import-options-dialog">
+		<div class="dialog-titlebar">Import Options</div>
+		<div class="row">
+			<label for="import-copy">Copy Files to Project Folder</label>
+			<input type="checkbox" id="import-copy"/>
+		</div>
+		<div class="row">
+			<label for="import-convert">Convert to Project Sample Rate</label>
+			<input type="checkbox" id="import-convert"/>
+		</div>
+		<div class="row">
+			<label for="import-split">Split Channels</label>
+			<input type="checkbox" id="import-split"/>
+		</div>
+		<div class="row">
+			<label for="import-one-track">Import Files on One Track</label>
+			<input type="checkbox" id="import-one-track"/>
+		</div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>
