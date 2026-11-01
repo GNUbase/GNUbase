@@ -161,10 +161,10 @@ TEST_CASE("marker lines show the active marker track's markers, every track's or
 	fixture.addMarkers();
 
 	// Behind the events of every track, on the event display's timeline.
-	Rml::Element& area = fixture.element(".event-area");
+	const Rml::Element& area = fixture.element(".event-area");
 	CHECK(area.GetChild(0)->IsClassSet("marker-lines"));
 	CHECK(area.GetChild(1)->IsClassSet("events"));
-	Rml::Element& lines = fixture.element("event-lanes.marker-lines");
+	const Rml::Element& lines = fixture.element("event-lanes.marker-lines");
 	CHECK(lines.GetAttribute<double>("scale", -1.0) == fixture.display.view().scale);
 	fixture.display.zoomIn();
 	fixture.step();
@@ -310,12 +310,12 @@ TEST_CASE("the markers window lists the active marker track's markers to locate,
 
 	// Descriptions and id numbers are edited in place, Enter taking them.
 	app.ui().click(window, at("#marker-rows .description input", 0), ui::MouseButton::Left, 1, {});
-	app.ui().key(window, "Mod+A");
+	app.ui().key(window, "Ctrl+A");
 	app.ui().text(window, "Start");
 	app.ui().key(window, "Enter");
 	REQUIRE(app.waitUntil([&markers] { return markers.markers()[0].name == "Start"; })); // the rows again
 	app.ui().click(window, at("#marker-rows .number input", 1), ui::MouseButton::Left, 1, {});
-	app.ui().key(window, "Mod+A");
+	app.ui().key(window, "Ctrl+A");
 	app.ui().text(window, "4");
 	app.ui().key(window, "Enter");
 	REQUIRE(app.waitUntil([&markers] { return markers.markers()[1].number == 4; }));
@@ -362,6 +362,25 @@ TEST_CASE("the markers window lists the active marker track's markers to locate,
 	app.ui().key(window, "Mod+M");
 	REQUIRE(app.waitUntil([&app] { return app.appUi().markers() == nullptr; }));
 	CHECK(app.shell().find(window) == nullptr);
+}
+
+TEST_CASE("the markers window's locate arrow follows the project's sample rate", "[ui]")
+{
+	// The window learns the cursor before the project; the arrow converts it at the project's rate, not at 48 kHz.
+	test::UiApp app;
+	app.call("track.add", {{"type", "marker"}});
+	app.call("project.set", {{"sampleRate", 44100.0}});
+	app.call("marker.add", {{"position", g_quarter}});
+	app.call("marker.add", {{"position", 2 * g_quarter}}); // one second: sample 44100
+	app.call("transport.locate", {{"position", 44100}});
+
+	app.ui().key(std::nullopt, "Mod+M");
+	REQUIRE(app.waitUntil(
+		[&app] { return app.appUi().markers() != nullptr && app.appUi().markers()->markers().size() == 2; }));
+	Rml::ElementDocument& document = markersDocument(app);
+	REQUIRE(app.waitUntil([&document] { return document.QuerySelector("#marker-rows tr.at-cursor") != nullptr; }));
+	CHECK(document.QuerySelector("#marker-rows tr.at-cursor")->GetAttribute<uint64_t>("value", 0) ==
+		app.appUi().markers()->markers()[1].id);
 }
 
 TEST_CASE("key commands locate to markers, set them and recall cycle markers", "[ui]")
