@@ -3,74 +3,38 @@
 #include "ui/widgets.h"
 
 #include "ui/rmlui.h"
+#include "ui/widgetutils.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Elements/ElementFormControlInput.h>
 #include <RmlUi/Core/Event.h>
-#include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/Factory.h>
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <algorithm>
 #include <array>
-#include <cmath>
-#include <iomanip>
-#include <locale>
 #include <optional>
-#include <sstream>
 #include <string>
 
 namespace gnubase::ui
 {
 	namespace
 	{
+		using widgets::appendPart;
+		using widgets::format;
+		using widgets::number;
+		using widgets::parse;
+
 		// How far the mouse moves for the whole range of a knob or a value field, in dp.
 		constexpr float g_dragRange = 200.0F;
 		// Shift makes drags, wheel turns and arrow keys this much finer.
 		constexpr float g_fine = 0.1F;
 
-		// A number as documents write it and users type it, "0.5" or "-6 dB", whatever the C locale is.
-		std::optional<float> parse(const std::string& text)
-		{
-			std::istringstream in(text);
-			in.imbue(std::locale::classic());
-			float value = 0.0F;
-			if (!(in >> value) || !std::isfinite(value))
-				return std::nullopt;
-			return value;
-		}
-
-		// The number with that many decimals, or as short as it goes without losing precision.
-		std::string format(float value, std::optional<int> decimals = std::nullopt)
-		{
-			std::ostringstream out;
-			out.imbue(std::locale::classic());
-			if (decimals)
-				out << std::fixed << std::setprecision(*decimals);
-			else
-				out << std::setprecision(7);
-			out << value;
-			return out.str();
-		}
-
 		std::string percent(float fraction)
 		{
 			return format(fraction * 100.0F) + "%";
-		}
-
-		// A part of a widget, which the themes draw by its class, e.g. the knob's pointer.
-		Rml::Element* appendPart(Rml::Element& parent, const std::string& className)
-		{
-			Rml::ElementPtr part = Rml::Factory::InstanceElement(&parent, "*", "div", Rml::XMLAttributes());
-			part->SetClass(className, true);
-			return parent.AppendChild(std::move(part));
-		}
-
-		float number(const Rml::Element& element, const std::string& attribute, float fallback)
-		{
-			return parse(element.GetAttribute<Rml::String>(attribute, "")).value_or(fallback);
 		}
 
 		// A widget with a number: the attributes value, min (0), max (1), default (min) and step (a hundredth of the
@@ -132,6 +96,9 @@ namespace gnubase::ui
 						change(value() + (step() * fineness(event)));
 					else if (key == Rml::Input::KI_DOWN || key == Rml::Input::KI_LEFT)
 						change(value() - (step() * fineness(event)));
+					else
+						break;
+					event.StopPropagation(); // the widget used the key: no key command runs for it
 					break;
 				}
 				default:
@@ -140,18 +107,6 @@ namespace gnubase::ui
 			}
 
 		protected:
-			// Hands the events that a widget listens to to listen(); listeners must go before the elements they listen
-			// to, so widgets remove them in their destructors.
-			class Listener final : public Rml::EventListener
-			{
-			public:
-				explicit Listener(ValueControl& control) : m_control(control) {}
-				void ProcessEvent(Rml::Event& event) override { m_control.listen(event); }
-
-			private:
-				ValueControl& m_control;
-			};
-
 			float minimum() const { return number(*this, "min", 0.0F); }
 			float maximum() const { return number(*this, "max", 1.0F); }
 			float step() const { return number(*this, "step", (maximum() - minimum()) / 100.0F); }
@@ -214,7 +169,7 @@ namespace gnubase::ui
 			float m_last = 0.0F; // where the mouse was in the drag
 
 		protected:
-			Listener m_listener{*this};
+			widgets::Listener m_listener{[this](Rml::Event& event) { listen(event); }};
 		};
 
 		// <knob>: a rotary control whose pointer turns from -135 to 135 degrees, dragged up and down.

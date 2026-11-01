@@ -78,7 +78,7 @@ namespace gnubase::engine
 		uint32_t value = 0;
 		uint8_t channel = 0;
 		std::vector<uint8_t> data; // SysEx
-		uint32_t part = 0;         // its MIDI part, in RenderChannel::midiParts
+		int32_t part = -1;         // the index of its MIDI part in the channel's midiParts
 	};
 
 	struct RenderPart
@@ -129,11 +129,14 @@ namespace gnubase::engine
 		std::optional<int> midiPan;
 		bool monitor = false; // audio tracks: the monitor and record enable buttons
 		bool recordEnable = false;
+		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A silent MIDI channel
+		// has no notes or controllers, and a disabled track no events or parts.
+		bool silent = false;
 		AutoFades autoFades;                          // audio tracks: their own settings or the project's
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
 		std::vector<RenderNote> notes;                // sorted by start, then pitch
 		std::vector<RenderController> controllers;    // sorted by position
-		std::vector<RenderPart> midiParts;            // in the order of the parts' ids
+		std::vector<RenderPart> midiParts;            // sorted by start
 		std::vector<RenderAutomationLane> automation; // in the order of the lanes' ids
 	};
 

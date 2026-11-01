@@ -118,6 +118,14 @@ namespace gnubase::engine
 		// the project record their own undo step, so call only commands outside the document this way.
 		Json call(const std::string& command, const Json& parameters = Json::object());
 
+		// Leaves the command out of engine.commandLog: for a command that the engine runs on its own and that changed
+		// nothing, such as a try to open a lost audio device again. Inside another command, the outer one decides.
+		void leaveOutOfLog()
+		{
+			if (m_outer == nullptr)
+				m_unlogged = true;
+		}
+
 	private:
 		friend class Engine;
 
@@ -125,6 +133,7 @@ namespace gnubase::engine
 		CommandContext* m_outer = nullptr;
 		Engine* m_engine = nullptr; // set on the outermost context
 		std::vector<Event> m_events;
+		bool m_unlogged = false; // leaveOutOfLog
 	};
 
 	using CommandHandler = std::function<Json(CommandContext& context)>;
@@ -209,6 +218,7 @@ namespace gnubase::engine
 		void execute(Request& request);
 		std::shared_ptr<const Command> find(const std::string& name) const; // throws CommandError if unknown
 		Json runInside(const std::string& command, const Json& parameters, CommandContext& outer);
+		void applySettings(); // hands the user settings to the parts of the engine that use them
 
 		const std::filesystem::path m_settingsDirectory;
 		mutable std::mutex m_mutex; // guards everything below except the thread

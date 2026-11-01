@@ -7,7 +7,7 @@ GNUbase is licensed under the GPL-3.0-or-later, so everything that goes into it 
 | Component | Where | Used for | In the app | License | License text |
 |---|---|---|---|---|---|
 | [SDL 3](https://github.com/libsdl-org/SDL) | `ext/SDL` (GNUbase fork) | windows, input, graphics | yes, linked statically | zlib | `ext/SDL/LICENSE.txt` |
-| [RmlUi](https://github.com/mikke89/RmlUi) | `ext/RmlUi` (GNUbase fork) | user interface (core and debugger), and from its `Backends` folder the SDL input code and the SDL_GPU renderer | yes, linked statically | MIT | `ext/RmlUi/LICENSE.txt` |
+| [RmlUi](https://github.com/mikke89/RmlUi) | `ext/RmlUi` (GNUbase fork) | user interface (core, debugger and Lua plugin), and from its `Backends` folder the SDL input code and the SDL_GPU renderer | yes, linked statically | MIT | `ext/RmlUi/LICENSE.txt` |
 | [FreeType](https://freetype.org) | `ext/freetype` (2.15.0) | rendering text for RmlUi's font engine | yes, linked statically | FreeType License or GPL-2.0-or-later, at the user's choice | `ext/freetype/LICENSE.TXT`, `ext/freetype/docs/FTL.TXT` and `ext/freetype/docs/GPLv2.TXT` |
 | [LunaSVG](https://github.com/sammycage/lunasvg) | `ext/lunasvg` (3.5.0 and later fixes) | rasterizing SVG icons and graphics for RmlUi's SVG plugin ([features/svg.md](features/svg.md)) | yes, linked statically | MIT | `ext/lunasvg/LICENSE` |
 | [Inter](https://github.com/rsms/inter) 4.1 | `resources/fonts/Inter` | the user interface's text | yes, as font files | SIL Open Font License 1.1 | `resources/fonts/Inter/OFL.txt` |
@@ -62,7 +62,7 @@ Binary releases must include the copyright notices and license texts of the MIT,
 
 ## Not part of GNUbase
 
-- **System libraries:** SDL uses the operating system's audio, graphics and input libraries (for example ALSA, PulseAudio, PipeWire, X11 and Wayland on Linux). They come with the operating system and are not shipped with GNUbase.
+- **System libraries:** SDL uses the operating system's audio, graphics and input libraries (for example ALSA, PulseAudio, PipeWire, X11 and Wayland on Linux). On Linux, GNUbase links libdbus (AFL-2.1 or GPL-2.0-or-later) to ask rtkit for real-time priority. They come with the operating system and are not shipped with GNUbase.
 - **Build and CI tools:** CMake, Ninja, compilers, clang-format, clang-tidy, ccache and Git LFS are used to build and check GNUbase, not included in it.
 - **Shader compilers:** SDL_shadercross, with DXC and SPIRV-Cross, compiles the shaders of RmlUi's SDL_GPU renderer when one changes ([render-backend.md](render-backend.md#effects-in-sdl_gpu-285)). Only their output, the compiled shaders in RmlUi's `ShadersCompiledSPV.h`, is in the repository.
 

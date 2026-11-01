@@ -67,7 +67,7 @@
 	{
 		image-color: #d76a73;
 	}
-	.dialog
+	.dialog, dialog
 	{
 		decorator: svg-ninepatch(dialog.svg, 6 6 6 6);
 	}
@@ -96,7 +96,7 @@
 		font-family: JetBrains Mono;
 		color: #f3f4f5;
 	}
-	.tooltip
+	.tooltip, tooltip
 	{
 		decorator: svg-ninepatch(tooltip.svg, 6 6 6 6);
 		font-size: 11dp;
@@ -105,27 +105,35 @@
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
 	}
-	.menu, select selectbox
+	.menu, menu, select selectbox
 	{
 		decorator: svg-ninepatch(menu.svg, 6 6 6 6);
 	}
-	.menu-item:hover, select selectbox option:hover
+	.menu-item:hover, menuitem:hover, menuitem:focus-visible, select selectbox option:hover
 	{
 		decorator: svg-ninepatch(menu-item-hover.svg, 6 6 6 6);
 	}
-	.menu-separator
+	menuitem:disabled
+	{
+		color: #b7bbc0;
+	}
+	menuitem.checked
+	{
+		color: #5ea7b3;
+	}
+	.menu-separator, menuseparator
 	{
 		decorator: svg-ninepatch(menu-separator.svg, 2 2 2 2);
 	}
-	.list
+	.list, listview
 	{
 		decorator: svg-ninepatch(list.svg, 6 6 6 6);
 	}
-	.list-item:hover
+	.list-item:hover, listitem:hover, listview tbody tr:hover
 	{
 		decorator: svg-ninepatch(list-item-hover.svg, 6 6 6 6);
 	}
-	.list-item.selected, select selectbox option:checked
+	.list-item.selected, listitem.selected, listview tr.selected, select selectbox option:checked
 	{
 		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
@@ -164,6 +172,11 @@
 	button.checked
 	{
 		decorator: svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	button.suspended
+	{
+		decorator: svg-ninepatch(button-normal.svg, 6 6 6 6);
+		color: #cda85f;
 	}
 	button:disabled
 	{
@@ -368,6 +381,22 @@
 	{
 		decorator: svg(meter-peak.svg);
 	}
+	.tree-toggle
+	{
+		decorator: svg(dropdown-arrow.svg);
+	}
+	colorpicker .color-field
+	{
+		decorator: linear-gradient(to bottom, #00000000, #000000), linear-gradient(to right, #ffffff, #ffffff00);
+	}
+	colorpicker .color-hue
+	{
+		decorator: linear-gradient(to bottom, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+	}
+	colorpicker .color-field-thumb, colorpicker .color-hue-thumb
+	{
+		decorator: svg(slider-thumb.svg);
+	}
 	.splitter-grip-vertical
 	{
 		decorator: svg(splitter-grip-vertical.svg);
@@ -397,5 +426,93 @@
 		stroke-color: #484c50;
 		stroke-width: 1dp;
 		font-size: 11dp;
+	}
+	.event-display
+	{
+		background-color: #151617;
+	}
+	.event-display .overview
+	{
+		background-color: #1e2022;
+	}
+	.event-display .overview event-lanes
+	{
+		color: #3b5d63;
+		stroke-color: transparent;
+	}
+	.event-display .overview-view
+	{
+		border-width: 1dp;
+		border-color: #5ea7b3;
+		background-color: #5ea7b326;
+	}
+	.event-display event-lanes.muted-events
+	{
+		color: #44474a;
+		stroke-color: #66686c;
+	}
+	.event-display event-lanes.selected-events
+	{
+		color: #4e828b;
+		stroke-color: #f3f4f5;
+	}
+	.event-display ruler
+	{
+		background-color: #1e2022;
+	}
+	.event-display .project-cursor
+	{
+		background-color: #f3f4f5;
+	}
+	.event-display .cross-hair-vertical, .event-display .cross-hair-horizontal
+	{
+		background-color: #66686c;
+	}
+	.track-list
+	{
+		background-color: #1e2022;
+	}
+	.track-list listitem
+	{
+		border-bottom-width: 1dp;
+		border-bottom-color: #484c50;
+	}
+	.track-list listitem.disabled
+	{
+		color: #b7bbc0;
+	}
+	.track-list .drop-line
+	{
+		background-color: #5ea7b3;
+	}
+	.docking [zone]
+	{
+		background-color: #1a1b1c;
+	}
+	.docking .zone-frame
+	{
+		border-width: 2dp;
+		border-color: #5ea7b3;
+	}
+	.docking .strip
+	{
+		background-color: #1e2022;
+	}
+	.menubar
+	{
+		background-color: #1e2022;
+	}
+	.menubar button
+	{
+		decorator: none;
+		color: #f3f4f5;
+	}
+	.menubar button:hover
+	{
+		decorator: svg-ninepatch(menu-item-hover.svg, 6 6 6 6);
+	}
+	menuitem .menu-keys
+	{
+		color: #b7bbc0;
 	}
 }

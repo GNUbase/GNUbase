@@ -15,6 +15,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 // The application shell (#48): GNUbase's top-level windows, each with its own RmlUi context, and the event loop that
@@ -68,6 +69,11 @@ namespace gnubase::ui
 		bool cancelled() const { return files.empty() && error.empty(); }
 	};
 
+	// Tells the element under the point, in the window's pixels, that the files were dropped on it: a g_fileDropEvent
+	// (ui/rmlui.h) with the files as UTF-8 lines in "files", their "count", and "mouse_x" and "mouse_y". The shell
+	// calls it for the window system's drops, and ui::Automation for the files it drops.
+	void dropFiles(Window& window, Point at, const std::vector<std::filesystem::path>& files);
+
 	class Shell
 	{
 	public:
@@ -87,6 +93,14 @@ namespace gnubase::ui
 		Window* find(WindowId id);
 		std::vector<Window*> windows();
 
+		// Where the window is on the desktop, and moving it there (onto a connected monitor if it isn't on one).
+		Rect bounds(WindowId id) const { return m_windows.bounds(id); }
+		void setBounds(WindowId id, const Rect& bounds);
+
+		// Runs handler when the user asks to close a window other than the main window, before the shell closes it,
+		// e.g. to dock the panel it shows again (ui/docking.h). The handler may close the window itself.
+		void onCloseRequest(std::function<void(Window&)> handler) { m_closeRequest = std::move(handler); }
+
 		// The user's UI scale (the user setting ui.scale, #53), on top of each monitor's scale.
 		void setUiScale(float scale);
 		float uiScale() const { return m_uiScale; }
@@ -101,7 +115,7 @@ namespace gnubase::ui
 		void post(std::function<void()> task);
 
 		// Handles the events that arrive within timeout (all that are waiting, without timeout), then updates and
-		// draws every window that needs it.
+		// draws every window that needs it. Throws std::logic_error inside a step, e.g. from an event handler.
 		void step(std::optional<std::chrono::milliseconds> timeout);
 
 		// Steps until the shell quits, sleeping while no window needs drawing. Returns the exit code, 0.
@@ -125,6 +139,14 @@ namespace gnubase::ui
 		// (ui/enginebinding.h). While it returns true, because it follows values that change without events such as
 		// the playback position, the shell steps at least once a frame (g_framePeriod).
 		void eachStep(std::function<bool()> task);
+
+		// Runs handler for every key pressed in a window that none of its elements used, e.g. for key commands
+		// (ui/keycommands.h). Elements that use a key stop its propagation.
+		void onUnusedKey(std::function<void(Window&, const KeyPress&)> handler) { m_unusedKey = std::move(handler); }
+
+		// Hands a key that no element of the window used to that handler. The shell calls it for the window system's
+		// input, and ui::Automation for the keys it presses.
+		void unusedKey(Window& window, const KeyPress& keys);
 
 		// From any thread: makes the shell step soon, e.g. when the engine sent the UI something.
 		void wake() { m_windows.wake(); }
@@ -156,6 +178,7 @@ namespace gnubase::ui
 		float m_uiScale = 1.0F;
 		std::string m_theme;
 		bool m_running = true;
+		bool m_stepping = false;
 		std::map<uint64_t, std::function<void(const FileDialogResult&)>> m_dialogs; // open file dialogs by id
 		uint64_t m_nextDialog = 1;
 		std::vector<Task> m_tasks;
@@ -163,5 +186,7 @@ namespace gnubase::ui
 		std::vector<std::function<void()>> m_posted;
 		std::vector<std::function<bool()>> m_stepTasks;
 		Clock::time_point m_nextFrame = Clock::time_point::max(); // when a step task that follows values runs again
+		std::function<void(Window&, const KeyPress&)> m_unusedKey;
+		std::function<void(Window&)> m_closeRequest;
 	};
 }

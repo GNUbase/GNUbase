@@ -7,11 +7,13 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <iosfwd>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 struct lua_Debug; // NOLINT(readability-identifier-naming): Lua's own name
 struct lua_State;
@@ -36,6 +38,7 @@ namespace gnubase::scripting
 	// - gnubase.test: the test framework (testing.lua). The test cases a script registers run when it ends; their
 	//   report is printed, and if one fails, the script fails. So no command area may be called test.
 	// print writes to the output given to the constructor. Use a runtime on one thread, never an audio thread.
+	// Functions that aren't engine commands can be added next to them, e.g. the UI's gnubase.ui (app/uitools.h).
 	class Runtime
 	{
 	public:
@@ -55,6 +58,20 @@ namespace gnubase::scripting
 		// commands counts too, but only Lua code is interrupted. Zero, the default, means no limit.
 		void setTimeLimit(std::chrono::milliseconds limit) { m_timeLimit = limit; }
 
+		// Adds the function as gnubase.<area>.<name>, e.g. "ui.click" as gnubase.ui.click. Lua calls it like a
+		// command: with a table of parameters, getting its result as a table, and binary JSON, such as a PNG file's
+		// bytes, as a string. What it throws raises a Lua error with the message. Throws std::logic_error if the name
+		// is taken.
+		using Function = std::function<engine::Json(const engine::Json& parameters)>;
+		void addFunction(const std::string& name, Function function);
+
+		// Takes the events that arrived and calls their gnubase.on handlers, for a runtime whose code doesn't run
+		// commands or wait, such as the UI's (app/appui.h). Returns a handler's error, if one fails.
+		std::optional<std::string> dispatchEvents();
+
+		// The Lua state, for libraries that add to it, such as RmlUi's Lua plugin.
+		lua_State* state() { return m_state.get(); }
+
 	private:
 		struct CloseState
 		{
@@ -63,6 +80,7 @@ namespace gnubase::scripting
 
 		static Runtime& self(lua_State* state);
 		static int callCommand(lua_State* state);
+		static int callFunction(lua_State* state);
 		static int print(lua_State* state);
 		static int on(lua_State* state);
 		static int waitFor(lua_State* state);
@@ -77,7 +95,8 @@ namespace gnubase::scripting
 
 		engine::Client m_client;
 		std::ostream& m_output;
-		std::deque<engine::Event> m_events; // arrived, not taken yet
+		std::deque<engine::Event> m_events;                 // arrived, not taken yet
+		std::vector<std::unique_ptr<Function>> m_functions; // added with addFunction; Lua holds pointers to them
 		std::chrono::milliseconds m_timeLimit{0};
 		std::chrono::steady_clock::time_point m_deadline;
 		std::unique_ptr<lua_State, CloseState> m_state; // closed first: its functions use the members above

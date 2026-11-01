@@ -1,6 +1,6 @@
 # UI automation
 
-MCP clients and UI tests ([ui-tests.md](ui-tests.md)), and later Lua (#208), read GNUbase's UI back and drive it as a user would
+MCP clients, UI tests ([ui-tests.md](ui-tests.md)) and Lua ([ui-lua.md](ui-lua.md)) read GNUbase's UI back and drive it as a user would
 (#58): its windows and documents, the DOM with each element's box, screenshots of windows or single elements, and mouse
 and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
 
@@ -13,10 +13,11 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
   by value, since it may still run after the caller gave up. When the shell quits, work it hasn't run yet is dropped,
   and whoever waits for it gets an error at once.
 - **MCP tools.** `app::addUiTools` adds `ui_windows`, `ui_dom`, `ui_screenshot`, `ui_wait`, `ui_move`, `ui_click`,
-  `ui_drag`, `ui_wheel`, `ui_key` and `ui_text` to the MCP server; the windowed app serves them with `--mcp-http`, next
+  `ui_drag`, `ui_drop`, `ui_wheel`, `ui_key` and `ui_text` to the MCP server; the windowed app serves them with `--mcp-http`, next
   to the engine's tools and `script_run`. Headless GNUbase has no UI and no UI tools. A screenshot comes back as MCP
   image content, a PNG: a tool returns the PNG as `Json::binary`, which `mcp::Server` sends as an image. PNG encoding
-  runs on the server's thread.
+  runs on the server's thread. `app::addUiFunctions` adds the same tools to the UI's Lua as `gnubase.ui.click` and so
+  on, from the same list ([ui-lua.md](ui-lua.md)).
 - **Coordinates.** Everything is in the window's pixels, as in its screenshots: an element's box, the points that
   mouse tools take, the window's size. A window's dp ratio (its monitor's scale times the UI scale, #53) converts to dp.
 - **The DOM.** An element has its tag, id, classes, other attributes, a form control's value, its active
@@ -28,8 +29,11 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
   button; a double click is two clicks, which RmlUi recognises by their timing, with the UI updated between them as
   frames would be, so a first click that opens a field leaves the second to the field. A drag presses at the start,
   moves in eight steps and releases at the end, so RmlUi sends `dragstart`, `drag` and `dragdrop`. Wheel turns are in
-  lines, positive to the right and down. Clicks, drags and wheel turns can hold modifiers, e.g. Shift for a fine drag. Keys are pressed and released with modifiers; they don't type text, which `ui_text`
-  sends as text input, as the OS's text input does after a key press. Each input tool answers with the element under
+  lines, positive to the right and down. A file drop hands files to the element under the target as the window system
+  hands the user's drops from the OS's file manager (`ui::dropFiles`: a `filedrop` event with the files, their count
+  and the point), e.g. audio files on the event display to import them. Clicks, drags and wheel turns can hold modifiers, e.g. Shift for a fine drag. Keys are pressed and released with modifiers; they don't type text, which `ui_text`
+  sends as text input, as the OS's text input does after a key press. A key that no element uses runs its key command,
+  as the user's does ([key-commands.md](key-commands.md)). Each input tool answers with the element under
   the mouse or with the focus, so a client sees what it hit.
 - **Waiting.** `ui_wait` asks the UI thread every 20 ms whether an element that a selector matches is visible (with a
   given text), or that none is, for at most 60 seconds.

@@ -6,7 +6,9 @@
 
 #include "ui/automation.h"
 #include "ui/datamodel.h"
+#include "ui/widgets.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/EventListener.h>
@@ -14,7 +16,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <optional>
@@ -366,4 +370,430 @@ TEST_CASE("meters show the level and the peak in dB", "[ui]")
 	page.document->GetElementById("right")->SetAttribute("value", "0");
 	CHECK(app.waitUntil([&page] { return page.box("#right .meter-level").at("height").get<int>() == 109; }));
 	CHECK_FALSE(test::compareImages(app.ui().screenshot(std::nullopt, at("#right")), silent, {8}).equal);
+}
+
+namespace
+{
+	bool visible(test::UiApp& app, const std::string& selector)
+	{
+		return element(app, selector).at("visible").get<bool>();
+	}
+
+	ui::Target point(int x, int y)
+	{
+		return {"", 0, ui::Point{x, y}};
+	}
+
+	// The main window's size in pixels.
+	ui::Size windowSize(test::UiApp& app)
+	{
+		const Json window = app.ui().windows().at("windows").at(0);
+		return {window.at("width").get<int>(), window.at("height").get<int>()};
+	}
+
+	// Whether the element's border box lies inside the main window.
+	bool insideWindow(test::UiApp& app, const std::string& selector)
+	{
+		const Json box = element(app, selector).at("box");
+		const ui::Size window = windowSize(app);
+		return box.at("x").get<int>() >= 0 && box.at("y").get<int>() >= 0 &&
+			box.at("x").get<int>() + box.at("width").get<int>() <= window.width &&
+			box.at("y").get<int>() + box.at("height").get<int>() <= window.height;
+	}
+}
+
+TEST_CASE("menus open under their button and close on an item, a click elsewhere or Escape", "[ui]")
+{
+	test::UiApp app;
+	const Events events(app.show("popups.rml"));
+	CHECK_FALSE(visible(app, "#edit"));
+
+	// The menu opens under its button; another click on the button closes it.
+	click(app, "#edit-button");
+	REQUIRE(visible(app, "#edit"));
+	const Json button = element(app, "#edit-button").at("box");
+	const Json menu = element(app, "#edit").at("box");
+	CHECK(menu.at("x") == button.at("x"));
+	CHECK(menu.at("y").get<int>() == button.at("y").get<int>() + button.at("height").get<int>());
+	click(app, "#edit-button");
+	CHECK_FALSE(visible(app, "#edit"));
+
+	// A click on an item reaches the item and closes the menu; a disabled item does neither.
+	click(app, "#edit-button");
+	CHECK(has(element(app, "#redo"), "pseudoClasses", "disabled"));
+	click(app, "#redo");
+	CHECK(events.clicks.count("redo") == 0);
+	CHECK(visible(app, "#edit"));
+	click(app, "#undo");
+	CHECK(events.clicks.at("undo") == 1);
+	CHECK_FALSE(visible(app, "#edit"));
+
+	click(app, "#edit-button");
+	app.ui().key(std::nullopt, "Escape");
+	CHECK_FALSE(visible(app, "#edit"));
+	click(app, "#edit-button");
+	click(app, "#plain");
+	CHECK_FALSE(visible(app, "#edit"));
+
+	// Down and Up move between the items that aren't disabled, and Enter clicks one.
+	click(app, "#edit-button");
+	app.ui().key(std::nullopt, "Down");
+	app.ui().key(std::nullopt, "Down");
+	CHECK(has(element(app, "#cut"), "pseudoClasses", "focus"));
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(events.clicks.at("cut") == 1);
+	CHECK_FALSE(visible(app, "#edit"));
+}
+
+TEST_CASE("context menus open at the mouse on a right click, inside the window, with submenus on hover", "[ui]")
+{
+	test::UiApp app;
+	const Events events(app.show("popups.rml"));
+
+	const Json track = element(app, "#track").at("box");
+	const int x = track.at("x").get<int>() + 10;
+	const int y = track.at("y").get<int>() + 10;
+	app.ui().click(std::nullopt, point(x, y), ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#track-menu"));
+	CHECK(element(app, "#track-menu").at("box").at("x") == x);
+	CHECK(element(app, "#track-menu").at("box").at("y") == y);
+
+	// The submenu shows while the mouse is over its item; a click on that item keeps the menu open.
+	CHECK_FALSE(visible(app, "#colors"));
+	app.ui().move(std::nullopt, at("#color"));
+	CHECK(visible(app, "#colors"));
+	click(app, "#color");
+	CHECK(visible(app, "#track-menu"));
+	click(app, "#blue");
+	CHECK(events.clicks.at("blue") == 1);
+	CHECK_FALSE(visible(app, "#track-menu"));
+
+	// In the window's corner the menu opens inside the window. Without a contextmenu attribute, or with the left
+	// button, none opens.
+	app.ui().click(std::nullopt, at("#corner"), ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#track-menu"));
+	CHECK(insideWindow(app, "#track-menu"));
+	click(app, "#plain");
+	app.ui().click(std::nullopt, at("#plain"), ui::MouseButton::Right, 1, {});
+	click(app, "#track");
+	CHECK_FALSE(visible(app, "#track-menu"));
+}
+
+TEST_CASE("tooltips show an element's title once the mouse rests on it", "[ui]")
+{
+	test::UiApp app;
+	app.show("popups.rml");
+
+	app.ui().move(std::nullopt, at("#track"));
+	CHECK_FALSE(visible(app, "tooltip"));
+	REQUIRE(app.waitUntil([&app] { return visible(app, "tooltip"); }));
+	CHECK(element(app, "tooltip").at("text") == "Audio 01");
+	const Json track = element(app, "#track").at("box");
+	CHECK(element(app, "tooltip").at("box").at("y").get<int>() >
+		track.at("y").get<int>() + (track.at("height").get<int>() / 2));
+
+	// Over an element without a title there's none; near the window's corner it stays inside; a click hides it.
+	app.ui().move(std::nullopt, at("#plain"));
+	CHECK_FALSE(visible(app, "tooltip"));
+	app.ui().move(std::nullopt, at("#corner"));
+	REQUIRE(app.waitUntil([&app] { return visible(app, "tooltip"); }));
+	CHECK(app.waitUntil([&app] { return insideWindow(app, "tooltip"); }));
+	click(app, "#corner");
+	CHECK_FALSE(visible(app, "tooltip"));
+}
+
+namespace
+{
+	// The results of the close events of dialogs.
+	struct Closes final : Rml::EventListener
+	{
+		void ProcessEvent(Rml::Event& event) override
+		{
+			results.push_back(event.GetParameter<Rml::String>("result", ""));
+		}
+
+		std::vector<std::string> results;
+	};
+
+	// Loads the dialog from tests/data/ui and shows it modal over the main window's documents.
+	void openDialog(test::UiApp& app, Closes& closes)
+	{
+		Rml::ElementDocument* dialog =
+			app.main().context().LoadDocument(std::string(GNUBASE_TEST_DATA_DIR) + "/ui/dialog.rml");
+		REQUIRE(dialog != nullptr);
+		dialog->AddEventListener(ui::g_dialogCloseEvent, &closes);
+		dialog->Show(Rml::ModalFlag::Modal);
+		app.shell().step(std::chrono::milliseconds(0));
+	}
+
+	bool dialogOpen(test::UiApp& app)
+	{
+		return !app.ui().dom(std::nullopt, "#rename-dialog", 0).at("elements").empty();
+	}
+}
+
+TEST_CASE("dialogs open in the middle, move by their title bar, and close with Enter, Escape or a button", "[ui]")
+{
+	Closes closes; // outlives the documents it listens to
+	test::UiApp app;
+	app.show("popups.rml");
+	openDialog(app, closes);
+
+	const Json box = element(app, "#rename-dialog").at("box");
+	const ui::Size window = windowSize(app);
+	CHECK(std::abs(box.at("x").get<int>() + (box.at("width").get<int>() / 2) - (window.width / 2)) <= 1);
+	CHECK(std::abs(box.at("y").get<int>() + (box.at("height").get<int>() / 2) - (window.height / 2)) <= 1);
+
+	const Json bar = element(app, "#rename-dialog .dialog-titlebar").at("box");
+	const int x = bar.at("x").get<int>() + 20;
+	const int y = bar.at("y").get<int>() + 10;
+	app.ui().drag(std::nullopt, point(x, y), point(x + 40, y + 30));
+	const Json moved = element(app, "#rename-dialog").at("box");
+	CHECK(moved.at("x").get<int>() == box.at("x").get<int>() + 40);
+	CHECK(moved.at("y").get<int>() == box.at("y").get<int>() + 30);
+
+	// Enter in the text field clicks OK, which closes the dialog with its result.
+	click(app, "#name");
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(app.waitUntil([&app] { return !dialogOpen(app); }));
+	CHECK(closes.results == std::vector<std::string>{"ok"});
+
+	openDialog(app, closes);
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(app.waitUntil([&app] { return !dialogOpen(app); }));
+	openDialog(app, closes);
+	click(app, "#cancel");
+	CHECK(app.waitUntil([&app] { return !dialogOpen(app); }));
+	CHECK(closes.results == std::vector<std::string>{"ok", "cancel", "cancel"});
+}
+
+namespace
+{
+	// The page of views at dp ratio 1, with its data model.
+	struct ViewsPage
+	{
+		explicit ViewsPage(test::UiApp& app) : model(app.main().context(), "views")
+		{
+			REQUIRE(model.constructor().Bind("selection", &selection));
+			events = std::make_unique<Events>(app.show("views.rml"));
+			app.setDpRatio(1.0F);
+		}
+
+		Rml::String selection;
+		ui::DataModel model;
+		std::unique_ptr<Events> events;
+	};
+
+	bool selected(test::UiApp& app, const std::string& selector)
+	{
+		return has(element(app, selector), "classes", "selected");
+	}
+
+	void ctrlClick(test::UiApp& app, const std::string& selector, const std::string& modifier)
+	{
+		app.ui().click(std::nullopt, at(selector), ui::MouseButton::Left, 1, {modifier});
+	}
+}
+
+TEST_CASE("tabs show the panel of the tab clicked", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	CHECK(has(element(app, "#general"), "pseudoClasses", "selected"));
+	CHECK(visible(app, "#general-panel"));
+	CHECK_FALSE(visible(app, "#routing-panel"));
+
+	click(app, "#routing");
+	CHECK(has(element(app, "#routing"), "pseudoClasses", "selected"));
+	CHECK(visible(app, "#routing-panel"));
+	CHECK_FALSE(visible(app, "#general-panel"));
+}
+
+TEST_CASE("list views select rows with clicks and keys, and data-value binds the selection", "[ui]")
+{
+	test::UiApp app;
+	ViewsPage page(app);
+
+	click(app, "#bass");
+	CHECK(selected(app, "#bass"));
+	CHECK(page.selection == "2");
+	REQUIRE(!page.events->changes.empty());
+	CHECK(page.events->changes.back().first == "tracks");
+	CHECK(page.events->changes.back().second.Get<Rml::String>() == "2");
+
+	// Ctrl-click adds and removes a row, Shift-click selects a range, a plain click one row again.
+	ctrlClick(app, "#vocals", "ctrl");
+	CHECK(page.selection == "2,4");
+	ctrlClick(app, "#bass", "ctrl");
+	CHECK(page.selection == "4");
+	ctrlClick(app, "#vocals", "shift");
+	CHECK(page.selection == "2,3,4");
+	click(app, "#drums");
+	CHECK(page.selection == "1");
+
+	// Down and Up move the selection, Shift extends it, End goes to the last row.
+	app.ui().key(std::nullopt, "Down");
+	CHECK(page.selection == "2");
+	app.ui().key(std::nullopt, "Shift+Down");
+	CHECK(page.selection == "2,3");
+	app.ui().key(std::nullopt, "End");
+	CHECK(page.selection == "4");
+	app.ui().key(std::nullopt, "Up");
+	CHECK(page.selection == "3");
+
+	// The data model selects rows, e.g. after an engine event.
+	page.selection = "1,3";
+	page.model.changed("selection");
+	CHECK(app.waitUntil(
+		[&app] { return selected(app, "#drums") && selected(app, "#keys") && !selected(app, "#vocals"); }));
+
+	// The keys then move from the first row the data model selected, not from the row last clicked or keyed.
+	page.selection = "1";
+	page.model.changed("selection");
+	CHECK(app.waitUntil([&app] { return selected(app, "#drums") && !selected(app, "#keys"); }));
+	app.ui().key(std::nullopt, "Down");
+	CHECK(page.selection == "2");
+}
+
+TEST_CASE("tree views show the children of expanded rows, toggled by click or by the arrow keys", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+
+	// Project is expanded, Audio isn't: its files are hidden. Children are indented by their level.
+	CHECK(visible(app, "#audio"));
+	CHECK_FALSE(visible(app, "#kick"));
+	CHECK(has(element(app, "#audio"), "classes", "parent"));
+	CHECK_FALSE(has(element(app, "#midi"), "classes", "parent"));
+	CHECK(element(app, "#audio .tree-indent").at("box").at("width") == 16);
+
+	click(app, "#audio .tree-toggle");
+	CHECK(visible(app, "#kick"));
+	CHECK(element(app, "#kick .tree-indent").at("box").at("width") == 32);
+	CHECK_FALSE(selected(app, "#audio"));
+
+	// A click selects; Left collapses the selected row and Right expands it; Down skips hidden rows.
+	click(app, "#audio");
+	app.ui().key(std::nullopt, "Left");
+	CHECK_FALSE(visible(app, "#kick"));
+	app.ui().key(std::nullopt, "Down");
+	CHECK(selected(app, "#midi"));
+	click(app, "#audio");
+	app.ui().key(std::nullopt, "Right");
+	CHECK(visible(app, "#snare"));
+	CHECK(element(app, "#audio").at("attributes").contains("expanded"));
+}
+
+TEST_CASE("table views select their body's rows", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+
+	click(app, "#row-verse");
+	CHECK(selected(app, "#row-verse"));
+	CHECK(element(app, "#table").at("attributes").at("value") == "verse");
+	click(app, "#header");
+	CHECK_FALSE(selected(app, "#header"));
+	CHECK(selected(app, "#row-verse"));
+}
+
+TEST_CASE("splitters move the boundary between the elements of a row or a column", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	CHECK_FALSE(has(element(app, "#split"), "classes", "column"));
+	CHECK(has(element(app, "#split-rows"), "classes", "column"));
+
+	const Json split = element(app, "#split").at("box");
+	const int x = split.at("x").get<int>() + (split.at("width").get<int>() / 2);
+	const int y = split.at("y").get<int>() + (split.at("height").get<int>() / 2);
+	app.ui().drag(std::nullopt, point(x, y), point(x + 40, y));
+	CHECK(element(app, "#tracks").at("box").at("width") == 190);
+	REQUIRE(!page.events->changes.empty());
+	CHECK(page.events->changes.back().first == "split");
+	CHECK(page.events->changes.back().second.Get<float>() == Catch::Approx(190.0F));
+
+	// Not smaller than nothing.
+	app.ui().drag(std::nullopt, point(x + 40, y), point(x - 400, y));
+	CHECK(element(app, "#tracks").at("box").at("width") == 0);
+
+	const Json rows = element(app, "#split-rows").at("box");
+	const int rowsX = rows.at("x").get<int>() + (rows.at("width").get<int>() / 2);
+	const int rowsY = rows.at("y").get<int>() + (rows.at("height").get<int>() / 2);
+	app.ui().drag(std::nullopt, point(rowsX, rowsY), point(rowsX, rowsY - 20));
+	CHECK(element(app, "#tree").at("box").at("height") == 108); // 120 dp, padding 4 dp above and below
+}
+
+namespace
+{
+	// Whether the middle of the element looks like the color, within 2 of 255 a channel.
+	bool looksLike(test::UiApp& app, const std::string& selector, std::array<int, 3> color)
+	{
+		const ui::Image image = app.ui().screenshot(std::nullopt, at(selector));
+		const std::array<uint8_t, 4> pixel = image.pixel(image.width / 2, image.height / 2);
+		for (size_t i = 0; i < color.size(); ++i)
+			if (std::abs(static_cast<int>(pixel[i]) - color[i]) > 2)
+				return false;
+		return true;
+	}
+
+	// The color picker's value field in that row: 1 to 6 for H, S, V, R, G and B.
+	std::string colorField(int row)
+	{
+		return "#picker .color-value:nth-child(" + std::to_string(row) + ") valuefield";
+	}
+}
+
+TEST_CASE(
+	"color pickers pick from the field and the hue strip, take numbers, and show the old and the new color", "[ui]")
+{
+	test::UiApp app;
+	Rml::String color = "#ff0000";
+	ui::DataModel model(app.main().context(), "color");
+	REQUIRE(model.constructor().Bind("color", &color));
+	const Events events(app.show("color.rml"));
+	app.setDpRatio(1.0F);
+	const auto number = [&app](int row)
+	{ return std::stof(element(app, colorField(row)).at("attributes").at("value").get<std::string>()); };
+	CHECK(number(1) == 0.0F);
+	CHECK(number(2) == 100.0F);
+	CHECK(number(4) == 255.0F);
+	CHECK(looksLike(app, "#picker .color-new", {255, 0, 0}));
+
+	// The field picks saturation from left to right and value from bottom to top: a quarter in, halfway down.
+	const Json field = element(app, "#picker .color-field").at("box");
+	app.ui().click(std::nullopt,
+		point(field.at("x").get<int>() + (field.at("width").get<int>() / 4),
+			field.at("y").get<int>() + (field.at("height").get<int>() / 2)),
+		ui::MouseButton::Left, 1, {});
+	CHECK(color == "#806060");
+	REQUIRE(!events.changes.empty());
+	CHECK(events.changes.back().first == "picker");
+	CHECK(events.changes.back().second.Get<Rml::String>() == "#806060");
+
+	// The hue strip picks the hue from top to bottom: halfway is cyan.
+	const Json hue = element(app, "#picker .color-hue").at("box");
+	const int x = hue.at("x").get<int>() + (hue.at("width").get<int>() / 2);
+	app.ui().drag(std::nullopt, point(x, hue.at("y").get<int>() + 10),
+		point(x, hue.at("y").get<int>() + (hue.at("height").get<int>() / 2)));
+	CHECK(color == "#608080");
+	CHECK(number(1) == 180.0F);
+
+	// The numbers: red to 255.
+	app.ui().click(std::nullopt, at(colorField(4)), ui::MouseButton::Left, 2, {});
+	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().text(std::nullopt, "255");
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(color == "#ff8080");
+	CHECK(number(1) == 0.0F);
+
+	// The swatches show the color the picker started with and the new one.
+	CHECK(looksLike(app, "#picker .color-old", {255, 0, 0}));
+	CHECK(looksLike(app, "#picker .color-new", {255, 128, 128}));
+
+	// The data model sets the color, e.g. a track's.
+	color = "#0000ff";
+	model.changed("color");
+	CHECK(app.waitUntil([&number] { return number(6) == 255.0F && number(1) == 240.0F; }));
+	CHECK(looksLike(app, "#picker .color-new", {0, 0, 255}));
 }

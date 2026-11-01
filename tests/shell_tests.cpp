@@ -19,6 +19,7 @@
 #include <chrono>
 #include <filesystem>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -524,6 +525,28 @@ TEST_CASE("work posted from any thread runs on the UI thread in the shell's next
 	CHECK(ranOn == uiThread);
 	ui.shell.step(milliseconds(0));
 	CHECK(runs == 1); // once
+}
+
+TEST_CASE("the shell doesn't step inside one of its steps, e.g. for a script that waits in an event handler", "[unit]")
+{
+	Ui ui{{primary()}};
+	ui.shell.open(at({100, 100, 800, 600}));
+	bool refused = false;
+	ui.shell.post(
+		[&]
+		{
+			try
+			{
+				ui.shell.step(milliseconds(0));
+			}
+			catch (const std::logic_error&)
+			{
+				refused = true;
+			}
+		});
+	ui.shell.step(milliseconds(0));
+	CHECK(refused);
+	ui.shell.step(milliseconds(0)); // steps as before once the step ended
 }
 
 TEST_CASE("the theme applies in every window, also in windows opened later, without loading documents again", "[unit]")

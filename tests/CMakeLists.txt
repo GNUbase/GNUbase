@@ -5,6 +5,11 @@ add_library(gnubase-testutils STATIC
 	testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	target_sources(gnubase-testutils PRIVATE
+		testutils/fakertkit.cpp testutils/fakertkit.h)
+	target_link_libraries(gnubase-testutils PRIVATE PkgConfig::DBUS)
+endif()
 target_compile_definitions(gnubase-testutils PRIVATE
 	GNUBASE_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden"
 	GNUBASE_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/output"
@@ -16,10 +21,12 @@ set(settingsEnvironment "GNUBASE_SETTINGS_DIR=${CMAKE_CURRENT_BINARY_DIR}/output
 
 # One file per line, sorted, so that pull requests adding tests rarely touch the same lines.
 add_executable(gnubase-tests
+	addtrack_tests.cpp
 	analysis_tests.cpp
 	app_tests.cpp
 	audio_tests.cpp
 	audiofile_tests.cpp
+	audioimport_tests.cpp
 	automation_tests.cpp
 	backup_tests.cpp
 	bus_tests.cpp
@@ -29,18 +36,26 @@ add_executable(gnubase-tests
 	dawproject_tests.cpp
 	debugreports.cpp
 	device_tests.cpp
+	docking_tests.cpp
 	document_tests.cpp
 	effects_tests.cpp
 	engine_tests.cpp
 	enginebinding_tests.cpp
+	eventdisplay_tests.cpp
+	eventedit_tests.cpp
+	eventediting_tests.cpp
 	fade_tests.cpp
+	fileimport_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
 	history_tests.cpp
+	historypanel_tests.cpp
 	ipc_process_tests.cpp
 	ipc_tests.cpp
+	keycommands_tests.cpp
 	latency_tests.cpp
 	log_tests.cpp
+	mainmenu_tests.cpp
 	marker_tests.cpp
 	mcp_tests.cpp
 	mcpevents_tests.cpp
@@ -50,6 +65,7 @@ add_executable(gnubase-tests
 	midiedit_tests.cpp
 	midifile_tests.cpp
 	midifunctions_tests.cpp
+	miditap_tests.cpp
 	mixer_tests.cpp
 	monitoring_tests.cpp
 	multicore_tests.cpp
@@ -66,14 +82,18 @@ add_executable(gnubase-tests
 	sequencing_tests.cpp
 	settings_tests.cpp
 	shell_tests.cpp
+	snap_tests.cpp
 	streaming_tests.cpp
+	studiosetup_tests.cpp
 	stylerules_tests.cpp
 	svg_tests.cpp
 	testing_tests.cpp
 	testutils_tests.cpp
 	theme_tests.cpp
 	time_tests.cpp
+	timeformat_tests.cpp
 	timestretch_tests.cpp
+	tracklist_tests.cpp
 	transport_tests.cpp
 	uiapp.cpp
 	uiapp.h
@@ -184,6 +204,16 @@ foreach(luaTest IN LISTS luaTests)
 		"GNUBASE_GOLDEN_DIR=${CMAKE_CURRENT_SOURCE_DIR}/golden;GNUBASE_TEST_OUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/output;${settingsEnvironment}")
 endforeach()
 
+# Every tests/lua/ui/*.lua is a UI test in Lua (#208), which gnubase-tests runs in the app's UI (tests/uiapp_tests.cpp),
+# in the source folder like the other Lua tests. Catch2 exits with 4 when it skips the test: no SDL_GPU device.
+file(GLOB luaUiTests CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/lua/ui/*.lua")
+foreach(luaTest IN LISTS luaUiTests)
+	file(RELATIVE_PATH script "${PROJECT_SOURCE_DIR}" "${luaTest}")
+	add_test(NAME "${script}" COMMAND gnubase-tests "[lua-ui]" WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+	set_tests_properties("${script}" PROPERTIES LABELS "ui;lua" TIMEOUT 300 SKIP_RETURN_CODE 4 ENVIRONMENT
+		"GNUBASE_LUA_UI_TEST=${script};${settingsEnvironment}")
+endforeach()
+
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}"
 	GNUBASE_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs"
 	GNUBASE_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources"
@@ -192,6 +222,16 @@ target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERS
 if(WIN32)
 	target_sources(gnubase-tests PRIVATE asio_tests.cpp devicecontract.h)
 	target_include_directories(gnubase-tests SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/ext/asio/common)
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	# The JACK tests load libjack to add a client with physical ports, as a sound card has them.
+	find_package(PkgConfig REQUIRED)
+	pkg_check_modules(JACK REQUIRED jack)
+	target_include_directories(gnubase-tests SYSTEM PRIVATE ${JACK_INCLUDE_DIRS})
+	target_link_libraries(gnubase-tests PRIVATE ${CMAKE_DL_LIBS})
+	# The ALSA sequencer test makes a sequencer client of its own as a loopback.
+	pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
+	target_link_libraries(gnubase-tests PRIVATE PkgConfig::ALSA)
 endif()
 gnubase_target_defaults(gnubase-tests)
 # Sanitizer builds are too slow for benchmarks.

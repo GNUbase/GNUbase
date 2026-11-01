@@ -52,6 +52,8 @@ namespace gnubase::audio
 
 		// Simulates the driver asking for a reset.
 		using Device::requestReset;
+		// Simulates the driver reporting a dropout.
+		using Device::reportOverload;
 
 		// While stopped. Without a source the inputs are silent.
 		void setInput(InputSource source);

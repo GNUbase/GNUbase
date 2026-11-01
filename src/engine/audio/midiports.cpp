@@ -231,19 +231,25 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"midi.monitor", 1,
 				"The MIDI input received since the last call from every open input, at most 4096 messages, each with "
-				"its port, its frame position on the audio device and its bytes. dropped counts what didn't fit. "
-				"Input reaches the monitor while an audio device processes blocks, which places it in time.",
-				CommandInfo{}.parameters,
+				"its port, its frame position on the audio device and its bytes. dropped counts what didn't fit: "
+				"while nobody reads, newer messages are dropped. start: true starts afresh; it drops what was "
+				"received so far and returns nothing. Each call empties what it returns. Input reaches the monitor "
+				"while an audio device processes blocks, which places it in time.",
+				Json::parse(R"({"type": "object", "additionalProperties": false,
+					"properties": {"start": {"type": "boolean"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"received": {"type": "array"},
 					"dropped": {"type": "integer"}}, "required": ["received", "dropped"]})"),
 				true},
-			[this](CommandContext&)
+			[this](CommandContext& context)
 			{
 				listOnce();
+				const bool start = context.parameters().value("start", false);
 				Json received = Json::array();
 				Received entry;
 				while (m_monitor.tryPop(entry))
 				{
+					if (start)
+						continue;
 					const auto port = std::find_if(m_ports.begin(), m_ports.end(),
 						[&entry](const Port& candidate) { return candidate.slot == entry.slot; });
 					const std::vector<uint8_t> bytes(
@@ -251,8 +257,8 @@ namespace gnubase::engine
 					received.push_back({{"backend", port->backend->name()}, {"id", port->info.id},
 						{"position", entry.position}, {"bytes", bytes}});
 				}
-				return Json{{"received", std::move(received)},
-					{"dropped", m_monitorDropped.exchange(0, std::memory_order_relaxed)}};
+				const size_t dropped = m_monitorDropped.exchange(0, std::memory_order_relaxed);
+				return Json{{"received", std::move(received)}, {"dropped", start ? 0 : dropped}};
 			});
 	}
 }

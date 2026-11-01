@@ -1,0 +1,303 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "ui/timeformat.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <functional>
+#include <limits>
+#include <memory>
+#include <utility>
+#include <vector>
+
+namespace gnubase::ui
+{
+	namespace
+	{
+		constexpr std::array<TimeFormat, 5> g_formats{TimeFormat::BarsBeats, TimeFormat::Seconds, TimeFormat::Timecode,
+			TimeFormat::Samples, TimeFormat::UserFrames};
+
+		constexpr time::Ticks g_sixteenth = time::g_ticksPerQuarter / 4;
+		constexpr time::Ticks g_displayTick = g_sixteenth / time::g_defaultDisplayTicksPerSixteenth;
+
+		// More marks than any ruler is wide in pixels.
+		constexpr size_t g_maxMarks = 20000;
+
+		// A step in a format's own units, and how many parts minor ticks divide it into.
+		struct Step
+		{
+			double length = 1.0;
+			int parts = 1;
+		};
+
+		// The first of steps (shortest first) at least minimum long; past the last, decimal multiples of it.
+		Step pick(const std::vector<Step>& steps, double minimum)
+		{
+			for (const Step& step : steps)
+				if (step.length >= minimum * (1.0 - 1e-9))
+					return step;
+			const double unit = steps.back().length;
+			const auto [factor, parts] = decimalStep(minimum / unit);
+			return {factor * unit, parts};
+		}
+
+		// Seconds in round steps, from a millisecond to an hour.
+		std::vector<Step> secondSteps()
+		{
+			return {{0.001, 1}, {0.002, 2}, {0.005, 5}, {0.01, 5}, {0.02, 4}, {0.05, 5}, {0.1, 5}, {0.2, 4}, {0.5, 5},
+				{1, 5}, {2, 4}, {5, 5}, {10, 5}, {15, 3}, {30, 3}, {60, 4}, {120, 4}, {300, 5}, {600, 5}, {900, 3},
+				{1800, 3}, {3600, 4}};
+		}
+
+		// Frames in steps of frames, then of round seconds.
+		std::vector<Step> frameSteps(int framesPerSecond)
+		{
+			std::vector<Step> steps;
+			for (const Step& frames : {Step{1, 1}, Step{2, 2}, Step{5, 5}, Step{10, 5}})
+				if (frames.length < framesPerSecond)
+					steps.push_back(frames);
+			const int secondParts = framesPerSecond % 5 == 0 ? 5 : 4; // whole frames each
+			for (const Step& seconds : secondSteps())
+				if (seconds.length >= 1.0)
+					steps.push_back(
+						{seconds.length * framesPerSecond, seconds.length == 1.0 ? secondParts : seconds.parts});
+			return steps;
+		}
+
+		double framesPerSecond(time::FrameRate rate)
+		{
+			return rate.framesPerSecond / (rate.pullDown ? 1.001 : 1.0);
+		}
+
+		time::FrameRate userRate(const TimeContext& context)
+		{
+			return {std::max(1, context.userFramesPerSecond), false, false};
+		}
+
+		std::string timecode(double seconds, time::FrameRate rate)
+		{
+			return time::formatTimecode(time::toTimecode(seconds, rate), rate);
+		}
+
+		// Marks of a unit that grows linearly with time, perSecond units a second: seconds, frames and samples.
+		void linearMarks(double from, double to, double minimum, double perSecond, const std::vector<Step>& steps,
+			const std::function<std::string(double units, double step)>& label, std::vector<RulerMark>& marks)
+		{
+			from = std::max(from, 0.0);
+			const Step step = pick(steps, minimum * perSecond);
+			const size_t first = marks.size();
+			evenMarks(
+				from * perSecond, to * perSecond, step.length, step.parts,
+				[&label, &step](double units) { return label(units, step.length); }, marks);
+			for (size_t i = first; i < marks.size(); ++i)
+				marks[i].position /= perSecond;
+		}
+
+		// "5", "5.2", "5.2.3" or "5.2.3.60": a position as bars, beats, sixteenths and display ticks, without the
+		// parts that are zero.
+		std::string musicalLabel(const time::BarsBeats& position)
+		{
+			std::string text = std::to_string(position.bar + 1);
+			if (position.beat == 0 && position.sixteenth == 0 && position.tick == 0)
+				return text;
+			text += "." + std::to_string(position.beat + 1);
+			if (position.sixteenth == 0 && position.tick == 0)
+				return text;
+			text += "." + std::to_string(position.sixteenth + 1);
+			return position.tick == 0 ? text : text + "." + std::to_string(position.tick);
+		}
+
+		time::Ticks beatLength(const time::TimeSignature& signature)
+		{
+			return time::g_ticksPerQuarter * 4 / signature.denominator;
+		}
+
+		// Bars and beats: labels every few bars, every beat, every sixteenth or every few display ticks, whichever is
+		// the finest that keeps them minimum seconds apart where the tempo is fastest and the bars or beats shortest.
+		void musicalMarks(
+			const TimeContext& context, double from, double to, double minimum, std::vector<RulerMark>& marks)
+		{
+			from = std::max(from, 0.0);
+			if (!(to > from) || !(minimum > 0.0))
+				return;
+			const time::TempoMap& tempo = context.tempo;
+			const time::SignatureMap& signatures = context.signatures;
+			double needed = 0.0; // ticks
+			for (int i = 0; i <= 32; ++i)
+			{
+				const double at = from + ((to - from) * i / 32.0);
+				needed = std::max(needed, static_cast<double>(tempo.toTicks(at + minimum) - tempo.toTicks(at)));
+			}
+			needed *= 1.0 - 1e-6; // ticks are rounded
+			time::Ticks bar = std::numeric_limits<time::Ticks>::max();
+			time::Ticks beat = std::numeric_limits<time::Ticks>::max();
+			for (const time::SignatureChange& change : signatures.changes())
+			{
+				beat = std::min(beat, beatLength(change.signature));
+				bar = std::min(bar, beatLength(change.signature) * change.signature.numerator);
+			}
+			const time::Ticks first = tempo.toTicks(from);
+			const time::Ticks last = tempo.toTicks(to);
+			const auto add = [&](time::Ticks position, bool labelled)
+			{
+				if (position >= first && position < last)
+					marks.push_back(
+						{tempo.toSeconds(position), labelled ? musicalLabel(signatures.toBarsBeats(position)) : ""});
+			};
+
+			if (static_cast<double>(beat) < needed)
+			{
+				// Every n bars, n a power of two; minor ticks at the beats of single bars, else at up to 4 parts.
+				int64_t n = 1;
+				while (static_cast<double>(n * bar) < needed)
+					n *= 2;
+				const int64_t parts = std::min<int64_t>(n, 4);
+				for (int64_t b = signatures.toBarsBeats(first).bar / n * n;
+					signatures.barStart(b) < last && marks.size() < g_maxMarks; b += n)
+				{
+					const time::Ticks start = signatures.barStart(b);
+					add(start, true);
+					if (n == 1)
+					{
+						const time::TimeSignature signature = signatures.signatureAt(start);
+						for (int i = 1; i < signature.numerator; ++i)
+							add(start + (i * beatLength(signature)), false);
+					}
+					else
+					{
+						for (int64_t i = 1; i < parts; ++i)
+							add(signatures.barStart(b + (i * n / parts)), false);
+					}
+				}
+				return;
+			}
+
+			// Within bars: beats, sixteenths or display ticks.
+			time::Ticks step = 0; // 0: a beat, whose length depends on the bar's signature
+			int parts = 4;
+			if (static_cast<double>(g_sixteenth) < needed)
+			{
+				step = 0;
+			}
+			else
+			{
+				step = g_sixteenth;
+				for (const auto& [ticks, minor] : {std::pair<int, int>{1, 1}, {5, 5}, {15, 3}, {30, 2}, {60, 2}})
+					if (static_cast<double>(ticks * g_displayTick) >= needed)
+					{
+						step = ticks * g_displayTick;
+						parts = minor;
+						break;
+					}
+			}
+			for (int64_t b = signatures.toBarsBeats(first).bar; signatures.barStart(b) < last; ++b)
+			{
+				const time::Ticks start = signatures.barStart(b);
+				const time::Ticks end = signatures.barStart(b + 1);
+				const time::Ticks length = step == 0 ? beatLength(signatures.signatureAt(start)) : step;
+				const int divisions =
+					step == 0 ? static_cast<int>(std::clamp<time::Ticks>(length / g_sixteenth, 1, 4)) : parts;
+				for (time::Ticks at = start; at < end && at < last && marks.size() < g_maxMarks; at += length)
+				{
+					add(at, true);
+					for (int i = 1; i < divisions; ++i)
+						add(at + (length * i / divisions), false);
+				}
+			}
+		}
+	}
+
+	std::string timeFormatName(TimeFormat format)
+	{
+		switch (format)
+		{
+		case TimeFormat::BarsBeats:
+			return "barsBeats";
+		case TimeFormat::Seconds:
+			return "seconds";
+		case TimeFormat::Timecode:
+			return "timecode";
+		case TimeFormat::Samples:
+			return "samples";
+		case TimeFormat::UserFrames:
+			return "userFrames";
+		}
+		return {};
+	}
+
+	std::optional<TimeFormat> timeFormatFromName(const std::string& name)
+	{
+		for (const TimeFormat format : g_formats)
+			if (timeFormatName(format) == name)
+				return format;
+		return std::nullopt;
+	}
+
+	std::string formatTime(TimeFormat format, double seconds, const TimeContext& context)
+	{
+		switch (format)
+		{
+		case TimeFormat::BarsBeats:
+			return time::formatBarsBeats(context.signatures.toBarsBeats(context.tempo.toTicks(seconds)));
+		case TimeFormat::Seconds:
+			return time::formatSeconds(seconds);
+		case TimeFormat::Timecode:
+			return timecode(seconds, context.frameRate);
+		case TimeFormat::Samples:
+			return std::to_string(std::llround(seconds * context.sampleRate));
+		case TimeFormat::UserFrames:
+			return timecode(seconds, userRate(context));
+		}
+		return {};
+	}
+
+	RulerScale rulerScale(TimeFormat format, const TimeContext& context)
+	{
+		RulerScale scale;
+		switch (format)
+		{
+		case TimeFormat::BarsBeats:
+			scale.marks = [shared = std::make_shared<const TimeContext>(context)](
+							  double from, double to, double minimum, std::vector<RulerMark>& marks)
+			{ musicalMarks(*shared, from, to, minimum, marks); };
+			break;
+		case TimeFormat::Seconds:
+			scale.marks = [](double from, double to, double minimum, std::vector<RulerMark>& marks)
+			{
+				linearMarks(
+					from, to, minimum, 1.0, secondSteps(),
+					[](double seconds, double step)
+					{
+						const std::string text = time::formatSeconds(seconds);
+						return step >= 1.0 ? text.substr(0, text.size() - 4) : text; // no ".000"
+					},
+					marks);
+			};
+			break;
+		case TimeFormat::Timecode:
+		case TimeFormat::UserFrames:
+		{
+			const time::FrameRate rate = format == TimeFormat::Timecode ? context.frameRate : userRate(context);
+			scale.marks = [rate](double from, double to, double minimum, std::vector<RulerMark>& marks)
+			{
+				linearMarks(
+					from, to, minimum, framesPerSecond(rate), frameSteps(rate.framesPerSecond),
+					[rate](double frame, double /*step*/)
+					{ return time::formatTimecode(time::fromFrameNumber(std::llround(frame), rate), rate); }, marks);
+			};
+			break;
+		}
+		case TimeFormat::Samples:
+			scale.marks = [rate = context.sampleRate](
+							  double from, double to, double minimum, std::vector<RulerMark>& marks)
+			{
+				const auto [step, parts] = decimalStep(std::max(minimum * rate, 1.0));
+				linearMarks(
+					from, to, minimum, rate, {{step, parts}},
+					[](double sample, double /*step*/) { return std::to_string(std::llround(sample)); }, marks);
+			};
+			break;
+		}
+		return scale;
+	}
+}

@@ -4,6 +4,7 @@
 #include "engine/settings/store.h"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace gnubase::engine
@@ -20,6 +21,7 @@ namespace gnubase::engine::settings
 	inline constexpr Key<std::string> g_audioAutoMonitoring{"audio.autoMonitoring"};
 	inline constexpr Key<std::string> g_audioBackend{"audio.backend"};
 	inline constexpr Key<std::string> g_audioDevice{"audio.device"};
+	inline constexpr Key<std::string> g_audioFallbackDevice{"audio.fallbackDevice"};
 	inline constexpr Key<double> g_audioSampleRate{"audio.sampleRate"};
 	inline constexpr Key<int64_t> g_audioBlockSize{"audio.blockSize"};
 	inline constexpr Key<bool> g_midiChaseNotes{"midi.chaseNotes"};
@@ -34,5 +36,6 @@ namespace gnubase::engine::settings
 	const Format& userFormat();
 
 	// settings.get, settings.set, settings.reset and settings.list for the store, which only the command thread uses.
-	void registerCommands(Engine& engine, Store& store);
+	// changed runs after settings.set or settings.reset changed a value.
+	void registerCommands(Engine& engine, Store& store, std::function<void()> changed);
 }

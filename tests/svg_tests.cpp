@@ -245,7 +245,7 @@ TEST_CASE("several hundred icons are rasterized once per icon and size, never in
 {
 	Graphics graphics;
 	const std::vector<std::filesystem::path> files = icons();
-	// Every icon in three sizes and four colors: 672 on screen.
+	// Every icon in three sizes and four colors: several hundred on screen.
 	std::string rml;
 	for (const char* size : {"small", "medium", "large"})
 		for (const char* color : {"text", "accent", "danger", "muted"})
@@ -254,7 +254,7 @@ TEST_CASE("several hundred icons are rasterized once per icon and size, never in
 	graphics.show(rml);
 	Rml::ElementList shown;
 	graphics.document->GetElementsByTagName(shown, "svg");
-	CHECK(shown.size() == 672);
+	CHECK(shown.size() == files.size() * 12);
 
 	// The first frame rasterizes each icon once per size, whatever its color.
 	const std::vector<ui::Image> first = graphics.draw();

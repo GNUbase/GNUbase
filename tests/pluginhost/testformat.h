@@ -13,8 +13,8 @@
 // test:paramstress, test:crash, test:hang, test:stateblob, with the parameters of tests/plugins/README.md, and
 // test:stall, which only this format has: it passes its input through, and setting its parameter Stall (id 1) to a
 // number of milliseconds makes it take that long once, e.g. to make one block late. Its parameter Value (id 2) does
-// nothing, and Resets (id 3) counts its resets, so its state shows what reached it. The format has no files: it
-// ignores plugin paths.
+// nothing, Resets (id 3) counts its resets and Offline (id 5) is 1 while its process mode is offline, so its state
+// shows what reached it. The format has no files: it ignores plugin paths.
 //
 // Like a format adapter, it passes on what a plugin asks of its host: a restart request, a changed latency when the
 // plugin is activated, and a values rescan after a state was loaded.

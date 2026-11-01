@@ -17,19 +17,36 @@ add_library(gnubase-ui STATIC
 	automation.h
 	canvas.cpp
 	canvas.h
+	colorwidgets.cpp
 	datamodel.cpp
 	datamodel.h
 	displays.cpp
 	displays.h
+	docking.cpp
+	docking.h
 	enginebinding.cpp
 	enginebinding.h
+	eventdisplay.cpp
+	eventdisplay.h
+	eventdisplaymenus.cpp
+	eventediting.cpp
+	eventwaveforms.cpp
+	eventwaveforms.h
+	fileimport.cpp
 	fonts.cpp
 	fonts.h
 	gpurenderer.cpp
 	gpurenderer.h
+	historypanel.cpp
+	historypanel.h
 	image.cpp
+	keycommands.cpp
+	keycommands.h
 	livereload.cpp
 	livereload.h
+	mainmenu.cpp
+	mainmenu.h
+	popupwidgets.cpp
 	pseudolocale.cpp
 	pseudolocale.h
 	renderer.h
@@ -41,13 +58,19 @@ add_library(gnubase-ui STATIC
 	shell.h
 	themes.cpp
 	themes.h
+	timeformat.cpp
+	timeformat.h
+	tracklist.cpp
+	tracklist.h
 	ui.cpp
 	ui.h
 	uisettings.cpp
 	uisettings.h
 	valuewidgets.cpp
+	viewwidgets.cpp
 	widgets.cpp
 	widgets.h
+	widgetutils.h
 	windowsystem.h)
 target_link_libraries(gnubase-ui
 	PUBLIC gnubase-engine RmlUi::RmlUi

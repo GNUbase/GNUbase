@@ -7,6 +7,7 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 
 #include <algorithm>
 #include <optional>
@@ -36,26 +37,24 @@ namespace gnubase::ui
 			const Rect& area = displays.front().usable;
 			return {area.width * 4 / 5, area.height * 4 / 5};
 		}
+	}
 
-		// Tells the element under the drop's position that files were dropped on it.
-		void drop(Window& window, const WindowEvent& event)
+	void dropFiles(Window& window, Point at, const std::vector<std::filesystem::path>& files)
+	{
+		Rml::Element* target = window.context().GetElementAtPoint({static_cast<float>(at.x), static_cast<float>(at.y)});
+		if (target == nullptr || files.empty())
+			return; // no document there
+		std::string list;
+		for (const std::filesystem::path& file : files)
 		{
-			Rml::Element* target = window.context().GetElementAtPoint(
-				{static_cast<float>(event.position.x), static_cast<float>(event.position.y)});
-			if (target == nullptr || event.files.empty())
-				return; // no document there
-			std::string files;
-			for (const std::filesystem::path& file : event.files)
-			{
-				if (!files.empty())
-					files += '\n';
-				files += file.u8string();
-			}
-			target->DispatchEvent(g_fileDropEvent,
-				{{"files", Rml::Variant(files)}, {"count", Rml::Variant(static_cast<int>(event.files.size()))},
-					{"mouse_x", Rml::Variant(event.position.x)}, {"mouse_y", Rml::Variant(event.position.y)}});
-			window.requestRender();
+			if (!list.empty())
+				list += '\n';
+			list += file.u8string();
 		}
+		target->DispatchEvent(g_fileDropEvent,
+			{{"files", Rml::Variant(list)}, {"count", Rml::Variant(static_cast<int>(files.size()))},
+				{"mouse_x", Rml::Variant(at.x)}, {"mouse_y", Rml::Variant(at.y)}});
+		window.requestRender();
 	}
 
 	Shell::Shell(WindowSystem& windows, Renderer& renderer) : m_windows(windows), m_renderer(renderer)
@@ -143,6 +142,15 @@ namespace gnubase::ui
 		return result;
 	}
 
+	void Shell::setBounds(WindowId id, const Rect& bounds)
+	{
+		Window* window = find(id);
+		if (window == nullptr)
+			return;
+		m_windows.setBounds(id, place(bounds, m_windows.displays()));
+		refresh(*window);
+	}
+
 	void Shell::setUiScale(float scale)
 	{
 		m_uiScale = scale;
@@ -193,7 +201,8 @@ namespace gnubase::ui
 	{
 		const float ratio = m_windows.scale(window.m_id) * m_uiScale;
 		const Size pixels = m_windows.pixelSize(window.m_id);
-		if (ratio != window.m_dpRatio)
+		const bool ratioChanged = ratio != window.m_dpRatio;
+		if (ratioChanged)
 		{
 			window.m_dpRatio = ratio;
 			window.m_context->SetDensityIndependentPixelRatio(ratio);
@@ -204,6 +213,13 @@ namespace gnubase::ui
 			window.m_pixelSize = pixels;
 			window.m_context->SetDimensions({pixels.width, pixels.height});
 			window.m_renderRequested = true;
+		}
+		else if (ratioChanged)
+		{
+			// RmlUi sends Resize only when the pixel size changes. A new dp ratio alone, as from the UI scale, changes
+			// the documents' size in dp just as much, so they hear of it the same way.
+			for (int i = 0; i < window.m_context->GetNumDocuments(); ++i)
+				window.m_context->GetDocument(i)->DispatchEvent(Rml::EventId::Resize, Rml::Dictionary());
 		}
 	}
 
@@ -256,9 +272,15 @@ namespace gnubase::ui
 		{
 		case WindowEventKind::CloseRequested:
 			if (window->m_main)
+			{
 				quit();
+			}
 			else
+			{
+				if (m_closeRequest)
+					m_closeRequest(*window); // may close it
 				close(event.window);
+			}
 			break;
 		case WindowEventKind::Moved:
 		case WindowEventKind::Resized:
@@ -266,11 +288,15 @@ namespace gnubase::ui
 			refresh(*window);
 			break;
 		case WindowEventKind::Exposed:
-		case WindowEventKind::Input:
 			window->m_renderRequested = true;
 			break;
+		case WindowEventKind::Input:
+			window->m_renderRequested = true;
+			if (event.key)
+				unusedKey(*window, *event.key);
+			break;
 		case WindowEventKind::FilesDropped:
-			drop(*window, event);
+			dropFiles(*window, event.position, event.files);
 			break;
 		default:
 			break;
@@ -296,6 +322,15 @@ namespace gnubase::ui
 
 	void Shell::step(std::optional<std::chrono::milliseconds> timeout)
 	{
+		if (m_stepping)
+			throw std::logic_error("the UI can't step inside one of its steps, e.g. wait in its own event handlers");
+		m_stepping = true;
+		const struct Stepped
+		{
+			bool& stepping;
+			~Stepped() { stepping = false; }
+		} stepped{m_stepping};
+
 		std::optional<WindowEvent> event = m_windows.nextEvent(timeout);
 		while (event && m_running)
 		{
@@ -332,6 +367,12 @@ namespace gnubase::ui
 		for (auto& [id, window] : m_open)
 			if (window->m_renderRequested || nextUpdate(*window, now) <= now)
 				draw(*window);
+	}
+
+	void Shell::unusedKey(Window& window, const KeyPress& keys)
+	{
+		if (m_unusedKey)
+			m_unusedKey(window, keys);
 	}
 
 	void Shell::every(std::chrono::milliseconds interval, std::function<void()> task)

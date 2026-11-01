@@ -3,6 +3,8 @@
 
 #include "app/appui.h"
 #include "engine/engine.h"
+#include "platform/audio/device.h"
+#include "platform/midi/port.h"
 #include "testutils/goldenimage.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
@@ -14,6 +16,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 // The harness for UI tests (#59), and what they share with tests/window_tests.cpp: the display and the GPU.
 namespace gnubase::test
@@ -39,13 +42,24 @@ namespace gnubase::test
 	class UiApp
 	{
 	public:
-		// The main window's size in desktop coordinates; in pixels at a monitor scale of 1.
-		explicit UiApp(ui::Size size = {640, 480});
+		// The main window's size in desktop coordinates; in pixels at a monitor scale of 1. The engine takes MIDI and
+		// audio from these backends, by default the system's; the audio backends must include the dummy device's.
+		explicit UiApp(ui::Size size = {640, 480},
+			std::vector<std::unique_ptr<midi::Backend>> midiBackends = midi::makeBackends(),
+			std::vector<std::unique_ptr<audio::Backend>> audioBackends = audio::makeBackends());
 
-		engine::Engine& engine() { return m_engine; }
+		engine::Engine& engine() { return *m_engine; }
+		app::AppUi& appUi() { return *m_ui; }
 		ui::Shell& shell() { return m_ui->shell(); }
 		ui::Window& main() { return m_ui->mainWindow(); }
 		ui::Automation& ui() { return *m_automation; }
+		scripting::Runtime& lua() { return m_ui->lua(); }
+		ui::KeyCommands& keys() { return m_ui->keyCommands(); }
+
+		// Quits the UI and the engine and starts them again with the same user settings, as a user restarting GNUbase
+		// would, with the main window as it was first opened. The engine takes MIDI and audio from the system's
+		// backends then.
+		void restart();
 
 		// Runs an engine command that must succeed; returns its result.
 		engine::Json call(const std::string& command, const engine::Json& parameters = engine::Json::object());
@@ -69,8 +83,12 @@ namespace gnubase::test
 		static void checkGolden(const std::string& name, const ui::Image& image);
 
 	private:
+		void start(std::vector<std::unique_ptr<midi::Backend>> midiBackends,
+			std::vector<std::unique_ptr<audio::Backend>> audioBackends);
+
 		TempDir m_settings;
-		engine::Engine m_engine;
+		ui::Size m_size;
+		std::unique_ptr<engine::Engine> m_engine;
 		std::unique_ptr<app::AppUi> m_ui;
 		std::unique_ptr<ui::Automation> m_automation;
 	};

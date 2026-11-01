@@ -111,11 +111,13 @@ namespace gnubase::plugin::remote
 		config.maxChannels = std::clamp<uint32_t>(std::max(inputChannels, outputChannels), 1, 256);
 		config.maxFrames = std::clamp<uint32_t>(maxFrames, 1, 65536);
 		config.blockSlots = 2;
-		// Two blocks in flight, each with its events, transport segments and sysex bytes.
-		const size_t perBlock = (g_maxEvents * (sizeof(Event) + sizeof(ipc::MessageHeader))) +
-			(g_maxTransportSegments * (sizeof(TransportSegment) + sizeof(ipc::MessageHeader))) + g_maxSysexBytes +
-			g_maxAudioMessage;
-		config.eventRingSize = nextPowerOfTwo(static_cast<uint32_t>(2 * perBlock));
+		// Two blocks in flight, each with its info or result, transport segments and events, and its sysex events'
+		// bytes in messages of their own, padded to 8 bytes. Where the ring wraps, padding takes at most one message.
+		constexpr size_t header = sizeof(ipc::MessageHeader);
+		constexpr size_t perBlock = header + sizeof(ProcessInfo) + (g_maxPorts * sizeof(uint64_t)) +
+			(g_maxTransportSegments * (header + sizeof(TransportSegment))) + (g_maxEvents * (header + sizeof(Event))) +
+			g_maxSysexBytes + (g_maxEvents * (header + 7));
+		config.eventRingSize = nextPowerOfTwo(static_cast<uint32_t>((2 * perBlock) + header + g_maxAudioMessage));
 		config.controlRingSize = 256; // unused: control messages go over the host's control connection
 		return config;
 	}

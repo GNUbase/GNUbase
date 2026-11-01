@@ -4,7 +4,10 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <numeric>
 #include <tuple>
+#include <utility>
+#include <vector>
 
 namespace gnubase::engine
 {
@@ -26,7 +29,7 @@ namespace gnubase::engine
 			const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate);
 			const time::Position endPosition{part.position.base, part.position.value + part.length};
 			const time::Ticks end = time::toTicks(endPosition, project.tempo, project.sampleRate);
-			const auto index = static_cast<uint32_t>(channel.midiParts.size());
+			const auto index = static_cast<int32_t>(channel.midiParts.size());
 			channel.midiParts.push_back({toSamples(project, start), toSamples(project, end)});
 			for (const auto& [id, note] : part.notes)
 			{
@@ -40,6 +43,47 @@ namespace gnubase::engine
 				if (controller.position < end - start)
 					channel.controllers.push_back({toSamples(project, start + controller.position), controller.type,
 						controller.number, controller.value, controller.channel, controller.data, index});
+		}
+
+		// Mute, solo and disabled tracks: with a channel soloed, only soloed channels, those they play into and those
+		// that play into them are heard (feeds: the channels each channel plays into, by index).
+		void markSilent(const Project& project, const std::vector<std::vector<size_t>>& feeds, RenderSnapshot& snapshot)
+		{
+			const size_t count = snapshot.channels.size();
+			std::vector<bool> heard(count, true);
+			std::vector<size_t> soloed;
+			for (size_t i = 0; i < count; ++i)
+				if (project.channels.at(snapshot.channels[i].id).solo)
+					soloed.push_back(i);
+			if (!soloed.empty())
+			{
+				std::vector<std::vector<size_t>> fedBy(count);
+				for (size_t i = 0; i < count; ++i)
+					for (const size_t to : feeds[i])
+						fedBy[to].push_back(i);
+				heard.assign(count, false);
+				for (const auto* links : {&feeds, &std::as_const(fedBy)})
+				{
+					std::vector<bool> reached(count, false);
+					std::vector<size_t> pending = soloed;
+					while (!pending.empty())
+					{
+						const size_t i = pending.back();
+						pending.pop_back();
+						if (reached[i])
+							continue;
+						reached[i] = true;
+						heard[i] = true;
+						pending.insert(pending.end(), (*links)[i].begin(), (*links)[i].end());
+					}
+				}
+			}
+			for (size_t i = 0; i < count; ++i)
+			{
+				RenderChannel& channel = snapshot.channels[i];
+				channel.silent =
+					!heard[i] || project.channels.at(channel.id).mute || !project.trackById.at(channel.track).enabled;
+			}
 		}
 	}
 
@@ -107,6 +151,7 @@ namespace gnubase::engine
 		}
 
 		// Outputs, once every channel has its index.
+		std::vector<std::vector<size_t>> feeds(snapshot->channels.size()); // the channels each one plays into
 		for (RenderChannel& render : snapshot->channels)
 		{
 			const ObjectId output = project.channels.at(render.id).output;
@@ -120,11 +165,16 @@ namespace gnubase::engine
 				render.output = {RenderTarget::Kind::Channel, channel->second};
 				render.panner =
 					pannerFor(render.format, snapshot->channels[static_cast<size_t>(channel->second)].format);
+				feeds[static_cast<size_t>(channelIndex.at(render.id))].push_back(static_cast<size_t>(channel->second));
 			}
 		}
+		markSilent(project, feeds, *snapshot);
 
+		const auto plays = [&project](ObjectId track) { return project.trackById.at(track).enabled; };
 		for (const auto& [id, event] : project.audioEvents)
 		{
+			if (!plays(event.track))
+				continue;
 			const Clip& clip = project.clips.at(event.clip);
 			snapshot->channels[trackChannel.at(event.track)].audioEvents.push_back(
 				{id, toSamples(project, event.position), mediaIndex.at(clip.media), event.offset, event.length,
@@ -132,7 +182,12 @@ namespace gnubase::engine
 					clip.fadeIn, clip.fadeOut, crossfadeApplies(project, event) ? event.crossfade : Crossfade()});
 		}
 		for (const auto& [id, part] : project.midiParts)
-			compilePart(project, part, snapshot->channels[trackChannel.at(part.track)]);
+		{
+			RenderChannel& channel = snapshot->channels[static_cast<size_t>(trackChannel.at(part.track))];
+			// A silent MIDI track's notes would still reach its instrument.
+			if (!part.mute && plays(part.track) && (!channel.silent || channel.type != TrackType::Midi))
+				compilePart(project, part, channel);
+		}
 
 		for (const auto& [id, lane] : project.automation)
 		{
@@ -158,6 +213,23 @@ namespace gnubase::engine
 				{ return std::tie(a.start, a.pitch) < std::tie(b.start, b.pitch); });
 			std::stable_sort(channel.controllers.begin(), channel.controllers.end(),
 				[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
+			// The parts by start; their controller events keep pointing at them.
+			std::vector<size_t> byStart(channel.midiParts.size());
+			std::iota(byStart.begin(), byStart.end(), size_t{0});
+			std::stable_sort(byStart.begin(), byStart.end(),
+				[&channel](size_t a, size_t b) { return channel.midiParts[a].start < channel.midiParts[b].start; });
+			std::vector<int32_t> moved(byStart.size());
+			std::vector<RenderPart> parts;
+			parts.reserve(byStart.size());
+			for (size_t i = 0; i < byStart.size(); ++i)
+			{
+				moved[byStart[i]] = static_cast<int32_t>(i);
+				parts.push_back(channel.midiParts[byStart[i]]);
+			}
+			channel.midiParts = std::move(parts);
+			for (RenderController& controller : channel.controllers)
+				if (controller.part >= 0)
+					controller.part = moved[static_cast<size_t>(controller.part)];
 		}
 		return snapshot;
 	}

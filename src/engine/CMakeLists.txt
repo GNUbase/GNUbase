@@ -89,6 +89,7 @@ add_library(gnubase-engine STATIC
 	audio/automation.cpp audio/automation.h
 	audio/fades.cpp audio/fades.h
 	audio/midiports.cpp audio/midiports.h
+	audio/miditap.cpp audio/miditap.h
 	audio/performance.cpp audio/performance.h
 	audio/playback.cpp audio/playback.h
 	audio/sequencer.cpp audio/sequencer.h
@@ -100,8 +101,10 @@ add_library(gnubase-engine STATIC
 	audiofile/resampler.cpp audiofile/resampler.h
 	audiofile/writer.cpp
 	dawproject/dawproject.cpp dawproject/dawproject.h
+	document/audiofilecommands.cpp
 	document/channelformat.cpp document/channelformat.h
 	document/document.cpp document/document.h
+	document/eventedits.cpp
 	document/fadeedits.cpp
 	document/history.cpp document/history.h
 	document/markers.cpp
@@ -111,6 +114,7 @@ add_library(gnubase-engine STATIC
 	document/projectmodel.cpp document/projectmodel.h
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/serialize.cpp document/serialize.h
+	document/snap.cpp document/snap.h
 	dsp/biquad.cpp dsp/biquad.h
 	dsp/delay.cpp dsp/delay.h
 	dsp/dither.cpp dsp/dither.h

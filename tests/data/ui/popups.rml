@@ -1,0 +1,36 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Menus, context menus and tooltips of the widget library (#54) for tests/widgets_tests.cpp: a menu button, a track
+     with a context menu that has a submenu and a disabled item, and elements with tooltips. -->
+<rml>
+<head>
+	<title>Popups</title>
+	<style>
+		body { position: absolute; left: 0; top: 0; right: 0; bottom: 0; padding: 8dp; }
+		#track { position: absolute; left: 200dp; top: 100dp; width: 200dp; height: 40dp; }
+		#plain { position: absolute; left: 200dp; top: 200dp; width: 200dp; height: 40dp; }
+		#corner { position: absolute; right: 0; bottom: 0; width: 40dp; height: 20dp; }
+	</style>
+</head>
+<body>
+	<button id="edit-button" menu="edit">Edit</button>
+	<div id="track" class="panel" contextmenu="track-menu" title="Audio 01">Audio 01</div>
+	<div id="plain" class="panel">No menu</div>
+	<div id="corner" contextmenu="track-menu" title="A long tooltip near the window's corner"/>
+	<menu id="edit">
+		<menuitem id="undo">Undo</menuitem>
+		<menuitem id="redo" disabled="disabled">Redo</menuitem>
+		<menuseparator/>
+		<menuitem id="cut">Cut</menuitem>
+	</menu>
+	<menu id="track-menu">
+		<menuitem id="rename">Rename</menuitem>
+		<menuitem id="color">Color
+			<menu id="colors">
+				<menuitem id="red">Red</menuitem>
+				<menuitem id="blue">Blue</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem id="remove" disabled="disabled">Remove</menuitem>
+	</menu>
+</body>
+</rml>

@@ -53,10 +53,12 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `general-search.svg` — Search.
 - `general-menu.svg` — Open the menu.
 - `general-more.svg` — Show more actions.
+- `general-arrow-down.svg` — Open a pop-up menu of settings.
 - `general-undo.svg` — Undo the last action.
 - `general-redo.svg` — Redo the last undone action.
 - `general-save.svg` — Save the project.
 - `general-open.svg` — Open a project or file.
 - `general-snap.svg` — Toggle snapping to the grid.
+- `general-zero-crossing.svg` — Toggle snapping to zero crossings.
 - `general-lock.svg` — Lock the selected item.
 - `general-link.svg` — Link selected items.

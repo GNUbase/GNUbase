@@ -6,6 +6,7 @@
 #include "ui/shell.h"
 
 #include <chrono>
+#include <filesystem>
 #include <future>
 #include <memory>
 #include <optional>
@@ -76,10 +77,14 @@ namespace gnubase::ui
 		engine::Json wheel(std::optional<WindowId> window, const Target& at, float dx, float dy,
 			const std::vector<std::string>& modifiers = {});
 
-		// Presses and releases a key with modifiers, written like "Enter", "Ctrl+S" or "Shift+Alt+F5": letters,
-		// digits, F1 to F24, Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, Up, Down,
-		// Left, Right, Space; modifiers Ctrl, Shift, Alt and Meta (or Cmd). Returns {"focus": ...}, the element with
-		// the keyboard focus, or null.
+		// Drops files from elsewhere, such as the OS's file manager, on the target, as the window system delivers the
+		// user's drops (ui::dropFiles). Returns the element they were dropped on, as move does.
+		engine::Json drop(
+			std::optional<WindowId> window, const Target& target, const std::vector<std::filesystem::path>& files);
+
+		// Presses and releases a key with modifiers, written like "Enter", "Ctrl+S", "Mod+Z" or "Shift+Alt+F5" (keys
+		// and modifiers as ui::parseKeys reads them). A key that no element uses runs its key command
+		// (ui/keycommands.h). Returns {"focus": ...}, the element with the keyboard focus, or null.
 		engine::Json key(std::optional<WindowId> window, const std::string& keys);
 
 		// Types the UTF-8 text into the element with the focus. Returns the focus, as key does.

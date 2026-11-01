@@ -1,0 +1,23 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- A dialog of the widget library (#54) for tests/widgets_tests.cpp: a title bar to move it, a text field, and
+     buttons that close it with their result. -->
+<rml>
+<head>
+	<title>Rename</title>
+	<style>
+		dialog { width: 300dp; }
+		.row { display: flex; margin: 8dp 12dp 0 12dp; }
+		.row > * { margin-right: 6dp; }
+	</style>
+</head>
+<body>
+	<dialog id="rename-dialog">
+		<div class="dialog-titlebar">Rename Track</div>
+		<div class="row"><input type="text" id="name" value="Audio 01"/></div>
+		<div class="row">
+			<button id="cancel" result="cancel">Cancel</button>
+			<button id="ok" class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>
