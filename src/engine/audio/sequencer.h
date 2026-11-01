@@ -114,9 +114,33 @@ namespace gnubase::engine
 		const uint16_t* soundingBegin() const noexcept { return m_sounding.data(); }
 		const uint16_t* soundingEnd() const noexcept { return m_sounding.data() + m_soundingCount; }
 
-		// Audio thread: forgets the sounding notes without ending them, after the instrument they sounded on ended
+		// Audio thread: whether the note sounds, from the track's parts or held through its input (a note-on came in
+		// and no note-off yet; a stop ends those too).
+		bool holds(uint16_t index) const noexcept { return m_inputHeld[index] || sounds(index); }
+
+		// Audio thread: forgets the notes it holds without ending them, after the instrument they sounded on ended
 		// them (InstrumentChannel::releaseNotesOf).
-		void forget() noexcept { m_soundingCount = 0; }
+		void forget() noexcept
+		{
+			m_soundingCount = 0;
+			m_inputHeld.fill(false);
+		}
+
+		// Audio thread, before the first block of a graph, after its releases: the serial of the instrument channel its
+		// track plays on in that graph (InstrumentChannel::serial), or 0. When that changes (the instrument replaced,
+		// the instrument track removed, routed from nowhere), the notes its input holds sounded on another instrument
+		// or none, so it forgets them: they mustn't keep the same notes of other sources from ending on this one
+		// (#391). Its parts' notes still end. Serials are never reused, unlike the addresses of freed channels.
+		void playOn(uint64_t instrument) noexcept
+		{
+			if (instrument == m_instrument)
+				return;
+			m_inputHeld.fill(false);
+			m_instrument = instrument;
+		}
+
+		// Audio thread: the serial of the instrument channel it played on in the graph that ran last (playOn).
+		uint64_t playsOn() const noexcept { return m_instrument; }
 
 		// Audio thread: the events played into the track in this block (midi.inject), as from its MIDI input. They go
 		// out after the events it receives and before its parts' events, also while the transport stands. The audio
@@ -169,6 +193,8 @@ namespace gnubase::engine
 		size_t m_chasedSent = 0;
 		std::array<uint32_t, g_notes> m_chasedNotes{}; // while chasing: the notes to start, as indices into notes
 		graph::EventBuffer m_input;
+		std::array<bool, g_notes> m_inputHeld{}; // notes its input sent a note-on for and no note-off since
+		uint64_t m_instrument = 0;               // playOn: where its notes went in the graph that runs
 	};
 
 	// An instrument track's channel: its own parts' events and those of the MIDI tracks routed to it, played by its
@@ -176,13 +202,19 @@ namespace gnubase::engine
 	class InstrumentChannel : public graph::Processor
 	{
 	public:
-		InstrumentChannel(std::shared_ptr<MidiSequencer> sequencer, std::shared_ptr<graph::Processor> instrument);
+		// The audio engine gives each channel it makes a new serial, for MidiSequencer::playOn.
+		InstrumentChannel(std::shared_ptr<MidiSequencer> sequencer, std::shared_ptr<graph::Processor> instrument,
+			uint64_t serial = 0);
 
 		void process(const graph::ProcessContext& context) noexcept override;
 
+		uint64_t serial() const noexcept { return m_serial; }
+
 		// Audio thread, before the first block of the graph without a MIDI track that was routed here (removed or
-		// rerouted): ends the notes that track's sequencer started here at the next block, except those this
-		// channel's own sequencer or one of the staying tracks' also holds. The departed sequencer forgets them.
+		// rerouted), and before the sequencers' playOn: ends the notes that track's sequencer started here, from its
+		// parts or its input, at the next block, except those this channel's own sequencer or one of the staying
+		// tracks' also holds. A staying track counts only if it played here in the graph that ran last: one that
+		// arrives in this graph holds notes from somewhere else. The departed sequencer forgets them.
 		void releaseNotesOf(
 			MidiSequencer& departed, const std::vector<std::shared_ptr<MidiSequencer>>& staying) noexcept;
 
@@ -195,6 +227,7 @@ namespace gnubase::engine
 	private:
 		std::shared_ptr<MidiSequencer> m_sequencer;
 		std::shared_ptr<graph::Processor> m_instrument;
+		uint64_t m_serial = 0;
 		graph::EventBuffer m_events;
 		std::array<bool, MidiSequencer::g_notes> m_held{};   // notes the instrument got a note-on for and no note-off
 		std::array<bool, MidiSequencer::g_notes> m_ending{}; // held notes to end as soon as the buffer has room

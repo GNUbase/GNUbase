@@ -1,0 +1,320 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The add track dialog (#80, docs/features/add-track.md, reference manual pp. 139-161, 197-198): a page per track
+     type, which the list on the left selects, with the settings the reference has for it. app::AppUi opens it (the UI
+     command project.addTrack, the project window's Add Track button). Its Lua reads the busses, tracks, formats and
+     instruments from the engine and adds the tracks with track.add, Count of them in one history.transaction, so MCP
+     and Lua scripts add exactly the same tracks. -->
+<rml>
+<head>
+	<title>Add Track</title>
+	<style>
+		dialog
+		{
+			width: 540dp;
+		}
+
+		.content
+		{
+			display: flex;
+			height: 260dp;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#track-types
+		{
+			width: 120dp;
+			margin-right: 12dp;
+		}
+
+		#track-fields
+		{
+			flex: 1;
+		}
+
+		.field
+		{
+			display: flex;
+			align-items: center;
+			height: 28dp;
+		}
+
+		.field .label
+		{
+			width: 120dp;
+		}
+
+		.field select,
+		.field input.text
+		{
+			width: 240dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#add-track-message
+		{
+			flex: 1;
+		}
+
+		.row label
+		{
+			margin: 0 6dp 0 4dp;
+		}
+
+		.row button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		AddTrack = {}
+		local dialog = AddTrack
+
+		-- The settings of each page, in the order they show.
+		local pages = {
+			audio = {"input", "format", "output", "name", "count"},
+			instrument = {"instrument", "output", "name", "count"},
+			midi = {"output", "name", "count"},
+			group = {"format", "output", "name", "count"},
+			effect = {"format", "output", "name", "count"},
+			folder = {"groupChannel", "format", "output", "name", "count"},
+			marker = {"name", "count"},
+			ruler = {"timeFormat", "count"},
+		}
+
+		local timeFormatNames = {barsBeats = "Bars+Beats", seconds = "Seconds", timecode = "Timecode",
+			samples = "Samples", userFrames = "fps (User)"}
+
+		-- The reference adds at most 100 tracks at a time (manual p. 140).
+		local maxCount = 100
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local function option(value, text, selected)
+			return '<option value="' .. escape(value) .. '"' .. (selected and " selected" or "") .. ">" ..
+				escape(text) .. "</option>"
+		end
+
+		local function dropdown(id, options)
+			return '<select id="' .. id .. '">' .. table.concat(options) .. "</select>"
+		end
+
+		local function field(label, control)
+			return '<div class="field"><span class="label">' .. escape(label) .. "</span>" .. control .. "</div>"
+		end
+
+		-- A form control's value: the value attribute that RmlUi keeps up to date; nil without the control.
+		local function valueOf(document, id)
+			local element = document:GetElementById(id)
+			local value = element and element:GetAttribute("value")
+			return value ~= nil and tostring(value) or nil
+		end
+
+		local function idOf(document, id)
+			local value = valueOf(document, id)
+			return value and math.tointeger(tonumber(value))
+		end
+
+		-- Where a new track's channel can play: output busses and group channels, or for MIDI tracks the instrument
+		-- channels. The engine's defaults are selected: the main output, or for MIDI none.
+		local function outputs(project, type)
+			if type == "midi" then
+				local options = {option(0, "Not Connected", true)}
+				for _, track in ipairs(project.tracks) do
+					if track.type == "instrument" then
+						options[#options + 1] = option(track.channel, track.name)
+					end
+				end
+				return options
+			end
+			local options = {option(0, "No Bus")}
+			for _, bus in ipairs(project.busses) do
+				if bus.direction == "output" then
+					options[#options + 1] = option(bus.id, bus.name, bus.mainMix)
+				end
+			end
+			for _, track in ipairs(project.tracks) do
+				if (track.type == "group" or track.type == "folder") and track.channel ~= 0 then
+					options[#options + 1] = option(track.channel, track.name)
+				end
+			end
+			return options
+		end
+
+		-- The controls of the settings, by name.
+		local builders = {
+			input = function(project)
+				local options = {option(0, "No Bus")}
+				local first = true
+				for _, bus in ipairs(project.busses) do
+					if bus.direction == "input" then
+						options[#options + 1] = option(bus.id, bus.name, first) -- the engine's default
+						first = false
+					end
+				end
+				return field("Audio Inputs", dropdown("track-input", options))
+			end,
+			instrument = function()
+				local options = {option("", "No Instrument", true)}
+				for _, processor in ipairs(dialog.instruments) do
+					options[#options + 1] = option(processor.id, processor.name)
+				end
+				return field("Instrument", dropdown("track-instrument", options))
+			end,
+			groupChannel = function()
+				return field("Group Channel", '<input type="checkbox" id="track-group-channel" ' ..
+					'onchange="AddTrack.groupChannel(document)"/>')
+			end,
+			format = function()
+				local options = {}
+				for _, name in ipairs(dialog.formats) do
+					options[#options + 1] = option(name, name, name == "stereo")
+				end
+				return field("Configuration", dropdown("track-format", options))
+			end,
+			output = function(project, type)
+				return field("Output Routing", dropdown("track-output", outputs(project, type)))
+			end,
+			timeFormat = function()
+				local options = {}
+				for index, name in ipairs(dialog.timeFormats) do
+					options[#options + 1] = option(name, timeFormatNames[name] or name, index == 1)
+				end
+				return field("Time Format", dropdown("track-time-format", options))
+			end,
+			name = function()
+				return field("Name", '<input type="text" id="track-name"/>')
+			end,
+			count = function()
+				return field("Count", '<valuefield id="track-count" value="1" min="1" max="' .. maxCount ..
+					'" step="1" decimals="0"/>')
+			end,
+		}
+
+		-- Reads what the pages offer from the engine and shows the audio page.
+		function dialog.load(document)
+			local parameters
+			for _, command in ipairs(gnubase.engine.commands().commands) do
+				if command.name == "track.add" then
+					parameters = command.parameters.properties
+				end
+			end
+			dialog.formats = parameters.format.enum
+			dialog.timeFormats = parameters.timeFormat.enum
+			dialog.instruments = {}
+			for _, processor in ipairs(gnubase.processor.list().processors) do
+				if processor.instrument then
+					dialog.instruments[#dialog.instruments + 1] = processor
+				end
+			end
+			dialog.show(document, "audio")
+		end
+
+		-- Shows a track type's page, with the project's busses and channels as they are now.
+		function dialog.show(document, type)
+			dialog.type = type
+			local project = gnubase.project.get()
+			local rml = {}
+			for _, name in ipairs(pages[type]) do
+				rml[#rml + 1] = builders[name](project, type)
+			end
+			document:GetElementById("track-fields").inner_rml = table.concat(rml)
+			document:GetElementById("add-track-message").inner_rml = ""
+			dialog.groupChannel(document)
+		end
+
+		-- A folder's configuration and output apply to its group channel only.
+		function dialog.groupChannel(document)
+			local checkbox = document:GetElementById("track-group-channel")
+			if checkbox == nil then
+				return
+			end
+			for _, id in ipairs{"track-format", "track-output"} do
+				local element = document:GetElementById(id)
+				if checkbox:HasAttribute("checked") then
+					element:RemoveAttribute("disabled")
+				else
+					element:SetAttribute("disabled", "")
+				end
+			end
+		end
+
+		-- track.add's parameters for what the page shows.
+		local function parameters(document)
+			local type = dialog.type
+			local result = {type = type}
+			local name = valueOf(document, "track-name")
+			if name ~= nil and name ~= "" then
+				result.name = name
+			end
+			local channel = true
+			if type == "folder" then
+				channel = document:GetElementById("track-group-channel"):HasAttribute("checked")
+				result.groupChannel = channel
+			end
+			if channel then
+				result.input = idOf(document, "track-input")
+				result.output = idOf(document, "track-output")
+				result.format = valueOf(document, "track-format")
+			end
+			local instrument = valueOf(document, "track-instrument")
+			if instrument ~= nil and instrument ~= "" then
+				result.instrument = instrument
+			end
+			result.timeFormat = valueOf(document, "track-time-format")
+			return result
+		end
+
+		-- Add Track: Count tracks in one undo step. The dialog stays open with Keep Dialog Open, and when the engine
+		-- refuses, with its message.
+		function dialog.add(document)
+			local track = parameters(document)
+			local count = math.floor((tonumber(valueOf(document, "track-count")) or 1) + 0.5)
+			count = math.max(1, math.min(maxCount, count))
+			local commands = {}
+			for index = 1, count do
+				commands[index] = {command = "track.add", parameters = track}
+			end
+			local ok, problem = pcall(gnubase.history.transaction, {description = "Add Track", commands = commands})
+			if not ok then
+				document:GetElementById("add-track-message").inner_rml = escape(problem)
+			elseif document:GetElementById("keep-open"):HasAttribute("checked") then
+				dialog.show(document, dialog.type) -- new group and instrument channels are outputs now
+			else
+				document:Close()
+			end
+		end
+	</script>
+</head>
+<body onload="AddTrack.load(document)">
+	<dialog id="add-track-dialog">
+		<div class="dialog-titlebar">Add Track</div>
+		<div class="content">
+			<listview id="track-types" value="audio" onchange="AddTrack.show(document, element:GetAttribute('value'))">
+				<listitem id="type-audio" value="audio" class="selected">Audio</listitem>
+				<listitem id="type-instrument" value="instrument">Instrument</listitem>
+				<listitem id="type-midi" value="midi">MIDI</listitem>
+				<listitem id="type-group" value="group">Group</listitem>
+				<listitem id="type-effect" value="effect">Effect</listitem>
+				<listitem id="type-folder" value="folder">Folder</listitem>
+				<listitem id="type-marker" value="marker">Marker</listitem>
+				<listitem id="type-ruler" value="ruler">Ruler</listitem>
+			</listview>
+			<div id="track-fields"/>
+		</div>
+		<div class="row">
+			<div id="add-track-message"/>
+			<input type="checkbox" id="keep-open"/><label for="keep-open">Keep Dialog Open</label>
+			<button id="add-track-cancel" result="cancel">Cancel</button>
+			<button id="add-track-confirm" class="primary" onclick="AddTrack.add(document)">Add Track</button>
+		</div>
+	</dialog>
+</body>
+</rml>
