@@ -108,6 +108,17 @@ namespace gnubase::engine
 	};
 
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
+	// A plugin slot of a channel, as the engine makes and runs its plugin.
+	struct RenderSlot
+	{
+		ObjectId id = 0;
+		std::string plugin; // "<format>:<id>"
+		bool bypass = false;
+		bool active = true;
+		std::map<uint32_t, double> parameters;             // the values set on top of its state
+		std::shared_ptr<const std::vector<uint8_t>> state; // its state from a file, or none
+	};
+
 	struct RenderChannel
 	{
 		ObjectId id = 0;
@@ -138,6 +149,7 @@ namespace gnubase::engine
 		std::vector<RenderController> controllers;    // sorted by position
 		std::vector<RenderPart> midiParts;            // sorted by start
 		std::vector<RenderAutomationLane> automation; // in the order of the lanes' ids
+		std::vector<RenderSlot> slots;                // from top to bottom
 	};
 
 	// A channel volume in dB as a linear gain; the fader's bottom, g_minChannelVolume, is silence.

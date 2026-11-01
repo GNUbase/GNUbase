@@ -448,11 +448,11 @@ TEST_CASE("the automation player turns curves into parameter and controller even
 	auto automation = std::make_unique<ChannelAutomation>();
 	// The fader follows a straight ramp with one event; instrument parameters and controllers get the value of each
 	// g_automationInterval frame at that frame.
-	automation->lanes.push_back({{AutomationTargetType::Volume, 0, 0, 0}, Kind::Fader, ChannelFader::Volume, 1.0, 0.0,
-		2.0, {{100, 0.5, AutomationShape::Linear, 0.0}, {300, 1.5, AutomationShape::Step, 0.0}}});
-	automation->lanes.push_back({{AutomationTargetType::Instrument, 2, 0, 0}, Kind::Instrument, 2, 0.25, 0.0, 1.0,
+	automation->lanes.push_back({{AutomationTargetType::Volume, 0, 0, 0, 0}, Kind::Fader, ChannelFader::Volume, 1.0,
+		0.0, 2.0, {{100, 0.5, AutomationShape::Linear, 0.0}, {300, 1.5, AutomationShape::Step, 0.0}}});
+	automation->lanes.push_back({{AutomationTargetType::Instrument, 2, 0, 0, 0}, Kind::Instrument, 2, 0.25, 0.0, 1.0,
 		{{0, 0.0, AutomationShape::Linear, 0.0}, {128, 1.0, AutomationShape::Linear, 0.0}}});
-	automation->lanes.push_back({{AutomationTargetType::Controller, 0, 7, 3}, Kind::Midi, 0, 0.0, 0.0, 1.0,
+	automation->lanes.push_back({{AutomationTargetType::Controller, 0, 7, 3, 0}, Kind::Midi, 0, 0.0, 0.0, 1.0,
 		{{100, 0.0, AutomationShape::Linear, 0.0}, {300, 1.0, AutomationShape::Step, 0.0},
 			{400, 0.0, AutomationShape::Step, 0.0}, {400, 0.5, AutomationShape::Step, 0.0}}});
 	player.setAutomation(std::move(automation));
@@ -747,10 +747,10 @@ TEST_CASE(
 	const auto automation = []()
 	{
 		auto result = std::make_unique<ChannelAutomation>();
-		result->lanes.push_back({{AutomationTargetType::Instrument, 1, 0, 0}, Kind::Instrument, 1, 0.0, 0.0, 1.0,
+		result->lanes.push_back({{AutomationTargetType::Instrument, 1, 0, 0, 0}, Kind::Instrument, 1, 0.0, 0.0, 1.0,
 			{{0, 0.0, AutomationShape::Linear, 0.0}, {1280, 1.0, AutomationShape::Curve, 0.5},
 				{2000, 0.25, AutomationShape::Step, 0.0}}});
-		result->lanes.push_back({{AutomationTargetType::Controller, 0, 1, 0}, Kind::Midi, 0, 0.0, 0.0, 1.0,
+		result->lanes.push_back({{AutomationTargetType::Controller, 0, 1, 0, 0}, Kind::Midi, 0, 0.0, 0.0, 1.0,
 			{{100, 0.0, AutomationShape::Linear, 0.0}, {1500, 1.0, AutomationShape::Curve, -0.5},
 				{2500, 0.0, AutomationShape::Step, 0.0}}});
 		return result;
@@ -785,7 +785,8 @@ TEST_CASE("a new source processor gets every automation value again", "[unit]")
 	AutomationPlayer player;
 	auto automation = std::make_unique<ChannelAutomation>();
 	automation->instrument = "testSynth";
-	automation->lanes.push_back({{AutomationTargetType::Instrument, 0, 0, 0}, Kind::Instrument, 0, 0.25, 0.0, 1.0, {}});
+	automation->lanes.push_back(
+		{{AutomationTargetType::Instrument, 0, 0, 0, 0}, Kind::Instrument, 0, 0.25, 0.0, 1.0, {}});
 	player.setAutomation(std::move(automation));
 
 	// The new automation reaches the audio thread while the old graph still plays, with the old instrument.
@@ -824,7 +825,7 @@ TEST_CASE("MIDI controller ramps send only changes and leave room for notes", "[
 	{
 		AutomationPlayer player;
 		auto automation = std::make_unique<ChannelAutomation>();
-		automation->lanes.push_back({{AutomationTargetType::Controller, 0, 7, 0}, Kind::Midi, 0, 0.0, 0.0, 1.0,
+		automation->lanes.push_back({{AutomationTargetType::Controller, 0, 7, 0, 0}, Kind::Midi, 0, 0.0, 0.0, 1.0,
 			{{0, 0.0, AutomationShape::Linear, 0.0},
 				{int64_t{blockSize} * 2, 5.0 / 128.0, AutomationShape::Step, 0.0}}});
 		player.setAutomation(std::move(automation));
@@ -839,7 +840,7 @@ TEST_CASE("MIDI controller ramps send only changes and leave room for notes", "[
 	auto state = std::make_shared<ChannelState>();
 	auto automation = std::make_unique<ChannelAutomation>();
 	for (uint8_t number = 0; number < 16; ++number)
-		automation->lanes.push_back({{AutomationTargetType::Controller, 0, number, 0}, Kind::Midi, 0, 0.0, 0.0, 1.0,
+		automation->lanes.push_back({{AutomationTargetType::Controller, 0, number, 0, 0}, Kind::Midi, 0, 0.0, 0.0, 1.0,
 			{{0, 0.0, AutomationShape::Linear, 0.0}, {blockSize, 1.0, AutomationShape::Step, 0.0}}});
 	state->automation.setAutomation(std::move(automation));
 	auto sequencer = std::make_shared<MidiSequencer>();

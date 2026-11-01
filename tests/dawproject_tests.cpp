@@ -15,6 +15,7 @@
 #include <cmath>
 #include <filesystem>
 #include <map>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1140,4 +1141,71 @@ TEST_CASE("automation on linear tracks is written in seconds; numbers that aren'
 		for (const Json& point : points)
 			CHECK(std::isfinite(point.at("value").get<double>()));
 	}
+}
+
+TEST_CASE("built-in plugins in slots are devices in project.xml, and come back from it", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const Json audio = run(client, "track.add", {{"type", "audio"}, {"name", "Audio"}});
+	const ObjectId channel = idOf(audio, "channel");
+	const ObjectId gain =
+		idOf(run(client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:gainPan"}}), "slot");
+	run(client, "parameter.set",
+		{{"channel", channel}, {"target", {{"type", "plugin"}, {"slot", gain}, {"parameter", 0}}}, {"value", -3.0}});
+	run(client, "plugin.set", {{"slot", gain}, {"bypass", true}});
+	const ObjectId eq = idOf(run(client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:eq"}}), "slot");
+	run(client, "plugin.set", {{"slot", eq}, {"active", false}});
+	const std::string file = utf8(dir.path() / "slots.dawproject");
+	run(client, "project.save", {{"path", file}});
+
+	std::map<std::string, std::string> entries = readZip(file);
+	pugi::xml_document xml;
+	REQUIRE(xml.load_string(entries.at("project.xml").c_str()));
+	pugi::xml_node devices = xml.child("Project")
+								 .child("Structure")
+								 .find_child_by_attribute("Track", "name", "Audio")
+								 .child("Channel")
+								 .child("Devices");
+	pugi::xml_node first = devices.child("BuiltinDevice");
+	CHECK(std::string(first.attribute("deviceID").as_string()) == "builtin:gainPan");
+	CHECK(std::string(first.attribute("deviceRole").as_string()) == "audioFX");
+	CHECK(first.attribute("loaded").as_bool());
+	CHECK(!first.child("Enabled").attribute("value").as_bool(true));
+	const pugi::xml_node parameter = first.child("Parameters").child("RealParameter");
+	CHECK(parameter.attribute("parameterID").as_uint(99) == 0);
+	CHECK(parameter.attribute("value").as_double() == -3.0);
+	CHECK(!first.next_sibling("BuiltinDevice").attribute("loaded").as_bool(true));
+
+	// Another application's file: its own devices and ones this build doesn't have are left out, values stop at
+	// their parameter's range, and a channel takes at most 16.
+	pugi::xml_node unknown = devices.append_child("BuiltinDevice");
+	unknown.append_attribute("deviceID") = "builtin:nothing";
+	devices.append_child("Vst3Plugin").append_attribute("deviceID") = "0123456789ABCDEF0123456789ABCDEF";
+	for (int i = 0; i < 20; ++i)
+	{
+		pugi::xml_node extra = devices.append_child("BuiltinDevice");
+		extra.append_attribute("deviceID") = "builtin:gainPan";
+		pugi::xml_node real = extra.append_child("Parameters").append_child("RealParameter");
+		real.append_attribute("parameterID") = 0;
+		real.append_attribute("value") = 1000.0;
+	}
+	std::ostringstream changed;
+	xml.save(changed);
+	entries["project.xml"] = changed.str();
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	const std::string other = utf8(dir.path() / "other.dawproject");
+	writeZip(other, entries);
+	run(client, "project.load", {{"path", other}});
+	const Json loaded = run(client, "project.get");
+	const Json slots = run(client, "plugin.list", {{"channel", loaded.at("channels")[0].at("id")}}).at("slots");
+	REQUIRE(slots.size() == 16);
+	CHECK(slots[0].at("plugin") == "builtin:gainPan");
+	CHECK(slots[0].at("name") == "Gain and pan");
+	CHECK(slots[0].at("bypass") == true);
+	CHECK(slots[0].at("parameters") == Json::array({{{"parameter", 0}, {"value", -3.0}}}));
+	CHECK(slots[1].at("plugin") == "builtin:eq");
+	CHECK(slots[1].at("active") == false);
+	CHECK(slots[2].at("parameters") == Json::array({{{"parameter", 0}, {"value", 12.0}}}));
 }

@@ -8,8 +8,10 @@
 #include "engine/time/tempomap.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -105,6 +107,31 @@ namespace gnubase::engine
 		// soloed, only soloed ones, where they play through and what plays into them are heard.
 		bool mute = false;
 		bool solo = false;
+		// Audio channels: the plugin slots, from top to bottom; the audio passes through them before the fader.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		std::vector<ObjectId> slots = {};
+	};
+
+	// A channel has at most this many plugin slots (reference manual p. 544).
+	inline constexpr size_t g_maxSlots = 16;
+
+	// A plugin in one of a channel's slots (#282). The plugin itself lives in the engine, a built-in one in the
+	// engine's process and any other in a plugin host process; the document keeps what makes it again.
+	struct Slot
+	{
+		ObjectId id = 0;
+		ObjectId channel = 0;
+		std::string plugin;  // "<format>:<id>", e.g. "builtin:eq"; one this build doesn't know stays and passes audio
+		std::string name;    // the plugin's name when it was inserted, for plugins this build doesn't know
+		bool bypass = false; // the plugin keeps processing, but the audio passes it unchanged
+		bool active = true;  // off: the plugin stays in its slot, deactivated, and the audio passes it unchanged
+		// The values set for its parameters (parameter.set), by parameter id, on top of its state.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see Channel::instrumentParameters
+		std::map<uint32_t, double> parameters = {};
+		// The plugin's own state from a file, loaded before the parameters; none: its defaults. Shared, since copies
+		// of the project (undo, render snapshots) don't change it.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see Channel::instrumentParameters
+		std::shared_ptr<const std::vector<uint8_t>> state = {};
 	};
 
 	// The fader's range: its bottom is silence, its top the project's maximum volume, at most this.
@@ -338,6 +365,7 @@ namespace gnubase::engine
 		PanLeft,         // the combined panner's position of the left channel, -1 to 1
 		PanRight,        // and of the right channel
 		Instrument,      // a parameter of the channel's built-in instrument, in its range
+		Plugin,          // a parameter of the plugin in one of the channel's slots, in its range: slot and parameter
 		Controller,      // a MIDI control change: number and channel; 0 to 1
 		PitchBend,       // channel; 0 to 1, 0.5 is no bend
 		ChannelPressure, // channel; 0 to 1
@@ -346,9 +374,10 @@ namespace gnubase::engine
 	struct AutomationTarget
 	{
 		AutomationTargetType type = AutomationTargetType::Volume;
-		uint32_t parameter = 0; // Instrument: the parameter's id
+		uint32_t parameter = 0; // Instrument and Plugin: the parameter's id
 		uint8_t number = 0;     // Controller: 0-127
 		uint8_t channel = 0;    // the MIDI types: 0-15
+		ObjectId slot = 0;      // Plugin: the slot
 	};
 
 	// The shape of the curve from an automation point to the next one.
@@ -397,6 +426,7 @@ namespace gnubase::engine
 		std::vector<ObjectId> tracks; // top-level tracks, from top to bottom
 		std::map<ObjectId, Track> trackById;
 		std::map<ObjectId, Channel> channels;
+		std::map<ObjectId, Slot> slots;
 		std::map<ObjectId, MediaFile> media;
 		std::map<ObjectId, Clip> clips;
 		std::map<ObjectId, AudioEvent> audioEvents;
@@ -451,10 +481,18 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor, a.recordEnable,
-				   a.mute, a.solo) ==
+				   a.mute, a.solo, a.slots) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable,
-				b.mute, b.solo);
+				b.mute, b.solo, b.slots);
+	}
+
+	inline bool operator==(const Slot& a, const Slot& b)
+	{
+		const bool sameState = a.state == b.state || (a.state && b.state && *a.state == *b.state);
+		return sameState &&
+			std::tie(a.id, a.channel, a.plugin, a.name, a.bypass, a.active, a.parameters) ==
+			std::tie(b.id, b.channel, b.plugin, b.name, b.bypass, b.active, b.parameters);
 	}
 
 	inline bool operator==(const MediaFile& a, const MediaFile& b)
@@ -533,7 +571,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)
 	{
-		return std::tie(a.type, a.parameter, a.number, a.channel) == std::tie(b.type, b.parameter, b.number, b.channel);
+		return std::tie(a.type, a.parameter, a.slot, a.number, a.channel) ==
+			std::tie(b.type, b.parameter, b.slot, b.number, b.channel);
 	}
 
 	inline bool operator==(const AutomationPoint& a, const AutomationPoint& b)

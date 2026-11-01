@@ -49,6 +49,7 @@ namespace gnubase::engine
 	Json toJson(const Bus& bus);
 	Json toJson(const Track& track);
 	Json toJson(const Channel& channel);
+	Json toJson(const Slot& slot); // its state as base64
 	Json toJson(const MediaFile& media);
 	Json toJson(const Clip& clip);
 	Json toJson(const AudioEvent& event);

@@ -61,15 +61,26 @@ namespace gnubase::engine
 			{
 				const auto pan = [](const char* name, double defaultValue)
 				{ return processors::ParameterInfo{0, name, -1.0, 1.0, defaultValue, {}, false, {}}; };
-				parameters.push_back({{AutomationTargetType::Volume, 0, 0, 0},
+				parameters.push_back({{AutomationTargetType::Volume, 0, 0, 0, 0},
 					{0, "Volume", g_minChannelVolume, project.maxVolume, 0.0, "dB", false, {}}});
-				parameters.push_back({{AutomationTargetType::Pan, 0, 0, 0}, pan("Pan", 0.0)});
-				parameters.push_back({{AutomationTargetType::PanLeft, 0, 0, 0}, pan("Pan left", -1.0)});
-				parameters.push_back({{AutomationTargetType::PanRight, 0, 0, 0}, pan("Pan right", 1.0)});
+				parameters.push_back({{AutomationTargetType::Pan, 0, 0, 0, 0}, pan("Pan", 0.0)});
+				parameters.push_back({{AutomationTargetType::PanLeft, 0, 0, 0, 0}, pan("Pan left", -1.0)});
+				parameters.push_back({{AutomationTargetType::PanRight, 0, 0, 0, 0}, pan("Pan right", 1.0)});
 			}
 			if (const processors::BuiltinInfo* instrument = processors::findBuiltin(channel.instrument))
 				for (const processors::ParameterInfo& parameter : instrument->parameters)
-					parameters.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0}, parameter});
+					parameters.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0, 0}, parameter});
+			// The plugins in its slots, top to bottom: built-in ones; others report theirs once they run (#283).
+			const std::string prefix = "builtin:";
+			for (const ObjectId id : channel.slots)
+			{
+				const Slot& slot = project.slots.at(id);
+				if (slot.plugin.compare(0, prefix.size(), prefix) != 0)
+					continue;
+				if (const processors::BuiltinInfo* plugin = processors::findBuiltin(slot.plugin.substr(prefix.size())))
+					for (const processors::ParameterInfo& parameter : plugin->parameters)
+						parameters.push_back({{AutomationTargetType::Plugin, parameter.id, 0, 0, id}, parameter});
+			}
 			return parameters;
 		}
 
@@ -83,11 +94,13 @@ namespace gnubase::engine
 			if (!type.has_value() ||
 				(*type != AutomationTargetType::Volume && *type != AutomationTargetType::Pan &&
 					*type != AutomationTargetType::PanLeft && *type != AutomationTargetType::PanRight &&
-					*type != AutomationTargetType::Instrument))
-				throw CommandError("target.type must be volume, pan, panLeft, panRight or instrument");
-			const bool parameter = *type == AutomationTargetType::Instrument;
+					*type != AutomationTargetType::Instrument && *type != AutomationTargetType::Plugin))
+				throw CommandError("target.type must be volume, pan, panLeft, panRight, instrument or plugin");
+			const bool plugin = *type == AutomationTargetType::Plugin;
+			const bool parameter = *type == AutomationTargetType::Instrument || plugin;
 			for (const auto& item : json.items())
-				require(item.key() == "type" || (item.key() == "parameter" && parameter),
+				require(item.key() == "type" || (item.key() == "parameter" && parameter) ||
+						(item.key() == "slot" && plugin),
 					"target." + item.key() + " doesn't belong to a " + json.at("type").get<std::string>() + " target");
 			AutomationTarget result;
 			result.type = *type;
@@ -96,6 +109,12 @@ namespace gnubase::engine
 				require(json.contains("parameter") && isParameterId(json.at("parameter")),
 					"target.parameter must be a parameter id (see parameter.list)");
 				result.parameter = json.at("parameter").get<uint32_t>();
+			}
+			if (plugin)
+			{
+				require(json.contains("slot") && json.at("slot").is_number_unsigned(),
+					"target.slot must be a slot id (see plugin.list)");
+				result.slot = json.at("slot").get<ObjectId>();
 			}
 			return result;
 		}
@@ -107,14 +126,27 @@ namespace gnubase::engine
 				[&target](const ChannelParameter& parameter) { return parameter.target == target; });
 			if (found != parameters.end())
 				return *found;
+			if (target.type == AutomationTargetType::Plugin)
+			{
+				const auto slot = project.slots.find(target.slot);
+				require(slot != project.slots.end() && slot->second.channel == channel.id,
+					"channel " + idText(channel.id) + " has no slot " + idText(target.slot));
+				throw CommandError(slot->second.plugin + " has no parameter " + std::to_string(target.parameter));
+			}
 			if (target.type != AutomationTargetType::Instrument)
 				throw CommandError("a MIDI channel has no volume or pan");
 			require(!channel.instrument.empty(), "channel " + idText(channel.id) + " plays no instrument");
 			throw CommandError(channel.instrument + " has no parameter " + std::to_string(target.parameter));
 		}
 
-		double value(const Channel& channel, const ChannelParameter& parameter)
+		double value(const Project& project, const Channel& channel, const ChannelParameter& parameter)
 		{
+			if (parameter.target.type == AutomationTargetType::Plugin)
+			{
+				const std::map<uint32_t, double>& values = project.slots.at(parameter.target.slot).parameters;
+				const auto set = values.find(parameter.target.parameter);
+				return set != values.end() ? set->second : parameter.info.defaultValue;
+			}
 			switch (parameter.target.type)
 			{
 			case AutomationTargetType::Volume:
@@ -133,8 +165,13 @@ namespace gnubase::engine
 			}
 		}
 
-		void setValue(Channel& channel, const ChannelParameter& parameter, double value)
+		void setValue(Project& project, Channel& channel, const ChannelParameter& parameter, double value)
 		{
+			if (parameter.target.type == AutomationTargetType::Plugin)
+			{
+				project.slots.at(parameter.target.slot).parameters[parameter.target.parameter] = value;
+				return;
+			}
 			switch (parameter.target.type)
 			{
 			case AutomationTargetType::Volume:
@@ -155,10 +192,10 @@ namespace gnubase::engine
 			}
 		}
 
-		Json describe(const Channel& channel, const ChannelParameter& parameter)
+		Json describe(const Project& project, const Channel& channel, const ChannelParameter& parameter)
 		{
 			const processors::ParameterInfo& info = parameter.info;
-			const double current = value(channel, parameter);
+			const double current = value(project, channel, parameter);
 			return {{"target", toJson(parameter.target)}, {"name", info.name}, {"minimum", info.minimum},
 				{"maximum", info.maximum}, {"default", info.defaultValue}, {"unit", info.unit},
 				{"stepped", info.stepped}, {"options", info.options}, {"value", current},
@@ -170,7 +207,7 @@ namespace gnubase::engine
 			const Channel& channel = findChannel(project, context.parameters());
 			Json parameters = Json::array();
 			for (const ChannelParameter& parameter : channelParameters(project, channel))
-				parameters.push_back(describe(channel, parameter));
+				parameters.push_back(describe(project, channel, parameter));
 			return {{"parameters", std::move(parameters)}};
 		}
 
@@ -178,7 +215,8 @@ namespace gnubase::engine
 		{
 			const Json& parameters = context.parameters();
 			const Channel& channel = findChannel(project, parameters);
-			return {{"parameter", describe(channel, findParameter(project, channel, target(parameters.at("target"))))}};
+			return {{"parameter",
+				describe(project, channel, findParameter(project, channel, target(parameters.at("target"))))}};
 		}
 
 		Json setParameter(Project& project, CommandContext& context)
@@ -205,9 +243,16 @@ namespace gnubase::engine
 					throw CommandError("text \"" + text + "\" isn't a value of " + info.name);
 				newValue = *parsed;
 			}
-			setValue(channel, parameter, newValue);
-			context.emit("channel.changed", {{"channel", toJson(channel)}});
-			return {{"parameter", describe(channel, parameter)}};
+			setValue(project, channel, parameter, newValue);
+			if (parameter.target.type == AutomationTargetType::Plugin)
+			{
+				Json slot = toJson(project.slots.at(parameter.target.slot));
+				slot.erase("state");
+				context.emit("plugin.changed", {{"slot", std::move(slot)}});
+			}
+			else
+				context.emit("channel.changed", {{"channel", toJson(channel)}});
+			return {{"parameter", describe(project, channel, parameter)}};
 		}
 	}
 
@@ -215,8 +260,9 @@ namespace gnubase::engine
 	{
 		const Json idSchema = {{"type", "integer"}};
 		const Json targetSchema = objectSchema(
-			{{"type", {{"type", "string"}, {"enum", {"volume", "pan", "panLeft", "panRight", "instrument"}}}},
-				{"parameter", {{"type", "integer"}, {"minimum", 0}, {"maximum", UINT32_MAX}}}},
+			{{"type", {{"type", "string"}, {"enum", {"volume", "pan", "panLeft", "panRight", "instrument", "plugin"}}}},
+				{"parameter", {{"type", "integer"}, {"minimum", 0}, {"maximum", UINT32_MAX}}},
+				{"slot", {{"type", "integer"}, {"minimum", 0}}}},
 			{"type"});
 		const Json parameterResult = {
 			{"type", "object"}, {"properties", {{"parameter", {{"type", "object"}}}}}, {"required", {"parameter"}}};
@@ -225,7 +271,8 @@ namespace gnubase::engine
 			{"parameter.list", 1,
 				"The automatable parameters of a channel: on channels with audio the fader's volume (in dB, up to the "
 				"project's maxVolume), pan, panLeft and panRight (-1 to 1, see channel.set), and on instrument "
-				"tracks the parameters of their built-in instrument (see processor.list; plugins come later). Each "
+				"tracks the parameters of their built-in instrument (see processor.list), then those of the built-in "
+				"plugins in its slots, top to bottom, with targets of type plugin that name the slot. Each "
 				"has its target, as automationLane.add takes it, its name, minimum, maximum, default, unit, whether "
 				"it is stepped (whole numbers only), options (the names of a stepped parameter's values from the "
 				"minimum on, if it has any), its static value and text, the value as it is displayed. Automation "

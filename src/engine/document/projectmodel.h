@@ -74,6 +74,7 @@ namespace gnubase::engine
 		Json importAudioFiles(Project& project, CommandContext& context, Jobs& jobs);
 		void registerFadeCommands(Engine& engine);      // fadeedits.cpp: fades, crossfades and auto fades
 		void registerParameterCommands(Engine& engine); // parameters.cpp: parameter.list, parameter.get, parameter.set
+		void registerSlotCommands(Engine& engine);      // slotcommands.cpp: plugin.*
 		void registerEventEditCommands(Engine& engine); // eventedits.cpp: event.*, parts and events (#85)
 		void record(std::string action, const Project& before, CommandContext& context);
 		Json undoOrRedo(CommandContext& context, Direction direction);

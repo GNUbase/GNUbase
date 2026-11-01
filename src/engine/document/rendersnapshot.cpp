@@ -134,6 +134,11 @@ namespace gnubase::engine
 			render.format = channel.format;
 			render.instrument = channel.instrument;
 			render.instrumentParameters = channel.instrumentParameters;
+			for (const ObjectId id : channel.slots)
+			{
+				const Slot& slot = project.slots.at(id);
+				render.slots.push_back({slot.id, slot.plugin, slot.bypass, slot.active, slot.parameters, slot.state});
+			}
 			render.volume = volumeGain(channel.volume);
 			render.pan = channel.pan;
 			render.stereoPanner = channel.panner;

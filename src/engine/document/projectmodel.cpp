@@ -453,6 +453,8 @@ namespace gnubase::engine
 				target.parameter = static_cast<uint32_t>(parameter);
 				break;
 			}
+			case AutomationTargetType::Plugin:
+				throw CommandError("plugin parameters can't be automated yet (#70)");
 			case AutomationTargetType::Controller:
 				only({"number", "channel"});
 				require(midi, "MIDI controllers are automated on MIDI and instrument tracks");
@@ -492,6 +494,7 @@ namespace gnubase::engine
 				throw CommandError("the instrument of automation lane " + idText(lane.id) + " has no parameter " +
 					std::to_string(lane.target.parameter) + " any more");
 			}
+			case AutomationTargetType::Plugin: // not automated yet (#70)
 			case AutomationTargetType::Controller:
 			case AutomationTargetType::PitchBend:
 			case AutomationTargetType::ChannelPressure:
@@ -860,6 +863,14 @@ namespace gnubase::engine
 				Channel channel = project.channels.at(copy.channel);
 				channel.id = project.newId();
 				channel.track = copy.id;
+				for (ObjectId& slotId : channel.slots)
+				{
+					Slot slot = project.slots.at(slotId);
+					slot.id = project.newId();
+					slot.channel = channel.id;
+					slotId = slot.id;
+					project.slots[slot.id] = std::move(slot);
+				}
 				channels[copy.channel] = channel.id;
 				copy.channel = channel.id;
 				project.channels[channel.id] = std::move(channel);
@@ -1031,6 +1042,9 @@ namespace gnubase::engine
 					marker = marker->second.track == removed ? project.markers.erase(marker) : std::next(marker);
 				for (auto lane = project.automation.begin(); lane != project.automation.end();)
 					lane = lane->second.track == removed ? project.automation.erase(lane) : std::next(lane);
+				if (gone.channel != 0)
+					for (const ObjectId slot : project.channels.at(gone.channel).slots)
+						project.slots.erase(slot);
 				project.channels.erase(gone.channel);
 				project.trackById.erase(removed);
 				context.emit("track.removed", {{"track", removed}});
@@ -2017,6 +2031,10 @@ namespace gnubase::engine
 			{"track.duplicate", "Duplicate track"},
 			{"channel.set", "Change channel"},
 			{"parameter.set", "Change parameter"},
+			{"plugin.insert", "Insert plugin"},
+			{"plugin.remove", "Remove plugin"},
+			{"plugin.move", "Move plugin"},
+			{"plugin.set", "Change plugin"},
 			{"media.add", "Add media file"},
 			{"media.convert", "Convert media file"},
 			{"media.stretch", "Stretch media file"},
@@ -2864,6 +2882,7 @@ namespace gnubase::engine
 		registerMarkerCommands(engine);
 		registerAutomationCommands(engine);
 		registerParameterCommands(engine);
+		registerSlotCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
 		registerMidiFileCommands(engine);

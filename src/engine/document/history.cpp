@@ -117,8 +117,8 @@ namespace gnubase::engine
 
 	bool ProjectChange::empty() const
 	{
-		return !settingsBefore && tracks.empty() && channels.empty() && media.empty() && clips.empty() &&
-			audioEvents.empty() && midiParts.empty() && markers.empty() && automation.empty();
+		return !settingsBefore && tracks.empty() && channels.empty() && slots.empty() && media.empty() &&
+			clips.empty() && audioEvents.empty() && midiParts.empty() && markers.empty() && automation.empty();
 	}
 
 	ProjectChange difference(const Project& before, const Project& after)
@@ -133,6 +133,7 @@ namespace gnubase::engine
 		}
 		change.tracks = differences(before.trackById, after.trackById);
 		change.channels = differences(before.channels, after.channels);
+		change.slots = differences(before.slots, after.slots);
 		change.media = differences(before.media, after.media);
 		change.clips = differences(before.clips, after.clips);
 		change.audioEvents = differences(before.audioEvents, after.audioEvents);
@@ -183,6 +184,7 @@ namespace gnubase::engine
 		}
 		applyObjects(project.trackById, change.tracks, direction);
 		applyObjects(project.channels, change.channels, direction);
+		applyObjects(project.slots, change.slots, direction);
 		applyObjects(project.media, change.media, direction);
 		applyObjects(project.clips, change.clips, direction);
 		applyObjects(project.audioEvents, change.audioEvents, direction);

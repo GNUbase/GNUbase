@@ -67,6 +67,7 @@ namespace gnubase::engine
 		std::optional<ProjectSettings> settingsAfter;
 		std::vector<ObjectChange<Track>> tracks;
 		std::vector<ObjectChange<Channel>> channels;
+		std::vector<ObjectChange<Slot>> slots;
 		std::vector<ObjectChange<MediaFile>> media;
 		std::vector<ObjectChange<Clip>> clips;
 		std::vector<ObjectChange<AudioEvent>> audioEvents;
