@@ -8,16 +8,22 @@
 #include "ui/eventdisplay.h"
 #include "ui/gpurenderer.h"
 #include "ui/keycommands.h"
+#include "ui/mainmenu.h"
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
 #include "ui/themes.h"
+#include "ui/tracklist.h"
 #include "ui/transport.h"
 #include "ui/uisettings.h"
+
+#include <RmlUi/Core/ObserverPtr.h>
 
 #include <filesystem>
 #include <iosfwd>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace Rml
 {
@@ -47,15 +53,17 @@ namespace gnubase::app
 		AppUi& operator=(AppUi&&) = delete;
 		~AppUi() = default;
 
-		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the event
-		// display in its main zone, whose commands are key commands in the focus zone "project". Throws
-		// std::runtime_error if the document can't be loaded.
+		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the main menu
+		// bar (ui/mainmenu.h) and the track list beside the event display in its main zone, whose commands are key
+		// commands in the focus zone "project". Throws std::runtime_error if the document can't be loaded.
 		ui::EventDisplay& showProject();
+		// The project window's track list, null before showProject.
+		ui::TrackList* trackList() { return m_trackList.get(); }
 
 		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
-		// window.studioSetup, which the main menu's Studio menu will run. Throws std::runtime_error if the document
-		// can't be loaded.
-		Rml::ElementDocument& openStudioSetup(ui::Window& window) const;
+		// window.studioSetup, which the main menu's Studio menu runs. While it is open, this brings it to the front
+		// instead: MCP and Lua can run the command then. Throws std::runtime_error if the document can't be loaded.
+		Rml::ElementDocument& openStudioSetup(ui::Window& window);
 
 		// The transport controls (#90, docs/features/transport-bar.md): the project window's transport bar, once it
 		// shows, and the transport panel and the time display window, windows of their own that the UI commands
@@ -90,6 +98,10 @@ namespace gnubase::app
 		void toggle(TransportWindow& shown, const char* file, const char* title, ui::Size size);
 		// Edits a display of the transport bar, or of the transport panel, which opens if the bar doesn't show.
 		void enter(const std::string& field);
+		// File > Import: the OS's file dialog for the window, then the event display imports what the user chose.
+		void chooseImport(ui::Window& window, std::string title, std::vector<ui::FileFilter> filters, bool many);
+		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
+		Rml::ElementDocument& openDialog(ui::Window& window, const char* name) const;
 
 		// Made in this order and destroyed in the reverse: RmlUi releases its resources through the renderer and
 		// its Lua plugin's in Lua, the shell's windows need all of them, the settings and the binding tell the shell,
@@ -112,5 +124,12 @@ namespace gnubase::app
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;
+		std::unique_ptr<ui::TrackList> m_trackList; // and before the display
+		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
+		bool m_canUndo = false;
+		bool m_canRedo = false;
+		ui::Subscription m_history;
+		std::unique_ptr<ui::MainMenu> m_menu;         // the project window's
+		Rml::ObserverPtr<Rml::Element> m_studioSetup; // the open studio setup dialog's document
 	};
 }

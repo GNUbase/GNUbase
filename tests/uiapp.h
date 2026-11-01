@@ -3,6 +3,7 @@
 
 #include "app/appui.h"
 #include "engine/engine.h"
+#include "platform/audio/device.h"
 #include "platform/midi/port.h"
 #include "testutils/goldenimage.h"
 #include "testutils/testutils.h"
@@ -41,10 +42,11 @@ namespace gnubase::test
 	class UiApp
 	{
 	public:
-		// The main window's size in desktop coordinates; in pixels at a monitor scale of 1. The engine takes MIDI from
-		// these backends, by default the system's.
+		// The main window's size in desktop coordinates; in pixels at a monitor scale of 1. The engine takes MIDI and
+		// audio from these backends, by default the system's; the audio backends must include the dummy device's.
 		explicit UiApp(ui::Size size = {640, 480},
-			std::vector<std::unique_ptr<midi::Backend>> midiBackends = midi::makeBackends());
+			std::vector<std::unique_ptr<midi::Backend>> midiBackends = midi::makeBackends(),
+			std::vector<std::unique_ptr<audio::Backend>> audioBackends = audio::makeBackends());
 
 		engine::Engine& engine() { return *m_engine; }
 		app::AppUi& appUi() { return *m_ui; }
@@ -55,7 +57,8 @@ namespace gnubase::test
 		ui::KeyCommands& keys() { return m_ui->keyCommands(); }
 
 		// Quits the UI and the engine and starts them again with the same user settings, as a user restarting GNUbase
-		// would, with the main window as it was first opened. The engine takes MIDI from the system's backends then.
+		// would, with the main window as it was first opened. The engine takes MIDI and audio from the system's
+		// backends then.
 		void restart();
 
 		// Runs an engine command that must succeed; returns its result.
@@ -80,7 +83,8 @@ namespace gnubase::test
 		static void checkGolden(const std::string& name, const ui::Image& image);
 
 	private:
-		void start(std::vector<std::unique_ptr<midi::Backend>> midiBackends);
+		void start(std::vector<std::unique_ptr<midi::Backend>> midiBackends,
+			std::vector<std::unique_ptr<audio::Backend>> audioBackends);
 
 		TempDir m_settings;
 		ui::Size m_size;

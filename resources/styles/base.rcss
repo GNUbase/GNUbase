@@ -720,6 +720,120 @@ meter .meter-peak
 	display: block;
 }
 
+/* The track list (docs/features/track-list.md): the global track controls over a row per track, level with the
+   event display's lanes under its overview line and ruler. Code sets the rows' heights from the tracks' and where the
+   list is scrolled to; the line where dragged tracks go shows while they are dragged. */
+.track-list
+{
+	overflow: hidden;
+}
+
+.track-list .track-list-header
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 44dp;
+	padding: 2dp 4dp;
+	box-sizing: border-box;
+}
+
+.track-list .track-list-header button
+{
+	margin-right: 2dp;
+}
+
+.track-list .track-rows
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 44dp;
+	bottom: 0;
+	overflow: hidden;
+	clip: always;
+}
+
+.no-overviewLine .track-list .track-list-header
+{
+	height: 24dp;
+}
+
+.no-overviewLine .track-list .track-rows
+{
+	top: 24dp;
+}
+
+.track-list listview
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	padding: 0;
+	overflow: visible;
+}
+
+.track-list listitem
+{
+	display: flex;
+	flex-direction: row;
+	align-items: flex-start;
+	padding: 3dp 4dp 0 4dp;
+	overflow: hidden;
+}
+
+.track-list .track-name
+{
+	flex: 1 1 0;
+	overflow: hidden;
+	white-space: nowrap;
+	height: 18dp;
+}
+
+.track-list .track-name-field,
+.track-list listitem.renaming .track-name
+{
+	display: none;
+}
+
+.track-list listitem.renaming .track-name-field
+{
+	display: block;
+	flex: 1 1 0;
+	height: 18dp;
+}
+
+.track-list .track-controls button
+{
+	width: 22dp;
+	height: 18dp;
+	margin-left: 2dp;
+	padding: 0;
+	text-align: center;
+}
+
+.track-list .track-controls svg.icon
+{
+	width: 14dp;
+	height: 14dp;
+}
+
+.track-list .drop-line
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 2dp;
+	display: none;
+	pointer-events: none;
+}
+
+.track-list .drop-line.shown
+{
+	display: block;
+}
+
 /* Menus (ui/widgets.h): hidden until they open, over the document. A menu inside an item is its submenu, shown
    beside the item while the mouse is over it. */
 menu
@@ -761,6 +875,29 @@ menuseparator
 {
 	display: block;
 	height: 8dp;
+}
+
+/* The main menu bar (docs/features/main-menu.md): the menus' titles in a row, and an item's key on its right. */
+.menubar
+{
+	display: flex;
+	align-items: center;
+	height: 24dp;
+	padding: 0 4dp;
+	box-sizing: border-box;
+}
+
+.menubar button
+{
+	min-width: 0;
+	height: 22dp;
+	padding: 3dp 8dp;
+}
+
+menuitem .menu-keys
+{
+	float: right;
+	padding-left: 24dp;
 }
 
 /* Every document's tooltip, under the mouse; it lets the mouse through. */
@@ -978,6 +1115,52 @@ splitter.column .splitter-grip-horizontal
 {
 	position: relative;
 	flex: 1 1 0;
+}
+
+/* A setup pane: a menu of toggle buttons that stays open while they are clicked; those of sections are dragged onto
+   each other to reorder the sections. */
+.setup-pane button
+{
+	display: block;
+	margin: 2dp 8dp;
+}
+
+.setup-pane [setup-section]
+{
+	drag: drag-drop;
+}
+
+/* The edit history panel (ui/historypanel.h): a table of the undo steps that fills its panel. Rows of undone steps
+   have the state class .undone. */
+listview.history
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.history td
+{
+	padding: 3dp 4dp;
+	overflow: hidden;
+}
+
+.history td.time
+{
+	width: 60dp;
+}
+
+.history td.state
+{
+	width: 56dp;
+}
+
+.history td.details input
+{
+	width: 100%;
+	box-sizing: border-box;
 }
 
 /* The color picker: the saturation and value field, the hue strip, the old and new colors' swatches, and the value

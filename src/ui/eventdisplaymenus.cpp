@@ -209,6 +209,10 @@ namespace gnubase::ui
 			repeat(static_cast<int>(std::lround(count->GetAttribute<float>("value", 1.0F))),
 				shared != nullptr && shared->HasAttribute("checked"));
 		}
+		else if (dialog->GetElementById("import-copy") != nullptr)
+		{
+			importAudio(*dialog);
+		}
 		else if (Rml::Element* name = dialog->GetElementById("zoom-preset-name"))
 		{
 			if (const std::string text = valueOf(name); !text.empty())
