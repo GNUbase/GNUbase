@@ -648,6 +648,11 @@ meter .meter-peak
 	pointer-events: none;
 }
 
+.event-display .marker-label.hidden
+{
+	display: none;
+}
+
 .event-display .marker-label
 {
 	position: absolute;
