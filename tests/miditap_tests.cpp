@@ -51,7 +51,9 @@ namespace
 		{
 			run(client, "audio.setDevice", {{"blockSize", blockSize}, {"inputChannels", 0}, {"captureSeconds", 1}});
 			instrument = channelOf(run(client, "track.add", {{"type", "instrument"}}));
-			midi = channelOf(run(client, "track.add", {{"type", "midi"}}));
+			const Json added = run(client, "track.add", {{"type", "midi"}});
+			midi = channelOf(added);
+			midiTrack = added.at("track").at("id").get<ObjectId>();
 			run(client, "channel.set", {{"channel", instrument}, {"instrument", "noteProbe"}});
 			run(client, "channel.set", {{"channel", midi}, {"output", instrument}});
 		}
@@ -75,6 +77,7 @@ namespace
 		Client client{engine};
 		ObjectId instrument = 0;
 		ObjectId midi = 0;
+		ObjectId midiTrack = 0;
 	};
 
 	// The frames of a capture where a probe channel doesn't have the expected value, which is inside [from, to) and
@@ -239,4 +242,145 @@ TEST_CASE("midi.capture with start returns what was played since, after a long s
 				 {{{"channel", probe.instrument}, {"position", 9100}, {"bytes", {0x90, 60, 100}}},
 					 {{"channel", probe.instrument}, {"position", 9200}, {"bytes", {0x80, 60, 0}}}}},
 			{"dropped", 0}});
+}
+
+TEST_CASE(
+	"injected notes end when their MIDI track is rerouted or removed, except those another source holds", "[unit]")
+{
+	const bool playing = GENERATE(false, true);
+	const bool removed = GENERATE(false, true);
+	INFO((playing ? "playing, " : "stopped, ") << (removed ? "removed" : "rerouted"));
+	Probe probe(64);
+	const ObjectId other = channelOf(run(probe.client, "track.add", {{"type", "midi"}}));
+	run(probe.client, "channel.set", {{"channel", other}, {"output", probe.instrument}});
+	const auto noteOn = [&probe](ObjectId channel, int pitch)
+	{ run(probe.client, "midi.inject", {{"channel", channel}, {"messages", {message(10, {0x90, pitch, 100})}}}); };
+	noteOn(probe.instrument, 60); // the instrument track's own input
+	noteOn(probe.midi, 64);       // both MIDI tracks hold 64
+	noteOn(probe.midi, 67);
+	noteOn(other, 64);
+	if (playing)
+		run(probe.client, "transport.play");
+	run(probe.client, "audio.render", {{"frames", 500}});
+	if (removed)
+		run(probe.client, "track.remove", {{"track", probe.midiTrack}});
+	else
+		run(probe.client, "channel.set", {{"channel", probe.midi}, {"output", 0}});
+	run(probe.client, "audio.render", {{"frames", 500}});
+
+	// 67 ends at the first block of the new graph; 64 stays, as the other MIDI track holds it.
+	CHECK(wrongFrames(probe.capture(0, 0, 500), 10, 500, 3.0f) == 0);
+	CHECK(wrongFrames(probe.capture(1, 0, 500), 10, 500, 60.0f + 64 + 67) == 0);
+	CHECK(wrongFrames(probe.capture(0, 500, 500), 0, 500, 2.0f) == 0);
+	CHECK(wrongFrames(probe.capture(1, 500, 500), 0, 500, 60.0f + 64) == 0);
+}
+
+TEST_CASE("after a stop ended an injected note, the MIDI track that held it no longer keeps it sounding", "[unit]")
+{
+	Probe probe(64);
+	const ObjectId other = channelOf(run(probe.client, "track.add", {{"type", "midi"}}));
+	run(probe.client, "channel.set", {{"channel", other}, {"output", probe.instrument}});
+	run(probe.client, "midi.inject", {{"channel", other}, {"messages", {message(0, {0x90, 64, 100})}}});
+	run(probe.client, "transport.play");
+	run(probe.client, "audio.render", {{"frames", 128}});
+	run(probe.client, "transport.stop"); // the instrument ends 64
+	run(probe.client, "audio.render", {{"frames", 64}});
+	run(probe.client, "midi.inject", {{"channel", probe.midi}, {"messages", {message(192, {0x90, 64, 100})}}});
+	run(probe.client, "audio.render", {{"frames", 64}});
+	run(probe.client, "channel.set", {{"channel", probe.midi}, {"output", 0}}); // the other one doesn't hold 64
+	run(probe.client, "audio.render", {{"frames", 64}});
+	CHECK(wrongFrames(probe.capture(0, 0, 192), 0, 128, 1.0f) == 0);
+	CHECK(wrongFrames(probe.capture(0, 192, 128), 0, 64, 1.0f) == 0);
+}
+
+TEST_CASE("an instrument track's held input doesn't keep a note sounding on the instrument that replaced it", "[unit]")
+{
+	// Replaced twice in one block, the audio thread skips the graph between, and the old instrument channel is freed
+	// before the new one is made, so the new one can get its address.
+	const bool skipped = GENERATE(false, true);
+	INFO((skipped ? "replaced twice in one block" : "a block between the replacements"));
+	Probe probe(64);
+	const auto noteOn = [&probe](ObjectId channel, int64_t position)
+	{ run(probe.client, "midi.inject", {{"channel", channel}, {"messages", {message(position, {0x90, 64, 100})}}}); };
+	noteOn(probe.instrument, 10); // the transport stands, so nothing else ends what the input holds
+	run(probe.client, "audio.render", {{"frames", 128}});
+	run(probe.client, "channel.set", {{"channel", probe.instrument}, {"instrument", ""}});
+	if (!skipped)
+		run(probe.client, "audio.render", {{"frames", 64}});
+	run(probe.client, "channel.set", {{"channel", probe.instrument}, {"instrument", "noteProbe"}});
+	run(probe.client, "audio.render", {{"frames", skipped ? 128 : 64}});
+	noteOn(probe.midi, 256);
+	run(probe.client, "audio.render", {{"frames", 64}});
+	run(probe.client, "track.remove", {{"track", probe.midiTrack}});
+	run(probe.client, "audio.render", {{"frames", 64}});
+
+	// The new instrument plays the MIDI track's 64 alone; it ends at the first block of the graph without that track.
+	CHECK(wrongFrames(probe.capture(0, 256, 128), 0, 64, 1.0f) == 0);
+	CHECK(wrongFrames(probe.capture(1, 256, 128), 0, 64, 64.0f) == 0);
+}
+
+TEST_CASE("a MIDI track's held input doesn't keep a note sounding on an instrument it is routed to later", "[unit]")
+{
+	const bool removed = GENERATE(false, true);
+	INFO((removed ? "its instrument track removed" : "routed nowhere"));
+	Probe probe(64);
+	const ObjectId first = run(probe.client, "project.get").at("tracks").at(0).at("id").get<ObjectId>();
+	const ObjectId second = channelOf(run(probe.client, "track.add", {{"type", "instrument"}}));
+	run(probe.client, "channel.set", {{"channel", second}, {"instrument", "noteProbe"}});
+	const Json added = run(probe.client, "track.add", {{"type", "midi"}});
+	const ObjectId other = channelOf(added);
+	run(probe.client, "channel.set", {{"channel", other}, {"output", second}});
+	if (!removed)
+		run(probe.client, "channel.set", {{"channel", probe.midi}, {"output", 0}});
+	const auto noteOn = [&probe](ObjectId channel, int64_t position)
+	{ run(probe.client, "midi.inject", {{"channel", channel}, {"messages", {message(position, {0x90, 64, 100})}}}); };
+	noteOn(probe.midi, 10); // on the first instrument, or nowhere
+	run(probe.client, "audio.render", {{"frames", 128}});
+	if (removed)
+		run(probe.client, "track.remove", {{"track", first}});
+	run(probe.client, "audio.render", {{"frames", 64}});
+	run(probe.client, "channel.set", {{"channel", probe.midi}, {"output", second}});
+	run(probe.client, "audio.render", {{"frames", 64}});
+	noteOn(other, 256);
+	run(probe.client, "audio.render", {{"frames", 64}});
+	run(probe.client, "track.remove", {{"track", added.at("track").at("id").get<ObjectId>()}});
+	run(probe.client, "audio.render", {{"frames", 64}});
+
+	// The second instrument plays the other track's 64 alone (the first one is gone or never got a note); it ends at
+	// the first block of the graph without that track.
+	CHECK(wrongFrames(probe.capture(0, 256, 128), 0, 64, 1.0f) == 0);
+	CHECK(wrongFrames(probe.capture(1, 256, 128), 0, 64, 64.0f) == 0);
+}
+
+TEST_CASE(
+	"a MIDI track routed to an instrument in the same block another track leaves it doesn't keep its note sounding",
+	"[unit]")
+{
+	const bool removed = GENERATE(false, true);
+	INFO((removed ? "its instrument track removed" : "routed nowhere"));
+	Probe probe(64);
+	const ObjectId first = run(probe.client, "project.get").at("tracks").at(0).at("id").get<ObjectId>();
+	const ObjectId second = channelOf(run(probe.client, "track.add", {{"type", "instrument"}}));
+	run(probe.client, "channel.set", {{"channel", second}, {"instrument", "noteProbe"}});
+	const Json added = run(probe.client, "track.add", {{"type", "midi"}});
+	const ObjectId other = channelOf(added);
+	run(probe.client, "channel.set", {{"channel", other}, {"output", second}});
+	if (!removed)
+		run(probe.client, "channel.set", {{"channel", probe.midi}, {"output", 0}});
+	const auto noteOn = [&probe](ObjectId channel, int64_t position)
+	{ run(probe.client, "midi.inject", {{"channel", channel}, {"messages", {message(position, {0x90, 64, 100})}}}); };
+	noteOn(probe.midi, 10); // on the first instrument, or nowhere
+	noteOn(other, 20);      // on the second instrument
+	run(probe.client, "audio.render", {{"frames", 128}});
+	// No block between these commands, as with scripts and MCP clients: the audio thread skips the graphs between.
+	if (removed)
+		run(probe.client, "track.remove", {{"track", first}});
+	run(probe.client, "channel.set", {{"channel", probe.midi}, {"output", second}});
+	run(probe.client, "track.remove", {{"track", added.at("track").at("id").get<ObjectId>()}});
+	run(probe.client, "audio.render", {{"frames", 128}});
+
+	// The other track's 64 ends at the first block of the graph without it: the MIDI track's 64, held on the first
+	// instrument or nowhere, doesn't keep it sounding on the second.
+	CHECK(wrongFrames(probe.capture(0, 20, 108), 0, 108, removed ? 2.0f : 1.0f) == 0);
+	CHECK(wrongFrames(probe.capture(0, 128, 128), 0, 0, 0.0f) == 0);
 }

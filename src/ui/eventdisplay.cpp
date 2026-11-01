@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/eventdisplay.h"
 
+#include "platform/log.h"
+#include "ui/rmlui.h"
+
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
@@ -32,7 +35,9 @@ namespace gnubase::ui
 		constexpr double g_dragZoomDistance = 40.0; // dp dragged in the ruler to zoom by a factor of 2
 		constexpr double g_overviewEdge = 4.0;      // dp either side of the overview rectangle's edges
 
-		// What the display listens to in its document.
+		// What the display listens to in its root element and in its document.
+		constexpr std::array<Rml::EventId, 4> g_rootEvents = {
+			Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mousescroll, Rml::EventId::Dblclick};
 		constexpr std::array<Rml::EventId, 5> g_documentEvents = {Rml::EventId::Mousemove, Rml::EventId::Mouseup,
 			Rml::EventId::Resize, Rml::EventId::Click, Rml::EventId::Change};
 
@@ -75,12 +80,16 @@ namespace gnubase::ui
 		m_ruler = &addCanvas<Ruler>(timeline, "ruler", "timeline-ruler");
 		m_area = &add(timeline, "div", "event-area");
 		m_lanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "events");
+		m_mutedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "muted-events");
+		m_selectedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "selected-events");
+		m_waveforms = std::make_unique<EventWaveforms>(binding, add(*m_area, "div", "waveforms"));
 		m_crossVertical = &add(*m_area, "div", "cross-hair-vertical");
 		m_crossHorizontal = &add(*m_area, "div", "cross-hair-horizontal");
 		m_cursorLine = &add(timeline, "div", "project-cursor");
 		root.SetClass("cross-hair", m_crossHair);
-		for (const Rml::EventId id : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mousescroll})
+		for (const Rml::EventId id : g_rootEvents)
 			root.AddEventListener(id, this);
+		root.AddEventListener(g_fileDropEvent, this);
 		for (const Rml::EventId id : g_documentEvents)
 			m_document->AddEventListener(id, this);
 		findControls();
@@ -91,6 +100,7 @@ namespace gnubase::ui
 			{"zoom.outVertically", [this] { zoomOutVertically(); }}, {"zoom.full", [this] { zoomFull(); }},
 			{"zoom.undo", [this] { undoZoom(); }}, {"zoom.redo", [this] { redoZoom(); }},
 			{"view.autoScroll", [this] { setAutoScroll(!m_autoScroll); }}};
+		addEditActions();
 
 		// Every change to the project is an undo step or a new project; the display shows the project as it is then.
 		for (const char* event : {"history.changed", "project.reset"})
@@ -102,6 +112,14 @@ namespace gnubase::ui
 				}));
 		m_subscriptions.push_back(
 			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
+		m_subscriptions.push_back(m_binding.on("snap.changed",
+			[this](const engine::Event& event)
+			{
+				m_snap = engine::snapSettingsFrom(event.data, m_snap);
+				showSnap();
+			}));
+		m_subscriptions.push_back(m_binding.on("quantize.changed", [this](const engine::Event& event)
+			{ m_quantize = engine::midi::quantizeSettingsFromJson(event.data.at("settings")); }));
 		m_subscriptions.push_back(m_binding.on("settings.changed",
 			[this](const engine::Event& event)
 			{
@@ -146,8 +164,9 @@ namespace gnubase::ui
 		}
 		if (!alive())
 			return;
-		for (const Rml::EventId id : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mousescroll})
+		for (const Rml::EventId id : g_rootEvents)
 			m_root->RemoveEventListener(id, this);
+		m_root->RemoveEventListener(g_fileDropEvent, this);
 		for (const Rml::EventId id : g_documentEvents)
 			m_document->RemoveEventListener(id, this);
 	}
@@ -204,7 +223,11 @@ namespace gnubase::ui
 					return;
 				m_loading = false;
 				if (result.ok())
-					loadProject(result.value);
+				{
+					m_project = result.value;
+					++m_loads;
+					loadProject(m_project);
+				}
 				if (std::exchange(m_stale, false))
 					requestProject();
 			});
@@ -213,51 +236,88 @@ namespace gnubase::ui
 	void EventDisplay::loadProject(const Json& project)
 	{
 		m_time = projectTime(project);
+		m_snap = engine::snapSettingsFrom(project.at("snap"), m_snap);
+		m_quantize = engine::midi::quantizeSettingsFromJson(project.at("quantize"));
+		showSnap();
 
-		// A lane per track, in the project's order.
+		// A lane per track that isn't hidden, in the project's order.
 		std::map<uint64_t, size_t> lanes;
 		std::map<uint64_t, bool> linear;
-		m_tracks.assign(project.at("tracks").size(), EventLanes::Lane{g_trackHeight, {}});
+		m_tracks.clear();
+		m_laneTracks.clear();
+		m_laneTypes.clear();
+		m_laneLinear.clear();
+		m_events.clear();
 		for (const Json& track : project.at("tracks"))
 		{
 			const auto id = track.at("id").get<uint64_t>();
-			lanes[id] = lanes.size();
 			linear[id] = track.at("timeBase") == "linear";
+			if (m_hidden.count(id) != 0)
+				continue;
+			lanes[id] = lanes.size();
+			m_tracks.push_back({static_cast<float>(trackHeight(id)), {}});
+			m_laneTracks.push_back(id);
+			m_laneTypes.push_back(track.at("type").get<std::string>());
+			m_laneLinear.push_back(linear[id]);
 		}
 		const auto seconds = [this](int64_t position, bool isLinear)
 		{ return isLinear ? static_cast<double>(position) / m_time.sampleRate : m_time.tempo.toSeconds(position); };
-		std::map<uint64_t, double> clipRates;
-		std::map<uint64_t, double> mediaRates;
-		for (const Json& media : project.at("media"))
-			mediaRates[media.at("id").get<uint64_t>()] = media.at("sampleRate").get<double>();
+		std::map<uint64_t, const Json*> media;
+		for (const Json& file : project.at("media"))
+			media[file.at("id").get<uint64_t>()] = &file;
+		std::map<uint64_t, uint64_t> clipMedia;
 		for (const Json& clip : project.at("clips"))
-			clipRates[clip.at("id").get<uint64_t>()] = mediaRates[clip.at("media").get<uint64_t>()];
+			clipMedia[clip.at("id").get<uint64_t>()] = clip.at("media").get<uint64_t>();
 		m_end = 0.0;
-		const auto addEvent = [&](uint64_t track, double start, double end)
+		const auto addEvent = [&](const Json& event, double start, double end)
 		{
+			const auto track = event.at("track").get<uint64_t>();
 			if (lanes.count(track) == 0)
 				return;
 			m_tracks[lanes[track]].events.push_back({start, end - start});
+			m_events.push_back(
+				{event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false), std::nullopt});
 			m_end = std::max(m_end, end);
 		};
+		std::vector<EventWaveforms::Event> waves;
 		for (const Json& event : project.at("audioEvents"))
 		{
 			const auto track = event.at("track").get<uint64_t>();
-			const double rate = clipRates[event.at("clip").get<uint64_t>()];
+			const auto file = media.find(clipMedia[event.at("clip").get<uint64_t>()]);
+			const double rate = file == media.end() ? 0.0 : file->second->at("sampleRate").get<double>();
 			const double start = seconds(event.at("position").get<int64_t>(), linear[track]);
-			addEvent(track, start, start + (rate > 0.0 ? event.at("length").get<double>() / rate : 0.0));
+			const double length = rate > 0.0 ? event.at("length").get<double>() / rate : 0.0;
+			addEvent(event, start, start + length);
+			// The snap point counts while it is inside the event.
+			const Json& snapPoint = event.at("snapPoint");
+			const double into = snapPoint.is_null() || rate <= 0.0
+				? -1.0
+				: (snapPoint.get<double>() - event.at("offset").get<double>()) / rate;
+			if (!m_events.empty() && m_events.back().id == event.at("id") && into >= 0.0 && into < length)
+				m_events.back().snapPoint = start + into;
+			if (file != media.end() && rate > 0.0 && lanes.count(track) != 0)
+				waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {start, length}, file->first, rate,
+					file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});
 		}
+		m_waveforms->setEvents(waves);
 		for (const Json& part : project.at("midiParts"))
 		{
 			const auto track = part.at("track").get<uint64_t>();
 			const auto position = part.at("position").get<int64_t>();
-			addEvent(track, seconds(position, linear[track]),
+			addEvent(part, seconds(position, linear[track]),
 				seconds(position + part.at("length").get<int64_t>(), linear[track]));
 		}
 		for (EventLanes::Lane& lane : m_tracks)
 			std::sort(lane.events.begin(), lane.events.end(),
 				[](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
+		// Events that are gone leave the selection.
+		std::vector<uint64_t> selection;
+		for (const uint64_t id : m_selection)
+			if (std::any_of(m_events.begin(), m_events.end(), [id](const Shown& shown) { return shown.id == id; }))
+				selection.push_back(id);
+		m_selection = std::move(selection);
 		setLanes();
+		showSelection();
 		setRulerFormat(m_format); // the tempo or signatures may have changed
 		setCursor(m_cursorSample);
 		apply();
@@ -269,11 +329,34 @@ namespace gnubase::ui
 			return;
 		std::vector<EventLanes::Lane> lanes = m_tracks;
 		std::vector<TimeSpan> all;
-		for (EventLanes::Lane& lane : lanes)
+		m_laneTops.assign(1, 0.0);
+		// Muted and selected events again over them, for the style sheets to show; selected ones where a drag
+		// moves them.
+		std::vector<EventLanes::Lane> muted;
+		for (size_t i = 0; i < lanes.size(); ++i)
 		{
-			lane.height = static_cast<float>(g_trackHeight * m_view.trackZoom);
-			all.insert(all.end(), lane.events.begin(), lane.events.end());
+			lanes[i].height = static_cast<float>(trackHeight(m_laneTracks[i]) * m_view.trackZoom);
+			m_laneTops.push_back(m_laneTops.back() + lanes[i].height);
+			muted.push_back({lanes[i].height, {}});
+			all.insert(all.end(), lanes[i].events.begin(), lanes[i].events.end());
 		}
+		std::vector<EventLanes::Lane> selected = muted;
+		const double shift = m_drag == Drag::Events && m_dragMoved ? m_dragDx * m_view.scale : 0.0;
+		for (const Shown& shown : m_events)
+		{
+			if (shown.mute)
+				muted[shown.lane].events.push_back({shown.start, shown.end - shown.start});
+			const auto lane = static_cast<int64_t>(shown.lane) + (m_drag == Drag::Events ? m_dragLanes : 0);
+			if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id) && lane >= 0 &&
+				lane < static_cast<int64_t>(selected.size()))
+				selected[static_cast<size_t>(lane)].events.push_back({shown.start + shift, shown.end - shown.start});
+		}
+		for (std::vector<EventLanes::Lane>* overlay : {&muted, &selected})
+			for (EventLanes::Lane& lane : *overlay)
+				std::sort(lane.events.begin(), lane.events.end(),
+					[](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
+		m_mutedLanes->setLanes(std::move(muted));
+		m_selectedLanes->setLanes(std::move(selected));
 		m_lanes->setLanes(std::move(lanes));
 		// The overview line has every event in one row, as high as the line is.
 		std::sort(all.begin(), all.end(), [](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
@@ -284,6 +367,8 @@ namespace gnubase::ui
 	void EventDisplay::followTransport(const Json& status)
 	{
 		setCursor(status.at("position").get<int64_t>());
+		m_left = status.value("left", m_left);
+		m_right = status.value("right", m_right);
 		const bool playing = status.at("playing").get<bool>();
 		if (playing && !m_position)
 		{
@@ -424,12 +509,12 @@ namespace gnubase::ui
 	void EventDisplay::setView(TimelineView view)
 	{
 		view.start = std::max(view.start, 0.0); // nothing before the project start
-		const double content = static_cast<double>(m_tracks.size()) * g_trackHeight * view.trackZoom;
-		view.top = std::clamp(view.top, 0.0, std::max(0.0, content - height()));
 		const bool heights = view.trackZoom != m_view.trackZoom;
-		m_view = view;
+		m_view.trackZoom = view.trackZoom;
 		if (heights)
 			setLanes();
+		view.top = std::clamp(view.top, 0.0, std::max(0.0, m_laneTops.back() - height()));
+		m_view = view;
 		apply();
 	}
 
@@ -437,12 +522,15 @@ namespace gnubase::ui
 	{
 		if (!alive())
 			return;
-		for (Rml::Element* canvas : {static_cast<Rml::Element*>(m_ruler), static_cast<Rml::Element*>(m_lanes)})
+		for (Rml::Element* canvas : {static_cast<Rml::Element*>(m_ruler), static_cast<Rml::Element*>(m_lanes),
+				 static_cast<Rml::Element*>(m_mutedLanes), static_cast<Rml::Element*>(m_selectedLanes)})
 		{
 			canvas->SetAttribute("start", m_view.start);
 			canvas->SetAttribute("scale", m_view.scale);
 		}
-		m_lanes->SetAttribute("scroll-top", m_view.top);
+		for (Rml::Element* canvas : {m_lanes, m_mutedLanes, m_selectedLanes})
+			canvas->SetAttribute("scroll-top", m_view.top);
+		m_waveforms->show({m_view.start, m_view.scale, m_view.top, m_laneTops, width(), height(), dpRatio()});
 		setCursor(m_cursorSample);
 
 		// The overview line shows the whole project, and the view as a rectangle.
@@ -456,6 +544,38 @@ namespace gnubase::ui
 		}
 		for (const std::function<void()>& listener : m_viewListeners)
 			listener();
+		if (m_layoutListener)
+			m_layoutListener();
+	}
+
+	double EventDisplay::trackHeight(uint64_t track) const
+	{
+		const auto height = m_heights.find(track);
+		return height == m_heights.end() ? g_trackHeight : height->second;
+	}
+
+	void EventDisplay::setTrackHeight(uint64_t track, double height)
+	{
+		m_heights[track] = std::clamp(height, g_minTrackHeight, g_maxTrackHeight);
+		setLanes();
+		setView(m_view);
+	}
+
+	void EventDisplay::setTrackHeights(double height)
+	{
+		for (const uint64_t track : m_laneTracks)
+			m_heights[track] = std::clamp(height, g_minTrackHeight, g_maxTrackHeight);
+		setLanes();
+		setView(m_view);
+	}
+
+	void EventDisplay::setHiddenTracks(std::set<uint64_t> tracks)
+	{
+		if (tracks == m_hidden)
+			return;
+		m_hidden = std::move(tracks);
+		if (m_project.is_object())
+			loadProject(m_project);
 	}
 
 	void EventDisplay::setAutoScroll(bool on)
@@ -487,6 +607,7 @@ namespace gnubase::ui
 		m_ruler->setScale(rulerScale(format, m_time));
 		m_ruler->SetAttribute("format", timeFormatName(format));
 		showFormat();
+		showSnap(); // the grid types are the format's
 	}
 
 	void EventDisplay::setCrossHair(bool shown)
@@ -551,6 +672,11 @@ namespace gnubase::ui
 			dialogEvent(event);
 			return;
 		}
+		if (event.GetType() == g_fileDropEvent)
+		{
+			dropFiles(event);
+			return;
+		}
 		Rml::Element* target = event.GetTargetElement();
 		switch (event.GetId())
 		{
@@ -573,7 +699,11 @@ namespace gnubase::ui
 			}
 			break;
 		case Rml::EventId::Mouseup:
+			areaUp(event);
 			m_drag = Drag::None;
+			break;
+		case Rml::EventId::Dblclick:
+			doubleClick(event);
 			break;
 		case Rml::EventId::Mousescroll:
 			wheel(event);
@@ -588,6 +718,10 @@ namespace gnubase::ui
 			// A click on the auto-scroll button switches it off, or on again while it's suspended.
 			if (target != nullptr && target == m_autoScrollButton)
 				setAutoScroll(m_suspended || event.GetParameter<bool>("value", false));
+			else if (target != nullptr && target == m_snapButton)
+				setSnap({{"on", event.GetParameter<bool>("value", false)}});
+			else if (target != nullptr && target == m_zeroCrossingButton)
+				setSnap({{"zeroCrossing", event.GetParameter<bool>("value", false)}});
 			break;
 		default:
 			break;
@@ -637,10 +771,15 @@ namespace gnubase::ui
 				m_drag = Drag::OverviewMove;
 			}
 		}
-		else if (inside(&target, m_area) && m_playing && m_autoScroll && m_suspendWhenEditing)
+		else if (inside(&target, m_area))
 		{
-			m_suspended = true;
-			showAutoScroll();
+			if (m_playing && m_autoScroll && m_suspendWhenEditing)
+			{
+				m_suspended = true;
+				showAutoScroll();
+			}
+			areaDown(event, dpFrom(*m_lanes, x), (y - m_lanes->GetAbsoluteTop()) / dpRatio());
+			return; // goes on, so that RmlUi sends double clicks
 		}
 		event.StopPropagation();
 	}
@@ -688,6 +827,11 @@ namespace gnubase::ui
 			view.scale = std::clamp((end - view.start) / width(), g_minScale, g_maxScale);
 			break;
 		}
+		case Drag::Events:
+		case Drag::ResizeStart:
+		case Drag::ResizeEnd:
+			areaMove(dx, dy);
+			return;
 		case Drag::None:
 			return;
 		}

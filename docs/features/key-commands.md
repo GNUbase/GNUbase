@@ -14,7 +14,8 @@ it up in `app::AppUi`.
   keys bound again in the same zone replace what they did there. A command may have several keys, as in the reference
   ("Assign Additional Key"). `keysFor(command, parameters)` returns the keys bound to a command as the platform writes
   them, in the order they were bound, for menus (#54) and tooltips; `run` runs a command as a key would, for a menu
-  item.
+  item. `enableWhen(command, enabled)` says when a command can run and `canRun` asks, so that the main menu disables
+  its items ([main-menu.md](main-menu.md)); keys run their commands either way.
 - **Writing keys.** `ui::parseKeys` reads `Space`, `Mod+Z`, `Shift+Alt+F5` or `Ctrl+Num+`, in any case: letters,
   digits, F1 to F24, the named keys (Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, the
   arrows Up, Down, Left, Right, Space), the punctuation keys `. , - +`, and the keypad's own keys Num0 to Num9,
@@ -72,9 +73,24 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Shift+H, Shift+G | `zoom.inVertically`, `zoom.outVertically` | Zoom In/Out Vertically |
 | Shift+F | `zoom.full` | Zoom Full |
 | F | `view.autoScroll` | Auto-Scroll On/Off |
+| Delete, Backspace | `edit.delete` | Delete |
+| Shift+M, Shift+U | `edit.mute`, `edit.unmute` | Mute Events, Unmute Events |
+| Mod+Shift+L, Mod+Shift+U | `edit.lock`, `edit.unlock` | Lock, Unlock |
+| Alt+X | `edit.splitAtCursor` | Split At Cursor |
+| Mod+D | `edit.duplicate` | Duplicate |
+| Mod+K | `edit.repeat` | Repeat |
+| Mod+L | `edit.moveStartToCursor` | Move Event Start/Range Start to Cursor |
+| Mod+Left, Mod+Right | `edit.nudgeLeft`, `edit.nudgeRight` | Nudge Left, Right |
+| Alt+Left, Alt+Shift+Right | `edit.nudgeStartLeft`, `edit.nudgeStartRight` | Nudge Start Left, Right |
+| Alt+Shift+Left, Alt+Right | `edit.nudgeEndLeft`, `edit.nudgeEndRight` | Nudge End Left, Right |
+| Mod+A, Mod+Shift+A | `edit.selectAll`, `edit.selectNone` | Select All, Select None |
+| Mod+Alt+I | `edit.invertSelection` | Invert Selection |
+| J | `edit.snap` | Snap On/Off ([snap.md](snap.md)) |
 
-Commands that come with their tickets bring their keys: opening windows such as the mixer (F3), cycle, record, nudging
-and the rest of the reference's tables.
+The other edit commands ([parts-and-events.md](parts-and-events.md)) have no default keys in the reference.
+
+The UI command `file.quit` (Quit, in the main menu's File menu) has Mod+Q, everywhere. Commands that come with their
+tickets bring their keys: opening windows such as the mixer (F3), cycle, record and the rest of the reference's tables.
 
 ## Checks
 

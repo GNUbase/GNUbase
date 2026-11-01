@@ -1,0 +1,51 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- A docking window with sections (docs/features/docking.md) for tests/docking_tests.cpp, laid out like the mixer's
+     window layout (reference manual pp. 439-440): a meter bridge strip, a left zone and two channels with the
+     sections routing, inserts, EQ (hidden by default), sends and fader, between a channel name and a footer. The Set
+     up Window Layout pane shows and hides the strip, the zone and the sections, and reorders the sections. -->
+<rml>
+<head>
+	<title>Sections</title>
+	<style>
+		body { position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
+		.channel { display: flex; flex-direction: column; width: 120dp; }
+		.channel div { height: 20dp; }
+	</style>
+</head>
+<body class="docking">
+	<div id="toolbar" class="toolbar" strip="toolbar">
+		<button id="window-layout" menu="layout-pane" title="Set up Window Layout">Layout</button>
+	</div>
+	<div id="meter-bridge" class="strip" strip="meterBridge"/>
+	<div class="zones">
+		<div id="left-zone" zone="left" size="160" default="hidden"/>
+		<splitter for="left"/>
+		<div id="main-zone" zone="main">
+			<div id="channel-1" class="channel" sections="channel">
+				<div class="channel-name">Audio 01</div>
+				<div section="routing" label="Routing"/>
+				<div section="inserts" label="Inserts"/>
+				<div section="eq" label="EQ" default="hidden"/>
+				<div section="sends" label="Sends"/>
+				<div section="fader" label="Fader"/>
+				<div class="channel-footer"/>
+			</div>
+			<div id="channel-2" class="channel" sections="channel">
+				<div class="channel-name">Audio 02</div>
+				<div section="routing" label="Routing"/>
+				<div section="inserts" label="Inserts"/>
+				<div section="eq" label="EQ" default="hidden"/>
+				<div section="sends" label="Sends"/>
+				<div section="fader" label="Fader"/>
+				<div class="channel-footer"/>
+			</div>
+		</div>
+	</div>
+
+	<menu id="layout-pane" class="setup-pane">
+		<button type="toggle" toggle="meterBridge">Meter Bridge</button>
+		<button type="toggle" toggle="left">Left Zone</button>
+		<div setup="channel"/>
+	</menu>
+</body>
+</rml>

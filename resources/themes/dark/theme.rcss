@@ -446,6 +446,16 @@
 		border-color: #5ea7b3;
 		background-color: #5ea7b326;
 	}
+	.event-display event-lanes.muted-events
+	{
+		color: #44474a;
+		stroke-color: #66686c;
+	}
+	.event-display event-lanes.selected-events
+	{
+		color: #4e828b;
+		stroke-color: #f3f4f5;
+	}
 	.event-display ruler
 	{
 		background-color: #1e2022;
@@ -477,5 +487,52 @@
 	.event-display .marker-label.active
 	{
 		color: #f3f4f5;
+	}
+	.track-list
+	{
+		background-color: #1e2022;
+	}
+	.track-list listitem
+	{
+		border-bottom-width: 1dp;
+		border-bottom-color: #484c50;
+	}
+	.track-list listitem.disabled
+	{
+		color: #b7bbc0;
+	}
+	.track-list .drop-line
+	{
+		background-color: #5ea7b3;
+	}
+	.docking [zone]
+	{
+		background-color: #1a1b1c;
+	}
+	.docking .zone-frame
+	{
+		border-width: 2dp;
+		border-color: #5ea7b3;
+	}
+	.docking .strip
+	{
+		background-color: #1e2022;
+	}
+	.menubar
+	{
+		background-color: #1e2022;
+	}
+	.menubar button
+	{
+		decorator: none;
+		color: #f3f4f5;
+	}
+	.menubar button:hover
+	{
+		decorator: svg-ninepatch(menu-item-hover.svg, 6 6 6 6);
+	}
+	menuitem .menu-keys
+	{
+		color: #b7bbc0;
 	}
 }
