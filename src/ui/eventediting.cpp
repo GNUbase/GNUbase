@@ -301,12 +301,18 @@ namespace gnubase::ui
 		m_actions.insert(actions.begin(), actions.end());
 	}
 
+	size_t EventDisplay::laneAt(double y) const
+	{
+		if (y < 0.0)
+			return 0;
+		return static_cast<size_t>(std::upper_bound(m_laneTops.begin(), m_laneTops.end(), y) - m_laneTops.begin()) - 1;
+	}
+
 	const EventDisplay::Shown* EventDisplay::eventAt(double x, double y) const
 	{
-		const double row = (y + m_view.top) / (g_trackHeight * m_view.trackZoom);
-		if (row < 0.0)
+		if (y + m_view.top < 0.0)
 			return nullptr;
-		const auto lane = static_cast<size_t>(row);
+		const size_t lane = laneAt(y + m_view.top);
 		const double time = m_view.start + (x * m_view.scale);
 		const Shown* found = nullptr; // the last one is drawn on top
 		for (const Shown& shown : m_events)
@@ -315,12 +321,12 @@ namespace gnubase::ui
 		return found;
 	}
 
-	std::optional<size_t> EventDisplay::laneAt(double y) const
+	std::optional<size_t> EventDisplay::visibleLaneAt(double y) const
 	{
-		const double row = (y + m_view.top) / (g_trackHeight * m_view.trackZoom);
-		if (row < 0.0 || row >= static_cast<double>(m_laneTracks.size()))
+		const size_t lane = laneAt(y + m_view.top);
+		if (y + m_view.top < 0.0 || lane >= m_laneTracks.size())
 			return std::nullopt;
-		return static_cast<size_t>(row);
+		return lane;
 	}
 
 	void EventDisplay::areaDown(Rml::Event& event, double x, double y)
@@ -328,6 +334,7 @@ namespace gnubase::ui
 		m_dragMoved = false;
 		m_dragDx = 0.0;
 		m_dragLanes = 0;
+		m_dragLaneY = y + m_view.top;
 		m_pressX = x;
 		m_pressY = y;
 		m_pressed = modifiersOf(event);
@@ -386,7 +393,9 @@ namespace gnubase::ui
 		if (m_drag != Drag::Events)
 			return;
 		m_dragDx = moveShift(dx).second / m_view.scale;
-		m_dragLanes = static_cast<int>(std::lround(dy / (g_trackHeight * m_view.trackZoom)));
+		const auto lane = [this](double y)
+		{ return static_cast<int>(std::min(laneAt(y), m_laneTracks.empty() ? 0 : m_laneTracks.size() - 1)); };
+		m_dragLanes = lane(m_dragLaneY + dy) - lane(m_dragLaneY);
 		setLanes();
 	}
 
@@ -526,7 +535,7 @@ namespace gnubase::ui
 		}
 		if (y + m_view.top < 0.0 || eventAt(x, y) != nullptr)
 			return;
-		const std::optional<size_t> found = laneAt(y);
+		const std::optional<size_t> found = visibleLaneAt(y);
 		// Below the tracks, a new MIDI track (reference manual p. 198, the track list's empty area, #80).
 		if (!found)
 		{
