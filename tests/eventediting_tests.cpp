@@ -233,6 +233,24 @@ TEST_CASE("a drag at an edge resizes, Alt and a click splits, a double click add
 	CHECK(f.parts().size() == 4);
 }
 
+TEST_CASE("the object selection tool's modifiers act on events whatever keys they are set to", "[unit]")
+{
+	Fixture f;
+	f.call("settings.set",
+		{{"key", "ui.toolModifiers"}, {"value", {{"select.splitEvent", "shift"}, {"dragDrop.copy", "ctrl"}}}});
+	f.step();
+	// Shift and a click at 2 seconds splits the part there rather than adding it to the selection.
+	f.click(200, 60, {"shift"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+	CHECK(f.parts()[1].at("position") == 4 * g_quarter);
+	// Ctrl and a drag of the piece from 2 to 3 seconds copies it two seconds later.
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[1].events.size() == 2; }));
+	f.drag(250, 60, 450, 60, {"ctrl"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+	CHECK(f.parts()[2].at("position") == 8 * g_quarter);
+	CHECK(f.parts()[2].at("shared") == 0);
+}
+
 TEST_CASE("a double click below the tracks adds a MIDI track", "[unit]")
 {
 	Fixture f;
@@ -452,4 +470,284 @@ TEST_CASE("with snap to events, a position marker attracts a dragged event", "[u
 	// The audio event dragged from 2 to 5.95 seconds starts on the marker (8 dp attract).
 	f.drag(225, 20, 620, 20);
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 288000; }));
+}
+
+// The project window's tools (#86, reference manual pp. 57-65): what a press in the event lanes does with each.
+TEST_CASE("the tools are chosen by command, and the display names the one chosen", "[unit]")
+{
+	Fixture f;
+	const Rml::Element* root = f.document.GetElementById("display");
+	CHECK(f.display.tool() == ui::Tool::ObjectSelection);
+	CHECK(root->GetAttribute<std::string>("tool", "") == "objectSelection");
+	f.run("tool.split");
+	CHECK(f.display.tool() == ui::Tool::Split);
+	CHECK(root->GetAttribute<std::string>("tool", "") == "split");
+	// Next and previous go along the toolbar: ... erase, split, glue ...
+	f.run("tool.next");
+	CHECK(f.display.tool() == ui::Tool::Glue);
+	f.run("tool.previous");
+	f.run("tool.previous");
+	CHECK(f.display.tool() == ui::Tool::Erase);
+	f.run("tool.objectSelection");
+	f.run("tool.previous"); // around to the last
+	CHECK(f.display.tool() == ui::Tool::Play);
+	for (const char* id : {"tool.objectSelection", "tool.rangeSelection", "tool.split", "tool.glue", "tool.erase",
+			 "tool.zoom", "tool.mute", "tool.draw", "tool.line", "tool.play", "tool.next", "tool.previous",
+			 "tool.combineSelectionTools"})
+		CHECK(f.display.actions().count(id) == 1);
+	f.run("tool.combineSelectionTools");
+	CHECK(f.display.combineSelectionTools());
+	// Tools that don't use the cross-hair cursor hide it (reference manual p. 110).
+	f.run("tool.mute");
+	CHECK(!root->IsClassSet("cross-hair"));
+	f.run("tool.split");
+	CHECK(root->IsClassSet("cross-hair"));
+}
+
+TEST_CASE("the object selection tool selects with a rectangle and sets the cursor with Alt and Shift", "[unit]")
+{
+	Fixture f;
+	// A rectangle from an empty spot across both events selects them; another one replaces the selection, with Ctrl
+	// it adds to it.
+	f.drag(50, 5, 400, 75);
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event, f.part});
+	f.drag(50, 45, 120, 75);
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+	f.drag(50, 5, 230, 20, {"ctrl"});
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event, f.part});
+	CHECK(!f.document.QuerySelector(".tool-rectangle")->IsClassSet("shown"));
+	// Alt, Shift and a click moves the project cursor there (the tool modifier Set Cursor Position), on an event too.
+	f.click(500, 60, {"alt", "shift"});
+	REQUIRE(f.waitUntil([&f] { return f.display.cursor() == 5.0; }));
+	f.click(150, 60, {"alt", "shift"});
+	REQUIRE(f.waitUntil([&f] { return f.display.cursor() == 1.5; }));
+	CHECK(f.parts().size() == 1);
+	f.display.setSizingMovesContents(true);
+	CHECK(f.display.sizingMovesContents());
+}
+
+TEST_CASE("the split tool splits where it clicks, with Alt into equal pieces", "[unit]")
+{
+	Fixture f;
+	f.display.setTool(ui::Tool::Split);
+	f.click(150, 60); // the part from 1 to 3 seconds at 1.5
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+	CHECK(f.parts()[1].at("position") == 3 * g_quarter);
+	// Alt at 2 seconds in the piece from 1.5 to 3: pieces of half a second, at 2 and 2.5.
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[1].events.size() == 2; }));
+	f.click(200, 60, {"alt"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 4; }));
+	std::vector<int64_t> starts;
+	for (const Json& part : f.parts())
+		starts.push_back(part.at("position").get<int64_t>());
+	std::sort(starts.begin(), starts.end());
+	CHECK(starts == std::vector<int64_t>{2 * g_quarter, 3 * g_quarter, 4 * g_quarter, 5 * g_quarter});
+	// With snap on beats, a click at 2.2 seconds in the audio event (2 to 2.5) goes to its start: nothing to split.
+	f.call("snap.set", {{"on", true}, {"grid", "beat"}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().on; }));
+	f.click(220, 20);
+	f.call("project.get");
+	f.step();
+	CHECK(f.audioEvents().size() == 1);
+	// The tool modifiers are a user setting: here Ctrl splits repeatedly, into pieces of a tenth of a second.
+	f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"split.splitRepeated", "ctrl"}}}});
+	f.call("snap.set", {{"on", false}});
+	REQUIRE(f.waitUntil([&f] { return !f.display.snap().on; }));
+	f.click(210, 20, {"ctrl"});
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 5; }));
+}
+
+TEST_CASE("the glue tool glues an event to the next one, with Alt to all that follow", "[unit]")
+{
+	Fixture f;
+	f.call("event.split", {{"events", {f.part}}, {"positions", {60000, 72000, 96000}}}); // 1.25, 1.5 and 2 s
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[1].events.size() == 4; }));
+	f.display.setTool(ui::Tool::Glue);
+	f.click(110, 60);
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[1].events.size() == 3; }));
+	f.click(110, 60, {"alt"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 1; }));
+	CHECK(f.parts()[0].at("length") == 4 * g_quarter);
+}
+
+TEST_CASE("the erase tool deletes what it clicks, with Alt everything after it on the track", "[unit]")
+{
+	Fixture f;
+	f.display.setTool(ui::Tool::Erase);
+	f.click(225, 20);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents().empty(); }));
+	const Json midi = f.call("project.get").at("tracks")[1];
+	f.call("midiPart.add", {{"track", midi.at("id")}, {"position", 8 * g_quarter}, {"length", g_quarter}});
+	f.call("midiPart.add", {{"track", midi.at("id")}, {"position", 0}, {"length", g_quarter}});
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[1].events.size() == 3; }));
+	f.click(150, 60, {"alt"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 1; }));
+	CHECK(f.parts()[0].at("position") == 0);
+}
+
+TEST_CASE("the mute tool mutes and unmutes with a click and mutes with a rectangle", "[unit]")
+{
+	Fixture f;
+	f.display.setTool(ui::Tool::Mute);
+	f.click(150, 60);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("mute") == true; }));
+	REQUIRE(f.waitUntil([&f] { return f.lanes("muted-events")[1].events.size() == 1; }));
+	f.click(150, 60);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("mute") == false; }));
+	REQUIRE(f.waitUntil([&f] { return f.lanes("muted-events")[1].events.empty(); }));
+	f.drag(50, 5, 400, 75);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("mute") == true && f.audioEvents()[0].at("mute") == true; }));
+}
+
+TEST_CASE(
+	"the zoom tool zooms in where it clicks, out with Alt, onto a rectangle, and back with a double click", "[unit]")
+{
+	Fixture f;
+	f.display.setTool(ui::Tool::Zoom);
+	const ui::TimelineView before = f.display.view();
+	f.click(300, 60); // 3 seconds stay under the mouse
+	CHECK(f.display.view().scale == before.scale / 2);
+	CHECK(std::abs(f.display.view().start + (300 * f.display.view().scale) - 3.0) < 1e-9);
+	f.click(300, 60, {"alt"});
+	CHECK(f.display.view().scale == before.scale);
+	CHECK(std::abs(f.display.view().start - before.start) < 1e-9);
+	// A rectangle from 1 to 3 seconds shows them across.
+	f.drag(100, 30, 300, 70);
+	CHECK(std::abs(f.display.view().start - 1.0) < 1e-9);
+	CHECK(std::abs(f.display.visibleLength() - 2.0) < 1e-9);
+	// A double click undoes the last zoom.
+	f.click(500, 60, {}, 2);
+	CHECK(f.display.view().scale == before.scale);
+	CHECK(std::abs(f.display.view().start - before.start) < 1e-9);
+}
+
+TEST_CASE("the draw tool draws parts on MIDI tracks, snapped; the line tool waits for automation tracks", "[unit]")
+{
+	Fixture f;
+	f.display.setTool(ui::Tool::Draw);
+	// From 4 to 5.5 seconds: eight quarters on, three long.
+	f.drag(400, 60, 550, 60);
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+	CHECK(f.parts()[1].at("position") == 8 * g_quarter);
+	CHECK(f.parts()[1].at("length") == 3 * g_quarter);
+	REQUIRE(f.waitUntil(
+		[&f] { return f.display.selection() == std::vector<uint64_t>{f.parts()[1].at("id").get<uint64_t>()}; }));
+	// With snap on bars, from 6.3 to 9.6 seconds: the bars from 6 to 10. A click draws the bar there.
+	f.call("snap.set", {{"on", true}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().on; }));
+	f.drag(630, 60, 960, 60);
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+	CHECK(f.parts()[2].at("position") == 12 * g_quarter);
+	CHECK(f.parts()[2].at("length") == 8 * g_quarter);
+	f.click(50, 60);
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 4; }));
+	CHECK(f.parts()[3].at("position") == 0);
+	CHECK(f.parts()[3].at("length") == 4 * g_quarter);
+	// Nothing on audio tracks until audio parts come; the line tool draws on automation tracks (#121).
+	f.drag(400, 20, 550, 20);
+	f.display.setTool(ui::Tool::Line);
+	f.display.setLineMode(ui::LineMode::Sine);
+	CHECK(f.display.lineMode() == ui::LineMode::Sine);
+	CHECK(f.document.GetElementById("display")->GetAttribute<std::string>("line-mode", "") == "sine");
+	f.drag(630, 60, 960, 60);
+	f.call("project.get");
+	f.step();
+	CHECK(f.parts().size() == 4);
+	CHECK(f.audioEvents().size() == 1);
+}
+
+TEST_CASE("the play tool plays from where it presses until it is released", "[unit]")
+{
+	Fixture f;
+	f.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+	f.call("audio.start");
+	std::vector<std::pair<bool, int64_t>> states; // playing, position
+	const ui::Subscription subscription = f.binding.on("transport.changed", [&states](const engine::Event& event)
+		{ states.emplace_back(event.data.at("playing").get<bool>(), event.data.at("position").get<int64_t>()); });
+	const auto started = [&states]
+	{ return std::find_if(states.begin(), states.end(), [](const auto& state) { return state.first; }); };
+	f.display.setTool(ui::Tool::Play);
+	f.click(300, 60);
+	REQUIRE(f.waitUntil([&states, &started] { return started() != states.end(); }));
+	CHECK(started()->second >= 144000);
+	REQUIRE(f.waitUntil([&f] { return f.call("transport.get").at("playing") == false; }));
+	CHECK(f.parts().size() == 1); // nothing edited
+}
+
+TEST_CASE("the range selection tool selects ranges, snapped, by dragging and double clicking", "[unit]")
+{
+	Fixture f;
+	const Json tracks = f.call("project.get").at("tracks");
+	const auto audio = tracks[0].at("id").get<uint64_t>();
+	const auto midi = tracks[1].at("id").get<uint64_t>();
+	const Rml::Element* root = f.document.GetElementById("display");
+	const auto range = [&f]
+	{
+		REQUIRE(f.display.range().has_value());
+		return f.display.range().value_or(ui::RangeSelection{});
+	};
+	f.display.select({f.part});
+	f.display.setTool(ui::Tool::RangeSelection);
+	CHECK(f.display.selection().empty()); // the range tool selects ranges, not events
+	// A drag from 1.5 seconds on the audio lane to 3.5 on the MIDI lane.
+	f.drag(150, 10, 350, 70);
+	REQUIRE(f.display.range().has_value());
+	CHECK(range().start == 72000);
+	CHECK(range().end == 168000);
+	CHECK(range().tracks == std::vector<uint64_t>{audio, midi});
+	CHECK(root->GetAttribute<std::string>("range", "") == "72000 168000");
+	CHECK(root->GetAttribute<std::string>("range-tracks", "") == std::to_string(audio) + " " + std::to_string(midi));
+	CHECK(f.document.QuerySelector(".range-selection")->IsClassSet("shown"));
+	// A click is a range of no length there.
+	f.click(500, 60);
+	CHECK(range().start == 240000);
+	CHECK(range().end == 240000);
+	CHECK(range().tracks == std::vector<uint64_t>{midi});
+	// A double click on an event selects its range; with Shift, one on another adds its range.
+	f.click(150, 60, {}, 2);
+	CHECK(range().start == 48000);
+	CHECK(range().end == 144000);
+	f.click(225, 20, {"shift"}, 2);
+	CHECK(range().start == 48000);
+	CHECK(range().end == 144000);
+	CHECK(range().tracks == std::vector<uint64_t>{audio, midi});
+	// Between events, the gap: on the audio lane from the start to the event at 2 seconds.
+	f.click(100, 20, {}, 2);
+	CHECK(range().start == 0);
+	CHECK(range().end == 96000);
+	CHECK(range().tracks == std::vector<uint64_t>{audio});
+	// Snapped to bars: 0.7 to 3.3 seconds is 0 to 4. Alt and Shift take every track.
+	f.call("snap.set", {{"on", true}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().on; }));
+	f.drag(70, 60, 330, 60, {"alt", "shift"});
+	CHECK(range().start == 0);
+	CHECK(range().end == 192000);
+	CHECK(range().tracks == std::vector<uint64_t>{audio, midi});
+	// Another tool selects the events in the range instead.
+	f.display.setTool(ui::Tool::ObjectSelection);
+	CHECK(!f.display.range().has_value());
+	CHECK(!f.document.QuerySelector(".range-selection")->IsClassSet("shown"));
+	CHECK(root->GetAttribute<std::string>("range", "") == "");
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event, f.part});
+}
+
+TEST_CASE("with the selection tools combined, a lane's upper half selects ranges and its lower half events", "[unit]")
+{
+	Fixture f;
+	const auto range = [&f]
+	{
+		REQUIRE(f.display.range().has_value());
+		return f.display.range().value_or(ui::RangeSelection{});
+	};
+	f.display.setCombineSelectionTools(true);
+	f.drag(150, 45, 250, 50);
+	REQUIRE(f.display.range().has_value());
+	CHECK(range().start == 72000);
+	CHECK(range().end == 120000);
+	f.click(150, 75);
+	CHECK(!f.display.range().has_value());
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+	f.drag(150, 75, 250, 75);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 4 * g_quarter; }));
 }
