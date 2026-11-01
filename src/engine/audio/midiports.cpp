@@ -44,6 +44,7 @@ namespace gnubase::engine
 			port.slot = m_nextSlot++;
 		}
 		const int slot = port.slot;
+		m_allInputs[static_cast<size_t>(slot)].store(inAllInputs(port), std::memory_order_relaxed); // first open too
 		try
 		{
 			port.input = port.backend->openInput(port.info.id,
