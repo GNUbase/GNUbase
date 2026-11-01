@@ -74,6 +74,8 @@ add_executable(gnubase-tests
 	performance_tests.cpp
 	playback_tests.cpp
 	plugin_api_tests.cpp
+	pool_tests.cpp
+	poolpanel_tests.cpp
 	processor_tests.cpp
 	projectfiles_tests.cpp
 	quantize_tests.cpp
@@ -84,6 +86,7 @@ add_executable(gnubase-tests
 	settings_tests.cpp
 	shell_tests.cpp
 	snap_tests.cpp
+	statusline_tests.cpp
 	streaming_tests.cpp
 	studiosetup_tests.cpp
 	stylerules_tests.cpp

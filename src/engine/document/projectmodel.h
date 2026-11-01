@@ -80,7 +80,8 @@ namespace gnubase::engine
 		Json importMidiFile(Project& project, CommandContext& context);
 		void registerAudioFileCommands(Engine& engine, Jobs& jobs); // audiofilecommands.cpp: audioFile.import
 		Json importAudioFiles(Project& project, CommandContext& context, Jobs& jobs);
-		void registerFadeCommands(Engine& engine);      // fadeedits.cpp: fades, crossfades and auto fades
+		void registerPoolCommands(Engine& engine); // pool.cpp: pool.*, poolFolder.*, clip.set, media management (#93)
+		void registerFadeCommands(Engine& engine); // fadeedits.cpp: fades, crossfades and auto fades
 		void registerParameterCommands(Engine& engine); // parameters.cpp: parameter.list, parameter.get, parameter.set
 		void registerEventEditCommands(Engine& engine); // eventedits.cpp: event.*, parts and events (#85)
 		// projectfiles.cpp (#77): save new version, revert, auto save, recent projects and templates.
