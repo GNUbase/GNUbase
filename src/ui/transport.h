@@ -89,7 +89,6 @@ namespace gnubase::ui
 		engine::Json m_status = engine::Json::object(); // as transport.get returns it
 		int64_t m_position = 0;                         // the cursor, in samples
 		std::map<std::string, TimeFormat> m_formats;    // by slot
-		engine::Json m_formatsSaved = engine::Json::object();
 		bool m_loading = false;
 		bool m_stale = false;
 

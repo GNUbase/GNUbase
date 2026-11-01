@@ -168,7 +168,6 @@ namespace gnubase::ui
 		Json formats = Json::object();
 		for (const auto& [name, value] : m_formats)
 			formats[name] = timeFormatName(value);
-		m_formatsSaved = formats;
 		m_binding.send("settings.set", {{"key", g_formatsKey}, {"value", formats}});
 		show();
 	}
@@ -182,7 +181,7 @@ namespace gnubase::ui
 
 	void TransportControls::followFormats(const Json& formats)
 	{
-		if (!formats.is_object() || formats == m_formatsSaved)
+		if (!formats.is_object())
 			return;
 		for (const auto& [slot, name] : formats.items())
 			if (name.is_string())
