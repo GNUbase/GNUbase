@@ -468,6 +468,23 @@
 	{
 		background-color: #66686c;
 	}
+	.track-list
+	{
+		background-color: #1e2022;
+	}
+	.track-list listitem
+	{
+		border-bottom-width: 1dp;
+		border-bottom-color: #484c50;
+	}
+	.track-list listitem.disabled
+	{
+		color: #b7bbc0;
+	}
+	.track-list .drop-line
+	{
+		background-color: #5ea7b3;
+	}
 	.docking [zone]
 	{
 		background-color: #1a1b1c;

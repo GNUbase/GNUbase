@@ -1026,6 +1026,48 @@ TEST_CASE("saving keeps the history, loading starts a new one", "[integration]")
 	CHECK(run(client, "project.get").at("tracks").size() == 1);
 }
 
+TEST_CASE("mute, solo and disabled tracks are saved, also in project.xml", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const Json muted = run(client, "track.add", {{"type", "audio"}, {"name", "Muted"}});
+	const Json soloed = run(client, "track.add", {{"type", "group"}, {"name", "Soloed"}});
+	const Json disabled = run(client, "track.add", {{"type", "midi"}, {"name", "Disabled"}});
+	run(client, "channel.set", {{"channel", idOf(muted, "channel")}, {"mute", true}});
+	run(client, "channel.set", {{"channel", idOf(soloed, "channel")}, {"solo", true}});
+	run(client, "track.set", {{"track", idOf(disabled, "track")}, {"enabled", false}});
+	const Json before = run(client, "project.get");
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "project.get") == before);
+
+	std::map<std::string, std::string> entries = readZip(file);
+	pugi::xml_document xml;
+	REQUIRE(xml.load_string(entries.at("project.xml").c_str()));
+	const pugi::xml_node structure = xml.child("Project").child("Structure");
+	const auto trackNode = [&structure](const char* name)
+	{ return structure.find_child_by_attribute("Track", "name", name); };
+	CHECK(trackNode("Muted").child("Channel").child("Mute").attribute("value").as_bool());
+	CHECK_FALSE(trackNode("Soloed").child("Channel").child("Mute").attribute("value").as_bool(true));
+	CHECK(trackNode("Soloed").child("Channel").attribute("solo").as_bool());
+	CHECK_FALSE(trackNode("Disabled").attribute("loaded").as_bool(true));
+	CHECK(trackNode("Muted").attribute("loaded").as_bool());
+
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	const std::string other = utf8(dir.path() / "other.dawproject");
+	writeZip(other, entries);
+	run(client, "project.load", {{"path", other}});
+	const Json loaded = run(client, "project.get");
+	REQUIRE(loaded.at("tracks").size() == 3);
+	CHECK(loaded.at("channels")[0].at("mute") == true);
+	CHECK(loaded.at("channels")[1].at("solo") == true);
+	CHECK(loaded.at("channels")[1].at("mute") == false);
+	CHECK(loaded.at("tracks")[2].at("enabled") == false);
+	CHECK(loaded.at("tracks")[0].at("enabled") == true);
+}
+
 TEST_CASE("automation on linear tracks is written in seconds; numbers that aren't finite don't load", "[integration]")
 {
 	const test::TempDir dir;

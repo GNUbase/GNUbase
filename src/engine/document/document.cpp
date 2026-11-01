@@ -2,6 +2,8 @@
 #include "engine/document/document.h"
 
 #include <algorithm>
+#include <map>
+#include <utility>
 
 namespace gnubase::engine
 {
@@ -23,6 +25,24 @@ namespace gnubase::engine
 		order.reserve(trackById.size());
 		appendTracks(*this, tracks, order);
 		return order;
+	}
+
+	void renumber(Project& project, MidiPart& part)
+	{
+		std::map<ObjectId, Note> notes;
+		for (auto& [id, note] : part.notes)
+		{
+			note.id = project.newId();
+			notes[note.id] = note;
+		}
+		part.notes = std::move(notes);
+		std::map<ObjectId, Controller> controllers;
+		for (auto& [id, controller] : part.controllers)
+		{
+			controller.id = project.newId();
+			controllers[controller.id] = std::move(controller);
+		}
+		part.controllers = std::move(controllers);
 	}
 
 	Project newProject()
