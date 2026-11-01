@@ -538,6 +538,7 @@ namespace gnubase::engine::peaks
 			entry->data = data;
 			entry->builder.reset();
 		}
+		reader.reset(); // ready peaks leave the audio file closed: Windows can't move or remove a file that is open
 		if (entry->cancelled || m_stop)
 			return;
 		const std::string file = store(entry->path, stamp, *data, m_settings.fallbackFolder);

@@ -101,13 +101,14 @@ namespace gnubase::engine
 				"media folder as 32-bit float WAV files at the project's sample rate. splitChannels writes each "
 				"channel of a file with several into the media folder as a mono WAV file, named after the file and "
 				"its speaker (such as take-L.wav), on a new mono track of its own. copy, convert and splitChannels "
-				"need a saved project. One undo step. Returns the new tracks, and per file (per channel when split) "
-				"the media files and events, in the order of files.",
+				"need a saved project. clipsOnly adds the media files and clips to the pool without tracks or events "
+				"(the pool's Import Medium). One undo step. Returns the new tracks, and per file (per channel when "
+				"split) the media files and events, in the order of files.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties",
 						{{"files", {{"type", "array"}, {"items", {{"type", "string"}}}}}, {"track", integer},
 							{"position", integer}, {"oneTrack", boolean}, {"copy", boolean}, {"convert", boolean},
-							{"splitChannels", boolean}}},
+							{"splitChannels", boolean}, {"clipsOnly", boolean}}},
 					{"required", {"files"}}},
 				{{"type", "object"}, {"properties", {{"tracks", ids}, {"media", ids}, {"events", ids}, {"job", job}}},
 					{"required", {"tracks", "media", "events", "job"}}},
@@ -125,7 +126,9 @@ namespace gnubase::engine
 		const bool convert = parameters.value("convert", false);
 		const bool split = parameters.value("splitChannels", false);
 		const bool oneTrack = parameters.value("oneTrack", false);
+		const bool clipsOnly = parameters.value("clipsOnly", false);
 		ObjectId target = parameters.value("track", ObjectId{0});
+		require(!clipsOnly || (target == 0 && !oneTrack), "clipsOnly adds no events: leave out track and oneTrack");
 		require(!split || (target == 0 && !oneTrack),
 			"splitChannels puts every channel on a track of its own: leave out track and oneTrack");
 		if (target != 0)
@@ -178,6 +181,8 @@ namespace gnubase::engine
 					if (!splits)
 						clipParameters["name"] = fs::u8path(path).stem().u8string(); // not a converted copy's name
 					const Json clip = run("clip.add", clipParameters).at("clip");
+					if (clipsOnly)
+						continue;
 
 					ObjectId track = target;
 					if (track == 0)
