@@ -12,6 +12,7 @@
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
+#include "ui/statusline.h"
 #include "ui/themes.h"
 #include "ui/tracklist.h"
 #include "ui/uisettings.h"
@@ -54,6 +55,7 @@ namespace gnubase::app
 		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the main menu
 		// bar (ui/mainmenu.h) and the track list beside the event display in its main zone, whose commands are key
 		// commands in the focus zone "project". Throws std::runtime_error if the document can't be loaded.
+		// Also displays the status line.
 		ui::EventDisplay& showProject();
 		// The project window's track list, null before showProject.
 		ui::TrackList* trackList() { return m_trackList.get(); }
@@ -94,6 +96,7 @@ namespace gnubase::app
 		engine::Engine& m_engine;
 		std::filesystem::path m_resources;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
+		std::unique_ptr<ui::StatusLine> m_statusLine;     // too
 		std::unique_ptr<ui::TrackList> m_trackList;       // and before the display
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
 		bool m_canUndo = false;

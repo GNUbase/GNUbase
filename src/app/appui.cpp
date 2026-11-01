@@ -253,6 +253,7 @@ namespace gnubase::app
 		m_docking.attach("project", *document);
 		m_trackList.reset();
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
+		m_statusLine = std::make_unique<ui::StatusLine>(m_binding, *document);
 		if (Rml::Element* tracks = document->GetElementById("track-list"))
 			m_trackList = std::make_unique<ui::TrackList>(*m_eventDisplay, m_binding, *tracks);
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);

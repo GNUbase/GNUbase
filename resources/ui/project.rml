@@ -11,6 +11,7 @@
      zoom-presets.rml, next to this file. ui::TrackList fills #track-list under its global track controls
      (docs/features/track-list.md): #add-track opens the add track dialog (add-track.rml), #track-controls-settings
      the track controls settings dialog (track-controls.rml); #track-list-menu is its context menu.
+     ui::StatusLine fills #record-format and #lost-device (docs/features/status-line.md).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
 <head>
@@ -38,6 +39,18 @@
 		#toolbar .spacer
 		{
 			flex: 1 1 0;
+		}
+
+		.status-line
+		{
+			display: flex;
+			align-items: center;
+			padding: 0 6dp;
+		}
+
+		.status-field
+		{
+			margin-right: 16dp;
 		}
 
 		#track-list
@@ -106,7 +119,10 @@
 		<splitter for="right" resize="next"/>
 		<div id="right-zone" zone="right" focuszone="right" size="240" default="hidden"/>
 	</div>
-	<div id="status-line" class="strip" strip="statusLine" default="hidden"/>
+	<div id="status-line" class="strip status-line" strip="statusLine" default="hidden">
+		<span id="record-format" class="status-field" title="Record Format"/>
+		<span id="lost-device" class="status-field hidden"/>
+	</div>
 	<div id="transport-bar" class="strip" strip="transportBar" default="hidden"/>
 
 	<menu id="file-menu">

@@ -44,8 +44,9 @@ namespace gnubase::engine
 		{
 			return Json::parse(R"({"type": "object",
 			"properties": {"device": {"type": ["object", "null"]}, "running": {"type": "boolean"},
-				"position": {"type": "integer"}, "capturedFrames": {"type": "integer"},
-				"droppedFrames": {"type": "integer"}, "playbackDropouts": {"type": "integer"},
+				"position": {"type": "integer"}, "projectSampleRate": {"type": "number"},
+				"capturedFrames": {"type": "integer"}, "droppedFrames": {"type": "integer"},
+				"playbackDropouts": {"type": "integer"},
 				"processing": {"type": "object", "properties": {"multiProcessing": {"type": "boolean"},
 					"threads": {"type": "integer"}, "activeThreads": {"type": "integer"},
 					"limitedBy": {"type": ["string", "null"],
@@ -54,8 +55,8 @@ namespace gnubase::engine
 				"lost": {"type": ["object", "null"], "properties": {"backend": {"type": "string"},
 					"device": {"type": "string"}, "reason": {"type": "string"}, "restart": {"type": "boolean"}},
 					"required": ["backend", "device", "reason", "restart"]}},
-			"required": ["device", "running", "position", "capturedFrames", "droppedFrames", "playbackDropouts",
-				"processing", "lost"]})");
+			"required": ["device", "running", "position", "projectSampleRate", "capturedFrames", "droppedFrames",
+				"playbackDropouts", "processing", "lost"]})");
 		}
 
 		bool supports(const audio::DeviceInfo& info, double sampleRate)
@@ -284,6 +285,7 @@ namespace gnubase::engine
 		const double rate = m_snapshots.latest().sampleRate;
 		if (rate != m_projectRate)
 		{
+			const bool known = m_projectRate != 0.0; // not the first sync, which only learns the rate
 			m_projectRate = rate;
 			if (m_lost)
 				m_lost->parameters.erase("sampleRate"); // it returns at the new rate if it supports it
@@ -291,10 +293,15 @@ namespace gnubase::engine
 			{
 				if (!m_lost)
 					m_parameters["sampleRate"] = rate;
-				reset(); // a fallback opens again at the new rate, after the lost device is tried
-				if (m_engine != nullptr)
-					m_engine->broadcast("audio.changed", status());
+				reset(); // retry the lost device, or reopen the fallback at the new rate
 			}
+			else if (m_lost)
+			{
+				m_parameters.erase("sampleRate"); // it returns at the new rate if it supports it
+			}
+			// Also when the device stays as it is: the status line shows the project's rate and a mismatch.
+			if (known && m_engine != nullptr)
+				m_engine->broadcast("audio.changed", status());
 		}
 		if (m_device && (m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring))
 			rebuild();
@@ -1256,19 +1263,19 @@ namespace gnubase::engine
 	Json AudioEngine::status() const
 	{
 		const Json processing = processingStatus();
+		const double projectRate = m_snapshots.latest().sampleRate;
 		Json lost = nullptr;
 		if (m_lost)
 			lost = {{"backend", m_lost->backend}, {"device", m_lost->device}, {"reason", m_lost->reason},
 				{"restart", m_lost->restart}};
 		if (!m_device)
 		{
-			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"capturedFrames", 0},
-				{"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()}, {"processing", processing},
-				{"lost", std::move(lost)}};
+			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"projectSampleRate", projectRate},
+				{"capturedFrames", 0}, {"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()},
+				{"processing", processing}, {"lost", std::move(lost)}};
 		}
 		const audio::DeviceFormat& format = m_device->format();
 		const audio::DeviceLatency latency = m_device->latency();
-		const double projectRate = m_snapshots.latest().sampleRate;
 		Json device = toJson(m_device->info());
 		device.update({{"backend", m_backend}, {"sampleRate", format.sampleRate}, {"blockSize", format.blockSize},
 			{"inputChannels", format.inputChannels}, {"outputChannels", format.outputChannels},
@@ -1276,7 +1283,7 @@ namespace gnubase::engine
 			{"recordOffset", m_recordOffset.load(std::memory_order_relaxed)}, {"directMonitoring", m_directMonitoring},
 			{"projectSampleRate", projectRate}, {"sampleRateMismatch", format.sampleRate != projectRate}});
 		return {{"device", std::move(device)}, {"running", m_device->running()}, {"position", m_device->position()},
-			{"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
+			{"projectSampleRate", projectRate}, {"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
 			{"droppedFrames", m_dummy != nullptr ? m_dummy->droppedFrames() : 0},
 			{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", std::move(lost)}};
 	}
@@ -1541,8 +1548,9 @@ namespace gnubase::engine
 				"frames "
 				"of audio track playback were silent because a disk stream "
 				"was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's "
-				"sample rate; with sampleRateMismatch the device runs at another one, as it doesn't support the "
-				"project's or was asked for another, and plays faster or slower. lost: the device that went away "
+				"sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as "
+				"it doesn't support the project's or was asked for another, and plays faster or slower; a new project "
+				"sample rate sends audio.changed. lost: the device that went away "
 				"(its backend, device id, the reason it can't be opened and whether it ran and restarts), while the "
 				"engine waits for it to return (see audio.reset); otherwise null. While a device is lost, device is "
 				"the fallback that plays meanwhile (the user setting audio.fallbackDevice), or null.",
