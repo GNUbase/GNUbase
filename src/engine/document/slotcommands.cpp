@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <iterator>
 #include <string>
 #include <utility>
@@ -48,12 +49,15 @@ namespace gnubase::engine
 			return found->second;
 		}
 
-		Json describe(const Project& project, const Slot& slot)
+		using SlotStatus = std::function<std::string(ObjectId)>;
+
+		Json describe(const Project& project, const Slot& slot, const SlotStatus& status)
 		{
 			Json json = toJson(slot);
 			json.erase("state"); // only files need it
 			const std::vector<ObjectId>& slots = project.channels.at(slot.channel).slots;
 			json["index"] = std::distance(slots.begin(), std::find(slots.begin(), slots.end(), slot.id));
+			json["status"] = status ? status(slot.id) : "noDevice";
 			return json;
 		}
 
@@ -78,7 +82,7 @@ namespace gnubase::engine
 			return processors::findBuiltin(plugin.substr(prefix.size()));
 		}
 
-		Json insertPlugin(Project& project, CommandContext& context)
+		Json insertPlugin(Project& project, CommandContext& context, const SlotStatus& status)
 		{
 			const Json& parameters = context.parameters();
 			Channel& channel = audioChannel(project, parameters.at("channel").get<ObjectId>());
@@ -99,7 +103,7 @@ namespace gnubase::engine
 			const ObjectId id = slot.id;
 			project.slots[id] = std::move(slot);
 			context.emit("channel.changed", {{"channel", toJson(channel)}});
-			return {{"slot", describe(project, project.slots.at(id))}};
+			return {{"slot", describe(project, project.slots.at(id), status)}};
 		}
 
 		Json removePlugin(Project& project, CommandContext& context)
@@ -112,7 +116,7 @@ namespace gnubase::engine
 			return Json::object();
 		}
 
-		Json movePlugin(Project& project, CommandContext& context)
+		Json movePlugin(Project& project, CommandContext& context, const SlotStatus& status)
 		{
 			const Json& parameters = context.parameters();
 			Slot& slot = findSlot(project, parameters);
@@ -131,32 +135,32 @@ namespace gnubase::engine
 			context.emit("channel.changed", {{"channel", toJson(from)}});
 			if (to.id != from.id)
 				context.emit("channel.changed", {{"channel", toJson(to)}});
-			return {{"slot", describe(project, slot)}};
+			return {{"slot", describe(project, slot, status)}};
 		}
 
-		Json setPlugin(Project& project, CommandContext& context)
+		Json setPlugin(Project& project, CommandContext& context, const SlotStatus& status)
 		{
 			const Json& parameters = context.parameters();
 			Slot& slot = findSlot(project, parameters);
 			slot.bypass = parameters.value("bypass", slot.bypass);
 			slot.active = parameters.value("active", slot.active);
-			Json described = describe(project, slot);
+			Json described = describe(project, slot, status);
 			context.emit("plugin.changed", {{"slot", described}});
 			return {{"slot", std::move(described)}};
 		}
 
-		Json listPlugins(Project& project, CommandContext& context)
+		Json listPlugins(Project& project, CommandContext& context, const SlotStatus& status)
 		{
 			const Channel& channel = audioChannel(project, context.parameters().at("channel").get<ObjectId>());
 			Json slots = Json::array();
 			for (const ObjectId id : channel.slots)
-				slots.push_back(describe(project, project.slots.at(id)));
+				slots.push_back(describe(project, project.slots.at(id), status));
 			return {{"slots", std::move(slots)}};
 		}
 
-		Json getPlugin(Project& project, CommandContext& context)
+		Json getPlugin(Project& project, CommandContext& context, const SlotStatus& status)
 		{
-			return {{"slot", describe(project, findSlot(project, context.parameters()))}};
+			return {{"slot", describe(project, findSlot(project, context.parameters()), status)}};
 		}
 	}
 
@@ -166,8 +170,17 @@ namespace gnubase::engine
 		const Json indexSchema = {{"type", "integer"}, {"minimum", 0}, {"maximum", g_maxSlots}};
 		const Json slotResult = {
 			{"type", "object"}, {"properties", {{"slot", {{"type", "object"}}}}}, {"required", {"slot"}}};
-		const std::string slotText = "A slot has its id, channel, index (0 is the top), plugin, name, bypass, active "
-									 "and the parameters set on its plugin (see parameter.list).";
+		const std::string slotText =
+			"A slot has its id, channel, index (0 is the top), plugin, name, bypass, active, the parameters set on its "
+			"plugin (see parameter.list) and the status of its plugin in the audio engine: \"loading\" (being made or "
+			"activated, while the audio passes it unchanged), \"active\", \"inactive\", \"failed\" (it couldn't be "
+			"made or activated), \"unavailable\" (this build has no such plugin) or \"noDevice\" (no audio device is "
+			"open).";
+		const auto with = [this](Json (*handler)(Project&, CommandContext&, const SlotStatus&))
+		{
+			return [this, handler](Project& project, CommandContext& context)
+			{ return handler(project, context, m_slotStatus); };
+		};
 
 		add(engine,
 			{"plugin.insert", 1,
@@ -181,7 +194,7 @@ namespace gnubase::engine
 				objectSchema({{"channel", idSchema}, {"plugin", {{"type", "string"}}}, {"index", indexSchema}},
 					{"channel", "plugin"}),
 				slotResult, false},
-			insertPlugin);
+			with(insertPlugin));
 		add(engine,
 			{"plugin.remove", 1,
 				"Removes a slot and its plugin; the slots below it move up. Undo puts the plugin back with its "
@@ -194,7 +207,7 @@ namespace gnubase::engine
 				"slots without the moved one. The plugin keeps its parameters. Returns the slot.",
 				objectSchema({{"slot", idSchema}, {"channel", idSchema}, {"index", indexSchema}}, {"slot", "index"}),
 				slotResult, false},
-			movePlugin);
+			with(movePlugin));
 		add(engine,
 			{"plugin.set", 1,
 				"Changes a slot: bypass lets the audio pass the plugin unchanged while the plugin keeps processing, so "
@@ -203,14 +216,14 @@ namespace gnubase::engine
 				objectSchema({{"slot", idSchema}, {"bypass", {{"type", "boolean"}}}, {"active", {{"type", "boolean"}}}},
 					{"slot"}),
 				slotResult, false},
-			setPlugin);
+			with(setPlugin));
 		add(engine,
 			{"plugin.list", 1, "The slots of a channel with audio, from top to bottom. " + slotText,
 				objectSchema({{"channel", idSchema}}, {"channel"}),
 				{{"type", "object"}, {"properties", {{"slots", {{"type", "array"}}}}}, {"required", {"slots"}}}, true},
-			listPlugins);
+			with(listPlugins));
 		add(engine,
 			{"plugin.get", 1, "One slot. " + slotText, objectSchema({{"slot", idSchema}}, {"slot"}), slotResult, true},
-			getPlugin);
+			with(getPlugin));
 	}
 }

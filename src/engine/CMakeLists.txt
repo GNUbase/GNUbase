@@ -142,6 +142,7 @@ add_library(gnubase-engine STATIC
 	peaks/peaks.cpp peaks/peaks.h
 	plugins/hostmanager.cpp plugins/hostmanager.h
 	plugins/pluginslot.cpp plugins/pluginslot.h
+	plugins/slotinstances.cpp plugins/slotinstances.h
 	processors/builtin.cpp processors/builtin.h
 	processors/builtinplugin.cpp processors/builtinplugin.h
 	processors/effects.h

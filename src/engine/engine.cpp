@@ -132,6 +132,7 @@ namespace gnubase::engine
 		m_audio = std::make_unique<AudioEngine>(
 			m_project->snapshots(), *m_settings, std::move(backends), std::move(midiBackends));
 		m_audio->registerCommands(*this);
+		m_project->setSlotStatus([this](ObjectId slot) { return m_audio->slotStatus(slot); });
 		m_peaks = std::make_unique<peaks::PeakCache>(
 			[this](const std::string& name, const Json& data) { broadcast(name, data); });
 		m_peaks->registerCommands(*this);

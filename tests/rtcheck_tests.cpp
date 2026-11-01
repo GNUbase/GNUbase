@@ -509,6 +509,55 @@ TEST_CASE("the built-in plugins process, flush parameters and reset without allo
 	CHECK(g_violations == 0);
 }
 
+TEST_CASE("a plugin slot takes parameter values and bypass while it processes, without allocating or locking", "[unit]")
+{
+	using namespace gnubase;
+	class NullHost final : public plugin::Host
+	{
+	public:
+		void requestRestart() override {}
+		void requestProcess() override {}
+		void requestCallback() override {}
+		void* extension(std::string_view /*id*/) override { return nullptr; }
+	};
+	NullHost host;
+	std::unique_ptr<plugin::Plugin> limiter = engine::processors::BuiltinFactory().create("builtin:limiter", host);
+	REQUIRE(limiter->init());
+	engine::plugins::PluginSlot slot(std::move(limiter));
+	REQUIRE(slot.activate(48000.0, 128));
+	CHECK(slot.activeFor(48000.0, 128));
+	CHECK(slot.latency() == 48); // 1 ms look-ahead
+
+	std::vector<float> left(128);
+	std::vector<float> right(128);
+	const std::array<float*, 2> audio{left.data(), right.data()};
+	const engine::graph::EventBuffer eventsIn(4);
+	engine::graph::EventBuffer eventsOut(4);
+	const engine::graph::TransportBlock transport;
+	const RecordViolations record;
+	for (int i = 0; i < 100; ++i)
+	{
+		// The command thread's calls, between blocks.
+		slot.setParameters({{1, i % 2 == 0 ? -12.0 : -0.3}}); // the ceiling
+		slot.setBypass(i % 3 == 0);
+		std::fill(left.begin(), left.end(), 0.5f);
+		std::fill(right.begin(), right.end(), -0.5f);
+		const ScopedRealtimeContext realtime;
+		slot.process({audio.data(), 2, 128, eventsIn, eventsOut, transport});
+		eventsOut.clear();
+	}
+	CHECK(g_violations == 0);
+	CHECK(!slot.failed());
+	CHECK(left[0] == 0.5f); // the last block, 99, was bypassed
+	CHECK(right[127] == -0.5f);
+	CHECK(slot.latency() == 0);
+	slot.setBypass(false);
+	CHECK(slot.latency() == 48);
+	slot.deactivate();
+	CHECK(!slot.activeFor(48000.0, 128));
+	CHECK(slot.latency() == 0);
+}
+
 TEST_CASE("rendering a project through the dummy device passes the RT checker", "[unit]")
 {
 	using gnubase::engine::Json;

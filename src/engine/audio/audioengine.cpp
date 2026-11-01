@@ -3,6 +3,7 @@
 
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
+#include "engine/plugins/slotinstances.h"
 #include "engine/processors/builtin.h"
 #include "engine/settings/usersettings.h"
 #include "platform/log.h"
@@ -204,6 +205,7 @@ namespace gnubase::engine
 	{
 		if (m_device)
 			m_device->stop();
+		m_deviceRunning = false;
 		stopCueing();
 	}
 
@@ -248,6 +250,7 @@ namespace gnubase::engine
 		try
 		{
 			m_device->start(*this);
+			m_deviceRunning = true;
 		}
 		catch (...)
 		{
@@ -312,6 +315,27 @@ namespace gnubase::engine
 		return AutoMonitoring::TapeMachine;
 	}
 
+	namespace
+	{
+		// The node that plays what a channel plays: its source node if it has plugin slots (graph::describe), else its
+		// own; -1 for none.
+		int sourceNode(const graph::GraphDesc& desc, ObjectId channel)
+		{
+			int found = -1;
+			for (size_t n = 0; n < desc.nodes.size(); ++n)
+			{
+				const graph::NodeDesc& node = desc.nodes[n];
+				if (node.object != channel)
+					continue;
+				if (node.kind == graph::NodeKind::ChannelSource)
+					return static_cast<int>(n);
+				if (node.kind == graph::NodeKind::Channel)
+					found = static_cast<int>(n);
+			}
+			return found;
+		}
+	}
+
 	void AudioEngine::rebuild()
 	{
 		const RenderSnapshot& snapshot = m_snapshots.latest();
@@ -329,15 +353,17 @@ namespace gnubase::engine
 			if (channel.type != TrackType::Audio)
 				continue;
 			auto playlist = std::make_shared<const Playlist>(makePlaylist(snapshot, channel));
-			for (graph::NodeDesc& node : desc.nodes)
-				if (node.kind == graph::NodeKind::Channel && node.object == channel.id)
-					node.processor = std::make_shared<TrackPlayer>(playlist, channel.id, m_playback);
+			const int source = sourceNode(desc, channel.id);
+			if (source >= 0)
+				desc.nodes[static_cast<size_t>(source)].processor =
+					std::make_shared<TrackPlayer>(playlist, channel.id, m_playback);
 			tracks.push_back({channel.id, std::move(playlist)});
 		}
 		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate);
 		const uint64_t generation = ++m_generation;
 		attachMidi(snapshot, desc, generation);
 		attachStrips(snapshot, desc);
+		attachSlots(snapshot, desc);
 		std::vector<std::vector<int>> ports = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
 		if (m_directMonitoring)
 			monitorDirectly(snapshot, desc, ports);
@@ -368,6 +394,31 @@ namespace gnubase::engine
 			m_programs->publish(std::move(program));
 		else
 			m_programs = std::make_unique<rt::SnapshotPublisher<Program>>(std::move(program));
+		if (m_slots)
+			m_slots->retire(generation);
+	}
+
+	std::string AudioEngine::slotStatus(ObjectId slot) const
+	{
+		if (!m_device || !m_slots)
+			return "noDevice";
+		const std::string status = m_slots->status(slot);
+		return status.empty() ? "loading" : status; // the graph is built again after the command
+	}
+
+	void AudioEngine::attachSlots(const RenderSnapshot& snapshot, graph::GraphDesc& desc)
+	{
+		if (!m_slots)
+			return;
+		std::vector<plugins::SlotInstances::Wanted> wanted;
+		for (const RenderChannel& channel : snapshot.channels)
+			for (const RenderSlot& slot : channel.slots)
+				wanted.push_back({&slot, static_cast<uint32_t>(channelCount(channel.format))});
+		const audio::DeviceFormat& format = m_device->format();
+		m_slots->update(wanted, format.sampleRate, format.blockSize);
+		for (graph::NodeDesc& node : desc.nodes)
+			if (node.kind == graph::NodeKind::PluginSlot)
+				node.processor = m_slots->processor(node.object);
 	}
 
 	void AudioEngine::attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc, uint64_t generation)
@@ -434,9 +485,9 @@ namespace gnubase::engine
 				processor = instrument.channel;
 				instruments[channel.id] = instrument;
 			}
-			for (graph::NodeDesc& node : desc.nodes)
-				if (node.kind == graph::NodeKind::Channel && node.object == channel.id)
-					node.processor = processor;
+			const int source = sourceNode(desc, channel.id);
+			if (source >= 0)
+				desc.nodes[static_cast<size_t>(source)].processor = processor;
 		}
 		m_sequencers = std::move(sequencers);
 		m_instruments = std::move(instruments);
@@ -445,8 +496,10 @@ namespace gnubase::engine
 	void AudioEngine::attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc)
 	{
 		std::map<ObjectId, std::shared_ptr<ChannelState>> states;
-		for (const RenderChannel& channel : snapshot.channels)
+		const size_t firstChannel = snapshot.busses.size();
+		for (size_t i = 0; i < snapshot.channels.size(); ++i)
 		{
+			const RenderChannel& channel = snapshot.channels[i];
 			const auto kept = m_channelStates.find(channel.id);
 			const std::shared_ptr<ChannelState> state =
 				kept != m_channelStates.end() ? kept->second : std::make_shared<ChannelState>();
@@ -467,10 +520,21 @@ namespace gnubase::engine
 			std::optional<Monitoring> monitoring;
 			if (channel.input >= 0)
 				monitoring = Monitoring{channel.monitor, channel.recordEnable, m_autoMonitoring};
-			for (graph::NodeDesc& node : desc.nodes)
-				if (node.kind == graph::NodeKind::Channel && node.object == channel.id)
-					node.processor =
-						std::make_shared<ChannelStrip>(state, node.processor, panning, monitoring, channel.silent);
+			graph::NodeDesc& node = desc.nodes[firstChannel + i];
+			const auto source = static_cast<size_t>(sourceNode(desc, channel.id));
+			if (source == firstChannel + i)
+			{
+				node.processor =
+					std::make_shared<ChannelStrip>(state, node.processor, panning, monitoring, channel.silent);
+				continue;
+			}
+			// Plugin slots between them: the source node plays the source and the automation, the channel's node
+			// fades.
+			graph::NodeDesc& sourceDesc = desc.nodes[source];
+			sourceDesc.processor = std::make_shared<ChannelStrip>(
+				state, sourceDesc.processor, panning, monitoring, channel.silent, StripPart::Source);
+			node.processor =
+				std::make_shared<ChannelStrip>(state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader);
 		}
 		m_channelStates = std::move(states);
 	}
@@ -489,13 +553,11 @@ namespace gnubase::engine
 	void AudioEngine::monitorDirectly(
 		const RenderSnapshot& snapshot, graph::GraphDesc& desc, const std::vector<std::vector<int>>& ports)
 	{
-		const int firstChannel = static_cast<int>(snapshot.busses.size());
-		for (size_t i = 0; i < snapshot.channels.size(); ++i)
+		for (const RenderChannel& channel : snapshot.channels)
 		{
-			const RenderChannel& channel = snapshot.channels[i];
 			if (!monitoredDirectly(channel))
 				continue;
-			const int node = firstChannel + static_cast<int>(i);
+			const int node = sourceNode(desc, channel.id);
 			desc.audio.erase(std::remove_if(desc.audio.begin(), desc.audio.end(),
 								 [&channel, node](const graph::Connection& connection)
 								 { return connection.from == channel.input && connection.to == node; }),
@@ -1338,6 +1400,16 @@ namespace gnubase::engine
 	void AudioEngine::registerCommands(Engine& engine)
 	{
 		m_engine = &engine;
+		m_slots = std::make_unique<plugins::SlotInstances>(
+			engine.pluginHosts(),
+			[this]
+			{
+				if (!m_updatingPlugins.exchange(true))
+					m_engine->post(
+						"audio.updatePlugins", Json::object(), [this](const Result&) { m_updatingPlugins = false; });
+			},
+			[this](uint64_t generation)
+			{ return m_started.load(std::memory_order_acquire) >= generation || !m_deviceRunning; });
 		// A failed command's events go nowhere: if it closed the device or opened it again before it failed, clients
 		// still learn the status it left.
 		const auto announcingFailure = [this](const std::function<void()>& change)
@@ -1592,6 +1664,22 @@ namespace gnubase::engine
 				else
 					context.leaveOutOfLog();
 				return result;
+			});
+		engine.registerCommand(
+			{"audio.updatePlugins", 1,
+				"Builds the processing graph again with the plugins of the slots as they are now. The engine runs it "
+				"on "
+				"its own when a plugin is ready after it was loaded or activated, failed, or asked to be restarted; a "
+				"slot's audio passes its plugin unchanged until then. Left out of engine.commandLog.",
+				noParameters(), {{"type", "object"}}, false},
+			[this](CommandContext& context)
+			{
+				// Reset before the rebuild: a plugin that gets ready during it posts again.
+				m_updatingPlugins = false;
+				if (m_device)
+					rebuild();
+				context.leaveOutOfLog();
+				return Json::object();
 			});
 		engine.registerCommand(
 			{"audio.simulateDeviceLoss", 1,

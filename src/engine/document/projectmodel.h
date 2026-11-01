@@ -53,6 +53,9 @@ namespace gnubase::engine
 
 		rt::SnapshotPublisher<RenderSnapshot>& snapshots() { return m_snapshots; }
 
+		// What the plugin.* commands report as a slot's status: the audio engine's (AudioEngine::slotStatus).
+		void setSlotStatus(std::function<std::string(ObjectId slot)> status) { m_slotStatus = std::move(status); }
+
 	private:
 		// Registers a query, or a command that changes the project. Such a command runs on the project, and if it
 		// fails the project is restored from a copy, so a failed command changes nothing. If it succeeds, what it
@@ -94,6 +97,7 @@ namespace gnubase::engine
 		std::map<std::string, Edit> m_edits; // the commands a transaction can run
 		uint64_t m_revision = 0;
 		bool m_automationFollowsEvents = false; // a setting, not part of the project
+		std::function<std::string(ObjectId)> m_slotStatus;
 		rt::SnapshotPublisher<RenderSnapshot> m_snapshots;
 	};
 }

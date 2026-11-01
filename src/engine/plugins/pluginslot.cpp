@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/plugins/pluginslot.h"
 
+#include "engine/document/document.h"
 #include "engine/graph/graph.h"
 #include "engine/midi/midivalues.h"
 #include "platform/rt/realtime.h"
@@ -30,16 +31,90 @@ namespace gnubase::engine::plugins
 	{
 		m_ports = plugin::extension<plugin::AudioPorts>(*m_plugin);
 		m_latency = plugin::extension<plugin::Latency>(*m_plugin);
+		if (auto* params = plugin::extension<plugin::Params>(*m_plugin))
+		{
+			const uint32_t count = params->paramCount();
+			for (uint32_t i = 0; i < count; ++i)
+			{
+				plugin::ParamInfo info;
+				if (!params->paramInfo(i, info))
+					continue;
+				m_parameterIds.push_back(info.id);
+				m_defaults.push_back(info.defaultValue);
+			}
+		}
+		m_set.resize(m_parameterIds.size());
+		m_targets = std::make_unique<std::atomic<double>[]>(m_parameterIds.size());
+		m_changed = std::make_unique<std::atomic<bool>[]>(m_parameterIds.size());
+		for (size_t i = 0; i < m_parameterIds.size(); ++i)
+		{
+			m_targets[i].store(0.0, std::memory_order_relaxed);
+			m_changed[i].store(false, std::memory_order_relaxed);
+		}
 	}
 
 	PluginSlot::~PluginSlot()
 	{
+		// No graph processes the slot any more.
+		deactivate();
+	}
+
+	void PluginSlot::deactivate()
+	{
+		rt::assertNotRealtime("PluginSlot::deactivate");
 		if (!m_active)
 			return;
-		// No graph processes the slot any more.
 		if (m_started)
 			m_plugin->stopProcessing();
 		m_plugin->deactivate();
+		m_active = false;
+		m_started = false;
+		m_activeRate.store(0.0, std::memory_order_relaxed);
+		m_activeFrames.store(0, std::memory_order_relaxed);
+	}
+
+	void PluginSlot::destroy()
+	{
+		if (!m_plugin)
+			return;
+		deactivate();
+		m_plugin = nullptr;
+		m_ports = nullptr;
+		m_latency = nullptr;
+	}
+
+	bool PluginSlot::activeFor(double sampleRate, uint32_t maxFrames) const
+	{
+		return m_activeRate.load(std::memory_order_relaxed) == sampleRate &&
+			m_activeFrames.load(std::memory_order_relaxed) == maxFrames;
+	}
+
+	bool PluginSlot::loadState(const std::vector<uint8_t>& state)
+	{
+		rt::assertNotRealtime("PluginSlot::loadState");
+		auto* extension = m_plugin ? plugin::extension<plugin::State>(*m_plugin) : nullptr;
+		return extension != nullptr && extension->loadState(state.data(), state.size(), plugin::StateContext::Project);
+	}
+
+	void PluginSlot::setParameters(const std::map<uint32_t, double>& values)
+	{
+		bool changed = false;
+		for (size_t i = 0; i < m_parameterIds.size(); ++i)
+		{
+			const auto value = values.find(m_parameterIds[i]);
+			std::optional<double> wanted;
+			if (value != values.end())
+				wanted = value->second;
+			if (wanted == m_set[i])
+				continue;
+			// A value that went goes back to the default.
+			m_targets[i].store(wanted.value_or(m_defaults[i]), std::memory_order_relaxed);
+			m_changed[i].store(true, std::memory_order_release);
+			m_set[i] = wanted;
+			changed = true;
+		}
+		if (changed)
+			m_changes.fetch_add(1, std::memory_order_release);
 	}
 
 	void PluginSlot::allocate(bool input, uint32_t maxFrames)
@@ -73,24 +148,56 @@ namespace gnubase::engine::plugins
 
 	void PluginSlot::prepare(double sampleRate, uint32_t maxFrames)
 	{
-		rt::assertNotRealtime("PluginSlot::prepare");
-		if (m_active)
-		{
-			if (m_started)
-				m_plugin->stopProcessing();
-			m_plugin->deactivate();
-		}
-		m_started = false;
+		activate(sampleRate, maxFrames);
+	}
+
+	bool PluginSlot::activate(double sampleRate, uint32_t maxFrames)
+	{
+		rt::assertNotRealtime("PluginSlot::activate");
+		if (!m_plugin)
+			return false;
+		if (m_active && activeFor(sampleRate, maxFrames))
+			return true;
+		deactivate();
 		m_plugin->setProcessMode(m_mode.load(std::memory_order_relaxed));
 		m_active = m_plugin->activate(sampleRate, 1, maxFrames);
 		// The ports as activate left them: a plugin may change them while inactive, and a remote one reads them again.
 		allocate(true, maxFrames);
 		allocate(false, maxFrames);
+		m_dry.assign(size_t{g_maxAudioChannels} * maxFrames, 0.0f);
+		m_maxFrames = maxFrames;
+		if (m_active)
+		{
+			m_activeRate.store(sampleRate, std::memory_order_relaxed);
+			m_activeFrames.store(maxFrames, std::memory_order_relaxed);
+		}
+		return m_active;
 	}
 
 	uint32_t PluginSlot::latency() const
 	{
-		return m_active && m_latency != nullptr ? m_latency->latency() : 0;
+		return m_active && m_latency != nullptr && !bypassed() ? m_latency->latency() : 0;
+	}
+
+	void PluginSlot::addParameterChanges() noexcept
+	{
+		const uint64_t changes = m_changes.load(std::memory_order_acquire);
+		if (changes == m_seenChanges)
+			return;
+		m_seenChanges = changes;
+		for (size_t i = 0; i < m_parameterIds.size(); ++i)
+		{
+			if (!m_changed[i].exchange(false, std::memory_order_acquire))
+				continue;
+			plugin::Event event;
+			event.type = plugin::EventType::ParamValue;
+			event.port = -1;
+			event.channel = -1;
+			event.key = -1;
+			event.param = m_parameterIds[i];
+			event.value = m_targets[i].load(std::memory_order_relaxed);
+			m_eventsIn.push(event);
+		}
 	}
 
 	void convertEvent(const graph::ProcessEvent& event, uint32_t frames, plugin::EventList& out) noexcept
@@ -158,6 +265,7 @@ namespace gnubase::engine::plugins
 	void PluginSlot::convertEvents(const graph::ProcessContext& context) noexcept
 	{
 		m_eventsIn.clear();
+		addParameterChanges(); // at offset 0, before the block's own events
 		for (const graph::ProcessEvent& event : context.eventsIn)
 			convertEvent(event, context.frames, m_eventsIn);
 	}
@@ -192,6 +300,12 @@ namespace gnubase::engine::plugins
 		}
 		if (!m_started)
 			m_started = m_plugin->startProcessing();
+		const bool bypass = bypassed();
+		const int dryChannels = std::min(context.channels, g_maxAudioChannels);
+		if (bypass && context.frames <= m_maxFrames)
+			for (int c = 0; c < dryChannels; ++c)
+				std::memcpy(m_dry.data() + (static_cast<size_t>(c) * m_maxFrames), context.audio[c],
+					context.frames * sizeof(float));
 
 		// The node's audio goes to the main input; a mono node feeds every channel of it.
 		for (uint32_t port = 0; port < m_inputs.size(); ++port)
@@ -219,6 +333,13 @@ namespace gnubase::engine::plugins
 
 		const bool failed = status == plugin::ProcessStatus::Error || m_outputs.empty();
 		m_failed.store(failed, std::memory_order_relaxed);
+		if (bypass && context.frames <= m_maxFrames)
+		{
+			for (int c = 0; c < dryChannels; ++c)
+				std::memcpy(context.audio[c], m_dry.data() + (static_cast<size_t>(c) * m_maxFrames),
+					context.frames * sizeof(float));
+			return;
+		}
 		if (failed)
 		{
 			silence(context);
