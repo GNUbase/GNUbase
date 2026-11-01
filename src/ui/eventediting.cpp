@@ -357,8 +357,12 @@ namespace gnubase::ui
 		const bool wide = right - left > 3.0 * g_edge;
 		const bool atStart = wide && x - left <= g_edge;
 		const bool atEnd = wide && !atStart && right - x <= g_edge;
-		// An edge with the modifier Disable Snapping resizes rather than adding to the selection.
-		if (add && !held(event, "alt_key") && !((atStart || atEnd) && modifiers("sizeObjects.disableSnapping")))
+		// The tool modifiers for a press on an event (Set Cursor Position, Split Event, Copy, Shared Copy, and Disable
+		// Snapping at an edge) act on it rather than adding it to the selection, whatever keys they are set to.
+		const bool toolModifier = modifiers("select.setCursorPosition") || modifiers("select.splitEvent") ||
+			modifiers("dragDrop.copy") || modifiers("dragDrop.sharedCopy") ||
+			((atStart || atEnd) && modifiers("sizeObjects.disableSnapping"));
+		if (add && !toolModifier)
 		{
 			// Ctrl or Shift and a click adds an event to the selection or takes it out.
 			std::vector<uint64_t> events = m_selection;
@@ -532,13 +536,13 @@ namespace gnubase::ui
 		if (y + m_view.top < 0.0 || eventAt(x, y) != nullptr)
 			return;
 		const std::optional<size_t> found = visibleLaneAt(y);
-		const size_t lane = found.value_or(m_laneTypes.size());
 		// Below the tracks, a new MIDI track (reference manual p. 198, the track list's empty area, #80).
-		if (lane >= m_laneTypes.size())
+		if (!found)
 		{
 			m_binding.send("track.add", {{"type", "midi"}});
 			return;
 		}
+		const size_t lane = *found;
 		if (m_laneTypes[lane] != "midi" && m_laneTypes[lane] != "instrument")
 			return;
 		// A one-bar part where the click is (reference manual p. 251), or one between the locators.

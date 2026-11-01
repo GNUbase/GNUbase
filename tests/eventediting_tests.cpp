@@ -233,6 +233,24 @@ TEST_CASE("a drag at an edge resizes, Alt and a click splits, a double click add
 	CHECK(f.parts().size() == 4);
 }
 
+TEST_CASE("the object selection tool's modifiers act on events whatever keys they are set to", "[unit]")
+{
+	Fixture f;
+	f.call("settings.set",
+		{{"key", "ui.toolModifiers"}, {"value", {{"select.splitEvent", "shift"}, {"dragDrop.copy", "ctrl"}}}});
+	f.step();
+	// Shift and a click at 2 seconds splits the part there rather than adding it to the selection.
+	f.click(200, 60, {"shift"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+	CHECK(f.parts()[1].at("position") == 4 * g_quarter);
+	// Ctrl and a drag of the piece from 2 to 3 seconds copies it two seconds later.
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[1].events.size() == 2; }));
+	f.drag(250, 60, 450, 60, {"ctrl"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+	CHECK(f.parts()[2].at("position") == 8 * g_quarter);
+	CHECK(f.parts()[2].at("shared") == 0);
+}
+
 TEST_CASE("a double click below the tracks adds a MIDI track", "[unit]")
 {
 	Fixture f;
@@ -458,7 +476,7 @@ TEST_CASE("with snap to events, a position marker attracts a dragged event", "[u
 TEST_CASE("the tools are chosen by command, and the display names the one chosen", "[unit]")
 {
 	Fixture f;
-	Rml::Element* root = f.document.GetElementById("display");
+	const Rml::Element* root = f.document.GetElementById("display");
 	CHECK(f.display.tool() == ui::Tool::ObjectSelection);
 	CHECK(root->GetAttribute<std::string>("tool", "") == "objectSelection");
 	f.run("tool.split");
@@ -663,7 +681,7 @@ TEST_CASE("the range selection tool selects ranges, snapped, by dragging and dou
 	const Json tracks = f.call("project.get").at("tracks");
 	const auto audio = tracks[0].at("id").get<uint64_t>();
 	const auto midi = tracks[1].at("id").get<uint64_t>();
-	Rml::Element* root = f.document.GetElementById("display");
+	const Rml::Element* root = f.document.GetElementById("display");
 	const auto range = [&f]
 	{
 		REQUIRE(f.display.range().has_value());
