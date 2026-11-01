@@ -92,7 +92,9 @@ namespace gnubase::rt
 	//
 	// Every job runs in its caller's floating-point mode on every thread (rounding, flush to zero, denormals are
 	// zero), so a job's results don't depend on which thread computed them. On Linux workers take SCHED_FIFO priority
-	// one below their caller's (workerPriority) once a real-time thread runs a job.
+	// one below their caller's (workerPriority) once a real-time thread runs a job. Where the OS refuses them, as
+	// without RLIMIT_RTPRIO, they ask rtkit over the system bus, which gives them SCHED_RR one below the highest
+	// priority it grants; from there they can only lower it to follow their caller.
 	class WorkerPool
 	{
 	public:
@@ -154,6 +156,8 @@ namespace gnubase::rt
 		size_t threadLimit = SIZE_MAX; // starting more worker threads than this throws std::system_error
 		bool refuseRealtime = false;   // no worker gets real-time priority
 		bool pretendRealtime = false;  // every worker counts as real-time (realtime()), whatever priority it got
+		// Linux: workers may not take real-time priority themselves, as without RLIMIT_RTPRIO; rtkit may give it.
+		bool refuseDirectRealtime = false;
 	};
 	void setWorkerPoolFaults(const WorkerPoolFaults& faults) noexcept;
 }

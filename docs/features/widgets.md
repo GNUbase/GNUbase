@@ -110,7 +110,8 @@ The theme draws them; the widget library adds nothing.
   a row and Shift-click selects the rows from the last one clicked. Up and Down move the selection, Shift extends it,
   Home and End go to the first and last row. Selected rows have the state class `.selected`. The view's `value`
   attribute is the selected rows' values separated by commas, and `change` sends it, so `data-value` binds the
-  selection both ways, also when `data-for` makes the rows.
+  selection both ways, also when `data-for` makes the rows. Clicks and keys in a form control in a row, such as a text
+  field, are the control's and don't change the selection.
 - **Trees.** Rows with a `level` attribute (0 at the top) make a tree: the rows that follow a row with a higher level
   are its children, shown while it has the `expanded` attribute. The view gives tree rows a `.tree-indent`, sized from
   the level (16 dp a level), and a `.tree-toggle`, which the theme draws as an arrow; parents get the state classes
@@ -123,9 +124,10 @@ The theme draws them; the widget library adds nothing.
 ## Splitters
 
 `<splitter>` between two elements of a flex row or column moves the boundary between them when dragged: it sets the
-width or height of the element before it (without its padding and borders), from nothing to taking all of the element
-after it, and sends `change` with that size in dp, e.g. for a workspace to keep. In a column it has the state class
-`.column`; the theme's grip shows which way it moves.
+width or height of the element before it, or with `resize="next"` of the element after it (without its padding and
+borders), from its `min-width` or `min-height` to taking all of the other element down to that one's minimum, and
+sends `change` with that size in dp, e.g. for a workspace to keep. In a column it has the state class `.column`; the
+theme's grip shows which way it moves. The docking system's zones are sized with splitters ([docking.md](docking.md)).
 
 ## Color picker
 

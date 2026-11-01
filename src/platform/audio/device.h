@@ -178,12 +178,22 @@ namespace gnubase::audio
 		// (rt::WorkerPool), or null if it has none. Valid while the device is open.
 		virtual void* workgroup() const { return nullptr; }
 
-		// Called when the driver asks to be opened again, e.g. because its settings changed in its control panel. Never
+		// Called when the driver asks to be opened again, e.g. because its settings changed in its control panel or its
+		// device went away (opening it again then fails until it returns). Never
 		// called on the audio thread, but possibly on a driver's thread while this is set.
 		void onReset(std::function<void()> handler)
 		{
-			const std::scoped_lock lock(m_resetMutex);
+			const std::scoped_lock lock(m_handlerMutex);
 			m_reset = std::move(handler);
+		}
+
+		// Called when what latency() returns changes while the device is open, e.g. once the driver learns the
+		// latency of what it is connected to. Never called on the audio thread, but possibly on a driver's thread
+		// while this is set.
+		void onLatencyChange(std::function<void()> handler)
+		{
+			const std::scoped_lock lock(m_handlerMutex);
+			m_latencyChange = std::move(handler);
 		}
 
 		// Dropouts the driver reported since the device was opened: blocks it played or recorded without the engine
@@ -192,24 +202,33 @@ namespace gnubase::audio
 
 	protected:
 		// For backends, when their driver asks for a reset. Not on the audio thread. The handler runs on a copy,
-		// outside the lock: what it sets off may destroy this device before it returns.
-		void requestReset() const
-		{
-			std::function<void()> handler;
-			{
-				const std::scoped_lock lock(m_resetMutex);
-				handler = m_reset;
-			}
-			if (handler)
-				handler();
-		}
+		// outside the lock: what it sets off may destroy this device before it returns. False if no handler is set
+		// yet, as before the engine has read a device it just opened: a backend asks again later then (#371).
+		bool requestReset() const { return call(m_reset); }
+
+		// For backends, when the latency they report changes. Not on the audio thread; the same as requestReset.
+		void reportLatencyChange() const { call(m_latencyChange); }
 
 		// For backends, when their driver reports a dropout. Any thread, the audio thread too.
 		void reportOverload() noexcept { m_overloads.fetch_add(1, std::memory_order_relaxed); }
 
 	private:
-		mutable std::mutex m_resetMutex; // guards m_reset
+		bool call(const std::function<void()>& slot) const
+		{
+			std::function<void()> handler;
+			{
+				const std::scoped_lock lock(m_handlerMutex);
+				handler = slot;
+			}
+			if (!handler)
+				return false;
+			handler();
+			return true;
+		}
+
+		mutable std::mutex m_handlerMutex; // guards m_reset and m_latencyChange
 		std::function<void()> m_reset;
+		std::function<void()> m_latencyChange;
 		std::atomic<uint64_t> m_overloads{0};
 	};
 
@@ -226,6 +245,10 @@ namespace gnubase::audio
 
 		// The devices there are now. Throws DeviceError if the driver can't list them.
 		virtual std::vector<DeviceInfo> devices() = 0;
+
+		// False if a device's unavailableReason says only why it last failed to open, not whether its hardware is
+		// there now (ASIO, whose drivers tell that only when they are opened).
+		virtual bool listsPresence() const { return true; }
 
 		// Opens a device stopped. Throws DeviceError if it can't, e.g. for an unknown device or an unsupported sample
 		// rate, block size or clock source.

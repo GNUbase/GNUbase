@@ -13,11 +13,16 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
+#include <thread>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase::audio;
@@ -25,7 +30,9 @@ using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::WithinAbs;
 using gnubase::engine::Client;
 using gnubase::engine::Engine;
+using gnubase::engine::Event;
 using gnubase::engine::Json;
+using gnubase::engine::Message;
 using gnubase::engine::ObjectId;
 using gnubase::engine::Result;
 
@@ -174,6 +181,113 @@ namespace
 			return std::make_unique<PlainDevice>();
 		}
 	};
+
+	// A device that learns its latency after it opens, as PipeWire does from its ports' latency parameters: it
+	// reports a block each way until learn() tells it more and reports the change. Its inputs carry its outputs back
+	// as a cable would, its input + output latency later, also when that changes while it runs. It captures 4 s of
+	// its output and counts how often it was started.
+	class SettlingDevice : public DummyDevice
+	{
+	public:
+		SettlingDevice() : DummyDevice(DeviceFormat{48000.0, 64, 2, 2}, 192000), m_loop(m_input, m_output) {}
+
+		DeviceInfo info() const override
+		{
+			DeviceInfo info = DummyDevice::info();
+			info.id = "settling";
+			return info;
+		}
+
+		DeviceLatency latency() const override { return {m_input.load(), m_output.load()}; }
+
+		void start(AudioCallback& callback) override
+		{
+			++starts;
+			m_loop.callback = &callback;
+			DummyDevice::start(m_loop);
+		}
+
+		// The new latency applies from the next block on, also to the loopback.
+		void learn(DeviceLatency latency)
+		{
+			m_input = latency.input;
+			m_output = latency.output;
+			reportLatencyChange();
+		}
+
+		std::atomic<int> starts{0};
+
+	private:
+		// Between the device and the engine: fills the inputs with what the outputs played the round trip before.
+		class Loop : public AudioCallback
+		{
+		public:
+			Loop(const std::atomic<uint32_t>& input, const std::atomic<uint32_t>& output)
+				: m_input(input), m_output(output)
+			{
+			}
+
+			void process(const DeviceBlock& block) noexcept override
+			{
+				const uint64_t roundTrip = uint64_t{m_input.load()} + m_output.load(); // at least a block
+				for (size_t c = 0; c < 2; ++c)
+					for (uint32_t i = 0; i < block.frames; ++i)
+					{
+						const uint64_t frame = block.position + i;
+						m_inputs[c][i] = frame >= roundTrip ? m_ring[c][(frame - roundTrip) % m_ring[c].size()] : 0.0f;
+					}
+				const std::array<const float*, 2> inputs{m_inputs[0].data(), m_inputs[1].data()};
+				callback->process({inputs.data(), block.outputs, block.frames, block.position, block.time, block.midiIn,
+					block.midiOut});
+				for (size_t c = 0; c < 2; ++c)
+					for (uint32_t i = 0; i < block.frames; ++i)
+						m_ring[c][(block.position + i) % m_ring[c].size()] = block.outputs[c][i];
+			}
+
+			AudioCallback* callback = nullptr;
+
+		private:
+			const std::atomic<uint32_t>& m_input;
+			const std::atomic<uint32_t>& m_output;
+			std::array<std::vector<float>, 2> m_ring{std::vector<float>(4096), std::vector<float>(4096)};
+			std::array<std::vector<float>, 2> m_inputs{std::vector<float>(64), std::vector<float>(64)};
+		};
+
+		std::atomic<uint32_t> m_input{64};
+		std::atomic<uint32_t> m_output{64};
+		Loop m_loop;
+	};
+
+	class SettlingBackend : public Backend
+	{
+	public:
+		explicit SettlingBackend(std::atomic<SettlingDevice*>& opened) : m_opened(opened) {}
+		std::string name() const override { return "settling"; }
+		std::vector<DeviceInfo> devices() override { return {SettlingDevice().info()}; }
+		std::unique_ptr<Device> open(const DeviceConfig& /*config*/) override
+		{
+			auto device = std::make_unique<SettlingDevice>();
+			m_opened = device.get();
+			return device;
+		}
+
+	private:
+		std::atomic<SettlingDevice*>& m_opened;
+	};
+
+	// Waits for an event whose data matches; false after five seconds.
+	template <typename Match> bool waitForEvent(Client& client, const std::string& name, Match match)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		while (std::chrono::steady_clock::now() < deadline)
+		{
+			const std::optional<Message> message = client.wait(std::chrono::milliseconds(50));
+			const auto* event = message ? std::get_if<Event>(&*message) : nullptr;
+			if (event != nullptr && event->name == name && match(event->data))
+				return true;
+		}
+		return false;
+	}
 }
 
 TEST_CASE("the dummy device reports its latency and loops its outputs back a round trip later", "[unit]")
@@ -322,8 +436,7 @@ TEST_CASE("recorded input lines up across cycle jumps", "[integration]")
 	CHECK(silent(recorded(client, 0, 400, 100)));
 }
 
-TEST_CASE(
-	"only the transport's playing frames are recorded, and only from the dummy device while it stands", "[integration]")
+TEST_CASE("only the transport's playing frames are recorded, and only while the device stands", "[integration]")
 {
 	Engine engine;
 	Client client(engine);
@@ -427,4 +540,134 @@ TEST_CASE("direct monitoring needs a driver that can do it", "[integration]")
 	CHECK(
 		run(client, "audio.setDevice", {{"backend", "plain"}, {"recordShift", -20}}).at("device").at("recordOffset") ==
 		20);
+}
+
+// The loopback tests record through hardware this way (checkRoundTrip in tests/device_tests.cpp).
+TEST_CASE("any device keeps what its inputs record for captureSeconds", "[integration]")
+{
+	std::vector<std::unique_ptr<Backend>> backends;
+	backends.push_back(std::make_unique<PlainBackend>());
+	Engine engine(std::move(backends));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "plain"}});
+	CHECK(recorded(client, 0, 0, 10).empty()); // by default, nothing
+	run(client, "audio.setDevice", {{"backend", "plain"}, {"captureSeconds", 1}});
+	CHECK(recorded(client, 1, 47990, 100) == std::vector<float>(10, 0.0f));
+	CHECK_THAT(reject(client, "audio.setDevice", {{"backend", "plain"}, {"captureSeconds", 601}}),
+		ContainsSubstring("captureSeconds"));
+}
+
+TEST_CASE("the record offset follows latency a device reports after it opens", "[integration]")
+{
+	std::atomic<SettlingDevice*> opened{nullptr};
+	std::vector<std::unique_ptr<Backend>> backends;
+	backends.push_back(std::make_unique<SettlingBackend>(opened));
+	backends.push_back(std::make_unique<DummyBackend>());
+	Engine engine(std::move(backends));
+	Client client(engine);
+	CHECK_THAT(reject(client, "audio.updateLatency"), ContainsSubstring("no audio device"));
+	const Json device = run(client, "audio.setDevice", {{"backend", "settling"}, {"recordShift", 10}}).at("device");
+	CHECK(device.at("recordOffset") == 118); // a block each way
+	run(client, "audio.start");
+
+	// The driver learns its latency while the device runs: the engine reads it again and keeps the device running.
+	opened.load()->learn({100, 157});
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("device").at("recordOffset") == 247 && data.at("running") == true; }));
+	const Json status = run(client, "audio.get");
+	CHECK(status.at("device").at("inputLatency") == 100);
+	CHECK(status.at("device").at("outputLatency") == 157);
+	CHECK(status.at("running") == true);
+
+	// Nothing changed: the same device, stopped, which keeps its position.
+	const Json stopped = run(client, "audio.stop");
+	const Json same = run(client, "audio.updateLatency");
+	CHECK(same.at("device").at("recordOffset") == 247);
+	CHECK(same.at("position") == stopped.at("position"));
+	CHECK_THAT(reject(client, "audio.updateLatency", {{"inputLatency", 100}}), ContainsSubstring("dummy device"));
+}
+
+TEST_CASE("a latency change while the device runs keeps it running and a loopback across it aligned", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	std::atomic<SettlingDevice*> opened{nullptr};
+	std::vector<std::unique_ptr<Backend>> backends;
+	backends.push_back(std::make_unique<SettlingBackend>(opened));
+	Engine engine(std::move(backends));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "settling"}, {"captureSeconds", 4}});
+	constexpr int64_t frames = 96000;
+	addRamp(client, writeRamp(dir, frames), 0, frames);
+	run(client, "transport.play"); // before the device starts: its frame f plays position f
+	run(client, "audio.start");
+	const auto playedTo = [&client](int64_t position)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		while (run(client, "transport.get").at("position").get<int64_t>() < position)
+		{
+			if (std::chrono::steady_clock::now() > deadline)
+				return false;
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		return true;
+	};
+	REQUIRE(playedTo(24000));
+
+	// The round trip grows from 128 to 257 frames while the device runs: the engine follows without stopping it.
+	opened.load()->learn({100, 157});
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("device").at("recordOffset") == 257 && data.at("running") == true; }));
+	REQUIRE(playedTo(frames + 512));
+	run(client, "audio.stop");
+	CHECK(opened.load()->starts == 1);
+
+	// What came back lines up with what played on both sides of the change; only input that arrived between the
+	// device's change and the engine's may be misplaced, in one stretch.
+	const std::vector<float> output = opened.load()->captured(0, 0, frames);
+	const std::vector<float> input = recorded(client, 0, 0, frames);
+	REQUIRE(output.size() == static_cast<size_t>(frames));
+	REQUIRE(input.size() == static_cast<size_t>(frames));
+	CHECK(output[1000] == ramp(1000, 0));
+	std::vector<int64_t> misplaced;
+	for (int64_t f = 0; f < frames; ++f)
+		if (input[static_cast<size_t>(f)] != output[static_cast<size_t>(f)])
+			misplaced.push_back(f);
+	if (!misplaced.empty())
+	{
+		INFO("misplaced from " << misplaced.front() << " to " << misplaced.back());
+		CHECK(misplaced.front() >= 20000);
+		CHECK(misplaced.back() < frames - 24000);
+	}
+}
+
+TEST_CASE("a loopback records sample-aligned after the dummy device's latency changes", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice",
+		{{"blockSize", 64}, {"captureSeconds", 1}, {"inputLatency", 32}, {"outputLatency", 32}, {"loopback", true}});
+	run(client, "audio.render", {{"frames", 640}});
+
+	// As a driver whose latency settles after it opens: the loopback's round trip grows, and so does the offset.
+	const Json status = run(client, "audio.updateLatency", {{"inputLatency", 100}, {"outputLatency", 157}});
+	CHECK(status.at("device").at("inputLatency") == 100);
+	CHECK(status.at("device").at("outputLatency") == 157);
+	CHECK(status.at("device").at("recordOffset") == 257);
+	CHECK(status.at("position") == 640); // the same device, which records the ramp below
+
+	addRamp(client, writeRamp(dir, 500), 1000, 500);
+	run(client, "transport.play");
+	run(client, "audio.render", {{"frames", 4800}});
+	CHECK(rampMismatches(client, 0, 1000, 500) == 0);
+	CHECK(rampMismatches(client, 1, 1000, 500) == 0);
+
+	CHECK_THAT(reject(client, "audio.updateLatency", {{"inputLatency", 10}, {"outputLatency", 10}}),
+		ContainsSubstring("at least a block"));
+	CHECK_THAT(reject(client, "audio.updateLatency", {{"inputLatency", 70000}}), ContainsSubstring("65536"));
+	run(client, "audio.start");
+	CHECK_THAT(reject(client, "audio.updateLatency", {{"inputLatency", 200}}), ContainsSubstring("running"));
+	run(client, "audio.stop");
+	CHECK(run(client, "audio.get").at("device").at("inputLatency") == 100);   // the rejected ones changed nothing
+	CHECK(run(client, "audio.reset").at("device").at("recordOffset") == 257); // which a reset keeps
 }

@@ -39,6 +39,32 @@ elseif(APPLE)
 		audio/coreaudio.cpp audio/coreaudio.h)
 	target_link_libraries(gnubase-platform PRIVATE "-framework CoreAudio" "-framework CoreFoundation")
 endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	find_package(PkgConfig REQUIRED)
+	pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
+	target_sources(gnubase-platform PRIVATE
+		audio/pipewire.cpp audio/pipewire.h)
+	target_link_libraries(gnubase-platform PRIVATE PkgConfig::PIPEWIRE)
+	# PipeWire's interface macros (pw_core_add_listener and the like) expand to GNU statement expressions, which
+	# clang's -Wpedantic reports at the call site.
+	set_source_files_properties(audio/pipewire.cpp PROPERTIES COMPILE_OPTIONS
+		$<$<CXX_COMPILER_ID:Clang>:-Wno-gnu-statement-expression-from-macro-expansion>)
+	# libjack's headers only: the JACK backend loads libjack when it is first used, so GNUbase runs without it.
+	pkg_check_modules(JACK REQUIRED jack)
+	target_sources(gnubase-platform PRIVATE
+		audio/jack.cpp audio/jack.h
+		jacklibrary.cpp jacklibrary.h
+		midi/jackmidi.cpp midi/jackmidi.h)
+	target_include_directories(gnubase-platform SYSTEM PRIVATE ${JACK_INCLUDE_DIRS})
+	target_link_libraries(gnubase-platform PRIVATE ${CMAKE_DL_LIBS})
+	pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
+	target_sources(gnubase-platform PRIVATE
+		midi/alsaseq.cpp midi/alsaseq.h)
+	target_link_libraries(gnubase-platform PRIVATE PkgConfig::ALSA)
+	# Worker threads ask rtkit for real-time priority over the system bus; GLOBAL for the tests' fake rtkit.
+	pkg_check_modules(DBUS REQUIRED IMPORTED_TARGET GLOBAL dbus-1)
+	target_link_libraries(gnubase-platform PRIVATE PkgConfig::DBUS)
+endif()
 if(APPLE)
 	target_sources(gnubase-platform PRIVATE
 		midi/coremidi.cpp midi/coremidi.h)

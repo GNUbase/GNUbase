@@ -11,9 +11,9 @@ buttons, menus and dialogs ([widgets.md](widgets.md)).
 
 `EventDisplay` fills an element of a document and follows the project through the engine binding
 ([ui-engine-binding.md](ui-engine-binding.md)): it is one more client of the engine API, and shows what any client
-changed. The app shows it in the main window (`resources/ui/project.rml`, `AppUi::showProject`), under a toolbar with
-the auto-scroll and zoom presets buttons, until the docking system (#56) and the track list (#81) give the project
-window its zones and its toolbar.
+changed. The app shows it in the main zone of the project window (`resources/ui/project.rml`, `AppUi::showProject`,
+[docking.md](docking.md)), under the toolbar with the auto-scroll and zoom presets buttons, right of the track list
+([track-list.md](track-list.md)), which shows a row beside each lane. Hiding the overview line, a strip of the window, hides the display's `.overview`.
 
 ```
 .event-display                  the element the document gives it
@@ -24,9 +24,15 @@ window its zones and its toolbar.
     ruler.timeline-ruler        the ruler, in the chosen time format
     .event-area
       event-lanes.events        a lane per track
+      event-lanes.muted-events  muted events again, over them (parts-and-events.md)
+      event-lanes.selected-events  selected events again, over those
+      .waveforms                a waveform per audio event near the view (peaks.md)
       .cross-hair-vertical, .cross-hair-horizontal
     .project-cursor             across the ruler and the lanes
 ```
+
+Selecting and editing events, with the mouse and with the edit commands, is in [parts-and-events.md](parts-and-events.md);
+snapping them, with the toolbar's snap controls, in [snap.md](snap.md).
 
 `resources/styles/base.rcss` lays it out; the themes color it ([themes.md](themes.md)). Code sets only what comes from
 data: the canvas elements' attributes `start` (seconds at the left edge), `scale` (seconds per dp) and `scroll-top`,
@@ -67,21 +73,23 @@ come with the project setup (#78): until then timecode runs at 25 fps.
 
 ## Zoom and scrolling
 
-| Action | Command (`actions()`) | Mouse |
-|---|---|---|
-| Zoom in, zoom out by 2, around the project cursor, or onto it when it's out of view | `zoom.in`, `zoom.out` | Ctrl (Cmd) and the wheel, around the mouse, 1.25 per line; drag down or up in the ruler's lower half, around where the drag started, 2 per 40 dp |
-| Track heights by 1.25 | `zoom.inVertically`, `zoom.outVertically` | Ctrl and Shift and the wheel |
-| The whole project: from its start to the end of its last event, at least a minute | `zoom.full` | |
-| Undo and redo zoom | `zoom.undo`, `zoom.redo` | |
-| Auto-scroll on or off | `view.autoScroll` | |
-| Scroll | `scrollTo`, `scrollVertically` | the wheel down, Shift and the wheel across (a tenth of the view per line) |
+| Action | Command (`actions()`) | Keys | Mouse |
+|---|---|---|---|
+| Zoom in, zoom out by 2, around the project cursor, or onto it when it's out of view | `zoom.in`, `zoom.out` | H, G | Ctrl (Cmd) and the wheel, around the mouse, 1.25 per line; drag down or up in the ruler's lower half, around where the drag started, 2 per 40 dp |
+| Track heights by 1.25 | `zoom.inVertically`, `zoom.outVertically` | Shift+H, Shift+G | Ctrl and Shift and the wheel |
+| The whole project: from its start to the end of its last event, at least a minute | `zoom.full` | Shift+F | |
+| Undo and redo zoom | `zoom.undo`, `zoom.redo` | | |
+| Auto-scroll on or off | `view.autoScroll` | F | |
+| Scroll | `scrollTo`, `scrollVertically` | | the wheel down, Shift and the wheel across (a tenth of the view per line) |
 
 - Every zoom, and every drag that zooms, is one step in the zoom history; scrolling isn't. `zoomTo(from, to)` shows a
   stretch, such as a cycle marker's. Zoom stops at 10 µs and 60 s per dp, track heights at a quarter and eight times
-  `g_trackHeight` (40 dp, until tracks have heights of their own, #81).
-- **Commands.** `actions()` maps command ids to the display's functions, for the key command system (#57) to bind
-  keys to (the reference's H, G, Shift+H and Shift+G). Until it does, MCP clients and tests zoom with the mouse
-  through the UI tools (`ui_wheel` with `modifiers`, `ui_drag`).
+  each track's height (40 dp, `g_trackHeight`, until the track list sets another, [track-list.md](track-list.md)).
+  The tracks inside folded folders have no lane.
+- **Commands.** `actions()` maps command ids to the display's functions. `AppUi` adds them as key commands
+  ([key-commands.md](key-commands.md)) and binds the reference's keys (manual p. 1573) in the project window's focus
+  zone, `project`, which the window has when it opens and wherever it is clicked. `KeyCommands::run` runs one as its
+  key would; MCP clients press the keys with `ui_key`.
 - **Zoom presets** are the user setting `ui.zoomPresets`, for every project: each a name and the seconds the view
   shows. `addZoomPreset`, `applyZoomPreset` (keeps the left edge), `removeZoomPreset` and `renameZoomPreset` change it
   through `settings.set`; changes from MCP or Lua apply at once.
@@ -91,7 +99,7 @@ come with the project setup (#78): until then timecode runs at 25 fps.
   (`resources/ui/zoom-preset.rml`) and adds it; and Organize..., a dialog (`zoom-presets.rml`) with a row per preset,
   whose name can be edited and which a Delete button marks deleted. OK saves the presets as the dialog shows them, in
   one `settings.set`; Cancel and Escape drop the changes. The dialogs load from the folder of the display's document.
-- Zoom to selection waits for selections (#85); track height presets for the track list (#81).
+- Zoom to selection waits for selections (#85); the track height presets menu isn't there yet.
 
 ## Overview line, cursors and auto-scroll
 
@@ -129,3 +137,5 @@ come with the project setup (#78): until then timecode runs at 25 fps.
   listed and zoomed to, presets renamed and deleted in the organize dialog with OK and dropped with Cancel; the
   auto-scroll button on and off, the modes and suspending from its menu, checked, and the button suspended by a click
   in the lanes while the dummy device plays, and resumed by a click on it.
+  The keys zoom, vertically too, zoom full and switch auto-scroll when the window opens and after a click into
+  it, and zoom undo runs as a command.

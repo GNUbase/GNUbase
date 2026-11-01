@@ -488,7 +488,8 @@ namespace gnubase::audio
 			}
 
 			// Asks for a reset when the device goes away, its channel counts change or another program changes its
-			// rate. Notifications come on a queue of the device's own, so that none is still running once it's gone.
+			// rate, and counts the dropouts the device reports (processor overloads). Notifications come on a queue of
+			// the device's own, so that none is still running once it's gone.
 			void listen()
 			{
 				m_queue = dispatch_queue_create("gnubase.coreaudio", DISPATCH_QUEUE_SERIAL);
@@ -496,7 +497,9 @@ namespace gnubase::audio
 				  bool reset = false;
 				  for (UInt32 i = 0; i < count; ++i)
 				  {
-					  if (addresses[i].mSelector == kAudioDevicePropertyDeviceIsAlive)
+					  if (addresses[i].mSelector == kAudioDeviceProcessorOverload)
+						  reportOverload(); // a dropout
+					  else if (addresses[i].mSelector == kAudioDevicePropertyDeviceIsAlive)
 					  {
 						  UInt32 alive = 1;
 						  reset = reset || (read(m_object, addresses[i], alive) && alive == 0);
@@ -514,7 +517,8 @@ namespace gnubase::audio
 				m_listened = {address(kAudioDevicePropertyDeviceIsAlive),
 					address(kAudioDevicePropertyNominalSampleRate),
 					address(kAudioDevicePropertyStreamConfiguration, kAudioObjectPropertyScopeInput),
-					address(kAudioDevicePropertyStreamConfiguration, kAudioObjectPropertyScopeOutput)};
+					address(kAudioDevicePropertyStreamConfiguration, kAudioObjectPropertyScopeOutput),
+					address(kAudioDeviceProcessorOverload)};
 				for (const AudioObjectPropertyAddress& where : m_listened)
 					if (AudioObjectAddPropertyListenerBlock(m_object, &where, m_queue, m_listener) != noErr)
 						logging::warning("CoreAudio: {} won't report changes", m_info.name);
@@ -529,7 +533,7 @@ namespace gnubase::audio
 			os_workgroup_t m_workgroup = nullptr;
 			dispatch_queue_t m_queue = nullptr;
 			AudioObjectPropertyListenerBlock m_listener = nullptr;
-			std::array<AudioObjectPropertyAddress, 4> m_listened{};
+			std::array<AudioObjectPropertyAddress, 5> m_listened{};
 			bool m_running = false;
 
 			// Audio thread memory, allocated when opened.
