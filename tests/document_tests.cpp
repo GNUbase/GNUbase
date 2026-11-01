@@ -560,3 +560,189 @@ TEST_CASE("project.new starts over with an empty project", "[unit]")
 	CHECK(project.at("sampleRate").get<double>() == 48000.0);
 	CHECK(engine.renderSnapshots().acquire().channels.empty());
 }
+
+TEST_CASE("muted channels are silent; soloed ones silence the others, except where they play through and what plays "
+		  "into them",
+	"[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId group = addTrack(client, {{"type", "group"}});
+	const ObjectId audio = addTrack(client, {{"type", "audio"}});
+	const ObjectId other = addTrack(client, {{"type", "audio"}});
+	const ObjectId instrument = addTrack(client, {{"type", "instrument"}});
+	const ObjectId midi = addTrack(client, {{"type", "midi"}});
+	const auto set = [&client](ObjectId trackId, Json parameters)
+	{
+		parameters["channel"] = channelOf(client, trackId).at("id");
+		return run(client, "channel.set", parameters).at("channel");
+	};
+	set(audio, {{"output", channelOf(client, group).at("id")}});
+	set(midi, {{"output", channelOf(client, instrument).at("id")}});
+	const ObjectId part = run(client, "midiPart.add", {{"track", midi}, {"position", 0}, {"length", g_ticksPerQuarter}})
+							  .at("part")
+							  .at("id")
+							  .get<ObjectId>();
+	run(client, "note.add",
+		{{"part", part}, {"notes", {{{"position", 0}, {"length", 100}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	const auto silentOnes = [&engine, ids = std::vector<ObjectId>{group, audio, other, instrument, midi}]
+	{
+		const RenderSnapshot& snapshot = engine.renderSnapshots().acquire();
+		std::vector<ObjectId> result;
+		for (const ObjectId id : ids)
+			if (renderChannel(snapshot, id).silent)
+				result.push_back(id);
+		return result;
+	};
+	CHECK(channelOf(client, audio).at("mute") == false);
+	CHECK(channelOf(client, audio).at("solo") == false);
+	CHECK(silentOnes().empty());
+
+	CHECK(set(other, {{"mute", true}}).at("mute") == true);
+	CHECK(silentOnes() == std::vector<ObjectId>{other});
+	set(other, {{"mute", false}});
+
+	// A soloed group keeps the tracks that play into it, a soloed track the group it plays through, a soloed MIDI
+	// track its instrument.
+	CHECK(set(group, {{"solo", true}}).at("solo") == true);
+	CHECK(silentOnes() == std::vector<ObjectId>{other, instrument, midi});
+	set(group, {{"solo", false}});
+	set(audio, {{"solo", true}});
+	CHECK(silentOnes() == std::vector<ObjectId>{other, instrument, midi});
+	set(audio, {{"solo", false}});
+	set(midi, {{"solo", true}});
+	CHECK(silentOnes() == std::vector<ObjectId>{group, audio, other});
+	CHECK(renderChannel(engine.renderSnapshots().acquire(), midi).notes.size() == 1);
+	// Soloing two tracks plays both; a muted one stays silent, though what it plays through is heard, and a silent
+	// MIDI track's notes don't play.
+	set(other, {{"solo", true}});
+	CHECK(silentOnes() == std::vector<ObjectId>{group, audio});
+	set(midi, {{"mute", true}});
+	CHECK(silentOnes() == std::vector<ObjectId>{group, audio, midi});
+	CHECK(renderChannel(engine.renderSnapshots().acquire(), midi).notes.empty());
+
+	run(client, "history.undo", {{"steps", 2}});
+	CHECK(channelOf(client, midi).at("mute") == false);
+	CHECK(channelOf(client, other).at("solo") == false);
+	CHECK(silentOnes() == std::vector<ObjectId>{group, audio, other});
+}
+
+TEST_CASE("disabled tracks play nothing; only audio, instrument and MIDI tracks can be disabled", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId audio = addTrack(client, {{"type", "audio"}});
+	run(client, "audioEvent.add", {{"track", audio}, {"clip", addClip(client)}, {"position", 0}});
+	CHECK(track(client, audio).at("enabled") == true);
+	CHECK(renderChannel(engine.renderSnapshots().acquire(), audio).audioEvents.size() == 1);
+
+	CHECK(run(client, "track.set", {{"track", audio}, {"enabled", false}}).at("track").at("enabled") == false);
+	{
+		const RenderChannel& disabled = renderChannel(engine.renderSnapshots().acquire(), audio);
+		CHECK(disabled.silent);
+		CHECK(disabled.audioEvents.empty());
+	}
+	// A disabled track keeps its events and channel settings.
+	CHECK(run(client, "project.get").at("audioEvents").size() == 1);
+
+	for (const char* type : {"instrument", "midi"})
+	{
+		const ObjectId id = addTrack(client, {{"type", type}});
+		run(client, "track.set", {{"track", id}, {"enabled", false}});
+		CHECK(renderChannel(engine.renderSnapshots().acquire(), id).silent);
+	}
+	for (const char* type : {"group", "effect", "folder", "marker", "ruler"})
+	{
+		INFO(type);
+		const ObjectId id = addTrack(client, {{"type", type}});
+		CHECK_THAT(reject(client, "track.set", {{"track", id}, {"enabled", false}}), ContainsSubstring("disabled"));
+		run(client, "track.remove", {{"track", id}});
+	}
+	run(client, "history.undo", {{"steps", 15}});
+	CHECK(track(client, audio).at("enabled") == true);
+	CHECK(renderChannel(engine.renderSnapshots().acquire(), audio).audioEvents.size() == 1);
+}
+
+TEST_CASE("track.duplicate copies a track below it with its channel, events, parts and automation", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId first = addTrack(client, {{"type", "audio"}});
+	const ObjectId audio = addTrack(client, {{"type", "audio"}, {"name", "Guitar"}, {"color", "#c03040"}});
+	const ObjectId last = addTrack(client, {{"type", "audio"}});
+	run(client, "channel.set", {{"channel", channelOf(client, audio).at("id")}, {"volume", -6.0}, {"mute", true}});
+	run(client, "audioEvent.add", {{"track", audio}, {"clip", addClip(client)}, {"position", 480}});
+	const ObjectId lane = run(client, "automationLane.add", {{"track", audio}, {"target", {{"type", "pan"}}}})
+							  .at("lane")
+							  .at("id")
+							  .get<ObjectId>();
+	run(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", 0.5}}}}});
+
+	const Json copy = run(client, "track.duplicate", {{"track", audio}}).at("track");
+	const auto copyId = copy.at("id").get<ObjectId>();
+	Json project = run(client, "project.get");
+	REQUIRE(project.at("tracks").size() == 4);
+	CHECK(project.at("tracks")[0].at("id") == first);
+	CHECK(project.at("tracks")[1].at("id") == audio);
+	CHECK(project.at("tracks")[2].at("id") == copyId);
+	CHECK(project.at("tracks")[3].at("id") == last);
+	CHECK(copy.at("name") == "Guitar");
+	CHECK(copy.at("color") == "#c03040");
+	const Json channel = channelOf(client, copyId);
+	CHECK(channel.at("id") != channelOf(client, audio).at("id"));
+	CHECK(channel.at("track") == copyId);
+	CHECK(channel.at("volume") == -6.0);
+	CHECK(channel.at("mute") == true);
+	CHECK(channel.at("input") == channelOf(client, audio).at("input"));
+	REQUIRE(project.at("audioEvents").size() == 2);
+	CHECK(project.at("audioEvents")[1].at("track") == copyId);
+	CHECK(project.at("audioEvents")[1].at("position") == 480);
+	CHECK(project.at("audioEvents")[1].at("clip") == project.at("audioEvents")[0].at("clip"));
+	REQUIRE(project.at("automation").size() == 2);
+	CHECK(project.at("automation")[1].at("track") == copyId);
+	CHECK(project.at("automation")[1].at("points")[0].at("value") == 0.5);
+	CHECK(project.at("automation")[1].at("points")[0].at("id") != project.at("automation")[0].at("points")[0].at("id"));
+
+	// A MIDI part's notes get ids of their own.
+	const ObjectId instrument = addTrack(client, {{"type", "instrument"}});
+	const ObjectId part =
+		run(client, "midiPart.add", {{"track", instrument}, {"position", 0}, {"length", g_ticksPerQuarter}})
+			.at("part")
+			.at("id")
+			.get<ObjectId>();
+	run(client, "note.add",
+		{{"part", part}, {"notes", {{{"position", 0}, {"length", 100}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	run(client, "track.duplicate", {{"track", instrument}});
+	project = run(client, "project.get");
+	REQUIRE(project.at("midiParts").size() == 2);
+	const Json& original = project.at("midiParts")[0];
+	const Json& duplicate = project.at("midiParts")[1];
+	CHECK(duplicate.at("id") != original.at("id"));
+	CHECK(duplicate.at("track") != original.at("track"));
+	REQUIRE(duplicate.at("notes").size() == 1);
+	CHECK(duplicate.at("notes")[0].at("pitch") == 60);
+	CHECK(duplicate.at("notes")[0].at("id") != original.at("notes")[0].at("id"));
+
+	// A folder comes with its tracks, which play through the new folder's group channel; one undo removes it all.
+	const ObjectId folder = addTrack(client, {{"type", "folder"}, {"groupChannel", true}, {"name", "Band"}});
+	addTrack(client, {{"type", "audio"}, {"parent", folder}});
+	const size_t before = run(client, "project.get").at("tracks").size();
+	const auto folderCopy = run(client, "track.duplicate", {{"track", folder}}).at("track").at("id").get<ObjectId>();
+	project = run(client, "project.get");
+	REQUIRE(project.at("tracks").size() == before + 2);
+	const Json& inside = project.at("tracks")[before + 1];
+	CHECK(project.at("tracks")[before].at("id") == folderCopy);
+	CHECK(inside.at("parent") == folderCopy);
+	CHECK(channelOf(client, inside.at("id").get<ObjectId>()).at("output") == channelOf(client, folderCopy).at("id"));
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("tracks").size() == before);
+
+	// Marker tracks stay within their limit.
+	const ObjectId markers = addTrack(client, {{"type", "marker"}});
+	run(client, "marker.add", {{"track", markers}, {"position", 0}});
+	run(client, "track.duplicate", {{"track", markers}});
+	CHECK(run(client, "project.get").at("markers").size() == 2);
+	for (int i = 2; i < 10; ++i)
+		addTrack(client, {{"type", "marker"}});
+	CHECK_THAT(reject(client, "track.duplicate", {{"track", markers}}), ContainsSubstring("at most"));
+}

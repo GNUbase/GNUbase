@@ -430,7 +430,7 @@ namespace gnubase::engine
 				if (!track.color.empty())
 					node.append_attribute("color") = track.color.c_str();
 				node.append_attribute("contentType") = contentType(track.type);
-				node.append_attribute("loaded") = true;
+				node.append_attribute("loaded") = track.enabled; // a disabled track isn't loaded
 				if (track.channel != 0)
 				{
 					const Channel& channel = m_project.channels.at(track.channel);
@@ -441,6 +441,12 @@ namespace gnubase::engine
 					// A MIDI track's output is an instrument, which DAWproject's audio routing can't describe.
 					if (channel.format != ChannelFormat::None && channel.output != 0)
 						element.append_attribute("destination") = destination(channel.output).c_str();
+					if (channel.solo)
+						element.append_attribute("solo") = true;
+					pugi::xml_node mute = element.append_child("Mute");
+					mute.append_attribute("id") = xmlId("cm", channel.id).c_str();
+					mute.append_attribute("name") = "Mute";
+					mute.append_attribute("value") = channel.mute;
 					if (channel.format != ChannelFormat::None && track.type != TrackType::Midi)
 					{
 						pugi::xml_node pan = element.append_child("Pan");
@@ -1009,6 +1015,7 @@ namespace gnubase::engine
 				const std::string color = node.attribute("color").as_string("");
 				track.color = validColor(color) ? color : std::string();
 				track.parent = parent;
+				track.enabled = !canDisable(type) || node.attribute("loaded").as_bool(true);
 				if (type != TrackType::Folder || !channelNode.empty())
 				{
 					Channel channel;
@@ -1042,6 +1049,8 @@ namespace gnubase::engine
 							m_parameters[pan.attribute("id").as_string()] = {track.id, AutomationTargetType::Pan};
 						}
 					}
+					channel.mute = channelNode.child("Mute").attribute("value").as_bool(false);
+					channel.solo = channelNode.attribute("solo").as_bool(false);
 					track.channel = channel.id;
 					m_project.channels[channel.id] = channel;
 					m_channels[channelNode.attribute("id").as_string()] = channel.id;
