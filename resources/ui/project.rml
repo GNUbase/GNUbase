@@ -12,6 +12,7 @@
      (docs/features/track-list.md): #add-track opens the add track dialog (add-track.rml), #track-controls-settings
      the track controls settings dialog (track-controls.rml); #track-list-menu is its context menu.
      The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md).
+     ui::StatusLine fills #record-format and #lost-device (docs/features/status-line.md).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
 <head>
@@ -41,6 +42,18 @@
 			flex: 1 1 0;
 		}
 
+		.status-line
+		{
+			display: flex;
+			align-items: center;
+			padding: 0 6dp;
+		}
+
+		.status-field
+		{
+			margin-right: 16dp;
+		}
+
 		#track-list
 		{
 			position: absolute;
@@ -66,6 +79,7 @@
 	<div id="menu-bar" class="menubar" strip="menuBar">
 		<button menu="file-menu">File</button>
 		<button menu="edit-menu">Edit</button>
+		<button menu="media-menu">Media</button>
 		<button menu="project-menu">Project</button>
 		<button menu="transport-menu">Transport</button>
 		<button menu="studio-menu">Studio</button>
@@ -118,7 +132,10 @@
 		<splitter for="right" resize="next"/>
 		<div id="right-zone" zone="right" focuszone="right" size="240" default="hidden"/>
 	</div>
-	<div id="status-line" class="strip" strip="statusLine" default="hidden"/>
+	<div id="status-line" class="strip status-line" strip="statusLine" default="hidden">
+		<span id="record-format" class="status-field" title="Record Format"/>
+		<span id="lost-device" class="status-field hidden"/>
+	</div>
 	<div id="transport-bar" class="strip" strip="transportBar" default="hidden"/>
 
 	<menu id="file-menu">
@@ -130,6 +147,17 @@
 		</menuitem>
 		<menuseparator/>
 		<menuitem command="file.quit">Quit</menuitem>
+	</menu>
+	<menu id="media-menu">
+		<menuitem command="window.pool">Open Pool Window</menuitem>
+		<menuseparator/>
+		<menuitem command="pool.import">Import Medium...</menuitem>
+		<menuitem command="poolFolder.add">Create Folder</menuitem>
+		<menuseparator/>
+		<menuitem command="pool.removeUnused">Remove Unused Media</menuitem>
+		<menuitem command="pool.findMissing">Find Missing Files...</menuitem>
+		<menuitem command="media.removeMissing">Remove Missing Files</menuitem>
+		<menuitem command="media.conform">Conform Files</menuitem>
 	</menu>
 	<menu id="edit-menu">
 		<menuitem command="history.undo">Undo</menuitem>
