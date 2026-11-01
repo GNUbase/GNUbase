@@ -107,8 +107,8 @@ namespace gnubase::engine
 		std::vector<RenderAutomationPoint> points; // sorted by position; points at one position in the order added
 	};
 
-	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	// A plugin slot of a channel, as the engine makes and runs its plugin.
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct RenderSlot
 	{
 		ObjectId id = 0;
@@ -119,6 +119,7 @@ namespace gnubase::engine
 		std::shared_ptr<const std::vector<uint8_t>> state; // its state from a file, or none
 	};
 
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct RenderChannel
 	{
 		ObjectId id = 0;

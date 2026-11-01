@@ -58,8 +58,8 @@ namespace gnubase::engine::plugins
 		// Values of parameters the plugin doesn't have are ignored.
 		void setParameters(const std::map<uint32_t, double>& values);
 
-		// [any] From the next block on, the slot outputs its input while the plugin keeps processing, and reports no
-		// latency once the graph is compiled again.
+		// [any] From the next block on, the slot outputs its input while the plugin keeps processing, crossfading over
+		// that block, and reports no latency once the graph is compiled again.
 		void setBypass(bool bypass) noexcept { m_bypass.store(bypass, std::memory_order_relaxed); }
 		bool bypassed() const noexcept { return m_bypass.load(std::memory_order_relaxed); }
 
@@ -85,6 +85,8 @@ namespace gnubase::engine::plugins
 
 		void allocate(bool input, uint32_t maxFrames);
 		void addParameterChanges() noexcept;
+		// The plugin's main output as the node's audio, and its notes unless bypassed.
+		void output(const graph::ProcessContext& context, bool bypass) noexcept;
 		void convertEvents(const graph::ProcessContext& context) noexcept;
 		uint32_t convertTransport(const graph::TransportBlock& transport) noexcept;
 
@@ -120,6 +122,7 @@ namespace gnubase::engine::plugins
 		bool m_started = false;
 		int64_t m_steadyTime = 0;
 		std::vector<float> m_dry; // the input of a bypassed block: g_maxAudioChannels × maxFrames
+		bool m_bypassed = false;  // the last block's bypass
 		uint32_t m_maxFrames = 0;
 	};
 }

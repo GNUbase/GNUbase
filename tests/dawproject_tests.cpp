@@ -1168,6 +1168,7 @@ TEST_CASE("built-in plugins in slots are devices in project.xml, and come back f
 								 .find_child_by_attribute("Track", "name", "Audio")
 								 .child("Channel")
 								 .child("Devices");
+	CHECK(devices == devices.parent().first_child()); // a Channel's first element
 	pugi::xml_node first = devices.child("BuiltinDevice");
 	CHECK(std::string(first.attribute("deviceID").as_string()) == "builtin:gainPan");
 	CHECK(std::string(first.attribute("deviceRole").as_string()) == "audioFX");

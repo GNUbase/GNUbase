@@ -12,8 +12,10 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase::engine;
@@ -183,8 +185,21 @@ TEST_CASE("plugin.set bypasses or deactivates a slot's plugin as one undo step",
 	CHECK(run(client, "history.get").at("steps").back().at("action") == "Change plugin");
 	slot = run(client, "plugin.set", {{"slot", eq}, {"active", false}}).at("slot");
 	CHECK(slot.at("active") == false);
+	while (client.poll())
+	{
+	}
 	run(client, "history.undo");
 	CHECK(run(client, "plugin.get", {{"slot", eq}}).at("slot").at("active") == true);
+	// Undo announces the slot as plugin.set does.
+	std::optional<Json> announced;
+	while (const auto message = client.poll())
+		if (const auto* event = std::get_if<Event>(&*message); event != nullptr && event->name == "plugin.changed")
+			announced = event->data.at("slot");
+	REQUIRE(announced.has_value());
+	const Json changed = announced.value_or(Json());
+	CHECK(changed.at("id") == eq);
+	CHECK(changed.at("active") == true);
+	CHECK(changed.at("index") == 0);
 	CHECK_THAT(reject(client, "plugin.set", {{"slot", 9999}, {"bypass", true}}), ContainsSubstring("9999"));
 }
 
@@ -287,6 +302,8 @@ TEST_CASE("slots are saved with their plugin's state, and files from before them
 	Json unknown = saved;
 	unknown["slots"][0]["plugin"] = "future:plugin";
 	CHECK(projectFromJson(unknown).slots.at(gain).plugin == "future:plugin");
+	unknown["slots"][0]["plugin"] = "builtin:future";
+	CHECK(toJson(projectFromJson(unknown)) == unknown); // with its parameter values
 
 	const auto refused = [&saved](const std::function<void(Json&)>& change)
 	{
@@ -300,6 +317,8 @@ TEST_CASE("slots are saved with their plugin's state, and files from before them
 	refused([](Json& p) { p["slots"][0]["plugin"] = "noFormat"; });
 	refused([](Json& p) { p["slots"][0]["state"] = "not base64!"; });
 	refused([](Json& p) { p["slots"][0]["parameters"][0]["value"] = std::numeric_limits<double>::infinity(); });
+	refused([](Json& p) { p["slots"][0]["plugin"] = "builtin:testSynth"; }); // an instrument
+	refused([](Json& p) { p["slots"].push_back(p["slots"][0]); });           // the same slot twice
 	refused(
 		[](Json& p)
 		{

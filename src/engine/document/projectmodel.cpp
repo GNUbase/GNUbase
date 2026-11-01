@@ -2153,6 +2153,18 @@ namespace gnubase::engine
 			announceObjects(change.clips, direction, "clip", "clip", context);
 			announceObjects(change.audioEvents, direction, "audioEvent", "event", context);
 			announceObjects(change.markers, direction, "marker", "marker", context);
+			// Slots that came or went are in their channel's channel.changed, as with plugin.insert and plugin.remove.
+			for (const ObjectChange<Slot>& slot : change.slots)
+			{
+				const auto current = project.slots.find(slot.id);
+				if (!slot.before || !slot.after || current == project.slots.end())
+					continue;
+				Json json = toJson(current->second);
+				json.erase("state");
+				const std::vector<ObjectId>& slots = project.channels.at(current->second.channel).slots;
+				json["index"] = std::distance(slots.begin(), std::find(slots.begin(), slots.end(), slot.id));
+				context.emit("plugin.changed", {{"slot", std::move(json)}});
+			}
 			// After the tracks, so that a client knows the track that becomes active.
 			if (activated)
 				context.emit("marker.trackActivated", {{"track", project.activeMarkerTrack}});

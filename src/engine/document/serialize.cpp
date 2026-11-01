@@ -776,8 +776,11 @@ namespace gnubase::engine
 		// the values of other plugins, which this build may not have, are kept as long as they are numbers.
 		std::map<uint32_t, double> slotParametersFromJson(const Json& json, const Slot& slot, const std::string& name)
 		{
+			// A built-in plugin this build has: values as for an instrument. Others, e.g. one of a newer build, keep
+			// theirs.
 			const std::string prefix = "builtin:";
-			if (slot.plugin.compare(0, prefix.size(), prefix) == 0)
+			if (slot.plugin.compare(0, prefix.size(), prefix) == 0 &&
+				processors::findBuiltin(slot.plugin.substr(prefix.size())) != nullptr)
 				return instrumentParametersFromJson(json, slot.plugin.substr(prefix.size()), name);
 			if (!json.is_array())
 				throw std::invalid_argument(name + " parameters must be a list");
@@ -811,6 +814,12 @@ namespace gnubase::engine
 			slot.name = item.value("name", std::string());
 			slot.bypass = item.value("bypass", false);
 			slot.active = item.value("active", true);
+			const std::string prefix = "builtin:";
+			const processors::BuiltinInfo* builtin = slot.plugin.compare(0, prefix.size(), prefix) == 0
+				? processors::findBuiltin(slot.plugin.substr(prefix.size()))
+				: nullptr;
+			if (builtin != nullptr && builtin->instrument)
+				throw std::invalid_argument(name + ": " + slot.plugin + " is an instrument, not an effect");
 			slot.parameters = slotParametersFromJson(item.value("parameters", Json::array()), slot, name);
 			if (item.contains("state"))
 			{
@@ -1021,7 +1030,8 @@ namespace gnubase::engine
 			if (channel == project.channels.end() || channel->second.format == ChannelFormat::None)
 				throw std::invalid_argument("slot " + std::to_string(slot.id) + " is on no channel with audio");
 			const ObjectId id = slot.id;
-			project.slots[id] = std::move(slot);
+			if (!project.slots.emplace(id, std::move(slot)).second)
+				throw std::invalid_argument("slot " + std::to_string(id) + " is there twice");
 		}
 		size_t listed = 0;
 		for (const auto& [id, channel] : project.channels)

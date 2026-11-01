@@ -117,6 +117,7 @@ namespace gnubase::engine
 
 	// A plugin in one of a channel's slots (#282). The plugin itself lives in the engine, a built-in one in the
 	// engine's process and any other in a plugin host process; the document keeps what makes it again.
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct Slot
 	{
 		ObjectId id = 0;

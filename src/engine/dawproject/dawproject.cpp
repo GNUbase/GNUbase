@@ -496,7 +496,7 @@ namespace gnubase::engine
 					if (info == nullptr)
 						continue;
 					if (devices.empty())
-						devices = channelNode.append_child("Devices");
+						devices = channelNode.prepend_child("Devices"); // the first of a Channel's elements
 					pugi::xml_node device = devices.append_child("BuiltinDevice");
 					device.append_attribute("id") = xmlId("d", slot.id).c_str();
 					device.append_attribute("name") = info->name.c_str();

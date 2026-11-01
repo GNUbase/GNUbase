@@ -166,6 +166,7 @@ namespace gnubase::engine::plugins
 		allocate(false, maxFrames);
 		m_dry.assign(size_t{g_maxAudioChannels} * maxFrames, 0.0f);
 		m_maxFrames = maxFrames;
+		m_bypassed = bypassed();
 		if (m_active)
 		{
 			m_activeRate.store(sampleRate, std::memory_order_relaxed);
@@ -301,8 +302,11 @@ namespace gnubase::engine::plugins
 		if (!m_started)
 			m_started = m_plugin->startProcessing();
 		const bool bypass = bypassed();
+		const bool crossfade = bypass != m_bypassed;
+		m_bypassed = bypass;
 		const int dryChannels = std::min(context.channels, g_maxAudioChannels);
-		if (bypass && context.frames <= m_maxFrames)
+		const bool dry = (bypass || crossfade) && context.frames <= m_maxFrames;
+		if (dry)
 			for (int c = 0; c < dryChannels; ++c)
 				std::memcpy(m_dry.data() + (static_cast<size_t>(c) * m_maxFrames), context.audio[c],
 					context.frames * sizeof(float));
@@ -333,18 +337,32 @@ namespace gnubase::engine::plugins
 
 		const bool failed = status == plugin::ProcessStatus::Error || m_outputs.empty();
 		m_failed.store(failed, std::memory_order_relaxed);
-		if (bypass && context.frames <= m_maxFrames)
-		{
-			for (int c = 0; c < dryChannels; ++c)
-				std::memcpy(context.audio[c], m_dry.data() + (static_cast<size_t>(c) * m_maxFrames),
-					context.frames * sizeof(float));
-			return;
-		}
 		if (failed)
-		{
 			silence(context);
+		else
+			output(context, bypass);
+		if (!dry)
 			return;
+		// The input instead, or a crossfade to or from it over the block.
+		for (int c = 0; c < dryChannels; ++c)
+		{
+			const float* input = m_dry.data() + (static_cast<size_t>(c) * m_maxFrames);
+			float* samples = context.audio[c];
+			if (!crossfade)
+			{
+				std::memcpy(samples, input, context.frames * sizeof(float));
+				continue;
+			}
+			for (uint32_t i = 0; i < context.frames; ++i)
+			{
+				const float t = static_cast<float>(i + 1) / static_cast<float>(context.frames);
+				samples[i] += (bypass ? t : 1.0f - t) * (input[i] - samples[i]);
+			}
 		}
+	}
+
+	void PluginSlot::output(const graph::ProcessContext& context, bool bypass) noexcept
+	{
 		// The main output becomes the node's audio; a mono output feeds every channel of the node.
 		const plugin::AudioBuffer& output = m_outputs[m_mainOutput];
 		for (int c = 0; c < context.channels; ++c)
@@ -355,6 +373,8 @@ namespace gnubase::engine::plugins
 			else
 				std::fill(context.audio[c], context.audio[c] + context.frames, 0.0f);
 		}
+		if (bypass)
+			return; // nor its notes
 		for (const plugin::Event& event : m_eventsOut)
 		{
 			if (event.type != plugin::EventType::NoteOn && event.type != plugin::EventType::NoteOff)

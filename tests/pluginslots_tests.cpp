@@ -4,15 +4,21 @@
 // slots change.
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "engine/plugins/pluginslot.h"
+#include "engine/processors/builtinplugin.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -217,4 +223,85 @@ TEST_CASE("plugins in slots render the same with any number of processing thread
 	const Json single = render(1);
 	CHECK(single == render(4));
 	CHECK(single.at(g_block - 1).get<double>() != 0.0);
+}
+
+TEST_CASE("switching bypass crossfades over a block, so it doesn't click", "[unit]")
+{
+	class NullHost final : public gnubase::plugin::Host
+	{
+	public:
+		void requestRestart() override {}
+		void requestProcess() override {}
+		void requestCallback() override {}
+		void* extension(std::string_view /*id*/) override { return nullptr; }
+	};
+	NullHost host;
+	std::unique_ptr<gnubase::plugin::Plugin> gain = processors::BuiltinFactory().create("builtin:gainPan", host);
+	REQUIRE(gain->init());
+	plugins::PluginSlot slot(std::move(gain));
+	slot.setParameters({{g_gain, -12.0}});
+	REQUIRE(slot.activate(48000.0, 128));
+
+	std::vector<float> left;
+	std::vector<float> right;
+	const graph::EventBuffer eventsIn(4);
+	graph::EventBuffer eventsOut(4);
+	const graph::TransportBlock transport;
+	std::vector<float> played;
+	for (int block = 0; block < 40; ++block)
+	{
+		if (block == 20)
+			slot.setBypass(true);
+		left.assign(128, 0.5f);
+		right.assign(128, 0.5f);
+		const std::array<float*, 2> audio{left.data(), right.data()};
+		slot.process({audio.data(), 2, 128, eventsIn, eventsOut, transport});
+		played.insert(played.end(), left.begin(), left.end());
+	}
+	CHECK_THAT(played[(20 * 128) - 1], WithinAbs(0.5 * std::pow(10.0, -12.0 / 20.0), 1e-4));
+	CHECK(played.back() == 0.5f);
+	float largestStep = 0.0f;
+	for (size_t i = 1; i < played.size(); ++i)
+		largestStep = std::max(largestStep, std::abs(played[i] - played[i - 1]));
+	CHECK(largestStep < 0.01f); // 0.37 at once without the crossfade
+}
+
+TEST_CASE("plugins change while the device plays, and a new sample rate activates them again", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId channel = monitorSine(client, 500.0, -24.0);
+	const ObjectId other = run(client, "track.add", {{"type", "audio"}}).at("channel").at("id").get<ObjectId>();
+	run(client, "audio.start");
+	const Json limiter = insert(client, channel, "builtin:limiter");
+	const Json eq = insert(client, other, "builtin:eq");
+	waitFor(client, limiter, "active");
+	waitFor(client, eq, "active");
+
+	const auto node = [&client](const Json& object)
+	{
+		const Json graph = run(client, "graph.get");
+		for (const Json& n : graph.at("nodes"))
+			if (n.at("object") == object)
+				return n;
+		return Json();
+	};
+	CHECK(node(limiter).at("kind") == "pluginSlot");
+
+	// Deactivating, bypassing and removing while blocks are processed: the plugin leaves the graph first.
+	run(client, "plugin.set", {{"slot", limiter}, {"active", false}});
+	waitFor(client, limiter, "inactive");
+	run(client, "plugin.set", {{"slot", limiter}, {"active", true}, {"bypass", true}});
+	waitFor(client, limiter, "active");
+	run(client, "plugin.remove", {{"slot", eq}});
+	run(client, "history.undo");
+	waitFor(client, eq, "active");
+	// A new sample rate activates them again.
+	run(client, "audio.stop");
+	run(client, "audio.setDevice", {{"sampleRate", 44100.0}});
+	run(client, "audio.start");
+	waitFor(client, limiter, "active");
+	waitFor(client, eq, "active");
+	run(client, "audio.stop");
+	CHECK(run(client, "plugin.get", {{"slot", limiter}}).at("slot").at("bypass") == true);
 }

@@ -539,7 +539,7 @@ TEST_CASE("a plugin slot takes parameter values and bypass while it processes, w
 	{
 		// The command thread's calls, between blocks.
 		slot.setParameters({{1, i % 2 == 0 ? -12.0 : -0.3}}); // the ceiling
-		slot.setBypass(i % 3 == 0);
+		slot.setBypass(i % 3 == 0 || i == 98);
 		std::fill(left.begin(), left.end(), 0.5f);
 		std::fill(right.begin(), right.end(), -0.5f);
 		const ScopedRealtimeContext realtime;
@@ -548,7 +548,7 @@ TEST_CASE("a plugin slot takes parameter values and bypass while it processes, w
 	}
 	CHECK(g_violations == 0);
 	CHECK(!slot.failed());
-	CHECK(left[0] == 0.5f); // the last block, 99, was bypassed
+	CHECK(left[0] == 0.5f); // the last blocks, 98 and 99, were bypassed: no crossfade in 99
 	CHECK(right[127] == -0.5f);
 	CHECK(slot.latency() == 0);
 	slot.setBypass(false);

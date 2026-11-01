@@ -4,6 +4,7 @@
 #include "engine/plugins/hostmanager.h"
 #include "engine/processors/builtinplugin.h"
 #include "platform/log.h"
+#include "platform/rt/realtime.h"
 
 #include <chrono>
 #include <exception>
@@ -69,6 +70,7 @@ namespace gnubase::engine::plugins
 		std::function<void()> changed;
 		std::function<bool(uint64_t)> retired;
 		std::atomic<bool> closing{false};
+		std::atomic<int> retiring{0}; // whenRetired jobs that haven't run their work
 
 		Shared(HostManager& manager, std::function<void()> onChange, std::function<bool(uint64_t)> isRetired)
 			: jobs(manager), changed(std::move(onChange)), retired(std::move(isRetired))
@@ -89,7 +91,9 @@ namespace gnubase::engine::plugins
 		void requestRestart() override
 		{
 			m_restart->store(true);
-			if (!m_shared->closing)
+			// Posting a command isn't real-time safe; a request from an audio thread waits for the next graph build.
+			// Plugins in host processes ask on the IPC thread.
+			if (!m_shared->closing && !rt::isRealtimeContext())
 				m_shared->changed();
 		}
 		void requestProcess() override {}
@@ -105,6 +109,7 @@ namespace gnubase::engine::plugins
 	{
 		std::string plugin;
 		uint32_t channels = 2;
+		std::shared_ptr<const std::vector<uint8_t>> state; // what it was made with
 		std::shared_ptr<std::atomic<bool>> restart = std::make_shared<std::atomic<bool>>(false);
 		std::shared_ptr<EngineHost> host; // the plugin's, outlives it
 
@@ -115,6 +120,7 @@ namespace gnubase::engine::plugins
 
 		// Command thread.
 		bool inGraph = false;
+		bool leaving = false;            // waits for retire
 		Action action = Action::Destroy; // what retire does with it
 		double triedRate = 0.0;          // what it was last activated for: a plugin that failed isn't tried again
 		uint32_t triedFrames = 0;
@@ -149,7 +155,10 @@ namespace gnubase::engine::plugins
 						if (processor)
 							processor->destroy();
 					});
-			m_shared->jobs.run([] {}).get(); // the jobs before it are done
+			// Done once the jobs before an empty one are, and the retiring ones that queued themselves again.
+			do
+				m_shared->jobs.run([] {}).get();
+			while (m_shared->retiring > 0);
 		}
 		catch (const std::exception& error)
 		{
@@ -197,9 +206,14 @@ namespace gnubase::engine::plugins
 			const RenderSlot& slot = *want.slot;
 			wanted.insert(slot.id);
 			std::shared_ptr<Instance>& instance = m_instances[slot.id];
-			if (instance && (instance->plugin != slot.plugin || instance->channels != want.channels))
+			if (instance && instance->leaving)
+				continue; // retire comes first
+			if (instance &&
+				(instance->plugin != slot.plugin || instance->channels != want.channels ||
+					instance->state != slot.state))
 			{
-				// Another plugin, or the channel's format changed: a new instance.
+				// Another plugin, the channel's format changed or another state, e.g. from another file: a new
+				// instance.
 				instance->action = Action::Destroy;
 				m_leaving.push_back(instance);
 				instance.reset();
@@ -209,6 +223,7 @@ namespace gnubase::engine::plugins
 				instance = std::make_shared<Instance>();
 				instance->plugin = slot.plugin;
 				instance->channels = want.channels;
+				instance->state = slot.state;
 				instance->host = std::make_shared<EngineHost>(m_shared, instance->restart);
 				instance->triedRate = sampleRate;
 				instance->triedFrames = maxFrames;
@@ -247,6 +262,7 @@ namespace gnubase::engine::plugins
 			}
 			// Out of the graph first, if it is in one: retire acts once the audio thread runs a graph without it.
 			instance->inGraph = false;
+			instance->leaving = true;
 			m_leaving.push_back(instance);
 		}
 		for (auto instance = m_instances.begin(); instance != m_instances.end();)
@@ -290,6 +306,7 @@ namespace gnubase::engine::plugins
 				if (shared->closing || shared->retired(generation))
 				{
 					work();
+					--shared->retiring;
 					return;
 				}
 				// Later, after the jobs queued meanwhile.
@@ -306,6 +323,8 @@ namespace gnubase::engine::plugins
 		for (const std::shared_ptr<Instance>& instance : m_leaving)
 		{
 			const Action action = instance->action;
+			instance->leaving = false;
+			++shared->retiring;
 			if (action != Action::Destroy)
 				instance->set({instance->processor, "loading"});
 			whenRetired(shared, generation,
