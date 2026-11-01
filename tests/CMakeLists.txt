@@ -21,10 +21,12 @@ set(settingsEnvironment "GNUBASE_SETTINGS_DIR=${CMAKE_CURRENT_BINARY_DIR}/output
 
 # One file per line, sorted, so that pull requests adding tests rarely touch the same lines.
 add_executable(gnubase-tests
+	addtrack_tests.cpp
 	analysis_tests.cpp
 	app_tests.cpp
 	audio_tests.cpp
 	audiofile_tests.cpp
+	audioimport_tests.cpp
 	automation_tests.cpp
 	backup_tests.cpp
 	bus_tests.cpp
@@ -43,6 +45,7 @@ add_executable(gnubase-tests
 	eventedit_tests.cpp
 	eventediting_tests.cpp
 	fade_tests.cpp
+	fileimport_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
 	history_tests.cpp
@@ -90,6 +93,7 @@ add_executable(gnubase-tests
 	time_tests.cpp
 	timeformat_tests.cpp
 	timestretch_tests.cpp
+	tracklist_tests.cpp
 	transport_tests.cpp
 	uiapp.cpp
 	uiapp.h

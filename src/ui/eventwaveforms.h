@@ -42,11 +42,11 @@ namespace gnubase::ui
 		// What the event lanes show.
 		struct View
 		{
-			double start = 0.0;      // seconds at the left edge
-			double scale = 0.01;     // seconds per dp
-			double top = 0.0;        // dp scrolled down
-			double laneHeight = 0.0; // dp
-			double width = 0.0;      // of the lanes, in dp
+			double start = 0.0;           // seconds at the left edge
+			double scale = 0.01;          // seconds per dp
+			double top = 0.0;             // dp scrolled down
+			std::vector<double> laneTops; // dp, each lane's top and the bottom of the last
+			double width = 0.0;           // of the lanes, in dp
 			double height = 0.0;
 			float dpRatio = 1.0F;
 		};

@@ -7,6 +7,7 @@
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -54,7 +55,12 @@ namespace gnubase::engine
 		Group,  // sums the channels routed to it; holds no events
 		Effect, // receives sends; holds no events
 		Marker, // holds markers; has no channel and stays at the top level
+		Ruler,  // shows a ruler in a time format of its own; has no channel
 	};
+
+	// The time formats of ruler tracks, as the event display's ruler names them.
+	inline constexpr std::array<const char*, 5> g_rulerTimeFormats = {
+		"barsBeats", "seconds", "timecode", "samples", "userFrames"};
 
 	// A project has at most this many marker tracks.
 	inline constexpr int g_maxMarkerTracks = 10;
@@ -95,6 +101,10 @@ namespace gnubase::engine
 		// Audio tracks: the monitor and record enable buttons (docs/features/latency-and-monitoring.md).
 		bool monitor = false;
 		bool recordEnable = false;
+		// The mute and solo buttons (docs/features/track-list.md): a muted channel is silent; while any channel is
+		// soloed, only soloed ones, where they play through and what plays into them are heard.
+		bool mute = false;
+		bool solo = false;
 	};
 
 	// The fader's range: its bottom is silence, its top the project's maximum volume, at most this.
@@ -290,7 +300,15 @@ namespace gnubase::engine
 		ObjectId channel = 0;               // 0 for folders without a group channel
 		std::vector<ObjectId> children;     // folders: the tracks inside, from top to bottom
 		std::optional<AutoFades> autoFades; // audio tracks: settings of their own instead of the project's
+		std::string timeFormat;             // ruler tracks: one of g_rulerTimeFormats
+		bool enabled = true; // audio, instrument and MIDI tracks: a disabled one plays nothing and is silent
 	};
+
+	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
+	inline bool canDisable(TrackType type)
+	{
+		return type == TrackType::Audio || type == TrackType::Instrument || type == TrackType::Midi;
+	}
 
 	enum class MarkerType : uint8_t
 	{
@@ -409,6 +427,9 @@ namespace gnubase::engine
 	// Makes the first top-level output bus the main mix if no bus is.
 	void keepMainMix(Project& project);
 
+	// Gives a part's notes and controllers new ids.
+	void renumber(Project& project, MidiPart& part);
+
 	// What is wrong with a bus of the project, or empty: its number of ports, a child bus's parent and channels.
 	std::string busProblem(const Project& project, const Bus& bus);
 
@@ -429,10 +450,11 @@ namespace gnubase::engine
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
-				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor,
-				   a.recordEnable) ==
+				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor, a.recordEnable,
+				   a.mute, a.solo) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
-				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable);
+				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable,
+				b.mute, b.solo);
 	}
 
 	inline bool operator==(const MediaFile& a, const MediaFile& b)
@@ -528,8 +550,10 @@ namespace gnubase::engine
 
 	inline bool operator==(const Track& a, const Track& b)
 	{
-		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades) ==
-			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades);
+		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
+				   a.timeFormat, a.enabled) ==
+			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
+				b.timeFormat, b.enabled);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan
