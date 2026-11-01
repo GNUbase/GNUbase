@@ -113,8 +113,9 @@ namespace gnubase::ui
 		Rml::Element* m_labels = nullptr;
 		ProjectMarkers m_markers;
 		MarkerLineMode m_mode = MarkerLineMode::Active;
-		double m_trackZoom = -1.0; // that the marker events' lanes have
-		bool m_modeKnown = false;  // changed since it was asked for
+		std::vector<uint64_t> m_laneTracks;
+		std::vector<double> m_laneTops;
+		bool m_modeKnown = false; // changed since it was asked for
 		bool m_loading = false;
 		bool m_stale = false;
 		std::chrono::steady_clock::time_point m_lastClick; // for double clicks
