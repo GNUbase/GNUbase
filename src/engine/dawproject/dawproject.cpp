@@ -351,8 +351,7 @@ namespace gnubase::engine
 
 				pugi::xml_node structure = root.append_child("Structure");
 				for (const ObjectId id : m_project.tracks)
-					if (m_project.trackById.at(id).type != TrackType::Marker) // markers go into the arrangement
-						writeTrack(structure, m_project.trackById.at(id));
+					writeTrack(structure, m_project.trackById.at(id));
 				// The main mix first: other applications take the first master channel as their main output.
 				std::vector<const Bus*> masters;
 				for (const Bus& bus : m_project.busses)
@@ -422,13 +421,16 @@ namespace gnubase::engine
 
 			void writeTrack(pugi::xml_node parent, const Track& track)
 			{
+				// Markers go into the arrangement; ruler tracks only into GNUbase's entry.
+				if (track.type == TrackType::Marker || track.type == TrackType::Ruler)
+					return;
 				pugi::xml_node node = parent.append_child("Track");
 				node.append_attribute("id") = xmlId("t", track.id).c_str();
 				node.append_attribute("name") = track.name.c_str();
 				if (!track.color.empty())
 					node.append_attribute("color") = track.color.c_str();
 				node.append_attribute("contentType") = contentType(track.type);
-				node.append_attribute("loaded") = true;
+				node.append_attribute("loaded") = track.enabled; // a disabled track isn't loaded
 				if (track.channel != 0)
 				{
 					const Channel& channel = m_project.channels.at(track.channel);
@@ -439,6 +441,12 @@ namespace gnubase::engine
 					// A MIDI track's output is an instrument, which DAWproject's audio routing can't describe.
 					if (channel.format != ChannelFormat::None && channel.output != 0)
 						element.append_attribute("destination") = destination(channel.output).c_str();
+					if (channel.solo)
+						element.append_attribute("solo") = true;
+					pugi::xml_node mute = element.append_child("Mute");
+					mute.append_attribute("id") = xmlId("cm", channel.id).c_str();
+					mute.append_attribute("name") = "Mute";
+					mute.append_attribute("value") = channel.mute;
 					if (channel.format != ChannelFormat::None && track.type != TrackType::Midi)
 					{
 						pugi::xml_node pan = element.append_child("Pan");
@@ -1007,6 +1015,7 @@ namespace gnubase::engine
 				const std::string color = node.attribute("color").as_string("");
 				track.color = validColor(color) ? color : std::string();
 				track.parent = parent;
+				track.enabled = !canDisable(type) || node.attribute("loaded").as_bool(true);
 				if (type != TrackType::Folder || !channelNode.empty())
 				{
 					Channel channel;
@@ -1040,6 +1049,8 @@ namespace gnubase::engine
 							m_parameters[pan.attribute("id").as_string()] = {track.id, AutomationTargetType::Pan};
 						}
 					}
+					channel.mute = channelNode.child("Mute").attribute("value").as_bool(false);
+					channel.solo = channelNode.attribute("solo").as_bool(false);
 					track.channel = channel.id;
 					m_project.channels[channel.id] = channel;
 					m_channels[channelNode.attribute("id").as_string()] = channel.id;

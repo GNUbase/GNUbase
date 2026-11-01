@@ -70,6 +70,8 @@ namespace gnubase::engine
 		void registerMarkerCommands(Engine& engine);                  // markers.cpp: marker.*
 		void registerMidiFileCommands(Engine& engine); // midifilecommands.cpp: midiFile.export and midiFile.import
 		Json importMidiFile(Project& project, CommandContext& context);
+		void registerAudioFileCommands(Engine& engine, Jobs& jobs); // audiofilecommands.cpp: audioFile.import
+		Json importAudioFiles(Project& project, CommandContext& context, Jobs& jobs);
 		void registerFadeCommands(Engine& engine);      // fadeedits.cpp: fades, crossfades and auto fades
 		void registerParameterCommands(Engine& engine); // parameters.cpp: parameter.list, parameter.get, parameter.set
 		void registerEventEditCommands(Engine& engine); // eventedits.cpp: event.*, parts and events (#85)
