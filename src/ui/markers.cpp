@@ -212,7 +212,7 @@ namespace gnubase::ui
 				R"(">)" + Rml::StringUtilities::EncodeRml(text) + "</div>";
 		}
 		m_labels->SetInnerRML(labels);
-		m_trackZoom = -1.0; // the lanes again
+		m_laneTops.clear(); // rebuild the lanes with the new marker events
 		place();
 	}
 
@@ -221,17 +221,18 @@ namespace gnubase::ui
 		if (!alive())
 			return;
 		const TimelineView& view = m_display.view();
-		const double height = g_trackHeight * view.trackZoom;
-		if (view.trackZoom != m_trackZoom)
+		const auto& tracks = m_display.laneTracks();
+		const auto& tops = m_display.laneTops();
+		if (tracks != m_laneTracks || tops != m_laneTops)
 		{
-			m_trackZoom = view.trackZoom;
+			m_laneTracks = tracks;
+			m_laneTops = tops;
 			std::vector<EventLanes::Lane> lanes;
-			for (const ProjectMarkers::Track& track : m_markers.tracks)
+			for (size_t i = 0; i < tracks.size(); ++i)
 			{
-				EventLanes::Lane lane{static_cast<float>(height), {}};
-				if (track.marker)
-					for (const MarkerItem& marker : m_markers.of(track.id))
-						lane.events.push_back({marker.start, marker.end - marker.start});
+				EventLanes::Lane lane{static_cast<float>(tops[i + 1] - tops[i]), {}};
+				for (const MarkerItem& marker : m_markers.of(tracks[i]))
+					lane.events.push_back({marker.start, marker.end - marker.start});
 				std::sort(lane.events.begin(), lane.events.end(),
 					[](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
 				lanes.push_back(std::move(lane));
@@ -246,14 +247,18 @@ namespace gnubase::ui
 		m_events->SetAttribute("scroll-top", view.top);
 
 		std::map<uint64_t, size_t> lanes;
-		for (const ProjectMarkers::Track& track : m_markers.tracks)
-			lanes.emplace(track.id, lanes.size());
+		for (size_t i = 0; i < tracks.size(); ++i)
+			lanes.emplace(tracks[i], i);
 		// The labels are the markers', in the same order.
 		for (int i = 0; i < m_labels->GetNumChildren() && i < static_cast<int>(m_markers.markers.size()); ++i)
 		{
 			Rml::Element* label = m_labels->GetChild(i);
 			const MarkerItem& marker = m_markers.markers[static_cast<size_t>(i)];
-			const double top = (static_cast<double>(lanes[marker.track]) * height) - view.top;
+			const auto lane = lanes.find(marker.track);
+			label->SetClass("hidden", lane == lanes.end());
+			if (lane == lanes.end())
+				continue;
+			const double top = tops[lane->second] - view.top;
 			label->SetProperty(Rml::PropertyId::Left, dp((marker.start - view.start) / view.scale));
 			label->SetProperty(Rml::PropertyId::Top, dp(top));
 		}
@@ -270,13 +275,16 @@ namespace gnubase::ui
 		const TimelineView& view = m_display.view();
 		const double x = (event.GetParameter<float>("mouse_x", 0.0F) - m_area->GetAbsoluteLeft()) / ratio();
 		const double y = ((event.GetParameter<float>("mouse_y", 0.0F) - m_area->GetAbsoluteTop()) / ratio()) + view.top;
-		const double lane = std::floor(y / (g_trackHeight * view.trackZoom));
-		if (lane < 0.0 || lane >= static_cast<double>(m_markers.tracks.size()))
+		const auto& tops = m_display.laneTops();
+		if (tops.empty() || y < 0.0 || y >= tops.back())
 			return std::nullopt;
-		const ProjectMarkers::Track& track = m_markers.tracks[static_cast<size_t>(lane)];
-		if (!track.marker)
+		const auto lane = static_cast<size_t>(std::upper_bound(tops.begin(), tops.end(), y) - tops.begin() - 1);
+		const auto id = m_display.laneTracks()[lane];
+		const auto track = std::find_if(m_markers.tracks.begin(), m_markers.tracks.end(),
+			[id](const ProjectMarkers::Track& candidate) { return candidate.id == id && candidate.marker; });
+		if (track == m_markers.tracks.end())
 			return std::nullopt;
-		return std::make_pair(&track, view.start + (x * view.scale));
+		return std::make_pair(&*track, view.start + (x * view.scale));
 	}
 
 	void MarkerLines::ProcessEvent(Rml::Event& event)
