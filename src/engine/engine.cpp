@@ -105,17 +105,19 @@ namespace gnubase::engine
 					list.push_back(toJson(info));
 				return Json{{"commands", list}};
 			});
-		registerCommand({"engine.commandLog", 1,
-							"The last 256 commands that ran, oldest first, without queries: what the UI and other "
-							"clients did. Each with its request id (events name it too), the client that sent it (ui, "
-							"mcp, lua, app for the command line, engine for the engine's own commands), the command, "
-							"its parameters, and the error if it failed.",
-							CommandInfo{}.parameters, Json::parse(R"({"type": "object", "properties": {"commands":
+		registerCommand(
+			{"engine.commandLog", 1,
+				"The last 256 commands that ran, oldest first, without queries: what the UI and other "
+				"clients did. Each with its request id (events name it too), the client that sent it (ui, "
+				"mcp, lua, app for the command line, engine for the engine's own commands), the command, "
+				"its parameters, and the error if it failed. Commands the engine ran on its own that changed "
+				"nothing, such as tries to open a lost audio device again, are left out.",
+				CommandInfo{}.parameters, Json::parse(R"({"type": "object", "properties": {"commands":
 								{"type": "array", "items": {"type": "object", "properties": {"request": {"type":
 								"integer"}, "client": {"type": "string"}, "command": {"type": "string"}, "parameters":
 								{}, "error": {"type": "string"}}, "required": ["request", "client", "command",
 								"parameters"]}}}, "required": ["commands"]})"),
-							true},
+				true},
 			[this](CommandContext&) { return Json{{"commands", Json(m_commandLog)}}; });
 		processors::registerCommands(*this);
 		m_plugins = std::make_unique<plugins::HostManager>();
@@ -332,7 +334,7 @@ namespace gnubase::engine
 			result.error = error.what();
 			context.m_events.clear(); // a failed command changes nothing
 		}
-		if (!query)
+		if (!query && !context.m_unlogged)
 		{
 			Json entry = {{"request", request.id}, {"client", request.sender ? request.sender->name : "engine"},
 				{"command", request.command}, {"parameters", request.parameters}};
