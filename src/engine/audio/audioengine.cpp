@@ -44,8 +44,9 @@ namespace gnubase::engine
 		{
 			return Json::parse(R"({"type": "object",
 			"properties": {"device": {"type": ["object", "null"]}, "running": {"type": "boolean"},
-				"position": {"type": "integer"}, "capturedFrames": {"type": "integer"},
-				"droppedFrames": {"type": "integer"}, "playbackDropouts": {"type": "integer"},
+				"position": {"type": "integer"}, "projectSampleRate": {"type": "number"},
+				"capturedFrames": {"type": "integer"}, "droppedFrames": {"type": "integer"},
+				"playbackDropouts": {"type": "integer"},
 				"processing": {"type": "object", "properties": {"multiProcessing": {"type": "boolean"},
 					"threads": {"type": "integer"}, "activeThreads": {"type": "integer"},
 					"limitedBy": {"type": ["string", "null"],
@@ -54,8 +55,8 @@ namespace gnubase::engine
 				"lost": {"type": ["object", "null"], "properties": {"backend": {"type": "string"},
 					"device": {"type": "string"}, "reason": {"type": "string"}, "restart": {"type": "boolean"}},
 					"required": ["backend", "device", "reason", "restart"]}},
-			"required": ["device", "running", "position", "capturedFrames", "droppedFrames", "playbackDropouts",
-				"processing", "lost"]})");
+			"required": ["device", "running", "position", "projectSampleRate", "capturedFrames", "droppedFrames",
+				"playbackDropouts", "processing", "lost"]})");
 		}
 
 		bool supports(const audio::DeviceInfo& info, double sampleRate)
@@ -167,7 +168,7 @@ namespace gnubase::engine
 		std::vector<std::unique_ptr<audio::Backend>> backends,
 		std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends)
 		: m_snapshots(snapshots), m_settings(settings), m_backends(std::move(backends)),
-		  m_midi(std::move(midiBackends)), m_midiInput(graph::g_maxEventsPerBlock),
+		  m_midi(settings, std::move(midiBackends)), m_midiInput(graph::g_maxEventsPerBlock),
 		  m_generatorEvents(graph::g_maxEventsPerBlock), m_generatorOut(graph::g_maxEventsPerBlock)
 	{
 	}
@@ -285,6 +286,7 @@ namespace gnubase::engine
 		const double rate = m_snapshots.latest().sampleRate;
 		if (rate != m_projectRate)
 		{
+			const bool known = m_projectRate != 0.0; // not the first sync, which only learns the rate
 			m_projectRate = rate;
 			if (m_lost)
 				m_lost->parameters.erase("sampleRate"); // it returns at the new rate if it supports it
@@ -292,10 +294,15 @@ namespace gnubase::engine
 			{
 				if (!m_lost)
 					m_parameters["sampleRate"] = rate;
-				reset(); // a fallback opens again at the new rate, after the lost device is tried
-				if (m_engine != nullptr)
-					m_engine->broadcast("audio.changed", status());
+				reset(); // retry the lost device, or reopen the fallback at the new rate
 			}
+			else if (m_lost)
+			{
+				m_parameters.erase("sampleRate"); // it returns at the new rate if it supports it
+			}
+			// Also when the device stays as it is: the status line shows the project's rate and a mismatch.
+			if (known && m_engine != nullptr)
+				m_engine->broadcast("audio.changed", status());
 		}
 		if (m_device && (m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring))
 			rebuild();
@@ -995,15 +1002,16 @@ namespace gnubase::engine
 	{
 		const RenderSnapshot& snapshot = m_snapshots.latest();
 		const std::vector<std::vector<int>> used = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
-		const auto list = [this](const std::vector<std::string>& names, bool input)
+		const Json& saved = m_settings.value("audio.portSettings");
+		const auto list = [this, &saved](const std::vector<std::string>& names, bool input)
 		{
 			Json ports = Json::array();
 			for (const std::string& name : names)
 			{
-				const auto found = m_portSettings.find(portKey(input, name));
-				const PortSettings settings = found != m_portSettings.end() ? found->second : PortSettings{};
-				ports.push_back({{"name", name}, {"showAs", settings.showAs.empty() ? name : settings.showAs},
-					{"visible", settings.visible}, {"busses", Json::array()}});
+				const Json setting = saved.value(portKey(input, name), Json::object());
+				const std::string showAs = setting.value("showAs", std::string());
+				ports.push_back({{"name", name}, {"showAs", showAs.empty() ? name : showAs},
+					{"visible", setting.value("visible", true)}, {"busses", Json::array()}});
 			}
 			return ports;
 		};
@@ -1061,17 +1069,22 @@ namespace gnubase::engine
 		return m_backend + '/' + m_device->info().id + (input ? "/in/" : "/out/") + name;
 	}
 
-	Json AudioEngine::setPort(const Json& parameters)
+	Json AudioEngine::setPort(CommandContext& context)
 	{
 		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
-		const bool input = parameters.at("input").get<bool>();
-		const auto name = parameters.at("name").get<std::string>();
+		Json changes = context.parameters();
+		const bool input = changes.at("input").get<bool>();
+		const auto name = changes.at("name").get<std::string>();
 		const std::vector<std::string>& names = input ? m_inputPorts : m_outputPorts;
 		const auto found = std::find(names.begin(), names.end(), name);
 		require(found != names.end(), std::string(input ? "no input port " : "no output port ") + name);
-		PortSettings& settings = m_portSettings[portKey(input, name)];
-		settings.showAs = parameters.value("showAs", settings.showAs);
-		settings.visible = parameters.value("visible", settings.visible);
+		changes.erase("input");
+		changes.erase("name");
+		context.call("settings.set",
+			{{"key", "audio.portSettings"},
+				{"value",
+					settings::changeEntry(m_settings.value("audio.portSettings"), portKey(input, name), changes,
+						{{"showAs", ""}, {"visible", true}})}});
 		return ports().at(input ? "inputs" : "outputs").at(static_cast<size_t>(found - names.begin()));
 	}
 
@@ -1257,19 +1270,19 @@ namespace gnubase::engine
 	Json AudioEngine::status() const
 	{
 		const Json processing = processingStatus();
+		const double projectRate = m_snapshots.latest().sampleRate;
 		Json lost = nullptr;
 		if (m_lost)
 			lost = {{"backend", m_lost->backend}, {"device", m_lost->device}, {"reason", m_lost->reason},
 				{"restart", m_lost->restart}};
 		if (!m_device)
 		{
-			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"capturedFrames", 0},
-				{"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()}, {"processing", processing},
-				{"lost", std::move(lost)}};
+			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"projectSampleRate", projectRate},
+				{"capturedFrames", 0}, {"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()},
+				{"processing", processing}, {"lost", std::move(lost)}};
 		}
 		const audio::DeviceFormat& format = m_device->format();
 		const audio::DeviceLatency latency = m_device->latency();
-		const double projectRate = m_snapshots.latest().sampleRate;
 		Json device = toJson(m_device->info());
 		device.update({{"backend", m_backend}, {"sampleRate", format.sampleRate}, {"blockSize", format.blockSize},
 			{"inputChannels", format.inputChannels}, {"outputChannels", format.outputChannels},
@@ -1277,7 +1290,7 @@ namespace gnubase::engine
 			{"recordOffset", m_recordOffset.load(std::memory_order_relaxed)}, {"directMonitoring", m_directMonitoring},
 			{"projectSampleRate", projectRate}, {"sampleRateMismatch", format.sampleRate != projectRate}});
 		return {{"device", std::move(device)}, {"running", m_device->running()}, {"position", m_device->position()},
-			{"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
+			{"projectSampleRate", projectRate}, {"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
 			{"droppedFrames", m_dummy != nullptr ? m_dummy->droppedFrames() : 0},
 			{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", std::move(lost)}};
 	}
@@ -1453,8 +1466,8 @@ namespace gnubase::engine
 				"Changes how a port of the audio device is shown, given by whether it is an input and its system name "
 				"(name in audio.ports). showAs: the name routing menus show; empty shows the system name. visible: "
 				"whether routing menus offer it; busses on a hidden port keep it. The settings are kept per device "
-				"while GNUbase runs. Returns the port as audio.ports lists it, and sends audio.ports as the event "
-				"audio.portsChanged.",
+				"in the user setting audio.portSettings, so they come back with the device, also after a restart. "
+				"Returns the port as audio.ports lists it, and sends audio.ports as the event audio.portsChanged.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["input", "name"],
 					"properties": {"input": {"type": "boolean"}, "name": {"type": "string"},
 					"showAs": {"type": "string"}, "visible": {"type": "boolean"}}})"),
@@ -1464,7 +1477,7 @@ namespace gnubase::engine
 				false},
 			[this](CommandContext& context)
 			{
-				Json port = setPort(context.parameters());
+				Json port = setPort(context);
 				context.emit("audio.portsChanged", ports());
 				return port;
 			});
@@ -1542,8 +1555,9 @@ namespace gnubase::engine
 				"frames "
 				"of audio track playback were silent because a disk stream "
 				"was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's "
-				"sample rate; with sampleRateMismatch the device runs at another one, as it doesn't support the "
-				"project's or was asked for another, and plays faster or slower. lost: the device that went away "
+				"sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as "
+				"it doesn't support the project's or was asked for another, and plays faster or slower; a new project "
+				"sample rate sends audio.changed. lost: the device that went away "
 				"(its backend, device id, the reason it can't be opened and whether it ran and restarts), while the "
 				"engine waits for it to return (see audio.reset); otherwise null. While a device is lost, device is "
 				"the fallback that plays meanwhile (the user setting audio.fallbackDevice), or null.",

@@ -12,6 +12,7 @@
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
+#include "ui/statusline.h"
 #include "ui/themes.h"
 #include "ui/tracklist.h"
 #include "ui/transport.h"
@@ -56,6 +57,7 @@ namespace gnubase::app
 		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the main menu
 		// bar (ui/mainmenu.h) and the track list beside the event display in its main zone, whose commands are key
 		// commands in the focus zone "project". Throws std::runtime_error if the document can't be loaded.
+		// Also displays the status line.
 		ui::EventDisplay& showProject();
 		// The project window's track list, null before showProject.
 		ui::TrackList* trackList() { return m_trackList.get(); }
@@ -98,8 +100,12 @@ namespace gnubase::app
 		void toggle(TransportWindow& shown, const char* file, const char* title, ui::Size size);
 		// Edits a display of the transport bar, or of the transport panel, which opens if the bar doesn't show.
 		void enter(const std::string& field);
-		// File > Import: the OS's file dialog for the window, then the event display imports what the user chose.
-		void chooseImport(ui::Window& window, std::string title, std::vector<ui::FileFilter> filters, bool many);
+		// File > Import: the OS's file dialog for the window, then the event display imports what the user chose;
+		// with clipsOnly into the pool only (Media > Import Medium).
+		void chooseImport(
+			ui::Window& window, std::string title, std::vector<ui::FileFilter> filters, bool many, bool clipsOnly);
+		// Media > Find Missing Files: the OS's folder dialog, then media.locate looks for the missing files there.
+		void chooseMissingFolder(ui::Window& window);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name) const;
 
@@ -124,7 +130,8 @@ namespace gnubase::app
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;
-		std::unique_ptr<ui::TrackList> m_trackList; // and before the display
+		std::unique_ptr<ui::StatusLine> m_statusLine; // too
+		std::unique_ptr<ui::TrackList> m_trackList;   // and before the display
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
 		bool m_canUndo = false;
 		bool m_canRedo = false;

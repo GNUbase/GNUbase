@@ -36,9 +36,18 @@ MCP and Lua scripts can do all it does.
 - **Audio ports.** `audio.setPort` gives a port of the device a name to show (`showAs`; empty for the system name) and
   hides or shows it (`visible`), for routing menus and the audio connections window to use. `audio.ports`
   lists both with every port and `audio.portsChanged` sends them when they change. Busses keep using ports by their
-  system names, so renaming a port reroutes nothing, and busses on a hidden port keep it. The settings are kept per
-  device (backend, device id, direction, name) while GNUbase runs, like the MIDI ports'; saving them with the user
-  settings comes later.
+  system names, so renaming a port reroutes nothing, and busses on a hidden port keep it. Routing menus and the
+  audio connections window are to use both once they exist (#108).
+- **Port settings are user settings** (#393), so they last across restarts, as in the reference:
+  `audio.portSettings` keys each audio port by `backend/device id/in|out/system name`, `midi.portSettings` each MIDI
+  port by `backend/in|out/port id`. An entry keeps only what differs from the defaults (the system name, visible, in
+  all MIDI inputs) and stays while its device is unplugged, so the port gets its settings back when it returns.
+  `audio.setPort` and `midi.setPort` change the entry through `settings.set`, which saves the file and sends
+  `settings.changed`; `audio.ports` and `midi.ports` read it. After any change of the user settings, also
+  `settings.set` or `settings.reset` on these keys, the listed MIDI ports follow them: hidden inputs close, shown ones
+  open, and the audio thread's "all MIDI inputs" flags update. The settings schema validator checks
+  `additionalProperties` given as a schema, so a broken value in the file falls back to the default (no port settings)
+  instead of reaching the ports.
 - **Not yet:** the reference's other devices (remote control, time display, MIDI remote control), the Audio Settings
   dialog that repeats the audio pages, releasing the driver while GNUbase is in the background, processing precision,
   the extra processing buffer and power scheme options, disk preload and the MIDI input and output monitors.
@@ -50,4 +59,5 @@ MCP and Lua scripts can do all it does.
   as it takes MIDI backends), Apply switches to its device's driver with `audio.setDevice`, and OK sends no
   `audio.set` for a device without a current clock source until the user picks one. Running the command again keeps
   the one open dialog. `tests/audio_tests.cpp` checks `audio.set` and
-  `audio.setPort`.
+  `audio.setPort`, and that port settings survive an engine restart with the same settings folder, wait for an
+  unplugged MIDI port and a device that is not open, and follow `settings.reset`.

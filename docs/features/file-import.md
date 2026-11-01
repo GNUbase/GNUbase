@@ -23,7 +23,8 @@ Options dialog:
   after the file and its speaker (`take-L.wav`, `take-R.wav`; numbers beyond 8 channels), each on a new mono track. It
   converts in the same pass when both are on, and doesn't go with `track` or `oneTrack`.
 
-Copying, converting and splitting need a saved project. Files are read, converted and split on the command thread, as
+With **clipsOnly** the files only go into the pool, as clips without tracks or events (the pool's Import Medium,
+[pool.md](pool.md)). Copying, converting and splitting need a saved project. Files are read, converted and split on the command thread, as
 `media.convert` does; the import is one undo step ("Import audio files") made of the `media.add`, `clip.add`,
 `track.add` and `audioEvent.add` a client would send, so it emits their events. If a file fails, nothing is imported
 and the files the import wrote are removed. Undo leaves written files on disk, as for `media.convert`.
