@@ -12,6 +12,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -212,6 +213,35 @@ TEST_CASE("saved and opened projects are recent projects, newest first, until fo
 	CHECK(recent(client) == std::vector<std::string>{utf8(fs::absolute(a))});
 	run(client, "project.forgetRecent");
 	CHECK(recent(client).empty());
+}
+
+TEST_CASE("save and load succeed when the recent projects can't be written", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path file = dir.path() / "Song.dawproject";
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	// A folder in the place of the recent projects' file: it can't be read, kept as a backup or replaced.
+	fs::create_directories(dir.path() / "settings" / "recent-projects.json");
+	std::mutex mutex;
+	std::vector<std::string> events;
+	const Listener listener(engine,
+		[&](const Event& event)
+		{
+			const std::scoped_lock lock(mutex);
+			if (event.name == "project.saved" || event.name == "project.reset")
+				events.push_back(event.name);
+		});
+
+	run(client, "project.save", {{"path", utf8(file)}});
+	CHECK(fs::is_regular_file(file));
+	CHECK(!modified(client));
+	run(client, "track.add", {{"type", "audio"}});
+	run(client, "project.load", {{"path", utf8(file)}});
+	CHECK(trackCount(client) == 0);
+	CHECK(recent(client).empty()); // the list couldn't be written
+	const std::scoped_lock lock(mutex);
+	CHECK(events == std::vector<std::string>{"project.saved", "project.reset"});
 }
 
 TEST_CASE("templates are projects in the settings folder that new projects start from", "[integration]")
