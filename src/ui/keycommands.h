@@ -103,6 +103,13 @@ namespace gnubase::ui
 		// Runs a command as a key would, e.g. for a menu item.
 		void run(const std::string& command, const engine::Json& parameters, Window& window, Rml::Element* zone);
 
+		// Says when the command can run, for menu items (ui/mainmenu.h): enabled gets the window and the zone it
+		// would run in. Throws std::invalid_argument for a command it doesn't know.
+		void enableWhen(const std::string& command, std::function<bool(Window& window, Rml::Element* zone)> enabled);
+
+		// Whether the command exists and can run in the window and zone now: what enableWhen says, or true.
+		bool canRun(const std::string& command, Window& window, Rml::Element* zone) const;
+
 	private:
 		struct Bound
 		{
@@ -116,6 +123,7 @@ namespace gnubase::ui
 		Platform m_platform;
 		std::map<std::string, engine::Json> m_engineCommands; // their parameter schemas, by name
 		std::map<std::string, UiCommand> m_uiCommands;
-		std::vector<Bound> m_bindings; // in the order they were bound
+		std::map<std::string, std::function<bool(Window&, Rml::Element*)>> m_enabled; // by command
+		std::vector<Bound> m_bindings;                                                // in the order they were bound
 	};
 }

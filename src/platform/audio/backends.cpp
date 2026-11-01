@@ -9,6 +9,10 @@
 #ifdef __APPLE__
 #include "platform/audio/coreaudio.h"
 #endif
+#ifdef __linux__
+#include "platform/audio/jack.h"
+#include "platform/audio/pipewire.h"
+#endif
 
 namespace gnubase::audio
 {
@@ -22,6 +26,10 @@ namespace gnubase::audio
 #endif
 #ifdef __APPLE__
 		backends.push_back(makeCoreAudioBackend());
+#endif
+#ifdef __linux__
+		backends.push_back(makePipeWireBackend());
+		backends.push_back(makeJackBackend());
 #endif
 		backends.push_back(std::make_unique<DummyBackend>());
 		return backends;

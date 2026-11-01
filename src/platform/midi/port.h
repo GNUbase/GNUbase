@@ -26,7 +26,8 @@ namespace gnubase::midi
 		bool midi2 = false; // the OS speaks MIDI 2.0 with the port
 	};
 
-	// Gets each message of an input port with the host time it arrived. Called on a driver thread; must not block.
+	// Gets each message of an input port with the host time it arrived. Called on a driver thread, which may be a
+	// real-time one (JACK's process thread): must not block or allocate.
 	using Receiver = std::function<void(const audio::MidiMessage& message, HostTime time)>;
 
 	// An open input port. Destroying it closes the port; its receiver isn't called after that.

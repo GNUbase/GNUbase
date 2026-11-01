@@ -10,6 +10,8 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   `src/ui`, and the engine never depends on the UI (`gnubase_require_no_ui`).
 - **Commands.** `send(command, parameters, done)` queues a command and returns at once; the UI thread never waits for
   the engine. `done` runs on the UI thread with the result. A failed command without `done` is logged.
+  `waiting(command)` counts the commands of that name still waiting for their results, so tests can check how many
+  queries a view keeps open (queries don't show in `engine.commandLog`).
 - **Events.** `on(name, handler)` calls `handler` with every event of that name, from whichever client caused it: a
   change made through MCP, Lua or another window reaches the UI the same way as the UI's own. The returned
   `Subscription` ends the handler when it goes, so a view that closes stops listening; subscriptions must not outlive
