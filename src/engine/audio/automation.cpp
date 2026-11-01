@@ -487,10 +487,21 @@ namespace gnubase::engine
 		return false;
 	}
 
+	void ChannelStrip::glide(const graph::ProcessContext& context, float& gain, float target) noexcept
+	{
+		const float from = gain < 0.0f ? target : gain;
+		gain = target;
+		const float step = (target - from) / static_cast<float>(context.frames);
+		if (from != 1.0f || target != 1.0f)
+			for (int c = 0; c < context.channels; ++c)
+				for (uint32_t i = 0; i < context.frames; ++i)
+					context.audio[c][i] *= from + (step * static_cast<float>(i + 1));
+	}
+
 	ChannelStrip::ChannelStrip(std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source,
-		Panning panning, std::optional<Monitoring> monitoring)
+		Panning panning, std::optional<Monitoring> monitoring, bool silent)
 		: m_state(std::move(state)), m_source(std::move(source)), m_panning(panning), m_monitoring(monitoring),
-		  m_sourceEvents(graph::g_maxEventsPerBlock), m_faderEvents(graph::g_maxEventsPerBlock),
+		  m_silent(silent), m_sourceEvents(graph::g_maxEventsPerBlock), m_faderEvents(graph::g_maxEventsPerBlock),
 		  m_faderOut(graph::g_maxEventsPerBlock)
 	{
 	}
@@ -514,14 +525,8 @@ namespace gnubase::engine
 		if (m_monitoring && context.frames > 0)
 		{
 			const graph::TransportBlock& transport = context.transport;
-			const float target = m_monitoring->active(transport.playing, transport.recording) ? 1.0f : 0.0f;
-			const float from = m_state->monitorGain < 0.0f ? target : m_state->monitorGain;
-			m_state->monitorGain = target;
-			const float step = (target - from) / static_cast<float>(context.frames);
-			if (from != 1.0f || target != 1.0f)
-				for (int c = 0; c < context.channels; ++c)
-					for (uint32_t i = 0; i < context.frames; ++i)
-						context.audio[c][i] *= from + (step * static_cast<float>(i + 1));
+			glide(context, m_state->monitorGain,
+				m_monitoring->active(transport.playing, transport.recording) ? 1.0f : 0.0f);
 		}
 
 		if (m_source)
@@ -537,6 +542,8 @@ namespace gnubase::engine
 			m_state->fader->process(
 				{context.audio, context.channels, context.frames, m_faderEvents, m_faderOut, context.transport},
 				m_panning);
+			if (context.frames > 0)
+				glide(context, m_state->outputGain, m_silent ? 0.0f : 1.0f);
 		}
 	}
 }
