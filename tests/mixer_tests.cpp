@@ -308,6 +308,50 @@ TEST_CASE("pan law, maximum volume, panner settings and MIDI volume and pan are 
 	CHECK(run(mixer.client, "project.get") == before);
 }
 
+TEST_CASE("muted channels and channels silenced by another's solo are silent, gliding over a block", "[integration]")
+{
+	// Two tracks play the sine: twice the sine at the output.
+	const auto twoTracks = [](Mixer& mixer)
+	{ return run(mixer.client, "track.add", {{"type", "audio"}}).at("channel").at("id").get<ObjectId>(); };
+	Mixer both;
+	twoTracks(both);
+	run(both.client, "audio.render", {{"frames", 1000}});
+	checkGain(both.output(0, 1000), 2.0);
+
+	Mixer muted;
+	twoTracks(muted);
+	muted.set({{"mute", true}});
+	run(muted.client, "audio.render", {{"frames", 1000}});
+	checkGain(muted.output(0, 1000), 1.0);
+
+	Mixer soloed;
+	const ObjectId other = twoTracks(soloed);
+	run(soloed.client, "channel.set", {{"channel", other}, {"solo", true}});
+	run(soloed.client, "audio.render", {{"frames", 1000}});
+	checkGain(soloed.output(0, 1000), 1.0);
+
+	// Muting while playing glides to silence over one block of 64 frames, unmuting back.
+	Mixer gliding;
+	run(gliding.client, "audio.render", {{"frames", 128}});
+	gliding.set({{"mute", true}});
+	run(gliding.client, "audio.render", {{"frames", 128}});
+	gliding.set({{"mute", false}});
+	run(gliding.client, "audio.render", {{"frames", 128}});
+	checkGain(gliding.output(0, 384),
+		[](size_t i)
+		{
+			if (i < 128)
+				return 1.0;
+			if (i < 192)
+				return 1.0 - (static_cast<double>(i - 127) / 64.0);
+			if (i < 256)
+				return 0.0;
+			if (i < 320)
+				return static_cast<double>(i - 255) / 64.0;
+			return 1.0;
+		});
+}
+
 TEST_CASE("a MIDI channel's volume and pan reach its instrument as CC 7 and CC 10", "[unit]")
 {
 	// Through channel.set into the render snapshot.

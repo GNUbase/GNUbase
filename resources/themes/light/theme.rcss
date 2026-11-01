@@ -488,6 +488,23 @@
 	{
 		color: #17202d;
 	}
+	.track-list
+	{
+		background-color: #ffffff;
+	}
+	.track-list listitem
+	{
+		border-bottom-width: 1dp;
+		border-bottom-color: #b9c1cc;
+	}
+	.track-list listitem.disabled
+	{
+		color: #566273;
+	}
+	.track-list .drop-line
+	{
+		background-color: #0969da;
+	}
 	.docking [zone]
 	{
 		background-color: #f6f8fa;
@@ -500,5 +517,22 @@
 	.docking .strip
 	{
 		background-color: #ffffff;
+	}
+	.menubar
+	{
+		background-color: #ffffff;
+	}
+	.menubar button
+	{
+		decorator: none;
+		color: #17202d;
+	}
+	.menubar button:hover
+	{
+		decorator: svg-ninepatch(menu-item-hover.svg, 6 6 6 6);
+	}
+	menuitem .menu-keys
+	{
+		color: #566273;
 	}
 }

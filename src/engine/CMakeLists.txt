@@ -101,6 +101,7 @@ add_library(gnubase-engine STATIC
 	audiofile/resampler.cpp audiofile/resampler.h
 	audiofile/writer.cpp
 	dawproject/dawproject.cpp dawproject/dawproject.h
+	document/audiofilecommands.cpp
 	document/channelformat.cpp document/channelformat.h
 	document/document.cpp document/document.h
 	document/eventedits.cpp

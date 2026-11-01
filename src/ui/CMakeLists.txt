@@ -32,15 +32,20 @@ add_library(gnubase-ui STATIC
 	eventediting.cpp
 	eventwaveforms.cpp
 	eventwaveforms.h
+	fileimport.cpp
 	fonts.cpp
 	fonts.h
 	gpurenderer.cpp
 	gpurenderer.h
+	historypanel.cpp
+	historypanel.h
 	image.cpp
 	keycommands.cpp
 	keycommands.h
 	livereload.cpp
 	livereload.h
+	mainmenu.cpp
+	mainmenu.h
 	markers.cpp
 	markers.h
 	markerswindow.cpp
@@ -58,6 +63,8 @@ add_library(gnubase-ui STATIC
 	themes.h
 	timeformat.cpp
 	timeformat.h
+	tracklist.cpp
+	tracklist.h
 	ui.cpp
 	ui.h
 	uisettings.cpp
