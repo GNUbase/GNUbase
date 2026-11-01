@@ -52,9 +52,11 @@ namespace gnubase::test
 #endif
 	}
 
-	UiApp::UiApp(ui::Size size, std::vector<std::unique_ptr<midi::Backend>> midiBackends) : m_size(size)
+	UiApp::UiApp(ui::Size size, std::vector<std::unique_ptr<midi::Backend>> midiBackends,
+		std::vector<std::unique_ptr<audio::Backend>> audioBackends)
+		: m_size(size)
 	{
-		start(std::move(midiBackends));
+		start(std::move(midiBackends), std::move(audioBackends));
 	}
 
 	void UiApp::restart()
@@ -62,12 +64,14 @@ namespace gnubase::test
 		m_automation.reset();
 		m_ui.reset();
 		m_engine.reset();
-		start(midi::makeBackends());
+		start(midi::makeBackends(), audio::makeBackends());
 	}
 
-	void UiApp::start(std::vector<std::unique_ptr<midi::Backend>> midiBackends)
+	void UiApp::start(std::vector<std::unique_ptr<midi::Backend>> midiBackends,
+		std::vector<std::unique_ptr<audio::Backend>> audioBackends)
 	{
-		m_engine = std::make_unique<engine::Engine>(audio::makeBackends(), m_settings.path(), std::move(midiBackends));
+		m_engine =
+			std::make_unique<engine::Engine>(std::move(audioBackends), m_settings.path(), std::move(midiBackends));
 		std::ostringstream problems;
 		const bool ready = app::setUpEngine(*m_engine, app::Options{}, problems); // the dummy device, the app's default
 		INFO(problems.str());

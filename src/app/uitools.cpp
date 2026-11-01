@@ -265,6 +265,22 @@ namespace gnubase::app
 						arguments.value("modifiers", std::vector<std::string>()));
 				})});
 
+		Json dropProperties = targetProperties();
+		dropProperties["files"] = {
+			{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "The files' paths, at least one."}};
+		tools.push_back({"ui_drop",
+			"Drops files on an element or a point, as if dragged there from the OS's file manager, e.g. audio or MIDI "
+			"files on the project window's event display to import them. Returns the element they were dropped on.",
+			object(std::move(dropProperties), {"files"}), elementResult, false,
+			run(
+				[](ui::Automation& ui, const Json& arguments)
+				{
+					std::vector<std::filesystem::path> files;
+					for (const Json& file : arguments.at("files"))
+						files.push_back(std::filesystem::u8path(file.get<std::string>()));
+					return ui.drop(windowOf(arguments), targetOf(arguments), files);
+				})});
+
 		Json wheelProperties = targetProperties();
 		wheelProperties["dx"] = {{"type", "number"}, {"description", "Lines to the right; 0 if left out."}};
 		wheelProperties["dy"] = {{"type", "number"}, {"description", "Lines down; 0 if left out."}};
