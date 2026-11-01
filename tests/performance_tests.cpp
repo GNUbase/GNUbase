@@ -299,42 +299,50 @@ TEST_CASE("audio.performance counts simulated device overloads and reports the b
 	run(client, "audio.stop");
 }
 
-TEST_CASE("audio.reset keeps the performance measurement and counts the restart as an overload", "[integration]")
+TEST_CASE("audio.reset keeps the performance measurement and counts only the dropout that set it off", "[integration]")
 {
 	Engine engine;
 	Client client(engine);
 	run(client, "audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}});
 	run(client, "audio.simulateOverload");
-	run(client, "audio.simulateOverload");
 	run(client, "audio.render", {{"frames", 640}});
 	const Json before = run(client, "audio.performance");
 	REQUIRE(before.at("cycles") == 10);
 
-	// The reference manual, p. 1589: a restart of the audio engine is a dropout.
+	// The reference manual, p. 1589: a restart for excessive processing delay is a dropout. Drivers that lose sync
+	// report it before they ask for the reset, so it counts once.
+	run(client, "audio.simulateOverload");
 	run(client, "audio.reset");
 	const Json after = run(client, "audio.performance");
-	CHECK(after.at("deviceOverloads") == 3);
+	CHECK(after.at("deviceOverloads") == 2);
 	CHECK(after.at("overloads") == before.at("overloads").get<uint64_t>() + 1);
 	CHECK(after.at("cycles") == 10);
 	CHECK(after.at("peak") == before.at("peak"));
 
-	// The new device's dropouts add to them, and so does the next restart, also while the device runs.
+	// A restart after a settings change is none, also while the device runs; the new device's dropouts add up.
+	run(client, "audio.reset");
 	run(client, "audio.simulateOverload");
 	run(client, "audio.render", {{"frames", 640}});
 	const Json more = run(client, "audio.performance");
-	CHECK(more.at("deviceOverloads") == 4);
+	CHECK(more.at("deviceOverloads") == 3);
 	CHECK(more.at("cycles") == 20);
 	run(client, "audio.start");
 	run(client, "audio.reset");
 	CHECK(run(client, "audio.get").at("running") == true);
-	CHECK(run(client, "audio.performance").at("deviceOverloads") == 5);
+	CHECK(run(client, "audio.performance").at("deviceOverloads") == 3);
 	run(client, "audio.stop");
 
+	// The device following the project's sample rate is a settings change too.
+	const Json stopped = run(client, "audio.performance");
+	run(client, "project.set", {{"sampleRate", 44100.0}});
+	REQUIRE(run(client, "audio.get").at("device").at("sampleRate") == 44100.0);
+	const Json followed = run(client, "audio.performance");
+	CHECK(followed.at("deviceOverloads") == 3);
+	CHECK(followed.at("cycles") == stopped.at("cycles"));
+
 	// Resetting the measurement or choosing a device starts over.
-	CHECK(run(client, "audio.resetPerformance").at("deviceOverloads") == 5);
+	CHECK(run(client, "audio.resetPerformance").at("deviceOverloads") == 3);
 	CHECK(run(client, "audio.performance").at("deviceOverloads") == 0);
-	run(client, "audio.reset");
-	CHECK(run(client, "audio.performance").at("deviceOverloads") == 1);
 	run(client, "audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}});
 	const Json fresh = run(client, "audio.performance");
 	CHECK(fresh.at("deviceOverloads") == 0);

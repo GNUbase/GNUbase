@@ -7,15 +7,18 @@ and the driver's control panel. It is `resources/ui/studio-setup.rml`, a `<dialo
 MCP and Lua scripts can do all it does.
 
 - **Opening it.** The UI command `window.studioSetup` opens it, modal, in the window it runs in
-  (`app::AppUi::openStudioSetup`). The reference opens it from its Studio menu and has no key for it; GNUbase's main
-  menu will run the command too.
+  (`app::AppUi::openStudioSetup`). As in the reference, Studio > Studio Setup in the main menu runs it
+  ([main-menu.md](main-menu.md)), and it has no key. There is one dialog: running the command while it is open, as
+  MCP and Lua can, brings it to the front with what the user changed in it (#394).
 - **Pages.** The devices list on the left selects a page, as in the reference:
   - *Audio System*: the audio driver, a device of any backend in `audio.devices` (unavailable devices say so), the
     device's input and output latency in ms, its sample rate, the record shift in samples and multi-processing
     (`audio.setProcessing`).
   - *the audio device*, named after it: the Control Panel button (`audio.controlPanel`, disabled when the driver has
     none), the latencies, the sample rate, buffer size and clock source the driver offers, direct monitoring (disabled
-    when the driver can't) and the ports: input or output, system name, Show As, Visible and State.
+    when the driver can't) and the ports: input or output, system name, Show As, Visible and State. When the driver
+    lists clock sources but flags none as current, as some ASIO drivers do, the Clock Source list shows an empty
+    entry, which Apply and OK don't send, so they don't reopen the device with a source the user didn't pick (#398).
   - *MIDI Port Setup*: the ports of every MIDI backend (`midi.ports`) with Show As, Visible, State (active, inactive or
     not present) and, for inputs, In 'All MIDI Inputs'.
 - **Apply, OK, Cancel.** The pages keep what the user changes until Apply or OK sends it; Cancel and Escape drop it.
@@ -52,6 +55,9 @@ MCP and Lua scripts can do all it does.
   keyboard and drives it with `ui::Automation`: it shows the driver, the device's settings and its ports; a new sample
   rate, a renamed and a hidden port and a renamed MIDI input that leaves all MIDI inputs reach the engine with OK;
   Cancel drops a change, Apply changes multi-processing while the device runs, a bad record shift keeps the dialog
-  open with the message, and Reset reopens the device. `tests/audio_tests.cpp` checks `audio.set` and
+  open with the message, and Reset reopens the device. With a fake audio backend (`test::UiApp` takes audio backends
+  as it takes MIDI backends), Apply switches to its device's driver with `audio.setDevice`, and OK sends no
+  `audio.set` for a device without a current clock source until the user picks one. Running the command again keeps
+  the one open dialog. `tests/audio_tests.cpp` checks `audio.set` and
   `audio.setPort`, and that port settings survive an engine restart with the same settings folder, wait for an
-  unplugged MIDI port and a device that isn't open, and follow `settings.reset`.
+  unplugged MIDI port and a device that is not open, and follow `settings.reset`.
