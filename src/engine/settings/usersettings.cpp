@@ -31,6 +31,34 @@ namespace gnubase::engine::settings
 				description.pop_back(); // the settings are separated by semicolons
 			return text + ", default " + definition.defaultValue.dump() + "): " + description;
 		}
+
+		// ui.layout: the windows' zones, strips and sections, and the panels in windows of their own
+		// (docs/features/docking.md).
+		Json layoutSchema()
+		{
+			const Json strings = {{"type", "array"}, {"items", {{"type", "string"}}}};
+			const Json zone = {{"type", "object"},
+				{"properties",
+					{{"visible", {{"type", "boolean"}}}, {"size", {{"type", "number"}, {"minimum", 0}}},
+						{"active", {{"type", "string"}}}, {"tabs", strings}, {"hidden", strings}}}};
+			const Json sections = {{"type", "object"}, {"properties", {{"order", strings}, {"hidden", strings}}}};
+			const Json window = {{"type", "object"},
+				{"properties",
+					{{"zones", {{"type", "object"}, {"additionalProperties", zone}}},
+						{"strips", {{"type", "object"}, {"additionalProperties", {{"type", "boolean"}}}}},
+						{"sections", {{"type", "object"}, {"additionalProperties", sections}}}}}};
+			const Json integer = {{"type", "integer"}};
+			const Json size = {{"type", "integer"}, {"minimum", 1}};
+			const Json bounds = {{"type", "object"},
+				{"properties", {{"x", integer}, {"y", integer}, {"width", size}, {"height", size}}},
+				{"required", Json::array({"x", "y", "width", "height"})}};
+			const Json panel = {
+				{"type", "object"}, {"properties", {{"floating", {{"type", "boolean"}}}, {"bounds", bounds}}}};
+			return {{"type", "object"},
+				{"properties",
+					{{"windows", {{"type", "object"}, {"additionalProperties", window}}},
+						{"panels", {{"type", "object"}, {"additionalProperties", panel}}}}}};
+		}
 	}
 
 	const Format& userFormat()
@@ -68,6 +96,12 @@ namespace gnubase::engine::settings
 								{"properties", {{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}}}},
 								{"additionalProperties", false}}}},
 					Json::object()},
+				{"audio.fallbackDevice",
+					"The device that plays while the chosen audio device is lost, until it returns: none, default (the "
+					"lost device's backend's default device, or the dummy device if that doesn't open), or dummy (the "
+					"dummy device: no sound, but the transport moves and the project plays on). The engine switches "
+					"back once the lost device returns.",
+					Json{{"type", "string"}, {"enum", {"none", "default", "dummy"}}}, "none"},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
 				{"midi.chaseBeyondParts",
@@ -102,9 +136,32 @@ namespace gnubase::engine::settings
 										{"inAllInputs", {{"type", "boolean"}}}}},
 								{"additionalProperties", false}}}},
 					Json::object()},
+				{"ui.layout",
+					"The layout of the windows with zones: under windows, by window (project), its zones (left, "
+					"right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs "
+					"hidden and the active one, and its strips (toolbar, infoLine, overviewLine, statusLine, "
+					"transportBar) with whether each is shown, and its sets of sections (such as a mixer channel's) "
+					"with the order of their sections and those hidden; under panels, by panel, whether it is in a "
+					"window of "
+					"its own and that window's bounds. What it leaves out has its default.",
+					layoutSchema(), Json::object()},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
+				{"ui.trackControls",
+					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
+					"folder, marker, ruler), in order: mute, solo, record, monitor (audio tracks), read (automation) "
+					"and timeBase. Mute and solo always show on tracks with a channel; a type left out shows none.",
+					Json{{"type", "object"},
+						{"additionalProperties",
+							{{"type", "array"},
+								{"items",
+									{{"type", "string"},
+										{"enum", {"mute", "solo", "record", "monitor", "read", "timeBase"}}}}}}},
+					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
+						{"instrument", {"mute", "solo", "read"}}, {"midi", {"mute", "solo", "read"}},
+						{"group", {"mute", "solo", "read"}}, {"effect", {"mute", "solo", "read"}},
+						{"folder", {"mute", "solo", "read"}}, {"marker", Json::array()}, {"ruler", Json::array()}}},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "
 					"seconds the view shows.",
