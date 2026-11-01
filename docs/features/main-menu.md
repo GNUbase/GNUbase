@@ -25,7 +25,7 @@ project window.
 
 | Menu | Items |
 |---|---|
-| File | Quit (`file.quit`, Mod+Q) |
+| File | Import (Audio File... `file.importAudio`, MIDI File... `file.importMidi`, [file-import.md](file-import.md)); Quit (`file.quit`, Mod+Q) |
 | Edit | Undo, Redo; Delete; Functions (Split at Cursor, Split Loop, Duplicate, Repeat..., Fill Loop, Convert to Real Copy); Select (All, None, Invert, In Loop, From Start to Cursor, From Cursor to End, Events under Cursor); Move (Event Start to Cursor, Event End to Cursor); Mute, Unmute, Lock, Unlock |
 | Transport | Start, Stop, Start/Stop; Go to Project Start; Locators (Go to Left/Right Locator Position, Set Left/Right Locator to Project Cursor Position, Exchange Left & Right Locator Positions); Set Project Cursor Position (Locate Next/Previous Marker) |
 | Studio | Studio Setup... (`window.studioSetup`, [studio-setup.md](studio-setup.md)) |

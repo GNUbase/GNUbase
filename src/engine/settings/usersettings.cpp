@@ -99,6 +99,12 @@ namespace gnubase::engine::settings
 					Json{{"type", "object"}}, Json{{"input", Json::object()}, {"output", Json::object()}}},
 				{"audio.device", "The audio device's id, or empty for the backend's default device.",
 					Json{{"type", "string"}}, ""},
+				{"audio.fallbackDevice",
+					"The device that plays while the chosen audio device is lost, until it returns: none, default (the "
+					"lost device's backend's default device, or the dummy device if that doesn't open), or dummy (the "
+					"dummy device: no sound, but the transport moves and the project plays on). The engine switches "
+					"back once the lost device returns.",
+					Json{{"type", "string"}, {"enum", {"none", "default", "dummy"}}}, "none"},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
 				{"midi.chaseBeyondParts",
@@ -140,6 +146,20 @@ namespace gnubase::engine::settings
 					"(alt), sizeObjects.disableSnapping (ctrl) and split.splitRepeated (alt). What it leaves out has "
 					"its default.",
 					toolModifiersSchema(), Json::object()},
+				{"ui.trackControls",
+					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
+					"folder, marker, ruler), in order: mute, solo, record, monitor (audio tracks), read (automation) "
+					"and timeBase. Mute and solo always show on tracks with a channel; a type left out shows none.",
+					Json{{"type", "object"},
+						{"additionalProperties",
+							{{"type", "array"},
+								{"items",
+									{{"type", "string"},
+										{"enum", {"mute", "solo", "record", "monitor", "read", "timeBase"}}}}}}},
+					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
+						{"instrument", {"mute", "solo", "read"}}, {"midi", {"mute", "solo", "read"}},
+						{"group", {"mute", "solo", "read"}}, {"effect", {"mute", "solo", "read"}},
+						{"folder", {"mute", "solo", "read"}}, {"marker", Json::array()}, {"ruler", Json::array()}}},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "
 					"seconds the view shows.",

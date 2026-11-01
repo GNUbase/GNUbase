@@ -14,6 +14,7 @@
 namespace gnubase::engine
 {
 	class JobContext;
+	class Jobs;
 
 	// The folder where a project keeps its audio files: "Audio" in the folder of its project file.
 	std::filesystem::path mediaFolderFor(const std::filesystem::path& projectFile);
@@ -41,6 +42,13 @@ namespace gnubase::engine
 	// to, or leaves it empty for a file that can't be read. If it doesn't complete, it removes the copies it made.
 	// Throws JobCancelled or std::runtime_error.
 	void copyMedia(std::vector<MediaCopy>& files, const std::filesystem::path& folder, JobContext& job);
+
+	// Copies media files into the media folder as a job, then points the media at their copies with one
+	// command, a transaction named action, so that it is one undo step. Media whose path changed while the job
+	// copied, or that were removed, keep their path, and their copies are removed. The job's result is
+	// {copied: [{media, from, to}], missing: [{media, path}], changed: [media]}. Returns the job.
+	Json startMediaCopy(
+		Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder, std::string action);
 
 	// Removes files, ignoring errors, e.g. copies that a job made and doesn't need.
 	void removeFiles(const std::vector<std::string>& files);
