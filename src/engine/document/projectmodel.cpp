@@ -2072,6 +2072,14 @@ namespace gnubase::engine
 			{"automationPoint.remove", "Remove automation points"},
 			{"midiFile.import", "Import MIDI file"},
 			{"audioFile.import", "Import audio files"},
+			{"clip.set", "Change clip"},
+			{"poolFolder.add", "Add pool folder"},
+			{"poolFolder.set", "Change pool folder"},
+			{"poolFolder.remove", "Remove pool folder"},
+			{"pool.removeUnused", "Remove unused media"},
+			{"media.locate", "Locate missing files"},
+			{"media.removeMissing", "Remove missing files"},
+			{"media.conform", "Conform files"},
 		};
 
 		// Empty for commands without a fixed name, such as transactions.
@@ -2141,6 +2149,7 @@ namespace gnubase::engine
 			announceObjects(change.tracks, direction, "track", "track", context);
 			announceObjects(change.channels, direction, "channel", "channel", context);
 			announceObjects(change.media, direction, "media", "media", context);
+			announceObjects(change.poolFolders, direction, "poolFolder", "folder", context);
 			announceObjects(change.clips, direction, "clip", "clip", context);
 			announceObjects(change.audioEvents, direction, "audioEvent", "event", context);
 			announceObjects(change.markers, direction, "marker", "marker", context);
@@ -2889,6 +2898,7 @@ namespace gnubase::engine
 		midi::registerFunctionCommands(*this, engine);
 		registerMidiFileCommands(engine);
 		registerAudioFileCommands(engine, jobs);
+		registerPoolCommands(engine);
 		registerFadeCommands(engine);
 		registerEventEditCommands(engine);
 		registerSnapCommands(*this, engine);

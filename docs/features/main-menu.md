@@ -27,10 +27,11 @@ project window.
 |---|---|
 | File | Import (Audio File... `file.importAudio`, MIDI File... `file.importMidi`, [file-import.md](file-import.md)); Quit (`file.quit`, Mod+Q) |
 | Edit | Undo, Redo; Delete; Functions (Split at Cursor, Split Loop, Duplicate, Repeat..., Fill Loop, Convert to Real Copy); Select (All, None, Invert, In Loop, From Start to Cursor, From Cursor to End, Events under Cursor); Move (Event Start to Cursor, Event End to Cursor); Mute, Unmute, Lock, Unlock |
+| Media | Open Pool Window (`window.pool`, Mod+P); Import Medium... (`pool.import`); Create Folder; Remove Unused Media; Find Missing Files... (`pool.findMissing`); Remove Missing Files; Conform Files ([pool.md](pool.md)) |
 | Transport | Start, Stop, Start/Stop; Go to Project Start; Locators (Go to Left/Right Locator Position, Set Left/Right Locator to Project Cursor Position, Exchange Left & Right Locator Positions); Set Project Cursor Position (Locate Next/Previous Marker) |
 | Studio | Studio Setup... (`window.studioSetup`, [studio-setup.md](studio-setup.md)) |
 
-The other menus of the reference (Project, Audio, MIDI, Media, Workspaces, Window, Help) and their items come with the
+The other menus of the reference (Project, Audio, MIDI, Workspaces, Window, Help) and their items come with the
 features they run. Quitting waits for the shell's next step, since it closes every window.
 
 ## Not yet
