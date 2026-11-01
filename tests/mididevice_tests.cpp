@@ -311,10 +311,22 @@ namespace
 		JackLoopback(const JackLoopback&) = delete;
 		JackLoopback& operator=(const JackLoopback&) = delete;
 
+		// Writes a note on to "out" in the middle of the next cycle and returns the time a client downstream, which
+		// reads it in the same cycle, stamps it with: as the server's cycle times have it, what arrives in a cycle
+		// spans the cycle before (#402). 0 if the server doesn't tell its cycle times.
+		HostTime inject()
+		{
+			m_injected = -1;
+			m_inject = true;
+			while (m_injected.load() == -1)
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			return m_injected.load();
+		}
+
 	private:
 		static int process(jack_nframes_t frames, void* data)
 		{
-			const auto& self = *static_cast<JackLoopback*>(data);
+			auto& self = *static_cast<JackLoopback*>(data);
 			void* in = self.m_jack.portGetBuffer(self.m_in, frames);
 			void* out = self.m_jack.portGetBuffer(self.m_out, frames);
 			self.m_jack.midiClearBuffer(out);
@@ -325,6 +337,13 @@ namespace
 				if (self.m_jack.midiEventGet(&event, in, i) == 0)
 					self.m_jack.midiEventWrite(out, event.time, event.buffer, event.size);
 			}
+			if (self.m_inject.exchange(false))
+			{
+				const uint32_t frame = frames / 2;
+				self.m_jack.midiEventWrite(out, frame, noteOn(60).bytes.data(), 3);
+				const gnubase::JackLibrary::Cycle cycle = self.m_jack.cycle(self.m_client);
+				self.m_injected = cycle.period == 0 ? 0 : cycle.start - cycle.period + (cycle.period * frame / frames);
+			}
 			return 0;
 		}
 
@@ -332,6 +351,8 @@ namespace
 		jack_client_t* m_client = nullptr;
 		jack_port_t* m_in = nullptr;
 		jack_port_t* m_out = nullptr;
+		std::atomic<bool> m_inject{false};
+		std::atomic<HostTime> m_injected{0};
 	};
 #endif
 
@@ -633,8 +654,45 @@ TEST_CASE("the JACK MIDI backend has ports only while a JACK audio device is ope
 	CHECK(inbox.waitFor(1));
 }
 
+// Input is stamped from the server's filtered cycle times, not from when the process callback happens to run (#402).
+TEST_CASE("the JACK MIDI backend stamps input with the server's cycle times", "[integration]")
+{
+	const std::unique_ptr<JackLoopback> loopback = JackLoopback::start();
+	if (!loopback)
+	{
+		if (required("GNUBASE_REQUIRE_JACK"))
+			FAIL("no JACK server runs here");
+		SKIP("no JACK server runs here");
+	}
+	const std::unique_ptr<gnubase::audio::Device> device = gnubase::audio::makeJackBackend()->open({});
+	const std::unique_ptr<Backend> backend = makeJackMidiBackend();
+	REQUIRE(hasPort(*backend, "gnubase-test-midi:out"));
+	Inbox inbox;
+	const auto input = backend->openInput("gnubase-test-midi:out", inbox.receiver());
+	// Within 20 µs: the two clocks are read at slightly different times, and a thread may be preempted between the two
+	// reads now and then. The callback runs tens of µs late.
+	int close = 0;
+	for (size_t i = 1; i <= 20; ++i)
+	{
+		const HostTime expected = loopback->inject();
+		REQUIRE(expected != 0);
+		REQUIRE(inbox.waitFor(i));
+		if (std::llabs(inbox.messages().back().second - expected) < 20000)
+			++close;
+	}
+	CHECK(close >= 18);
+}
+
 TEST_CASE("the JACK MIDI backend has no ports without libjack", "[unit]")
 {
+	// As if a JACK audio device were open, so that the backend tries to load the library (#408).
+	struct AudioDeviceOpen
+	{
+		AudioDeviceOpen() { ++gnubase::g_jackAudioDevicesOpen; }
+		~AudioDeviceOpen() { --gnubase::g_jackAudioDevicesOpen; }
+		AudioDeviceOpen(const AudioDeviceOpen&) = delete;
+		AudioDeviceOpen& operator=(const AudioDeviceOpen&) = delete;
+	} const open;
 	const std::unique_ptr<Backend> backend = makeJackMidiBackend("libjack-that-isnt-there.so");
 	CHECK(backend->ports().empty());
 	Inbox inbox;

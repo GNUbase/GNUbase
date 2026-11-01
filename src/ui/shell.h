@@ -69,6 +69,11 @@ namespace gnubase::ui
 		bool cancelled() const { return files.empty() && error.empty(); }
 	};
 
+	// Tells the element under the point, in the window's pixels, that the files were dropped on it: a g_fileDropEvent
+	// (ui/rmlui.h) with the files as UTF-8 lines in "files", their "count", and "mouse_x" and "mouse_y". The shell
+	// calls it for the window system's drops, and ui::Automation for the files it drops.
+	void dropFiles(Window& window, Point at, const std::vector<std::filesystem::path>& files);
+
 	class Shell
 	{
 	public:
@@ -87,6 +92,14 @@ namespace gnubase::ui
 		void close(WindowId id);
 		Window* find(WindowId id);
 		std::vector<Window*> windows();
+
+		// Where the window is on the desktop, and moving it there (onto a connected monitor if it isn't on one).
+		Rect bounds(WindowId id) const { return m_windows.bounds(id); }
+		void setBounds(WindowId id, const Rect& bounds);
+
+		// Runs handler when the user asks to close a window other than the main window, before the shell closes it,
+		// e.g. to dock the panel it shows again (ui/docking.h). The handler may close the window itself.
+		void onCloseRequest(std::function<void(Window&)> handler) { m_closeRequest = std::move(handler); }
 
 		// The user's UI scale (the user setting ui.scale, #53), on top of each monitor's scale.
 		void setUiScale(float scale);
@@ -174,5 +187,6 @@ namespace gnubase::ui
 		std::vector<std::function<bool()>> m_stepTasks;
 		Clock::time_point m_nextFrame = Clock::time_point::max(); // when a step task that follows values runs again
 		std::function<void(Window&, const KeyPress&)> m_unusedKey;
+		std::function<void(Window&)> m_closeRequest;
 	};
 }

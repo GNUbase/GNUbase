@@ -3,6 +3,7 @@
 
 #include "platform/log.h"
 
+#include <algorithm>
 #include <variant>
 #include <vector>
 
@@ -52,6 +53,12 @@ namespace gnubase::ui
 		std::string name = command;
 		const engine::RequestId id = m_client.send(std::move(command), std::move(parameters));
 		m_waiting.emplace(id, Waiting{std::move(name), std::move(done)});
+	}
+
+	size_t EngineBinding::waiting(const std::string& command) const
+	{
+		return static_cast<size_t>(std::count_if(m_waiting.begin(), m_waiting.end(),
+			[&command](const auto& waiting) { return waiting.second.command == command; }));
 	}
 
 	Subscription EngineBinding::on(std::string event, std::function<void(const engine::Event&)> handler)

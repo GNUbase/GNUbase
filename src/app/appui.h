@@ -3,19 +3,26 @@
 
 #include "engine/engine.h"
 #include "scripting/runtime.h"
+#include "ui/docking.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/gpurenderer.h"
 #include "ui/keycommands.h"
+#include "ui/mainmenu.h"
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
 #include "ui/themes.h"
+#include "ui/tracklist.h"
 #include "ui/uisettings.h"
+
+#include <RmlUi/Core/ObserverPtr.h>
 
 #include <filesystem>
 #include <iosfwd>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace Rml
 {
@@ -44,27 +51,35 @@ namespace gnubase::app
 		AppUi& operator=(AppUi&&) = delete;
 		~AppUi() = default;
 
-		// Shows the project window in the main window (resources/ui/project.rml) with the event display, whose
-		// commands are key commands in the focus zone "project". Throws std::runtime_error if the document can't be
-		// loaded.
+		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the main menu
+		// bar (ui/mainmenu.h) and the track list beside the event display in its main zone, whose commands are key
+		// commands in the focus zone "project". Throws std::runtime_error if the document can't be loaded.
 		ui::EventDisplay& showProject();
+		// The project window's track list, null before showProject.
+		ui::TrackList* trackList() { return m_trackList.get(); }
 
 		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
-		// window.studioSetup, which the main menu's Studio menu will run. Throws std::runtime_error if the document
-		// can't be loaded.
-		Rml::ElementDocument& openStudioSetup(ui::Window& window) const;
+		// window.studioSetup, which the main menu's Studio menu runs. While it is open, this brings it to the front
+		// instead: MCP and Lua can run the command then. Throws std::runtime_error if the document can't be loaded.
+		Rml::ElementDocument& openStudioSetup(ui::Window& window);
 
 		ui::Shell& shell() { return m_shell; }
 		ui::Window& mainWindow() { return m_main; }
 		ui::RmlUi& rmlui() { return m_rmlui; }
 		scripting::Runtime& lua() { return m_lua; }
 		ui::KeyCommands& keyCommands() { return m_keys; }
+		ui::Docking& docking() { return m_docking; }
 		const ui::GpuRenderer& renderer() const { return m_renderer; }
 
 	private:
+		// File > Import: the OS's file dialog for the window, then the event display imports what the user chose.
+		void chooseImport(ui::Window& window, std::string title, std::vector<ui::FileFilter> filters, bool many);
+		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
+		Rml::ElementDocument& openDialog(ui::Window& window, const char* name) const;
+
 		// Made in this order and destroyed in the reverse: RmlUi releases its resources through the renderer and
 		// its Lua plugin's in Lua, the shell's windows need all of them, the settings and the binding tell the shell,
-		// and key commands send through the binding.
+		// key commands send through the binding, and the docking system follows the binding and opens windows.
 		ui::SdlWindowSystem m_windows;
 		ui::GpuRenderer m_renderer;
 		scripting::Runtime m_lua;
@@ -75,8 +90,16 @@ namespace gnubase::app
 		ui::EngineBinding m_binding;
 		ui::KeyCommands m_keys;
 		ui::Window& m_main;
+		ui::Docking m_docking;
 		engine::Engine& m_engine;
 		std::filesystem::path m_resources;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
+		std::unique_ptr<ui::TrackList> m_trackList;       // and before the display
+		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
+		bool m_canUndo = false;
+		bool m_canRedo = false;
+		ui::Subscription m_history;
+		std::unique_ptr<ui::MainMenu> m_menu;         // the project window's
+		Rml::ObserverPtr<Rml::Element> m_studioSetup; // the open studio setup dialog's document
 	};
 }

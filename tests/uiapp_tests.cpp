@@ -366,6 +366,57 @@ TEST_CASE("the auto-scroll button switches auto-scroll, its menu sets the mode, 
 	app.call("audio.stop");
 }
 
+TEST_CASE("the snap buttons, the snap and grid type menus and J change the project's snap settings", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	ui::EventDisplay& display = window.display;
+	const auto snap = [&app] { return app.call("snap.get"); };
+
+	// The toggle button and J switch snap; the button shows it.
+	click(app, selector("#snap"));
+	REQUIRE(app.waitUntil([&snap] { return snap().at("on") == true; }));
+	REQUIRE(app.waitUntil([&app] { return hasClass(app, "#snap", "checked"); }));
+	REQUIRE(app.waitUntil([&display] { return display.snap().on; }));
+	app.ui().key(std::nullopt, "J");
+	REQUIRE(app.waitUntil([&snap] { return snap().at("on") == false; }));
+	REQUIRE(app.waitUntil([&app] { return !hasClass(app, "#snap", "checked"); }));
+	click(app, selector("#snap-zero-crossing"));
+	REQUIRE(app.waitUntil([&snap] { return snap().at("zeroCrossing") == true; }));
+
+	// The snap type menu checks the type; its button shows it.
+	choose(app, "#snap-type", "#snap-type-menu", "Events + Grid + Cursor");
+	REQUIRE(app.waitUntil([&snap] { return snap().at("type") == "eventsGridCursor"; }));
+	REQUIRE(app.waitUntil([&app] { return element(app, "#snap-type").value("text", "") == "Events + Grid + Cursor"; }));
+	click(app, selector("#snap-type"));
+	CHECK(hasClass(app, "#snap-type-menu > menuitem[snap-type=eventsGridCursor]", "checked"));
+	CHECK(!hasClass(app, "#snap-type-menu > menuitem[snap-type=grid]", "checked"));
+	app.ui().key(std::nullopt, "Escape");
+
+	// The grid type menu has the ruler format's grid types (reference manual pp. 107-108).
+	choose(app, "#grid-type", "#grid-type-menu", "Use Quantize");
+	REQUIRE(app.waitUntil([&snap] { return snap().at("grid") == "quantize"; }));
+	REQUIRE(app.waitUntil([&app] { return element(app, "#grid-type").value("text", "") == "Use Quantize"; }));
+	CHECK(count(app, "#grid-type-menu > menuitem") == 4);
+	display.setRulerFormat(ui::TimeFormat::Seconds);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(count(app, "#grid-type-menu > menuitem") == 4);
+	choose(app, "#grid-type", "#grid-type-menu", "10ms");
+	REQUIRE(app.waitUntil([&snap] { return snap().at("grid") == "10ms"; }));
+	display.setRulerFormat(ui::TimeFormat::Timecode);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(count(app, "#grid-type-menu > menuitem") == 6);
+	choose(app, "#grid-type", "#grid-type-menu", "1/4 Frame");
+	REQUIRE(app.waitUntil([&snap] { return snap().at("grid") == "quarterFrame"; }));
+	display.setRulerFormat(ui::TimeFormat::Samples);
+	app.shell().step(std::chrono::milliseconds(0));
+	choose(app, "#grid-type", "#grid-type-menu", "44100 Samples");
+	REQUIRE(app.waitUntil([&app] { return element(app, "#grid-type").value("text", "") == "44100 Samples"; }));
+	click(app, selector("#grid-type"));
+	CHECK(hasClass(app, "#grid-type-menu > menuitem[grid-type=44100samples]", "checked"));
+	app.ui().key(std::nullopt, "Escape");
+}
+
 // UI tests in Lua (#208): ctest runs each tests/lua/ui/*.lua through this test case, which GNUBASE_LUA_UI_TEST tells
 // which file, in the source folder. The file runs in the app's UI Lua on the UI thread, and prints its report.
 TEST_CASE("a UI test written in Lua passes", "[.][ui][lua-ui]")
@@ -437,7 +488,7 @@ TEST_CASE("keys edit the selected events in the project window", "[ui]")
 	app.ui().key(std::nullopt, "Shift+M");
 	REQUIRE(app.waitUntil([&parts] { return parts()[1].at("mute") == true; }));
 	app.ui().key(std::nullopt, "Mod+Right");
-	REQUIRE(app.waitUntil([&parts] { return parts()[1].at("position") == 5 * 1720320; }));
+	REQUIRE(app.waitUntil([&parts] { return parts()[1].at("position") == 8 * 1720320; })); // a bar, the grid's step
 	app.ui().key(std::nullopt, "Backspace");
 	REQUIRE(app.waitUntil([&parts] { return parts().size() == 1; }));
 	CHECK(app.keys().keysFor("edit.delete") == std::vector<std::string>{"Delete", "Backspace"});

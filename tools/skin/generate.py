@@ -448,6 +448,22 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".event-display .project-cursor", {"background-color": c["text"]}),
         (".event-display .cross-hair-vertical, .event-display .cross-hair-horizontal",
          {"background-color": mix(c["background"], c["textMuted"], .5)}),
+        # The track list (docs/features/track-list.md): rows beside the lanes, disabled tracks dimmed, and the line
+        # where dragged tracks go
+        (".track-list", {"background-color": c["surface"]}),
+        (".track-list listitem", {"border-bottom-width": f"{widths['hairline']}dp",
+                                  "border-bottom-color": c["border"]}),
+        (".track-list listitem.disabled", {"color": c["textMuted"]}),
+        (".track-list .drop-line", {"background-color": c["accent"]}),
+        # Docking windows (docs/features/docking.md): zones, the frame of the zone with the keyboard focus, and strips
+        (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
+        (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),
+        (".docking .strip", {"background-color": c["surface"]}),
+        # The main menu bar (docs/features/main-menu.md): flat menu titles, lit under the mouse, and the items' keys
+        (".menubar", {"background-color": c["surface"]}),
+        (".menubar button", {"decorator": "none", "color": c["text"]}),
+        (".menubar button:hover", {"decorator": skin("menu-item-hover")}),
+        ("menuitem .menu-keys", {"color": c["textMuted"]}),
     ]
 
     lines = ["/* SPDX-License-Identifier: GPL-3.0-or-later */",
