@@ -6,6 +6,7 @@
 #include "ui/shell.h"
 
 #include <chrono>
+#include <filesystem>
 #include <future>
 #include <memory>
 #include <optional>
@@ -75,6 +76,11 @@ namespace gnubase::ui
 		// holding the modifiers.
 		engine::Json wheel(std::optional<WindowId> window, const Target& at, float dx, float dy,
 			const std::vector<std::string>& modifiers = {});
+
+		// Drops files from elsewhere, such as the OS's file manager, on the target, as the window system delivers the
+		// user's drops (ui::dropFiles). Returns the element they were dropped on, as move does.
+		engine::Json drop(
+			std::optional<WindowId> window, const Target& target, const std::vector<std::filesystem::path>& files);
 
 		// Presses and releases a key with modifiers, written like "Enter", "Ctrl+S", "Mod+Z" or "Shift+Alt+F5" (keys
 		// and modifiers as ui::parseKeys reads them). A key that no element uses runs its key command

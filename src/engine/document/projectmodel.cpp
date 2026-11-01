@@ -53,6 +53,7 @@ namespace gnubase::engine
 			{TrackType::Group, "group", "Group"},
 			{TrackType::Effect, "effect", "FX"},
 			{TrackType::Marker, "marker", "Marker"},
+			{TrackType::Ruler, "ruler", "Ruler"},
 		};
 
 		const TrackTypeName& trackTypeEntry(TrackType type)
@@ -706,6 +707,40 @@ namespace gnubase::engine
 				{time::TimeBase::Linear, start + length}, event.position.base, project.tempo, project.sampleRate);
 		}
 
+		// The input, output and instrument in the parameters, if any, for channel.set and track.add.
+		void route(const Project& project, const Channel& channel, Channel& changed, const Json& parameters)
+		{
+			const TrackType type = project.trackById.at(channel.track).type;
+			if (parameters.contains("input"))
+			{
+				changed.input = parameters.at("input").get<ObjectId>();
+				require(type == TrackType::Audio || changed.input == 0, "only audio tracks have an input");
+				const Bus* bus = busOrNull(project, changed.input);
+				require(changed.input == 0 || (bus != nullptr && bus->direction == BusDirection::Input),
+					"input must be an input bus");
+			}
+			if (parameters.contains("output"))
+			{
+				changed.output = parameters.at("output").get<ObjectId>();
+				checkOutput(project, changed, changed.output);
+			}
+			if (parameters.contains("instrument"))
+			{
+				changed.instrument = parameters.at("instrument").get<std::string>();
+				require(type == TrackType::Instrument || changed.instrument.empty(),
+					"only an instrument track's channel plays an instrument");
+				if (!changed.instrument.empty())
+				{
+					const processors::BuiltinInfo* info = processors::findBuiltin(changed.instrument);
+					require(info != nullptr, "no built-in processor " + changed.instrument);
+					require(info->instrument, changed.instrument + " is not an instrument");
+				}
+				// Another instrument starts with its parameters at their defaults.
+				if (changed.instrument != channel.instrument)
+					changed.instrumentParameters.clear();
+			}
+		}
+
 		// Commands.
 
 		Json addTrack(Project& project, CommandContext& context)
@@ -722,10 +757,17 @@ namespace gnubase::engine
 				require(countTracks(project, TrackType::Marker) < g_maxMarkerTracks,
 					"a project has at most " + std::to_string(g_maxMarkerTracks) + " marker tracks");
 			}
-			const bool hasChannel = (type != TrackType::Folder && type != TrackType::Marker) || groupChannel;
+			const bool hasChannel =
+				(type != TrackType::Folder && type != TrackType::Marker && type != TrackType::Ruler) || groupChannel;
 			const bool hasAudio = hasChannel && type != TrackType::Midi;
 			require(hasAudio || (!parameters.contains("channels") && !parameters.contains("format")),
 				"this track has no audio channels");
+			require(hasChannel ||
+					(!parameters.contains("input") && !parameters.contains("output") &&
+						!parameters.contains("instrument")),
+				"this track has no channel");
+			require(
+				type == TrackType::Ruler || !parameters.contains("timeFormat"), "only ruler tracks have a time format");
 			const ChannelFormat format =
 				hasAudio ? channelFormat(parameters, ChannelFormat::Stereo) : ChannelFormat::None;
 
@@ -736,6 +778,8 @@ namespace gnubase::engine
 			track.color = color(parameters, {});
 			track.timeBase = timeBaseFromName(parameters.value("timeBase", "musical"));
 			track.parent = parent;
+			if (type == TrackType::Ruler)
+				track.timeFormat = parameters.value("timeFormat", g_rulerTimeFormats[0]);
 
 			// New tracks play through the main output, or through the folder's group channel when added to one.
 			std::optional<Channel> channel;
@@ -759,6 +803,12 @@ namespace gnubase::engine
 			std::vector<ObjectId>& list = siblings(project, parent);
 			list.insert(list.begin() + static_cast<std::ptrdiff_t>(index), track.id);
 			project.trackById[track.id] = track;
+			// Routing is checked with the track in place; a failure restores the project.
+			if (channel)
+			{
+				route(project, *channel, project.channels.at(channel->id), parameters);
+				channel = project.channels.at(channel->id);
+			}
 
 			Json result = {{"track", toJson(track)}, {"channel", channel ? toJson(*channel) : Json(nullptr)}};
 			context.emit("track.added", result);
@@ -772,9 +822,18 @@ namespace gnubase::engine
 			const Json& parameters = context.parameters();
 			Track& track = find(project.trackById, parameters.at("track").get<ObjectId>(), "track");
 			const std::string newColor = color(parameters, track.color);
+			require(track.type == TrackType::Ruler || !parameters.contains("timeFormat"),
+				"only ruler tracks have a time format");
 			if (parameters.contains("name"))
 				track.name = parameters.at("name").get<std::string>();
 			track.color = newColor;
+			track.timeFormat = parameters.value("timeFormat", track.timeFormat);
+			if (parameters.contains("enabled"))
+			{
+				const bool enabled = parameters.at("enabled").get<bool>();
+				require(enabled || canDisable(track.type), "only audio, instrument and MIDI tracks can be disabled");
+				track.enabled = enabled;
+			}
 			if (parameters.contains("timeBase"))
 			{
 				const time::TimeBase base = timeBaseFromName(parameters.at("timeBase").get<std::string>());
@@ -784,6 +843,127 @@ namespace gnubase::engine
 			Json result = {{"track", toJson(track)}};
 			context.emit("track.changed", result);
 			return result;
+		}
+
+		// Copies a track with its channel, events, parts, markers and automation, and the tracks inside it, into the
+		// folder parent; returns the copy, not yet among parent's tracks. channels maps each copied channel to its
+		// copy.
+		ObjectId copyTrack(Project& project, ObjectId id, ObjectId parent, std::map<ObjectId, ObjectId>& channels,
+			std::vector<std::pair<std::string, Json>>& added)
+		{
+			Track copy = project.trackById.at(id);
+			copy.id = project.newId();
+			copy.parent = parent;
+			copy.children.clear();
+			if (copy.channel != 0)
+			{
+				Channel channel = project.channels.at(copy.channel);
+				channel.id = project.newId();
+				channel.track = copy.id;
+				channels[copy.channel] = channel.id;
+				copy.channel = channel.id;
+				project.channels[channel.id] = std::move(channel);
+			}
+			added.emplace_back("track.added", Json{{"track", nullptr}, {"channel", nullptr}});
+			const size_t trackEvent = added.size() - 1;
+
+			// Crossfades join the copies of the events they joined.
+			std::map<ObjectId, ObjectId> events;
+			std::vector<AudioEvent> audio;
+			for (const auto& [eventId, event] : project.audioEvents)
+				if (event.track == id)
+				{
+					audio.push_back(event);
+					events[eventId] = project.newId();
+				}
+			for (AudioEvent& event : audio)
+			{
+				event.id = events.at(event.id);
+				event.track = copy.id;
+				const auto from = events.find(event.crossfade.from);
+				event.crossfade.from = from == events.end() ? 0 : from->second;
+				project.audioEvents[event.id] = event;
+				added.emplace_back("audioEvent.added", Json{{"event", toJson(event)}});
+			}
+			std::vector<MidiPart> parts;
+			for (const auto& [partId, part] : project.midiParts)
+				if (part.track == id)
+					parts.push_back(part);
+			for (MidiPart& part : parts)
+			{
+				part.id = project.newId();
+				part.track = copy.id;
+				if (part.shared == 0) // a shared copy stays one, with the notes and controllers it shares
+					renumber(project, part);
+				added.emplace_back("midiPart.added", Json{{"part", toJson(part)}});
+				project.midiParts[part.id] = std::move(part);
+			}
+			std::vector<Marker> markers;
+			for (const auto& [markerId, marker] : project.markers)
+				if (marker.track == id)
+					markers.push_back(marker);
+			for (Marker& marker : markers)
+			{
+				marker.id = project.newId();
+				marker.track = copy.id;
+				project.markers[marker.id] = marker;
+				added.emplace_back("marker.added", Json{{"marker", toJson(marker)}});
+			}
+			std::vector<AutomationLane> lanes;
+			for (const auto& [laneId, lane] : project.automation)
+				if (lane.track == id)
+					lanes.push_back(lane);
+			for (AutomationLane& lane : lanes)
+			{
+				lane.id = project.newId();
+				lane.track = copy.id;
+				std::map<ObjectId, AutomationPoint> points;
+				for (const auto& [pointId, point] : lane.points)
+				{
+					AutomationPoint renumbered = point;
+					renumbered.id = project.newId();
+					points[renumbered.id] = renumbered;
+				}
+				lane.points = std::move(points);
+				added.emplace_back("automationLane.added", Json{{"lane", toJson(lane)}});
+				project.automation[lane.id] = std::move(lane);
+			}
+
+			const std::vector<ObjectId> children = project.trackById.at(id).children;
+			for (const ObjectId child : children)
+				copy.children.push_back(copyTrack(project, child, copy.id, channels, added));
+			added[trackEvent].second["track"] = toJson(copy);
+			const ObjectId copyId = copy.id;
+			project.trackById[copyId] = std::move(copy);
+			return copyId;
+		}
+
+		Json duplicateTrack(Project& project, CommandContext& context)
+		{
+			const ObjectId id = context.parameters().at("track").get<ObjectId>();
+			const Track& track = find(project.trackById, id, "track");
+			require(track.type != TrackType::Marker || countTracks(project, TrackType::Marker) < g_maxMarkerTracks,
+				"a project has at most " + std::to_string(g_maxMarkerTracks) + " marker tracks");
+			const ObjectId parent = track.parent;
+			std::map<ObjectId, ObjectId> channels;
+			std::vector<std::pair<std::string, Json>> added;
+			const ObjectId copy = copyTrack(project, id, parent, channels, added);
+			// Channels that played through a copied channel play through its copy.
+			for (const auto& [original, duplicate] : channels)
+			{
+				Channel& channel = project.channels.at(duplicate);
+				if (const auto output = channels.find(channel.output); output != channels.end())
+					channel.output = output->second;
+			}
+			std::vector<ObjectId>& list = siblings(project, parent);
+			list.insert(std::next(std::find(list.begin(), list.end(), id)), copy);
+			for (auto& [name, data] : added)
+			{
+				if (name == "track.added" && data.at("track").at("channel") != 0)
+					data["channel"] = toJson(project.channels.at(data.at("track").at("channel").get<ObjectId>()));
+				context.emit(name, data);
+			}
+			return {{"track", toJson(project.trackById.at(copy))}};
 		}
 
 		Json moveTrack(Project& project, CommandContext& context)
@@ -877,34 +1057,7 @@ namespace gnubase::engine
 				require(type != TrackType::Midi, "a MIDI channel has no audio channels");
 				changed.format = channelFormat(parameters, channel.format);
 			}
-			if (parameters.contains("input"))
-			{
-				changed.input = parameters.at("input").get<ObjectId>();
-				require(type == TrackType::Audio || changed.input == 0, "only audio tracks have an input");
-				const Bus* bus = busOrNull(project, changed.input);
-				require(changed.input == 0 || (bus != nullptr && bus->direction == BusDirection::Input),
-					"input must be an input bus");
-			}
-			if (parameters.contains("output"))
-			{
-				changed.output = parameters.at("output").get<ObjectId>();
-				checkOutput(project, changed, changed.output);
-			}
-			if (parameters.contains("instrument"))
-			{
-				changed.instrument = parameters.at("instrument").get<std::string>();
-				require(type == TrackType::Instrument || changed.instrument.empty(),
-					"only an instrument track's channel plays an instrument");
-				if (!changed.instrument.empty())
-				{
-					const processors::BuiltinInfo* info = processors::findBuiltin(changed.instrument);
-					require(info != nullptr, "no built-in processor " + changed.instrument);
-					require(info->instrument, changed.instrument + " is not an instrument");
-				}
-				// Another instrument starts with its parameters at their defaults.
-				if (changed.instrument != channel.instrument)
-					changed.instrumentParameters.clear();
-			}
+			route(project, channel, changed, parameters);
 			for (const char* key : {"volume", "pan", "panner", "panLeft", "panRight", "panBypass"})
 				if (parameters.contains(key))
 					require(changed.format != ChannelFormat::None, "a MIDI channel has no volume or pan");
@@ -947,6 +1100,8 @@ namespace gnubase::engine
 				require(type == TrackType::Audio, std::string("only audio tracks have ") + key);
 				*value = parameters.at(key).get<bool>();
 			}
+			changed.mute = parameters.value("mute", changed.mute);
+			changed.solo = parameters.value("solo", changed.solo);
 			channel = changed;
 			Json result = {{"channel", toJson(channel)}};
 			context.emit("channel.changed", result);
@@ -1404,72 +1559,6 @@ namespace gnubase::engine
 				require(!sameFile(path, media.path), "path is media file " + idText(id) + "; choose a new file");
 		}
 
-		// Copies media files into the media folder as a job, then points the media at their copies with one
-		// command, a transaction named action, so that it is one undo step. Media whose path changed while the job
-		// copied, or that were removed, keep their path, and their copies are removed. The job's result is
-		// {copied: [{media, from, to}], missing: [{media, path}], changed: [media]}. Returns the job.
-		Json startMediaCopy(Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder,
-			std::string action)
-		{
-			return jobs.start(std::move(kind),
-				[files = std::move(files), folder = std::move(folder), action = std::move(action)](
-					JobContext& job) mutable
-				{
-					copyMedia(files, folder, job);
-					Json relink = Json::array();
-					Json missing = Json::array();
-					std::vector<std::string> made;
-					for (const MediaCopy& file : files)
-					{
-						if (file.to.empty())
-						{
-							missing.push_back({{"media", file.media}, {"path", file.from}});
-							continue;
-						}
-						relink.push_back({{"media", file.media}, {"from", file.from}, {"path", file.to}});
-						made.push_back(file.to);
-					}
-
-					std::set<ObjectId> skipped;
-					try
-					{
-						job.checkCancelled();
-						if (!relink.empty())
-						{
-							const Json command = {{"command", "media.relink"}, {"parameters", {{"files", relink}}}};
-							const Json result = job.command(
-								"history.transaction", {{"description", action}, {"commands", Json::array({command})}});
-							for (const Json& media : result.at("results").at(0).at("skipped"))
-								skipped.insert(media.get<ObjectId>());
-						}
-					}
-					catch (...)
-					{
-						removeFiles(made);
-						throw;
-					}
-
-					Json copied = Json::array();
-					Json changed = Json::array();
-					std::vector<std::string> unused;
-					for (const MediaCopy& file : files)
-					{
-						if (file.to.empty())
-							continue;
-						if (skipped.count(file.media) != 0)
-						{
-							changed.push_back(file.media);
-							unused.push_back(file.to);
-							continue;
-						}
-						copied.push_back({{"media", file.media}, {"from", file.from}, {"to", file.to}});
-					}
-					removeFiles(unused);
-					return Json{{"copied", std::move(copied)}, {"missing", std::move(missing)},
-						{"changed", std::move(changed)}};
-				});
-		}
-
 		Json relinkMedia(Project& project, CommandContext& context)
 		{
 			Json relinked = Json::array();
@@ -1521,7 +1610,7 @@ namespace gnubase::engine
 			require(sampleRate > 0.0, "sampleRate must be positive");
 			try
 			{
-				const AudioFileInfo info = convertSampleRate(source.path, media.path, sampleRate);
+				const AudioFileInfo info = convertSampleRate(source.path, {media.path}, sampleRate);
 				media.sampleRate = info.sampleRate;
 				media.channels = info.channels;
 				media.length = info.frames;
@@ -1925,6 +2014,7 @@ namespace gnubase::engine
 			{"track.set", "Change track"},
 			{"track.move", "Move track"},
 			{"track.remove", "Remove track"},
+			{"track.duplicate", "Duplicate track"},
 			{"channel.set", "Change channel"},
 			{"parameter.set", "Change parameter"},
 			{"media.add", "Add media file"},
@@ -1964,6 +2054,7 @@ namespace gnubase::engine
 			{"automationPoint.set", "Change automation points"},
 			{"automationPoint.remove", "Remove automation points"},
 			{"midiFile.import", "Import MIDI file"},
+			{"audioFile.import", "Import audio files"},
 		};
 
 		// Empty for commands without a fixed name, such as transactions.
@@ -2091,7 +2182,7 @@ namespace gnubase::engine
 				try
 				{
 					result = handler(m_project, context);
-					syncSharedParts(before, m_project, context);
+					syncSharedParts(before.midiParts, m_project, context);
 				}
 				catch (...)
 				{
@@ -2186,7 +2277,11 @@ namespace gnubase::engine
 			CommandContext inner(parameters, &context);
 			try
 			{
+				// Each command's edit reaches the other shared copies before the next command runs, so that edits of
+				// several copies of a group all stay and a command sees what an earlier one did to another copy.
+				const std::map<ObjectId, MidiPart> parts = project.midiParts;
 				results.push_back(edit->second.handler(project, inner));
+				syncSharedParts(parts, project, inner);
 			}
 			catch (const std::exception& error)
 			{
@@ -2271,8 +2366,11 @@ namespace gnubase::engine
 		const Json stringSchema = {{"type", "string"}};
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json noResult = Json::object();
-		const Json trackTypes = enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker"});
+		const Json trackTypes =
+			enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker", "ruler"});
 		const Json timeBases = enumSchema({"musical", "linear"});
+		const Json timeFormats =
+			enumSchema(std::vector<std::string>(g_rulerTimeFormats.begin(), g_rulerTimeFormats.end()));
 		const Json formats = enumSchema(formatNames());
 		const Json color = {{"type", {"string", "null"}}};
 
@@ -2502,15 +2600,16 @@ namespace gnubase::engine
 		add(engine,
 			{"track.add", 1,
 				"Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks "
-				"(default: "
-				"last). Audio channels default to stereo; format or channels set another format, as in bus.add. "
-				"Folders "
-				"get a channel only with groupChannel. New channels "
-				"play through the main output, or through the folder's group channel. Marker tracks have no channel "
-				"and stay at the top level; a project has at most 10, and a new one becomes the active marker track.",
+				"(default: last). Audio channels default to stereo; format or channels set another format, as in "
+				"bus.add. Folders get a channel only with groupChannel. New channels play through the main output, "
+				"or through the folder's group channel, and audio tracks record from the first input bus; input, "
+				"output and instrument set them as channel.set does. Marker tracks have no channel and stay at the "
+				"top level; a project has at most 10, and a new one becomes the active marker track. Ruler tracks "
+				"have no channel either; timeFormat is the time format their ruler shows (default barsBeats).",
 				objectSchema({{"type", trackTypes}, {"name", stringSchema}, {"color", color}, {"parent", idSchema},
 								 {"index", integerSchema}, {"format", formats}, {"channels", integerSchema},
-								 {"timeBase", timeBases}, {"groupChannel", booleanSchema}},
+								 {"timeBase", timeBases}, {"groupChannel", booleanSchema}, {"input", idSchema},
+								 {"output", idSchema}, {"instrument", stringSchema}, {"timeFormat", timeFormats}},
 					{"type"}),
 				{{"type", "object"},
 					{"properties", {{"track", {{"type", "object"}}}, {"channel", {{"type", {"object", "null"}}}}}},
@@ -2519,9 +2618,12 @@ namespace gnubase::engine
 			addTrack);
 		add(engine,
 			{"track.set", 1,
-				"Changes a track's name, color (#rrggbb, or null for the default) or time base. A new time base keeps "
-				"its events, parts and markers at the same time.",
-				objectSchema({{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases}},
+				"Changes a track's name, color (#rrggbb, or null for the default), time base or, for ruler tracks, "
+				"time format. A new time base keeps its events, parts and markers at the same time. enabled false "
+				"disables an audio, instrument or MIDI track: it keeps its events and channel settings but plays "
+				"nothing and is silent.",
+				objectSchema({{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
+								 {"timeFormat", timeFormats}, {"enabled", booleanSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);
@@ -2538,6 +2640,13 @@ namespace gnubase::engine
 				"Without the active marker track, the topmost marker track becomes the active one.",
 				objectSchema({{"track", idSchema}}, {"track"}), noResult, false},
 			removeTrack);
+		add(engine,
+			{"track.duplicate", 1,
+				"Duplicates a track below it: its channel with every setting, its events, parts, markers and "
+				"automation, and for a folder the tracks inside it, whose channels play through the copies of the "
+				"group channels they played through. Returns the copy.",
+				objectSchema({{"track", idSchema}}, {"track"}), resultSchema({"track"}), false},
+			duplicateTrack);
 
 		add(engine,
 			{"channel.set", 1,
@@ -2562,14 +2671,17 @@ namespace gnubase::engine
 				"are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording "
 				"and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, "
 				"whileRecording while the transport records, tapeMachine while it stands or records (the default). "
-				"Monitoring glides in and out over one audio block.",
-				objectSchema({{"channel", idSchema}, {"format", formats}, {"channels", integerSchema},
-								 {"input", idSchema}, {"output", idSchema}, {"instrument", stringSchema},
-								 {"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
-								 {"panRight", numberSchema}, {"panBypass", booleanSchema},
-								 {"midiVolume", {{"type", {"integer", "null"}}}},
-								 {"midiPan", {{"type", {"integer", "null"}}}}, {"volume", numberSchema},
-								 {"pan", numberSchema}, {"monitor", booleanSchema}, {"recordEnable", booleanSchema}},
+				"Monitoring glides in and out over one audio block. mute silences a channel; while any channel is "
+				"soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the "
+				"channels that play into them are heard. Muting and soloing glide over one audio block.",
+				objectSchema(
+					{{"channel", idSchema}, {"format", formats}, {"channels", integerSchema}, {"input", idSchema},
+						{"output", idSchema}, {"instrument", stringSchema},
+						{"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
+						{"panRight", numberSchema}, {"panBypass", booleanSchema},
+						{"midiVolume", {{"type", {"integer", "null"}}}}, {"midiPan", {{"type", {"integer", "null"}}}},
+						{"volume", numberSchema}, {"pan", numberSchema}, {"monitor", booleanSchema},
+						{"recordEnable", booleanSchema}, {"mute", booleanSchema}, {"solo", booleanSchema}},
 					{"channel"}),
 				resultSchema({"channel"}), false},
 			setChannel);
@@ -2756,8 +2868,10 @@ namespace gnubase::engine
 		midi::registerQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
 		registerMidiFileCommands(engine);
+		registerAudioFileCommands(engine, jobs);
 		registerFadeCommands(engine);
 		registerEventEditCommands(engine);
+		registerSnapCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 	}

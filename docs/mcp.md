@@ -166,7 +166,7 @@ GNUbase started with its UI and `--mcp-http` also has tools to look at the UI an
 - `ui_windows` lists the windows: their ids, which is the main window, their size in pixels and their dp ratio, and the documents each shows. The other tools take a `window`; without one they use the main window.
 - `ui_dom` reads the DOM: every element's tag, id, classes, other attributes, a form control's value, pseudo-classes such as `hover`, `focus` or `checked`, whether it's visible and its box. With a `selector` it returns the elements that match; `depth` limits how many levels of children come with them, and `depth: 0` returns the elements with their text.
 - `ui_screenshot` returns a PNG of the window, or with a `selector` of one element.
-- `ui_click`, `ui_move`, `ui_drag` and `ui_wheel` use the mouse on an element, by `selector` (and `index` among its matches), or on a point `x`, `y`. `ui_key` presses keys such as `Enter` or `Ctrl+S`; `ui_text` types text into the focused field. Each answers with the element it reached, so the agent sees what it hit.
+- `ui_click`, `ui_move`, `ui_drag` and `ui_wheel` use the mouse on an element, by `selector` (and `index` among its matches), or on a point `x`, `y`. `ui_key` presses keys such as `Enter` or `Ctrl+S`; `ui_text` types text into the focused field. `ui_drop` drops files on an element or a point, as if dragged there from the OS's file manager, e.g. audio files on the event display to import them. Each answers with the element it reached, so the agent sees what it hit.
 - `ui_wait` waits until an element is visible, or has a text, or until none is, e.g. for a dialog that a click opens.
 
 Boxes and points are in the window's pixels, as in its screenshots; on a monitor with a scale of 200 %, 1 dp is 2 pixels. An agent opening a dialog and reading it back:
@@ -301,6 +301,31 @@ Result:
 
 - `event`: object, required
 
+### audioFile
+
+#### `audioFile_import`
+
+Engine command `audioFile.import`.
+
+Imports audio files (WAV, RF64, Wave64, AIFF, FLAC, Ogg Vorbis or MP3) as audio events at position, in sample frames from the project start (default 0). Each file goes on a new audio track named after it, with its channels; with oneTrack, they go one after another on one new track, and with track, one after another on that audio track. copy copies files from outside the project folder into its media folder (see project.location) as a job, returned as job (null without one) with the result media.add's copy job has; the media are pointed at the copies as an undo step of its own. convert writes files at another sample rate than the project's, and MP3 and Ogg Vorbis files, into the media folder as 32-bit float WAV files at the project's sample rate. splitChannels writes each channel of a file with several into the media folder as a mono WAV file, named after the file and its speaker (such as take-L.wav), on a new mono track of its own. copy, convert and splitChannels need a saved project. One undo step. Returns the new tracks, and per file (per channel when split) the media files and events, in the order of files.
+
+Arguments:
+
+- `convert`: boolean
+- `copy`: boolean
+- `files`: array of string, required
+- `oneTrack`: boolean
+- `position`: integer
+- `splitChannels`: boolean
+- `track`: integer
+
+Result:
+
+- `events`: array of integer, required
+- `job`: object or null, required
+- `media`: array of integer, required
+- `tracks`: array of integer, required
+
 ### audio
 
 #### `audio_analyze`
@@ -407,7 +432,7 @@ Result:
 
 Engine command `audio.get`. Read-only.
 
-The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate; with sampleRateMismatch the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower. lost: the device that went away (its backend, device id, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null.
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, from 0 to 196608), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate; with sampleRateMismatch the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower. lost: the device that went away (its backend, device id, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null. While a device is lost, device is the fallback that plays meanwhile (the user setting audio.fallbackDevice), or null.
 
 Result:
 
@@ -424,7 +449,7 @@ Result:
 
 Engine command `audio.performance`. Read-only.
 
-Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported and the device's restarts by audio.reset (a block that was both counts twice); cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance, also across audio.reset; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late. blockSize: the device's block size in frames, 0 without a device.
+Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported, also those it recovers from with a reset (a block that was both counts twice; a reset after a settings change counts nothing); cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance, also across audio.reset; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late. blockSize: the device's block size in frames, 0 without a device.
 
 Result:
 
@@ -451,6 +476,23 @@ Result:
 - `inputs`: array, required
 - `missing`: array, required
 - `outputs`: array, required
+
+#### `audio_reconnect`
+
+Engine command `audio.reconnect`.
+
+Tries once to open the lost audio device again (lost in audio.get), as audio.reset does; does nothing unless a device is lost. While one is, the engine runs it on its own about every half second, one try at a time. While a fallback device plays, it tries only once the backend lists the lost device as available again, so that the fallback isn't interrupted, or every few seconds if the backend learns only by opening it whether it is there (ASIO). Tries that find the device still gone change nothing and are left out of engine.commandLog. Sends audio.changed when the device opens.
+
+Result:
+
+- `capturedFrames`: integer, required
+- `device`: object or null, required
+- `droppedFrames`: integer, required
+- `lost`: object or null, required
+- `playbackDropouts`: integer, required
+- `position`: integer, required
+- `processing`: object, required
+- `running`: boolean, required
 
 #### `audio_record`
 
@@ -498,7 +540,7 @@ Result:
 
 Engine command `audio.reset`.
 
-Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this when their settings change, e.g. in their control panel, or when their device goes away; the engine then resets on its own. A device that can't be opened, e.g. because it was unplugged, is lost (lost in audio.get): the engine goes on without it and resets again about every half second until it opens, then restarts it if it ran, so playback goes on where it stopped. audio.setDevice ends the wait. The performance measurement goes on across a reset, which counts as a dropout (see audio.performance); one that loses the device ends it. Sends audio.changed when the device closes, opens or is lost.
+Opens the audio device again with the same settings and restarts it if it ran. Drivers ask for this when their settings change, e.g. in their control panel, or when their device goes away; the engine then resets on its own. A device that can't be opened, e.g. because it was unplugged, is lost (lost in audio.get): the engine goes on without it and tries again about every half second until it opens (audio.reconnect), then restarts it if it ran, so playback goes on where it stopped; audio.start and audio.stop meanwhile decide whether it does. With the user setting audio.fallbackDevice, a fallback device plays meanwhile and the engine switches back once the lost device opens; a reset while one plays tries the lost device and opens the fallback again if that fails. audio.setDevice ends the wait. The performance measurement goes on across a reset, which itself counts nothing: a driver that resets because of a dropout reports the dropout (see audio.performance). A reset that loses the device ends the measurement. Sends audio.changed when the device closes, opens or is lost, also when it fails after the device opened again.
 
 Result:
 
@@ -533,7 +575,7 @@ Result:
 
 Engine command `audio.set`.
 
-Changes the audio device's settings and keeps the others: the parameters of audio.setDevice except backend and device, e.g. sampleRate, blockSize, clockSource, recordShift or directMonitoring. The device opens again with them, as for audio.reset, and runs on if it ran. If it can't open with them, it opens again with the settings it had and the command fails.
+Changes the audio device's settings and keeps the others: the parameters of audio.setDevice except backend and device, e.g. sampleRate, blockSize, clockSource, recordShift or directMonitoring. The device opens again with them, as for audio.reset, and runs on if it ran. If it can't open with them, it opens again with the settings it had and the command fails; if those fail too, there is no device. Fails while a fallback plays for a lost device (see audio.reset). Sends audio.changed, also when it fails after the device closed: with the device opened again with its old settings, at position 0, or with none.
 
 Arguments:
 
@@ -568,6 +610,7 @@ Engine command `audio.setDevice`.
 Replaces the audio device. backend: one from audio.devices, by default "dummy". device: its id, by default the backend's default device. sampleRate: by default the project's if the device supports it, otherwise the driver's current rate; when the project's sample rate changes, the device follows it where it can. blockSize: by default the driver's preferred size. clockSource: a name from the device's clockSources. The device starts stopped at position 0. Another backend's device is closed before the new one opens, since drivers often allow only one; if opening fails, there is no device.
 Recorded input goes where the transport played the device's input + output latency before it arrived, so what is played along to or looped back lines up with what played (recordOffset in audio.get). recordShift (frames, -65536 to 65536) moves recordings that much later, for drivers that report their latency wrong. captureSeconds (0 to 600, by default 0, or 60 for the dummy device) keeps that much of what the inputs record in memory for audio.captureInput, e.g. for a loopback test. directMonitoring: the driver monitors audio tracks' inputs itself, without the engine's latency, for tracks that play into an output bus (canMonitorDirectly in audio.devices says which can); their fader and pan set its level and position, automation doesn't reach it.
 The dummy device has no hardware: its output is captured in memory (audio.capture) and it renders offline (audio.render). It supports 44100, 48000, 88200, 96000, 176400 and 192000 Hz and opens with any rate from 8000 Hz. Its defaults: 48000 Hz, blocks of 256 frames, 2 inputs, 2 outputs (inputChannels, outputChannels), 60 s of capture (captureSeconds, also of its output). Its input is silent, or a built-in generator (see processor.list) with parameters by name. It reports inputLatency and outputLatency (frames, 0 to 65536, default 0); with loopback its inputs carry its outputs back that much later, as a cable from each output to the input of the same number would, which needs at least a block. It monitors directly by adding inputs to its outputs.
+Sends audio.changed, also when it fails after closing the old device.
 
 Arguments:
 
@@ -621,7 +664,7 @@ Result:
 
 Engine command `audio.setProcessing`.
 
-Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; default: half the hardware threads, about one per core). Independent tracks then run in parallel; the output is the same for any number of threads. The device must be stopped. activeThreads in the result is how many process, and limitedBy why that is fewer: multiProcessing is off, the hardware has fewer threads, worker threads didn't get real-time priority (on Linux: no real-time privileges), or the system refused to start them (system). Fails, keeping the previous settings, if threads can't be started.
+Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; default: half the hardware threads, about one per core). Independent tracks then run in parallel; the output is the same for any number of threads. The device must be stopped. activeThreads in the result is how many process, and limitedBy why that is fewer: multiProcessing is off, the hardware has fewer threads, worker threads didn't get real-time priority (on Linux: no real-time privileges and no rtkit), or the system refused to start them (system). Fails, keeping the previous settings, if threads can't be started.
 
 Arguments:
 
@@ -643,7 +686,7 @@ Result:
 
 Engine command `audio.simulateDeviceLoss`.
 
-Only the dummy device: simulates its hardware being unplugged (connected false) and its driver asking for a reset, after which the device is lost (see audio.reset), or plugged in again (connected true), after which the engine opens it again on its own. While it is unplugged, audio.setDevice can't open it either.
+Only the dummy device: simulates its hardware being unplugged (connected false) and its driver asking for a reset, after which the device is lost (see audio.reset), or plugged in again (connected true), after which the engine opens it again on its own. While it is unplugged, audio.setDevice can't open it either. The dummy device as a fallback (audio.fallbackDevice) can't be unplugged.
 
 Arguments:
 
@@ -682,7 +725,7 @@ Result:
 
 Engine command `audio.start`.
 
-Simulated real time: the device processes one block per block duration until stopped.
+Starts the audio device; the dummy device processes one block per block duration (simulated real time) until stopped. While the device is lost (see audio.reset), it starts once it returns (restart in lost), and audio.changed announces that.
 
 Result:
 
@@ -699,7 +742,7 @@ Result:
 
 Engine command `audio.stop`.
 
-Stops simulated real time. Does nothing if the device isn't running.
+Stops the audio device. Does nothing if it isn't running. While the device is lost (see audio.reset), it stays stopped once it returns (restart in lost), and audio.changed announces that.
 
 Result:
 
@@ -716,7 +759,7 @@ Result:
 
 Engine command `audio.updateLatency`.
 
-Reads the audio device's latencies again and places recordings by the new record offset (see audio.get); a running device stops for that and starts again. Drivers that learn their latency after the device opens, or whose latency changes with the graph, report the change; the engine then runs this on its own. Only for the dummy device, and only while it is stopped: inputLatency and outputLatency (default: as they are) first change what it reports, and with loopback its round trip, as such a driver's would. Sends audio.changed if anything changed.
+Reads the audio device's latencies again and places recordings by the new record offset (see audio.get); a running device keeps running and switches at its next block. Drivers that learn their latency after the device opens, or whose latency changes with the graph, report the change; the engine then runs this on its own. Only for the dummy device, and only while it is stopped: inputLatency and outputLatency (default: as they are) first change what it reports, and with loopback its round trip, as such a driver's would. Sends audio.changed if anything changed.
 
 Arguments:
 
@@ -1021,7 +1064,7 @@ Result:
 
 Engine command `channel.set`.
 
-Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts between formats where a channel feeds a destination of another one: speakers both formats have connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, or to L and R at the pan law's center). instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 (silence) to the project's maxVolume (default 0); values beyond them stop there. The panner depends on the routing: a mono channel on a stereo destination has its position pan, -1 (left) to 1 (right), placed with the project's pan law; a stereo channel on a stereo or mono destination has the balance panner (panner balance, the default: pan turns down the other side) or the combined panner (panner combined: panLeft and panRight place its left and right channel, by default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records (the default). Monitoring glides in and out over one audio block.
+Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts between formats where a channel feeds a destination of another one: speakers both formats have connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, or to L and R at the pan law's center). instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 (silence) to the project's maxVolume (default 0); values beyond them stop there. The panner depends on the routing: a mono channel on a stereo destination has its position pan, -1 (left) to 1 (right), placed with the project's pan law; a stereo channel on a stereo or mono destination has the balance panner (panner balance, the default: pan turns down the other side) or the combined panner (panner combined: panLeft and panRight place its left and right channel, by default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records (the default). Monitoring glides in and out over one audio block. mute silences a channel; while any channel is soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the channels that play into them are heard. Muting and soloing glide over one audio block.
 
 Arguments:
 
@@ -1033,6 +1076,7 @@ Arguments:
 - `midiPan`: integer or null
 - `midiVolume`: integer or null
 - `monitor`: boolean
+- `mute`: boolean
 - `output`: integer
 - `pan`: number
 - `panBypass`: boolean
@@ -1040,6 +1084,7 @@ Arguments:
 - `panRight`: number
 - `panner`: one of "balance" | "combined"
 - `recordEnable`: boolean
+- `solo`: boolean
 - `volume`: number
 
 Result:
@@ -1170,7 +1215,7 @@ Result:
 
 Engine command `engine.commandLog`. Read-only.
 
-The last 256 commands that ran, oldest first, without queries: what the UI and other clients did. Each with its request id (events name it too), the client that sent it (ui, mcp, lua, app for the command line, engine for the engine's own commands), the command, its parameters, and the error if it failed.
+The last 256 commands that ran, oldest first, without queries: what the UI and other clients did. Each with its request id (events name it too), the client that sent it (ui, mcp, lua, app for the command line, engine for the engine's own commands), the command, its parameters, and the error if it failed. Commands the engine ran on its own that changed nothing, such as tries to open a lost audio device again, are left out.
 
 Result:
 
@@ -1308,7 +1353,7 @@ Arguments:
 
 Engine command `event.resize`.
 
-Moves the start or the end (edge) of audio events and MIDI parts by delta project samples or by ticks, within the clip and at least a sample frame or a tick long. normal sizing (the default) reveals or hides content; moveContents moves the content with the edge. A MIDI part's notes and controllers that end up before its start are removed. Locked events don't change. Returns the events.
+Moves the start or the end (edge) of audio events and MIDI parts by delta project samples or by ticks, within the clip and at least a sample frame or a tick long. normal sizing (the default) reveals or hides content; moveContents moves the content with the edge. A MIDI part's notes and controllers that end up before its start are removed. With zeroCrossing, normal sizing moves audio events' edges to the nearest point within 50 ms where the audio crosses zero. Locked events don't change. Returns the events.
 
 Arguments:
 
@@ -1317,6 +1362,7 @@ Arguments:
 - `events`: array of integer, required
 - `mode`: one of "normal" | "moveContents"
 - `ticks`: integer
+- `zeroCrossing`: boolean
 
 Result:
 
@@ -1338,17 +1384,48 @@ Result:
 
 - `events`: array of integer, required
 
+#### `event_setSnapPoint`
+
+Engine command `event.setSnapPoint`.
+
+Sets audio events' snap point at position (project samples, default the project cursor), which must be inside each of them (Snap Point to Cursor): where the event snaps to the grid when it moves, and attracts other events. It is a point in the clip, so it stays with the audio when the event is resized or split. Returns the events.
+
+Arguments:
+
+- `events`: array of integer, required
+- `position`: integer
+
+Result:
+
+- `events`: array of integer, required
+
+#### `event_shuffle`
+
+Engine command `event.shuffle`.
+
+Shuffle (snap type shuffle): events that adjoin each other on one track change places with the events that adjoin them. They go where position (project samples, where the first of them would start) puts them: after each other event whose middle it is past. The others close up and make room, so the row keeps its start and has no gaps. Locked events end the row. Returns the events.
+
+Arguments:
+
+- `events`: array of integer, required
+- `position`: integer, required
+
+Result:
+
+- `events`: array of integer, required
+
 #### `event_split`
 
 Engine command `event.split`.
 
-Splits audio events and MIDI parts at positions (project samples): events, or without it every unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with splitNotes are cut in two. Returns the new events after the splits.
+Splits audio events and MIDI parts at positions (project samples): events, or without it every unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with splitNotes are cut in two. With zeroCrossing, audio events split at the nearest point within 50 ms and inside the event where their audio crosses zero. Returns the new events after the splits.
 
 Arguments:
 
 - `events`: array of integer
 - `positions`: array of integer, required
 - `splitNotes`: boolean
+- `zeroCrossing`: boolean
 
 Result:
 
@@ -2731,7 +2808,7 @@ The value of a user setting; settings.list describes them all.
 
 Arguments:
 
-- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "ui.layout" | "ui.markerLines" | "ui.scale" | "ui.theme" | "ui.zoomPresets", required. The setting.
+- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.fallbackDevice" | "audio.sampleRate" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "ui.layout" | "ui.markerLines" | "ui.scale" | "ui.theme" | "ui.trackControls" | "ui.zoomPresets", required. The setting.
 
 Result:
 
@@ -2759,7 +2836,7 @@ Puts a user setting back to its default, or every one without key, and saves the
 
 Arguments:
 
-- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "ui.layout" | "ui.markerLines" | "ui.scale" | "ui.theme" | "ui.zoomPresets". The setting.
+- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.fallbackDevice" | "audio.sampleRate" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "ui.layout" | "ui.markerLines" | "ui.scale" | "ui.theme" | "ui.trackControls" | "ui.zoomPresets". The setting.
 
 Result:
 
@@ -2769,11 +2846,11 @@ Result:
 
 Engine command `settings.set`.
 
-Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.autoMonitoring` (one of ["manual","whileRecordEnabled","whileRecording","tapeMachine"], default "tapeMachine"): When record-enabled audio tracks monitor their input, besides the monitor button: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records; `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.busPresets` (object, default {"input":{},"output":{}}): The user's own bus presets, per direction (input, output) by name: each a list of busses with their name, format, ports and child busses (bus.savePreset); `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `midi.chaseBeyondParts` (boolean, default true): Chases controller events from the whole track; off, only from the MIDI parts under the position, so none outside parts; `midi.chaseControllers` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each control change's last value before that position; `midi.chaseNotes` (boolean, default true): Where playback starts or jumps, MIDI tracks start the notes that sound at that position; `midi.chasePitchBend` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last pitch bend before that position; `midi.chasePrograms` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last program change before that position; `ui.layout` (object, default {}): The layout of the windows with zones: under windows, by window (project), its zones (left, right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs hidden and the active one, and its strips (toolbar, infoLine, overviewLine, statusLine, transportBar) with whether each is shown; under panels, by panel, whether it is in a window of its own and that window's bounds. What it leaves out has its default; `ui.markerLines` (one of ["active","all","off"], default "active"): Which markers the event display shows as lines across every track: the active marker track's (active), every marker track's (all), or none (off); `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes; `ui.zoomPresets` (array, default []): The horizontal zoom presets of the event display, for every project: each a name and the seconds the view shows.
+Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.autoMonitoring` (one of ["manual","whileRecordEnabled","whileRecording","tapeMachine"], default "tapeMachine"): When record-enabled audio tracks monitor their input, besides the monitor button: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records; `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.busPresets` (object, default {"input":{},"output":{}}): The user's own bus presets, per direction (input, output) by name: each a list of busses with their name, format, ports and child busses (bus.savePreset); `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.fallbackDevice` (one of ["none","default","dummy"], default "none"): The device that plays while the chosen audio device is lost, until it returns: none, default (the lost device's backend's default device, or the dummy device if that doesn't open), or dummy (the dummy device: no sound, but the transport moves and the project plays on). The engine switches back once the lost device returns; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `midi.chaseBeyondParts` (boolean, default true): Chases controller events from the whole track; off, only from the MIDI parts under the position, so none outside parts; `midi.chaseControllers` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each control change's last value before that position; `midi.chaseNotes` (boolean, default true): Where playback starts or jumps, MIDI tracks start the notes that sound at that position; `midi.chasePitchBend` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last pitch bend before that position; `midi.chasePrograms` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last program change before that position; `ui.layout` (object, default {}): The layout of the windows with zones: under windows, by window (project), its zones (left, right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs hidden and the active one, and its strips (toolbar, infoLine, overviewLine, statusLine, transportBar) with whether each is shown, and its sets of sections (such as a mixer channel's) with the order of their sections and those hidden; under panels, by panel, whether it is in a window of its own and that window's bounds. What it leaves out has its default; `ui.markerLines` (one of ["active","all","off"], default "active"): Which markers the event display shows as lines across every track: the active marker track's (active), every marker track's (all), or none (off); `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes; `ui.trackControls` (object, default {"audio":["mute","solo","record","monitor","read"],"effect":["mute","solo","read"],"folder":["mute","solo","read"],"group":["mute","solo","read"],"instrument":["mute","solo","read"],"marker":[],"midi":["mute","solo","read"],"ruler":[]}): The controls the track list shows, by track type (audio, instrument, midi, group, effect, folder, marker, ruler), in order: mute, solo, record, monitor (audio tracks), read (automation) and timeBase. Mute and solo always show on tracks with a channel; a type left out shows none; `ui.zoomPresets` (array, default []): The horizontal zoom presets of the event display, for every project: each a name and the seconds the view shows.
 
 Arguments:
 
-- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.sampleRate" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "ui.layout" | "ui.markerLines" | "ui.scale" | "ui.theme" | "ui.zoomPresets", required. The setting.
+- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.fallbackDevice" | "audio.sampleRate" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "ui.layout" | "ui.markerLines" | "ui.scale" | "ui.theme" | "ui.trackControls" | "ui.zoomPresets", required. The setting.
 - `value`: any, required. The new value; it must fit the setting's schema.
 
 Result:
@@ -2781,13 +2858,70 @@ Result:
 - `key`: string, required
 - `value`: any, required. The setting's value.
 
+### snap
+
+#### `snap_get`
+
+Engine command `snap.get`. Read-only.
+
+The project's snap settings. on: whether snap is on. type: grid (the nearest grid line), gridRelative (moves in grid steps, keeping the distance to the grid), events (the starts and ends of other events, audio events' snap points and markers, when near), shuffle (events trade places with their neighbours, see event.shuffle), cursor (the project cursor, when near), or the combinations gridCursor, eventsCursor and eventsGridCursor. grid: bar, beat, quantize (the project's quantize grid) or adaptToZoom (a note value that the view chooses); 1ms, 10ms, 100ms, 1000ms; subframe, quarterFrame, halfFrame, frame, twoFrames, second; 1sample, 10samples, 100samples, 44100samples. zeroCrossing: splitting and resizing audio events in the project window cut where the audio crosses zero.
+
+Result:
+
+- `grid`: one of "bar" | "beat" | "quantize" | "adaptToZoom" | "1ms" | "10ms" | "100ms" | "1000ms" | "subframe" | "quarterFrame" | "halfFrame" | "frame" | "twoFrames" | "second" | "1sample" | "10samples" | "100samples" | "44100samples", required
+- `on`: boolean, required
+- `type`: one of "grid" | "gridRelative" | "events" | "shuffle" | "cursor" | "gridCursor" | "eventsCursor" | "eventsGridCursor", required
+- `zeroCrossing`: boolean, required
+
+#### `snap_position`
+
+Engine command `snap.position`. Read-only.
+
+Snaps a position (project samples) as editing in the project window does, with the project's snap settings, changed by settings: where a point that would go to position goes. from is where it was, for gridRelative; events are the events being edited, whose edges and snap points don't attract; range is how near (project samples, default a tenth of a second) events, markers and the cursor attract; zoomStep is adaptToZoom's note value in ticks (default: bars); framesPerSecond the frame grids' rate (default 25). Returns position in project samples, and ticks, which are exact when musical, that is when a bar, beat, quantize or zoom grid line put it there.
+
+Arguments:
+
+- `events`: array of integer
+- `framesPerSecond`: integer
+- `from`: integer
+- `position`: integer, required
+- `range`: integer
+- `settings`: object
+- `zoomStep`: integer
+
+Result:
+
+- `musical`: boolean, required
+- `position`: integer, required
+- `ticks`: integer, required
+
+#### `snap_set`
+
+Engine command `snap.set`.
+
+Changes the project's snap settings; what isn't given stays. on: whether snap is on. type: grid (the nearest grid line), gridRelative (moves in grid steps, keeping the distance to the grid), events (the starts and ends of other events, audio events' snap points and markers, when near), shuffle (events trade places with their neighbours, see event.shuffle), cursor (the project cursor, when near), or the combinations gridCursor, eventsCursor and eventsGridCursor. grid: bar, beat, quantize (the project's quantize grid) or adaptToZoom (a note value that the view chooses); 1ms, 10ms, 100ms, 1000ms; subframe, quarterFrame, halfFrame, frame, twoFrames, second; 1sample, 10samples, 100samples, 44100samples. zeroCrossing: splitting and resizing audio events in the project window cut where the audio crosses zero. Settings are not undo steps; they are saved with the project. Emits snap.changed.
+
+Arguments:
+
+- `grid`: one of "bar" | "beat" | "quantize" | "adaptToZoom" | "1ms" | "10ms" | "100ms" | "1000ms" | "subframe" | "quarterFrame" | "halfFrame" | "frame" | "twoFrames" | "second" | "1sample" | "10samples" | "100samples" | "44100samples"
+- `on`: boolean
+- `type`: one of "grid" | "gridRelative" | "events" | "shuffle" | "cursor" | "gridCursor" | "eventsCursor" | "eventsGridCursor"
+- `zeroCrossing`: boolean
+
+Result:
+
+- `grid`: one of "bar" | "beat" | "quantize" | "adaptToZoom" | "1ms" | "10ms" | "100ms" | "1000ms" | "subframe" | "quarterFrame" | "halfFrame" | "frame" | "twoFrames" | "second" | "1sample" | "10samples" | "100samples" | "44100samples", required
+- `on`: boolean, required
+- `type`: one of "grid" | "gridRelative" | "events" | "shuffle" | "cursor" | "gridCursor" | "eventsCursor" | "eventsGridCursor", required
+- `zeroCrossing`: boolean, required
+
 ### track
 
 #### `track_add`
 
 Engine command `track.add`.
 
-Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; format or channels set another format, as in bus.add. Folders get a channel only with groupChannel. New channels play through the main output, or through the folder's group channel. Marker tracks have no channel and stay at the top level; a project has at most 10, and a new one becomes the active marker track.
+Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks (default: last). Audio channels default to stereo; format or channels set another format, as in bus.add. Folders get a channel only with groupChannel. New channels play through the main output, or through the folder's group channel, and audio tracks record from the first input bus; input, output and instrument set them as channel.set does. Marker tracks have no channel and stay at the top level; a project has at most 10, and a new one becomes the active marker track. Ruler tracks have no channel either; timeFormat is the time format their ruler shows (default barsBeats).
 
 Arguments:
 
@@ -2796,14 +2930,32 @@ Arguments:
 - `format`: one of "mono" | "stereo" | "LRC" | "LRS" | "LRC+LFE" | "LRS+LFE" | "LRCS" | "LRCS+LFE" | "quadro" | "quadro+LFE" | "5.0" | "5.1" | "6.0 cine" | "6.0 music" | "7.0" | "7.1"
 - `groupChannel`: boolean
 - `index`: integer
+- `input`: integer
+- `instrument`: string
 - `name`: string
+- `output`: integer
 - `parent`: integer
 - `timeBase`: one of "musical" | "linear"
-- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect" | "marker", required
+- `timeFormat`: one of "barsBeats" | "seconds" | "timecode" | "samples" | "userFrames"
+- `type`: one of "audio" | "instrument" | "midi" | "folder" | "group" | "effect" | "marker" | "ruler", required
 
 Result:
 
 - `channel`: object or null, required
+- `track`: object, required
+
+#### `track_duplicate`
+
+Engine command `track.duplicate`.
+
+Duplicates a track below it: its channel with every setting, its events, parts, markers and automation, and for a folder the tracks inside it, whose channels play through the copies of the group channels they played through. Returns the copy.
+
+Arguments:
+
+- `track`: integer, required
+
+Result:
+
 - `track`: object, required
 
 #### `track_move`
@@ -2832,13 +2984,15 @@ Arguments:
 
 Engine command `track.set`.
 
-Changes a track's name, color (#rrggbb, or null for the default) or time base. A new time base keeps its events, parts and markers at the same time.
+Changes a track's name, color (#rrggbb, or null for the default), time base or, for ruler tracks, time format. A new time base keeps its events, parts and markers at the same time. enabled false disables an audio, instrument or MIDI track: it keeps its events and channel settings but plays nothing and is silent.
 
 Arguments:
 
 - `color`: string or null
+- `enabled`: boolean
 - `name`: string
 - `timeBase`: one of "musical" | "linear"
+- `timeFormat`: one of "barsBeats" | "seconds" | "timecode" | "samples" | "userFrames"
 - `track`: integer, required
 
 Result:
@@ -3052,6 +3206,23 @@ Result:
 
 - `element`: object or null, required
 
+#### `ui_drop`
+
+Drops files on an element or a point, as if dragged there from the OS's file manager, e.g. audio or MIDI files on the project window's event display to import them. Returns the element they were dropped on.
+
+Arguments:
+
+- `files`: array of string, required. The files' paths, at least one.
+- `index`: integer. Which of the elements the selector matches; 0, the first, if left out.
+- `selector`: string. A CSS selector; the mouse goes to the centre of the element it matches.
+- `window`: integer. The window's id from ui_windows; the main window if left out.
+- `x`: integer. Instead of a selector: the point in the window's pixels, with y.
+- `y`: integer. The point's y, with x.
+
+Result:
+
+- `element`: object or null, required
+
 #### `ui_key`
 
 Presses and releases a key with modifiers, written like "Enter", "Ctrl+Shift+S" or "Mod+Z": letters, digits, F1 to F24, Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, Up, Down, Left, Right, Space, . , - +, and on the keypad Num0 to Num9, NumEnter, Num* Num/ Num+ Num- Num.; modifiers Mod (the platform's command key: Cmd on macOS, Ctrl elsewhere), Ctrl, Shift, Alt and Meta (Cmd). A key that the focused element doesn't use runs its key command, e.g. Space starts or stops playback. Keys don't type text: use ui_text for that. Returns the element with the keyboard focus.
@@ -3159,12 +3330,12 @@ Queries without required arguments can also be read as resources:
 
 - `gnubase://audio.analyze`: Measures the captured output of channels (default: every output) from frame start for frames frames (default: to the end of the capture). Per channel: the peak and RMS level, and a spectrum summary with the strongest frequencies (at most peaks, default 5, up to 20) and the power of octave bands. For the channels together: the integrated loudness in LUFS (ITU-R BS.1770), null below 400 ms. Levels are linear and in dBFS (a full-scale sine's peak is 0 dBFS, its RMS -3 dBFS); dBFS is null for silence.
 - `gnubase://audio.devices`: The audio backends of this build, the preferred one first, and the devices each has now: their ids, names, channel names, sample rates, block sizes, clock sources (and the current one), whether the driver has a control panel, whether it can monitor inputs directly (canMonitorDirectly), and whether the device is available. An unavailable device, e.g. one whose hardware isn't connected, has an unavailableReason; audio.setDevice still tries it. Some backends only learn that by opening or starting the device (ASIO). A backend that can't list its devices has an error instead.
-- `gnubase://audio.get`: The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, at least 0), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate; with sampleRateMismatch the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower. lost: the device that went away (its backend, device id, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null.
-- `gnubase://audio.performance`: Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported and the device's restarts by audio.reset (a block that was both counts twice); cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance, also across audio.reset; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late. blockSize: the device's block size in frames, 0 without a device.
+- `gnubase://audio.get`: The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, from 0 to 196608), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate; with sampleRateMismatch the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower. lost: the device that went away (its backend, device id, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null. While a device is lost, device is the fallback that plays meanwhile (the user setting audio.fallbackDevice), or null.
+- `gnubase://audio.performance`: Performance data for the performance monitor. Loads are the share of a block's duration spent processing it, so above 1 the device drops out. load: averaged over about 0.3 s; peak: the highest block; overloads: blocks above 1 plus deviceOverloads, the dropouts the driver reported, also those it recovers from with a reset (a block that was both counts twice; a reset after a settings change counts nothing); cycles: blocks measured; threads: the load of each processing thread, the audio thread first. Peak, overloads and cycles count since the last audio.resetPerformance, also across audio.reset; everything starts over with a new device or new processing threads. diskLoad: how far the disk stream furthest behind has run empty, 0 to 1; diskDropouts: frames of audio track playback that were silent because a disk stream was late. blockSize: the device's block size in frames, 0 without a device.
 - `gnubase://audio.ports`: The audio device's ports by name, in order, each with the name it is shown as and whether it is visible (audio.setPort), and the busses that use it (the bus ids); each bus's ports on this device, null where it has none (a child bus's are its parent's); and the missing ports: port names that busses use but the device doesn't have, with those busses. bus.remapPorts re-routes them. beyondDevice: busses without ports of their own (consecutive ports in bus order) whose channels run past the device's ports, with those channels, which are silent; bus.set gives them ports. Without a device there are no ports.
 - `gnubase://automation.get`: The automation settings. followsEvents (default false): when an audio event or MIDI part moves, the automation of its track in its range moves with it and replaces the points where it lands.
 - `gnubase://automationLane.list`: The automation lanes of a track, or of every track in track order, with their points sorted by position.
-- `gnubase://engine.commandLog`: The last 256 commands that ran, oldest first, without queries: what the UI and other clients did. Each with its request id (events name it too), the client that sent it (ui, mcp, lua, app for the command line, engine for the engine's own commands), the command, its parameters, and the error if it failed.
+- `gnubase://engine.commandLog`: The last 256 commands that ran, oldest first, without queries: what the UI and other clients did. Each with its request id (events name it too), the client that sent it (ui, mcp, lua, app for the command line, engine for the engine's own commands), the command, its parameters, and the error if it failed. Commands the engine ran on its own that changed nothing, such as tries to open a lost audio device again, are left out.
 - `gnubase://engine.commands`: Every command with its documentation, parameters and result.
 - `gnubase://engine.version`: The GNUbase version.
 - `gnubase://graph.get`: The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes they receive audio and events from, and the order they are processed in.
@@ -3183,6 +3354,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://quantize.get`: The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).
 - `gnubase://quantize.presets`: The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings. The user's presets are kept in the settings folder, so they come back when GNUbase starts again: file is where (null if they are kept in memory only), readOnly whether changes are saved (not while the file belongs to a newer GNUbase), and problems what was wrong with it, such as presets that this GNUbase can't read and skips; they stay in the file.
 - `gnubase://settings.list`: Every user setting with its key, description, JSON schema, default and value; the settings file, null when settings are kept in memory only; its version; and what happened when it was loaded: the status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the problems found, where the original file was kept, and whether the file is read-only for this session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be backed up or locked).
+- `gnubase://snap.get`: The project's snap settings. on: whether snap is on. type: grid (the nearest grid line), gridRelative (moves in grid steps, keeping the distance to the grid), events (the starts and ends of other events, audio events' snap points and markers, when near), shuffle (events trade places with their neighbours, see event.shuffle), cursor (the project cursor, when near), or the combinations gridCursor, eventsCursor and eventsGridCursor. grid: bar, beat, quantize (the project's quantize grid) or adaptToZoom (a note value that the view chooses); 1ms, 10ms, 100ms, 1000ms; subframe, quarterFrame, halfFrame, frame, twoFrames, second; 1sample, 10samples, 100samples, 44100samples. zeroCrossing: splitting and resizing audio events in the project window cut where the audio crosses zero.
 - `gnubase://transport.get`: Whether playback and recording run, the project cursor in samples, the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.
 
 <!-- End of the generated tool catalogue -->

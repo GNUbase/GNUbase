@@ -53,6 +53,13 @@ namespace gnubase::ui
 	//                                 class no-<strip> while it is hidden, for strips that are part of other elements
 	//                                 such as the event display's overview line
 	//   toggle="left|infoLine"        a button or menu item that shows or hides the zone or strip; checked follows it
+	//   sections="channel"            a container of sections of that set, such as each of the mixer's channels; its
+	//                                 children with section="eq" (label="EQ", default="hidden") are the sections, in
+	//                                 the user's order and hidden with the class .hidden. The first container says
+	//                                 which sections a set has and their default order
+	//   setup="channel"               a setup pane's list of the set's sections, which the docking system fills with a
+	//                                 toggle button per section (setup-section="eq"); a button dragged onto another
+	//                                 moves its section there
 	//
 	// Zones get the state class .hidden when hidden and .focused while the keyboard focus is in them; strips get
 	// .hidden. A tab is dragged onto another to move it there; a right click on the tabs opens the zone's tab menu,
@@ -95,6 +102,13 @@ namespace gnubase::ui
 		void moveTab(const std::string& id, const std::string& before);             // to that panel's place
 		void setTabHidden(const std::string& id, bool hidden);
 		void setFloating(const std::string& id, bool floating);
+		// set is a set of sections, such as "channel"; before is the section whose place it takes.
+		void moveSection(
+			const std::string& window, const std::string& set, const std::string& id, const std::string& before);
+		void setSectionHidden(const std::string& window, const std::string& set, const std::string& id, bool hidden);
+		std::vector<std::string> sections(const std::string& window, const std::string& set) const; // in order
+		// Shows the panel as its zone's active tab, with the zone shown, unless it is in a window of its own.
+		void open(const std::string& id);
 
 		// The window a panel shows in on its own, or null while it is docked.
 		Window* windowOf(const std::string& panel);
@@ -110,10 +124,18 @@ namespace gnubase::ui
 			Rml::ObserverPtr<Rml::Element> document; // that window's document
 		};
 
+		struct Section
+		{
+			std::string id;
+			std::string label;
+			bool hidden = false; // by default
+		};
+
 		struct Attached
 		{
 			Rml::ObserverPtr<Rml::Element> document;
 			std::map<std::string, std::vector<std::string>> tabs; // the tabs each zone's tab group shows, in order
+			std::map<std::string, std::vector<Section>> sections; // each set's, in the document's order
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -128,6 +150,9 @@ namespace gnubase::ui
 		std::string windowIn(Window& window) const;              // the docking window shown there
 		std::vector<std::string> tabs(const std::string& window, const std::string& name) const; // in order
 		std::vector<std::string> shownTabs(const std::string& window, const std::string& name) const;
+		const Section* section(const std::string& window, const std::string& set, const std::string& id) const;
+		bool sectionHidden(const std::string& window, const std::string& set, const std::string& id) const;
+		engine::Json& sectionsJson(const std::string& window, const std::string& set);
 
 		void apply();
 		void applyWindow(const std::string& window, Attached& attached);

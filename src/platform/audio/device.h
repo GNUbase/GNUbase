@@ -202,8 +202,9 @@ namespace gnubase::audio
 
 	protected:
 		// For backends, when their driver asks for a reset. Not on the audio thread. The handler runs on a copy,
-		// outside the lock: what it sets off may destroy this device before it returns.
-		void requestReset() const { call(m_reset); }
+		// outside the lock: what it sets off may destroy this device before it returns. False if no handler is set
+		// yet, as before the engine has read a device it just opened: a backend asks again later then (#371).
+		bool requestReset() const { return call(m_reset); }
 
 		// For backends, when the latency they report changes. Not on the audio thread; the same as requestReset.
 		void reportLatencyChange() const { call(m_latencyChange); }
@@ -212,15 +213,17 @@ namespace gnubase::audio
 		void reportOverload() noexcept { m_overloads.fetch_add(1, std::memory_order_relaxed); }
 
 	private:
-		void call(const std::function<void()>& slot) const
+		bool call(const std::function<void()>& slot) const
 		{
 			std::function<void()> handler;
 			{
 				const std::scoped_lock lock(m_handlerMutex);
 				handler = slot;
 			}
-			if (handler)
-				handler();
+			if (!handler)
+				return false;
+			handler();
+			return true;
 		}
 
 		mutable std::mutex m_handlerMutex; // guards m_reset and m_latencyChange
@@ -242,6 +245,10 @@ namespace gnubase::audio
 
 		// The devices there are now. Throws DeviceError if the driver can't list them.
 		virtual std::vector<DeviceInfo> devices() = 0;
+
+		// False if a device's unavailableReason says only why it last failed to open, not whether its hardware is
+		// there now (ASIO, whose drivers tell that only when they are opened).
+		virtual bool listsPresence() const { return true; }
 
 		// Opens a device stopped. Throws DeviceError if it can't, e.g. for an unknown device or an unsupported sample
 		// rate, block size or clock source.
