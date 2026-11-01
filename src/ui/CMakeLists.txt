@@ -49,6 +49,8 @@ add_library(gnubase-ui STATIC
 	markers.cpp
 	markers.h
 	markerswindow.cpp
+	poolpanel.cpp
+	poolpanel.h
 	popupwidgets.cpp
 	pseudolocale.cpp
 	pseudolocale.h
@@ -59,6 +61,8 @@ add_library(gnubase-ui STATIC
 	sdlwindowsystem.h
 	shell.cpp
 	shell.h
+	statusline.cpp
+	statusline.h
 	themes.cpp
 	themes.h
 	timeformat.cpp

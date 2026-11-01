@@ -466,6 +466,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
         (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),
         (".docking .strip", {"background-color": c["surface"]}),
+        # The status line (docs/features/status-line.md): a sample rate mismatch and a lost audio device stand out
+        (".status-line .status-field", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        (".status-line .mismatch", {"color": c["warning"]}),
+        ("#lost-device", {"color": c["danger"]}),
         # The main menu bar (docs/features/main-menu.md): flat menu titles, lit under the mouse, and the items' keys
         (".menubar", {"background-color": c["surface"]}),
         (".menubar button", {"decorator": "none", "color": c["text"]}),
