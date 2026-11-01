@@ -46,6 +46,8 @@ add_library(gnubase-ui STATIC
 	livereload.h
 	mainmenu.cpp
 	mainmenu.h
+	poolpanel.cpp
+	poolpanel.h
 	popupwidgets.cpp
 	pseudolocale.cpp
 	pseudolocale.h

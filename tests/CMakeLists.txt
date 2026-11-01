@@ -74,6 +74,8 @@ add_executable(gnubase-tests
 	performance_tests.cpp
 	playback_tests.cpp
 	plugin_api_tests.cpp
+	pool_tests.cpp
+	poolpanel_tests.cpp
 	processor_tests.cpp
 	quantize_tests.cpp
 	rmlui_tests.cpp
