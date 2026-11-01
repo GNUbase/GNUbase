@@ -477,8 +477,9 @@ namespace gnubase::engine
 	}
 
 	InstrumentChannel::InstrumentChannel(
-		std::shared_ptr<MidiSequencer> sequencer, std::shared_ptr<graph::Processor> instrument)
-		: m_sequencer(std::move(sequencer)), m_instrument(std::move(instrument)), m_events(graph::g_maxEventsPerBlock)
+		std::shared_ptr<MidiSequencer> sequencer, std::shared_ptr<graph::Processor> instrument, uint64_t serial)
+		: m_sequencer(std::move(sequencer)), m_instrument(std::move(instrument)), m_serial(serial),
+		  m_events(graph::g_maxEventsPerBlock)
 	{
 	}
 
@@ -495,8 +496,8 @@ namespace gnubase::engine
 		for (uint16_t index = 0; index < MidiSequencer::g_notes; ++index)
 		{
 			if (!m_held[index] || m_ending[index] || !departed.holds(index) || m_sequencer->holds(index) ||
-				std::any_of(staying.begin(), staying.end(),
-					[index](const std::shared_ptr<MidiSequencer>& source) { return source->holds(index); }))
+				std::any_of(staying.begin(), staying.end(), [this, index](const std::shared_ptr<MidiSequencer>& source)
+					{ return source->playsOn() == m_serial && source->holds(index); }))
 				continue;
 			m_ending[index] = true;
 			++m_endingCount;

@@ -31,6 +31,7 @@ namespace gnubase::engine
 			{TrackType::Group, "group"},
 			{TrackType::Effect, "effect"},
 			{TrackType::Marker, "marker"},
+			{TrackType::Ruler, "ruler"},
 		};
 
 		constexpr struct
@@ -376,9 +377,13 @@ namespace gnubase::engine
 
 	Json toJson(const Track& track)
 	{
-		return {{"id", track.id}, {"type", trackTypeName(track.type)}, {"name", track.name},
+		Json json = {{"id", track.id}, {"type", trackTypeName(track.type)}, {"name", track.name},
 			{"color", colorJson(track.color)}, {"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent},
-			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)}};
+			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)},
+			{"enabled", track.enabled}};
+		if (track.type == TrackType::Ruler)
+			json["timeFormat"] = track.timeFormat;
+		return json;
 	}
 
 	Json toJson(const Channel& channel)
@@ -394,7 +399,7 @@ namespace gnubase::engine
 			{"panRight", channel.panRight}, {"panBypass", channel.panBypass},
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
 			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
-			{"recordEnable", channel.recordEnable}};
+			{"recordEnable", channel.recordEnable}, {"mute", channel.mute}, {"solo", channel.solo}};
 	}
 
 	Json toJson(const MediaFile& media)
@@ -414,7 +419,7 @@ namespace gnubase::engine
 		return {{"id", event.id}, {"track", event.track}, {"clip", event.clip}, {"position", event.position.value},
 			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute},
 			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
-			{"crossfade", toJson(event.crossfade)}};
+			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()}};
 	}
 
 	Json toJson(const Note& note)
@@ -563,7 +568,8 @@ namespace gnubase::engine
 			{"clips", toJsonArray(project.clips)}, {"audioEvents", toJsonArray(project.audioEvents)},
 			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
 			{"automation", toJsonArray(project.automation)}, {"quantize", midi::toJson(project.quantize)},
-			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack}};
+			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
+			{"snap", toJson(project.snap)}};
 	}
 
 	namespace
@@ -821,8 +827,17 @@ namespace gnubase::engine
 			track.timeBase = timeBaseFromName(item.at("timeBase").get<std::string>());
 			track.parent = item.at("parent").get<ObjectId>();
 			track.channel = item.at("channel").get<ObjectId>();
+			// Files from before disabled tracks have every track enabled; only some types can be disabled.
+			track.enabled = !canDisable(track.type) || item.value("enabled", true);
 			if (const Json autoFades = item.value("autoFades", Json()); !autoFades.is_null())
 				track.autoFades = autoFadesFromJson(autoFades);
+			if (track.type == TrackType::Ruler)
+			{
+				track.timeFormat = item.at("timeFormat").get<std::string>();
+				if (std::find(g_rulerTimeFormats.begin(), g_rulerTimeFormats.end(), track.timeFormat) ==
+					g_rulerTimeFormats.end())
+					throw std::invalid_argument("unknown ruler time format " + track.timeFormat);
+			}
 			(track.parent == 0 ? project.tracks : project.trackById.at(track.parent).children).push_back(track.id);
 			project.trackById[track.id] = track;
 		}
@@ -859,6 +874,8 @@ namespace gnubase::engine
 			const bool audio = track != project.trackById.end() && track->second.type == TrackType::Audio;
 			channel.monitor = audio && item.value("monitor", false);
 			channel.recordEnable = audio && item.value("recordEnable", false);
+			channel.mute = item.value("mute", false); // files from before mute and solo have neither
+			channel.solo = item.value("solo", false);
 			project.channels[id] = std::move(channel);
 		}
 		for (const Json& item : json.at("media"))
@@ -890,6 +907,8 @@ namespace gnubase::engine
 			event.fadeIn = fadeFromJson(item.value("fadeIn", Json::object()));
 			event.fadeOut = fadeFromJson(item.value("fadeOut", Json::object()));
 			event.crossfade = crossfadeFrom(item.value("crossfade", Json()));
+			if (const Json snapPoint = item.value("snapPoint", Json()); !snapPoint.is_null()) // files from before #87
+				event.snapPoint = snapPoint.get<time::Samples>();
 			project.audioEvents[event.id] = event;
 		}
 		for (const Json& item : json.at("midiParts"))
@@ -960,6 +979,7 @@ namespace gnubase::engine
 		if (json.contains("quantize"))
 			project.quantize = midi::quantizeSettingsFromJson(json.at("quantize"));
 		project.autoQuantize = json.value("autoQuantize", false);
+		project.snap = snapSettingsFrom(json.value("snap", Json::object()), SnapSettings()); // files from before #87
 
 		// Without a counter, ids continue after the highest one.
 		ObjectId highest = 0;
