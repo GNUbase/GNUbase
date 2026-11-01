@@ -285,12 +285,18 @@ namespace gnubase::ui
 		m_actions.insert(actions.begin(), actions.end());
 	}
 
+	size_t EventDisplay::laneAt(double y) const
+	{
+		if (y < 0.0)
+			return 0;
+		return static_cast<size_t>(std::upper_bound(m_laneTops.begin(), m_laneTops.end(), y) - m_laneTops.begin()) - 1;
+	}
+
 	const EventDisplay::Shown* EventDisplay::eventAt(double x, double y) const
 	{
-		const double row = (y + m_view.top) / (g_trackHeight * m_view.trackZoom);
-		if (row < 0.0)
+		if (y + m_view.top < 0.0)
 			return nullptr;
-		const auto lane = static_cast<size_t>(row);
+		const size_t lane = laneAt(y + m_view.top);
 		const double time = m_view.start + (x * m_view.scale);
 		const Shown* found = nullptr; // the last one is drawn on top
 		for (const Shown& shown : m_events)
@@ -304,6 +310,7 @@ namespace gnubase::ui
 		m_dragMoved = false;
 		m_dragDx = 0.0;
 		m_dragLanes = 0;
+		m_dragLaneY = y + m_view.top;
 		const bool add = held(event, "ctrl_key") || held(event, "meta_key") || held(event, "shift_key");
 		const Shown* shown = eventAt(x, y);
 		if (shown == nullptr)
@@ -346,7 +353,9 @@ namespace gnubase::ui
 		if (m_drag != Drag::Events)
 			return;
 		m_dragDx = moveShift(dx).second / m_view.scale;
-		m_dragLanes = static_cast<int>(std::lround(dy / (g_trackHeight * m_view.trackZoom)));
+		const auto lane = [this](double y)
+		{ return static_cast<int>(std::min(laneAt(y), m_laneTracks.empty() ? 0 : m_laneTracks.size() - 1)); };
+		m_dragLanes = lane(m_dragLaneY + dy) - lane(m_dragLaneY);
 		setLanes();
 	}
 
@@ -451,10 +460,9 @@ namespace gnubase::ui
 			return;
 		const double x = dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F));
 		const double y = (event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio();
-		const double row = (y + m_view.top) / (g_trackHeight * m_view.trackZoom);
-		if (row < 0.0 || eventAt(x, y) != nullptr)
+		if (y + m_view.top < 0.0 || eventAt(x, y) != nullptr)
 			return;
-		const auto lane = static_cast<size_t>(row);
+		const size_t lane = laneAt(y + m_view.top);
 		// Below the tracks, a new MIDI track (reference manual p. 198, the track list's empty area, #80).
 		if (lane >= m_laneTypes.size())
 		{
