@@ -206,25 +206,6 @@ namespace gnubase::engine
 			item.position() = start;
 		}
 
-		// Gives a part's notes and controllers new ids.
-		void renumber(Project& project, MidiPart& part)
-		{
-			std::map<ObjectId, Note> notes;
-			for (auto& [id, note] : part.notes)
-			{
-				note.id = project.newId();
-				notes[note.id] = note;
-			}
-			part.notes = std::move(notes);
-			std::map<ObjectId, Controller> controllers;
-			for (auto& [id, controller] : part.controllers)
-			{
-				controller.id = project.newId();
-				controllers[controller.id] = std::move(controller);
-			}
-			part.controllers = std::move(controllers);
-		}
-
 		// Takes a part out of its shared copies before its contents change for its own sake.
 		void detach(Project& project, MidiPart& part)
 		{
