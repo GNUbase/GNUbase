@@ -71,20 +71,21 @@ The object selection tool's gestures (#86 brings the other tools):
 |---|---|---|
 | Click | Selects the event, or nothing on an empty spot | p. 253 |
 | Ctrl (Cmd) or Shift and a click | Adds the event to the selection or takes it out | |
-| Drag | Moves the selection, and onto the track it is dragged to when it is on one track | p. 256 |
+| Drag | Moves the selection, and onto the track it is dragged to when it is on one track; snapped ([snap.md](snap.md)) | p. 256 |
 | Alt and a drag; with Shift too | Copies the selection; shared copies of MIDI parts | pp. 270–271 |
 | Drag within 6 dp of an event's left or right edge | Resizes the selection: normal sizing, or sizing moves contents (`setSizingMovesContents`) | p. 265 |
 | Alt and a click | Splits the event there | p. 268 |
 | Double click on an empty MIDI or instrument lane | Adds a one-bar part at the bar, or one between the locators when the click is between them | p. 251 |
+| Double click below the tracks | Adds a MIDI track ([add-track.md](add-track.md)) | p. 198 |
 
 The edit commands are in `actions()`, for the key command system to bind (#57): `edit.delete`, `edit.mute`,
 `edit.unmute`, `edit.lock`, `edit.unlock`, `edit.splitAtCursor` and `edit.splitLoop` (the selection, or every event
 there), `edit.glue`, `edit.duplicate`, `edit.repeat`, `edit.fillLoop`, `edit.toRealCopy`, `edit.moveStartToCursor`,
 `edit.moveEndToCursor`, the nudges `edit.nudgeLeft`, `edit.nudgeRight`, `edit.nudgeStartLeft`, `edit.nudgeStartRight`,
-`edit.nudgeEndLeft` and `edit.nudgeEndRight` (a quarter note until the snap grid, #87, sets the step), and the select
+`edit.nudgeEndLeft` and `edit.nudgeEndRight` (a step of the snap grid, [snap.md](snap.md)), and the select
 submenu `edit.selectAll`, `edit.selectNone`, `edit.invertSelection`, `edit.selectInLoop`,
-`edit.selectFromStartToCursor`, `edit.selectFromCursorToEnd` and `edit.selectUnderCursor` (on every track until the
-track list, #81, selects tracks). `edit.repeat` opens the Repeat Events dialog (`resources/ui/repeat-events.rml`,
+`edit.selectFromStartToCursor`, `edit.selectFromCursorToEnd` and `edit.selectUnderCursor` (on every track, not yet only on
+the track list's selected tracks). `edit.repeat` opens the Repeat Events dialog (`resources/ui/repeat-events.rml`,
 reference manual pp. 271–272): a count from 1 to 1000 and Shared Copies, which OK passes to `repeat(count, shared)`.
 Copies, duplicates and new parts become the selection. `app::AppUi` binds the reference's keys for them in the project
 window ([key-commands.md](key-commands.md)): Delete and Backspace delete, Mod+D duplicates, Mod+K repeats, Alt+X splits

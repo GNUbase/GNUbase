@@ -25,12 +25,14 @@
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -526,35 +528,68 @@ namespace
 		return backend;
 	}
 
-	// Runs PipeWire's command line tool. True if it succeeds.
-	bool pwCli(const std::vector<std::string>& arguments)
+	// Runs one of PipeWire's command line tools (pw-cli, pw-metadata). True if it succeeds.
+	bool pw(const std::string& tool, const std::vector<std::string>& arguments)
 	{
 		gnubase::platform::ChildProcess process =
-			gnubase::platform::ChildProcess::start("/usr/bin/pw-cli", arguments, "/dev/null");
+			gnubase::platform::ChildProcess::start("/usr/bin/" + tool, arguments, "/dev/null");
 		return process.wait(std::chrono::seconds(10)) == 0;
+	}
+
+	// True once done() holds, false if it doesn't within five seconds.
+	bool eventually(const std::function<bool()>& done)
+	{
+		for (int i = 0; i < 100 && !done(); ++i)
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		return done();
 	}
 
 	// Removes a node when it goes out of scope, also when a check fails.
 	struct NodeRemover
 	{
-		~NodeRemover() { pwCli({"destroy", name}); } // fails if it was removed already
+		~NodeRemover() { pw("pw-cli", {"destroy", name}); } // fails if it was removed already
 
 		std::string name;
 	};
 
+	// Forces a setting of the graph (clock.force-rate, clock.force-quantum) as another client would, and clears it
+	// again when it goes out of scope, also when a check fails.
+	class ForcedSetting
+	{
+	public:
+		ForcedSetting(std::string key, uint32_t value) : m_key(std::move(key))
+		{
+			REQUIRE(pw("pw-metadata", {"-n", "settings", "0", m_key, std::to_string(value)}));
+		}
+		~ForcedSetting() { pw("pw-metadata", {"-n", "settings", "0", m_key, "0"}); }
+		ForcedSetting(const ForcedSetting&) = delete;
+		ForcedSetting& operator=(const ForcedSetting&) = delete;
+
+	private:
+		std::string m_key;
+	};
+
+	// The tests that change the graph need PipeWire's command line tools, which come with the daemon.
+	bool havePipeWireTools()
+	{
+		if (std::filesystem::exists("/usr/bin/pw-cli") && std::filesystem::exists("/usr/bin/pw-metadata"))
+			return true;
+		WARN("no pw-cli and pw-metadata to change the graph with");
+		return false;
+	}
+
 	// In the contract's test case, so that the contract never meets the sink that comes and goes when ctest runs
-	// tests in parallel.
+	// tests in parallel. A device asks for a reset when the sink gets other ports, e.g. for another channel count,
+	// and opens again with those; then when the sink goes away.
 	void checkUnplug(const std::unique_ptr<Backend>& backend)
 	{
-		if (!std::filesystem::exists("/usr/bin/pw-cli"))
-		{
-			WARN("no pw-cli to add and remove a sink with");
+		if (!havePipeWireTools())
 			return;
-		}
 		const std::string sink = "gnubase-test-unplug";
-		REQUIRE(pwCli({"create-node", "adapter",
-			"{ factory.name=support.null-audio-sink node.name=" + sink +
-				" media.class=Audio/Sink audio.position=[ FL FR ] object.linger=true }"}));
+		REQUIRE(pw("pw-cli",
+			{"create-node", "adapter",
+				"{ factory.name=support.null-audio-sink node.name=" + sink +
+					" media.class=Audio/Sink audio.position=[ FL FR ] object.linger=true }"}));
 		const NodeRemover remover{sink};
 		const auto listed = [&backend, &sink]
 		{
@@ -562,28 +597,181 @@ namespace
 			return std::any_of(
 				devices.begin(), devices.end(), [&sink](const DeviceInfo& device) { return device.id == sink; });
 		};
-		for (int i = 0; i < 100 && !listed(); ++i)
-			std::this_thread::sleep_for(std::chrono::milliseconds(50));
-		REQUIRE(listed()); // with ports, which the session manager adds
+		REQUIRE(eventually(listed)); // with ports, which the session manager adds
 		std::unique_ptr<Device> device = backend->open(config(sink));
+		CHECK(device->format().outputChannels == 2);
 		std::atomic<int> resets{0};
 		device->onReset([&resets] { ++resets; });
-		REQUIRE(pwCli({"destroy", sink}));
-		for (int i = 0; i < 100 && resets == 0; ++i)
-			std::this_thread::sleep_for(std::chrono::milliseconds(50));
-		CHECK(resets > 0);
+		REQUIRE(pw("pw-cli",
+			{"set-param", sink, "PortConfig",
+				"{ direction: Input, mode: dsp, format: { mediaType: audio, mediaSubtype: raw, format: F32P, rate: "
+				"48000, "
+				"channels: 1, position: [ MONO ] } }"}));
+		CHECK(eventually([&resets] { return resets > 0; }));
+		device.reset();
+
+		device = backend->open(config(sink));
+		CHECK(device->info().outputs == std::vector<std::string>{"MONO"});
+		resets = 0;
+		device->onReset([&resets] { ++resets; });
+		REQUIRE(pw("pw-cli", {"destroy", sink}));
+		CHECK(eventually([&resets] { return resets > 0; }));
 		device.reset();
 		CHECK(!listed());
 	}
 }
 
-TEST_CASE("the PipeWire backend keeps the device contract and asks for a reset when a sink goes away", "[integration]")
+TEST_CASE("the PipeWire backend keeps the device contract and asks for a reset when a sink's ports change or it goes "
+		  "away",
+	"[integration]")
 {
 	const std::unique_ptr<Backend> backend = pipeWireOrSkip();
 	if (!backend)
 		SKIP("no PipeWire daemon runs here");
 	checkDeviceContract(*backend);
 	checkUnplug(backend);
+}
+
+// While another client forces the graph to another rate, a device would only play silence: it asks for a reset. Until
+// the force is lifted the listing has the forced rate only, and opening at another one says why it can't; a device
+// opened without a rate opens at the forced one. When the force is lifted, the device asks for a reset again.
+TEST_CASE("a PipeWire device asks for a reset when another client forces the graph to another rate", "[integration]")
+{
+	std::unique_ptr<Backend> backend = pipeWireOrSkip();
+	if (!backend)
+		SKIP("no PipeWire daemon runs here");
+	if (!havePipeWireTools())
+		return;
+	SECTION("the device")
+	{
+		std::unique_ptr<Device> device = backend->open(config("default"));
+		const double rate = device->format().sampleRate;
+		const uint32_t other = rate != 44100.0 ? 44100 : 48000;
+		std::atomic<int> resets{0};
+		device->onReset([&resets] { ++resets; });
+		ContractCallback callback(device->format());
+		device->start(callback);
+		REQUIRE(callback.waitFor(8));
+		{
+			const ForcedSetting forced("clock.force-rate", other);
+			CHECK(eventually([&resets] { return resets > 0; }));
+			device.reset();
+			CHECK(backend->devices().front().sampleRates == std::vector<double>{static_cast<double>(other)});
+			CHECK_THROWS_WITH(backend->open(config("default", rate)), Catch::Matchers::ContainsSubstring("forces"));
+			CHECK(backend->open(config("default"))->format().sampleRate == other);
+		}
+		CHECK(eventually(
+			[&backend, rate]
+			{
+				try
+				{
+					return backend->open(config("default", rate))->format().sampleRate == rate;
+				}
+				catch (const DeviceError&)
+				{
+					return false;
+				}
+			}));
+		CHECK(callback.violations() == 0);
+	}
+	SECTION("the engine, with the device set as the studio setup sets it")
+	{
+		std::vector<std::unique_ptr<Backend>> backends;
+		backends.push_back(std::move(backend));
+		gnubase::engine::Engine engine(std::move(backends));
+		Client client(engine);
+		// Backend and device only, without a sample rate: the device opens at the graph's rate, the project's.
+		run(client, "audio.setDevice", {{"backend", "pipewire"}, {"device", "default"}});
+		run(client, "audio.start");
+		const auto status = [&client] { return run(client, "audio.get"); };
+		const Json before = status().at("device");
+		REQUIRE(before.at("sampleRateMismatch") == false);
+		const double rate = before.at("sampleRate").get<double>();
+		const double other = rate != 44100.0 ? 44100.0 : 48000.0;
+		const auto runsAt = [&status](double expected, bool mismatch)
+		{
+			const Json current = status();
+			return current.at("running") == true && current.at("lost").is_null() &&
+				current.at("device").at("sampleRate").get<double>() == expected &&
+				current.at("device").at("sampleRateMismatch") == mismatch;
+		};
+		{
+			// Like any device that doesn't run at the project's rate, it runs at the forced one meanwhile.
+			const ForcedSetting forced("clock.force-rate", static_cast<uint32_t>(other));
+			CHECK(eventually([&runsAt, other] { return runsAt(other, true); }));
+		}
+		CHECK(eventually([&runsAt, rate] { return runsAt(rate, false); }));
+	}
+}
+
+// The latency counts in quanta: when another client changes the graph's quantum while a device runs, the device
+// reports a latency change, and the engine moves the record offset with it once, without restarting the device over
+// and over (#386).
+TEST_CASE("a running PipeWire device reports a latency change when the graph's quantum changes", "[integration]")
+{
+	std::unique_ptr<Backend> backend = pipeWireOrSkip();
+	if (!backend)
+		SKIP("no PipeWire daemon runs here");
+	if (!havePipeWireTools())
+		return;
+	SECTION("the device")
+	{
+		const std::unique_ptr<Device> device = backend->open(config("default"));
+		std::atomic<int> changes{0};
+		device->onLatencyChange([&changes] { ++changes; });
+		ContractCallback callback(device->format());
+		device->start(callback);
+		REQUIRE(callback.waitFor(8));
+		const DeviceLatency before = device->latency();
+		const uint32_t quantum = device->format().blockSize != 256 ? 256 : 512;
+		const ForcedSetting forced("clock.force-quantum", quantum);
+		CHECK(eventually([&changes] { return changes > 0; }));
+		CHECK(callback.waitFor(8));
+		const DeviceLatency after = device->latency();
+		INFO("latency at block size " << device->format().blockSize << ": " << before.input << " in, " << before.output
+									  << " out; at quantum " << quantum << ": " << after.input << " in, "
+									  << after.output << " out");
+		CHECK(after.output != before.output);
+		if (device->format().inputChannels > 0)
+			CHECK(after.input != before.input);
+		CHECK(callback.violations() == 0);
+	}
+	SECTION("the engine")
+	{
+		std::vector<std::unique_ptr<Backend>> backends;
+		backends.push_back(std::move(backend));
+		gnubase::engine::Engine engine(std::move(backends));
+		Client client(engine);
+		run(client, "audio.setDevice", {{"backend", "pipewire"}, {"device", "default"}, {"recordShift", 10}});
+		run(client, "audio.start");
+		const auto status = [&client] { return run(client, "audio.get").at("device"); };
+		const auto settled = [&status]
+		{
+			const Json device = status();
+			return device.at("recordOffset").get<int64_t>() ==
+				device.at("inputLatency").get<int64_t>() + device.at("outputLatency").get<int64_t>() - 10;
+		};
+		REQUIRE(eventually(settled));
+		const int64_t before = status().at("recordOffset").get<int64_t>();
+		const uint32_t quantum = status().at("blockSize").get<uint32_t>() != 256 ? 256 : 512;
+		const ForcedSetting forced("clock.force-quantum", quantum);
+		CHECK(eventually(
+			[&settled, &status, before] { return settled() && status().at("recordOffset").get<int64_t>() != before; }));
+
+		// Settled: no more restarts, each of which would send audio.changed.
+		while (client.poll())
+		{
+		}
+		std::this_thread::sleep_for(std::chrono::seconds(1));
+		int changes = 0;
+		while (const std::optional<gnubase::engine::Message> message = client.poll())
+		{
+			const auto* event = std::get_if<gnubase::engine::Event>(&*message);
+			changes += event != nullptr && event->name == "audio.changed" ? 1 : 0;
+		}
+		CHECK(changes == 0);
+		CHECK(run(client, "audio.get").at("running") == true);
+	}
 }
 
 // tools/start-pipewire.sh adds the loopback: a null sink of media class Audio/Duplex, a device of its own
@@ -710,7 +898,10 @@ namespace
 			const auto add = function<decltype(&jack_port_register)>("jack_port_register");
 			m_close = function<decltype(&jack_client_close)>("jack_client_close");
 			m_bufferSize = function<decltype(&jack_get_buffer_size)>("jack_get_buffer_size");
+			m_setBufferSize = function<decltype(&jack_set_buffer_size)>("jack_set_buffer_size");
 			m_buffer = function<decltype(&jack_port_get_buffer)>("jack_port_get_buffer");
+			m_cycleTimes = function<decltype(&jack_get_cycle_times)>("jack_get_cycle_times");
+			m_time = function<decltype(&jack_get_time)>("jack_get_time");
 			m_client = open(name, JackNoStartServer, nullptr);
 			REQUIRE(m_client != nullptr);
 			size_t i = 0;
@@ -736,6 +927,23 @@ namespace
 		// The server's buffer size, as this client sees it.
 		uint32_t bufferSize() const { return m_bufferSize(m_client); }
 
+		// Asks the server for a buffer size, as another application would. 0 if it takes it.
+		int setBufferSize(uint32_t frames) const { return m_setBufferSize(m_client, frames); }
+
+		// The start of the server's current cycle on the host clock, or 0 if the server doesn't tell. A cycle is every
+		// client's, so this works on another client's process thread too (jackd).
+		gnubase::HostTime cycleStart() const
+		{
+			jack_nframes_t frames = 0;
+			jack_time_t current = 0;
+			jack_time_t next = 0;
+			float period = 0.0f;
+			if (m_cycleTimes(m_client, &frames, &current, &next, &period) != 0)
+				return 0;
+			const gnubase::HostTime now = gnubase::hostTime();
+			return now - (static_cast<gnubase::HostTime>(m_time() - current) * 1000);
+		}
+
 	private:
 		template <typename Function> Function function(const char* name)
 		{
@@ -759,8 +967,62 @@ namespace
 		std::array<jack_port_t*, 4> m_ports{}; // capture, then playback
 		decltype(&jack_client_close) m_close = nullptr;
 		decltype(&jack_get_buffer_size) m_bufferSize = nullptr;
+		decltype(&jack_set_buffer_size) m_setBufferSize = nullptr;
 		decltype(&jack_port_get_buffer) m_buffer = nullptr;
+		decltype(&jack_get_cycle_times) m_cycleTimes = nullptr;
+		decltype(&jack_get_time) m_time = nullptr;
 	};
+
+	// Counts the blocks, a cycle long, that start within 20 µs of the start of the server's cycle: the two clocks are
+	// read at slightly different times, and a thread may be preempted between the two reads now and then.
+	class CycleCallback : public AudioCallback
+	{
+	public:
+		explicit CycleCallback(const TestClient& clock) : m_clock(clock) {}
+
+		void process(const DeviceBlock& block) noexcept override
+		{
+			const gnubase::HostTime start = m_clock.cycleStart();
+			if (start == 0)
+				return;
+			if (std::llabs(block.time - start) < 20000)
+				m_close.fetch_add(1);
+			m_blocks.fetch_add(1);
+		}
+
+		int blocks() const { return m_blocks.load(); }
+		int close() const { return m_close.load(); }
+
+	private:
+		const TestClient& m_clock;
+		std::atomic<int> m_blocks{0};
+		std::atomic<int> m_close{0};
+	};
+
+	// Sets one of PipeWire's settings, e.g. clock.force-rate. True if it succeeds.
+	bool pwSetting(const std::string& key, const std::string& value)
+	{
+		gnubase::platform::ChildProcess process = gnubase::platform::ChildProcess::start(
+			"/usr/bin/pw-metadata", {"-n", "settings", "0", key, value}, "/dev/null");
+		return process.wait(std::chrono::seconds(10)) == 0;
+	}
+
+	// The graph's forced quantum (PipeWire's setting clock.force-quantum), 0 if none is forced.
+	uint32_t forcedQuantum()
+	{
+		// NOLINTNEXTLINE(bugprone-command-processor): a constant command, whose output ChildProcess can't capture
+		FILE* pipe = popen("pw-metadata -n settings 0 clock.force-quantum 2>/dev/null", "r");
+		if (pipe == nullptr)
+			return 0;
+		std::string output;
+		std::array<char, 256> chunk{};
+		while (fgets(chunk.data(), static_cast<int>(chunk.size()), pipe) != nullptr)
+			output += chunk.data();
+		pclose(pipe);
+		const std::string key = "key:'clock.force-quantum' value:'";
+		const size_t at = output.find(key);
+		return at == std::string::npos ? 0 : static_cast<uint32_t>(std::strtoul(&output[at + key.size()], nullptr, 10));
+	}
 
 	// Takes longer than a cycle once, a few blocks in, so that the server reports an xrun.
 	class LateCallback : public AudioCallback
@@ -812,39 +1074,122 @@ namespace
 		REQUIRE(callback.waitFor(8));
 		std::this_thread::sleep_for(std::chrono::milliseconds(300));
 		CHECK(resets == 0);
-		if (!bufferSizeChanges)
-			return;
-
-		const std::vector<uint32_t> sizes = device->info().blockSizes;
-		const uint32_t other = sizes.back() != device->format().blockSize ? sizes.back() : sizes.front();
+		if (bufferSizeChanges)
 		{
-			const std::unique_ptr<Device> changer = backend.open(config("default", 0.0, other));
-			CHECK(changer->format().blockSize == other);
-			CHECK(waitUntil([&resets] { return resets > 0; }));
-			CHECK(callback.waitFor(4));
+			const std::vector<uint32_t> sizes = device->info().blockSizes;
+			const uint32_t other = sizes.back() != device->format().blockSize ? sizes.back() : sizes.front();
+			{
+				const std::unique_ptr<Device> changer = backend.open(config("default", 0.0, other));
+				CHECK(changer->format().blockSize == other);
+				CHECK(waitUntil([&resets] { return resets > 0; }));
+				CHECK(callback.waitFor(4));
+			}
+			CHECK(callback.violations() == 0);
 		}
-		CHECK(callback.violations() == 0);
+		device->stop(); // before the callback goes
 	}
 
 	// A device opened at a block size other than the server's asks the server for it and doesn't reset itself once the
 	// server follows, which PipeWire's JACK layer does a few cycles late, not even when the graph changes afterwards:
-	// the latency, which may follow the buffer size, is the device's new baseline then.
-	void checkJackOwnBufferSize(Backend& backend, const std::string& library)
+	// the latency, which may follow the buffer size, is the device's new baseline then. Under PipeWire, where the
+	// request forces the graph's quantum, closing leaves none forced (#389).
+	void checkJackOwnBufferSize(Backend& backend, const std::string& library, bool pipeWire)
 	{
 		auto other = std::make_unique<TestClient>(library, "gnubase-test-client", false);
 		const uint32_t own = other->bufferSize() != 512 ? 512 : 1024;
-		const std::unique_ptr<Device> device = backend.open(config("default", 0.0, own));
-		std::atomic<int> resets{0};
-		device->onReset([&resets] { ++resets; });
+		{
+			const std::unique_ptr<Device> device = backend.open(config("default", 0.0, own));
+			std::atomic<int> resets{0};
+			device->onReset([&resets] { ++resets; });
+			ContractCallback callback(device->format());
+			device->start(callback);
+			REQUIRE(callback.waitFor(8));
+			REQUIRE(waitUntil([&other, own] { return other->bufferSize() == own; }));
+			if (pipeWire)
+				CHECK(forcedQuantum() == own);
+			std::this_thread::sleep_for(std::chrono::milliseconds(100)); // the device's watcher sees the new size
+			other.reset(); // removes the client's ports: the graph changes
+			std::this_thread::sleep_for(std::chrono::milliseconds(300));
+			CHECK(resets == 0);
+			CHECK(callback.violations() == 0);
+			device->stop();
+		}
+		if (pipeWire)
+			CHECK(waitUntil([] { return forcedQuantum() == 0; }));
+	}
+
+	// Closing gives the server its buffer size back only while it still runs at the size the device asked for: a size
+	// another client set meanwhile stays (#371).
+	void checkJackOtherClientsBufferSize(Backend& backend, const std::string& library)
+	{
+		const TestClient other(library, "gnubase-test-client", false);
+		const uint32_t found = other.bufferSize();
+		const uint32_t own = found != 512 ? 512 : 1024;
+		const uint32_t theirs = found != 128 ? 128 : 64;
+		{
+			const std::unique_ptr<Device> device = backend.open(config("default", 0.0, own));
+			REQUIRE(waitUntil([&other, own] { return other.bufferSize() == own; }));
+			REQUIRE(other.setBufferSize(theirs) == 0);
+			REQUIRE(waitUntil([&other, theirs] { return other.bufferSize() == theirs; }));
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		CHECK(other.bufferSize() == theirs);
+		CHECK(other.setBufferSize(found) == 0);
+	}
+
+	// A reset the device finds before it has a handler, as between the engine opening it and reading its info and
+	// latency, comes once the handler is set (#371).
+	void checkJackResetBeforeHandler(Backend& backend, std::unique_ptr<TestClient> hardware)
+	{
+		const std::unique_ptr<Device> device = backend.open(config("default"));
 		ContractCallback callback(device->format());
 		device->start(callback);
-		REQUIRE(callback.waitFor(8));
-		REQUIRE(waitUntil([&other, own] { return other->bufferSize() == own; }));
-		std::this_thread::sleep_for(std::chrono::milliseconds(100)); // the device's watcher sees the new size
-		other.reset();                                               // removes the client's ports: the graph changes
-		std::this_thread::sleep_for(std::chrono::milliseconds(300));
-		CHECK(resets == 0);
-		CHECK(callback.violations() == 0);
+		REQUIRE(callback.waitFor(4));
+		hardware.reset();
+		std::this_thread::sleep_for(std::chrono::milliseconds(300)); // the device's watcher finds the ports gone
+		std::atomic<int> resets{0};
+		device->onReset([&resets] { ++resets; });
+		CHECK(waitUntil([&resets] { return resets > 0; }));
+		device->stop();
+	}
+
+	// The device asks for a reset when the server's sample rate changes, and plays silence rather than calling the
+	// engine at the wrong rate (#389). jackd can't change its rate while it runs; PipeWire can (clock.force-rate).
+	void checkJackRateChange(Backend& backend)
+	{
+		const double rate = backend.devices().front().sampleRates.front();
+		{
+			const std::unique_ptr<Device> device = backend.open(config("default"));
+			std::atomic<int> resets{0};
+			device->onReset([&resets] { ++resets; });
+			ContractCallback callback(device->format());
+			device->start(callback);
+			REQUIRE(callback.waitFor(4));
+			struct RateRestorer
+			{
+				~RateRestorer() { pwSetting("clock.force-rate", "0"); }
+			} const restorer;
+			REQUIRE(pwSetting("clock.force-rate", rate != 44100.0 ? "44100" : "48000"));
+			CHECK(waitUntil([&resets] { return resets > 0; }));
+			const size_t blocks = callback.blocks();
+			std::this_thread::sleep_for(std::chrono::milliseconds(200));
+			CHECK(callback.blocks() <= blocks + 1); // one may have been under way
+			device->stop();
+		}
+		CHECK(waitUntil([&backend, rate] { return backend.devices().front().sampleRates.front() == rate; }));
+	}
+
+	// Blocks are stamped with the start of the server's cycle as its filtered clock has it, not with the time the
+	// process callback happens to run at (#402).
+	void checkJackCycleTimes(Backend& backend, const std::string& library)
+	{
+		const TestClient clock(library, "gnubase-test-clock", false);
+		const std::unique_ptr<Device> device = backend.open(config("default")); // a block per cycle
+		CycleCallback callback(clock);
+		device->start(callback);
+		CHECK(waitUntil([&callback] { return callback.blocks() >= 50; }));
+		device->stop();
+		CHECK(callback.close() >= callback.blocks() * 9 / 10); // the callback runs tens of µs late
 	}
 
 	// The server reports a cycle the device took too long for as an xrun, which the device counts as an overload.
@@ -889,6 +1234,7 @@ namespace
 		REQUIRE(callback.waitFor(4));
 		hardware.reset();
 		CHECK(waitUntil([&resets] { return resets > 0; }));
+		device->stop();
 	}
 
 	// Plays a project over a sound card whose outputs are cabled to its inputs: a client with physical ports, which the
@@ -923,16 +1269,28 @@ TEST_CASE("the JACK backend keeps the device contract and plays a project over a
 		SKIP("no JACK server runs here");
 	checkDeviceContract(*backend);
 	checkJackResets(*backend, true);
-	checkJackOwnBufferSize(*backend, "libjack.so.0");
+	checkJackOwnBufferSize(*backend, "libjack.so.0", false);
+	checkJackOtherClientsBufferSize(*backend, "libjack.so.0");
 	checkJackXruns(*backend);
 	checkJackStopWhileLate(*backend);
+	checkJackCycleTimes(*backend, "libjack.so.0");
 	checkJackUnplug(*backend, std::make_unique<TestClient>("libjack.so.0", "gnubase-test-hardware", true));
+	checkJackResetBeforeHandler(*backend, std::make_unique<TestClient>("libjack.so.0", "gnubase-test-hardware", true));
 	checkJackRoundTrip(std::move(backend), "libjack.so.0");
 }
 
 TEST_CASE("the JACK backend keeps the device contract and plays a project over a loopback with PipeWire's JACK layer",
 	"[integration]")
 {
+	// GNUbase's clients ask for buffer sizes the way jack_bufsize does, through the graph's clock.force-quantum, which
+	// outlasts the client (#389); by default each client forces its own node's quantum, which goes with it.
+	struct GlobalBufferSize
+	{
+		GlobalBufferSize() { setenv("PIPEWIRE_PROPS", "{ jack.global-buffer-size = true }", 1); }
+		~GlobalBufferSize() { unsetenv("PIPEWIRE_PROPS"); }
+		GlobalBufferSize(const GlobalBufferSize&) = delete;
+		GlobalBufferSize& operator=(const GlobalBufferSize&) = delete;
+	} const globalBufferSize;
 	const std::string library = pipeWireJack();
 	if (library.empty() && required("GNUBASE_REQUIRE_PIPEWIRE"))
 		FAIL("PipeWire's libjack isn't installed (pipewire-jack)");
@@ -942,8 +1300,10 @@ TEST_CASE("the JACK backend keeps the device contract and plays a project over a
 	auto hardware = std::make_unique<TestClient>(library, "gnubase-test-hardware", true);
 	checkDeviceContract(*backend);
 	checkJackResets(*backend, false);
-	checkJackOwnBufferSize(*backend, library);
+	checkJackOwnBufferSize(*backend, library, true);
+	checkJackRateChange(*backend);
 	checkJackUnplug(*backend, std::move(hardware));
+	checkJackResetBeforeHandler(*backend, std::make_unique<TestClient>(library, "gnubase-test-hardware", true));
 	checkJackRoundTrip(std::move(backend), library);
 }
 
@@ -1007,10 +1367,10 @@ TEST_CASE("the dummy device names its channels and keeps the format it was given
 TEST_CASE("a device passes its driver's reset requests on", "[unit]")
 {
 	DummyDevice device(DeviceFormat{}, 0);
-	device.requestReset(); // nobody listens: nothing happens
+	CHECK(!device.requestReset()); // nobody listens: nothing happens, and the driver learns so
 	int resets = 0;
 	device.onReset([&resets] { ++resets; });
-	device.requestReset();
+	CHECK(device.requestReset());
 	CHECK(resets == 1);
 }
 

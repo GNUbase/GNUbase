@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <stdexcept>
 #include <utility>
 
@@ -72,6 +73,30 @@ namespace gnubase::ui
 					if (item.is_string())
 						result.push_back(item.get<std::string>());
 			return result;
+		}
+
+		// Puts the container's children whose attribute the order names into that order, where the last of them is.
+		void arrange(Rml::Element& container, const char* name, const std::vector<std::string>& order)
+		{
+			std::vector<Rml::Element*> children; // in the document's order
+			for (int i = 0; i < container.GetNumChildren(); ++i)
+				if (contains(order, attribute(*container.GetChild(i), name)))
+					children.push_back(container.GetChild(i));
+			std::vector<Rml::Element*> sorted;
+			for (const std::string& id : order)
+				std::copy_if(children.begin(), children.end(), std::back_inserter(sorted),
+					[&](const Rml::Element* child) { return attribute(*child, name) == id; });
+			if (sorted == children)
+				return;
+			Rml::Element* end = children.back()->GetNextSibling();
+			for (Rml::Element* child : sorted)
+			{
+				Rml::ElementPtr moved = container.RemoveChild(child);
+				if (end != nullptr)
+					container.InsertBefore(std::move(moved), end);
+				else
+					container.AppendChild(std::move(moved));
+			}
 		}
 
 		Json boundsJson(const Rect& bounds)
@@ -160,7 +185,27 @@ namespace gnubase::ui
 		Attached& attached = m_windows[name];
 		if (Rml::Element* old = attached.document.get())
 			listen(*old, false);
-		attached = Attached{document.GetObserverPtr(), {}};
+		attached = Attached{document.GetObserverPtr(), {}, {}};
+		// The first container of a set says which sections it has, before the user's order changes it.
+		for (const Rml::Element* container : elements(document, "[sections]"))
+		{
+			std::vector<Section>& known = attached.sections[attribute(*container, "sections")];
+			if (!known.empty())
+				continue;
+			for (int i = 0; i < container->GetNumChildren(); ++i)
+				if (const Rml::Element* child = container->GetChild(i); child->HasAttribute("section"))
+					known.push_back({attribute(*child, "section"), attribute(*child, "label"),
+						attribute(*child, "default") == "hidden"});
+		}
+		for (Rml::Element* pane : elements(document, "[setup]"))
+			for (const Section& known : attached.sections[attribute(*pane, "setup")])
+				if (pane->QuerySelector("[setup-section=" + known.id + "]") == nullptr)
+				{
+					Rml::Element* item = pane->AppendChild(document.CreateElement("button"));
+					item->SetAttribute("type", "toggle");
+					item->SetAttribute("setup-section", known.id);
+					item->SetInnerRML(known.label);
+				}
 		for (Rml::Element* zone : elements(document, "[zone]"))
 		{
 			const std::string zoneName = attribute(*zone, "zone");
@@ -230,7 +275,8 @@ namespace gnubase::ui
 			const char* description;
 			std::vector<const char*> keys; // the reference's (manual p. 1572)
 		};
-		const std::array<Toggle, 8> toggles = {{
+		const std::array<Toggle, 9> toggles = {{
+			{"window.menuBar", "menuBar", "Shows or hides the menu bar.", {}},
 			{"window.leftZone", "left", "Shows or hides the left zone.", {"Mod+Alt+L", "Alt+I"}},
 			{"window.rightZone", "right", "Shows or hides the right zone.", {"Mod+Alt+R"}},
 			{"window.lowerZone", "lower", "Shows or hides the lower zone.", {"Mod+Alt+E", "Mod+Alt+B"}},
@@ -444,6 +490,99 @@ namespace gnubase::ui
 		apply();
 	}
 
+	const Docking::Section* Docking::section(
+		const std::string& window, const std::string& set, const std::string& id) const
+	{
+		const auto attached = m_windows.find(window);
+		if (attached == m_windows.end())
+			return nullptr;
+		const auto sections = attached->second.sections.find(set);
+		if (sections == attached->second.sections.end())
+			return nullptr;
+		const auto it = std::find_if(sections->second.begin(), sections->second.end(),
+			[&id](const Section& section) { return section.id == id; });
+		return it == sections->second.end() ? nullptr : &*it;
+	}
+
+	std::vector<std::string> Docking::sections(const std::string& window, const std::string& set) const
+	{
+		std::vector<std::string> result;
+		for (const std::string& id : strings(find(m_layout, {"windows", window, "sections", set, "order"})))
+			if (section(window, set, id) != nullptr && !contains(result, id))
+				result.push_back(id);
+		if (const auto attached = m_windows.find(window); attached != m_windows.end())
+			if (const auto known = attached->second.sections.find(set); known != attached->second.sections.end())
+				for (const Section& entry : known->second)
+					if (!contains(result, entry.id))
+						result.push_back(entry.id);
+		return result;
+	}
+
+	bool Docking::sectionHidden(const std::string& window, const std::string& set, const std::string& id) const
+	{
+		if (const Json* hidden = find(m_layout, {"windows", window, "sections", set, "hidden"});
+			hidden != nullptr && hidden->is_array())
+			return contains(strings(hidden), id);
+		const Section* known = section(window, set, id);
+		return known != nullptr && known->hidden;
+	}
+
+	Json& Docking::sectionsJson(const std::string& window, const std::string& set)
+	{
+		Json& json = m_layout["windows"][window]["sections"][set];
+		if (!json.is_object())
+			json = Json::object();
+		return json;
+	}
+
+	void Docking::moveSection(
+		const std::string& window, const std::string& set, const std::string& id, const std::string& before)
+	{
+		std::vector<std::string> order = sections(window, set);
+		const auto from = std::find(order.begin(), order.end(), id);
+		const auto to = std::find(order.begin(), order.end(), before);
+		if (from == order.end() || to == order.end() || id == before)
+			return;
+		const auto index = to - order.begin();
+		order.erase(from);
+		order.insert(order.begin() + index, id); // where before was, as for tabs
+		sectionsJson(window, set)["order"] = order;
+		save();
+		apply();
+	}
+
+	void Docking::setSectionHidden(
+		const std::string& window, const std::string& set, const std::string& id, bool hidden)
+	{
+		if (section(window, set, id) == nullptr)
+			return;
+		std::vector<std::string> list; // every hidden one, so that the defaults no longer count
+		for (const std::string& name : sections(window, set))
+			if (name == id ? hidden : sectionHidden(window, set, name))
+				list.push_back(name);
+		sectionsJson(window, set)["hidden"] = list;
+		save();
+		apply();
+	}
+
+	void Docking::open(const std::string& id)
+	{
+		const Panel* shown = panel(id);
+		const Json* floating = find(m_layout, {"panels", id, "floating"});
+		if (shown == nullptr || (floating != nullptr && floating->is_boolean() && floating->get<bool>()))
+			return;
+		Json& json = zone(shown->window, shown->zone);
+		if (std::vector<std::string> hidden = strings(find(json, {"hidden"})); contains(hidden, id))
+		{
+			hidden.erase(std::remove(hidden.begin(), hidden.end(), id), hidden.end());
+			json["hidden"] = hidden;
+		}
+		json["active"] = id;
+		json["visible"] = true;
+		save();
+		apply();
+	}
+
 	Window* Docking::windowOf(const std::string& panel)
 	{
 		const auto it = m_shown.find(panel);
@@ -529,6 +668,27 @@ namespace gnubase::ui
 				toggle->SetAttribute("checked", "");
 			else
 				toggle->RemoveAttribute("checked");
+		}
+		for (const auto& [set, known] : attached.sections)
+		{
+			const std::vector<std::string> order = sections(window, set);
+			for (Rml::Element* container : elements(*document, "[sections=" + set + "]"))
+			{
+				arrange(*container, "section", order);
+				for (Rml::Element* part : elements(*container, "[section]"))
+					part->SetClass("hidden", sectionHidden(window, set, attribute(*part, "section")));
+			}
+			for (Rml::Element* pane : elements(*document, "[setup=" + set + "]"))
+			{
+				arrange(*pane, "setup-section", order);
+				for (Rml::Element* item : elements(*pane, "[setup-section]"))
+				{
+					if (sectionHidden(window, set, attribute(*item, "setup-section")))
+						item->RemoveAttribute("checked");
+					else
+						item->SetAttribute("checked", "");
+				}
+			}
 		}
 		for (Rml::Element* item : elements(*document, "menuitem[tab]"))
 		{
@@ -697,6 +857,11 @@ namespace gnubase::ui
 			if (target->HasAttribute("toggle") && !window.empty())
 				later([this, window = std::move(window), name = attribute(*target, "toggle"),
 						  on = event.GetParameter("value", false)] { setVisible(window, name, on); });
+			else if (const Rml::Element* pane = closestWith(target, "setup");
+				pane != nullptr && target->HasAttribute("setup-section") && !window.empty())
+				later([this, window = std::move(window), set = attribute(*pane, "setup"),
+						  id = attribute(*target, "setup-section"), on = event.GetParameter("value", false)]
+					{ setSectionHidden(window, set, id, !on); });
 			else if (target->HasAttribute("tab"))
 				later([this, id = attribute(*target, "tab"), on = event.GetParameter("value", false)]
 					{ setTabHidden(id, !on); });
@@ -744,6 +909,13 @@ namespace gnubase::ui
 			if (onto != nullptr && dragged != nullptr && onto->GetTagName() == "tab" && dragged->GetTagName() == "tab")
 				later([this, id = attribute(*dragged, "panel"), before = attribute(*onto, "panel")]
 					{ moveTab(id, before); });
+			const Rml::Element* item = closestWith(target, "setup-section");
+			const Rml::Element* pane = closestWith(target, "setup");
+			if (item != nullptr && pane != nullptr && dragged != nullptr && dragged->HasAttribute("setup-section") &&
+				!window.empty())
+				later([this, window = std::move(window), set = attribute(*pane, "setup"),
+						  id = attribute(*dragged, "setup-section"), before = attribute(*item, "setup-section")]
+					{ moveSection(window, set, id, before); });
 			break;
 		}
 		case Rml::EventId::Tabchange:
