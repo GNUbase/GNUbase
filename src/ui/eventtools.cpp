@@ -136,7 +136,7 @@ namespace gnubase::ui
 
 	bool EventDisplay::toolDown(double x, double y)
 	{
-		const std::optional<size_t> lane = laneAt(y);
+		const std::optional<size_t> lane = visibleLaneAt(y);
 		m_pressTool = m_tool;
 		// Combined, the object selection tool selects ranges in a lane's upper half (reference manual p. 253).
 		if (m_combine && m_tool == Tool::ObjectSelection && lane &&
@@ -198,8 +198,11 @@ namespace gnubase::ui
 		case Drag::DrawPart:
 		{
 			// The part as it will be: snapped, on the pressed lane.
-			const double height = g_trackHeight * m_view.trackZoom;
-			const double top = (std::floor((m_pressY + m_view.top) / height) * height) - m_view.top;
+			const size_t lane = laneAt(m_pressY + m_view.top);
+			if (lane >= m_laneTracks.size())
+				return;
+			const double height = m_laneTops[lane + 1] - m_laneTops[lane];
+			const double top = m_laneTops[lane] - m_view.top;
 			const auto at = [this](double dpX)
 			{
 				const time::Position snapped = snapAt(m_view.start + (dpX * m_view.scale), std::nullopt);
@@ -250,13 +253,12 @@ namespace gnubase::ui
 				zoomTo(from, to);
 				break;
 			}
-			const double height = g_trackHeight * m_view.trackZoom;
-			const double top = (std::min(m_pressY, y) + m_view.top) / height;
-			const double bottom = (std::max(m_pressY, y) + m_view.top) / height;
+			const double top = std::min(m_pressY, y) + m_view.top;
+			const double bottom = std::max(m_pressY, y) + m_view.top;
 			std::vector<uint64_t> touched;
 			for (const Shown& shown : m_events)
-				if (static_cast<double>(shown.lane) + 1.0 > top && static_cast<double>(shown.lane) < bottom &&
-					shown.end > from && shown.start < to)
+				if (m_laneTops[shown.lane + 1] > top && m_laneTops[shown.lane] < bottom && shown.end > from &&
+					shown.start < to)
 					touched.push_back(shown.id);
 			if (m_pressTool == Tool::Mute)
 			{
@@ -279,7 +281,7 @@ namespace gnubase::ui
 			break;
 		case Drag::DrawPart:
 		{
-			const std::optional<size_t> lane = laneAt(m_pressY);
+			const std::optional<size_t> lane = visibleLaneAt(m_pressY);
 			if (!lane)
 				break;
 			const auto ticks = [this](int64_t sample) { return m_time.tempo.toTicks(sample, m_time.sampleRate); };
@@ -376,7 +378,7 @@ namespace gnubase::ui
 			return false; // the second click is a click
 		}
 		// The range of the event, or of the gap between two events, on the lane (reference manual p. 285).
-		const std::optional<size_t> lane = laneAt(y);
+		const std::optional<size_t> lane = visibleLaneAt(y);
 		if (!lane)
 			return true;
 		double start = 0.0;
@@ -415,12 +417,7 @@ namespace gnubase::ui
 	{
 		if (m_laneTracks.empty())
 			return;
-		const double height = g_trackHeight * m_view.trackZoom;
-		const auto laneOf = [this, height](double dpY)
-		{
-			const double row = std::floor((dpY + m_view.top) / height);
-			return static_cast<size_t>(std::clamp(row, 0.0, static_cast<double>(m_laneTracks.size() - 1)));
-		};
+		const auto laneOf = [this](double dpY) { return std::min(laneAt(dpY + m_view.top), m_laneTracks.size() - 1); };
 		size_t first = std::min(laneOf(m_pressY), laneOf(y));
 		size_t last = std::max(laneOf(m_pressY), laneOf(y));
 		if (modifiers("range.selectFullVertical"))
@@ -479,15 +476,15 @@ namespace gnubase::ui
 				std::find(m_laneTracks.begin(), m_laneTracks.end(), range.tracks.empty() ? 0 : range.tracks.back());
 			if (first != m_laneTracks.end() && last != m_laneTracks.end())
 			{
-				const double height = g_trackHeight * m_view.trackZoom;
 				const double start = static_cast<double>(range.start) / m_time.sampleRate;
 				const double end = static_cast<double>(range.end) / m_time.sampleRate;
 				m_rangeElement->SetProperty(Rml::PropertyId::Left, dp((start - m_view.start) / m_view.scale));
 				m_rangeElement->SetProperty(Rml::PropertyId::Width, dp((end - start) / m_view.scale));
-				const auto lanes = static_cast<double>(last - first + 1);
-				const double top = (static_cast<double>(first - m_laneTracks.begin()) * height) - m_view.top;
+				const double height = m_laneTops[static_cast<size_t>(last - m_laneTracks.begin()) + 1] -
+					m_laneTops[static_cast<size_t>(first - m_laneTracks.begin())];
+				const double top = m_laneTops[static_cast<size_t>(first - m_laneTracks.begin())] - m_view.top;
 				m_rangeElement->SetProperty(Rml::PropertyId::Top, dp(top));
-				m_rangeElement->SetProperty(Rml::PropertyId::Height, dp(lanes * height));
+				m_rangeElement->SetProperty(Rml::PropertyId::Height, dp(height));
 				visible = true;
 			}
 		}

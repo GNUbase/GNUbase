@@ -533,9 +533,12 @@ namespace gnubase::audio
 					: 0;
 			case kAsioEngineVersion:
 				return 2;
+			case kAsioResyncRequest: // a dropout the driver recovers from with a reset; the others are settings changes
+				if (AsioDevice* device = g_open.load(std::memory_order_acquire); device != nullptr)
+					device->driverOverload();
+				[[fallthrough]];
 			case kAsioResetRequest:
 			case kAsioBufferSizeChange:
-			case kAsioResyncRequest:    // a dropout too, which the engine counts when it resets
 			case kAsioLatenciesChanged: // opening the driver again reads them
 				if (const AsioDevice* device = g_open.load(std::memory_order_acquire); device != nullptr)
 					device->driverReset();
@@ -598,6 +601,7 @@ namespace gnubase::audio
 			}
 
 			std::string name() const override { return "asio"; }
+			bool listsPresence() const override { return false; }
 
 			// Names only: a driver tells more once it is loaded, and loading one would close the open one. Drivers are
 			// unavailable if they didn't load or start the last time they were opened or started.
