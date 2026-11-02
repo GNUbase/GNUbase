@@ -134,6 +134,7 @@ namespace gnubase::engine
 		publish();
 		m_savedRevision = autoSave ? 0 : m_revision; // publish() made m_revision at least 1
 		m_autoSavedRevision = m_revision;
+		m_openedRevision = m_revision;
 		m_lastSave = now();
 		if (!m_file.empty())
 			remember(m_file);

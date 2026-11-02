@@ -2235,6 +2235,7 @@ namespace gnubase::engine
 			{"automationPoint.remove", "Remove automation points"},
 			{"midiFile.import", "Import MIDI file"},
 			{"audioFile.import", "Import audio files"},
+			{"recording.add", "Record"},
 			{"clip.set", "Change clip"},
 			{"poolFolder.add", "Add pool folder"},
 			{"poolFolder.set", "Change pool folder"},
@@ -2788,31 +2789,42 @@ namespace gnubase::engine
 				"Saves the project's busses of a direction as a user preset, for every project (the user setting "
 				"audio.busPresets), replacing one of the same name. A preset named Default is applied to new projects.",
 				presetName, noResult, false},
-			[this](CommandContext& context)
+			[this, &engine](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				const auto name = parameters.at("name").get<std::string>();
 				require(!name.empty(), "name must not be empty");
 				const BusDirection direction = busDirection(parameters.at("direction"));
-				Json presets = context.call("settings.get", {{"key", "audio.busPresets"}}).at("value");
-				Json mine = userPresets(direction, context);
-				mine[name] = presetBusses(m_project, direction);
-				presets[directionName(direction)] = std::move(mine);
-				context.call("settings.set", {{"key", "audio.busPresets"}, {"value", std::move(presets)}});
+				const Json busses = presetBusses(m_project, direction);
+				// From the presets in the settings file, so that those another GNUbase process saved stay.
+				engine.modifySetting(context, "audio.busPresets",
+					[direction, &name, &busses](const Json& value)
+					{
+						Json presets = value;
+						Json& mine = presets[directionName(direction)];
+						if (!mine.is_object())
+							mine = Json::object();
+						mine[name] = busses;
+						return presets;
+					});
 				return Json::object();
 			});
 		addControl(engine,
 			{"bus.removePreset", 1, "Removes one of the user's own bus presets.", presetName, noResult, false},
-			[](CommandContext& context)
+			[&engine](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				const auto name = parameters.at("name").get<std::string>();
 				const BusDirection direction = busDirection(parameters.at("direction"));
-				Json presets = context.call("settings.get", {{"key", "audio.busPresets"}}).at("value");
-				Json mine = userPresets(direction, context);
-				require(mine.erase(name) == 1, "no user bus preset " + name + "; only the user's own presets go");
-				presets[directionName(direction)] = std::move(mine);
-				context.call("settings.set", {{"key", "audio.busPresets"}, {"value", std::move(presets)}});
+				engine.modifySetting(context, "audio.busPresets",
+					[direction, &name](const Json& value)
+					{
+						Json presets = value;
+						Json& mine = presets[directionName(direction)];
+						require(mine.is_object() && mine.erase(name) == 1,
+							"no user bus preset " + name + "; only the user's own presets go");
+						return presets;
+					});
 				return Json::object();
 			});
 
@@ -3105,6 +3117,7 @@ namespace gnubase::engine
 		midi::registerFunctionCommands(*this, engine);
 		registerMidiFileCommands(engine);
 		registerAudioFileCommands(engine, jobs);
+		registerRecordingCommands(engine);
 		registerPoolCommands(engine);
 		registerFadeCommands(engine);
 		registerEventEditCommands(engine);
@@ -3265,12 +3278,17 @@ namespace gnubase::engine
 				"A number that grows with every change of the project: every edit, undo and redo, and loading or "
 				"starting a project. project.load with revision loads only if it hasn't changed. modified says "
 				"whether the project changed since it was last saved, loaded or started; undoing back to the saved "
-				"state still counts as a change.",
+				"state still counts as a change. project identifies the open project: the revision at which it was "
+				"loaded or started, so it changes only when another project is opened.",
 				objectSchema({}),
-				objectSchema({{"revision", integerSchema}, {"modified", booleanSchema}}, {"revision", "modified"}),
+				objectSchema({{"revision", integerSchema}, {"modified", booleanSchema}, {"project", integerSchema}},
+					{"revision", "modified", "project"}),
 				true},
 			[this](CommandContext&)
-			{ return Json{{"revision", m_revision}, {"modified", m_revision != m_savedRevision}}; });
+			{
+				return Json{{"revision", m_revision}, {"modified", m_revision != m_savedRevision},
+					{"project", m_openedRevision}};
+			});
 
 		engine.registerCommand(
 			{"project.backup", 1,
