@@ -796,6 +796,52 @@ Engine command `audio.updatePlugins`.
 
 Builds the processing graph again with the plugins of the slots as they are now. The engine runs it on its own when a plugin is ready after it was loaded or activated, failed, or asked to be restarted; a slot's audio passes its plugin unchanged until then. Emits plugin.changed for the slots whose plugin's status changed. Left out of engine.commandLog.
 
+### audition
+
+#### `audition_scrub`
+
+Engine command `audition.scrub`.
+
+Scrubs an audio track, as the scrub tool does while the mouse drags: plays its events from where the last scrub of the track got to, to position (samples), forwards or backwards, in seconds (default: the time since that scrub, 0.01 to 0.1 seconds), so speed and pitch follow how fast the positions come; the first scrub only sets where the next one starts. Like audition.start it goes straight to the main mix's outputs; it also moves the project cursor to position (transport.changed). Ends with audition.stop. Announces audition.changed.
+
+Arguments:
+
+- `position`: integer, required
+- `seconds`: number
+- `track`: integer, required
+
+Result:
+
+- `mode`: one of "off" | "play" | "scrub", required
+- `track`: integer, required
+
+#### `audition_start`
+
+Engine command `audition.start`.
+
+Auditions an audio track, as the play tool does while the mouse is pressed: plays its events from position (samples) until audition.stop, straight to the main mix's outputs, without its channel's fader, pan, mute and effects, and without the transport. A mono clip plays on every channel. Ends what was auditioned before. Announces audition.changed.
+
+Arguments:
+
+- `position`: integer, required
+- `track`: integer, required
+
+Result:
+
+- `mode`: one of "off" | "play" | "scrub", required
+- `track`: integer, required
+
+#### `audition_stop`
+
+Engine command `audition.stop`.
+
+Ends auditioning and scrubbing. Does nothing if neither runs. Announces audition.changed.
+
+Result:
+
+- `mode`: one of "off" | "play" | "scrub", required
+- `track`: integer, required
+
 ### autoFades
 
 #### `autoFades_set`
