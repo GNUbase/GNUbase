@@ -306,6 +306,12 @@
 		</menuitem>
 	</menu>
 	<menu id="studio-menu">
+		<menuitem command="window.mixer">Mixer</menuitem>
+		<menuitem command="window.lowerZoneMixer">Mixer in Project Window</menuitem>
+		<menuitem command="window.mixer2">Mixer 2</menuitem>
+		<menuitem command="window.mixer3">Mixer 3</menuitem>
+		<menuitem command="window.mixer4">Mixer 4</menuitem>
+		<menuseparator/>
 		<menuitem command="window.studioSetup">Studio Setup...</menuitem>
 	</menu>
 

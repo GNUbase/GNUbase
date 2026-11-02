@@ -30,7 +30,7 @@ project window.
 | Media | Open Pool Window (`window.pool`, Mod+P); Import Medium... (`pool.import`); Create Folder; Remove Unused Media; Find Missing Files... (`pool.findMissing`); Remove Missing Files; Conform Files ([pool.md](pool.md)) |
 | Transport | Start, Stop, Start/Stop, Record; Audio Record Mode (Keep History, Cycle History + Replace, Replace, [recording.md](recording.md)); Go to Project Start; Locators (Go to Left/Right Locator Position, Set Left/Right Locator to Project Cursor Position, Exchange Left & Right Locator Positions); Set Project Cursor Position (Locate Next/Previous Marker) |
 | Project | Add Track...; Remove Selected Tracks, Remove Empty Tracks, Duplicate Tracks; Track Folding; Project Setup... (`window.projectSetup`, [project-setup.md](project-setup.md)) |
-| Studio | Studio Setup... (`window.studioSetup`, [studio-setup.md](studio-setup.md)) |
+| Studio | Mixer, Mixer in Project Window, Mixer 2, 3 and 4 (`window.mixer`, `window.lowerZoneMixer`, `window.mixer2` to `window.mixer4`, [mixer-window.md](mixer-window.md)), Studio Setup... (`window.studioSetup`, [studio-setup.md](studio-setup.md)) |
 
 The other menus of the reference (Audio, MIDI, Workspaces, Window, Help) and their items come with the
 features they run. Quitting waits for the shell's next step, since it closes every window.
