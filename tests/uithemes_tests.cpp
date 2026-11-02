@@ -156,6 +156,41 @@ TEST_CASE("every document gets the design system and the active theme's colors, 
 	}
 }
 
+TEST_CASE("every theme dims the edit history's undone steps and draws its separator", "[unit]")
+{
+	test::FakeUi fake{{{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}}};
+	ui::Fonts(resources() / "fonts").load();
+	const ui::Themes themes(resources());
+	ui::Window& window = fake.shell.open(spec());
+	// The edit history panel's elements (ui/historypanel.h, docs/features/edit-history.md).
+	Rml::ElementDocument* document = window.context().LoadDocumentFromMemory(R"(<rml><body>
+		<listview class="history"><table><tbody><tr id="done"><td class="action">Add track</td></tr></tbody></table>
+		<div class="history-separator" id="separator"/>
+		<table><tbody><tr id="undone" class="undone"><td class="action">Add track</td></tr></tbody></table></listview>
+	</body></rml>)");
+	REQUIRE(document != nullptr);
+	document->Show();
+	Rml::Element* done = document->GetElementById("done");
+	Rml::Element* undone = document->GetElementById("undone");
+	Rml::Element* separator = document->GetElementById("separator");
+	REQUIRE(done != nullptr);
+	REQUIRE(undone != nullptr);
+	REQUIRE(separator != nullptr);
+
+	for (const std::string theme : {"gnubase", "dark", "light"})
+	{
+		INFO("theme " << theme);
+		fake.shell.setTheme(theme);
+		window.requestRender();
+		fake.shell.step(milliseconds(0));
+		const nlohmann::json token = tokens(theme);
+		CHECK(done->GetComputedValues().color() == color(token.at("text")));
+		CHECK(undone->GetComputedValues().color() == color(token.at("textMuted")));
+		CHECK(separator->GetComputedValues().background_color() == color(token.at("accent")));
+		CHECK(separator->GetBox().GetSize().y > 0.0F);
+	}
+}
+
 TEST_CASE("a theme's style sheet that changed on disk applies to documents loaded again", "[unit]")
 {
 	// Live reload (ui/livereload.h) clears RmlUi's style sheet cache and loads the documents again.
