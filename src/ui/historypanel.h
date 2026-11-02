@@ -47,6 +47,7 @@ namespace gnubase::ui
 		bool m_dragging = false;
 		int m_dragTo = 0;
 		std::vector<float> m_middles;
+		bool m_placing = false;                                       // rows are moving across the separator
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 		Subscription m_changed;
 	};

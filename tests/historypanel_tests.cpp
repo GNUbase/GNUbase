@@ -78,17 +78,27 @@ namespace
 		return at + 1 == rows.size() || top + boxOf(separator[0], "height") <= boxOf(rows[at + 1], "y") + 1;
 	}
 
-	// The panel shows the engine's position: the step before it is the selected row with the separator under it,
-	// those after it are undone.
-	bool showsPosition(test::UiApp& app, size_t at)
+	// The separator is under the row, and the rows after it are undone.
+	bool undoneAfter(test::UiApp& app, size_t at)
 	{
 		const Json rows = elements(app, "#history tbody tr");
-		if (rows.size() != 4)
+		for (size_t i = 0; i < rows.size(); ++i)
+			if (has(rows[i], "undone") != (i > at))
+				return false;
+		return at < rows.size() && separatorAfter(app, at);
+	}
+
+	// The panel shows the engine's position among its rows: the step before it is the selected row with the
+	// separator under it, those after it are undone.
+	bool showsPosition(test::UiApp& app, size_t at, size_t count = 4)
+	{
+		const Json rows = elements(app, "#history tbody tr");
+		if (rows.size() != count)
 			return false;
 		for (size_t i = 0; i < rows.size(); ++i)
-			if (has(rows[i], "selected") != (i == at) || has(rows[i], "undone") != (i > at))
+			if (has(rows[i], "selected") != (i == at))
 				return false;
-		return separatorAfter(app, at);
+		return undoneAfter(app, at);
 	}
 
 	ui::Target point(int x, int y)
@@ -248,6 +258,85 @@ TEST_CASE("dragging the edit history's separator up undoes and down redoes, with
 		std::chrono::milliseconds(300)));
 	CHECK(position(app) == 3);
 	CHECK(showsPosition(app, 3));
+}
+
+TEST_CASE(
+	"the edit history's separator shows where a drag goes, and a drag that the history changed under sends nothing",
+	"[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "audio"}});
+	app.call("track.add", {{"type", "midi"}});
+	app.call("project.set", {{"name", "History"}});
+	app.keys().run("window.history", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 3); }));
+	engine::Client listener(app.engine());
+
+	// Through the window's context, to look before the button is released.
+	Rml::Context& context = app.main().context();
+	const ui::Point from = separator(app).point.value_or(ui::Point{});
+	const int to = under(app, 1, separator(app)).point.value_or(ui::Point{}).y;
+	context.ProcessMouseMove(from.x, from.y, 0);
+	context.ProcessMouseButtonDown(0, 0);
+	for (const int y : {from.y - 2, (from.y + to) / 2, to})
+		context.ProcessMouseMove(from.x, y, 0);
+	REQUIRE(app.waitUntil([&app] { return undoneAfter(app, 1); }));
+	CHECK(cell(app, 2, "state") == "Undone");
+	CHECK(has(row(app, 3), "selected"));
+	CHECK(position(app) == 3);
+	CHECK(historyChanges(listener) == 0);
+
+	// Another client adds a step meanwhile: the rows show it, and the drag no longer undoes anything.
+	app.call("project.set", {{"name", "Changed"}});
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 4, 5); }));
+	CHECK(historyChanges(listener) == 1);
+	context.ProcessMouseButtonUp(0, 0);
+	size_t changes = 0;
+	CHECK(!app.waitUntil(
+		[&]
+		{
+			changes += historyChanges(listener);
+			return changes > 0;
+		},
+		std::chrono::milliseconds(300)));
+	CHECK(position(app) == 4);
+	CHECK(showsPosition(app, 4, 5));
+}
+
+TEST_CASE("typing a step's details keeps the focus while another client undoes and redoes", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "audio"}});
+	app.call("track.add", {{"type", "midi"}});
+	app.call("project.set", {{"name", "History"}});
+	app.keys().run("window.history", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 3); }));
+	engine::Client listener(app.engine());
+
+	// The row of the step being typed in moves past the separator and back; the text goes on where it was.
+	click(app, "#history tbody tr input", 2);
+	app.ui().text(std::nullopt, "ab");
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 2); }));
+	app.ui().text(std::nullopt, "c");
+	app.call("history.redo");
+	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 3); }));
+	app.ui().text(std::nullopt, "d");
+	CHECK(app.call("history.get").at("steps").at(2).at("details").get<std::string>().empty());
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&app] { return app.call("history.get").at("steps").at(2).at("details") == "abcd"; }));
+	// Undo, redo and the details once, not what was typed before each move.
+	size_t changes = 0;
+	app.waitUntil(
+		[&]
+		{
+			changes += historyChanges(listener);
+			return changes > 3;
+		},
+		std::chrono::milliseconds(300));
+	CHECK(changes == 3);
 }
 
 TEST_CASE("the edit history panel is drawn again when another client changes the history", "[ui]")

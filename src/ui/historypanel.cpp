@@ -93,7 +93,8 @@ namespace gnubase::ui
 		: m_binding(binding), m_changed(binding.on("history.changed", [this](const engine::Event&) { request(); }))
 	{
 		// The rows move between the tables when the position changes, so that the separator stays between them; RmlUi
-		// lays both tables' columns out the same from their first rows.
+		// lays both tables' columns out the same from their first rows. Both bodies are at the same depth, so the list
+		// view, which looks for rows breadth first, finds them in order.
 		element.SetInnerRML(R"(<listview id="history" class="history"><table><thead><tr><td class="action">Action</td>)"
 							R"(<td class="time">Time</td><td class="state">State</td><td class="details">Details</td>)"
 							R"(</tr></thead><tbody/></table><div class="history-separator"/><table><tbody/></table>)"
@@ -128,7 +129,7 @@ namespace gnubase::ui
 		{
 			drag(event);
 		}
-		else if (target != nullptr && target->GetTagName() == "input" &&
+		else if (target != nullptr && target->GetTagName() == "input" && !m_placing &&
 			(event == Rml::EventId::Blur || event.GetParameter<bool>("linebreak", false)))
 		{
 			describe(*target);
@@ -158,7 +159,12 @@ namespace gnubase::ui
 		{
 			body->undone->SetInnerRML("");
 			body->done->SetInnerRML(rows(m_steps.size()));
+			m_dragging = false; // the rows it measured are gone, and the steps it would undo or redo may be too
 		}
+		// RmlUi drops a drag without a dragend when the separator leaves the document, e.g. as the panel moves to a
+		// window of its own; the separator stays :active as long as its drag goes on.
+		if (m_dragging && (!m_separator || !m_separator->IsPseudoClassSet("active")))
+			m_dragging = false;
 		for (int i = 1; i <= count; ++i)
 		{
 			const Rml::Element* row = body->row(i);
@@ -169,7 +175,7 @@ namespace gnubase::ui
 			if (Rml::Element* field = row->GetChild(3)->GetFirstChild(); !field->IsPseudoClassSet("focus"))
 				field->SetAttribute("value", step.at("details").get<std::string>());
 		}
-		place(m_dragging ? std::min(m_dragTo, count) : m_position);
+		place(m_dragging ? m_dragTo : m_position);
 		view->SetAttribute("value", std::to_string(m_position));
 		// Answers arrive outside input handling: ask the window to update and draw, also so that the list view moves
 		// its selection before the next key.
@@ -182,12 +188,24 @@ namespace gnubase::ui
 		const std::optional<Bodies> body = bodies(m_view.get());
 		if (!body)
 			return;
-		// The initial state's row and those of the steps up to the position go before the separator.
+		// The initial state's row and those of the steps up to the position go before the separator. RmlUi moves the
+		// focus from a row it removes to its parent: a details field the user is typing in gets it back, without
+		// sending what it has so far.
+		Rml::ObserverPtr<Rml::Element> field;
+		if (Rml::Context* context = m_view->GetContext(); context != nullptr)
+			for (const Rml::Element* parent = context->GetFocusElement(); parent != nullptr;
+				parent = parent->GetParentNode())
+				if (parent == m_view.get())
+					field = context->GetFocusElement()->GetObserverPtr();
+		m_placing = true;
 		while (body->done->GetNumChildren() > position + 1)
 			body->undone->InsertBefore(
 				body->done->RemoveChild(body->done->GetLastChild()), body->undone->GetFirstChild());
 		while (body->done->GetNumChildren() < position + 1 && body->undone->HasChildNodes())
 			body->done->AppendChild(body->undone->RemoveChild(body->undone->GetFirstChild()));
+		if (field && !field->IsPseudoClassSet("focus"))
+			field->Focus();
+		m_placing = false;
 		for (int i = 1; i < body->rows(); ++i)
 		{
 			Rml::Element* row = body->row(i);
@@ -219,9 +237,13 @@ namespace gnubase::ui
 			// The separator goes after the steps whose rows' middles are above the mouse, where they were when the
 			// drag started; the rows show what it will undo or redo.
 			const float mouse = event.GetParameter("mouse_y", 0.0F);
-			m_dragTo = static_cast<int>(
+			const auto to = static_cast<int>(
 				std::count_if(m_middles.begin(), m_middles.end(), [mouse](float middle) { return middle < mouse; }));
-			place(m_dragTo);
+			if (to != m_dragTo)
+			{
+				m_dragTo = to;
+				place(m_dragTo);
+			}
 		}
 		else if (event == Rml::EventId::Dragend && m_dragging)
 		{

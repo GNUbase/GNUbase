@@ -552,7 +552,7 @@
 	{
 		color: #d76a73;
 	}
-	.history tr.undone
+	.history tr.undone, .history tr.undone input.text
 	{
 		color: #b7bbc0;
 	}
