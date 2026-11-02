@@ -946,7 +946,9 @@ namespace gnubase::engine
 			return added;
 		}
 
-		// The events and parts on the tracks that lie within from and to.
+		// The events and parts on the tracks that lie within from and to, once both are split there: those that start
+		// at or after from and before to. Not by their end, since a piece of a clip at another sample rate than the
+		// project's can end a sample after to.
 		std::vector<Item> within(
 			Project& project, const std::vector<ObjectId>& tracks, time::Samples from, time::Samples to, bool locked)
 		{
@@ -954,8 +956,8 @@ namespace gnubase::engine
 			for (const Item& item : itemsOn(project, tracks, locked))
 			{
 				const time::TimeBase base = item.position().base;
-				if (item.position().value >= inBase(project, from, base) &&
-					endOf(project, item).value <= inBase(project, to, base))
+				const int64_t start = item.position().value;
+				if (start >= inBase(project, from, base) && start < inBase(project, to, base))
 					items.push_back(item);
 			}
 			return items;
@@ -1002,6 +1004,7 @@ namespace gnubase::engine
 		std::vector<RenderAutomationPoint> curveOf(const AutomationLane& lane)
 		{
 			std::vector<RenderAutomationPoint> points;
+			points.reserve(lane.points.size());
 			for (const auto& [id, point] : lane.points)
 				points.push_back({point.position.value,
 					lane.target.type == AutomationTargetType::Volume ? volumeGain(point.value) : point.value,
@@ -1301,8 +1304,9 @@ namespace gnubase::engine
 
 		Json pasteRange(Project& project, CommandContext& context, const std::optional<RangeClipboard>& stored)
 		{
-			require(stored.has_value(), "nothing to paste: copy or cut a range first");
-			const RangeClipboard& clipboard = stored.value();
+			if (!stored)
+				throw CommandError("nothing to paste: copy or cut a range first");
+			const RangeClipboard& clipboard = *stored;
 			const Json& parameters = context.parameters();
 			const time::Samples at = parameters.contains("position")
 				? parameters.at("position").get<time::Samples>()

@@ -35,7 +35,8 @@ Each command is one undo step and changes nothing if it fails; `range.copy` chan
   replaces the curve where it lands, on the destination track's lane of the same parameter; a track without such a
   lane gets none. A point shaped as a curve keeps its bend over what remains of its segment.
 - **The clipboard** is the engine's, so MCP, Lua and the UI share it; it isn't part of the project or of undo. It keeps
-  copies of the events, parts and points, so cutting and deleting the originals doesn't change it. `range.paste` goes
+  copies of the events, parts and points, so cutting and deleting the originals doesn't change it. A new or opened
+  project empties it, since it holds the old project's track and clip ids. `range.paste` goes
   onto the tracks the range was copied from, or with `track` onto that track and the ones below it in the project's
   order, one for each copied track; their types must take the copied events. Pasted events are unlocked real copies;
   a copied audio event whose clip was removed from the pool can't be pasted.

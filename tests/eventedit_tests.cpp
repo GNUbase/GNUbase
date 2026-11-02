@@ -676,3 +676,37 @@ TEST_CASE("range.copy without a range copies everything between the locators: gl
 	f.call("pool.removeUnused");
 	CHECK_THAT(f.fails("range.paste", {{"position", 0}}), ContainsSubstring("clip"));
 }
+
+TEST_CASE("range.delete and range.copy take the piece in the range of a clip at another sample rate", "[unit]")
+{
+	// A 44.1 kHz clip in a 48 kHz project: the piece that the cut at the range's end leaves inside it is 22056 frames
+	// long, which ends a sample after the range.
+	Fixture f;
+	const int64_t track = f.track("audio", "linear");
+	const Json media =
+		f.call("media.add", {{"path", "slow.wav"}, {"sampleRate", 44100}, {"channels", 1}, {"length", 3 * 44100}})
+			.at("media");
+	const Json clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	f.call("audioEvent.add", {{"track", track}, {"clip", clip.at("id")}, {"position", 0}, {"length", 3 * 44100}});
+	const int64_t end = g_second + 24006;
+	const Json range = {{"start", g_second}, {"end", end}, {"tracks", {track}}};
+
+	CHECK(f.call("range.copy", range).at("events") == 1);
+	f.call("range.delete", range);
+	const Json project = f.call("project.get");
+	REQUIRE(project.at("audioEvents").size() == 2);
+	for (const Json& event : project.at("audioEvents"))
+		CHECK((event.at("position") == 0 || event.at("position") == end));
+}
+
+TEST_CASE("range.paste doesn't paste what was copied in another project", "[unit]")
+{
+	RangeFixture f;
+	f.call("range.copy", f.range());
+	// The new project's tracks and clips get the old ones' ids again.
+	f.call("project.new");
+	const int64_t audioTrack = f.track("audio", "linear");
+	f.track("midi");
+	f.audioEvent(audioTrack);
+	CHECK_THAT(f.fails("range.paste", {{"position", 0}}), ContainsSubstring("nothing to paste"));
+}
