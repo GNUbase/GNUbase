@@ -1648,11 +1648,10 @@ namespace gnubase::engine
 				"was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's "
 				"sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as "
 				"it doesn't support the project's or was asked for another, and plays faster or slower; a new project "
-				"sample rate sends audio.changed. lost: the device that went away "
-				"(its backend, device id, its name while it was open, the reason it can't be opened and whether it "
-				"ran and restarts), while the "
-				"engine waits for it to return (see audio.reset); otherwise null. While a device is lost, device is "
-				"the fallback that plays meanwhile (the user setting audio.fallbackDevice), or null.",
+				"sample rate sends audio.changed. lost: the device that went away (its backend, device id, its name "
+				"while it was open, the reason it can't be opened and whether it ran and restarts), while the engine "
+				"waits for it to return (see audio.reset); otherwise null. While a device is lost, device is the "
+				"fallback that plays meanwhile (the user setting audio.fallbackDevice), or null.",
 				noParameters(), statusSchema(), true},
 			[this](CommandContext&) { return status(); });
 		engine.registerCommand(

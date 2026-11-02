@@ -50,9 +50,12 @@ namespace gnubase::ui
 			{
 				m_lostDevice->SetInnerRML(
 					Rml::StringUtilities::EncodeRml("Audio Device Lost: " + lost.at("name").get<std::string>()));
-				// The id (WASAPI GUIDs, a CoreAudio UID) means little to users, but tells devices of one name apart.
-				m_lostDevice->SetAttribute(
-					"title", lost.at("reason").get<std::string>() + " (" + lost.at("device").get<std::string>() + ")");
+				// The id (WASAPI GUIDs, a CoreAudio UID) means little to users, but tells devices of one name apart. A
+				// device without a name is shown by its id already.
+				std::string title = lost.at("reason").get<std::string>();
+				if (lost.at("name") != lost.at("device"))
+					title += " (" + lost.at("device").get<std::string>() + ")";
+				m_lostDevice->SetAttribute("title", title);
 			}
 		}
 	}

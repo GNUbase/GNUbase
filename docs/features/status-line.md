@@ -10,7 +10,8 @@ The project window's status line (#407, reference manual pp. 26, 71, 129), a str
   The bit depth joins it with the project setup (#78), which brings the project's record bit depth.
 - **Lost audio device.** While a device is lost, `#lost-device` shows "Audio Device Lost: " and the device's name, with
   the reason it can't be opened and the device's id in parentheses as its tooltip (`title`) (#455): the id tells devices
-  of one name apart. Otherwise it has the class `hidden`. It goes once the device returns or another one is picked.
+  of one name apart, and is left out for a device without a name, which shows its id already. Otherwise it has the
+  class `hidden`. It goes once the device returns or another one is picked.
 - **The engine.** Both follow `audio.changed`, after `audio.get` when the window opens: `projectSampleRate` (also there
   without a device), `device.sampleRateMismatch` and `lost`. The engine sends `audio.changed` for every new project
   sample rate, also when the device stays at its rate, so the status line needs no project events. MCP and Lua read
