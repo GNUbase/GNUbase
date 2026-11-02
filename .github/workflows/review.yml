@@ -1,22 +1,30 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Starts a review of every new or updated pull request from this repository by the hosted review agent. The agent runs
-# on the Claude platform, not on a GitHub runner: this job only creates its session and ends after a few seconds. The
-# agent posts the review itself; the team's own pull requests get a comment that starts with "Verdict:".
+# Starts a review of every new or updated pull request by the hosted review agent. The agent runs on the Claude
+# platform, not on a GitHub runner: this job only creates its session and ends after a few seconds. The agent posts the
+# review itself; the team's own pull requests get a comment that starts with "Verdict:", contributors a review that
+# approves or requests changes.
 #
-# Pull requests from forks get no secrets under pull_request, so contributor pull requests are reviewed by hand.
-# A push whose new commits only merge other branches (main, a chained pull request) is not reviewed again.
+# pull_request_target, unlike pull_request, gives pull requests from forks access to the secret. It runs this workflow
+# from the base branch; the pull request's commits are only fetched and read by git, never checked out or run. Changes
+# to this workflow take effect once they are on main. Only authors GitHub already knows (owner, members, collaborators,
+# earlier contributors) get a review, so strangers can't spend the API credits.
+# A push to a pull request from this repository whose new commits only merge other branches (main, a chained pull
+# request) is not reviewed again. Every push to a pull request from a fork is.
 name: Review
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, reopened, ready_for_review, synchronize]
 
 permissions:
+  issues: read
   pull-requests: read
 
 jobs:
   review:
-    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+    if: >-
+      !github.event.pull_request.draft &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.pull_request.author_association)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -25,6 +33,7 @@ jobs:
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
       SHA: ${{ github.event.pull_request.head.sha }}
+      HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
     steps:
       - name: Start a review session
         run: |
@@ -32,21 +41,30 @@ jobs:
             echo "No ANTHROPIC_API_KEY secret: no review."
             exit 0
           fi
-          # The agent's reviews end with this marker; GitHub records the commit each one reviewed.
-          last=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
-            --jq '.[] | select(.body | contains("<!-- review-agent -->")) | .commit_id' | tail -n 1)
-          # Only the branch's own line counts (first parents): commits that a merge brings in are on main or another
-          # branch already. Commits only, no trees or blobs: the fetch takes about a second.
-          if [ -n "$last" ]; then
-            git init -q history
-            git -C history fetch -q --filter=tree:0 "https://github.com/$REPO" "$SHA" || true
-            if git -C history merge-base --is-ancestor "$last" "$SHA" 2>/dev/null &&
-              [ "$(git -C history rev-list --first-parent --no-merges --count "$last..$SHA")" = 0 ]; then
-              echo "Nothing but merge commits since the review of $last: no new review."
-              exit 0
+          # The merge-only skip trusts that a merge brings in commits that are on main or another team branch already.
+          # That holds for the team's branches only: a fork's merge commit can bring in anything.
+          if [ "$HEAD_REPO" = "$REPO" ]; then
+            # The agent's reviews end with this marker; GitHub records the commit each one reviewed. Anyone can post a
+            # review with the marker, so only the account the agent posts as counts.
+            last=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
+              --jq '.[] | select(.user.login == "GNUbase" and (.body | contains("<!-- review-agent -->"))) | .commit_id' |
+              tail -n 1)
+            # Only the branch's own line counts (first parents). Commits only, no trees or blobs: about a second.
+            if [ -n "$last" ]; then
+              git init -q history
+              git -C history fetch -q --filter=tree:0 "https://github.com/$REPO" "$SHA" || true
+              if git -C history merge-base --is-ancestor "$last" "$SHA" 2>/dev/null &&
+                [ "$(git -C history rev-list --first-parent --no-merges --count "$last..$SHA")" = 0 ]; then
+                echo "Nothing but merge commits since the review of $last: no new review."
+                exit 0
+              fi
             fi
           fi
-          jq -n --arg repo "$REPO" --arg pr "$PR" --arg sha "$SHA" '{
+          # The agent files follow-up issues by milestone goal; the list saves it looking them up.
+          milestones=$(gh api "repos/$REPO/milestones?state=open&per_page=100" \
+            --jq '.[] | "- \(.title) (number \(.number)): \(.description // "" | gsub("\r?\n"; " "))"') ||
+            milestones="" # on an error gh prints GitHub's error body, which is no milestone list
+          jq -n --arg repo "$REPO" --arg pr "$PR" --arg sha "$SHA" --arg milestones "$milestones" '{
             agent: "agent_01DV6re7oPSNqrFfxSTsuNw4",
             environment_id: "env_01HfuHY4q2Krvzjw2qLKNwqY",
             vault_ids: ["vlt_011CgaXKfWy6gtTqobHwhrnw"],
@@ -55,7 +73,7 @@ jobs:
             title: "Review PR #\($pr)",
             metadata: {pr: $pr, sha: $sha},
             initial_events: [{type: "user.message", content: [{type: "text",
-              text: "Review pull request #\($pr) in \($repo) at head commit \($sha)."}]}]
+              text: "Review pull request #\($pr) in \($repo) at head commit \($sha).\n\nOpen milestones and their goals:\n\($milestones)"}]}]
           }' > session.json
           curl -sS --fail-with-body https://api.anthropic.com/v1/sessions \
             -H "x-api-key: $ANTHROPIC_API_KEY" \
