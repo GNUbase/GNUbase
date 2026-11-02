@@ -127,7 +127,7 @@ namespace
 		interleaved.resize(reader->read(interleaved.data(), static_cast<size_t>(reader->info().frames)) *
 			static_cast<size_t>(channels));
 		std::vector<float> samples;
-		for (size_t i = static_cast<size_t>(channel); i < interleaved.size(); i += static_cast<size_t>(channels))
+		for (auto i = static_cast<size_t>(channel); i < interleaved.size(); i += static_cast<size_t>(channels))
 			samples.push_back(interleaved[i]);
 		return samples;
 	}
@@ -172,7 +172,10 @@ namespace
 		ObjectId track = 0;
 	};
 
-	const Json g_sine = {{"processor", "sine"}, {"parameters", {{"Frequency", 440.0}, {"Level", 0.5}}}};
+	Json sineInput()
+	{
+		return {{"processor", "sine"}, {"parameters", {{"Frequency", 440.0}, {"Level", 0.5}}}};
+	}
 }
 
 TEST_CASE("recording through the dummy device matches its input sample-exactly", "[integration]")
@@ -235,7 +238,7 @@ TEST_CASE("cycle recording makes a take per lap, all in one file", "[integration
 		mode = "replace";
 	}
 
-	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", g_sine}});
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
 	Client& client = setup.client;
 	CHECK(run(client, "transport.set", {{"left", 500}, {"right", 2000}, {"cycle", true}, {"audioRecordMode", mode}})
 			  .at("audioRecordMode") == mode);
@@ -279,7 +282,7 @@ TEST_CASE("cycle recording makes a take per lap, all in one file", "[integration
 
 TEST_CASE("audio pre-record keeps the input from before recording started in the file", "[integration]")
 {
-	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", g_sine}});
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
 	Client& client = setup.client;
 	run(client, "settings.set", {{"key", "audio.preRecordSeconds"}, {"value", 0.05}}); // 2400 frames
 	run(client, "audio.render", {{"frames", 4800}});                                   // stopped
@@ -301,7 +304,7 @@ TEST_CASE("audio pre-record keeps the input from before recording started in the
 
 TEST_CASE("only record-enabled audio tracks record, and nothing records without recording", "[integration]")
 {
-	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", g_sine}});
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
 	Client& client = setup.client;
 	const ObjectId idle = idOf(run(client, "track.add", {{"type", "audio"}}), "track");
 	run(client, "transport.play");
@@ -324,7 +327,7 @@ TEST_CASE("only record-enabled audio tracks record, and nothing records without 
 
 TEST_CASE("a recording isn't added to a project opened while it was recorded", "[integration]")
 {
-	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", g_sine}});
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
 	Client& client = setup.client;
 	const auto before = run(client, "project.revision").at("project").get<uint64_t>();
 	run(client, "transport.record");
@@ -347,7 +350,7 @@ TEST_CASE("a recording isn't added to a project opened while it was recorded", "
 
 TEST_CASE("the takes of a track removed while recording are skipped, the others still land", "[integration]")
 {
-	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", g_sine}});
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
 	Client& client = setup.client;
 	const Json other = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 2}});
 	run(client, "channel.set", {{"channel", other.at("channel").at("id")}, {"recordEnable", true}});
