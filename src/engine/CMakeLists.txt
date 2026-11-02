@@ -92,6 +92,7 @@ add_library(gnubase-engine STATIC
 	audio/miditap.cpp audio/miditap.h
 	audio/performance.cpp audio/performance.h
 	audio/playback.cpp audio/playback.h
+	audio/recorder.cpp audio/recorder.h
 	audio/sequencer.cpp audio/sequencer.h
 	audio/transport.cpp audio/transport.h
 	audiofile/audiofile.h
@@ -115,6 +116,7 @@ add_library(gnubase-engine STATIC
 	document/projectfiles.cpp
 	document/slotcommands.cpp
 	document/projectmodel.cpp document/projectmodel.h
+	document/recording.cpp
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/serialize.cpp document/serialize.h
 	document/snap.cpp document/snap.h
