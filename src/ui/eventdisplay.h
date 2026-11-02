@@ -35,8 +35,8 @@ namespace gnubase::ui
 	inline constexpr double g_trackHeight = 40.0;
 	inline constexpr double g_minTrackHeight = 20.0;
 	inline constexpr double g_maxTrackHeight = 400.0;
-	// What zoom full and the overview line show at least, in seconds, until projects have a length (#78).
-	inline constexpr double g_minimumProjectLength = 60.0;
+	// The project setup's length until the project is read, in seconds (#78).
+	inline constexpr double g_defaultProjectLength = 600.0;
 
 	// The part of the timeline the event display shows.
 	struct TimelineView
@@ -119,7 +119,7 @@ namespace gnubase::ui
 		double cursor() const { return m_cursor; }
 		// The seconds that the event lanes show across.
 		double visibleLength() const;
-		// From the project start to the end of its last event, at least g_minimumProjectLength.
+		// From the project start to the end of the project setup's length or of its last event, if that is later.
 		double projectLength() const;
 
 		// Zoom (reference manual pp. 101-104). Every zoom is a step in the zoom history; scrolling isn't.
@@ -417,6 +417,8 @@ namespace gnubase::ui
 		int m_dragLanes = 0;
 		double m_dragLaneY = 0.0; // where a drag of events started, in dp from the top of the first lane
 		double m_end = 0.0;       // of the last event
+		double m_length = g_defaultProjectLength; // the project setup's
+		std::string m_projectFormat;              // the project setup's time format the ruler last followed
 		bool m_loading = false;
 		bool m_stale = false;
 		int64_t m_cursorSample = 0;

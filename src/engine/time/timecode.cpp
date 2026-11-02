@@ -19,11 +19,45 @@ namespace gnubase::time
 			return rate.pullDown ? 1001.0 : 1000.0;
 		}
 
+		struct NamedRate
+		{
+			const char* name;
+			FrameRate rate;
+		};
+
+		constexpr NamedRate g_rates[] = {{"23.976", g_fps24PullDown}, {"24", g_fps24}, {"24.975", g_fps25PullDown},
+			{"25", g_fps25}, {"29.97", g_fps30PullDown}, {"29.97dfps", g_fps30PullDownDrop}, {"30", g_fps30},
+			{"30dfps", g_fps30Drop}, {"50", g_fps50}, {"59.94", g_fps60PullDown}, {"60", g_fps60}};
+
 		std::string padded(int64_t value, size_t digits)
 		{
 			const std::string text = std::to_string(value);
 			return std::string(digits > text.size() ? digits - text.size() : 0, '0') + text;
 		}
+	}
+
+	std::vector<std::string> frameRateNames()
+	{
+		std::vector<std::string> names;
+		for (const NamedRate& entry : g_rates)
+			names.emplace_back(entry.name);
+		return names;
+	}
+
+	std::string frameRateName(FrameRate rate)
+	{
+		for (const NamedRate& entry : g_rates)
+			if (entry.rate == rate)
+				return entry.name;
+		return std::to_string(rate.framesPerSecond); // a rate of the user's, such as user frames
+	}
+
+	std::optional<FrameRate> frameRateFromName(const std::string& name)
+	{
+		for (const NamedRate& entry : g_rates)
+			if (entry.name == name)
+				return entry.rate;
+		return std::nullopt;
 	}
 
 	Timecode fromFrameNumber(int64_t frame, FrameRate rate)

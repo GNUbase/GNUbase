@@ -2,7 +2,10 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <tuple>
+#include <vector>
 
 namespace gnubase::time
 {
@@ -24,6 +27,18 @@ namespace gnubase::time
 	inline constexpr FrameRate g_fps50{50, false, false};
 	inline constexpr FrameRate g_fps60PullDown{60, true, false}; // 59.94
 	inline constexpr FrameRate g_fps60{60, false, false};
+
+	inline bool operator==(FrameRate a, FrameRate b)
+	{
+		return std::tie(a.framesPerSecond, a.pullDown, a.dropFrame) ==
+			std::tie(b.framesPerSecond, b.pullDown, b.dropFrame);
+	}
+
+	// The project frame rates (reference manual p. 128) by name, as the engine API spells them: "23.976", "24",
+	// "24.975", "25", "29.97", "29.97dfps", "30", "30dfps", "50", "59.94" and "60".
+	std::vector<std::string> frameRateNames();
+	std::string frameRateName(FrameRate rate);
+	std::optional<FrameRate> frameRateFromName(const std::string& name);
 
 	struct Timecode
 	{

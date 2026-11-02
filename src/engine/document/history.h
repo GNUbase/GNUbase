@@ -55,6 +55,7 @@ namespace gnubase::engine
 		AutoFades autoFades;
 		PanLaw panLaw = PanLaw::Minus3;
 		double maxVolume = 6.0;
+		ProjectSetup setup;
 		std::vector<Bus> busses;
 		std::vector<ObjectId> tracks;
 		ObjectId activeMarkerTrack = 0;

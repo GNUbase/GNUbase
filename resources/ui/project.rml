@@ -135,7 +135,7 @@
 		<div id="right-zone" zone="right" focuszone="right" size="240" default="hidden"/>
 	</div>
 	<div id="status-line" class="strip status-line" strip="statusLine" default="hidden">
-		<span id="record-format" class="status-field" title="Record Format"/>
+		<span id="record-format" class="status-field" title="Record Format" onclick="gnubase.ui.command{command = 'window.projectSetup'}"/>
 		<span id="lost-device" class="status-field hidden"/>
 	</div>
 	<div id="transport-bar" class="strip transport" strip="transportBar" default="hidden"/>
@@ -231,6 +231,8 @@
 				<menuitem command="track.moveSelectedToNewFolderWithGroupChannel">Move Selected Tracks to New Folder with Group Channel</menuitem>
 			</menu>
 		</menuitem>
+		<menuseparator/>
+		<menuitem command="window.projectSetup">Project Setup...</menuitem>
 	</menu>
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
