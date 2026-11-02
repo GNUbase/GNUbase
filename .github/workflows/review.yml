@@ -8,7 +8,8 @@
 # from the base branch; the pull request's commits are only fetched and read by git, never checked out or run. Changes
 # to this workflow take effect once they are on main. Only authors GitHub already knows (owner, members, collaborators,
 # earlier contributors) get a review, so strangers can't spend the API credits.
-# A push whose new commits only merge other branches (main, a chained pull request) is not reviewed again.
+# A push to a pull request from this repository whose new commits only merge other branches (main, a chained pull
+# request) is not reviewed again. Every push to a pull request from a fork is.
 name: Review
 
 on:
@@ -32,6 +33,7 @@ jobs:
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
       SHA: ${{ github.event.pull_request.head.sha }}
+      HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
     steps:
       - name: Start a review session
         run: |
@@ -39,20 +41,23 @@ jobs:
             echo "No ANTHROPIC_API_KEY secret: no review."
             exit 0
           fi
-          # The agent's reviews end with this marker; GitHub records the commit each one reviewed. Anyone can post a
-          # review with the marker, so only the account the agent posts as counts.
-          last=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
-            --jq '.[] | select(.user.login == "GNUbase" and (.body | contains("<!-- review-agent -->"))) | .commit_id' |
-            tail -n 1)
-          # Only the branch's own line counts (first parents): commits that a merge brings in are on main or another
-          # branch already. Commits only, no trees or blobs: the fetch takes about a second.
-          if [ -n "$last" ]; then
-            git init -q history
-            git -C history fetch -q --filter=tree:0 "https://github.com/$REPO" "$SHA" || true
-            if git -C history merge-base --is-ancestor "$last" "$SHA" 2>/dev/null &&
-              [ "$(git -C history rev-list --first-parent --no-merges --count "$last..$SHA")" = 0 ]; then
-              echo "Nothing but merge commits since the review of $last: no new review."
-              exit 0
+          # The merge-only skip trusts that a merge brings in commits that are on main or another team branch already.
+          # That holds for the team's branches only: a fork's merge commit can bring in anything.
+          if [ "$HEAD_REPO" = "$REPO" ]; then
+            # The agent's reviews end with this marker; GitHub records the commit each one reviewed. Anyone can post a
+            # review with the marker, so only the account the agent posts as counts.
+            last=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
+              --jq '.[] | select(.user.login == "GNUbase" and (.body | contains("<!-- review-agent -->"))) | .commit_id' |
+              tail -n 1)
+            # Only the branch's own line counts (first parents). Commits only, no trees or blobs: about a second.
+            if [ -n "$last" ]; then
+              git init -q history
+              git -C history fetch -q --filter=tree:0 "https://github.com/$REPO" "$SHA" || true
+              if git -C history merge-base --is-ancestor "$last" "$SHA" 2>/dev/null &&
+                [ "$(git -C history rev-list --first-parent --no-merges --count "$last..$SHA")" = 0 ]; then
+                echo "Nothing but merge commits since the review of $last: no new review."
+                exit 0
+              fi
             fi
           fi
           # The agent files follow-up issues by milestone goal; the list saves it looking them up.
