@@ -42,17 +42,17 @@ TEST_CASE("the status line highlights a sample rate mismatch and shows a lost au
 {
 	test::UiApp app({1000, 700});
 	app.appUi().showProject();
-	CHECK(app.waitUntil([&] { return text(app, "#record-format") == "Record: 48 kHz"; }));
+	CHECK(app.waitUntil([&] { return text(app, "#record-format") == "Record: 48 kHz - 24 bit"; }));
 	CHECK_FALSE(has(app, "#record-format", "mismatch"));
 	CHECK(has(app, "#lost-device", "hidden"));
 
 	// The dummy device doesn't run at 16 kHz, so it stays at 48 kHz and plays the project faster.
 	app.call("project.set", {{"sampleRate", 16000.0}});
 	CHECK(app.waitUntil([&] { return has(app, "#record-format", "mismatch"); }));
-	CHECK(text(app, "#record-format") == "Record: 16 kHz");
+	CHECK(text(app, "#record-format") == "Record: 16 kHz - 24 bit");
 	app.call("project.set", {{"sampleRate", 44100.0}}); // it does at 44.1 kHz
 	CHECK(app.waitUntil([&] { return !has(app, "#record-format", "mismatch"); }));
-	CHECK(text(app, "#record-format") == "Record: 44.1 kHz");
+	CHECK(text(app, "#record-format") == "Record: 44.1 kHz - 24 bit");
 
 	// Unplugged: shown by its name, with the reason and its id as the tooltip, until it is plugged in again.
 	app.call("audio.simulateDeviceLoss", {{"connected", false}});

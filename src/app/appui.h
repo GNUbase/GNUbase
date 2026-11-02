@@ -78,6 +78,9 @@ namespace gnubase::app
 		// window.studioSetup, which the main menu's Studio menu runs. While it is open, this brings it to the front
 		// instead: MCP and Lua can run the command then. Throws std::runtime_error if the document can't be loaded.
 		Rml::ElementDocument& openStudioSetup(ui::Window& window);
+		// Opens the project setup dialog (resources/ui/project-setup.rml, #78) the same way: the UI command
+		// window.projectSetup, which Project > Project Setup and a click on the status line's record format run.
+		Rml::ElementDocument& openProjectSetup(ui::Window& window);
 
 		// Opens the start screen in the main window (ui/projectfiles.h, #77), as the app does when it starts without
 		// a project.
@@ -124,6 +127,10 @@ namespace gnubase::app
 		void chooseMissingFolder(ui::Window& window);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name) const;
+		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
+		// is open, brings it to the front instead.
+		Rml::ElementDocument& openOnce(
+			ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open) const;
 
 		// Made in this order and destroyed in the reverse: RmlUi releases its resources through the renderer and
 		// its Lua plugin's in Lua, the shell's windows need all of them, the settings and the binding tell the shell,
@@ -155,10 +162,11 @@ namespace gnubase::app
 		bool m_canUndo = false;
 		bool m_canRedo = false;
 		ui::Subscription m_history;
-		ui::ProjectFiles m_files;                     // the File menu's project commands
-		std::unique_ptr<ui::MainMenu> m_menu;         // the project window's
-		Rml::ObserverPtr<Rml::Element> m_studioSetup; // the open studio setup dialog's document
-		std::weak_ptr<ui::PoolPanel> m_pool;          // the docking system owns it while it is there
-		std::vector<ui::Subscription> m_poolResults;  // what the pool commands did, for the pool
+		ui::ProjectFiles m_files;                      // the File menu's project commands
+		std::unique_ptr<ui::MainMenu> m_menu;          // the project window's
+		Rml::ObserverPtr<Rml::Element> m_studioSetup;  // the open studio setup dialog's document
+		Rml::ObserverPtr<Rml::Element> m_projectSetup; // the open project setup dialog's document
+		std::weak_ptr<ui::PoolPanel> m_pool;           // the docking system owns it while it is there
+		std::vector<ui::Subscription> m_poolResults;   // what the pool commands did, for the pool
 	};
 }

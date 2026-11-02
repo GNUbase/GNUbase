@@ -35,10 +35,13 @@ namespace gnubase::ui
 	{
 		if (m_recordFormat)
 		{
-			// The reference's "Record: 44.1 kHz"; the bit depth joins it with the project setup (#78).
+			// "Record: 44.1 kHz - 24 bit", or "- 32 bit float"; the engine names bit depths int24 and float32.
 			std::array<char, 32> rate{};
 			std::snprintf(rate.data(), rate.size(), "%g", status.at("projectSampleRate").get<double>() / 1000.0);
-			m_recordFormat->SetInnerRML("Record: " + std::string(rate.data()) + " kHz");
+			const std::string depth = status.at("recordBitDepth").get<std::string>();
+			const bool floating = depth.rfind("float", 0) == 0;
+			m_recordFormat->SetInnerRML(Rml::StringUtilities::EncodeRml("Record: " + std::string(rate.data()) +
+				" kHz - " + depth.substr(floating ? 5 : 3) + (floating ? " bit float" : " bit")));
 			const engine::Json& device = status.at("device");
 			m_recordFormat->SetClass("mismatch", !device.is_null() && device.value("sampleRateMismatch", false));
 		}

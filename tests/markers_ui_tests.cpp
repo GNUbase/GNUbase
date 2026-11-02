@@ -538,6 +538,19 @@ namespace
 			app.appUi().markers()->markers()[1].id);
 	}
 
+	TEST_CASE("the markers window's lengths don't count from the project's start time", "[ui]")
+	{
+		test::UiApp app;
+		app.call("track.add", {{"type", "marker"}});
+		app.call("project.set", {{"startTime", 3600.0}});
+		app.call("marker.add", {{"type", "cycle"}, {"position", 4 * g_quarter}, {"end", 8 * g_quarter}}); // 2 seconds
+		app.call("settings.set", {{"key", "ui.timeFormats"}, {"value", {{"primary", "seconds"}}}});
+
+		openMarkers(app, 1);
+		Rml::ElementDocument& document = markersDocument(app);
+		REQUIRE(app.waitUntil([&document] { return field(document, 0, "length") == std::string("0:00:02.000"); }));
+	}
+
 	TEST_CASE("key commands locate to markers, set them and recall cycle markers", "[ui]")
 	{
 		test::UiApp app;
