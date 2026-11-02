@@ -669,6 +669,7 @@ TEST_CASE("the play tool auditions the pressed audio track until it is released,
 	const auto modes = [&auditions]
 	{
 		std::vector<std::string> result;
+		result.reserve(auditions.size());
 		for (const Json& audition : auditions)
 			result.push_back(audition.at("mode").get<std::string>());
 		return result;
