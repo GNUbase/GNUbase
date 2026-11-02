@@ -6,9 +6,11 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace gnubase::engine
 {
+	class CommandContext;
 	class Engine;
 }
 
@@ -41,6 +43,8 @@ namespace gnubase::engine::settings
 	Json changeEntry(Json map, const std::string& key, const Json& changes, const Json& defaults);
 
 	// settings.get, settings.set, settings.reset and settings.list for the store, which only the command thread uses.
-	// changed runs after settings.set or settings.reset changed a value.
-	void registerCommands(Engine& engine, Store& store, std::function<void()> changed);
+	// changed runs after settings.set or settings.reset changed values and emitted settings.changed, with the command
+	// and the keys of the settings that changed, so it can emit the events that follow from them.
+	using Changed = std::function<void(CommandContext& context, const std::vector<std::string>& keys)>;
+	void registerCommands(Engine& engine, Store& store, Changed changed);
 }

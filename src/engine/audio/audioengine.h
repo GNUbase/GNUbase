@@ -91,8 +91,10 @@ namespace gnubase::engine
 		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
 		void setChase(const MidiChase& chase);
 
-		// Command thread, after the user settings changed: the MIDI ports follow their settings (MidiPorts).
-		void applyPortSettings() { m_midi.applySettings(); }
+		// Command thread, after a command changed the user settings audio.portSettings (audioPorts) or
+		// midi.portSettings (midiPorts): emits the audio ports as audio.portsChanged, and the MIDI ports follow their
+		// settings (MidiPorts::applySettings).
+		void portSettingsChanged(CommandContext& context, bool audioPorts, bool midiPorts);
 
 		// Any thread but the audio thread, without waiting: the project cursor (Transport::position).
 		time::Samples position() const { return m_transport.position(); }

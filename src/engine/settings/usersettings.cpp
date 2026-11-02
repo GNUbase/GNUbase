@@ -247,7 +247,7 @@ namespace gnubase::engine::settings
 		return map;
 	}
 
-	void registerCommands(Engine& engine, Store& store, std::function<void()> changed)
+	void registerCommands(Engine& engine, Store& store, Changed changed)
 	{
 		Json keys = Json::array();
 		std::string list;
@@ -289,8 +289,8 @@ namespace gnubase::engine::settings
 				const Json& value = context.parameters().at("value");
 				if (store.set(name, value))
 				{
-					changed();
 					context.emit("settings.changed", {{"values", {{name, value}}}});
+					changed(context, {name});
 				}
 				return Json{{"key", name}, {"value", store.value(name)}};
 			});
@@ -323,8 +323,12 @@ namespace gnubase::engine::settings
 				}
 				if (!reset.empty())
 				{
-					changed();
+					std::vector<std::string> keys;
+					keys.reserve(reset.size());
+					for (const auto& entry : reset.items())
+						keys.push_back(entry.key());
 					context.emit("settings.changed", {{"values", std::move(reset)}});
+					changed(context, keys);
 				}
 				return Json{{"values", std::move(values)}};
 			});

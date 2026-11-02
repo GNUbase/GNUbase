@@ -64,6 +64,13 @@ namespace gnubase::engine
 
 	bool MidiPorts::refresh()
 	{
+		const bool listed = listHardware();
+		const bool followed = followSettings();
+		return listed || followed;
+	}
+
+	bool MidiPorts::listHardware()
+	{
 		m_listed = true;
 		bool changed = false;
 		std::vector<bool> seen(m_ports.size(), false);
@@ -107,9 +114,17 @@ namespace gnubase::engine
 		}
 		for (size_t i = 0; i < m_ports.size(); ++i)
 		{
-			Port& port = m_ports[i];
-			changed = changed || port.present != seen[i];
-			port.present = seen[i];
+			changed = changed || m_ports[i].present != seen[i];
+			m_ports[i].present = seen[i];
+		}
+		return changed;
+	}
+
+	bool MidiPorts::followSettings()
+	{
+		bool changed = false;
+		for (Port& port : m_ports)
+		{
 			if (port.slot >= 0)
 				m_allInputs[static_cast<size_t>(port.slot)].store(inAllInputs(port), std::memory_order_relaxed);
 			const bool wanted = port.present && port.info.input && visible(port);
@@ -182,30 +197,32 @@ namespace gnubase::engine
 		return static_cast<size_t>(found - m_ports.begin());
 	}
 
-	void MidiPorts::applySettings()
+	void MidiPorts::applySettings(CommandContext& context)
 	{
-		if (m_listed)
-			refresh();
+		if (!m_listed)
+			return; // the first midi command lists the ports with their settings
+		followSettings();
+		context.emit("midi.changed", list()); // also for names, which change nothing else
 	}
 
 	Json MidiPorts::setPort(Engine& engine, CommandContext& context)
 	{
 		listOnce();
 		Json changes = context.parameters();
-		const size_t index = find(changes); // an index: applying the setting may add ports
-		const Port& port = m_ports[index];
+		const Port& port = m_ports[find(changes)];
 		if (changes.contains("inAllInputs") && !port.info.input)
 			throw CommandError("only inputs belong to all MIDI inputs");
 		for (const char* name : {"backend", "id", "input"})
 			changes.erase(name);
-		// The engine applies the changed setting (applySettings), which opens or closes the port.
+		// The engine applies the changed setting (applySettings), which opens or closes the port and sends
+		// midi.changed.
 		engine.modifySetting(context, "midi.portSettings",
 			[entry = key(port), &changes](const Json& value)
 			{
 				return settings::changeEntry(
 					value, entry, changes, {{"showAs", ""}, {"visible", true}, {"inAllInputs", true}});
 			});
-		return toJson(m_ports[index]);
+		return toJson(port);
 	}
 
 	void MidiPorts::registerCommands(Engine& engine)
@@ -231,18 +248,14 @@ namespace gnubase::engine
 				"if ids repeat. showAs: the name it is shown as; empty shows the system name. visible: hidden inputs "
 				"are closed. inAllInputs, for inputs: whether tracks set to all MIDI inputs receive it. The settings "
 				"are kept in the user setting midi.portSettings, so they come back with the port, also after a "
-				"restart. Returns the port.",
+				"restart. Returns the port. If that changes the setting, sends midi.ports as the event midi.changed, "
+				"as settings.set and settings.reset on midi.portSettings do.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["id", "input"],
 					"properties": {"backend": {"type": "string"}, "id": {"type": "string"},
 					"input": {"type": "boolean"}, "showAs": {"type": "string"}, "visible": {"type": "boolean"},
 					"inAllInputs": {"type": "boolean"}}})"),
 				Json::parse(R"({"type": "object"})"), false},
-			[this, &engine](CommandContext& context)
-			{
-				Json port = setPort(engine, context);
-				context.emit("midi.changed", list());
-				return port;
-			});
+			[this, &engine](CommandContext& context) { return setPort(engine, context); });
 		engine.registerCommand(
 			{"midi.refresh", 1,
 				"Lists the MIDI ports again: opens new and returning visible inputs and marks unplugged ports as not "

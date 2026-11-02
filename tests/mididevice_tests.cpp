@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/midiports.h"
+#include "engine/engine.h"
 #include "engine/settings/usersettings.h"
 #include "platform/hosttime.h"
 #include "platform/midi/dummyport.h"
@@ -778,7 +779,9 @@ TEST_CASE("a hidden input that becomes visible reaches all MIDI inputs", "[unit]
 	CHECK(ports.refresh()); // lists the hidden input, doesn't open it
 
 	settings.set("midi.portSettings", gnubase::engine::Json::object());
-	ports.applySettings(); // opens the input for the first time, no further listing
+	const gnubase::engine::Json parameters = gnubase::engine::Json::object();
+	gnubase::engine::CommandContext context(parameters);
+	ports.applySettings(context); // opens the input for the first time, no further listing
 
 	const auto keys = backend.openOutput("Keys");
 	const HostTime now = hostTime();
