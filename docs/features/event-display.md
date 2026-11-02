@@ -54,7 +54,8 @@ attributes show the view to MCP's `ui_dom`.
 
 The ruler shows bars and beats (the default), seconds, timecode at the project's frame rate, samples, or timecode at a
 frame rate of the user's (`setRulerFormat`; its `format` attribute names it: `barsBeats`, `seconds`, `timecode`,
-`samples`, `userFrames`). `ui::rulerScale` puts labels at least their width and an em apart:
+`samples`, `userFrames`). The format is the project's snap settings' `format`, so the snap grid follows it and the
+project keeps it ([snap.md](snap.md)). `ui::rulerScale` puts labels at least their width and an em apart:
 
 - **Bars and beats** where the tempo and signature maps put them: every few bars (powers of two), every beat, every
   sixteenth, or every 60, 30, 15, 5 or 1 display ticks (120 per sixteenth), the finest step that keeps labels apart

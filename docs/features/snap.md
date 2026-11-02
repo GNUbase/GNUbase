@@ -7,10 +7,19 @@ in `eventedits.cpp`; the event display's is in `src/ui/eventediting.cpp` and `ev
 
 ## Settings
 
-The project keeps its snap settings (`Project::snap`): on or off, the snap type, the grid type and snap to zero
-crossing. Like the quantize settings they are not undo steps; they are saved in the DAWproject extension entry, and
-`project.get` has them as `snap`. Snap starts off, with the grid on bars. `snap.get` reads them, `snap.set` changes
-what it is given and emits `snap.changed`.
+The project keeps its snap settings (`Project::snap`): on or off, the snap type, the time format the grid follows,
+a grid type for each time format and snap to zero crossing. Like the quantize settings they are not undo steps; they
+are saved in the DAWproject extension entry, and `project.get` has them as `snap`. Snap starts off, with the grid on
+bars. `snap.get` reads them, `snap.set` changes what it is given and emits `snap.changed`.
+
+The grid types depend on the time format (#413, pp. 105, 107-109): `format` is the project window's ruler format
+(`barsBeats`, `seconds`, `timecode`, `samples`, `userFrames`), `grids` keeps the grid type chosen for each, by default
+`bar`, `100ms`, `frame`, `100samples` and `frame`, and `grid` is the one in use, the format's. Switching the format
+switches the grid to that format's, so the grid always matches the grid type menu that is shown, and switching back
+finds the one chosen there before. `snap.set` with a grid type that isn't the format's refuses it when it is given a
+format too; without one (as before #413) it switches to the grid type's format, the frames to `timecode` unless
+`userFrames` is in use. Settings saved before #413 have only `grid`, and load with its format; older builds read
+`grid`, the grid in use.
 
 | Snap type | A position goes to | Reference |
 |---|---|---|
@@ -55,6 +64,9 @@ what it is given and emits `snap.changed`.
   buttons show the settings (`.checked`, and the chosen type's name); the grid type menu has the grid types of the
   ruler's time format (bars and beats, seconds, timecode and fps (User), samples), filled in by the display, the chosen
   one checked. Every change goes to the engine with `snap.set`; the display follows `snap.changed` and `project.get`.
+- **Ruler format.** Choosing the ruler's time format sends it to the engine as the snap settings' `format`, and the
+  display snaps with that format's grid at once; the ruler shows the format of the project's snap settings, so a
+  project opens with the ruler format it was saved with.
 - **Gestures.** Dragging events snaps the pressed event's snap point or start, and the selection keeps its distance to
   it; the preview shows the snapped place. Resizing snaps the pressed event's edge, Alt and a click splits at the
   snapped position. Events, markers and the cursor attract from 8 dp; the selection doesn't. Moves of events that are
@@ -77,13 +89,19 @@ Not yet: grid lines and snap point lines in the event display, the editors' own 
   across a tempo change, adapt to zoom, every linear grid and the user's frame rate, grid steps; every snap type and
   their combinations, magnets and the cursor only within range, grid relative in bars across a tempo change, in beats
   and on a linear grid; `snap.get` and `snap.set` saved with the project and not undone; `snap.position` with event
-  edges, markers, snap points, the cursor, the zoom's note value, the frame rate and grid relative; snap points set and
+  edges, markers, snap points, the cursor, the zoom's note value, the frame rate and grid relative; a grid type per
+  time format, switching formats, grid types of another format refused or choosing their format, and settings from
+  before #413; snap points set and
   refused; shuffling forwards, backwards, to the end and to the front, its errors and a locked neighbour; splitting
   and resizing at zero crossings of a real file, not when sizing moves the contents or the file is missing; a split
   near an event's start still splits it, and one just outside an event leaves it alone.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): with snap on, a drag, a resize and an Alt click land
   on bars, shuffle swaps two parts, events, a position marker and the cursor attract, a snap point set at the cursor
-  snaps to a bar, grid relative moves a beat, nudges move a beat and a bar, and with snap off a drag doesn't snap.
+  snaps to a bar, grid relative moves a beat, nudges move a beat and a bar, and with snap off a drag doesn't snap;
+  with the ruler in seconds a drag snaps to 100 ms, back in bars and beats to a bar, and the ruler follows the
+  format of `snap.set`.
 - `tests/uiapp_tests.cpp`: the toolbar's snap and zero crossing buttons and J, the snap type menu checked and shown on
-  its button, the grid type menu with the grid types of each ruler format; the project window's golden image shows the
-  toolbar.
+  its button, the grid type menu with the grid types of each ruler format, and back in a format the grid type chosen
+  there shown and checked; the project window's golden image shows the toolbar.
+- `tests/dawproject_tests.cpp`: an extension entry with the snap settings as #87 saved them loads with the grid
+  type's format.

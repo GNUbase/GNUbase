@@ -164,6 +164,7 @@ namespace gnubase::ui
 		bool suspendAutoScrollWhenEditing() const { return m_suspendWhenEditing; }
 		bool autoScrollSuspended() const { return m_suspended; }
 
+		// The ruler's time format, and with it the snap grid's (snap.set's format).
 		void setRulerFormat(TimeFormat format);
 		TimeFormat rulerFormat() const { return m_format; }
 		void setCrossHair(bool shown);
@@ -313,6 +314,8 @@ namespace gnubase::ui
 		void dialogEvent(Rml::Event& event);
 		void openDialog(const char* file);
 		void showFormat();
+		void showRuler();
+		void followSnapFormat(); // the ruler shows the snap settings' format
 		void showPresets();
 		void showAutoScroll();
 		void showSnap();

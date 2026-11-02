@@ -13,6 +13,12 @@ test.case("snap settings snap positions to bars and shuffle parts", function()
 	test.equal(snapped.position, 192000)
 	test.equal(snapped.ticks, 2 * bar)
 	test.equal(snapped.musical, true)
+	-- Each time format keeps a grid type of its own (#413).
+	gnubase.snap.set{format = "seconds"}
+	test.equal(gnubase.snap.get().grid, "100ms")
+	test.equal(gnubase.snap.position{position = 150000}.position, 148800)
+	gnubase.snap.set{format = "barsBeats"}
+	test.equal(gnubase.snap.get().grid, "bar")
 
 	local track = gnubase.track.add{type = "midi"}.track.id
 	local a = gnubase.midiPart.add{track = track, position = 0, length = bar}.part.id

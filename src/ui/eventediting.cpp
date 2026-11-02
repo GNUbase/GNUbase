@@ -215,7 +215,7 @@ namespace gnubase::ui
 					return;
 				// A selection the display doesn't show yet takes the step at the project's start.
 				const time::Position step =
-					engine::gridStep(m_snap.grid, snapGrid(), samples(edge(false).value_or(0.0)));
+					engine::gridStep(m_snap.grid(), snapGrid(), samples(edge(false).value_or(0.0)));
 				Json parameters = {{"events", m_selection},
 					{step.base == time::TimeBase::Musical ? "ticks" : "delta", direction * step.value}};
 				if (edgeName != nullptr)

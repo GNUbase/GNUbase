@@ -97,7 +97,7 @@ namespace gnubase::ui
 		for (const Rml::EventId id : g_documentEvents)
 			m_document->AddEventListener(id, this);
 		findControls();
-		setRulerFormat(m_format);
+		showRuler();
 
 		m_actions = {{"zoom.in", [this] { zoomIn(); }}, {"zoom.out", [this] { zoomOut(); }},
 			{"zoom.inVertically", [this] { zoomInVertically(); }},
@@ -122,6 +122,7 @@ namespace gnubase::ui
 			[this](const engine::Event& event)
 			{
 				m_snap = engine::snapSettingsFrom(event.data, m_snap);
+				followSnapFormat();
 				showSnap();
 			}));
 		m_subscriptions.push_back(m_binding.on("quantize.changed", [this](const engine::Event& event)
@@ -264,6 +265,7 @@ namespace gnubase::ui
 		if (!readTimeContext(project, m_time))
 			logging::warning("The event display can't read the project's tempo or signatures");
 		m_snap = engine::snapSettingsFrom(project.at("snap"), m_snap);
+		followSnapFormat();
 		m_quantize = engine::midi::quantizeSettingsFromJson(project.at("quantize"));
 		showSnap();
 
@@ -358,7 +360,7 @@ namespace gnubase::ui
 		m_selection = std::move(selection);
 		setLanes();
 		showSelection();
-		setRulerFormat(m_format); // the tempo or signatures may have changed
+		showRuler(); // the tempo or signatures may have changed
 		setCursor(m_cursorSample);
 		apply();
 	}
@@ -653,13 +655,36 @@ namespace gnubase::ui
 		showAutoScroll();
 	}
 
+	// The snap grid follows the format at once; the engine's snap.changed confirms it.
 	void EventDisplay::setRulerFormat(TimeFormat format)
 	{
 		m_format = format;
+		const std::string name = timeFormatName(format);
+		if (const std::optional<engine::GridFormat> grid = engine::gridFormatFromName(name);
+			grid && *grid != m_snap.format)
+		{
+			m_snap.format = *grid;
+			setSnap({{"format", name}});
+		}
+		showRuler();
+	}
+
+	void EventDisplay::followSnapFormat()
+	{
+		if (const std::optional<TimeFormat> format = timeFormatFromName(engine::gridFormatName(m_snap.format));
+			format && *format != m_format)
+		{
+			m_format = *format;
+			showRuler();
+		}
+	}
+
+	void EventDisplay::showRuler()
+	{
 		if (!alive())
 			return;
-		m_ruler->setScale(rulerScale(format, m_time));
-		m_ruler->SetAttribute("format", timeFormatName(format));
+		m_ruler->setScale(rulerScale(m_format, m_time));
+		m_ruler->SetAttribute("format", timeFormatName(m_format));
 		showFormat();
 		showSnap(); // the grid types are the format's
 	}

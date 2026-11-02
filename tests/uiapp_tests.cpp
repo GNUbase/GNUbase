@@ -415,6 +415,21 @@ TEST_CASE("the snap buttons, the snap and grid type menus and J change the proje
 	click(app, selector("#grid-type"));
 	CHECK(hasClass(app, "#grid-type-menu > menuitem[grid-type=44100samples]", "checked"));
 	app.ui().key(std::nullopt, "Escape");
+
+	// Each format keeps its grid type (#413): back in seconds and in bars and beats, the button shows the one chosen
+	// there, the menu checks it, and it is the project's grid.
+	display.setRulerFormat(ui::TimeFormat::Seconds);
+	REQUIRE(app.waitUntil([&app] { return element(app, "#grid-type").value("text", "") == "10ms"; }));
+	REQUIRE(app.waitUntil([&snap] { return snap().at("format") == "seconds" && snap().at("grid") == "10ms"; }));
+	click(app, selector("#grid-type"));
+	CHECK(hasClass(app, "#grid-type-menu > menuitem[grid-type=10ms]", "checked"));
+	app.ui().key(std::nullopt, "Escape");
+	display.setRulerFormat(ui::TimeFormat::BarsBeats);
+	REQUIRE(app.waitUntil([&app] { return element(app, "#grid-type").value("text", "") == "Use Quantize"; }));
+	REQUIRE(app.waitUntil([&snap] { return snap().at("grid") == "quantize"; }));
+	click(app, selector("#grid-type"));
+	CHECK(hasClass(app, "#grid-type-menu > menuitem[grid-type=quantize]", "checked"));
+	app.ui().key(std::nullopt, "Escape");
 }
 
 TEST_CASE("the toolbar's tool buttons and the keys choose the tools, a second click opens a tool's modes", "[ui]")

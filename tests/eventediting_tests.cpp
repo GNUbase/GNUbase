@@ -304,7 +304,7 @@ TEST_CASE("the edit commands act on the selection", "[unit]")
 	// Nudging moves the part a grid step, here a beat; duplicating selects the copy right after it; moving its start
 	// to the cursor.
 	f.call("snap.set", {{"grid", "beat"}});
-	REQUIRE(f.waitUntil([&f] { return f.display.snap().grid == engine::GridType::Beat; }));
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().grid() == engine::GridType::Beat; }));
 	f.display.select({f.part});
 	f.run("edit.nudgeRight");
 	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 3 * g_quarter; }));
@@ -437,7 +437,7 @@ TEST_CASE("with snap on, moving, resizing, splitting and nudging follow the grid
 
 	// Grid relative in beats: dragged 0.6 seconds, the part keeps its place on the beat and moves a beat.
 	f.call("snap.set", {{"type", "gridRelative"}, {"grid", "beat"}});
-	REQUIRE(f.waitUntil([&f] { return f.display.snap().grid == engine::GridType::Beat; }));
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().grid() == engine::GridType::Beat; }));
 	f.drag(500, 60, 560, 60);
 	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 9 * g_quarter; }));
 
@@ -448,7 +448,7 @@ TEST_CASE("with snap on, moving, resizing, splitting and nudging follow the grid
 	f.run("edit.snap");
 	REQUIRE(f.waitUntil([&f] { return !f.display.snap().on; }));
 	f.call("snap.set", {{"grid", "bar"}});
-	REQUIRE(f.waitUntil([&f] { return f.display.snap().grid == engine::GridType::Bar; }));
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().grid() == engine::GridType::Bar; }));
 	f.run("edit.nudgeRight");
 	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 12 * g_quarter; }));
 	// Off, a drag doesn't snap: 0.3 seconds is 0.6 quarters.
@@ -470,6 +470,32 @@ TEST_CASE("with snap to events, a position marker attracts a dragged event", "[u
 	// The audio event dragged from 2 to 5.95 seconds starts on the marker (8 dp attract).
 	f.drag(225, 20, 620, 20);
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("position") == 288000; }));
+}
+
+// Reference manual pp. 107-109: the grid types depend on the ruler's time format.
+TEST_CASE("the ruler's time format chooses the grid that moves snap to", "[unit]")
+{
+	Fixture f;
+	f.call("snap.set", {{"on", true}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().on; }));
+
+	// Seconds: 100 ms; the part dragged from 1 to 1.63 seconds starts at 1.6.
+	f.display.setRulerFormat(ui::TimeFormat::Seconds);
+	CHECK(f.display.snap().grid() == engine::GridType::Ms100);
+	REQUIRE(f.waitUntil([&f] { return f.call("snap.get").at("format") == "seconds"; }));
+	f.drag(150, 60, 213, 60);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == (16 * g_quarter) / 5; }));
+
+	// Bars and beats again: bars; dragged from 1.6 to 2.6 seconds it starts on the bar at 2.
+	f.display.setRulerFormat(ui::TimeFormat::BarsBeats);
+	REQUIRE(f.waitUntil([&f] { return f.call("snap.get").at("format") == "barsBeats"; }));
+	f.drag(170, 60, 270, 60);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 4 * g_quarter; }));
+
+	// The ruler follows the project's snap settings.
+	f.call("snap.set", {{"format", "samples"}});
+	REQUIRE(f.waitUntil([&f] { return f.display.rulerFormat() == ui::TimeFormat::Samples; }));
+	CHECK(f.display.snap().grid() == engine::GridType::Samples100);
 }
 
 // The project window's tools (#86, reference manual pp. 57-65): what a press in the event lanes does with each.
