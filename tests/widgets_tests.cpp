@@ -12,6 +12,7 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/Input.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -719,6 +720,33 @@ TEST_CASE("table views keep the selection of rows rebuilt twice between two upda
 	CHECK(app.waitUntil([&app] { return selected(app, "#new-verse"); }));
 	CHECK(!selected(app, "#new-intro"));
 	CHECK(element(app, "#table").at("attributes").at("value") == "verse");
+
+	// Rebuilt again, and a key comes before the view updates (sent to the view itself: input from the automation
+	// updates the context first): it moves from the new row too, so Down stays on the last one.
+	body.SetInnerRML(R"(<tr value="verse"><td>Verse</td><td>16 bars</td></tr>)");
+	body.SetInnerRML(R"(<tr id="last-intro" value="intro"><td>Intro</td><td>8 bars</td></tr>)"
+					 R"(<tr id="last-verse" value="verse"><td>Verse</td><td>16 bars</td></tr>)");
+	Rml::Dictionary down;
+	down["key_identifier"] = static_cast<int>(Rml::Input::KI_DOWN);
+	page.document->GetElementById("table")->DispatchEvent(Rml::EventId::Keydown, down);
+	CHECK(selected(app, "#last-verse"));
+	CHECK(!selected(app, "#last-intro"));
+}
+
+TEST_CASE("table views select among rows rebuilt twice between two updates when none was selected", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	click(app, "#row-intro");
+	page.document->GetElementById("table")->SetAttribute("value", "chorus"); // no row has it yet
+	CHECK(app.waitUntil([&app] { return !selected(app, "#row-intro"); }));
+
+	Rml::Element& body = *page.document->GetElementById("table-body");
+	body.SetInnerRML(R"(<tr value="intro"><td>Intro</td><td>8 bars</td></tr>)");
+	body.SetInnerRML(R"(<tr id="new-intro" value="intro"><td>Intro</td><td>8 bars</td></tr>)"
+					 R"(<tr id="new-chorus" value="chorus"><td>Chorus</td><td>8 bars</td></tr>)");
+	CHECK(app.waitUntil([&app] { return selected(app, "#new-chorus"); }));
+	CHECK(!selected(app, "#new-intro"));
 }
 
 TEST_CASE("splitters move the boundary between the elements of a row or a column", "[ui]")

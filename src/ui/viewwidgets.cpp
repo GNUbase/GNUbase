@@ -66,11 +66,8 @@ namespace gnubase::ui
 			{
 				Rml::Element::OnUpdate();
 				const std::vector<Rml::Element*> all = rows();
-				if (all.size() != m_rowCount || GetAttribute<Rml::String>("value", "") != m_value || currentGone())
-				{
-					m_rowCount = all.size();
+				if (all.size() != m_rowCount || GetAttribute<Rml::String>("value", "") != m_value || rowsReplaced(all))
 					select(all, GetAttribute<Rml::String>("value", ""));
-				}
 				shapeTree(all);
 			}
 
@@ -150,7 +147,7 @@ namespace gnubase::ui
 			void key(Rml::Event& event)
 			{
 				const std::vector<Rml::Element*> all = rows();
-				if (currentGone()) // rows rebuilt since the last update
+				if (rowsReplaced(all)) // since the last update
 					select(all, GetAttribute<Rml::String>("value", ""));
 				const std::vector<Rml::Element*> shown = visible(all);
 				if (shown.empty())
@@ -235,6 +232,8 @@ namespace gnubase::ui
 			void select(const std::vector<Rml::Element*>& all, const std::string& value)
 			{
 				m_value = value;
+				m_rowCount = all.size();
+				m_firstRow = all.empty() ? Rml::ObserverPtr<Rml::Element>() : all.front()->GetObserverPtr();
 				setCurrent(nullptr);
 				m_anchor.reset();
 				std::vector<std::string> values;
@@ -310,16 +309,21 @@ namespace gnubase::ui
 				m_hadCurrent = row != nullptr;
 			}
 
-			// Whether the row the keys move from was destroyed: code replaced the rows, possibly with as many rows and
-			// the same value, so that neither tells the view. Its value then selects among the new rows.
-			bool currentGone() const { return m_hadCurrent && !m_current; }
+			// Whether code replaced rows since the view last selected them, possibly with as many rows and the same
+			// value, so that neither tells the view: the row the keys move from or the first row was destroyed. The
+			// value then selects among the new rows.
+			bool rowsReplaced(const std::vector<Rml::Element*>& all) const
+			{
+				return (m_hadCurrent && !m_current) || (!all.empty() && all.front() != m_firstRow.get());
+			}
 
 			size_t m_rowCount = 0;
 			std::string m_value; // the value attribute as the view last applied or set it
 			// Rows can be destroyed at any time; observer pointers become null with them.
-			Rml::ObserverPtr<Rml::Element> m_anchor;  // where a Shift-click's range starts
-			Rml::ObserverPtr<Rml::Element> m_current; // the row the keys move from
-			bool m_hadCurrent = false;                // m_current was set to a row
+			Rml::ObserverPtr<Rml::Element> m_anchor;   // where a Shift-click's range starts
+			Rml::ObserverPtr<Rml::Element> m_current;  // the row the keys move from
+			bool m_hadCurrent = false;                 // m_current was set to a row
+			Rml::ObserverPtr<Rml::Element> m_firstRow; // the first row when the view last selected rows
 		};
 
 		// <splitter>: between two elements of a flex row or column, dragging it moves the boundary between them. It
