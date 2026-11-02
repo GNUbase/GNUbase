@@ -38,7 +38,7 @@ each other.
   does the window losing the keyboard focus ([key-commands.md](key-commands.md)).
 - **The mouse wheel** changes a display's value: up for later, by a beat in Bars+Beats, a frame in Timecode and fps
   (User), a second in Seconds and Samples, never before the project start. On the locator range it moves the right
-  locator, not before the left one. A display being edited ignores the wheel.
+  locator, not before the left one. A display being edited ignores the wheel, and a scroll sideways moves nothing.
 - **Displays** (`time`) show the project cursor, a locator or the locator range in the time format of their slot
   (`format`: `primary`, `secondary`, `timeDisplay`). While playing they read the playback position once a frame, as
   the event display does. They are `<textdisplay>`s ([widgets.md](widgets.md)): a double click edits one, and Enter

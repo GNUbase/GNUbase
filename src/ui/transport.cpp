@@ -426,7 +426,10 @@ namespace gnubase::ui
 
 	void TransportControls::wheel(Rml::Element& element, float delta)
 	{
-		// Up is later, by as many steps as the wheel turned, at least one.
+		// Up is later, by as many steps as the wheel turned, at least one. A scroll sideways, as touchpads and tilt
+		// wheels send, has no vertical delta and moves nothing.
+		if (delta == 0.0F)
+			return;
 		const long turned = std::lround(-delta);
 		long steps = turned;
 		if (steps == 0)

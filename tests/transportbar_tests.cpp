@@ -631,6 +631,13 @@ TEST_CASE("the mouse wheel changes a display's value", "[ui]")
 	app.call("transport.set", {{"left", 48000}, {"right", 96000}});
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#left-locator") == "1.3.1.0"; }));
 
+	// A scroll sideways, as a touchpad or a tilt wheel sends, moves nothing.
+	app.ui().wheel(std::nullopt, at("#primary-time"), 1, 0);
+	app.ui().wheel(std::nullopt, at("#left-locator"), -1, 0);
+	settle(app);
+	CHECK(position(app) == 0);
+	CHECK(transport(app).at("left") == 48000);
+
 	// Up for later, by a beat in bars and beats.
 	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -1);
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 24000; }));
