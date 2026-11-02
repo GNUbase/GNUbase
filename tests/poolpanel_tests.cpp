@@ -70,6 +70,29 @@ namespace
 		const Json media = app.call("media.add", {{"path", path}}).at("media");
 		return app.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<uint64_t>();
 	}
+
+	// The panel's message line: what the last pool command did, or why it failed.
+	std::string message(test::UiApp& app)
+	{
+		const Json found = elements(app, "#pool-message");
+		return found.empty() ? std::string() : found.at(0).value("text", "");
+	}
+
+	uint64_t folderOf(test::UiApp& app, uint64_t clip)
+	{
+		const Json pool = app.call("pool.get");
+		for (const Json& item : pool.at("clips"))
+			if (item.at("id") == clip)
+				return item.at("folder").get<uint64_t>();
+		FAIL_CHECK("no clip " << clip);
+		return 0;
+	}
+
+	void openPool(test::UiApp& app, size_t rowCount)
+	{
+		app.keys().run("window.pool", Json::object(), app.main(), nullptr);
+		REQUIRE(app.waitUntil([&app, rowCount] { return rows(app).size() == rowCount; }));
+	}
 }
 
 TEST_CASE("the pool panel lists folders and clips, renames them and moves clips into folders", "[ui]")
@@ -143,6 +166,9 @@ TEST_CASE("the pool panel lists folders and clips, renames them and moves clips 
 	click(app, "#pool-remove-unused");
 	REQUIRE(app.waitUntil([&app] { return app.call("pool.get").at("clips").size() == 1; }));
 	REQUIRE(app.waitUntil([&app] { return rows(app).size() == 4; }));
+	REQUIRE(app.waitUntil([&app] { return !message(app).empty(); }));
+	CHECK(message(app) == "Removed 2 clips and 2 files from the pool.");
+	CHECK(!has(elements(app, "#pool-message").at(0), "error"));
 
 	// Undo from another client shows at once.
 	app.call("history.undo");
@@ -166,4 +192,68 @@ TEST_CASE("the pool panel's Import puts files into the pool through the Import O
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("clips").size() == 2; }));
 	CHECK(app.call("project.get").at("tracks").empty());
 	CHECK(app.call("project.get").at("audioEvents").empty());
+}
+
+TEST_CASE(
+	"the pool panel moves only clips dragged onto a folder, keeps names typed away and sorts names in any case", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const uint64_t kick = addClip(app, writeAudio(dir.path() / "kick.wav", 480));
+	const uint64_t bass = addClip(app, writeAudio(dir.path() / "b.wav", 480));
+	const uint64_t alpha = addClip(app, writeAudio(dir.path() / "a.wav", 480));
+	app.call("clip.set", {{"clip", bass}, {"name", "Bass"}});
+	app.call("clip.set", {{"clip", alpha}, {"name", "alpha"}});
+	const uint64_t drums = app.call("poolFolder.add", {{"name", "Drums"}}).at("folder").at("id").get<uint64_t>();
+	const std::string k = "c" + std::to_string(kick);
+	const std::string d = "f" + std::to_string(drums);
+	openPool(app, 5);
+
+	// Names sort as the user reads them, whatever their letter case.
+	CHECK(rows(app) == std::vector<std::string>{"f0", d, "c" + std::to_string(alpha), "c" + std::to_string(bass), k});
+
+	// A clip pressed on and let go outside the panel isn't dragged: neither a click into a folder's name nor a drag
+	// from outside onto the folder moves it.
+	const ui::Target kickRow{"#pool listitem span.used", rowIndex(app, k), std::nullopt};
+	const ui::Target outside{"#event-display", 0, std::nullopt};
+	app.ui().drag(std::nullopt, kickRow, outside);
+	click(app, "#pool listitem input", rowIndex(app, d) - 1); // the Audio folder has no field
+	CHECK(folderOf(app, kick) == 0);
+	app.ui().drag(std::nullopt, kickRow, outside);
+	app.ui().drag(std::nullopt, outside, {"#pool listitem span.used", rowIndex(app, d), std::nullopt});
+	CHECK(folderOf(app, kick) == 0);
+
+	// A name typed away keeps the old one.
+	click(app, "#pool listitem input", rowIndex(app, d) - 1);
+	app.ui().key(std::nullopt, "End");
+	for (int i = 0; i < 5; ++i)
+		app.ui().key(std::nullopt, "Backspace");
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(elements(app, "#pool listitem input").at(static_cast<size_t>(rowIndex(app, d) - 1)).value("value", "") ==
+		"Drums");
+	CHECK(app.call("pool.get").at("folders").at(0).at("name") == "Drums");
+
+	// While another tab shows, the panel doesn't read the pool; once it shows again, it does.
+	app.appUi().docking().showTab("mixer");
+	addClip(app, writeAudio(dir.path() / "late.wav", 480));
+	CHECK_FALSE(app.waitUntil([&app] { return rows(app).size() == 6; }, std::chrono::milliseconds(300)));
+	openPool(app, 6);
+}
+
+TEST_CASE("the pool panel shows why Conform Files from the Media menu failed", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	test::writeWav(dir.path() / "slow.wav", {std::vector<float>(441, 0.25f), 1, 44100});
+	addClip(app, (dir.path() / "slow.wav").u8string());
+
+	// The project was never saved, so there is no media folder to conform into; the pool opens to say so.
+	click(app, "#menu-bar button[menu=media-menu]");
+	click(app, "#media-menu menuitem[command=\"media.conform\"]");
+	REQUIRE(app.waitUntil([&app] { return !message(app).empty(); }));
+	CHECK(message(app).find("Conform Files failed: save the project first") == 0);
+	CHECK(has(elements(app, "#pool-message").at(0), "error"));
+	CHECK(app.waitUntil([&app] { return elements(app, "#pool").at(0).at("visible") == true; }));
 }

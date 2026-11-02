@@ -149,6 +149,29 @@ TEST_CASE("the UI follows the events of every client while it subscribes", "[uni
 	CHECK(once == 1);
 }
 
+TEST_CASE("the UI hears what commands of a name that it sent did, whoever sent them", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	std::vector<engine::Result> results;
+	std::optional<ui::Subscription> subscription =
+		binding.onResult("test.unknown", [&results](const engine::Result& result) { results.push_back(result); });
+	bool done = false;
+	binding.send("test.unknown");
+	binding.send("test.unknown", Json::object(), [&done](const engine::Result&) { done = true; });
+	binding.send("engine.version");
+	updateUntil(binding, [&done, &results] { return done && results.size() == 2; });
+	CHECK_FALSE(results.at(0).ok());
+	CHECK_FALSE(results.at(0).error.empty());
+
+	// Other clients' commands and ended subscriptions don't count.
+	REQUIRE_FALSE(engine::Client(engine).call("test.unknown", Json::object()).ok());
+	subscription.reset();
+	binding.send("test.unknown", Json::object(), [&done](const engine::Result&) { done = false; });
+	updateUntil(binding, [&done] { return !done; });
+	CHECK(results.size() == 2);
+}
+
 TEST_CASE("watched values reach the UI once an update, and only when they changed", "[unit]")
 {
 	engine::Engine engine;

@@ -376,11 +376,19 @@ TEST_CASE("a panel moves between its zone and a window of its own", "[ui]")
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(shown(app, "#test-content"));
 	CHECK(*panel.alive == 1);
+	// A panel shows while it is its zone's active tab and the zone shows, or while it has a window of its own.
+	CHECK(docking.showing("test"));
+	CHECK_FALSE(docking.showing("mixer"));
+	docking.setVisible("project", "lower", false);
+	CHECK_FALSE(docking.showing("test"));
+	CHECK(*panel.alive == 1); // it stays while it is hidden
+	docking.setVisible("project", "lower", true);
 
 	app.ui().click(std::nullopt, at("tab[panel=test]"), ui::MouseButton::Right, 1, {});
 	app.ui().click(std::nullopt, at("#tab-menu-lower menuitem[action=float]"), ui::MouseButton::Left, 1, {});
 	REQUIRE(app.waitUntil([&docking] { return docking.windowOf("test") != nullptr; }));
 	const ui::WindowId window = docking.windowOf("test")->id();
+	CHECK(docking.showing("test"));
 	CHECK(elements(app, "tab[panel=test]").empty());
 	CHECK(elements(app, "#test-content").empty());
 	CHECK(element(app, "#test-content", window).at("visible") == true);

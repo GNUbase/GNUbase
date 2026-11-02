@@ -548,6 +548,10 @@
 	{
 		color: #d76a73;
 	}
+	.pool-message.error
+	{
+		color: #d76a73;
+	}
 	.menubar
 	{
 		background-color: #1e2022;

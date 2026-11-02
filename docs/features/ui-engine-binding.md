@@ -11,7 +11,10 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
 - **Commands.** `send(command, parameters, done)` queues a command and returns at once; the UI thread never waits for
   the engine. `done` runs on the UI thread with the result. A failed command without `done` is logged.
   `waiting(command)` counts the commands of that name still waiting for their results, so tests can check how many
-  queries a view keeps open (queries don't show in `engine.commandLog`).
+  queries a view keeps open (queries don't show in `engine.commandLog`). `onResult(command, handler)` hears the result
+  of every command of that name the UI sent, after the sender's `done`, for as long as its `Subscription` exists:
+  the pool shows that way what its commands did, whether its toolbar or the Media menu sent them
+  ([pool.md](pool.md)).
 - **Events.** `on(name, handler)` calls `handler` with every event of that name, from whichever client caused it: a
   change made through MCP, Lua or another window reaches the UI the same way as the UI's own. The returned
   `Subscription` ends the handler when it goes, so a view that closes stops listening; subscriptions must not outlive
@@ -35,7 +38,8 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   client or a Lua test sees there what a click in the UI did; events name the same request id.
 - **Checks.** `tests/enginebinding_tests.cpp`: results and events reach the UI thread only in `update`, after the
   binding woke it, once for any number of messages; subscriptions end with their objects, also from inside a handler;
-  watched values arrive once an update, only when they changed. The last test changes the transport through MCP and
+  results reach `onResult` handlers for the UI's own commands only; watched values arrive once an update, only when
+  they changed. The last test changes the transport through MCP and
   checks a document shows it, then clicks the document's button and finds the command in `engine.commandLog`, sent by
   `ui`.
   `tests/engine_tests.cpp` checks the command log and the clients' wake-up, `tests/shell_tests.cpp` the step tasks
