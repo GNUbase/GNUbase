@@ -12,7 +12,6 @@ on:
     types: [opened, reopened, ready_for_review, synchronize]
 
 permissions:
-  contents: read
   pull-requests: read
 
 jobs:
@@ -36,12 +35,13 @@ jobs:
           # The agent's reviews end with this marker; GitHub records the commit each one reviewed.
           last=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
             --jq '.[] | select(.body | contains("<!-- review-agent -->")) | .commit_id' | tail -n 1)
+          # Only the branch's own line counts (first parents): commits that a merge brings in are on main or another
+          # branch already. Commits only, no trees or blobs: the fetch takes about a second.
           if [ -n "$last" ]; then
-            others=$(gh api "repos/$REPO/compare/$last...$SHA" \
-              --jq 'if .status == "identical" then 0
-                elif .status == "ahead" then [.commits[] | select(.parents | length < 2)] | length else -1 end' ||
-              echo -1)
-            if [ "$others" = 0 ]; then
+            git init -q history
+            git -C history fetch -q --filter=tree:0 "https://github.com/$REPO" "$SHA" || true
+            if git -C history merge-base --is-ancestor "$last" "$SHA" 2>/dev/null &&
+              [ "$(git -C history rev-list --first-parent --no-merges --count "$last..$SHA")" = 0 ]; then
               echo "Nothing but merge commits since the review of $last: no new review."
               exit 0
             fi
