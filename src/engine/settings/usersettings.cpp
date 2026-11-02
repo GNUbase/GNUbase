@@ -59,6 +59,19 @@ namespace gnubase::engine::settings
 					{{"windows", {{"type", "object"}, {"additionalProperties", window}}},
 						{"panels", {{"type", "object"}, {"additionalProperties", panel}}}}}};
 		}
+
+		// ui.toolModifiers: by action, the modifier keys (docs/features/tools.md).
+		Json toolModifiersSchema()
+		{
+			const Json keys = {{"type", "string"},
+				{"enum", {"", "ctrl", "alt", "shift", "ctrl+alt", "ctrl+shift", "alt+shift", "ctrl+alt+shift"}}};
+			Json properties = Json::object();
+			for (const char* action : {"dragDrop.copy", "dragDrop.sharedCopy", "erase.deleteLaterEvents",
+					 "glue.glueAllFollowing", "range.selectFullVertical", "select.setCursorPosition",
+					 "select.splitEvent", "sizeObjects.disableSnapping", "split.splitRepeated"})
+				properties[action] = keys;
+			return {{"type", "object"}, {"properties", properties}, {"additionalProperties", false}};
+		}
 	}
 
 	const Format& userFormat()
@@ -157,6 +170,14 @@ namespace gnubase::engine::settings
 							{{"type", "string"},
 								{"enum", {"barsBeats", "seconds", "timecode", "samples", "userFrames"}}}}},
 					Json{{"primary", "barsBeats"}, {"secondary", "timecode"}, {"timeDisplay", "barsBeats"}}},
+				{"ui.toolModifiers",
+					"The modifier keys of the project window's tools, by action (docs/features/tools.md), each ctrl "
+					"(Cmd on macOS), alt and shift joined with +, or empty for none: dragDrop.copy (default alt), "
+					"dragDrop.sharedCopy (alt+shift), erase.deleteLaterEvents (alt), glue.glueAllFollowing (alt), "
+					"range.selectFullVertical (alt+shift), select.setCursorPosition (alt+shift), select.splitEvent "
+					"(alt), sizeObjects.disableSnapping (ctrl) and split.splitRepeated (alt). What it leaves out has "
+					"its default.",
+					toolModifiersSchema(), Json::object()},
 				{"ui.trackControls",
 					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
 					"folder, marker, ruler), in order: mute, solo, record, monitor (audio tracks), read (automation) "
