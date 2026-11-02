@@ -39,9 +39,11 @@ jobs:
             echo "No ANTHROPIC_API_KEY secret: no review."
             exit 0
           fi
-          # The agent's reviews end with this marker; GitHub records the commit each one reviewed.
+          # The agent's reviews end with this marker; GitHub records the commit each one reviewed. Anyone can post a
+          # review with the marker, so only the account the agent posts as counts.
           last=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
-            --jq '.[] | select(.body | contains("<!-- review-agent -->")) | .commit_id' | tail -n 1)
+            --jq '.[] | select(.user.login == "GNUbase" and (.body | contains("<!-- review-agent -->"))) | .commit_id' |
+            tail -n 1)
           # Only the branch's own line counts (first parents): commits that a merge brings in are on main or another
           # branch already. Commits only, no trees or blobs: the fetch takes about a second.
           if [ -n "$last" ]; then
