@@ -15,6 +15,8 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1185,6 +1187,85 @@ TEST_CASE("port settings are user settings: they survive a restart and wait for 
 	CHECK(remote.at("visible") == true);
 	CHECK(remote.at("inAllInputs") == true);
 	CHECK(remote.at("open") == true);
+}
+
+namespace
+{
+	// The values of the settings file in a settings folder.
+	Json settingsFile(const std::filesystem::path& dir)
+	{
+		return Json::parse(gnubase::test::readText(dir / "settings.json")).at("values");
+	}
+}
+
+TEST_CASE("two GNUbase processes on one settings folder each change a port and keep the other's", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const auto loopbacks = []
+	{
+		auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+		dummy->addLoopback("Keys");
+		dummy->addLoopback("Remote");
+		return midiBackends(std::move(dummy));
+	};
+	Engine first(fakeBackends(std::make_shared<FakeDriver>()), dir.path(), loopbacks());
+	Engine second(fakeBackends(std::make_shared<FakeDriver>()), dir.path(), loopbacks());
+	Client one(first);
+	Client two(second);
+	run(one, "audio.setDevice");
+	run(two, "audio.setDevice");
+
+	// Each changes the port settings from what the file has now, not from what it read when it started.
+	run(one, "audio.setPort", {{"input", true}, {"name", "Input 1"}, {"showAs", "Mic"}});
+	run(two, "audio.setPort", {{"input", true}, {"name", "Input 2"}, {"showAs", "Guitar"}});
+	run(one, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", "My keys"}});
+	run(two, "midi.setPort", {{"id", "Remote"}, {"input", true}, {"visible", false}});
+	const Json audio = {
+		{"dummy/dummy/in/Input 1", {{"showAs", "Mic"}}}, {"dummy/dummy/in/Input 2", {{"showAs", "Guitar"}}}};
+	const Json ports = {{"dummy/in/Keys", {{"showAs", "My keys"}}}, {"dummy/in/Remote", {{"visible", false}}}};
+	CHECK(settingsFile(dir.path()).at("audio.portSettings") == audio);
+	CHECK(settingsFile(dir.path()).at("midi.portSettings") == ports);
+
+	// The second one took the first one's port settings from the file, announced them and applies them.
+	CHECK(waitForEvent(two, "settings.changed",
+		[&ports](const Json& data) { return data.at("values").value("midi.portSettings", Json()) == ports; }));
+	CHECK(run(two, "settings.get", {{"key", "audio.portSettings"}}).at("value") == audio);
+	CHECK(run(two, "audio.ports").at("inputs")[0].at("showAs") == "Mic");
+	const Json midi = run(two, "midi.ports").at("ports");
+	CHECK(std::any_of(midi.begin(), midi.end(),
+		[](const Json& port) { return port.at("id") == "Keys" && port.at("showAs") == "My keys"; }));
+}
+
+TEST_CASE("port settings keep the members of a later GNUbase's entries", "[integration]")
+{
+	// A later GNUbase gave a port's entry a member this one doesn't know.
+	const gnubase::test::TempDir dir;
+	{
+		std::ofstream file(dir.path() / "settings.json");
+		file << Json{{"version", 1},
+			{"values",
+				{{"audio.portSettings", {{"dummy/dummy/in/Input 1", {{"showAs", "Mic"}, {"color", "#ff0000"}}}}},
+					{"midi.portSettings", {{"dummy/in/Keys", {{"showAs", "My keys"}, {"channel", 3}}}}}}}}
+					.dump();
+	}
+	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+	dummy->addLoopback("Keys");
+	Engine engine(fakeBackends(std::make_shared<FakeDriver>()), dir.path(), midiBackends(std::move(dummy)));
+	Client client(engine);
+	run(client, "audio.setDevice");
+
+	// This GNUbase uses the members it knows, and its changes keep the others and the other entries.
+	CHECK(run(client, "audio.ports").at("inputs")[0].at("showAs") == "Mic");
+	const Json midi = run(client, "midi.ports").at("ports");
+	CHECK(std::any_of(midi.begin(), midi.end(),
+		[](const Json& port) { return port.at("id") == "Keys" && port.at("showAs") == "My keys"; }));
+	run(client, "audio.setPort", {{"input", true}, {"name", "Input 2"}, {"visible", false}});
+	run(client, "audio.setPort", {{"input", true}, {"name", "Input 1"}, {"showAs", "Vocals"}});
+	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", ""}});
+	CHECK(settingsFile(dir.path()).at("audio.portSettings") ==
+		Json{{"dummy/dummy/in/Input 1", {{"showAs", "Vocals"}, {"color", "#ff0000"}}},
+			{"dummy/dummy/in/Input 2", {{"visible", false}}}});
+	CHECK(settingsFile(dir.path()).at("midi.portSettings") == Json{{"dummy/in/Keys", {{"channel", 3}}}});
 }
 
 TEST_CASE("MIDI input reaches the monitor at its frame position once the device processes blocks", "[unit]")

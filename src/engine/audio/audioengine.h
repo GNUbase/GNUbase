@@ -196,8 +196,8 @@ namespace gnubase::engine
 		int64_t recordOffset() const;               // from the device's latency and the record shift
 		bool updateLatency(const Json& parameters); // audio.updateLatency; true if anything changed
 		Json devices() const;
-		Json ports() const;                    // audio.ports
-		Json setPort(CommandContext& context); // audio.setPort
+		Json ports() const;                                    // audio.ports
+		Json setPort(Engine& engine, CommandContext& context); // audio.setPort
 		// Where the user setting audio.portSettings keeps a port of the device: its backend, device id, direction and
 		// name.
 		std::string portKey(bool input, const std::string& name) const;

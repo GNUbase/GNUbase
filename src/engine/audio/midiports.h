@@ -80,10 +80,10 @@ namespace gnubase::engine
 
 		void open(Port& port);
 		void listOnce();
-		size_t find(const Json& parameters) const; // the port's index in m_ports
-		Json setPort(CommandContext& context);     // midi.setPort
-		static std::string key(const Port& port);  // in midi.portSettings: backend/in or out/id
-		Json setting(const Port& port) const;      // its entry there; empty while it has the defaults
+		size_t find(const Json& parameters) const;             // the port's index in m_ports
+		Json setPort(Engine& engine, CommandContext& context); // midi.setPort
+		static std::string key(const Port& port);              // in midi.portSettings: backend/in or out/id
+		Json setting(const Port& port) const;                  // its entry there; empty while it has the defaults
 		bool visible(const Port& port) const { return setting(port).value("visible", true); }
 		bool inAllInputs(const Port& port) const { return port.info.input && setting(port).value("inAllInputs", true); }
 		Json toJson(const Port& port) const;

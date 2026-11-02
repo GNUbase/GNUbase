@@ -1201,7 +1201,7 @@ namespace gnubase::engine
 		return m_backend + '/' + m_device->info().id + (input ? "/in/" : "/out/") + name;
 	}
 
-	Json AudioEngine::setPort(CommandContext& context)
+	Json AudioEngine::setPort(Engine& engine, CommandContext& context)
 	{
 		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
 		Json changes = context.parameters();
@@ -1212,11 +1212,12 @@ namespace gnubase::engine
 		require(found != names.end(), std::string(input ? "no input port " : "no output port ") + name);
 		changes.erase("input");
 		changes.erase("name");
-		context.call("settings.set",
-			{{"key", "audio.portSettings"},
-				{"value",
-					settings::changeEntry(m_settings.value("audio.portSettings"), portKey(input, name), changes,
-						{{"showAs", ""}, {"visible", true}})}});
+		// The engine applies the changed setting (applyPortSettings).
+		engine.modifySetting(context, "audio.portSettings",
+			[this, input, &name, &changes](const Json& value)
+			{
+				return settings::changeEntry(value, portKey(input, name), changes, {{"showAs", ""}, {"visible", true}});
+			});
 		return ports().at(input ? "inputs" : "outputs").at(static_cast<size_t>(found - names.begin()));
 	}
 
@@ -1617,9 +1618,9 @@ namespace gnubase::engine
 					"showAs": {"type": "string"}, "visible": {"type": "boolean"}, "busses": {"type": "array"}},
 					"required": ["name", "showAs", "visible", "busses"]})"),
 				false},
-			[this](CommandContext& context)
+			[this, &engine](CommandContext& context)
 			{
-				Json port = setPort(context);
+				Json port = setPort(engine, context);
 				context.emit("audio.portsChanged", ports());
 				return port;
 			});

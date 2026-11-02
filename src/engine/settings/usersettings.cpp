@@ -102,12 +102,13 @@ namespace gnubase::engine::settings
 				{"audio.portSettings",
 					"How the audio devices' ports are shown (audio.setPort), by backend/device id/in or out/system "
 					"name, also for devices that aren't connected: the name shown (showAs) and whether it is "
-					"visible. Ports without an entry show their system name and are visible.",
+					"visible. Ports without an entry show their system name and are visible. Members of an entry that "
+					"this GNUbase doesn't know, from a later one, stay.",
 					Json{{"type", "object"},
 						{"additionalProperties",
 							{{"type", "object"},
-								{"properties", {{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}}}},
-								{"additionalProperties", false}}}},
+								{"properties",
+									{{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}}}}}}},
 					Json::object()},
 				{"audio.fallbackDevice",
 					"The device that plays while the chosen audio device is lost, until it returns: none, default (the "
@@ -149,14 +150,14 @@ namespace gnubase::engine::settings
 					"The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't "
 					"connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to "
 					"all MIDI inputs (inAllInputs). Ports without an entry show their system name, are visible and "
-					"belong to all MIDI inputs.",
+					"belong to all MIDI inputs. Members of an entry that this GNUbase doesn't know, from a later one, "
+					"stay.",
 					Json{{"type", "object"},
 						{"additionalProperties",
 							{{"type", "object"},
 								{"properties",
 									{{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}},
-										{"inAllInputs", {{"type", "boolean"}}}}},
-								{"additionalProperties", false}}}},
+										{"inAllInputs", {{"type", "boolean"}}}}}}}},
 					Json::object()},
 				{"project.autoSave",
 					"Saves a copy of a project with unsaved changes every project.autoSaveInterval minutes into the "
