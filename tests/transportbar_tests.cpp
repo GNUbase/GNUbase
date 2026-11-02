@@ -670,6 +670,9 @@ TEST_CASE("a drag or wheel gesture on the tempo field is one undo step", "[ui]")
 	const int x = static_cast<int>(box.at("x").get<double>() + (box.at("width").get<double>() / 2));
 	const int y = static_cast<int>(box.at("y").get<double>() + (box.at("height").get<double>() / 2));
 	app.ui().drag(std::nullopt, at("#tempo"), {std::string(), 0, ui::Point{x, y - 40}});
+	// The field keeps where the drag took it, also before the project's tempo is read again: wheel turns go on from
+	// there.
+	CHECK(element(app, "#tempo").at("attributes").at("value") != "120");
 	REQUIRE(app.waitUntil([&app] { return tempo(app) > 121.0; }));
 	settle(app);
 	CHECK(undoSteps(app) == before + 1);

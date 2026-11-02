@@ -131,6 +131,7 @@ namespace gnubase::ui
 		};
 		Gesture m_gesture = Gesture::None;
 		std::optional<float> m_tempo; // where the gesture took it
+		std::optional<float> m_sent;  // what the gesture's end set, until the project's tempo is read again
 		std::chrono::steady_clock::time_point m_wheeled;
 		std::optional<Subscription> m_wheelPause;
 

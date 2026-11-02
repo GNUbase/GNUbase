@@ -267,6 +267,8 @@ namespace gnubase::ui
 					logging::warning("The transport controls can't read the project's tempo or signatures");
 				if (std::exchange(m_stale, false))
 					requestProject();
+				else
+					m_sent.reset(); // read after the tempo the gesture set
 				show();
 			});
 	}
@@ -496,7 +498,12 @@ namespace gnubase::ui
 		m_gesture = Gesture::None;
 		m_wheelPause.reset();
 		if (const std::optional<float> tempo = std::exchange(m_tempo, std::nullopt))
+		{
+			// Until the project's tempo is read again, the field keeps what it set rather than the tempo before.
+			m_sent = tempo;
 			m_binding.send("project.set", {{"tempo", *tempo}});
+			requestProject();
+		}
 		show();
 	}
 
@@ -516,11 +523,12 @@ namespace gnubase::ui
 			const auto value = m_status.find(attribute(*element, "state"));
 			setChecked(*element, value != m_status.end() && value->is_boolean() && value->get<bool>());
 		}
-		const time::TempoPoint& tempo = m_time.tempo.points().front();
+		const std::string tempo =
+			widgets::format(m_sent.value_or(static_cast<float>(m_time.tempo.points().front().bpm)));
 		for (Rml::Element* element : all("[field=tempo]"))
 			if (m_gesture == Gesture::None && // during one, the field shows where the gesture took it
-				attribute(*element, "value") != widgets::format(static_cast<float>(tempo.bpm)))
-				element->SetAttribute("value", widgets::format(static_cast<float>(tempo.bpm)));
+				attribute(*element, "value") != tempo)
+				element->SetAttribute("value", tempo);
 		const time::TimeSignature signature = m_time.signatures.signatureAt(0);
 		for (Rml::Element* element : all("[field=signature]"))
 			setText(*element, std::to_string(signature.numerator) + "/" + std::to_string(signature.denominator));
