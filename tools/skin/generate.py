@@ -455,6 +455,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                            "stroke-width": f"{widths['hairline']}dp"}),
         (".event-display .marker-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
         (".event-display .marker-label.active", {"color": c["text"]}),
+        # The tools (docs/features/tools.md): the selection range and the rectangle a tool drags
+        (".event-display .range-selection", {"border-width": f"{widths['hairline']}dp", "border-color": c["text"],
+                                             "background-color": c["text"] + "33"}),
+        (".event-display .tool-rectangle", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent"],
+                                            "background-color": c["accent"] + "1a"}),
         # The track list (docs/features/track-list.md): rows beside the lanes, disabled tracks dimmed, and the line
         # where dragged tracks go
         (".track-list", {"background-color": c["surface"]}),
