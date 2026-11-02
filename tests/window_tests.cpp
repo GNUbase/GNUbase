@@ -38,6 +38,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 using namespace gnubase;
 using std::chrono::milliseconds;
@@ -366,6 +367,68 @@ TEST_CASE("every theme looks the same on every platform, and switches without lo
 	// dp of the page.
 	gpu.shell->setUiScale(2.0F / monitorScale);
 	compare("theme-gnubase-2x", 2);
+}
+
+TEST_CASE(
+	"every theme draws the focus ring over the skins of focused widgets, also those filled with the accent", "[ui]")
+{
+	Gpu gpu;
+	loadFonts();
+	const ui::Themes themes(std::filesystem::path(GNUBASE_RESOURCES_DIR));
+	const ui::Window& window = gpu.open("widgets.rml", 1024, 640);
+	gpu.shell->setUiScale(gpu.shell->uiScale() / window.dpRatio()); // one pixel per dp
+	Rml::ElementDocument* document = window.context().GetDocument(0);
+	REQUIRE(document != nullptr);
+	std::vector<Rml::Element*> widgets;
+	for (const char* id : {"plain", "primary", "checked", "checkbox-on", "radio-on"})
+	{
+		widgets.push_back(document->GetElementById(id));
+		REQUIRE(widgets.back() != nullptr);
+	}
+
+	const auto distance = [](const Color& a, const Color& b)
+	{
+		int largest = 0;
+		for (size_t i = 0; i < 3; ++i)
+			largest = std::max(largest, std::abs(static_cast<int>(a[i]) - static_cast<int>(b[i])));
+		return largest;
+	};
+	// How well the focus ring stands out from the widget's skin: in the outer 4 dp at the middle of its top and left
+	// edges, the pixels the focus changed, compared with the skin 5 dp inside the edge. 0 if the focus changed nothing,
+	// or only in the skin's own color, as a ring in the accent color on a skin filled with it.
+	const auto standsOut = [&distance](const ui::Image& before, const ui::Image& after, Rml::Element& widget)
+	{
+		const Rml::Vector2f offset = widget.GetAbsoluteOffset(Rml::BoxArea::Padding);
+		const Rml::Vector2f middle = offset + (widget.GetBox().GetSize(Rml::BoxArea::Padding) / 2);
+		const auto pixel = [](const ui::Image& image, float x, float y)
+		{ return image.pixel(static_cast<int>(x), static_cast<int>(y)); };
+		int largest = 0;
+		for (int edge = 0; edge < 4; ++edge)
+		{
+			const auto depth = static_cast<float>(edge);
+			const std::array<std::array<float, 4>, 2> lines{{{middle.x, offset.y + depth, middle.x, offset.y + 5.0F},
+				{offset.x + depth, middle.y, offset.x + 5.0F, middle.y}}};
+			for (const auto& [x, y, skinX, skinY] : lines)
+				if (distance(pixel(before, x, y), pixel(after, x, y)) > 16)
+					largest = std::max(largest, distance(pixel(after, x, y), pixel(before, skinX, skinY)));
+		}
+		return largest;
+	};
+	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast"})
+	{
+		INFO("theme " << theme);
+		gpu.shell->setTheme(theme);
+		const ui::Image before = gpu.screenshot(window, "focus-" + theme + "-before");
+		for (Rml::Element* widget : widgets)
+			widget->SetPseudoClass("focus-visible", true);
+		const ui::Image after = gpu.screenshot(window, "focus-" + theme);
+		for (Rml::Element* widget : widgets)
+		{
+			INFO("widget " << widget->GetId());
+			CHECK(standsOut(before, after, *widget) >= 64);
+			widget->SetPseudoClass("focus-visible", false);
+		}
+	}
 }
 
 TEST_CASE("another thread wakes SDL's event loop while it waits", "[ui]")

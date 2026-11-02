@@ -186,12 +186,13 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
     elif name == "tooltip":
         bg = mix(c["surfaceRaised"], c["background"], .25); border = mix(c["border"], c["textMuted"], .25)
     elif name == "focus-ring":
-        bg = "none"; border = accent
-        extra = glow_rect(w, h, accent, r) if theme["glow"] else ""
+        # Drawn over the widget's skin: the accent ring, and inside it a line in the background color, which shows on
+        # skins filled with the accent, such as primary buttons and checked check boxes.
         ring = theme.get("focusRing", 1)
-        if ring != 1:
-            return w, h, svg_doc(w, h, rect(w, h, "none", accent, r, ring, None, ring / 2)), {
-                "left": inset, "top": inset, "right": inset, "bottom": inset}
+        body = (rect(w, h, "none", accent, r, ring, None, ring / 2) +
+                rect(w, h, "none", c["background"], max(1, r - ring), 1, None, ring + .5))
+        if theme["glow"]: body += glow_rect(w, h, accent, r)
+        return w, h, svg_doc(w, h, body), {"left": inset, "top": inset, "right": inset, "bottom": inset}
     elif name.startswith("button-primary"):
         if name.endswith("normal"): bg = accent
         elif name.endswith("hover"): bg = mix(accent, "#ffffff", .16)
@@ -540,14 +541,15 @@ def focusable(selector: str) -> bool:
 def with_focus_rings(rules: list, ring: str) -> list:
     """The rules, then for each that gives a FOCUSABLE widget a skin its :focus-visible twin with the ring.
 
-    The twins come last, so the ring also shows on a hovered widget.
+    The twins come last, so the ring also shows on a hovered widget. The ring is the first decorator, because RmlUi
+    draws the first one on top.
     """
     twins = []
     for selector, declarations in rules:
         decorator = declarations.get("decorator")
         parts = [part + ":focus-visible" for part in selector.split(", ") if focusable(part)]
         if decorator is not None and parts:
-            twins.append((", ".join(parts), {"decorator": ring if decorator == "none" else f"{decorator}, {ring}"}))
+            twins.append((", ".join(parts), {"decorator": ring if decorator == "none" else f"{ring}, {decorator}"}))
     return rules + twins
 
 
