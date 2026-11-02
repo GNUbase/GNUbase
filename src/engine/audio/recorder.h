@@ -41,6 +41,7 @@ namespace gnubase::engine
 	// Where and how a recording that starts writes its files.
 	struct RecordSetup
 	{
+		uint64_t project = 0; // the project it records for (ProjectModel::openedRevision)
 		std::filesystem::path folder;
 		WriteOptions format; // the channels come from each track
 		AudioRecordMode mode = AudioRecordMode::KeepHistory;
@@ -49,7 +50,7 @@ namespace gnubase::engine
 
 		bool operator==(const RecordSetup& other) const
 		{
-			return folder == other.folder && format.format == other.format.format &&
+			return project == other.project && folder == other.folder && format.format == other.format.format &&
 				format.sampleFormat == other.format.sampleFormat && format.sampleRate == other.format.sampleRate &&
 				mode == other.mode && preRecordFrames == other.preRecordFrames && tracks == other.tracks;
 		}
@@ -112,7 +113,8 @@ namespace gnubase::engine
 		};
 
 		void run();
-		// Disk thread, holding m_mutex.
+		// Disk thread, or the command thread, holding m_mutex.
+		bool drain(); // handles the chunks the audio thread sent; false if there were none
 		void handle(const Chunk& chunk);
 		void begin(const Chunk& chunk);
 		void write(const float* samples, uint32_t frames);

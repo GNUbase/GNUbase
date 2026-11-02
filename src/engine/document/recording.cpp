@@ -8,8 +8,8 @@
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 
-#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -52,10 +52,13 @@ namespace gnubase::engine
 				"happens to the track's unlocked events where the takes overlap them: keepHistory (the default) keeps "
 				"them, cycleHistoryReplace cuts them out and keeps every take, replace cuts out what each take "
 				"overlaps, also of the takes before it. One undo step. Announces recording.added with the result: "
-				"the media files, clips and events added.",
+				"the media files, clips and events added. project, as project.revision reports it, is the project "
+				"the recording was made in: if another project is open by now, nothing is added and recording.failed "
+				"is announced. A track that is gone is skipped and announced with recording.failed; the others are "
+				"added.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties",
-						{{"mode", {{"type", "string"}, {"enum", g_audioRecordModes}}},
+						{{"project", integer}, {"mode", {{"type", "string"}, {"enum", g_audioRecordModes}}},
 							{"tracks", {{"type", "array"}, {"items", track}}}}},
 					{"required", {"tracks"}}},
 				{{"type", "object"}, {"properties", {{"media", ids}, {"clips", ids}, {"events", ids}}},
@@ -98,12 +101,26 @@ namespace gnubase::engine
 		Json media = Json::array();
 		Json clips = Json::array();
 		Json events = Json::array();
+		if (parameters.contains("project") && parameters.at("project").get<uint64_t>() != m_openedRevision)
+		{
+			context.emit("recording.failed",
+				{{"reason", "the recording isn't added: another project was opened while it was recorded"}});
+			return {{"media", media}, {"clips", clips}, {"events", events}};
+		}
 		for (const Json& entry : parameters.at("tracks"))
 		{
 			const auto trackId = entry.at("track").get<ObjectId>();
 			const auto found = project.trackById.find(trackId);
-			require(found != project.trackById.end() && found->second.type == TrackType::Audio,
-				"track " + std::to_string(trackId) + " isn't an audio track");
+			if (found == project.trackById.end())
+			{
+				context.emit("recording.failed",
+					{{"reason",
+						"track " + std::to_string(trackId) + " was removed, so its recording " +
+							entry.at("path").get<std::string>() + " isn't added"}});
+				continue;
+			}
+			require(
+				found->second.type == TrackType::Audio, "track " + std::to_string(trackId) + " isn't an audio track");
 			const Json added = run("media.add", {{"path", entry.at("path")}}).at("media");
 			const auto frames = added.at("length").get<time::Samples>();
 			const double ratio = project.sampleRate / added.at("sampleRate").get<double>();
@@ -123,17 +140,9 @@ namespace gnubase::engine
 
 			const auto endOf = [ratio](const Take& each)
 			{ return each.position + std::llround(static_cast<double>(each.length) * ratio); };
-			if (mode == "cycleHistoryReplace" && !takes.empty())
-			{
-				time::Samples start = takes.front().position;
-				time::Samples end = endOf(takes.front());
-				for (const Take& each : takes)
-				{
-					start = std::min(start, each.position);
-					end = std::max(end, endOf(each));
-				}
-				replace(trackId, start, end);
-			}
+			if (mode == "cycleHistoryReplace")
+				for (const Take& each : takes) // before any take is added, so that every take stays
+					replace(trackId, each.position, endOf(each));
 			for (const Take& each : takes)
 			{
 				if (mode == "replace")

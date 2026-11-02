@@ -3278,12 +3278,17 @@ namespace gnubase::engine
 				"A number that grows with every change of the project: every edit, undo and redo, and loading or "
 				"starting a project. project.load with revision loads only if it hasn't changed. modified says "
 				"whether the project changed since it was last saved, loaded or started; undoing back to the saved "
-				"state still counts as a change.",
+				"state still counts as a change. project identifies the open project: the revision at which it was "
+				"loaded or started, so it changes only when another project is opened.",
 				objectSchema({}),
-				objectSchema({{"revision", integerSchema}, {"modified", booleanSchema}}, {"revision", "modified"}),
+				objectSchema({{"revision", integerSchema}, {"modified", booleanSchema}, {"project", integerSchema}},
+					{"revision", "modified", "project"}),
 				true},
 			[this](CommandContext&)
-			{ return Json{{"revision", m_revision}, {"modified", m_revision != m_savedRevision}}; });
+			{
+				return Json{{"revision", m_revision}, {"modified", m_revision != m_savedRevision},
+					{"project", m_openedRevision}};
+			});
 
 		engine.registerCommand(
 			{"project.backup", 1,

@@ -52,18 +52,26 @@ namespace
 		return result.at(kind).at("id").get<ObjectId>();
 	}
 
-	// Waits for recording.added, which the engine announces once a recording is in the project; null after 10 s.
-	Json waitForRecording(Client& client)
+	// Waits for the event name, such as recording.added, which the engine announces once a recording is in the
+	// project; null after 10 s. failures gets the reasons of the recording.failed events before it.
+	Json waitFor(Client& client, const std::string& name, std::vector<std::string>* failures = nullptr)
 	{
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 		while (std::chrono::steady_clock::now() < deadline)
 		{
 			const std::optional<Message> message = client.wait(std::chrono::milliseconds(50));
 			const auto* event = message ? std::get_if<Event>(&*message) : nullptr;
-			if (event != nullptr && event->name == "recording.added")
+			if (event != nullptr && event->name == name)
 				return event->data;
+			if (event != nullptr && event->name == "recording.failed" && failures != nullptr)
+				failures->push_back(event->data.at("reason").get<std::string>());
 		}
 		return nullptr;
+	}
+
+	Json waitForRecording(Client& client)
+	{
+		return waitFor(client, "recording.added");
 	}
 
 	// Frame f of channel c of a ramp file: (f + 1) / 65536, negated on the second channel; exact in float.
@@ -314,6 +322,54 @@ TEST_CASE("only record-enabled audio tracks record, and nothing records without 
 	CHECK(std::filesystem::directory_iterator(setup.dir.path() / "Audio") != std::filesystem::directory_iterator());
 }
 
+TEST_CASE("a recording isn't added to a project opened while it was recorded", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", g_sine}});
+	Client& client = setup.client;
+	const auto before = run(client, "project.revision").at("project").get<uint64_t>();
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+
+	// The new project has an armed audio track too, which may well have the old track's id.
+	run(client, "project.new");
+	CHECK(run(client, "project.revision").at("project").get<uint64_t>() != before);
+	const Json added = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 2}});
+	run(client, "channel.set", {{"channel", added.at("channel").at("id")}, {"recordEnable", true}});
+	run(client, "audio.render", {{"frames", 640}});
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 640}});
+	const Json failed = waitFor(client, "recording.failed");
+	REQUIRE(failed.is_object());
+	CHECK_THAT(failed.at("reason").get<std::string>(), ContainsSubstring("another project"));
+	CHECK(run(client, "project.get").at("audioEvents").empty());
+	CHECK(run(client, "history.get").at("steps").back().at("action") != "Record");
+}
+
+TEST_CASE("the takes of a track removed while recording are skipped, the others still land", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", g_sine}});
+	Client& client = setup.client;
+	const Json other = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 2}});
+	run(client, "channel.set", {{"channel", other.at("channel").at("id")}, {"recordEnable", true}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+	run(client, "track.remove", {{"track", idOf(other, "track")}});
+	run(client, "audio.render", {{"frames", 640}});
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 640}});
+	std::vector<std::string> failures;
+	const Json added = waitFor(client, "recording.added", &failures);
+	REQUIRE(added.is_object());
+	REQUIRE(failures.size() == 1);
+	CHECK_THAT(failures[0], ContainsSubstring("removed"));
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].at("position") == 0);
+	CHECK(events[0].at("length") == 1280);
+	CHECK(added.at("events") == Json::array({events[0].at("id")}));
+}
+
 TEST_CASE("recording.add applies the audio record modes to the events a take overlaps", "[integration]")
 {
 	const gnubase::test::TempDir dir;
@@ -359,6 +415,13 @@ TEST_CASE("recording.add applies the audio record modes to the events a take ove
 	{
 		add("cycleHistoryReplace", two);
 		CHECK(spans() == Spans{{0, 400}, {400, 200}, {500, 200}, {700, 300}});
+	}
+	SECTION("cycle history + replace cuts out only what each take overlaps")
+	{
+		add("cycleHistoryReplace",
+			Json::array({{{"position", 100}, {"offset", 0}, {"length", 100}},
+				{{"position", 700}, {"offset", 100}, {"length", 100}}}));
+		CHECK(spans() == Spans{{0, 100}, {100, 100}, {200, 500}, {700, 100}, {800, 200}});
 	}
 	SECTION("replace keeps only the last take where takes overlap")
 	{

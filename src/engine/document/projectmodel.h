@@ -60,6 +60,8 @@ namespace gnubase::engine
 		const Project& project() const { return m_project; }
 		// The project file it was last saved as or loaded from, absolute; empty for none. Only on the command thread.
 		const std::string& file() const { return m_file; }
+		// Identifies the open project: the revision at which it was loaded or started (project.revision's project).
+		uint64_t openedRevision() const { return m_openedRevision; }
 
 		rt::SnapshotPublisher<RenderSnapshot>& snapshots() { return m_snapshots; }
 
@@ -132,6 +134,7 @@ namespace gnubase::engine
 		uint64_t m_revision = 0;
 		uint64_t m_savedRevision = 0;     // when it was last saved, loaded or made: unchanged since if m_revision
 		uint64_t m_autoSavedRevision = 0; // when it was last saved or auto saved
+		uint64_t m_openedRevision = 0;    // when it was loaded or made: openedRevision
 		std::chrono::steady_clock::time_point m_lastSave = std::chrono::steady_clock::now(); // or auto save
 		std::filesystem::path m_settingsDirectory; // the user settings' folder, empty without one
 		std::shared_ptr<settings::Store> m_recent; // the recent projects

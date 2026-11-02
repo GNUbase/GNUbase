@@ -74,9 +74,7 @@ namespace gnubase::engine
 	{
 		rt::assertNotRealtime("engine::Recorder::prepare");
 		const std::scoped_lock lock(m_mutex);
-		Chunk* chunk = nullptr;
-		while (m_filled && m_filled->tryPop(chunk)) // what the audio thread sent before it stopped
-			handle(*chunk);
+		drain(); // what the audio thread sent before it stopped
 		if (m_recording)
 			end();
 		m_channels = std::max(channels, 0);
@@ -104,6 +102,7 @@ namespace gnubase::engine
 	{
 		rt::assertNotRealtime("engine::Recorder::setup");
 		const std::scoped_lock lock(m_mutex);
+		drain(); // a recording that the audio thread started already starts with the setup it started with
 		if (setup.preRecordFrames != m_next.preRecordFrames)
 		{
 			m_history.assign(static_cast<size_t>(setup.preRecordFrames) * static_cast<size_t>(m_channels), 0.0f);
@@ -164,18 +163,23 @@ namespace gnubase::engine
 		std::unique_lock lock(m_mutex);
 		while (!m_stopping)
 		{
-			bool handled = false;
-			Chunk* chunk = nullptr;
-			while (m_filled && m_filled->tryPop(chunk))
-			{
-				handle(*chunk);
-				m_free->tryPush(chunk);
-				handled = true;
-			}
 			// ponytail: polls, since the audio thread can't wake it; a semaphore if 2 ms ever matters.
-			if (!handled)
+			if (!drain())
 				m_wake.wait_for(lock, g_idle);
 		}
+	}
+
+	bool Recorder::drain()
+	{
+		bool handled = false;
+		Chunk* chunk = nullptr;
+		while (m_filled && m_filled->tryPop(chunk))
+		{
+			handle(*chunk);
+			m_free->tryPush(chunk);
+			handled = true;
+		}
+		return handled;
 	}
 
 	void Recorder::handle(const Chunk& chunk)
@@ -307,7 +311,8 @@ namespace gnubase::engine
 		m_files.clear();
 		if (!tracks.empty() && m_notify)
 			m_notify("recording.finished",
-				{{"mode", g_audioRecordModes.at(static_cast<size_t>(m_current.mode))}, {"tracks", std::move(tracks)}});
+				{{"project", m_current.project}, {"mode", g_audioRecordModes.at(static_cast<size_t>(m_current.mode))},
+					{"tracks", std::move(tracks)}});
 	}
 
 	void Recorder::keepHistory(const Chunk& chunk)

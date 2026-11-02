@@ -156,6 +156,7 @@ namespace gnubase::engine
 				// Into the project's media folder, or for an unsaved project a folder of the user's.
 				const Project& project = m_project->project();
 				RecordSetup setup;
+				setup.project = m_project->openedRevision();
 				setup.format = recordFormat(project);
 				const std::string& file = m_project->file();
 				setup.folder = file.empty() ? recordings : mediaFolderFor(std::filesystem::u8path(file));

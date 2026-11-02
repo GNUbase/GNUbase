@@ -35,11 +35,14 @@ transport's record state and the record mode setting.
   a clip per file, and an audio event per take at its position, playing its part of the file. `recording.added`
   announces the media files, clips and events; a file that can't be created or written is announced with
   `recording.failed` and its reason, and the others go on. Undo removes the events, clips and media files; the files
-  stay on disk.
+  stay on disk. A recording belongs to the project it was started in (`project.revision`'s `project`, which
+  `recording.add` gets as `project`): if another project was opened meanwhile, nothing is added and
+  `recording.failed` says so, and a track removed while it recorded is skipped with `recording.failed` while the
+  other tracks' takes are added.
 - **Audio record modes** (p. 345). `transport.set` with `audioRecordMode`, which `transport.get` reports and the
   Transport menu's Audio Record Mode sets, decides what happens to the unlocked events of the track that the takes
   overlap: `keepHistory` (the default) keeps them, and the newest event plays where they overlap; `cycleHistoryReplace`
-  cuts them out where the recording overlaps them and keeps every lap; `replace` cuts out what each take overlaps,
+  cuts them out where each take overlaps them, before adding any take, and keeps every lap; `replace` cuts out what each take overlaps,
   also of the takes before it, so of a cycle recording the last lap stays wherever laps overlap. Cutting out splits an
   event at the take's edges and removes what lies inside, as `event.split` and `event.remove` do. Locked events stay.
 - **Audio pre-record** (p. 346). The user setting `audio.preRecordSeconds` (0 to 60, 0 by default) keeps that much of
