@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Starts a review of every new or updated pull request from this repository by the hosted review agent. The agent runs
+# on the Claude platform, not on a GitHub runner: this job only creates its session and ends after a few seconds. The
+# agent posts the review itself; the team's own pull requests get a comment that starts with "Verdict:".
+#
+# Pull requests from forks get no secrets under pull_request, so contributor pull requests are reviewed by hand.
+# A push whose new commits only merge other branches (main, a chained pull request) is not reviewed again.
+name: Review
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  review:
+    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Start a review session
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "No ANTHROPIC_API_KEY secret: no review."
+            exit 0
+          fi
+          # The agent's reviews end with this marker; GitHub records the commit each one reviewed.
+          last=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
+            --jq '.[] | select(.body | contains("<!-- review-agent -->")) | .commit_id' | tail -n 1)
+          # Only the branch's own line counts (first parents): commits that a merge brings in are on main or another
+          # branch already. Commits only, no trees or blobs: the fetch takes about a second.
+          if [ -n "$last" ]; then
+            git init -q history
+            git -C history fetch -q --filter=tree:0 "https://github.com/$REPO" "$SHA" || true
+            if git -C history merge-base --is-ancestor "$last" "$SHA" 2>/dev/null &&
+              [ "$(git -C history rev-list --first-parent --no-merges --count "$last..$SHA")" = 0 ]; then
+              echo "Nothing but merge commits since the review of $last: no new review."
+              exit 0
+            fi
+          fi
+          jq -n --arg repo "$REPO" --arg pr "$PR" --arg sha "$SHA" '{
+            agent: "agent_01DV6re7oPSNqrFfxSTsuNw4",
+            environment_id: "env_01HfuHY4q2Krvzjw2qLKNwqY",
+            vault_ids: ["vlt_011CgaXKfWy6gtTqobHwhrnw"],
+            resources: [{type: "file", file_id: "file_011mWoPyejwwMKcvXjvoQEyA", mount_path: "/manual.pdf"}],
+            budget: {type: "limit", max_list_cost: {amount: "1000", currency: "USD"}},
+            title: "Review PR #\($pr)",
+            metadata: {pr: $pr, sha: $sha},
+            initial_events: [{type: "user.message", content: [{type: "text",
+              text: "Review pull request #\($pr) in \($repo) at head commit \($sha)."}]}]
+          }' > session.json
+          curl -sS --fail-with-body https://api.anthropic.com/v1/sessions \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2026-10-21" \
+            -H "anthropic-beta: managed-agents-2026-04-01" \
+            -H "content-type: application/json" \
+            -d @session.json | jq -r '"Review session \(.id): \(.status)"'
