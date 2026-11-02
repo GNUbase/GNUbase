@@ -692,6 +692,11 @@ TEST_CASE("list views select rows with clicks and keys, and data-value binds the
 	CHECK(page.selection == "4");
 	app.ui().key(std::nullopt, "Up");
 	CHECK(page.selection == "3");
+	// Page Up and Page Down move by the rows the view shows, here all of them.
+	app.ui().key(std::nullopt, "PageUp");
+	CHECK(page.selection == "1");
+	app.ui().key(std::nullopt, "PageDown");
+	CHECK(page.selection == "4");
 
 	// The data model selects rows, e.g. after an engine event.
 	page.selection = "1,3";
