@@ -123,8 +123,8 @@ namespace gnubase::ui
 		// Names in the order the user reads them: ASCII letters in either case alike.
 		bool beforeByName(const Json* a, const Json* b)
 		{
-			const std::string& x = a->at("name").get_ref<const std::string&>();
-			const std::string& y = b->at("name").get_ref<const std::string&>();
+			const auto& x = a->at("name").get_ref<const std::string&>();
+			const auto& y = b->at("name").get_ref<const std::string&>();
 			return std::lexicographical_compare(x.begin(), x.end(), y.begin(), y.end(), [](char l, char r)
 				{ return std::tolower(static_cast<unsigned char>(l)) < std::tolower(static_cast<unsigned char>(r)); });
 		}
