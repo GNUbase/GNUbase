@@ -42,10 +42,21 @@ MCP and Lua scripts can do all it does.
   `audio.portSettings` keys each audio port by `backend/device id/in|out/system name`, `midi.portSettings` each MIDI
   port by `backend/in|out/port id`. An entry keeps only what differs from the defaults (the system name, visible, in
   all MIDI inputs) and stays while its device is unplugged, so the port gets its settings back when it returns.
-  `audio.setPort` and `midi.setPort` change the entry through `settings.set`, which saves the file and sends
-  `settings.changed`; `audio.ports` and `midi.ports` read it. After any change of the user settings, also
-  `settings.set` or `settings.reset` on these keys, the listed MIDI ports follow them: hidden inputs close, shown ones
-  open, and the audio thread's "all MIDI inputs" flags update. The settings schema validator checks
+  `audio.setPort` and `midi.setPort` change only their port's entry, in the value the settings file has when they
+  save it (`Engine::modifySetting`, through `settings::Store::modify`), so several GNUbase processes on one settings
+  folder keep each other's port settings (#452); then the process uses the file's whole value, applies it and sends
+  `settings.changed` like `settings.set`. `audio.ports` and `midi.ports` read it. An entry's schema allows members
+  this GNUbase doesn't know, so a later GNUbase can add one without this version dropping the whole value, and a
+  change keeps them; `settings.set` therefore accepts a misspelled member, which nothing reads. A member of another
+  type is a change of the settings version, so an older GNUbase only reads that file and writes nothing. Whichever
+  command changes these keys, the port commands or `settings.set` and `settings.reset`, the engine
+  (`Engine::settingsChanged`) sends the ports afterwards: `audio.portsChanged` with `audio.ports` for
+  `audio.portSettings`, `midi.changed` with `midi.ports` for `midi.portSettings` (#436). The listed MIDI ports follow
+  their settings: hidden inputs close, shown ones open, and the audio thread's "all MIDI inputs" flags update. That
+  doesn't list the MIDI hardware again (`MidiPorts::applySettings`, only `midi.refresh` does), and neither does a
+  change of any other user setting: a port plugged in meanwhile waits for the `midi.refresh` its backend posts, which
+  sends `midi.changed` with it. Before the first MIDI command has listed the ports, there is no `midi.changed`. The settings
+  schema validator checks
   `additionalProperties` given as a schema, so a broken value in the file falls back to the default (no port settings)
   instead of reaching the ports.
 - **Not yet:** the reference's other devices (remote control, time display, MIDI remote control), the Audio Settings
@@ -60,4 +71,7 @@ MCP and Lua scripts can do all it does.
   `audio.set` for a device without a current clock source until the user picks one. Running the command again keeps
   the one open dialog. `tests/audio_tests.cpp` checks `audio.set` and
   `audio.setPort`, and that port settings survive an engine restart with the same settings folder, wait for an
-  unplugged MIDI port and a device that is not open, and follow `settings.reset`.
+  unplugged MIDI port and a device that is not open, and follow `settings.reset`; that two engines on one settings
+  folder each change a port and the file keeps both; that a later GNUbase's members of an entry stay; and that
+  `settings.set` and `settings.reset` on the port settings send `audio.portsChanged` and `midi.changed`, while no
+  settings change lists the MIDI ports again, counted with a dummy MIDI backend.

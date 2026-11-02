@@ -67,9 +67,11 @@ frame rate of the user's (`setRulerFormat`; its `format` attribute names it: `ba
 
 **Time format menu** (`#ruler-format-menu`): the arrow button at the ruler's right end (`.ruler-format`, in the
 document) and a right click anywhere in the ruler open it, with Bars+Beats, Seconds, Timecode, Samples and fps (User);
-the ruler's format is checked. The ruler's time formats follow the reference's (p. 69). Its mode "bars and beats linear" (p. 70), which keeps bars
-evenly spaced across tempo changes, comes with the tempo track (#155); the project's frame rate, start time and length
-come with the project setup (#78): until then timecode runs at 25 fps.
+the ruler's format is checked. The ruler's time formats follow the reference's (p. 69). The ruler starts with the
+project setup's time format and follows it when it changes; the menu picks one of the ruler's own meanwhile. Timecode
+runs at the project's frame rate, seconds and timecode count from its start time and bars from its bar offset
+([project-setup.md](project-setup.md)). Its mode "bars and beats linear" (p. 70), which keeps bars evenly spaced across
+tempo changes, comes with the tempo track (#155).
 
 ## Zoom and scrolling
 
@@ -77,7 +79,7 @@ come with the project setup (#78): until then timecode runs at 25 fps.
 |---|---|---|---|
 | Zoom in, zoom out by 2, around the project cursor, or onto it when it's out of view | `zoom.in`, `zoom.out` | H, G | Ctrl (Cmd) and the wheel, around the mouse, 1.25 per line; drag down or up in the ruler's lower half, around where the drag started, 2 per 40 dp |
 | Track heights by 1.25 | `zoom.inVertically`, `zoom.outVertically` | Shift+H, Shift+G | Ctrl and Shift and the wheel |
-| The whole project: from its start to the end of its last event, at least a minute | `zoom.full` | Shift+F | |
+| The whole project: from its start to the end of the project setup's length, or of its last event if that is later | `zoom.full` | Shift+F | |
 | Undo and redo zoom | `zoom.undo`, `zoom.redo` | | |
 | Auto-scroll on or off | `view.autoScroll` | F | |
 | Scroll | `scrollTo`, `scrollVertically` | | the wheel down, Shift and the wheel across (a tenth of the view per line) |

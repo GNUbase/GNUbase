@@ -570,6 +570,44 @@ TEST_CASE("bus presets: standard, from the device's ports, and the user's own", 
 		reject(client, "bus.applyPreset", {{"direction", "input"}, {"name", "Default"}}), ContainsSubstring("Default"));
 }
 
+TEST_CASE("two GNUbase processes on one settings folder each save bus presets and keep the other's", "[integration]")
+{
+	const test::TempDir dir;
+	Engine first(gnubase::audio::makeBackends(), dir.path());
+	Engine second(gnubase::audio::makeBackends(), dir.path());
+	Client one(first);
+	Client two(second);
+	const auto names = [&dir]
+	{
+		const Json presets =
+			Json::parse(test::readText(dir.path() / "settings.json")).at("values").at("audio.busPresets");
+		std::vector<std::string> result;
+		for (const char* direction : {"input", "output"})
+		{
+			const Json mine = presets.value(direction, Json::object());
+			for (const auto& item : mine.items())
+				result.push_back(std::string(direction) + " " + item.key());
+		}
+		return result;
+	};
+
+	// Each changes the presets that the file has now, not those it read when it started.
+	run(one, "bus.savePreset", {{"direction", "input"}, {"name", "One"}});
+	run(two, "bus.savePreset", {{"direction", "output"}, {"name", "Two"}});
+	run(one, "bus.savePreset", {{"direction", "input"}, {"name", "Three"}});
+	CHECK(names() == std::vector<std::string>{"input One", "input Three", "output Two"});
+	run(two, "bus.removePreset", {{"direction", "input"}, {"name", "Three"}});
+	CHECK(names() == std::vector<std::string>{"input One", "output Two"});
+	CHECK_THAT(reject(two, "bus.removePreset", {{"direction", "input"}, {"name", "Three"}}),
+		ContainsSubstring("no user bus preset Three"));
+
+	// Both use what the file has once they changed it.
+	const Json presets = run(two, "bus.presets", {{"direction", "input"}}).at("presets");
+	CHECK(std::any_of(presets.begin(), presets.end(), [](const Json& p) { return p.at("name") == "One"; }));
+	run(one, "bus.savePreset", {{"direction", "output"}, {"name", "Four"}});
+	CHECK(run(one, "settings.get", {{"key", "audio.busPresets"}}).at("value").at("output").contains("Two"));
+}
+
 TEST_CASE("a Default bus preset that doesn't work leaves new projects their standard busses", "[unit]")
 {
 	Engine engine;

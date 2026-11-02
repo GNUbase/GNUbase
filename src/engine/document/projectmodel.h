@@ -13,7 +13,9 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace gnubase::engine
 {
@@ -37,6 +39,20 @@ namespace gnubase::engine
 	// longer shared.
 	void syncSharedParts(const std::map<ObjectId, MidiPart>& before, Project& project, CommandContext& context);
 
+	// What range.copy and range.cut keep for range.paste (eventedits.cpp): the events, parts and automation of a
+	// selection range, cut at its edges, where they were. Not part of the project or of undo.
+	struct RangeClipboard
+	{
+		time::Samples start = 0; // the range, in project samples and in ticks
+		time::Samples end = 0;
+		time::Ticks startTicks = 0;
+		time::Ticks endTicks = 0;
+		std::vector<ObjectId> tracks; // the tracks it was copied from, from top to bottom
+		std::vector<AudioEvent> audioEvents;
+		std::vector<MidiPart> midiParts;
+		std::vector<AutomationLane> automation; // the points in the range, with the curve's values at its edges
+	};
+
 	// The project document, its commands, its undo history and its render snapshots. The commands run on the engine's
 	// command thread, the only thread that touches the document; every command that changes it records an undo step
 	// and publishes a new render snapshot for the audio thread.
@@ -58,6 +74,10 @@ namespace gnubase::engine
 
 		// The project, for commands defined in other files that read it. Only on the command thread.
 		const Project& project() const { return m_project; }
+		// The project file it was last saved as or loaded from, absolute; empty for none. Only on the command thread.
+		const std::string& file() const { return m_file; }
+		// Identifies the open project: the revision at which it was loaded or started (project.revision's project).
+		uint64_t openedRevision() const { return m_openedRevision; }
 
 		rt::SnapshotPublisher<RenderSnapshot>& snapshots() { return m_snapshots; }
 
@@ -90,11 +110,14 @@ namespace gnubase::engine
 		Json importMidiFile(Project& project, CommandContext& context);
 		void registerAudioFileCommands(Engine& engine, Jobs& jobs); // audiofilecommands.cpp: audioFile.import
 		Json importAudioFiles(Project& project, CommandContext& context, Jobs& jobs);
+		void registerRecordingCommands(Engine& engine); // recording.cpp: recording.add
+		Json addRecording(Project& project, CommandContext& context);
 		void registerPoolCommands(Engine& engine); // pool.cpp: pool.*, poolFolder.*, clip.set, media management (#93)
 		void registerFadeCommands(Engine& engine); // fadeedits.cpp: fades, crossfades and auto fades
 		void registerParameterCommands(Engine& engine); // parameters.cpp: parameter.list, parameter.get, parameter.set
 		void registerSlotCommands(Engine& engine);      // slotcommands.cpp: plugin.*
 		void registerEventEditCommands(Engine& engine); // eventedits.cpp: event.*, parts and events (#85)
+		void registerRangeEditCommands(Engine& engine); // eventedits.cpp: range.*, range editing (#88)
 		// projectfiles.cpp (#77): save new version, revert, auto save, recent projects and templates.
 		void registerProjectFileCommands(Engine& engine);
 		// After the project was replaced by a new or loaded one (from file, or none): clears the undo history,
@@ -128,10 +151,12 @@ namespace gnubase::engine
 		uint64_t m_revision = 0;
 		uint64_t m_savedRevision = 0;     // when it was last saved, loaded or made: unchanged since if m_revision
 		uint64_t m_autoSavedRevision = 0; // when it was last saved or auto saved
+		uint64_t m_openedRevision = 0;    // when it was loaded or made: openedRevision
 		std::chrono::steady_clock::time_point m_lastSave = std::chrono::steady_clock::now(); // or auto save
 		std::filesystem::path m_settingsDirectory; // the user settings' folder, empty without one
 		std::shared_ptr<settings::Store> m_recent; // the recent projects
 		bool m_automationFollowsEvents = false;    // a setting, not part of the project
+		std::optional<RangeClipboard> m_clipboard; // range.copy and range.cut
 		std::function<std::string(ObjectId)> m_slotStatus;
 		rt::SnapshotPublisher<RenderSnapshot> m_snapshots;
 	};

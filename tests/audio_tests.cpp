@@ -15,6 +15,8 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1185,6 +1187,165 @@ TEST_CASE("port settings are user settings: they survive a restart and wait for 
 	CHECK(remote.at("visible") == true);
 	CHECK(remote.at("inAllInputs") == true);
 	CHECK(remote.at("open") == true);
+}
+
+namespace
+{
+	// The values of the settings file in a settings folder.
+	Json settingsFile(const std::filesystem::path& dir)
+	{
+		return Json::parse(gnubase::test::readText(dir / "settings.json")).at("values");
+	}
+}
+
+TEST_CASE("two GNUbase processes on one settings folder each change a port and keep the other's", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const auto loopbacks = []
+	{
+		auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+		dummy->addLoopback("Keys");
+		dummy->addLoopback("Remote");
+		return midiBackends(std::move(dummy));
+	};
+	Engine first(fakeBackends(std::make_shared<FakeDriver>()), dir.path(), loopbacks());
+	Engine second(fakeBackends(std::make_shared<FakeDriver>()), dir.path(), loopbacks());
+	Client one(first);
+	Client two(second);
+	run(one, "audio.setDevice");
+	run(two, "audio.setDevice");
+
+	// Each changes the port settings from what the file has now, not from what it read when it started.
+	run(one, "audio.setPort", {{"input", true}, {"name", "Input 1"}, {"showAs", "Mic"}});
+	run(two, "audio.setPort", {{"input", true}, {"name", "Input 2"}, {"showAs", "Guitar"}});
+	run(one, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", "My keys"}});
+	run(two, "midi.setPort", {{"id", "Remote"}, {"input", true}, {"visible", false}});
+	const Json audio = {
+		{"dummy/dummy/in/Input 1", {{"showAs", "Mic"}}}, {"dummy/dummy/in/Input 2", {{"showAs", "Guitar"}}}};
+	const Json ports = {{"dummy/in/Keys", {{"showAs", "My keys"}}}, {"dummy/in/Remote", {{"visible", false}}}};
+	CHECK(settingsFile(dir.path()).at("audio.portSettings") == audio);
+	CHECK(settingsFile(dir.path()).at("midi.portSettings") == ports);
+
+	// The second one took the first one's port settings from the file, announced them and applies them.
+	CHECK(waitForEvent(two, "settings.changed",
+		[&ports](const Json& data) { return data.at("values").value("midi.portSettings", Json()) == ports; }));
+	CHECK(run(two, "settings.get", {{"key", "audio.portSettings"}}).at("value") == audio);
+	CHECK(run(two, "audio.ports").at("inputs")[0].at("showAs") == "Mic");
+	const Json midi = run(two, "midi.ports").at("ports");
+	CHECK(std::any_of(midi.begin(), midi.end(),
+		[](const Json& port) { return port.at("id") == "Keys" && port.at("showAs") == "My keys"; }));
+}
+
+TEST_CASE("port settings keep the members of a later GNUbase's entries", "[integration]")
+{
+	// A later GNUbase gave a port's entry a member this one doesn't know.
+	const gnubase::test::TempDir dir;
+	{
+		std::ofstream file(dir.path() / "settings.json");
+		file << Json{{"version", 1},
+			{"values",
+				{{"audio.portSettings", {{"dummy/dummy/in/Input 1", {{"showAs", "Mic"}, {"color", "#ff0000"}}}}},
+					{"midi.portSettings", {{"dummy/in/Keys", {{"showAs", "My keys"}, {"channel", 3}}}}}}}}
+					.dump();
+	}
+	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+	dummy->addLoopback("Keys");
+	Engine engine(fakeBackends(std::make_shared<FakeDriver>()), dir.path(), midiBackends(std::move(dummy)));
+	Client client(engine);
+	run(client, "audio.setDevice");
+
+	// This GNUbase uses the members it knows, and its changes keep the others and the other entries.
+	CHECK(run(client, "audio.ports").at("inputs")[0].at("showAs") == "Mic");
+	const Json midi = run(client, "midi.ports").at("ports");
+	CHECK(std::any_of(midi.begin(), midi.end(),
+		[](const Json& port) { return port.at("id") == "Keys" && port.at("showAs") == "My keys"; }));
+	run(client, "audio.setPort", {{"input", true}, {"name", "Input 2"}, {"visible", false}});
+	run(client, "audio.setPort", {{"input", true}, {"name", "Input 1"}, {"showAs", "Vocals"}});
+	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", ""}});
+	CHECK(settingsFile(dir.path()).at("audio.portSettings") ==
+		Json{{"dummy/dummy/in/Input 1", {{"showAs", "Vocals"}, {"color", "#ff0000"}}},
+			{"dummy/dummy/in/Input 2", {{"visible", false}}}});
+	CHECK(settingsFile(dir.path()).at("midi.portSettings") == Json{{"dummy/in/Keys", {{"channel", 3}}}});
+}
+
+namespace
+{
+	// A dummy MIDI backend that counts how often its ports are listed.
+	class CountingBackend : public gnubase::midi::DummyBackend
+	{
+	public:
+		std::vector<gnubase::midi::PortInfo> ports() override
+		{
+			m_listings.fetch_add(1, std::memory_order_relaxed);
+			return DummyBackend::ports();
+		}
+
+		int listings() const { return m_listings.load(std::memory_order_relaxed); }
+
+	private:
+		std::atomic<int> m_listings{0};
+	};
+}
+
+TEST_CASE("settings.set and settings.reset on the port settings send the ports without listing the MIDI ports again",
+	"[integration]")
+{
+	auto counting = std::make_unique<CountingBackend>();
+	CountingBackend& backend = *counting;
+	backend.addLoopback("Keys");
+	std::vector<std::unique_ptr<gnubase::midi::Backend>> backends;
+	backends.push_back(std::move(counting));
+	Engine engine(makeBackends(), {}, std::move(backends));
+	Client client(engine);
+	run(client, "audio.setDevice");
+	CHECK(run(client, "midi.ports").at("ports").size() == 2);
+	const int listings = backend.listings();
+
+	// Other user settings leave the MIDI hardware alone, and so do the port settings.
+	run(client, "settings.set", {{"key", "ui.scale"}, {"value", 1.5}});
+	run(client, "settings.reset", {{"key", "ui.scale"}});
+	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"visible", false}});
+	CHECK(
+		waitForEvent(client, "midi.changed", [](const Json& data) { return data.at("ports")[0].at("open") == false; }));
+	CHECK(backend.listings() == listings);
+
+	// settings.set and settings.reset on them send the ports, as audio.setPort and midi.setPort do.
+	run(client, "settings.set",
+		{{"key", "audio.portSettings"}, {"value", {{"dummy/dummy/in/Input 1", {{"showAs", "Mic"}}}}}});
+	CHECK(waitForEvent(
+		client, "audio.portsChanged", [](const Json& data) { return data.at("inputs")[0].at("showAs") == "Mic"; }));
+	run(client, "settings.reset", {{"key", "midi.portSettings"}});
+	CHECK(
+		waitForEvent(client, "midi.changed", [](const Json& data) { return data.at("ports")[0].at("open") == true; }));
+
+	// Resetting every setting sends both, the audio ports first.
+	run(client, "midi.setPort", {{"id", "Keys"}, {"input", true}, {"showAs", "My keys"}});
+	run(client, "settings.reset");
+	CHECK(waitForEvent(
+		client, "audio.portsChanged", [](const Json& data) { return data.at("inputs")[0].at("showAs") == "Input 1"; }));
+	CHECK(waitForEvent(
+		client, "midi.changed", [](const Json& data) { return data.at("ports")[0].at("showAs") == "Keys"; }));
+	CHECK(backend.listings() == listings);
+
+	// A port plugged in around a settings change still reaches the clients, with the midi.refresh its backend posts.
+	backend.addLoopback("Pads");
+	run(client, "settings.set", {{"key", "ui.scale"}, {"value", 2.0}});
+	CHECK(waitForEvent(client, "midi.changed", [](const Json& data) { return data.at("ports").size() == 4; }));
+}
+
+TEST_CASE("port settings changed before the MIDI ports are listed don't list them", "[unit]")
+{
+	auto counting = std::make_unique<CountingBackend>();
+	CountingBackend& backend = *counting;
+	backend.addLoopback("Keys");
+	std::vector<std::unique_ptr<gnubase::midi::Backend>> backends;
+	backends.push_back(std::move(counting));
+	Engine engine(makeBackends(), {}, std::move(backends));
+	Client client(engine);
+	run(client, "settings.set", {{"key", "midi.portSettings"}, {"value", {{"dummy/in/Keys", {{"visible", false}}}}}});
+	run(client, "settings.reset");
+	CHECK(backend.listings() == 0);
+	CHECK(run(client, "midi.ports").at("ports")[0].at("open") == true);
 }
 
 TEST_CASE("MIDI input reaches the monitor at its frame position once the device processes blocks", "[unit]")

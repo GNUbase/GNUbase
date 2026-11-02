@@ -18,6 +18,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <variant>
 #include <vector>
@@ -190,6 +191,14 @@ namespace gnubase::engine
 		// have files of their own, such as the quantize presets, keep them there.
 		const std::filesystem::path& settingsDirectory() const { return m_settingsDirectory; }
 
+		// Changes a user setting that holds a collection as part of a command, such as one port's entry of
+		// audio.portSettings: change gets the value that the settings file has now (settings::Store::modify), so what
+		// another GNUbase process saved meanwhile stays. If the value changed, emits settings.changed and applies the
+		// settings, as settings.set does, which sends the ports of changed port settings (audio.portsChanged,
+		// midi.changed). Returns the new value; throws like settings.set. Command thread only.
+		Json modifySetting(
+			CommandContext& context, std::string_view key, const std::function<Json(const Json& value)>& change);
+
 		// The project cursor in samples, where the audio thread last moved it or a locate puts it, read without a
 		// command and without waiting: for the UI to read once a frame while playing. Not for audio threads.
 		int64_t playbackPosition() const;
@@ -219,6 +228,8 @@ namespace gnubase::engine
 		std::shared_ptr<const Command> find(const std::string& name) const; // throws CommandError if unknown
 		Json runInside(const std::string& command, const Json& parameters, CommandContext& outer);
 		void applySettings(); // hands the user settings to the parts of the engine that use them
+		// After a command changed the user settings with these keys: applies them and emits the events that follow.
+		void settingsChanged(CommandContext& context, const std::vector<std::string>& keys);
 
 		const std::filesystem::path m_settingsDirectory;
 		mutable std::mutex m_mutex; // guards everything below except the thread

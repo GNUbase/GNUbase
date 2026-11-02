@@ -43,6 +43,12 @@ namespace gnubase::engine
 	Fade fadeFromJson(const Json& json, const Fade& fallback = {});
 	AutoFades autoFadesFromJson(const Json& json, const AutoFades& fallback = {});
 
+	// The project setup's settings, which project.get has at its top level. projectSetupFromJson changes those the
+	// JSON has, and throws std::invalid_argument for unknown names and values that don't go together (see
+	// projectSetupProblem).
+	Json toJson(const ProjectSetup& setup);
+	ProjectSetup projectSetupFromJson(const Json& json, const ProjectSetup& fallback = {});
+
 	const char* markerTypeName(MarkerType type);
 	std::optional<MarkerType> markerTypeFromName(const std::string& name);
 

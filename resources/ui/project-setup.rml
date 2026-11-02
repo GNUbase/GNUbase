@@ -1,0 +1,247 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The project setup dialog (#78, docs/features/project-setup.md, reference manual pp. 128-130): the project's start
+     time and length, frame rate, time format and bar offset, sample rate, record bit depth and file type, pan law and
+     maximum volume. app::AppUi opens it (the UI command window.projectSetup). Its Lua reads the project when the
+     dialog loads and on OK sends what changed with project.set, in one history.transaction with media.conform when
+     the sample rate changes and Conform Audio Files is on; Cancel drops it. -->
+<rml>
+<head>
+	<title>Project Setup</title>
+	<style>
+		dialog
+		{
+			width: 720dp;
+		}
+
+		.content
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.column
+		{
+			flex: 1;
+		}
+
+		.column + .column
+		{
+			margin-left: 16dp;
+		}
+
+		.section
+		{
+			margin-top: 8dp;
+		}
+
+		.field
+		{
+			display: flex;
+			align-items: center;
+			height: 28dp;
+		}
+
+		.field .label
+		{
+			width: 150dp;
+		}
+
+		.field select, .field input.text
+		{
+			width: 170dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#project-setup-message
+		{
+			flex: 1;
+		}
+
+		.row button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		-- The dialog's state, in the UI's Lua: the project as it was when the dialog loaded, to send only what changed.
+		ProjectSetup = {}
+		local setup = ProjectSetup
+
+		-- The choices of each setting: the engine's name (see project.set) and the text shown.
+		local sampleRates = {22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000, 384000}
+		local frameRates = {{"23.976", "23.976 fps"}, {"24", "24 fps"}, {"24.975", "24.975 fps"}, {"25", "25 fps"},
+			{"29.97", "29.97 fps"}, {"29.97dfps", "29.97 dfps"}, {"30", "30 fps"}, {"30dfps", "30 dfps"},
+			{"50", "50 fps"}, {"59.94", "59.94 fps"}, {"60", "60 fps"}}
+		local timeFormats = {{"barsBeats", "Bars+Beats"}, {"seconds", "Seconds"}, {"timecode", "Timecode"},
+			{"samples", "Samples"}, {"userFrames", "fps (User)"}}
+		local bitDepths = {{"int16", "16 Bit"}, {"int24", "24 Bit"}, {"int32", "32 Bit"}, {"float32", "32 Bit Float"},
+			{"float64", "64 Bit Float"}}
+		local fileTypes = {{"wav", "Wave File"}, {"broadcastWav", "Broadcast Wave File"}, {"aiff", "AIFF File"},
+			{"flac", "FLAC File"}}
+		local panLaws = {{"0dB", "0 dB"}, {"-3dB", "-3 dB"}, {"-4.5dB", "-4.5 dB"}, {"-6dB", "-6 dB"},
+			{"equalPower", "Equal Power"}}
+		local maxVolumes = {{"6", "+6 dB"}, {"12", "+12 dB"}}
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local function numberText(value)
+			return math.tointeger(value) and tostring(math.tointeger(value)) or tostring(value)
+		end
+
+		local function field(label, control)
+			return '<div class="field"><span class="label">' .. escape(label) .. "</span>" .. control .. "</div>"
+		end
+
+		local function section(title)
+			return '<div class="section">' .. escape(title) .. "</div>"
+		end
+
+		local function text(id, value)
+			return '<input type="text" id="' .. id .. '" value="' .. escape(value) .. '"/>'
+		end
+
+		-- A select of choices with current selected; current is added when the choices lack it, so that the select
+		-- never falls back to another value the user didn't choose.
+		local function dropDown(id, choices, current)
+			local found = false
+			for _, choice in ipairs(choices) do
+				found = found or choice[1] == current
+			end
+			if not found then
+				choices = {{current, current}, table.unpack(choices)}
+			end
+			local options = {}
+			for _, choice in ipairs(choices) do
+				options[#options + 1] = '<option value="' .. escape(choice[1]) .. '"' ..
+					(choice[1] == current and " selected" or "") .. ">" .. escape(choice[2]) .. "</option>"
+			end
+			return '<select id="' .. id .. '">' .. table.concat(options) .. "</select>"
+		end
+
+		-- A form control's value: the value attribute that RmlUi keeps up to date.
+		local function valueOf(document, id)
+			local value = document:GetElementById(id):GetAttribute("value")
+			return value ~= nil and tostring(value) or ""
+		end
+
+		local function timecode(seconds, frameRate)
+			return gnubase.ui.formatTimecode{seconds = seconds, frameRate = frameRate}.text
+		end
+
+		-- Reads the project and fills the dialog.
+		function setup.load(document)
+			local project = gnubase.project.get()
+			setup.project = project
+			setup.start = timecode(project.startTime, project.frameRate)
+			setup.length = timecode(project.length, project.frameRate)
+			local rates = {}
+			for _, rate in ipairs(sampleRates) do
+				rates[#rates + 1] = {numberText(rate), numberText(rate) .. " Hz"}
+			end
+			document:GetElementById("setup-left").inner_rml =
+				section("Project Duration") ..
+				field("Start", text("setup-start", setup.start)) ..
+				field("Length", text("setup-length", setup.length)) ..
+				section("Project Frame Rate") ..
+				field("Frame Rate", dropDown("setup-frame-rate", frameRates, project.frameRate)) ..
+				section("Project Time Displays") ..
+				field("Time Format", dropDown("setup-time-format", timeFormats, project.timeFormat)) ..
+				field("Bar Offset", text("setup-bar-offset", numberText(project.barOffset)))
+			document:GetElementById("setup-right").inner_rml =
+				section("Record File Format") ..
+				field("Sample Rate", dropDown("setup-sample-rate", rates, numberText(project.sampleRate))) ..
+				field("Conform Audio Files", '<input type="checkbox" id="setup-conform" checked/>') ..
+				field("Bit Depth", dropDown("setup-bit-depth", bitDepths, project.recordBitDepth)) ..
+				field("Record File Type", dropDown("setup-file-type", fileTypes, project.recordFileType)) ..
+				section("Other Project Settings") ..
+				field("Stereo Pan Law", dropDown("setup-pan-law", panLaws, project.panLaw)) ..
+				field("Volume Max", dropDown("setup-max-volume", maxVolumes, numberText(project.maxVolume)))
+		end
+
+		-- What changed, as project.set's parameters, and the errors of fields that can't be read.
+		local function changes(document)
+			local project = setup.project
+			local changed = {}
+			local errors = {}
+			for _, entry in ipairs{{"setup-frame-rate", "frameRate"}, {"setup-time-format", "timeFormat"},
+				{"setup-bit-depth", "recordBitDepth"}, {"setup-file-type", "recordFileType"},
+				{"setup-pan-law", "panLaw"}} do
+				local value = valueOf(document, entry[1])
+				if value ~= project[entry[2]] then
+					changed[entry[2]] = value
+				end
+			end
+			for _, entry in ipairs{{"setup-sample-rate", "sampleRate"}, {"setup-max-volume", "maxVolume"}} do
+				local value = tonumber(valueOf(document, entry[1]))
+				if value ~= nil and value ~= project[entry[2]] then
+					changed[entry[2]] = value
+				end
+			end
+			-- Timecodes at the frame rate chosen; unchanged text keeps the time it showed.
+			local frameRate = valueOf(document, "setup-frame-rate")
+			for _, entry in ipairs{{"setup-start", "startTime", "Start", setup.start},
+				{"setup-length", "length", "Length", setup.length}} do
+				local typed = valueOf(document, entry[1])
+				if typed ~= entry[4] then
+					local seconds = gnubase.ui.parseTimecode{text = typed, frameRate = frameRate}.seconds
+					if seconds == nil then
+						errors[#errors + 1] = entry[3] .. " must be a timecode, such as " .. entry[4]
+					else
+						changed[entry[2]] = seconds
+					end
+				end
+			end
+			local barOffset = math.tointeger(tonumber(valueOf(document, "setup-bar-offset")))
+			if barOffset == nil then
+				errors[#errors + 1] = "Bar Offset must be a whole number of bars"
+			elseif barOffset ~= project.barOffset then
+				changed.barOffset = barOffset
+			end
+			return changed, errors
+		end
+
+		-- OK: sends what changed as one undo step and closes, unless that failed.
+		function setup.ok(document)
+			local changed, errors = changes(document)
+			if #errors == 0 and next(changed) ~= nil then
+				local commands = {{command = "project.set", parameters = changed}}
+				-- Reference manual p. 128: audio files must be converted to a new sample rate to play back properly.
+				if changed.sampleRate ~= nil and document:GetElementById("setup-conform"):HasAttribute("checked") then
+					commands[2] = {command = "media.conform"}
+				end
+				local ok, problem = pcall(gnubase.history.transaction, {description = "Project Setup",
+					commands = commands})
+				if not ok then
+					errors[#errors + 1] = tostring(problem)
+				end
+			end
+			if #errors == 0 then
+				document:Close()
+			else
+				document:GetElementById("project-setup-message").inner_rml = escape(table.concat(errors, "; "))
+			end
+		end
+	</script>
+</head>
+<body onload="ProjectSetup.load(document)">
+	<dialog id="project-setup">
+		<div class="dialog-titlebar">Project Setup</div>
+		<div class="content">
+			<div class="column" id="setup-left"/>
+			<div class="column" id="setup-right"/>
+		</div>
+		<div class="row">
+			<div id="project-setup-message"/>
+			<button id="setup-cancel" result="cancel">Cancel</button>
+			<button id="setup-ok" class="primary" onclick="ProjectSetup.ok(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

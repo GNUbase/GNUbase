@@ -6,6 +6,7 @@
 #include "ui/fonts.h"
 #include "ui/historypanel.h"
 #include "ui/poolpanel.h"
+#include "ui/timeformat.h"
 #include "ui/widgets.h"
 
 #include <RmlUi/Core/Context.h>
@@ -58,7 +59,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 51> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 61> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -96,6 +97,17 @@ namespace gnubase::app
 			{"edit.selectFromCursorToEnd", "Selects the events that start after the project cursor.", nullptr},
 			{"edit.selectUnderCursor", "Selects the events at the project cursor.", nullptr},
 			{"edit.locatorsToSelection", "Sets the locators around the selected events.", "P"},
+			// Range editing (docs/features/range-editing.md), with the reference's keys (manual pp. 1562-1563).
+			{"edit.cut", "Cuts the selection range to the clipboard.", "Mod+X"},
+			{"edit.copy", "Copies the selection range to the clipboard.", "Mod+C"},
+			{"edit.paste", "Pastes the clipboard at the selection range's start or the project cursor.", "Mod+V"},
+			{"edit.cutTime", "Cuts the selection range and closes the gap.", "Mod+Shift+X"},
+			{"edit.deleteTime", "Deletes the selection range and closes the gap.", "Shift+Backspace"},
+			{"edit.pasteTime", "Pastes the clipboard and moves what comes after it to make room.", "Mod+Shift+V"},
+			{"edit.insertSilence", "Inserts silence as long as the selection range at its start.", "Mod+Shift+E"},
+			{"edit.splitRange", "Splits the events at the selection range's edges.", "Shift+X"},
+			{"edit.cropRange", "Crops the events that cross the selection range's edges to it.", nullptr},
+			{"edit.globalCopy", "Copies everything between the locators to the clipboard.", nullptr},
 			// Snap and grid (docs/features/snap.md).
 			{"edit.snap", "Switches snap on or off.", "J"},
 			{"edit.snapPointToCursor", "Sets the snap point of the selected audio events at the project cursor.",
@@ -263,6 +275,30 @@ namespace gnubase::app
 			[this](ui::Window& window, Rml::Element* /*zone*/) { chooseMissingFolder(window); }});
 		m_keys.add({"window.studioSetup", "Opens the studio setup dialog for the audio and MIDI devices.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openStudioSetup(window); }});
+		m_keys.add({"window.projectSetup",
+			"Opens the project setup dialog for the project's sample rate, record format, frame rate, start time, "
+			"length, time display, pan law and maximum volume.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { openProjectSetup(window); }});
+		// For the project setup dialog: a timecode at a project frame rate (see project.set), and the seconds of one
+		// typed (none for text that isn't one).
+		m_lua.addFunction("ui.formatTimecode",
+			[](const engine::Json& parameters)
+			{
+				const time::FrameRate rate =
+					time::frameRateFromName(parameters.value("frameRate", "25")).value_or(time::g_fps25);
+				const double seconds = parameters.at("seconds").get<double>();
+				return engine::Json{{"text", time::formatTimecode(time::toTimecode(seconds, rate), rate)}};
+			});
+		m_lua.addFunction("ui.parseTimecode",
+			[](const engine::Json& parameters)
+			{
+				ui::TimeContext context;
+				context.frameRate =
+					time::frameRateFromName(parameters.value("frameRate", "25")).value_or(time::g_fps25);
+				const std::optional<double> seconds =
+					ui::parseTime(ui::TimeFormat::Timecode, parameters.at("text").get<std::string>(), context);
+				return seconds ? engine::Json{{"seconds", *seconds}} : engine::Json::object();
+			});
 		// File > Import (docs/features/file-import.md): the OS's file dialog, then the event display imports the files.
 		m_keys.add({"file.importAudio", "Imports audio files into the project window at the project cursor.",
 			[this](ui::Window& window, Rml::Element* /*zone*/)
@@ -632,18 +668,29 @@ namespace gnubase::app
 
 	Rml::ElementDocument& AppUi::openStudioSetup(ui::Window& window)
 	{
-		// One dialog: a second document would share the first one's StudioSetup table in the UI's Lua. A closed
-		// document has left its context, until the context releases it.
-		auto* open = dynamic_cast<Rml::ElementDocument*>(m_studioSetup.get());
-		if (open != nullptr && open->GetParentNode() != nullptr)
+		return openOnce(window, "studio-setup.rml", m_studioSetup);
+	}
+
+	Rml::ElementDocument& AppUi::openProjectSetup(ui::Window& window)
+	{
+		return openOnce(window, "project-setup.rml", m_projectSetup);
+	}
+
+	Rml::ElementDocument& AppUi::openOnce(
+		ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open) const
+	{
+		// One dialog: a second document would share the first one's table in the UI's Lua. A closed document has left
+		// its context, until the context releases it.
+		auto* document = dynamic_cast<Rml::ElementDocument*>(open.get());
+		if (document != nullptr && document->GetParentNode() != nullptr)
 		{
-			open->Show(Rml::ModalFlag::Modal, Rml::FocusFlag::Keep);
-			open->PullToFront();
-			return *open;
+			document->Show(Rml::ModalFlag::Modal, Rml::FocusFlag::Keep);
+			document->PullToFront();
+			return *document;
 		}
-		Rml::ElementDocument& document = openDialog(window, "studio-setup.rml");
-		m_studioSetup = document.GetObserverPtr();
-		return document;
+		Rml::ElementDocument& opened = openDialog(window, name);
+		open = opened.GetObserverPtr();
+		return opened;
 	}
 
 	Rml::ElementDocument& AppUi::openDialog(ui::Window& window, const char* name) const

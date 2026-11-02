@@ -219,6 +219,55 @@ TEST_CASE("positions typed in every time format read back as the engine converts
 	CHECK(!ui::parseTime(ui::TimeFormat::Samples, "12.5", context).has_value());
 }
 
+TEST_CASE("the ruler's marks count from the project setup's start time and bar offset", "[unit]")
+{
+	ui::TimeContext context; // 120 BPM in 4/4: a bar every 2 seconds
+	context.startTime = 3602.5;
+	context.barOffset = -4;
+
+	// Seconds and timecode label their round steps from the start time, which puts them off the project's seconds.
+	const std::vector<ui::RulerMark> seconds = labelled(marks(ui::TimeFormat::Seconds, context, 0.0, 30.0, 4.0));
+	REQUIRE(seconds.size() >= 2);
+	CHECK(seconds[0].position == Catch::Approx(2.5));
+	CHECK(seconds[0].label == "1:00:05");
+	CHECK(seconds[1].position == Catch::Approx(7.5));
+	const std::vector<ui::RulerMark> minutes = labelled(marks(ui::TimeFormat::Timecode, context, 0.0, 300.0, 50.0));
+	REQUIRE(minutes.size() >= 2);
+	CHECK(minutes[0].position == Catch::Approx(57.5));
+	CHECK(minutes[0].label == "01:01:00:00");
+
+	// Bars count from the bar offset, through zero and negative bars, at the bars' own positions.
+	const std::vector<ui::RulerMark> bars = labelled(marks(ui::TimeFormat::BarsBeats, context, 0.0, 10.0, 1.5));
+	REQUIRE(bars.size() == 5);
+	const std::vector<std::string> labels{"-3", "-2", "-1", "0", "1"};
+	for (size_t i = 0; i < bars.size(); ++i)
+	{
+		CHECK(bars[i].position == Catch::Approx(2.0 * static_cast<double>(i)));
+		CHECK(bars[i].label == labels[i]);
+	}
+}
+
+TEST_CASE("bars before bar 1 of a negative bar offset are typed with a minus sign", "[unit]")
+{
+	ui::TimeContext context;
+	context.barOffset = -4;
+	CHECK(ui::formatTime(ui::TimeFormat::BarsBeats, 0.0, context) == "-3.1.1.0");
+	for (const double seconds : {0.0, 1.5, 2.0, 7.25, 10.0})
+	{
+		INFO(seconds);
+		const std::optional<double> typed = ui::parseTime(
+			ui::TimeFormat::BarsBeats, ui::formatTime(ui::TimeFormat::BarsBeats, seconds, context), context);
+		REQUIRE(typed.has_value());
+		CHECK(typed.value_or(-1.0) == Catch::Approx(seconds));
+	}
+	CHECK(ui::parseTime(ui::TimeFormat::BarsBeats, "-3.2", context) == Catch::Approx(0.5));
+	CHECK(!ui::parseTime(ui::TimeFormat::BarsBeats, "-4", context).has_value()); // before the project start
+	CHECK(!ui::parseTime(ui::TimeFormat::BarsBeats, "-", context).has_value());
+	CHECK(!ui::parseTime(ui::TimeFormat::BarsBeats, "1.-2", context).has_value());
+	// Lengths have no minus.
+	CHECK(!ui::parseLength(ui::TimeFormat::BarsBeats, "-1", 0.0, context).has_value());
+}
+
 TEST_CASE("lengths read as bars and beats from their start, or as times in the other formats", "[unit]")
 {
 	const ui::TimeContext context = changingContext();
