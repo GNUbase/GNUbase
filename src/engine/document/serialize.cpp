@@ -512,7 +512,7 @@ namespace gnubase::engine
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
 			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
 			{"recordEnable", channel.recordEnable}, {"mute", channel.mute}, {"solo", channel.solo},
-			{"slots", channel.slots}};
+			{"slots", channel.slots}, {"notes", channel.notes}};
 	}
 
 	Json toJson(const Slot& slot)
@@ -1073,6 +1073,7 @@ namespace gnubase::engine
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
 			channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none
+			channel.notes = item.value("notes", std::string());           // files from before #89 have none
 			project.channels[id] = std::move(channel);
 		}
 		// Every slot is in the list of its channel, which has audio, once, and no channel lists more than it may.

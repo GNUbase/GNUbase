@@ -27,7 +27,7 @@ Set up Window Layout menu, which shows or hides the menu bar (the reference's Sh
 info line, overview line, status line and transport bar (p. 65). The overview line is
 part of the event display: while a strip is hidden, the body has the class `no-<strip>`, which the style sheet uses to
 hide it. The transport bar has the [transport controls](transport-bar.md). The [status line](status-line.md) shows the
-record format and a lost audio device. The info line is empty.
+record format and a lost audio device. The [info line](inspector.md) shows the selected event or part.
 
 States are classes for the themes: zones, their splitters and strips get `.hidden`, and the zone with the keyboard
 focus gets `.focused`, whose `.zone-frame` (an element the docking system adds over each zone) the theme draws as a
@@ -37,8 +37,9 @@ frame (p. 99). Code only sets the zones' sizes, which come from data.
 
 A panel (`ui::Panel`) has an id, a title, the docking window and the zone it docks in, and a function that fills the
 element it shows in, wherever that is; what the function returns lives as long as the panel shows there. `add`
-registers panels; the project window has Inspector and Visibility on the left, Editor and Mixer in the lower zone, and
-Media and Meter on the right (pp. 75–98), empty until their tickets fill them, the Pool in the lower zone
+registers panels; the project window has the Inspector ([inspector.md](inspector.md)) and Visibility on the left,
+Editor and Mixer in the lower zone, and Media and Meter on the right (pp. 75–98), the others empty until their tickets
+fill them, the Pool in the lower zone
 ([pool.md](pool.md), `window.pool`, Mod+P) and the edit history on the right ([edit-history.md](edit-history.md)).
 `open` shows a panel as its zone's active tab, with the zone shown. `showing` says whether a panel shows: in a window
 of its own, or as its zone's active tab while the zone shows; what its function returned stays while it doesn't, so a

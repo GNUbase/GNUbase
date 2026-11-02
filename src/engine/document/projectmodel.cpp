@@ -1252,6 +1252,7 @@ namespace gnubase::engine
 			}
 			changed.mute = parameters.value("mute", changed.mute);
 			changed.solo = parameters.value("solo", changed.solo);
+			changed.notes = parameters.value("notes", changed.notes);
 			channel = changed;
 			Json result = {{"channel", toJson(channel)}};
 			context.emit("channel.changed", result);
@@ -2943,15 +2944,16 @@ namespace gnubase::engine
 				"whileRecording while the transport records, tapeMachine while it stands or records (the default). "
 				"Monitoring glides in and out over one audio block. mute silences a channel; while any channel is "
 				"soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the "
-				"channels that play into them are heard. Muting and soloing glide over one audio block.",
-				objectSchema(
-					{{"channel", idSchema}, {"format", formats}, {"channels", integerSchema}, {"input", idSchema},
-						{"output", idSchema}, {"instrument", stringSchema},
-						{"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
-						{"panRight", numberSchema}, {"panBypass", booleanSchema},
-						{"midiVolume", {{"type", {"integer", "null"}}}}, {"midiPan", {{"type", {"integer", "null"}}}},
-						{"volume", numberSchema}, {"pan", numberSchema}, {"monitor", booleanSchema},
-						{"recordEnable", booleanSchema}, {"mute", booleanSchema}, {"solo", booleanSchema}},
+				"channels that play into them are heard. Muting and soloing glide over one audio block. notes is the "
+				"channel's notepad, the user's text about it.",
+				objectSchema({{"channel", idSchema}, {"format", formats}, {"channels", integerSchema},
+								 {"input", idSchema}, {"output", idSchema}, {"instrument", stringSchema},
+								 {"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
+								 {"panRight", numberSchema}, {"panBypass", booleanSchema},
+								 {"midiVolume", {{"type", {"integer", "null"}}}},
+								 {"midiPan", {{"type", {"integer", "null"}}}}, {"volume", numberSchema},
+								 {"pan", numberSchema}, {"monitor", booleanSchema}, {"recordEnable", booleanSchema},
+								 {"mute", booleanSchema}, {"solo", booleanSchema}, {"notes", stringSchema}},
 					{"channel"}),
 				resultSchema({"channel"}), false},
 			setChannel);
