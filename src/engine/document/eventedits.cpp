@@ -1634,8 +1634,10 @@ namespace gnubase::engine
 				schema(rangeParameters, {}), copiedResult, false},
 			[this](CommandContext& context)
 			{
-				m_clipboard = copyRange(m_project, rangeFrom(m_project, context, true));
-				return clipboardInfo(*m_clipboard);
+				RangeClipboard clipboard = copyRange(m_project, rangeFrom(m_project, context, true));
+				Json result = clipboardInfo(clipboard);
+				m_clipboard = std::move(clipboard);
+				return result;
 			});
 
 		addEdit(engine,
