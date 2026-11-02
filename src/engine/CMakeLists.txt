@@ -112,6 +112,7 @@ add_library(gnubase-engine STATIC
 	document/midifilecommands.cpp
 	document/parameters.cpp
 	document/pool.cpp
+	document/projectfiles.cpp
 	document/slotcommands.cpp
 	document/projectmodel.cpp document/projectmodel.h
 	document/rendersnapshot.cpp document/rendersnapshot.h

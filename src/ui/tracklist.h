@@ -50,6 +50,9 @@ namespace gnubase::ui
 		// The selected tracks, top to bottom, and selecting them (the list view's value).
 		std::vector<uint64_t> selection() const;
 		void select(const std::vector<uint64_t>& tracks);
+		// Whether a selected folder has a group channel (withGroupChannel) or has none: when Disable or Enable Group
+		// Channel has something to do.
+		bool selectsFolder(bool withGroupChannel) const;
 
 		// Folding (reference manual p. 225): the tracks inside a folded folder are hidden, in the event display too.
 		bool folded(uint64_t folder) const { return m_folded.count(folder) != 0; }
@@ -61,7 +64,9 @@ namespace gnubase::ui
 		// The commands that key commands and menus bind to, by id: track.selectPrevious and track.selectNext (Up and
 		// Down), track.rename (the first selected track), track.removeSelected, track.removeEmpty,
 		// track.duplicateSelected, track.disableSelected, track.enableSelected, track.toggleFolding (the selected
-		// folders), track.foldAll, track.unfoldAll and track.flipFolding.
+		// folders), track.foldAll, track.unfoldAll and track.flipFolding; and for folder tracks
+		// track.enableSelectedGroupChannels, track.disableSelectedGroupChannels, track.moveSelectedToNewFolder and
+		// track.moveSelectedToNewFolderWithGroupChannel.
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
 
 	private:

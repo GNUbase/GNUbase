@@ -53,6 +53,8 @@ add_library(gnubase-ui STATIC
 	poolpanel.cpp
 	poolpanel.h
 	popupwidgets.cpp
+	projectfiles.cpp
+	projectfiles.h
 	pseudolocale.cpp
 	pseudolocale.h
 	renderer.h
@@ -70,6 +72,8 @@ add_library(gnubase-ui STATIC
 	timeformat.h
 	tracklist.cpp
 	tracklist.h
+	transport.cpp
+	transport.h
 	ui.cpp
 	ui.h
 	uisettings.cpp

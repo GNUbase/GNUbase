@@ -184,6 +184,42 @@ namespace gnubase::ui
 				}
 				transaction(enabled ? "Enable Tracks" : "Disable Tracks", std::move(commands));
 			};
+		// Folder tracks (docs/features/folder-tracks.md, reference manual pp. 222-225).
+		for (const bool on : {false, true})
+		{
+			m_actions[on ? "track.enableSelectedGroupChannels" : "track.disableSelectedGroupChannels"] = [this, on]
+			{
+				Json commands = Json::array();
+				for (const uint64_t track : selection())
+					if (m_tracks[m_index.at(track)].type == "folder")
+						commands.push_back(
+							{{"command", "track.set"}, {"parameters", {{"track", track}, {"groupChannel", on}}}});
+				transaction(on ? "Enable Group Channels" : "Disable Group Channels", std::move(commands));
+			};
+			m_actions[on ? "track.moveSelectedToNewFolderWithGroupChannel" : "track.moveSelectedToNewFolder"] =
+				[this, on]
+			{
+				// A new folder where the first of them was, with them inside; marker tracks stay at the top level.
+				Json tracks = Json::array();
+				for (const uint64_t track : topSelection())
+					if (m_tracks[m_index.at(track)].type != "marker")
+						tracks.push_back(track);
+				if (tracks.empty())
+					return;
+				const auto first = tracks[0].get<uint64_t>();
+				const uint64_t parent = m_tracks[m_index.at(first)].parent;
+				int64_t index = 0;
+				for (const Row& row : m_tracks)
+				{
+					if (row.id == first)
+						break;
+					index += row.parent == parent ? 1 : 0;
+				}
+				m_binding.send("track.add",
+					{{"type", "folder"}, {"parent", parent}, {"index", index}, {"groupChannel", on},
+						{"tracks", std::move(tracks)}});
+			};
+		}
 
 		m_subscriptions.push_back(m_binding.on("settings.changed",
 			[this](const engine::Event& event)
@@ -234,6 +270,17 @@ namespace gnubase::ui
 		std::sort(
 			tracks.begin(), tracks.end(), [this](uint64_t a, uint64_t b) { return m_index.at(a) < m_index.at(b); });
 		return tracks;
+	}
+
+	bool TrackList::selectsFolder(bool withGroupChannel) const
+	{
+		const std::vector<uint64_t> tracks = selection();
+		return std::any_of(tracks.begin(), tracks.end(),
+			[this, withGroupChannel](uint64_t track)
+			{
+				const Row& row = m_tracks[m_index.at(track)];
+				return row.type == "folder" && (row.channel != 0) == withGroupChannel;
+			});
 	}
 
 	void TrackList::select(const std::vector<uint64_t>& tracks)

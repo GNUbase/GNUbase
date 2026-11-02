@@ -11,6 +11,7 @@
      zoom-presets.rml, next to this file. ui::TrackList fills #track-list under its global track controls
      (docs/features/track-list.md): #add-track opens the add track dialog (add-track.rml), #track-controls-settings
      the track controls settings dialog (track-controls.rml); #track-list-menu is its context menu.
+     app::AppUi fills the transport bar with the transport controls (transport.rml).
      The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md).
      ui::StatusLine fills #record-format and #lost-device (docs/features/status-line.md).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
@@ -136,9 +137,19 @@
 		<span id="record-format" class="status-field" title="Record Format"/>
 		<span id="lost-device" class="status-field hidden"/>
 	</div>
-	<div id="transport-bar" class="strip" strip="transportBar" default="hidden"/>
+	<div id="transport-bar" class="strip transport" strip="transportBar" default="hidden"/>
 
 	<menu id="file-menu">
+		<menuitem command="file.new">New Project</menuitem>
+		<menuitem command="file.open">Open...</menuitem>
+		<menuseparator/>
+		<menuitem command="file.save">Save</menuitem>
+		<menuitem command="file.saveAs">Save As...</menuitem>
+		<menuitem command="file.backup">Back up Project...</menuitem>
+		<menuitem command="file.saveTemplate">Save as Template...</menuitem>
+		<menuitem command="file.saveNewVersion">Save New Version</menuitem>
+		<menuitem command="file.revert">Revert</menuitem>
+		<menuseparator/>
 		<menuitem id="import-submenu">Import
 			<menu>
 				<menuitem command="file.importAudio">Audio File...</menuitem>
@@ -214,6 +225,9 @@
 				<menuitem command="track.foldAll">Fold Tracks</menuitem>
 				<menuitem command="track.unfoldAll">Unfold Tracks</menuitem>
 				<menuitem command="track.flipFolding">Flip Fold States</menuitem>
+				<menuseparator/>
+				<menuitem command="track.moveSelectedToNewFolder">Move Selected Tracks to New Folder</menuitem>
+				<menuitem command="track.moveSelectedToNewFolderWithGroupChannel">Move Selected Tracks to New Folder with Group Channel</menuitem>
 			</menu>
 		</menuitem>
 	</menu>
@@ -225,6 +239,17 @@
 		<menuseparator/>
 		<menuitem command="track.disableSelected">Disable Selected Tracks</menuitem>
 		<menuitem command="track.enableSelected">Enable Selected Tracks</menuitem>
+		<menuseparator/>
+		<!-- Folder tracks (reference manual pp. 222-224) -->
+		<menuitem command="track.enableSelectedGroupChannels">Enable Group Channel</menuitem>
+		<menuitem command="track.disableSelectedGroupChannels">Disable Group Channel</menuitem>
+		<menuitem id="folder-data-submenu">Show Data on Folder Tracks
+			<menu>
+				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "always"}'>Always Show Data</menuitem>
+				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "never"}'>Never Show Data</menuitem>
+				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "hideWhenExpanded"}'>Hide Data When Expanded</menuitem>
+			</menu>
+		</menuitem>
 		<menuseparator/>
 		<menuitem command="track.controlsSettings">Track Controls Settings...</menuitem>
 	</menu>

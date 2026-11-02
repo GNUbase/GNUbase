@@ -132,6 +132,15 @@ namespace gnubase::ui
 		// still open when the shell is destroyed never call done.
 		void showFileDialog(const FileDialog& dialog, std::function<void(const FileDialogResult&)> done);
 
+		// The file dialogs shown and not answered yet, by id, and answering one as the user would, for UI tests and
+		// MCP's ui_file_dialog: done runs at once with the files, none for a cancel. The OS's dialog, if it shows one,
+		// stays open until the user closes it, and its answer is ignored. Returns false for a dialog that isn't open.
+		std::map<uint64_t, FileDialog> fileDialogs() const;
+		bool answerFileDialog(uint64_t id, std::vector<std::filesystem::path> files);
+
+		// Whether showFileDialog shows the OS's dialog; when off, as in UI tests, dialogs wait for answerFileDialog.
+		void showOsFileDialogs(bool shown) { m_osFileDialogs = shown; }
+
 		// Runs task in the steps after each interval has passed, e.g. to look for changed files.
 		void every(std::chrono::milliseconds interval, std::function<void()> task);
 
@@ -179,7 +188,13 @@ namespace gnubase::ui
 		std::string m_theme;
 		bool m_running = true;
 		bool m_stepping = false;
-		std::map<uint64_t, std::function<void(const FileDialogResult&)>> m_dialogs; // open file dialogs by id
+		struct OpenFileDialog
+		{
+			FileDialog dialog;
+			std::function<void(const FileDialogResult&)> done;
+		};
+		std::map<uint64_t, OpenFileDialog> m_dialogs; // open file dialogs by id
+		bool m_osFileDialogs = true;
 		uint64_t m_nextDialog = 1;
 		std::vector<Task> m_tasks;
 		std::mutex m_postedMutex; // guards m_posted, which other threads add to

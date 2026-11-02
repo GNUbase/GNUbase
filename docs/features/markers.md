@@ -24,10 +24,10 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
 `ui::MarkerLines` (`src/ui/markers.h`) draws the markers into the project window's event display
 ([event-display.md](event-display.md)) and follows the project like it, reading `project.get` after every change:
 
-- **Marker lines** across every track, behind the events: an `<event-lanes class="marker-lines">` with one lane as
-  tall as any display, a line of no length per position marker and at the start and end of each cycle marker. Which
-  markers: the user setting `ui.markerLines`, `active` (the active marker track's, the default), `all` or `off`, as the
-  reference's Show Marker Lines menu and preferences (p. 425). Changes from MCP or Lua apply at once.
+- **Marker lines** across every track, behind the events and folder data: an `<event-lanes class="marker-lines">` with
+  one lane as tall as any display, a line of no length per position marker and at the start and end of each cycle
+  marker. Which markers: the user setting `ui.markerLines`, `active` (the active marker track's, the default), `all` or
+  `off`, as the reference's Show Marker Lines menu and preferences (p. 425). Changes from MCP or Lua apply at once.
 - **Marker events** on the marker tracks' lanes, over the events: an `<event-lanes class="marker-events">` with a lane
   per track, position markers as lines and cycle markers as spans, and a `.marker-label` per marker with its number,
   in brackets for cycle markers, and its name; labels of the active marker track's markers have `.active`. The themes

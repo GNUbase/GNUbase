@@ -2,7 +2,7 @@
 
 A project that is moved or archived needs its media with it (#170). `src/engine/media/backup.h` has the file work; the commands are in the project model.
 
-- The **project folder** is the folder of the file the project was last saved as or loaded from (`project.location`; `project.save` announces it with `project.saved`); its **media folder** is `Audio` in it. A project without a file has neither. Project folder layout beyond that comes with project handling (#77).
+- The **project folder** is the folder of the file the project was last saved as or loaded from (`project.location`; `project.save` announces it with `project.saved`); its **media folder** is `Audio` in it. A project without a file has neither. Auto saves go into its `Auto Saves` folder ([project-files.md](project-files.md)).
 - `media.add` with `copy` adds a file from outside the project folder where it is and copies it into the media folder as a job, which then points the media file at the copy (the engine part of the import option, #92). Names stay unique: `take.wav`, `take-2.wav`.
 - `media.prepareArchive` copies every media file from outside the project folder into the media folder as a job, then points the media at the copies as one undo step; missing files are listed and left alone. Saved without embedding, the project then refers to its media relative to itself, and the folder can move.
 - `media.relink` points media files at other files with the same sample rate and channel count, as one undo step.

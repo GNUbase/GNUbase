@@ -117,6 +117,10 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"}, {"enum", {"none", "default", "dummy"}}}, "none"},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
+				{"editing.applyFolderColor",
+					"Folder tracks give their color to the tracks inside them: when the folder's color changes and "
+					"when tracks are added or moved into it.",
+					Json{{"type", "boolean"}}, false},
 				{"midi.chaseBeyondParts",
 					"Chases controller events from the whole track; off, only from the MIDI parts under the "
 					"position, so none outside parts.",
@@ -149,6 +153,18 @@ namespace gnubase::engine::settings
 										{"inAllInputs", {{"type", "boolean"}}}}},
 								{"additionalProperties", false}}}},
 					Json::object()},
+				{"project.autoSave",
+					"Saves a copy of a project with unsaved changes every project.autoSaveInterval minutes into the "
+					"folder Auto Saves of its project folder (see project.autoSave).",
+					Json{{"type", "boolean"}}, true},
+				{"project.autoSaveFiles", "How many auto saves a project keeps; the next one overwrites the oldest.",
+					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 100}}, 5},
+				{"project.autoSaveInterval", "Minutes between auto saves.",
+					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 120}}, 15},
+				{"ui.folderData",
+					"When folder tracks show the events and parts of the tracks inside them as data blocks in the "
+					"event display: always, never, or hideWhenExpanded (only while the folder is folded).",
+					Json{{"type", "string"}, {"enum", {"always", "never", "hideWhenExpanded"}}}, "always"},
 				{"ui.layout",
 					"The layout of the windows with zones: under windows, by window (project), its zones (left, "
 					"right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs "
@@ -165,6 +181,15 @@ namespace gnubase::engine::settings
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
+				{"ui.timeFormats",
+					"The time formats of the transport controls' displays: primary and secondary in the transport bar "
+					"and panel, timeDisplay in the time display window; each barsBeats, seconds, timecode, samples or "
+					"userFrames.",
+					Json{{"type", "object"},
+						{"additionalProperties",
+							{{"type", "string"},
+								{"enum", {"barsBeats", "seconds", "timecode", "samples", "userFrames"}}}}},
+					Json{{"primary", "barsBeats"}, {"secondary", "timecode"}, {"timeDisplay", "barsBeats"}}},
 				{"ui.toolModifiers",
 					"The modifier keys of the project window's tools, by action (docs/features/tools.md), each ctrl "
 					"(Cmd on macOS), alt and shift joined with +, or empty for none: dragDrop.copy (default alt), "

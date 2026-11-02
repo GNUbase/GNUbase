@@ -11,12 +11,14 @@
 #include "ui/mainmenu.h"
 #include "ui/markers.h"
 #include "ui/poolpanel.h"
+#include "ui/projectfiles.h"
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
 #include "ui/statusline.h"
 #include "ui/themes.h"
 #include "ui/tracklist.h"
+#include "ui/transport.h"
 #include "ui/uisettings.h"
 
 #include <RmlUi/Core/ObserverPtr.h>
@@ -29,6 +31,7 @@
 
 namespace Rml
 {
+	class Element;
 	class ElementDocument;
 }
 
@@ -74,6 +77,19 @@ namespace gnubase::app
 		// instead: MCP and Lua can run the command then. Throws std::runtime_error if the document can't be loaded.
 		Rml::ElementDocument& openStudioSetup(ui::Window& window);
 
+		// Opens the start screen in the main window (ui/projectfiles.h, #77), as the app does when it starts without
+		// a project.
+		void openStartScreen() { m_files.openStartScreen(m_main); }
+
+		// The transport controls (#90, docs/features/transport-bar.md): the project window's transport bar, once it
+		// shows, and the transport panel and the time display window, windows of their own that the UI commands
+		// window.transportPanel (F2) and window.timeDisplay show and hide. Null or none while they don't show.
+		ui::TransportControls* transportBar() { return m_transportBar.get(); }
+		void toggleTransportPanel();
+		void toggleTimeDisplay();
+		ui::Window* transportPanel() { return m_transportPanel.shown(m_shell); }
+		ui::Window* timeDisplay() { return m_timeDisplay.shown(m_shell); }
+
 		ui::Shell& shell() { return m_shell; }
 		ui::Window& mainWindow() { return m_main; }
 		ui::RmlUi& rmlui() { return m_rmlui; }
@@ -83,6 +99,21 @@ namespace gnubase::app
 		const ui::GpuRenderer& renderer() const { return m_renderer; }
 
 	private:
+		// A window of its own with transport controls.
+		struct TransportWindow
+		{
+			ui::WindowId window = 0;
+			std::unique_ptr<ui::TransportControls> controls;
+
+			// The window, or null if it is closed, also when the user closed it.
+			ui::Window* shown(ui::Shell& shell) const { return window == 0 ? nullptr : shell.find(window); }
+		};
+
+		// Fills an element with the transport controls (resources/ui/transport.rml) and drives them.
+		std::unique_ptr<ui::TransportControls> transportControls(Rml::Element& root, ui::Window& window, bool fill);
+		void toggle(TransportWindow& shown, const char* file, const char* title, ui::Size size);
+		// Edits a display of the transport bar, or of the transport panel, which opens if the bar doesn't show.
+		void enter(const std::string& field);
 		// File > Import: the OS's file dialog for the window, then the event display imports what the user chose;
 		// with clipsOnly into the pool only (Media > Import Medium).
 		void chooseImport(
@@ -113,12 +144,16 @@ namespace gnubase::app
 		ui::WindowId m_markersWindow = 0;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
 		std::unique_ptr<ui::MarkerLines> m_markerLines;   // and before the display
-		std::unique_ptr<ui::StatusLine> m_statusLine;     // too
-		std::unique_ptr<ui::TrackList> m_trackList;       // and before the display
+		std::unique_ptr<ui::TransportControls> m_transportBar;
+		TransportWindow m_transportPanel;
+		TransportWindow m_timeDisplay;
+		std::unique_ptr<ui::StatusLine> m_statusLine; // too
+		std::unique_ptr<ui::TrackList> m_trackList;   // and before the display
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
 		bool m_canUndo = false;
 		bool m_canRedo = false;
 		ui::Subscription m_history;
+		ui::ProjectFiles m_files;                     // the File menu's project commands
 		std::unique_ptr<ui::MainMenu> m_menu;         // the project window's
 		Rml::ObserverPtr<Rml::Element> m_studioSetup; // the open studio setup dialog's document
 		std::weak_ptr<ui::PoolPanel> m_pool;          // the docking system owns it while it is there

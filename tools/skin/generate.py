@@ -444,6 +444,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                                      "stroke-color": mix(c["background"], c["textMuted"], .5)}),
         (".event-display event-lanes.selected-events", {"color": mix(c["surfaceRaised"], c["accent"], .7),
                                                         "stroke-color": c["text"]}),
+        # Folder tracks (docs/features/folder-tracks.md): the data blocks of the events of the tracks inside them
+        (".event-display event-lanes.folder-data", {"color": mix(c["surface"], c["accent"], .3),
+                                                    "stroke-color": "transparent"}),
         (".event-display ruler", {"background-color": c["surface"]}),
         (".event-display .project-cursor", {"background-color": c["text"]}),
         (".event-display .cross-hair-vertical, .event-display .cross-hair-horizontal",
