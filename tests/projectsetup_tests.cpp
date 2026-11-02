@@ -39,7 +39,8 @@ namespace
 	std::string reject(engine::Client& client, const std::string& command, Json parameters)
 	{
 		const engine::Result result = client.call(command, std::move(parameters));
-		REQUIRE_FALSE(result.ok());
+		// Not REQUIRE_FALSE: Catch2's Normal | FalseTest trips clang-analyzer's EnumCastOutOfRange check
+		REQUIRE(!result.ok());
 		return result.error;
 	}
 
@@ -53,9 +54,12 @@ namespace
 		return settings;
 	}
 
-	const Json g_changed = {{"recordFileType", "broadcastWav"}, {"recordBitDepth", "float32"},
-		{"frameRate", "29.97dfps"}, {"startTime", 3600.0}, {"length", 300.0}, {"barOffset", -1},
-		{"timeFormat", "timecode"}};
+	// A function, not a global: building a Json may throw, which a static initializer can't catch.
+	Json changedSetup()
+	{
+		return {{"recordFileType", "broadcastWav"}, {"recordBitDepth", "float32"}, {"frameRate", "29.97dfps"},
+			{"startTime", 3600.0}, {"length", 300.0}, {"barOffset", -1}, {"timeFormat", "timecode"}};
+	}
 
 	Json elements(test::UiApp& app, const std::string& selector)
 	{
@@ -127,16 +131,16 @@ TEST_CASE("the project setup's settings are set, announced, undone and saved", "
 		Json({{"recordFileType", "wav"}, {"recordBitDepth", "int24"}, {"frameRate", "25"}, {"startTime", 0.0},
 			{"length", 600.0}, {"barOffset", 0}, {"timeFormat", "barsBeats"}}));
 
-	run(client, "project.set", g_changed);
+	run(client, "project.set", changedSetup());
 	const Json changed = run(client, "project.get");
-	CHECK(setup(changed) == g_changed);
+	CHECK(setup(changed) == changedSetup());
 	Json announced;
 	while (const auto message = listener.poll())
 		if (const auto* event = std::get_if<engine::Event>(&*message);
 			event != nullptr && event->name == "project.changed")
 			announced = event->data;
 	REQUIRE(announced.is_object());
-	CHECK(setup(announced) == g_changed);
+	CHECK(setup(announced) == changedSetup());
 	// The record format reaches the audio engine, for the status line (#454) and recording.
 	CHECK(engine.renderSnapshots().acquire().recordBitDepth == "float32");
 	CHECK(run(client, "audio.get").at("recordBitDepth") == "float32");
@@ -153,7 +157,7 @@ TEST_CASE("the project setup's settings are set, announced, undone and saved", "
 	run(client, "project.new");
 	CHECK(setup(run(client, "project.get")).at("frameRate") == "25");
 	run(client, "project.load", {{"path", file}});
-	CHECK(setup(run(client, "project.get")) == g_changed);
+	CHECK(setup(run(client, "project.get")) == changedSetup());
 }
 
 TEST_CASE("project.set refuses project setup settings that don't go together", "[unit]")
