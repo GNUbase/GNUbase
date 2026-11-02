@@ -50,6 +50,9 @@ namespace gnubase::ui
 		// The selected tracks, top to bottom, and selecting them (the list view's value).
 		std::vector<uint64_t> selection() const;
 		void select(const std::vector<uint64_t>& tracks);
+		// Whether a selected folder has a group channel (withGroupChannel) or has none: when Disable or Enable Group
+		// Channel has something to do.
+		bool selectsFolder(bool withGroupChannel) const;
 
 		// Folding (reference manual p. 225): the tracks inside a folded folder are hidden, in the event display too.
 		bool folded(uint64_t folder) const { return m_folded.count(folder) != 0; }

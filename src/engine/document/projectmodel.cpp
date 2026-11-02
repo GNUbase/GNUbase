@@ -273,7 +273,7 @@ namespace gnubase::engine
 			return mainMix(project);
 		}
 
-		// The folder output of the track and every track inside it whose audio channel has an output.
+		// The folder output of the track and every track inside it that has an audio channel.
 		std::map<ObjectId, ObjectId> folderOutputs(const Project& project, ObjectId root)
 		{
 			std::map<ObjectId, ObjectId> outputs;
@@ -287,7 +287,9 @@ namespace gnubase::engine
 		}
 
 		// After tracks moved or a group channel went on or off: routes the channels of the tracks whose folder
-		// output changed from before to the new one, unless that would make a loop.
+		// output changed from before to the new one, unless that would make a loop. Only channels that still follow
+		// the folder, i.e. play through the old folder output, move: one routed elsewhere by hand or disconnected
+		// keeps its routing.
 		void reroute(Project& project, const std::map<ObjectId, ObjectId>& before, CommandContext& context)
 		{
 			for (const auto& [id, output] : before)
@@ -297,6 +299,8 @@ namespace gnubase::engine
 				if (track.channel == 0 || now == output || loops(project, track.channel, now))
 					continue;
 				Channel& channel = project.channels.at(track.channel);
+				if (channel.output != output)
+					continue;
 				channel.output = now;
 				context.emit("channel.changed", {{"channel", toJson(channel)}});
 			}
@@ -917,8 +921,13 @@ namespace gnubase::engine
 			{
 				require(type == TrackType::Folder, "only folders take tracks");
 				for (const Json& moved : parameters.at("tracks"))
-					moveInto(project, moved.get<ObjectId>(), track.id,
+				{
+					const auto id = moved.get<ObjectId>();
+					require(find(project.trackById, id, "track").parent != track.id,
+						"tracks lists track " + idText(id) + " twice");
+					moveInto(project, id, track.id,
 						static_cast<int64_t>(project.trackById.at(track.id).children.size()), context);
+				}
 			}
 			return result;
 		}
@@ -2739,11 +2748,11 @@ namespace gnubase::engine
 				"bus.add. Folders get a channel only with groupChannel. New channels play through the main output, "
 				"or through the group channel of the nearest folder around them that has one, and audio tracks record "
 				"from the first input bus; input, output and instrument set them as channel.set does. tracks moves "
-				"those tracks into a new folder, in that order, as track.move does (Move Selected Tracks to New "
-				"Folder). With the user setting editing.applyFolderColor, a track added to a folder without a color "
-				"takes the folder's. Marker tracks have no channel and stay at the top level; a project has at most "
-				"10, and a new one becomes the active marker track. Ruler tracks have no channel either; timeFormat "
-				"is the time format their ruler shows (default barsBeats).",
+				"those tracks, each listed once, into a new folder, in that order, as track.move does (Move Selected "
+				"Tracks to New Folder). With the user setting editing.applyFolderColor, a track added to a folder "
+				"without a color takes the folder's. Marker tracks have no channel and stay at the top level; a "
+				"project has at most 10, and a new one becomes the active marker track. Ruler tracks have no channel "
+				"either; timeFormat is the time format their ruler shows (default barsBeats).",
 				objectSchema({{"type", trackTypes}, {"name", stringSchema}, {"color", color}, {"parent", idSchema},
 								 {"index", integerSchema}, {"format", formats}, {"channels", integerSchema},
 								 {"timeBase", timeBases}, {"groupChannel", booleanSchema}, {"input", idSchema},
@@ -2761,10 +2770,11 @@ namespace gnubase::engine
 				"time format. A new time base keeps its events, parts and markers at the same time. enabled false "
 				"disables an audio, instrument or MIDI track: it keeps its events and channel settings but plays "
 				"nothing and is silent. groupChannel turns a folder's group channel on or off: a new one is stereo "
-				"and plays through the main output, or the group channel of the folder around it; the audio of the "
-				"tracks inside then plays through it, or without it through the main output, and its automation "
-				"and the routing of other channels to it go. With the user setting editing.applyFolderColor, a "
-				"folder's new color goes to the tracks inside it.",
+				"and plays through the next group channel up, or the main output; the audio of the tracks inside "
+				"then plays through it, or without it through the next group channel up, or the main output, and "
+				"its automation and the routing of other channels to it go. Channels routed elsewhere by hand or "
+				"disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new "
+				"color goes to the tracks inside it.",
 				objectSchema(
 					{{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
 						{"timeFormat", timeFormats}, {"enabled", booleanSchema}, {"groupChannel", booleanSchema}},
@@ -2776,7 +2786,8 @@ namespace gnubase::engine
 				"Moves a track, with what it contains, into a folder (parent, 0 for the top level) at index among its "
 				"tracks. Where the group channel of the nearest folder around a moved track changes, its audio and "
 				"that of the tracks inside it follows: into a folder with a group channel it plays through that, out "
-				"of it through the main output, unless that would make a loop. With the user setting "
+				"of it through the next group channel up, or the main output. Channels routed elsewhere by hand or "
+				"disconnected, and routes that would make a loop, stay as they are. With the user setting "
 				"editing.applyFolderColor, tracks moved into a folder with a color take it.",
 				objectSchema({{"track", idSchema}, {"parent", idSchema}, {"index", integerSchema}},
 					{"track", "parent", "index"}),

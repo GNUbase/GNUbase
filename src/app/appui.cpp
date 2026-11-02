@@ -254,11 +254,17 @@ namespace gnubase::app
 						if (m_trackList)
 							m_trackList->actions().at(id)();
 					}});
-			// The commands for selected tracks wait for a selection.
+			// The commands for selected tracks wait for a selection, Enable and Disable Group Channel for a selected
+			// folder they change.
 			const bool selected =
 				id.find("Selected") != std::string::npos || id == "track.rename" || id == "track.toggleFolding";
-			m_keys.enableWhen(command.id, [this, selected](ui::Window&, Rml::Element*)
-				{ return m_trackList != nullptr && (!selected || !m_trackList->selection().empty()); });
+			if (id == "track.enableSelectedGroupChannels" || id == "track.disableSelectedGroupChannels")
+				m_keys.enableWhen(command.id,
+					[this, off = id == "track.disableSelectedGroupChannels"](ui::Window&, Rml::Element*)
+					{ return m_trackList != nullptr && m_trackList->selectsFolder(off); });
+			else
+				m_keys.enableWhen(command.id, [this, selected](ui::Window&, Rml::Element*)
+					{ return m_trackList != nullptr && (!selected || !m_trackList->selection().empty()); });
 			if (command.keys != nullptr)
 				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
 		}

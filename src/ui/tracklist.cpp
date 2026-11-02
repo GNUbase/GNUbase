@@ -272,6 +272,17 @@ namespace gnubase::ui
 		return tracks;
 	}
 
+	bool TrackList::selectsFolder(bool withGroupChannel) const
+	{
+		const std::vector<uint64_t> tracks = selection();
+		return std::any_of(tracks.begin(), tracks.end(),
+			[this, withGroupChannel](uint64_t track)
+			{
+				const Row& row = m_tracks[m_index.at(track)];
+				return row.type == "folder" && (row.channel != 0) == withGroupChannel;
+			});
+	}
+
 	void TrackList::select(const std::vector<uint64_t>& tracks)
 	{
 		if (!alive())

@@ -418,20 +418,25 @@ TEST_CASE("folder tracks: new folders for the selected tracks, group channels an
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.display.laneTracks().size() == 2 && blocks() == 1; }));
 	tracks.list.setFolded(folder, false);
 
-	// The context menu turns the selected folders' group channels off and on (p. 224).
-	const auto menu = [&tracks](uint64_t track, const char* command)
+	// The context menu turns the selected folders' group channels off and on (p. 224); the one that has nothing to do
+	// is disabled.
+	const auto item = [](const char* command)
+	{ return std::string("#track-list-menu > [command=\"") + command + "\"]"; };
+	const auto menu = [&tracks, &item](uint64_t track, const char* command, const char* greyed)
 	{
 		tracks.app.ui().click(
 			std::nullopt, {row(track) + " .track-name", 0, std::nullopt}, ui::MouseButton::Right, 1, {});
 		tracks.app.shell().step(std::chrono::milliseconds(0));
 		REQUIRE(elements(tracks.app, "#track-list-menu").at(0).at("visible").get<bool>());
-		tracks.click(std::string("#track-list-menu > [command=\"") + command + "\"]");
+		CHECK(elements(tracks.app, item(greyed)).at(0).at("attributes").contains("disabled"));
+		CHECK_FALSE(elements(tracks.app, item(command)).at(0).at("attributes").contains("disabled"));
+		tracks.click(item(command));
 	};
-	menu(folder, "track.disableSelectedGroupChannels");
+	menu(folder, "track.disableSelectedGroupChannels", "track.enableSelectedGroupChannels");
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(folder).at("channel") == 0; }));
 	CHECK(tracks.channel(audio).at("output") == main);
 	REQUIRE(tracks.app.waitUntil([&] { return elements(tracks.app, row(folder) + " button.mute").empty(); }));
-	menu(folder, "track.enableSelectedGroupChannels");
+	menu(folder, "track.enableSelectedGroupChannels", "track.disableSelectedGroupChannels");
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(folder).at("channel") != 0; }));
 	CHECK(tracks.channel(other).at("output") == tracks.track(folder).at("channel"));
 
