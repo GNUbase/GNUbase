@@ -29,6 +29,13 @@ namespace gnubase::engine
 			"100samples", "44100samples"};
 		constexpr const char* g_gridFormatNames[] = {"barsBeats", "seconds", "timecode", "samples", "userFrames"};
 		static_assert(std::size(g_gridFormatNames) == g_gridFormatCount);
+		// The format of each grid type; the frames are also userFrames'.
+		constexpr GridFormat g_gridFormats[] = {GridFormat::BarsBeats, GridFormat::BarsBeats, GridFormat::BarsBeats,
+			GridFormat::BarsBeats, GridFormat::Seconds, GridFormat::Seconds, GridFormat::Seconds, GridFormat::Seconds,
+			GridFormat::Timecode, GridFormat::Timecode, GridFormat::Timecode, GridFormat::Timecode,
+			GridFormat::Timecode, GridFormat::Timecode, GridFormat::Samples, GridFormat::Samples, GridFormat::Samples,
+			GridFormat::Samples};
+		static_assert(std::size(g_gridFormats) == std::size(g_gridTypeNames));
 
 		constexpr double g_zeroCrossingWindow = 0.05; // seconds either side
 
@@ -167,29 +174,14 @@ namespace gnubase::engine
 
 	bool hasGrid(GridFormat format, GridType grid)
 	{
-		const auto at = static_cast<int>(grid);
-		switch (format)
-		{
-		case GridFormat::BarsBeats:
-			return at <= static_cast<int>(GridType::AdaptToZoom);
-		case GridFormat::Seconds:
-			return at >= static_cast<int>(GridType::Ms1) && at <= static_cast<int>(GridType::Ms1000);
-		case GridFormat::Timecode:
-		case GridFormat::UserFrames:
-			return at >= static_cast<int>(GridType::Subframe) && at <= static_cast<int>(GridType::Second);
-		case GridFormat::Samples:
-			return at >= static_cast<int>(GridType::Samples1);
-		}
-		return false;
+		const GridFormat of = g_gridFormats[static_cast<size_t>(grid)];
+		return of == format || (of == GridFormat::Timecode && format == GridFormat::UserFrames);
 	}
 
 	void SnapSettings::setGrid(GridType grid)
 	{
 		if (!hasGrid(format, grid))
-			for (const GridFormat each :
-				{GridFormat::BarsBeats, GridFormat::Seconds, GridFormat::Timecode, GridFormat::Samples})
-				if (hasGrid(each, grid))
-					format = each;
+			format = g_gridFormats[static_cast<size_t>(grid)];
 		grids.at(static_cast<size_t>(format)) = grid;
 	}
 
@@ -250,39 +242,67 @@ namespace gnubase::engine
 		}
 	}
 
-	SnapSettings snapSettingsFrom(const Json& json, SnapSettings settings)
+	SnapSettings snapSettingsFrom(const Json& json, SnapSettings settings, bool loading)
 	{
+		// Loading, a name that isn't known (a newer build's) or a grid type that isn't its format's is left out.
+		const auto refuse = [loading](const std::invalid_argument& error)
+		{
+			if (!loading)
+				throw error;
+		};
 		settings.on = json.value("on", settings.on);
 		settings.zeroCrossing = json.value("zeroCrossing", settings.zeroCrossing);
 		if (json.contains("type"))
 		{
-			const std::optional<SnapType> type = snapTypeFromName(json.at("type").get<std::string>());
-			if (!type)
-				throw std::invalid_argument("unknown snap type " + json.at("type").dump());
-			settings.type = *type;
+			if (const std::optional<SnapType> type = snapTypeFromName(json.at("type").get<std::string>()))
+				settings.type = *type;
+			else
+				refuse(std::invalid_argument("unknown snap type " + json.at("type").dump()));
 		}
 		if (json.contains("grids"))
 			for (const auto& [name, grid] : json.at("grids").items())
-				if (const std::optional<GridFormat> format = gridFormatFromName(name)) // a newer build's: left out
+				try
 				{
+					const std::optional<GridFormat> format = gridFormatFromName(name);
+					if (!format)
+						throw std::invalid_argument("unknown time format " + name);
 					const GridType type = gridFrom(grid);
 					requireGrid(*format, type);
 					settings.grids.at(static_cast<size_t>(*format)) = type;
 				}
+				catch (const std::invalid_argument& error)
+				{
+					refuse(error);
+				}
+		bool hasFormat = false;
 		if (json.contains("format"))
 		{
-			const std::optional<GridFormat> format = gridFormatFromName(json.at("format").get<std::string>());
-			if (!format)
-				throw std::invalid_argument("unknown time format " + json.at("format").dump());
-			settings.format = *format;
+			if (const std::optional<GridFormat> format = gridFormatFromName(json.at("format").get<std::string>()))
+			{
+				settings.format = *format;
+				hasFormat = true;
+			}
+			else
+			{
+				refuse(std::invalid_argument("unknown time format " + json.at("format").dump()));
+			}
 		}
 		if (json.contains("grid"))
-		{
-			const GridType grid = gridFrom(json.at("grid"));
-			if (json.contains("format"))
-				requireGrid(settings.format, grid);
-			settings.setGrid(grid);
-		}
+			try
+			{
+				const GridType grid = gridFrom(json.at("grid"));
+				if (json.contains("format"))
+				{
+					if (!hasFormat) // an unknown format's grid type
+						return settings;
+					requireGrid(settings.format, grid);
+				}
+				settings.setGrid(grid);
+			}
+			catch (const std::invalid_argument& error)
+			{
+				refuse(error);
+			}
 		return settings;
 	}
 

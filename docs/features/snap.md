@@ -19,7 +19,10 @@ switches the grid to that format's, so the grid always matches the grid type men
 finds the one chosen there before. `snap.set` with a grid type that isn't the format's refuses it when it is given a
 format too; without one (as before #413) it switches to the grid type's format, the frames to `timecode` unless
 `userFrames` is in use. Settings saved before #413 have only `grid`, and load with its format; older builds read
-`grid`, the grid in use.
+`grid`, the grid in use. A project from a newer build with a snap type, time format or grid type this build doesn't
+know loads with what it knows; those are left out (and not saved again). The grid follows the project window's
+ruler, which the project keeps; the transport's time displays have formats of their own (`ui.timeFormats`), so the
+ruler and the primary time display can differ.
 
 | Snap type | A position goes to | Reference |
 |---|---|---|

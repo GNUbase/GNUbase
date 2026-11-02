@@ -109,8 +109,8 @@ namespace gnubase::engine
 	Json toJson(const SnapSettings& settings);
 	// Changes what json names: grids, then format, then grid, which is the format's (without a format, as before
 	// #413, it chooses its format). Throws std::invalid_argument for unknown names and for a grid type that isn't its
-	// format's; unknown formats in grids are left out.
-	SnapSettings snapSettingsFrom(const Json& json, SnapSettings settings);
+	// format's; loading a project, it leaves those out instead, so that a newer build's projects load.
+	SnapSettings snapSettingsFrom(const Json& json, SnapSettings settings, bool loading = false);
 
 	// What the grid is made of.
 	struct SnapGrid

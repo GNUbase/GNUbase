@@ -380,6 +380,25 @@ TEST_CASE("snap settings from before #413 take the format of their grid type", "
 	CHECK(old("44100samples").format == engine::GridFormat::Samples);
 	CHECK(old("44100samples").grid() == GridType::Samples44100);
 
+	// Every grid type is one format's, the frames the two timecode formats'.
+	for (int i = 0; i <= static_cast<int>(GridType::Samples44100); ++i)
+	{
+		const auto grid = static_cast<GridType>(i);
+		int formats = 0;
+		for (size_t format = 0; format < engine::g_gridFormatCount; ++format)
+			formats += engine::hasGrid(static_cast<engine::GridFormat>(format), grid) ? 1 : 0;
+		CHECK(formats == (engine::hasGrid(engine::GridFormat::Timecode, grid) ? 2 : 1));
+	}
+
+	// Loading, names a newer build may have keep what there was; a grid type that isn't its format's is left out.
+	const Json newer = {{"format", "seconds"}, {"grid", "5ms"}, {"grids", {{"seconds", "1000ms"}, {"samples", "bar"}}}};
+	CHECK_THROWS(engine::snapSettingsFrom(newer, defaults));
+	const engine::SnapSettings loaded = engine::snapSettingsFrom(newer, defaults, true);
+	CHECK(loaded.format == engine::GridFormat::Seconds);
+	CHECK(loaded.grid() == GridType::Ms1000);
+	CHECK(loaded.grids.at(static_cast<size_t>(engine::GridFormat::Samples)) == GridType::Samples100);
+	CHECK(engine::snapSettingsFrom({{"format", "seconds"}, {"grid", "bar"}}, defaults, true).grid() == GridType::Ms100);
+
 	// And what is saved now reads back the same.
 	engine::SnapSettings settings = old("halfFrame");
 	settings.format = engine::GridFormat::UserFrames;

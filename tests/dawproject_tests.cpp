@@ -1051,6 +1051,20 @@ TEST_CASE("snap settings saved before #413 load with the time format of their gr
 	CHECK(snap.at("grids") ==
 		Json{{"barsBeats", "bar"}, {"seconds", "100ms"}, {"timecode", "quarterFrame"}, {"samples", "100samples"},
 			{"userFrames", "frame"}});
+	// A newer build's names keep the defaults, the rest loads.
+	extension.at("project")["snap"] = {{"on", true}, {"type", "wobble"}, {"format", "feetFrames"}, {"grid", "5ms"},
+		{"grids", {{"seconds", "5ms"}, {"samples", "10samples"}, {"timecode", "bar"}, {"feetFrames", "1foot"}}},
+		{"zeroCrossing", true}};
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "snap.get") ==
+		Json{{"on", true}, {"type", "grid"}, {"format", "barsBeats"}, {"grid", "bar"},
+			{"grids",
+				{{"barsBeats", "bar"}, {"seconds", "100ms"}, {"timecode", "frame"}, {"samples", "10samples"},
+					{"userFrames", "frame"}}},
+			{"zeroCrossing", true}});
+
 	// Older builds read the grid type in use.
 	run(client, "snap.set", {{"format", "seconds"}});
 	run(client, "project.save", {{"path", file}});

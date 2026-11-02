@@ -1175,7 +1175,7 @@ namespace gnubase::engine
 		if (json.contains("quantize"))
 			project.quantize = midi::quantizeSettingsFromJson(json.at("quantize"));
 		project.autoQuantize = json.value("autoQuantize", false);
-		project.snap = snapSettingsFrom(json.value("snap", Json::object()), SnapSettings()); // files from before #87
+		project.snap = snapSettingsFrom(json.value("snap", Json::object()), SnapSettings(), true); // before #87: none
 
 		// Without a counter, ids continue after the highest one.
 		ObjectId highest = 0;
