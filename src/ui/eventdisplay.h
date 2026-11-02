@@ -83,6 +83,13 @@ namespace gnubase::ui
 		Square,
 	};
 
+	// The play tool's modes (reference manual pp. 252-253): auditioning the pressed track, or scrubbing it.
+	enum class PlayMode : uint8_t
+	{
+		Play,
+		Scrub,
+	};
+
 	// A selection range (reference manual p. 285): from start to end in project samples, on these tracks (by id, in
 	// the project's order). A click makes one of no length.
 	struct RangeSelection
@@ -199,17 +206,20 @@ namespace gnubase::ui
 
 		// The tools (#86, eventtools.cpp, docs/features/tools.md), also in the root's attribute tool. The object
 		// selection tool edits as above; the others send the same event.* commands (split, glue, erase, mute), zoom,
-		// draw MIDI parts, play from where they press, or select a range. With the selection tools combined, the
-		// object selection tool selects ranges in a lane's upper half. Their tool modifiers are the user setting
-		// ui.toolModifiers. The document's toolbar may have a button per tool, button[tool=<name>], whose attribute
-		// tool-menu names a menu of its modes that a second click opens (#object-selection-menu with the sizing modes,
-		// #line-menu with the line modes), and a toggle button #combine-selection-tools.
+		// draw MIDI parts, audition or scrub the pressed audio track, or select a range. With the selection tools
+		// combined, the object selection tool selects ranges in a lane's upper half. Their tool modifiers are the user
+		// setting ui.toolModifiers. The document's toolbar may have a button per tool, button[tool=<name>], whose
+		// attribute tool-menu names a menu of its modes that a second click opens (#object-selection-menu with the
+		// sizing modes, #line-menu with the line modes, #play-menu with the play modes), and a toggle button
+		// #combine-selection-tools.
 		void setTool(Tool tool);
 		Tool tool() const { return m_tool; }
 		void setCombineSelectionTools(bool on);
 		bool combineSelectionTools() const { return m_combine; }
 		void setLineMode(LineMode mode);
 		LineMode lineMode() const { return m_lineMode; }
+		void setPlayMode(PlayMode mode);
+		PlayMode playMode() const { return m_playMode; }
 		// The selection range, also in the root's attributes range ("start end") and range-tracks (ids); none
 		// without the range selection tool. Choosing another tool selects the events in the range instead.
 		const std::optional<RangeSelection>& range() const { return m_range; }
@@ -259,7 +269,7 @@ namespace gnubase::ui
 			Rectangle,     // a rectangle that selects, mutes or zooms
 			Range,         // a selection range
 			DrawPart,      // a new MIDI part
-			Play,          // plays until the mouse is released
+			Play,          // auditions or scrubs until the mouse is released
 			Click,         // splits, glues or erases where it is released, unless it moved
 		};
 
@@ -457,6 +467,8 @@ namespace gnubase::ui
 		Tool m_pressTool = Tool::ObjectSelection; // the tool of the press now, upper or lower half when combined
 		bool m_combine = false;
 		LineMode m_lineMode = LineMode::Line;
+		PlayMode m_playMode = PlayMode::Play;
+		uint64_t m_auditioned = 0; // the track the play tool auditions or scrubs while pressed
 		std::optional<RangeSelection> m_range;
 		std::optional<RangeSelection> m_rangeBase; // what a drag with Shift adds to
 		double m_pressX = 0.0;                     // dp in the event lanes
@@ -470,6 +482,7 @@ namespace gnubase::ui
 		Rml::Element* m_combineButton = nullptr;
 		Rml::Element* m_objectMenu = nullptr;
 		Rml::Element* m_lineMenu = nullptr;
+		Rml::Element* m_playMenu = nullptr;
 		std::vector<CycleMarker> m_cycleMarkers;
 		std::vector<int64_t> m_markers; // every marker's position and end, in samples, for snapping
 		engine::SnapSettings m_snap;

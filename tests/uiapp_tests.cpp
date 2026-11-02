@@ -462,6 +462,49 @@ TEST_CASE("the toolbar's tool buttons and the keys choose the tools, a second cl
 	CHECK(!visible(app, "#line-menu"));
 	choose(app, "button[tool=line]", "#line-menu", "Parabola");
 	CHECK(display.lineMode() == ui::LineMode::Parabola);
+	// The play tool's: play and scrub (reference manual pp. 252-253).
+	click(app, selector("button[tool=play]"));
+	CHECK(!visible(app, "#play-menu"));
+	choose(app, "button[tool=play]", "#play-menu", "Scrub");
+	CHECK(display.playMode() == ui::PlayMode::Scrub);
+	CHECK(element(app, "#event-display").at("attributes").at("play-mode") == "scrub");
+	click(app, selector("button[tool=play]"));
+	CHECK(hasClass(app, "#play-menu > menuitem[play-mode=scrub]", "checked"));
+	CHECK(!hasClass(app, "#play-menu > menuitem[play-mode=play]", "checked"));
+	app.ui().key(std::nullopt, "Escape");
+}
+
+TEST_CASE("the scrub tool scrubs an audio track and moves the project cursor in the project window", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	const Json track = app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
+	const Json media =
+		app.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+			.at("media");
+	const Json clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	app.call(
+		"audioEvent.add", {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 0}, {"length", 240000}});
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			auto* lanes =
+				dynamic_cast<ui::EventLanes*>(app.main().context().GetDocument(0)->QuerySelector("event-lanes.events"));
+			return lanes != nullptr && !lanes->lanes().empty() && !lanes->lanes()[0].events.empty();
+		}));
+	const Json lanes = element(app, "event-lanes.events");
+	const auto at = [&lanes](int x, int y)
+	{
+		return ui::Target{
+			"", 0, ui::Point{lanes.at("box").at("x").get<int>() + x, lanes.at("box").at("y").get<int>() + y}};
+	};
+
+	// 9, then Scrub from the play tool's modes, and a drag from 1 to 1.5 seconds.
+	app.ui().key(std::nullopt, "9");
+	choose(app, "button[tool=play]", "#play-menu", "Scrub");
+	app.ui().drag(std::nullopt, at(100, 20), at(150, 20), {});
+	REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("position") == 72000; }));
+	CHECK(app.call("transport.get").at("playing") == false);
 }
 
 TEST_CASE("the split and range selection tools edit and select in the project window", "[ui]")

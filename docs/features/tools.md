@@ -23,15 +23,18 @@ project or undo.
 | Mute (`mute`) | Mutes or unmutes the event | A rectangle that mutes what it touches | | p. 277 |
 | Zoom (`zoom`) | Zooms in by 2 around the click; Alt zooms out | A rectangle whose stretch of time it zooms to | Undoes the zoom before it | pp. 101-103 |
 | Line (`line`) | | | | p. 873 |
-| Play (`play`) | Plays from there until the mouse is released | | | p. 252 |
+| Play (`play`) | Auditions the audio track from there until the mouse is released | Scrub mode: scrubs the track along | | pp. 252-253 |
 
 - **Modes.** The object selection tool sizes normally or with sizing moves contents (`setSizingMovesContents`);
   sizing applies time stretch waits for time stretching (M11). The line tool has the modes line, parabola, sine,
   triangle and square (`setLineMode`, the root's attribute `line-mode`); it draws on automation tracks, which the event
-  display shows with #121, and does nothing on parts and events until then.
+  display shows with #121, and does nothing on parts and events until then. The play tool has the modes play and
+  scrub (`setPlayMode`, the root's attribute `play-mode`).
 - **Draw** makes MIDI parts on MIDI and instrument tracks; on audio tracks it waits for audio parts. A drag's ends snap.
-- **Play** locates the project cursor and plays the whole project until the mouse is released; the reference plays
-  only the pressed track, through the control room, which waits for auditioning in the engine.
+- **Play** auditions the pressed audio track from where it presses until the mouse is released, past its channel
+  and without the transport (`audition.start`, `audition.stop`, [audition.md](audition.md)). In scrub mode the
+  press and every move of the drag scrub the track to the mouse's position (`audition.scrub`), forwards or
+  backwards at the mouse's speed, and move the project cursor along. On other tracks it does nothing yet.
 - **Cross-hair cursor.** It shows with the tools that use it (object selection, range selection, draw, split, line),
   not with the others (p. 110).
 - **Selection range.** `range()` is the range: start and end in project samples and the tracks it covers by id, also
@@ -71,15 +74,15 @@ the info line).
 `resources/ui/project.rml` has a button per tool, `button[tool=<name>]`, checked for the tool chosen, and the toggle
 `#combine-selection-tools`. A button with `tool-menu` gets that menu as its `menu` once its tool is chosen, so the
 first click chooses the tool and the next opens its modes (p. 265): `#object-selection-menu` with the sizing modes and
-`#line-menu` with the line modes, each with the mode checked.
+`#line-menu` with the line modes and `#play-menu` with the play modes, each with the mode checked.
 
 The commands are in `EventDisplay::actions()`, and `app::AppUi` binds the reference's keys (p. 1569) in the project
 window: `tool.objectSelection` 1, `tool.rangeSelection` 2, `tool.split` 3, `tool.glue` 4, `tool.erase` 5, `tool.zoom`
 6, `tool.mute` 7, `tool.draw` 8, `tool.play` 9, `tool.line` (no key), `tool.previous` F9, `tool.next` F10 (along the
 toolbar, around at the ends) and `tool.combineSelectionTools` Alt+Shift+1.
 
-Not yet: the toolbox on a right click, tool cursors, the time warp, comp and color tools, the drumstick tool and
-scrubbing.
+Not yet: the toolbox on a right click, tool cursors, the time warp, comp and color tools, the drumstick tool, and
+resizing an event's edge with the scrub tool, which scrubs as it resizes (p. 268).
 
 ## Checks
 
@@ -88,9 +91,10 @@ scrubbing.
   with Ctrl, and setting the cursor; splitting, snapped, into equal pieces, and with a tool modifier changed through
   `settings.set`; gluing to the next and to all following events; erasing one and all later events; muting and
   unmuting with clicks and a rectangle; zooming in, out, to a rectangle and back with a double click; drawing parts,
-  snapped, by dragging and with a click, none on audio tracks or with the line tool; playing on the dummy device while
-  the mouse is pressed; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
+  snapped, by dragging and with a click, none on audio tracks or with the line tool; auditioning the audio lane's
+  track on the dummy device while the mouse is pressed, nothing on a MIDI lane, and scrubbing with a drag; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
   every track, and the events they select when another tool takes over; the combined selection tools.
 - `tests/uiapp_tests.cpp`: the toolbar's tool buttons, the keys 1 to 9, F9, F10 and Alt+Shift+1 in the app's project
-  window, the object selection tool's and the line tool's mode menus on a second click; the split tool and the range
+  window, the object selection tool's, the line tool's and the play tool's mode menus on a second click; scrubbing an
+  audio track with the mouse; the split tool and the range
   tool driven with the mouse as MCP's UI tools drive it. The project window's golden image shows the toolbar.
