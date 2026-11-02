@@ -12,6 +12,7 @@ on:
     types: [opened, reopened, ready_for_review, synchronize]
 
 permissions:
+  issues: read
   pull-requests: read
 
 jobs:
@@ -46,7 +47,10 @@ jobs:
               exit 0
             fi
           fi
-          jq -n --arg repo "$REPO" --arg pr "$PR" --arg sha "$SHA" '{
+          # The agent files follow-up issues by milestone goal; the list saves it looking them up.
+          milestones=$(gh api "repos/$REPO/milestones?state=open&per_page=100" \
+            --jq '.[] | "- \(.title) (number \(.number)): \(.description | gsub("\r?\n"; " "))"')
+          jq -n --arg repo "$REPO" --arg pr "$PR" --arg sha "$SHA" --arg milestones "$milestones" '{
             agent: "agent_01DV6re7oPSNqrFfxSTsuNw4",
             environment_id: "env_01HfuHY4q2Krvzjw2qLKNwqY",
             vault_ids: ["vlt_011CgaXKfWy6gtTqobHwhrnw"],
@@ -55,7 +59,7 @@ jobs:
             title: "Review PR #\($pr)",
             metadata: {pr: $pr, sha: $sha},
             initial_events: [{type: "user.message", content: [{type: "text",
-              text: "Review pull request #\($pr) in \($repo) at head commit \($sha)."}]}]
+              text: "Review pull request #\($pr) in \($repo) at head commit \($sha).\n\nOpen milestones and their goals:\n\($milestones)"}]}]
           }' > session.json
           curl -sS --fail-with-body https://api.anthropic.com/v1/sessions \
             -H "x-api-key: $ANTHROPIC_API_KEY" \
