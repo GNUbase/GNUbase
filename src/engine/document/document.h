@@ -6,6 +6,7 @@
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
+#include "engine/time/timecode.h"
 
 #include <array>
 #include <cstddef>
@@ -424,6 +425,24 @@ namespace gnubase::engine
 		std::map<ObjectId, AutomationPoint> points;
 	};
 
+	// The record file types and bit depths of the project setup (reference manual pp. 129-130), as the engine API
+	// names them. Recording (#96) writes its files in them.
+	inline constexpr std::array<const char*, 4> g_recordFileTypes = {"wav", "broadcastWav", "aiff", "flac"};
+	inline constexpr std::array<const char*, 5> g_recordBitDepths = {"int16", "int24", "int32", "float32", "float64"};
+
+	// The project setup's settings that only clients and recording read (#78, docs/features/project-setup.md); the
+	// sample rate, pan law and maximum volume are the project's own.
+	struct ProjectSetup
+	{
+		std::string recordFileType = "wav";   // one of g_recordFileTypes
+		std::string recordBitDepth = "int24"; // one of g_recordBitDepths
+		time::FrameRate frameRate = time::g_fps25;
+		double startTime = 0.0;               // the time shown at the project start, in seconds
+		double length = 600.0;                // in seconds
+		int barOffset = 0;                    // added to the bar numbers shown
+		std::string timeFormat = "barsBeats"; // the primary time format: one of g_rulerTimeFormats
+	};
+
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct Project
 	{
@@ -434,6 +453,7 @@ namespace gnubase::engine
 		AutoFades autoFades; // for audio tracks without settings of their own
 		PanLaw panLaw = PanLaw::Minus3;
 		double maxVolume = 6.0; // the top of the faders, in dB: 6 or 12
+		ProjectSetup setup;
 		ObjectId nextId = 1;
 
 		std::vector<Bus> busses;      // in the order they are shown
@@ -490,6 +510,13 @@ namespace gnubase::engine
 	bool poolFolderOutside(const Project& project, ObjectId folder, ObjectId excluded);
 
 	// Equality compares every member; the undo history uses it to find what a command changed.
+	inline bool operator==(const ProjectSetup& a, const ProjectSetup& b)
+	{
+		return std::tie(
+				   a.recordFileType, a.recordBitDepth, a.frameRate, a.startTime, a.length, a.barOffset, a.timeFormat) ==
+			std::tie(b.recordFileType, b.recordBitDepth, b.frameRate, b.startTime, b.length, b.barOffset, b.timeFormat);
+	}
+
 	inline bool operator==(const Bus& a, const Bus& b)
 	{
 		return std::tie(a.id, a.name, a.direction, a.format, a.ports, a.parent, a.parentChannels, a.mainMix) ==

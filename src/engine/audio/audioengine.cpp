@@ -46,6 +46,7 @@ namespace gnubase::engine
 			return Json::parse(R"({"type": "object",
 			"properties": {"device": {"type": ["object", "null"]}, "running": {"type": "boolean"},
 				"position": {"type": "integer"}, "projectSampleRate": {"type": "number"},
+				"recordBitDepth": {"type": "string"},
 				"capturedFrames": {"type": "integer"}, "droppedFrames": {"type": "integer"},
 				"playbackDropouts": {"type": "integer"},
 				"processing": {"type": "object", "properties": {"multiProcessing": {"type": "boolean"},
@@ -57,8 +58,8 @@ namespace gnubase::engine
 					"device": {"type": "string"}, "name": {"type": "string"}, "reason": {"type": "string"},
 					"restart": {"type": "boolean"}},
 					"required": ["backend", "device", "name", "reason", "restart"]}},
-			"required": ["device", "running", "position", "projectSampleRate", "capturedFrames", "droppedFrames",
-				"playbackDropouts", "processing", "lost"]})");
+			"required": ["device", "running", "position", "projectSampleRate", "recordBitDepth", "capturedFrames",
+				"droppedFrames", "playbackDropouts", "processing", "lost"]})");
 		}
 
 		bool supports(const audio::DeviceInfo& info, double sampleRate)
@@ -74,9 +75,10 @@ namespace gnubase::engine
 				"left": {"type": "integer"}, "right": {"type": "integer"}, "cycle": {"type": "boolean"},
 				"startMode": {"type": "string", "enum": ["cursor", "cycleStart"]},
 				"returnToStart": {"type": "boolean"}, "punchIn": {"type": "boolean"},
-				"punchOut": {"type": "boolean"}, "metronome": {"type": "boolean"}},
+				"punchOut": {"type": "boolean"}, "metronome": {"type": "boolean"},
+				"audioRecordMode": {"type": "string", "enum": ["keepHistory", "cycleHistoryReplace", "replace"]}},
 			"required": ["playing", "recording", "position", "left", "right", "cycle", "startMode",
-				"returnToStart", "punchIn", "punchOut", "metronome"]})");
+				"returnToStart", "punchIn", "punchOut", "metronome", "audioRecordMode"]})");
 		}
 
 		Json noParameters()
@@ -170,6 +172,16 @@ namespace gnubase::engine
 		std::vector<std::unique_ptr<audio::Backend>> backends,
 		std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends)
 		: m_snapshots(snapshots), m_settings(settings), m_backends(std::move(backends)),
+		  m_recorder(
+			  [this](const std::string& name, const Json& data)
+			  {
+				  if (m_engine == nullptr)
+					  return;
+				  if (name == "recording.finished")
+					  m_engine->post("recording.add", data); // one undo step that adds the takes
+				  else
+					  m_engine->broadcast(name, data);
+			  }),
 		  m_midi(settings, std::move(midiBackends)), m_midiInput(graph::g_maxEventsPerBlock),
 		  m_generatorEvents(graph::g_maxEventsPerBlock), m_generatorOut(graph::g_maxEventsPerBlock)
 	{
@@ -288,6 +300,10 @@ namespace gnubase::engine
 
 	void AudioEngine::sync()
 	{
+		// A new record bit depth is only announced, for the status line's record format.
+		const std::string depth = m_snapshots.latest().recordBitDepth;
+		bool announce = !m_recordBitDepth.empty() && depth != m_recordBitDepth;
+		m_recordBitDepth = depth;
 		// A new project sample rate: the device changes to it if it can, otherwise it plays faster or slower.
 		const double rate = m_snapshots.latest().sampleRate;
 		if (rate != m_projectRate)
@@ -307,11 +323,47 @@ namespace gnubase::engine
 				m_parameters.erase("sampleRate"); // it returns at the new rate if it supports it
 			}
 			// Also when the device stays as it is: the status line shows the project's rate and a mismatch.
-			if (known && m_engine != nullptr)
-				m_engine->broadcast("audio.changed", status());
+			announce = announce || known;
 		}
+		if (announce && m_engine != nullptr)
+			m_engine->broadcast("audio.changed", status());
 		if (m_device && (m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring))
 			rebuild();
+		updateRecorder();
+	}
+
+	void AudioEngine::updateRecorder()
+	{
+		if (!m_device)
+			return;
+		RecordSetup setup;
+		if (m_describeRecording)
+			setup = m_describeRecording();
+		setup.mode = m_transport.settings().audioRecordMode;
+		setup.preRecordFrames = std::llround(
+			std::clamp(m_settings.get(settings::g_audioPreRecordSeconds), 0.0, 60.0) * m_device->format().sampleRate);
+		// Each channel of a track's file records the channel of its input bus with the same number; a bus with fewer
+		// channels gives the others its last one, so a mono input fills a stereo track.
+		const RenderSnapshot& snapshot = m_snapshots.latest();
+		const std::vector<std::vector<int>> ports = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
+		std::vector<RecordTrack> tracks;
+		for (RecordTrack& track : setup.tracks)
+		{
+			const auto channel = std::find_if(snapshot.channels.begin(), snapshot.channels.end(),
+				[&track](const RenderChannel& candidate) { return candidate.track == track.track; });
+			if (channel == snapshot.channels.end() || channel->input < 0)
+				continue;
+			const std::vector<int>& bus = ports.at(static_cast<size_t>(channel->input));
+			for (int c = 0; c < channelCount(channel->format); ++c)
+				track.ports.push_back(bus.empty() ? -1 : bus[std::min(static_cast<size_t>(c), bus.size() - 1)]);
+			tracks.push_back(std::move(track));
+		}
+		setup.tracks = std::move(tracks);
+		if (!(setup == m_recordSetup))
+		{
+			m_recordSetup = setup;
+			m_recorder.setup(std::move(setup));
+		}
 	}
 
 	AutoMonitoring AudioEngine::autoMonitoring() const
@@ -694,6 +746,7 @@ namespace gnubase::engine
 		graph::TransportBlock transport = m_transport.advance(block.frames);
 		m_played.add(block.position, block.frames, transport);
 		captureInput(block);
+		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed));
 		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
 		m_tap.deliver(block.position, block.frames, program.sequencers);
 		program.graph.process(block.frames, transport, m_workers.get());
@@ -765,6 +818,7 @@ namespace gnubase::engine
 		m_programs.reset();
 		m_directMonitoring = false;
 		m_played = PlayedPositions();
+		m_recorder.prepare(0, 0); // ends a recording
 		m_capturedInput.clear();
 		m_tap.clear(); // the next device starts at position 0
 		m_lost.reset();
@@ -842,6 +896,8 @@ namespace gnubase::engine
 			});
 		m_recordOffset = recordOffset();
 		m_played = PlayedPositions(static_cast<size_t>(g_maxRecordOffset) + m_device->format().blockSize);
+		m_recorder.prepare(m_device->format().inputChannels, m_device->format().blockSize);
+		m_recordSetup = {}; // its pre-record follows the device's sample rate
 		m_capturedInput.assign(static_cast<size_t>(m_device->format().inputChannels),
 			std::vector<float>(static_cast<size_t>(std::llround(captureSeconds * m_device->format().sampleRate))));
 		m_inputPorts = portNames(info.inputs, m_device->format().inputChannels, "Input ");
@@ -1151,7 +1207,7 @@ namespace gnubase::engine
 		return m_backend + '/' + m_device->info().id + (input ? "/in/" : "/out/") + name;
 	}
 
-	Json AudioEngine::setPort(CommandContext& context)
+	Json AudioEngine::setPort(Engine& engine, CommandContext& context)
 	{
 		require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
 		Json changes = context.parameters();
@@ -1162,11 +1218,12 @@ namespace gnubase::engine
 		require(found != names.end(), std::string(input ? "no input port " : "no output port ") + name);
 		changes.erase("input");
 		changes.erase("name");
-		context.call("settings.set",
-			{{"key", "audio.portSettings"},
-				{"value",
-					settings::changeEntry(m_settings.value("audio.portSettings"), portKey(input, name), changes,
-						{{"showAs", ""}, {"visible", true}})}});
+		// The engine applies the changed setting and sends audio.portsChanged (portSettingsChanged).
+		engine.modifySetting(context, "audio.portSettings",
+			[this, input, &name, &changes](const Json& value)
+			{
+				return settings::changeEntry(value, portKey(input, name), changes, {{"showAs", ""}, {"visible", true}});
+			});
 		return ports().at(input ? "inputs" : "outputs").at(static_cast<size_t>(found - names.begin()));
 	}
 
@@ -1353,6 +1410,7 @@ namespace gnubase::engine
 	{
 		const Json processing = processingStatus();
 		const double projectRate = m_snapshots.latest().sampleRate;
+		const std::string recordBitDepth = m_snapshots.latest().recordBitDepth;
 		Json lost = nullptr;
 		if (m_lost)
 			lost = {{"backend", m_lost->backend}, {"device", m_lost->device}, {"name", m_lost->name},
@@ -1360,8 +1418,8 @@ namespace gnubase::engine
 		if (!m_device)
 		{
 			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"projectSampleRate", projectRate},
-				{"capturedFrames", 0}, {"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()},
-				{"processing", processing}, {"lost", std::move(lost)}};
+				{"recordBitDepth", recordBitDepth}, {"capturedFrames", 0}, {"droppedFrames", 0},
+				{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", std::move(lost)}};
 		}
 		const audio::DeviceFormat& format = m_device->format();
 		const audio::DeviceLatency latency = m_device->latency();
@@ -1372,7 +1430,8 @@ namespace gnubase::engine
 			{"recordOffset", m_recordOffset.load(std::memory_order_relaxed)}, {"directMonitoring", m_directMonitoring},
 			{"projectSampleRate", projectRate}, {"sampleRateMismatch", format.sampleRate != projectRate}});
 		return {{"device", std::move(device)}, {"running", m_device->running()}, {"position", m_device->position()},
-			{"projectSampleRate", projectRate}, {"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
+			{"projectSampleRate", projectRate}, {"recordBitDepth", recordBitDepth},
+			{"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
 			{"droppedFrames", m_dummy != nullptr ? m_dummy->droppedFrames() : 0},
 			{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", std::move(lost)}};
 	}
@@ -1559,7 +1618,8 @@ namespace gnubase::engine
 				"(name in audio.ports). showAs: the name routing menus show; empty shows the system name. visible: "
 				"whether routing menus offer it; busses on a hidden port keep it. The settings are kept per device "
 				"in the user setting audio.portSettings, so they come back with the device, also after a restart. "
-				"Returns the port as audio.ports lists it, and sends audio.ports as the event audio.portsChanged.",
+				"Returns the port as audio.ports lists it. If that changes the setting, sends audio.ports as the event "
+				"audio.portsChanged, as settings.set and settings.reset on audio.portSettings do.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["input", "name"],
 					"properties": {"input": {"type": "boolean"}, "name": {"type": "string"},
 					"showAs": {"type": "string"}, "visible": {"type": "boolean"}}})"),
@@ -1567,12 +1627,7 @@ namespace gnubase::engine
 					"showAs": {"type": "string"}, "visible": {"type": "boolean"}, "busses": {"type": "array"}},
 					"required": ["name", "showAs", "visible", "busses"]})"),
 				false},
-			[this](CommandContext& context)
-			{
-				Json port = setPort(context);
-				context.emit("audio.portsChanged", ports());
-				return port;
-			});
+			[this, &engine](CommandContext& context) { return setPort(engine, context); });
 		engine.registerCommand(
 			{"audio.setProcessing", 1,
 				"Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; "
@@ -1649,7 +1704,9 @@ namespace gnubase::engine
 				"was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's "
 				"sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as "
 				"it doesn't support the project's or was asked for another, and plays faster or slower; a new project "
-				"sample rate sends audio.changed. lost: the device that went away (its backend, device id, its name "
+				"sample rate sends audio.changed. recordBitDepth is the project's (see project.set), for the record "
+				"format; a new one also sends audio.changed. lost: the device that went away (its backend, device id, "
+				"its name "
 				"while it was open, the reason it can't be opened and whether it ran and restarts), while the engine "
 				"waits for it to return (see audio.reset); otherwise null. While a device is lost, device is the "
 				"fallback that plays meanwhile (the user setting audio.fallbackDevice), or null.",
@@ -1932,7 +1989,16 @@ namespace gnubase::engine
 			{"cycle", settings.cycle},
 			{"startMode", settings.startMode == StartMode::CycleStart ? "cycleStart" : "cursor"},
 			{"returnToStart", settings.returnToStart}, {"punchIn", settings.punchIn}, {"punchOut", settings.punchOut},
-			{"metronome", settings.metronome}};
+			{"metronome", settings.metronome},
+			{"audioRecordMode", g_audioRecordModes.at(static_cast<size_t>(settings.audioRecordMode))}};
+	}
+
+	void AudioEngine::portSettingsChanged(CommandContext& context, bool audioPorts, bool midiPorts)
+	{
+		if (audioPorts)
+			context.emit("audio.portsChanged", ports());
+		if (midiPorts)
+			m_midi.applySettings(context);
 	}
 
 	void AudioEngine::setChase(const MidiChase& chase)
@@ -2034,6 +2100,15 @@ namespace gnubase::engine
 			require(name == "cursor" || name == "cycleStart", "startMode must be cursor or cycleStart");
 			settings.startMode = name == "cycleStart" ? StartMode::CycleStart : StartMode::Cursor;
 		}
+		if (const auto mode = parameters.find("audioRecordMode"); mode != parameters.end())
+		{
+			const auto name = mode->get<std::string>();
+			const auto index = static_cast<size_t>(
+				std::find(g_audioRecordModes.begin(), g_audioRecordModes.end(), name) - g_audioRecordModes.begin());
+			require(index < g_audioRecordModes.size(),
+				"audioRecordMode must be keepHistory, cycleHistoryReplace or replace");
+			settings.audioRecordMode = static_cast<AudioRecordMode>(index);
+		}
 		sent(m_transport.set(settings));
 	}
 
@@ -2128,11 +2203,13 @@ namespace gnubase::engine
 			"left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). "
 			"returnToStart: on stop, return to where playback started. punchIn, punchOut and metronome are the "
 			"transport bar's switches; punching in and out at the locators and the click come with recording and the "
-			"metronome.",
+			"metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see "
+			"recording.add): keepHistory (the default), cycleHistoryReplace or replace.",
 			R"({"type": "object", "additionalProperties": false, "properties": {
 				"left": {"type": ["integer", "string"]}, "right": {"type": ["integer", "string"]},
 				"cycle": {"type": "boolean"}, "startMode": {"type": "string"}, "returnToStart": {"type": "boolean"},
-				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "metronome": {"type": "boolean"}}})",
+				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "metronome": {"type": "boolean"},
+				"audioRecordMode": {"type": "string"}}})",
 			[this](const Json& parameters) { setTransport(parameters); });
 		command("transport.exchangeLocators", "Swaps the left and right locators.", nullptr,
 			[this](const Json&)

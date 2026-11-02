@@ -7,10 +7,11 @@
      and drives the controls and menus with these ids (docs/features/event-display.md): the ruler's arrow button
      .ruler-format, #ruler-format-menu, #zoom-presets-menu, #auto-scroll and #auto-scroll-menu, and the snap controls
      #snap, #snap-type, #snap-type-menu, #grid-type, #grid-type-menu (which the display fills with the ruler format's
-     grid types) and #snap-zero-crossing (docs/features/snap.md). Its dialogs are zoom-preset.rml and
-     zoom-presets.rml, next to this file. ui::TrackList fills #track-list under its global track controls
-     (docs/features/track-list.md): #add-track opens the add track dialog (add-track.rml), #track-controls-settings
-     the track controls settings dialog (track-controls.rml); #track-list-menu is its context menu.
+     grid types) and #snap-zero-crossing (docs/features/snap.md). Its dialogs are zoom-preset.rml,
+     zoom-presets.rml and repeat-events.rml, next to this file. ui::TrackList fills #track-list under its global track
+     controls (docs/features/track-list.md): #add-track opens the add track dialog (add-track.rml),
+     #track-controls-settings the track controls settings dialog (track-controls.rml); #track-list-menu is its context
+     menu.
      app::AppUi fills the transport bar with the transport controls (transport.rml).
      The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md).
      ui::StatusLine fills #record-format and #lost-device (docs/features/status-line.md). ui::InfoLine fills
@@ -135,7 +136,7 @@
 		<div id="right-zone" zone="right" focuszone="right" size="240" default="hidden"/>
 	</div>
 	<div id="status-line" class="strip status-line" strip="statusLine" default="hidden">
-		<span id="record-format" class="status-field" title="Record Format"/>
+		<span id="record-format" class="status-field" title="Record Format" onclick="gnubase.ui.command{command = 'window.projectSetup'}"/>
 		<span id="lost-device" class="status-field hidden"/>
 	</div>
 	<div id="transport-bar" class="strip transport" strip="transportBar" default="hidden"/>
@@ -175,8 +176,24 @@
 		<menuitem command="history.undo">Undo</menuitem>
 		<menuitem command="history.redo">Redo</menuitem>
 		<menuseparator/>
+		<menuitem command="edit.cut">Cut</menuitem>
+		<menuitem command="edit.copy">Copy</menuitem>
+		<menuitem command="edit.paste">Paste</menuitem>
 		<menuitem command="edit.delete">Delete</menuitem>
 		<menuseparator/>
+		<menuitem id="range-submenu">Range
+			<menu>
+				<menuitem command="edit.globalCopy">Global Copy</menuitem>
+				<menuitem command="edit.cutTime">Cut Time</menuitem>
+				<menuitem command="edit.deleteTime">Delete Time</menuitem>
+				<menuitem command="edit.pasteTime">Paste Time</menuitem>
+				<menuseparator/>
+				<menuitem command="edit.splitRange">Split</menuitem>
+				<menuitem command="edit.cropRange">Crop</menuitem>
+				<menuseparator/>
+				<menuitem command="edit.insertSilence">Insert Silence</menuitem>
+			</menu>
+		</menuitem>
 		<menuitem id="functions-submenu">Functions
 			<menu>
 				<menuitem command="edit.splitAtCursor">Split at Cursor</menuitem>
@@ -231,6 +248,8 @@
 				<menuitem command="track.moveSelectedToNewFolderWithGroupChannel">Move Selected Tracks to New Folder with Group Channel</menuitem>
 			</menu>
 		</menuitem>
+		<menuseparator/>
+		<menuitem command="window.projectSetup">Project Setup...</menuitem>
 	</menu>
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
@@ -258,6 +277,15 @@
 		<menuitem command="transport.play">Start</menuitem>
 		<menuitem command="transport.stop">Stop</menuitem>
 		<menuitem command="transport.toggle">Start/Stop</menuitem>
+		<menuitem command="transport.record">Record</menuitem>
+		<menuseparator/>
+		<menuitem id="audio-record-mode-submenu">Audio Record Mode
+			<menu>
+				<menuitem command="transport.set" parameters='{"audioRecordMode": "keepHistory"}'>Keep History</menuitem>
+				<menuitem command="transport.set" parameters='{"audioRecordMode": "cycleHistoryReplace"}'>Cycle History + Replace</menuitem>
+				<menuitem id="audio-record-mode-replace" command="transport.set" parameters='{"audioRecordMode": "replace"}'>Replace</menuitem>
+			</menu>
+		</menuitem>
 		<menuseparator/>
 		<menuitem command="transport.locate" parameters='{"target": "projectStart"}'>Go to Project Start</menuitem>
 		<menuseparator/>
