@@ -671,15 +671,23 @@ TEST_CASE("the JACK MIDI backend stamps input with the server's cycle times", "[
 	const auto input = backend->openInput("gnubase-test-midi:out", inbox.receiver());
 	// Within 20 µs: the two clocks are read at slightly different times, and a thread may be preempted between the two
 	// reads now and then. The callback runs tens of µs late.
+	// A cycle's filtered start is jackd's estimate; without real-time priority on a busy machine, a callback now and
+	// then runs before it, and JackLibrary::cycle() doesn't take a start in the future. Such a cycle has no cycle times
+	// and nothing to compare with: its injection is retried, at most 10 of them.
+	int stamped = 0;
 	int close = 0;
-	for (size_t i = 1; i <= 20; ++i)
+	size_t injected = 0;
+	while (stamped < 20 && injected < 30)
 	{
 		const HostTime expected = loopback->inject();
-		REQUIRE(expected != 0);
-		REQUIRE(inbox.waitFor(i));
+		REQUIRE(inbox.waitFor(++injected));
+		if (expected == 0)
+			continue;
+		++stamped;
 		if (std::llabs(inbox.messages().back().second - expected) < 20000)
 			++close;
 	}
+	REQUIRE(stamped == 20);
 	CHECK(close >= 18);
 }
 
