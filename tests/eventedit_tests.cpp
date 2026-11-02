@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Editing parts and events (#85): the event.* commands on audio events and MIDI parts, shared copies and locks.
+// Editing parts and events (#85): the event.* commands on audio events and MIDI parts, shared copies and locks; and
+// range editing (#88), the range.* commands on audio, MIDI and automation.
 // tests/eventdisplay_tests.cpp drives the same commands through the event display's gestures.
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 using Catch::Matchers::ContainsSubstring;
+using Catch::Matchers::WithinAbs;
 using gnubase::engine::Client;
 using gnubase::engine::Engine;
 using gnubase::engine::Json;
@@ -430,4 +436,243 @@ TEST_CASE("event.get tells where events and parts are, in samples and ticks", "[
 	CHECK(info[1].at("endTicks") == 2 * g_bar);
 	CHECK(info[1].at("mute") == true);
 	CHECK(info[1].at("lock") == false);
+}
+
+namespace
+{
+	using Spans = std::vector<std::pair<int64_t, int64_t>>;
+	using Points = std::vector<std::pair<int64_t, double>>;
+	constexpr int64_t g_start = (5 * g_second) / 2; // the range's start and end
+	constexpr int64_t g_end = (7 * g_second) / 2;
+
+	// Range editing (#88): an audio event from 1 to 3 seconds on a linear audio track with pan automation (-1 at 0,
+	// 0.5 at 3 seconds and 1 at 4 seconds), and a part from 2 to 4 seconds with a note on every quarter on a MIDI track
+	// with modulation automation (0 at the start, 1 at bar 3). The range is 2.5 to 3.5 seconds on both tracks.
+	struct RangeFixture : Fixture
+	{
+		RangeFixture()
+			: audioTrack(track("audio", "linear")), midiTrack(track("midi")), event(audioEvent(audioTrack)),
+			  midiPart(part(midiTrack)),
+			  pan(lane(audioTrack, {{"type", "pan"}}, {{0, -1.0}, {3 * g_second, 0.5}, {4 * g_second, 1.0}})),
+			  modulation(lane(midiTrack, {{"type", "controller"}, {"number", 1}}, {{0, 0.0}, {2 * g_bar, 1.0}}))
+		{
+		}
+
+		int64_t lane(int64_t onTrack, const Json& target, const Points& points)
+		{
+			const auto id =
+				call("automationLane.add", {{"track", onTrack}, {"target", target}}).at("lane").at("id").get<int64_t>();
+			Json list = Json::array();
+			for (const auto& [position, value] : points)
+				list.push_back({{"position", position}, {"value", value}});
+			call("automationPoint.add", {{"lane", id}, {"points", list}});
+			return id;
+		}
+
+		// A lane's points as position and value, in order.
+		void checkPoints(int64_t laneId, const Points& expected)
+		{
+			Points actual;
+			const Json lanes = call("automationLane.list");
+			for (const Json& lane : lanes.at("lanes"))
+				if (lane.at("id") == laneId)
+					for (const Json& point : lane.at("points"))
+						actual.emplace_back(point.at("position").get<int64_t>(), point.at("value").get<double>());
+			REQUIRE(actual.size() == expected.size());
+			for (size_t i = 0; i < expected.size(); ++i)
+			{
+				INFO("point " << i);
+				CHECK(actual[i].first == expected[i].first);
+				CHECK_THAT(actual[i].second, WithinAbs(expected[i].second, 1e-9));
+			}
+		}
+
+		// The events and parts on a track as start and end in project samples, by start.
+		Spans spans(int64_t onTrack)
+		{
+			Json ids = Json::array();
+			const Json project = call("project.get");
+			for (const char* kind : {"audioEvents", "midiParts"})
+				for (const Json& item : project.at(kind))
+					if (item.at("track") == onTrack)
+						ids.push_back(item.at("id"));
+			Spans result;
+			if (ids.empty())
+				return result;
+			const Json info = call("event.get", {{"events", ids}});
+			for (const Json& each : info.at("events"))
+				result.emplace_back(each.at("start").get<int64_t>(), each.at("end").get<int64_t>());
+			std::sort(result.begin(), result.end());
+			return result;
+		}
+
+		Json range(const Json& more = Json::object()) const
+		{
+			Json parameters = {{"start", g_start}, {"end", g_end}, {"tracks", {audioTrack, midiTrack}}};
+			parameters.update(more);
+			return parameters;
+		}
+
+		size_t steps() { return call("history.get").at("steps").size(); }
+
+		int64_t audioTrack;
+		int64_t midiTrack;
+		int64_t event;
+		int64_t midiPart;
+		int64_t pan;
+		int64_t modulation;
+	};
+}
+
+TEST_CASE("range.split cuts the events and parts on the range's tracks at its edges", "[unit]")
+{
+	RangeFixture f;
+	const int64_t other = f.audioEvent(f.track("audio", "linear")); // on a track outside the range
+	const Json added = f.call("range.split", f.range()).at("events");
+	CHECK(added.size() == 3); // the event at the start, the part at both edges
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, g_start}, {g_start, 3 * g_second}});
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, g_start}, {g_start, g_end}, {g_end, 4 * g_second}});
+	CHECK(f.audio(other).at("length") == 2 * g_second);
+
+	// A range of no length splits at its start; locked events stay whole.
+	f.call("history.undo");
+	f.call("event.set", {{"events", {f.event}}, {"lock", true}});
+	CHECK(f.call("range.split", f.range({{"end", g_start}})).at("events").size() == 1);
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}});
+}
+
+TEST_CASE("range.delete removes what is in the range, and with time closes the gap", "[unit]")
+{
+	RangeFixture f;
+	f.call("range.delete", f.range());
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, g_start}});
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, g_start}, {g_end, 4 * g_second}});
+	// The automation outside the range keeps its curve: the value at the start holds until the end, where the curve
+	// goes on from its value there. The modulation has no point in the range: nothing to delete there.
+	f.checkPoints(f.pan, {{0, -1.0}, {g_start, 0.25}, {g_end, 0.75}, {4 * g_second, 1.0}});
+	f.checkPoints(f.modulation, {{0, 0.0}, {2 * g_bar, 1.0}});
+	f.call("history.undo");
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, 4 * g_second}});
+
+	// Delete Time: what comes after moves back by the range's length, in ticks on the musical track.
+	f.call("range.delete", f.range({{"time", true}}));
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, g_start}});
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, g_start}, {g_start, 3 * g_second}});
+	f.checkPoints(f.pan, {{0, -1.0}, {g_start, 0.25}, {g_start, 0.75}, {3 * g_second, 1.0}});
+	f.checkPoints(f.modulation,
+		{{0, 0.0}, {g_bar + g_quarter, 0.625}, {g_bar + g_quarter, 0.875}, {(2 * g_bar) - (2 * g_quarter), 1.0}});
+	// The part after the range kept its last note.
+	const Json parts = f.call("project.get").at("midiParts");
+	REQUIRE(parts.size() == 2);
+	CHECK(parts[1].at("position") == g_bar + g_quarter);
+	REQUIRE(parts[1].at("notes").size() == 1);
+	CHECK(parts[1].at("notes")[0].at("pitch") == 63);
+
+	CHECK_THAT(f.fails("range.delete", f.range({{"end", g_start}})), ContainsSubstring("empty"));
+	CHECK_THAT(f.fails("range.delete", f.range({{"tracks", {12345}}})), ContainsSubstring("no track"));
+}
+
+TEST_CASE("range.insertSilence makes room at the range's start as long as the range", "[unit]")
+{
+	RangeFixture f;
+	f.call("range.insertSilence", f.range());
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, g_start}, {g_end, 4 * g_second}});
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, g_start}, {g_end, 5 * g_second}});
+	// The value at the start holds over the silence, and the curve goes on after it.
+	f.checkPoints(f.pan, {{0, -1.0}, {g_start, 0.25}, {g_end, 0.25}, {4 * g_second, 0.5}, {5 * g_second, 1.0}});
+	f.checkPoints(f.modulation,
+		{{0, 0.0}, {g_bar + g_quarter, 0.625}, {g_bar + (3 * g_quarter), 0.625}, {(2 * g_bar) + (2 * g_quarter), 1.0}});
+}
+
+TEST_CASE("range.crop cuts the events that cross the range's edges to it", "[unit]")
+{
+	RangeFixture f;
+	const int64_t inside = f.call("midiPart.add", {{"track", f.midiTrack}, {"position", 5 * g_bar}, {"length", g_bar}})
+							   .at("part")
+							   .at("id")
+							   .get<int64_t>();
+	const Json cropped = f.call("range.crop", f.range({{"end", 12 * g_second}})).at("events");
+	REQUIRE(cropped.size() == 2);
+	CHECK(f.spans(f.audioTrack) == Spans{{g_start, 3 * g_second}});
+	CHECK(f.spans(f.midiTrack) == Spans{{g_start, 4 * g_second}, {10 * g_second, 12 * g_second}});
+	CHECK(f.midi(inside).at("length") == g_bar); // inside the range: unaffected
+	// The cropped audio plays on from where it was cut.
+	CHECK(f.audio(cropped[0]).at("offset") == (2 * g_second) + ((3 * g_second) / 2));
+
+	// With splitNotes, notes across an edge are cut instead of left out.
+	f.call("history.undo");
+	f.call("range.crop", f.range({{"start", (9 * g_second) / 4}, {"splitNotes", true}}));
+	const Json parts = f.call("project.get").at("midiParts");
+	const auto first = std::find_if(
+		parts.begin(), parts.end(), [](const Json& part) { return part.at("position") == g_bar + (g_quarter / 2); });
+	REQUIRE(first != parts.end());
+	REQUIRE(first->at("notes").size() == 3);
+	CHECK(first->at("notes")[0].at("length") == g_quarter / 2);
+}
+
+TEST_CASE("range.copy and range.cut keep the range for range.paste, which can paste time", "[unit]")
+{
+	RangeFixture f;
+	CHECK_THAT(f.fails("range.paste", Json::object()), ContainsSubstring("nothing"));
+
+	// Copying changes nothing and records no undo step.
+	const size_t steps = f.steps();
+	const Json copied = f.call("range.copy", f.range());
+	CHECK(copied.at("events") == 2);
+	CHECK(copied.at("lanes") == 2);
+	CHECK(f.steps() == steps);
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}});
+
+	// Pasted at 4 seconds onto the tracks it came from: the piece of the event plays the same audio, the piece of the
+	// part has its notes, the automation in the range replaces the curve there.
+	const Json pasted = f.call("range.paste", {{"position", 4 * g_second}}).at("events");
+	REQUIRE(pasted.size() == 2);
+	CHECK(f.audio(pasted[0]).at("position") == 4 * g_second);
+	CHECK(f.audio(pasted[0]).at("offset") == (2 * g_second) + ((3 * g_second) / 2));
+	CHECK(f.audio(pasted[0]).at("length") == g_second / 2);
+	const Json part = f.midi(pasted[1]);
+	CHECK(part.at("position") == 2 * g_bar);
+	CHECK(part.at("length") == 2 * g_quarter);
+	REQUIRE(part.at("notes").size() == 2);
+	CHECK(part.at("notes")[0].at("pitch") == 61);
+	f.checkPoints(f.pan,
+		{{0, -1.0}, {3 * g_second, 0.5}, {4 * g_second, 1.0}, {4 * g_second, 0.25}, {(9 * g_second) / 2, 0.5},
+			{5 * g_second, 0.75}, {5 * g_second, 1.0}});
+
+	// Cut Time takes the range out and closes the gap; Paste Time at the range's start puts it back.
+	f.call("history.undo");
+	f.call("range.cut", f.range({{"time", true}}));
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, g_start}, {g_start, 3 * g_second}});
+	f.call("range.paste", {{"position", g_start}, {"time", true}});
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, g_start}, {g_start, 3 * g_second}});
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, g_start}, {g_start, g_end}, {g_end, 4 * g_second}});
+
+	// Onto other tracks: the first copied track goes to track, the next to the track below it. The types must fit.
+	const int64_t audio2 = f.track("audio", "linear");
+	const int64_t midi2 = f.track("instrument");
+	f.call("range.paste", {{"position", 0}, {"track", audio2}});
+	CHECK(f.spans(audio2) == Spans{{0, g_second / 2}});
+	CHECK(f.spans(midi2) == Spans{{0, g_second}});
+	CHECK_THAT(f.fails("range.paste", {{"track", f.midiTrack}}), ContainsSubstring("audio track"));
+	CHECK_THAT(f.fails("range.paste", {{"track", midi2}}), ContainsSubstring("enough tracks"));
+}
+
+TEST_CASE("range.copy without a range copies everything between the locators: global copy", "[unit]")
+{
+	RangeFixture f;
+	f.call("transport.set", {{"left", 2 * g_second}, {"right", 3 * g_second}});
+	CHECK(f.call("range.copy").at("events") == 2);
+	f.call("range.paste", {{"position", 6 * g_second}});
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}, {6 * g_second, 7 * g_second}});
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, 4 * g_second}, {6 * g_second, 7 * g_second}});
+
+	// A copied audio event whose clip is gone can't be pasted.
+	f.call("range.cut");
+	Json events = Json::array();
+	const Json project = f.call("project.get");
+	for (const Json& event : project.at("audioEvents"))
+		events.push_back(event.at("id"));
+	f.call("event.remove", {{"events", events}});
+	f.call("pool.removeUnused");
+	CHECK_THAT(f.fails("range.paste", {{"position", 0}}), ContainsSubstring("clip"));
 }

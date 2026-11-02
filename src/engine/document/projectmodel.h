@@ -13,7 +13,9 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace gnubase::engine
 {
@@ -36,6 +38,20 @@ namespace gnubase::engine
 	// whose notes or controllers changed since before gives them to its other copies, and a copy without others is no
 	// longer shared.
 	void syncSharedParts(const std::map<ObjectId, MidiPart>& before, Project& project, CommandContext& context);
+
+	// What range.copy and range.cut keep for range.paste (eventedits.cpp): the events, parts and automation of a
+	// selection range, cut at its edges, where they were. Not part of the project or of undo.
+	struct RangeClipboard
+	{
+		time::Samples start = 0; // the range, in project samples and in ticks
+		time::Samples end = 0;
+		time::Ticks startTicks = 0;
+		time::Ticks endTicks = 0;
+		std::vector<ObjectId> tracks; // the tracks it was copied from, from top to bottom
+		std::vector<AudioEvent> audioEvents;
+		std::vector<MidiPart> midiParts;
+		std::vector<AutomationLane> automation; // the points in the range, with the curve's values at its edges
+	};
 
 	// The project document, its commands, its undo history and its render snapshots. The commands run on the engine's
 	// command thread, the only thread that touches the document; every command that changes it records an undo step
@@ -95,6 +111,7 @@ namespace gnubase::engine
 		void registerParameterCommands(Engine& engine); // parameters.cpp: parameter.list, parameter.get, parameter.set
 		void registerSlotCommands(Engine& engine);      // slotcommands.cpp: plugin.*
 		void registerEventEditCommands(Engine& engine); // eventedits.cpp: event.*, parts and events (#85)
+		void registerRangeEditCommands(Engine& engine); // eventedits.cpp: range.*, range editing (#88)
 		// projectfiles.cpp (#77): save new version, revert, auto save, recent projects and templates.
 		void registerProjectFileCommands(Engine& engine);
 		// After the project was replaced by a new or loaded one (from file, or none): clears the undo history,
@@ -132,6 +149,7 @@ namespace gnubase::engine
 		std::filesystem::path m_settingsDirectory; // the user settings' folder, empty without one
 		std::shared_ptr<settings::Store> m_recent; // the recent projects
 		bool m_automationFollowsEvents = false;    // a setting, not part of the project
+		std::optional<RangeClipboard> m_clipboard; // range.copy and range.cut
 		std::function<std::string(ObjectId)> m_slotStatus;
 		rt::SnapshotPublisher<RenderSnapshot> m_snapshots;
 	};
