@@ -74,9 +74,10 @@ namespace gnubase::engine
 				"left": {"type": "integer"}, "right": {"type": "integer"}, "cycle": {"type": "boolean"},
 				"startMode": {"type": "string", "enum": ["cursor", "cycleStart"]},
 				"returnToStart": {"type": "boolean"}, "punchIn": {"type": "boolean"},
-				"punchOut": {"type": "boolean"}, "metronome": {"type": "boolean"}},
+				"punchOut": {"type": "boolean"}, "metronome": {"type": "boolean"},
+				"audioRecordMode": {"type": "string", "enum": ["keepHistory", "cycleHistoryReplace", "replace"]}},
 			"required": ["playing", "recording", "position", "left", "right", "cycle", "startMode",
-				"returnToStart", "punchIn", "punchOut", "metronome"]})");
+				"returnToStart", "punchIn", "punchOut", "metronome", "audioRecordMode"]})");
 		}
 
 		Json noParameters()
@@ -170,6 +171,16 @@ namespace gnubase::engine
 		std::vector<std::unique_ptr<audio::Backend>> backends,
 		std::vector<std::unique_ptr<gnubase::midi::Backend>> midiBackends)
 		: m_snapshots(snapshots), m_settings(settings), m_backends(std::move(backends)),
+		  m_recorder(
+			  [this](const std::string& name, const Json& data)
+			  {
+				  if (m_engine == nullptr)
+					  return;
+				  if (name == "recording.finished")
+					  m_engine->post("recording.add", data); // one undo step that adds the takes
+				  else
+					  m_engine->broadcast(name, data);
+			  }),
 		  m_midi(settings, std::move(midiBackends)), m_midiInput(graph::g_maxEventsPerBlock),
 		  m_generatorEvents(graph::g_maxEventsPerBlock), m_generatorOut(graph::g_maxEventsPerBlock)
 	{
@@ -312,6 +323,41 @@ namespace gnubase::engine
 		}
 		if (m_device && (m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring))
 			rebuild();
+		updateRecorder();
+	}
+
+	void AudioEngine::updateRecorder()
+	{
+		if (!m_device)
+			return;
+		RecordSetup setup;
+		if (m_describeRecording)
+			setup = m_describeRecording();
+		setup.mode = m_transport.settings().audioRecordMode;
+		setup.preRecordFrames = std::llround(
+			std::clamp(m_settings.get(settings::g_audioPreRecordSeconds), 0.0, 60.0) * m_device->format().sampleRate);
+		// Each channel of a track's file records the channel of its input bus with the same number; a bus with fewer
+		// channels gives the others its last one, so a mono input fills a stereo track.
+		const RenderSnapshot& snapshot = m_snapshots.latest();
+		const std::vector<std::vector<int>> ports = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
+		std::vector<RecordTrack> tracks;
+		for (RecordTrack& track : setup.tracks)
+		{
+			const auto channel = std::find_if(snapshot.channels.begin(), snapshot.channels.end(),
+				[&track](const RenderChannel& candidate) { return candidate.track == track.track; });
+			if (channel == snapshot.channels.end() || channel->input < 0)
+				continue;
+			const std::vector<int>& bus = ports.at(static_cast<size_t>(channel->input));
+			for (int c = 0; c < channelCount(channel->format); ++c)
+				track.ports.push_back(bus.empty() ? -1 : bus[std::min(static_cast<size_t>(c), bus.size() - 1)]);
+			tracks.push_back(std::move(track));
+		}
+		setup.tracks = std::move(tracks);
+		if (!(setup == m_recordSetup))
+		{
+			m_recordSetup = setup;
+			m_recorder.setup(std::move(setup));
+		}
 	}
 
 	AutoMonitoring AudioEngine::autoMonitoring() const
@@ -694,6 +740,7 @@ namespace gnubase::engine
 		graph::TransportBlock transport = m_transport.advance(block.frames);
 		m_played.add(block.position, block.frames, transport);
 		captureInput(block);
+		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed));
 		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
 		m_tap.deliver(block.position, block.frames, program.sequencers);
 		program.graph.process(block.frames, transport, m_workers.get());
@@ -765,6 +812,7 @@ namespace gnubase::engine
 		m_programs.reset();
 		m_directMonitoring = false;
 		m_played = PlayedPositions();
+		m_recorder.prepare(0, 0); // ends a recording
 		m_capturedInput.clear();
 		m_tap.clear(); // the next device starts at position 0
 		m_lost.reset();
@@ -842,6 +890,8 @@ namespace gnubase::engine
 			});
 		m_recordOffset = recordOffset();
 		m_played = PlayedPositions(static_cast<size_t>(g_maxRecordOffset) + m_device->format().blockSize);
+		m_recorder.prepare(m_device->format().inputChannels, m_device->format().blockSize);
+		m_recordSetup = {}; // its pre-record follows the device's sample rate
 		m_capturedInput.assign(static_cast<size_t>(m_device->format().inputChannels),
 			std::vector<float>(static_cast<size_t>(std::llround(captureSeconds * m_device->format().sampleRate))));
 		m_inputPorts = portNames(info.inputs, m_device->format().inputChannels, "Input ");
@@ -1162,7 +1212,7 @@ namespace gnubase::engine
 		require(found != names.end(), std::string(input ? "no input port " : "no output port ") + name);
 		changes.erase("input");
 		changes.erase("name");
-		// The engine applies the changed setting (applyPortSettings).
+		// The engine applies the changed setting and sends audio.portsChanged (portSettingsChanged).
 		engine.modifySetting(context, "audio.portSettings",
 			[this, input, &name, &changes](const Json& value)
 			{
@@ -1560,7 +1610,8 @@ namespace gnubase::engine
 				"(name in audio.ports). showAs: the name routing menus show; empty shows the system name. visible: "
 				"whether routing menus offer it; busses on a hidden port keep it. The settings are kept per device "
 				"in the user setting audio.portSettings, so they come back with the device, also after a restart. "
-				"Returns the port as audio.ports lists it, and sends audio.ports as the event audio.portsChanged.",
+				"Returns the port as audio.ports lists it. If that changes the setting, sends audio.ports as the event "
+				"audio.portsChanged, as settings.set and settings.reset on audio.portSettings do.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["input", "name"],
 					"properties": {"input": {"type": "boolean"}, "name": {"type": "string"},
 					"showAs": {"type": "string"}, "visible": {"type": "boolean"}}})"),
@@ -1568,12 +1619,7 @@ namespace gnubase::engine
 					"showAs": {"type": "string"}, "visible": {"type": "boolean"}, "busses": {"type": "array"}},
 					"required": ["name", "showAs", "visible", "busses"]})"),
 				false},
-			[this, &engine](CommandContext& context)
-			{
-				Json port = setPort(engine, context);
-				context.emit("audio.portsChanged", ports());
-				return port;
-			});
+			[this, &engine](CommandContext& context) { return setPort(engine, context); });
 		engine.registerCommand(
 			{"audio.setProcessing", 1,
 				"Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; "
@@ -1933,7 +1979,16 @@ namespace gnubase::engine
 			{"cycle", settings.cycle},
 			{"startMode", settings.startMode == StartMode::CycleStart ? "cycleStart" : "cursor"},
 			{"returnToStart", settings.returnToStart}, {"punchIn", settings.punchIn}, {"punchOut", settings.punchOut},
-			{"metronome", settings.metronome}};
+			{"metronome", settings.metronome},
+			{"audioRecordMode", g_audioRecordModes.at(static_cast<size_t>(settings.audioRecordMode))}};
+	}
+
+	void AudioEngine::portSettingsChanged(CommandContext& context, bool audioPorts, bool midiPorts)
+	{
+		if (audioPorts)
+			context.emit("audio.portsChanged", ports());
+		if (midiPorts)
+			m_midi.applySettings(context);
 	}
 
 	void AudioEngine::setChase(const MidiChase& chase)
@@ -2035,6 +2090,15 @@ namespace gnubase::engine
 			require(name == "cursor" || name == "cycleStart", "startMode must be cursor or cycleStart");
 			settings.startMode = name == "cycleStart" ? StartMode::CycleStart : StartMode::Cursor;
 		}
+		if (const auto mode = parameters.find("audioRecordMode"); mode != parameters.end())
+		{
+			const auto name = mode->get<std::string>();
+			const auto index = static_cast<size_t>(
+				std::find(g_audioRecordModes.begin(), g_audioRecordModes.end(), name) - g_audioRecordModes.begin());
+			require(index < g_audioRecordModes.size(),
+				"audioRecordMode must be keepHistory, cycleHistoryReplace or replace");
+			settings.audioRecordMode = static_cast<AudioRecordMode>(index);
+		}
 		sent(m_transport.set(settings));
 	}
 
@@ -2129,11 +2193,13 @@ namespace gnubase::engine
 			"left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). "
 			"returnToStart: on stop, return to where playback started. punchIn, punchOut and metronome are the "
 			"transport bar's switches; punching in and out at the locators and the click come with recording and the "
-			"metronome.",
+			"metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see "
+			"recording.add): keepHistory (the default), cycleHistoryReplace or replace.",
 			R"({"type": "object", "additionalProperties": false, "properties": {
 				"left": {"type": ["integer", "string"]}, "right": {"type": ["integer", "string"]},
 				"cycle": {"type": "boolean"}, "startMode": {"type": "string"}, "returnToStart": {"type": "boolean"},
-				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "metronome": {"type": "boolean"}}})",
+				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "metronome": {"type": "boolean"},
+				"audioRecordMode": {"type": "string"}}})",
 			[this](const Json& parameters) { setTransport(parameters); });
 		command("transport.exchangeLocators", "Swaps the left and right locators.", nullptr,
 			[this](const Json&)

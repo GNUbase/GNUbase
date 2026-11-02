@@ -684,6 +684,7 @@ TEST_CASE("the markers window sorts by a click on a column header, and its colum
 	REQUIRE(app.waitUntil(
 		[&document, width]
 		{
+			document.UpdateDocument(); // a hidden window lays out only when it draws
 			return document.QuerySelector("#marker-head td.type")->GetOffsetWidth() ==
 				Approx(width + 40.0F).margin(2.0);
 		}));

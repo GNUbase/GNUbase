@@ -332,7 +332,8 @@ namespace gnubase::ui
 		std::string cells = R"(<td class="locate"/>)";
 		for (const std::string& column : m_columns.order)
 		{
-			const auto at = std::find(g_columns.begin(), g_columns.end(), column);
+			const auto index =
+				static_cast<size_t>(std::find(g_columns.begin(), g_columns.end(), column) - g_columns.begin());
 			std::string classes = column;
 			if (column == m_columns.sort)
 				classes += m_columns.descending ? " sorted descending" : " sorted";
@@ -341,7 +342,7 @@ namespace gnubase::ui
 			cells += R"(" column=")";
 			cells += column;
 			cells += R"(">)";
-			cells += g_headers[static_cast<size_t>(at - g_columns.begin())];
+			cells += g_headers[index];
 			cells += "</td>";
 		}
 		m_head->SetInnerRML(cells);
