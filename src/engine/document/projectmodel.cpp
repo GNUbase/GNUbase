@@ -342,7 +342,7 @@ namespace gnubase::engine
 				while (!project.trackById.at(above).children.empty())
 					above = project.trackById.at(above).children.back();
 			}
-			const std::string previous = above == 0 ? std::string() : project.trackById.at(above).color;
+			std::string previous = above == 0 ? std::string() : project.trackById.at(above).color;
 			if (mode == "previous")
 				return previous;
 			const auto found = std::find_if(colors.begin(), colors.end(),
