@@ -89,6 +89,8 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Alt+Shift+Left, Alt+Right | `edit.nudgeEndLeft`, `edit.nudgeEndRight` | Nudge End Left, Right |
 | Mod+A, Mod+Shift+A | `edit.selectAll`, `edit.selectNone` | Select All, Select None |
 | Mod+Alt+I | `edit.invertSelection` | Invert Selection |
+| Left, Right | `edit.selectPrevious`, `edit.selectNext` | Navigate Left, Right |
+| Up, Down | `track.selectPrevious`, `track.selectNext`, and the first event on the track while an event is selected | Navigate Up, Down |
 | Mod+X, Mod+C, Mod+V | `edit.cut`, `edit.copy`, `edit.paste` | Cut, Copy, Paste ([range-editing.md](range-editing.md)) |
 | Mod+Shift+X, Shift+Backspace, Mod+Shift+V | `edit.cutTime`, `edit.deleteTime`, `edit.pasteTime` | Cut Time, Delete Time, Paste Time |
 | Mod+Shift+E | `edit.insertSilence` | Insert Silence |

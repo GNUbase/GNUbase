@@ -60,7 +60,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 61> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 63> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -97,6 +97,10 @@ namespace gnubase::app
 			{"edit.selectFromStartToCursor", "Selects the events that end before the project cursor.", nullptr},
 			{"edit.selectFromCursorToEnd", "Selects the events that start after the project cursor.", nullptr},
 			{"edit.selectUnderCursor", "Selects the events at the project cursor.", nullptr},
+			// Left and Right (reference manual p. 253); Up and Down are the track list's track.selectPrevious and
+			// track.selectNext (p. 218).
+			{"edit.selectPrevious", "Selects the event before the selected one on its track.", "Left"},
+			{"edit.selectNext", "Selects the event after the selected one on its track.", "Right"},
 			{"edit.locatorsToSelection", "Sets the locators around the selected events.", "P"},
 			// Range editing (docs/features/range-editing.md), with the reference's keys (manual pp. 1562-1563).
 			{"edit.cut", "Cuts the selection range to the clipboard.", "Mod+X"},
@@ -161,8 +165,10 @@ namespace gnubase::app
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
 		constexpr std::array<ProjectCommand, 17> g_trackCommands{{
-			{"track.selectPrevious", "Selects the track above the selected one.", "Up"},
-			{"track.selectNext", "Selects the track below the selected one.", "Down"},
+			{"track.selectPrevious",
+				"Selects the track above the selected one, and its first event while an event is selected.", "Up"},
+			{"track.selectNext",
+				"Selects the track below the selected one, and its first event while an event is selected.", "Down"},
 			{"track.rename", "Renames the first selected track.", "Alt+F2"},
 			{"track.removeSelected", "Removes the selected tracks.", nullptr},
 			{"track.removeEmpty", "Removes the tracks that hold nothing.", nullptr},

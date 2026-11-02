@@ -899,7 +899,7 @@ namespace gnubase::ui
 		case Drag::DrawPart:
 		case Drag::Play:
 		case Drag::Click:
-			areaMove(dx, dy);
+			areaMove(dx, dy, restricts(event));
 			return;
 		case Drag::None:
 			return;

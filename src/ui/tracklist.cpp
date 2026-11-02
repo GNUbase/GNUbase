@@ -679,6 +679,8 @@ namespace gnubase::ui
 		const uint64_t track = lanes[static_cast<size_t>(index)];
 		select({track});
 		reveal(track);
+		if (!m_display.selection().empty()) // the first event on it too (reference manual p. 218)
+			m_display.selectFirstOn(track);
 	}
 
 	void TrackList::reveal(uint64_t track)

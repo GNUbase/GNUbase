@@ -9,6 +9,7 @@
 #include "ui/canvas.h"
 #include "ui/eventdisplay.h"
 #include "ui/themes.h"
+#include "ui/tracklist.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
@@ -20,6 +21,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
@@ -620,6 +622,71 @@ TEST_CASE("keys edit the selected events in the project window", "[ui]")
 	app.ui().key(std::nullopt, "Backspace");
 	REQUIRE(app.waitUntil([&parts] { return parts().size() == 1; }));
 	CHECK(app.keys().keysFor("edit.delete") == std::vector<std::string>{"Delete", "Backspace"});
+}
+
+TEST_CASE("the arrow keys select events along a track, and Up and Down step the tracks and their first events", "[ui]")
+{
+	test::UiApp app({800, 300});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const auto addTrack = [&app] { return app.call("track.add", {{"type", "midi"}}).at("track").at("id"); };
+	const Json upper = addTrack();
+	const Json empty = addTrack();
+	const Json lower = addTrack();
+	const auto addPart = [&app](const Json& track, int64_t position)
+	{
+		return app.call("midiPart.add", {{"track", track}, {"position", position}, {"length", 1720320}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t first = addPart(upper, 0);
+	const uint64_t second = addPart(upper, int64_t{4} * 1720320);
+	addPart(lower, int64_t{4} * 1720320); // under the second part's start, not the first on its track
+	const uint64_t lowerFirst = addPart(lower, 0);
+	REQUIRE(app.waitUntil(
+		[&app, &display]
+		{
+			app.ui().key(std::nullopt, "Mod+A");
+			return display.selection().size() == 4;
+		}));
+	using Ids = std::vector<uint64_t>;
+	const auto press = [&app](const char* key)
+	{
+		app.ui().key(std::nullopt, key);
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+	ui::TrackList& tracks = *app.appUi().trackList();
+	const auto track = [](const Json& id) { return Ids{id.get<uint64_t>()}; };
+
+	// Left and Right: the part before or after on its track.
+	display.select({first});
+	press("Right");
+	CHECK(display.selection() == Ids{second});
+	press("Left");
+	CHECK(display.selection() == Ids{first});
+
+	// With a part selected, Up and Down still step through the tracks, and select the first part on the new one
+	// (reference manual p. 218). On a track without parts the selected part stays selected.
+	display.select({second});
+	tracks.select(track(upper));
+	press("Down");
+	CHECK(tracks.selection() == track(empty));
+	CHECK(display.selection() == Ids{second});
+	press("Down");
+	CHECK(tracks.selection() == track(lower));
+	CHECK(display.selection() == Ids{lowerFirst});
+	press("Up");
+	CHECK(tracks.selection() == track(empty));
+	CHECK(display.selection() == Ids{lowerFirst});
+	press("Up");
+	CHECK(tracks.selection() == track(upper));
+	CHECK(display.selection() == Ids{first});
+
+	// With no part selected, they select only the track.
+	display.select({});
+	press("Down");
+	CHECK(tracks.selection() == track(empty));
+	CHECK(display.selection().empty());
 }
 
 TEST_CASE("Mod+K opens the Repeat Events dialog, which repeats the selected events", "[ui]")
