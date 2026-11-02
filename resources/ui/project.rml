@@ -135,7 +135,7 @@
 		<div id="right-zone" zone="right" focuszone="right" size="240" default="hidden"/>
 	</div>
 	<div id="status-line" class="strip status-line" strip="statusLine" default="hidden">
-		<span id="record-format" class="status-field" title="Record Format"/>
+		<span id="record-format" class="status-field" title="Record Format" onclick="gnubase.ui.command{command = 'window.projectSetup'}"/>
 		<span id="lost-device" class="status-field hidden"/>
 	</div>
 	<div id="transport-bar" class="strip transport" strip="transportBar" default="hidden" sections="transport" contextmenu="transport-setup"/>
@@ -175,8 +175,24 @@
 		<menuitem command="history.undo">Undo</menuitem>
 		<menuitem command="history.redo">Redo</menuitem>
 		<menuseparator/>
+		<menuitem command="edit.cut">Cut</menuitem>
+		<menuitem command="edit.copy">Copy</menuitem>
+		<menuitem command="edit.paste">Paste</menuitem>
 		<menuitem command="edit.delete">Delete</menuitem>
 		<menuseparator/>
+		<menuitem id="range-submenu">Range
+			<menu>
+				<menuitem command="edit.globalCopy">Global Copy</menuitem>
+				<menuitem command="edit.cutTime">Cut Time</menuitem>
+				<menuitem command="edit.deleteTime">Delete Time</menuitem>
+				<menuitem command="edit.pasteTime">Paste Time</menuitem>
+				<menuseparator/>
+				<menuitem command="edit.splitRange">Split</menuitem>
+				<menuitem command="edit.cropRange">Crop</menuitem>
+				<menuseparator/>
+				<menuitem command="edit.insertSilence">Insert Silence</menuitem>
+			</menu>
+		</menuitem>
 		<menuitem id="functions-submenu">Functions
 			<menu>
 				<menuitem command="edit.splitAtCursor">Split at Cursor</menuitem>
@@ -231,6 +247,8 @@
 				<menuitem command="track.moveSelectedToNewFolderWithGroupChannel">Move Selected Tracks to New Folder with Group Channel</menuitem>
 			</menu>
 		</menuitem>
+		<menuseparator/>
+		<menuitem command="window.projectSetup">Project Setup...</menuitem>
 	</menu>
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>

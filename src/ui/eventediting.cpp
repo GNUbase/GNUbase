@@ -241,8 +241,53 @@ namespace gnubase::ui
 				m_binding.send("transport.locate", {{"position", m_cursorSample}});
 			};
 		};
+		// A range command for the selection range, if there is one (reference manual pp. 287-294), with a length
+		// unless it splits.
+		const auto onRange = [this](const char* command, const Json& parameters, bool needsLength = true)
+		{
+			return [this, command, parameters, needsLength]
+			{
+				if (!m_range || (needsLength && m_range->end <= m_range->start))
+					return;
+				Json withRange = parameters;
+				withRange["start"] = m_range->start;
+				withRange["end"] = m_range->end;
+				withRange["tracks"] = m_range->tracks;
+				edit(command, std::move(withRange));
+			};
+		};
+		// Paste goes to the range's start and first track, or to the project cursor on the tracks it was copied from,
+		// where it selects what it pasted.
+		const auto paste = [this](bool time)
+		{
+			return [this, time]
+			{
+				Json parameters = {{"position", m_range ? m_range->start : m_cursorSample}, {"time", time}};
+				if (m_range && !m_range->tracks.empty())
+					parameters["track"] = m_range->tracks.front();
+				edit("range.paste", std::move(parameters), !m_range);
+			};
+		};
 		const std::map<std::string, std::function<void()>> actions = {
-			{"edit.delete", onSelection("event.remove", Json::object())},
+			{"edit.delete",
+				[this, range = onRange("range.delete", Json::object()),
+					events = onSelection("event.remove", Json::object())]
+				{
+					if (m_range)
+						range();
+					else
+						events();
+				}},
+			{"edit.cut", onRange("range.cut", Json::object())},
+			{"edit.copy", onRange("range.copy", Json::object())},
+			{"edit.paste", paste(false)},
+			{"edit.cutTime", onRange("range.cut", {{"time", true}})},
+			{"edit.deleteTime", onRange("range.delete", {{"time", true}})},
+			{"edit.pasteTime", paste(true)},
+			{"edit.insertSilence", onRange("range.insertSilence", Json::object())},
+			{"edit.splitRange", onRange("range.split", Json::object(), false)},
+			{"edit.cropRange", onRange("range.crop", Json::object())},
+			{"edit.globalCopy", [this] { edit("range.copy", Json::object()); }},
 			{"edit.mute", onSelection("event.set", {{"mute", true}})},
 			{"edit.unmute", onSelection("event.set", {{"mute", false}})},
 			{"edit.lock", onSelection("event.set", {{"lock", true}})},
