@@ -283,11 +283,10 @@ namespace gnubase::engine
 		scrubParameters["properties"]["seconds"] = {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 1}};
 		const auto report = [this](CommandContext& context)
 		{
-			Json result = {{"track", m_audition.track()},
-				{"mode",
-					m_audition.track() == 0      ? "off"
-						: m_audition.scrubbing() ? "scrub"
-												 : "play"}};
+			std::string mode = "off";
+			if (m_audition.track() != 0)
+				mode = m_audition.scrubbing() ? "scrub" : "play";
+			Json result = {{"track", m_audition.track()}, {"mode", mode}};
 			context.emit("audition.changed", result);
 			return result;
 		};
