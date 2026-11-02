@@ -201,6 +201,8 @@ namespace gnubase::app
 				const bool follows = m_binding.update();
 				if (m_menu)
 					m_menu->update();
+				if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
+					pool->update();
 				return follows;
 			});
 		m_shell.onUnusedKey([this](ui::Window& window, const ui::KeyPress& keys) { m_keys.press(window, keys); });
@@ -215,13 +217,33 @@ namespace gnubase::app
 		// The edit history (reference manual pp. 110-111), a dialog there, which Edit > History opens.
 		m_docking.add({"history", "History", "project", "right",
 			[this](Rml::Element& element) { return std::make_shared<ui::HistoryPanel>(m_binding, element); }});
-		// The pool (reference manual pp. 739-760, docs/features/pool.md), a window of its own there.
+		// The pool (reference manual pp. 739-760, docs/features/pool.md), a window of its own there. Its file dialogs
+		// belong to the window it shows in, and it reads the pool only while it shows.
 		m_docking.add({"pool", "Pool", "project", "lower", [this](Rml::Element& element)
 			{
-				return std::make_shared<ui::PoolPanel>(m_binding, element, [this](const std::string& command)
-					{ m_keys.run(command, engine::Json::object(), m_main, nullptr); });
+				auto pool = std::make_shared<ui::PoolPanel>(
+					m_binding, element,
+					[this](const std::string& command)
+					{
+						ui::Window* window = m_docking.windowOf("pool");
+						m_keys.run(command, engine::Json::object(), window != nullptr ? *window : m_main, nullptr);
+					},
+					[this] { return m_docking.showing("pool"); });
+				m_pool = pool;
+				return pool;
 			}});
 		m_docking.addKeyCommands(m_keys);
+		// What the pool's commands did, sent from its toolbar, the Media menu or Find Missing Files, shows in the
+		// pool, which opens for it.
+		for (const char* command : {"pool.removeUnused", "media.locate", "media.removeMissing", "media.conform"})
+			m_poolResults.push_back(m_binding.onResult(command,
+				[this, command](const engine::Result& result)
+				{
+					if (!m_docking.showing("pool"))
+						m_docking.open("pool");
+					if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
+						pool->report(command, result);
+				}));
 
 		m_keys.add({"window.history", "Shows the edit history, where steps are undone and redone.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("history"); }});

@@ -59,6 +59,10 @@ namespace gnubase::ui
 		// Calls handler in update() with every event of that name while the subscription exists.
 		[[nodiscard]] Subscription on(std::string event, std::function<void(const engine::Event&)> handler);
 
+		// Calls handler in update() with the result of every command of that name sent through the binding, after
+		// the sender's done, while the subscription exists: e.g. to show what a command run from a menu did.
+		[[nodiscard]] Subscription onResult(std::string command, std::function<void(const engine::Result&)> handler);
+
 		// Calls apply in update() with what read returns, the first time and whenever it changed since: for values
 		// that change faster than the UI draws, such as the playback position and meters, which the UI reads once a
 		// frame instead of getting an event for every change.
@@ -105,6 +109,7 @@ namespace gnubase::ui
 		engine::Client m_client;
 		std::map<engine::RequestId, Waiting> m_waiting; // commands sent, until their results arrive
 		std::map<uint64_t, Handler> m_handlers;
+		std::map<uint64_t, Waiting> m_resultHandlers; // onResult's, by subscription
 		std::map<uint64_t, std::function<void()>> m_watches;
 		uint64_t m_nextId = 1;
 	};

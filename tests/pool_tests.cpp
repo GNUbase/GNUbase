@@ -3,6 +3,8 @@
 // and the media commands remove unused and missing files, find moved files again and conform files to the project's
 // sample rate.
 #include "engine/audiofile/audiofile.h"
+#include "engine/document/document.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "testutils/testutils.h"
 
@@ -11,6 +13,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -113,7 +116,75 @@ namespace
 		{
 			return byId(run(client, "project.get").at("clips"), clip).at("media").get<uint64_t>();
 		}
+
+		Json event(const Json& id) { return byId(run(client, "project.get").at("audioEvents"), id); }
+
+		// Loads the saved project again, e.g. after files moved while it was closed.
+		void reopen()
+		{
+			run(client, "project.new");
+			run(client, "project.load", {{"path", utf8(file)}});
+		}
 	};
+
+	size_t filesIn(const fs::path& folder)
+	{
+		size_t count = 0;
+		for (const auto& entry : fs::directory_iterator(folder))
+			count += entry.is_regular_file() ? 1 : 0;
+		return count;
+	}
+}
+
+TEST_CASE("poolFolderOutside: the Audio folder, folders inside an excluded one, missing folders and loops", "[unit]")
+{
+	Project project;
+	project.poolFolders[1] = {1, "Drums", 0};
+	project.poolFolders[2] = {2, "Kicks", 1};
+	project.poolFolders[3] = {3, "Loop A", 4};
+	project.poolFolders[4] = {4, "Loop B", 3};
+	project.poolFolders[5] = {5, "Lost", 99};
+	project.poolFolders[6] = {6, "Self", 6};
+	CHECK(poolFolderOutside(project, 0, 1));
+	CHECK(poolFolderOutside(project, 1, 2));
+	CHECK(poolFolderOutside(project, 2, 0));
+	CHECK(poolFolderOutside(project, 2, 6));
+	CHECK_FALSE(poolFolderOutside(project, 1, 1));  // the excluded folder itself
+	CHECK_FALSE(poolFolderOutside(project, 2, 1));  // inside it
+	CHECK_FALSE(poolFolderOutside(project, 99, 0)); // not there
+	CHECK_FALSE(poolFolderOutside(project, 5, 0));  // inside one that isn't there
+	CHECK_FALSE(poolFolderOutside(project, 3, 0));  // in a loop
+	CHECK_FALSE(poolFolderOutside(project, 6, 0));  // inside itself
+}
+
+TEST_CASE("a project whose pool folders point nowhere or loop loads with each loop broken once", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	const test::TempDir dir;
+	writeFile(dir.path() / "kick.wav", 480);
+	const Json media = run(client, "media.add", {{"path", utf8(dir.path() / "kick.wav")}}).at("media");
+	const auto clip = run(client, "clip.add", {{"media", media.at("id")}}).at("clip").at("id");
+
+	// What a damaged project file holds: folder 9002 is in 9003 and 9003 in 9002, 9001 is in that loop without being
+	// part of it, 9004 is inside itself, 9005 in a folder that isn't there, and the clip in another one.
+	Json json = run(client, "project.get");
+	json["poolFolders"] = Json::array({{{"id", 9001}, {"name", "C"}, {"parent", 9002}},
+		{{"id", 9002}, {"name", "A"}, {"parent", 9003}}, {{"id", 9003}, {"name", "B"}, {"parent", 9002}},
+		{{"id", 9004}, {"name", "D"}, {"parent", 9004}}, {{"id", 9005}, {"name", "E"}, {"parent", 9999}}});
+	for (Json& item : json.at("clips"))
+		if (item.at("id") == clip)
+			item["folder"] = 9998;
+	const Project project = projectFromJson(json);
+	REQUIRE(project.poolFolders.size() == 5);
+	CHECK(project.poolFolders.at(9002).parent == 0);    // the loop is broken at its first folder
+	CHECK(project.poolFolders.at(9003).parent == 9002); // and the other stays inside it
+	CHECK(project.poolFolders.at(9001).parent == 9002); // a folder inside the loop keeps its place
+	CHECK(project.poolFolders.at(9004).parent == 0);
+	CHECK(project.poolFolders.at(9005).parent == 0);
+	CHECK(project.clips.at(clip.get<ObjectId>()).folder == 0);
+	for (const auto& [id, folder] : project.poolFolders)
+		CHECK(poolFolderOutside(project, folder.parent, id));
 }
 
 TEST_CASE("pool.get lists the clips with their use, status and info, and the pool's totals", "[integration]")
@@ -323,6 +394,51 @@ TEST_CASE("media.locate finds missing files in a folder by name and relinks them
 		ContainsSubstring("nowhere"));
 }
 
+TEST_CASE("media.locate takes a file of the same length, the same spelling first, matching ASCII letters in any case",
+	"[integration]")
+{
+	SavedProject song;
+	const fs::path aerger = fs::u8path("\xC3\x84rger.wav"); // Ärger.wav
+	const fs::path oel = fs::u8path("\xC3\x96l.wav");       // Öl.wav
+	writeFile(song.library / "kick.wav", 4800, 1);
+	writeFile(song.library / "snare.wav", 2400);
+	writeFile(song.library / aerger, 480);
+	writeFile(song.library / oel, 480);
+	const uint64_t kick = song.mediaOf(song.clip(song.library / "kick.wav"));
+	const uint64_t snare = song.mediaOf(song.clip(song.library / "snare.wav"));
+	const uint64_t aergerMedia = song.mediaOf(song.clip(song.library / aerger));
+	const uint64_t oelMedia = song.mediaOf(song.clip(song.library / oel));
+	song.save();
+	song.settle();
+	fs::remove_all(song.library);
+
+	// Three files named kick: one of another length with the same spelling, two that fit, one of them spelled
+	// alike. Snare is there only with another length. Ärger is there with other ASCII letters in upper case, Öl
+	// with a lower-case Ö, which isn't an ASCII letter.
+	const fs::path moved = song.dir.path() / "moved";
+	writeFile(moved / "a" / "kick.wav", 9600, 1);
+	writeFile(moved / "b" / "KICK.wav", 4800, 1);
+	writeFile(moved / "c" / "kick.wav", 4800, 1);
+	writeFile(moved / "snare.wav", 4800);
+	writeFile(moved / fs::u8path("\xC3\x84RGER.WAV"), 480);
+	writeFile(moved / fs::u8path("\xC3\xB6l.wav"), 480);
+	song.reopen();
+
+	const Json located = run(song.client, "media.locate", {{"folder", utf8(moved)}});
+	CHECK(located.at("relinked") == Json::array({kick, aergerMedia}));
+	CHECK(located.at("missing") == Json::array({snare, oelMedia}));
+	const Json media = run(song.client, "project.get").at("media");
+	CHECK(fs::equivalent(fs::u8path(byId(media, kick).at("path").get<std::string>()), moved / "c" / "kick.wav"));
+	CHECK(
+		fs::u8path(byId(media, aergerMedia).at("path").get<std::string>()).filename().u8string() == "\xC3\x84RGER.WAV");
+
+	// A media file given twice is looked for and relinked once.
+	run(song.client, "history.undo");
+	const Json twice = run(song.client, "media.locate", {{"folder", utf8(moved)}, {"media", {kick, kick}}});
+	CHECK(twice.at("relinked") == Json::array({kick}));
+	CHECK(twice.at("missing").empty());
+}
+
 TEST_CASE("media.removeMissing removes missing files with their clips and events", "[integration]")
 {
 	SavedProject song;
@@ -349,6 +465,36 @@ TEST_CASE("media.removeMissing removes missing files with their clips and events
 	CHECK(run(song.client, "history.get").at("steps").back().at("action") == "Remove missing files");
 	run(song.client, "history.undo");
 	CHECK(run(song.client, "project.get").at("audioEvents").size() == 2);
+}
+
+TEST_CASE("media.removeMissing removes the crossfade from a missing file's event into the next one", "[integration]")
+{
+	SavedProject song;
+	writeFile(song.library / "gone.wav", 48000);
+	writeFile(song.library / "here.wav", 48000);
+	const uint64_t gone = song.clip(song.library / "gone.wav");
+	const uint64_t here = song.clip(song.library / "here.wav");
+	const auto track = run(song.client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	const auto from =
+		run(song.client, "audioEvent.add", {{"track", track}, {"clip", gone}, {"position", 0}}).at("event").at("id");
+	const auto to = run(song.client, "audioEvent.add", {{"track", track}, {"clip", here}, {"position", 24000}})
+						.at("event")
+						.at("id");
+	run(song.client, "crossfade.set", {{"from", from}, {"to", to}});
+	REQUIRE(song.event(to).at("crossfade").at("from") == from);
+	song.settle();
+	fs::remove(song.library / "gone.wav");
+
+	const Json removed = run(song.client, "media.removeMissing");
+	CHECK(removed.at("events") == Json::array({from}));
+	const Json project = run(song.client, "project.get");
+	REQUIRE(project.at("audioEvents").size() == 1);
+	CHECK(project.at("audioEvents")[0].at("crossfade").is_null());
+	CHECK(project.at("audioEvents")[0].at("length") == 48000);
+
+	run(song.client, "history.undo");
+	CHECK(run(song.client, "project.get").at("audioEvents").size() == 2);
+	CHECK(song.event(to).at("crossfade").at("from") == from);
 }
 
 TEST_CASE("media.conform converts files to the project's sample rate and keeps what events play", "[integration]")
@@ -395,6 +541,78 @@ TEST_CASE("media.conform converts files to the project's sample rate and keeps w
 	writeFile(song.library / "other.wav", 441, 1, 44100.0);
 	song.clip(song.library / "other.wav");
 	CHECK_THAT(reject(song.client, "media.conform", Json::object()), ContainsSubstring("save the project"));
+}
+
+TEST_CASE("media.conform converts a media file given twice once", "[integration]")
+{
+	SavedProject song;
+	writeFile(song.library / "slow.wav", 44100, 2, 44100.0);
+	const uint64_t slow = song.clip(song.library / "slow.wav");
+	const auto track = run(song.client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	const auto event = run(song.client, "audioEvent.add",
+		{{"track", track}, {"clip", slow}, {"position", 0}, {"offset", 4410}, {"length", 22050}})
+						   .at("event")
+						   .at("id");
+	const uint64_t media = song.mediaOf(slow);
+
+	CHECK(run(song.client, "media.conform", {{"media", {media, media}}}).at("media") == Json::array({media}));
+	CHECK(filesIn(song.media) == 1);
+	CHECK(byId(run(song.client, "pool.get").at("clips"), slow).at("sampleRate") == 48000.0);
+	CHECK(song.event(event).at("offset") == 4800);
+	CHECK(song.event(event).at("length") == 24000);
+}
+
+TEST_CASE(
+	"media.conform scales event fades, snap points and crossfades in the frames each is counted in", "[integration]")
+{
+	SavedProject song;
+	writeFile(song.library / "slow.wav", 44100, 1, 44100.0);
+	writeFile(song.library / "fine.wav", 48000, 1);
+	const uint64_t slow = song.clip(song.library / "slow.wav");
+	const uint64_t fine = song.clip(song.library / "fine.wav");
+	run(song.client, "clip.setFades", {{"clip", slow}, {"fadeOut", {{"length", 2205}}}});
+	const auto track = run(song.client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	const auto add = [&song, &track](uint64_t clip, int64_t position, int64_t offset, int64_t length)
+	{
+		return run(song.client, "audioEvent.add",
+			{{"track", track}, {"clip", clip}, {"position", position}, {"offset", offset}, {"length", length}})
+			.at("event")
+			.at("id");
+	};
+	// first (44.1 kHz) crossfades into second (48 kHz), which crossfades into third (44.1 kHz). A crossfade's length
+	// is in the frames of the event it goes into, its outLength in those of the event it comes from.
+	const auto first = add(slow, 0, 4410, 22050);   // project samples 0 to 24000
+	const auto second = add(fine, 12000, 0, 24000); // 12000 to 36000
+	const auto third = add(slow, 30000, 0, 22050);  // 30000 to 54000
+	run(song.client, "audioEvent.setFades", {{"event", first}, {"fadeIn", {{"length", 441}}}});
+	run(song.client, "audioEvent.setFades", {{"event", third}, {"fadeOut", {{"length", 2205}}}});
+	run(song.client, "event.setSnapPoint", {{"events", {first}}, {"position", 12000}});
+	run(song.client, "crossfade.set", {{"from", first}, {"to", second}, {"length", 9600}, {"outLength", 8820}});
+	run(song.client, "crossfade.set", {{"from", second}, {"to", third}, {"length", 4410}, {"outLength", 4800}});
+	const auto snapPoint = song.event(first).at("snapPoint").get<int64_t>();
+
+	run(song.client, "media.conform");
+	CHECK(byId(run(song.client, "project.get").at("clips"), slow).at("fadeOut").at("length") == 2400);
+	const Json a = song.event(first);
+	CHECK(a.at("offset") == 4800);
+	CHECK(a.at("length") == 24000);
+	CHECK(a.at("fadeIn").at("length") == 480);
+	CHECK(a.at("snapPoint") == std::llround(static_cast<double>(snapPoint) * 48000.0 / 44100.0));
+	const Json b = song.event(second);
+	CHECK(b.at("offset") == 0);
+	CHECK(b.at("length") == 24000);
+	CHECK(b.at("crossfade").at("length") == 9600);    // second's frames, which stay
+	CHECK(b.at("crossfade").at("outLength") == 9600); // first's frames, now at 48 kHz
+	const Json c = song.event(third);
+	CHECK(c.at("length") == 24000);
+	CHECK(c.at("fadeOut").at("length") == 2400);
+	CHECK(c.at("crossfade").at("length") == 4800);    // third's frames, now at 48 kHz
+	CHECK(c.at("crossfade").at("outLength") == 4800); // second's frames, which stay
+
+	run(song.client, "history.undo");
+	CHECK(song.event(first).at("snapPoint") == snapPoint);
+	CHECK(song.event(second).at("crossfade").at("outLength") == 8820);
+	CHECK(song.event(third).at("crossfade").at("length") == 4410);
 }
 
 TEST_CASE("audioFile.import with clipsOnly adds files to the pool without tracks or events", "[integration]")

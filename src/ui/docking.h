@@ -113,6 +113,11 @@ namespace gnubase::ui
 		// The window a panel shows in on its own, or null while it is docked.
 		Window* windowOf(const std::string& panel);
 
+		// Whether a panel shows: in a window of its own, or as its zone's active tab while the zone shows. What create
+		// returned stays while the panel's tab is hidden behind another one or its zone is, e.g. to refresh it only
+		// once it shows again.
+		bool showing(const std::string& id) const;
+
 	private:
 		// Where a panel shows: a tab of its zone, or a window of its own.
 		struct Shown
@@ -150,6 +155,9 @@ namespace gnubase::ui
 		std::string windowIn(Window& window) const;              // the docking window shown there
 		std::vector<std::string> tabs(const std::string& window, const std::string& name) const; // in order
 		std::vector<std::string> shownTabs(const std::string& window, const std::string& name) const;
+		// The index of the zone's active tab in shown, its shownTabs: the one ui.layout names, or the first.
+		size_t activeTab(
+			const std::vector<std::string>& shown, const std::string& window, const std::string& name) const;
 		const Section* section(const std::string& window, const std::string& set, const std::string& id) const;
 		bool sectionHidden(const std::string& window, const std::string& set, const std::string& id) const;
 		engine::Json& sectionsJson(const std::string& window, const std::string& set);

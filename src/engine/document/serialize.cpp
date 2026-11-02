@@ -1061,15 +1061,28 @@ namespace gnubase::engine
 				fadeFromJson(item.value("fadeIn", Json::object())), fadeFromJson(item.value("fadeOut", Json::object())),
 				item.value("folder", ObjectId{0})};
 		}
-		// Files from before the pool's folders have none. Folders inside folders that aren't there, or inside
-		// themselves, go to the top; clips in folders that aren't there to the Audio folder.
+		// Files from before the pool's folders have none. Folders inside folders that aren't there go to the top, and
+		// of each loop of folders inside each other the first one; clips in folders that aren't there go to the
+		// Audio folder.
 		for (const Json& item : json.value("poolFolders", Json::array()))
 		{
 			const auto id = item.at("id").get<ObjectId>();
 			project.poolFolders[id] = {id, item.at("name").get<std::string>(), item.value("parent", ObjectId{0})};
 		}
 		for (auto& [id, folder] : project.poolFolders)
-			if (!poolFolderOutside(project, folder.parent, id))
+			if (project.poolFolders.count(folder.parent) == 0)
+				folder.parent = 0;
+		// Every parent is there now, so a folder is in a loop if its parents lead back to it. One that is only inside
+		// a loop keeps its place once the loop is broken.
+		const auto inLoop = [&project](ObjectId id)
+		{
+			ObjectId folder = project.poolFolders.at(id).parent;
+			for (size_t steps = 0; folder != 0 && folder != id && steps < project.poolFolders.size(); ++steps)
+				folder = project.poolFolders.at(folder).parent;
+			return folder == id;
+		};
+		for (auto& [id, folder] : project.poolFolders)
+			if (inLoop(id))
 				folder.parent = 0;
 		for (auto& [id, clip] : project.clips)
 			if (project.poolFolders.count(clip.folder) == 0)

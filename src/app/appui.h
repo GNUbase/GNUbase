@@ -10,6 +10,7 @@
 #include "ui/keycommands.h"
 #include "ui/mainmenu.h"
 #include "ui/markers.h"
+#include "ui/poolpanel.h"
 #include "ui/projectfiles.h"
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
@@ -155,5 +156,7 @@ namespace gnubase::app
 		ui::ProjectFiles m_files;                     // the File menu's project commands
 		std::unique_ptr<ui::MainMenu> m_menu;         // the project window's
 		Rml::ObserverPtr<Rml::Element> m_studioSetup; // the open studio setup dialog's document
+		std::weak_ptr<ui::PoolPanel> m_pool;          // the docking system owns it while it is there
+		std::vector<ui::Subscription> m_poolResults;  // what the pool commands did, for the pool
 	};
 }

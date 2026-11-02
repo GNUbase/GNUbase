@@ -68,6 +68,13 @@ namespace gnubase::ui
 		return {*this, id};
 	}
 
+	Subscription EngineBinding::onResult(std::string command, std::function<void(const engine::Result&)> handler)
+	{
+		const uint64_t id = m_nextId++;
+		m_resultHandlers.emplace(id, Waiting{std::move(command), std::move(handler)});
+		return {*this, id};
+	}
+
 	Subscription EngineBinding::follow(std::function<void()> read)
 	{
 		const uint64_t id = m_nextId++;
@@ -78,6 +85,7 @@ namespace gnubase::ui
 	void EngineBinding::end(uint64_t id) noexcept
 	{
 		m_handlers.erase(id);
+		m_resultHandlers.erase(id);
 		m_watches.erase(id);
 	}
 
@@ -120,6 +128,21 @@ namespace gnubase::ui
 			waiting.done(result);
 		else if (!result.ok())
 			logging::warning("{} from the UI failed: {}", waiting.command, result.error);
+		// As in dispatch, each handler is taken out while it runs.
+		std::vector<uint64_t> ids;
+		for (const auto& [id, handler] : m_resultHandlers)
+			if (handler.command == waiting.command)
+				ids.push_back(id);
+		for (const uint64_t id : ids)
+		{
+			auto handler = m_resultHandlers.find(id);
+			if (handler == m_resultHandlers.end())
+				continue;
+			std::function<void(const engine::Result&)> call = std::move(handler->second.done);
+			call(result);
+			if (handler = m_resultHandlers.find(id); handler != m_resultHandlers.end())
+				handler->second.done = std::move(call);
+		}
 	}
 
 	void EngineBinding::dispatch(const engine::Event& event)

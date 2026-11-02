@@ -8,6 +8,7 @@
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <functional>
 #include <iomanip>
@@ -101,20 +102,46 @@ namespace gnubase::ui
 		{
 			return value.size() > 1 ? std::stoull(value.substr(1)) : 0;
 		}
+
+		// "1 clip", "2 clips".
+		std::string counted(size_t count, const std::string& noun)
+		{
+			return std::to_string(count) + " " + noun + (count == 1 ? "" : "s");
+		}
+
+		// What the toolbar and the Media menu call what a pool command does.
+		std::string actionOf(const std::string& command)
+		{
+			if (command == "media.locate")
+				return "Find Missing Files";
+			for (const Button& button : g_buttons)
+				if (command == button.command)
+					return button.label;
+			return command;
+		}
+
+		// Names in the order the user reads them: ASCII letters in either case alike.
+		bool beforeByName(const Json* a, const Json* b)
+		{
+			const auto& x = a->at("name").get_ref<const std::string&>();
+			const auto& y = b->at("name").get_ref<const std::string&>();
+			return std::lexicographical_compare(x.begin(), x.end(), y.begin(), y.end(), [](char l, char r)
+				{ return std::tolower(static_cast<unsigned char>(l)) < std::tolower(static_cast<unsigned char>(r)); });
+		}
 	}
 
-	PoolPanel::PoolPanel(EngineBinding& binding, Rml::Element& element, Run run)
-		: m_binding(binding), m_run(std::move(run)),
-		  m_changed(binding.on("history.changed", [this](const engine::Event&) { request(); })),
-		  m_saved(binding.on("project.saved", [this](const engine::Event&) { request(); }))
+	PoolPanel::PoolPanel(EngineBinding& binding, Rml::Element& element, Run run, std::function<bool()> shown)
+		: m_binding(binding), m_run(std::move(run)), m_shown(std::move(shown)),
+		  m_changed(binding.on("history.changed", [this](const engine::Event&) { poolChanged(); })),
+		  m_saved(binding.on("project.saved", [this](const engine::Event&) { poolChanged(); }))
 	{
 		std::string rml = R"(<div class="pool"><div class="toolbar pool-toolbar">)";
 		for (const Button& button : g_buttons)
 			rml += std::string(R"(<button id=")") + button.id + R"(">)" + button.label + "</button>";
-		rml +=
-			R"(</div><div id="pool-info" class="pool-info"/><div class="pool-header"><span class="name">Media</span>)"
-			R"(<span class="used">Used</span><span class="status">Status</span><span class="info">Info</span>)"
-			R"(<span class="path">Path</span></div><listview id="pool" class="pool-list" multiple/></div>)";
+		rml += R"(</div><div id="pool-message" class="pool-message"/><div id="pool-info" class="pool-info"/>)"
+			   R"(<div class="pool-header"><span class="name">Media</span><span class="used">Used</span>)"
+			   R"(<span class="status">Status</span><span class="info">Info</span><span class="path">Path</span></div>)"
+			   R"(<listview id="pool" class="pool-list" multiple/></div>)";
 		element.SetInnerRML(rml);
 		Rml::Element* root = element.GetFirstChild();
 		m_root = root->GetObserverPtr();
@@ -124,7 +151,7 @@ namespace gnubase::ui
 			root->AddEventListener(id, this);
 		root->AddEventListener(Rml::EventId::Blur, this, true); // blur doesn't bubble
 		root->AddEventListener(g_treeToggleEvent, this);
-		request();
+		update();
 	}
 
 	PoolPanel::~PoolPanel()
@@ -170,11 +197,12 @@ namespace gnubase::ui
 			else
 				m_collapsed.insert(value);
 		}
-		else if (event == Rml::EventId::Mousedown && !field)
+		else if (event == Rml::EventId::Mousedown)
 		{
-			// Clips dragged onto a folder: the selected ones if the mouse went down on one of them.
+			// Clips dragged onto a folder: the selected ones if the mouse went down on one of them, not on its name.
 			m_dragged.clear();
-			const std::string value = rowValue(target);
+			m_pressed = target->GetObserverPtr();
+			const std::string value = field ? std::string() : rowValue(target);
 			if (value.empty() || value[0] != 'c')
 				return;
 			const std::vector<std::string> selected = selection();
@@ -186,11 +214,81 @@ namespace gnubase::ui
 		}
 		else if (event == Rml::EventId::Mouseup)
 		{
+			// The panel doesn't hear a button let go outside it: the drag goes on only while what the mouse went down
+			// on is still :active, which RmlUi clears when the button goes up.
 			const std::string value = rowValue(target);
-			if (!m_dragged.empty() && !value.empty() && value[0] == 'f')
+			if (!m_dragged.empty() && m_pressed && m_pressed->IsPseudoClassSet("active") && !value.empty() &&
+				value[0] == 'f')
 				drop(value);
 			m_dragged.clear();
 		}
+	}
+
+	void PoolPanel::update()
+	{
+		if (m_stale && m_shown())
+			request();
+	}
+
+	void PoolPanel::poolChanged()
+	{
+		m_stale = true;
+		update();
+	}
+
+	void PoolPanel::report(const std::string& command, const engine::Result& result)
+	{
+		if (!result.ok())
+		{
+			showMessage(actionOf(command) + " failed: " + result.error, true);
+			return;
+		}
+		const Json& value = result.value;
+		std::string text;
+		if (command == "media.locate")
+		{
+			const size_t found = value.at("relinked").size();
+			const size_t looked = found + value.at("missing").size();
+			text = looked == 0 ? "No files are missing."
+							   : "Found " + std::to_string(found) + " of " + counted(looked, "missing file") + ".";
+		}
+		else if (command == "pool.removeUnused")
+		{
+			text = "Removed " + counted(value.at("clips").size(), "clip") + " and " +
+				counted(value.at("media").size(), "file") + " from the pool.";
+		}
+		else if (command == "media.removeMissing")
+		{
+			text = "Removed " + counted(value.at("media").size(), "missing file") + " with " +
+				counted(value.at("clips").size(), "clip") + " and " + counted(value.at("events").size(), "event") + ".";
+		}
+		else if (command == "media.conform")
+		{
+			text = "Conformed " + counted(value.at("media").size(), "file") + " to the project's sample rate.";
+		}
+		showMessage(text, false);
+	}
+
+	void PoolPanel::showMessage(const std::string& text, bool error)
+	{
+		Rml::Element* line = m_root ? m_root->GetElementById("pool-message") : nullptr;
+		if (line == nullptr)
+			return;
+		setText(*line, text);
+		line->SetClass("error", error);
+		if (Rml::Context* context = line->GetContext())
+			context->RequestNextUpdate(0);
+	}
+
+	void PoolPanel::send(const char* action, const std::string& command, const Json& parameters)
+	{
+		m_binding.send(command, parameters,
+			[this, action, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired())
+					showMessage(
+						result.ok() ? std::string() : std::string(action) + " failed: " + result.error, !result.ok());
+			});
 	}
 
 	std::vector<std::string> PoolPanel::selection() const
@@ -207,6 +305,7 @@ namespace gnubase::ui
 
 	void PoolPanel::request()
 	{
+		m_stale = false;
 		m_binding.send("pool.get", Json::object(),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
@@ -245,8 +344,7 @@ namespace gnubase::ui
 				std::vector<const Json*> items;
 				for (auto item = first; item != last; ++item)
 					items.push_back(item->second);
-				std::stable_sort(items.begin(), items.end(), [](const Json* a, const Json* b)
-					{ return a->at("name").get<std::string>() < b->at("name").get<std::string>(); });
+				std::stable_sort(items.begin(), items.end(), beforeByName);
 				return items;
 			};
 			std::vector<Row> result;
@@ -336,15 +434,22 @@ namespace gnubase::ui
 	void PoolPanel::rename(Rml::Element& field)
 	{
 		const std::string value = rowValue(&field);
-		const auto name = field.GetAttribute<Rml::String>("value", "");
-		if (value.size() < 2 || name.empty())
+		if (value.size() < 2)
 			return;
+		const auto name = field.GetAttribute<Rml::String>("value", "");
 		const bool folder = value[0] == 'f';
 		const uint64_t id = idOf(value);
 		for (const Json& item : m_pool.value(folder ? "folders" : "clips", Json::array()))
-			if (item.at("id").get<uint64_t>() == id && item.at("name").get<std::string>() != name)
-				m_binding.send(
-					folder ? "poolFolder.set" : "clip.set", {{folder ? "folder" : "clip", id}, {"name", name}});
+		{
+			if (item.at("id").get<uint64_t>() != id)
+				continue;
+			const auto& current = item.at("name").get_ref<const std::string&>();
+			if (name.empty()) // a name typed away keeps the old one
+				field.SetAttribute("value", current);
+			else if (name != current)
+				send("Rename", folder ? "poolFolder.set" : "clip.set",
+					{{folder ? "folder" : "clip", id}, {"name", name}});
+		}
 	}
 
 	void PoolPanel::drop(const std::string& folder)
@@ -354,9 +459,9 @@ namespace gnubase::ui
 		for (const std::string& clip : m_dragged)
 			commands.push_back({{"command", "clip.set"}, {"parameters", {{"clip", idOf(clip)}, {"folder", target}}}});
 		if (commands.size() == 1)
-			m_binding.send("clip.set", commands[0].at("parameters"));
+			send("Move", "clip.set", commands[0].at("parameters"));
 		else
-			m_binding.send("history.transaction", {{"description", "Move clips"}, {"commands", commands}});
+			send("Move", "history.transaction", {{"description", "Move clips"}, {"commands", commands}});
 	}
 
 	void PoolPanel::addFolder()
@@ -370,6 +475,6 @@ namespace gnubase::ui
 			for (const Json& clip : m_pool.value("clips", Json::array()))
 				if (clip.at("id").get<uint64_t>() == idOf(selected[0]))
 					parent = clip.at("folder").get<uint64_t>();
-		m_binding.send("poolFolder.add", {{"parent", parent}});
+		send("New Folder", "poolFolder.add", {{"parent", parent}});
 	}
 }
