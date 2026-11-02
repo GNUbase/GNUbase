@@ -673,8 +673,9 @@ TEST_CASE("the JACK MIDI backend stamps input with the server's cycle times", "[
 	// Within 20 µs: the two clocks are read at slightly different times, and a thread may be preempted between the two
 	// reads now and then. The callback runs tens of µs late.
 	// A cycle's filtered start is jackd's estimate; without real-time priority on a busy machine, a callback now and
-	// then runs before it, and JackLibrary::cycle() doesn't take a start in the future. Such a cycle has no cycle times
-	// and nothing to compare with: its injection is retried, at most 10 of them.
+	// then runs before it. JackLibrary::cycle() takes a start up to a period ahead, but falls back to the callback's
+	// start for a cycle without cycle times or with a start further ahead or more than a second ago. Such a cycle has
+	// nothing to compare with: its injection is retried, at most 10 of them.
 	int stamped = 0;
 	int close = 0;
 	size_t injected = 0;
