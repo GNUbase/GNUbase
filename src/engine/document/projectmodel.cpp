@@ -453,6 +453,8 @@ namespace gnubase::engine
 				target.parameter = static_cast<uint32_t>(parameter);
 				break;
 			}
+			case AutomationTargetType::Plugin:
+				throw CommandError("plugin parameters can't be automated yet (#70)");
 			case AutomationTargetType::Controller:
 				only({"number", "channel"});
 				require(midi, "MIDI controllers are automated on MIDI and instrument tracks");
@@ -492,6 +494,7 @@ namespace gnubase::engine
 				throw CommandError("the instrument of automation lane " + idText(lane.id) + " has no parameter " +
 					std::to_string(lane.target.parameter) + " any more");
 			}
+			case AutomationTargetType::Plugin: // not automated yet (#70)
 			case AutomationTargetType::Controller:
 			case AutomationTargetType::PitchBend:
 			case AutomationTargetType::ChannelPressure:
@@ -860,6 +863,14 @@ namespace gnubase::engine
 				Channel channel = project.channels.at(copy.channel);
 				channel.id = project.newId();
 				channel.track = copy.id;
+				for (ObjectId& slotId : channel.slots)
+				{
+					Slot slot = project.slots.at(slotId);
+					slot.id = project.newId();
+					slot.channel = channel.id;
+					slotId = slot.id;
+					project.slots[slot.id] = std::move(slot);
+				}
 				channels[copy.channel] = channel.id;
 				copy.channel = channel.id;
 				project.channels[channel.id] = std::move(channel);
@@ -1031,6 +1042,9 @@ namespace gnubase::engine
 					marker = marker->second.track == removed ? project.markers.erase(marker) : std::next(marker);
 				for (auto lane = project.automation.begin(); lane != project.automation.end();)
 					lane = lane->second.track == removed ? project.automation.erase(lane) : std::next(lane);
+				if (gone.channel != 0)
+					for (const ObjectId slot : project.channels.at(gone.channel).slots)
+						project.slots.erase(slot);
 				project.channels.erase(gone.channel);
 				project.trackById.erase(removed);
 				context.emit("track.removed", {{"track", removed}});
@@ -2017,6 +2031,10 @@ namespace gnubase::engine
 			{"track.duplicate", "Duplicate track"},
 			{"channel.set", "Change channel"},
 			{"parameter.set", "Change parameter"},
+			{"plugin.insert", "Insert plugin"},
+			{"plugin.remove", "Remove plugin"},
+			{"plugin.move", "Move plugin"},
+			{"plugin.set", "Change plugin"},
 			{"media.add", "Add media file"},
 			{"media.convert", "Convert media file"},
 			{"media.stretch", "Stretch media file"},
@@ -2105,7 +2123,8 @@ namespace gnubase::engine
 		}
 
 		// Called after the change was applied to project in the given direction.
-		void announce(const Project& project, const ProjectChange& change, Direction direction, CommandContext& context)
+		void announce(const ProjectModel& model, const Project& project, const ProjectChange& change,
+			Direction direction, CommandContext& context)
 		{
 			bool reordered = false;
 			bool activated = false;
@@ -2135,6 +2154,24 @@ namespace gnubase::engine
 			announceObjects(change.clips, direction, "clip", "clip", context);
 			announceObjects(change.audioEvents, direction, "audioEvent", "event", context);
 			announceObjects(change.markers, direction, "marker", "marker", context);
+			// Slots as plugin.insert, plugin.remove and the other plugin.* commands announce them. Those of a channel
+			// that came or went are in its events.
+			std::set<ObjectId> channels; // that came or went
+			for (const ObjectChange<Channel>& channel : change.channels)
+				if (!channel.before || !channel.after)
+					channels.insert(channel.id);
+			for (const ObjectChange<Slot>& slot : change.slots)
+			{
+				const std::optional<Slot>& current = direction == Direction::Redo ? slot.after : slot.before;
+				const std::optional<Slot>& previous = direction == Direction::Redo ? slot.before : slot.after;
+				if (channels.count((current ? current : previous)->channel) != 0)
+					continue;
+				if (!current)
+					context.emit("plugin.removed", {{"slot", slot.id}});
+				else
+					context.emit(
+						previous ? "plugin.changed" : "plugin.added", {{"slot", model.describeSlot(project, slot.id)}});
+			}
 			// After the tracks, so that a client knows the track that becomes active.
 			if (activated)
 				context.emit("marker.trackActivated", {{"track", project.activeMarkerTrack}});
@@ -2248,7 +2285,7 @@ namespace gnubase::engine
 		{
 			const HistoryStep& step = undo ? m_history.undo() : m_history.redo();
 			apply(m_project, step.change, direction);
-			announce(m_project, step.change, direction, context);
+			announce(*this, m_project, step.change, direction, context);
 		}
 		announceHistory(context);
 		publish();
@@ -2388,8 +2425,10 @@ namespace gnubase::engine
 			[](Project& project, CommandContext&) { return toJson(project); });
 		add(engine,
 			{"graph.get", 1,
-				"The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes "
-				"they receive audio and events from, and the order they are processed in.",
+				"The project's audio processing graph: its nodes (busses, then channels in track order, then for each "
+				"channel with plugin slots a channelSource node with what plays on the channel and a pluginSlot node "
+				"per slot, which pass the audio on to the channel's node) with the nodes they receive audio and events "
+				"from, and the order they are processed in. object is the bus, channel or slot id.",
 				objectSchema({}), {{"type", "object"}}, true},
 			[this](Project&, CommandContext&) { return graphToJson(graph::describe(m_snapshots.latest())); });
 		add(engine,
@@ -2873,6 +2912,7 @@ namespace gnubase::engine
 		registerMarkerCommands(engine);
 		registerAutomationCommands(engine);
 		registerParameterCommands(engine);
+		registerSlotCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
 		registerMidiFileCommands(engine);

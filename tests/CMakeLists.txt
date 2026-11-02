@@ -70,6 +70,8 @@ add_executable(gnubase-tests
 	monitoring_tests.cpp
 	multicore_tests.cpp
 	parameter_tests.cpp
+	plugincommands_tests.cpp
+	pluginslots_tests.cpp
 	peaks_tests.cpp
 	performance_tests.cpp
 	playback_tests.cpp

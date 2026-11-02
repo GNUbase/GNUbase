@@ -6,8 +6,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -69,6 +71,7 @@ namespace gnubase::engine
 			{AutomationTargetType::PanLeft, "panLeft"},
 			{AutomationTargetType::PanRight, "panRight"},
 			{AutomationTargetType::Instrument, "instrument"},
+			{AutomationTargetType::Plugin, "plugin"},
 			{AutomationTargetType::Controller, "controller"},
 			{AutomationTargetType::PitchBend, "pitchBend"},
 			{AutomationTargetType::ChannelPressure, "channelPressure"},
@@ -149,6 +152,64 @@ namespace gnubase::engine
 		{
 			return {json.at("position").get<time::Ticks>(), json.at("length").get<time::Ticks>(),
 				velocityFrom(json.at("velocity"))};
+		}
+
+		constexpr const char* g_base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+		// Standard base64 with padding, as a slot's state is stored in the project.
+		std::string toBase64(const std::vector<uint8_t>& bytes)
+		{
+			std::string text;
+			text.reserve((bytes.size() + 2) / 3 * 4);
+			for (size_t i = 0; i < bytes.size(); i += 3)
+			{
+				const size_t left = bytes.size() - i;
+				const uint32_t triple = (uint32_t{bytes[i]} << 16) | (left > 1 ? uint32_t{bytes[i + 1]} << 8 : 0) |
+					(left > 2 ? uint32_t{bytes[i + 2]} : 0);
+				text += g_base64[(triple >> 18) & 63];
+				text += g_base64[(triple >> 12) & 63];
+				text += left > 1 ? g_base64[(triple >> 6) & 63] : '=';
+				text += left > 2 ? g_base64[triple & 63] : '=';
+			}
+			return text;
+		}
+
+		// The inverse of toBase64; nothing for text that isn't base64 with padding.
+		std::optional<std::vector<uint8_t>> fromBase64(const std::string& text)
+		{
+			if (text.size() % 4 != 0)
+				return std::nullopt;
+			const auto value = [](char c) -> int
+			{
+				const char* found = c == '\0' ? nullptr : std::strchr(g_base64, c);
+				return found == nullptr ? -1 : static_cast<int>(found - g_base64);
+			};
+			std::vector<uint8_t> bytes;
+			bytes.reserve(text.size() / 4 * 3);
+			for (size_t i = 0; i < text.size(); i += 4)
+			{
+				const bool last = i + 4 == text.size();
+				const int padding = last ? (text[i + 3] == '=' ? 1 : 0) + (text[i + 2] == '=' ? 1 : 0) : 0;
+				if (padding == 1 && text[i + 3] != '=')
+					return std::nullopt;
+				uint32_t triple = 0;
+				for (size_t j = 0; j < 4; ++j)
+				{
+					const int digit = j >= 4 - static_cast<size_t>(padding) ? 0 : value(text[i + j]);
+					if (digit < 0)
+						return std::nullopt;
+					triple = (triple << 6) | static_cast<uint32_t>(digit);
+				}
+				// The bits after the last byte are zero, so that a state has one text.
+				if ((padding == 2 && (triple & 0xFFFFU) != 0) || (padding == 1 && (triple & 0xFFU) != 0))
+					return std::nullopt;
+				bytes.push_back(static_cast<uint8_t>(triple >> 16));
+				if (padding < 2)
+					bytes.push_back(static_cast<uint8_t>(triple >> 8));
+				if (padding < 1)
+					bytes.push_back(static_cast<uint8_t>(triple));
+			}
+			return bytes;
 		}
 
 		template <typename Map> Json toJsonArray(const Map& objects)
@@ -399,7 +460,20 @@ namespace gnubase::engine
 			{"panRight", channel.panRight}, {"panBypass", channel.panBypass},
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
 			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
-			{"recordEnable", channel.recordEnable}, {"mute", channel.mute}, {"solo", channel.solo}};
+			{"recordEnable", channel.recordEnable}, {"mute", channel.mute}, {"solo", channel.solo},
+			{"slots", channel.slots}};
+	}
+
+	Json toJson(const Slot& slot)
+	{
+		Json parameters = Json::array();
+		for (const auto& [parameter, value] : slot.parameters)
+			parameters.push_back({{"parameter", parameter}, {"value", value}});
+		Json json = {{"id", slot.id}, {"channel", slot.channel}, {"plugin", slot.plugin}, {"name", slot.name},
+			{"bypass", slot.bypass}, {"active", slot.active}, {"parameters", std::move(parameters)}};
+		if (slot.state)
+			json["state"] = toBase64(*slot.state);
+		return json;
 	}
 
 	Json toJson(const MediaFile& media)
@@ -515,6 +589,10 @@ namespace gnubase::engine
 		case AutomationTargetType::Instrument:
 			json["parameter"] = target.parameter;
 			break;
+		case AutomationTargetType::Plugin:
+			json["slot"] = target.slot;
+			json["parameter"] = target.parameter;
+			break;
 		case AutomationTargetType::Controller:
 			json["number"] = target.number;
 			json["channel"] = target.channel;
@@ -569,12 +647,13 @@ namespace gnubase::engine
 		return {{"name", project.name}, {"sampleRate", project.sampleRate}, {"tempo", tempo},
 			{"signatures", signatures}, {"autoFades", toJson(project.autoFades)},
 			{"panLaw", panLawName(project.panLaw)}, {"maxVolume", project.maxVolume}, {"busses", busses},
-			{"tracks", tracks}, {"channels", toJsonArray(project.channels)}, {"media", toJsonArray(project.media)},
-			{"clips", toJsonArray(project.clips)}, {"poolFolders", toJsonArray(project.poolFolders)},
-			{"audioEvents", toJsonArray(project.audioEvents)}, {"midiParts", toJsonArray(project.midiParts)},
-			{"markers", toJsonArray(project.markers)}, {"automation", toJsonArray(project.automation)},
-			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
-			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)}};
+			{"tracks", tracks}, {"channels", toJsonArray(project.channels)}, {"slots", toJsonArray(project.slots)},
+			{"media", toJsonArray(project.media)}, {"clips", toJsonArray(project.clips)},
+			{"poolFolders", toJsonArray(project.poolFolders)}, {"audioEvents", toJsonArray(project.audioEvents)},
+			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
+			{"automation", toJsonArray(project.automation)}, {"quantize", midi::toJson(project.quantize)},
+			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
+			{"snap", toJson(project.snap)}};
 	}
 
 	namespace
@@ -696,6 +775,60 @@ namespace gnubase::engine
 			return values;
 		}
 
+		// The values of a slot's parameters from a file. A built-in plugin's are checked like instrument parameters;
+		// the values of other plugins, which this build may not have, are kept as long as they are numbers.
+		std::map<uint32_t, double> slotParametersFromJson(const Json& json, const Slot& slot, const std::string& name)
+		{
+			// A built-in plugin this build has: values as for an instrument. Others, e.g. one of a newer build, keep
+			// theirs.
+			if (const processors::BuiltinInfo* builtin = processors::findBuiltinPlugin(slot.plugin))
+				return instrumentParametersFromJson(json, builtin->id, name);
+			if (!json.is_array())
+				throw std::invalid_argument(name + " parameters must be a list");
+			std::map<uint32_t, double> values;
+			for (const Json& item : json)
+			{
+				if (!item.is_object() || !item.contains("parameter") || !isParameterId(item.at("parameter")) ||
+					!item.contains("value") || !item.at("value").is_number())
+					throw std::invalid_argument(name + " has a parameter that isn't one: " + item.dump());
+				const auto id = item.at("parameter").get<uint32_t>();
+				const std::string valueName = name + " parameter " + std::to_string(id);
+				const auto value = item.at("value").get<double>();
+				if (!std::isfinite(value))
+					throw std::invalid_argument(valueName + " must be a finite number");
+				if (!values.emplace(id, value).second)
+					throw std::invalid_argument(valueName + " is there twice");
+			}
+			return values;
+		}
+
+		Slot slotFromJson(const Json& item)
+		{
+			Slot slot;
+			slot.id = item.at("id").get<ObjectId>();
+			const std::string name = "slot " + std::to_string(slot.id);
+			slot.channel = item.at("channel").get<ObjectId>();
+			slot.plugin = item.at("plugin").get<std::string>();
+			const size_t colon = slot.plugin.find(':');
+			if (colon == std::string::npos || colon == 0 || colon + 1 == slot.plugin.size())
+				throw std::invalid_argument(name + " has a plugin id that isn't \"<format>:<id>\": " + slot.plugin);
+			slot.name = item.value("name", std::string());
+			slot.bypass = item.value("bypass", false);
+			slot.active = item.value("active", true);
+			const processors::BuiltinInfo* builtin = processors::findBuiltinPlugin(slot.plugin);
+			if (builtin != nullptr && builtin->instrument)
+				throw std::invalid_argument(name + ": " + slot.plugin + " is an instrument, not an effect");
+			slot.parameters = slotParametersFromJson(item.value("parameters", Json::array()), slot, name);
+			if (item.contains("state"))
+			{
+				std::optional<std::vector<uint8_t>> state = fromBase64(item.at("state").get<std::string>());
+				if (!state.has_value())
+					throw std::invalid_argument(name + " state isn't base64");
+				slot.state = std::make_shared<const std::vector<uint8_t>>(std::move(*state));
+			}
+			return slot;
+		}
+
 		// An optional whole number from a file, 0 if it is missing.
 		int64_t checkedInteger(const Json& json, const char* key, int64_t maximum, const std::string& name)
 		{
@@ -743,6 +876,9 @@ namespace gnubase::engine
 				fits = project.channels.at(track.channel).format != ChannelFormat::None;
 				minimum = lane.target.type == AutomationTargetType::Volume ? g_minChannelVolume : -1.0;
 				maximum = lane.target.type == AutomationTargetType::Volume ? project.maxVolume : 1.0;
+				break;
+			case AutomationTargetType::Plugin:
+				fits = false; // plugin parameters are automated with #70
 				break;
 			case AutomationTargetType::Instrument:
 				// The instrument's range applies when it plays; the instrument may have changed since.
@@ -881,8 +1017,37 @@ namespace gnubase::engine
 			channel.recordEnable = audio && item.value("recordEnable", false);
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
+			channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none
 			project.channels[id] = std::move(channel);
 		}
+		// Every slot is in the list of its channel, which has audio, once, and no channel lists more than it may.
+		for (const Json& item : json.value("slots", Json::array()))
+		{
+			Slot slot = slotFromJson(item);
+			const auto channel = project.channels.find(slot.channel);
+			if (channel == project.channels.end() || channel->second.format == ChannelFormat::None)
+				throw std::invalid_argument("slot " + std::to_string(slot.id) + " is on no channel with audio");
+			const ObjectId id = slot.id;
+			if (!project.slots.emplace(id, std::move(slot)).second)
+				throw std::invalid_argument("slot " + std::to_string(id) + " is there twice");
+		}
+		size_t listed = 0;
+		for (const auto& [id, channel] : project.channels)
+		{
+			const std::string name = "channel " + std::to_string(id);
+			if (channel.slots.size() > g_maxSlots)
+				throw std::invalid_argument(name + " has more than " + std::to_string(g_maxSlots) + " slots");
+			for (auto slot = channel.slots.begin(); slot != channel.slots.end(); ++slot)
+			{
+				const auto found = project.slots.find(*slot);
+				if (found == project.slots.end() || found->second.channel != id ||
+					std::find(channel.slots.begin(), slot, *slot) != slot)
+					throw std::invalid_argument(name + " lists slot " + std::to_string(*slot) + " that isn't its own");
+			}
+			listed += channel.slots.size();
+		}
+		if (listed != project.slots.size())
+			throw std::invalid_argument("a slot is in no channel's list");
 		for (const Json& item : json.at("media"))
 		{
 			const auto id = item.at("id").get<ObjectId>();
@@ -1007,6 +1172,8 @@ namespace gnubase::engine
 		for (const auto& [id, track] : project.trackById)
 			see(id);
 		for (const auto& [id, channel] : project.channels)
+			see(id);
+		for (const auto& [id, slot] : project.slots)
 			see(id);
 		for (const auto& [id, media] : project.media)
 			see(id);

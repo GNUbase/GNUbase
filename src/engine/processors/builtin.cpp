@@ -274,6 +274,14 @@ namespace gnubase::engine::processors
 		return found != infos.end() ? &*found : nullptr;
 	}
 
+	const BuiltinInfo* findBuiltinPlugin(const std::string& plugin)
+	{
+		const std::string prefix = "builtin:";
+		if (plugin.compare(0, prefix.size(), prefix) != 0)
+			return nullptr;
+		return findBuiltin(plugin.substr(prefix.size()));
+	}
+
 	const ParameterInfo* findParameter(const BuiltinInfo& info, uint32_t id)
 	{
 		const auto found = std::find_if(info.parameters.begin(), info.parameters.end(),

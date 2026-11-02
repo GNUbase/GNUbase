@@ -56,6 +56,9 @@ namespace gnubase::engine::processors
 	// The built-in processor with this id, or nullptr.
 	const BuiltinInfo* findBuiltin(const std::string& id);
 
+	// The built-in processor a plugin id ("builtin:<id>") names, or nullptr. Instruments too.
+	const BuiltinInfo* findBuiltinPlugin(const std::string& plugin);
+
 	// The parameter of a built-in processor with this id, or nullptr.
 	const ParameterInfo* findParameter(const BuiltinInfo& info, uint32_t id);
 
