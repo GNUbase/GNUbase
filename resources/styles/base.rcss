@@ -919,8 +919,18 @@ menuseparator
 	height: 8dp;
 }
 
-/* The main menu bar (docs/features/main-menu.md): the menus' titles in a row, and an item's key on its right. */
-.menubar
+/* An item's arrow to its submenu, on its right: the theme's dropdown arrow, turned to point right. */
+menuitem > .menu-arrow
+{
+	float: right;
+	width: 12dp;
+	height: 8dp;
+	margin: 5dp -2dp 0 16dp;
+	transform: rotate(-90deg);
+}
+
+/* A menu bar (docs/features/main-menu.md): the menus' titles in a row, and an item's key on its right. */
+menubar
 {
 	display: flex;
 	align-items: center;
@@ -929,7 +939,7 @@ menuseparator
 	box-sizing: border-box;
 }
 
-.menubar button
+menubar button
 {
 	min-width: 0;
 	height: 22dp;

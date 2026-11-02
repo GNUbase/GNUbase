@@ -79,14 +79,14 @@
 <body class="docking" focuszone="project">
 	<!-- The main menus (reference manual p. 55, docs/features/main-menu.md): an item with a command attribute runs that
 	     engine or UI command, with the JSON object in its parameters attribute, and shows its key. -->
-	<div id="menu-bar" class="menubar" strip="menuBar">
+	<menubar id="menu-bar" strip="menuBar">
 		<button menu="file-menu">File</button>
 		<button menu="edit-menu">Edit</button>
 		<button menu="media-menu">Media</button>
 		<button menu="project-menu">Project</button>
 		<button menu="transport-menu">Transport</button>
 		<button menu="studio-menu">Studio</button>
-	</div>
+	</menubar>
 	<div id="toolbar" class="toolbar" strip="toolbar">
 		<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
 		<button tool="objectSelection" tool-menu="object-selection-menu" class="icon-only" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></button>

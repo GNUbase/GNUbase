@@ -490,11 +490,13 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         # The edit history (docs/features/edit-history.md): undone steps dimmed, and the separator after the done ones
         (".history tr.undone, .history tr.undone input.text", {"color": c["textMuted"]}),
         (".history .history-separator", {"background-color": c["accent"]}),
-        # The main menu bar (docs/features/main-menu.md): flat menu titles, lit under the mouse, and the items' keys
-        (".menubar", {"background-color": c["surface"]}),
-        (".menubar button", {"decorator": "none", "color": c["text"]}),
-        (".menubar button:hover", {"decorator": skin("menu-item-hover")}),
+        # Menu bars (docs/features/main-menu.md): flat menu titles, lit under the mouse, the items' keys, and the arrows
+        # of items with a submenu
+        ("menubar", {"background-color": c["surface"]}),
+        ("menubar button", {"decorator": "none", "color": c["text"]}),
+        ("menubar button:hover", {"decorator": skin("menu-item-hover")}),
         ("menuitem .menu-keys", {"color": c["textMuted"]}),
+        ("menuitem > .menu-arrow", {"decorator": skin("dropdown-arrow")}),
     ]
 
     lines = ["/* SPDX-License-Identifier: GPL-3.0-or-later */",

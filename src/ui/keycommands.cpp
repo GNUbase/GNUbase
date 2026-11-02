@@ -40,7 +40,7 @@ namespace gnubase::ui
 				{"Escape", KI_ESCAPE}, {"Esc", KI_ESCAPE}, {"Tab", KI_TAB}, {"Backspace", KI_BACK},
 				{"Delete", KI_DELETE}, {"Del", KI_DELETE}, {"Insert", KI_INSERT}, {"Home", KI_HOME}, {"End", KI_END},
 				{"PageUp", KI_PRIOR}, {"PageDown", KI_NEXT}, {"Up", KI_UP}, {"Down", KI_DOWN}, {"Left", KI_LEFT},
-				{"Right", KI_RIGHT}, {"Space", KI_SPACE}, {".", KI_OEM_PERIOD}, {",", KI_OEM_COMMA},
+				{"Right", KI_RIGHT}, {"Space", KI_SPACE}, {"Alt", KI_LMENU}, {".", KI_OEM_PERIOD}, {",", KI_OEM_COMMA},
 				{"-", KI_OEM_MINUS}, {"+", KI_OEM_PLUS}, {"NumEnter", KI_NUMPADENTER}, {"Num*", KI_MULTIPLY},
 				{"Num/", KI_DIVIDE}, {"Num+", KI_ADD}, {"Num-", KI_SUBTRACT}, {"Num.", KI_DECIMAL}};
 			return keys;
@@ -135,6 +135,8 @@ namespace gnubase::ui
 		std::istringstream modifiers(split == std::string::npos ? std::string() : keys.substr(0, split));
 		for (std::string name; std::getline(modifiers, name, '+');)
 			pressed.modifiers |= parseModifier(name, platform);
+		if (pressed.key == KI_LMENU)
+			pressed.modifiers |= KM_ALT; // held while it's pressed, as the keyboard sends it
 		return pressed;
 	}
 
@@ -145,7 +147,7 @@ namespace gnubase::ui
 			{{KM_CTRL, "Ctrl"}, {KM_ALT, mac ? "Opt" : "Alt"}, {KM_SHIFT, "Shift"}, {KM_META, mac ? "Cmd" : "Meta"}}};
 		std::string name;
 		for (const auto& [flag, text] : modifiers)
-			if ((keys.modifiers & flag) != 0)
+			if ((keys.modifiers & flag) != 0 && (flag != KM_ALT || keys.key != KI_LMENU)) // Alt, not Alt+Alt
 			{
 				name += text;
 				name += '+';
