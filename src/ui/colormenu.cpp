@@ -66,7 +66,7 @@ namespace gnubase::ui
 		// The swatches show the colors, which are user data (CLAUDE.md, UI conventions).
 		for (int i = 0; i < m_menu->GetNumChildren(); ++i)
 		{
-			Rml::Element* item = m_menu->GetChild(i);
+			const Rml::Element* item = m_menu->GetChild(i);
 			const auto color = item->GetAttribute<Rml::String>("color", "");
 			if (Rml::Element* swatch = item->GetNumChildren() > 0 ? item->GetChild(0) : nullptr;
 				swatch != nullptr && !color.empty())
@@ -92,7 +92,7 @@ namespace gnubase::ui
 
 	void ColorMenu::ProcessEvent(Rml::Event& event)
 	{
-		Rml::Element* target = event.GetTargetElement();
+		const Rml::Element* target = event.GetTargetElement();
 		if (event.GetCurrentElement() == m_button.get())
 		{
 			fill();
