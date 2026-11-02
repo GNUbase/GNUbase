@@ -72,6 +72,8 @@ namespace gnubase::app
 		// The markers window while it is open, or null.
 		ui::MarkersWindow* markers() { return m_shell.find(m_markersWindow) != nullptr ? m_markers.get() : nullptr; }
 		ui::WindowId markersWindow() const { return m_markersWindow; }
+		// The markers in the project window's event display, null before showProject.
+		ui::MarkerLines* markerLines() { return m_markerLines.get(); }
 		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
 		// window.studioSetup, which the main menu's Studio menu runs. While it is open, this brings it to the front
 		// instead: MCP and Lua can run the command then. Throws std::runtime_error if the document can't be loaded.

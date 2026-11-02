@@ -137,6 +137,10 @@
 	{
 		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
+	listview thead td.sorted
+	{
+		color: #10dff2;
+	}
 	tabset tabs
 	{
 		decorator: svg-ninepatch(tabbar.svg, 6 6 6 6);
@@ -492,6 +496,11 @@
 	.event-display .marker-label.active
 	{
 		color: #f1f4ff;
+	}
+	.event-display .marker-label.selected
+	{
+		color: #090b18;
+		background-color: #e12ad8;
 	}
 	.event-display .range-selection
 	{

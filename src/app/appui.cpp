@@ -464,6 +464,12 @@ namespace gnubase::app
 			m_trackList = std::make_unique<ui::TrackList>(*m_eventDisplay, m_binding, *tracks);
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 		m_markerLines = std::make_unique<ui::MarkerLines>(*m_eventDisplay, m_binding);
+		m_markerLines->onSelect(
+			[this](const std::vector<uint64_t>& selection)
+			{
+				if (ui::MarkersWindow* window = markers(); window != nullptr && window->syncsSelection())
+					window->setSelection(selection);
+			});
 		return *m_eventDisplay;
 	}
 
@@ -491,6 +497,13 @@ namespace gnubase::app
 		}
 		document->Show();
 		m_markers = std::make_unique<ui::MarkersWindow>(m_engine, m_binding, *document);
+		// Sync Selection: the markers window's selection is the project window's.
+		m_markers->onSelect(
+			[this](const std::vector<uint64_t>& selection)
+			{
+				if (m_markerLines != nullptr && m_markers != nullptr && m_markers->syncsSelection())
+					m_markerLines->setSelection(selection);
+			});
 		return m_markers.get();
 	}
 
