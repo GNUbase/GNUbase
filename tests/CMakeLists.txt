@@ -57,6 +57,7 @@ add_executable(gnubase-tests
 	log_tests.cpp
 	mainmenu_tests.cpp
 	marker_tests.cpp
+	markers_ui_tests.cpp
 	mcp_tests.cpp
 	mcpevents_tests.cpp
 	mcptools_tests.cpp
