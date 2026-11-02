@@ -26,8 +26,9 @@ events. Each is one undo step and changes nothing if it fails.
 
 - **Positions.** Distances are project samples (`delta`), like the locators, or ticks (`ticks`), which are exact for
   events on musical tracks: a part moved by a bar in ticks starts on the bar. Blocks of events (duplicate, fill loop)
-  are measured in ticks when every event is on a musical track, otherwise in samples. Nothing moves before the
-  project start: a move or copy there fails, a resize stops at it.
+  are measured in ticks when every event is on a musical track, otherwise in samples; a block with no length in its
+  unit (a frame of a 192 kHz clip in a 48 kHz project) is refused, since its copies would lie on top of it. Nothing
+  moves before the project start: a move or copy there fails, a resize stops at it.
 - **Resizing** stops at the clip's start and end and keeps events at least a sample frame (a tick for parts) long.
   Normal sizing reveals or hides content: a part's start moved later moves its notes and controllers back, so they keep
   their time. Sizing moves contents moves the content with the edge: an audio event's offset, a part's notes. A part's
@@ -88,6 +89,7 @@ submenu `edit.selectAll`, `edit.selectNone`, `edit.invertSelection`, `edit.selec
 `edit.selectFromStartToCursor`, `edit.selectFromCursorToEnd` and `edit.selectUnderCursor` (on every track, not yet only on
 the track list's selected tracks). `edit.repeat` opens the Repeat Events dialog (`resources/ui/repeat-events.rml`,
 reference manual pp. 271–272): a count from 1 to 1000 and Shared Copies, which OK passes to `repeat(count, shared)`.
+The count is edited as the dialog opens, so Mod+K, a number and Enter repeat the selection.
 Copies, duplicates and new parts become the selection. `app::AppUi` binds the reference's keys for them in the project
 window ([key-commands.md](key-commands.md)): Delete and Backspace delete, Mod+D duplicates, Mod+K repeats, Alt+X splits
 at the cursor, Mod and the arrows nudge, and so on.
@@ -108,6 +110,7 @@ delay, a lock and a shared copy icon on events, and moving a selection on severa
   locators with the last copy cut, converting a shared copy to a real one), the select submenu, muted events shown
   greyed out and locked ones kept.
 - `tests/uiapp_tests.cpp` presses the default keys in the app's project window: select all, duplicate, mute, nudge
-  and Backspace; and Mod+K, whose Repeat Events dialog makes three shared copies.
+  and Backspace; and Mod+K, whose Repeat Events dialog makes three shared copies, and real copies from just a number
+  typed and Enter.
 - `tests/lua/events.lua`: a muted part is silent and plays again after undo; duplicating, shared copies, splitting and
   gluing from Lua.

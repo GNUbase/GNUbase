@@ -109,7 +109,8 @@ namespace gnubase::ui
 	// resources/ui/project.rml): a ruler time format menu #ruler-format-menu, which a right click in the ruler opens
 	// too; a horizontal zoom presets menu #zoom-presets-menu, whose Add and Organize items open the dialogs
 	// zoom-preset.rml and zoom-presets.rml next to the document; an auto-scroll toggle button #auto-scroll, with the
-	// state class .suspended while editing suspends it; and an auto-scroll settings menu #auto-scroll-menu.
+	// state class .suspended while editing suspends it; and an auto-scroll settings menu #auto-scroll-menu. Its third
+	// dialog, repeat-events.rml next to the document too, opens with edit.repeat.
 	class EventDisplay final : private Rml::EventListener
 	{
 	public:

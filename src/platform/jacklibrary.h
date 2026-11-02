@@ -78,6 +78,12 @@ namespace gnubase
 		// (#402). On the process thread, where it neither allocates nor locks.
 		Cycle cycle(jack_client_t* client) const noexcept;
 
+		// The cycle that starts at the server's time start (µs) on the host clock, from both clocks read at the same
+		// moment (hostNow, jackNow) and its period in µs. jackd2's start is its filter's estimate, which after an early
+		// wake-up can lie ahead of a client that reads it soon after; a start more than a period ahead or more than a
+		// second ago is a clock gone wrong, which gives hostNow and a period of 0, as does no period (#434).
+		static Cycle toHostClock(HostTime hostNow, jack_time_t jackNow, jack_time_t start, float period) noexcept;
+
 	private:
 		template <typename Function> void load(Function& function, const char* name);
 		template <typename Function> void loadOptional(Function& function, const char* name);

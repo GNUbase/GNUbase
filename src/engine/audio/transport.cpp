@@ -160,7 +160,10 @@ namespace gnubase::engine
 		if (size == 0)
 			return;
 		for (uint32_t i = 0; i < frames; ++i)
+		{
 			m_positions[(start + i) % size] = -1;
+			m_recording[(start + i) % size] = transport.recording ? 1 : 0;
+		}
 		for (size_t s = 0; s < transport.segmentCount; ++s)
 		{
 			const graph::TransportSegment& segment = transport.segments[s];
@@ -176,5 +179,13 @@ namespace gnubase::engine
 		if (frame < 0 || frame >= m_end || frame < m_end - size)
 			return -1;
 		return m_positions[static_cast<size_t>(frame % size)];
+	}
+
+	time::Samples PlayedPositions::recordedAt(int64_t frame) const noexcept
+	{
+		const time::Samples position = at(frame);
+		return position >= 0 && m_recording[static_cast<size_t>(frame % static_cast<int64_t>(m_recording.size()))] != 0
+			? position
+			: -1;
 	}
 }

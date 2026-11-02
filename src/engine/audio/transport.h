@@ -6,6 +6,7 @@
 #include "platform/rt/seqlockpair.h"
 #include "platform/rt/spscqueue.h"
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -17,6 +18,18 @@ namespace gnubase::engine
 		Cursor,     // the project cursor
 		CycleStart, // the left locator
 	};
+
+	// What a recording does to the events of its track that it overlaps (reference manual p. 345), as recording.add
+	// takes it. MIDI recording (#97) adds its own modes next to it.
+	enum class AudioRecordMode : uint8_t
+	{
+		KeepHistory,         // they stay
+		CycleHistoryReplace, // the recording replaces them; every lap of a cycle recording stays
+		Replace,             // each take replaces them and the takes before it
+	};
+
+	// The modes' names, by AudioRecordMode.
+	inline constexpr std::array<const char*, 3> g_audioRecordModes = {"keepHistory", "cycleHistoryReplace", "replace"};
 
 	struct TransportSettings
 	{
@@ -30,6 +43,7 @@ namespace gnubase::engine
 		bool punchIn = false;
 		bool punchOut = false;
 		bool metronome = false;
+		AudioRecordMode audioRecordMode = AudioRecordMode::KeepHistory;
 	};
 
 	// The project cursor, play and stop, recording, and cycle playback. The command thread sends requests; the audio
@@ -122,7 +136,7 @@ namespace gnubase::engine
 	{
 	public:
 		// Command thread: keeps the positions of the last frames frames.
-		explicit PlayedPositions(size_t frames = 0) : m_positions(frames, -1) {}
+		explicit PlayedPositions(size_t frames = 0) : m_positions(frames, -1), m_recording(frames, 0) {}
 
 		// Audio thread: the frames from device frame start on played where transport says.
 		void add(uint64_t start, uint32_t frames, const graph::TransportBlock& transport) noexcept;
@@ -130,9 +144,12 @@ namespace gnubase::engine
 		// Audio thread: where the device frame played, or -1 if the transport stood then, or the frame isn't kept:
 		// added longer ago than the last frames, or not yet.
 		time::Samples at(int64_t frame) const noexcept;
+		// Audio thread: the same, but -1 also if the transport didn't record then.
+		time::Samples recordedAt(int64_t frame) const noexcept;
 
 	private:
 		std::vector<time::Samples> m_positions; // a ring, by device frame
+		std::vector<uint8_t> m_recording;       // the same ring: 1 where the transport recorded
 		int64_t m_end = 0;                      // the device frame after the last one added
 	};
 }
