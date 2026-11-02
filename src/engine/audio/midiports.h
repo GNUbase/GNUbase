@@ -49,7 +49,8 @@ namespace gnubase::engine
 
 		// After a command changed midi.portSettings: the listed ports follow their settings, opening or closing inputs,
 		// without listing the hardware again, and the command emits them as midi.changed. A port that appeared
-		// meanwhile waits for the midi.refresh its backend posted, which reports it. Nothing while unlisted.
+		// meanwhile waits for the midi.refresh its backend posted, which reports it; this never adds ports, so
+		// midi.setPort keeps its port across the change. Nothing while unlisted.
 		void applySettings(CommandContext& context);
 
 		// Audio thread, once per block: the messages that arrived for this block go into allInputs if their port

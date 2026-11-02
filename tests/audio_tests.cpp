@@ -1326,6 +1326,11 @@ TEST_CASE("settings.set and settings.reset on the port settings send the ports w
 	CHECK(waitForEvent(
 		client, "midi.changed", [](const Json& data) { return data.at("ports")[0].at("showAs") == "Keys"; }));
 	CHECK(backend.listings() == listings);
+
+	// A port plugged in around a settings change still reaches the clients, with the midi.refresh its backend posts.
+	backend.addLoopback("Pads");
+	run(client, "settings.set", {{"key", "ui.scale"}, {"value", 2.0}});
+	CHECK(waitForEvent(client, "midi.changed", [](const Json& data) { return data.at("ports").size() == 4; }));
 }
 
 TEST_CASE("port settings changed before the MIDI ports are listed don't list them", "[unit]")

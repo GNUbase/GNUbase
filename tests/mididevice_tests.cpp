@@ -779,7 +779,8 @@ TEST_CASE("a hidden input that becomes visible reaches all MIDI inputs", "[unit]
 	CHECK(ports.refresh()); // lists the hidden input, doesn't open it
 
 	settings.set("midi.portSettings", gnubase::engine::Json::object());
-	gnubase::engine::CommandContext context(gnubase::engine::Json::object());
+	const gnubase::engine::Json parameters = gnubase::engine::Json::object();
+	gnubase::engine::CommandContext context(parameters);
 	ports.applySettings(context); // opens the input for the first time, no further listing
 
 	const auto keys = backend.openOutput("Keys");
