@@ -1162,7 +1162,7 @@ namespace gnubase::engine
 		require(found != names.end(), std::string(input ? "no input port " : "no output port ") + name);
 		changes.erase("input");
 		changes.erase("name");
-		// The engine applies the changed setting (applyPortSettings).
+		// The engine applies the changed setting and sends audio.portsChanged (portSettingsChanged).
 		engine.modifySetting(context, "audio.portSettings",
 			[this, input, &name, &changes](const Json& value)
 			{
@@ -1560,7 +1560,8 @@ namespace gnubase::engine
 				"(name in audio.ports). showAs: the name routing menus show; empty shows the system name. visible: "
 				"whether routing menus offer it; busses on a hidden port keep it. The settings are kept per device "
 				"in the user setting audio.portSettings, so they come back with the device, also after a restart. "
-				"Returns the port as audio.ports lists it, and sends audio.ports as the event audio.portsChanged.",
+				"Returns the port as audio.ports lists it. If that changes the setting, sends audio.ports as the event "
+				"audio.portsChanged, as settings.set and settings.reset on audio.portSettings do.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["input", "name"],
 					"properties": {"input": {"type": "boolean"}, "name": {"type": "string"},
 					"showAs": {"type": "string"}, "visible": {"type": "boolean"}}})"),
@@ -1568,12 +1569,7 @@ namespace gnubase::engine
 					"showAs": {"type": "string"}, "visible": {"type": "boolean"}, "busses": {"type": "array"}},
 					"required": ["name", "showAs", "visible", "busses"]})"),
 				false},
-			[this, &engine](CommandContext& context)
-			{
-				Json port = setPort(engine, context);
-				context.emit("audio.portsChanged", ports());
-				return port;
-			});
+			[this, &engine](CommandContext& context) { return setPort(engine, context); });
 		engine.registerCommand(
 			{"audio.setProcessing", 1,
 				"Multi-processing: threads is how many threads process the graph, the audio thread included (1 to 64; "
@@ -1934,6 +1930,14 @@ namespace gnubase::engine
 			{"startMode", settings.startMode == StartMode::CycleStart ? "cycleStart" : "cursor"},
 			{"returnToStart", settings.returnToStart}, {"punchIn", settings.punchIn}, {"punchOut", settings.punchOut},
 			{"metronome", settings.metronome}};
+	}
+
+	void AudioEngine::portSettingsChanged(CommandContext& context, bool audioPorts, bool midiPorts)
+	{
+		if (audioPorts)
+			context.emit("audio.portsChanged", ports());
+		if (midiPorts)
+			m_midi.applySettings(context);
 	}
 
 	void AudioEngine::setChase(const MidiChase& chase)

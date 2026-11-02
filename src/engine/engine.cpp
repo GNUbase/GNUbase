@@ -131,7 +131,8 @@ namespace gnubase::engine
 		m_project = std::make_unique<ProjectModel>();
 		m_project->registerCommands(*this, *m_jobs);
 		m_settings = std::make_unique<settings::Store>(settings::userFormat(), settingsDirectory);
-		settings::registerCommands(*this, *m_settings, [this] { applySettings(); });
+		settings::registerCommands(*this, *m_settings,
+			[this](CommandContext& context, const std::vector<std::string>& keys) { settingsChanged(context, keys); });
 		m_audio = std::make_unique<AudioEngine>(
 			m_project->snapshots(), *m_settings, std::move(backends), std::move(midiBackends));
 		m_audio->registerCommands(*this);
@@ -182,7 +183,14 @@ namespace gnubase::engine
 		chase.pitchBend = m_settings->get(settings::g_midiChasePitchBend);
 		chase.beyondParts = m_settings->get(settings::g_midiChaseBeyondParts);
 		m_audio->setChase(chase);
-		m_audio->applyPortSettings();
+	}
+
+	void Engine::settingsChanged(CommandContext& context, const std::vector<std::string>& keys)
+	{
+		applySettings();
+		const auto changed = [&keys](std::string_view key)
+		{ return std::find(keys.begin(), keys.end(), key) != keys.end(); };
+		m_audio->portSettingsChanged(context, changed("audio.portSettings"), changed("midi.portSettings"));
 	}
 
 	Json Engine::modifySetting(
@@ -193,8 +201,8 @@ namespace gnubase::engine
 		Json value = m_settings->modify(key, change);
 		if (value != before)
 		{
-			applySettings();
 			context.emit("settings.changed", {{"values", {{std::string(key), value}}}});
+			settingsChanged(context, {std::string(key)});
 		}
 		return value;
 	}
