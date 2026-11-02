@@ -7,13 +7,16 @@
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "engine/processors/builtin.h"
 
 #include <miniz.h>
 #include <pugixml.hpp>
 
 #include <algorithm>
 #include <cctype>
+#include <climits>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <iomanip>
@@ -21,6 +24,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <string>
 #include <system_error>
 #include <tuple>
 #include <utility>
@@ -69,8 +73,30 @@ namespace gnubase::engine
 		// GNUbase's entry until plugin slots are written as devices (#72).
 		bool exportable(const AutomationTarget& target)
 		{
-			return target.type != AutomationTargetType::Instrument && target.type != AutomationTargetType::PanLeft &&
-				target.type != AutomationTargetType::PanRight;
+			return target.type != AutomationTargetType::Instrument && target.type != AutomationTargetType::Plugin &&
+				target.type != AutomationTargetType::PanLeft && target.type != AutomationTargetType::PanRight;
+		}
+
+		// The built-in effect a slot's plugin id names, or nullptr.
+		const processors::BuiltinInfo* builtinPlugin(const std::string& plugin)
+		{
+			const processors::BuiltinInfo* info = processors::findBuiltinPlugin(plugin);
+			return info != nullptr && !info->instrument ? info : nullptr;
+		}
+
+		// A built-in parameter's unit as a DAWproject unit, which RealParameter requires; "linear" for the values that
+		// have none there, such as milliseconds.
+		const char* dawprojectUnit(const std::string& unit)
+		{
+			if (unit == "dB")
+				return "decibel";
+			if (unit == "Hz")
+				return "hertz";
+			if (unit == "s")
+				return "seconds";
+			if (unit == "%")
+				return "percent";
+			return "linear";
 		}
 
 		// DAWproject has only a channel count: the format for it, the widest one for more than 8 channels.
@@ -463,10 +489,53 @@ namespace gnubase::engine
 						volume.append_attribute("min") = 0.0;
 						volume.append_attribute("max") = volumeToGain(m_project.maxVolume);
 						volume.append_attribute("value") = volumeToGain(channel.volume);
+						writeDevices(element, channel);
 					}
 				}
 				for (const ObjectId child : track.children)
 					writeTrack(node, m_project.trackById.at(child));
+			}
+
+			// The built-in plugins of a channel's slots as devices, with the values set on their parameters. Plugins
+			// of other formats stay in GNUbase's entry until their states are written in the formats' own files (#72).
+			void writeDevices(pugi::xml_node channelNode, const Channel& channel) const
+			{
+				pugi::xml_node devices;
+				for (const ObjectId id : channel.slots)
+				{
+					const Slot& slot = m_project.slots.at(id);
+					const processors::BuiltinInfo* info = builtinPlugin(slot.plugin);
+					if (info == nullptr)
+						continue;
+					if (devices.empty())
+						devices = channelNode.prepend_child("Devices"); // the first of a Channel's elements
+					pugi::xml_node device = devices.append_child("BuiltinDevice");
+					device.append_attribute("id") = xmlId("d", slot.id).c_str();
+					device.append_attribute("name") = info->name.c_str();
+					device.append_attribute("deviceID") = slot.plugin.c_str();
+					device.append_attribute("deviceName") = info->name.c_str();
+					device.append_attribute("deviceRole") = "audioFX";
+					device.append_attribute("loaded") = slot.active;
+					pugi::xml_node parameters = device.append_child("Parameters");
+					for (const auto& [parameter, value] : slot.parameters)
+					{
+						const processors::ParameterInfo* found = processors::findParameter(*info, parameter);
+						if (found == nullptr)
+							continue;
+						pugi::xml_node real = parameters.append_child("RealParameter");
+						real.append_attribute("id") = (xmlId("d", slot.id) + "p" + std::to_string(parameter)).c_str();
+						real.append_attribute("name") = found->name.c_str();
+						real.append_attribute("parameterID") = parameter;
+						real.append_attribute("unit") = dawprojectUnit(found->unit);
+						real.append_attribute("min") = found->minimum;
+						real.append_attribute("max") = found->maximum;
+						real.append_attribute("value") = value;
+					}
+					pugi::xml_node enabled = device.append_child("Enabled");
+					enabled.append_attribute("id") = (xmlId("d", slot.id) + "e").c_str();
+					enabled.append_attribute("name") = "On/Off";
+					enabled.append_attribute("value") = !slot.bypass;
+				}
 			}
 
 			// A position or length in the lane's time unit: beats on musical tracks, seconds on linear ones.
@@ -540,6 +609,7 @@ namespace gnubase::engine
 					element.append_attribute("channel") = target.channel;
 					break;
 				case AutomationTargetType::Instrument:
+				case AutomationTargetType::Plugin:
 				case AutomationTargetType::PanLeft:
 				case AutomationTargetType::PanRight:
 					break;
@@ -1051,6 +1121,8 @@ namespace gnubase::engine
 					}
 					channel.mute = channelNode.child("Mute").attribute("value").as_bool(false);
 					channel.solo = channelNode.attribute("solo").as_bool(false);
+					if (type != TrackType::Midi)
+						readDevices(channelNode.child("Devices"), channel);
 					track.channel = channel.id;
 					m_project.channels[channel.id] = channel;
 					m_channels[channelNode.attribute("id").as_string()] = channel.id;
@@ -1062,6 +1134,41 @@ namespace gnubase::engine
 				m_tracks[node.attribute("id").as_string()] = track.id;
 				for (const pugi::xml_node child : node.children("Track"))
 					readTrack(child, track.id);
+			}
+
+			// GNUbase's built-in devices, which another application may have kept, into the channel's slots: their
+			// parameters as far as the plugin has them, within their ranges. Other devices are left out until plugins
+			// of other formats are written as devices (#72).
+			void readDevices(pugi::xml_node devices, Channel& channel)
+			{
+				for (const pugi::xml_node device : devices.children("BuiltinDevice"))
+				{
+					const std::string plugin = device.attribute("deviceID").as_string("");
+					const processors::BuiltinInfo* info = builtinPlugin(plugin);
+					if (info == nullptr || channel.slots.size() >= g_maxSlots)
+						continue;
+					Slot slot;
+					slot.id = m_project.newId();
+					slot.channel = channel.id;
+					slot.plugin = plugin;
+					slot.name = info->name;
+					slot.active = device.attribute("loaded").as_bool(true);
+					slot.bypass = !device.child("Enabled").attribute("value").as_bool(true);
+					for (const pugi::xml_node parameter : device.child("Parameters").children("RealParameter"))
+					{
+						const processors::ParameterInfo* found =
+							processors::findParameter(*info, parameter.attribute("parameterID").as_uint(UINT32_MAX));
+						if (found == nullptr)
+							continue;
+						double value = std::clamp(finiteNumber(parameter.attribute("value"), found->defaultValue),
+							found->minimum, found->maximum);
+						if (found->stepped)
+							value = std::round(value);
+						slot.parameters[found->id] = value;
+					}
+					channel.slots.push_back(slot.id);
+					m_project.slots[slot.id] = std::move(slot);
+				}
 			}
 
 			// Outputs to busses and group channels; other destinations stay on the main output.
@@ -1185,6 +1292,7 @@ namespace gnubase::engine
 						point.value = normalizedToPan(value);
 						break;
 					case AutomationTargetType::Instrument:
+					case AutomationTargetType::Plugin:
 					case AutomationTargetType::Controller:
 					case AutomationTargetType::PitchBend:
 					case AutomationTargetType::ChannelPressure:

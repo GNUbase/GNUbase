@@ -790,6 +790,12 @@ Result:
 - `projectSampleRate`: number, required
 - `running`: boolean, required
 
+#### `audio_updatePlugins`
+
+Engine command `audio.updatePlugins`.
+
+Builds the processing graph again with the plugins of the slots as they are now. The engine runs it on its own when a plugin is ready after it was loaded or activated, failed, or asked to be restarted; a slot's audio passes its plugin unchanged until then. Emits plugin.changed for the slots whose plugin's status changed. Left out of engine.commandLog.
+
 ### autoFades
 
 #### `autoFades_set`
@@ -1498,7 +1504,7 @@ Result:
 
 Engine command `graph.get`. Read-only.
 
-The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes they receive audio and events from, and the order they are processed in.
+The project's audio processing graph: its nodes (busses, then channels in track order, then for each channel with plugin slots a channelSource node with what plays on the channel and a pluginSlot node per slot, which pass the audio on to the channel's node) with the nodes they receive audio and events from, and the order they are processed in. object is the bus, channel or slot id.
 
 ### history
 
@@ -2462,7 +2468,7 @@ Result:
 
 Engine command `parameter.list`. Read-only.
 
-The automatable parameters of a channel: on channels with audio the fader's volume (in dB, up to the project's maxVolume), pan, panLeft and panRight (-1 to 1, see channel.set), and on instrument tracks the parameters of their built-in instrument (see processor.list; plugins come later). Each has its target, as automationLane.add takes it, its name, minimum, maximum, default, unit, whether it is stepped (whole numbers only), options (the names of a stepped parameter's values from the minimum on, if it has any), its static value and text, the value as it is displayed. Automation overrides the static value while it plays. MIDI channels have none: their volume and pan are MIDI controllers (channel.set midiVolume and midiPan).
+The automatable parameters of a channel: on channels with audio the fader's volume (in dB, up to the project's maxVolume), pan, panLeft and panRight (-1 to 1, see channel.set), and on instrument tracks the parameters of their built-in instrument (see processor.list), then those of the built-in plugins in its slots, top to bottom, with targets of type plugin that name the slot. Each has its target, as automationLane.add takes it, its name, minimum, maximum, default, unit, whether it is stepped (whole numbers only), options (the names of a stepped parameter's values from the minimum on, if it has any), its static value and text, the value as it is displayed. Automation overrides the static value while it plays. MIDI channels have none: their volume and pan are MIDI controllers (channel.set midiVolume and midiPan).
 
 Arguments:
 
@@ -2488,6 +2494,94 @@ Arguments:
 Result:
 
 - `parameter`: object, required
+
+### plugin
+
+#### `plugin_get`
+
+Engine command `plugin.get`. Read-only.
+
+One slot. A slot has its id, channel, index (0 is the top), plugin, name, bypass, active, the parameters set on its plugin (see parameter.list) and the status of its plugin in the audio engine: "loading" (being made or activated, while the audio passes it unchanged), "active", "inactive", "failed" (it couldn't be made or activated), "unavailable" (this build has no such plugin) or "noDevice" (no audio device is open). A command reports the status as of the command; plugin.changed announces it when it changes.
+
+Arguments:
+
+- `slot`: integer, required
+
+Result:
+
+- `slot`: object, required
+
+#### `plugin_insert`
+
+Engine command `plugin.insert`.
+
+Puts a plugin into a slot of a channel with audio (not a MIDI channel), at index or else below the others; the slot at the index and those below it move down. A channel has at most 16 slots. The audio passes through the slots from top to bottom before the fader. plugin is a built-in effect, "builtin:<id>" with an id from processor.list that isn't an instrument; plugins of other formats come with the plugin scan. The plugin starts with its parameters at their defaults, active and not bypassed. Emits plugin.added with the slot. Returns the slot. A slot has its id, channel, index (0 is the top), plugin, name, bypass, active, the parameters set on its plugin (see parameter.list) and the status of its plugin in the audio engine: "loading" (being made or activated, while the audio passes it unchanged), "active", "inactive", "failed" (it couldn't be made or activated), "unavailable" (this build has no such plugin) or "noDevice" (no audio device is open). A command reports the status as of the command; plugin.changed announces it when it changes.
+
+Arguments:
+
+- `channel`: integer, required
+- `index`: integer
+- `plugin`: string, required
+
+Result:
+
+- `slot`: object, required
+
+#### `plugin_list`
+
+Engine command `plugin.list`. Read-only.
+
+The slots of a channel with audio, from top to bottom. A slot has its id, channel, index (0 is the top), plugin, name, bypass, active, the parameters set on its plugin (see parameter.list) and the status of its plugin in the audio engine: "loading" (being made or activated, while the audio passes it unchanged), "active", "inactive", "failed" (it couldn't be made or activated), "unavailable" (this build has no such plugin) or "noDevice" (no audio device is open). A command reports the status as of the command; plugin.changed announces it when it changes.
+
+Arguments:
+
+- `channel`: integer, required
+
+Result:
+
+- `slots`: array, required
+
+#### `plugin_move`
+
+Engine command `plugin.move`.
+
+Moves a slot to index on its channel or on another channel with audio (channel); the index counts the slots without the moved one. The plugin keeps its parameters. Returns the slot.
+
+Arguments:
+
+- `channel`: integer
+- `index`: integer, required
+- `slot`: integer, required
+
+Result:
+
+- `slot`: object, required
+
+#### `plugin_remove`
+
+Engine command `plugin.remove`.
+
+Removes a slot and its plugin; the slots below it move up. Emits plugin.removed with the slot's id. Undo puts the plugin back with its parameters.
+
+Arguments:
+
+- `slot`: integer, required
+
+#### `plugin_set`
+
+Engine command `plugin.set`.
+
+Changes a slot: bypass lets the audio pass the plugin unchanged while the plugin keeps processing, so switching it doesn't click; the audio is delayed by the plugin's latency, so bypassing never shifts timing. active false deactivates the plugin, which stays in its slot, and the audio passes it unchanged. Emits plugin.changed with the slot. Returns the slot.
+
+Arguments:
+
+- `active`: boolean
+- `bypass`: boolean
+- `slot`: integer, required
+
+Result:
+
+- `slot`: object, required
 
 ### pluginhost
 
@@ -3566,7 +3660,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://engine.commandLog`: The last 256 commands that ran, oldest first, without queries: what the UI and other clients did. Each with its request id (events name it too), the client that sent it (ui, mcp, lua, app for the command line, engine for the engine's own commands), the command, its parameters, and the error if it failed. Commands the engine ran on its own that changed nothing, such as tries to open a lost audio device again, are left out.
 - `gnubase://engine.commands`: Every command with its documentation, parameters and result.
 - `gnubase://engine.version`: The GNUbase version.
-- `gnubase://graph.get`: The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes they receive audio and events from, and the order they are processed in.
+- `gnubase://graph.get`: The project's audio processing graph: its nodes (busses, then channels in track order, then for each channel with plugin slots a channelSource node with what plays on the channel and a pluginSlot node per slot, which pass the audio on to the channel's node) with the nodes they receive audio and events from, and the order they are processed in. object is the bus, channel or slot id.
 - `gnubase://history.get`: The undo history: every step with its action, time (UTC) and details, the position (steps before it are done, the ones after it can be redone) and the maximum number of steps (0: no limit).
 - `gnubase://job.list`: Every background job since the engine started, such as backups: id, kind, state (running, done, failed or cancelled), progress from 0 to 1, what it is doing, and its result or error once it ended.
 - `gnubase://marker.list`: The markers of a marker track (default: the active one; track 0 if there is none) in timeline order, with their position and end also in the project's samples.

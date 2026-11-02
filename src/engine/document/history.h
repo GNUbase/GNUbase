@@ -14,6 +14,7 @@
 namespace gnubase::engine
 {
 	// One object before and after a change. Without before it was added; without after it was removed.
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	template <typename T> struct ObjectChange
 	{
 		ObjectId id = 0;
@@ -67,6 +68,7 @@ namespace gnubase::engine
 		std::optional<ProjectSettings> settingsAfter;
 		std::vector<ObjectChange<Track>> tracks;
 		std::vector<ObjectChange<Channel>> channels;
+		std::vector<ObjectChange<Slot>> slots;
 		std::vector<ObjectChange<MediaFile>> media;
 		std::vector<ObjectChange<Clip>> clips;
 		std::vector<ObjectChange<PoolFolder>> poolFolders;

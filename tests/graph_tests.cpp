@@ -477,3 +477,44 @@ TEST_CASE("graph.get describes the project's processing graph", "[unit]")
 	CHECK(nodes[2].at("eventInputs") == Json::array());
 	CHECK(result.value.at("order") == Json::array({0, 2, 1}));
 }
+
+TEST_CASE("a channel with plugin slots has a source node and a node per slot before its own", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const Result added = client.call("track.add", {{"type", "audio"}});
+	REQUIRE(added.ok());
+	const Json channel = added.value.at("channel").at("id");
+	const Result group = client.call("track.add", {{"type", "group"}});
+	REQUIRE(group.ok());
+	REQUIRE(client.call("channel.set", {{"channel", channel}, {"output", group.value.at("channel").at("id")}}).ok());
+	const Result first = client.call("plugin.insert", {{"channel", channel}, {"plugin", "builtin:eq"}});
+	const Result second = client.call("plugin.insert", {{"channel", channel}, {"plugin", "builtin:limiter"}});
+	REQUIRE(first.ok());
+	REQUIRE(second.ok());
+
+	const Result result = client.call("graph.get");
+	REQUIRE(result.ok());
+	const Json& nodes = result.value.at("nodes");
+	REQUIRE(nodes.size() == 7); // in, out, the track's channel, the group's, the source, two slots
+	CHECK(nodes[4].at("kind") == "channelSource");
+	CHECK(nodes[4].at("object") == channel);
+	CHECK(nodes[4].at("audioInputs") == Json::array({0})); // the track's input reaches the source
+	CHECK(nodes[5].at("kind") == "pluginSlot");
+	CHECK(nodes[5].at("object") == first.value.at("slot").at("id"));
+	CHECK(nodes[5].at("audioInputs") == Json::array({4}));
+	CHECK(nodes[6].at("object") == second.value.at("slot").at("id"));
+	CHECK(nodes[6].at("audioInputs") == Json::array({5}));
+	CHECK(nodes[2].at("audioInputs") == Json::array({6})); // the fader after the slots
+	CHECK(nodes[3].at("audioInputs") == Json::array({2}));
+	CHECK(result.value.at("order") == Json::array({0, 4, 5, 6, 2, 3, 1}));
+
+	// Channels that send to a channel with slots reach its source node.
+	REQUIRE(
+		client.call("plugin.insert", {{"channel", group.value.at("channel").at("id")}, {"plugin", "builtin:eq"}}).ok());
+	const Json routed = client.call("graph.get").value.at("nodes");
+	REQUIRE(routed.size() == 9);
+	CHECK(routed[7].at("kind") == "channelSource");
+	CHECK(routed[7].at("audioInputs") == Json::array({2}));
+	CHECK(routed[3].at("audioInputs") == Json::array({8}));
+}

@@ -281,19 +281,19 @@ namespace gnubase::engine
 		std::vector<PlayedLane>& lanes = automation->lanes;
 		if (channel.format != ChannelFormat::None)
 		{
-			lanes.push_back({{AutomationTargetType::Volume, 0, 0, 0}, Kind::Fader, ChannelFader::Volume, channel.volume,
-				0.0, volumeGain(maxVolume), {}});
+			lanes.push_back({{AutomationTargetType::Volume, 0, 0, 0, 0}, Kind::Fader, ChannelFader::Volume,
+				channel.volume, 0.0, volumeGain(maxVolume), {}});
 			lanes.push_back(
-				{{AutomationTargetType::Pan, 0, 0, 0}, Kind::Fader, ChannelFader::Pan, channel.pan, -1.0, 1.0, {}});
-			lanes.push_back({{AutomationTargetType::PanLeft, 0, 0, 0}, Kind::Fader, ChannelFader::PanLeft,
+				{{AutomationTargetType::Pan, 0, 0, 0, 0}, Kind::Fader, ChannelFader::Pan, channel.pan, -1.0, 1.0, {}});
+			lanes.push_back({{AutomationTargetType::PanLeft, 0, 0, 0, 0}, Kind::Fader, ChannelFader::PanLeft,
 				channel.panLeft, -1.0, 1.0, {}});
-			lanes.push_back({{AutomationTargetType::PanRight, 0, 0, 0}, Kind::Fader, ChannelFader::PanRight,
+			lanes.push_back({{AutomationTargetType::PanRight, 0, 0, 0, 0}, Kind::Fader, ChannelFader::PanRight,
 				channel.panRight, -1.0, 1.0, {}});
 		}
 		for (const auto& [number, value] :
 			{std::pair{uint8_t{7}, channel.midiVolume}, std::pair{uint8_t{10}, channel.midiPan}})
 			if (value)
-				lanes.push_back({{AutomationTargetType::Controller, 0, number, 0}, Kind::Midi, 0,
+				lanes.push_back({{AutomationTargetType::Controller, 0, number, 0, 0}, Kind::Midi, 0,
 					static_cast<double>(midi::controllerFromMidi1(static_cast<uint8_t>(*value))) / 4294967295.0, 0.0,
 					1.0, {}});
 		if (const processors::BuiltinInfo* info = processors::findBuiltin(channel.instrument))
@@ -301,8 +301,8 @@ namespace gnubase::engine
 			{
 				const auto set = channel.instrumentParameters.find(parameter.id);
 				const double value = set != channel.instrumentParameters.end() ? set->second : parameter.defaultValue;
-				lanes.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0}, Kind::Instrument, parameter.id,
-					value, parameter.minimum, parameter.maximum, {}});
+				lanes.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0, 0}, Kind::Instrument,
+					parameter.id, value, parameter.minimum, parameter.maximum, {}});
 			}
 		const bool midi = channel.type == TrackType::Midi || channel.type == TrackType::Instrument;
 		for (const RenderAutomationLane& lane : channel.automation)
@@ -499,10 +499,10 @@ namespace gnubase::engine
 	}
 
 	ChannelStrip::ChannelStrip(std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source,
-		Panning panning, std::optional<Monitoring> monitoring, bool silent)
+		Panning panning, std::optional<Monitoring> monitoring, bool silent, StripPart part)
 		: m_state(std::move(state)), m_source(std::move(source)), m_panning(panning), m_monitoring(monitoring),
-		  m_silent(silent), m_sourceEvents(graph::g_maxEventsPerBlock), m_faderEvents(graph::g_maxEventsPerBlock),
-		  m_faderOut(graph::g_maxEventsPerBlock)
+		  m_silent(silent), m_part(part), m_sourceEvents(graph::g_maxEventsPerBlock),
+		  m_faderEvents(graph::g_maxEventsPerBlock), m_faderOut(graph::g_maxEventsPerBlock)
 	{
 	}
 
@@ -515,6 +515,12 @@ namespace gnubase::engine
 
 	void ChannelStrip::process(const graph::ProcessContext& context) noexcept
 	{
+		if (m_part == StripPart::Fader)
+		{
+			// The source node played the automation in this block already.
+			fade(context, m_state->faderEvents);
+			return;
+		}
 		m_sourceEvents.clear();
 		m_faderEvents.clear();
 		for (const graph::ProcessEvent& event : context.eventsIn)
@@ -536,14 +542,24 @@ namespace gnubase::engine
 			for (const graph::ProcessEvent& event : m_sourceEvents)
 				context.eventsOut.add(event);
 
-		if (context.channels > 0)
+		if (m_part == StripPart::Source)
 		{
-			m_faderOut.clear();
-			m_state->fader->process(
-				{context.audio, context.channels, context.frames, m_faderEvents, m_faderOut, context.transport},
-				m_panning);
-			if (context.frames > 0)
-				glide(context, m_state->outputGain, m_silent ? 0.0f : 1.0f);
+			m_state->faderEvents.clear();
+			for (const graph::ProcessEvent& event : m_faderEvents)
+				m_state->faderEvents.add(event);
+			return;
 		}
+		fade(context, m_faderEvents);
+	}
+
+	void ChannelStrip::fade(const graph::ProcessContext& context, const graph::EventBuffer& events) noexcept
+	{
+		if (context.channels == 0)
+			return;
+		m_faderOut.clear();
+		m_state->fader->process(
+			{context.audio, context.channels, context.frames, events, m_faderOut, context.transport}, m_panning);
+		if (context.frames > 0)
+			glide(context, m_state->outputGain, m_silent ? 0.0f : 1.0f);
 	}
 }
