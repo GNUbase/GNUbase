@@ -70,6 +70,8 @@ add_library(gnubase-ui STATIC
 	timeformat.h
 	tracklist.cpp
 	tracklist.h
+	transport.cpp
+	transport.h
 	ui.cpp
 	ui.h
 	uisettings.cpp
