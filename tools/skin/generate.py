@@ -475,6 +475,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".status-line .status-field", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
         (".status-line .mismatch", {"color": c["warning"]}),
         ("#lost-device", {"color": c["danger"]}),
+        # The pool's message line (docs/features/pool.md): why a pool command failed stands out
+        (".pool-message.error", {"color": c["danger"]}),
         # The main menu bar (docs/features/main-menu.md): flat menu titles, lit under the mouse, and the items' keys
         (".menubar", {"background-color": c["surface"]}),
         (".menubar button", {"decorator": "none", "color": c["text"]}),

@@ -38,8 +38,11 @@ frame (p. 99). Code only sets the zones' sizes, which come from data.
 A panel (`ui::Panel`) has an id, a title, the docking window and the zone it docks in, and a function that fills the
 element it shows in, wherever that is; what the function returns lives as long as the panel shows there. `add`
 registers panels; the project window has Inspector and Visibility on the left, Editor and Mixer in the lower zone, and
-Media and Meter on the right (pp. 75–98), empty until their tickets fill them, and the edit history on the right
-([edit-history.md](edit-history.md)). `open` shows a panel as its zone's active tab, with the zone shown.
+Media and Meter on the right (pp. 75–98), empty until their tickets fill them, the Pool in the lower zone
+([pool.md](pool.md), `window.pool`, Mod+P) and the edit history on the right ([edit-history.md](edit-history.md)).
+`open` shows a panel as its zone's active tab, with the zone shown. `showing` says whether a panel shows: in a window
+of its own, or as its zone's active tab while the zone shows; what its function returned stays while it doesn't, so a
+panel such as the pool can wait with refreshing until it shows again.
 
 - **Tabs.** A zone's tab group shows its panels' tabs in the user's order. A tab dragged onto another takes its place.
   A right click on the tabs opens the zone's tab menu: Open in Separate Window for the tab clicked (or the active one),
@@ -137,7 +140,8 @@ every zone and strip shown and hidden with the toolbar buttons, the key commands
 `ui.layout` from the engine, and reset to the defaults; splitters dragged in a row and a column, for zones before and
 after them, held at the zones' minimums, and a double click that collapses a zone whose size comes back; tabs dragged
 into a new order, hidden through the tab menu, stepped through with the keys in the zone with the focus, which gets
-the focus frame, and the active tab remembered; a panel moved into a window of its own through the tab menu, with its
+the focus frame, and the active tab remembered; whether a panel shows, behind another tab, in a hidden zone or in a
+window of its own; a panel moved into a window of its own through the tab menu, with its
 contents made there and gone from the zone, docked with the Dock button and by closing its window, which reopens where
 it was; and the complete layout, with zone sizes, tab orders, hidden and active tabs, strips and a panel's window,
 back exactly after a restart. On a test window with sections, the setup pane shows and hides sections in every

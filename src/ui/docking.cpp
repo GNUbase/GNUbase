@@ -434,12 +434,8 @@ namespace gnubase::ui
 		const std::vector<std::string> shown = shownTabs(window, name);
 		if (shown.empty())
 			return;
-		const Json* active = find(m_layout, {"windows", window, "zones", name, "active"});
-		auto it = active != nullptr && active->is_string()
-			? std::find(shown.begin(), shown.end(), active->get<std::string>())
-			: shown.end();
 		const auto count = static_cast<int>(shown.size());
-		const int index = it == shown.end() ? 0 : static_cast<int>(it - shown.begin());
+		const auto index = static_cast<int>(activeTab(shown, window, name));
 		zone(window, name)["active"] = shown[static_cast<size_t>((index + (step % count) + count) % count)];
 		save();
 		apply();
@@ -762,13 +758,31 @@ namespace gnubase::ui
 				}
 			built = shown;
 		}
-		if (shown.empty())
-			return;
-		const Json* active = find(m_layout, {"windows", window, "zones", zoneName, "active"});
+		if (!shown.empty())
+			tabset->SetActiveTab(static_cast<int>(activeTab(shown, window, zoneName)));
+	}
+
+	size_t Docking::activeTab(
+		const std::vector<std::string>& shown, const std::string& window, const std::string& name) const
+	{
+		const Json* active = find(m_layout, {"windows", window, "zones", name, "active"});
 		const auto it = active != nullptr && active->is_string()
 			? std::find(shown.begin(), shown.end(), active->get<std::string>())
 			: shown.end();
-		tabset->SetActiveTab(it == shown.end() ? 0 : static_cast<int>(it - shown.begin()));
+		return it == shown.end() ? 0 : static_cast<size_t>(it - shown.begin());
+	}
+
+	bool Docking::showing(const std::string& id) const
+	{
+		const Panel* info = panel(id);
+		const auto shown = m_shown.find(id);
+		if (info == nullptr || shown == m_shown.end() || shown->second.element == nullptr)
+			return false;
+		if (shown->second.window != 0)
+			return true;
+		const std::vector<std::string> tabs = shownTabs(info->window, info->zone);
+		return visible(info->window, info->zone) && !tabs.empty() &&
+			tabs[activeTab(tabs, info->window, info->zone)] == id;
 	}
 
 	// Closes the windows of panels that are docked again, or opens those of panels that left their zone.
