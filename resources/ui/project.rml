@@ -96,7 +96,7 @@
 		<button tool="mute" class="icon-only" title="Mute"><svg class="icon" src="../icons/tool-mute.svg"/></button>
 		<button tool="zoom" class="icon-only" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
 		<button tool="line" tool-menu="line-menu" class="icon-only" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></button>
-		<button id="play-tool" tool="play" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
+		<button id="play-tool" tool="play" tool-menu="play-menu" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
 		<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
 		<button id="auto-scroll-settings" class="icon-only" menu="auto-scroll-menu" title="Select Auto-Scroll Settings"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 		<button id="zoom-presets" class="icon-only" menu="zoom-presets-menu" title="Horizontal Zoom Presets"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
@@ -318,7 +318,7 @@
 		<menuitem snap-type="eventsGridCursor">Events + Grid + Cursor</menuitem>
 	</menu>
 	<menu id="grid-type-menu"/>
-	<!-- The tools' modes, which a second click on the tool's button opens (reference manual pp. 265, 873) -->
+	<!-- The tools' modes, which a second click on the tool's button opens (reference manual pp. 252, 265, 873) -->
 	<menu id="object-selection-menu">
 		<menuitem sizing="normal">Normal Sizing</menuitem>
 		<menuitem sizing="moveContents">Sizing Moves Contents</menuitem>
@@ -330,6 +330,10 @@
 		<menuitem line-mode="sine">Sine</menuitem>
 		<menuitem line-mode="triangle">Triangle</menuitem>
 		<menuitem line-mode="square">Square</menuitem>
+	</menu>
+	<menu id="play-menu">
+		<menuitem play-mode="play">Play</menuitem>
+		<menuitem play-mode="scrub">Scrub</menuitem>
 	</menu>
 	<menu id="auto-scroll-menu">
 		<menuitem id="page-scroll">Page Scroll</menuitem>

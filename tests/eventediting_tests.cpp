@@ -657,22 +657,47 @@ TEST_CASE("the draw tool draws parts on MIDI tracks, snapped; the line tool wait
 	CHECK(f.audioEvents().size() == 1);
 }
 
-TEST_CASE("the play tool plays from where it presses until it is released", "[unit]")
+TEST_CASE("the play tool auditions the pressed audio track until it is released, or scrubs it", "[unit]")
 {
 	Fixture f;
 	f.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
 	f.call("audio.start");
-	std::vector<std::pair<bool, int64_t>> states; // playing, position
-	const ui::Subscription subscription = f.binding.on("transport.changed", [&states](const engine::Event& event)
-		{ states.emplace_back(event.data.at("playing").get<bool>(), event.data.at("position").get<int64_t>()); });
-	const auto started = [&states]
-	{ return std::find_if(states.begin(), states.end(), [](const auto& state) { return state.first; }); };
+	const auto audio = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
+	std::vector<Json> auditions;
+	const ui::Subscription subscription =
+		f.binding.on("audition.changed", [&auditions](const engine::Event& event) { auditions.push_back(event.data); });
+	const auto modes = [&auditions]
+	{
+		std::vector<std::string> result;
+		for (const Json& audition : auditions)
+			result.push_back(audition.at("mode").get<std::string>());
+		return result;
+	};
 	f.display.setTool(ui::Tool::Play);
+	CHECK(f.display.playMode() == ui::PlayMode::Play);
+	CHECK(f.document.GetElementById("display")->GetAttribute<std::string>("play-mode", "") == "play");
+
+	// A click on the audio lane at 3 seconds auditions its track from there until the release; the transport stays.
+	f.click(300, 10);
+	REQUIRE(f.waitUntil([&modes] { return modes() == std::vector<std::string>{"play", "off"}; }));
+	CHECK(auditions[0].at("track") == audio);
+	CHECK(f.call("transport.get").at("playing") == false);
+	CHECK(f.call("transport.get").at("position") == 0);
+	// On the MIDI lane it does nothing.
 	f.click(300, 60);
-	REQUIRE(f.waitUntil([&states, &started] { return started() != states.end(); }));
-	CHECK(started()->second >= 144000);
-	REQUIRE(f.waitUntil([&f] { return f.call("transport.get").at("playing") == false; }));
+	f.step();
+	CHECK(auditions.size() == 2);
+
+	// Scrubbing: a drag from 2.2 to 2.4 seconds scrubs the track and moves the cursor along.
+	f.display.setPlayMode(ui::PlayMode::Scrub);
+	CHECK(f.document.GetElementById("display")->GetAttribute<std::string>("play-mode", "") == "scrub");
+	f.drag(220, 10, 240, 10);
+	REQUIRE(f.waitUntil([&modes] { return modes().size() >= 4 && modes().back() == "off"; }));
+	CHECK(modes()[2] == "scrub");
+	CHECK(f.call("transport.get").at("position") == 115200);
+	CHECK(f.call("transport.get").at("playing") == false);
 	CHECK(f.parts().size() == 1); // nothing edited
+	CHECK(f.audioEvents().size() == 1);
 }
 
 TEST_CASE("the range selection tool selects ranges, snapped, by dragging and double clicking", "[unit]")
