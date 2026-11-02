@@ -112,11 +112,12 @@ at the cursor, Mod and the arrows nudge, and so on.
   on audio tracks, MIDI parts on MIDI and instrument tracks); otherwise it only moves in time. A selection on
   several tracks moves or copies with an `event.move` or `event.copy` per track in one `history.transaction`, one
   undo step.
-- **The arrow keys** (`edit.selectPrevious`, `edit.selectNext`, `edit.selectAbove`, `edit.selectBelow`) start from
-  the last selected event in time going right, the first going left, and the topmost or bottommost going up or down,
-  and select one event. Up and Down skip tracks without events and take the event under the start of the one they
-  start from, or else the one that starts nearest to it. At the first or last event, or with no event selected,
-  Left and Right do nothing; with no event selected, Up and Down select tracks ([track-list.md](track-list.md)).
+- **The arrow keys** (pp. 218, 253): Left and Right (`edit.selectPrevious`, `edit.selectNext`) select the event
+  before the first selected one or after the last on its track; at the first or last event, or with no event
+  selected, they do nothing. Up and Down always step the track selection (`track.selectPrevious`,
+  `track.selectNext`, [track-list.md](track-list.md)); while an event is selected, they also select the first event
+  on the newly selected track. On a track without events the selected events stay selected, so the next Up or Down
+  goes on selecting events.
 
 Not yet: the info line (#89, which `event.get` feeds), a lock and a shared copy icon on events, and scrolling an event
 that the arrow keys select into view.
@@ -131,14 +132,14 @@ that the arrow keys select into view.
   with drags, shared copies with Alt and Shift, onto another track; drags restricted with Ctrl, across and down, moving
   and copying, and Ctrl and a click still deselecting; the drag delay (a drag released at once is a click, one held
   past it shows and moves); a selection on two tracks moved two tracks down and copied back in one undo step each, and
-  only in time when a track's type doesn't fit; the arrow keys' commands along a track, up, down and past an empty
-  track; resizing at the edges, splitting with Alt, adding
+  only in time when a track's type doesn't fit; the arrow keys' commands along a track and at its ends; resizing at the edges, splitting with Alt, adding
   parts with a double click at a bar and between the locators; the edit commands on the selection (delete, mute,
   lock, nudging, duplicating, moving to the cursor, splitting at the cursor and the locators, gluing, filling the
   locators with the last copy cut, converting a shared copy to a real one), the select submenu, muted events shown
   greyed out and locked ones kept.
 - `tests/uiapp_tests.cpp` presses the default keys in the app's project window: select all, duplicate, mute, nudge
-  and Backspace; the arrow keys selecting parts, and Down selecting the next track with no part selected; and Mod+K,
+  and Backspace; Left and Right selecting parts, Up and Down stepping the tracks and selecting their first parts, also across a track
+  without parts, and only the track with no part selected; and Mod+K,
   whose Repeat Events dialog makes three shared copies, and real copies from just a number typed and Enter.
 - `tests/lua/events.lua`: a muted part is silent and plays again after undo; duplicating, shared copies, splitting and
   gluing from Lua.

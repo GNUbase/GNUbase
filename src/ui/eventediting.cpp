@@ -336,68 +336,46 @@ namespace gnubase::ui
 				{
 					selectWhere([this](const Shown& shown) { return shown.start <= m_cursor && shown.end > m_cursor; });
 				}},
-			{"edit.selectPrevious", [this] { selectNeighbour(-1, 0); }},
-			{"edit.selectNext", [this] { selectNeighbour(1, 0); }},
-			{"edit.selectAbove", [this] { selectNeighbour(0, -1); }},
-			{"edit.selectBelow", [this] { selectNeighbour(0, 1); }},
+			{"edit.selectPrevious", [this] { selectNeighbour(-1); }},
+			{"edit.selectNext", [this] { selectNeighbour(1); }},
 		};
 		m_actions.insert(actions.begin(), actions.end());
 	}
 
-	void EventDisplay::selectNeighbour(int across, int down)
+	void EventDisplay::selectNeighbour(int direction)
 	{
-		// From the last selected event in time going right, the first going left, the topmost going up and the
-		// bottommost going down, the earliest on its lane.
+		// From the last selected event in time going right, the first going left.
 		const auto key = [](const Shown& shown) { return std::make_pair(shown.start, shown.id); };
+		const auto before = [direction, &key](const Shown& a, const Shown& b)
+		{ return direction < 0 ? key(a) < key(b) : key(a) > key(b); };
 		const Shown* from = nullptr;
 		for (const Shown& shown : m_events)
-		{
-			if (!std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
-				continue;
-			bool better = from == nullptr;
-			if (!better && down < 0)
-				better = std::make_pair(shown.lane, key(shown)) < std::make_pair(from->lane, key(*from));
-			else if (!better && down > 0)
-				better = shown.lane > from->lane || (shown.lane == from->lane && key(shown) < key(*from));
-			else if (!better)
-				better = across < 0 ? key(shown) < key(*from) : key(shown) > key(*from);
-			if (better)
+			if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id) &&
+				(from == nullptr || before(shown, *from)))
 				from = &shown;
-		}
 		if (from == nullptr)
 			return;
 		const Shown* to = nullptr;
-		if (across != 0)
-		{
-			for (const Shown& shown : m_events)
-				if (shown.lane == from->lane && (across < 0 ? key(shown) < key(*from) : key(shown) > key(*from)) &&
-					(to == nullptr || (across < 0 ? key(shown) > key(*to) : key(shown) < key(*to))))
-					to = &shown;
-		}
-		else
-		{
-			// On the nearest lane with events: the one under the start, the latest of them, or else the one that
-			// starts nearest to it, the earlier of two.
-			const double at = from->start;
-			const auto under = [at](const Shown& shown) { return shown.start <= at && at < shown.end; };
-			const auto closer = [at, &under](const Shown& a, const Shown& b)
-			{
-				if (under(a) != under(b))
-					return under(a);
-				if (under(a))
-					return a.start > b.start;
-				const double da = std::abs(a.start - at);
-				const double db = std::abs(b.start - at);
-				return da != db ? da < db : a.start < b.start;
-			};
-			for (auto lane = static_cast<int64_t>(from->lane) + down;
-				to == nullptr && lane >= 0 && lane < static_cast<int64_t>(m_laneTracks.size()); lane += down)
-				for (const Shown& shown : m_events)
-					if (static_cast<int64_t>(shown.lane) == lane && (to == nullptr || closer(shown, *to)))
-						to = &shown;
-		}
+		for (const Shown& shown : m_events)
+			if (shown.lane == from->lane && before(shown, *from) && (to == nullptr || before(*to, shown)))
+				to = &shown;
 		if (to != nullptr)
 			select({to->id});
+	}
+
+	void EventDisplay::selectFirstOn(uint64_t track)
+	{
+		const auto lane = std::find(m_laneTracks.begin(), m_laneTracks.end(), track);
+		if (lane == m_laneTracks.end())
+			return;
+		const auto index = static_cast<size_t>(lane - m_laneTracks.begin());
+		const Shown* first = nullptr;
+		for (const Shown& shown : m_events)
+			if (shown.lane == index &&
+				(first == nullptr || std::make_pair(shown.start, shown.id) < std::make_pair(first->start, first->id)))
+				first = &shown;
+		if (first != nullptr)
+			select({first->id});
 	}
 
 	size_t EventDisplay::laneAt(double y) const

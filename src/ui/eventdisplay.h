@@ -186,6 +186,9 @@ namespace gnubase::ui
 		// the locators when the click is between them; one below the tracks adds a MIDI track.
 		const std::vector<uint64_t>& selection() const { return m_selection; }
 		void select(std::vector<uint64_t> events);
+		// Selects the first event on the track's lane, by start; with none there or the track not shown, the
+		// selection stays (Up and Down while an event is selected, reference manual p. 218, ui/tracklist.h).
+		void selectFirstOn(uint64_t track);
 		// Sizing moves contents instead of normal sizing when resizing with the mouse (reference manual p. 265).
 		void setSizingMovesContents(bool moves);
 		bool sizingMovesContents() const { return m_sizingMovesContents; }
@@ -231,7 +234,7 @@ namespace gnubase::ui
 		// edit.nudgeRight, edit.nudgeStartLeft, edit.nudgeStartRight, edit.nudgeEndLeft, edit.nudgeEndRight,
 		// edit.moveStartToCursor, edit.moveEndToCursor, edit.selectAll, edit.selectNone, edit.invertSelection,
 		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd, edit.selectUnderCursor, and the
-		// arrow keys' edit.selectPrevious, edit.selectNext, edit.selectAbove and edit.selectBelow; and
+		// Left and Right's edit.selectPrevious and edit.selectNext; and
 		// edit.locatorsToSelection sets the locators around the selected events.
 		// edit.snap (snap on or off) and edit.snapPointToCursor (the selected audio events' snap points); and the
 		// tools: tool.objectSelection, tool.rangeSelection, tool.draw, tool.erase, tool.split, tool.glue, tool.mute,
@@ -365,9 +368,8 @@ namespace gnubase::ui
 		// is musical and every selected event is on a musical track, else samples. Also in seconds.
 		std::pair<engine::Json, double> shiftTo(const time::Position& to, double from) const;
 		std::pair<engine::Json, double> moveShift(double dx) const; // a drag of the selection, dx dp across
-		// The arrow keys (reference manual p. 253): the event before (-1) or after (1) the selected one on its lane, or
-		// down lanes away on the nearest lane above (-1) or below (1) with events, the one nearest in time.
-		void selectNeighbour(int across, int down);
+		// Left and Right (reference manual p. 253): the event before (-1) or after (1) the selected ones on the lane.
+		void selectNeighbour(int direction);
 		// Adds a MIDI part on the lane from start to end, ticks, and selects it.
 		void addPart(size_t lane, time::Ticks start, time::Ticks end);
 		// The lane at y dp down the event lanes, if there is one there.

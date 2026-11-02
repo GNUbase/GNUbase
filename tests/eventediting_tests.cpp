@@ -899,46 +899,30 @@ TEST_CASE("a selection on several tracks moves and copies onto other tracks of t
 	CHECK(undo() == before + 3);
 }
 
-TEST_CASE("the arrow keys' commands select the event before or after, or on the track above or below", "[unit]")
+TEST_CASE("the arrow keys' commands select the event before or after on its track", "[unit]")
 {
 	Fixture f;
 	const Json midi = f.parts()[0].at("track");
-	const auto addPart = [&f](const Json& track, int64_t position)
-	{
-		return f.call("midiPart.add", {{"track", track}, {"position", position}, {"length", 2 * g_quarter}})
+	const uint64_t later =
+		f.call("midiPart.add", {{"track", midi}, {"position", 8 * g_quarter}, {"length", 2 * g_quarter}})
 			.at("part")
 			.at("id")
 			.get<uint64_t>();
-	};
-	const uint64_t later = addPart(midi, 8 * g_quarter); // 4 to 5 seconds
-	f.call("track.add", {{"type", "audio"}});            // lane 2, empty
-	const Json lower = f.call("track.add", {{"type", "midi"}}).at("track");
-	const uint64_t below = addPart(lower.at("id"), 7 * g_quarter); // 3.5 to 4.5 seconds, lane 3
-	REQUIRE(f.waitUntil([&f] { return f.lanes("events").size() == 4 && !f.lanes("events")[3].events.empty(); }));
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[1].events.size() == 2; }));
 	using Ids = std::vector<uint64_t>;
 
 	// Without a selection, nothing.
 	f.run("edit.selectNext");
 	CHECK(f.display.selection().empty());
-	// Along the track, and no further than its last event.
+	// Along the track, and no further than its ends.
 	f.display.select({f.part});
 	f.run("edit.selectNext");
 	CHECK(f.display.selection() == Ids{later});
+	CHECK(f.document.GetElementById("display")->GetAttribute<std::string>("selection", "") == std::to_string(later));
 	f.run("edit.selectNext");
 	CHECK(f.display.selection() == Ids{later});
 	f.run("edit.selectPrevious");
 	CHECK(f.display.selection() == Ids{f.part});
-	// Up: the audio event, the one nearest the part's start; no track above it.
-	f.run("edit.selectAbove");
-	CHECK(f.display.selection() == Ids{f.event});
-	f.run("edit.selectAbove");
-	CHECK(f.display.selection() == Ids{f.event});
-	// Down: the part under the audio event's start.
-	f.run("edit.selectBelow");
+	f.run("edit.selectPrevious");
 	CHECK(f.display.selection() == Ids{f.part});
-	// Down from the later part, past the empty track, to the part there.
-	f.display.select({later});
-	f.run("edit.selectBelow");
-	CHECK(f.display.selection() == Ids{below});
-	CHECK(f.document.GetElementById("display")->GetAttribute<std::string>("selection", "") == std::to_string(below));
 }
