@@ -9,10 +9,12 @@
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementTabSet.h>
 #include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/Property.h>
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <iterator>
 #include <stdexcept>
 #include <utility>
@@ -24,9 +26,13 @@ namespace gnubase::ui
 		using engine::Json;
 
 		// The events a docking window's document gets, all but focus as they bubble up.
-		constexpr std::array<Rml::EventId, 7> g_events = {Rml::EventId::Change, Rml::EventId::Click,
-			Rml::EventId::Dblclick, Rml::EventId::Dragend, Rml::EventId::Dragdrop, Rml::EventId::Mousedown,
-			Rml::EventId::Tabchange};
+		constexpr std::array<Rml::EventId, 8> g_events = {Rml::EventId::Change, Rml::EventId::Click,
+			Rml::EventId::Dblclick, Rml::EventId::Dragend, Rml::EventId::Dragdrop, Rml::EventId::Keydown,
+			Rml::EventId::Mousedown, Rml::EventId::Tabchange};
+
+		// The order in which Tab activates the zones (p. 100): the project zone, the Channel zone, then the left, lower
+		// and right zones.
+		constexpr std::array<const char*, 5> g_zoneOrder = {"main", "channel", "left", "lower", "right"};
 
 		// A panel in a window of its own opens this big, centred on the primary monitor, until the user moves it.
 		constexpr Size g_panelWindowSize{800, 500};
@@ -37,6 +43,24 @@ namespace gnubase::ui
 			while (element != nullptr && !element->HasAttribute(attribute))
 				element = element->GetParentNode();
 			return element;
+		}
+
+		// Whether Tab belongs to the element, as RmlUi or the widget handles it, rather than to the zones: a text
+		// field or a select box, where it moves between controls (#60), and an open menu, which keeps its keys.
+		bool keepsTab(const Rml::Element& element)
+		{
+			const Rml::String& tag = element.GetTagName();
+			if (tag == "textarea" || tag == "select")
+				return true;
+			if (tag == "input")
+			{
+				const auto type = element.GetAttribute<Rml::String>("type", "text");
+				return type != "checkbox" && type != "radio" && type != "range" && type != "button" && type != "submit";
+			}
+			for (const Rml::Element* above = &element; above != nullptr; above = above->GetParentNode())
+				if (above->GetTagName() == "menu")
+					return true;
+			return false;
 		}
 
 		std::string attribute(const Rml::Element& element, const char* name)
@@ -838,6 +862,35 @@ namespace gnubase::ui
 		}
 	}
 
+	bool Docking::focusZone(Rml::Element& from, int step)
+	{
+		Rml::ElementDocument* document = from.GetOwnerDocument();
+		if (document == nullptr)
+			return false;
+		const auto rank = [](const Rml::Element* zone)
+		{
+			const std::string name = attribute(*zone, "zone");
+			return std::find(g_zoneOrder.begin(), g_zoneOrder.end(), name) - g_zoneOrder.begin();
+		};
+		std::vector<Rml::Element*> zones = elements(*document, "[zone]");
+		zones.erase(std::remove_if(zones.begin(), zones.end(),
+						[&rank](const Rml::Element* zone)
+						{
+							return zone->IsClassSet("hidden") ||
+								rank(zone) == static_cast<std::ptrdiff_t>(g_zoneOrder.size());
+						}),
+			zones.end());
+		if (zones.empty())
+			return false;
+		std::sort(zones.begin(), zones.end(),
+			[&rank](const Rml::Element* a, const Rml::Element* b) { return rank(a) < rank(b); });
+		// Outside the zones, e.g. on the toolbar, which belongs to the focus zone project, as in the project zone.
+		const auto at = std::find(zones.begin(), zones.end(), closestWith(&from, "zone"));
+		const auto count = static_cast<std::ptrdiff_t>(zones.size());
+		const std::ptrdiff_t index = at == zones.end() ? 0 : at - zones.begin();
+		return zones[static_cast<size_t>((((index + step) % count) + count) % count)]->Focus(true);
+	}
+
 	void Docking::later(std::function<void()> change)
 	{
 		m_shell.post(
@@ -932,6 +985,14 @@ namespace gnubase::ui
 					{ moveSection(window, set, id, before); });
 			break;
 		}
+		case Rml::EventId::Keydown:
+			// Tab and Shift+Tab move between the zones, before the document moves between its controls.
+			if (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_TAB &&
+				!event.GetParameter("ctrl_key", false) && !event.GetParameter("alt_key", false) &&
+				!event.GetParameter("meta_key", false) && !keepsTab(*target) &&
+				focusZone(*target, event.GetParameter("shift_key", false) ? -1 : 1))
+				event.StopPropagation();
+			break;
 		case Rml::EventId::Tabchange:
 		{
 			const Rml::Element* area = closestWith(target, "zone");
