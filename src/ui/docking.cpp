@@ -45,15 +45,22 @@ namespace gnubase::ui
 			return element;
 		}
 
-		// Whether the element takes typed text, so that Tab moves on from it as RmlUi does (#60).
-		bool textField(const Rml::Element& element)
+		// Whether Tab belongs to the element, as RmlUi or the widget handles it, rather than to the zones: a text
+		// field or a select box, where it moves between controls (#60), and an open menu, which keeps its keys.
+		bool keepsTab(const Rml::Element& element)
 		{
-			if (element.GetTagName() == "textarea")
+			const Rml::String& tag = element.GetTagName();
+			if (tag == "textarea" || tag == "select")
 				return true;
-			if (element.GetTagName() != "input")
-				return false;
-			const auto type = element.GetAttribute<Rml::String>("type", "text");
-			return type != "checkbox" && type != "radio" && type != "range" && type != "button" && type != "submit";
+			if (tag == "input")
+			{
+				const auto type = element.GetAttribute<Rml::String>("type", "text");
+				return type != "checkbox" && type != "radio" && type != "range" && type != "button" && type != "submit";
+			}
+			for (const Rml::Element* above = &element; above != nullptr; above = above->GetParentNode())
+				if (above->GetTagName() == "menu")
+					return true;
+			return false;
 		}
 
 		std::string attribute(const Rml::Element& element, const char* name)
@@ -968,7 +975,7 @@ namespace gnubase::ui
 			// Tab and Shift+Tab move between the zones, before the document moves between its controls.
 			if (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_TAB &&
 				!event.GetParameter("ctrl_key", false) && !event.GetParameter("alt_key", false) &&
-				!event.GetParameter("meta_key", false) && !textField(*target) &&
+				!event.GetParameter("meta_key", false) && !keepsTab(*target) &&
 				focusZone(*target, event.GetParameter("shift_key", false) ? -1 : 1))
 				event.StopPropagation();
 			break;

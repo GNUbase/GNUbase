@@ -29,7 +29,8 @@ it up in `app::AppUi`.
 - **Elements first.** RmlUi gets every key first, at the focused element, from where it bubbles up. An element that
   uses a key stops its propagation: a text field keeps the keys typed into it, a focused button is clicked by Space
   and Enter, a focused knob, fader or slider turns with the arrow keys, menus and dialogs keep their keys, Tab moves
-  the focus. A key command runs only for a key that no element
+  the focus: between the zones of a docking window ([docking.md](docking.md)), and between controls in text fields
+  and dialogs. A key command runs only for a key that no element
   used: where `Rml::Context::ProcessKeyDown` says so, `SdlWindowSystem` passes the key on with its input event, and
   the shell hands it to its handler (`Shell::onUnusedKey`, `KeyCommands::press`). `ui::Automation::key`, and so MCP's
   `ui_key` and the UI tests, does the same. Widgets that act on keys must stop them, or the key commands run too.

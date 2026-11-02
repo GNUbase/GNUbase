@@ -127,8 +127,10 @@ next shown zone of the docking window and Shift+Tab the previous one, around the
 project zone, the Channel zone once it exists, then the left, lower and right zones. From outside the zones, such as
 the toolbar, Tab goes on as from the project zone. The docking system takes the key from the document's keydown before
 RmlUi does and focuses the zone's element, so the zone gets `.focused` and its keys
-([key-commands.md](key-commands.md)) work there. Tab isn't a key command and can't be bound to another key. In a text
-field Tab moves between controls as RmlUi does (#60), and dialogs, which are documents of their own, keep it too.
+([key-commands.md](key-commands.md)) work there; a control in the zone, such as a list view, takes its own keys once
+it is clicked. Tab isn't a key command and can't be bound to another key. In a text field or a select box Tab moves
+between controls as RmlUi does (#60), an open menu keeps it, and so do dialogs, which are modal documents of their own,
+and a panel in a window of its own, whose document has no zones. Ctrl+Tab, Alt+Tab and Cmd+Tab aren't taken.
 
 ## Not yet
 
@@ -146,8 +148,8 @@ every zone and strip shown and hidden with the toolbar buttons, the key commands
 after them, held at the zones' minimums, and a double click that collapses a zone whose size comes back; tabs dragged
 into a new order, hidden through the tab menu, stepped through with the keys in the zone with the focus, which gets
 the focus frame, and the active tab remembered; Tab and Shift+Tab through the shown zones in the reference's order,
-around the ends and past hidden zones, with a zone's keys working in the zone they reach, and Tab in a text field
-left to RmlUi; a panel moved into a window of its own through the tab menu, with its
+around the ends and past hidden zones, with a zone's keys working in the zone they reach, and Tab in a text field,
+Ctrl+Tab and Tab in an open menu left alone; a panel moved into a window of its own through the tab menu, with its
 contents made there and gone from the zone, docked with the Dock button and by closing its window, which reopens where
 it was; and the complete layout, with zone sizes, tab orders, hidden and active tabs, strips and a panel's window,
 back exactly after a restart. On a test window with sections, the setup pane shows and hides sections in every

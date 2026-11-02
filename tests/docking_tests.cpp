@@ -349,7 +349,20 @@ TEST_CASE("Tab and Shift+Tab move the keyboard focus through the zones", "[ui]")
 	field->SetAttribute("type", "text");
 	REQUIRE(field->Focus());
 	app.ui().key(std::nullopt, "Tab");
-	CHECK(context.GetFocusElement() != document->GetElementById("main-zone"));
+	CHECK(!context.GetFocusElement()->HasAttribute("zone"));
+
+	// Ctrl+Tab isn't the zones' key.
+	app.ui().click(std::nullopt, at("#event-display"), ui::MouseButton::Left, 1, {});
+	app.ui().key(std::nullopt, "Ctrl+Tab");
+	CHECK(!context.GetFocusElement()->HasAttribute("zone"));
+
+	// An open menu keeps its keys.
+	app.ui().click(std::nullopt, at("button[menu=edit-menu]"), ui::MouseButton::Left, 1, {});
+	REQUIRE(has(element(app, "#edit-menu"), "open"));
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(has(element(app, "#edit-menu"), "open"));
+	CHECK(!context.GetFocusElement()->HasAttribute("zone"));
+	app.ui().key(std::nullopt, "Escape");
 }
 
 TEST_CASE("a panel moves between its zone and a window of its own", "[ui]")
