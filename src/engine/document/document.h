@@ -423,7 +423,6 @@ namespace gnubase::engine
 		std::map<ObjectId, AutomationPoint> points;
 	};
 
-	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
 	struct ProjectColor
 	{
@@ -437,6 +436,7 @@ namespace gnubase::engine
 	// Whether text is a color as "#rrggbb".
 	bool isColor(const std::string& text);
 
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct Project
 	{
 		std::string name = "Untitled";
