@@ -122,6 +122,15 @@ namespace gnubase::engine::settings
 					"Folder tracks give their color to the tracks inside them: when the folder's color changes and "
 					"when tracks are added or moved into it.",
 					Json{{"type", "boolean"}}, false},
+				{"editing.autoTrackColor",
+					"The color new tracks get when none is given (reference manual p. 1621): default (the default "
+					"color), previous (the color of the track above), previousPlusOne (the color after that one in "
+					"the project's color set, or its first color), lastApplied (the color last given to events or "
+					"parts) or random (a color of the set). With editing.applyFolderColor, a folder's color wins "
+					"inside it.",
+					Json{{"type", "string"},
+						{"enum", {"default", "previous", "previousPlusOne", "lastApplied", "random"}}},
+					"default"},
 				{"midi.chaseBeyondParts",
 					"Chases controller events from the whole track; off, only from the MIDI parts under the "
 					"position, so none outside parts.",

@@ -45,7 +45,7 @@ namespace gnubase::engine
 	};
 
 	// The parts of a project that are not objects with ids, or keep their order: name, sample rate, tempo, time
-	// signatures, auto fades, busses, the top-level tracks and the active marker track.
+	// signatures, auto fades, the color set, busses, the top-level tracks and the active marker track.
 	struct ProjectSettings
 	{
 		std::string name;
@@ -55,6 +55,7 @@ namespace gnubase::engine
 		AutoFades autoFades;
 		PanLaw panLaw = PanLaw::Minus3;
 		double maxVolume = 6.0;
+		std::vector<ProjectColor> colors;
 		std::vector<Bus> busses;
 		std::vector<ObjectId> tracks;
 		ObjectId activeMarkerTrack = 0;

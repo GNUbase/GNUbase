@@ -24,6 +24,7 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
+#include <random>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -204,10 +205,7 @@ namespace gnubase::engine
 			if (!parameters.contains("color") || parameters.at("color").is_null())
 				return parameters.contains("color") ? std::string() : fallback;
 			const std::string value = parameters.at("color").get<std::string>();
-			const bool valid = value.size() == 7 && value[0] == '#' &&
-				std::all_of(value.begin() + 1, value.end(),
-					[](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; });
-			require(valid, "color must be #rrggbb");
+			require(isColor(value), "color must be #rrggbb");
 			return value;
 		}
 
@@ -314,6 +312,42 @@ namespace gnubase::engine
 				!context.call("settings.get", {{"key", "editing.applyFolderColor"}}).at("value").get<bool>())
 				return {};
 			return project.trackById.at(folder).color;
+		}
+
+		// The color editing.autoTrackColor gives a track added at index among the siblings in parent (reference
+		// manual p. 1621): none (default), the color of the track above it (previous), the color after that one in
+		// the project's color set (previousPlusOne), the color last given to events or parts (lastApplied), or a
+		// random color of the set (random).
+		std::string autoTrackColor(const Project& project, ObjectId parent, size_t index, CommandContext& context)
+		{
+			const std::string mode =
+				context.call("settings.get", {{"key", "editing.autoTrackColor"}}).at("value").get<std::string>();
+			const std::vector<ProjectColor>& colors = project.colors;
+			if (mode == "lastApplied")
+				return project.lastAppliedColor;
+			if (mode == "random")
+			{
+				static std::mt19937 random{std::random_device{}()}; // only the command thread adds tracks
+				return colors[std::uniform_int_distribution<size_t>(0, colors.size() - 1)(random)].color;
+			}
+			if (mode != "previous" && mode != "previousPlusOne")
+				return {};
+			// The track above: the one before it among its siblings, or the last track inside that one if it is a
+			// folder, or else the folder it is in.
+			const std::vector<ObjectId>& list = parent == 0 ? project.tracks : project.trackById.at(parent).children;
+			ObjectId above = parent;
+			if (index > 0)
+			{
+				above = list[index - 1];
+				while (!project.trackById.at(above).children.empty())
+					above = project.trackById.at(above).children.back();
+			}
+			const std::string previous = above == 0 ? std::string() : project.trackById.at(above).color;
+			if (mode == "previous")
+				return previous;
+			const auto found = std::find_if(colors.begin(), colors.end(),
+				[&previous](const ProjectColor& color) { return color.color == previous; });
+			return found == colors.end() || found + 1 == colors.end() ? colors.front().color : (found + 1)->color;
 		}
 
 		// Gives a folder color to the tracks inside root, and to root itself with paintRoot.
@@ -878,7 +912,8 @@ namespace gnubase::engine
 			track.id = project.newId();
 			track.type = type;
 			track.name = parameters.value("name", defaultTrackName(project, type));
-			track.color = color(parameters, {});
+			track.color =
+				parameters.contains("color") ? color(parameters, {}) : autoTrackColor(project, parent, index, context);
 			track.timeBase = timeBaseFromName(parameters.value("timeBase", "musical"));
 			track.parent = parent;
 			if (type == TrackType::Ruler)
@@ -911,8 +946,10 @@ namespace gnubase::engine
 				channel = project.channels.at(channel->id);
 			}
 
-			if (parent != 0 && !parameters.contains("color"))
-				project.trackById.at(track.id).color = folderColor(project, parent, context);
+			if (const std::string inherited =
+					parameters.contains("color") ? std::string() : folderColor(project, parent, context);
+				!inherited.empty())
+				project.trackById.at(track.id).color = inherited;
 
 			Json result = {{"track", toJson(project.trackById.at(track.id))},
 				{"channel", channel ? toJson(*channel) : Json(nullptr)}};
@@ -2103,11 +2140,11 @@ namespace gnubase::engine
 		}
 
 		// What project.changed announces.
-		Json projectSettingsJson(
-			const std::string& name, double sampleRate, const AutoFades& autoFades, PanLaw panLaw, double maxVolume)
+		template <typename Settings> Json projectSettingsJson(const Settings& settings)
 		{
-			return {{"name", name}, {"sampleRate", sampleRate}, {"autoFades", toJson(autoFades)},
-				{"panLaw", panLawName(panLaw)}, {"maxVolume", maxVolume}};
+			return {{"name", settings.name}, {"sampleRate", settings.sampleRate},
+				{"autoFades", toJson(settings.autoFades)}, {"panLaw", panLawName(settings.panLaw)},
+				{"maxVolume", settings.maxVolume}, {"colors", toJson(settings.colors)}};
 		}
 
 		Json setProject(Project& project, CommandContext& context)
@@ -2147,6 +2184,13 @@ namespace gnubase::engine
 			if (parameters.contains("panLaw"))
 				project.panLaw = panLawFromName(parameters.at("panLaw").get<std::string>()).value_or(project.panLaw);
 			project.maxVolume = maxVolume;
+			if (parameters.contains("colors"))
+			{
+				require(!parameters.at("colors").empty(), "a color set has at least one color");
+				for (const Json& item : parameters.at("colors"))
+					require(isColor(item.at("color").get<std::string>()), "colors must be #rrggbb");
+				project.colors = colorsFromJson(parameters.at("colors"));
+			}
 			// Faders above a lower maximum come down to it.
 			for (auto& [id, channel] : project.channels)
 				if (channel.volume > maxVolume)
@@ -2156,9 +2200,7 @@ namespace gnubase::engine
 				}
 			if (sampleRate != project.sampleRate)
 				changeSampleRate(project, sampleRate, context);
-			context.emit("project.changed",
-				projectSettingsJson(
-					project.name, project.sampleRate, project.autoFades, project.panLaw, project.maxVolume));
+			context.emit("project.changed", projectSettingsJson(project));
 			return Json::object();
 		}
 	}
@@ -2299,10 +2341,8 @@ namespace gnubase::engine
 				if (current.name != previous.name || current.sampleRate != previous.sampleRate ||
 					current.tempo != previous.tempo || current.signatures != previous.signatures ||
 					!(current.autoFades == previous.autoFades) || current.panLaw != previous.panLaw ||
-					current.maxVolume != previous.maxVolume)
-					context.emit("project.changed",
-						projectSettingsJson(
-							current.name, current.sampleRate, current.autoFades, current.panLaw, current.maxVolume));
+					current.maxVolume != previous.maxVolume || !(current.colors == previous.colors))
+					context.emit("project.changed", projectSettingsJson(current));
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
 				activated = current.activeMarkerTrack != previous.activeMarkerTrack;
@@ -2697,14 +2737,27 @@ namespace gnubase::engine
 				"faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it. tempo (1 to 999 BPM) "
 				"and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} are the project's first tempo and "
 				"time signature, as the transport bar sets them; later changes stay, and musical positions keep their "
-				"ticks.",
+				"ticks. colors is the project's color set, which track and event colors are picked from: at least "
+				"one {name, color (#rrggbb)}, in order.",
 				objectSchema({{"name", stringSchema}, {"sampleRate", numberSchema},
 					{"panLaw", enumSchema(panLawNames())}, {"maxVolume", numberSchema}, {"tempo", numberSchema},
+					{"colors",
+						{{"type", "array"},
+							{"items",
+								objectSchema({{"name", stringSchema}, {"color", stringSchema}}, {"name", "color"})}}},
 					{"signature",
 						objectSchema({{"numerator", {{"type", "integer"}}}, {"denominator", {{"type", "integer"}}}},
 							{"numerator", "denominator"})}}),
 				noResult, false},
 			setProject);
+		add(engine,
+			{"project.factoryColors", 1,
+				"The factory color set, which new projects have: each color's name and color (#rrggbb). The project "
+				"colors setup dialog resets colors to it.",
+				objectSchema(Json::object()),
+				{{"type", "object"}, {"properties", {{"colors", {{"type", "array"}}}}}, {"required", {"colors"}}},
+				true},
+			[](Project&, CommandContext&) { return Json{{"colors", toJson(factoryColors())}}; });
 
 		const Json directions = enumSchema({"input", "output"});
 		const Json portNames = arraySchema(stringSchema);
@@ -3231,7 +3284,7 @@ namespace gnubase::engine
 				"Where the project is: its project file (set by project.save and project.load), the folder of that "
 				"file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. "
 				"All null for a project that has no file yet.",
-				objectSchema({}),
+				objectSchema(Json::object()),
 				objectSchema({{"file", nullableString}, {"folder", nullableString}, {"mediaFolder", nullableString}},
 					{"file", "folder", "mediaFolder"}),
 				true},
@@ -3277,7 +3330,7 @@ namespace gnubase::engine
 				"starting a project. project.load with revision loads only if it hasn't changed. modified says "
 				"whether the project changed since it was last saved, loaded or started; undoing back to the saved "
 				"state still counts as a change.",
-				objectSchema({}),
+				objectSchema(Json::object()),
 				objectSchema({{"revision", integerSchema}, {"modified", booleanSchema}}, {"revision", "modified"}),
 				true},
 			[this](CommandContext&)

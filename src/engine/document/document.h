@@ -246,6 +246,7 @@ namespace gnubase::engine
 		// Where in the clip (its sample frames) the event snaps (reference manual p. 105); none, or outside the
 		// event: its start.
 		std::optional<time::Samples> snapPoint;
+		std::string color; // "#rrggbb", or empty to follow the track's color
 	};
 
 	inline constexpr double g_minEventVolume = -144.0;
@@ -323,6 +324,7 @@ namespace gnubase::engine
 		// Shared copies (docs/features/parts-and-events.md) have the same id here and the same notes and controllers,
 		// with the same ids: a change to one goes to the others. 0: not shared.
 		ObjectId shared = 0;
+		std::string color; // "#rrggbb", or empty to follow the track's color
 		std::map<ObjectId, Note> notes;
 		std::map<ObjectId, Controller> controllers;
 	};
@@ -422,6 +424,19 @@ namespace gnubase::engine
 	};
 
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
+	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
+	struct ProjectColor
+	{
+		std::string name;
+		std::string color; // "#rrggbb"
+	};
+
+	// The color set of new projects.
+	std::vector<ProjectColor> factoryColors();
+
+	// Whether text is a color as "#rrggbb".
+	bool isColor(const std::string& text);
+
 	struct Project
 	{
 		std::string name = "Untitled";
@@ -430,7 +445,8 @@ namespace gnubase::engine
 		time::SignatureMap signatures;
 		AutoFades autoFades; // for audio tracks without settings of their own
 		PanLaw panLaw = PanLaw::Minus3;
-		double maxVolume = 6.0; // the top of the faders, in dB: 6 or 12
+		double maxVolume = 6.0;                             // the top of the faders, in dB: 6 or 12
+		std::vector<ProjectColor> colors = factoryColors(); // at least one
 		ObjectId nextId = 1;
 
 		std::vector<Bus> busses;      // in the order they are shown
@@ -453,6 +469,9 @@ namespace gnubase::engine
 		bool autoQuantize = false;
 		// Snap and grid (#87): settings, not part of undo.
 		SnapSettings snap;
+		// The color last given to events or parts, for editing.autoTrackColor's lastApplied: not part of undo or the
+		// file.
+		std::string lastAppliedColor;
 
 		ObjectId newId() { return nextId++; }
 
@@ -550,9 +569,9 @@ namespace gnubase::engine
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
-				   a.fadeOut, a.crossfade, a.snapPoint) ==
+				   a.fadeOut, a.crossfade, a.snapPoint, a.color) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
-				b.fadeOut, b.crossfade, b.snapPoint);
+				b.fadeOut, b.crossfade, b.snapPoint, b.color);
 	}
 
 	inline bool operator==(const NoteTiming& a, const NoteTiming& b)
@@ -580,8 +599,13 @@ namespace gnubase::engine
 	// A MIDI part's own properties, without its notes and controllers.
 	inline bool sameProperties(const MidiPart& a, const MidiPart& b)
 	{
-		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared) ==
-			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared);
+		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color) ==
+			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color);
+	}
+
+	inline bool operator==(const ProjectColor& a, const ProjectColor& b)
+	{
+		return std::tie(a.name, a.color) == std::tie(b.name, b.color);
 	}
 
 	inline bool operator==(const Marker& a, const Marker& b)

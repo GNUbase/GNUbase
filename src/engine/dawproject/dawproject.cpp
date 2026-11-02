@@ -683,6 +683,8 @@ namespace gnubase::engine
 					element.append_attribute("fadeOutTime") = fadeOut;
 				}
 				element.append_attribute("name") = clip.name.c_str();
+				if (!event.color.empty())
+					element.append_attribute("color") = event.color.c_str();
 				pugi::xml_node audio = element.append_child("Audio");
 				audio.append_attribute("id") = xmlId("a", event.id).c_str();
 				audio.append_attribute("channels") = media.channels;
@@ -749,6 +751,8 @@ namespace gnubase::engine
 				if (part.mute)
 					element.append_attribute("enable") = false;
 				element.append_attribute("name") = part.name.c_str();
+				if (!part.color.empty())
+					element.append_attribute("color") = part.color.c_str();
 				// Notes alone, or a lane each for the notes and every controller.
 				pugi::xml_node content = element;
 				if (!part.controllers.empty())
@@ -976,6 +980,7 @@ namespace gnubase::engine
 				bool enabled = true;  // false inside a disabled (muted) clip
 				double fadeIn = 0.0;  // seconds, of the innermost clip with fades
 				double fadeOut = 0.0;
+				std::string color; // of the innermost clip with a color, or empty
 			};
 
 			time::Ticks toTicks(double time, bool seconds) const
@@ -1320,6 +1325,8 @@ namespace gnubase::engine
 					content.seconds = std::string(unit.as_string()) == "seconds";
 				content.origin = content.seconds == context.seconds ? start - playStart : 0.0;
 				content.enabled = context.enabled && clip.attribute("enable").as_bool(true);
+				if (const std::string color = clip.attribute("color").as_string(""); validColor(color))
+					content.color = color;
 				if (!clip.attribute("fadeInTime").empty() || !clip.attribute("fadeOutTime").empty())
 					readFades(clip, context, start, duration, content);
 				const TrackType type = m_project.trackById.at(context.track).type;
@@ -1330,6 +1337,7 @@ namespace gnubase::engine
 					{
 						part = &addPart(context, start, duration, clip.attribute("name").as_string(""));
 						part->mute = !content.enabled;
+						part->color = content.color;
 					}
 					return *part;
 				};
@@ -1519,6 +1527,7 @@ namespace gnubase::engine
 				event.track = lane.track;
 				event.clip = clipId;
 				event.mute = mute;
+				event.color = content.color;
 				event.position = {time::TimeBase::Musical, toTicks(start, lane.seconds)};
 				event.offset = std::clamp<time::Samples>(
 					std::llround(offset * media.sampleRate), 0, std::max<time::Samples>(0, media.length - 1));

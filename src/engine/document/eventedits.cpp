@@ -378,6 +378,7 @@ namespace gnubase::engine
 			right.length = end - split;
 			right.mute = part.mute;
 			right.lock = part.lock;
+			right.color = part.color;
 			for (auto it = part.notes.begin(); it != part.notes.end();)
 			{
 				Note& note = it->second;
@@ -691,14 +692,23 @@ namespace gnubase::engine
 		{
 			const Json& parameters = context.parameters();
 			const std::vector<Item> items = itemsFrom(project, parameters, false);
+			const bool recolor = parameters.contains("color");
+			const std::string color = recolor && parameters.at("color").is_string()
+				? parameters.at("color").get<std::string>()
+				: std::string();
+			require(color.empty() || isColor(color), "color must be #rrggbb");
 			for (const Item& item : items)
 			{
 				bool& mute = item.audio != nullptr ? item.audio->mute : item.part->mute;
 				bool& lock = item.audio != nullptr ? item.audio->lock : item.part->lock;
 				mute = parameters.value("mute", mute);
 				lock = parameters.value("lock", lock);
+				if (recolor)
+					(item.audio != nullptr ? item.audio->color : item.part->color) = color;
 				announce(context, item, "changed");
 			}
+			if (!color.empty())
+				project.lastAppliedColor = color;
 			return {{"events", idsOf(items)}};
 		}
 
@@ -1009,10 +1019,13 @@ namespace gnubase::engine
 
 		addEdit(engine,
 			{"event.set", 1,
-				"Mutes or unmutes and locks or unlocks audio events and MIDI parts. Muted ones don't play; locked "
-				"ones can't be moved, resized, split, glued or removed by the event commands. Returns the events.",
-				schema({{"events", events()}, {"mute", boolean()}, {"lock", boolean()}}, {"events"}), eventsResult(),
-				false},
+				"Mutes or unmutes, locks or unlocks and colors audio events and MIDI parts. Muted ones don't play; "
+				"locked ones can't be moved, resized, split, glued or removed by the event commands. color (#rrggbb) "
+				"is a color of their own; null makes them follow their track's color again. Returns the events.",
+				schema({{"events", events()}, {"mute", boolean()}, {"lock", boolean()},
+						   {"color", {{"type", {"string", "null"}}}}},
+					{"events"}),
+				eventsResult(), false},
 			"Change events", setEvents);
 
 		addEdit(engine,

@@ -43,6 +43,10 @@ namespace gnubase::engine
 	Fade fadeFromJson(const Json& json, const Fade& fallback = {});
 	AutoFades autoFadesFromJson(const Json& json, const AutoFades& fallback = {});
 
+	// A color set as an array of {name, color}, and back: at least one color, each #rrggbb, or std::invalid_argument.
+	Json toJson(const std::vector<ProjectColor>& colors);
+	std::vector<ProjectColor> colorsFromJson(const Json& json);
+
 	const char* markerTypeName(MarkerType type);
 	std::optional<MarkerType> markerTypeFromName(const std::string& name);
 
