@@ -514,3 +514,99 @@ TEST_CASE("a cue leaves a voice alone that the audio thread starts reading meanw
 	CHECK(blocks.wrong == 0);
 	CHECK(playback.dropouts() == 0);
 }
+
+TEST_CASE("auditioning plays only the pressed audio track, past its channel and without the transport", "[integration]")
+{
+	const int blockSize = GENERATE(64, 100);
+	INFO("block size " << blockSize);
+	const gnubase::test::TempDir dir;
+	Song song(blockSize);
+	const Json added = run(song.client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 2}});
+	const ObjectId track = idOf(added, "track");
+	const TestTrack other = song.addTrack(2);
+	const ObjectId clip = song.addClip(writeRamp(dir, "stereo", 2, 4000));
+	song.add({track, 100, 0, 2000, 2}, clip);
+	song.add({other.id, 0, 3000, 1000, 2}, clip);
+	// Its channel's fader and mute don't apply (reference manual p. 252).
+	run(song.client, "channel.set", {{"channel", idOf(added, "channel")}, {"volume", -20.0}, {"mute", true}});
+	const Json transport = run(song.client, "transport.get");
+
+	CHECK(run(song.client, "audition.start", {{"track", track}, {"position", 50}}) ==
+		Json{{"track", track}, {"mode", "play"}});
+	run(song.client, "audio.render", {{"frames", 1000}});
+	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"mode", "off"}});
+	run(song.client, "audio.render", {{"frames", 200}});
+
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const std::vector<float> output = song.capture(channel, 1200);
+		size_t wrong = 0;
+		for (int64_t i = 0; i < 1200; ++i)
+		{
+			const int64_t position = 50 + i;
+			const float expected = i < 1000 && position >= 100 ? ramp(position - 100, channel) : 0.0f;
+			if (output[static_cast<size_t>(i)] != expected && wrong++ == 0)
+				UNSCOPED_INFO("channel " << channel << ", frame " << i << ": " << output[static_cast<size_t>(i)]
+										 << " instead of " << expected);
+		}
+		CHECK(wrong == 0);
+	}
+	CHECK(run(song.client, "transport.get") == transport); // the transport never played or moved
+}
+
+TEST_CASE("auditioning needs a device and an audio track", "[integration]")
+{
+	Engine engine;
+	Client client{engine};
+	const ObjectId midi = idOf(run(client, "track.add", {{"type", "midi"}}), "track");
+	const Json parameters = {{"track", midi}, {"position", 0}};
+	CHECK(client.call("audition.start", parameters).error.find("no audio device") != std::string::npos);
+	run(client, "audio.setDevice", {{"blockSize", 64}});
+	CHECK(client.call("audition.start", parameters).error == "no audio track " + std::to_string(midi));
+	CHECK(client.call("audition.scrub", {{"track", midi}, {"position", -1}}).error == "position must not be negative");
+	CHECK(run(client, "audition.stop") == Json{{"track", 0}, {"mode", "off"}});
+}
+
+TEST_CASE("scrubbing plays an audio track forwards and backwards at the speed positions come, and moves the cursor",
+	"[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Song song(64);
+	const TestTrack track = song.addTrack(2);
+	const TestTrack other = song.addTrack(2);
+	const ObjectId clip = song.addClip(writeRamp(dir, "mono", 1, 4000));
+	song.add({track.id, 0, 0, 4000}, clip);
+	song.add({other.id, 0, 0, 4000}, clip);
+
+	// The first scrub only sets where it starts and moves the cursor there; 480 frames back in 0.01 seconds (480
+	// frames) play backwards at normal speed.
+	CHECK(run(song.client, "audition.scrub", {{"track", track.id}, {"position", 1000}}) ==
+		Json{{"track", track.id}, {"mode", "scrub"}});
+	CHECK(run(song.client, "transport.get").at("position") == 1000);
+	run(song.client, "audition.scrub", {{"track", track.id}, {"position", 520}, {"seconds", 0.01}});
+	CHECK(run(song.client, "transport.get").at("position") == 520);
+	run(song.client, "audio.render", {{"frames", 600}});
+	// Then 960 frames forwards in 480: twice as fast.
+	run(song.client, "audition.scrub", {{"track", track.id}, {"position", 1480}, {"seconds", 0.01}});
+	run(song.client, "audio.render", {{"frames", 600}});
+	run(song.client, "audition.stop");
+	CHECK(run(song.client, "transport.get").at("playing") == false);
+
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const std::vector<float> output = song.capture(channel, 1200);
+		size_t wrong = 0;
+		for (size_t i = 0; i < 1200; ++i)
+		{
+			float expected = 0.0f; // a mono clip on both channels; silence once a scrub has played
+			if (i < 480)
+				expected = ramp(1000 - static_cast<int64_t>(i), 0);
+			else if (i >= 600 && i < 1080)
+				expected = ramp(520 + (2 * static_cast<int64_t>(i - 600)), 0);
+			if (output[i] != expected && wrong++ == 0)
+				UNSCOPED_INFO(
+					"channel " << channel << ", frame " << i << ": " << output[i] << " instead of " << expected);
+		}
+		CHECK(wrong == 0);
+	}
+}

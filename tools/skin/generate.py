@@ -501,6 +501,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                   "border-bottom-color": c["border"]}),
         (".track-list listitem.disabled", {"color": c["textMuted"]}),
         (".track-list .drop-line", {"background-color": c["accent"]}),
+        # The mixer (docs/features/mixer-window.md): a line between the channel strips
+        (".mixer-channel", {"border-right-width": f"{widths['hairline']}dp", "border-right-color": c["border"]}),
         # Docking windows (docs/features/docking.md): zones, the frame of the zone with the keyboard focus, and strips
         (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
         (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),
@@ -509,16 +511,23 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".status-line .status-field", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
         (".status-line .mismatch", {"color": c["warning"]}),
         ("#lost-device", {"color": c["danger"]}),
+        # The info line and the inspector (docs/features/inspector.md): the info line's values in another color with
+        # several events selected, bypassed and deactivated inserts dimmed
+        (".info-line.multiple .info-field", {"color": c["accent"]}),
+        (".info-line .info-label, .inspector-label", {"color": c["textMuted"]}),
+        (".inspector .insert.bypassed, .inspector .insert.inactive", {"color": c["textMuted"]}),
         # The pool's message line (docs/features/pool.md): why a pool command failed stands out
         (".pool-message.error", {"color": c["danger"]}),
         # The edit history (docs/features/edit-history.md): undone steps dimmed, and the separator after the done ones
         (".history tr.undone, .history tr.undone input.text", {"color": c["textMuted"]}),
         (".history .history-separator", {"background-color": c["accent"]}),
-        # The main menu bar (docs/features/main-menu.md): flat menu titles, lit under the mouse, and the items' keys
-        (".menubar", {"background-color": c["surface"]}),
-        (".menubar button", {"decorator": "none", "color": c["text"]}),
-        (".menubar button:hover", {"decorator": skin("menu-item-hover")}),
+        # Menu bars (docs/features/main-menu.md): flat menu titles, lit under the mouse, the items' keys, and the arrows
+        # of items with a submenu
+        ("menubar", {"background-color": c["surface"]}),
+        ("menubar button", {"decorator": "none", "color": c["text"]}),
+        ("menubar button:hover", {"decorator": skin("menu-item-hover")}),
         ("menuitem .menu-keys", {"color": c["textMuted"]}),
+        ("menuitem > .menu-arrow", {"decorator": skin("dropdown-arrow")}),
     ]
 
     rules = with_focus_rings(rules, skin("focus-ring"))

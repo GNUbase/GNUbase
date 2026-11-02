@@ -469,6 +469,8 @@ namespace gnubase::engine
 						element.append_attribute("destination") = destination(channel.output).c_str();
 					if (channel.solo)
 						element.append_attribute("solo") = true;
+					if (!channel.notes.empty())
+						element.append_attribute("comment") = channel.notes.c_str();
 					pugi::xml_node mute = element.append_child("Mute");
 					mute.append_attribute("id") = xmlId("cm", channel.id).c_str();
 					mute.append_attribute("name") = "Mute";
@@ -1121,6 +1123,7 @@ namespace gnubase::engine
 					}
 					channel.mute = channelNode.child("Mute").attribute("value").as_bool(false);
 					channel.solo = channelNode.attribute("solo").as_bool(false);
+					channel.notes = channelNode.attribute("comment").as_string();
 					if (type != TrackType::Midi)
 						readDevices(channelNode.child("Devices"), channel);
 					track.channel = channel.id;

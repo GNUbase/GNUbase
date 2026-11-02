@@ -397,6 +397,57 @@ namespace gnubase::engine
 		return fade;
 	}
 
+	Json toJson(const ProjectSetup& setup)
+	{
+		return {{"recordFileType", setup.recordFileType}, {"recordBitDepth", setup.recordBitDepth},
+			{"frameRate", time::frameRateName(setup.frameRate)}, {"startTime", setup.startTime},
+			{"length", setup.length}, {"barOffset", setup.barOffset}, {"timeFormat", setup.timeFormat}};
+	}
+
+	ProjectSetup projectSetupFromJson(const Json& json, const ProjectSetup& fallback)
+	{
+		ProjectSetup setup = fallback;
+		const auto oneOf = [&json](const char* key, const std::string& current, const auto& names)
+		{
+			std::string name = json.value(key, current);
+			if (std::find(names.begin(), names.end(), name) == names.end())
+				throw std::invalid_argument(std::string("unknown ") + key + " " + name);
+			return name;
+		};
+		setup.recordFileType = oneOf("recordFileType", setup.recordFileType, g_recordFileTypes);
+		setup.recordBitDepth = oneOf("recordBitDepth", setup.recordBitDepth, g_recordBitDepths);
+		setup.timeFormat = oneOf("timeFormat", setup.timeFormat, g_rulerTimeFormats);
+		if (json.contains("frameRate"))
+		{
+			const std::string name = json.at("frameRate").get<std::string>();
+			const std::optional<time::FrameRate> rate = time::frameRateFromName(name);
+			if (!rate)
+				throw std::invalid_argument("unknown frameRate " + name);
+			setup.frameRate = *rate;
+		}
+		setup.startTime = json.value("startTime", setup.startTime);
+		setup.length = json.value("length", setup.length);
+		setup.barOffset = json.value("barOffset", setup.barOffset);
+
+		// What recording can write (AudioFileWriter): AIFF in integers, FLAC in 16 and 24 bits, 64-bit float in WAV.
+		const std::string& type = setup.recordFileType;
+		const std::string& depth = setup.recordBitDepth;
+		const bool wav = type == "wav" || type == "broadcastWav";
+		if (type == "aiff" && depth.rfind("int", 0) != 0)
+			throw std::invalid_argument("AIFF files record 16, 24 or 32 bit, not " + depth);
+		if (type == "flac" && depth != "int16" && depth != "int24")
+			throw std::invalid_argument("FLAC files record 16 or 24 bit, not " + depth);
+		if (!wav && depth == "float64")
+			throw std::invalid_argument("only Wave files record 64 bit float");
+		if (!std::isfinite(setup.startTime) || setup.startTime < 0.0 || setup.startTime >= 86400.0)
+			throw std::invalid_argument("startTime must be from 0 to less than 24 hours (86400 seconds)");
+		if (!std::isfinite(setup.length) || setup.length <= 0.0 || setup.length > 86400.0)
+			throw std::invalid_argument("length must be more than 0 and at most 24 hours (86400 seconds)");
+		if (setup.barOffset < -9999 || setup.barOffset > 9999)
+			throw std::invalid_argument("barOffset must be from -9999 to 9999");
+		return setup;
+	}
+
 	AutoFades autoFadesFromJson(const Json& json, const AutoFades& fallback)
 	{
 		AutoFades settings = fallback;
@@ -441,7 +492,7 @@ namespace gnubase::engine
 		Json json = {{"id", track.id}, {"type", trackTypeName(track.type)}, {"name", track.name},
 			{"color", colorJson(track.color)}, {"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent},
 			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)},
-			{"enabled", track.enabled}};
+			{"enabled", track.enabled}, {"picture", track.picture}};
 		if (track.type == TrackType::Ruler)
 			json["timeFormat"] = track.timeFormat;
 		return json;
@@ -461,7 +512,7 @@ namespace gnubase::engine
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
 			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
 			{"recordEnable", channel.recordEnable}, {"mute", channel.mute}, {"solo", channel.solo},
-			{"slots", channel.slots}};
+			{"slots", channel.slots}, {"notes", channel.notes}};
 	}
 
 	Json toJson(const Slot& slot)
@@ -629,6 +680,22 @@ namespace gnubase::engine
 			{"points", std::move(list)}};
 	}
 
+	Json toJson(const MixerView& view)
+	{
+		return {{"hidden", view.hidden}, {"hiddenTypes", view.hiddenTypes}};
+	}
+
+	namespace
+	{
+		Json mixersJson(const std::map<std::string, MixerView>& mixers)
+		{
+			Json json = Json::object();
+			for (const auto& [name, view] : mixers)
+				json[name] = toJson(view);
+			return json;
+		}
+	}
+
 	Json toJson(const Project& project)
 	{
 		Json busses = Json::array();
@@ -644,7 +711,7 @@ namespace gnubase::engine
 		for (const time::SignatureChange& change : project.signatures.changes())
 			signatures.push_back({{"bar", change.bar}, {"numerator", change.signature.numerator},
 				{"denominator", change.signature.denominator}});
-		return {{"name", project.name}, {"sampleRate", project.sampleRate}, {"tempo", tempo},
+		Json json = {{"name", project.name}, {"sampleRate", project.sampleRate}, {"tempo", tempo},
 			{"signatures", signatures}, {"autoFades", toJson(project.autoFades)},
 			{"panLaw", panLawName(project.panLaw)}, {"maxVolume", project.maxVolume}, {"busses", busses},
 			{"tracks", tracks}, {"channels", toJsonArray(project.channels)}, {"slots", toJsonArray(project.slots)},
@@ -653,7 +720,9 @@ namespace gnubase::engine
 			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
 			{"automation", toJsonArray(project.automation)}, {"quantize", midi::toJson(project.quantize)},
 			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
-			{"snap", toJson(project.snap)}};
+			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)}};
+		json.update(toJson(project.setup));
+		return json;
 	}
 
 	namespace
@@ -941,6 +1010,8 @@ namespace gnubase::engine
 		project.maxVolume = json.value("maxVolume", 6.0);
 		if (project.maxVolume != 6.0 && project.maxVolume != 12.0)
 			throw std::invalid_argument("maxVolume must be 6 or 12");
+		// Files from before the project setup have its defaults.
+		project.setup = projectSetupFromJson(json);
 
 		// Files from before ports have only the first four.
 		for (const Json& item : json.at("busses"))
@@ -970,6 +1041,7 @@ namespace gnubase::engine
 			track.channel = item.at("channel").get<ObjectId>();
 			// Files from before disabled tracks have every track enabled; only some types can be disabled.
 			track.enabled = !canDisable(track.type) || item.value("enabled", true);
+			track.picture = item.value("picture", std::string()); // files from before #106 have none
 			if (const Json autoFades = item.value("autoFades", Json()); !autoFades.is_null())
 				track.autoFades = autoFadesFromJson(autoFades);
 			if (track.type == TrackType::Ruler)
@@ -1018,6 +1090,7 @@ namespace gnubase::engine
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
 			channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none
+			channel.notes = item.value("notes", std::string());           // files from before #89 have none
 			project.channels[id] = std::move(channel);
 		}
 		// Every slot is in the list of its channel, which has audio, once, and no channel lists more than it may.
@@ -1176,6 +1249,10 @@ namespace gnubase::engine
 			project.quantize = midi::quantizeSettingsFromJson(json.at("quantize"));
 		project.autoQuantize = json.value("autoQuantize", false);
 		project.snap = snapSettingsFrom(json.value("snap", Json::object()), SnapSettings()); // files from before #87
+		const Json mixers = json.value("mixers", Json::object()); // files from before #106 have none
+		for (const auto& [name, view] : mixers.items())
+			project.mixers[name] = {
+				view.value("hidden", std::vector<ObjectId>()), view.value("hiddenTypes", std::vector<std::string>())};
 
 		// Without a counter, ids continue after the highest one.
 		ObjectId highest = 0;

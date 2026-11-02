@@ -74,11 +74,32 @@ namespace gnubase::ui
 				std::max(0.0F, std::min(at.x, window.x - size.x)), std::max(0.0F, std::min(at.y, window.y - size.y))};
 		}
 
+		class Menu;
+
+		// The menu whose id the button's menu attribute names, or null.
+		Menu* menuOf(const Rml::Element& button);
+
+		// The titles of a <menubar>: its elements with a menu attribute, in order.
+		Rml::ElementList titlesOf(Rml::Element& bar)
+		{
+			Rml::ElementList titles;
+			bar.QuerySelectorAll(titles, "[menu]");
+			return titles;
+		}
+
+		// Whether the menu bar's title can open its menu: it is shown and not disabled.
+		bool opens(const Rml::Element& title)
+		{
+			return !title.HasAttribute("disabled") && title.IsVisible() && menuOf(title) != nullptr;
+		}
+
 		// <menu>: <menuitem>s and <menuseparator>s, hidden until it opens: at the mouse on a right click on an element
 		// whose contextmenu attribute names the menu by id, or under a button whose menu attribute names it. A menu
-		// inside an item is its submenu, shown while the mouse is over the item. A click on an item without a submenu
-		// closes the menu, as do Escape and a click outside it. Up and Down move the focus between the items, and Enter
-		// clicks the focused one. An open menu has the state class .open.
+		// inside an item is its submenu, shown while the mouse is over the item or once Right opened it; its item
+		// shows a .menu-arrow part. A click on an item without a submenu closes the menu, as do Escape and a click
+		// outside it. Up and Down move the focus between the items, Enter clicks the focused one, Right opens the
+		// focused item's submenu and Left closes a submenu; in a menu of a <menubar>'s title, Right and Left otherwise
+		// open the next and previous title's menu. An open menu has the state class .open.
 		class Menu final : public Rml::Element
 		{
 		public:
@@ -87,12 +108,53 @@ namespace gnubase::ui
 			// Opens the menu at a point in the window's pixels, inside the window.
 			void open(Rml::Vector2f at)
 			{
+				addArrows(*this);
 				SetClass("open", true);
 				moveTo(*this, at);
 				GetOwnerDocument()->UpdateDocument(); // for the menu's size
 				moveTo(*this, inside(*this, at));
 				Focus();
 			}
+
+			// Opens the menu under its button.
+			void openUnder(Rml::Element& button)
+			{
+				open(button.GetAbsoluteOffset(Rml::BoxArea::Border) +
+					Rml::Vector2f(0.0F, button.GetBox().GetSize(Rml::BoxArea::Border).y));
+			}
+
+			// Closes the menu and the submenus that keys opened in it. The focus doesn't stay on a hidden item: it goes
+			// to a submenu's item, or else to the document.
+			void close()
+			{
+				SetClass("open", false);
+				Rml::ElementList open;
+				QuerySelectorAll(open, "menu.open");
+				for (Rml::Element* submenu : open)
+					submenu->SetClass("open", false);
+				for (const Rml::Element* focused = GetContext() != nullptr ? GetContext()->GetFocusElement() : nullptr;
+					focused != nullptr; focused = focused->GetParentNode())
+					if (focused == this)
+					{
+						if (Rml::Element* item = GetParentNode(); item != nullptr && item->GetTagName() == "menuitem")
+							item->Focus();
+						else
+							GetOwnerDocument()->Focus();
+						break;
+					}
+			}
+
+			// The mouse is over one of the menu's items: the submenus that keys opened in its other items close.
+			void hover(const Rml::Element& item)
+			{
+				for (int i = 0; i < GetNumChildren(); ++i)
+					if (GetChild(i) != &item)
+						if (Menu* submenu = submenuOf(*GetChild(i)))
+							submenu->close();
+			}
+
+			// Focuses the first item that isn't disabled, for a menu that keys opened; false if there is none.
+			bool focusFirst() { return moveFocus(1); }
 
 			void ProcessDefaultAction(Rml::Event& event) override
 			{
@@ -101,37 +163,160 @@ namespace gnubase::ui
 				{
 					Rml::Element* item = closestTag(event.GetTargetElement(), "menuitem", this);
 					if (item != nullptr && !item->HasAttribute("disabled") && item->QuerySelector("menu") == nullptr)
-						SetClass("open", false); // every menu the click bubbles through closes
+						close(); // every menu the click bubbles through closes
 				}
 				else if (event == Rml::EventId::Keydown && IsClassSet("open"))
 				{
 					const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
 					if (key == Rml::Input::KI_DOWN || key == Rml::Input::KI_UP)
-					{
 						moveFocus(key == Rml::Input::KI_DOWN ? 1 : -1);
-						event.StopPropagation();
-					}
+					else if (key == Rml::Input::KI_RIGHT)
+						right();
+					else if (key == Rml::Input::KI_LEFT)
+						left();
+					else
+						return;
+					event.StopPropagation(); // the keys stay in the open menu
 				}
 			}
 
 		private:
-			// Focuses the next or previous item that isn't disabled.
-			void moveFocus(int direction)
+			// The item's submenu, or null.
+			static Menu* submenuOf(Rml::Element& item)
+			{
+				for (int i = 0; i < item.GetNumChildren(); ++i)
+					if (auto* submenu = dynamic_cast<Menu*>(item.GetChild(i)))
+						return submenu;
+				return nullptr;
+			}
+
+			// Gives the menu's items with a submenu, and those of the submenus, their arrow once.
+			static void addArrows(Rml::Element& menu)
+			{
+				for (int i = 0; i < menu.GetNumChildren(); ++i)
+				{
+					Rml::Element* item = menu.GetChild(i);
+					Menu* submenu = item->GetTagName() == "menuitem" ? submenuOf(*item) : nullptr;
+					if (submenu == nullptr)
+						continue;
+					addArrows(*submenu);
+					Rml::ElementList arrows;
+					item->GetElementsByClassName(arrows, "menu-arrow");
+					if (std::none_of(arrows.begin(), arrows.end(),
+							[item](const Rml::Element* arrow) { return arrow->GetParentNode() == item; }))
+						// First, so that it floats right of the item's text.
+						item->InsertBefore(item->GetOwnerDocument()->CreateElement("span"), item->GetFirstChild())
+							->SetClass("menu-arrow", true);
+				}
+			}
+
+			Rml::Element* focusedItem() const
+			{
+				Rml::Element* focused = GetContext()->GetFocusElement();
+				return focused != nullptr && focused->GetParentNode() == this && focused->GetTagName() == "menuitem"
+					? focused
+					: nullptr;
+			}
+
+			// Right: into the focused item's submenu, unless it has nothing to focus, or else to the menu bar's next
+			// menu.
+			void right()
+			{
+				if (Rml::Element* item = focusedItem())
+					if (Menu* submenu = submenuOf(*item))
+					{
+						submenu->SetClass("open", true);
+						if (!submenu->focusFirst())
+							submenu->SetClass("open", false);
+						return;
+					}
+				switchTitle(1);
+			}
+
+			// Left: out of a submenu back to its item, or else to the menu bar's previous menu.
+			void left()
+			{
+				if (Rml::Element* item = GetParentNode(); item != nullptr && item->GetTagName() == "menuitem")
+				{
+					close();
+					item->Focus(true);
+					return;
+				}
+				switchTitle(-1);
+			}
+
+			// The <menubar> title whose menu this is, or null.
+			Rml::Element* title() const
+			{
+				Rml::ElementList bars;
+				GetOwnerDocument()->GetElementsByTagName(bars, "menubar");
+				for (Rml::Element* bar : bars)
+					for (Rml::Element* title : titlesOf(*bar))
+						if (menuOf(*title) == this)
+							return title;
+				return nullptr;
+			}
+
+			// The menu that this one is a submenu of, at any depth, or this one.
+			Menu& outermost()
+			{
+				Menu* menu = this;
+				for (Rml::Element* parent = GetParentNode(); parent != nullptr; parent = parent->GetParentNode())
+					if (auto* outer = dynamic_cast<Menu*>(parent))
+						menu = outer;
+				return *menu;
+			}
+
+			// Opens the menu of the next or previous title in the menu bar that can open one, instead of the menu
+			// bar's menu that this one is in.
+			void switchTitle(int direction)
+			{
+				Menu& current = outermost();
+				Rml::Element* own = current.title();
+				Rml::Element* bar = closestTag(own, "menubar");
+				if (bar == nullptr)
+					return;
+				const Rml::ElementList titles = titlesOf(*bar);
+				const int count = static_cast<int>(titles.size());
+				const int start = static_cast<int>(std::find(titles.begin(), titles.end(), own) - titles.begin());
+				for (int step = 1; step < count; ++step)
+				{
+					Rml::Element* next = titles[static_cast<size_t>((start + (step * direction) + count) % count)];
+					if (opens(*next))
+					{
+						current.close();
+						Menu* menu = menuOf(*next);
+						menu->openUnder(*next);
+						menu->focusFirst();
+						return;
+					}
+				}
+			}
+
+			// Focuses the next or previous item that isn't disabled; false if there is none.
+			bool moveFocus(int direction)
 			{
 				std::vector<Rml::Element*> items;
 				for (int i = 0; i < GetNumChildren(); ++i)
 					if (GetChild(i)->GetTagName() == "menuitem" && !GetChild(i)->HasAttribute("disabled"))
 						items.push_back(GetChild(i));
 				if (items.empty())
-					return;
+					return false;
 				const auto focused = std::find(items.begin(), items.end(), GetContext()->GetFocusElement());
 				const int count = static_cast<int>(items.size());
 				int index = direction > 0 ? 0 : count - 1;
 				if (focused != items.end())
 					index = (static_cast<int>(focused - items.begin()) + direction + count) % count;
 				items[static_cast<size_t>(index)]->Focus(true);
+				return true;
 			}
 		};
+
+		Menu* menuOf(const Rml::Element& button)
+		{
+			const auto id = button.GetAttribute<Rml::String>("menu", "");
+			return id.empty() ? nullptr : dynamic_cast<Menu*>(button.GetOwnerDocument()->GetElementById(id));
+		}
 
 		// A document's tooltip: the title attribute of the element under the mouse, or of its nearest ancestor with
 		// one, shown under the mouse once the mouse has rested there; the state class .shown while it's shown.
@@ -309,9 +494,16 @@ namespace gnubase::ui
 			bool m_closed = false;
 		};
 
+#ifdef __APPLE__
+		constexpr bool g_altOpensMenuBar = false; // the system menu bar has the keys there
+#else
+		constexpr bool g_altOpensMenuBar = true;
+#endif
+
 		// What every document gets: the behaviour of attributes that any element can have (contextmenu, menu and
-		// title), menus that close on a click elsewhere or on Escape, the keys of its dialog, and a tooltip. It listens
-		// in the capture phase, before the elements do.
+		// title), menus that close on a click elsewhere or on Escape, menu bars whose titles the mouse moves between
+		// and that Alt opens, the keys of its dialog, and a tooltip. It listens in the capture phase, before the
+		// elements do.
 		class Popups final : public Rml::Plugin
 		{
 		public:
@@ -325,21 +517,27 @@ namespace gnubase::ui
 			}
 
 		private:
-			static constexpr std::array<Rml::EventId, 6> g_events = {Rml::EventId::Mousedown, Rml::EventId::Click,
-				Rml::EventId::Keydown, Rml::EventId::Mouseover, Rml::EventId::Mousescroll, Rml::EventId::Mouseout};
+			static constexpr std::array<Rml::EventId, 8> g_events = {Rml::EventId::Mousedown, Rml::EventId::Mouseup,
+				Rml::EventId::Click, Rml::EventId::Keydown, Rml::EventId::Keyup, Rml::EventId::Mouseover,
+				Rml::EventId::Mousescroll, Rml::EventId::Mouseout};
 
-			static void handle(Rml::Event& event)
+			void handle(Rml::Event& event)
 			{
 				Rml::ElementDocument* document = event.GetCurrentElement()->GetOwnerDocument();
 				Rml::Element* target = event.GetTargetElement();
 				const Rml::Vector2f mouse(event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F));
 				Tooltip* tooltip = tooltipOf(*document);
+				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
 				switch (event.GetId())
 				{
 				case Rml::EventId::Mouseover:
 					// What the mouse is over now: the elements it entered get the event innermost first.
 					if (tooltip != nullptr)
 						tooltip->hover(document->GetContext()->GetHoverElement(), mouse);
+					hoverTitle(target);
+					if (const Rml::Element* item = closestTag(target, "menuitem"))
+						if (auto* menu = dynamic_cast<Menu*>(item->GetParentNode()))
+							menu->hover(*item);
 					break;
 				case Rml::EventId::Mouseout:
 					// The mouse left the document; Mouseover reports where it goes within it.
@@ -349,16 +547,21 @@ namespace gnubase::ui
 				case Rml::EventId::Mousescroll:
 					if (tooltip != nullptr)
 						tooltip->hide();
+					m_alt = false; // Alt with the mouse isn't Alt alone
+					break;
+				case Rml::EventId::Mouseup:
+					m_alt = false;
 					break;
 				case Rml::EventId::Mousedown:
 				{
 					if (tooltip != nullptr)
 						tooltip->hide();
+					m_alt = false;
 					// A click outside the open menus closes them, except on the button of a menu, which toggles it.
 					const Rml::Element* button = closestWith(target, "menu");
 					for (Menu* menu : openMenus(*document))
 						if (!contains(*menu, target) && (button == nullptr || menuOf(*button) != menu))
-							menu->SetClass("open", false);
+							menu->close();
 					if (event.GetParameter("button", 0) == 1)
 						if (const Rml::Element* owner = closestWith(target, "contextmenu"))
 							if (Menu* menu = byId(*document, owner->GetAttribute<Rml::String>("contextmenu", "")))
@@ -371,20 +574,21 @@ namespace gnubase::ui
 						if (Menu* menu = menuOf(*button))
 						{
 							if (menu->IsClassSet("open"))
-								menu->SetClass("open", false);
+								menu->close();
 							else
-								menu->open(button->GetAbsoluteOffset(Rml::BoxArea::Border) +
-									Rml::Vector2f(0.0F, button->GetBox().GetSize(Rml::BoxArea::Border).y));
+								menu->openUnder(*button);
 						}
 					break;
 				case Rml::EventId::Keydown:
 					if (tooltip != nullptr)
 						tooltip->hide();
-					if (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_ESCAPE)
+					// Alt alone arms the menu bar, for when it's released; any other key with it disarms it.
+					m_alt = isAlt(key) && !otherModifiers(event);
+					if (key == Rml::Input::KI_ESCAPE)
 						if (const std::vector<Menu*> open = openMenus(*document); !open.empty())
 						{
 							for (Menu* menu : open)
-								menu->SetClass("open", false);
+								menu->close();
 							event.StopPropagation(); // Escape closed the menu, not the dialog around it
 							break;
 						}
@@ -399,8 +603,80 @@ namespace gnubase::ui
 					if (Dialog* dialog = dialogOf(*document))
 						dialog->key(event);
 					break;
+				case Rml::EventId::Keyup:
+					if (m_alt && isAlt(key) && !otherModifiers(event))
+						toggleMenuBar(*document);
+					m_alt = false;
+					break;
 				default:
 					break;
+				}
+			}
+
+			static bool isAlt(int key)
+			{
+				return g_altOpensMenuBar && (key == Rml::Input::KI_LMENU || key == Rml::Input::KI_RMENU);
+			}
+
+			static bool otherModifiers(const Rml::Event& event)
+			{
+				return event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("shift_key", 0) != 0 ||
+					event.GetParameter<int>("meta_key", 0) != 0;
+			}
+
+			// With the menu of a menu bar's title open, the mouse over another of its titles opens that title's menu
+			// instead.
+			static void hoverTitle(Rml::Element* target)
+			{
+				Rml::Element* title = closestWith(target, "menu");
+				Rml::Element* bar = closestTag(title, "menubar");
+				if (bar == nullptr || !opens(*title) || menuOf(*title)->IsClassSet("open"))
+					return;
+				for (const Rml::Element* other : titlesOf(*bar))
+					if (Menu* open = menuOf(*other); open != nullptr && open->IsClassSet("open"))
+					{
+						open->close();
+						menuOf(*title)->openUnder(*title);
+						return;
+					}
+			}
+
+			// Alt alone: closes the open menu of the window's menu bar, or else closes the other menus and opens the
+			// menu of its first title that opens one, with the first item focused. The window's menu bar is the first
+			// one shown in its documents. A modal document, such as a dialog, keeps the key, as from key commands.
+			static void toggleMenuBar(Rml::ElementDocument& focused)
+			{
+				if (focused.IsModal())
+					return;
+				Rml::Context* context = focused.GetContext();
+				for (int i = 0; i < context->GetNumDocuments(); ++i)
+				{
+					Rml::ElementList bars;
+					context->GetDocument(i)->GetElementsByTagName(bars, "menubar");
+					for (Rml::Element* bar : bars)
+					{
+						if (!bar->IsVisible(true))
+							continue;
+						const Rml::ElementList titles = titlesOf(*bar);
+						bool closed = false;
+						for (const Rml::Element* title : titles)
+							if (Menu* menu = menuOf(*title); menu != nullptr && menu->IsClassSet("open"))
+							{
+								menu->close();
+								closed = true;
+							}
+						const auto first = std::find_if(
+							titles.begin(), titles.end(), [](const Rml::Element* title) { return opens(*title); });
+						if (!closed && first != titles.end())
+						{
+							for (Menu* open : openMenus(*bar->GetOwnerDocument())) // a context menu, say
+								open->close();
+							Menu* menu = menuOf(**first);
+							menu->openUnder(**first);
+							menu->focusFirst();
+						}
+						return;
+					}
 				}
 			}
 
@@ -423,11 +699,6 @@ namespace gnubase::ui
 				return id.empty() ? nullptr : dynamic_cast<Menu*>(document.GetElementById(id));
 			}
 
-			static Menu* menuOf(const Rml::Element& button)
-			{
-				return byId(*button.GetOwnerDocument(), button.GetAttribute<Rml::String>("menu", ""));
-			}
-
 			static std::vector<Menu*> openMenus(Rml::ElementDocument& document)
 			{
 				Rml::ElementList found;
@@ -446,7 +717,8 @@ namespace gnubase::ui
 				return element != nullptr;
 			}
 
-			Listener m_listener{[](Rml::Event& event) { handle(event); }};
+			Listener m_listener{[this](Rml::Event& event) { handle(event); }};
+			bool m_alt = false; // Alt is held alone, so releasing it toggles the menu bar
 		};
 	}
 

@@ -51,6 +51,7 @@ add_executable(gnubase-tests
 	graph_tests.cpp
 	history_tests.cpp
 	historypanel_tests.cpp
+	inspector_tests.cpp
 	ipc_process_tests.cpp
 	ipc_tests.cpp
 	keycommands_tests.cpp
@@ -69,6 +70,8 @@ add_executable(gnubase-tests
 	midifunctions_tests.cpp
 	miditap_tests.cpp
 	mixer_tests.cpp
+	mixerviews_tests.cpp
+	mixerwindow_tests.cpp
 	monitoring_tests.cpp
 	multicore_tests.cpp
 	parameter_tests.cpp
@@ -82,6 +85,7 @@ add_executable(gnubase-tests
 	poolpanel_tests.cpp
 	processor_tests.cpp
 	projectfiles_tests.cpp
+	projectsetup_tests.cpp
 	quantize_tests.cpp
 	recording_tests.cpp
 	rmlui_tests.cpp
@@ -270,6 +274,7 @@ function(gnubase_add_shell_test name script)
 	add_test(NAME "${name}" COMMAND "${GNUBASE_SH}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/${script}" "${PROJECT_SOURCE_DIR}")
 	set_tests_properties("${name}" PROPERTIES LABELS integration)
 endfunction()
+gnubase_add_shell_test("the clang-tidy cache reruns clang-tidy only when an input changed" clang_tidy_cache_tests.sh)
 gnubase_add_shell_test("the keyword guard blocks private keywords in commits and pull requests" keyword_guard_tests.sh)
 gnubase_add_shell_test("the license header check lists files without the SPDX header" spdx_check_tests.sh)
 

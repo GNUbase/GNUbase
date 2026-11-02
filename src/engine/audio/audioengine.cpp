@@ -46,6 +46,7 @@ namespace gnubase::engine
 			return Json::parse(R"({"type": "object",
 			"properties": {"device": {"type": ["object", "null"]}, "running": {"type": "boolean"},
 				"position": {"type": "integer"}, "projectSampleRate": {"type": "number"},
+				"recordBitDepth": {"type": "string"},
 				"capturedFrames": {"type": "integer"}, "droppedFrames": {"type": "integer"},
 				"playbackDropouts": {"type": "integer"},
 				"processing": {"type": "object", "properties": {"multiProcessing": {"type": "boolean"},
@@ -57,8 +58,8 @@ namespace gnubase::engine
 					"device": {"type": "string"}, "name": {"type": "string"}, "reason": {"type": "string"},
 					"restart": {"type": "boolean"}},
 					"required": ["backend", "device", "name", "reason", "restart"]}},
-			"required": ["device", "running", "position", "projectSampleRate", "capturedFrames", "droppedFrames",
-				"playbackDropouts", "processing", "lost"]})");
+			"required": ["device", "running", "position", "projectSampleRate", "recordBitDepth", "capturedFrames",
+				"droppedFrames", "playbackDropouts", "processing", "lost"]})");
 		}
 
 		bool supports(const audio::DeviceInfo& info, double sampleRate)
@@ -254,6 +255,7 @@ namespace gnubase::engine
 					cue.position = m_transport.position();
 					cue.window = static_cast<time::Samples>(g_cueSeconds * m_device->format().sampleRate);
 					m_playback.cue(cue);
+					m_audition.cue(cue.window, true);
 					std::this_thread::sleep_for(g_cueInterval);
 				}
 			});
@@ -291,7 +293,9 @@ namespace gnubase::engine
 		{
 			const auto block = static_cast<uint32_t>(std::min<uint64_t>(blockSize, frames - done));
 			cue(m_transport.position(), false, block, false);
+			m_audition.cue(block, false);
 			m_playback.waitUntilBuffered(g_offlineWait);
+			m_audition.waitUntilBuffered(g_offlineWait);
 			device.render(*this, block);
 			done += block;
 		}
@@ -299,6 +303,10 @@ namespace gnubase::engine
 
 	void AudioEngine::sync()
 	{
+		// A new record bit depth is only announced, for the status line's record format.
+		const std::string depth = m_snapshots.latest().recordBitDepth;
+		bool announce = !m_recordBitDepth.empty() && depth != m_recordBitDepth;
+		m_recordBitDepth = depth;
 		// A new project sample rate: the device changes to it if it can, otherwise it plays faster or slower.
 		const double rate = m_snapshots.latest().sampleRate;
 		if (rate != m_projectRate)
@@ -318,9 +326,10 @@ namespace gnubase::engine
 				m_parameters.erase("sampleRate"); // it returns at the new rate if it supports it
 			}
 			// Also when the device stays as it is: the status line shows the project's rate and a mismatch.
-			if (known && m_engine != nullptr)
-				m_engine->broadcast("audio.changed", status());
+			announce = announce || known;
 		}
+		if (announce && m_engine != nullptr)
+			m_engine->broadcast("audio.changed", status());
 		if (m_device && (m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring))
 			rebuild();
 		updateRecorder();
@@ -393,6 +402,8 @@ namespace gnubase::engine
 		std::map<ObjectId, std::string> paths;
 		for (const RenderMedia& media : snapshot.media)
 			paths[media.id] = media.path;
+		m_mediaPaths = paths;
+		m_auditionTracks.clear();
 		for (const RenderChannel& channel : snapshot.channels)
 		{
 			if (channel.type != TrackType::Audio)
@@ -402,6 +413,7 @@ namespace gnubase::engine
 			if (source >= 0)
 				desc.nodes[static_cast<size_t>(source)].processor =
 					std::make_shared<TrackPlayer>(playlist, channel.id, m_playback);
+			m_auditionTracks[channel.track] = {channel.id, playlist};
 			tracks.push_back({channel.id, std::move(playlist)});
 		}
 		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate);
@@ -430,6 +442,9 @@ namespace gnubase::engine
 			program->destinations.push_back(destination);
 		}
 		// Bus nodes come first, in bus order (graph::describe); child busses reach the device through their parent.
+		for (size_t b = 0; b < snapshot.busses.size(); ++b)
+			if (snapshot.busses[b].mainMix)
+				program->mainPorts = ports[b];
 		for (size_t b = 0; b < snapshot.busses.size(); ++b)
 			if (snapshot.busses[b].parent < 0)
 				(snapshot.busses[b].direction == BusDirection::Input ? program->inputs : program->outputs)
@@ -761,6 +776,7 @@ namespace gnubase::engine
 					out[i] += in[i];
 			}
 		}
+		m_audition.process(block.outputs, format.outputChannels, program.mainPorts, block.frames);
 
 		const std::chrono::duration<double> busy = std::chrono::steady_clock::now() - start;
 		std::array<double, PerformanceData::g_maxThreads> threads{};
@@ -1404,6 +1420,7 @@ namespace gnubase::engine
 	{
 		const Json processing = processingStatus();
 		const double projectRate = m_snapshots.latest().sampleRate;
+		const std::string recordBitDepth = m_snapshots.latest().recordBitDepth;
 		Json lost = nullptr;
 		if (m_lost)
 			lost = {{"backend", m_lost->backend}, {"device", m_lost->device}, {"name", m_lost->name},
@@ -1411,8 +1428,8 @@ namespace gnubase::engine
 		if (!m_device)
 		{
 			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"projectSampleRate", projectRate},
-				{"capturedFrames", 0}, {"droppedFrames", 0}, {"playbackDropouts", m_playback.dropouts()},
-				{"processing", processing}, {"lost", std::move(lost)}};
+				{"recordBitDepth", recordBitDepth}, {"capturedFrames", 0}, {"droppedFrames", 0},
+				{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", std::move(lost)}};
 		}
 		const audio::DeviceFormat& format = m_device->format();
 		const audio::DeviceLatency latency = m_device->latency();
@@ -1423,7 +1440,8 @@ namespace gnubase::engine
 			{"recordOffset", m_recordOffset.load(std::memory_order_relaxed)}, {"directMonitoring", m_directMonitoring},
 			{"projectSampleRate", projectRate}, {"sampleRateMismatch", format.sampleRate != projectRate}});
 		return {{"device", std::move(device)}, {"running", m_device->running()}, {"position", m_device->position()},
-			{"projectSampleRate", projectRate}, {"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
+			{"projectSampleRate", projectRate}, {"recordBitDepth", recordBitDepth},
+			{"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
 			{"droppedFrames", m_dummy != nullptr ? m_dummy->droppedFrames() : 0},
 			{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", std::move(lost)}};
 	}
@@ -1696,7 +1714,9 @@ namespace gnubase::engine
 				"was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's "
 				"sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as "
 				"it doesn't support the project's or was asked for another, and plays faster or slower; a new project "
-				"sample rate sends audio.changed. lost: the device that went away (its backend, device id, its name "
+				"sample rate sends audio.changed. recordBitDepth is the project's (see project.set), for the record "
+				"format; a new one also sends audio.changed. lost: the device that went away (its backend, device id, "
+				"its name "
 				"while it was open, the reason it can't be opened and whether it ran and restarts), while the engine "
 				"waits for it to return (see audio.reset); otherwise null. While a device is lost, device is the "
 				"fallback that plays meanwhile (the user setting audio.fallbackDevice), or null.",
@@ -1947,6 +1967,7 @@ namespace gnubase::engine
 		registerTransportCommands(engine);
 		m_midi.registerCommands(engine);
 		registerMidiTapCommands(engine);
+		registerAuditionCommands(engine);
 	}
 
 	void AudioEngine::sent(bool accepted)

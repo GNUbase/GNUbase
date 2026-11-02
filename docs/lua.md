@@ -182,6 +182,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.devices`
@@ -196,7 +197,7 @@ Returns:
 
 #### `gnubase.audio.get`
 
-The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, from 0 to 196608), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower; a new project sample rate sends audio.changed. lost: the device that went away (its backend, device id, its name while it was open, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null. While a device is lost, device is the fallback that plays meanwhile (the user setting audio.fallbackDevice), or null.
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, from 0 to 196608), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower; a new project sample rate sends audio.changed. recordBitDepth is the project's (see project.set), for the record format; a new one also sends audio.changed. lost: the device that went away (its backend, device id, its name while it was open, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null. While a device is lost, device is the fallback that plays meanwhile (the user setting audio.fallbackDevice), or null.
 
 Only reads; changes nothing.
 
@@ -210,6 +211,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.performance`
@@ -258,6 +260,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.record`
@@ -299,6 +302,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.reset`
@@ -315,6 +319,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.resetPerformance`
@@ -362,6 +367,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.setDevice`
@@ -398,6 +404,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.setPort`
@@ -437,6 +444,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.simulateDeviceLoss`
@@ -457,6 +465,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.simulateOverload`
@@ -489,6 +498,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.stop`
@@ -505,6 +515,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.updateLatency`
@@ -526,6 +537,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.updatePlugins`
@@ -615,6 +627,46 @@ Returns:
 - `job`: object or null, required
 - `media`: array of integer, required
 - `tracks`: array of integer, required
+
+### audition
+
+#### `gnubase.audition.scrub`
+
+Scrubs an audio track, as the scrub tool does while the mouse drags: plays its events from where the last scrub of the track got to, to position (samples), forwards or backwards, in seconds (default: the time since that scrub, 0.01 to 0.1 seconds), so speed and pitch follow how fast the positions come; the first scrub only sets where the next one starts. Like audition.start it goes straight to the main mix's outputs; it also moves the project cursor to position (transport.changed). Ends with audition.stop. Announces audition.changed.
+
+Parameters:
+
+- `position`: integer, required
+- `seconds`: number
+- `track`: integer, required
+
+Returns:
+
+- `mode`: one of "off" | "play" | "scrub", required
+- `track`: integer, required
+
+#### `gnubase.audition.start`
+
+Auditions an audio track, as the play tool does while the mouse is pressed: plays its events from position (samples) until audition.stop, straight to the main mix's outputs, without its channel's fader, pan, mute and effects, and without the transport. A mono clip plays on every channel. Ends what was auditioned before. Announces audition.changed.
+
+Parameters:
+
+- `position`: integer, required
+- `track`: integer, required
+
+Returns:
+
+- `mode`: one of "off" | "play" | "scrub", required
+- `track`: integer, required
+
+#### `gnubase.audition.stop`
+
+Ends auditioning and scrubbing. Does nothing if neither runs. Announces audition.changed.
+
+Returns:
+
+- `mode`: one of "off" | "play" | "scrub", required
+- `track`: integer, required
 
 ### autoFades
 
@@ -869,7 +921,7 @@ Returns:
 
 #### `gnubase.channel.set`
 
-Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts between formats where a channel feeds a destination of another one: speakers both formats have connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, or to L and R at the pan law's center). instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 (silence) to the project's maxVolume (default 0); values beyond them stop there. The panner depends on the routing: a mono channel on a stereo destination has its position pan, -1 (left) to 1 (right), placed with the project's pan law; a stereo channel on a stereo or mono destination has the balance panner (panner balance, the default: pan turns down the other side) or the combined panner (panner combined: panLeft and panRight place its left and right channel, by default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records (the default). Monitoring glides in and out over one audio block. mute silences a channel; while any channel is soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the channels that play into them are heard. Muting and soloing glide over one audio block.
+Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts between formats where a channel feeds a destination of another one: speakers both formats have connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, or to L and R at the pan law's center). instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 (silence) to the project's maxVolume (default 0); values beyond them stop there. The panner depends on the routing: a mono channel on a stereo destination has its position pan, -1 (left) to 1 (right), placed with the project's pan law; a stereo channel on a stereo or mono destination has the balance panner (panner balance, the default: pan turns down the other side) or the combined panner (panner combined: panLeft and panRight place its left and right channel, by default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records (the default). Monitoring glides in and out over one audio block. mute silences a channel; while any channel is soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the channels that play into them are heard. Muting and soloing glide over one audio block. notes is the channel's notepad, the user's text about it.
 
 Parameters:
 
@@ -882,6 +934,7 @@ Parameters:
 - `midiVolume`: integer or null
 - `monitor`: boolean
 - `mute`: boolean
+- `notes`: string
 - `output`: integer
 - `pan`: number
 - `panBypass`: boolean
@@ -2047,6 +2100,40 @@ Returns:
 
 - `part`: object, required
 
+### mixer
+
+#### `gnubase.mixer.get`
+
+What a mixer hides. mixer: lower (the mixer in the project window's lower zone) or window1 to window4 (the mixer windows). hidden: the channels and busses (by id) it doesn't show. hiddenTypes: the channel types its filter hides: input, audio, instrument, midi, group (also folders' group channels), effect and output.
+
+Only reads; changes nothing.
+
+Parameters:
+
+- `mixer`: one of "lower" | "window1" | "window2" | "window3" | "window4", required
+
+Returns:
+
+- `hidden`: array of integer, required
+- `hiddenTypes`: array of one of "input" | "audio" | "instrument" | "midi" | "group" | "effect" | "output", required
+- `mixer`: one of "lower" | "window1" | "window2" | "window3" | "window4", required
+
+#### `gnubase.mixer.set`
+
+Changes what a mixer hides; what isn't given stays. mixer: lower (the mixer in the project window's lower zone) or window1 to window4 (the mixer windows). hidden: the channels and busses (by id) it doesn't show. hiddenTypes: the channel types its filter hides: input, audio, instrument, midi, group (also folders' group channels), effect and output. Each mixer has its own; they are settings, not undo steps, saved with the project. Emits mixer.changed with the mixer's view.
+
+Parameters:
+
+- `hidden`: array of integer
+- `hiddenTypes`: array of one of "input" | "audio" | "instrument" | "midi" | "group" | "effect" | "output"
+- `mixer`: one of "lower" | "window1" | "window2" | "window3" | "window4", required
+
+Returns:
+
+- `hidden`: array of integer, required
+- `hiddenTypes`: array of one of "input" | "audio" | "instrument" | "midi" | "group" | "effect" | "output", required
+- `mixer`: one of "lower" | "window1" | "window2" | "window3" | "window4", required
+
 ### note
 
 #### `gnubase.note.add`
@@ -2485,16 +2572,23 @@ Returns:
 
 #### `gnubase.project.set`
 
-Changes the project's name, sample rate, stereo pan law or maximum volume. Linear positions keep their time at a new sample rate. panLaw is how much a mono channel panned to the center is turned down on each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it. tempo (1 to 999 BPM) and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} are the project's first tempo and time signature, as the transport bar sets them; later changes stay, and musical positions keep their ticks.
+Changes the project's name, sample rate, stereo pan law or maximum volume, or the other settings of the project setup. Linear positions keep their time at a new sample rate; media files keep theirs (see media.conform). panLaw is how much a mono channel panned to the center is turned down on each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it. tempo (1 to 999 BPM) and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} are the project's first tempo and time signature, as the transport bar sets them; later changes stay, and musical positions keep their ticks. recordFileType (wav, the default, broadcastWav, aiff or flac) and recordBitDepth (int16, int24, the default, int32, float32 or float64) are what recording writes: AIFF only integers, FLAC 16 or 24 bit, 64 bit float only Wave. frameRate is the timecode's (default 25). startTime (seconds, under 24 hours) is the time shown at the project start, length (seconds, up to 24 hours, default 600) how long the project is, barOffset (-9999 to 9999) is added to the bar numbers shown, and timeFormat is the primary time format of rulers and position displays.
 
 Parameters:
 
+- `barOffset`: integer
+- `frameRate`: one of "23.976" | "24" | "24.975" | "25" | "29.97" | "29.97dfps" | "30" | "30dfps" | "50" | "59.94" | "60"
+- `length`: number
 - `maxVolume`: number
 - `name`: string
 - `panLaw`: one of "0dB" | "-3dB" | "-4.5dB" | "-6dB" | "equalPower"
+- `recordBitDepth`: one of "int16" | "int24" | "int32" | "float32" | "float64"
+- `recordFileType`: one of "wav" | "broadcastWav" | "aiff" | "flac"
 - `sampleRate`: number
 - `signature`: object
+- `startTime`: number
 - `tempo`: number
+- `timeFormat`: one of "barsBeats" | "seconds" | "timecode" | "samples" | "userFrames"
 
 #### `gnubase.project.templates`
 
@@ -2667,6 +2761,108 @@ Returns:
 
 - `autoQuantize`: boolean, required
 - `settings`: object, required
+
+### range
+
+#### `gnubase.range.copy`
+
+Copies the range from start to end (project samples, default the locators) on tracks (ids, default every track) to the range clipboard for range.paste: the audio events and MIDI parts in it, cut at its edges (splitNotes as in range.split), and the automation in it with the curve's values at the edges. Without start, end and tracks it is Global Copy: everything between the locators. Changes nothing in the project. Returns how many events and parts and automation lanes it copied.
+
+Parameters:
+
+- `end`: integer
+- `splitNotes`: boolean
+- `start`: integer
+- `tracks`: array of integer
+
+Returns:
+
+- `events`: integer, required
+- `lanes`: integer, required
+
+#### `gnubase.range.crop`
+
+Crops the audio events and MIDI parts that cross an edge of the range from start to end (project samples, default the locators) on tracks (ids, default every track) to it, removing what lies outside; events entirely inside or outside it stay as they are, and so do locked ones. splitNotes as in range.split. Returns the cropped events.
+
+Parameters:
+
+- `end`: integer
+- `splitNotes`: boolean
+- `start`: integer
+- `tracks`: array of integer
+
+Returns:
+
+- `events`: array of integer, required
+
+#### `gnubase.range.cut`
+
+Copies the range from start to end (project samples, default the locators) on tracks (ids, default every track) to the range clipboard as range.copy does, then deletes it as range.delete does; time (Cut Time) closes the gap. Returns how many events and parts and automation lanes it copied.
+
+Parameters:
+
+- `end`: integer
+- `splitNotes`: boolean
+- `start`: integer
+- `time`: boolean
+- `tracks`: array of integer
+
+Returns:
+
+- `events`: integer, required
+- `lanes`: integer, required
+
+#### `gnubase.range.delete`
+
+Deletes what lies in the range from start to end (project samples, default the locators) on tracks (ids, default every track): the audio events and MIDI parts in it, cut at its edges (splitNotes as in range.split), and the automation points in it. The automation outside keeps its curve: the value it arrives at the start with holds up to the end. time (Delete Time) closes the gap: what comes after the range on its tracks moves back by its length, in ticks on musical tracks. Locked events stay.
+
+Parameters:
+
+- `end`: integer
+- `splitNotes`: boolean
+- `start`: integer
+- `time`: boolean
+- `tracks`: array of integer
+
+#### `gnubase.range.insertSilence`
+
+Inserts silence as long as the range from start to end (project samples, default the locators) on tracks (ids, default every track) at its start: what lies on its tracks from the start on, cut there, moves later by the range's length, in ticks on musical tracks, and the automation holds the value it arrives at the start with over the silence. Locked events stay.
+
+Parameters:
+
+- `end`: integer
+- `splitNotes`: boolean
+- `start`: integer
+- `tracks`: array of integer
+
+#### `gnubase.range.paste`
+
+Pastes the range clipboard (range.copy, range.cut) at position (project samples, default the project cursor): onto the tracks it was copied from, or onto track and the tracks below it in the project's order, one for each copied track, which must take the copied events. Audio events and MIDI parts come as unlocked real copies; automation replaces the curve where it lands, on a lane of the same parameter. time (Paste Time) first makes room as long as the copied range, as range.insertSilence does. Returns the new events.
+
+Parameters:
+
+- `position`: integer
+- `time`: boolean
+- `track`: integer
+
+Returns:
+
+- `events`: array of integer, required
+
+#### `gnubase.range.split`
+
+Splits the audio events and MIDI parts on the range from start to end (project samples, default the locators) on tracks (ids, default every track) at its edges; a range of no length splits at its start. Locked events stay whole; splitNotes cuts notes across an edge in two, as event.split does. Returns the new events after the splits.
+
+Parameters:
+
+- `end`: integer
+- `splitNotes`: boolean
+- `start`: integer
+- `tracks`: array of integer
+
+Returns:
+
+- `events`: array of integer, required
 
 ### recording
 
@@ -2857,7 +3053,7 @@ Parameters:
 
 #### `gnubase.track.set`
 
-Changes a track's name, color (#rrggbb, or null for the default), time base or, for ruler tracks, time format. A new time base keeps its events, parts and markers at the same time. enabled false disables an audio, instrument or MIDI track: it keeps its events and channel settings but plays nothing and is silent. groupChannel turns a folder's group channel on or off: a new one is stereo and plays through the next group channel up, or the main output; the audio of the tracks inside then plays through it, or without it through the next group channel up, or the main output, and its automation and the routing of other channels to it go. Channels routed elsewhere by hand or disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new color goes to the tracks inside it.
+Changes a track's name, color (#rrggbb, or null for the default), time base or, for ruler tracks, time format. A new time base keeps its events, parts and markers at the same time. enabled false disables an audio, instrument or MIDI track: it keeps its events and channel settings but plays nothing and is silent. groupChannel turns a folder's group channel on or off: a new one is stereo and plays through the next group channel up, or the main output; the audio of the tracks inside then plays through it, or without it through the next group channel up, or the main output, and its automation and the routing of other channels to it go. Channels routed elsewhere by hand or disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new color goes to the tracks inside it. picture is an image file (PNG, JPEG or SVG) that the mixer shows on the track's channel, or empty for none.
 
 Parameters:
 
@@ -2865,6 +3061,7 @@ Parameters:
 - `enabled`: boolean
 - `groupChannel`: boolean
 - `name`: string
+- `picture`: string
 - `timeBase`: one of "musical" | "linear"
 - `timeFormat`: one of "barsBeats" | "seconds" | "timecode" | "samples" | "userFrames"
 - `track`: integer, required

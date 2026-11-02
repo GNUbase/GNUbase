@@ -146,7 +146,8 @@ job()
 			cmake --build "build/$1" --target gnubase-tests && runTests "build/$1" Debug
 		;;
 	clang-tidy)
-		cmake --preset linux-clang -B build/clang-tidy -DGNUBASE_CLANG_TIDY=ON "${ccache[@]}" &&
+		cmake --preset linux-clang -B build/clang-tidy -DGNUBASE_CLANG_TIDY=ON \
+			-DGNUBASE_CLANG_TIDY_CACHE="$root/build/clang-tidy-cache" "${ccache[@]}" &&
 			cmake --build build/clang-tidy
 		;;
 	*)

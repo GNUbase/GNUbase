@@ -518,6 +518,11 @@
 	{
 		background-color: #ffff00;
 	}
+	.mixer-channel
+	{
+		border-right-width: 1dp;
+		border-right-color: #ffffff;
+	}
 	.docking [zone]
 	{
 		background-color: #000000;
@@ -544,6 +549,18 @@
 	{
 		color: #ff8c8c;
 	}
+	.info-line.multiple .info-field
+	{
+		color: #ffff00;
+	}
+	.info-line .info-label, .inspector-label
+	{
+		color: #c8c8c8;
+	}
+	.inspector .insert.bypassed, .inspector .insert.inactive
+	{
+		color: #c8c8c8;
+	}
 	.pool-message.error
 	{
 		color: #ff8c8c;
@@ -556,22 +573,26 @@
 	{
 		background-color: #ffff00;
 	}
-	.menubar
+	menubar
 	{
 		background-color: #000000;
 	}
-	.menubar button
+	menubar button
 	{
 		decorator: none;
 		color: #ffffff;
 	}
-	.menubar button:hover
+	menubar button:hover
 	{
 		decorator: svg-ninepatch(menu-item-hover.svg, 6 6 6 6);
 	}
 	menuitem .menu-keys
 	{
 		color: #c8c8c8;
+	}
+	menuitem > .menu-arrow
+	{
+		decorator: svg(dropdown-arrow.svg);
 	}
 	valuefield:focus-visible
 	{
@@ -637,7 +658,7 @@
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(radio-on.svg);
 	}
-	.menubar button:focus-visible
+	menubar button:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
 	}

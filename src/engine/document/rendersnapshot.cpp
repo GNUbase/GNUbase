@@ -100,12 +100,14 @@ namespace gnubase::engine
 		snapshot->tempo = project.tempo;
 		snapshot->panLaw = project.panLaw;
 		snapshot->maxVolume = project.maxVolume;
+		snapshot->recordBitDepth = project.setup.recordBitDepth;
 
 		std::map<ObjectId, int> busIndex;
 		for (const Bus& bus : project.busses)
 		{
 			busIndex[bus.id] = static_cast<int>(snapshot->busses.size());
-			snapshot->busses.push_back({bus.id, bus.direction, bus.format, bus.ports, -1, bus.parentChannels});
+			snapshot->busses.push_back(
+				{bus.id, bus.direction, bus.format, bus.ports, -1, bus.parentChannels, bus.mainMix});
 		}
 		for (size_t i = 0; i < project.busses.size(); ++i)
 			if (project.busses[i].parent != 0)
