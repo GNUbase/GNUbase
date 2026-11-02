@@ -330,7 +330,7 @@ namespace gnubase::engine
 		std::function<Json(ObjectId)> m_describeSlot;
 		std::map<ObjectId, std::string> m_slotStatuses; // as announced last
 		std::map<ObjectId, int> m_sourceNodes;          // rebuild: per channel
-		Transport m_transport;                      // advanced by the audio thread
+		Transport m_transport;                          // advanced by the audio thread
 		MidiPorts m_midi;
 		audio::MidiBuffer m_midiInput; // the block's messages from all MIDI inputs, for MIDI recording (#97)
 		MidiTap m_tap;                 // midi.inject and midi.capture

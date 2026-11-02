@@ -75,8 +75,8 @@ namespace gnubase::engine::plugins
 		std::atomic<bool> closing{false};
 		std::atomic<int> retiring{0}; // whenRetired jobs that haven't run their work
 
-		Shared(HostManager& manager, std::function<void()> onChange, std::function<bool(uint64_t)> isRetired,
-			Factory make)
+		Shared(
+			HostManager& manager, std::function<void()> onChange, std::function<bool(uint64_t)> isRetired, Factory make)
 			: jobs(manager), changed(std::move(onChange)), retired(std::move(isRetired)),
 			  factory(make ? std::move(make) : Factory(makeBuiltin))
 		{
@@ -166,8 +166,7 @@ namespace gnubase::engine::plugins
 					break;
 				case Action::Reactivate:
 					current->deactivate();
-					set(
-						{current, sampleRate > 0.0 && current->activate(sampleRate, maxFrames) ? "active" : "failed"});
+					set({current, sampleRate > 0.0 && current->activate(sampleRate, maxFrames) ? "active" : "failed"});
 					break;
 				}
 			}

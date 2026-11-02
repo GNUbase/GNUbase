@@ -204,8 +204,8 @@ namespace gnubase::engine
 			with(insertPlugin));
 		add(engine,
 			{"plugin.remove", 1,
-				"Removes a slot and its plugin; the slots below it move up. Emits plugin.removed with the slot's id. Undo "
-				"puts the plugin back with its parameters.",
+				"Removes a slot and its plugin; the slots below it move up. Emits plugin.removed with the slot's id. "
+				"Undo puts the plugin back with its parameters.",
 				objectSchema({{"slot", idSchema}}, {"slot"}), {{"type", "object"}}, false},
 			removePlugin);
 		add(engine,

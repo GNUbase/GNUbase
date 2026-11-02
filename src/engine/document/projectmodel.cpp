@@ -2154,8 +2154,8 @@ namespace gnubase::engine
 			announceObjects(change.clips, direction, "clip", "clip", context);
 			announceObjects(change.audioEvents, direction, "audioEvent", "event", context);
 			announceObjects(change.markers, direction, "marker", "marker", context);
-			// Slots as plugin.insert, plugin.remove and the other plugin.* commands announce them. Those of a channel that
-			// came or went are in its events.
+			// Slots as plugin.insert, plugin.remove and the other plugin.* commands announce them. Those of a channel
+			// that came or went are in its events.
 			std::set<ObjectId> channels; // that came or went
 			for (const ObjectChange<Channel>& channel : change.channels)
 				if (!channel.before || !channel.after)
@@ -2169,8 +2169,8 @@ namespace gnubase::engine
 				if (!current)
 					context.emit("plugin.removed", {{"slot", slot.id}});
 				else
-					context.emit(previous ? "plugin.changed" : "plugin.added",
-						{{"slot", model.describeSlot(project, slot.id)}});
+					context.emit(
+						previous ? "plugin.changed" : "plugin.added", {{"slot", model.describeSlot(project, slot.id)}});
 			}
 			// After the tracks, so that a client knows the track that becomes active.
 			if (activated)
