@@ -41,6 +41,10 @@ add_library(gnubase-ui STATIC
 	historypanel.cpp
 	historypanel.h
 	image.cpp
+	infoline.cpp
+	infoline.h
+	inspector.cpp
+	inspector.h
 	keycommands.cpp
 	keycommands.h
 	livereload.cpp

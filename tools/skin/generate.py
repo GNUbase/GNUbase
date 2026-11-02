@@ -478,6 +478,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".status-line .status-field", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
         (".status-line .mismatch", {"color": c["warning"]}),
         ("#lost-device", {"color": c["danger"]}),
+        # The info line and the inspector (docs/features/inspector.md): the info line's values in another color with
+        # several events selected, bypassed and deactivated inserts dimmed
+        (".info-line.multiple .info-field", {"color": c["accent"]}),
+        (".info-line .info-label, .inspector-label", {"color": c["textMuted"]}),
+        (".inspector .insert.bypassed, .inspector .insert.inactive", {"color": c["textMuted"]}),
         # The pool's message line (docs/features/pool.md): why a pool command failed stands out
         (".pool-message.error", {"color": c["danger"]}),
         # The main menu bar (docs/features/main-menu.md): flat menu titles, lit under the mouse, and the items' keys

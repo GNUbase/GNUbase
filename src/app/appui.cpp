@@ -5,6 +5,7 @@
 #include "platform/log.h"
 #include "ui/fonts.h"
 #include "ui/historypanel.h"
+#include "ui/inspector.h"
 #include "ui/poolpanel.h"
 #include "ui/widgets.h"
 
@@ -203,6 +204,16 @@ namespace gnubase::app
 					m_menu->update();
 				if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
 					pool->update();
+				if (m_infoLine)
+					m_infoLine->update();
+				// The inspector shows the first selected track.
+				if (const std::shared_ptr<ui::Inspector> inspector = m_inspector.lock(); inspector && m_eventDisplay)
+				{
+					const std::vector<uint64_t> tracks =
+						m_trackList ? m_trackList->selection() : std::vector<uint64_t>();
+					inspector->update(
+						tracks.empty() ? 0 : tracks.front(), m_eventDisplay->project(), m_eventDisplay->loads());
+				}
 				return follows;
 			});
 		m_shell.onUnusedKey([this](ui::Window& window, const ui::KeyPress& keys) { m_keys.press(window, keys); });
@@ -211,9 +222,20 @@ namespace gnubase::app
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleMarkers(); }); }});
 		m_keys.bind({"Mod+M", "window.markers"});
 
-		// The project window's panels (reference manual pp. 54, 75-98), which their tickets fill.
+		// The project window's panels (reference manual pp. 54, 75-98), which their tickets fill: the inspector
+		// (docs/features/inspector.md) shows the selected track.
 		for (const ProjectPanel& panel : g_projectPanels)
-			m_docking.add({panel.id, panel.title, "project", panel.zone, {}});
+		{
+			ui::Panel added{panel.id, panel.title, "project", panel.zone, {}};
+			if (added.id == "inspector")
+				added.create = [this](Rml::Element& element)
+				{
+					auto inspector = std::make_shared<ui::Inspector>(m_binding, element);
+					m_inspector = inspector;
+					return std::shared_ptr<void>(inspector);
+				};
+			m_docking.add(std::move(added));
+		}
 		// The edit history (reference manual pp. 110-111), a dialog there, which Edit > History opens.
 		m_docking.add({"history", "History", "project", "right",
 			[this](Rml::Element& element) { return std::make_shared<ui::HistoryPanel>(m_binding, element); }});
@@ -456,10 +478,13 @@ namespace gnubase::app
 		m_markerLines.reset();
 		m_docking.attach("project", *document);
 		m_trackList.reset();
+		m_infoLine.reset();
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
 		if (Rml::Element* bar = document->GetElementById("transport-bar"))
 			m_transportBar = transportControls(*bar, m_main, true);
 		m_statusLine = std::make_unique<ui::StatusLine>(m_binding, *document);
+		if (Rml::Element* info = document->GetElementById("info-line"))
+			m_infoLine = std::make_unique<ui::InfoLine>(*m_eventDisplay, m_binding, *info);
 		if (Rml::Element* tracks = document->GetElementById("track-list"))
 			m_trackList = std::make_unique<ui::TrackList>(*m_eventDisplay, m_binding, *tracks);
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
