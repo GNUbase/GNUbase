@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Menus, context menus and tooltips of the widget library (#54) for tests/widgets_tests.cpp: a menu button, a track
-     with a context menu that has a submenu and a disabled item, elements with tooltips, and a menu bar whose File
-     menu has a submenu and whose Tools title is disabled. -->
+     with a context menu that has submenus (one with only a disabled item) and a disabled item, elements with
+     tooltips, and a menu bar whose File menu has a submenu and whose Tools title is disabled. -->
 <rml>
 <head>
 	<title>Popups</title>
@@ -33,6 +33,11 @@
 			</menu>
 		</menuitem>
 		<menuitem id="remove" disabled="disabled">Remove</menuitem>
+		<menuitem id="lock">Lock
+			<menu id="locks">
+				<menuitem id="locked" disabled="disabled">Locked</menuitem>
+			</menu>
+		</menuitem>
 	</menu>
 	<menubar id="menubar">
 		<button id="file-title" menu="file">File</button>

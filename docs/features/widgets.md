@@ -82,16 +82,18 @@ attributes, through a data model or directly.
   part when it opens, first in the item so that it floats right; the themes draw it with their dropdown arrow, turned
   to point right.
 - Keys: Down and Up move the focus between the items that aren't disabled, Enter clicks the focused one. Right opens
-  the focused item's submenu (with the state class `.open`) and focuses its first item; Left closes the submenu and
-  goes back to its item. A submenu that keys opened closes when the mouse goes to another item of its menu, and with
-  its menu. Escape closes every open menu.
+  the focused item's submenu (with the state class `.open`) and focuses its first item, unless all its items are
+  disabled; Left closes the submenu and goes back to its item. A submenu that keys opened closes when the mouse goes
+  to another item of its menu, and with its menu. Escape closes every open menu. A menu that closes with the focus
+  in it gives the focus to its item, if it is a submenu, or else to its document.
 - `<menubar>` holds the titles of menus: elements with a `menu` attribute, usually buttons. While one title's menu is
   open, the mouse over another title opens that one's menu instead; in a title's menu (and its submenus) Right and
   Left open the next and previous title's menu where they don't go into or out of a submenu, with its first item
-  focused, skipping disabled titles and going round. Alt pressed and released on its own opens the menu of the first
-  menu bar shown in the window, again with its first item focused, and closes it when one of its menus is open; Alt
-  with another key, a modifier or a click doesn't. On macOS Alt does nothing, since the system menu bar takes the
-  keys there.
+  focused, skipping hidden and disabled titles and going round. Alt pressed and released on its own opens the menu of
+  the first menu bar shown in the window, again with its first item focused, closing other menus, and closes it when
+  one of its menus is open. Alt with another key, a modifier, a mouse button or the wheel doesn't, nor in a modal
+  document, nor when the window loses the keyboard while Alt is held (Alt+Tab: SDL then releases the keys, and the
+  window system drops that Alt). On macOS Alt does nothing, since the system menu bar takes the keys there.
 
 ## Tooltips
 
@@ -170,8 +172,11 @@ the page; value fields take typed numbers and leave bad ones. Text displays send
 with Escape or when nothing was typed. Meters show their level and peak at the right heights.
 Menus open under their button and at the mouse, inside the window, show submenus on hover, close on an item, a click
 elsewhere and Escape, skip disabled items, and work with the keys; items with a submenu show an arrow, and Right and
-Left go into and out of the submenu. In a menu bar the mouse and Right and Left move between the open menus, skipping
-a disabled title, and Alt alone opens and closes the first menu (not on macOS, nor with another key or a click).
+Left go into and out of the submenu, but not into one with nothing to focus. In a menu bar the mouse and Right and
+Left move between the open menus, also from a submenu, skipping a disabled title, and Alt alone opens the first menu,
+closing a context menu, and closes it, leaving the focus out of the closed menu (not on macOS, nor with another key,
+a click, a mouse button going up or the wheel, nor when SDL releases Alt as the window loses the keyboard, nor
+behind a modal dialog).
 Tooltips show after a rest and go with the mouse.
 Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result.
 Tabs show their panels. List views select with clicks, Ctrl, Shift and the keys, and follow their data; trees expand

@@ -458,6 +458,11 @@ namespace gnubase::ui
 			// take the hover from what the tests point at.
 			if (event.type == SDL_EVENT_WINDOW_MOUSE_LEAVE && (SDL_GetWindowFlags(window) & SDL_WINDOW_HIDDEN) != 0)
 				return std::nullopt;
+			// When the window loses the keyboard, e.g. to Alt+Tab, SDL releases the keys still held: Alt released then
+			// isn't Alt pressed alone, which opens the menu bar (ui/widgets.h).
+			if (event.type == SDL_EVENT_KEY_UP && (event.key.key == SDLK_LALT || event.key.key == SDLK_RALT) &&
+				SDL_GetKeyboardFocus() != window)
+				return std::nullopt;
 			const bool unused = RmlSDL::InputEventHandler(target->second, window, event);
 			WindowEvent input{WindowEventKind::Input, id};
 			if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && unused) // one key command per press

@@ -13,6 +13,7 @@
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/Input.h>
+#include <SDL3/SDL.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -571,6 +572,15 @@ TEST_CASE("items with a submenu show an arrow, and Right and Left open and close
 	CHECK(focused(app, "#rename"));
 	CHECK(visible(app, "#track-menu"));
 
+	// Nor does Right on an item whose submenu has nothing to focus.
+	app.ui().key(std::nullopt, "Up");
+	REQUIRE(focused(app, "#lock"));
+	app.ui().key(std::nullopt, "Right");
+	CHECK_FALSE(visible(app, "#locks"));
+	CHECK(focused(app, "#lock"));
+	app.ui().key(std::nullopt, "Down");
+	REQUIRE(focused(app, "#rename"));
+
 	// A submenu that keys opened closes when the mouse goes to another item, and with its menu.
 	app.ui().key(std::nullopt, "Down");
 	app.ui().key(std::nullopt, "Right");
@@ -641,6 +651,17 @@ TEST_CASE("in a menu bar the mouse and Left and Right move between the open menu
 	CHECK(visible(app, "#recent-menu"));
 	CHECK(focused(app, "#first-recent"));
 	CHECK(visible(app, "#file"));
+
+	// In the submenu, Right on an item without a submenu opens the next title's menu too.
+	app.ui().key(std::nullopt, "Right");
+	CHECK(visible(app, "#view"));
+	CHECK_FALSE(visible(app, "#file"));
+	app.ui().key(std::nullopt, "Left");
+	REQUIRE(visible(app, "#file"));
+	CHECK_FALSE(visible(app, "#recent-menu")); // closed with its menu
+	app.ui().key(std::nullopt, "Down");
+	app.ui().key(std::nullopt, "Right");
+	REQUIRE(focused(app, "#first-recent"));
 	app.ui().key(std::nullopt, "Left");
 	CHECK_FALSE(visible(app, "#recent-menu"));
 	CHECK(focused(app, "#recent"));
@@ -670,6 +691,7 @@ TEST_CASE("Alt opens the menu bar's first menu on Windows and Linux, and closes 
 	CHECK(visible(app, "#view"));
 	app.ui().key(std::nullopt, "Alt");
 	CHECK_FALSE(visible(app, "#view"));
+	CHECK_FALSE(focused(app, "#zoom-in")); // the focus left the closed menu
 
 	// A context menu that is open closes.
 	app.ui().click(std::nullopt, at("#track"), ui::MouseButton::Right, 1, {});
@@ -693,6 +715,39 @@ TEST_CASE("Alt opens the menu bar's first menu on Windows and Linux, and closes 
 	context.ProcessKeyDown(Rml::Input::KI_LMENU, Rml::Input::KM_ALT | Rml::Input::KM_CTRL);
 	context.ProcessKeyUp(Rml::Input::KI_LMENU, Rml::Input::KM_CTRL);
 	CHECK_FALSE(visible(app, "#file"));
+
+	// Nor when a mouse button goes up or the wheel turns while it's held: Alt during a drag copies events.
+	context.ProcessMouseButtonDown(0, 0);
+	context.ProcessKeyDown(Rml::Input::KI_LMENU, Rml::Input::KM_ALT);
+	context.ProcessMouseButtonUp(0, Rml::Input::KM_ALT);
+	context.ProcessKeyUp(Rml::Input::KI_LMENU, 0);
+	CHECK_FALSE(visible(app, "#file"));
+	context.ProcessKeyDown(Rml::Input::KI_LMENU, Rml::Input::KM_ALT);
+	context.ProcessMouseWheel(Rml::Vector2f(0.0F, 1.0F), Rml::Input::KM_ALT);
+	context.ProcessKeyUp(Rml::Input::KI_LMENU, 0);
+	CHECK_FALSE(visible(app, "#file"));
+
+	// Nor when SDL releases it because the window lost the keyboard, e.g. to Alt+Tab (the tests' hidden windows never
+	// have it): the open menu stays open, and Right after it still reaches the menu.
+	click(app, "#file-title");
+	REQUIRE(visible(app, "#file"));
+	SDL_Event event{};
+	event.type = SDL_EVENT_KEY_DOWN;
+	event.key.windowID = app.main().id();
+	event.key.key = SDLK_LALT;
+	event.key.scancode = SDL_SCANCODE_LALT;
+	event.key.down = true;
+	REQUIRE(SDL_PushEvent(&event));
+	event.type = SDL_EVENT_KEY_UP;
+	event.key.down = false;
+	REQUIRE(SDL_PushEvent(&event));
+	event.type = SDL_EVENT_KEY_DOWN;
+	event.key.key = SDLK_RIGHT;
+	event.key.scancode = SDL_SCANCODE_RIGHT;
+	event.key.down = true;
+	REQUIRE(SDL_PushEvent(&event));
+	CHECK(app.waitUntil([&app] { return visible(app, "#view"); }));
+	app.ui().key(std::nullopt, "Escape");
 
 	// Nor does it open a hidden menu bar's menu.
 	document.GetElementById("menubar")->SetProperty("display", "none");
@@ -787,6 +842,19 @@ TEST_CASE("dialogs open in the middle, move by their title bar, and close with E
 	click(app, "#cancel");
 	CHECK(app.waitUntil([&app] { return !dialogOpen(app); }));
 	CHECK(closes.results == std::vector<std::string>{"ok", "cancel", "cancel"});
+}
+
+TEST_CASE("Alt leaves a menu bar behind a modal dialog closed", "[ui]")
+{
+	Closes closes;
+	test::UiApp app;
+	app.show("popups.rml");
+	openDialog(app, closes);
+	app.ui().key(std::nullopt, "Alt");
+	CHECK_FALSE(visible(app, "#file"));
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(app.waitUntil([&app] { return !dialogOpen(app); }));
+	CHECK(closes.results == std::vector<std::string>{"cancel"});
 }
 
 namespace

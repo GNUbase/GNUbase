@@ -135,6 +135,8 @@ namespace gnubase::ui
 		std::istringstream modifiers(split == std::string::npos ? std::string() : keys.substr(0, split));
 		for (std::string name; std::getline(modifiers, name, '+');)
 			pressed.modifiers |= parseModifier(name, platform);
+		if (pressed.key == KI_LMENU)
+			pressed.modifiers |= KM_ALT; // held while it's pressed, as the keyboard sends it
 		return pressed;
 	}
 
@@ -145,7 +147,7 @@ namespace gnubase::ui
 			{{KM_CTRL, "Ctrl"}, {KM_ALT, mac ? "Opt" : "Alt"}, {KM_SHIFT, "Shift"}, {KM_META, mac ? "Cmd" : "Meta"}}};
 		std::string name;
 		for (const auto& [flag, text] : modifiers)
-			if ((keys.modifiers & flag) != 0)
+			if ((keys.modifiers & flag) != 0 && (flag != KM_ALT || keys.key != KI_LMENU)) // Alt, not Alt+Alt
 			{
 				name += text;
 				name += '+';
