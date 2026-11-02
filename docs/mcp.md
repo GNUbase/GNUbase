@@ -3129,6 +3129,122 @@ Result:
 - `autoQuantize`: boolean, required
 - `settings`: object, required
 
+### range
+
+#### `range_copy`
+
+Engine command `range.copy`.
+
+Copies the range from start to end (project samples, default the locators) on tracks (ids, default every track) to the range clipboard for range.paste: the audio events and MIDI parts in it, cut at its edges (splitNotes as in range.split), and the automation in it with the curve's values at the edges. Without start, end and tracks it is Global Copy: everything between the locators. Changes nothing in the project. Returns how many events and parts and automation lanes it copied.
+
+Arguments:
+
+- `end`: integer
+- `splitNotes`: boolean
+- `start`: integer
+- `tracks`: array of integer
+
+Result:
+
+- `events`: integer, required
+- `lanes`: integer, required
+
+#### `range_crop`
+
+Engine command `range.crop`.
+
+Crops the audio events and MIDI parts that cross an edge of the range from start to end (project samples, default the locators) on tracks (ids, default every track) to it, removing what lies outside; events entirely inside or outside it stay as they are, and so do locked ones. splitNotes as in range.split. Returns the cropped events.
+
+Arguments:
+
+- `end`: integer
+- `splitNotes`: boolean
+- `start`: integer
+- `tracks`: array of integer
+
+Result:
+
+- `events`: array of integer, required
+
+#### `range_cut`
+
+Engine command `range.cut`.
+
+Copies the range from start to end (project samples, default the locators) on tracks (ids, default every track) to the range clipboard as range.copy does, then deletes it as range.delete does; time (Cut Time) closes the gap. Returns how many events and parts and automation lanes it copied.
+
+Arguments:
+
+- `end`: integer
+- `splitNotes`: boolean
+- `start`: integer
+- `time`: boolean
+- `tracks`: array of integer
+
+Result:
+
+- `events`: integer, required
+- `lanes`: integer, required
+
+#### `range_delete`
+
+Engine command `range.delete`.
+
+Deletes what lies in the range from start to end (project samples, default the locators) on tracks (ids, default every track): the audio events and MIDI parts in it, cut at its edges (splitNotes as in range.split), and the automation points in it. The automation outside keeps its curve: the value it arrives at the start with holds up to the end. time (Delete Time) closes the gap: what comes after the range on its tracks moves back by its length, in ticks on musical tracks. Locked events stay.
+
+Arguments:
+
+- `end`: integer
+- `splitNotes`: boolean
+- `start`: integer
+- `time`: boolean
+- `tracks`: array of integer
+
+#### `range_insertSilence`
+
+Engine command `range.insertSilence`.
+
+Inserts silence as long as the range from start to end (project samples, default the locators) on tracks (ids, default every track) at its start: what lies on its tracks from the start on, cut there, moves later by the range's length, in ticks on musical tracks, and the automation holds the value it arrives at the start with over the silence. Locked events stay.
+
+Arguments:
+
+- `end`: integer
+- `splitNotes`: boolean
+- `start`: integer
+- `tracks`: array of integer
+
+#### `range_paste`
+
+Engine command `range.paste`.
+
+Pastes the range clipboard (range.copy, range.cut) at position (project samples, default the project cursor): onto the tracks it was copied from, or onto track and the tracks below it in the project's order, one for each copied track, which must take the copied events. Audio events and MIDI parts come as unlocked real copies; automation replaces the curve where it lands, on a lane of the same parameter. time (Paste Time) first makes room as long as the copied range, as range.insertSilence does. Returns the new events.
+
+Arguments:
+
+- `position`: integer
+- `time`: boolean
+- `track`: integer
+
+Result:
+
+- `events`: array of integer, required
+
+#### `range_split`
+
+Engine command `range.split`.
+
+Splits the audio events and MIDI parts on the range from start to end (project samples, default the locators) on tracks (ids, default every track) at its edges; a range of no length splits at its start. Locked events stay whole; splitNotes cuts notes across an edge in two, as event.split does. Returns the new events after the splits.
+
+Arguments:
+
+- `end`: integer
+- `splitNotes`: boolean
+- `start`: integer
+- `tracks`: array of integer
+
+Result:
+
+- `events`: array of integer, required
+
 ### recording
 
 #### `recording_add`

@@ -60,7 +60,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 51> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 61> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -98,6 +98,17 @@ namespace gnubase::app
 			{"edit.selectFromCursorToEnd", "Selects the events that start after the project cursor.", nullptr},
 			{"edit.selectUnderCursor", "Selects the events at the project cursor.", nullptr},
 			{"edit.locatorsToSelection", "Sets the locators around the selected events.", "P"},
+			// Range editing (docs/features/range-editing.md), with the reference's keys (manual pp. 1562-1563).
+			{"edit.cut", "Cuts the selection range to the clipboard.", "Mod+X"},
+			{"edit.copy", "Copies the selection range to the clipboard.", "Mod+C"},
+			{"edit.paste", "Pastes the clipboard at the selection range's start or the project cursor.", "Mod+V"},
+			{"edit.cutTime", "Cuts the selection range and closes the gap.", "Mod+Shift+X"},
+			{"edit.deleteTime", "Deletes the selection range and closes the gap.", "Shift+Backspace"},
+			{"edit.pasteTime", "Pastes the clipboard and moves what comes after it to make room.", "Mod+Shift+V"},
+			{"edit.insertSilence", "Inserts silence as long as the selection range at its start.", "Mod+Shift+E"},
+			{"edit.splitRange", "Splits the events at the selection range's edges.", "Shift+X"},
+			{"edit.cropRange", "Crops the events that cross the selection range's edges to it.", nullptr},
+			{"edit.globalCopy", "Copies everything between the locators to the clipboard.", nullptr},
 			// Snap and grid (docs/features/snap.md).
 			{"edit.snap", "Switches snap on or off.", "J"},
 			{"edit.snapPointToCursor", "Sets the snap point of the selected audio events at the project cursor.",

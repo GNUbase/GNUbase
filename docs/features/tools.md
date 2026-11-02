@@ -37,7 +37,7 @@ project or undo.
 - **Selection range.** `range()` is the range: start and end in project samples and the tracks it covers by id, also
   in the root's attributes `range` (`"start end"`) and `range-tracks`, and drawn as `.range-selection` (`.shown` while
   there is one). Its edges snap. Choosing the range tool selects no events; choosing another tool selects the events in the range instead and ends
-  it (p. 286). Editing ranges comes with #88, which reads `range()`.
+  it (p. 286). The edit commands edit the range ([range-editing.md](range-editing.md)).
 - **Combine selection tools** (`setCombineSelectionTools`, p. 253): the object selection tool selects ranges in a
   lane's upper half and events in its lower half.
 - **The rectangle** that the object selection, mute and zoom tools drag, and the part that the draw tool drags, show
