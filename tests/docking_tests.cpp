@@ -156,7 +156,7 @@ TEST_CASE("the project window's zones and strips show and hide with buttons, key
 	test::UiApp app({1000, 700});
 	app.appUi().showProject();
 	for (const char* zone :
-		{"#left-zone", "#lower-zone", "#right-zone", "#info-line", "#status-line", "#transport-bar"})
+		{"#channel-zone", "#left-zone", "#lower-zone", "#right-zone", "#info-line", "#status-line", "#transport-bar"})
 	{
 		INFO(zone);
 		CHECK(!shown(app, zone)); // the defaults
@@ -251,6 +251,92 @@ TEST_CASE("splitters size the zones down to their minimum, and a double click hi
 	CHECK(!shown(app, "splitter[for=lower]"));
 	app.ui().key(std::nullopt, "Mod+Alt+E");
 	CHECK(boxOf(app, "#lower-zone", "height") == 280);
+}
+
+TEST_CASE(
+	"the Channel zone, left of the left zone, shows and hides with its button, the menu, its key and ui.layout", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.setDpRatio(1.0F);
+	app.appUi().showProject();
+	CHECK(!shown(app, "#channel-zone"));
+	CHECK(!shown(app, "splitter[for=channel]"));
+
+	app.ui().click(std::nullopt, at("#show-channel-zone"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#channel-zone"); }));
+	CHECK(element(app, "#show-channel-zone").at("attributes").contains("checked"));
+	CHECK(shown(app, "splitter[for=channel]"));
+	CHECK(tabs(app, "channel") == std::vector<std::string>{"channel"});
+	CHECK(boxOf(app, "#channel-zone", "width") == 200);
+	app.ui().key(std::nullopt, "Mod+Alt+L");
+	REQUIRE(shown(app, "#left-zone"));
+	CHECK(boxOf(app, "#channel-zone", "x") + boxOf(app, "#channel-zone", "width") <= boxOf(app, "#left-zone", "x"));
+
+	// Its splitter sizes it, and it is a focus zone.
+	const ui::Target splitter = middle(app, "splitter[for=channel]");
+	app.ui().drag(std::nullopt, splitter, moved(splitter, 50, 0));
+	CHECK(boxOf(app, "#channel-zone", "width") == 250);
+	waitUntilSaved(app);
+	CHECK(savedLayout(app).at("windows").at("project").at("zones").at("channel").at("size") == 250);
+	app.ui().click(std::nullopt, at("#channel-zone panels"), ui::MouseButton::Left, 1, {});
+	CHECK(has(element(app, "#channel-zone"), "focused"));
+	CHECK(!has(element(app, "#main-zone"), "focused"));
+
+	app.ui().key(std::nullopt, "Mod+Alt+C");
+	CHECK(!shown(app, "#channel-zone"));
+	CHECK(!shown(app, "splitter[for=channel]"));
+	CHECK(!element(app, "#show-channel-zone").at("attributes").contains("checked"));
+
+	// Set up Window Layout
+	app.ui().click(std::nullopt, at("#window-layout"), ui::MouseButton::Left, 1, {});
+	app.ui().click(std::nullopt, at("menuitem[toggle=channel]"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#channel-zone"); }));
+	CHECK(boxOf(app, "#channel-zone", "width") == 250);
+	waitUntilSaved(app);
+	CHECK(savedLayout(app).at("windows").at("project").at("zones").at("channel").at("visible") == true);
+
+	// Any client shows and hides it through the user setting.
+	Json layout = savedLayout(app);
+	layout["windows"]["project"]["zones"]["channel"]["visible"] = false;
+	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#channel-zone"); }));
+	layout["windows"]["project"]["zones"]["channel"] = {{"visible", true}, {"size", 180}};
+	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#channel-zone"); }));
+	CHECK(boxOf(app, "#channel-zone", "width") == 180);
+}
+
+TEST_CASE("the lower zone has its tabs at its bottom, with Close Lower Zone to their left", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	app.ui().key(std::nullopt, "Mod+Alt+E");
+	REQUIRE(shown(app, "#lower-zone"));
+	app.shell().step(std::chrono::milliseconds(0));
+
+	const int zoneBottom = boxOf(app, "#lower-zone", "y") + boxOf(app, "#lower-zone", "height");
+	const int tabsTop = boxOf(app, "#lower-zone tabs", "y");
+	CHECK(boxOf(app, "#lower-zone panels", "y") + boxOf(app, "#lower-zone panels", "height") <= tabsTop);
+	CHECK(tabsTop + boxOf(app, "#lower-zone tabs", "height") == zoneBottom);
+	const Json lowerTabs = elements(app, "#lower-zone tab");
+	REQUIRE(!lowerTabs.empty());
+	const Json first = lowerTabs[0].at("box");
+	CHECK(first.at("y").get<int>() >= tabsTop);
+	// The other zones keep theirs at the top.
+	app.ui().key(std::nullopt, "Mod+Alt+R");
+	CHECK(boxOf(app, "#right-zone tabs", "y") == boxOf(app, "#right-zone", "y"));
+
+	// Close Lower Zone, left of the tabs and in their row, hides the zone.
+	REQUIRE(shown(app, "#close-lower-zone"));
+	const Json close = element(app, "#close-lower-zone").at("box");
+	CHECK(close.at("x").get<int>() + close.at("width").get<int>() <= first.at("x").get<int>());
+	CHECK(close.at("y").get<int>() >= tabsTop);
+	CHECK(close.at("y").get<int>() + close.at("height").get<int>() <= zoneBottom);
+	app.ui().click(std::nullopt, at("#close-lower-zone"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#lower-zone"); }));
+	CHECK(!element(app, "#show-lower-zone").at("attributes").contains("checked"));
+	waitUntilSaved(app);
+	CHECK(savedLayout(app).at("windows").at("project").at("zones").at("lower").at("visible") == false);
 }
 
 TEST_CASE("tab groups move, hide and step through their tabs and remember the active one", "[ui]")
@@ -356,10 +442,12 @@ TEST_CASE("the layout comes back exactly after a restart", "[ui]")
 	app.setDpRatio(1.0F);
 	app.appUi().showProject();
 	ui::Docking& docking = app.appUi().docking();
+	docking.setVisible("project", "channel", true);
 	docking.setVisible("project", "left", true);
 	docking.setVisible("project", "lower", true);
 	docking.setVisible("project", "statusLine", true);
 	docking.setVisible("project", "overviewLine", false);
+	docking.setSize("project", "channel", 230);
 	docking.setSize("project", "left", 310);
 	docking.setSize("project", "lower", 190);
 	docking.moveTab("visibility", "inspector");
@@ -381,8 +469,8 @@ TEST_CASE("the layout comes back exactly after a restart", "[ui]")
 	const auto snapshot = [&app]
 	{
 		Json result;
-		for (const char* selector : {"#left-zone", "#main-zone", "#lower-zone", "#right-zone", "#toolbar",
-				 "#status-line", "#info-line", "#transport-bar", ".overview"})
+		for (const char* selector : {"#channel-zone", "#left-zone", "#main-zone", "#lower-zone", "#right-zone",
+				 "#toolbar", "#status-line", "#info-line", "#transport-bar", ".overview"})
 		{
 			const Json found = elements(app, selector);
 			result[selector] = found.size() == 1 && found[0].at("visible").get<bool>() ? found[0].at("box") : Json();

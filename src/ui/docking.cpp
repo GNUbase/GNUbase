@@ -275,8 +275,9 @@ namespace gnubase::ui
 			const char* description;
 			std::vector<const char*> keys; // the reference's (manual p. 1572)
 		};
-		const std::array<Toggle, 9> toggles = {{
+		const std::array<Toggle, 10> toggles = {{
 			{"window.menuBar", "menuBar", "Shows or hides the menu bar.", {}},
+			{"window.channelZone", "channel", "Shows or hides the Channel zone.", {"Mod+Alt+C"}},
 			{"window.leftZone", "left", "Shows or hides the left zone.", {"Mod+Alt+L", "Alt+I"}},
 			{"window.rightZone", "right", "Shows or hides the right zone.", {"Mod+Alt+R"}},
 			{"window.lowerZone", "lower", "Shows or hides the lower zone.", {"Mod+Alt+E", "Mod+Alt+B"}},
@@ -907,6 +908,11 @@ namespace gnubase::ui
 				button != nullptr && button->GetId() == "dock")
 			{
 				later([this, id = attribute(*target->GetOwnerDocument(), "panel")] { setFloating(id, false); });
+			}
+			else if (const Rml::Element* hider = closestWith(target, "hide"); hider != nullptr && !window.empty())
+			{
+				later([this, window = std::move(window), name = attribute(*hider, "hide")]
+					{ setVisible(window, name, false); });
 			}
 			break;
 		case Rml::EventId::Mousedown:

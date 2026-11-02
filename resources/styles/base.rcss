@@ -1153,6 +1153,27 @@ splitter.column .splitter-grip-horizontal
 	flex: 1 1 0;
 }
 
+/* A zone with tabbar="bottom", such as the lower zone, has its tabs at its bottom, with room on their left for its
+   Close button (.zone-close, such as Close Lower Zone), which sits over the tab group. */
+.docking [tabbar=bottom] tabset
+{
+	flex-direction: column-reverse;
+}
+
+.docking [tabbar=bottom] tabset tabs
+{
+	padding: 0 4dp 2dp 32dp;
+}
+
+.docking .zone-close
+{
+	position: absolute;
+	left: 4dp;
+	bottom: 2dp;
+	height: 24dp;
+	z-index: 1;
+}
+
 .docking .panel-content
 {
 	position: relative;

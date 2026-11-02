@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The project window: a docking window (docs/features/docking.md) with the main menu bar, whose items
-     ui::MainMenu runs (docs/features/main-menu.md), the toolbar, the info line, the zones and
+     ui::MainMenu runs (docs/features/main-menu.md), the toolbar, the info line, the zones (Channel, left, main, lower, right) and
      their splitters, the status line and the transport bar. The main zone shows the track list (#81) beside the
      event display (#84). ui::Docking lays out the elements with zone, splitter for, strip and toggle
      attributes and fills the other zones with their panels' tabs. ui::EventDisplay fills the element #event-display
@@ -105,6 +105,7 @@
 		<button id="grid-type" menu="grid-type-menu" title="Grid Type">Bar</button>
 		<button id="snap-zero-crossing" type="toggle" class="icon-only" title="Snap to Zero Crossing"><svg class="icon" src="../icons/general-zero-crossing.svg"/></button>
 		<div class="spacer"/>
+		<button id="show-channel-zone" type="toggle" toggle="channel" class="icon-only" title="Show/Hide Channel"><svg class="icon" src="../icons/layout-channel-zone.svg"/></button>
 		<button id="show-left-zone" type="toggle" toggle="left" class="icon-only" title="Show/Hide Left Zone"><svg class="icon" src="../icons/layout-left-zone.svg"/></button>
 		<button id="show-lower-zone" type="toggle" toggle="lower" class="icon-only" title="Show/Hide Lower Zone"><svg class="icon" src="../icons/layout-lower-zone.svg"/></button>
 		<button id="show-right-zone" type="toggle" toggle="right" class="icon-only" title="Show/Hide Right Zone"><svg class="icon" src="../icons/layout-right-zone.svg"/></button>
@@ -112,6 +113,8 @@
 	</div>
 	<div id="info-line" class="strip" strip="infoLine" default="hidden"/>
 	<div class="zones">
+		<div id="channel-zone" zone="channel" focuszone="channel" size="200" default="hidden"/>
+		<splitter for="channel"/>
 		<div id="left-zone" zone="left" focuszone="left" size="240" default="hidden"/>
 		<splitter for="left"/>
 		<div class="zone-column">
@@ -128,7 +131,10 @@
 				</div>
 			</div>
 			<splitter for="lower" resize="next"/>
-			<div id="lower-zone" zone="lower" focuszone="lower" size="240" default="hidden"/>
+			<!-- Its tabs are at its bottom, with Close Lower Zone to their left (reference manual p. 83). -->
+			<div id="lower-zone" zone="lower" focuszone="lower" size="240" default="hidden" tabbar="bottom">
+				<button id="close-lower-zone" class="zone-close icon-only" hide="lower" title="Close Lower Zone"><svg class="icon" src="../icons/general-close.svg"/></button>
+			</div>
 		</div>
 		<splitter for="right" resize="next"/>
 		<div id="right-zone" zone="right" focuszone="right" size="240" default="hidden"/>
@@ -284,6 +290,7 @@
 	<menu id="window-layout-menu">
 		<menuitem type="toggle" toggle="menuBar">Menu Bar</menuitem>
 		<menuseparator/>
+		<menuitem type="toggle" toggle="channel">Channel</menuitem>
 		<menuitem type="toggle" toggle="left">Left Zone</menuitem>
 		<menuitem type="toggle" toggle="lower">Lower Zone</menuitem>
 		<menuitem type="toggle" toggle="right">Right Zone</menuitem>

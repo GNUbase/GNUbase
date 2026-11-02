@@ -40,6 +40,7 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `track-group.svg` — Group tracks into one bus.
 - `track-effect.svg` — Effect track (`fx`).
 - `track-marker.svg` — Marker track.
+- `layout-channel-zone.svg` — Show or hide the Channel zone.
 - `layout-left-zone.svg` — Show or hide the left zone.
 - `layout-lower-zone.svg` — Show or hide the lower zone.
 - `layout-right-zone.svg` — Show or hide the right zone.

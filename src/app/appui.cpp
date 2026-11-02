@@ -41,7 +41,8 @@ namespace gnubase::app
 			const char* zone;
 		};
 
-		constexpr std::array<ProjectPanel, 6> g_projectPanels{{
+		constexpr std::array<ProjectPanel, 7> g_projectPanels{{
+			{"channel", "Channel", "channel"},
 			{"inspector", "Inspector", "left"},
 			{"visibility", "Visibility", "left"},
 			{"editor", "Editor", "lower"},
@@ -211,7 +212,8 @@ namespace gnubase::app
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleMarkers(); }); }});
 		m_keys.bind({"Mod+M", "window.markers"});
 
-		// The project window's panels (reference manual pp. 54, 75-98), which their tickets fill.
+		// The project window's panels (reference manual pp. 54, 73, 75-98), which their tickets fill: the Channel
+		// zone's with the mixer's channel strip (#106).
 		for (const ProjectPanel& panel : g_projectPanels)
 			m_docking.add({panel.id, panel.title, "project", panel.zone, {}});
 		// The edit history (reference manual pp. 110-111), a dialog there, which Edit > History opens.
