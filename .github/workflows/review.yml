@@ -49,7 +49,7 @@ jobs:
           fi
           # The agent files follow-up issues by milestone goal; the list saves it looking them up.
           milestones=$(gh api "repos/$REPO/milestones?state=open&per_page=100" \
-            --jq '.[] | "- \(.title) (number \(.number)): \(.description | gsub("\r?\n"; " "))"')
+            --jq '.[] | "- \(.title) (number \(.number)): \(.description // "" | gsub("\r?\n"; " "))"') || true
           jq -n --arg repo "$REPO" --arg pr "$PR" --arg sha "$SHA" --arg milestones "$milestones" '{
             agent: "agent_01DV6re7oPSNqrFfxSTsuNw4",
             environment_id: "env_01HfuHY4q2Krvzjw2qLKNwqY",
