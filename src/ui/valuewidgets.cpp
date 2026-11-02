@@ -256,7 +256,8 @@ namespace gnubase::ui
 		// <valuefield>: the value as text, with the decimals (2) and the unit that its attributes give. Besides
 		// dragging, a double click edits it as text, with the state class .editing: Enter or leaving the field takes
 		// the number typed, Escape keeps the value. With autofocus, it is edited, all of it selected so that the
-		// number typed replaces it, whenever it gets the focus without the mouse: when its document shows it focused.
+		// number typed replaces it, whenever it gets a visible focus: when its document shows it focused, or Tab moves
+		// to it, but not on a click.
 		class ValueField final : public ValueControl
 		{
 		public:
@@ -314,6 +315,10 @@ namespace gnubase::ui
 
 			void ProcessDefaultAction(Rml::Event& event) override
 			{
+				// A key before that update, typed while the document was loading, starts editing too, so that the text
+				// it types goes into the text field.
+				if (event == Rml::EventId::Keydown && m_focused)
+					startFocused();
 				ValueControl::ProcessDefaultAction(event);
 				if (event == Rml::EventId::Dblclick && active())
 					startEditing();
@@ -327,11 +332,8 @@ namespace gnubase::ui
 			void OnUpdate() override
 			{
 				ValueControl::OnUpdate();
-				if (!m_focused)
-					return;
-				m_focused = false;
-				if (GetContext() != nullptr && GetContext()->GetFocusElement() == this && active())
-					startEditing();
+				if (m_focused)
+					startFocused();
 			}
 
 			bool active() const override { return ValueControl::active() && !m_editing; }
@@ -348,6 +350,14 @@ namespace gnubase::ui
 
 		private:
 			int decimals() const { return static_cast<int>(number(*this, "decimals", 2.0F)); }
+
+			// Starts editing after a visible focus, if the field still has it.
+			void startFocused()
+			{
+				m_focused = false;
+				if (GetContext() != nullptr && GetContext()->GetFocusElement() == this && active())
+					startEditing();
+			}
 
 			void startEditing()
 			{
@@ -375,7 +385,7 @@ namespace gnubase::ui
 			Rml::ElementFormControlInput* m_input = nullptr;
 			Rml::String m_started; // the text the field started with
 			bool m_editing = false;
-			bool m_focused = false; // it has autofocus and got the focus without the mouse
+			bool m_focused = false; // it has autofocus and got a visible focus, and editing hasn't started yet
 		};
 
 		// <textdisplay>: its value attribute as text, drawn like a display, such as a position in a time format. A

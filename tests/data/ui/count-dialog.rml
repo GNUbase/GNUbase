@@ -1,0 +1,24 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- A dialog of the widget library for tests/widgets_tests.cpp whose main field is a value field with autofocus,
+     next to a value field without it. -->
+<rml>
+<head>
+	<title>Count</title>
+	<style>
+		dialog { width: 300dp; }
+		.row { display: flex; margin: 8dp 12dp 0 12dp; }
+		.row > * { margin-right: 6dp; }
+	</style>
+</head>
+<body>
+	<dialog id="count-dialog">
+		<div class="dialog-titlebar">Count</div>
+		<div class="row"><valuefield id="count" value="1" min="1" max="100" step="1" decimals="0" autofocus="autofocus"/></div>
+		<div class="row"><valuefield id="other" value="1" min="1" max="100" step="1" decimals="0"/></div>
+		<div class="row">
+			<button id="cancel" result="cancel">Cancel</button>
+			<button id="ok" class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>
