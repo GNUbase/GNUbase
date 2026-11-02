@@ -553,6 +553,8 @@ namespace gnubase::engine
 				target.parameter = static_cast<uint32_t>(parameter);
 				break;
 			}
+			case AutomationTargetType::Plugin:
+				throw CommandError("plugin parameters can't be automated yet (#70)");
 			case AutomationTargetType::Controller:
 				only({"number", "channel"});
 				require(midi, "MIDI controllers are automated on MIDI and instrument tracks");
@@ -592,6 +594,7 @@ namespace gnubase::engine
 				throw CommandError("the instrument of automation lane " + idText(lane.id) + " has no parameter " +
 					std::to_string(lane.target.parameter) + " any more");
 			}
+			case AutomationTargetType::Plugin: // not automated yet (#70)
 			case AutomationTargetType::Controller:
 			case AutomationTargetType::PitchBend:
 			case AutomationTargetType::ChannelPressure:
@@ -1032,6 +1035,14 @@ namespace gnubase::engine
 				Channel channel = project.channels.at(copy.channel);
 				channel.id = project.newId();
 				channel.track = copy.id;
+				for (ObjectId& slotId : channel.slots)
+				{
+					Slot slot = project.slots.at(slotId);
+					slot.id = project.newId();
+					slot.channel = channel.id;
+					slotId = slot.id;
+					project.slots[slot.id] = std::move(slot);
+				}
 				channels[copy.channel] = channel.id;
 				copy.channel = channel.id;
 				project.channels[channel.id] = std::move(channel);
@@ -1167,6 +1178,9 @@ namespace gnubase::engine
 					marker = marker->second.track == removed ? project.markers.erase(marker) : std::next(marker);
 				for (auto lane = project.automation.begin(); lane != project.automation.end();)
 					lane = lane->second.track == removed ? project.automation.erase(lane) : std::next(lane);
+				if (gone.channel != 0)
+					for (const ObjectId slot : project.channels.at(gone.channel).slots)
+						project.slots.erase(slot);
 				project.channels.erase(gone.channel);
 				project.trackById.erase(removed);
 				context.emit("track.removed", {{"track", removed}});
@@ -2103,6 +2117,32 @@ namespace gnubase::engine
 			require(sampleRate > 0.0, "sampleRate must be positive");
 			const double maxVolume = parameters.value("maxVolume", project.maxVolume);
 			require(maxVolume == 6.0 || maxVolume == 12.0, "maxVolume must be 6 or 12 dB");
+			// The first tempo and signature, which the transport bar shows; tempo and signature tracks edit the rest.
+			std::vector<time::TempoPoint> tempo = project.tempo.points();
+			tempo.front().bpm = parameters.value("tempo", tempo.front().bpm);
+			require(tempo.front().bpm >= time::g_minBpm && tempo.front().bpm <= time::g_maxBpm,
+				"tempo must be from 1 to 999 BPM");
+			std::vector<time::SignatureChange> signatures = project.signatures.changes();
+			if (const auto signature = parameters.find("signature"); signature != parameters.end())
+			{
+				const int numerator = signature->at("numerator").get<int>();
+				const int denominator = signature->at("denominator").get<int>();
+				require(numerator >= 1 && numerator <= 99, "the signature's numerator must be from 1 to 99");
+				require(
+					denominator == 1 || denominator == 2 || denominator == 4 || denominator == 8 || denominator == 16,
+					"the signature's denominator must be 1, 2, 4, 8 or 16");
+				signatures.front().signature = {numerator, denominator};
+			}
+			const time::TempoMap tempoMap(tempo);
+			const time::SignatureMap signatureMap(signatures);
+			const bool retimed = tempoMap != project.tempo || signatureMap != project.signatures;
+			project.tempo = tempoMap;
+			project.signatures = signatureMap;
+			if (retimed)
+				// A cycle marker in ticks can get shorter than a sample at a faster tempo.
+				for (auto& [id, marker] : project.markers)
+					if (keepMinimumLength(project, marker))
+						context.emit("marker.changed", {{"marker", toJson(marker)}});
 			project.name = parameters.value("name", project.name);
 			if (parameters.contains("panLaw"))
 				project.panLaw = panLawFromName(parameters.at("panLaw").get<std::string>()).value_or(project.panLaw);
@@ -2153,6 +2193,10 @@ namespace gnubase::engine
 			{"track.duplicate", "Duplicate track"},
 			{"channel.set", "Change channel"},
 			{"parameter.set", "Change parameter"},
+			{"plugin.insert", "Insert plugin"},
+			{"plugin.remove", "Remove plugin"},
+			{"plugin.move", "Move plugin"},
+			{"plugin.set", "Change plugin"},
 			{"media.add", "Add media file"},
 			{"media.convert", "Convert media file"},
 			{"media.stretch", "Stretch media file"},
@@ -2178,6 +2222,7 @@ namespace gnubase::engine
 			{"controller.remove", "Remove controllers"},
 			{"controller.set", "Change controllers"},
 			{"marker.add", "Add marker"},
+			{"marker.put", "Set marker"},
 			{"marker.set", "Change marker"},
 			{"marker.remove", "Remove markers"},
 			{"marker.renumber", "Renumber markers"},
@@ -2241,7 +2286,8 @@ namespace gnubase::engine
 		}
 
 		// Called after the change was applied to project in the given direction.
-		void announce(const Project& project, const ProjectChange& change, Direction direction, CommandContext& context)
+		void announce(const ProjectModel& model, const Project& project, const ProjectChange& change,
+			Direction direction, CommandContext& context)
 		{
 			bool reordered = false;
 			bool activated = false;
@@ -2271,6 +2317,24 @@ namespace gnubase::engine
 			announceObjects(change.clips, direction, "clip", "clip", context);
 			announceObjects(change.audioEvents, direction, "audioEvent", "event", context);
 			announceObjects(change.markers, direction, "marker", "marker", context);
+			// Slots as plugin.insert, plugin.remove and the other plugin.* commands announce them. Those of a channel
+			// that came or went are in its events.
+			std::set<ObjectId> channels; // that came or went
+			for (const ObjectChange<Channel>& channel : change.channels)
+				if (!channel.before || !channel.after)
+					channels.insert(channel.id);
+			for (const ObjectChange<Slot>& slot : change.slots)
+			{
+				const std::optional<Slot>& current = direction == Direction::Redo ? slot.after : slot.before;
+				const std::optional<Slot>& previous = direction == Direction::Redo ? slot.before : slot.after;
+				if (channels.count((current ? current : previous)->channel) != 0)
+					continue;
+				if (!current)
+					context.emit("plugin.removed", {{"slot", slot.id}});
+				else
+					context.emit(
+						previous ? "plugin.changed" : "plugin.added", {{"slot", model.describeSlot(project, slot.id)}});
+			}
 			// After the tracks, so that a client knows the track that becomes active.
 			if (activated)
 				context.emit("marker.trackActivated", {{"track", project.activeMarkerTrack}});
@@ -2384,7 +2448,7 @@ namespace gnubase::engine
 		{
 			const HistoryStep& step = undo ? m_history.undo() : m_history.redo();
 			apply(m_project, step.change, direction);
-			announce(m_project, step.change, direction, context);
+			announce(*this, m_project, step.change, direction, context);
 		}
 		announceHistory(context);
 		publish();
@@ -2524,31 +2588,36 @@ namespace gnubase::engine
 			[](Project& project, CommandContext&) { return toJson(project); });
 		add(engine,
 			{"graph.get", 1,
-				"The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes "
-				"they receive audio and events from, and the order they are processed in.",
+				"The project's audio processing graph: its nodes (busses, then channels in track order, then for each "
+				"channel with plugin slots a channelSource node with what plays on the channel and a pluginSlot node "
+				"per slot, which pass the audio on to the channel's node) with the nodes they receive audio and events "
+				"from, and the order they are processed in. object is the bus, channel or slot id.",
 				objectSchema({}), {{"type", "object"}}, true},
 			[this](Project&, CommandContext&) { return graphToJson(graph::describe(m_snapshots.latest())); });
-		add(engine,
+		addControl(engine,
 			{"project.save", 1,
-				"Saves the project as a DAWproject file. Media files are copied into it unless embedMedia is false; "
-				"then the file refers to them where they are.",
-				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}, {"path"}), noResult, true},
-			[this](Project& project, CommandContext& context)
+				"Saves the project as a DAWproject file: as path, which is then the project's file (save as), or "
+				"without path to the project's file (save). Media files are copied into it unless embedMedia is "
+				"false; then the file refers to them where they are. The file becomes the first of the recent "
+				"projects (project.recent).",
+				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}), noResult, false},
+			[this](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				DawProjectSaveOptions options;
 				options.embedMedia = parameters.value("embedMedia", true);
-				const std::string path = parameters.at("path").get<std::string>();
+				require(
+					parameters.contains("path") || !m_file.empty(), "the project has no file yet: save it with a path");
+				const std::string path = parameters.value("path", m_file);
 				try
 				{
-					saveDawProject(project, path, options);
-					m_file = std::filesystem::absolute(std::filesystem::u8path(path)).u8string();
+					saveDawProject(m_project, path, options);
 				}
 				catch (const std::exception& error)
 				{
 					throw CommandError(error.what());
 				}
-				context.emit("project.saved", {{"file", m_file}});
+				saved(std::filesystem::absolute(std::filesystem::u8path(path)).u8string(), context);
 				return Json::object();
 			});
 		addControl(engine,
@@ -2556,7 +2625,8 @@ namespace gnubase::engine
 				"Replaces the project with a DAWproject file and clears the undo history. Media files embedded in "
 				"it are extracted to mediaFolder, by default a folder named after the file next to it. With "
 				"revision, it loads only if the project is still at that revision (see project.revision), and fails "
-				"otherwise, so that no change made meanwhile is lost.",
+				"otherwise, so that no change made meanwhile is lost. An auto save (see project.autoSave) opens "
+				"without a file and with unsaved changes, and isn't a recent project.",
 				objectSchema(
 					{{"path", stringSchema}, {"mediaFolder", stringSchema}, {"revision", integerSchema}}, {"path"}),
 				noResult, false},
@@ -2571,28 +2641,32 @@ namespace gnubase::engine
 				const std::filesystem::path file = std::filesystem::u8path(path);
 				const std::string folder = parameters.value("mediaFolder",
 					(file.parent_path() / std::filesystem::u8path(file.stem().u8string() + " media")).u8string());
+				Project project;
 				try
 				{
-					m_project = loadDawProject(path, folder);
-					m_file = std::filesystem::absolute(file).u8string();
+					project = loadDawProject(path, folder);
 				}
 				catch (const std::exception& error)
 				{
 					throw CommandError(error.what());
 				}
-				m_history.clear();
-				context.emit("project.reset");
-				announceHistory(context);
-				publish();
+				opened(std::move(project), std::filesystem::absolute(file).u8string(), context);
 				return Json::object();
 			});
 		addControl(engine,
 			{"project.new", 1,
 				"Replaces the project with an empty one that has a stereo input and output bus, or the busses of the "
-				"user's bus presets named Default (see bus.savePreset), and clears the undo history.",
-				objectSchema({}), noResult, false},
+				"user's bus presets named Default (see bus.savePreset), or with template, a copy of the project "
+				"template of that name (see project.templates), and clears the undo history. The new project has no "
+				"file until it is saved.",
+				objectSchema({{"template", stringSchema}}), noResult, false},
 			[this](CommandContext& context)
 			{
+				if (context.parameters().contains("template"))
+				{
+					opened(loadTemplate(context.parameters().at("template").get<std::string>()), {}, context);
+					return Json::object();
+				}
 				Project project = newProject();
 				for (const BusDirection direction : {BusDirection::Input, BusDirection::Output})
 					if (const Json presets = userPresets(direction, context); presets.contains("Default"))
@@ -2610,12 +2684,7 @@ namespace gnubase::engine
 								"The {} bus preset Default isn't applied: {}", directionName(direction), error.what());
 						}
 					}
-				m_project = std::move(project);
-				m_file.clear();
-				m_history.clear();
-				context.emit("project.reset");
-				announceHistory(context);
-				publish();
+				opened(std::move(project), {}, context);
 				return Json::object();
 			});
 		add(engine,
@@ -2625,9 +2694,15 @@ namespace gnubase::engine
 				"time at a new sample rate. panLaw is how much a mono channel panned to the center is turned down on "
 				"each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same "
 				"wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the "
-				"faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it.",
+				"faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it. tempo (1 to 999 BPM) "
+				"and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} are the project's first tempo and "
+				"time signature, as the transport bar sets them; later changes stay, and musical positions keep their "
+				"ticks.",
 				objectSchema({{"name", stringSchema}, {"sampleRate", numberSchema},
-					{"panLaw", enumSchema(panLawNames())}, {"maxVolume", numberSchema}}),
+					{"panLaw", enumSchema(panLawNames())}, {"maxVolume", numberSchema}, {"tempo", numberSchema},
+					{"signature",
+						objectSchema({{"numerator", {{"type", "integer"}}}, {"denominator", {{"type", "integer"}}}},
+							{"numerator", "denominator"})}}),
 				noResult, false},
 			setProject);
 
@@ -3025,6 +3100,7 @@ namespace gnubase::engine
 		registerMarkerCommands(engine);
 		registerAutomationCommands(engine);
 		registerParameterCommands(engine);
+		registerSlotCommands(engine);
 		midi::registerQuantizeCommands(*this, engine);
 		midi::registerFunctionCommands(*this, engine);
 		registerMidiFileCommands(engine);
@@ -3035,6 +3111,7 @@ namespace gnubase::engine
 		registerSnapCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
+		registerProjectFileCommands(engine);
 	}
 
 	void ProjectModel::registerAutomationCommands(Engine& engine)
@@ -3186,9 +3263,14 @@ namespace gnubase::engine
 		addControl(engine,
 			{"project.revision", 1,
 				"A number that grows with every change of the project: every edit, undo and redo, and loading or "
-				"starting a project. project.load with revision loads only if it hasn't changed.",
-				objectSchema({}), objectSchema({{"revision", integerSchema}}, {"revision"}), true},
-			[this](CommandContext&) { return Json{{"revision", m_revision}}; });
+				"starting a project. project.load with revision loads only if it hasn't changed. modified says "
+				"whether the project changed since it was last saved, loaded or started; undoing back to the saved "
+				"state still counts as a change.",
+				objectSchema({}),
+				objectSchema({{"revision", integerSchema}, {"modified", booleanSchema}}, {"revision", "modified"}),
+				true},
+			[this](CommandContext&)
+			{ return Json{{"revision", m_revision}, {"modified", m_revision != m_savedRevision}}; });
 
 		engine.registerCommand(
 			{"project.backup", 1,

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -312,6 +313,48 @@ namespace gnubase::app
 			object({{"window", windowProperty()}, {"text", {{"type", "string"}}}}, {"text"}), focusResult, false,
 			run([](ui::Automation& ui, const Json& arguments)
 				{ return ui.text(windowOf(arguments), arguments.at("text").get<std::string>()); })});
+
+		tools.push_back({"ui_file_dialog",
+			"Lists the file dialogs that wait for an answer, e.g. after File > Open: each with its id, kind (open, "
+			"save or folder), title, filters and the location it starts in. With dialog, first answers that one as "
+			"the user would: with files, the files chosen (the file to save as, the folder); with none, a cancel. A "
+			"dialog the OS shows stays open until it is closed, and its answer is then ignored. Returns the dialogs "
+			"still waiting.",
+			object(
+				{{"dialog", {{"type", "integer"}, {"minimum", 1}, {"description", "The id of the dialog to answer."}}},
+					{"files",
+						{{"type", "array"}, {"items", {{"type", "string"}}},
+							{"description", "With dialog: the files chosen; none to cancel."}}}}),
+			object({{"dialogs", {{"type", "array"}}}}, {"dialogs"}), false, [&shell, caller](const Json& arguments)
+			{
+				return onUi(shell, caller,
+					[&shell, arguments]
+					{
+						if (arguments.contains("dialog"))
+						{
+							std::vector<std::filesystem::path> files;
+							for (const Json& file : arguments.value("files", Json::array()))
+								files.push_back(std::filesystem::u8path(file.get<std::string>()));
+							if (!shell.answerFileDialog(arguments.at("dialog").get<uint64_t>(), std::move(files)))
+								throw std::runtime_error("no file dialog " + arguments.at("dialog").dump() + " waits");
+						}
+						Json dialogs = Json::array();
+						for (const auto& [id, dialog] : shell.fileDialogs())
+						{
+							Json filters = Json::array();
+							for (const ui::FileFilter& filter : dialog.filters)
+								filters.push_back({{"name", filter.name}, {"extensions", filter.extensions}});
+							const char* kind = "open";
+							if (dialog.kind == ui::FileDialogKind::Save)
+								kind = "save";
+							else if (dialog.kind == ui::FileDialogKind::Folder)
+								kind = "folder";
+							dialogs.push_back({{"id", id}, {"kind", kind}, {"title", dialog.title},
+								{"filters", std::move(filters)}, {"location", dialog.location.u8string()}});
+						}
+						return Json{{"dialogs", std::move(dialogs)}};
+					});
+			}});
 		return tools;
 	}
 

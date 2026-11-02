@@ -55,8 +55,15 @@ The reference's defaults for the commands GNUbase has so far (`ui::defaultKeyMap
 | Num1, Num2 | `transport.locate` to the left, right locator | Go to Left/Right Locator |
 | Num. | `transport.locate` to the project start | Go to Project Start |
 | Mod+Num1, Mod+Num2 | `transport.set` left, right to the cursor | Set Left/Right Locator to Project Cursor Position |
+| Num/, Num* | `transport.toggle` cycle, record | Cycle, Record |
+| C, I, O | `transport.toggle` metronome, punchIn, punchOut | Activate Metronome, Punch In, Punch Out |
+| Num-, Num+ (Shift for faster) | `transport.locate` by seconds | Rewind, Forward (Fast Rewind, Fast Forward) |
 | Shift+N, Shift+B | `marker.locateNext`, `marker.locatePrevious` | Locate Next/Previous Marker |
 | Shift+1 to Shift+9, Num3 to Num9 | `marker.locate` with the number | To Marker 1 to 9 |
+| Mod+1 to Mod+9, Mod+Num3 to Mod+Num9 | `marker.put` with the number | Set Marker 1 to 9 |
+| Shift+Num1 to Shift+Num9 | `marker.setLocators` with the number | Recall Cycle Marker 1 to 9 |
+| Insert | `marker.add` | Insert Marker |
+| Mod+M | `window.markers` (the app's) | Open Markers |
 | Mod+Z | `history.undo` | Undo |
 | Mod+Shift+Z | `history.redo` | Redo |
 
@@ -83,7 +90,9 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Mod+Alt+I | `edit.invertSelection` | Invert Selection |
 | J | `edit.snap` | Snap On/Off ([snap.md](snap.md)) |
 
-The other edit commands ([parts-and-events.md](parts-and-events.md)) have no default keys in the reference.
+The other edit commands ([parts-and-events.md](parts-and-events.md)) have no default keys in the reference. The
+transport controls' commands (F2, the enter commands, Exchange Time Formats, P for Locators to Selection) are in
+[transport-bar.md](transport-bar.md).
 
 The UI command `file.quit` (Quit, in the main menu's File menu) has Mod+Q, everywhere. Commands that come with their
 tickets bring their keys: opening windows such as the mixer (F3), cycle, record and the rest of the reference's tables.

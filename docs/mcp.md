@@ -790,6 +790,12 @@ Result:
 - `projectSampleRate`: number, required
 - `running`: boolean, required
 
+#### `audio_updatePlugins`
+
+Engine command `audio.updatePlugins`.
+
+Builds the processing graph again with the plugins of the slots as they are now. The engine runs it on its own when a plugin is ready after it was loaded or activated, failed, or asked to be restarted; a slot's audio passes its plugin unchanged until then. Emits plugin.changed for the slots whose plugin's status changed. Left out of engine.commandLog.
+
 ### autoFades
 
 #### `autoFades_set`
@@ -1498,7 +1504,7 @@ Result:
 
 Engine command `graph.get`. Read-only.
 
-The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes they receive audio and events from, and the order they are processed in.
+The project's audio processing graph: its nodes (busses, then channels in track order, then for each channel with plugin slots a channelSource node with what plays on the channel and a pluginSlot node per slot, which pass the audio on to the channel's node) with the nodes they receive audio and events from, and the order they are processed in. object is the bus, channel or slot id.
 
 ### history
 
@@ -1706,6 +1712,21 @@ Result:
 
 - `marker`: object or null, required
 - `position`: integer, required
+
+#### `marker_put`
+
+Engine command `marker.put`.
+
+Puts position marker number N of a marker track (default: the active one; without a marker track one is added) at the cursor: moves it there, or adds it with that number. What the key commands Set Marker 1 to 9 do.
+
+Arguments:
+
+- `number`: integer, required
+- `track`: integer
+
+Result:
+
+- `marker`: object, required
 
 #### `marker_range`
 
@@ -2462,7 +2483,7 @@ Result:
 
 Engine command `parameter.list`. Read-only.
 
-The automatable parameters of a channel: on channels with audio the fader's volume (in dB, up to the project's maxVolume), pan, panLeft and panRight (-1 to 1, see channel.set), and on instrument tracks the parameters of their built-in instrument (see processor.list; plugins come later). Each has its target, as automationLane.add takes it, its name, minimum, maximum, default, unit, whether it is stepped (whole numbers only), options (the names of a stepped parameter's values from the minimum on, if it has any), its static value and text, the value as it is displayed. Automation overrides the static value while it plays. MIDI channels have none: their volume and pan are MIDI controllers (channel.set midiVolume and midiPan).
+The automatable parameters of a channel: on channels with audio the fader's volume (in dB, up to the project's maxVolume), pan, panLeft and panRight (-1 to 1, see channel.set), and on instrument tracks the parameters of their built-in instrument (see processor.list), then those of the built-in plugins in its slots, top to bottom, with targets of type plugin that name the slot. Each has its target, as automationLane.add takes it, its name, minimum, maximum, default, unit, whether it is stepped (whole numbers only), options (the names of a stepped parameter's values from the minimum on, if it has any), its static value and text, the value as it is displayed. Automation overrides the static value while it plays. MIDI channels have none: their volume and pan are MIDI controllers (channel.set midiVolume and midiPan).
 
 Arguments:
 
@@ -2488,6 +2509,94 @@ Arguments:
 Result:
 
 - `parameter`: object, required
+
+### plugin
+
+#### `plugin_get`
+
+Engine command `plugin.get`. Read-only.
+
+One slot. A slot has its id, channel, index (0 is the top), plugin, name, bypass, active, the parameters set on its plugin (see parameter.list) and the status of its plugin in the audio engine: "loading" (being made or activated, while the audio passes it unchanged), "active", "inactive", "failed" (it couldn't be made or activated), "unavailable" (this build has no such plugin) or "noDevice" (no audio device is open). A command reports the status as of the command; plugin.changed announces it when it changes.
+
+Arguments:
+
+- `slot`: integer, required
+
+Result:
+
+- `slot`: object, required
+
+#### `plugin_insert`
+
+Engine command `plugin.insert`.
+
+Puts a plugin into a slot of a channel with audio (not a MIDI channel), at index or else below the others; the slot at the index and those below it move down. A channel has at most 16 slots. The audio passes through the slots from top to bottom before the fader. plugin is a built-in effect, "builtin:<id>" with an id from processor.list that isn't an instrument; plugins of other formats come with the plugin scan. The plugin starts with its parameters at their defaults, active and not bypassed. Emits plugin.added with the slot. Returns the slot. A slot has its id, channel, index (0 is the top), plugin, name, bypass, active, the parameters set on its plugin (see parameter.list) and the status of its plugin in the audio engine: "loading" (being made or activated, while the audio passes it unchanged), "active", "inactive", "failed" (it couldn't be made or activated), "unavailable" (this build has no such plugin) or "noDevice" (no audio device is open). A command reports the status as of the command; plugin.changed announces it when it changes.
+
+Arguments:
+
+- `channel`: integer, required
+- `index`: integer
+- `plugin`: string, required
+
+Result:
+
+- `slot`: object, required
+
+#### `plugin_list`
+
+Engine command `plugin.list`. Read-only.
+
+The slots of a channel with audio, from top to bottom. A slot has its id, channel, index (0 is the top), plugin, name, bypass, active, the parameters set on its plugin (see parameter.list) and the status of its plugin in the audio engine: "loading" (being made or activated, while the audio passes it unchanged), "active", "inactive", "failed" (it couldn't be made or activated), "unavailable" (this build has no such plugin) or "noDevice" (no audio device is open). A command reports the status as of the command; plugin.changed announces it when it changes.
+
+Arguments:
+
+- `channel`: integer, required
+
+Result:
+
+- `slots`: array, required
+
+#### `plugin_move`
+
+Engine command `plugin.move`.
+
+Moves a slot to index on its channel or on another channel with audio (channel); the index counts the slots without the moved one. The plugin keeps its parameters. Returns the slot.
+
+Arguments:
+
+- `channel`: integer
+- `index`: integer, required
+- `slot`: integer, required
+
+Result:
+
+- `slot`: object, required
+
+#### `plugin_remove`
+
+Engine command `plugin.remove`.
+
+Removes a slot and its plugin; the slots below it move up. Emits plugin.removed with the slot's id. Undo puts the plugin back with its parameters.
+
+Arguments:
+
+- `slot`: integer, required
+
+#### `plugin_set`
+
+Engine command `plugin.set`.
+
+Changes a slot: bypass lets the audio pass the plugin unchanged while the plugin keeps processing, so switching it doesn't click; the audio is delayed by the plugin's latency, so bypassing never shifts timing. active false deactivates the plugin, which stays in its slot, and the audio passes it unchanged. Emits plugin.changed with the slot. Returns the slot.
+
+Arguments:
+
+- `active`: boolean
+- `bypass`: boolean
+- `slot`: integer, required
+
+Result:
+
+- `slot`: object, required
 
 ### pluginhost
 
@@ -2638,6 +2747,20 @@ Result:
 
 ### project
 
+#### `project_autoSave`
+
+Engine command `project.autoSave`.
+
+Saves a copy of the project if it changed since it was last saved or auto saved, as an auto save: into the folder Auto Saves of its project folder as <name>-01.bak, <name>-02.bak and so on up to the user setting project.autoSaveFiles, after which the oldest is overwritten. A project without a file goes to Auto Saves in the user settings' folder, named after the project, and isn't auto saved without one. Media files aren't copied, and the project itself stays unsaved. project.load opens an auto save without a file and with unsaved changes, so that saving asks for a path. With due, as the engine asks every 30 seconds, only if the user setting project.autoSave is on and project.autoSaveInterval minutes have passed since the project was saved, opened or auto saved, or an auto save failed. Returns the file, or null if nothing was saved; emits project.autoSaved with the file.
+
+Arguments:
+
+- `due`: boolean
+
+Result:
+
+- `file`: string or null, required
+
 #### `project_backup`
 
 Engine command `project.backup`.
@@ -2659,6 +2782,20 @@ Result:
 
 - `job`: object, required
 
+#### `project_forgetRecent`
+
+Engine command `project.forgetRecent`.
+
+Removes file from the recent projects (see project.recent), or every project without file. The files stay. Returns the recent projects left.
+
+Arguments:
+
+- `file`: string
+
+Result:
+
+- `projects`: array of object, required
+
 #### `project_get`
 
 Engine command `project.get`. Read-only.
@@ -2669,7 +2806,7 @@ The whole project: busses, tracks in order, channels, media, clips, events and p
 
 Engine command `project.load`.
 
-Replaces the project with a DAWproject file and clears the undo history. Media files embedded in it are extracted to mediaFolder, by default a folder named after the file next to it. With revision, it loads only if the project is still at that revision (see project.revision), and fails otherwise, so that no change made meanwhile is lost.
+Replaces the project with a DAWproject file and clears the undo history. Media files embedded in it are extracted to mediaFolder, by default a folder named after the file next to it. With revision, it loads only if the project is still at that revision (see project.revision), and fails otherwise, so that no change made meanwhile is lost. An auto save (see project.autoSave) opens without a file and with unsaved changes, and isn't a recent project.
 
 Arguments:
 
@@ -2693,34 +2830,83 @@ Result:
 
 Engine command `project.new`.
 
-Replaces the project with an empty one that has a stereo input and output bus, or the busses of the user's bus presets named Default (see bus.savePreset), and clears the undo history.
+Replaces the project with an empty one that has a stereo input and output bus, or the busses of the user's bus presets named Default (see bus.savePreset), or with template, a copy of the project template of that name (see project.templates), and clears the undo history. The new project has no file until it is saved.
+
+Arguments:
+
+- `template`: string
+
+#### `project_recent`
+
+Engine command `project.recent`. Read-only.
+
+The recent projects: the project files saved (not auto saved) or opened last, the newest first, at most 10, kept in the user settings' folder. exists says whether the file is still there.
+
+Result:
+
+- `projects`: array of object, required
+
+#### `project_revert`
+
+Engine command `project.revert`.
+
+Discards every change since the project was last saved: opens its file again and clears the undo history, as project.load does. Fails for a project without a file.
 
 #### `project_revision`
 
 Engine command `project.revision`. Read-only.
 
-A number that grows with every change of the project: every edit, undo and redo, and loading or starting a project. project.load with revision loads only if it hasn't changed.
+A number that grows with every change of the project: every edit, undo and redo, and loading or starting a project. project.load with revision loads only if it hasn't changed. modified says whether the project changed since it was last saved, loaded or started; undoing back to the saved state still counts as a change.
 
 Result:
 
+- `modified`: boolean, required
 - `revision`: integer, required
 
 #### `project_save`
 
-Engine command `project.save`. Read-only.
+Engine command `project.save`.
 
-Saves the project as a DAWproject file. Media files are copied into it unless embedMedia is false; then the file refers to them where they are.
+Saves the project as a DAWproject file: as path, which is then the project's file (save as), or without path to the project's file (save). Media files are copied into it unless embedMedia is false; then the file refers to them where they are. The file becomes the first of the recent projects (project.recent).
 
 Arguments:
 
 - `embedMedia`: boolean
-- `path`: string, required
+- `path`: string
+
+#### `project_saveNewVersion`
+
+Engine command `project.saveNewVersion`.
+
+Saves the project as a new version of its file and goes on with that: in the same folder, with the same name and the next number after the highest one there, "Song-01.dawproject" after "Song.dawproject", "Song-03.dawproject" after "Song-02.dawproject". The earlier versions stay as they are. Returns the new file. Fails for a project without a file: save it first.
+
+Arguments:
+
+- `embedMedia`: boolean. Copy the media files into the file (the default), as project.save does.
+
+Result:
+
+- `file`: string, required
+
+#### `project_saveTemplate`
+
+Engine command `project.saveTemplate`.
+
+Saves the project as the project template name (see project.templates), replacing a template of that name. Templates refer to media files where they are instead of copying them. The project itself, its file and whether it is saved stay as they are. Returns the template's file.
+
+Arguments:
+
+- `name`: string, required
+
+Result:
+
+- `file`: string, required
 
 #### `project_set`
 
 Engine command `project.set`.
 
-Changes the project's name, sample rate, stereo pan law or maximum volume. Linear positions keep their time at a new sample rate. panLaw is how much a mono channel panned to the center is turned down on each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it.
+Changes the project's name, sample rate, stereo pan law or maximum volume. Linear positions keep their time at a new sample rate. panLaw is how much a mono channel panned to the center is turned down on each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it. tempo (1 to 999 BPM) and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} are the project's first tempo and time signature, as the transport bar sets them; later changes stay, and musical positions keep their ticks.
 
 Arguments:
 
@@ -2728,6 +2914,18 @@ Arguments:
 - `name`: string
 - `panLaw`: one of "0dB" | "-3dB" | "-4.5dB" | "-6dB" | "equalPower"
 - `sampleRate`: number
+- `signature`: object
+- `tempo`: number
+
+#### `project_templates`
+
+Engine command `project.templates`. Read-only.
+
+The project templates, which project.new starts new projects from, sorted by name: each a name and its file in the folder Project Templates in the user settings' folder. None without that folder.
+
+Result:
+
+- `templates`: array of object, required
 
 ### quantize
 
@@ -2936,7 +3134,7 @@ The value of a user setting; settings.list describes them all.
 
 Arguments:
 
-- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.portSettings" | "audio.fallbackDevice" | "audio.sampleRate" | "editing.applyFolderColor" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "midi.portSettings" | "ui.folderData" | "ui.layout" | "ui.scale" | "ui.theme" | "ui.toolModifiers" | "ui.trackControls" | "ui.zoomPresets", required. The setting.
+- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.portSettings" | "audio.fallbackDevice" | "audio.sampleRate" | "editing.applyFolderColor" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "midi.portSettings" | "project.autoSave" | "project.autoSaveFiles" | "project.autoSaveInterval" | "ui.folderData" | "ui.layout" | "ui.markerLines" | "ui.scale" | "ui.theme" | "ui.timeFormats" | "ui.toolModifiers" | "ui.trackControls" | "ui.zoomPresets", required. The setting.
 
 Result:
 
@@ -2964,7 +3162,7 @@ Puts a user setting back to its default, or every one without key, and saves the
 
 Arguments:
 
-- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.portSettings" | "audio.fallbackDevice" | "audio.sampleRate" | "editing.applyFolderColor" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "midi.portSettings" | "ui.folderData" | "ui.layout" | "ui.scale" | "ui.theme" | "ui.toolModifiers" | "ui.trackControls" | "ui.zoomPresets". The setting.
+- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.portSettings" | "audio.fallbackDevice" | "audio.sampleRate" | "editing.applyFolderColor" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "midi.portSettings" | "project.autoSave" | "project.autoSaveFiles" | "project.autoSaveInterval" | "ui.folderData" | "ui.layout" | "ui.markerLines" | "ui.scale" | "ui.theme" | "ui.timeFormats" | "ui.toolModifiers" | "ui.trackControls" | "ui.zoomPresets". The setting.
 
 Result:
 
@@ -2974,11 +3172,11 @@ Result:
 
 Engine command `settings.set`.
 
-Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.autoMonitoring` (one of ["manual","whileRecordEnabled","whileRecording","tapeMachine"], default "tapeMachine"): When record-enabled audio tracks monitor their input, besides the monitor button: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records; `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.busPresets` (object, default {"input":{},"output":{}}): The user's own bus presets, per direction (input, output) by name: each a list of busses with their name, format, ports and child busses (bus.savePreset); `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.portSettings` (object, default {}): How the audio devices' ports are shown (audio.setPort), by backend/device id/in or out/system name, also for devices that aren't connected: the name shown (showAs) and whether it is visible. Ports without an entry show their system name and are visible; `audio.fallbackDevice` (one of ["none","default","dummy"], default "none"): The device that plays while the chosen audio device is lost, until it returns: none, default (the lost device's backend's default device, or the dummy device if that doesn't open), or dummy (the dummy device: no sound, but the transport moves and the project plays on). The engine switches back once the lost device returns; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `editing.applyFolderColor` (boolean, default false): Folder tracks give their color to the tracks inside them: when the folder's color changes and when tracks are added or moved into it; `midi.chaseBeyondParts` (boolean, default true): Chases controller events from the whole track; off, only from the MIDI parts under the position, so none outside parts; `midi.chaseControllers` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each control change's last value before that position; `midi.chaseNotes` (boolean, default true): Where playback starts or jumps, MIDI tracks start the notes that sound at that position; `midi.chasePitchBend` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last pitch bend before that position; `midi.chasePrograms` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last program change before that position; `midi.portSettings` (object, default {}): The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to all MIDI inputs (inAllInputs). Ports without an entry show their system name, are visible and belong to all MIDI inputs; `ui.folderData` (one of ["always","never","hideWhenExpanded"], default "always"): When folder tracks show the events and parts of the tracks inside them as data blocks in the event display: always, never, or hideWhenExpanded (only while the folder is folded); `ui.layout` (object, default {}): The layout of the windows with zones: under windows, by window (project), its zones (left, right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs hidden and the active one, and its strips (toolbar, infoLine, overviewLine, statusLine, transportBar) with whether each is shown, and its sets of sections (such as a mixer channel's) with the order of their sections and those hidden; under panels, by panel, whether it is in a window of its own and that window's bounds. What it leaves out has its default; `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes; `ui.toolModifiers` (object, default {}): The modifier keys of the project window's tools, by action (docs/features/tools.md), each ctrl (Cmd on macOS), alt and shift joined with +, or empty for none: dragDrop.copy (default alt), dragDrop.sharedCopy (alt+shift), erase.deleteLaterEvents (alt), glue.glueAllFollowing (alt), range.selectFullVertical (alt+shift), select.setCursorPosition (alt+shift), select.splitEvent (alt), sizeObjects.disableSnapping (ctrl) and split.splitRepeated (alt). What it leaves out has its default; `ui.trackControls` (object, default {"audio":["mute","solo","record","monitor","read"],"effect":["mute","solo","read"],"folder":["mute","solo","read"],"group":["mute","solo","read"],"instrument":["mute","solo","read"],"marker":[],"midi":["mute","solo","read"],"ruler":[]}): The controls the track list shows, by track type (audio, instrument, midi, group, effect, folder, marker, ruler), in order: mute, solo, record, monitor (audio tracks), read (automation) and timeBase. Mute and solo always show on tracks with a channel; a type left out shows none; `ui.zoomPresets` (array, default []): The horizontal zoom presets of the event display, for every project: each a name and the seconds the view shows.
+Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.autoMonitoring` (one of ["manual","whileRecordEnabled","whileRecording","tapeMachine"], default "tapeMachine"): When record-enabled audio tracks monitor their input, besides the monitor button: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records; `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.busPresets` (object, default {"input":{},"output":{}}): The user's own bus presets, per direction (input, output) by name: each a list of busses with their name, format, ports and child busses (bus.savePreset); `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.portSettings` (object, default {}): How the audio devices' ports are shown (audio.setPort), by backend/device id/in or out/system name, also for devices that aren't connected: the name shown (showAs) and whether it is visible. Ports without an entry show their system name and are visible; `audio.fallbackDevice` (one of ["none","default","dummy"], default "none"): The device that plays while the chosen audio device is lost, until it returns: none, default (the lost device's backend's default device, or the dummy device if that doesn't open), or dummy (the dummy device: no sound, but the transport moves and the project plays on). The engine switches back once the lost device returns; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `editing.applyFolderColor` (boolean, default false): Folder tracks give their color to the tracks inside them: when the folder's color changes and when tracks are added or moved into it; `midi.chaseBeyondParts` (boolean, default true): Chases controller events from the whole track; off, only from the MIDI parts under the position, so none outside parts; `midi.chaseControllers` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each control change's last value before that position; `midi.chaseNotes` (boolean, default true): Where playback starts or jumps, MIDI tracks start the notes that sound at that position; `midi.chasePitchBend` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last pitch bend before that position; `midi.chasePrograms` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last program change before that position; `midi.portSettings` (object, default {}): The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to all MIDI inputs (inAllInputs). Ports without an entry show their system name, are visible and belong to all MIDI inputs; `project.autoSave` (boolean, default true): Saves a copy of a project with unsaved changes every project.autoSaveInterval minutes into the folder Auto Saves of its project folder (see project.autoSave); `project.autoSaveFiles` (integer, 1 to 100, default 5): How many auto saves a project keeps; the next one overwrites the oldest; `project.autoSaveInterval` (integer, 1 to 120, default 15): Minutes between auto saves; `ui.folderData` (one of ["always","never","hideWhenExpanded"], default "always"): When folder tracks show the events and parts of the tracks inside them as data blocks in the event display: always, never, or hideWhenExpanded (only while the folder is folded); `ui.layout` (object, default {}): The layout of the windows with zones: under windows, by window (project), its zones (left, right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs hidden and the active one, and its strips (toolbar, infoLine, overviewLine, statusLine, transportBar) with whether each is shown, and its sets of sections (such as a mixer channel's) with the order of their sections and those hidden; under panels, by panel, whether it is in a window of its own and that window's bounds. What it leaves out has its default; `ui.markerLines` (one of ["active","all","off"], default "active"): Which markers the event display shows as lines across every track: the active marker track's (active), every marker track's (all), or none (off); `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes; `ui.timeFormats` (object, default {"primary":"barsBeats","secondary":"timecode","timeDisplay":"barsBeats"}): The time formats of the transport controls' displays: primary and secondary in the transport bar and panel, timeDisplay in the time display window; each barsBeats, seconds, timecode, samples or userFrames; `ui.toolModifiers` (object, default {}): The modifier keys of the project window's tools, by action (docs/features/tools.md), each ctrl (Cmd on macOS), alt and shift joined with +, or empty for none: dragDrop.copy (default alt), dragDrop.sharedCopy (alt+shift), erase.deleteLaterEvents (alt), glue.glueAllFollowing (alt), range.selectFullVertical (alt+shift), select.setCursorPosition (alt+shift), select.splitEvent (alt), sizeObjects.disableSnapping (ctrl) and split.splitRepeated (alt). What it leaves out has its default; `ui.trackControls` (object, default {"audio":["mute","solo","record","monitor","read"],"effect":["mute","solo","read"],"folder":["mute","solo","read"],"group":["mute","solo","read"],"instrument":["mute","solo","read"],"marker":[],"midi":["mute","solo","read"],"ruler":[]}): The controls the track list shows, by track type (audio, instrument, midi, group, effect, folder, marker, ruler), in order: mute, solo, record, monitor (audio tracks), read (automation) and timeBase. Mute and solo always show on tracks with a channel; a type left out shows none; `ui.zoomPresets` (array, default []): The horizontal zoom presets of the event display, for every project: each a name and the seconds the view shows.
 
 Arguments:
 
-- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.portSettings" | "audio.fallbackDevice" | "audio.sampleRate" | "editing.applyFolderColor" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "midi.portSettings" | "ui.folderData" | "ui.layout" | "ui.scale" | "ui.theme" | "ui.toolModifiers" | "ui.trackControls" | "ui.zoomPresets", required. The setting.
+- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.portSettings" | "audio.fallbackDevice" | "audio.sampleRate" | "editing.applyFolderColor" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "midi.portSettings" | "project.autoSave" | "project.autoSaveFiles" | "project.autoSaveInterval" | "ui.folderData" | "ui.layout" | "ui.markerLines" | "ui.scale" | "ui.theme" | "ui.timeFormats" | "ui.toolModifiers" | "ui.trackControls" | "ui.zoomPresets", required. The setting.
 - `value`: any, required. The new value; it must fit the setting's schema.
 
 Result:
@@ -3141,8 +3339,11 @@ Result:
 
 - `cycle`: boolean, required
 - `left`: integer, required
+- `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `punchIn`: boolean, required
+- `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
@@ -3158,8 +3359,11 @@ Result:
 
 - `cycle`: boolean, required
 - `left`: integer, required
+- `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `punchIn`: boolean, required
+- `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
@@ -3169,10 +3373,11 @@ Result:
 
 Engine command `transport.locate`.
 
-Moves the project cursor to a position in samples, or to a target: projectStart, projectEnd (the end of the last event), leftLocator or rightLocator. While playing, playback continues from there.
+Moves the project cursor to a position in samples, by seconds from where it is (back if negative, not before the project start: the transport bar's rewind and forward), or to a target: projectStart, projectEnd (the end of the last event), leftLocator or rightLocator. While playing, playback continues from there.
 
 Arguments:
 
+- `by`: number
 - `position`: integer
 - `target`: string
 
@@ -3180,8 +3385,11 @@ Result:
 
 - `cycle`: boolean, required
 - `left`: integer, required
+- `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `punchIn`: boolean, required
+- `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
@@ -3197,8 +3405,11 @@ Result:
 
 - `cycle`: boolean, required
 - `left`: integer, required
+- `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `punchIn`: boolean, required
+- `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
@@ -3218,8 +3429,11 @@ Result:
 
 - `cycle`: boolean, required
 - `left`: integer, required
+- `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `punchIn`: boolean, required
+- `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
@@ -3229,12 +3443,15 @@ Result:
 
 Engine command `transport.set`.
 
-Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started.
+Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started. punchIn, punchOut and metronome are the transport bar's switches; punching in and out at the locators and the click come with recording and the metronome.
 
 Arguments:
 
 - `cycle`: boolean
 - `left`: integer or string
+- `metronome`: boolean
+- `punchIn`: boolean
+- `punchOut`: boolean
 - `returnToStart`: boolean
 - `right`: integer or string
 - `startMode`: string
@@ -3243,8 +3460,11 @@ Result:
 
 - `cycle`: boolean, required
 - `left`: integer, required
+- `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `punchIn`: boolean, required
+- `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
@@ -3260,8 +3480,11 @@ Result:
 
 - `cycle`: boolean, required
 - `left`: integer, required
+- `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `punchIn`: boolean, required
+- `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
@@ -3271,14 +3494,21 @@ Result:
 
 Engine command `transport.toggle`.
 
-Stops playback if it plays, otherwise starts it.
+Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, punchIn, punchOut, metronome (see transport.set), or record (on as transport.record, off punches out).
+
+Arguments:
+
+- `setting`: one of "cycle" | "punchIn" | "punchOut" | "metronome" | "record"
 
 Result:
 
 - `cycle`: boolean, required
 - `left`: integer, required
+- `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `punchIn`: boolean, required
+- `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
@@ -3352,6 +3582,19 @@ Arguments:
 Result:
 
 - `element`: object or null, required
+
+#### `ui_file_dialog`
+
+Lists the file dialogs that wait for an answer, e.g. after File > Open: each with its id, kind (open, save or folder), title, filters and the location it starts in. With dialog, first answers that one as the user would: with files, the files chosen (the file to save as, the folder); with none, a cancel. A dialog the OS shows stays open until it is closed, and its answer is then ignored. Returns the dialogs still waiting.
+
+Arguments:
+
+- `dialog`: integer. The id of the dialog to answer.
+- `files`: array of string. With dialog: the files chosen; none to cancel.
+
+Result:
+
+- `dialogs`: array, required
 
 #### `ui_key`
 
@@ -3468,7 +3711,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://engine.commandLog`: The last 256 commands that ran, oldest first, without queries: what the UI and other clients did. Each with its request id (events name it too), the client that sent it (ui, mcp, lua, app for the command line, engine for the engine's own commands), the command, its parameters, and the error if it failed. Commands the engine ran on its own that changed nothing, such as tries to open a lost audio device again, are left out.
 - `gnubase://engine.commands`: Every command with its documentation, parameters and result.
 - `gnubase://engine.version`: The GNUbase version.
-- `gnubase://graph.get`: The project's audio processing graph: its nodes (busses, then channels in track order) with the nodes they receive audio and events from, and the order they are processed in.
+- `gnubase://graph.get`: The project's audio processing graph: its nodes (busses, then channels in track order, then for each channel with plugin slots a channelSource node with what plays on the channel and a pluginSlot node per slot, which pass the audio on to the channel's node) with the nodes they receive audio and events from, and the order they are processed in. object is the bus, channel or slot id.
 - `gnubase://history.get`: The undo history: every step with its action, time (UTC) and details, the position (steps before it are done, the ones after it can be redone) and the maximum number of steps (0: no limit).
 - `gnubase://job.list`: Every background job since the engine started, such as backups: id, kind, state (running, done, failed or cancelled), progress from 0 to 1, what it is doing, and its result or error once it ended.
 - `gnubase://marker.list`: The markers of a marker track (default: the active one; track 0 if there is none) in timeline order, with their position and end also in the project's samples.
@@ -3481,7 +3724,9 @@ Queries without required arguments can also be read as resources:
 - `gnubase://processor.list`: Every built-in processor: its id, name, description, whether it is an instrument, and its parameters with their ids, ranges, defaults and units. A stepped parameter takes whole numbers only; its options, if any, name its values from the minimum on.
 - `gnubase://project.get`: The whole project: busses, tracks in order, channels, media, clips, events and parts.
 - `gnubase://project.location`: Where the project is: its project file (set by project.save and project.load), the folder of that file, and the media folder in it where media.add with copy and media.prepareArchive put audio files. All null for a project that has no file yet.
-- `gnubase://project.revision`: A number that grows with every change of the project: every edit, undo and redo, and loading or starting a project. project.load with revision loads only if it hasn't changed.
+- `gnubase://project.recent`: The recent projects: the project files saved (not auto saved) or opened last, the newest first, at most 10, kept in the user settings' folder. exists says whether the file is still there.
+- `gnubase://project.revision`: A number that grows with every change of the project: every edit, undo and redo, and loading or starting a project. project.load with revision loads only if it hasn't changed. modified says whether the project changed since it was last saved, loaded or started; undoing back to the saved state still counts as a change.
+- `gnubase://project.templates`: The project templates, which project.new starts new projects from, sorted by name: each a name and its file in the folder Project Templates in the user settings' folder. None without that folder.
 - `gnubase://quantize.get`: The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).
 - `gnubase://quantize.presets`: The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings. The user's presets are kept in the settings folder, so they come back when GNUbase starts again: file is where (null if they are kept in memory only), readOnly whether changes are saved (not while the file belongs to a newer GNUbase), and problems what was wrong with it, such as presets that this GNUbase can't read and skips; they stay in the file.
 - `gnubase://settings.list`: Every user setting with its key, description, JSON schema, default and value; the settings file, null when settings are kept in memory only; its version; and what happened when it was loaded: the status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the problems found, where the original file was kept, and whether the file is read-only for this session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be backed up or locked).

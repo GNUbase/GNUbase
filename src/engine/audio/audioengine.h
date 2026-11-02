@@ -35,6 +35,11 @@ namespace gnubase::engine
 	class Engine;
 	struct RenderSnapshot;
 
+	namespace plugins
+	{
+		class SlotInstances;
+	}
+
 	namespace settings
 	{
 		class Store;
@@ -75,7 +80,7 @@ namespace gnubase::engine
 
 		// Registers audio.devices, audio.setDevice, audio.ports, audio.setProcessing, audio.get, audio.performance,
 		// audio.resetPerformance, audio.simulateOverload, audio.simulateDeviceLoss, audio.reset, audio.reconnect,
-		// audio.updateLatency,
+		// audio.updateLatency, audio.updatePlugins,
 		// audio.controlPanel, audio.render, audio.start, audio.stop, audio.capture and audio.captureInput, the
 		// transport commands transport.play, transport.stop, transport.toggle, transport.record, transport.locate,
 		// transport.set, transport.exchangeLocators and transport.get, and the MIDI port commands (MidiPorts).
@@ -95,6 +100,12 @@ namespace gnubase::engine
 		// Command thread: opens the device again at a new project sample rate if it supports it, and compiles a new
 		// graph if the project or the automatic monitoring mode changed since the last one.
 		void sync();
+
+		// Command thread: the status of a slot's plugin, as the plugin.* commands report it.
+		std::string slotStatus(ObjectId slot) const;
+		// Command thread: describes a slot for the plugin.changed that audio.updatePlugins emits when the status of its
+		// plugin changed (ProjectModel::describeSlot).
+		void setSlotDescriber(std::function<Json(ObjectId slot)> describe) { m_describeSlot = std::move(describe); }
 
 		// Audio thread.
 		void process(const audio::DeviceBlock& block) noexcept override;
@@ -223,6 +234,13 @@ namespace gnubase::engine
 		std::vector<Release> releases();
 		// Puts every channel's processor into a channel strip with the channel's fader and automation.
 		void attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
+		// Brings the slots' plugins in line with the snapshot and gives the slot nodes those that are ready.
+		void attachSlots(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
+		// Emits plugin.changed for the slots whose plugin's status changed since the last call.
+		void announceSlots(CommandContext& context);
+		// The node that plays what a channel plays in the graph rebuild describes: its source node if it has plugin
+		// slots (graph::describe), else its own; -1 for none.
+		int sourceNode(ObjectId channel) const;
 		AutoMonitoring autoMonitoring() const; // the user setting
 		// Direct monitoring: audio tracks that play into an output bus hear their input bus through the device
 		// instead of the graph. ports: the device channels of each bus (devicePorts).
@@ -304,7 +322,15 @@ namespace gnubase::engine
 		uint64_t m_generation = 0;          // the newest program's
 		std::atomic<uint64_t> m_started{0}; // the newest program the audio thread started
 		uint64_t m_running = 0;             // audio thread: the program it runs
-		Transport m_transport;              // advanced by the audio thread
+		std::atomic<bool> m_deviceRunning{false};
+		// The plugins of the project's slots. After m_started and m_programs: it waits for jobs that read the former,
+		// and destroys the plugins before the programs that hold their slots go.
+		std::unique_ptr<plugins::SlotInstances> m_slots;
+		std::atomic<bool> m_updatingPlugins{false}; // an audio.updatePlugins it posted hasn't run yet
+		std::function<Json(ObjectId)> m_describeSlot;
+		std::map<ObjectId, std::string> m_slotStatuses; // as announced last
+		std::map<ObjectId, int> m_sourceNodes;          // rebuild: per channel
+		Transport m_transport;                          // advanced by the audio thread
 		MidiPorts m_midi;
 		audio::MidiBuffer m_midiInput; // the block's messages from all MIDI inputs, for MIDI recording (#97)
 		MidiTap m_tap;                 // midi.inject and midi.capture

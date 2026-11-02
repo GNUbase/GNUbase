@@ -57,6 +57,7 @@ add_executable(gnubase-tests
 	log_tests.cpp
 	mainmenu_tests.cpp
 	marker_tests.cpp
+	markers_ui_tests.cpp
 	mcp_tests.cpp
 	mcpevents_tests.cpp
 	mcptools_tests.cpp
@@ -70,6 +71,8 @@ add_executable(gnubase-tests
 	monitoring_tests.cpp
 	multicore_tests.cpp
 	parameter_tests.cpp
+	plugincommands_tests.cpp
+	pluginslots_tests.cpp
 	peaks_tests.cpp
 	performance_tests.cpp
 	playback_tests.cpp
@@ -77,6 +80,7 @@ add_executable(gnubase-tests
 	pool_tests.cpp
 	poolpanel_tests.cpp
 	processor_tests.cpp
+	projectfiles_tests.cpp
 	quantize_tests.cpp
 	rmlui_tests.cpp
 	rt_tests.cpp
@@ -98,6 +102,7 @@ add_executable(gnubase-tests
 	timestretch_tests.cpp
 	tracklist_tests.cpp
 	transport_tests.cpp
+	transportbar_tests.cpp
 	uiapp.cpp
 	uiapp.h
 	uiapp_tests.cpp

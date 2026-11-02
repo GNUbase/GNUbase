@@ -7,13 +7,21 @@
 #include "engine/engine.h"
 #include "platform/rt/snapshotpublisher.h"
 
+#include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
 #include <string>
 
 namespace gnubase::engine
 {
+	namespace settings
+	{
+		class Store;
+	}
+
 	// A controller event from controller.add or controller.set, checked against its type: what the type uses must be
 	// there and valid, the rest is left zero (controllerFromJson). Its id is left to the caller. Throws CommandError
 	// with messages that start with name, e.g. "controllers[0]".
@@ -53,6 +61,16 @@ namespace gnubase::engine
 
 		rt::SnapshotPublisher<RenderSnapshot>& snapshots() { return m_snapshots; }
 
+		// What the plugin.* commands report as a slot's status: the audio engine's (AudioEngine::slotStatus).
+		void setSlotStatus(std::function<std::string(ObjectId slot)> status) { m_slotStatus = std::move(status); }
+		// A slot of the project as the plugin.* commands and their plugin.changed events describe it, with its index
+		// and status; null for no such slot. Only on the command thread.
+		Json describeSlot(const Project& project, ObjectId slot) const;
+
+		// For tests of due auto saves (project.autoSave): moves the clock they go by forward, for every project model
+		// in the process.
+		static void advanceClock(std::chrono::steady_clock::duration by);
+
 	private:
 		// Registers a query, or a command that changes the project. Such a command runs on the project, and if it
 		// fails the project is restored from a copy, so a failed command changes nothing. If it succeeds, what it
@@ -75,7 +93,22 @@ namespace gnubase::engine
 		void registerPoolCommands(Engine& engine); // pool.cpp: pool.*, poolFolder.*, clip.set, media management (#93)
 		void registerFadeCommands(Engine& engine); // fadeedits.cpp: fades, crossfades and auto fades
 		void registerParameterCommands(Engine& engine); // parameters.cpp: parameter.list, parameter.get, parameter.set
+		void registerSlotCommands(Engine& engine);      // slotcommands.cpp: plugin.*
 		void registerEventEditCommands(Engine& engine); // eventedits.cpp: event.*, parts and events (#85)
+		// projectfiles.cpp (#77): save new version, revert, auto save, recent projects and templates.
+		void registerProjectFileCommands(Engine& engine);
+		// After the project was replaced by a new or loaded one (from file, or none): clears the undo history,
+		// announces project.reset, counts as saved and adds the file to the recent projects. An auto save (a .bak in
+		// an Auto Saves folder) opens without a file instead, as unsaved and not a recent project.
+		void opened(Project project, const std::string& file, CommandContext& context);
+		// After the project was saved as file: it is the project's file now and a recent project. Announces
+		// project.saved.
+		void saved(const std::string& file, CommandContext& context);
+		// Makes the file the first of the recent projects.
+		void remember(const std::string& file);
+		// The project of the template with this name. Throws CommandError if there is none or the name isn't a file
+		// name.
+		Project loadTemplate(const std::string& name) const;
 		void record(std::string action, const Project& before, CommandContext& context);
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);
@@ -93,7 +126,13 @@ namespace gnubase::engine
 		History m_history;
 		std::map<std::string, Edit> m_edits; // the commands a transaction can run
 		uint64_t m_revision = 0;
-		bool m_automationFollowsEvents = false; // a setting, not part of the project
+		uint64_t m_savedRevision = 0;     // when it was last saved, loaded or made: unchanged since if m_revision
+		uint64_t m_autoSavedRevision = 0; // when it was last saved or auto saved
+		std::chrono::steady_clock::time_point m_lastSave = std::chrono::steady_clock::now(); // or auto save
+		std::filesystem::path m_settingsDirectory; // the user settings' folder, empty without one
+		std::shared_ptr<settings::Store> m_recent; // the recent projects
+		bool m_automationFollowsEvents = false;    // a setting, not part of the project
+		std::function<std::string(ObjectId)> m_slotStatus;
 		rt::SnapshotPublisher<RenderSnapshot> m_snapshots;
 	};
 }
