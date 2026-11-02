@@ -186,7 +186,6 @@ namespace gnubase::ui
 		if (Rml::Element* old = attached.document.get())
 			listen(*old, false);
 		attached = Attached{document.GetObserverPtr(), {}, {}};
-		learnSections(attached, document);
 		for (Rml::Element* zone : elements(document, "[zone]"))
 		{
 			const std::string zoneName = attribute(*zone, "zone");
@@ -211,12 +210,13 @@ namespace gnubase::ui
 		return {found.begin(), found.end()};
 	}
 
-	std::vector<Rml::Element*> Docking::containers(Rml::Element& root, const std::string& set)
+	std::vector<Rml::Element*> Docking::elementsWith(Rml::Element& root, const char* name, const std::string& value)
 	{
 		std::vector<Rml::Element*> result;
-		if (root.HasAttribute("sections") && (set.empty() || attribute(root, "sections") == set))
+		if (root.HasAttribute(name) && (value.empty() || attribute(root, name) == value))
 			result.push_back(&root);
-		const std::vector<Rml::Element*> found = elements(root, set.empty() ? "[sections]" : "[sections=" + set + "]");
+		const std::vector<Rml::Element*> found =
+			elements(root, "[" + std::string(name) + (value.empty() ? "]" : "=" + value + "]"));
 		result.insert(result.end(), found.begin(), found.end());
 		return result;
 	}
@@ -228,7 +228,7 @@ namespace gnubase::ui
 		if (document == nullptr)
 			return false;
 		bool learned = false;
-		for (const Rml::Element* container : containers(root, {}))
+		for (const Rml::Element* container : elementsWith(root, "sections", {}))
 		{
 			std::vector<Section>& known = attached.sections[attribute(*container, "sections")];
 			if (!known.empty())
@@ -257,18 +257,14 @@ namespace gnubase::ui
 		const Rml::Element* up = &element; // in the document, not just made for it
 		while (up != nullptr && up != document)
 			up = up->GetParentNode();
-		if (document == nullptr || up == nullptr)
+		const auto attached = m_windows.find(windowOf(element));
+		if (document == nullptr || up == nullptr || attached == m_windows.end())
 			return;
-		for (auto& [name, attached] : m_windows)
-			if (attached.document.get() == document)
-			{
-				if (learnSections(attached, element))
-					applySections(name, attached, *document); // the set's setup panes and every container of it
-				else
-					applySections(name, attached, element);
-				document->GetContext()->RequestNextUpdate(0);
-				return;
-			}
+		if (learnSections(attached->second, element))
+			applySections(attached->first, attached->second, *document); // the set's panes and every container of it
+		else
+			applySections(attached->first, attached->second, element);
+		document->GetContext()->RequestNextUpdate(0);
 	}
 
 	// The zones' tab menus: Open in Separate Window, then an item to show or hide each tab. Made once per panel, since
@@ -706,6 +702,7 @@ namespace gnubase::ui
 			else
 				toggle->RemoveAttribute("checked");
 		}
+		learnSections(attached, *document); // including from panels that showed for the first time
 		applySections(window, attached, *document);
 		for (Rml::Element* item : elements(*document, "menuitem[tab]"))
 		{
@@ -726,13 +723,13 @@ namespace gnubase::ui
 		for (const auto& [set, known] : attached.sections)
 		{
 			const std::vector<std::string> order = sections(window, set);
-			for (Rml::Element* container : containers(root, set))
+			for (Rml::Element* container : elementsWith(root, "sections", set))
 			{
 				arrange(*container, "section", order);
 				for (Rml::Element* part : elements(*container, "[section]"))
 					part->SetClass("hidden", sectionHidden(window, set, attribute(*part, "section")));
 			}
-			for (Rml::Element* pane : elements(root, "[setup=" + set + "]"))
+			for (Rml::Element* pane : elementsWith(root, "setup", set))
 			{
 				arrange(*pane, "setup-section", order);
 				for (Rml::Element* item : elements(*pane, "[setup-section]"))

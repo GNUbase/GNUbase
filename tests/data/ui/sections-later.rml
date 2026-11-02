@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- A docking window for tests/docking_tests.cpp whose containers of sections only come after attach, as a mixer's
      channels do on a project without tracks: its Set up Window Layout pane learns the set's sections from the first
-     channel that appears (docs/features/docking.md). -->
+     channel that appears (docs/features/docking.md), or from a panel that a test docks in the left zone. -->
 <rml>
 <head>
 	<title>Sections later</title>
@@ -16,6 +16,8 @@
 		<button id="window-layout" menu="layout-pane" title="Set up Window Layout">Layout</button>
 	</div>
 	<div class="zones">
+		<div id="left-zone" zone="left" size="160"/>
+		<splitter for="left"/>
 		<div id="main-zone" zone="main"/>
 	</div>
 

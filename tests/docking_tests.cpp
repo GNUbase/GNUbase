@@ -538,7 +538,7 @@ TEST_CASE("containers of sections added or rebuilt after attach show the user's 
 	CHECK(has(children.front(), "channel-name"));
 	CHECK(has(children.back(), "channel-footer"));
 
-	// So does a channel whose sections were rebuilt, and the arranging only touches what it is given.
+	// So does a channel whose sections were rebuilt.
 	Rml::Element* rebuilt = document.GetElementById("channel-1");
 	REQUIRE(rebuilt != nullptr);
 	rebuilt->SetInnerRML(R"(<div section="routing" label="Routing"/><div section="inserts" label="Inserts"/>
@@ -549,6 +549,19 @@ TEST_CASE("containers of sections added or rebuilt after attach show the user's 
 	CHECK(sections(app, "#channel-1", true) == order);
 	CHECK(sections(app, "#channel-1") == shownOrder);
 	CHECK(paneItems(app) == Names{"fader*", "routing*", "inserts", "eq", "sends*"});
+
+	// A setup pane that comes later gets the set's buttons in the user's order.
+	Rml::Element* menu = document.GetElementById("layout-pane");
+	REQUIRE(menu != nullptr);
+	Rml::Element* pane = menu->AppendChild(document.CreateElement("div"));
+	pane->SetId("later-pane");
+	pane->SetAttribute("setup", "channel");
+	docking.arrangeSections(*pane);
+	Names items;
+	for (const Json& item : elements(app, "#later-pane [setup-section]"))
+		items.push_back(item.at("attributes").at("setup-section").get<std::string>() +
+			(item.at("attributes").contains("checked") ? "*" : ""));
+	CHECK(items == Names{"fader*", "routing*", "inserts", "eq", "sends*"});
 
 	// Later changes reach the new channel like the others.
 	docking.setSectionHidden("test", "channel", "eq", false);
@@ -595,4 +608,27 @@ TEST_CASE("a window without containers of sections learns a set from the first c
 	REQUIRE(app.waitUntil(
 		[&app] { return sections(app, "#channel-2") == Names{"sends", "fader", "routing", "inserts", "eq"}; }));
 	CHECK(sections(app, "#channel-1") == Names{"sends", "fader", "routing", "inserts", "eq"});
+}
+
+TEST_CASE("a window learns a set from containers in a docked panel's content", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	Json layout = Json::object();
+	layout["windows"]["test"]["sections"]["channel"] = {{"order", {"fader"}}, {"hidden", {"eq", "sends"}}};
+	app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+	ui::Docking& docking = app.appUi().docking();
+	REQUIRE(app.waitUntil([&docking, &layout] { return docking.layout() == layout; }));
+
+	// The panel makes its channel only when it shows, after attach has looked at the document.
+	docking.add({"channels", "Channels", "test", "left", [](Rml::Element& element)
+		{
+			element.SetInnerRML(R"(<div id="panel-channel" class="channel" sections="channel">
+				<div section="routing" label="Routing"/><div section="eq" label="EQ"/>
+				<div section="sends" label="Sends"/><div section="fader" label="Fader"/></div>)");
+			return std::shared_ptr<void>();
+		}});
+	docking.attach("test", app.show("sections-later.rml"));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(paneItems(app) == Names{"fader*", "routing*", "eq", "sends"});
+	CHECK(sections(app, "#panel-channel") == Names{"fader", "routing"});
 }

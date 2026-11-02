@@ -109,9 +109,10 @@ namespace gnubase::ui
 		void setSectionHidden(const std::string& window, const std::string& set, const std::string& id, bool hidden);
 		std::vector<std::string> sections(const std::string& window, const std::string& set) const; // in order
 		// Arranges containers of sections added or rebuilt after attach, such as a new mixer channel: element, and the
-		// containers in it, get the user's order and hidden sections. A set the window doesn't know yet is learned from
-		// its first container there, which fills the set's setup panes. Call it once element is in a docking window's
-		// document; anything else is left alone.
+		// containers and setup panes in it, get the user's order and hidden sections. A set the window doesn't know yet
+		// is learned from its first container there, which fills the set's setup panes. Call it once element is in a
+		// docking window's document; anything else is left alone. A docked panel's content needn't: it is arranged when
+		// the panel shows.
 		void arrangeSections(Rml::Element& element);
 		// Shows the panel as its zone's active tab, with the zone shown, unless it is in a window of its own.
 		void open(const std::string& id);
@@ -170,7 +171,8 @@ namespace gnubase::ui
 		// Learns the sets of sections that the containers in root, root too, are the first of, and fills their setup
 		// panes. Whether it learned one.
 		static bool learnSections(Attached& attached, Rml::Element& root);
-		static std::vector<Rml::Element*> containers(Rml::Element& root, const std::string& set); // root too
+		// The elements in root, root too, whose attribute name has the value, or any value if it is empty.
+		static std::vector<Rml::Element*> elementsWith(Rml::Element& root, const char* name, const std::string& value);
 
 		void apply();
 		void applyWindow(const std::string& window, Attached& attached);
