@@ -275,7 +275,7 @@ TEST_CASE("mixer channels show notes and pictures, and a channel dragged onto an
 	ui::Image image;
 	image.width = 8;
 	image.height = 8;
-	image.pixels.assign(8 * 8 * 4, 200);
+	image.pixels.assign(size_t{8} * 8 * 4, 200);
 	REQUIRE(ui::writePng(image, dir.path() / "guitar.png"));
 	app.call("track.set", {{"track", c.track}, {"picture", picture}});
 	REQUIRE(app.waitUntil([&] { return elements(app, window, strip(c.channel) + " .mixer-picture img").size() == 1; }));

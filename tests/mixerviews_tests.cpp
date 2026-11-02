@@ -115,7 +115,7 @@ TEST_CASE("channels have notes and tracks a picture, as undo steps saved with th
 	CHECK(f.call("track.set", {{"track", track}, {"picture", "pictures/guitar.png"}}).at("track").at("picture") ==
 		"pictures/guitar.png");
 	f.call("history.undo");
-	CHECK(f.call("project.get").at("tracks").at(0).at("picture") == "");
+	CHECK(f.call("project.get").at("tracks").at(0).at("picture").get<std::string>().empty());
 	f.call("history.redo");
 
 	// A copy of the track has them too.

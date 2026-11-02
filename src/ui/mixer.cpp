@@ -280,7 +280,7 @@ namespace gnubase::ui
 
 	void Mixer::show()
 	{
-		Rml::Element* strips = m_strips.get();
+		const Rml::Element* strips = m_strips.get();
 		if (strips == nullptr)
 			return;
 		std::vector<const MixerChannel*> shown;

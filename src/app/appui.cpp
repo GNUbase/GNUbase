@@ -574,7 +574,7 @@ namespace gnubase::app
 		spec.title = number == 1 ? std::string("Mixer") : "Mixer " + std::to_string(number);
 		spec.size = {1000, 560};
 		spec.hidden = m_hidden;
-		ui::Window& window = m_shell.open(spec);
+		const ui::Window& window = m_shell.open(spec);
 		shown.window = window.id();
 		const std::filesystem::path file = m_resources / "ui" / "mixer.rml";
 		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
@@ -594,7 +594,7 @@ namespace gnubase::app
 
 	ui::Mixer* AppUi::mixer(int number)
 	{
-		MixerWindow& shown = m_mixers.at(static_cast<size_t>(number - 1));
+		const MixerWindow& shown = m_mixers.at(static_cast<size_t>(number - 1));
 		return shown.window != 0 && m_shell.find(shown.window) != nullptr ? shown.mixer.get() : nullptr;
 	}
 
