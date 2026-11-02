@@ -409,7 +409,7 @@ namespace gnubase::engine
 		ProjectSetup setup = fallback;
 		const auto oneOf = [&json](const char* key, const std::string& current, const auto& names)
 		{
-			const std::string name = json.value(key, current);
+			std::string name = json.value(key, current);
 			if (std::find(names.begin(), names.end(), name) == names.end())
 				throw std::invalid_argument(std::string("unknown ") + key + " " + name);
 			return name;
@@ -439,9 +439,9 @@ namespace gnubase::engine
 			throw std::invalid_argument("FLAC files record 16 or 24 bit, not " + depth);
 		if (!wav && depth == "float64")
 			throw std::invalid_argument("only Wave files record 64 bit float");
-		if (!(setup.startTime >= 0.0 && setup.startTime < 86400.0))
+		if (!std::isfinite(setup.startTime) || setup.startTime < 0.0 || setup.startTime >= 86400.0)
 			throw std::invalid_argument("startTime must be from 0 to less than 24 hours (86400 seconds)");
-		if (!(setup.length > 0.0 && setup.length <= 86400.0))
+		if (!std::isfinite(setup.length) || setup.length <= 0.0 || setup.length > 86400.0)
 			throw std::invalid_argument("length must be more than 0 and at most 24 hours (86400 seconds)");
 		if (setup.barOffset < -9999 || setup.barOffset > 9999)
 			throw std::invalid_argument("barOffset must be from -9999 to 9999");

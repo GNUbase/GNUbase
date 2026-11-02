@@ -161,9 +161,9 @@ namespace gnubase::ui
 			rows += R"(<td class="position">)" + formatTime(TimeFormat::BarsBeats, marker.start, context) + "</td>";
 			rows += R"(<td class="end">)" +
 				(marker.cycle ? formatTime(TimeFormat::BarsBeats, marker.end, context) : std::string()) + "</td>";
-			// ponytail: lengths in seconds, as formatTime writes positions; bars and beats lengths if users miss them.
+			// ponytail: lengths in seconds; bars and beats lengths if users miss them.
 			rows += R"(<td class="length">)" +
-				(marker.cycle ? formatTime(TimeFormat::Seconds, marker.end - marker.start, context) : std::string()) +
+				(marker.cycle ? formatLength(TimeFormat::Seconds, marker.start, marker.end, context) : std::string()) +
 				"</td>";
 			rows += R"(<td class="description"><input type="text" value=")" + text(marker.name) + R"("/></td>)";
 			rows += "</tr>";

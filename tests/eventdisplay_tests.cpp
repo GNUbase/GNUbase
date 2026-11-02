@@ -834,6 +834,15 @@ TEST_CASE("the ruler shows the chosen time format", "[unit]")
 	fixture.display.setRulerFormat(ui::TimeFormat::Timecode);
 	CHECK(fixture.display.rulerFormat() == ui::TimeFormat::Timecode);
 	CHECK(fixture.element("ruler").GetAttribute<std::string>("format", "") == "timecode");
+
+	// It follows the project's time format when that changes (#78), and keeps its own pick until then.
+	fixture.call("project.set", {{"timeFormat", "seconds"}});
+	REQUIRE(fixture.waitUntil([&fixture] { return fixture.display.rulerFormat() == ui::TimeFormat::Seconds; }));
+	CHECK(fixture.element("ruler").GetAttribute<std::string>("format", "") == "seconds");
+	fixture.display.setRulerFormat(ui::TimeFormat::Samples);
+	fixture.call("project.set", {{"length", 120.0}});
+	REQUIRE(fixture.waitUntil([&fixture] { return fixture.display.projectLength() == Approx(120.0); }));
+	CHECK(fixture.display.rulerFormat() == ui::TimeFormat::Samples);
 }
 
 TEST_CASE("the event display's actions are commands by name, for key commands", "[unit]")

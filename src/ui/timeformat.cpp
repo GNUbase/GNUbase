@@ -373,8 +373,9 @@ namespace gnubase::ui
 				rate);
 		}
 
-		// Bars, beats, sixteenths and display ticks, as many as typed; the rest are zero.
-		std::optional<time::BarsBeats> barsBeats(const std::string& text)
+		// Bars, beats, sixteenths and display ticks, as many as typed; the rest are zero. A signed bar may have a minus
+		// sign, for the bars a negative bar offset shows before bar 1.
+		std::optional<time::BarsBeats> barsBeats(const std::string& text, bool signedBar = false)
 		{
 			const auto parts = split(text, " .,:;");
 			if (!parts || parts->size() > 4)
@@ -382,10 +383,12 @@ namespace gnubase::ui
 			std::array<int64_t, 4> numbers{};
 			for (size_t i = 0; i < parts->size(); ++i)
 			{
-				const auto number = integer((*parts)[i]);
+				const std::string& part = (*parts)[i];
+				const bool negative = signedBar && i == 0 && part.size() > 1 && part[0] == '-';
+				const auto number = integer(negative ? part.substr(1) : part);
 				if (!number || *number > std::numeric_limits<int>::max())
 					return std::nullopt;
-				numbers.at(i) = *number;
+				numbers.at(i) = negative ? -*number : *number;
 			}
 			return time::BarsBeats{
 				numbers[0], static_cast<int>(numbers[1]), static_cast<int>(numbers[2]), static_cast<int>(numbers[3])};
@@ -400,7 +403,7 @@ namespace gnubase::ui
 			case TimeFormat::BarsBeats:
 			{
 				const auto parts = split(text, " .,:;");
-				std::optional<time::BarsBeats> position = barsBeats(text);
+				std::optional<time::BarsBeats> position = barsBeats(text, true);
 				if (!parts || !position || position->bar - context.barOffset < 1)
 					return std::nullopt;
 				// One-based, but for display ticks; what is left out is the first.
