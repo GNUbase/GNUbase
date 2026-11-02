@@ -6,6 +6,7 @@
 #include "engine/audio/miditap.h"
 #include "engine/audio/performance.h"
 #include "engine/audio/playback.h"
+#include "engine/audio/recorder.h"
 #include "engine/audio/sequencer.h"
 #include "engine/audio/transport.h"
 #include "engine/graph/graph.h"
@@ -91,8 +92,10 @@ namespace gnubase::engine
 		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
 		void setChase(const MidiChase& chase);
 
-		// Command thread, after the user settings changed: the MIDI ports follow their settings (MidiPorts).
-		void applyPortSettings() { m_midi.applySettings(); }
+		// Command thread, after a command changed the user settings audio.portSettings (audioPorts) or
+		// midi.portSettings (midiPorts): emits the audio ports as audio.portsChanged, and the MIDI ports follow their
+		// settings (MidiPorts::applySettings).
+		void portSettingsChanged(CommandContext& context, bool audioPorts, bool midiPorts);
 
 		// Any thread but the audio thread, without waiting: the project cursor (Transport::position).
 		time::Samples position() const { return m_transport.position(); }
@@ -106,6 +109,10 @@ namespace gnubase::engine
 		// Command thread: describes a slot for the plugin.changed that audio.updatePlugins emits when the status of its
 		// plugin changed (ProjectModel::describeSlot).
 		void setSlotDescriber(std::function<Json(ObjectId slot)> describe) { m_describeSlot = std::move(describe); }
+		// Command thread: where a recording that starts writes, in which format, and which tracks it records, from
+		// the project; the audio engine adds the device inputs of each track's input bus and the transport's audio
+		// record mode (docs/features/recording.md).
+		void setRecordSetup(std::function<RecordSetup()> setup) { m_describeRecording = std::move(setup); }
 
 		// Audio thread.
 		void process(const audio::DeviceBlock& block) noexcept override;
@@ -191,8 +198,8 @@ namespace gnubase::engine
 		int64_t recordOffset() const;               // from the device's latency and the record shift
 		bool updateLatency(const Json& parameters); // audio.updateLatency; true if anything changed
 		Json devices() const;
-		Json ports() const;                    // audio.ports
-		Json setPort(CommandContext& context); // audio.setPort
+		Json ports() const;                                    // audio.ports
+		Json setPort(Engine& engine, CommandContext& context); // audio.setPort
 		// Where the user setting audio.portSettings keeps a port of the device: its backend, device id, direction and
 		// name.
 		std::string portKey(bool input, const std::string& name) const;
@@ -252,6 +259,8 @@ namespace gnubase::engine
 		void stopMonitoringDirectly();
 		// Audio thread: the device's input where recording places it (audio.captureInput).
 		void captureInput(const audio::DeviceBlock& block) noexcept;
+		// Command thread: tells the recorder what the next recording records, if that changed.
+		void updateRecorder();
 
 		rt::SnapshotPublisher<RenderSnapshot>& m_snapshots;
 		uint64_t m_revision = 0;
@@ -305,7 +314,10 @@ namespace gnubase::engine
 		// Per input channel of the device, what it recorded at each project position from 0, for captureSeconds.
 		// Written by the audio thread, read while the device stands.
 		std::vector<std::vector<float>> m_capturedInput;
-		Playback m_playback; // before m_programs: their track players use it
+		Recorder m_recorder;                              // records the record-enabled audio tracks
+		RecordSetup m_recordSetup;                        // what it was told last
+		std::function<RecordSetup()> m_describeRecording; // setRecordSetup
+		Playback m_playback;                              // before m_programs: their track players use it
 
 		struct Instrument
 		{
