@@ -275,7 +275,8 @@ namespace gnubase::engine
 		audio::DummyDevice* m_dummy = nullptr; // m_device, if it is the dummy device
 		std::vector<std::string> m_inputPorts; // the device's port names, each one once
 		std::vector<std::string> m_outputPorts;
-		double m_projectRate = 0.0; // the project's sample rate the device last followed
+		double m_projectRate = 0.0;   // the project's sample rate the device last followed
+		std::string m_recordBitDepth; // the project's record bit depth last announced; empty before the first sync
 
 		// The device that couldn't be opened again (audio.reset), while the engine waits for it to return. A device
 		// that plays meanwhile is the fallback (failOver).

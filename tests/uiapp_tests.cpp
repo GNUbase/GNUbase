@@ -179,6 +179,7 @@ TEST_CASE("the project window shows events and the project cursor where the engi
 	test::UiApp app({800, 300});
 	ui::EventDisplay& display = app.appUi().showProject();
 	app.setDpRatio(1.0F);
+	app.call("project.set", {{"length", 60.0}}); // the overview line as the golden image has it
 	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
 	app.call("midiPart.add", // from 1 to 3 seconds at 120 BPM
 		{{"track", track.at("id")}, {"position", 2 * time::g_ticksPerQuarter},
@@ -275,7 +276,7 @@ TEST_CASE("the zoom presets menu adds, applies and organizes presets, and zooms 
 	CHECK(display.view().start == Catch::Approx(7.0));
 	choose(app, "#zoom-presets", "#zoom-presets-menu", "Zoom Full");
 	CHECK(display.view().start == 0.0);
-	CHECK(display.visibleLength() == Catch::Approx(ui::g_minimumProjectLength));
+	CHECK(display.visibleLength() == Catch::Approx(ui::g_defaultProjectLength));
 
 	// The project's cycle markers follow Zoom Full; one zooms to its range.
 	app.call("marker.add",

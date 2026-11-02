@@ -165,7 +165,8 @@ namespace gnubase::engine
 		double sampleRate = 48000.0;
 		time::TempoMap tempo{120.0}; // for processors that follow the tempo, e.g. a synced delay
 		PanLaw panLaw = PanLaw::Minus3;
-		double maxVolume = 6.0; // dB
+		double maxVolume = 6.0;               // dB
+		std::string recordBitDepth = "int24"; // the project's, for audio.get; not read on the audio thread
 		std::vector<RenderBus> busses;
 		std::vector<RenderMedia> media;
 		std::vector<RenderChannel> channels; // in track order

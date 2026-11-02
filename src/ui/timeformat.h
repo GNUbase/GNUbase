@@ -30,28 +30,30 @@ namespace gnubase::ui
 	std::string timeFormatName(TimeFormat format);
 	std::optional<TimeFormat> timeFormatFromName(const std::string& name);
 
-	// What converts the project's time: its tempo and signatures, its sample rate and frame rate, and the user's frame
-	// rate.
+	// What converts the project's time: its tempo and signatures, its sample rate and frame rate, the project setup's
+	// start time and bar offset (#78), and the user's frame rate.
 	struct TimeContext
 	{
 		time::TempoMap tempo{120.0};
 		time::SignatureMap signatures;
 		double sampleRate = 48000.0;
-		time::FrameRate frameRate = time::g_fps25; // the project's frame rate comes with the project setup (#78)
+		time::FrameRate frameRate = time::g_fps25;
+		double startTime = 0.0; // what seconds, timecode and user frames show at the project start
+		int barOffset = 0;      // added to the bars shown
 		int userFramesPerSecond = 30;
 	};
 
-	// The tempo, signatures and sample rate of a project as project.get returns it. Keeps the defaults, with a warning
-	// in the log, for a tempo or signature map it can't read.
+	// The tempo, signatures, sample rate, frame rate, start time and bar offset of a project as project.get returns
+	// it. Keeps the defaults, with a warning in the log, for a tempo or signature map it can't read.
 	TimeContext projectTime(const engine::Json& project);
 
 	// A position, in seconds from the project start, as position displays show it: "1.1.1.0", "0:00:01.500",
-	// "00:00:01:12" or "72000".
+	// "00:00:01:12" or "72000". Seconds, timecode and user frames count from the start time, bars from the bar offset.
 	std::string formatTime(TimeFormat format, double seconds, const TimeContext& context);
 
-	// A position typed in the format, in seconds, or nothing for text that isn't one. Numbers may be separated by any
-	// other characters; those left out count from the start: "3.2" is bar 3, beat 2, "1:30" a minute and a half, and
-	// for timecode "5:12" five seconds and twelve frames.
+	// A position typed in the format, in seconds, or nothing for text that isn't one or is before the project start.
+	// Numbers may be separated by any other characters; those left out count from the start: "3.2" is bar 3, beat 2,
+	// "1:30" a minute and a half, and for timecode "5:12" five seconds and twelve frames.
 	std::optional<double> parseTime(TimeFormat format, const std::string& text, const TimeContext& context);
 
 	// A length from one position to another, in seconds: bars, beats, sixteenths and display ticks counted from zero,
@@ -60,8 +62,8 @@ namespace gnubase::ui
 	std::optional<double> parseLength(
 		TimeFormat format, const std::string& text, double from, const TimeContext& context);
 
-	// Reads the sample rate, tempo and signatures of a project as project.get returns it into the context. Returns
-	// false, and leaves the context, if they aren't valid.
+	// Reads what projectTime does of a project as project.get returns it into the context. Returns false, and leaves
+	// the context, if they aren't valid.
 	bool readTimeContext(const engine::Json& project, TimeContext& context);
 
 	// A ruler scale for a timeline in seconds: bars and beats where the tempo and signature maps put them, down to

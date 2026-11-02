@@ -91,6 +91,10 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Mod+Alt+I | `edit.invertSelection` | Invert Selection |
 | Left, Right | `edit.selectPrevious`, `edit.selectNext` | Navigate Left, Right |
 | Up, Down | `track.selectPrevious`, `track.selectNext`, and the first event on the track while an event is selected | Navigate Up, Down |
+| Mod+X, Mod+C, Mod+V | `edit.cut`, `edit.copy`, `edit.paste` | Cut, Copy, Paste ([range-editing.md](range-editing.md)) |
+| Mod+Shift+X, Shift+Backspace, Mod+Shift+V | `edit.cutTime`, `edit.deleteTime`, `edit.pasteTime` | Cut Time, Delete Time, Paste Time |
+| Mod+Shift+E | `edit.insertSilence` | Insert Silence |
+| Shift+X | `edit.splitRange` | Split (range) |
 | J | `edit.snap` | Snap On/Off ([snap.md](snap.md)) |
 
 The other edit commands ([parts-and-events.md](parts-and-events.md)) have no default keys in the reference. The
