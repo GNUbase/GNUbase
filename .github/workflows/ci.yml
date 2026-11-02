@@ -122,7 +122,7 @@ jobs:
 
       # Before the tests, so that a failing test doesn't lose the build's cache.
       - name: Save the compiler cache
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.head_ref == 'ci/cache-and-tidy'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v6
         with:
           path: .ccache
@@ -258,7 +258,7 @@ jobs:
         run: cmake --build --preset linux-clang --target gnubase-tests
 
       - name: Save the compiler cache
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.head_ref == 'ci/cache-and-tidy'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v6
         with:
           path: .ccache
@@ -313,7 +313,7 @@ jobs:
           find .tidy-cache -type f ! -newer "$RUNNER_TEMP/build-start" -delete
 
       - name: Save the caches
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.head_ref == 'ci/cache-and-tidy'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v6
         with:
           path: |
