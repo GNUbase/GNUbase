@@ -8,11 +8,14 @@
 #include "ui/automation.h"
 #include "ui/docking.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <SDL3/SDL.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <string>
@@ -313,6 +316,74 @@ TEST_CASE("tab groups move, hide and step through their tabs and remember the ac
 	CHECK(app.appUi().docking().layout().at("windows").at("project").at("zones").at("lower").at("active") == "mixer");
 	app.ui().click(std::nullopt, at("#event-display"), ui::MouseButton::Left, 1, {});
 	CHECK(has(element(app, "#main-zone"), "focused"));
+}
+
+TEST_CASE("Tab and Shift+Tab move the keyboard focus through the zones", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	ui::Docking& docking = app.appUi().docking();
+	for (const char* zone : {"left", "lower", "right"})
+		docking.setVisible("project", zone, true);
+	app.shell().step(std::chrono::milliseconds(0));
+	const auto focused = [&app]
+	{
+		std::string found;
+		for (const char* zone : {"#main-zone", "#left-zone", "#lower-zone", "#right-zone"})
+			if (has(element(app, zone), "focused"))
+				found += (found.empty() ? "" : ",") + std::string(zone);
+		return found;
+	};
+	app.ui().click(std::nullopt, at("#event-display"), ui::MouseButton::Left, 1, {});
+	CHECK(focused() == "#main-zone");
+
+	// Forwards in the reference's order (p. 100), around to the project zone again, and back with Shift.
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(focused() == "#left-zone");
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(focused() == "#lower-zone");
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(focused() == "#right-zone");
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(focused() == "#main-zone");
+	app.ui().key(std::nullopt, "Shift+Tab");
+	CHECK(focused() == "#right-zone");
+	app.ui().key(std::nullopt, "Shift+Tab");
+	CHECK(focused() == "#lower-zone");
+
+	// A key command of a focus zone runs in the zone that has the focus: the lower zone's next tab.
+	app.ui().key(std::nullopt, "Mod+Alt+Right");
+	CHECK(docking.layout().at("windows").at("project").at("zones").at("lower").value("active", "") == "mixer");
+
+	// Hidden zones are skipped.
+	docking.setVisible("project", "right", false);
+	app.shell().step(std::chrono::milliseconds(0));
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(focused() == "#main-zone");
+	app.ui().key(std::nullopt, "Shift+Tab");
+	CHECK(focused() == "#lower-zone");
+
+	// In a text field, Tab moves between controls as before, not to the next zone.
+	Rml::Context& context = app.main().context();
+	Rml::ElementDocument* document = context.GetFocusElement()->GetOwnerDocument();
+	Rml::Element* field = document->GetElementById("lower-zone")->AppendChild(document->CreateElement("input"));
+	field->SetAttribute("type", "text");
+	REQUIRE(field->Focus());
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(!context.GetFocusElement()->HasAttribute("zone"));
+
+	// Ctrl+Tab isn't the zones' key.
+	app.ui().click(std::nullopt, at("#event-display"), ui::MouseButton::Left, 1, {});
+	app.ui().key(std::nullopt, "Ctrl+Tab");
+	CHECK(!context.GetFocusElement()->HasAttribute("zone"));
+
+	// An open menu keeps its keys.
+	app.ui().click(std::nullopt, at("button[menu=edit-menu]"), ui::MouseButton::Left, 1, {});
+	REQUIRE(has(element(app, "#edit-menu"), "open"));
+	app.ui().key(std::nullopt, "Tab");
+	CHECK(has(element(app, "#edit-menu"), "open"));
+	CHECK(!context.GetFocusElement()->HasAttribute("zone"));
+	app.ui().key(std::nullopt, "Escape");
 }
 
 TEST_CASE("a panel moves between its zone and a window of its own", "[ui]")
