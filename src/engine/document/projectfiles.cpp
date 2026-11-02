@@ -9,6 +9,7 @@
 #include "platform/log.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -31,6 +32,13 @@ namespace gnubase::engine
 		constexpr const char* g_templates = "Project Templates"; // in the settings folder
 		constexpr const char* g_recentKey = "project.recent";
 		constexpr size_t g_recentCount = 10;
+		// How far ProjectModel::advanceClock moved the clock that auto saves go by, in steady_clock ticks.
+		std::atomic<std::chrono::steady_clock::rep> g_clockOffset{0};
+
+		std::chrono::steady_clock::time_point now()
+		{
+			return std::chrono::steady_clock::now() + std::chrono::steady_clock::duration(g_clockOffset.load());
+		}
 
 		void require(bool condition, const std::string& message)
 		{
@@ -64,7 +72,7 @@ namespace gnubase::engine
 		// its folder and its own, "Song-01.dawproject" for "Song.dawproject".
 		fs::path nextVersion(const fs::path& file)
 		{
-			static const std::regex version(R"((.*)-(\d+))");
+			static const std::regex version(R"((.*)-(\d{1,9}))"); // longer numbers aren't versions
 			std::string name = file.stem().u8string();
 			int highest = 0;
 			std::smatch match;
@@ -114,17 +122,21 @@ namespace gnubase::engine
 
 	void ProjectModel::opened(Project project, const std::string& file, CommandContext& context)
 	{
+		// An auto save opens untitled and unsaved, so that saving it neither overwrites the auto save nor makes Auto
+		// Saves the project folder.
+		const fs::path path = fs::u8path(file);
+		const bool autoSave = path.extension() == ".bak" && path.parent_path().filename() == g_autoSaves;
 		m_project = std::move(project);
-		m_file = file;
+		m_file = autoSave ? std::string() : file;
 		m_history.clear();
 		context.emit("project.reset");
 		announceHistory(context);
 		publish();
-		m_savedRevision = m_revision;
+		m_savedRevision = autoSave ? 0 : m_revision; // publish() made m_revision at least 1
 		m_autoSavedRevision = m_revision;
-		m_lastSave = std::chrono::steady_clock::now();
-		if (!file.empty())
-			remember(file);
+		m_lastSave = now();
+		if (!m_file.empty())
+			remember(m_file);
 	}
 
 	void ProjectModel::saved(const std::string& file, CommandContext& context)
@@ -132,7 +144,7 @@ namespace gnubase::engine
 		m_file = file;
 		m_savedRevision = m_revision;
 		m_autoSavedRevision = m_revision;
-		m_lastSave = std::chrono::steady_clock::now();
+		m_lastSave = now();
 		remember(file);
 		context.emit("project.saved", {{"file", m_file}});
 	}
@@ -161,6 +173,8 @@ namespace gnubase::engine
 
 	Project ProjectModel::loadTemplate(const std::string& name) const
 	{
+		const std::string problem = fileNameProblem(name);
+		require(problem.empty(), problem);
 		const fs::path file = m_settingsDirectory / g_templates / fs::u8path(name + g_extension);
 		std::error_code error;
 		require(!m_settingsDirectory.empty() && fs::is_regular_file(file, error), "there is no template " + name);
@@ -175,9 +189,15 @@ namespace gnubase::engine
 		}
 	}
 
+	void ProjectModel::advanceClock(std::chrono::steady_clock::duration by)
+	{
+		g_clockOffset += by.count();
+	}
+
 	void ProjectModel::registerProjectFileCommands(Engine& engine)
 	{
 		m_settingsDirectory = engine.settingsDirectory();
+		m_lastSave = now();
 		m_recent = std::make_shared<settings::Store>(recentFormat(), m_settingsDirectory);
 		const Json stringSchema = {{"type", "string"}};
 		const Json booleanSchema = {{"type", "boolean"}};
@@ -228,19 +248,20 @@ namespace gnubase::engine
 				"into the folder Auto Saves of its project folder as <name>-01.bak, <name>-02.bak and so on up to "
 				"the user setting project.autoSaveFiles, after which the oldest is overwritten. A project without a "
 				"file goes to Auto Saves in the user settings' folder, named after the project, and isn't auto saved "
-				"without one. Media files aren't copied, and the project itself stays unsaved. An auto save opens "
-				"with project.load. With due, as the engine asks every 30 seconds, only if the user setting "
-				"project.autoSave is on and project.autoSaveInterval minutes have passed since the project was "
-				"saved, opened or auto saved. Returns the file, or null if nothing was saved; emits "
-				"project.autoSaved with the file.",
+				"without one. Media files aren't copied, and the project itself stays unsaved. project.load opens an "
+				"auto save without a file and with unsaved changes, so that saving asks for a path. With due, as the "
+				"engine asks every 30 seconds, only if the user setting project.autoSave is on and "
+				"project.autoSaveInterval minutes have passed since the project was saved, opened or auto saved, or "
+				"an auto save failed. Returns the file, or null if nothing was saved; emits project.autoSaved with "
+				"the file.",
 				objectSchema({{"due", booleanSchema}}),
 				objectSchema({{"file", {{"type", {"string", "null"}}}}}, {"file"}), false},
 			[this](CommandContext& context)
 			{
-				const auto now = std::chrono::steady_clock::now();
+				const auto current = now();
 				if (context.parameters().value("due", false) &&
 					(!userSetting(context, "project.autoSave").get<bool>() ||
-						now - m_lastSave <
+						current - m_lastSave <
 							std::chrono::minutes(userSetting(context, "project.autoSaveInterval").get<int>())))
 				{
 					context.leaveOutOfLog();
@@ -257,6 +278,7 @@ namespace gnubase::engine
 					m_file.empty() ? safeFileName(m_project.name) : fs::u8path(m_file).stem().u8string();
 				const fs::path file =
 					nextAutoSave(folder, name, userSetting(context, "project.autoSaveFiles").get<int>());
+				m_lastSave = current; // also if it fails, so that a due one is tried again only after the interval
 				try
 				{
 					fs::create_directories(folder);
@@ -269,7 +291,6 @@ namespace gnubase::engine
 					throw CommandError(error.what());
 				}
 				m_autoSavedRevision = m_revision;
-				m_lastSave = now;
 				context.emit("project.autoSaved", {{"file", file.u8string()}});
 				return Json{{"file", file.u8string()}};
 			});

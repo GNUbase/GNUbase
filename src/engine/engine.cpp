@@ -149,6 +149,8 @@ namespace gnubase::engine
 				std::unique_lock lock(m_mutex);
 				while (!m_tickerWake.wait_for(lock, g_autoSaveCheck, [this] { return m_stopping; }))
 				{
+					// If the destructor stops the engine meanwhile, the request is queued anyway: harmless, since the
+					// command thread fails the requests it didn't run when it stops.
 					lock.unlock();
 					post("project.autoSave", {{"due", true}});
 					lock.lock();

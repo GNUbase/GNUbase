@@ -67,6 +67,10 @@ namespace gnubase::engine
 		// and status; null for no such slot. Only on the command thread.
 		Json describeSlot(const Project& project, ObjectId slot) const;
 
+		// For tests of due auto saves (project.autoSave): moves the clock they go by forward, for every project model
+		// in the process.
+		static void advanceClock(std::chrono::steady_clock::duration by);
+
 	private:
 		// Registers a query, or a command that changes the project. Such a command runs on the project, and if it
 		// fails the project is restored from a copy, so a failed command changes nothing. If it succeeds, what it
@@ -94,14 +98,16 @@ namespace gnubase::engine
 		// projectfiles.cpp (#77): save new version, revert, auto save, recent projects and templates.
 		void registerProjectFileCommands(Engine& engine);
 		// After the project was replaced by a new or loaded one (from file, or none): clears the undo history,
-		// announces project.reset, counts as saved and adds the file to the recent projects.
+		// announces project.reset, counts as saved and adds the file to the recent projects. An auto save (a .bak in
+		// an Auto Saves folder) opens without a file instead, as unsaved and not a recent project.
 		void opened(Project project, const std::string& file, CommandContext& context);
 		// After the project was saved as file: it is the project's file now and a recent project. Announces
 		// project.saved.
 		void saved(const std::string& file, CommandContext& context);
 		// Makes the file the first of the recent projects.
 		void remember(const std::string& file);
-		// The project of the template with this name. Throws CommandError if there is none.
+		// The project of the template with this name. Throws CommandError if there is none or the name isn't a file
+		// name.
 		Project loadTemplate(const std::string& name) const;
 		void record(std::string action, const Project& before, CommandContext& context);
 		Json undoOrRedo(CommandContext& context, Direction direction);

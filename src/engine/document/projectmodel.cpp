@@ -2462,7 +2462,8 @@ namespace gnubase::engine
 				"Replaces the project with a DAWproject file and clears the undo history. Media files embedded in "
 				"it are extracted to mediaFolder, by default a folder named after the file next to it. With "
 				"revision, it loads only if the project is still at that revision (see project.revision), and fails "
-				"otherwise, so that no change made meanwhile is lost.",
+				"otherwise, so that no change made meanwhile is lost. An auto save (see project.autoSave) opens "
+				"without a file and with unsaved changes, and isn't a recent project.",
 				objectSchema(
 					{{"path", stringSchema}, {"mediaFolder", stringSchema}, {"revision", integerSchema}}, {"path"}),
 				noResult, false},
@@ -3078,7 +3079,8 @@ namespace gnubase::engine
 			{"project.revision", 1,
 				"A number that grows with every change of the project: every edit, undo and redo, and loading or "
 				"starting a project. project.load with revision loads only if it hasn't changed. modified says "
-				"whether the project changed since it was last saved, loaded or started.",
+				"whether the project changed since it was last saved, loaded or started; undoing back to the saved "
+				"state still counts as a change.",
 				objectSchema({}),
 				objectSchema({{"revision", integerSchema}, {"modified", booleanSchema}}, {"revision", "modified"}),
 				true},

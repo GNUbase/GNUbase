@@ -2,6 +2,7 @@
 // Project handling (#77, docs/features/project-files.md): save, save as, save new version, revert, auto save, recent
 // projects and templates through the engine API, which MCP and Lua use as they are, and the File menu and the start
 // screen in the app's UI.
+#include "engine/document/projectmodel.h"
 #include "engine/engine.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
@@ -12,6 +13,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -114,6 +116,11 @@ TEST_CASE("save new version saves under the next free number and goes on with it
 		utf8(fs::absolute(dir.path() / "My Project-06.dawproject")));
 	CHECK(fs::exists(file)); // the original stays
 
+	// A number too long for a version is part of another name, and doesn't keep the next version from being saved.
+	fs::copy_file(file, dir.path() / "My Project-12345678901.dawproject");
+	CHECK(run(client, "project.saveNewVersion").at("file") ==
+		utf8(fs::absolute(dir.path() / "My Project-07.dawproject")));
+
 	// Each version has the project as it was.
 	run(client, "project.load", {{"path", utf8(file)}});
 	CHECK(trackCount(client) == 0);
@@ -173,15 +180,48 @@ TEST_CASE(
 	CHECK(saved[2] == saved[0]); // the oldest of the two
 	CHECK(!fs::exists(autoSaves / "Song-03.bak"));
 
-	// An auto save opens like a project file, with the project as it was then.
+	// An auto save opens with the project as it was then, but without a file and unsaved, so that saving asks for a
+	// path instead of overwriting the auto save; it isn't a recent project.
 	run(client, "project.load", {{"path", saved[2]}});
 	CHECK(trackCount(client) == 4);
+	CHECK(run(client, "project.location").at("file").is_null());
+	CHECK(modified(client));
+	CHECK(recent(client) == std::vector<std::string>{utf8(fs::absolute(file))});
+	CHECK_THAT(reject(client, "project.save"), ContainsSubstring("no file"));
 
 	// Due auto saves, as the engine checks every half a minute: only when on and the interval has passed.
 	run(client, "track.add", {{"type", "audio"}});
 	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null()); // just loaded
 	run(client, "settings.set", {{"key", "project.autoSave"}, {"value", false}});
 	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null());
+}
+
+TEST_CASE("a due auto save saves once the interval passed, and one that fails waits for the next", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const fs::path file = dir.path() / "Song.dawproject";
+	const fs::path autoSaves = dir.path() / "Auto Saves";
+	run(client, "project.save", {{"path", utf8(file)}});
+	run(client, "track.add", {{"type", "audio"}});
+	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null()); // just saved
+
+	// A file in the place of the Auto Saves folder: the auto save fails, and the checks every 30 seconds don't try
+	// again until the interval (15 minutes) passed.
+	std::ofstream(autoSaves) << "not a folder";
+	ProjectModel::advanceClock(std::chrono::minutes(15));
+	reject(client, "project.autoSave", {{"due", true}});
+	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null());
+	ProjectModel::advanceClock(std::chrono::minutes(14));
+	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null());
+	ProjectModel::advanceClock(std::chrono::minutes(1));
+	reject(client, "project.autoSave", {{"due", true}});
+
+	fs::remove(autoSaves);
+	ProjectModel::advanceClock(std::chrono::minutes(15));
+	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file") == utf8(autoSaves / "Song-01.bak"));
+	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null()); // just auto saved
 }
 
 TEST_CASE("saved and opened projects are recent projects, newest first, until forgotten", "[integration]")
@@ -275,6 +315,9 @@ TEST_CASE("templates are projects in the settings folder that new projects start
 	CHECK(!modified(client));
 	CHECK(run(client, "history.get").at("steps").empty());
 	CHECK_THAT(reject(client, "project.new", {{"template", "Nothing"}}), ContainsSubstring("Nothing"));
+	// Only templates in Project Templates: a name that isn't a file name is refused.
+	fs::copy_file(fs::u8path(saved.at("file").get<std::string>()), dir.path() / "settings" / "x.dawproject");
+	CHECK_THAT(reject(client, "project.new", {{"template", "../x"}}), ContainsSubstring("name"));
 }
 
 TEST_CASE("without a settings folder there are no templates, recent projects or untitled auto saves", "[integration]")
