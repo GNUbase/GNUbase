@@ -699,6 +699,26 @@ TEST_CASE("range.delete and range.copy take the piece in the range of a clip at 
 		CHECK((event.at("position") == 0 || event.at("position") == end));
 }
 
+TEST_CASE("range.delete and range.copy leave an event that starts a sample before the range's end", "[unit]")
+{
+	// A 22.05 kHz clip in a 48 kHz project: one project sample is less than half a clip frame, so the cut at the
+	// range's end doesn't split the event, and only its first sample lies in the range.
+	Fixture f;
+	const int64_t track = f.track("audio", "linear");
+	const Json media =
+		f.call("media.add", {{"path", "slower.wav"}, {"sampleRate", 22050}, {"channels", 1}, {"length", 3 * 22050}})
+			.at("media");
+	const Json clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const int64_t end = g_second + 24006;
+	f.call("audioEvent.add", {{"track", track}, {"clip", clip.at("id")}, {"position", end - 1}, {"length", 2 * 22050}});
+	const Json before = f.call("project.get").at("audioEvents");
+	const Json range = {{"start", g_second}, {"end", end}, {"tracks", {track}}};
+
+	CHECK(f.call("range.copy", range).at("events") == 0);
+	f.call("range.delete", range);
+	CHECK(f.call("project.get").at("audioEvents") == before);
+}
+
 TEST_CASE("range.paste doesn't paste what was copied in another project", "[unit]")
 {
 	RangeFixture f;

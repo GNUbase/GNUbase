@@ -946,9 +946,9 @@ namespace gnubase::engine
 			return added;
 		}
 
-		// The events and parts on the tracks that lie within from and to, once both are split there: those that start
-		// at or after from and before to. Not by their end, since a piece of a clip at another sample rate than the
-		// project's can end a sample after to.
+		// The events and parts on the tracks that lie within from and to, once both are split there: those whose middle
+		// lies at or after from and before to. Not by their edges: a cut in a clip at another sample rate than the
+		// project's lands up to half a clip frame off, and an event less than that past an edge isn't cut at all.
 		std::vector<Item> within(
 			Project& project, const std::vector<ObjectId>& tracks, time::Samples from, time::Samples to, bool locked)
 		{
@@ -956,8 +956,8 @@ namespace gnubase::engine
 			for (const Item& item : itemsOn(project, tracks, locked))
 			{
 				const time::TimeBase base = item.position().base;
-				const int64_t start = item.position().value;
-				if (start >= inBase(project, from, base) && start < inBase(project, to, base))
+				const int64_t twiceMiddle = item.position().value + endOf(project, item).value;
+				if (twiceMiddle >= 2 * inBase(project, from, base) && twiceMiddle < 2 * inBase(project, to, base))
 					items.push_back(item);
 			}
 			return items;
