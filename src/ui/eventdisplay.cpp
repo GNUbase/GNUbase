@@ -121,8 +121,7 @@ namespace gnubase::ui
 		m_subscriptions.push_back(m_binding.on("snap.changed",
 			[this](const engine::Event& event)
 			{
-				m_snap = engine::snapSettingsFrom(event.data, m_snap);
-				followSnapFormat();
+				takeSnap(event.data);
 				showSnap();
 			}));
 		m_subscriptions.push_back(m_binding.on("quantize.changed", [this](const engine::Event& event)
@@ -264,8 +263,7 @@ namespace gnubase::ui
 	{
 		if (!readTimeContext(project, m_time))
 			logging::warning("The event display can't read the project's tempo or signatures");
-		m_snap = engine::snapSettingsFrom(project.at("snap"), m_snap);
-		followSnapFormat();
+		takeSnap(project.at("snap"));
 		m_quantize = engine::midi::quantizeSettingsFromJson(project.at("quantize"));
 		showSnap();
 
@@ -664,9 +662,28 @@ namespace gnubase::ui
 			grid && *grid != m_snap.format)
 		{
 			m_snap.format = *grid;
-			setSnap({{"format", name}});
+			++m_formatsSent;
+			m_binding.send("snap.set", {{"format", name}},
+				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (alive.expired())
+						return;
+					--m_formatsSent;
+					if (!result.ok())
+						logging::warning("The event display can't change the snap settings: {}", result.error);
+				});
 		}
 		showRuler();
+	}
+
+	// Settings the engine sent before it had the format the ruler chose keep that format.
+	void EventDisplay::takeSnap(const Json& settings)
+	{
+		const engine::GridFormat chosen = m_snap.format;
+		m_snap = engine::snapSettingsFrom(settings, m_snap);
+		if (m_formatsSent > 0)
+			m_snap.format = chosen;
+		followSnapFormat();
 	}
 
 	void EventDisplay::followSnapFormat()

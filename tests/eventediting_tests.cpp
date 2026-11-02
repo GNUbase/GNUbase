@@ -496,6 +496,16 @@ TEST_CASE("the ruler's time format chooses the grid that moves snap to", "[unit]
 	f.call("snap.set", {{"format", "samples"}});
 	REQUIRE(f.waitUntil([&f] { return f.display.rulerFormat() == ui::TimeFormat::Samples; }));
 	CHECK(f.display.snap().grid() == engine::GridType::Samples100);
+
+	// A snap.changed sent before the display chose its format doesn't switch the ruler back.
+	f.call("snap.set", {{"format", "seconds"}});
+	f.display.setRulerFormat(ui::TimeFormat::Timecode);
+	f.step();
+	CHECK(f.display.rulerFormat() == ui::TimeFormat::Timecode);
+	CHECK(f.display.snap().format == engine::GridFormat::Timecode);
+	REQUIRE(f.waitUntil([&f] { return f.call("snap.get").at("format") == "timecode"; }));
+	f.step();
+	CHECK(f.display.rulerFormat() == ui::TimeFormat::Timecode);
 }
 
 // The project window's tools (#86, reference manual pp. 57-65): what a press in the event lanes does with each.
