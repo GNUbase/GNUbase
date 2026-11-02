@@ -117,6 +117,10 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"}, {"enum", {"none", "default", "dummy"}}}, "none"},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
+				{"editing.applyFolderColor",
+					"Folder tracks give their color to the tracks inside them: when the folder's color changes and "
+					"when tracks are added or moved into it.",
+					Json{{"type", "boolean"}}, false},
 				{"midi.chaseBeyondParts",
 					"Chases controller events from the whole track; off, only from the MIDI parts under the "
 					"position, so none outside parts.",
@@ -157,6 +161,10 @@ namespace gnubase::engine::settings
 					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 100}}, 5},
 				{"project.autoSaveInterval", "Minutes between auto saves.",
 					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 120}}, 15},
+				{"ui.folderData",
+					"When folder tracks show the events and parts of the tracks inside them as data blocks in the "
+					"event display: always, never, or hideWhenExpanded (only while the folder is folded).",
+					Json{{"type", "string"}, {"enum", {"always", "never", "hideWhenExpanded"}}}, "always"},
 				{"ui.layout",
 					"The layout of the windows with zones: under windows, by window (project), its zones (left, "
 					"right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs "

@@ -114,9 +114,9 @@ namespace gnubase::ui
 		: m_display(display), m_binding(binding), m_area(display.eventArea().GetObserverPtr())
 	{
 		Rml::Element& area = display.eventArea();
-		Rml::Element* events = area.QuerySelector("event-lanes.events");
-		// Lines behind the events, marker events and their labels over them.
-		m_lines = &create<EventLanes>(area, events, "event-lanes", "marker-lines");
+		const Rml::Element* events = area.QuerySelector("event-lanes.events");
+		// Lines behind the events and folder tracks' data, marker events and their labels over the events.
+		m_lines = &create<EventLanes>(area, area.GetFirstChild(), "event-lanes", "marker-lines");
 		Rml::Element* after = events != nullptr ? events->GetNextSibling() : nullptr;
 		m_events = &create<EventLanes>(area, after, "event-lanes", "marker-events");
 		m_labels = &create<Rml::Element>(area, after, "div", "marker-labels");

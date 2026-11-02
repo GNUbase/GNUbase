@@ -456,6 +456,11 @@
 		color: #12a4b8;
 		stroke-color: #f1f4ff;
 	}
+	.event-display event-lanes.folder-data
+	{
+		color: #105163;
+		stroke-color: transparent;
+	}
 	.event-display ruler
 	{
 		background-color: #101426;
