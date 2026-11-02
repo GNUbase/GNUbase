@@ -194,9 +194,10 @@ namespace gnubase::ui
 
 		// <dialog>: a dialog in a document of its own, which the app shows, usually modal. It opens in the middle of
 		// the window, and dragging its .dialog-titlebar moves it. Escape closes it with the result "cancel", Enter
-		// clicks its button.primary (also from a text field) unless the focused control takes Enter, and a click on an
-		// element with a result attribute closes it with that result. Closing sends a close event with the parameter
-		// "result", then closes the document.
+		// clicks its button.primary (also from a text field, and from a value field with autofocus, after it takes the
+		// number typed) unless the focused control takes Enter, and a click on an element with a result attribute
+		// closes it with that result. Closing sends a close event with the parameter "result", then closes the
+		// document.
 		class Dialog final : public Rml::Element
 		{
 		public:
@@ -230,11 +231,13 @@ namespace gnubase::ui
 			// A key pressed anywhere in the dialog's document, before text fields keep Enter to themselves.
 			void key(Rml::Event& event)
 			{
-				// A multi-line text field takes Enter, and a value field being edited both keys.
+				// A multi-line text field takes Enter, and a value field being edited both keys, unless it has
+				// autofocus: then it is the dialog's main field, which works like a text field.
 				Rml::Element* target = event.GetTargetElement();
-				const Rml::Element* valueField = closestTag(target, "valuefield", this);
+				const Rml::Element* field = closestTag(target, "valuefield", this);
+				const bool mainField = field != nullptr && field->HasAttribute("autofocus");
 				if (closestTag(target, "textarea", this) != nullptr ||
-					(valueField != nullptr && valueField->IsClassSet("editing")))
+					(field != nullptr && !mainField && field->IsClassSet("editing")))
 					return;
 				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
 				if (key == Rml::Input::KI_ESCAPE)
@@ -244,14 +247,18 @@ namespace gnubase::ui
 				}
 				else if (key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER)
 				{
-					// A focused button clicks itself, a drop-down list opens or closes, a value field starts editing.
-					if (valueField != nullptr || closestTag(target, "button", this) != nullptr ||
+					// A focused button clicks itself, a drop-down list opens or closes, a value field other than the
+					// main one starts editing.
+					if ((field != nullptr && !mainField) || closestTag(target, "button", this) != nullptr ||
 						closestTag(target, "select", this) != nullptr)
 						return;
 					Rml::Element* primary = QuerySelector("button.primary");
 					if (primary == nullptr || primary->HasAttribute("disabled"))
 						return;
 					event.StopPropagation();
+					// Leaving the value field being edited takes the number typed, before OK reads it.
+					if (field != nullptr && field->IsClassSet("editing"))
+						target->Blur();
 					primary->Click();
 				}
 			}

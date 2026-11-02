@@ -548,6 +548,14 @@
 	{
 		color: #d76a73;
 	}
+	.history tr.undone, .history tr.undone input.text
+	{
+		color: #b7bbc0;
+	}
+	.history .history-separator
+	{
+		background-color: #5ea7b3;
+	}
 	.menubar
 	{
 		background-color: #1e2022;
