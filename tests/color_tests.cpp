@@ -177,7 +177,8 @@ TEST_CASE("editing.autoTrackColor colors new tracks", "[unit]")
 	run(client, "project.set", {{"colors", colors}});
 	const auto mode = [&client](const char* value)
 	{ run(client, "settings.set", {{"key", "editing.autoTrackColor"}, {"value", value}}); };
-	const auto added = [&client](Json parameters) { return colorOf(client, "tracks", addTrack(client, parameters)); };
+	const auto added = [&client](Json parameters)
+	{ return colorOf(client, "tracks", addTrack(client, std::move(parameters))); };
 
 	// The default (reference manual p. 1621): the track's default color.
 	CHECK(added({{"type", "audio"}}).is_null());
@@ -304,7 +305,8 @@ TEST_CASE("the track list and the event display show track and event colors", "[
 
 	// Back to the default color: the strip shows nothing of its own.
 	window.app.call("track.set", {{"track", audio}, {"color", nullptr}});
-	REQUIRE(window.app.waitUntil([&] { return window.elements(strip).at(0).at("attributes").at("color") == ""; }));
+	REQUIRE(window.app.waitUntil(
+		[&] { return window.elements(strip).at(0).at("attributes").at("color").get<std::string>().empty(); }));
 	CHECK(window.find(strip)->GetLocalProperty("background-color") == nullptr);
 }
 
