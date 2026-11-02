@@ -47,6 +47,9 @@ add_library(gnubase-ui STATIC
 	livereload.h
 	mainmenu.cpp
 	mainmenu.h
+	markers.cpp
+	markers.h
+	markerswindow.cpp
 	poolpanel.cpp
 	poolpanel.h
 	popupwidgets.cpp

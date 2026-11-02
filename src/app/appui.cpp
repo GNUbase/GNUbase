@@ -171,7 +171,7 @@ namespace gnubase::app
 		  m_themes(fontsAndThemes(resources)), m_shell(m_windows, m_renderer), m_settings(engine, m_shell, m_themes),
 		  m_binding(engine, [this] { m_shell.wake(); }), m_keys(engine, m_binding), m_main(m_shell.open(main)),
 		  m_docking(engine, m_binding, m_shell, resources / "ui" / "panel-window.rml", main.hidden), m_engine(engine),
-		  m_resources(resources), m_hiddenWindows(main.hidden),
+		  m_resources(resources), m_hidden(main.hidden),
 		  m_history(m_binding.on("history.changed",
 			  [this](const engine::Event& event)
 			  {
@@ -197,6 +197,10 @@ namespace gnubase::app
 				return follows;
 			});
 		m_shell.onUnusedKey([this](ui::Window& window, const ui::KeyPress& keys) { m_keys.press(window, keys); });
+		m_keys.add({"window.markers", "Opens or closes the markers window.",
+			// Later in the step: the key may be the markers window's own, which closing it would destroy.
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleMarkers(); }); }});
+		m_keys.bind({"Mod+M", "window.markers"});
 
 		// The project window's panels (reference manual pp. 54, 75-98), which their tickets fill.
 		for (const ProjectPanel& panel : g_projectPanels)
@@ -368,7 +372,7 @@ namespace gnubase::app
 		ui::WindowSpec spec;
 		spec.title = title;
 		spec.size = size;
-		spec.hidden = m_hiddenWindows;
+		spec.hidden = m_hidden;
 		ui::Window& window = m_shell.open(spec);
 		const std::filesystem::path path = m_resources / "ui" / file;
 		Rml::ElementDocument* document = window.context().LoadDocument(path.generic_u8string());
@@ -418,6 +422,7 @@ namespace gnubase::app
 			throw std::runtime_error("cannot load the project window from " + file.u8string());
 		}
 		document->Show();
+		m_markerLines.reset();
 		m_docking.attach("project", *document);
 		m_trackList.reset();
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
@@ -427,7 +432,35 @@ namespace gnubase::app
 		if (Rml::Element* tracks = document->GetElementById("track-list"))
 			m_trackList = std::make_unique<ui::TrackList>(*m_eventDisplay, m_binding, *tracks);
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
+		m_markerLines = std::make_unique<ui::MarkerLines>(*m_eventDisplay, m_binding);
 		return *m_eventDisplay;
+	}
+
+	ui::MarkersWindow* AppUi::toggleMarkers()
+	{
+		const bool open = m_markers != nullptr && m_shell.find(m_markersWindow) != nullptr;
+		m_markers.reset();
+		if (open)
+		{
+			m_shell.close(m_markersWindow);
+			return nullptr;
+		}
+		ui::WindowSpec spec;
+		spec.title = "Markers";
+		spec.size = {720, 360};
+		spec.hidden = m_hidden;
+		const ui::Window& window = m_shell.open(spec);
+		m_markersWindow = window.id();
+		const std::filesystem::path file = m_resources / "ui" / "markers.rml";
+		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
+		if (document == nullptr)
+		{
+			m_shell.close(m_markersWindow);
+			throw std::runtime_error("cannot load the markers window from " + file.u8string());
+		}
+		document->Show();
+		m_markers = std::make_unique<ui::MarkersWindow>(m_engine, m_binding, *document);
+		return m_markers.get();
 	}
 
 	void AppUi::chooseImport(

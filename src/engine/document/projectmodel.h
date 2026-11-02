@@ -53,6 +53,12 @@ namespace gnubase::engine
 
 		rt::SnapshotPublisher<RenderSnapshot>& snapshots() { return m_snapshots; }
 
+		// What the plugin.* commands report as a slot's status: the audio engine's (AudioEngine::slotStatus).
+		void setSlotStatus(std::function<std::string(ObjectId slot)> status) { m_slotStatus = std::move(status); }
+		// A slot of the project as the plugin.* commands and their plugin.changed events describe it, with its index
+		// and status; null for no such slot. Only on the command thread.
+		Json describeSlot(const Project& project, ObjectId slot) const;
+
 	private:
 		// Registers a query, or a command that changes the project. Such a command runs on the project, and if it
 		// fails the project is restored from a copy, so a failed command changes nothing. If it succeeds, what it
@@ -75,6 +81,7 @@ namespace gnubase::engine
 		void registerPoolCommands(Engine& engine); // pool.cpp: pool.*, poolFolder.*, clip.set, media management (#93)
 		void registerFadeCommands(Engine& engine); // fadeedits.cpp: fades, crossfades and auto fades
 		void registerParameterCommands(Engine& engine); // parameters.cpp: parameter.list, parameter.get, parameter.set
+		void registerSlotCommands(Engine& engine);      // slotcommands.cpp: plugin.*
 		void registerEventEditCommands(Engine& engine); // eventedits.cpp: event.*, parts and events (#85)
 		void record(std::string action, const Project& before, CommandContext& context);
 		Json undoOrRedo(CommandContext& context, Direction direction);
@@ -94,6 +101,7 @@ namespace gnubase::engine
 		std::map<std::string, Edit> m_edits; // the commands a transaction can run
 		uint64_t m_revision = 0;
 		bool m_automationFollowsEvents = false; // a setting, not part of the project
+		std::function<std::string(ObjectId)> m_slotStatus;
 		rt::SnapshotPublisher<RenderSnapshot> m_snapshots;
 	};
 }

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/document/rendersnapshot.h"
+#include "engine/graph/graph.h"
 #include "engine/graph/processor.h"
 #include "platform/rt/snapshotpublisher.h"
 
@@ -170,6 +171,18 @@ namespace gnubase::engine
 		std::shared_ptr<ChannelFader> fader = std::make_shared<ChannelFader>();
 		float monitorGain = -1.0f; // audio thread: the input's gain after the last block, -1 before the first
 		float outputGain = -1.0f;  // and the output's, 0 while the channel is silent (mute, solo)
+		// Audio thread: the fader's automation events of the block, from a channel's source node to its fader node
+		// when plugin slots are between them; the source node always runs first.
+		graph::EventBuffer faderEvents{graph::g_maxEventsPerBlock};
+	};
+
+	// Which part of a channel a strip runs: all of it, or, on a channel with plugin slots, what comes before them in
+	// its source node or the fader after them in its channel node (graph::describe).
+	enum class StripPart : uint8_t
+	{
+		Whole,
+		Source,
+		Fader,
 	};
 
 	// The user setting audio.autoMonitoring: when record-enabled tracks monitor their input.
@@ -201,7 +214,8 @@ namespace gnubase::engine
 	{
 	public:
 		ChannelStrip(std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source,
-			Panning panning = {}, std::optional<Monitoring> monitoring = std::nullopt, bool silent = false);
+			Panning panning = {}, std::optional<Monitoring> monitoring = std::nullopt, bool silent = false,
+			StripPart part = StripPart::Whole);
 
 		void process(const graph::ProcessContext& context) noexcept override;
 		uint32_t latency() const override { return m_source ? m_source->latency() : 0; }
@@ -213,12 +227,15 @@ namespace gnubase::engine
 		// Scales the block from gain to target, frame by frame, and keeps target as the gain; a gain below 0 (before
 		// the first block) starts at the target.
 		static void glide(const graph::ProcessContext& context, float& gain, float target) noexcept;
+		// The fader and its panner with the block's fader events, then muting.
+		void fade(const graph::ProcessContext& context, const graph::EventBuffer& events) noexcept;
 
 		std::shared_ptr<ChannelState> m_state;
 		std::shared_ptr<graph::Processor> m_source;
 		Panning m_panning;
 		std::optional<Monitoring> m_monitoring;
 		bool m_silent = false;
+		StripPart m_part = StripPart::Whole;
 		uint32_t m_smoothing = 0; // g_faderSmoothing in frames
 		graph::EventBuffer m_sourceEvents;
 		graph::EventBuffer m_faderEvents;

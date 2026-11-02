@@ -559,6 +559,8 @@ namespace gnubase::ui
 			m_overviewView->SetProperty(Rml::PropertyId::Left, dp(m_view.start / length * across));
 			m_overviewView->SetProperty(Rml::PropertyId::Width, dp(visibleLength() / length * across));
 		}
+		for (const std::function<void()>& listener : m_viewListeners)
+			listener();
 		if (m_layoutListener)
 			m_layoutListener();
 	}
