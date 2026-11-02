@@ -47,8 +47,11 @@ namespace gnubase::engine
 		// Lists the ports again, opens new and returning visible inputs, closes the others. True if anything changed.
 		bool refresh();
 
-		// After the user settings changed: the listed ports follow their settings, opening or closing inputs.
-		void applySettings();
+		// After a command changed midi.portSettings: the listed ports follow their settings, opening or closing inputs,
+		// without listing the hardware again, and the command emits them as midi.changed. A port that appeared
+		// meanwhile waits for the midi.refresh its backend posted, which reports it; this never adds ports, so
+		// midi.setPort keeps its port across the change. Nothing while unlisted.
+		void applySettings(CommandContext& context);
 
 		// Audio thread, once per block: the messages that arrived for this block go into allInputs if their port
 		// belongs to all MIDI inputs, and to the monitor (midi.monitor) at their frame position.
@@ -80,10 +83,12 @@ namespace gnubase::engine
 
 		void open(Port& port);
 		void listOnce();
-		size_t find(const Json& parameters) const; // the port's index in m_ports
-		Json setPort(CommandContext& context);     // midi.setPort
-		static std::string key(const Port& port);  // in midi.portSettings: backend/in or out/id
-		Json setting(const Port& port) const;      // its entry there; empty while it has the defaults
+		bool listHardware();   // adds new ports, marks the others present or not; true if that changed any
+		bool followSettings(); // opens and closes inputs, sets the all-inputs flags; true if an input opened or closed
+		size_t find(const Json& parameters) const;             // the port's index in m_ports
+		Json setPort(Engine& engine, CommandContext& context); // midi.setPort
+		static std::string key(const Port& port);              // in midi.portSettings: backend/in or out/id
+		Json setting(const Port& port) const;                  // its entry there; empty while it has the defaults
 		bool visible(const Port& port) const { return setting(port).value("visible", true); }
 		bool inAllInputs(const Port& port) const { return port.info.input && setting(port).value("inAllInputs", true); }
 		Json toJson(const Port& port) const;

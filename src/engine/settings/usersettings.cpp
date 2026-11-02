@@ -102,12 +102,13 @@ namespace gnubase::engine::settings
 				{"audio.portSettings",
 					"How the audio devices' ports are shown (audio.setPort), by backend/device id/in or out/system "
 					"name, also for devices that aren't connected: the name shown (showAs) and whether it is "
-					"visible. Ports without an entry show their system name and are visible.",
+					"visible. Ports without an entry show their system name and are visible. Members of an entry that "
+					"this GNUbase doesn't know, from a later one, stay.",
 					Json{{"type", "object"},
 						{"additionalProperties",
 							{{"type", "object"},
-								{"properties", {{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}}}},
-								{"additionalProperties", false}}}},
+								{"properties",
+									{{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}}}}}}},
 					Json::object()},
 				{"audio.fallbackDevice",
 					"The device that plays while the chosen audio device is lost, until it returns: none, default (the "
@@ -115,6 +116,11 @@ namespace gnubase::engine::settings
 					"dummy device: no sound, but the transport moves and the project plays on). The engine switches "
 					"back once the lost device returns.",
 					Json{{"type", "string"}, {"enum", {"none", "default", "dummy"}}}, "none"},
+				{"audio.preRecordSeconds",
+					"Audio pre-record: how many seconds of input from before recording starts go into the files of "
+					"record-enabled audio tracks, 0 to 60 (0: none). The events start where recording started; "
+					"resizing an event's start to the left brings out what was played before.",
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 60}}, 0.0},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
 				{"editing.applyFolderColor",
@@ -144,14 +150,14 @@ namespace gnubase::engine::settings
 					"The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't "
 					"connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to "
 					"all MIDI inputs (inAllInputs). Ports without an entry show their system name, are visible and "
-					"belong to all MIDI inputs.",
+					"belong to all MIDI inputs. Members of an entry that this GNUbase doesn't know, from a later one, "
+					"stay.",
 					Json{{"type", "object"},
 						{"additionalProperties",
 							{{"type", "object"},
 								{"properties",
 									{{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}},
-										{"inAllInputs", {{"type", "boolean"}}}}},
-								{"additionalProperties", false}}}},
+										{"inAllInputs", {{"type", "boolean"}}}}}}}},
 					Json::object()},
 				{"project.autoSave",
 					"Saves a copy of a project with unsaved changes every project.autoSaveInterval minutes into the "
@@ -246,7 +252,7 @@ namespace gnubase::engine::settings
 		return map;
 	}
 
-	void registerCommands(Engine& engine, Store& store, std::function<void()> changed)
+	void registerCommands(Engine& engine, Store& store, Changed changed)
 	{
 		Json keys = Json::array();
 		std::string list;
@@ -288,8 +294,8 @@ namespace gnubase::engine::settings
 				const Json& value = context.parameters().at("value");
 				if (store.set(name, value))
 				{
-					changed();
 					context.emit("settings.changed", {{"values", {{name, value}}}});
+					changed(context, {name});
 				}
 				return Json{{"key", name}, {"value", store.value(name)}};
 			});
@@ -322,8 +328,12 @@ namespace gnubase::engine::settings
 				}
 				if (!reset.empty())
 				{
-					changed();
+					std::vector<std::string> keys;
+					keys.reserve(reset.size());
+					for (const auto& entry : reset.items())
+						keys.push_back(entry.key());
 					context.emit("settings.changed", {{"values", std::move(reset)}});
+					changed(context, keys);
 				}
 				return Json{{"values", std::move(values)}};
 			});

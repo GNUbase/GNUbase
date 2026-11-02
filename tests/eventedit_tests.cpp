@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Editing parts and events (#85): the event.* commands on audio events and MIDI parts, shared copies and locks; and
 // range editing (#88), the range.* commands on audio, MIDI and automation.
-// tests/eventdisplay_tests.cpp drives the same commands through the event display's gestures.
+// tests/eventediting_tests.cpp drives the same commands through the event display's gestures.
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 
@@ -192,6 +192,19 @@ TEST_CASE("event.copy and event.duplicate make real and shared copies", "[unit]"
 	f.call("event.toRealCopy", {{"events", {copies[0]}}});
 	CHECK(f.count("clips") == clips + 1);
 	CHECK(f.audio(copies[0]).at("clip") != f.audio(event).at("clip"));
+
+	// One frame of a 192 kHz clip is no samples long at 48 kHz: its copies would all lie on top of it.
+	const Json media =
+		f.call("media.add", {{"path", "fast.wav"}, {"sampleRate", 192000}, {"channels", 1}, {"length", 192000}})
+			.at("media");
+	const Json clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const Json tiny =
+		f.call("audioEvent.add", {{"track", audioTrack}, {"clip", clip.at("id")}, {"position", 0}, {"length", 1}})
+			.at("event")
+			.at("id");
+	const size_t events = f.count("audioEvents");
+	CHECK_THAT(f.fails("event.duplicate", {{"events", {tiny}}, {"count", 3}}), ContainsSubstring("too short"));
+	CHECK(f.count("audioEvents") == events);
 }
 
 TEST_CASE("A transaction keeps every shared copy's edit, as one undo step", "[unit]")

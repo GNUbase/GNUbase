@@ -580,6 +580,37 @@ TEST_CASE("rendering a project through the dummy device passes the RT checker", 
 	CHECK(g_violations == 0);
 }
 
+TEST_CASE("recording audio, with cycle laps and a punch out, passes the RT checker", "[integration]")
+{
+	using gnubase::engine::Json;
+	const gnubase::test::TempDir dir;
+	gnubase::engine::Engine engine;
+	gnubase::engine::Client client(engine);
+	const auto run = [&client](const std::string& command, const Json& parameters)
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	run("audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}, {"input", {{"processor", "noise"}}}});
+	run("project.save", {{"path", (dir.path() / "rt.dawproject").u8string()}});
+	run("settings.set", {{"key", "audio.preRecordSeconds"}, {"value", 0.01}});
+	const Json channel = run("track.add", {{"type", "audio"}}).at("channel").at("id");
+	run("channel.set", {{"channel", channel}, {"recordEnable", true}});
+	run("transport.set", {{"left", 0}, {"right", 2000}, {"cycle", true}});
+
+	const RecordViolations record;
+	run("audio.render", {{"frames", 640}});
+	run("transport.record", Json::object());
+	run("audio.render", {{"frames", 4800}});
+	run("transport.record", {{"record", false}});
+	run("audio.render", {{"frames", 640}});
+	run("channel.set", {{"channel", channel}, {"recordEnable", false}});
+	run("audio.render", {{"frames", 640}});
+	CHECK(g_violations == 0);
+}
+
 TEST_CASE("MIDI injected into tracks and captured from instruments passes the RT checker", "[unit]")
 {
 	using gnubase::engine::Json;
