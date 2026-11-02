@@ -188,7 +188,7 @@ namespace gnubase::engine
 			refresh();
 	}
 
-	Json MidiPorts::setPort(CommandContext& context)
+	Json MidiPorts::setPort(Engine& engine, CommandContext& context)
 	{
 		listOnce();
 		Json changes = context.parameters();
@@ -199,11 +199,12 @@ namespace gnubase::engine
 		for (const char* name : {"backend", "id", "input"})
 			changes.erase(name);
 		// The engine applies the changed setting (applySettings), which opens or closes the port.
-		context.call("settings.set",
-			{{"key", "midi.portSettings"},
-				{"value",
-					settings::changeEntry(m_settings.value("midi.portSettings"), key(port), changes,
-						{{"showAs", ""}, {"visible", true}, {"inAllInputs", true}})}});
+		engine.modifySetting(context, "midi.portSettings",
+			[entry = key(port), &changes](const Json& value)
+			{
+				return settings::changeEntry(
+					value, entry, changes, {{"showAs", ""}, {"visible", true}, {"inAllInputs", true}});
+			});
 		return toJson(m_ports[index]);
 	}
 
@@ -236,9 +237,9 @@ namespace gnubase::engine
 					"input": {"type": "boolean"}, "showAs": {"type": "string"}, "visible": {"type": "boolean"},
 					"inAllInputs": {"type": "boolean"}}})"),
 				Json::parse(R"({"type": "object"})"), false},
-			[this](CommandContext& context)
+			[this, &engine](CommandContext& context)
 			{
-				Json port = setPort(context);
+				Json port = setPort(engine, context);
 				context.emit("midi.changed", list());
 				return port;
 			});
