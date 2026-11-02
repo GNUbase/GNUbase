@@ -61,6 +61,24 @@ namespace gnubase::engine
 			return !fs::is_regular_file(fs::u8path(media.path), error);
 		}
 
+		// The media files the media parameter names, each once, by id; every one without it.
+		std::vector<ObjectId> mediaIds(const Project& project, const Json& parameters)
+		{
+			std::vector<ObjectId> ids;
+			if (!parameters.contains("media"))
+			{
+				for (const auto& [id, media] : project.media)
+					ids.push_back(id);
+				return ids;
+			}
+			for (const Json& id : parameters.at("media"))
+				ids.push_back(find(project.media, id.get<ObjectId>(), "media file").id);
+			std::sort(ids.begin(), ids.end());
+			ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+			return ids;
+		}
+
+		// Folds ASCII letters to lower case; other characters stay as they are.
 		std::string lower(std::string text)
 		{
 			std::transform(text.begin(), text.end(), text.begin(),
@@ -147,6 +165,22 @@ namespace gnubase::engine
 				const fs::path projectFolder = m_file.empty() ? fs::path() : fs::u8path(m_file).parent_path();
 				const auto external = [&projectFolder](const MediaFile& media)
 				{ return projectFolder.empty() || !isInside(media.path, projectFolder); };
+				// Each media file is looked at on disk once, for whether it is there and its size, not once per clip
+				// and again per file: the panel asks after every edit.
+				std::set<ObjectId> missingMedia;
+				int externalFiles = 0;
+				std::uintmax_t totalSize = 0;
+				for (const auto& [id, media] : project.media)
+				{
+					std::error_code error;
+					const fs::directory_entry entry(fs::u8path(media.path), error);
+					if (error || !entry.is_regular_file(error))
+						missingMedia.insert(id);
+					else if (const std::uintmax_t size = entry.file_size(error); !error)
+						totalSize += size;
+					if (external(media))
+						++externalFiles;
+				}
 				const std::map<ObjectId, int> uses = clipUses(project);
 				std::set<ObjectId> usedMedia;
 				Json clips = Json::array();
@@ -159,29 +193,15 @@ namespace gnubase::engine
 						usedMedia.insert(clip.media);
 					clips.push_back({{"id", id}, {"name", clip.name}, {"folder", clip.folder}, {"media", clip.media},
 						{"used", count}, {"path", media.path}, {"sampleRate", media.sampleRate},
-						{"channels", media.channels}, {"length", media.length}, {"missing", missing(media)},
-						{"external", external(media)}});
+						{"channels", media.channels}, {"length", media.length},
+						{"missing", missingMedia.count(clip.media) != 0}, {"external", external(media)}});
 				}
 				Json folders = Json::array();
 				for (const auto& [id, folder] : project.poolFolders)
 					folders.push_back(toJson(folder));
-				int missingFiles = 0;
-				int externalFiles = 0;
-				std::uintmax_t totalSize = 0;
-				for (const auto& [id, media] : project.media)
-				{
-					std::error_code error;
-					const std::uintmax_t size = fs::file_size(fs::u8path(media.path), error);
-					if (missing(media))
-						++missingFiles;
-					else if (!error)
-						totalSize += size;
-					if (external(media))
-						++externalFiles;
-				}
 				return Json{{"folders", std::move(folders)}, {"clips", std::move(clips)},
 					{"audioFiles", project.media.size()}, {"usedFiles", usedMedia.size()},
-					{"missingFiles", missingFiles}, {"externalFiles", externalFiles}, {"totalSize", totalSize}};
+					{"missingFiles", missingMedia.size()}, {"externalFiles", externalFiles}, {"totalSize", totalSize}};
 			});
 
 		add(engine,
@@ -304,10 +324,11 @@ namespace gnubase::engine
 		add(engine,
 			{"media.locate", 1,
 				"Looks for missing media files in folder and the folders inside it (the Resolve Missing Files "
-				"dialog's Browse Folder, reference manual pp. 750-752): a file with the same name, in any letter "
-				"case, and the media file's sample rate and channel count. The files found are relinked as one undo "
-				"step. media limits it to those media files (default: every missing one). Returns the media files "
-				"relinked and the ones still missing.",
+				"dialog's Browse Folder, reference manual pp. 750-752): a file with the same name, the same spelling "
+				"first, else with ASCII letters in another case (other letters must match exactly), and the media "
+				"file's sample rate, channel count and length. The files found are relinked as one undo step. media "
+				"limits it to those media files (default: every missing one). Returns the media files relinked and "
+				"the ones still missing.",
 				objectSchema({{"folder", string}, {"media", ids}}, {"folder"}),
 				objectSchema({{"relinked", ids}, {"missing", ids}}, {"relinked", "missing"}), false},
 			[this](Project& project, CommandContext& context)
@@ -316,22 +337,14 @@ namespace gnubase::engine
 				const fs::path folder = fs::u8path(parameters.at("folder").get<std::string>());
 				std::error_code error;
 				require(fs::is_directory(folder, error), "no folder " + folder.u8string());
-				std::vector<ObjectId> wanted;
-				if (parameters.contains("media"))
-					for (const Json& id : parameters.at("media"))
-					{
-						const auto mediaId = id.get<ObjectId>();
-						if (missing(find(project.media, mediaId, "media file")))
-							wanted.push_back(mediaId);
-					}
-				else
-					for (const auto& [id, media] : project.media)
-						if (missing(media))
-							wanted.push_back(id);
+				std::vector<ObjectId> wanted = mediaIds(project, parameters);
+				wanted.erase(std::remove_if(wanted.begin(), wanted.end(),
+								 [&project](ObjectId id) { return !missing(project.media.at(id)); }),
+					wanted.end());
 
-				// The files in the folder by their names in lower case.
-				// ponytail: walks the whole folder on the command thread, like media.convert; a job if folders get
-				// huge.
+				// The files in the folder by their names with ASCII letters in lower case.
+				// ponytail: walks the whole folder on the command thread, like media.convert; a job (#498) if
+				// folders get huge.
 				std::multimap<std::string, fs::path> files;
 				if (!wanted.empty())
 					for (auto entry = fs::recursive_directory_iterator(
@@ -359,8 +372,10 @@ namespace gnubase::engine
 					{
 						try
 						{
+							// A file of another length would leave events pointing past its end.
 							const AudioFileInfo info = AudioFileReader::open(candidate.u8string())->info();
-							if (info.sampleRate != media.sampleRate || info.channels != media.channels)
+							if (info.sampleRate != media.sampleRate || info.channels != media.channels ||
+								info.frames != media.length)
 								continue;
 						}
 						catch (const AudioFileError&)
@@ -441,17 +456,16 @@ namespace gnubase::engine
 				objectSchema({{"media", ids}}), objectSchema({{"media", ids}}, {"media"}), false},
 			[this](Project& project, CommandContext& context)
 			{
+				// Each media file once: a second pass would convert the converted file and lose the first ratio.
 				const Json& parameters = context.parameters();
-				std::vector<ObjectId> wanted;
-				if (parameters.contains("media"))
-					for (const Json& id : parameters.at("media"))
-						wanted.push_back(find(project.media, id.get<ObjectId>(), "media file").id);
-				else
-					for (const auto& [id, media] : project.media)
-						if (!missing(media))
-							wanted.push_back(id);
-				wanted.erase(std::remove_if(wanted.begin(), wanted.end(), [&project](ObjectId id)
-								 { return project.media.at(id).sampleRate == project.sampleRate; }),
+				const bool given = parameters.contains("media");
+				std::vector<ObjectId> wanted = mediaIds(project, parameters);
+				wanted.erase(std::remove_if(wanted.begin(), wanted.end(),
+								 [&project, given](ObjectId id)
+								 {
+									 const MediaFile& media = project.media.at(id);
+									 return media.sampleRate == project.sampleRate || (!given && missing(media));
+								 }),
 					wanted.end());
 				if (wanted.empty())
 					return Json{{"media", Json::array()}};

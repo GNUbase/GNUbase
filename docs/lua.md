@@ -1544,7 +1544,7 @@ Returns:
 
 #### `gnubase.media.locate`
 
-Looks for missing media files in folder and the folders inside it (the Resolve Missing Files dialog's Browse Folder, reference manual pp. 750-752): a file with the same name, in any letter case, and the media file's sample rate and channel count. The files found are relinked as one undo step. media limits it to those media files (default: every missing one). Returns the media files relinked and the ones still missing.
+Looks for missing media files in folder and the folders inside it (the Resolve Missing Files dialog's Browse Folder, reference manual pp. 750-752): a file with the same name, the same spelling first, else with ASCII letters in another case (other letters must match exactly), and the media file's sample rate, channel count and length. The files found are relinked as one undo step. media limits it to those media files (default: every missing one). Returns the media files relinked and the ones still missing.
 
 Parameters:
 
