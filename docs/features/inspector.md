@@ -26,7 +26,7 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   The edit goes to every selected event or part, relative to its own value: a new start moves them all by as much
   as the first one moves, a new end or length resizes them all by as much (`event.move`, `event.resize` at the end).
   With Ctrl (Cmd) held when Enter takes the value, every one gets the value typed: the same start, end, length or
-  volume. Names go to every selected part (`midiPart.set`), the volume to every selected audio event
+  volume, also when it is the first one's own value. Names go to every selected part (`midiPart.set`), the volume to every selected audio event
   (`audioEvent.set`, -144 to 6 dB), mute and lock to all (`event.set`). Each edit is one `history.transaction`, so one
   undo restores every event.
 - **Positions.** In bars and beats the moves and resizes are in ticks, exact on musical tracks; in the other formats
@@ -60,7 +60,8 @@ one it has the class `empty` and says "No Track Selected".
   `output`).
 - **Inserts**: an overview of the channel's plugin slots by name, top to bottom (`plugin.*` changes them).
 - **Notepad** (p. 168): the channel's notes. What is typed goes to the engine when the field loses the focus, also
-  with Escape (`channel.set` `notes`, one undo step); the mixer's notepad (p. 497, #106) is meant to show the same
+  with Escape (`channel.set` `notes`, one undo step). When another track shows while the notepad or the name is being
+  edited, the edit is taken first, for the track it started on. The mixer's notepad (p. 497, #106) is meant to show the same
   notes.
 - **Set up Sections** (p. 167): a right click in the inspector opens the setup pane `#inspector-setup`, which the
   docking system fills with a toggle per section: it shows and hides sections, and dragging one onto another reorders
@@ -85,8 +86,9 @@ Expand Sections Exclusively, and the Channel zone (#380).
 - `tests/document_tests.cpp`: notes on audio and MIDI channels, with undo, and a value that isn't text refused.
 - `tests/dawproject_tests.cpp`: notes saved and loaded, also from `project.xml` alone.
 - `tests/inspector_tests.cpp` drives the app's project window with `ui::Automation`: the info line of one and of two
-  selected parts, start, length (relative and with Ctrl+Enter absolute) and end edits with undo, name, mute and lock
+  selected parts, start, length (relative and with Ctrl+Enter absolute, also with the first part's own value, after
+  which an edit taken by leaving the field is relative again) and end edits with undo, name, mute and lock
   for every selected part, changes from another client, an audio event's volume; the inspector's buttons, volume and
   pan both ways, the output from another client and from the drop-down list, the inserts overview with a bypassed
-  slot, the notepad, renaming, closing a section, hiding one in Set up Sections, and what a group and a marker track
+  slot, the notepad, renaming, notes and a name being typed when another track is selected, closing a section, hiding one in Set up Sections, and what a group and a marker track
   don't have.

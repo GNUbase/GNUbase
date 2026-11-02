@@ -11,7 +11,9 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Rml
@@ -51,11 +53,12 @@ namespace gnubase::ui
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_root;
-		std::vector<uint64_t> m_selection;             // shown, or asked for
-		uint64_t m_loads = 0;                          // the display's project shown
-		TimeFormat m_format = TimeFormat::BarsBeats;   // the display's ruler's
-		engine::Json m_events = engine::Json::array(); // event.get's, the first one first
-		bool m_absolute = false;                       // Ctrl held with Enter
+		std::vector<uint64_t> m_selection;                                 // shown, or asked for
+		uint64_t m_loads = 0;                                              // the display's project shown
+		TimeFormat m_format = TimeFormat::BarsBeats;                       // the display's ruler's
+		engine::Json m_events = engine::Json::array();                     // event.get's, the first one first
+		bool m_absolute = false;                                           // while edit applies an absolute take
+		std::optional<std::pair<std::string, std::string>> m_absoluteTake; // field and text taken with Ctrl+Enter
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};
 }

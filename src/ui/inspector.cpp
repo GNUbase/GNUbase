@@ -156,6 +156,11 @@ namespace gnubase::ui
 	{
 		if (track == m_track && loads == m_loads)
 			return;
+		// An edit belongs to the track it started on: leaving the field takes it there before another track shows.
+		Rml::Context* context = m_root ? m_root->GetContext() : nullptr;
+		if (Rml::Element* focus = context != nullptr ? context->GetFocusElement() : nullptr;
+			track != m_track && focus != nullptr && focus != m_root.get() && m_root->Contains(focus))
+			focus->Blur();
 		m_track = track;
 		m_loads = loads;
 		m_project = project;

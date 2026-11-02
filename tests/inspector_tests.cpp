@@ -185,6 +185,31 @@ TEST_CASE("the info line shows the first selected part, and its edits change eve
 	CHECK(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "empty"); }));
 }
 
+TEST_CASE("Ctrl+Enter in the info line takes the first part's own value for all, and only that take", "[ui]")
+{
+	Window window;
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t first = window.addPart(midi, 4 * g_quarter, 4 * g_quarter, "Intro");
+	const uint64_t second = window.addPart(midi, 12 * g_quarter, 8 * g_quarter, "Verse");
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 2; }));
+	window.display.select({second, first});
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "multiple"); }));
+	REQUIRE(window.shows("#info-line textdisplay[field=length]", "1.0.0.0"));
+
+	// The first part's length, unchanged, with Ctrl+Enter: the 2-bar part becomes 1 bar long too.
+	window.type("#info-line textdisplay[field=length]", "1.0.0.0", "Ctrl+Enter");
+	REQUIRE(window.app.waitUntil([&] { return window.part(second).at("length") == 4 * g_quarter; }));
+	CHECK(window.part(first).at("length") == 4 * g_quarter);
+
+	// The next edit, taken by leaving the field, is relative again: both move by as much.
+	window.click("#info-line textdisplay[field=start]", ui::MouseButton::Left, 2);
+	window.app.ui().key(std::nullopt, "Ctrl+A");
+	window.app.ui().text(std::nullopt, "3.1.1.0");
+	window.click("#info-line [info-field=name] .info-label");
+	REQUIRE(window.app.waitUntil([&] { return window.part(first).at("position") == 8 * g_quarter; }));
+	CHECK(window.part(second).at("position") == 16 * g_quarter);
+}
+
 TEST_CASE("the info line edits an audio event's volume", "[ui]")
 {
 	Window window;
@@ -294,4 +319,34 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 	window.list.select({marker});
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=basics]", "unavailable"); }));
 	CHECK(hasClass(window.app, ".inspector [section=notepad]", "unavailable"));
+}
+
+TEST_CASE("an edit in the inspector goes to the track it started on when another track shows", "[ui]")
+{
+	Window window;
+	const uint64_t vox = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
+	const uint64_t bass = window.addTrack({{"type", "audio"}, {"name", "Bass"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 2; }));
+	window.list.select({vox});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+
+	// Notes typed for one track, then another track selected: the notes are the first one's, not the other's.
+	window.click(".inspector textarea.notepad");
+	window.app.ui().text(std::nullopt, "Double the chorus");
+	window.list.select({bass});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Bass"));
+	REQUIRE(window.app.waitUntil([&] { return window.channel(vox).value("notes", "") == "Double the chorus"; }));
+	window.click(".inspector textarea.notepad");
+	window.app.ui().key(std::nullopt, "Escape");
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.channel(bass).value("notes", "").empty());
+
+	// The same for a name being typed.
+	window.click(".inspector textdisplay.inspector-name", ui::MouseButton::Left, 2);
+	window.app.ui().key(std::nullopt, "Ctrl+A");
+	window.app.ui().text(std::nullopt, "Low End");
+	window.list.select({vox});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+	REQUIRE(window.app.waitUntil([&] { return window.find("tracks", bass).at("name") == "Low End"; }));
+	CHECK(window.find("tracks", vox).at("name") == "Vox");
 }

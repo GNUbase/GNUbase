@@ -47,10 +47,10 @@ add_executable(gnubase-tests
 	fade_tests.cpp
 	fileimport_tests.cpp
 	fonts_tests.cpp
-	inspector_tests.cpp
 	graph_tests.cpp
 	history_tests.cpp
 	historypanel_tests.cpp
+	inspector_tests.cpp
 	ipc_process_tests.cpp
 	ipc_tests.cpp
 	keycommands_tests.cpp

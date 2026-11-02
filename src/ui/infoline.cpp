@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/infoline.h"
 
+#include "ui/widgetutils.h"
+
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/Elements/ElementFormControlInput.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/Input.h>
 
@@ -84,6 +87,18 @@ namespace gnubase::ui
 	{
 		if (!m_root)
 			return;
+		// Ctrl+Enter took the value the field had, so it sent no change: that value goes to all selected the same.
+		if (m_absoluteTake)
+		{
+			const auto [field, text] = *std::exchange(m_absoluteTake, std::nullopt);
+			const std::optional<float> number = widgets::parse(text);
+			if (!m_events.empty() && (field != "volume" || number))
+			{
+				m_absolute = true;
+				edit(field, text, number.value_or(0.0F));
+				m_absolute = false;
+			}
+		}
 		const std::vector<uint64_t>& selection = m_display.selection();
 		const TimeFormat format = m_display.rulerFormat();
 		if (selection == m_selection && m_display.loads() == m_loads && format == m_format)
@@ -157,15 +172,23 @@ namespace gnubase::ui
 		const Rml::Element* target = event.GetTargetElement();
 		if (event == Rml::EventId::Keydown)
 		{
+			// Ctrl (Cmd) with Enter in the text field of a display or value field: an absolute take, which the field's
+			// change applies, or update when the value didn't change and no change comes.
 			const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
-			if (key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER)
-				m_absolute = event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0;
+			const auto* input = rmlui_dynamic_cast<const Rml::ElementFormControlInput*>(target);
+			const Rml::Element* field = input != nullptr ? input->GetParentNode() : nullptr;
+			if ((key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER) &&
+				(event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0) &&
+				field != nullptr && field->HasAttribute("field"))
+				m_absoluteTake.emplace(field->GetAttribute<Rml::String>("field", ""), input->GetValue());
 			return;
 		}
 		// A display's, a value field's or a button's change, not that of the text field inside a display.
 		if (target == nullptr || !target->HasAttribute("field") || m_events.empty())
 			return;
 		const auto field = target->GetAttribute<Rml::String>("field", "");
+		m_absolute = m_absoluteTake && m_absoluteTake->first == field;
+		m_absoluteTake.reset();
 		if (target->GetTagName() == "button")
 			edit(field, {}, event.GetParameter<bool>("value", false) ? 1.0F : 0.0F);
 		else
