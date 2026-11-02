@@ -16,9 +16,9 @@ namespace Rml
 namespace gnubase::ui
 {
 	// Fills the status line's fields in root from audio.get and audio.changed: #record-format with the project's
-	// sample rate, with the class mismatch while the device runs at another one, and #lost-device with the device
-	// that went away and the reason as its title, with the class hidden while none is lost. Use it on the UI thread;
-	// the binding must outlive it. Fields that root lacks, or that go, show nothing.
+	// sample rate, with the class mismatch while the device runs at another one, and #lost-device with the name of
+	// the device that went away and the reason and its id as its title, with the class hidden while none is lost. Use
+	// it on the UI thread; the binding must outlive it. Fields that root lacks, or that go, show nothing.
 	class StatusLine
 	{
 	public:

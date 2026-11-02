@@ -8,9 +8,9 @@ The project window's status line (#407, reference manual pp. 26, 71, 129), a str
   runs at another rate, because it doesn't support the project's ([audio-devices.md](audio-devices.md)), the field has
   the class `mismatch`, which the themes color as a warning (p. 26: the field "is highlighted in a different color").
   The bit depth joins it with the project setup (#78), which brings the project's record bit depth.
-- **Lost audio device.** While a device is lost, `#lost-device` shows "Audio Device Lost: " and the device's id, with
-  the reason it can't be opened as its tooltip (`title`). Otherwise it has the class `hidden`. It goes once the device
-  returns or another one is picked.
+- **Lost audio device.** While a device is lost, `#lost-device` shows "Audio Device Lost: " and the device's name, with
+  the reason it can't be opened and the device's id in parentheses as its tooltip (`title`) (#455): the id tells devices
+  of one name apart. Otherwise it has the class `hidden`. It goes once the device returns or another one is picked.
 - **The engine.** Both follow `audio.changed`, after `audio.get` when the window opens: `projectSampleRate` (also there
   without a device), `device.sampleRateMismatch` and `lost`. The engine sends `audio.changed` for every new project
   sample rate, also when the device stays at its rate, so the status line needs no project events. MCP and Lua read

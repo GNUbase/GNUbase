@@ -738,6 +738,8 @@ TEST_CASE("a device unplugged during playback leaves the engine running and play
 	CHECK(status.at("device").is_null());
 	CHECK(status.at("running") == false);
 	CHECK(status.at("lost").at("backend") == "dummy");
+	CHECK(status.at("lost").at("device") == "dummy");
+	CHECK(status.at("lost").at("name") == "Dummy device");
 	CHECK(status.at("lost").at("restart") == true);
 	CHECK_THAT(status.at("lost").at("reason").get<std::string>(), ContainsSubstring("unplugged"));
 	const Json transport = run(client, "transport.get");
@@ -769,7 +771,9 @@ TEST_CASE("a backend's device that went away is opened again with its settings o
 	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
 	const Json lost = run(client, "audio.get").at("lost");
 	CHECK(lost.at("backend") == "fake");
-	CHECK(lost.at("restart") == false); // it was stopped
+	CHECK(lost.at("device") == "fake-1");
+	CHECK(lost.at("name") == "Fake interface"); // as it was listed while it was open
+	CHECK(lost.at("restart") == false);         // it was stopped
 	CHECK_THAT(lost.at("reason").get<std::string>(), ContainsSubstring("not connected"));
 
 	driver->connected = true;
