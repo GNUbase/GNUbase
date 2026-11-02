@@ -575,12 +575,14 @@ namespace
 		explicit ViewsPage(test::UiApp& app) : model(app.main().context(), "views")
 		{
 			REQUIRE(model.constructor().Bind("selection", &selection));
-			events = std::make_unique<Events>(app.show("views.rml"));
+			document = &app.show("views.rml");
+			events = std::make_unique<Events>(*document);
 			app.setDpRatio(1.0F);
 		}
 
 		Rml::String selection;
 		ui::DataModel model;
+		Rml::ElementDocument* document = nullptr;
 		std::unique_ptr<Events> events;
 	};
 
@@ -695,6 +697,28 @@ TEST_CASE("table views select their body's rows", "[ui]")
 	click(app, "#header");
 	CHECK_FALSE(selected(app, "#header"));
 	CHECK(selected(app, "#row-verse"));
+}
+
+TEST_CASE("table views keep the selection of rows rebuilt twice between two updates", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	click(app, "#row-intro");
+	REQUIRE(selected(app, "#row-intro"));
+
+	// As a panel that rebuilds its rows whenever their number changes may: first with another number of rows, then
+	// with as many as before and the same value, before the view updates. The rows it knew are gone.
+	Rml::Element& body = *page.document->GetElementById("table-body");
+	body.SetInnerRML(R"(<tr value="intro"><td>Intro</td><td>8 bars</td></tr>)");
+	body.SetInnerRML(R"(<tr id="new-intro" value="intro"><td>Intro</td><td>8 bars</td></tr>)"
+					 R"(<tr id="new-verse" value="verse"><td>Verse</td><td>16 bars</td></tr>)");
+	CHECK(app.waitUntil([&app] { return selected(app, "#new-intro"); }));
+
+	// The keys move from the new row, not from the one that went.
+	app.ui().key(std::nullopt, "Down");
+	CHECK(app.waitUntil([&app] { return selected(app, "#new-verse"); }));
+	CHECK(!selected(app, "#new-intro"));
+	CHECK(element(app, "#table").at("attributes").at("value") == "verse");
 }
 
 TEST_CASE("splitters move the boundary between the elements of a row or a column", "[ui]")

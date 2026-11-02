@@ -10,6 +10,7 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/Input.h>
+#include <RmlUi/Core/ObserverPtr.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -65,7 +66,7 @@ namespace gnubase::ui
 			{
 				Rml::Element::OnUpdate();
 				const std::vector<Rml::Element*> all = rows();
-				if (all.size() != m_rowCount || GetAttribute<Rml::String>("value", "") != m_value)
+				if (all.size() != m_rowCount || GetAttribute<Rml::String>("value", "") != m_value || currentGone())
 				{
 					m_rowCount = all.size();
 					select(all, GetAttribute<Rml::String>("value", ""));
@@ -131,29 +132,31 @@ namespace gnubase::ui
 				if (multiple && (event.GetParameter("ctrl_key", false) || event.GetParameter("meta_key", false)))
 				{
 					row->SetClass("selected", !row->IsClassSet("selected"));
-					m_anchor = row;
+					m_anchor = row->GetObserverPtr();
 				}
-				else if (multiple && event.GetParameter("shift_key", false) && m_anchor != nullptr)
+				else if (multiple && event.GetParameter("shift_key", false) && m_anchor)
 				{
 					selectRange(visible(all), *row);
 				}
 				else
 				{
 					selectOnly(all, *row);
-					m_anchor = row;
+					m_anchor = row->GetObserverPtr();
 				}
-				m_current = row;
+				setCurrent(row);
 				changed(all);
 			}
 
 			void key(Rml::Event& event)
 			{
 				const std::vector<Rml::Element*> all = rows();
+				if (currentGone()) // rows rebuilt since the last update
+					select(all, GetAttribute<Rml::String>("value", ""));
 				const std::vector<Rml::Element*> shown = visible(all);
 				if (shown.empty())
 					return;
 				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
-				const auto at = std::find(shown.begin(), shown.end(), m_current);
+				const auto at = std::find(shown.begin(), shown.end(), m_current.get());
 				const std::ptrdiff_t index = at == shown.end() ? -1 : at - shown.begin();
 				std::ptrdiff_t next = 0;
 				switch (key)
@@ -172,8 +175,8 @@ namespace gnubase::ui
 					break;
 				case Rml::Input::KI_RIGHT:
 				case Rml::Input::KI_LEFT:
-					if (m_current != nullptr && m_current->IsClassSet("parent"))
-						toggle(*m_current, key == Rml::Input::KI_RIGHT);
+					if (m_current && m_current->IsClassSet("parent"))
+						toggle(*m_current.get(), key == Rml::Input::KI_RIGHT);
 					event.StopPropagation();
 					return;
 				default:
@@ -181,16 +184,16 @@ namespace gnubase::ui
 				}
 				event.StopPropagation(); // the keys move the selection, not the focus or a scroll position
 				Rml::Element* row = shown[static_cast<size_t>(std::max<std::ptrdiff_t>(next, 0))];
-				if (HasAttribute("multiple") && event.GetParameter("shift_key", false) && m_anchor != nullptr)
+				if (HasAttribute("multiple") && event.GetParameter("shift_key", false) && m_anchor)
 				{
 					selectRange(shown, *row);
 				}
 				else
 				{
 					selectOnly(all, *row);
-					m_anchor = row;
+					m_anchor = row->GetObserverPtr();
 				}
-				m_current = row;
+				setCurrent(row);
 				row->ScrollIntoView(false);
 				changed(all);
 			}
@@ -204,7 +207,7 @@ namespace gnubase::ui
 			// Selects the rows from the anchor to the row, and only those.
 			void selectRange(const std::vector<Rml::Element*>& shown, const Rml::Element& row)
 			{
-				const auto anchor = std::find(shown.begin(), shown.end(), m_anchor);
+				const auto anchor = std::find(shown.begin(), shown.end(), m_anchor.get());
 				const auto end = std::find(shown.begin(), shown.end(), &row);
 				if (anchor == shown.end() || end == shown.end())
 					return;
@@ -232,7 +235,8 @@ namespace gnubase::ui
 			void select(const std::vector<Rml::Element*>& all, const std::string& value)
 			{
 				m_value = value;
-				m_current = m_anchor = nullptr;
+				setCurrent(nullptr);
+				m_anchor.reset();
 				std::vector<std::string> values;
 				std::istringstream split(value);
 				for (std::string one; std::getline(split, one, ',');)
@@ -242,8 +246,11 @@ namespace gnubase::ui
 					const bool selected = std::find(values.begin(), values.end(),
 											  row->GetAttribute<Rml::String>("value", "")) != values.end();
 					row->SetClass("selected", selected);
-					if (selected && m_current == nullptr)
-						m_current = m_anchor = row;
+					if (selected && !m_current)
+					{
+						setCurrent(row);
+						m_anchor = row->GetObserverPtr();
+					}
 				}
 			}
 
@@ -297,10 +304,22 @@ namespace gnubase::ui
 				}
 			}
 
+			void setCurrent(Rml::Element* row)
+			{
+				m_current = row != nullptr ? row->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>();
+				m_hadCurrent = row != nullptr;
+			}
+
+			// Whether the row the keys move from was destroyed: code replaced the rows, possibly with as many rows and
+			// the same value, so that neither tells the view. Its value then selects among the new rows.
+			bool currentGone() const { return m_hadCurrent && !m_current; }
+
 			size_t m_rowCount = 0;
-			std::string m_value;               // the value attribute as the view last applied or set it
-			Rml::Element* m_anchor = nullptr;  // where a Shift-click's range starts
-			Rml::Element* m_current = nullptr; // the row the keys move from
+			std::string m_value; // the value attribute as the view last applied or set it
+			// Rows can be destroyed at any time; observer pointers become null with them.
+			Rml::ObserverPtr<Rml::Element> m_anchor;  // where a Shift-click's range starts
+			Rml::ObserverPtr<Rml::Element> m_current; // the row the keys move from
+			bool m_hadCurrent = false;                // m_current was set to a row
 		};
 
 		// <splitter>: between two elements of a flex row or column, dragging it moves the boundary between them. It
