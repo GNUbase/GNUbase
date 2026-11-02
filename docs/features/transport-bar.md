@@ -22,6 +22,10 @@ are by attributes, which `TransportControls` follows:
 | Tempo & Time Signature | tempo, time signature | `project.set` `tempo`, `signature` |
 | Click | Activate Metronome Click | `transport.toggle` `metronome` |
 
+The sections keep the width of their controls. A window too narrow for all of them, such as the transport bar of a
+project window under about 1180 dp wide, cuts off the last sections at its right edge instead of drawing sections over
+each other.
+
 - **Buttons** have a `command` with `parameters` (JSON), which run as a key would (`KeyCommands::run`): engine
   commands through the UI's engine client, the UI's own commands in `AppUi`. Buttons with `state` are checked, the
   state class `.checked`, while the transport's value is true; they follow `transport.changed`, whoever changed it.
@@ -94,7 +98,8 @@ dividers; the time display window's beat count and window size; changing a displ
 and `signature` with undo and refused values. `tests/timeformat_tests.cpp`: positions typed in every format read back
 as the engine converts them, partial and invalid text, lengths in bars and beats across a tempo change, and the time
 context from `project.get`. `tests/transportbar_tests.cpp` drives the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)):
-every button of the transport bar, the switches following another client's changes, the marker buttons with and
+every button of the transport bar, a window too narrow for the transport bar cutting off its last sections, the
+switches following another client's changes, the marker buttons with and
 without markers, Locators to Selection by button and key, the time format menus, Exchange Time Formats by button and
 key, `ui.timeFormats` from the engine, positions, locators and a length typed into the displays, the tempo and
 signature fields with undo, every key command, the transport panel opened by F2, by an enter command and again after

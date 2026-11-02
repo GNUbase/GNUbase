@@ -67,10 +67,10 @@ namespace
 	}
 
 	// The project window with its transport bar shown. The shell fits windows into their monitor, 1024 pixels wide on
-	// CI, where the transport bar's sections would shrink over each other at a dp ratio of 1: at 0.8 they all fit.
-	ui::EventDisplay& showBar(test::UiApp& app)
+	// CI, where a dp ratio of 1 cuts off the transport bar's last sections: at 0.8 they all fit.
+	ui::EventDisplay& showBar(test::UiApp& app, float dpRatio = 0.8F)
 	{
-		app.setDpRatio(0.8F);
+		app.setDpRatio(dpRatio);
 		ui::EventDisplay& display = app.appUi().showProject();
 		app.appUi().docking().setVisible("project", "transportBar", true);
 		app.shell().step(std::chrono::milliseconds(0));
@@ -148,6 +148,54 @@ TEST_CASE("the transport bar's buttons run the transport and show its state", "[
 	click(app, "#stop");
 	REQUIRE(app.waitUntil([&app] { return !checked(app, "#start"); }));
 	CHECK(transport(app).at("playing") == false);
+}
+
+TEST_CASE("a narrow window cuts off the transport bar's last sections instead of drawing them over each other", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app, 1.0F); // about 1180 dp of sections in 1024 dp
+	Rml::Context& context = app.main().context();
+	Rml::Element* bar = nullptr;
+	for (int i = 0; i < context.GetNumDocuments(); ++i)
+		if (Rml::Element* found = context.GetDocument(i)->GetElementById("transport-bar"))
+			bar = found;
+	REQUIRE(bar != nullptr);
+	const float right = bar->GetAbsoluteLeft() + bar->GetOffsetWidth();
+
+	// The sections keep their controls' width, one after the other, and the last ones go past the bar's right edge.
+	Rml::ElementList sections;
+	bar->QuerySelectorAll(sections, ".transport-section");
+	REQUIRE(sections.size() == 7);
+	float end = bar->GetAbsoluteLeft();
+	for (Rml::Element* section : sections)
+	{
+		INFO(section->GetAttribute<Rml::String>("title", ""));
+		CHECK(section->GetAbsoluteLeft() >= end);
+		end = section->GetAbsoluteLeft() + section->GetOffsetWidth();
+		Rml::ElementList controls;
+		section->QuerySelectorAll(controls, "*");
+		for (Rml::Element* control : controls)
+			CHECK(control->GetAbsoluteLeft() + control->GetOffsetWidth() <= end + 0.5F);
+	}
+	CHECK(end > right);
+
+	// What shows is what a click reaches: the element in the middle of each control in the bar is the control or in it.
+	Rml::ElementList controls;
+	bar->QuerySelectorAll(controls, ".transport-section > *");
+	for (Rml::Element* control : controls)
+	{
+		const Rml::Vector2f middle(control->GetAbsoluteLeft() + (control->GetOffsetWidth() / 2.0F),
+			control->GetAbsoluteTop() + (control->GetOffsetHeight() / 2.0F));
+		if (middle.x >= right)
+			continue; // cut off
+		INFO(control->GetId());
+		const Rml::Element* hit = context.GetElementAtPoint(middle);
+		while (hit != nullptr && hit != control)
+			hit = hit->GetParentNode();
+		CHECK(hit == control);
+	}
+	click(app, "#punch-in");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("punchIn") == true; }));
 }
 
 TEST_CASE("the transport bar goes to markers, the project's ends and the selection", "[ui]")

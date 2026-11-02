@@ -459,12 +459,14 @@ valuefield.editing .valuefield-text
 }
 
 /* The transport controls (docs/features/transport-bar.md): sections in a row, the time display window's big
-   display. */
+   display. The sections keep their contents' width, so a window too narrow for them cuts off the last ones at the
+   right edge rather than drawing sections over each other. */
 .transport
 {
 	display: flex;
 	align-items: center;
 	white-space: nowrap;
+	overflow: hidden;
 }
 
 .docking .strip.transport
@@ -476,6 +478,7 @@ valuefield.editing .valuefield-text
 .transport-section
 {
 	display: flex;
+	flex-shrink: 0;
 	align-items: center;
 	margin-right: 12dp;
 }
