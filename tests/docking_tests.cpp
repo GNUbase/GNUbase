@@ -7,6 +7,7 @@
 
 #include "ui/automation.h"
 #include "ui/docking.h"
+#include "ui/keycommands.h"
 
 #include <RmlUi/Core/Element.h>
 #include <SDL3/SDL.h>
@@ -268,19 +269,32 @@ TEST_CASE(
 	CHECK(shown(app, "splitter[for=channel]"));
 	CHECK(tabs(app, "channel") == std::vector<std::string>{"channel"});
 	CHECK(boxOf(app, "#channel-zone", "width") == 200);
-	app.ui().key(std::nullopt, "Mod+Alt+L");
-	REQUIRE(shown(app, "#left-zone"));
-	CHECK(boxOf(app, "#channel-zone", "x") + boxOf(app, "#channel-zone", "width") <= boxOf(app, "#left-zone", "x"));
 
-	// Its splitter sizes it, and it is a focus zone.
+	// Its splitter sizes it, taking the room from the main zone, whether the left zone shows or not.
 	const ui::Target splitter = middle(app, "splitter[for=channel]");
 	app.ui().drag(std::nullopt, splitter, moved(splitter, 50, 0));
 	CHECK(boxOf(app, "#channel-zone", "width") == 250);
+	app.ui().key(std::nullopt, "Mod+Alt+L");
+	REQUIRE(shown(app, "#left-zone"));
+	CHECK(boxOf(app, "#channel-zone", "x") + boxOf(app, "#channel-zone", "width") <= boxOf(app, "#left-zone", "x"));
+	const ui::Target again = middle(app, "splitter[for=channel]");
+	app.ui().drag(std::nullopt, again, moved(again, 150, 0));
+	CHECK(boxOf(app, "#channel-zone", "width") == 400);
+	CHECK(boxOf(app, "#left-zone", "width") == 240);
 	waitUntilSaved(app);
-	CHECK(savedLayout(app).at("windows").at("project").at("zones").at("channel").at("size") == 250);
+	CHECK(savedLayout(app).at("windows").at("project").at("zones").at("channel").at("size") == 400);
+
+	// It is a focus zone, with key commands of its own.
+	std::string ranIn;
+	app.keys().add(
+		{"test.channelZone", "Records the focus zone it ran in.", [&ranIn](ui::Window& /*window*/, Rml::Element* zone)
+			{ ranIn = zone == nullptr ? std::string() : zone->GetAttribute<Rml::String>("focuszone", ""); }});
+	app.keys().bind({"F9", "test.channelZone", Json::object(), "channel"});
 	app.ui().click(std::nullopt, at("#channel-zone panels"), ui::MouseButton::Left, 1, {});
 	CHECK(has(element(app, "#channel-zone"), "focused"));
 	CHECK(!has(element(app, "#main-zone"), "focused"));
+	app.ui().key(std::nullopt, "F9");
+	CHECK(ranIn == "channel");
 
 	app.ui().key(std::nullopt, "Mod+Alt+C");
 	CHECK(!shown(app, "#channel-zone"));
@@ -291,7 +305,7 @@ TEST_CASE(
 	app.ui().click(std::nullopt, at("#window-layout"), ui::MouseButton::Left, 1, {});
 	app.ui().click(std::nullopt, at("menuitem[toggle=channel]"), ui::MouseButton::Left, 1, {});
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#channel-zone"); }));
-	CHECK(boxOf(app, "#channel-zone", "width") == 250);
+	CHECK(boxOf(app, "#channel-zone", "width") == 400);
 	waitUntilSaved(app);
 	CHECK(savedLayout(app).at("windows").at("project").at("zones").at("channel").at("visible") == true);
 
@@ -309,6 +323,7 @@ TEST_CASE(
 TEST_CASE("the lower zone has its tabs at its bottom, with Close Lower Zone to their left", "[ui]")
 {
 	test::UiApp app({1000, 700});
+	app.setDpRatio(1.0F);
 	app.appUi().showProject();
 	app.ui().key(std::nullopt, "Mod+Alt+E");
 	REQUIRE(shown(app, "#lower-zone"));
@@ -326,7 +341,8 @@ TEST_CASE("the lower zone has its tabs at its bottom, with Close Lower Zone to t
 	app.ui().key(std::nullopt, "Mod+Alt+R");
 	CHECK(boxOf(app, "#right-zone tabs", "y") == boxOf(app, "#right-zone", "y"));
 
-	// Close Lower Zone, left of the tabs and in their row, hides the zone.
+	// Close Lower Zone, left of the tabs and in their row, hides the zone, and the focus goes to the main zone, so that
+	// the lower zone's keys no longer apply.
 	REQUIRE(shown(app, "#close-lower-zone"));
 	const Json close = element(app, "#close-lower-zone").at("box");
 	CHECK(close.at("x").get<int>() + close.at("width").get<int>() <= first.at("x").get<int>());
@@ -335,6 +351,13 @@ TEST_CASE("the lower zone has its tabs at its bottom, with Close Lower Zone to t
 	app.ui().click(std::nullopt, at("#close-lower-zone"), ui::MouseButton::Left, 1, {});
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#lower-zone"); }));
 	CHECK(!element(app, "#show-lower-zone").at("attributes").contains("checked"));
+	CHECK(has(element(app, "#main-zone"), "focused"));
+	CHECK(!has(element(app, "#lower-zone"), "focused"));
+	const Json active =
+		app.appUi().docking().layout().at("windows").at("project").at("zones").at("lower").value("active", Json());
+	app.ui().key(std::nullopt, "Mod+Alt+Right");
+	CHECK(app.appUi().docking().layout().at("windows").at("project").at("zones").at("lower").value("active", Json()) ==
+		active);
 	waitUntilSaved(app);
 	CHECK(savedLayout(app).at("windows").at("project").at("zones").at("lower").at("visible") == false);
 }

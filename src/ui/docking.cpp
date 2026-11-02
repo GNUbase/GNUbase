@@ -99,6 +99,13 @@ namespace gnubase::ui
 			}
 		}
 
+		bool inside(const Rml::Element* element, const Rml::Element& ancestor)
+		{
+			while (element != nullptr && element != &ancestor)
+				element = element->GetParentNode();
+			return element != nullptr;
+		}
+
 		Json boundsJson(const Rect& bounds)
 		{
 			return {{"x", bounds.x}, {"y", bounds.y}, {"width", bounds.width}, {"height", bounds.height}};
@@ -639,6 +646,10 @@ namespace gnubase::ui
 				continue;
 			const bool shown = visible(window, zoneName);
 			zone->SetClass("hidden", !shown);
+			// The keyboard focus leaves a zone that hides, for the main zone, so that the zone's keys no longer apply.
+			if (const Rml::Element* focus = document->GetContext()->GetFocusElement(); !shown && inside(focus, *zone))
+				if (Rml::Element* main = document->QuerySelector("[zone=main]"))
+					main->Focus();
 			for (Rml::Element* splitter : elements(*document, "splitter[for=" + zoneName + "]"))
 				splitter->SetClass("hidden", !shown);
 			const Json* size = find(m_layout, {"windows", window, "zones", zoneName, "size"});

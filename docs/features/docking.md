@@ -2,8 +2,9 @@
 
 Windows built from zones, tab groups, splitters and strips, and panels that dock in a zone or open in a window of
 their own (#56), setup panes that show, hide and reorder sections (#372), and the project window's Channel zone and
-lower zone tab bar (#380) (reference manual pp. 54–100, 439–440, 1572, 1575–1578). The code is `ui::Docking` (`src/ui/docking.h`); `app::AppUi` makes the project window a docking window,
-and the mixer and the editors will be the next ones.
+lower zone tab bar (#380) (reference manual pp. 54–100, 439–440, 1572, 1575–1578). The code is `ui::Docking`
+(`src/ui/docking.h`); `app::AppUi` makes the project window a docking window, and the mixer and the editors will be the
+next ones.
 
 ## Structure
 
@@ -35,7 +36,8 @@ record format and a lost audio device. The info line is empty.
 
 States are classes for the themes: zones, their splitters and strips get `.hidden`, and the zone with the keyboard
 focus gets `.focused`, whose `.zone-frame` (an element the docking system adds over each zone) the theme draws as a
-frame (p. 99). Code only sets the zones' sizes, which come from data.
+frame (p. 99). Code only sets the zones' sizes, which come from data. A zone that hides with the focus in it, e.g. with
+Close Lower Zone, gives the focus to the main zone, so that its keys no longer apply.
 
 ## Panels and tab groups
 
@@ -78,8 +80,10 @@ The sections of the mixer come with the mixer window; `tests/data/ui/sections.rm
 
 ## Splitters
 
-Dragging a zone's splitter sizes the zone, between its `min-width` or `min-height` and what leaves the other side its
-minimum: zones have at least 120 by 80 dp, the column with the main zone 200 dp wide (base.rcss). The size is saved when
+Dragging a zone's splitter sizes the zone, between its `min-width` or `min-height` and what leaves the flexible
+elements of its row or column, such as the column with the main zone, their minimums: zones have at least 120 by 80 dp,
+the column with the main zone 200 dp wide (base.rcss). So the Channel zone takes its room from the main zone, not from
+the left zone next to it, whether that shows or not. The size is saved when
 the drag ends. A double click on a splitter collapses its zone; showing the zone again restores its size.
 
 ## The layout and the engine
@@ -134,7 +138,8 @@ zone that doesn't bind them itself.
 
 The mixer's window layout pane and its sections (p. 439) come with the mixer window; until then, containers of
 sections added after `attach`, such as a new channel, take the user's order and visibility only with the next change
-to the layout; the Channel zone's contents (p. 73) with the mixer's channel strip (#106); dragging a tab
+to the layout; the Channel zone's contents (p. 73) with the mixer's channel strip (#106), shown as its zone's one tab until then;
+a theme look for tabs at the bottom, whose active tab has its marker on the side away from the panels; dragging a tab
 out of its zone to open it in a window; Tab and Shift+Tab to move the focus between zones (p. 100), which RmlUi keeps
 for moving between controls for now; and live reload keeps the panels' contents only when the app opens again.
 
