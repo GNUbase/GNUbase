@@ -372,7 +372,7 @@ namespace gnubase::ui
 		for (const Row& row : m_tracks)
 			rml += R"(<listitem value=")" + std::to_string(row.id) + R"(" level=")" + std::to_string(row.level) +
 				R"(" type=")" + row.type +
-				R"("><span class="track-name"/><input type="text" class="track-name-field"/>)"
+				R"("><span class="track-color"/><span class="track-name"/><input type="text" class="track-name-field"/>)"
 				R"(<div class="track-controls"/></listitem>)";
 		finishRename(false);
 		const auto selected = m_view->GetAttribute<Rml::String>("value", "");
@@ -427,6 +427,20 @@ namespace gnubase::ui
 					element->SetAttribute("expanded", "");
 				else
 					element->RemoveAttribute("expanded");
+			}
+			// The color strip (reference manual p. 113): the track's color, which is user data, or the theme's.
+			if (Rml::Element* strip = element->QuerySelector(".track-color"); strip != nullptr)
+			{
+				const Json& color = track.at("color");
+				const std::string value = color.is_string() ? color.get<std::string>() : std::string();
+				if (strip->GetAttribute<Rml::String>("color", "") != value)
+				{
+					strip->SetAttribute("color", value);
+					if (value.empty())
+						strip->RemoveProperty("background-color");
+					else
+						strip->SetProperty("background-color", value);
+				}
 			}
 			// The name, unless it's being typed.
 			if (Rml::Element* name = element->QuerySelector(".track-name"); name != nullptr && row.id != m_renaming)

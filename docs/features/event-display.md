@@ -49,6 +49,7 @@ attributes show the view to MCP's `ui_dom`.
   scrolls before the project start.
 - **Live reload** loads `project.rml` again without the display in it; reopen the app.
 - **Markers** draw into the event area, with lanes of their own, through `onViewChanged` ([markers.md](markers.md)).
+- **Colors.** Events and parts show their own color, or else their track's ([colors.md](colors.md)).
 
 ## Ruler and time formats
 

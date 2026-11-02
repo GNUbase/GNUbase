@@ -277,6 +277,9 @@ namespace gnubase::app
 			m_keys.enableWhen(command, [this](ui::Window&, Rml::Element*) { return m_eventDisplay != nullptr; });
 		m_keys.add({"project.addTrack", "Opens the add track dialog.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "add-track.rml"); }});
+		// Project > Project Colors Setup (docs/features/colors.md).
+		m_keys.add({"project.colorsSetup", "Opens the project colors setup dialog, which edits the project's colors.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "project-colors.rml"); }});
 		// For documents' buttons and menu items: gnubase.ui.command{command = "project.addTrack"} runs a key command
 		// in the main window, as its keys would.
 		m_lua.addFunction("ui.command",
@@ -455,6 +458,7 @@ namespace gnubase::app
 		document->Show();
 		m_markerLines.reset();
 		m_docking.attach("project", *document);
+		m_colorMenu.reset();
 		m_trackList.reset();
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
 		if (Rml::Element* bar = document->GetElementById("transport-bar"))
@@ -462,6 +466,8 @@ namespace gnubase::app
 		m_statusLine = std::make_unique<ui::StatusLine>(m_binding, *document);
 		if (Rml::Element* tracks = document->GetElementById("track-list"))
 			m_trackList = std::make_unique<ui::TrackList>(*m_eventDisplay, m_binding, *tracks);
+		if (m_trackList)
+			m_colorMenu = std::make_unique<ui::ColorMenu>(*m_eventDisplay, *m_trackList, m_binding, *document);
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 		m_markerLines = std::make_unique<ui::MarkerLines>(*m_eventDisplay, m_binding);
 		return *m_eventDisplay;

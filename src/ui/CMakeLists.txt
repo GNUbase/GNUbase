@@ -16,6 +16,8 @@ add_library(gnubase-ui STATIC
 	automation.cpp
 	automation.h
 	canvas.cpp
+	colormenu.cpp
+	colormenu.h
 	canvas.h
 	colorwidgets.cpp
 	datamodel.cpp

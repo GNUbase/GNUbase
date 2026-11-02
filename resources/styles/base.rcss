@@ -823,6 +823,17 @@ meter .meter-peak
 	align-items: flex-start;
 	padding: 3dp 4dp 0 4dp;
 	overflow: hidden;
+	position: relative;
+}
+
+/* The track's color (#94), which code gives it as user data; without one it shows nothing. */
+.track-list .track-color
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 4dp;
 }
 
 .track-list .track-name
@@ -940,6 +951,16 @@ menuitem .menu-keys
 {
 	float: right;
 	padding-left: 24dp;
+}
+
+/* A color of the project's color set before its name (docs/features/colors.md); code gives it the color. */
+.color-swatch
+{
+	display: inline-block;
+	width: 12dp;
+	height: 12dp;
+	margin-right: 6dp;
+	vertical-align: middle;
 }
 
 /* Every document's tooltip, under the mouse; it lets the mouse through. */
