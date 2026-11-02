@@ -1193,8 +1193,9 @@ splitter.column .splitter-grip-horizontal
 	drag: drag-drop;
 }
 
-/* The edit history panel (ui/historypanel.h): a table of the undo steps that fills its panel. Rows of undone steps
-   have the state class .undone. */
+/* The edit history panel (ui/historypanel.h): a table of the undo steps that fills its panel, cut by the separator
+   after the done steps into a table of those and one of the undone steps, whose rows have the state class .undone.
+   The separator is dragged up to undo and down to redo. */
 listview.history
 {
 	position: absolute;
@@ -1224,6 +1225,12 @@ listview.history
 {
 	width: 100%;
 	box-sizing: border-box;
+}
+
+.history .history-separator
+{
+	height: 4dp;
+	drag: drag;
 }
 
 /* The pool (ui/poolpanel.h): a toolbar, the message line, the info line, the column headers and a tree of folders and

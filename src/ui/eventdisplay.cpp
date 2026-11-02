@@ -220,7 +220,7 @@ namespace gnubase::ui
 
 	double EventDisplay::projectLength() const
 	{
-		return std::max(m_end, g_minimumProjectLength);
+		return std::max(m_end, m_length);
 	}
 
 	double EventDisplay::overviewLength() const
@@ -364,7 +364,16 @@ namespace gnubase::ui
 		m_selection = std::move(selection);
 		setLanes();
 		showSelection();
-		setRulerFormat(m_format); // the tempo or signatures may have changed
+		m_length = project.value("length", g_defaultProjectLength);
+		// The ruler starts with the project's time format, and follows it when it changes (reference manual p. 69); its
+		// menu picks another one of its own.
+		const std::string projectFormat = project.value("timeFormat", std::string());
+		if (projectFormat != m_projectFormat)
+		{
+			m_projectFormat = projectFormat;
+			m_format = timeFormatFromName(projectFormat).value_or(m_format);
+		}
+		setRulerFormat(m_format); // the tempo, signatures, frame rate or start time may have changed too
 		setCursor(m_cursorSample);
 		apply();
 	}

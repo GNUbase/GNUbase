@@ -35,8 +35,8 @@ namespace gnubase::ui
 	inline constexpr double g_trackHeight = 40.0;
 	inline constexpr double g_minTrackHeight = 20.0;
 	inline constexpr double g_maxTrackHeight = 400.0;
-	// What zoom full and the overview line show at least, in seconds, until projects have a length (#78).
-	inline constexpr double g_minimumProjectLength = 60.0;
+	// The project setup's length until the project is read, in seconds (#78).
+	inline constexpr double g_defaultProjectLength = 600.0;
 
 	// The part of the timeline the event display shows.
 	struct TimelineView
@@ -102,7 +102,8 @@ namespace gnubase::ui
 	// resources/ui/project.rml): a ruler time format menu #ruler-format-menu, which a right click in the ruler opens
 	// too; a horizontal zoom presets menu #zoom-presets-menu, whose Add and Organize items open the dialogs
 	// zoom-preset.rml and zoom-presets.rml next to the document; an auto-scroll toggle button #auto-scroll, with the
-	// state class .suspended while editing suspends it; and an auto-scroll settings menu #auto-scroll-menu.
+	// state class .suspended while editing suspends it; and an auto-scroll settings menu #auto-scroll-menu. Its third
+	// dialog, repeat-events.rml next to the document too, opens with edit.repeat.
 	class EventDisplay final : private Rml::EventListener
 	{
 	public:
@@ -118,7 +119,7 @@ namespace gnubase::ui
 		double cursor() const { return m_cursor; }
 		// The seconds that the event lanes show across.
 		double visibleLength() const;
-		// From the project start to the end of its last event, at least g_minimumProjectLength.
+		// From the project start to the end of the project setup's length or of its last event, if that is later.
 		double projectLength() const;
 
 		// Zoom (reference manual pp. 101-104). Every zoom is a step in the zoom history; scrolling isn't.
@@ -229,7 +230,10 @@ namespace gnubase::ui
 		// edit.nudgeRight, edit.nudgeStartLeft, edit.nudgeStartRight, edit.nudgeEndLeft, edit.nudgeEndRight,
 		// edit.moveStartToCursor, edit.moveEndToCursor, edit.selectAll, edit.selectNone, edit.invertSelection,
 		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd and edit.selectUnderCursor; and
-		// edit.locatorsToSelection sets the locators around the selected events.
+		// edit.locatorsToSelection sets the locators around the selected events. With the range selection tool,
+		// edit.delete deletes the range; edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence,
+		// edit.splitRange and edit.cropRange edit it, edit.paste and edit.pasteTime paste at its start (without a
+		// range at the project cursor) and edit.globalCopy copies the locator range on every track.
 		// edit.snap (snap on or off) and edit.snapPointToCursor (the selected audio events' snap points); and the
 		// tools: tool.objectSelection, tool.rangeSelection, tool.draw, tool.erase, tool.split, tool.glue, tool.mute,
 		// tool.zoom, tool.line, tool.play, tool.next, tool.previous and tool.combineSelectionTools (on or off).
@@ -416,6 +420,8 @@ namespace gnubase::ui
 		int m_dragLanes = 0;
 		double m_dragLaneY = 0.0; // where a drag of events started, in dp from the top of the first lane
 		double m_end = 0.0;       // of the last event
+		double m_length = g_defaultProjectLength; // the project setup's
+		std::string m_projectFormat;              // the project setup's time format the ruler last followed
 		bool m_loading = false;
 		bool m_stale = false;
 		int64_t m_cursorSample = 0;

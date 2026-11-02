@@ -129,11 +129,13 @@ namespace gnubase::engine
 		m_project = std::move(project);
 		m_file = autoSave ? std::string() : file;
 		m_history.clear();
+		m_clipboard.reset(); // it holds the old project's track and clip ids
 		context.emit("project.reset");
 		announceHistory(context);
 		publish();
 		m_savedRevision = autoSave ? 0 : m_revision; // publish() made m_revision at least 1
 		m_autoSavedRevision = m_revision;
+		m_openedRevision = m_revision;
 		m_lastSave = now();
 		if (!m_file.empty())
 			remember(m_file);

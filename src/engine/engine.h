@@ -193,8 +193,9 @@ namespace gnubase::engine
 
 		// Changes a user setting that holds a collection as part of a command, such as one port's entry of
 		// audio.portSettings: change gets the value that the settings file has now (settings::Store::modify), so what
-		// another GNUbase process saved meanwhile stays. If the value changed, applies the settings and emits
-		// settings.changed, as settings.set does. Returns the new value; throws like settings.set. Command thread only.
+		// another GNUbase process saved meanwhile stays. If the value changed, emits settings.changed and applies the
+		// settings, as settings.set does, which sends the ports of changed port settings (audio.portsChanged,
+		// midi.changed). Returns the new value; throws like settings.set. Command thread only.
 		Json modifySetting(
 			CommandContext& context, std::string_view key, const std::function<Json(const Json& value)>& change);
 
@@ -227,6 +228,8 @@ namespace gnubase::engine
 		std::shared_ptr<const Command> find(const std::string& name) const; // throws CommandError if unknown
 		Json runInside(const std::string& command, const Json& parameters, CommandContext& outer);
 		void applySettings(); // hands the user settings to the parts of the engine that use them
+		// After a command changed the user settings with these keys: applies them and emits the events that follow.
+		void settingsChanged(CommandContext& context, const std::vector<std::string>& keys);
 
 		const std::filesystem::path m_settingsDirectory;
 		mutable std::mutex m_mutex; // guards everything below except the thread

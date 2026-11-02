@@ -15,15 +15,15 @@ namespace gnubase::engine
 		bool operator==(const ProjectSettings& a, const ProjectSettings& b)
 		{
 			return std::tie(a.name, a.sampleRate, a.tempo, a.signatures, a.autoFades, a.panLaw, a.maxVolume, a.colors,
-					   a.busses, a.tracks, a.activeMarkerTrack) ==
+					   a.setup, a.busses, a.tracks, a.activeMarkerTrack) ==
 				std::tie(b.name, b.sampleRate, b.tempo, b.signatures, b.autoFades, b.panLaw, b.maxVolume, b.colors,
-					b.busses, b.tracks, b.activeMarkerTrack);
+					b.setup, b.busses, b.tracks, b.activeMarkerTrack);
 		}
 
 		ProjectSettings settings(const Project& project)
 		{
 			return {project.name, project.sampleRate, project.tempo, project.signatures, project.autoFades,
-				project.panLaw, project.maxVolume, project.colors, project.busses, project.tracks,
+				project.panLaw, project.maxVolume, project.colors, project.setup, project.busses, project.tracks,
 				project.activeMarkerTrack};
 		}
 
@@ -183,6 +183,7 @@ namespace gnubase::engine
 			project.panLaw = target.panLaw;
 			project.maxVolume = target.maxVolume;
 			project.colors = target.colors;
+			project.setup = target.setup;
 			project.busses = target.busses;
 			project.tracks = target.tracks;
 			project.activeMarkerTrack = target.activeMarkerTrack;

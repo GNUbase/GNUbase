@@ -2142,9 +2142,11 @@ namespace gnubase::engine
 		// What project.changed announces.
 		template <typename Settings> Json projectSettingsJson(const Settings& settings)
 		{
-			return {{"name", settings.name}, {"sampleRate", settings.sampleRate},
+			Json json = {{"name", settings.name}, {"sampleRate", settings.sampleRate},
 				{"autoFades", toJson(settings.autoFades)}, {"panLaw", panLawName(settings.panLaw)},
 				{"maxVolume", settings.maxVolume}, {"colors", toJson(settings.colors)}};
+			json.update(toJson(settings.setup));
+			return json;
 		}
 
 		Json setProject(Project& project, CommandContext& context)
@@ -2154,6 +2156,15 @@ namespace gnubase::engine
 			require(sampleRate > 0.0, "sampleRate must be positive");
 			const double maxVolume = parameters.value("maxVolume", project.maxVolume);
 			require(maxVolume == 6.0 || maxVolume == 12.0, "maxVolume must be 6 or 12 dB");
+			ProjectSetup setup;
+			try
+			{
+				setup = projectSetupFromJson(parameters, project.setup);
+			}
+			catch (const std::invalid_argument& problem)
+			{
+				throw CommandError(problem.what());
+			}
 			// The first tempo and signature, which the transport bar shows; tempo and signature tracks edit the rest.
 			std::vector<time::TempoPoint> tempo = project.tempo.points();
 			tempo.front().bpm = parameters.value("tempo", tempo.front().bpm);
@@ -2191,6 +2202,7 @@ namespace gnubase::engine
 					require(isColor(item.at("color").get<std::string>()), "colors must be #rrggbb");
 				project.colors = colorsFromJson(parameters.at("colors"));
 			}
+			project.setup = std::move(setup);
 			// Faders above a lower maximum come down to it.
 			for (auto& [id, channel] : project.channels)
 				if (channel.volume > maxVolume)
@@ -2277,6 +2289,7 @@ namespace gnubase::engine
 			{"automationPoint.remove", "Remove automation points"},
 			{"midiFile.import", "Import MIDI file"},
 			{"audioFile.import", "Import audio files"},
+			{"recording.add", "Record"},
 			{"clip.set", "Change clip"},
 			{"poolFolder.add", "Add pool folder"},
 			{"poolFolder.set", "Change pool folder"},
@@ -2341,7 +2354,8 @@ namespace gnubase::engine
 				if (current.name != previous.name || current.sampleRate != previous.sampleRate ||
 					current.tempo != previous.tempo || current.signatures != previous.signatures ||
 					!(current.autoFades == previous.autoFades) || current.panLaw != previous.panLaw ||
-					current.maxVolume != previous.maxVolume || !(current.colors == previous.colors))
+					current.maxVolume != previous.maxVolume || !(current.colors == previous.colors) ||
+					!(current.setup == previous.setup))
 					context.emit("project.changed", projectSettingsJson(current));
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
@@ -2729,16 +2743,22 @@ namespace gnubase::engine
 			});
 		add(engine,
 			{"project.set", 1,
-				"Changes the project's name, sample rate, stereo pan law or maximum volume. Linear positions keep "
-				"their "
-				"time at a new sample rate. panLaw is how much a mono channel panned to the center is turned down on "
+				"Changes the project's name, sample rate, stereo pan law or maximum volume, or the other settings of "
+				"the project setup. Linear positions keep their time at a new sample rate; media files keep theirs "
+				"(see media.conform). panLaw is how much a mono channel panned to the center is turned down on "
 				"each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same "
 				"wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the "
 				"faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it. tempo (1 to 999 BPM) "
 				"and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} are the project's first tempo and "
 				"time signature, as the transport bar sets them; later changes stay, and musical positions keep their "
 				"ticks. colors is the project's color set, which track and event colors are picked from: at least "
-				"one {name, color (#rrggbb)}, in order.",
+				"one {name, color (#rrggbb)}, in order. recordFileType (wav, the default, broadcastWav, aiff or "
+				"flac) and recordBitDepth (int16, int24, the default, int32, float32 or float64) are what recording "
+				"writes: AIFF only integers, FLAC 16 or 24 bit, 64 bit float only Wave. frameRate is the timecode's "
+				"(default 25). startTime (seconds, under 24 hours) is the time shown at the project start, length "
+				"(seconds, up to 24 hours, default 600) how long the project is, barOffset (-9999 to 9999) is added "
+				"to the bar numbers shown, and timeFormat is the primary time format of rulers and position "
+				"displays.",
 				objectSchema({{"name", stringSchema}, {"sampleRate", numberSchema},
 					{"panLaw", enumSchema(panLawNames())}, {"maxVolume", numberSchema}, {"tempo", numberSchema},
 					{"colors",
@@ -2747,7 +2767,13 @@ namespace gnubase::engine
 								objectSchema({{"name", stringSchema}, {"color", stringSchema}}, {"name", "color"})}}},
 					{"signature",
 						objectSchema({{"numerator", {{"type", "integer"}}}, {"denominator", {{"type", "integer"}}}},
-							{"numerator", "denominator"})}}),
+							{"numerator", "denominator"})},
+					{"recordFileType",
+						enumSchema(std::vector<std::string>(g_recordFileTypes.begin(), g_recordFileTypes.end()))},
+					{"recordBitDepth",
+						enumSchema(std::vector<std::string>(g_recordBitDepths.begin(), g_recordBitDepths.end()))},
+					{"frameRate", enumSchema(time::frameRateNames())}, {"startTime", numberSchema},
+					{"length", numberSchema}, {"barOffset", integerSchema}, {"timeFormat", timeFormats}}),
 				noResult, false},
 			setProject);
 		add(engine,
@@ -3169,6 +3195,7 @@ namespace gnubase::engine
 		midi::registerFunctionCommands(*this, engine);
 		registerMidiFileCommands(engine);
 		registerAudioFileCommands(engine, jobs);
+		registerRecordingCommands(engine);
 		registerPoolCommands(engine);
 		registerFadeCommands(engine);
 		registerEventEditCommands(engine);
@@ -3329,12 +3356,17 @@ namespace gnubase::engine
 				"A number that grows with every change of the project: every edit, undo and redo, and loading or "
 				"starting a project. project.load with revision loads only if it hasn't changed. modified says "
 				"whether the project changed since it was last saved, loaded or started; undoing back to the saved "
-				"state still counts as a change.",
+				"state still counts as a change. project identifies the open project: the revision at which it was "
+				"loaded or started, so it changes only when another project is opened.",
 				objectSchema(Json::object()),
-				objectSchema({{"revision", integerSchema}, {"modified", booleanSchema}}, {"revision", "modified"}),
+				objectSchema({{"revision", integerSchema}, {"modified", booleanSchema}, {"project", integerSchema}},
+					{"revision", "modified", "project"}),
 				true},
 			[this](CommandContext&)
-			{ return Json{{"revision", m_revision}, {"modified", m_revision != m_savedRevision}}; });
+			{
+				return Json{{"revision", m_revision}, {"modified", m_revision != m_savedRevision},
+					{"project", m_openedRevision}};
+			});
 
 		engine.registerCommand(
 			{"project.backup", 1,

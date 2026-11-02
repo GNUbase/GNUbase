@@ -47,6 +47,12 @@ namespace gnubase::engine
 	Json toJson(const std::vector<ProjectColor>& colors);
 	std::vector<ProjectColor> colorsFromJson(const Json& json);
 
+	// The project setup's settings, which project.get has at its top level. projectSetupFromJson changes those the
+	// JSON has, and throws std::invalid_argument for unknown names and values that don't go together (see
+	// projectSetupProblem).
+	Json toJson(const ProjectSetup& setup);
+	ProjectSetup projectSetupFromJson(const Json& json, const ProjectSetup& fallback = {});
+
 	const char* markerTypeName(MarkerType type);
 	std::optional<MarkerType> markerTypeFromName(const std::string& name);
 
