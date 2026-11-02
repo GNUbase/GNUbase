@@ -282,3 +282,40 @@ TEST_CASE("elements keep the keys they use, and a modal dialog keeps every key",
 	press(app, "F5");
 	CHECK(recorder.take() == Strings{"test.anywhere"});
 }
+
+TEST_CASE("a command that runs while its key is held ends when the key goes up", "[ui]")
+{
+	test::UiApp app;
+	app.show("keycommands.rml");
+	ui::KeyCommands& keys = app.keys();
+	int pressed = 0;
+	int released = 0;
+	keys.add({"test.hold", "Runs while held.", [&pressed](ui::Window&, Rml::Element*) { ++pressed; },
+		[&released] { ++released; }});
+	keys.bind({"Shift+F5", "test.hold"});
+
+	// The key goes up after Shift: it ends the command all the same, once.
+	app.ui().key(std::nullopt, "Shift+F5", ui::KeyAction::Down);
+	CHECK(pressed == 1);
+	CHECK(released == 0);
+	app.ui().key(std::nullopt, "F6", ui::KeyAction::Up);
+	CHECK(released == 0);
+	app.ui().key(std::nullopt, "F5", ui::KeyAction::Up);
+	CHECK(released == 1);
+	app.ui().key(std::nullopt, "F5", ui::KeyAction::Up);
+	CHECK(released == 1);
+
+	// Pressed and released at once, and ended when the window loses the keyboard focus.
+	app.ui().key(std::nullopt, "Shift+F5");
+	CHECK(pressed == 2);
+	CHECK(released == 2);
+	app.ui().key(std::nullopt, "Shift+F5", ui::KeyAction::Down);
+	app.shell().keyReleased(app.main(), ui::KeyPress{Rml::Input::KI_UNKNOWN, 0});
+	CHECK(released == 3);
+
+	// A button that runs it ends it the same way.
+	keys.run("test.hold", Json::object(), app.main(), nullptr);
+	keys.release("test.hold");
+	CHECK(pressed == 4);
+	CHECK(released == 4);
+}

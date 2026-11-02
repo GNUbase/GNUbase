@@ -569,4 +569,29 @@
 	{
 		color: #b7bbc0;
 	}
+	.time-display.size-0
+	{
+		font-size: 32dp;
+		line-height: 64dp;
+	}
+	.time-display.size-1
+	{
+		font-size: 48dp;
+		line-height: 96dp;
+	}
+	.time-display.size-2
+	{
+		font-size: 64dp;
+		line-height: 128dp;
+	}
+	.time-display.size-3
+	{
+		font-size: 96dp;
+		line-height: 192dp;
+	}
+	.time-display.size-4
+	{
+		font-size: 128dp;
+		line-height: 256dp;
+	}
 }

@@ -956,6 +956,15 @@ namespace gnubase::ui
 					id = attribute(*tab, "panel");
 				later([this, id] { setFloating(id, true); });
 			}
+			else if (const Rml::Element* all = closestWith(target, "setup-all"); all != nullptr && !window.empty())
+			{
+				later(
+					[this, window = std::move(window), set = attribute(*all, "setup-all")]
+					{
+						for (const std::string& id : sections(window, set))
+							setSectionHidden(window, set, id, false);
+					});
+			}
 			else if (const Rml::Element* button = closestWith(target, "id");
 				button != nullptr && button->GetId() == "dock")
 			{

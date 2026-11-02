@@ -37,6 +37,15 @@ namespace gnubase::ui
 		Middle,
 	};
 
+	// What key does with a key: press and release it, or only press it (down) or release it (up), e.g. to hold
+	// Forward, which winds while its key is down.
+	enum class KeyAction : uint8_t
+	{
+		Press,
+		Down,
+		Up,
+	};
+
 	// Reads windows, documents and elements as JSON and injects input into a window's RmlUi context, the way the
 	// window system delivers the user's. Coordinates and boxes are in the window's pixels, as in its screenshots. A
 	// window that isn't given is the main window. Call every function on the UI thread (onUiThread runs them from
@@ -83,9 +92,10 @@ namespace gnubase::ui
 			std::optional<WindowId> window, const Target& target, const std::vector<std::filesystem::path>& files);
 
 		// Presses and releases a key with modifiers, written like "Enter", "Ctrl+S", "Mod+Z" or "Shift+Alt+F5" (keys
-		// and modifiers as ui::parseKeys reads them). A key that no element uses runs its key command
-		// (ui/keycommands.h). Returns {"focus": ...}, the element with the keyboard focus, or null.
-		engine::Json key(std::optional<WindowId> window, const std::string& keys);
+		// and modifiers as ui::parseKeys reads them), or only presses or releases it. A key that no element uses runs
+		// its key command (ui/keycommands.h); a command that runs while its key is held stops when the key goes up,
+		// whatever the modifiers then. Returns {"focus": ...}, the element with the keyboard focus, or null.
+		engine::Json key(std::optional<WindowId> window, const std::string& keys, KeyAction action = KeyAction::Press);
 
 		// Types the UTF-8 text into the element with the focus. Returns the focus, as key does.
 		engine::Json text(std::optional<WindowId> window, const std::string& text);

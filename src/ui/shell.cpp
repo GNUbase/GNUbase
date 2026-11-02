@@ -294,6 +294,8 @@ namespace gnubase::ui
 			window->m_renderRequested = true;
 			if (event.key)
 				unusedKey(*window, *event.key);
+			if (event.keyUp)
+				keyReleased(*window, *event.keyUp);
 			break;
 		case WindowEventKind::FilesDropped:
 			dropFiles(*window, event.position, event.files);
@@ -373,6 +375,12 @@ namespace gnubase::ui
 	{
 		if (m_unusedKey)
 			m_unusedKey(window, keys);
+	}
+
+	void Shell::keyReleased(Window& window, const KeyPress& keys)
+	{
+		if (m_keyReleased)
+			m_keyReleased(window, keys);
 	}
 
 	void Shell::every(std::chrono::milliseconds interval, std::function<void()> task)

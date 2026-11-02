@@ -223,6 +223,24 @@ namespace gnubase::ui
 				edit(edgeName == nullptr ? "event.move" : "event.resize", std::move(parameters));
 			};
 		};
+		// Nudge Cursor Left and Right: a grid step from the cursor (reference manual p. 300), never before the start.
+		const auto nudgeCursor = [this](int direction)
+		{
+			return [this, direction]
+			{
+				const engine::SnapGrid grid = snapGrid();
+				const time::Position step = engine::gridStep(m_snap.grid, grid, m_cursorSample);
+				int64_t to = m_cursorSample + (direction * step.value);
+				if (step.base == time::TimeBase::Musical)
+					to = grid.tempo.toSamples(
+						std::max<time::Ticks>(
+							0, grid.tempo.toTicks(m_cursorSample, grid.sampleRate) + (direction * step.value)),
+						grid.sampleRate);
+				// The next nudge goes on from here, even before transport.changed says so.
+				setCursor(std::max<int64_t>(0, to));
+				m_binding.send("transport.locate", {{"position", m_cursorSample}});
+			};
+		};
 		const std::map<std::string, std::function<void()>> actions = {
 			{"edit.delete", onSelection("event.remove", Json::object())},
 			{"edit.mute", onSelection("event.set", {{"mute", true}})},
@@ -241,6 +259,8 @@ namespace gnubase::ui
 				}},
 			{"edit.fillLoop", onSelection("event.fillLoop", Json::object())},
 			{"edit.toRealCopy", onSelection("event.toRealCopy", Json::object())},
+			{"locate.nudgeCursorLeft", nudgeCursor(-1)},
+			{"locate.nudgeCursorRight", nudgeCursor(1)},
 			{"edit.nudgeLeft", nudge(nullptr, -1)},
 			{"edit.nudgeRight", nudge(nullptr, 1)},
 			{"edit.nudgeStartLeft", nudge("start", -1)},

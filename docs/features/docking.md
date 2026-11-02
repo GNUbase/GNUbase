@@ -19,6 +19,7 @@ strips above and below a row of zones, where the main zone takes what the others
 | `toggle="left"` | A toggle button or menu item that shows or hides that zone or strip. |
 | `sections="channel"` | A container of the set of sections `channel`, such as each of the mixer's channels. Its children with `section="eq"` are the sections, with a `label` for the setup pane and `default="hidden"` to hide one by default. |
 | `setup="channel"` | A setup pane's list of that set's sections, which the docking system fills. |
+| `setup-all="channel"` | A button that shows every section of that set (Show All). |
 
 The project window (`resources/ui/project.rml`) has the menu bar ([main-menu.md](main-menu.md)), the toolbar, the info
 line, the left zone, the main zone with the event display, the lower and right zones, the status line and the transport
@@ -61,7 +62,8 @@ Layout pane does (pp. 439–440: the channel overview, the meter bridge, the lef
 sections such as routing, inserts, EQ, sends and the fader). The pane is a `<menu class="setup-pane">` that a button
 opens; its items are toggle buttons, so it stays open while they are clicked. Toggle buttons with a `toggle` attribute
 show and hide zones and strips as elsewhere, and an element with `setup="channel"` gets a toggle button per section of
-the set `channel` (`setup-section="eq"`, with the section's label), in the user's order.
+the set `channel` (`setup-section="eq"`, with the section's label), in the user's order. A button with
+`setup-all="channel"` shows them all.
 
 - **Show and hide.** A section's button shows or hides that section in every container of its set; hidden sections
   get the state class `.hidden`.
@@ -70,7 +72,9 @@ the set `channel` (`setup-section="eq"`, with the section's label), in the user'
 - **Defaults.** The set's first container in the document says which sections there are, their default order and which
   are hidden by default; the other containers are expected to have the same sections.
 
-The sections of the mixer come with the mixer window; `tests/data/ui/sections.rml` is a test window with sections.
+The transport bar and the transport panel (a docking window `transportPanel` of its own) have the sections of the
+set `transport`, with a setup pane as their context menu ([transport-bar.md](transport-bar.md)). The sections of the
+mixer come with the mixer window; `tests/data/ui/sections.rml` is a test window with sections.
 
 ## Splitters
 

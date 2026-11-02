@@ -473,3 +473,292 @@ TEST_CASE("the transport panel and the time display window", "[ui]")
 	app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
 	CHECK(app.appUi().timeDisplay() == nullptr);
 }
+
+namespace
+{
+	// Steps the shell for a while, e.g. for what the UI sends to arrive.
+	void settle(test::UiApp& app, std::chrono::milliseconds time = std::chrono::milliseconds(300))
+	{
+		app.waitUntil([] { return false; }, time);
+	}
+
+	int64_t position(test::UiApp& app)
+	{
+		return transport(app).at("position").get<int64_t>();
+	}
+
+	// Waits until the position stays where it is, and returns it.
+	int64_t stopped(test::UiApp& app)
+	{
+		settle(app);
+		const int64_t at = position(app);
+		settle(app);
+		CHECK(position(app) == at);
+		return at;
+	}
+
+	size_t undoSteps(test::UiApp& app)
+	{
+		return app.call("history.get").at("steps").size();
+	}
+
+	double tempo(test::UiApp& app)
+	{
+		return app.call("project.get").at("tempo").at(0).at("bpm").get<double>();
+	}
+
+	bool hasClass(test::UiApp& app, const std::string& selector, const std::string& name,
+		std::optional<ui::WindowId> window = std::nullopt)
+	{
+		const Json names = element(app, selector, window).value("classes", Json::array());
+		return std::find(names.begin(), names.end(), name) != names.end();
+	}
+
+	bool visible(test::UiApp& app, const std::string& selector, std::optional<ui::WindowId> window = std::nullopt)
+	{
+		return element(app, selector, window).at("visible").get<bool>();
+	}
+
+	// Presses or releases the left mouse button where the mouse is in the main window.
+	void mouseButton(test::UiApp& app, bool down)
+	{
+		Rml::Context& context = app.main().context();
+		if (down)
+			context.ProcessMouseButtonDown(0, 0);
+		else
+			context.ProcessMouseButtonUp(0, 0);
+		app.shell().step(std::chrono::milliseconds(0));
+	}
+}
+
+TEST_CASE("Rewind and Forward wind while their key or button is held", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+
+	// Held, Forward steps a second and then winds on until it is released.
+	app.ui().key(std::nullopt, "Num+", ui::KeyAction::Down);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") > 2 * 48000; }));
+	app.ui().key(std::nullopt, "Num+", ui::KeyAction::Up);
+	const int64_t wound = stopped(app);
+
+	// Rewind winds back.
+	app.ui().key(std::nullopt, "Num-", ui::KeyAction::Down);
+	REQUIRE(waitFor(app, [wound](const Json& state) { return state.at("position") < wound - 48000; }));
+	app.ui().key(std::nullopt, "Num-", ui::KeyAction::Up);
+	stopped(app);
+
+	// Fast Forward winds faster; it stops when its key goes up, also after Shift.
+	app.call("transport.locate", {{"position", 0}});
+	app.ui().key(std::nullopt, "Shift+Num+", ui::KeyAction::Down);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") > 8 * 48000; }));
+	app.ui().key(std::nullopt, "Num+", ui::KeyAction::Up);
+	stopped(app);
+
+	// The buttons wind while the mouse button is held on them.
+	app.call("transport.locate", {{"position", 0}});
+	app.ui().move(std::nullopt, at("#forward"));
+	mouseButton(app, true);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") > 2 * 48000; }));
+	mouseButton(app, false);
+	const int64_t forward = stopped(app);
+	app.ui().move(std::nullopt, at("#rewind"));
+	mouseButton(app, true);
+	REQUIRE(waitFor(app, [forward](const Json& state) { return state.at("position") < forward - 48000; }));
+	mouseButton(app, false);
+	stopped(app);
+
+	// A key pressed and released at once steps a second.
+	app.call("transport.locate", {{"position", 0}});
+	app.ui().key(std::nullopt, "Num+");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000; }));
+	CHECK(stopped(app) == 48000);
+}
+
+TEST_CASE("Nudge Cursor Left and Right move the project cursor by a grid step", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+
+	// The grid is on bars by default: 4 quarters at 120 BPM, 96000 samples.
+	app.ui().key(std::nullopt, "Mod+Num+");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 96000; }));
+	app.ui().key(std::nullopt, "Mod+Num+");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 192000; }));
+	app.ui().key(std::nullopt, "Mod+Num-");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 96000; }));
+
+	// On beats, by a beat; never before the project start.
+	app.call("snap.set", {{"grid", "beat"}});
+	settle(app);
+	app.ui().key(std::nullopt, "Mod+Num+");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 120000; }));
+	app.call("transport.locate", {{"position", 1000}});
+	settle(app);
+	app.ui().key(std::nullopt, "Mod+Num-");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 0; }));
+	app.ui().key(std::nullopt, "Mod+Num-");
+	CHECK(stopped(app) == 0);
+
+	// A linear grid: seconds.
+	app.call("snap.set", {{"grid", "second"}});
+	settle(app);
+	app.ui().key(std::nullopt, "Mod+Num+");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000; }));
+}
+
+TEST_CASE("the mouse wheel changes a display's value", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.call("transport.set", {{"left", 48000}, {"right", 96000}});
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#left-locator") == "1.3.1.0"; }));
+
+	// Up for later, by a beat in bars and beats.
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -1);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 24000; }));
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -2);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 72000; }));
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, 1);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000; }));
+
+	// By a frame in timecode (25 fps), a second in seconds; never before the project start.
+	app.ui().wheel(std::nullopt, at("#secondary-time"), 0, -1);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 49920; }));
+	app.call("settings.set",
+		{{"key", "ui.timeFormats"},
+			{"value", {{"primary", "seconds"}, {"secondary", "timecode"}, {"timeDisplay", "barsBeats"}}}});
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#left-locator") == "0:00:01.000"; }));
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, 3);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 0; }));
+
+	// The locators, and the range's length, which moves the right locator.
+	app.ui().wheel(std::nullopt, at("#left-locator"), 0, 1);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("left") == 0; }));
+	app.ui().wheel(std::nullopt, at("#right-locator"), 0, -1);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("right") == 144000; }));
+	app.ui().wheel(std::nullopt, at("#locator-range"), 0, 1);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("right") == 96000; }));
+}
+
+TEST_CASE("a drag or wheel gesture on the tempo field is one undo step", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "120"; }));
+	const size_t before = undoSteps(app);
+
+	// A drag up raises the tempo in many steps of the field, and sets it once, at its end.
+	const Json box = element(app, "#tempo").at("box");
+	const int x = static_cast<int>(box.at("x").get<double>() + (box.at("width").get<double>() / 2));
+	const int y = static_cast<int>(box.at("y").get<double>() + (box.at("height").get<double>() / 2));
+	app.ui().drag(std::nullopt, at("#tempo"), {std::string(), 0, ui::Point{x, y - 40}});
+	REQUIRE(app.waitUntil([&app] { return tempo(app) > 121.0; }));
+	settle(app);
+	CHECK(undoSteps(app) == before + 1);
+	const double dragged = tempo(app);
+
+	// Turns of the wheel in a row are one step too.
+	for (int turn = 0; turn < 3; ++turn)
+		app.ui().wheel(std::nullopt, at("#tempo"), 0, -1);
+	REQUIRE(app.waitUntil([&app, dragged] { return tempo(app) == dragged + 3.0; }));
+	settle(app);
+	CHECK(undoSteps(app) == before + 2);
+
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&app, dragged] { return tempo(app) == dragged; }));
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "120"; }));
+}
+
+TEST_CASE("the time display window shows beat counts only and changes its size", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
+	ui::Window* display = app.appUi().timeDisplay();
+	REQUIRE(display != nullptr);
+	const ui::WindowId window = display->id();
+	app.call("transport.locate", {{"position", 72000}}); // 1.4.1.0
+	REQUIRE(app.waitUntil([&app, window] { return shows(app, "#time-display", window) == "1.4.1.0"; }));
+	CHECK(hasClass(app, "#time-display", "size-1", window));
+	const ui::Size normal = app.shell().bounds(window).size();
+
+	// Show Beat Count Only: the beat in its bar.
+	app.ui().click(window, at("#time-display"), ui::MouseButton::Right, 1, {});
+	click(app, "#beat-count-only", window);
+	REQUIRE(app.waitUntil([&app, window] { return shows(app, "#time-display", window) == "4"; }));
+	CHECK(element(app, "#beat-count-only", window).at("attributes").contains("checked"));
+	CHECK(app.call("settings.get", {{"key", "ui.timeDisplay"}}).at("value").at("beatCountOnly") == true);
+	app.call("transport.locate", {{"position", 96000}});
+	REQUIRE(app.waitUntil([&app, window] { return shows(app, "#time-display", window) == "1"; }));
+
+	// Increase and Decrease Window Size: the window and its digits, whose sizes the theme has.
+	app.ui().click(window, at("#time-display"), ui::MouseButton::Right, 1, {});
+	click(app, "#increase-size", window);
+	REQUIRE(app.waitUntil([&app, window] { return hasClass(app, "#time-display", "size-2", window); }));
+	const ui::Size larger = app.shell().bounds(window).size();
+	CHECK(larger.width > normal.width);
+	CHECK(larger.height > normal.height);
+	CHECK(app.call("settings.get", {{"key", "ui.timeDisplay"}}).at("value").at("size") == 2);
+	for (int smaller = 0; smaller < 4; ++smaller)
+		app.keys().run("timeDisplay.decreaseSize", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app, window] { return hasClass(app, "#time-display", "size-0", window); }));
+	CHECK(app.shell().bounds(window).size().width < normal.width);
+	CHECK(app.call("settings.get", {{"key", "ui.timeDisplay"}}).at("value").at("size") == 0);
+
+	// Both stay for the window opened again.
+	app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
+	app.keys().run("window.timeDisplay", Json::object(), app.main(), nullptr);
+	display = app.appUi().timeDisplay();
+	REQUIRE(display != nullptr);
+	const ui::WindowId again = display->id();
+	REQUIRE(app.waitUntil([&app, again] { return shows(app, "#time-display", again) == "1"; }));
+	REQUIRE(app.waitUntil([&app, again] { return hasClass(app, "#time-display", "size-0", again); }));
+	CHECK(app.shell().bounds(again).size().width < normal.width);
+}
+
+TEST_CASE("setup panes show and hide the transport bar's and the transport panel's sections", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	CHECK(visible(app, "#transport-bar [section=locators]"));
+
+	// A right click on the bar opens its setup pane, which stays open while its buttons hide sections.
+	app.ui().click(std::nullopt, at("#transport-bar [section=click]"), ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#transport-setup"));
+	click(app, "#transport-setup [setup-section=locators]");
+	click(app, "#transport-setup [setup-section=punchPoints]");
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(!visible(app, "#transport-bar [section=locators]"));
+	CHECK(!visible(app, "#transport-bar [section=punchPoints]"));
+	CHECK(visible(app, "#transport-bar [section=transportControls]"));
+	const Json layout = app.call("settings.get", {{"key", "ui.layout"}}).at("value");
+	CHECK(layout.at("windows").at("project").at("sections").at("transport").at("hidden") ==
+		Json::array({"locators", "punchPoints"}));
+
+	// The transport panel has sections of its own.
+	app.ui().key(std::nullopt, "F2");
+	REQUIRE(app.appUi().transportPanel() != nullptr);
+	const ui::WindowId panel = app.appUi().transportPanel()->id();
+	CHECK(visible(app, "[section=locators]", panel));
+	app.ui().click(panel, at("[section=click]"), ui::MouseButton::Right, 1, {});
+	click(app, "#transport-setup [setup-section=click]", panel);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(!visible(app, "[section=click]", panel));
+	CHECK(visible(app, "#transport-bar [section=click]"));
+
+	// Show All shows every section of the bar again.
+	app.ui().click(std::nullopt, at("#transport-bar [section=click]"), ui::MouseButton::Right, 1, {});
+	click(app, "#transport-setup [setup-all]");
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(visible(app, "#transport-bar [section=locators]"));
+	CHECK(visible(app, "#transport-bar [section=punchPoints]"));
+	CHECK(!visible(app, "[section=click]", panel));
+
+	// The panel opened again keeps its own.
+	app.ui().key(std::nullopt, "F2");
+	app.ui().key(std::nullopt, "F2");
+	REQUIRE(app.appUi().transportPanel() != nullptr);
+	CHECK(!visible(app, "[section=click]", app.appUi().transportPanel()->id()));
+}

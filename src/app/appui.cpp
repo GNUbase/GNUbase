@@ -59,7 +59,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 51> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 53> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -68,6 +68,9 @@ namespace gnubase::app
 			{"zoom.undo", "Undoes the project window's last zoom.", nullptr},
 			{"zoom.redo", "Redoes the project window's last undone zoom.", nullptr},
 			{"view.autoScroll", "Switches the project window's auto-scroll on or off.", "F"},
+			// Nudge Cursor Left and Right (reference manual p. 300), bound everywhere with the transport's keys.
+			{"locate.nudgeCursorLeft", "Moves the project cursor left by a grid step.", nullptr},
+			{"locate.nudgeCursorRight", "Moves the project cursor right by a grid step.", nullptr},
 			// Editing parts and events (docs/features/parts-and-events.md); Backspace deletes too.
 			{"edit.delete", "Deletes the selected events.", "Delete"},
 			{"edit.mute", "Mutes the selected events.", "Shift+M"},
@@ -137,7 +140,9 @@ namespace gnubase::app
 		}};
 
 		constexpr ui::Size g_transportPanelSize{1100, 48};
-		constexpr ui::Size g_timeDisplaySize{480, 120};
+		// The time display window at each of its sizes (ui.timeDisplay); the theme sizes its digits to fit.
+		constexpr std::array<ui::Size, 5> g_timeDisplaySizes{
+			{{320, 80}, {480, 120}, {640, 160}, {960, 240}, {1280, 320}}};
 
 		std::string readText(const std::filesystem::path& file)
 		{
@@ -206,6 +211,7 @@ namespace gnubase::app
 				return follows;
 			});
 		m_shell.onUnusedKey([this](ui::Window& window, const ui::KeyPress& keys) { m_keys.press(window, keys); });
+		m_shell.onKeyReleased([this](ui::Window&, const ui::KeyPress& keys) { m_keys.released(keys); });
 		m_keys.add({"window.markers", "Opens or closes the markers window.",
 			// Later in the step: the key may be the markers window's own, which closing it would destroy.
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleMarkers(); }); }});
@@ -355,6 +361,48 @@ namespace gnubase::app
 					m_transportPanel.controls->exchangeFormats();
 			}});
 		m_keys.bind({".", "time.exchangeFormats"});
+		m_keys.bind({"Mod+Num-", "locate.nudgeCursorLeft"});
+		m_keys.bind({"Mod+Num+", "locate.nudgeCursorRight"});
+		// Rewind and Forward, and their fast variants, wind while held (reference manual pp. 297, 300, 1571).
+		struct Wind
+		{
+			const char* id;
+			const char* description;
+			double step;
+			const char* keys;
+		};
+		for (const Wind& wind :
+			{Wind{"wind.rewind", "Moves the project cursor back, winding while held.", -1.0, "Num-"},
+				Wind{"wind.forward", "Moves the project cursor on, winding while held.", 1.0, "Num+"},
+				Wind{
+					"wind.fastRewind", "Moves the project cursor back faster, winding while held.", -4.0, "Shift+Num-"},
+				Wind{"wind.fastForward", "Moves the project cursor on faster, winding while held.", 4.0, "Shift+Num+"}})
+		{
+			m_keys.add({wind.id, wind.description, [this, step = wind.step](ui::Window&, Rml::Element*)
+				{ m_winding.start(step); }, [this] { m_winding.stop(); }});
+			m_keys.bind({wind.keys, wind.id});
+		}
+		m_shell.eachStep([this] { return m_winding.step(); });
+		// The time display window's context menu (reference manual p. 313).
+		m_keys.add({"timeDisplay.beatCountOnly",
+			"Shows only the beat in its bar in the time display window, or the whole position again.",
+			[this](ui::Window&, Rml::Element*)
+			{
+				if (timeDisplay() != nullptr && m_timeDisplay.controls)
+					m_timeDisplay.controls->toggleBeatCountOnly();
+			}});
+		for (const int steps : {1, -1})
+			m_keys.add({steps > 0 ? "timeDisplay.increaseSize" : "timeDisplay.decreaseSize",
+				steps > 0 ? "Makes the time display window and its digits larger."
+						  : "Makes the time display window and its digits smaller.",
+				[this, steps](ui::Window&, Rml::Element*)
+				{
+					if (timeDisplay() != nullptr && m_timeDisplay.controls)
+						m_timeDisplay.controls->resize(steps);
+				}});
+		for (const char* command :
+			{"timeDisplay.beatCountOnly", "timeDisplay.increaseSize", "timeDisplay.decreaseSize"})
+			m_keys.enableWhen(command, [this](ui::Window&, Rml::Element*) { return timeDisplay() != nullptr; });
 		// Go to Previous Marker/Zero and Next Marker/Project End: to the project start or end without a marker.
 		for (const bool next : {false, true})
 			m_keys.add({next ? "locate.nextMarker" : "locate.previousMarker",
@@ -382,12 +430,14 @@ namespace gnubase::app
 		if (fill)
 			root.SetInnerRML(readText(m_resources / "ui" / "transport.rml"));
 		const ui::WindowId id = window.id();
-		return std::make_unique<ui::TransportControls>(m_engine, m_binding, root,
+		return std::make_unique<ui::TransportControls>(
+			m_engine, m_binding, root,
 			[this, id](const std::string& command, const engine::Json& parameters)
 			{
 				if (ui::Window* found = m_shell.find(id))
 					m_keys.run(command, parameters, *found, nullptr);
-			});
+			},
+			[this](const std::string& command) { m_keys.release(command); });
 	}
 
 	void AppUi::toggle(TransportWindow& shown, const char* file, const char* title, ui::Size size)
@@ -417,8 +467,23 @@ namespace gnubase::app
 		}
 		document->Show();
 		shown.window = window.id();
-		// The transport panel's #transport gets the controls; the time display window has its own.
+		// The transport panel's #transport gets the controls, a docking window for its sections; the time display
+		// window has its own, at the size it was given.
 		shown.controls = transportControls(*root, window, root == controls);
+		if (root == controls)
+			m_docking.attach("transportPanel", *document);
+		else
+			shown.controls->onSize(
+				[this, id = window.id()](int size)
+				{
+					ui::Rect bounds = m_shell.bounds(id);
+					const ui::Size sized = g_timeDisplaySizes.at(static_cast<size_t>(size));
+					if (bounds.size() == sized)
+						return;
+					bounds.width = sized.width;
+					bounds.height = sized.height;
+					m_shell.setBounds(id, bounds);
+				});
 	}
 
 	void AppUi::toggleTransportPanel()
@@ -428,7 +493,7 @@ namespace gnubase::app
 
 	void AppUi::toggleTimeDisplay()
 	{
-		toggle(m_timeDisplay, "time-display.rml", "Time Display", g_timeDisplaySize);
+		toggle(m_timeDisplay, "time-display.rml", "Time Display", g_timeDisplaySizes.at(1));
 	}
 
 	void AppUi::enter(const std::string& field)
@@ -454,11 +519,13 @@ namespace gnubase::app
 		}
 		document->Show();
 		m_markerLines.reset();
+		// The transport bar's sections are there when the docking system reads them.
+		m_transportBar.reset();
+		if (Rml::Element* bar = document->GetElementById("transport-bar"))
+			m_transportBar = transportControls(*bar, m_main, true);
 		m_docking.attach("project", *document);
 		m_trackList.reset();
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
-		if (Rml::Element* bar = document->GetElementById("transport-bar"))
-			m_transportBar = transportControls(*bar, m_main, true);
 		m_statusLine = std::make_unique<ui::StatusLine>(m_binding, *document);
 		if (Rml::Element* tracks = document->GetElementById("track-list"))
 			m_trackList = std::make_unique<ui::TrackList>(*m_eventDisplay, m_binding, *tracks);

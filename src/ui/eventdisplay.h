@@ -223,7 +223,8 @@ namespace gnubase::ui
 			std::optional<int64_t> sample = std::nullopt, bool clipsOnly = false);
 
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
-		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); and the edits of parts and events:
+		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); locate.nudgeCursorLeft and
+		// locate.nudgeCursorRight move the project cursor by a grid step; and the edits of parts and events:
 		// edit.delete, edit.mute, edit.unmute, edit.lock, edit.unlock, edit.splitAtCursor, edit.splitLoop, edit.glue,
 		// edit.duplicate, edit.repeat (opens the Repeat Events dialog), edit.fillLoop, edit.toRealCopy, edit.nudgeLeft,
 		// edit.nudgeRight, edit.nudgeStartLeft, edit.nudgeStartRight, edit.nudgeEndLeft, edit.nudgeEndRight,

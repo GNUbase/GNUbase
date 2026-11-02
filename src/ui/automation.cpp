@@ -351,14 +351,18 @@ namespace gnubase::ui
 		return result;
 	}
 
-	Json Automation::key(std::optional<WindowId> window, const std::string& keys)
+	Json Automation::key(std::optional<WindowId> window, const std::string& keys, KeyAction action)
 	{
 		const KeyPress pressed = parseKeys(keys);
 		Window& shown = resolve(window);
 		Rml::Context& context = updated(shown);
-		if (context.ProcessKeyDown(pressed.key, pressed.modifiers))
+		if (action != KeyAction::Up && context.ProcessKeyDown(pressed.key, pressed.modifiers))
 			m_shell.unusedKey(shown, pressed);
-		context.ProcessKeyUp(pressed.key, pressed.modifiers);
+		if (action != KeyAction::Down)
+		{
+			context.ProcessKeyUp(pressed.key, pressed.modifiers);
+			m_shell.keyReleased(shown, pressed);
+		}
 		shown.requestRender();
 		return {{"focus", nodeOrNull(context.GetFocusElement())}};
 	}

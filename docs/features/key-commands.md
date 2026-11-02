@@ -43,6 +43,10 @@ it up in `app::AppUi`.
 - **What doesn't run.** Nothing runs while a modal document has the focus, so typing into a dialog never edits the
   project. Lock keys (Caps Lock, Num Lock, Scroll Lock) don't change what a key does. A key held down runs its command
   once; the OS's key repeats don't run it again, so holding Space doesn't start and stop playback over and over.
+- **Held keys.** A UI command with a `release` runs while its key is held, such as Forward, which winds: the key going
+  up ends it (`KeyCommands::released`), whatever modifiers are still down, and so does the window losing the keyboard
+  focus. `ui::Automation::key` and MCP's `ui_key` press and release a key, or only press (`down`) or release
+  (`up`) it.
 
 ## Default key map
 
@@ -58,7 +62,6 @@ The reference's defaults for the commands GNUbase has so far (`ui::defaultKeyMap
 | Mod+Num1, Mod+Num2 | `transport.set` left, right to the cursor | Set Left/Right Locator to Project Cursor Position |
 | Num/, Num* | `transport.toggle` cycle, record | Cycle, Record |
 | C, I, O | `transport.toggle` metronome, punchIn, punchOut | Activate Metronome, Punch In, Punch Out |
-| Num-, Num+ (Shift for faster) | `transport.locate` by seconds | Rewind, Forward (Fast Rewind, Fast Forward) |
 | Shift+N, Shift+B | `marker.locateNext`, `marker.locatePrevious` | Locate Next/Previous Marker |
 | Shift+1 to Shift+9, Num3 to Num9 | `marker.locate` with the number | To Marker 1 to 9 |
 | Mod+1 to Mod+9, Mod+Num3 to Mod+Num9 | `marker.put` with the number | Set Marker 1 to 9 |

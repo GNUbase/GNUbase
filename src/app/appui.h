@@ -147,6 +147,7 @@ namespace gnubase::app
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;
+		ui::Winding m_winding{m_binding};             // Rewind and Forward held
 		std::unique_ptr<ui::StatusLine> m_statusLine; // too
 		std::unique_ptr<ui::TrackList> m_trackList;   // and before the display
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.

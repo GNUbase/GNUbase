@@ -21,7 +21,15 @@ namespace gnubase::ui
 		using engine::Json;
 
 		constexpr const char* g_formatsKey = "ui.timeFormats";
-		constexpr std::array<Rml::EventId, 2> g_events{Rml::EventId::Click, Rml::EventId::Change};
+		constexpr const char* g_timeDisplayKey = "ui.timeDisplay";
+		constexpr std::array<Rml::EventId, 6> g_events{Rml::EventId::Click, Rml::EventId::Change,
+			Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Dragstart, Rml::EventId::Dragend};
+		constexpr int g_largestSize = 4;
+		// Wheel turns on the tempo field that follow each other within this are one gesture.
+		constexpr std::chrono::milliseconds g_wheelPause{400};
+		// Rewind and Forward held: how long they wait before they wind, and how many steps a second they wind.
+		constexpr std::chrono::milliseconds g_windDelay{300};
+		constexpr double g_windSpeed = 4.0;
 
 		bool inside(const Rml::Element* element, const Rml::Element* ancestor)
 		{
@@ -83,8 +91,9 @@ namespace gnubase::ui
 	}
 
 	TransportControls::TransportControls(
-		engine::Engine& engine, EngineBinding& binding, Rml::Element& root, RunCommand run)
-		: m_engine(engine), m_binding(binding), m_run(std::move(run)), m_root(root.GetObserverPtr()),
+		engine::Engine& engine, EngineBinding& binding, Rml::Element& root, RunCommand run, ReleaseCommand release)
+		: m_engine(engine), m_binding(binding), m_run(std::move(run)), m_release(std::move(release)),
+		  m_root(root.GetObserverPtr()),
 		  m_formats{{"primary", TimeFormat::BarsBeats}, {"secondary", TimeFormat::Timecode},
 			  {"timeDisplay", TimeFormat::BarsBeats}}
 	{
@@ -101,6 +110,8 @@ namespace gnubase::ui
 				const Json& values = event.data.at("values");
 				if (const auto formats = values.find(g_formatsKey); formats != values.end())
 					followFormats(*formats);
+				if (const auto options = values.find(g_timeDisplayKey); options != values.end())
+					followTimeDisplay(*options);
 			}));
 		const std::weak_ptr<bool> alive = m_alive;
 		requestProject();
@@ -116,11 +127,18 @@ namespace gnubase::ui
 				if (!alive.expired() && result.ok())
 					followFormats(result.value.at("value"));
 			});
+		m_binding.send("settings.get", {{"key", g_timeDisplayKey}},
+			[this, alive](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok())
+					followTimeDisplay(result.value.at("value"));
+			});
 		show();
 	}
 
 	TransportControls::~TransportControls()
 	{
+		release();
 		listen(false);
 	}
 
@@ -134,6 +152,11 @@ namespace gnubase::ui
 				document->AddEventListener(id, this);
 			else
 				document->RemoveEventListener(id, this);
+		// Before the field or display under the mouse: the tempo field turns with the wheel itself.
+		if (on)
+			document->AddEventListener(Rml::EventId::Mousescroll, this, true);
+		else
+			document->RemoveEventListener(Rml::EventId::Mousescroll, this, true);
 	}
 
 	std::vector<Rml::Element*> TransportControls::all(const std::string& selector) const
@@ -177,6 +200,40 @@ namespace gnubase::ui
 		const TimeFormat primary = format("primary");
 		m_formats["primary"] = format("secondary");
 		setFormat("secondary", primary);
+	}
+
+	void TransportControls::toggleBeatCountOnly()
+	{
+		m_beatCountOnly = !m_beatCountOnly;
+		saveTimeDisplay();
+	}
+
+	void TransportControls::resize(int steps)
+	{
+		m_size = std::clamp(m_size + steps, 0, g_largestSize);
+		saveTimeDisplay();
+		if (m_sized)
+			m_sized(m_size);
+	}
+
+	void TransportControls::saveTimeDisplay()
+	{
+		m_binding.send("settings.set",
+			{{"key", g_timeDisplayKey}, {"value", {{"beatCountOnly", m_beatCountOnly}, {"size", m_size}}}});
+		show();
+	}
+
+	void TransportControls::followTimeDisplay(const Json& options)
+	{
+		if (!options.is_object())
+			return;
+		if (const auto beats = options.find("beatCountOnly"); beats != options.end() && beats->is_boolean())
+			m_beatCountOnly = beats->get<bool>();
+		if (const auto size = options.find("size"); size != options.end() && size->is_number_integer())
+			m_size = std::clamp(size->get<int>(), 0, g_largestSize);
+		show();
+		if (m_sized)
+			m_sized(m_size);
 	}
 
 	void TransportControls::followFormats(const Json& formats)
@@ -239,6 +296,52 @@ namespace gnubase::ui
 		Rml::Element* target = event.GetTargetElement();
 		if (root == nullptr || target == nullptr)
 			return;
+		if (event == Rml::EventId::Mousescroll)
+		{
+			Rml::Element* control = withAttribute(target, "field");
+			if (control == nullptr)
+				control = withAttribute(target, "time");
+			if (control == nullptr || !inside(control, root) || control->IsClassSet("editing"))
+				return;
+			if (control->HasAttribute("time"))
+			{
+				wheel(*control, event.GetParameter("wheel_delta_y", 0.0F));
+				event.StopPropagation(); // nothing around it scrolls
+			}
+			else if (attribute(*control, "field") == "tempo")
+			{
+				wheelTempo();
+			}
+			return;
+		}
+		if (event == Rml::EventId::Mousedown)
+		{
+			const Rml::Element* button = withAttribute(target, "hold");
+			if (event.GetParameter("button", 0) == 0 && button != nullptr && inside(button, root) &&
+				!button->HasAttribute("disabled") && button->HasAttribute("command"))
+			{
+				release();
+				m_holding = attribute(*button, "command");
+				m_run(m_holding, Json::object());
+			}
+			return;
+		}
+		if (event == Rml::EventId::Mouseup)
+		{
+			release();
+			return;
+		}
+		if (event == Rml::EventId::Dragstart || event == Rml::EventId::Dragend)
+		{
+			const Rml::Element* field = withAttribute(target, "field");
+			if (field == nullptr || !inside(field, root) || attribute(*field, "field") != "tempo")
+				return;
+			if (event == Rml::EventId::Dragstart)
+				m_gesture = Gesture::Drag;
+			else
+				endTempoGesture();
+			return;
+		}
 		if (event == Rml::EventId::Click)
 		{
 			if (const Rml::Element* item = withAttribute(target, "slot");
@@ -249,7 +352,8 @@ namespace gnubase::ui
 				return;
 			}
 			const Rml::Element* button = withAttribute(target, "command");
-			if (button == nullptr || !inside(button, root) || button->HasAttribute("disabled"))
+			if (button == nullptr || !inside(button, root) || button->HasAttribute("disabled") ||
+				button->HasAttribute("hold"))
 				return;
 			const Json parameters = Json::parse(attribute(*button, "parameters", "{}"), nullptr, false);
 			if (parameters.is_discarded())
@@ -269,7 +373,10 @@ namespace gnubase::ui
 		const std::string field = attribute(element, "field");
 		if (field == "tempo")
 		{
-			if (const std::optional<float> tempo = widgets::parse(text))
+			const std::optional<float> tempo = widgets::parse(text);
+			if (tempo && m_gesture != Gesture::None)
+				m_tempo = tempo; // set at the gesture's end
+			else if (tempo)
 				m_binding.send("project.set", {{"tempo", *tempo}});
 			return;
 		}
@@ -296,6 +403,89 @@ namespace gnubase::ui
 			m_binding.send("transport.set", {{"right", samples(left + *seconds)}});
 	}
 
+	void TransportControls::wheel(Rml::Element& element, float delta)
+	{
+		// Up is later, by as many steps as the wheel turned, at least one.
+		const long turned = std::lround(-delta);
+		const long steps = turned != 0 ? turned : (delta < 0.0F ? 1 : -1);
+		const std::string time = attribute(element, "time");
+		const double rate = m_time.sampleRate;
+		const double left = static_cast<double>(m_status.value("left", int64_t{0})) / rate;
+		const double right = static_cast<double>(m_status.value("right", int64_t{0})) / rate;
+		double from = right; // the range's length moves the right locator
+		if (time == "position")
+			from = static_cast<double>(m_position) / rate;
+		else if (time == "left")
+			from = left;
+		double to = from + static_cast<double>(steps); // by seconds in seconds and samples
+		switch (format(attribute(element, "format", "primary")))
+		{
+		case TimeFormat::BarsBeats:
+		{
+			const time::Ticks at = m_time.tempo.toTicks(from);
+			const time::Ticks beat =
+				time::g_ticksPerQuarter * 4 / std::max(m_time.signatures.signatureAt(at).denominator, 1);
+			to = m_time.tempo.toSeconds(std::max<time::Ticks>(0, at + (steps * beat)));
+			break;
+		}
+		case TimeFormat::Timecode:
+			to = from +
+				(static_cast<double>(steps) * (m_time.frameRate.pullDown ? 1.001 : 1.0) /
+					std::max(m_time.frameRate.framesPerSecond, 1));
+			break;
+		case TimeFormat::UserFrames:
+			to = from + (static_cast<double>(steps) / std::max(m_time.userFramesPerSecond, 1));
+			break;
+		case TimeFormat::Seconds:
+		case TimeFormat::Samples:
+			break;
+		}
+		// The next turn goes on from here, even before transport.changed says so.
+		if (time == "position")
+		{
+			m_position = samples(to);
+			m_binding.send("transport.locate", {{"position", m_position}});
+		}
+		else
+		{
+			const std::string locator = time == "left" ? "left" : "right";
+			m_status[locator] = samples(time == "length" ? std::max(to, left) : to);
+			m_binding.send("transport.set", {{locator, m_status[locator]}});
+		}
+	}
+
+	void TransportControls::wheelTempo()
+	{
+		if (m_gesture == Gesture::Drag)
+			return;
+		m_gesture = Gesture::Wheel;
+		m_wheeled = std::chrono::steady_clock::now();
+		if (!m_wheelPause)
+			m_wheelPause =
+				m_binding.watch<bool>([this] { return std::chrono::steady_clock::now() - m_wheeled >= g_wheelPause; },
+					[this](const bool& paused)
+					{
+						if (paused)
+							endTempoGesture();
+					});
+	}
+
+	void TransportControls::endTempoGesture()
+	{
+		m_gesture = Gesture::None;
+		m_wheelPause.reset();
+		if (const std::optional<float> tempo = std::exchange(m_tempo, std::nullopt))
+			m_binding.send("project.set", {{"tempo", *tempo}});
+		show();
+	}
+
+	void TransportControls::release()
+	{
+		if (!m_holding.empty() && m_release)
+			m_release(m_holding);
+		m_holding.clear();
+	}
+
 	void TransportControls::show()
 	{
 		if (!alive())
@@ -307,7 +497,8 @@ namespace gnubase::ui
 		}
 		const time::TempoPoint& tempo = m_time.tempo.points().front();
 		for (Rml::Element* element : all("[field=tempo]"))
-			if (attribute(*element, "value") != widgets::format(static_cast<float>(tempo.bpm)))
+			if (m_gesture == Gesture::None && // during one, the field shows where the gesture took it
+				attribute(*element, "value") != widgets::format(static_cast<float>(tempo.bpm)))
 				element->SetAttribute("value", widgets::format(static_cast<float>(tempo.bpm)));
 		const time::TimeSignature signature = m_time.signatures.signatureAt(0);
 		for (Rml::Element* element : all("[field=signature]"))
@@ -318,7 +509,14 @@ namespace gnubase::ui
 			document->QuerySelectorAll(items, "menuitem[slot]");
 			for (Rml::Element* item : items)
 				setChecked(*item, attribute(*item, "format") == timeFormatName(format(attribute(*item, "slot"))));
+			items.clear();
+			document->QuerySelectorAll(items, "[option=beatCountOnly]");
+			for (Rml::Element* item : items)
+				setChecked(*item, m_beatCountOnly);
 		}
+		for (Rml::Element* element : all("[format=timeDisplay]"))
+			for (int size = 0; size <= g_largestSize; ++size)
+				element->SetClass("size-" + std::to_string(size), size == m_size);
 		showTime();
 	}
 
@@ -333,7 +531,12 @@ namespace gnubase::ui
 		{
 			const std::string time = attribute(*element, "time");
 			const TimeFormat format = this->format(attribute(*element, "format", "primary"));
-			if (time == "position")
+			if (time == "position" && m_beatCountOnly && attribute(*element, "format") == "timeDisplay")
+			{
+				const time::Ticks at = m_time.tempo.toTicks(static_cast<double>(m_position) / rate);
+				setText(*element, std::to_string(m_time.signatures.toBarsBeats(at).beat + 1));
+			}
+			else if (time == "position")
 				setText(*element, formatTime(format, static_cast<double>(m_position) / rate, m_time));
 			else if (time == "left")
 				setText(*element, formatTime(format, left, m_time));
@@ -342,5 +545,26 @@ namespace gnubase::ui
 			else if (time == "length")
 				setText(*element, formatLength(format, left, std::max(left, right), m_time));
 		}
+	}
+
+	void Winding::start(double seconds)
+	{
+		m_step = seconds;
+		m_last = Clock::now() + g_windDelay;
+		m_binding.send("transport.locate", {{"by", seconds}});
+	}
+
+	bool Winding::step()
+	{
+		if (m_step == 0.0)
+			return false;
+		const Clock::time_point now = Clock::now();
+		if (now > m_last)
+		{
+			const double wound = std::chrono::duration<double>(now - m_last).count() * g_windSpeed * m_step;
+			m_last = now;
+			m_binding.send("transport.locate", {{"by", wound}});
+		}
+		return true;
 	}
 }

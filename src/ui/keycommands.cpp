@@ -170,10 +170,7 @@ namespace gnubase::ui
 			{"C", "transport.toggle", {{"setting", "metronome"}}},
 			{"I", "transport.toggle", {{"setting", "punchIn"}}},
 			{"O", "transport.toggle", {{"setting", "punchOut"}}},
-			{"Num-", "transport.locate", {{"by", -1.0}}},
-			{"Num+", "transport.locate", {{"by", 1.0}}},
-			{"Shift+Num-", "transport.locate", {{"by", -4.0}}},
-			{"Shift+Num+", "transport.locate", {{"by", 4.0}}},
+			// Num- and Num+ (Rewind, Forward) wind while held: the app binds its own commands to them.
 			{"Shift+N", "marker.locateNext"},
 			{"Shift+B", "marker.locatePrevious"},
 			{"Insert", "marker.add"},
@@ -267,6 +264,7 @@ namespace gnubase::ui
 				innermost = element;
 			if (const std::optional<Bound> found = bound(zone))
 			{
+				hold(pressed.key, found->command);
 				run(found->command, found->parameters, window, element);
 				return true;
 			}
@@ -274,8 +272,36 @@ namespace gnubase::ui
 		const std::optional<Bound> everywhere = bound({});
 		if (!everywhere)
 			return false;
+		hold(pressed.key, everywhere->command);
 		run(everywhere->command, everywhere->parameters, window, innermost);
 		return true;
+	}
+
+	void KeyCommands::hold(int key, const std::string& command)
+	{
+		const auto ui = m_uiCommands.find(command);
+		if (ui != m_uiCommands.end() && ui->second.release)
+			m_held.emplace_back(key, command);
+	}
+
+	void KeyCommands::released(const KeyPress& keys)
+	{
+		// A copy, since a command may press or release others.
+		std::vector<std::string> ending;
+		const auto ends = [&keys](const std::pair<int, std::string>& held)
+		{ return keys.key == Rml::Input::KI_UNKNOWN || held.first == keys.key; };
+		for (const auto& held : m_held)
+			if (ends(held))
+				ending.push_back(held.second);
+		m_held.erase(std::remove_if(m_held.begin(), m_held.end(), ends), m_held.end());
+		for (const std::string& command : ending)
+			release(command);
+	}
+
+	void KeyCommands::release(const std::string& command)
+	{
+		if (const auto ui = m_uiCommands.find(command); ui != m_uiCommands.end() && ui->second.release)
+			ui->second.release();
 	}
 
 	void KeyCommands::run(const std::string& command, const Json& parameters, Window& window, Rml::Element* zone)
