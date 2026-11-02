@@ -18,6 +18,7 @@
 #include <cmath>
 #include <sstream>
 #include <string>
+#include <tuple>
 
 namespace gnubase::ui
 {
@@ -171,7 +172,8 @@ namespace gnubase::ui
 		m_subscriptions.push_back(m_binding.on("transport.changed",
 			[this](const engine::Event& event)
 			{
-				m_recording = event.data.value("recording", false);
+				if (std::exchange(m_recording, event.data.value("recording", false)) && !m_recording)
+					resync();
 				setCursor(event.data.at("position").get<int64_t>());
 				if (!event.data.at("playing").get<bool>())
 					m_position.reset();
@@ -243,6 +245,20 @@ namespace gnubase::ui
 		m_list->SetAttribute("value", value);
 	}
 
+	void MarkersWindow::syncFrom(std::function<std::vector<uint64_t>()> source)
+	{
+		m_syncFrom = std::move(source);
+		resync();
+	}
+
+	// With Sync Selection on again (opened, after recording, the setting turned on), the window takes the project
+	// window's selection.
+	void MarkersWindow::resync()
+	{
+		if (m_loaded && m_syncFrom && syncsSelection())
+			setSelection(m_syncFrom());
+	}
+
 	void MarkersWindow::applySetting(const std::string& key, const Json& value)
 	{
 		if (key == "ui.timeFormats")
@@ -268,9 +284,11 @@ namespace gnubase::ui
 		const auto flag = m_flags.find(key);
 		if (flag == m_flags.end() || !value.is_boolean())
 			return;
-		flag->second = value.get<bool>();
+		const bool was = std::exchange(flag->second, value.get<bool>());
 		if (key == "ui.markersAutoScroll" && flag->second)
 			scrollToArrow();
+		if (key == "ui.markersSyncSelection" && flag->second && !was)
+			resync();
 		if (!alive())
 			return;
 		for (const auto& [id, setting] : g_toggles)
@@ -297,6 +315,8 @@ namespace gnubase::ui
 				{
 					m_markers = readMarkers(result.value);
 					show();
+					if (!std::exchange(m_loaded, true))
+						resync();
 				}
 				if (std::exchange(m_stale, false))
 					requestProject();
@@ -391,7 +411,9 @@ namespace gnubase::ui
 			}
 			rows += "</tr>";
 		}
+		m_rebuilding = true;
 		m_rows->SetInnerRML(rows);
+		m_rebuilding = false;
 		if (m_list != nullptr)
 			m_list->SetAttribute("value", value);
 		showCursor();
@@ -649,6 +671,8 @@ namespace gnubase::ui
 	// markers as they are again.
 	void MarkersWindow::commit(Rml::Element& field)
 	{
+		if (m_rebuilding)
+			return; // the rows are replaced: the field loses the focus without an edit
 		const uint64_t id = rowMarker(&field);
 		const auto marker =
 			std::find_if(m_listed.begin(), m_listed.end(), [id](const MarkerItem& each) { return each.id == id; });
@@ -683,6 +707,8 @@ namespace gnubase::ui
 		};
 		if (cell->IsClassSet("description"))
 		{
+			if (value == marker->name)
+				return;
 			for (const MarkerItem* each : markers)
 				if (each->name != value)
 					change(*each, {{"name", value}});
@@ -714,7 +740,7 @@ namespace gnubase::ui
 		}
 		else if (cell->IsClassSet("length"))
 		{
-			if (markers.size() == 1 && value == formatLength(m_format, marker->start, marker->end, context))
+			if (value == formatLength(m_format, marker->start, marker->end, context))
 				return;
 			for (const MarkerItem* each : markers)
 			{

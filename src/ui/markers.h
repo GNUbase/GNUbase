@@ -174,6 +174,8 @@ namespace gnubase::ui
 		// Whether the selection is the project window's too: the user setting ui.markersSyncSelection, but not while
 		// recording.
 		bool syncsSelection() const { return m_flags.at("ui.markersSyncSelection") && !m_recording; }
+		// The project window's selection, which the window takes whenever it starts syncing.
+		void syncFrom(std::function<std::vector<uint64_t>()> source);
 
 	private:
 		// The user setting ui.markerColumns.
@@ -199,6 +201,7 @@ namespace gnubase::ui
 
 		void ProcessEvent(Rml::Event& event) override;
 		bool alive() const { return static_cast<bool>(m_document); }
+		void resync();
 		void applySetting(const std::string& key, const engine::Json& value);
 		void requestProject();
 		void showHead();
@@ -232,6 +235,9 @@ namespace gnubase::ui
 		std::set<std::string> m_settingsKnown; // changed since they were asked for
 		std::optional<HeaderDrag> m_drag;
 		std::function<void(const std::vector<uint64_t>&)> m_onSelect;
+		std::function<std::vector<uint64_t>()> m_syncFrom;
+		bool m_loaded = false;     // the project has been read once
+		bool m_rebuilding = false; // the rows are being replaced
 		bool m_loading = false;
 		bool m_stale = false;
 		std::vector<Subscription> m_subscriptions;

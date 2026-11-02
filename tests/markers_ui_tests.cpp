@@ -800,6 +800,15 @@ TEST_CASE("the markers window changes the description or length of all selected 
 	app.ui().click(window, at("#marker-rows .type", 2), ui::MouseButton::Left, 1, {"shift"});
 	REQUIRE(app.waitUntil([&markers] { return markers.selection().size() == 3; }));
 
+	// A field that loses the focus without an edit changes nothing.
+	app.ui().click(window, at("#marker-rows .description input", 0), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#marker-rows .type", 2), ui::MouseButton::Left, 1, {"shift"});
+	settle(app);
+	CHECK(markerList(app)[1].at("name") == "Two");
+	CHECK(markerList(app)[2].at("name") == "Three");
+	CHECK(app.call("history.get").at("steps").size() == steps);
+	REQUIRE(markers.selection().size() == 3);
+
 	// A description typed into a selected row names them all, in one undo step; the row not selected keeps its own.
 	edit(app, 1, "description", "Verse");
 	REQUIRE(app.waitUntil(
@@ -830,6 +839,13 @@ TEST_CASE("the markers window changes the description or length of all selected 
 	edit(app, 1, "description", "Coda");
 	REQUIRE(app.waitUntil([&app] { return markerList(app)[1].at("name") == "Coda"; }));
 	CHECK(markerList(app)[0].at("name") == "Verse");
+
+	// A change from elsewhere rebuilds the rows under a focused field, which doesn't write its old text back.
+	app.ui().click(window, at("#marker-rows .description input", 3), ui::MouseButton::Left, 1, {});
+	app.call("marker.set", {{"marker", markerList(app)[3].at("id")}, {"name", "Outro"}});
+	REQUIRE(app.waitUntil([&markers] { return markers.markers()[3].name == "Outro"; }));
+	settle(app);
+	CHECK(markerList(app)[3].at("name") == "Outro");
 }
 
 TEST_CASE("the marker settings: marker ids on the marker track, cycle follows and sync selection", "[ui]")
@@ -901,6 +917,8 @@ TEST_CASE("the marker settings: marker ids on the marker track, cycle follows an
 	CHECK(lines.selection().size() == 2);
 	app.call("transport.stop");
 	REQUIRE(app.waitUntil([&markers] { return markers.syncsSelection(); }));
+	// After recording the window takes the project window's selection.
+	REQUIRE(app.waitUntil([&markers] { return markers.selection().size() == 2; }));
 	app.ui().click(window, at("#marker-rows .type", 1), ui::MouseButton::Left, 1, {});
 	REQUIRE(app.waitUntil([&lines, verse] { return lines.selection() == std::vector<uint64_t>{verse}; }));
 
@@ -913,4 +931,15 @@ TEST_CASE("the marker settings: marker ids on the marker track, cycle follows an
 	REQUIRE(app.waitUntil([&markers, intro] { return markers.selection() == std::vector<uint64_t>{intro}; }));
 	settle(app);
 	CHECK(lines.selection() == std::vector<uint64_t>{verse});
+
+	// Turned on again, and when the window opens, the window takes the project window's selection.
+	app.ui().click(window, at("#marker-settings"), ui::MouseButton::Left, 1, {});
+	app.ui().click(window, at("#sync-selection"), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&markers, verse] { return markers.selection() == std::vector<uint64_t>{verse}; }));
+	app.ui().key(std::nullopt, "Mod+M");
+	REQUIRE(app.waitUntil([&app] { return app.appUi().markers() == nullptr; }));
+	app.ui().click(std::nullopt, at(".marker-label", 0), ui::MouseButton::Left, 1, {});
+	REQUIRE(app.waitUntil([&lines, intro] { return lines.selection() == std::vector<uint64_t>{intro}; }));
+	const ui::MarkersWindow& reopened = openMarkers(app, 2);
+	REQUIRE(app.waitUntil([&reopened, intro] { return reopened.selection() == std::vector<uint64_t>{intro}; }));
 }

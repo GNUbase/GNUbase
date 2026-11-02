@@ -504,6 +504,8 @@ namespace gnubase::app
 				if (m_markerLines != nullptr && m_markers != nullptr && m_markers->syncsSelection())
 					m_markerLines->setSelection(selection);
 			});
+		m_markers->syncFrom(
+			[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
 		return m_markers.get();
 	}
 

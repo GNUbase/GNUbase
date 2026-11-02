@@ -82,7 +82,7 @@ namespace gnubase::engine::settings
 					{{"order", {{"type", "array"}, {"items", column}}},
 						{"widths",
 							{{"type", "object"},
-								{"additionalProperties", {{"type", "number"}, {"minimum", 0}, {"maximum", 10000}}}}},
+								{"additionalProperties", {{"type", "number"}, {"minimum", 16}, {"maximum", 2000}}}}},
 						{"sort", column}, {"descending", {{"type", "boolean"}}}}}};
 		}
 	}
