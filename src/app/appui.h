@@ -10,6 +10,7 @@
 #include "ui/keycommands.h"
 #include "ui/mainmenu.h"
 #include "ui/markers.h"
+#include "ui/projectfiles.h"
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
@@ -74,6 +75,10 @@ namespace gnubase::app
 		// window.studioSetup, which the main menu's Studio menu runs. While it is open, this brings it to the front
 		// instead: MCP and Lua can run the command then. Throws std::runtime_error if the document can't be loaded.
 		Rml::ElementDocument& openStudioSetup(ui::Window& window);
+
+		// Opens the start screen in the main window (ui/projectfiles.h, #77), as the app does when it starts without
+		// a project.
+		void openStartScreen() { m_files.openStartScreen(m_main); }
 
 		// The transport controls (#90, docs/features/transport-bar.md): the project window's transport bar, once it
 		// shows, and the transport panel and the time display window, windows of their own that the UI commands
@@ -147,6 +152,7 @@ namespace gnubase::app
 		bool m_canUndo = false;
 		bool m_canRedo = false;
 		ui::Subscription m_history;
+		ui::ProjectFiles m_files;                     // the File menu's project commands
 		std::unique_ptr<ui::MainMenu> m_menu;         // the project window's
 		Rml::ObserverPtr<Rml::Element> m_studioSetup; // the open studio setup dialog's document
 	};

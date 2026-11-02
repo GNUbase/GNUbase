@@ -1,0 +1,81 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The start screen (docs/features/project-files.md, reference manual pp. 120-124): ui::ProjectFiles opens it when
+     GNUbase starts without a project and with File > New Project, fills #start-templates and #start-recent with the
+     templates (project.templates) and the recent projects that are still there (project.recent), and acts on the
+     result it closes with: empty creates an empty project, template a project from the selected template, recent
+     opens the selected recent project and open asks for a project file. A double click on a row does what its
+     button does. -->
+<rml>
+<head>
+	<title>Projects</title>
+	<style>
+		dialog
+		{
+			width: 560dp;
+		}
+
+		.columns
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.column
+		{
+			flex: 1;
+			display: flex;
+			flex-direction: column;
+		}
+
+		.column + .column
+		{
+			margin-left: 12dp;
+		}
+
+		.column h2
+		{
+			margin-bottom: 4dp;
+		}
+
+		.column listview
+		{
+			height: 220dp;
+			overflow-y: auto;
+		}
+
+		.column button
+		{
+			margin-top: 6dp;
+		}
+
+		.row
+		{
+			display: flex;
+			justify-content: flex-end;
+			margin: 8dp 12dp 0 12dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="start-screen">
+		<div class="dialog-titlebar">Projects</div>
+		<div class="columns">
+			<div class="column">
+				<h2>Templates</h2>
+				<listview id="start-templates"/>
+				<button id="create-template" result="template">Create</button>
+				<button id="create-empty" result="empty">Create Empty Project</button>
+			</div>
+			<div class="column">
+				<h2>Recent</h2>
+				<listview id="start-recent"/>
+				<button id="open-recent" result="recent">Open</button>
+				<button id="open-other" result="open">Open Other...</button>
+			</div>
+		</div>
+		<div class="row">
+			<button result="cancel">Close</button>
+		</div>
+	</dialog>
+</body>
+</rml>

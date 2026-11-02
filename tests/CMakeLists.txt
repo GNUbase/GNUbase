@@ -80,6 +80,7 @@ add_executable(gnubase-tests
 	pool_tests.cpp
 	poolpanel_tests.cpp
 	processor_tests.cpp
+	projectfiles_tests.cpp
 	quantize_tests.cpp
 	rmlui_tests.cpp
 	rt_tests.cpp

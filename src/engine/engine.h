@@ -229,6 +229,7 @@ namespace gnubase::engine
 		RequestId m_nextRequest = 1;
 		bool m_stopping = false;
 		std::condition_variable m_wake;
+		std::condition_variable m_tickerWake;            // wakes the ticker to stop
 		std::unique_ptr<Jobs> m_jobs;                    // background work such as backups
 		std::unique_ptr<plugins::HostManager> m_plugins; // outlives the audio engine, whose graphs may hold plugins
 		std::unique_ptr<ProjectModel> m_project;         // only the command thread touches the document
@@ -236,6 +237,7 @@ namespace gnubase::engine
 		std::unique_ptr<AudioEngine> m_audio;            // plays the project; only the command thread changes it
 		std::unique_ptr<peaks::PeakCache> m_peaks;       // waveform overviews of the project's media files
 		std::thread m_thread;
+		std::thread m_ticker; // asks for due auto saves (project.autoSave)
 	};
 
 	// A connection to the engine. Receives the results of its own commands and every event, in order.

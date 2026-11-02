@@ -91,6 +91,7 @@ namespace gnubase::test
 			gpuUnavailable(error);
 		}
 		keepVulkanDriversLoaded();
+		m_ui->shell().showOsFileDialogs(false); // tests answer them (Shell::answerFileDialog)
 		m_automation = std::make_unique<ui::Automation>(m_ui->shell());
 		shell().step(std::chrono::milliseconds(0));
 	}
