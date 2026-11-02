@@ -47,7 +47,8 @@ MCP and Lua scripts can do all it does.
   folder keep each other's port settings (#452); then the process uses the file's whole value, applies it and sends
   `settings.changed` like `settings.set`. `audio.ports` and `midi.ports` read it. An entry's schema allows members
   this GNUbase doesn't know, so a later GNUbase can add one without this version dropping the whole value, and a
-  change keeps them. After any change of the user settings, also
+  change keeps them; `settings.set` therefore accepts a misspelled member, which nothing reads. A member of another
+  type is a change of the settings version, so an older GNUbase only reads that file and writes nothing. After any change of the user settings, also
   `settings.set` or `settings.reset` on these keys, the listed MIDI ports follow them: hidden inputs close, shown ones
   open, and the audio thread's "all MIDI inputs" flags update. The settings schema validator checks
   `additionalProperties` given as a schema, so a broken value in the file falls back to the default (no port settings)
