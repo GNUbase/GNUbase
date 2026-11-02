@@ -18,7 +18,8 @@ it up in `app::AppUi`.
   its items ([main-menu.md](main-menu.md)); keys run their commands either way.
 - **Writing keys.** `ui::parseKeys` reads `Space`, `Mod+Z`, `Shift+Alt+F5` or `Ctrl+Num+`, in any case: letters,
   digits, F1 to F24, the named keys (Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, the
-  arrows Up, Down, Left, Right, Space), the punctuation keys `. , - +`, and the keypad's own keys Num0 to Num9,
+  arrows Up, Down, Left, Right, Space), the punctuation keys `. , - +`, `Alt` on its own (which opens the menu bar,
+  [main-menu.md](main-menu.md)), and the keypad's own keys Num0 to Num9,
   NumEnter, `Num*`, `Num/`, `Num+`, `Num-` and `Num.`, which the reference uses for the transport. Letters and
   punctuation follow the keyboard layout (SDL's key codes); digits are digits on French layouts too.
 - **Per platform.** `Mod` is the platform's command key: Cmd on macOS, Ctrl on Windows and Linux, the reference's

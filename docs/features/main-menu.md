@@ -18,8 +18,11 @@ project window.
   undo or redo, and the project window's edit commands without the event display. A command that doesn't exist is
   disabled too. The menu updates in every step of the shell, so the DOM that MCP's UI tools read is always current.
 - **The menu bar** is a docking strip, `strip="menuBar"` ([docking.md](docking.md)): Menu Bar in the Set up Window
-  Layout menu and the UI command `window.menuBar` show and hide it, and `ui.layout` keeps it per window. Its titles are
-  buttons that open the menus (widgets.md, "Menus and context menus"), and submenus are menus inside items.
+  Layout menu and the UI command `window.menuBar` show and hide it, and `ui.layout` keeps it per window. It is a
+  `<menubar>`, whose titles are buttons that open the menus ([widgets.md](widgets.md), "Menus and context menus"), and
+  submenus are menus inside items, marked by an arrow. With a menu open, the mouse over another title opens that
+  title's menu instead; Left and Right move between the menus, and into and out of submenus; Alt on its own opens the
+  File menu on Windows and Linux, and closes it again.
 
 ## Menus
 
@@ -38,8 +41,7 @@ features they run. Quitting waits for the shell's next step, since it closes eve
 
 The reduced menus of other windows (the mixer and the editors, when they open in windows of their own); Show Menu Bar
 in the context menu of a window's title bar on Windows, which the OS draws (it is in Set up Window Layout for now); the
-system menu bar on macOS, where the window shows its own menu bar until then; arrows on items with submenus; moving
-between the menus of an open menu bar with the mouse or the arrow keys, and opening them with Alt.
+system menu bar on macOS, where the window shows its own menu bar until then (and Alt doesn't open it).
 
 ## Checks
 
@@ -48,4 +50,6 @@ between the menus of an open menu bar with the mouse or the arrow keys, and open
 menu; items show their keys per platform; Transport > Locators > Go to Right Locator Position sends `transport.locate`
 with its parameters through the UI's client; Edit > Select > All and Edit > Delete run the event display's commands;
 Undo and Redo are disabled and enabled as the history changes, and a disabled item ignores clicks; `canRun` and
-`enableWhen`; the menu bar hidden from Set up Window Layout and shown with `window.menuBar`; and File > Quit quits.
+`enableWhen`; the menu bar hidden from Set up Window Layout and shown with `window.menuBar`; File > Quit quits; and
+the File menu's Import item shows its arrow, the mouse moves from File to Edit, Right and Left move to Media and back,
+and Alt opens and closes the File menu (mouse moves and key presses, as MCP's `ui_move` and `ui_key` do).

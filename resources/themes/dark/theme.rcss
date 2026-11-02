@@ -552,21 +552,25 @@
 	{
 		color: #d76a73;
 	}
-	.menubar
+	menubar
 	{
 		background-color: #1e2022;
 	}
-	.menubar button
+	menubar button
 	{
 		decorator: none;
 		color: #f3f4f5;
 	}
-	.menubar button:hover
+	menubar button:hover
 	{
 		decorator: svg-ninepatch(menu-item-hover.svg, 6 6 6 6);
 	}
 	menuitem .menu-keys
 	{
 		color: #b7bbc0;
+	}
+	menuitem > .menu-arrow
+	{
+		decorator: svg(dropdown-arrow.svg);
 	}
 }

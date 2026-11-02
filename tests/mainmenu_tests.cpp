@@ -165,6 +165,35 @@ TEST_CASE("key commands say whether a command can run, for menu items", "[ui]")
 	CHECK_THROWS(keys.enableWhen("test.missing", {}));
 }
 
+TEST_CASE("the menu bar's menus follow the mouse and Left and Right, Alt opens them, and submenus have arrows", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+
+	click(app, "#menu-bar button[menu=file-menu]");
+	REQUIRE(shown(app, "#file-menu"));
+	CHECK(shown(app, "#import-submenu > .menu-arrow"));
+	CHECK(elements(app, "menuitem[command=\"file.save\"] .menu-arrow").empty());
+	app.ui().move(std::nullopt, {"#menu-bar button[menu=edit-menu]", 0, std::nullopt});
+	CHECK(!shown(app, "#file-menu"));
+	REQUIRE(shown(app, "#edit-menu"));
+	app.ui().move(std::nullopt, {"#menu-bar", 0, ui::Point{0, 0}});
+	app.ui().key(std::nullopt, "Right");
+	CHECK(!shown(app, "#edit-menu"));
+	CHECK(shown(app, "#media-menu"));
+	app.ui().key(std::nullopt, "Left");
+	CHECK(shown(app, "#edit-menu"));
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(!shown(app, "#edit-menu"));
+
+#ifndef __APPLE__
+	app.ui().key(std::nullopt, "Alt");
+	CHECK(shown(app, "#file-menu"));
+	app.ui().key(std::nullopt, "Alt");
+	CHECK(!shown(app, "#file-menu"));
+#endif
+}
+
 TEST_CASE("the menu bar shows and hides like the project window's strips, and File > Quit quits", "[ui]")
 {
 	test::UiApp app({900, 640});

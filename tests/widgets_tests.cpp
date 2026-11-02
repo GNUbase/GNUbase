@@ -529,6 +529,178 @@ TEST_CASE("context menus open at the mouse on a right click, inside the window, 
 	CHECK_FALSE(visible(app, "#track-menu"));
 }
 
+namespace
+{
+	bool focused(test::UiApp& app, const std::string& selector)
+	{
+		return has(element(app, selector), "pseudoClasses", "focus");
+	}
+}
+
+TEST_CASE("items with a submenu show an arrow, and Right and Left open and close the submenu", "[ui]")
+{
+	test::UiApp app;
+	const Events events(app.show("popups.rml"));
+
+	const Json track = element(app, "#track").at("box");
+	app.ui().click(std::nullopt, point(track.at("x").get<int>() + 10, track.at("y").get<int>() + 10),
+		ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#track-menu"));
+	CHECK(app.ui().dom(std::nullopt, "#color > .menu-arrow", 0).at("elements").size() == 1);
+	CHECK(app.ui().dom(std::nullopt, "#rename .menu-arrow", 0).at("elements").empty());
+	CHECK(visible(app, "#color > .menu-arrow"));
+
+	// Right on the item opens its submenu with its first item focused, Left closes it and goes back to the item.
+	moveAway(app);
+	app.ui().key(std::nullopt, "Down");
+	app.ui().key(std::nullopt, "Down");
+	REQUIRE(focused(app, "#color"));
+	app.ui().key(std::nullopt, "Right");
+	REQUIRE(visible(app, "#colors"));
+	CHECK(focused(app, "#red"));
+	app.ui().key(std::nullopt, "Down");
+	CHECK(focused(app, "#blue"));
+	app.ui().key(std::nullopt, "Left");
+	CHECK_FALSE(visible(app, "#colors"));
+	CHECK(focused(app, "#color"));
+	CHECK(visible(app, "#track-menu"));
+
+	// Right on an item without a submenu, in a menu that isn't in a menu bar, does nothing.
+	app.ui().key(std::nullopt, "Up");
+	app.ui().key(std::nullopt, "Right");
+	CHECK(focused(app, "#rename"));
+	CHECK(visible(app, "#track-menu"));
+
+	// A submenu that keys opened closes when the mouse goes to another item, and with its menu.
+	app.ui().key(std::nullopt, "Down");
+	app.ui().key(std::nullopt, "Right");
+	REQUIRE(visible(app, "#colors"));
+	app.ui().move(std::nullopt, at("#rename"));
+	CHECK_FALSE(visible(app, "#colors"));
+	app.ui().move(std::nullopt, at("#color"));
+	CHECK(visible(app, "#colors")); // under the mouse again
+	moveAway(app);
+	app.ui().key(std::nullopt, "Right");
+	app.ui().key(std::nullopt, "Escape");
+	CHECK_FALSE(visible(app, "#track-menu"));
+	app.ui().click(std::nullopt, point(track.at("x").get<int>() + 10, track.at("y").get<int>() + 10),
+		ui::MouseButton::Right, 1, {});
+	moveAway(app);
+	CHECK_FALSE(visible(app, "#colors"));
+	app.ui().key(std::nullopt, "Escape");
+}
+
+TEST_CASE("in a menu bar the mouse and Left and Right move between the open menus", "[ui]")
+{
+	test::UiApp app;
+	const Events events(app.show("popups.rml"));
+
+	// Without an open menu, the mouse over a title opens nothing.
+	app.ui().move(std::nullopt, at("#view-title"));
+	CHECK_FALSE(visible(app, "#view"));
+
+	// With one open, the mouse over another title opens that title's menu instead, under it; outside the menu bar
+	// the menu stays open. A disabled title opens nothing.
+	click(app, "#file-title");
+	REQUIRE(visible(app, "#file"));
+	app.ui().move(std::nullopt, at("#view-title"));
+	CHECK_FALSE(visible(app, "#file"));
+	REQUIRE(visible(app, "#view"));
+	CHECK(element(app, "#view").at("box").at("x") == element(app, "#view-title").at("box").at("x"));
+	app.ui().move(std::nullopt, at("#tools-title"));
+	CHECK(visible(app, "#view"));
+	CHECK_FALSE(visible(app, "#tools"));
+	app.ui().move(std::nullopt, at("#plain"));
+	CHECK(visible(app, "#view"));
+	app.ui().move(std::nullopt, at("#file-title"));
+	CHECK(visible(app, "#file"));
+	CHECK_FALSE(visible(app, "#view"));
+	click(app, "#file-title");
+	CHECK_FALSE(visible(app, "#file"));
+
+	// Right and Left open the next and previous title's menu with its first item focused, skipping disabled titles
+	// and going round; Right on an item with a submenu opens the submenu, and in the submenu Left goes back.
+	click(app, "#file-title");
+	moveAway(app);
+	app.ui().key(std::nullopt, "Right");
+	REQUIRE(visible(app, "#view"));
+	CHECK_FALSE(visible(app, "#file"));
+	CHECK(focused(app, "#zoom-in"));
+	app.ui().key(std::nullopt, "Right");
+	CHECK(visible(app, "#help"));
+	CHECK(focused(app, "#about"));
+	app.ui().key(std::nullopt, "Right");
+	CHECK(visible(app, "#file"));
+	CHECK(focused(app, "#new"));
+	app.ui().key(std::nullopt, "Left");
+	CHECK(visible(app, "#help"));
+	app.ui().key(std::nullopt, "Right");
+	app.ui().key(std::nullopt, "Down");
+	REQUIRE(focused(app, "#recent"));
+	app.ui().key(std::nullopt, "Right");
+	CHECK(visible(app, "#recent-menu"));
+	CHECK(focused(app, "#first-recent"));
+	CHECK(visible(app, "#file"));
+	app.ui().key(std::nullopt, "Left");
+	CHECK_FALSE(visible(app, "#recent-menu"));
+	CHECK(focused(app, "#recent"));
+	app.ui().key(std::nullopt, "Left");
+	CHECK(visible(app, "#help"));
+	CHECK_FALSE(visible(app, "#file"));
+
+	// Enter clicks the focused item and closes the menu.
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(events.clicks.at("about") == 1);
+	CHECK_FALSE(visible(app, "#help"));
+}
+
+TEST_CASE("Alt opens the menu bar's first menu on Windows and Linux, and closes it again", "[ui]")
+{
+	test::UiApp app;
+	[[maybe_unused]] Rml::ElementDocument& document = app.show("popups.rml"); // not on macOS
+	click(app, "#plain");
+
+	app.ui().key(std::nullopt, "Alt");
+#ifdef __APPLE__
+	CHECK_FALSE(visible(app, "#file")); // the system menu bar has the keys there
+#else
+	REQUIRE(visible(app, "#file"));
+	CHECK(focused(app, "#new"));
+	app.ui().key(std::nullopt, "Right");
+	CHECK(visible(app, "#view"));
+	app.ui().key(std::nullopt, "Alt");
+	CHECK_FALSE(visible(app, "#view"));
+
+	// A context menu that is open closes.
+	app.ui().click(std::nullopt, at("#track"), ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#track-menu"));
+	app.ui().key(std::nullopt, "Alt");
+	CHECK_FALSE(visible(app, "#track-menu"));
+	CHECK(visible(app, "#file"));
+	app.ui().key(std::nullopt, "Alt");
+	CHECK_FALSE(visible(app, "#file"));
+
+	// Alt only counts alone: not with another key or a click while it's held.
+	Rml::Context& context = app.main().context();
+	context.ProcessKeyDown(Rml::Input::KI_LMENU, Rml::Input::KM_ALT);
+	app.ui().key(std::nullopt, "Alt+N");
+	context.ProcessKeyUp(Rml::Input::KI_LMENU, 0);
+	CHECK_FALSE(visible(app, "#file"));
+	context.ProcessKeyDown(Rml::Input::KI_LMENU, Rml::Input::KM_ALT);
+	app.ui().click(std::nullopt, at("#plain"), ui::MouseButton::Left, 1, {"alt"});
+	context.ProcessKeyUp(Rml::Input::KI_LMENU, 0);
+	CHECK_FALSE(visible(app, "#file"));
+	context.ProcessKeyDown(Rml::Input::KI_LMENU, Rml::Input::KM_ALT | Rml::Input::KM_CTRL);
+	context.ProcessKeyUp(Rml::Input::KI_LMENU, Rml::Input::KM_CTRL);
+	CHECK_FALSE(visible(app, "#file"));
+
+	// Nor does it open a hidden menu bar's menu.
+	document.GetElementById("menubar")->SetProperty("display", "none");
+	app.ui().key(std::nullopt, "Alt");
+	CHECK_FALSE(visible(app, "#file"));
+#endif
+}
+
 TEST_CASE("tooltips show an element's title once the mouse rests on it", "[ui]")
 {
 	test::UiApp app;

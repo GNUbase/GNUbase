@@ -40,7 +40,7 @@ namespace gnubase::ui
 				{"Escape", KI_ESCAPE}, {"Esc", KI_ESCAPE}, {"Tab", KI_TAB}, {"Backspace", KI_BACK},
 				{"Delete", KI_DELETE}, {"Del", KI_DELETE}, {"Insert", KI_INSERT}, {"Home", KI_HOME}, {"End", KI_END},
 				{"PageUp", KI_PRIOR}, {"PageDown", KI_NEXT}, {"Up", KI_UP}, {"Down", KI_DOWN}, {"Left", KI_LEFT},
-				{"Right", KI_RIGHT}, {"Space", KI_SPACE}, {".", KI_OEM_PERIOD}, {",", KI_OEM_COMMA},
+				{"Right", KI_RIGHT}, {"Space", KI_SPACE}, {"Alt", KI_LMENU}, {".", KI_OEM_PERIOD}, {",", KI_OEM_COMMA},
 				{"-", KI_OEM_MINUS}, {"+", KI_OEM_PLUS}, {"NumEnter", KI_NUMPADENTER}, {"Num*", KI_MULTIPLY},
 				{"Num/", KI_DIVIDE}, {"Num+", KI_ADD}, {"Num-", KI_SUBTRACT}, {"Num.", KI_DECIMAL}};
 			return keys;

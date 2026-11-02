@@ -78,8 +78,20 @@ attributes, through a data model or directly.
   outside close it too. A `disabled` item gets `:disabled` and ignores clicks; `type="toggle"` makes an item checkable,
   as for buttons.
 - A `<menu>` inside an item is its submenu, shown beside the item while the mouse is over it (pure RCSS:
-  `menuitem:hover > menu`); a click on that item keeps the menu open.
-- Keys: Down and Up move the focus between the items that aren't disabled, Enter clicks the focused one.
+  `menuitem:hover > menu`); a click on that item keeps the menu open. The menu gives such an item a `.menu-arrow`
+  part when it opens, first in the item so that it floats right; the themes draw it with their dropdown arrow, turned
+  to point right.
+- Keys: Down and Up move the focus between the items that aren't disabled, Enter clicks the focused one. Right opens
+  the focused item's submenu (with the state class `.open`) and focuses its first item; Left closes the submenu and
+  goes back to its item. A submenu that keys opened closes when the mouse goes to another item of its menu, and with
+  its menu. Escape closes every open menu.
+- `<menubar>` holds the titles of menus: elements with a `menu` attribute, usually buttons. While one title's menu is
+  open, the mouse over another title opens that one's menu instead; in a title's menu (and its submenus) Right and
+  Left open the next and previous title's menu where they don't go into or out of a submenu, with its first item
+  focused, skipping disabled titles and going round. Alt pressed and released on its own opens the menu of the first
+  menu bar shown in the window, again with its first item focused, and closes it when one of its menus is open; Alt
+  with another key, a modifier or a click doesn't. On macOS Alt does nothing, since the system menu bar takes the
+  keys there.
 
 ## Tooltips
 
@@ -98,8 +110,8 @@ attribute closes it with that result. Closing sends the event `close` (`ui::g_di
 `result`, then closes the document.
 
 How it works: an RmlUi plugin (`RmlUi::registerPlugin`) gives every document a tooltip and listens to it in the capture
-phase, before its elements: for `contextmenu` and `menu` attributes, titles, clicks outside open menus, Escape, and
-its dialog's keys, which text fields would otherwise keep to themselves.
+phase, before its elements: for `contextmenu` and `menu` attributes, titles, clicks outside open menus, Escape, the
+mouse over menu bar titles, Alt, and its dialog's keys, which text fields would otherwise keep to themselves.
 
 ## Tabs
 
@@ -157,7 +169,10 @@ their parts placed where the value says; data-value binds them both ways; the wh
 the page; value fields take typed numbers and leave bad ones. Text displays send the text typed with Enter and nothing
 with Escape or when nothing was typed. Meters show their level and peak at the right heights.
 Menus open under their button and at the mouse, inside the window, show submenus on hover, close on an item, a click
-elsewhere and Escape, skip disabled items, and work with the keys. Tooltips show after a rest and go with the mouse.
+elsewhere and Escape, skip disabled items, and work with the keys; items with a submenu show an arrow, and Right and
+Left go into and out of the submenu. In a menu bar the mouse and Right and Left move between the open menus, skipping
+a disabled title, and Alt alone opens and closes the first menu (not on macOS, nor with another key or a click).
+Tooltips show after a rest and go with the mouse.
 Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result.
 Tabs show their panels. List views select with clicks, Ctrl, Shift and the keys, and follow their data; trees expand
 and collapse by click and keys, with indents by level; tables select body rows only; splitters move the boundary in a
