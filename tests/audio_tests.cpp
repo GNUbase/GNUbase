@@ -125,13 +125,14 @@ namespace
 		// is connected or not, and the backend doesn't list presence.
 		std::atomic<bool> asioLike{false};
 		std::atomic<bool> failedOpen{false};
+		std::atomic<bool> unnamed{false}; // fake-1 has no name, as with a driver that reports none
 	};
 
-	DeviceInfo fakeInfo()
+	DeviceInfo fakeInfo(const FakeDriver& driver)
 	{
 		DeviceInfo info;
 		info.id = "fake-1";
-		info.name = "Fake interface";
+		info.name = driver.unnamed ? "" : "Fake interface";
 		info.inputs = {"Mic", "Line"};
 		info.outputs = {"Main L", "Main R"};
 		info.sampleRates = {44100.0, 48000.0};
@@ -153,7 +154,7 @@ namespace
 
 		DeviceInfo info() const override
 		{
-			DeviceInfo info = fakeInfo();
+			DeviceInfo info = fakeInfo(m_driver);
 			info.clockSource = m_clockSource;
 			return info;
 		}
@@ -185,7 +186,7 @@ namespace
 
 		std::vector<DeviceInfo> devices() override
 		{
-			DeviceInfo first = fakeInfo();
+			DeviceInfo first = fakeInfo(*m_driver);
 			if (m_driver->asioLike ? m_driver->failedOpen.load() : !m_driver->connected)
 				first.unavailableReason = "not connected";
 			DeviceInfo unplugged;
@@ -197,7 +198,7 @@ namespace
 
 		std::unique_ptr<Device> open(const DeviceConfig& config) override
 		{
-			const DeviceInfo info = fakeInfo();
+			const DeviceInfo info = fakeInfo(*m_driver);
 			if (!config.device.empty() && config.device != info.id)
 				throw DeviceError("no device " + config.device);
 			if (!m_driver->connected)
@@ -808,6 +809,19 @@ TEST_CASE("the unplugged dummy device plugs in again after another backend repla
 	CHECK(run(client, "audio.setDevice").at("device").at("backend") == "dummy");
 }
 
+TEST_CASE("a lost device that has no name reports its id as its name", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	driver->unnamed = true;
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	driver->connected = false;
+	driver->device.load()->requestReset();
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
+	CHECK(run(client, "audio.get").at("lost").at("name") == "fake-1");
+}
+
 TEST_CASE("tries to open a lost device again run one at a time and stay out of the command log", "[integration]")
 {
 	Engine engine;
@@ -925,6 +939,7 @@ TEST_CASE("the default fallback is the lost device's backend's default device, e
 	CHECK(status.at("device").at("backend") == "dummy"); // the fake backend's default device is the lost one
 	CHECK(status.at("lost").at("backend") == "fake");
 	CHECK(status.at("lost").at("device") == "fake-1");
+	CHECK(status.at("lost").at("name") == "Fake interface"); // not the fallback's
 	CHECK(status.at("running") == true);
 	CHECK_THAT(reject(client, "audio.set", {{"blockSize", 512}}), ContainsSubstring("lost"));
 

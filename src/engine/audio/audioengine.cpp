@@ -865,7 +865,9 @@ namespace gnubase::engine
 		const std::string backend = lost ? lost->backend : m_backend;
 		const Json parameters = lost ? lost->parameters : m_parameters;
 		const std::string id = lost ? lost->device : m_device->info().id;
-		const std::string name = lost ? lost->name : m_device->info().name;
+		std::string name = lost ? lost->name : m_device->info().name;
+		if (name.empty()) // a driver that reports none: the status line shows something
+			name = id;
 		if (!lost)
 			logging::info("Resetting the audio device ({} {})", backend, id);
 		// The measurement goes on across the restart. Only a restart for a dropout is one (the reference manual,
