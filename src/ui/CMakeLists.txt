@@ -56,6 +56,8 @@ add_library(gnubase-ui STATIC
 	markers.cpp
 	markers.h
 	markerswindow.cpp
+	mixer.cpp
+	mixer.h
 	poolpanel.cpp
 	poolpanel.h
 	popupwidgets.cpp

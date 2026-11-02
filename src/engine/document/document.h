@@ -346,6 +346,10 @@ namespace gnubase::engine
 		std::optional<AutoFades> autoFades; // audio tracks: settings of their own instead of the project's
 		std::string timeFormat;             // ruler tracks: one of g_rulerTimeFormats
 		bool enabled = true; // audio, instrument and MIDI tracks: a disabled one plays nothing and is silent
+		// An image file that the mixer shows on the track's channel (#106), or empty. The initializer lets Track{...}
+		// leave it out, as for Channel::instrumentParameters.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see above
+		std::string picture = {};
 	};
 
 	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
@@ -440,6 +444,18 @@ namespace gnubase::engine
 	// Whether text is a color as "#rrggbb".
 	bool isColor(const std::string& text);
 
+	// The channel types a mixer's filter shows or hides (reference manual p. 454): input and output busses, and the
+	// channels of audio, instrument, MIDI, group and effect tracks; folders' group channels are group channels.
+	inline constexpr std::array<const char*, 7> g_mixerChannelTypes = {
+		"input", "audio", "instrument", "midi", "group", "effect", "output"};
+
+	// What a mixer hides (#106, docs/features/mixer-window.md): channels and busses by id, and channel types.
+	struct MixerView
+	{
+		std::vector<ObjectId> hidden;
+		std::vector<std::string> hiddenTypes; // from g_mixerChannelTypes
+	};
+
 	// The record file types and bit depths of the project setup (reference manual pp. 129-130), as the engine API
 	// names them. Recording (#96) writes its files in them.
 	inline constexpr std::array<const char*, 4> g_recordFileTypes = {"wav", "broadcastWav", "aiff", "flac"};
@@ -495,6 +511,8 @@ namespace gnubase::engine
 		// The color last given to events or parts, for editing.autoTrackColor's lastApplied: not part of undo or the
 		// file.
 		std::string lastAppliedColor;
+		// What each mixer hides (#106), by mixer: lower, window1 to window4. Settings, not part of undo.
+		std::map<std::string, MixerView> mixers;
 
 		ObjectId newId() { return nextId++; }
 
@@ -665,9 +683,9 @@ namespace gnubase::engine
 	inline bool operator==(const Track& a, const Track& b)
 	{
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled) ==
+				   a.timeFormat, a.enabled, a.picture) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled);
+				b.timeFormat, b.enabled, b.picture);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

@@ -82,6 +82,7 @@ namespace gnubase::engine
 	Json toJson(const AutomationTarget& target);
 	Json toJson(const AutomationPoint& point);
 	Json toJson(const AutomationLane& lane); // with its points, sorted by position
+	Json toJson(const MixerView& view);      // {"hidden": [ids], "hiddenTypes": [types]}
 
 	// The whole project, with the tracks from top to bottom. The id counter is left out: undo doesn't restore it,
 	// so that ids stay unique.

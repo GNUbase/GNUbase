@@ -4,6 +4,7 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
 #include "engine/dawproject/dawproject.h"
+#include "engine/document/mixerviews.h"
 #include "engine/document/serialize.h"
 #include "engine/dsp/timestretch.h"
 #include "engine/graph/graph.h"
@@ -1036,6 +1037,7 @@ namespace gnubase::engine
 				track.name = parameters.at("name").get<std::string>();
 			track.color = newColor;
 			track.timeFormat = parameters.value("timeFormat", track.timeFormat);
+			track.picture = parameters.value("picture", track.picture);
 			if (parameters.contains("enabled"))
 			{
 				const bool enabled = parameters.at("enabled").get<bool>();
@@ -2940,10 +2942,11 @@ namespace gnubase::engine
 				"then plays through it, or without it through the next group channel up, or the main output, and "
 				"its automation and the routing of other channels to it go. Channels routed elsewhere by hand or "
 				"disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new "
-				"color goes to the tracks inside it.",
-				objectSchema(
-					{{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
-						{"timeFormat", timeFormats}, {"enabled", booleanSchema}, {"groupChannel", booleanSchema}},
+				"color goes to the tracks inside it. picture is an image file (PNG, JPEG or SVG) that the mixer shows "
+				"on the track's channel, or empty for none.",
+				objectSchema({{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
+								 {"timeFormat", timeFormats}, {"enabled", booleanSchema},
+								 {"groupChannel", booleanSchema}, {"picture", stringSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);
@@ -3202,6 +3205,7 @@ namespace gnubase::engine
 		registerFadeCommands(engine);
 		registerEventEditCommands(engine);
 		registerSnapCommands(*this, engine);
+		registerMixerCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 		registerProjectFileCommands(engine);

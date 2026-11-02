@@ -522,6 +522,11 @@
 	{
 		background-color: #0969da;
 	}
+	.mixer-channel
+	{
+		border-right-width: 1dp;
+		border-right-color: #b9c1cc;
+	}
 	.docking [zone]
 	{
 		background-color: #f6f8fa;

@@ -2,8 +2,8 @@
 
 Windows built from zones, tab groups, splitters and strips, and panels that dock in a zone or open in a window of
 their own (#56), and setup panes that show, hide and reorder sections (#372) (reference manual pp. 54–100, 439–440,
-1575–1578). The code is `ui::Docking` (`src/ui/docking.h`); `app::AppUi` makes the project window a docking window,
-and the mixer and the editors will be the next ones.
+1575–1578). The code is `ui::Docking` (`src/ui/docking.h`); `app::AppUi` makes the project window and the mixer windows
+([mixer-window.md](mixer-window.md)) docking windows, and the editors will be the next ones.
 
 ## Structure
 
@@ -78,8 +78,8 @@ the set `channel` (`setup-section="eq"`, with the section's label), in the user'
   that adds containers asks for this, rather than the docking system looking for new ones: RmlUi reports no changes to
   the document, and searching every document in each frame would cost time on a large mixer.
 
-The sections of the mixer come with the mixer window; `tests/data/ui/sections.rml` is a test window with sections, and
-`tests/data/ui/sections-later.rml` one whose channels only come after `attach`.
+The mixer's channels are such containers ([mixer-window.md](mixer-window.md)); `tests/data/ui/sections.rml` is a test
+window with sections, and `tests/data/ui/sections-later.rml` one whose channels only come after `attach`.
 
 ## Splitters
 
@@ -101,7 +101,7 @@ their way to the engine it ignores the echoes, so a quick second change doesn't 
       "zones": {"lower": {"visible": true, "size": 280, "tabs": ["mixer", "editor"], "hidden": [], "active": "mixer"}},
       "strips": {"overviewLine": false, "infoLine": true}
     },
-    "mixer": {
+    "mixer1": {
       "sections": {"channel": {"order": ["fader", "routing", "inserts"], "hidden": ["inserts"]}}
     }
   },
@@ -146,11 +146,10 @@ and a panel in a window of its own, whose document has no zones. Ctrl+Tab, Alt+T
 
 ## Not yet
 
-The mixer's window layout pane and its sections (p. 439) come with the mixer window; sections in a panel that shows in
-a window of its own keep the document's order; the Channel tab (p. 73) with the track inspector; tabs at the bottom of
-the lower zone, as in the reference; dragging a tab out of its zone to open it in a window; the editor in the lower
-zone taking the focus when it opens (p. 100), once editors open there; and live reload keeps the panels' contents only
-when the app opens again.
+Sections in a panel that shows in a window of its own keep the document's order; the Channel tab (p. 73) with the
+track inspector; tabs at the bottom of the lower zone, as in the reference; dragging a tab out of its zone to open it
+in a window; the editor in the lower zone taking the focus when it opens (p. 100), once editors open there; and live
+reload keeps the panels' contents only when the app opens again.
 
 ## Checks
 

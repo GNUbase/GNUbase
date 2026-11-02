@@ -61,8 +61,8 @@ one it has the class `empty` and says "No Track Selected".
 - **Inserts**: an overview of the channel's plugin slots by name, top to bottom (`plugin.*` changes them).
 - **Notepad** (p. 168): the channel's notes. What is typed goes to the engine when the field loses the focus, also
   with Escape (`channel.set` `notes`, one undo step). When another track shows while the notepad or the name is being
-  edited, the edit is taken first, for the track it started on. The mixer's notepad (p. 497, #106) is meant to show the same
-  notes.
+  edited, the edit is taken first, for the track it started on. The mixer's notepad (p. 497,
+  [mixer-window.md](mixer-window.md)) shows the same notes.
 - **Set up Sections** (p. 167): a right click in the inspector opens the setup pane `#inspector-setup`, which the
   docking system fills with a toggle per section: it shows and hides sections, and dragging one onto another reorders
   them. The choice is the user setting `ui.layout`, under the set `inspector` ([docking.md](docking.md)).

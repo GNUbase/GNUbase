@@ -1,0 +1,134 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* The mixer (ui/mixer.h, docs/features/mixer-window.md): its toolbar over the fader section, a row of channel strips
+   that scrolls sideways, each the channel's name over its sections (picture, notepad, fader), and the Visibility tab's
+   list of channels. Strips have the channel's type in their type attribute; their sections get .hidden from the
+   docking system, the channel type filter's button .checked while a type is hidden. */
+.mixer
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.mixer-toolbar
+{
+	flex-shrink: 0;
+}
+
+.mixer-toolbar button
+{
+	margin-right: 4dp;
+}
+
+.mixer-toolbar .spacer
+{
+	flex: 1 1 0;
+}
+
+.mixer-channels
+{
+	flex: 1 1 0;
+	display: flex;
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+
+.mixer-channel
+{
+	display: flex;
+	flex-direction: column;
+	flex-shrink: 0;
+	width: 76dp;
+	padding: 4dp;
+	box-sizing: border-box;
+}
+
+.mixer-channel-name
+{
+	flex-shrink: 0;
+	height: 20dp;
+	overflow: hidden;
+	white-space: nowrap;
+	text-align: center;
+	cursor: move;
+}
+
+.mixer-picture
+{
+	flex-shrink: 0;
+	height: 52dp;
+	margin-bottom: 4dp;
+}
+
+.mixer-picture img, .mixer-picture svg
+{
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+.mixer-notes
+{
+	flex-shrink: 0;
+	margin-bottom: 4dp;
+}
+
+.mixer-notes textarea
+{
+	display: block;
+	width: 100%;
+	height: 64dp;
+	box-sizing: border-box;
+}
+
+.mixer-fader
+{
+	flex: 1 1 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	min-height: 120dp;
+}
+
+.mixer-buttons
+{
+	display: flex;
+	flex-shrink: 0;
+	margin-bottom: 4dp;
+}
+
+.mixer-buttons button
+{
+	margin: 0 1dp;
+}
+
+.mixer-fader fader
+{
+	flex: 1 1 0;
+	height: auto;
+	min-height: 60dp;
+}
+
+.mixer-volume
+{
+	flex-shrink: 0;
+	margin-top: 4dp;
+}
+
+.mixer-visibility
+{
+	display: flex;
+	flex-direction: column;
+	padding: 4dp;
+}
+
+.mixer-visibility-item
+{
+	display: block;
+	margin-bottom: 2dp;
+	text-align: left;
+}
