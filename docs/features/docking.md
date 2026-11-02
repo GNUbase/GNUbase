@@ -69,8 +69,13 @@ the set `channel` (`setup-section="eq"`, with the section's label), in the user'
   The sections stay where they were among the container's other children, such as a channel's name above them.
 - **Defaults.** The set's first container in the document says which sections there are, their default order and which
   are hidden by default; the other containers are expected to have the same sections.
+- **Containers that come later.** Containers added or rebuilt after `attach`, such as the mixer's channels as tracks
+  come and go, go through `Docking::arrangeSections(element)` once they are in the document: the element and the
+  containers in it get the user's order and hidden sections at once. A set that has no container yet, such as on a
+  project without channels, is learned from the first one that comes this way, which fills its setup panes too.
 
-The sections of the mixer come with the mixer window; `tests/data/ui/sections.rml` is a test window with sections.
+The sections of the mixer come with the mixer window; `tests/data/ui/sections.rml` is a test window with sections, and
+`tests/data/ui/sections-later.rml` one whose channels only come after `attach`.
 
 ## Splitters
 
@@ -127,9 +132,7 @@ zone that doesn't bind them itself.
 
 ## Not yet
 
-The mixer's window layout pane and its sections (p. 439) come with the mixer window; until then, containers of
-sections added after `attach`, such as a new channel, take the user's order and visibility only with the next change
-to the layout; the Channel tab (p. 73) with the track inspector; tabs at the bottom of the lower zone, as in the reference; dragging a tab
+The mixer's window layout pane and its sections (p. 439) come with the mixer window; the Channel tab (p. 73) with the track inspector; tabs at the bottom of the lower zone, as in the reference; dragging a tab
 out of its zone to open it in a window; Tab and Shift+Tab to move the focus between zones (p. 100), which RmlUi keeps
 for moving between controls for now; and live reload keeps the panels' contents only when the app opens again.
 
@@ -147,4 +150,6 @@ it was; and the complete layout, with zone sizes, tab orders, hidden and active 
 back exactly after a restart. On a test window with sections, the setup pane shows and hides sections in every
 channel and stays open, reorders them by drag and drop between the channel's other elements, and shows and hides a
 strip and a zone; `ui.layout` from the engine reorders and hides them too, ignores names that aren't sections, is
-refused in the wrong shape and resets to the defaults; and the order and visibility come back after a restart.
+refused in the wrong shape and resets to the defaults; and the order and visibility come back after a restart. A
+channel added or rebuilt after `attach` takes the user's order and hidden sections at once and follows later changes,
+and a window that starts without channels fills its setup pane from the first one that comes, with the user's layout.

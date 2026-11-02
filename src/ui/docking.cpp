@@ -186,26 +186,7 @@ namespace gnubase::ui
 		if (Rml::Element* old = attached.document.get())
 			listen(*old, false);
 		attached = Attached{document.GetObserverPtr(), {}, {}};
-		// The first container of a set says which sections it has, before the user's order changes it.
-		for (const Rml::Element* container : elements(document, "[sections]"))
-		{
-			std::vector<Section>& known = attached.sections[attribute(*container, "sections")];
-			if (!known.empty())
-				continue;
-			for (int i = 0; i < container->GetNumChildren(); ++i)
-				if (const Rml::Element* child = container->GetChild(i); child->HasAttribute("section"))
-					known.push_back({attribute(*child, "section"), attribute(*child, "label"),
-						attribute(*child, "default") == "hidden"});
-		}
-		for (Rml::Element* pane : elements(document, "[setup]"))
-			for (const Section& known : attached.sections[attribute(*pane, "setup")])
-				if (pane->QuerySelector("[setup-section=" + known.id + "]") == nullptr)
-				{
-					Rml::Element* item = pane->AppendChild(document.CreateElement("button"));
-					item->SetAttribute("type", "toggle");
-					item->SetAttribute("setup-section", known.id);
-					item->SetInnerRML(known.label);
-				}
+		learnSections(attached, document);
 		for (Rml::Element* zone : elements(document, "[zone]"))
 		{
 			const std::string zoneName = attribute(*zone, "zone");
@@ -228,6 +209,66 @@ namespace gnubase::ui
 		Rml::ElementList found;
 		root.QuerySelectorAll(found, selector);
 		return {found.begin(), found.end()};
+	}
+
+	std::vector<Rml::Element*> Docking::containers(Rml::Element& root, const std::string& set)
+	{
+		std::vector<Rml::Element*> result;
+		if (root.HasAttribute("sections") && (set.empty() || attribute(root, "sections") == set))
+			result.push_back(&root);
+		const std::vector<Rml::Element*> found = elements(root, set.empty() ? "[sections]" : "[sections=" + set + "]");
+		result.insert(result.end(), found.begin(), found.end());
+		return result;
+	}
+
+	// The first container of a set says which sections it has, before the user's order changes it.
+	bool Docking::learnSections(Attached& attached, Rml::Element& root)
+	{
+		auto* document = dynamic_cast<Rml::ElementDocument*>(attached.document.get());
+		if (document == nullptr)
+			return false;
+		bool learned = false;
+		for (const Rml::Element* container : containers(root, {}))
+		{
+			std::vector<Section>& known = attached.sections[attribute(*container, "sections")];
+			if (!known.empty())
+				continue;
+			for (int i = 0; i < container->GetNumChildren(); ++i)
+				if (const Rml::Element* child = container->GetChild(i); child->HasAttribute("section"))
+					known.push_back({attribute(*child, "section"), attribute(*child, "label"),
+						attribute(*child, "default") == "hidden"});
+			learned = learned || !known.empty();
+		}
+		for (Rml::Element* pane : elements(*document, "[setup]"))
+			for (const Section& known : attached.sections[attribute(*pane, "setup")])
+				if (pane->QuerySelector("[setup-section=" + known.id + "]") == nullptr)
+				{
+					Rml::Element* item = pane->AppendChild(document->CreateElement("button"));
+					item->SetAttribute("type", "toggle");
+					item->SetAttribute("setup-section", known.id);
+					item->SetInnerRML(known.label);
+				}
+		return learned;
+	}
+
+	void Docking::arrangeSections(Rml::Element& element)
+	{
+		Rml::ElementDocument* document = element.GetOwnerDocument();
+		const Rml::Element* up = &element; // in the document, not just made for it
+		while (up != nullptr && up != document)
+			up = up->GetParentNode();
+		if (document == nullptr || up == nullptr)
+			return;
+		for (auto& [name, attached] : m_windows)
+			if (attached.document.get() == document)
+			{
+				if (learnSections(attached, element))
+					applySections(name, attached, *document); // the set's setup panes and every container of it
+				else
+					applySections(name, attached, element);
+				document->GetContext()->RequestNextUpdate(0);
+				return;
+			}
 	}
 
 	// The zones' tab menus: Open in Separate Window, then an item to show or hide each tab. Made once per panel, since
@@ -665,27 +706,7 @@ namespace gnubase::ui
 			else
 				toggle->RemoveAttribute("checked");
 		}
-		for (const auto& [set, known] : attached.sections)
-		{
-			const std::vector<std::string> order = sections(window, set);
-			for (Rml::Element* container : elements(*document, "[sections=" + set + "]"))
-			{
-				arrange(*container, "section", order);
-				for (Rml::Element* part : elements(*container, "[section]"))
-					part->SetClass("hidden", sectionHidden(window, set, attribute(*part, "section")));
-			}
-			for (Rml::Element* pane : elements(*document, "[setup=" + set + "]"))
-			{
-				arrange(*pane, "setup-section", order);
-				for (Rml::Element* item : elements(*pane, "[setup-section]"))
-				{
-					if (sectionHidden(window, set, attribute(*item, "setup-section")))
-						item->RemoveAttribute("checked");
-					else
-						item->SetAttribute("checked", "");
-				}
-			}
-		}
+		applySections(window, attached, *document);
 		for (Rml::Element* item : elements(*document, "menuitem[tab]"))
 		{
 			const Panel* tab = panel(attribute(*item, "tab"));
@@ -697,6 +718,32 @@ namespace gnubase::ui
 				item->RemoveAttribute("checked");
 		}
 		document->GetContext()->RequestNextUpdate(0);
+	}
+
+	// The containers of sections in root, root too, and its setup panes.
+	void Docking::applySections(const std::string& window, const Attached& attached, Rml::Element& root)
+	{
+		for (const auto& [set, known] : attached.sections)
+		{
+			const std::vector<std::string> order = sections(window, set);
+			for (Rml::Element* container : containers(root, set))
+			{
+				arrange(*container, "section", order);
+				for (Rml::Element* part : elements(*container, "[section]"))
+					part->SetClass("hidden", sectionHidden(window, set, attribute(*part, "section")));
+			}
+			for (Rml::Element* pane : elements(root, "[setup=" + set + "]"))
+			{
+				arrange(*pane, "setup-section", order);
+				for (Rml::Element* item : elements(*pane, "[setup-section]"))
+				{
+					if (sectionHidden(window, set, attribute(*item, "setup-section")))
+						item->RemoveAttribute("checked");
+					else
+						item->SetAttribute("checked", "");
+				}
+			}
+		}
 	}
 
 	// Builds the zone's tab group again when its tabs changed, keeping what the panels that stay in it show, and
