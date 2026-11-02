@@ -82,18 +82,27 @@ namespace gnubase::ui
 			return time::formatTimecode(time::toTimecode(seconds, rate), rate);
 		}
 
-		// Marks of a unit that grows linearly with time, perSecond units a second: seconds, frames and samples.
+		// Marks of a unit that grows linearly with time, perSecond units a second: seconds, frames and samples. The
+		// labels count from offset seconds at the project start.
 		void linearMarks(double from, double to, double minimum, double perSecond, const std::vector<Step>& steps,
-			const std::function<std::string(double units, double step)>& label, std::vector<RulerMark>& marks)
+			const std::function<std::string(double units, double step)>& label, std::vector<RulerMark>& marks,
+			double offset = 0.0)
 		{
 			from = std::max(from, 0.0);
 			const Step step = pick(steps, minimum * perSecond);
 			const size_t first = marks.size();
-			evenMarks(
-				from * perSecond, to * perSecond, step.length, step.parts,
+			evenMarks((from + offset) * perSecond, (to + offset) * perSecond, step.length, step.parts,
 				[&label, &step](double units) { return label(units, step.length); }, marks);
 			for (size_t i = first; i < marks.size(); ++i)
-				marks[i].position /= perSecond;
+				marks[i].position = (marks[i].position / perSecond) - offset;
+		}
+
+		// What seconds, timecode and user frames show at the project start.
+		double startOffset(TimeFormat format, const TimeContext& context)
+		{
+			const bool clock =
+				format == TimeFormat::Seconds || format == TimeFormat::Timecode || format == TimeFormat::UserFrames;
+			return clock ? context.startTime : 0.0;
 		}
 
 		// "5", "5.2", "5.2.3" or "5.2.3.60": a position as bars, beats, sixteenths and display ticks, without the
@@ -144,8 +153,11 @@ namespace gnubase::ui
 			const auto add = [&](time::Ticks position, bool labelled)
 			{
 				if (position >= first && position < last)
-					marks.push_back(
-						{tempo.toSeconds(position), labelled ? musicalLabel(signatures.toBarsBeats(position)) : ""});
+				{
+					time::BarsBeats shown = signatures.toBarsBeats(position);
+					shown.bar += context.barOffset;
+					marks.push_back({tempo.toSeconds(position), labelled ? musicalLabel(shown) : ""});
+				}
 			};
 
 			if (static_cast<double>(beat) < needed)
@@ -236,9 +248,21 @@ namespace gnubase::ui
 		return std::nullopt;
 	}
 
+	namespace
+	{
+		// The project setup's frame rate, start time and bar offset; the defaults for a project without them.
+		void readSetup(const engine::Json& project, TimeContext& context)
+		{
+			context.frameRate = time::frameRateFromName(project.value("frameRate", "25")).value_or(time::g_fps25);
+			context.startTime = project.value("startTime", 0.0);
+			context.barOffset = project.value("barOffset", 0);
+		}
+	}
+
 	TimeContext projectTime(const engine::Json& project)
 	{
 		TimeContext context;
+		readSetup(project, context);
 		context.sampleRate = project.at("sampleRate").get<double>();
 		std::vector<time::TempoPoint> tempo;
 		for (const engine::Json& point : project.at("tempo"))
@@ -260,22 +284,37 @@ namespace gnubase::ui
 		return context;
 	}
 
+	namespace
+	{
+		// A time in the format without the start time and bar offset, as lengths show it.
+		std::string formatClock(TimeFormat format, double seconds, const TimeContext& context)
+		{
+			switch (format)
+			{
+			case TimeFormat::BarsBeats:
+				return time::formatBarsBeats(context.signatures.toBarsBeats(context.tempo.toTicks(seconds)));
+			case TimeFormat::Seconds:
+				return time::formatSeconds(seconds);
+			case TimeFormat::Timecode:
+				return timecode(seconds, context.frameRate);
+			case TimeFormat::Samples:
+				return std::to_string(std::llround(seconds * context.sampleRate));
+			case TimeFormat::UserFrames:
+				return timecode(seconds, userRate(context));
+			}
+			return {};
+		}
+	}
+
 	std::string formatTime(TimeFormat format, double seconds, const TimeContext& context)
 	{
-		switch (format)
+		if (format == TimeFormat::BarsBeats)
 		{
-		case TimeFormat::BarsBeats:
-			return time::formatBarsBeats(context.signatures.toBarsBeats(context.tempo.toTicks(seconds)));
-		case TimeFormat::Seconds:
-			return time::formatSeconds(seconds);
-		case TimeFormat::Timecode:
-			return timecode(seconds, context.frameRate);
-		case TimeFormat::Samples:
-			return std::to_string(std::llround(seconds * context.sampleRate));
-		case TimeFormat::UserFrames:
-			return timecode(seconds, userRate(context));
+			time::BarsBeats position = context.signatures.toBarsBeats(context.tempo.toTicks(seconds));
+			position.bar += context.barOffset;
+			return time::formatBarsBeats(position);
 		}
-		return {};
+		return formatClock(format, seconds + startOffset(format, context), context);
 	}
 
 	namespace
@@ -351,73 +390,86 @@ namespace gnubase::ui
 			return time::BarsBeats{
 				numbers[0], static_cast<int>(numbers[1]), static_cast<int>(numbers[2]), static_cast<int>(numbers[3])};
 		}
+
+		// A position typed in the format, without the start time, as lengths are typed; bars count from the bar
+		// offset.
+		std::optional<double> parseClock(TimeFormat format, const std::string& text, const TimeContext& context)
+		{
+			switch (format)
+			{
+			case TimeFormat::BarsBeats:
+			{
+				const auto parts = split(text, " .,:;");
+				std::optional<time::BarsBeats> position = barsBeats(text);
+				if (!parts || !position || position->bar - context.barOffset < 1)
+					return std::nullopt;
+				// One-based, but for display ticks; what is left out is the first.
+				const size_t typed = parts->size();
+				if ((typed > 1 && position->beat < 1) || (typed > 2 && position->sixteenth < 1))
+					return std::nullopt;
+				position->bar -= 1 + context.barOffset;
+				position->beat = std::max(position->beat - 1, 0);
+				position->sixteenth = std::max(position->sixteenth - 1, 0);
+				return context.tempo.toSeconds(context.signatures.toTicks(*position));
+			}
+			case TimeFormat::Seconds:
+			{
+				const auto parts = split(text, ":");
+				if (!parts || parts->size() > 3)
+					return std::nullopt;
+				const std::string& last = parts->back();
+				const size_t point = last.find('.');
+				const auto whole = integer(last.substr(0, point));
+				const auto fraction =
+					point == std::string::npos ? std::optional<int64_t>(0) : integer(last.substr(point + 1));
+				if (!whole || !fraction)
+					return std::nullopt;
+				auto seconds = static_cast<double>(*whole);
+				if (point != std::string::npos)
+					seconds +=
+						static_cast<double>(*fraction) / std::pow(10.0, static_cast<double>(last.size() - point - 1));
+				double unit = 60.0;
+				for (size_t i = parts->size() - 1; i-- > 0; unit *= 60.0)
+				{
+					const auto number = integer((*parts)[i]);
+					if (!number)
+						return std::nullopt;
+					seconds += static_cast<double>(*number) * unit;
+				}
+				return seconds;
+			}
+			case TimeFormat::Timecode:
+				return timecodeSeconds(text, context.frameRate);
+			case TimeFormat::Samples:
+			{
+				const auto parts = split(text, "");
+				const auto samples = parts ? integer(parts->front()) : std::nullopt;
+				if (!samples)
+					return std::nullopt;
+				return static_cast<double>(*samples) / context.sampleRate;
+			}
+			case TimeFormat::UserFrames:
+				return timecodeSeconds(text, userRate(context));
+			}
+			return std::nullopt;
+		}
 	}
 
 	std::optional<double> parseTime(TimeFormat format, const std::string& text, const TimeContext& context)
 	{
-		switch (format)
-		{
-		case TimeFormat::BarsBeats:
-		{
-			const auto parts = split(text, " .,:;");
-			std::optional<time::BarsBeats> position = barsBeats(text);
-			if (!parts || !position || position->bar < 1)
-				return std::nullopt;
-			// One-based, but for display ticks; what is left out is the first.
-			const size_t typed = parts->size();
-			if ((typed > 1 && position->beat < 1) || (typed > 2 && position->sixteenth < 1))
-				return std::nullopt;
-			position->bar -= 1;
-			position->beat = std::max(position->beat - 1, 0);
-			position->sixteenth = std::max(position->sixteenth - 1, 0);
-			return context.tempo.toSeconds(context.signatures.toTicks(*position));
-		}
-		case TimeFormat::Seconds:
-		{
-			const auto parts = split(text, ":");
-			if (!parts || parts->size() > 3)
-				return std::nullopt;
-			const std::string& last = parts->back();
-			const size_t point = last.find('.');
-			const auto whole = integer(last.substr(0, point));
-			const auto fraction =
-				point == std::string::npos ? std::optional<int64_t>(0) : integer(last.substr(point + 1));
-			if (!whole || !fraction)
-				return std::nullopt;
-			auto seconds = static_cast<double>(*whole);
-			if (point != std::string::npos)
-				seconds +=
-					static_cast<double>(*fraction) / std::pow(10.0, static_cast<double>(last.size() - point - 1));
-			double unit = 60.0;
-			for (size_t i = parts->size() - 1; i-- > 0; unit *= 60.0)
-			{
-				const auto number = integer((*parts)[i]);
-				if (!number)
-					return std::nullopt;
-				seconds += static_cast<double>(*number) * unit;
-			}
-			return seconds;
-		}
-		case TimeFormat::Timecode:
-			return timecodeSeconds(text, context.frameRate);
-		case TimeFormat::Samples:
-		{
-			const auto parts = split(text, "");
-			const auto samples = parts ? integer(parts->front()) : std::nullopt;
-			if (!samples)
-				return std::nullopt;
-			return static_cast<double>(*samples) / context.sampleRate;
-		}
-		case TimeFormat::UserFrames:
-			return timecodeSeconds(text, userRate(context));
-		}
-		return std::nullopt;
+		std::optional<double> seconds = parseClock(format, text, context);
+		if (!seconds)
+			return std::nullopt;
+		*seconds -= startOffset(format, context);
+		if (*seconds < 0.0)
+			return std::nullopt;
+		return seconds;
 	}
 
 	std::string formatLength(TimeFormat format, double from, double to, const TimeContext& context)
 	{
 		if (format != TimeFormat::BarsBeats)
-			return formatTime(format, to - from, context);
+			return formatClock(format, to - from, context);
 		// ponytail: counts in the first signature's bars, wrong across signature changes; measure from the start's
 		// bar when signature tracks (#156) make that common.
 		const time::BarsBeats length =
@@ -430,7 +482,7 @@ namespace gnubase::ui
 		TimeFormat format, const std::string& text, double from, const TimeContext& context)
 	{
 		if (format != TimeFormat::BarsBeats)
-			return parseTime(format, text, context);
+			return parseClock(format, text, context);
 		const std::optional<time::BarsBeats> length = barsBeats(text);
 		if (!length)
 			return std::nullopt;
@@ -452,6 +504,7 @@ namespace gnubase::ui
 					{change.at("numerator").get<int>(), change.at("denominator").get<int>()}});
 			time::TempoMap tempoMap(tempo);
 			time::SignatureMap signatureMap(signatures);
+			readSetup(project, context);
 			context.sampleRate = project.at("sampleRate").get<double>();
 			context.tempo = std::move(tempoMap);
 			context.signatures = std::move(signatureMap);
@@ -474,7 +527,8 @@ namespace gnubase::ui
 			{ musicalMarks(*shared, from, to, minimum, marks); };
 			break;
 		case TimeFormat::Seconds:
-			scale.marks = [](double from, double to, double minimum, std::vector<RulerMark>& marks)
+			scale.marks = [start = context.startTime](
+							  double from, double to, double minimum, std::vector<RulerMark>& marks)
 			{
 				linearMarks(
 					from, to, minimum, 1.0, secondSteps(),
@@ -483,19 +537,21 @@ namespace gnubase::ui
 						const std::string text = time::formatSeconds(seconds);
 						return step >= 1.0 ? text.substr(0, text.size() - 4) : text; // no ".000"
 					},
-					marks);
+					marks, start);
 			};
 			break;
 		case TimeFormat::Timecode:
 		case TimeFormat::UserFrames:
 		{
 			const time::FrameRate rate = format == TimeFormat::Timecode ? context.frameRate : userRate(context);
-			scale.marks = [rate](double from, double to, double minimum, std::vector<RulerMark>& marks)
+			scale.marks = [rate, start = context.startTime](
+							  double from, double to, double minimum, std::vector<RulerMark>& marks)
 			{
 				linearMarks(
 					from, to, minimum, framesPerSecond(rate), frameSteps(rate.framesPerSecond),
 					[rate](double frame, double /*step*/)
-					{ return time::formatTimecode(time::fromFrameNumber(std::llround(frame), rate), rate); }, marks);
+					{ return time::formatTimecode(time::fromFrameNumber(std::llround(frame), rate), rate); }, marks,
+					start);
 			};
 			break;
 		}

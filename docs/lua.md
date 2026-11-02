@@ -182,6 +182,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.devices`
@@ -196,7 +197,7 @@ Returns:
 
 #### `gnubase.audio.get`
 
-The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, from 0 to 196608), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower; a new project sample rate sends audio.changed. lost: the device that went away (its backend, device id, its name while it was open, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null. While a device is lost, device is the fallback that plays meanwhile (the user setting audio.fallbackDevice), or null.
+The audio device (its backend, id, name, format, channel names, latencies in frames, clock source, whether it has a control panel, whether it can monitor directly and does (directMonitoring), the record shift and the record offset: inputLatency + outputLatency - recordShift, from 0 to 196608), whether it runs, how many frames it has processed and, if it is the dummy device, captured, how many frames of audio track playback were silent because a disk stream was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as it doesn't support the project's or was asked for another, and plays faster or slower; a new project sample rate sends audio.changed. recordBitDepth is the project's (see project.set), for the record format; a new one also sends audio.changed. lost: the device that went away (its backend, device id, its name while it was open, the reason it can't be opened and whether it ran and restarts), while the engine waits for it to return (see audio.reset); otherwise null. While a device is lost, device is the fallback that plays meanwhile (the user setting audio.fallbackDevice), or null.
 
 Only reads; changes nothing.
 
@@ -210,6 +211,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.performance`
@@ -258,6 +260,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.record`
@@ -299,6 +302,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.reset`
@@ -315,6 +319,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.resetPerformance`
@@ -362,6 +367,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.setDevice`
@@ -398,6 +404,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.setPort`
@@ -437,6 +444,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.simulateDeviceLoss`
@@ -457,6 +465,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.simulateOverload`
@@ -489,6 +498,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.stop`
@@ -505,6 +515,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.updateLatency`
@@ -526,6 +537,7 @@ Returns:
 - `position`: integer, required
 - `processing`: object, required
 - `projectSampleRate`: number, required
+- `recordBitDepth`: string, required
 - `running`: boolean, required
 
 #### `gnubase.audio.updatePlugins`
@@ -2484,16 +2496,23 @@ Returns:
 
 #### `gnubase.project.set`
 
-Changes the project's name, sample rate, stereo pan law or maximum volume. Linear positions keep their time at a new sample rate. panLaw is how much a mono channel panned to the center is turned down on each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it. tempo (1 to 999 BPM) and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} are the project's first tempo and time signature, as the transport bar sets them; later changes stay, and musical positions keep their ticks.
+Changes the project's name, sample rate, stereo pan law or maximum volume, or the other settings of the project setup. Linear positions keep their time at a new sample rate; media files keep theirs (see media.conform). panLaw is how much a mono channel panned to the center is turned down on each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it. tempo (1 to 999 BPM) and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} are the project's first tempo and time signature, as the transport bar sets them; later changes stay, and musical positions keep their ticks. recordFileType (wav, the default, broadcastWav, aiff or flac) and recordBitDepth (int16, int24, the default, int32, float32 or float64) are what recording writes: AIFF only integers, FLAC 16 or 24 bit, 64 bit float only Wave. frameRate is the timecode's (default 25). startTime (seconds, under 24 hours) is the time shown at the project start, length (seconds, up to 24 hours, default 600) how long the project is, barOffset (-9999 to 9999) is added to the bar numbers shown, and timeFormat is the primary time format of rulers and position displays.
 
 Parameters:
 
+- `barOffset`: integer
+- `frameRate`: one of "23.976" | "24" | "24.975" | "25" | "29.97" | "29.97dfps" | "30" | "30dfps" | "50" | "59.94" | "60"
+- `length`: number
 - `maxVolume`: number
 - `name`: string
 - `panLaw`: one of "0dB" | "-3dB" | "-4.5dB" | "-6dB" | "equalPower"
+- `recordBitDepth`: one of "int16" | "int24" | "int32" | "float32" | "float64"
+- `recordFileType`: one of "wav" | "broadcastWav" | "aiff" | "flac"
 - `sampleRate`: number
 - `signature`: object
+- `startTime`: number
 - `tempo`: number
+- `timeFormat`: one of "barsBeats" | "seconds" | "timecode" | "samples" | "userFrames"
 
 #### `gnubase.project.templates`
 

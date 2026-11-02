@@ -273,7 +273,7 @@ TEST_CASE("the zoom presets menu adds, applies and organizes presets, and zooms 
 	CHECK(display.view().start == Catch::Approx(7.0));
 	choose(app, "#zoom-presets", "#zoom-presets-menu", "Zoom Full");
 	CHECK(display.view().start == 0.0);
-	CHECK(display.visibleLength() == Catch::Approx(ui::g_minimumProjectLength));
+	CHECK(display.visibleLength() == Catch::Approx(ui::g_defaultProjectLength));
 
 	// The project's cycle markers follow Zoom Full; one zooms to its range.
 	app.call("marker.add",

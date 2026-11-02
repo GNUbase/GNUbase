@@ -599,10 +599,11 @@ TEST_CASE("zooming in and out keeps the project cursor in place, and zoom steps 
 	fixture.display.zoomOut();
 	CHECK(!fixture.display.redoZoom());
 
-	// Zoom full: from the project start to its end, but at least a minute (the project length comes with #78).
+	// Zoom full: from the project start to the end of the project setup's length (#78), or of the last event.
 	fixture.display.zoomFull();
 	CHECK(fixture.display.view().start == 0.0);
-	CHECK(fixture.display.visibleLength() == Approx(ui::g_minimumProjectLength));
+	CHECK(fixture.display.visibleLength() == Approx(ui::g_defaultProjectLength));
+	fixture.call("project.set", {{"length", 60.0}});
 	fixture.call("transport.locate", {{"position", 0}});
 	fixture.call("midiPart.set",
 		{{"part", fixture.call("project.get").at("midiParts")[0].at("id")},
@@ -693,6 +694,9 @@ TEST_CASE("the overview line shows the whole project and moves and resizes the v
 {
 	Fixture fixture;
 	fixture.addEvents();
+	fixture.call("project.set", {{"length", 60.0}});
+	REQUIRE(fixture.waitUntil([&fixture] { return fixture.display.projectLength() == Approx(60.0); }));
+	fixture.step();
 	// The project is a minute long, the view shows its first 10 seconds: a sixth of the overview.
 	Rml::Element& overview = fixture.element(".overview");
 	Rml::Element& rectangle = fixture.element(".overview-view");

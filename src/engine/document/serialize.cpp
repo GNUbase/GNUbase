@@ -397,6 +397,57 @@ namespace gnubase::engine
 		return fade;
 	}
 
+	Json toJson(const ProjectSetup& setup)
+	{
+		return {{"recordFileType", setup.recordFileType}, {"recordBitDepth", setup.recordBitDepth},
+			{"frameRate", time::frameRateName(setup.frameRate)}, {"startTime", setup.startTime},
+			{"length", setup.length}, {"barOffset", setup.barOffset}, {"timeFormat", setup.timeFormat}};
+	}
+
+	ProjectSetup projectSetupFromJson(const Json& json, const ProjectSetup& fallback)
+	{
+		ProjectSetup setup = fallback;
+		const auto oneOf = [&json](const char* key, const std::string& current, const auto& names)
+		{
+			const std::string name = json.value(key, current);
+			if (std::find(names.begin(), names.end(), name) == names.end())
+				throw std::invalid_argument(std::string("unknown ") + key + " " + name);
+			return name;
+		};
+		setup.recordFileType = oneOf("recordFileType", setup.recordFileType, g_recordFileTypes);
+		setup.recordBitDepth = oneOf("recordBitDepth", setup.recordBitDepth, g_recordBitDepths);
+		setup.timeFormat = oneOf("timeFormat", setup.timeFormat, g_rulerTimeFormats);
+		if (json.contains("frameRate"))
+		{
+			const std::string name = json.at("frameRate").get<std::string>();
+			const std::optional<time::FrameRate> rate = time::frameRateFromName(name);
+			if (!rate)
+				throw std::invalid_argument("unknown frameRate " + name);
+			setup.frameRate = *rate;
+		}
+		setup.startTime = json.value("startTime", setup.startTime);
+		setup.length = json.value("length", setup.length);
+		setup.barOffset = json.value("barOffset", setup.barOffset);
+
+		// What recording can write (AudioFileWriter): AIFF in integers, FLAC in 16 and 24 bits, 64-bit float in WAV.
+		const std::string& type = setup.recordFileType;
+		const std::string& depth = setup.recordBitDepth;
+		const bool wav = type == "wav" || type == "broadcastWav";
+		if (type == "aiff" && depth.rfind("int", 0) != 0)
+			throw std::invalid_argument("AIFF files record 16, 24 or 32 bit, not " + depth);
+		if (type == "flac" && depth != "int16" && depth != "int24")
+			throw std::invalid_argument("FLAC files record 16 or 24 bit, not " + depth);
+		if (!wav && depth == "float64")
+			throw std::invalid_argument("only Wave files record 64 bit float");
+		if (!(setup.startTime >= 0.0 && setup.startTime < 86400.0))
+			throw std::invalid_argument("startTime must be from 0 to less than 24 hours (86400 seconds)");
+		if (!(setup.length > 0.0 && setup.length <= 86400.0))
+			throw std::invalid_argument("length must be more than 0 and at most 24 hours (86400 seconds)");
+		if (setup.barOffset < -9999 || setup.barOffset > 9999)
+			throw std::invalid_argument("barOffset must be from -9999 to 9999");
+		return setup;
+	}
+
 	AutoFades autoFadesFromJson(const Json& json, const AutoFades& fallback)
 	{
 		AutoFades settings = fallback;
@@ -644,7 +695,7 @@ namespace gnubase::engine
 		for (const time::SignatureChange& change : project.signatures.changes())
 			signatures.push_back({{"bar", change.bar}, {"numerator", change.signature.numerator},
 				{"denominator", change.signature.denominator}});
-		return {{"name", project.name}, {"sampleRate", project.sampleRate}, {"tempo", tempo},
+		Json json = {{"name", project.name}, {"sampleRate", project.sampleRate}, {"tempo", tempo},
 			{"signatures", signatures}, {"autoFades", toJson(project.autoFades)},
 			{"panLaw", panLawName(project.panLaw)}, {"maxVolume", project.maxVolume}, {"busses", busses},
 			{"tracks", tracks}, {"channels", toJsonArray(project.channels)}, {"slots", toJsonArray(project.slots)},
@@ -654,6 +705,8 @@ namespace gnubase::engine
 			{"automation", toJsonArray(project.automation)}, {"quantize", midi::toJson(project.quantize)},
 			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
 			{"snap", toJson(project.snap)}};
+		json.update(toJson(project.setup));
+		return json;
 	}
 
 	namespace
@@ -941,6 +994,8 @@ namespace gnubase::engine
 		project.maxVolume = json.value("maxVolume", 6.0);
 		if (project.maxVolume != 6.0 && project.maxVolume != 12.0)
 			throw std::invalid_argument("maxVolume must be 6 or 12");
+		// Files from before the project setup have its defaults.
+		project.setup = projectSetupFromJson(json);
 
 		// Files from before ports have only the first four.
 		for (const Json& item : json.at("busses"))

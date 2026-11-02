@@ -81,6 +81,7 @@ add_executable(gnubase-tests
 	poolpanel_tests.cpp
 	processor_tests.cpp
 	projectfiles_tests.cpp
+	projectsetup_tests.cpp
 	quantize_tests.cpp
 	rmlui_tests.cpp
 	rt_tests.cpp

@@ -6,6 +6,7 @@
 #include "ui/fonts.h"
 #include "ui/historypanel.h"
 #include "ui/poolpanel.h"
+#include "ui/timeformat.h"
 #include "ui/widgets.h"
 
 #include <RmlUi/Core/Context.h>
@@ -260,6 +261,30 @@ namespace gnubase::app
 			[this](ui::Window& window, Rml::Element* /*zone*/) { chooseMissingFolder(window); }});
 		m_keys.add({"window.studioSetup", "Opens the studio setup dialog for the audio and MIDI devices.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openStudioSetup(window); }});
+		m_keys.add({"window.projectSetup",
+			"Opens the project setup dialog for the project's sample rate, record format, frame rate, start time, "
+			"length, time display, pan law and maximum volume.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { openProjectSetup(window); }});
+		// For the project setup dialog: a timecode at a project frame rate (see project.set), and the seconds of one
+		// typed (none for text that isn't one).
+		m_lua.addFunction("ui.formatTimecode",
+			[](const engine::Json& parameters)
+			{
+				const time::FrameRate rate =
+					time::frameRateFromName(parameters.value("frameRate", "25")).value_or(time::g_fps25);
+				const double seconds = parameters.at("seconds").get<double>();
+				return engine::Json{{"text", time::formatTimecode(time::toTimecode(seconds, rate), rate)}};
+			});
+		m_lua.addFunction("ui.parseTimecode",
+			[](const engine::Json& parameters)
+			{
+				ui::TimeContext context;
+				context.frameRate =
+					time::frameRateFromName(parameters.value("frameRate", "25")).value_or(time::g_fps25);
+				const std::optional<double> seconds =
+					ui::parseTime(ui::TimeFormat::Timecode, parameters.at("text").get<std::string>(), context);
+				return seconds ? engine::Json{{"seconds", *seconds}} : engine::Json::object();
+			});
 		// File > Import (docs/features/file-import.md): the OS's file dialog, then the event display imports the files.
 		m_keys.add({"file.importAudio", "Imports audio files into the project window at the project cursor.",
 			[this](ui::Window& window, Rml::Element* /*zone*/)
@@ -535,18 +560,29 @@ namespace gnubase::app
 
 	Rml::ElementDocument& AppUi::openStudioSetup(ui::Window& window)
 	{
-		// One dialog: a second document would share the first one's StudioSetup table in the UI's Lua. A closed
-		// document has left its context, until the context releases it.
-		auto* open = dynamic_cast<Rml::ElementDocument*>(m_studioSetup.get());
-		if (open != nullptr && open->GetParentNode() != nullptr)
+		return openOnce(window, "studio-setup.rml", m_studioSetup);
+	}
+
+	Rml::ElementDocument& AppUi::openProjectSetup(ui::Window& window)
+	{
+		return openOnce(window, "project-setup.rml", m_projectSetup);
+	}
+
+	Rml::ElementDocument& AppUi::openOnce(
+		ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open) const
+	{
+		// One dialog: a second document would share the first one's table in the UI's Lua. A closed document has left
+		// its context, until the context releases it.
+		auto* document = dynamic_cast<Rml::ElementDocument*>(open.get());
+		if (document != nullptr && document->GetParentNode() != nullptr)
 		{
-			open->Show(Rml::ModalFlag::Modal, Rml::FocusFlag::Keep);
-			open->PullToFront();
-			return *open;
+			document->Show(Rml::ModalFlag::Modal, Rml::FocusFlag::Keep);
+			document->PullToFront();
+			return *document;
 		}
-		Rml::ElementDocument& document = openDialog(window, "studio-setup.rml");
-		m_studioSetup = document.GetObserverPtr();
-		return document;
+		Rml::ElementDocument& opened = openDialog(window, name);
+		open = opened.GetObserverPtr();
+		return opened;
 	}
 
 	Rml::ElementDocument& AppUi::openDialog(ui::Window& window, const char* name) const
