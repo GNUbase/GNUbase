@@ -2235,6 +2235,7 @@ namespace gnubase::engine
 			{"automationPoint.remove", "Remove automation points"},
 			{"midiFile.import", "Import MIDI file"},
 			{"audioFile.import", "Import audio files"},
+			{"recording.add", "Record"},
 			{"clip.set", "Change clip"},
 			{"poolFolder.add", "Add pool folder"},
 			{"poolFolder.set", "Change pool folder"},
@@ -3105,6 +3106,7 @@ namespace gnubase::engine
 		midi::registerFunctionCommands(*this, engine);
 		registerMidiFileCommands(engine);
 		registerAudioFileCommands(engine, jobs);
+		registerRecordingCommands(engine);
 		registerPoolCommands(engine);
 		registerFadeCommands(engine);
 		registerEventEditCommands(engine);

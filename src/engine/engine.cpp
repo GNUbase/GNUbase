@@ -4,6 +4,7 @@
 #include "engine/audio/audioengine.h"
 #include "engine/document/projectmodel.h"
 #include "engine/jobs/jobs.h"
+#include "engine/media/backup.h"
 #include "engine/peaks/peakcache.h"
 #include "engine/plugins/hostmanager.h"
 #include "engine/processors/builtin.h"
@@ -13,6 +14,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <system_error>
 #include <utility>
 
 namespace gnubase::engine
@@ -73,6 +76,15 @@ namespace gnubase::engine
 		constexpr size_t g_commandLogSize = 256;
 		// How often the engine asks whether an auto save is due (project.autoSave, docs/features/project-files.md).
 		constexpr std::chrono::seconds g_autoSaveCheck{30};
+
+		// Where unsaved projects record: "Recordings" in the settings folder, or without one in the temporary folder.
+		std::filesystem::path recordingsFolder(const std::filesystem::path& settingsDirectory)
+		{
+			if (!settingsDirectory.empty())
+				return settingsDirectory / "Recordings";
+			std::error_code error;
+			return std::filesystem::temp_directory_path(error) / "GNUbase Recordings";
+		}
 
 		Json toJson(const CommandInfo& info)
 		{
@@ -138,6 +150,25 @@ namespace gnubase::engine
 		m_project->setSlotStatus([this](ObjectId slot) { return m_audio->slotStatus(slot); });
 		m_audio->setSlotDescriber(
 			[this](ObjectId slot) { return m_project->describeSlot(m_project->project(), slot); });
+		m_audio->setRecordSetup(
+			[this, recordings = recordingsFolder(settingsDirectory)]
+			{
+				// Into the project's media folder, or for an unsaved project a folder of the user's.
+				const Project& project = m_project->project();
+				RecordSetup setup;
+				setup.format = recordFormat(project);
+				const std::string& file = m_project->file();
+				setup.folder = file.empty() ? recordings : mediaFolderFor(std::filesystem::u8path(file));
+				for (const ObjectId id : project.trackOrder())
+				{
+					const Track& track = project.trackById.at(id);
+					const auto channel = project.channels.find(track.channel);
+					if (track.type == TrackType::Audio && track.enabled && channel != project.channels.end() &&
+						channel->second.recordEnable && channel->second.input != 0)
+						setup.tracks.push_back({id, track.name, {}});
+				}
+				return setup;
+			});
 		m_peaks = std::make_unique<peaks::PeakCache>(
 			[this](const std::string& name, const Json& data) { broadcast(name, data); });
 		m_peaks->registerCommands(*this);

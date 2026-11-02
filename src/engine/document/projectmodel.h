@@ -58,6 +58,8 @@ namespace gnubase::engine
 
 		// The project, for commands defined in other files that read it. Only on the command thread.
 		const Project& project() const { return m_project; }
+		// The project file it was last saved as or loaded from, absolute; empty for none. Only on the command thread.
+		const std::string& file() const { return m_file; }
 
 		rt::SnapshotPublisher<RenderSnapshot>& snapshots() { return m_snapshots; }
 
@@ -90,6 +92,8 @@ namespace gnubase::engine
 		Json importMidiFile(Project& project, CommandContext& context);
 		void registerAudioFileCommands(Engine& engine, Jobs& jobs); // audiofilecommands.cpp: audioFile.import
 		Json importAudioFiles(Project& project, CommandContext& context, Jobs& jobs);
+		void registerRecordingCommands(Engine& engine); // recording.cpp: recording.add
+		Json addRecording(Project& project, CommandContext& context);
 		void registerPoolCommands(Engine& engine); // pool.cpp: pool.*, poolFolder.*, clip.set, media management (#93)
 		void registerFadeCommands(Engine& engine); // fadeedits.cpp: fades, crossfades and auto fades
 		void registerParameterCommands(Engine& engine); // parameters.cpp: parameter.list, parameter.get, parameter.set
