@@ -345,7 +345,7 @@ TEST_CASE("every theme looks the same on every platform, and switches without lo
 		return image;
 	};
 	std::optional<ui::Image> first;
-	for (const std::string theme : {"gnubase", "dark", "light"})
+	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast"})
 	{
 		INFO("theme " << theme);
 		gpu.shell->setTheme(theme);

@@ -78,7 +78,7 @@ TEST_CASE("GNUbase's themes are the folders in resources/themes with a theme sty
 {
 	const test::FakeUi fake{{{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}}};
 	const ui::Themes themes(resources());
-	CHECK(themes.names() == std::vector<std::string>{"dark", "gnubase", "light"});
+	CHECK(themes.names() == std::vector<std::string>{"dark", "gnubase", "high-contrast", "light"});
 	CHECK(themes.has(ui::g_defaultTheme));
 	CHECK(themes.has("light"));
 	CHECK(!themes.has("neon"));
@@ -125,7 +125,7 @@ TEST_CASE("every document gets the design system and the active theme's colors, 
 		window.requestRender();
 		fake.shell.step(milliseconds(0));
 	};
-	for (const std::string theme : {"gnubase", "dark", "light", "gnubase"})
+	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast", "gnubase"})
 	{
 		INFO("theme " << theme);
 		fake.shell.setTheme(theme);

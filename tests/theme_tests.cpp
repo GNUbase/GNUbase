@@ -7,9 +7,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <filesystem>
+#include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace
@@ -18,6 +21,8 @@ namespace
 	constexpr std::array<std::string_view, 16> g_allowedElements = {"svg", "rect", "circle", "ellipse", "line",
 		"polyline", "polygon", "path", "g", "defs", "use", "linearGradient", "radialGradient", "stop", "clipPath",
 		"mask"};
+
+	constexpr std::array<const char*, 4> g_themes = {"gnubase", "dark", "light", "high-contrast"};
 
 	std::filesystem::path themesDir()
 	{
@@ -50,6 +55,40 @@ namespace
 		return result;
 	}
 
+	// The rules of a theme style sheet: each selector with the declarations between its braces.
+	std::vector<std::pair<std::string, std::string>> rules(const std::string& sheet)
+	{
+		std::vector<std::pair<std::string, std::string>> result;
+		const std::vector<std::string> names = selectors(sheet);
+		size_t at = sheet.find('{', sheet.find('{') + 1); // past the media query's brace
+		for (const std::string& name : names)
+		{
+			const size_t close = sheet.find('}', at);
+			result.emplace_back(name, sheet.substr(at, close - at));
+			at = sheet.find('{', close);
+		}
+		return result;
+	}
+
+	// WCAG 2's contrast ratio of two #rrggbb colors, from 1 (the same) to 21 (black and white).
+	double contrast(const std::string& a, const std::string& b)
+	{
+		const auto luminance = [](const std::string& color)
+		{
+			double sum = 0.0;
+			const std::array<double, 3> weights = {0.2126, 0.7152, 0.0722};
+			for (size_t i = 0; i < 3; ++i)
+			{
+				const double c = std::stoi(color.substr(1 + (2 * i), 2), nullptr, 16) / 255.0;
+				sum += weights[i] * (c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4));
+			}
+			return sum;
+		};
+		const double la = luminance(a);
+		const double lb = luminance(b);
+		return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
+	}
+
 	void checkSvg(const std::filesystem::path& file, const nlohmann::json& asset)
 	{
 		const std::string text = gnubase::test::readText(file);
@@ -80,7 +119,7 @@ namespace
 TEST_CASE("every theme has the same assets, each a renderable SVG of its manifest's size", "[unit]")
 {
 	const nlohmann::json reference = readJson(themesDir() / "gnubase" / "manifest.json").at("assets");
-	for (const char* theme : {"gnubase", "dark", "light"})
+	for (const char* theme : g_themes)
 	{
 		INFO("theme " << theme);
 		const std::filesystem::path dir = themesDir() / theme;
@@ -121,4 +160,60 @@ TEST_CASE("every theme has the same assets, each a renderable SVG of its manifes
 		CHECK(tokens.at("fontFamilies").contains("ui"));
 		CHECK(tokens.at("fontFamilies").contains("counter"));
 	}
+}
+
+TEST_CASE("every theme shows the keyboard focus on every widget that takes it, in each of its states", "[unit]")
+{
+	for (const char* theme : g_themes)
+	{
+		INFO("theme " << theme);
+		const std::string sheet = gnubase::test::readText(themesDir() / theme / "theme.rcss");
+		const std::vector<std::pair<std::string, std::string>> found = rules(sheet);
+		std::vector<std::string> focused; // the selectors that style :focus-visible
+		for (const auto& [selector, declarations] : found)
+			if (selector.find(":focus-visible") != std::string::npos)
+			{
+				INFO(selector);
+				// The focus ring, over the widget's own skin for that state; menu items light up as under the mouse.
+				CHECK((declarations.find("focus-ring.svg") != std::string::npos ||
+					selector.find("menuitem") != std::string::npos));
+				std::string part;
+				for (std::istringstream parts(selector); std::getline(parts, part, ',');)
+				{
+					const size_t first = part.find_first_not_of(" \t");
+					focused.push_back(part.substr(first, part.find_last_not_of(" \t\r") + 1 - first));
+				}
+			}
+		for (const char* widget : {"button", "button.primary", "button.checked", "button.toggle",
+				 "button.toggle.mute.checked", "input.checkbox", "input.checkbox:checked", "input.radio",
+				 "input.radio:checked", "listview", "valuefield", "knob", "fader", "slider", "input.range", "menuitem"})
+		{
+			INFO("widget " << widget);
+			CHECK(std::find(focused.begin(), focused.end(), std::string(widget) + ":focus-visible") != focused.end());
+		}
+	}
+}
+
+TEST_CASE("the high contrast theme's text, accents and borders stand out from its backgrounds", "[unit]")
+{
+	const nlohmann::json tokens = readJson(themesDir() / "high-contrast" / "tokens.json");
+	for (const char* background : {"background", "surface", "surfaceRaised"})
+	{
+		INFO("on " << background);
+		const std::string under = tokens.at(background).get<std::string>();
+		// WCAG 2's enhanced contrast for text (1.4.6), and the contrast of controls' borders (1.4.11).
+		for (const char* text : {"text", "textMuted", "accent", "accent2", "danger", "warning", "success"})
+		{
+			INFO(text);
+			CHECK(contrast(tokens.at(text).get<std::string>(), under) >= 7.0);
+		}
+		CHECK(contrast(tokens.at("border").get<std::string>(), under) >= 3.0);
+		for (const nlohmann::json& color : tokens.at("trackPalette"))
+			CHECK(contrast(color.get<std::string>(), under) >= 7.0);
+	}
+	// Text on accent-colored fills, such as the primary button's.
+	CHECK(contrast(tokens.at("background").get<std::string>(), tokens.at("accent").get<std::string>()) >= 7.0);
+	// The focus ring is thicker than in the other themes.
+	CHECK(gnubase::test::readText(themesDir() / "high-contrast" / "focus-ring.svg").find("stroke-width=\"2\"") !=
+		std::string::npos);
 }
