@@ -1,14 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Starts a review of every new or updated pull request from this repository by the hosted review agent. The agent runs
-# on the Claude platform, not on a GitHub runner: this job only creates its session and ends after a few seconds. The
-# agent posts the review itself; the team's own pull requests get a comment that starts with "Verdict:".
+# Starts a review of every new or updated pull request by the hosted review agent. The agent runs on the Claude
+# platform, not on a GitHub runner: this job only creates its session and ends after a few seconds. The agent posts the
+# review itself; the team's own pull requests get a comment that starts with "Verdict:", contributors a review that
+# approves or requests changes.
 #
-# Pull requests from forks get no secrets under pull_request, so contributor pull requests are reviewed by hand.
+# pull_request_target, unlike pull_request, gives pull requests from forks access to the secret. It runs this workflow
+# from the base branch; the pull request's commits are only fetched and read by git, never checked out or run. Changes
+# to this workflow take effect once they are on main. Only authors GitHub already knows (owner, members, collaborators,
+# earlier contributors) get a review, so strangers can't spend the API credits.
 # A push whose new commits only merge other branches (main, a chained pull request) is not reviewed again.
 name: Review
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, reopened, ready_for_review, synchronize]
 
 permissions:
@@ -17,7 +21,9 @@ permissions:
 
 jobs:
   review:
-    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+    if: >-
+      !github.event.pull_request.draft &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]'), github.event.pull_request.author_association)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -49,7 +55,8 @@ jobs:
           fi
           # The agent files follow-up issues by milestone goal; the list saves it looking them up.
           milestones=$(gh api "repos/$REPO/milestones?state=open&per_page=100" \
-            --jq '.[] | "- \(.title) (number \(.number)): \(.description // "" | gsub("\r?\n"; " "))"') || true
+            --jq '.[] | "- \(.title) (number \(.number)): \(.description // "" | gsub("\r?\n"; " "))"') ||
+            milestones="" # on an error gh prints GitHub's error body, which is no milestone list
           jq -n --arg repo "$REPO" --arg pr "$PR" --arg sha "$SHA" --arg milestones "$milestones" '{
             agent: "agent_01DV6re7oPSNqrFfxSTsuNw4",
             environment_id: "env_01HfuHY4q2Krvzjw2qLKNwqY",
