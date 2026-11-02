@@ -185,6 +185,20 @@ namespace gnubase::engine
 		m_audio->applyPortSettings();
 	}
 
+	Json Engine::modifySetting(
+		CommandContext& context, std::string_view key, const std::function<Json(const Json& value)>& change)
+	{
+		rt::assertNotRealtime("engine::Engine::modifySetting");
+		const Json before = m_settings->value(key);
+		Json value = m_settings->modify(key, change);
+		if (value != before)
+		{
+			applySettings();
+			context.emit("settings.changed", {{"values", {{std::string(key), value}}}});
+		}
+		return value;
+	}
+
 	void Engine::registerCommand(CommandInfo info, CommandHandler handler)
 	{
 		rt::assertNotRealtime("engine::Engine::registerCommand");
