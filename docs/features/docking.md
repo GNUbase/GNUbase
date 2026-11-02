@@ -122,13 +122,21 @@ and `project` for the main zone), so key commands can depend on it ([key-command
 is the focus zone `project` too, so the project window's keys, such as zooming, work from the toolbar and from a side
 zone that doesn't bind them itself.
 
+**Moving the focus between zones** (#379, p. 100). A click into a zone gives it the keyboard focus. Tab activates the
+next shown zone of the docking window and Shift+Tab the previous one, around the ends, in the reference's order: the
+project zone, the Channel zone once it exists, then the left, lower and right zones. From outside the zones, such as
+the toolbar, Tab goes on as from the project zone. The docking system takes the key from the document's keydown before
+RmlUi does and focuses the zone's element, so the zone gets `.focused` and its keys
+([key-commands.md](key-commands.md)) work there. Tab isn't a key command and can't be bound to another key. In a text
+field Tab moves between controls as RmlUi does (#60), and dialogs, which are documents of their own, keep it too.
+
 ## Not yet
 
 The mixer's window layout pane and its sections (p. 439) come with the mixer window; until then, containers of
 sections added after `attach`, such as a new channel, take the user's order and visibility only with the next change
 to the layout; the Channel tab (p. 73) with the track inspector; tabs at the bottom of the lower zone, as in the reference; dragging a tab
-out of its zone to open it in a window; Tab and Shift+Tab to move the focus between zones (p. 100), which RmlUi keeps
-for moving between controls for now; and live reload keeps the panels' contents only when the app opens again.
+out of its zone to open it in a window; the editor in the lower zone taking the focus when it opens (p. 100), once
+editors open there; and live reload keeps the panels' contents only when the app opens again.
 
 ## Checks
 
@@ -137,7 +145,9 @@ every zone and strip shown and hidden with the toolbar buttons, the key commands
 `ui.layout` from the engine, and reset to the defaults; splitters dragged in a row and a column, for zones before and
 after them, held at the zones' minimums, and a double click that collapses a zone whose size comes back; tabs dragged
 into a new order, hidden through the tab menu, stepped through with the keys in the zone with the focus, which gets
-the focus frame, and the active tab remembered; a panel moved into a window of its own through the tab menu, with its
+the focus frame, and the active tab remembered; Tab and Shift+Tab through the shown zones in the reference's order,
+around the ends and past hidden zones, with a zone's keys working in the zone they reach, and Tab in a text field
+left to RmlUi; a panel moved into a window of its own through the tab menu, with its
 contents made there and gone from the zone, docked with the Dock button and by closing its window, which reopens where
 it was; and the complete layout, with zone sizes, tab orders, hidden and active tabs, strips and a panel's window,
 back exactly after a restart. On a test window with sections, the setup pane shows and hides sections in every

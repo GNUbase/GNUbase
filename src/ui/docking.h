@@ -139,6 +139,9 @@ namespace gnubase::ui
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
+		// Gives the keyboard focus to the zone step zones on from the one from is in, among the shown zones of its
+		// document, around the ends; false if the document has none.
+		static bool focusZone(Rml::Element& from, int step);
 		void listen(Rml::Element& document, bool on);
 		void makeMenus(const std::string& name, Attached& attached);
 		static std::vector<Rml::Element*> elements(Rml::Element& root, const std::string& selector);
