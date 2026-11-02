@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/engine.h"
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
 #include "engine/time/timecode.h"
@@ -38,6 +39,10 @@ namespace gnubase::ui
 		time::FrameRate frameRate = time::g_fps25; // the project's frame rate comes with the project setup (#78)
 		int userFramesPerSecond = 30;
 	};
+
+	// The tempo, signatures and sample rate of a project as project.get returns it. Keeps the defaults, with a warning
+	// in the log, for a tempo or signature map it can't read.
+	TimeContext projectTime(const engine::Json& project);
 
 	// A position, in seconds from the project start, as position displays show it: "1.1.1.0", "0:00:01.500",
 	// "00:00:01:12" or "72000".

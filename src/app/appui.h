@@ -9,6 +9,7 @@
 #include "ui/gpurenderer.h"
 #include "ui/keycommands.h"
 #include "ui/mainmenu.h"
+#include "ui/markers.h"
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
@@ -55,11 +56,18 @@ namespace gnubase::app
 		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the main menu
 		// bar (ui/mainmenu.h) and the track list beside the event display in its main zone, whose commands are key
 		// commands in the focus zone "project". Throws std::runtime_error if the document can't be loaded.
-		// Also displays the status line.
+		// Also displays the project markers and status line.
 		ui::EventDisplay& showProject();
 		// The project window's track list, null before showProject.
 		ui::TrackList* trackList() { return m_trackList.get(); }
 
+		// Opens the markers window in a window of its own (resources/ui/markers.rml), hidden like the main window, or
+		// closes it if it is open: the UI command window.markers, Mod+M. Returns it, or null when it closed it.
+		// Throws std::runtime_error if the document can't be loaded.
+		ui::MarkersWindow* toggleMarkers();
+		// The markers window while it is open, or null.
+		ui::MarkersWindow* markers() { return m_shell.find(m_markersWindow) != nullptr ? m_markers.get() : nullptr; }
+		ui::WindowId markersWindow() const { return m_markersWindow; }
 		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
 		// window.studioSetup, which the main menu's Studio menu runs. While it is open, this brings it to the front
 		// instead: MCP and Lua can run the command then. Throws std::runtime_error if the document can't be loaded.
@@ -99,7 +107,11 @@ namespace gnubase::app
 		ui::Docking m_docking;
 		engine::Engine& m_engine;
 		std::filesystem::path m_resources;
+		bool m_hidden = false; // the main window, and so the others
+		std::unique_ptr<ui::MarkersWindow> m_markers;
+		ui::WindowId m_markersWindow = 0;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
+		std::unique_ptr<ui::MarkerLines> m_markerLines;   // and before the display
 		std::unique_ptr<ui::StatusLine> m_statusLine;     // too
 		std::unique_ptr<ui::TrackList> m_trackList;       // and before the display
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.

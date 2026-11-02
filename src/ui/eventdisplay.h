@@ -230,6 +230,12 @@ namespace gnubase::ui
 		// tool.zoom, tool.line, tool.play, tool.next, tool.previous and tool.combineSelectionTools (on or off).
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
 
+		// Runs listener after every change of the view, for what others draw on the timeline, such as marker lines
+		// (ui/markers.h).
+		void onViewChanged(std::function<void()> listener) { m_viewListeners.push_back(std::move(listener)); }
+		// The element around the event lanes, which they fill.
+		Rml::Element& eventArea() const { return *m_area; }
+
 	private:
 		enum class Drag : uint8_t
 		{
@@ -468,6 +474,7 @@ namespace gnubase::ui
 		bool m_importOneTrack = false;
 
 		std::map<std::string, std::function<void()>> m_actions;
+		std::vector<std::function<void()>> m_viewListeners;
 		std::vector<Subscription> m_subscriptions;
 		std::optional<Subscription> m_position; // while playing
 	};

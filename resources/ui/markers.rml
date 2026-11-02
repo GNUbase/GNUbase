@@ -1,0 +1,116 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The markers window (docs/features/markers.md, reference manual pp. 426-431), in a window of its own. ui::MarkersWindow
+     fills the marker track list #marker-track and the rows of #marker-rows, one per marker of the active marker
+     track, and drives the buttons and the functions menu with these ids. -->
+<rml>
+<head>
+	<title>Markers</title>
+	<style>
+		body
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+
+		#toolbar
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			height: 32dp;
+			box-sizing: border-box;
+			padding: 4dp;
+			display: flex;
+		}
+
+		#toolbar button, #marker-track
+		{
+			margin-right: 4dp;
+		}
+
+		#marker-track
+		{
+			width: 140dp;
+		}
+
+		#marker-list
+		{
+			position: absolute;
+			left: 0;
+			top: 32dp;
+			right: 0;
+			bottom: 0;
+			overflow-y: auto;
+		}
+
+		#marker-list table
+		{
+			width: 100%;
+		}
+
+		td.locate
+		{
+			width: 20dp;
+		}
+
+		td.number
+		{
+			width: 48dp;
+		}
+
+		td.type
+		{
+			width: 64dp;
+		}
+
+		td.position, td.end, td.length
+		{
+			width: 88dp;
+		}
+
+		#marker-list input.text
+		{
+			width: 100%;
+			box-sizing: border-box;
+		}
+
+		/* The arrow shows in the row of the marker at the project cursor, or the last one before it. */
+		.locate-arrow
+		{
+			visibility: hidden;
+		}
+
+		tr.at-cursor .locate-arrow
+		{
+			visibility: visible;
+		}
+	</style>
+</head>
+<body>
+	<div id="toolbar" class="toolbar">
+		<select id="marker-track" title="Set Focus to Marker Track"/>
+		<button id="add-position-marker" title="Add Position Marker">Add Marker</button>
+		<button id="add-cycle-marker" title="Add Cycle Marker">Add Cycle Marker</button>
+		<button id="remove-marker" title="Remove Marker">Remove</button>
+		<button id="marker-functions" menu="marker-functions-menu" title="Functions">Functions</button>
+	</div>
+	<listview id="marker-list" multiple="multiple">
+		<table>
+			<thead>
+				<tr><td class="locate"/><td class="number">ID</td><td class="type">Type</td><td class="position">Position</td><td class="end">End</td><td class="length">Length</td><td class="description">Description</td></tr>
+			</thead>
+			<tbody id="marker-rows"/>
+		</table>
+	</listview>
+
+	<menu id="marker-functions-menu">
+		<menuitem id="move-to-cursor">Move Markers to Cursor</menuitem>
+		<menuitem id="reassign-position-ids">Reassign Position Marker IDs</menuitem>
+		<menuitem id="reassign-cycle-ids">Reassign Cycle Marker IDs</menuitem>
+	</menu>
+</body>
+</rml>
