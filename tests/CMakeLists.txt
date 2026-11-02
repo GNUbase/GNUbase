@@ -270,6 +270,7 @@ function(gnubase_add_shell_test name script)
 	add_test(NAME "${name}" COMMAND "${GNUBASE_SH}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/${script}" "${PROJECT_SOURCE_DIR}")
 	set_tests_properties("${name}" PROPERTIES LABELS integration)
 endfunction()
+gnubase_add_shell_test("the clang-tidy cache reruns clang-tidy only when an input changed" clang_tidy_cache_tests.sh)
 gnubase_add_shell_test("the keyword guard blocks private keywords in commits and pull requests" keyword_guard_tests.sh)
 gnubase_add_shell_test("the license header check lists files without the SPDX header" spdx_check_tests.sh)
 
