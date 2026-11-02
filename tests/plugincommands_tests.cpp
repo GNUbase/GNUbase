@@ -390,7 +390,8 @@ TEST_CASE("plugin states of any length are saved as base64, and texts that aren'
 		CHECK(*slot.state == expected);
 		CHECK(toJson(loaded) == withState);
 	}
-	for (const char* text : {"A", "AA", "AAA", "AA=", "A===", "=AAA", "AA=A", "AA==AA==", "AB==", "AAF=", "AA\nA"})
+	for (const char* text :
+		{"A", "AA", "AAA", "AA=", "A===", "=AAA", "AA=A", "AA==AA==", "Zg==Zg==", "AB==", "AAF=", "AA\nA"})
 	{
 		INFO(text);
 		Json bad = saved;

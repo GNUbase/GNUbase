@@ -1178,6 +1178,9 @@ TEST_CASE("built-in plugins in slots are devices in project.xml, and come back f
 	CHECK(parameter.attribute("parameterID").as_uint(99) == 0);
 	CHECK(parameter.attribute("value").as_double() == -3.0);
 	CHECK(std::string(parameter.attribute("unit").as_string()) == "decibel"); // required by the format
+	for (const pugi::xml_node device : devices.children())
+		for (const pugi::xml_node real : device.child("Parameters").children("RealParameter"))
+			CHECK(!std::string(real.attribute("unit").as_string()).empty());
 	CHECK(!first.next_sibling("BuiltinDevice").attribute("loaded").as_bool(true));
 
 	// Another application's file: its own devices and ones this build doesn't have are left out, values stop at
