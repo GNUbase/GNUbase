@@ -95,8 +95,9 @@ attributes, through a data model or directly.
   focused, skipping hidden and disabled titles and going round. Alt pressed and released on its own opens the menu of
   the first menu bar shown in the window, again with its first item focused, closing other menus, and closes it when
   one of its menus is open. Alt with another key, a modifier, a mouse button or the wheel doesn't, nor in a modal
-  document, nor when the window loses the keyboard while Alt is held (Alt+Tab: SDL then releases the keys, and the
-  window system drops that Alt). On macOS Alt does nothing, since the system menu bar takes the keys there.
+  document, nor when the window loses or gets the keyboard while Alt is held: SDL then releases the keys held (Alt+Tab)
+  or, on Linux, presses them right after the focus event (a window manager's Alt+J), and the window system drops that
+  Alt. On macOS Alt does nothing, since the system menu bar takes the keys there.
 
 ## Tooltips
 
@@ -178,8 +179,8 @@ elsewhere and Escape, skip disabled items, and work with the keys; items with a 
 Left go into and out of the submenu, but not into one with nothing to focus. In a menu bar the mouse and Right and
 Left move between the open menus, also from a submenu, skipping a disabled title, and Alt alone opens the first menu,
 closing a context menu, and closes it, leaving the focus out of the closed menu (not on macOS, nor with another key,
-a click, a mouse button going up or the wheel, nor when SDL releases Alt as the window loses the keyboard, nor
-behind a modal dialog).
+a click, a mouse button going up or the wheel, nor when SDL releases Alt as the window loses the keyboard or
+presses it as the window gets it, nor behind a modal dialog).
 Tooltips show after a rest and go with the mouse.
 Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result;
 a value field with autofocus is edited as its dialog opens, even by keys typed before the next update, and Enter

@@ -749,6 +749,41 @@ TEST_CASE("Alt opens the menu bar's first menu on Windows and Linux, and closes 
 	CHECK(app.waitUntil([&app] { return visible(app, "#view"); }));
 	app.ui().key(std::nullopt, "Escape");
 
+	// Nor when the window gets the keyboard with Alt held, e.g. by a window manager's Alt+J: SDL then presses the keys
+	// held for the window (on Linux), and Alt released after that isn't Alt pressed alone. The tests' windows never
+	// have the keyboard, so Alt is released directly.
+	const auto pushAltDown = [&app](SDL_EventType before, Uint64 delay)
+	{
+		SDL_Event pushed{};
+		pushed.type = before;
+		pushed.window.windowID = app.main().id();
+		pushed.window.timestamp = SDL_GetTicksNS();
+		REQUIRE(SDL_PushEvent(&pushed));
+		pushed = {};
+		pushed.type = SDL_EVENT_KEY_DOWN;
+		pushed.key.timestamp = SDL_GetTicksNS() + delay;
+		pushed.key.windowID = app.main().id();
+		pushed.key.key = SDLK_LALT;
+		pushed.key.scancode = SDL_SCANCODE_LALT;
+		pushed.key.mod = SDL_KMOD_LALT;
+		pushed.key.down = true;
+		REQUIRE(SDL_PushEvent(&pushed));
+		REQUIRE(app.waitUntil(
+			[] { return SDL_PeepEvents(nullptr, 0, SDL_PEEKEVENT, SDL_EVENT_WINDOW_FIRST, SDL_EVENT_KEY_UP) == 0; }));
+	};
+	pushAltDown(SDL_EVENT_WINDOW_FOCUS_GAINED, 0);
+	context.ProcessKeyUp(Rml::Input::KI_LMENU, 0);
+	CHECK_FALSE(visible(app, "#file"));
+	// Alt pressed after other events, or a while after the window got the keyboard, still counts.
+	pushAltDown(SDL_EVENT_WINDOW_EXPOSED, 0);
+	context.ProcessKeyUp(Rml::Input::KI_LMENU, 0);
+	CHECK(visible(app, "#file"));
+	app.ui().key(std::nullopt, "Escape");
+	pushAltDown(SDL_EVENT_WINDOW_FOCUS_GAINED, 1'000'000'000);
+	context.ProcessKeyUp(Rml::Input::KI_LMENU, 0);
+	CHECK(visible(app, "#file"));
+	app.ui().key(std::nullopt, "Escape");
+
 	// Nor does it open a hidden menu bar's menu.
 	document.GetElementById("menubar")->SetProperty("display", "none");
 	app.ui().key(std::nullopt, "Alt");

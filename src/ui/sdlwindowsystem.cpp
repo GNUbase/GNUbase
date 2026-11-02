@@ -449,6 +449,11 @@ namespace gnubase::ui
 			break;
 		}
 
+		if (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED)
+		{
+			m_keyboardGained = id;
+			m_keyboardGainedAt = event.window.timestamp;
+		}
 		if (isInput(event.type))
 		{
 			const auto target = m_inputTargets.find(id);
@@ -458,11 +463,25 @@ namespace gnubase::ui
 			// take the hover from what the tests point at.
 			if (event.type == SDL_EVENT_WINDOW_MOUSE_LEAVE && (SDL_GetWindowFlags(window) & SDL_WINDOW_HIDDEN) != 0)
 				return std::nullopt;
-			// When the window loses the keyboard, e.g. to Alt+Tab, SDL releases the keys still held: Alt released then
-			// isn't Alt pressed alone, which opens the menu bar (ui/widgets.h).
-			if (event.type == SDL_EVENT_KEY_UP && (event.key.key == SDLK_LALT || event.key.key == SDLK_RALT) &&
-				SDL_GetKeyboardFocus() != window)
+			// Alt pressed and released alone opens the menu bar (ui/widgets.h), but not when SDL presses or releases
+			// it for a change of the keyboard focus. When the window loses the keyboard, e.g. to Alt+Tab, SDL releases
+			// the keys still held. When it gets the keyboard, e.g. by a window manager's Alt+J, SDL presses the keys
+			// held for it on Linux, right after the focus event: that Alt's press and release don't count.
+			const bool alt = (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) &&
+				(event.key.key == SDLK_LALT || event.key.key == SDLK_RALT);
+			const bool pressedForFocus = alt && event.type == SDL_EVENT_KEY_DOWN && id == m_keyboardGained &&
+				event.key.timestamp < m_keyboardGainedAt + 100'000'000;
+			if (event.type != SDL_EVENT_KEY_DOWN || alt)
+				m_keyboardGained = 0;
+			if (alt && event.type == SDL_EVENT_KEY_DOWN)
+				m_altHeldOnGaining = pressedForFocus ? id : 0;
+			if (pressedForFocus)
 				return std::nullopt;
+			if (alt && event.type == SDL_EVENT_KEY_UP && (SDL_GetKeyboardFocus() != window || m_altHeldOnGaining == id))
+			{
+				m_altHeldOnGaining = 0;
+				return std::nullopt;
+			}
 			const bool unused = RmlSDL::InputEventHandler(target->second, window, event);
 			WindowEvent input{WindowEventKind::Input, id};
 			if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && unused) // one key command per press
