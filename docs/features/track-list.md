@@ -95,7 +95,7 @@ changes.
 
 ## Not yet
 
-Lanes and comping (#99), write automation (#122), the inspector (#89),
+Lanes and comping (#99), write automation (#122),
 recording from instrument and MIDI tracks (#97), dividing the track list, track visibility agents and the track type
 filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
 the settings dialog's groups, widths and presets, the track height presets menu, snap track heights, Shift-click to

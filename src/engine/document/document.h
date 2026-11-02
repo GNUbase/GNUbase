@@ -111,6 +111,9 @@ namespace gnubase::engine
 		// Audio channels: the plugin slots, from top to bottom; the audio passes through them before the fader.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		std::vector<ObjectId> slots = {};
+		// The notepad (reference manual p. 168): the user's notes on the channel, in the inspector and the mixer.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		std::string notes = {};
 	};
 
 	// A channel has at most this many plugin slots (reference manual p. 544).
@@ -543,10 +546,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor, a.recordEnable,
-				   a.mute, a.solo, a.slots) ==
+				   a.mute, a.solo, a.slots, a.notes) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable,
-				b.mute, b.solo, b.slots);
+				b.mute, b.solo, b.slots, b.notes);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)

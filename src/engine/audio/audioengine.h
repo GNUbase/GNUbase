@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/audition.h"
 #include "engine/audio/automation.h"
 #include "engine/audio/midiports.h"
 #include "engine/audio/miditap.h"
@@ -85,6 +86,7 @@ namespace gnubase::engine
 		// audio.controlPanel, audio.render, audio.start, audio.stop, audio.capture and audio.captureInput, the
 		// transport commands transport.play, transport.stop, transport.toggle, transport.record, transport.locate,
 		// transport.set, transport.exchangeLocators and transport.get, and the MIDI port commands (MidiPorts).
+		// audition.start, audition.scrub and audition.stop are in audition.cpp.
 		// audio.analyze, audio.compare and audio.record are in analysiscommands.cpp, midi.inject and midi.capture in
 		// miditap.cpp.
 		void registerCommands(Engine& engine);
@@ -155,6 +157,7 @@ namespace gnubase::engine
 			MidiTap::Sequencers sequencers;     // of the MIDI and instrument channels, for midi.inject
 			std::vector<uint64_t> destinations; // per sequencer, where it plays (MidiSequencer::playOn)
 			MidiTap::Instruments instruments;   // for midi.capture
+			std::vector<int> mainPorts;         // the main mix's device channels, for auditioning
 		};
 
 		// A release waiting for the audio thread to start a program that has it.
@@ -222,6 +225,7 @@ namespace gnubase::engine
 		void registerTransportCommands(Engine& engine);
 		void registerAnalysisCommands(Engine& engine); // analysiscommands.cpp
 		void registerMidiTapCommands(Engine& engine);  // miditap.cpp
+		void registerAuditionCommands(Engine& engine); // audition.cpp
 		void setTransport(const Json& parameters);
 		void locate(const Json& parameters);
 		void sent(bool accepted); // after a transport request
@@ -318,6 +322,9 @@ namespace gnubase::engine
 		RecordSetup m_recordSetup;                        // what it was told last
 		std::function<RecordSetup()> m_describeRecording; // setRecordSetup
 		Playback m_playback;                              // before m_programs: their track players use it
+		Audition m_audition;
+		std::map<ObjectId, Playback::Track> m_auditionTracks; // rebuild: each audio track's channel and playlist
+		std::map<ObjectId, std::string> m_mediaPaths;         // rebuild: by media
 
 		struct Instrument
 		{

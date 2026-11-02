@@ -51,6 +51,7 @@ add_executable(gnubase-tests
 	graph_tests.cpp
 	history_tests.cpp
 	historypanel_tests.cpp
+	inspector_tests.cpp
 	ipc_process_tests.cpp
 	ipc_tests.cpp
 	keycommands_tests.cpp

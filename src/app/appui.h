@@ -8,6 +8,8 @@
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/gpurenderer.h"
+#include "ui/infoline.h"
+#include "ui/inspector.h"
 #include "ui/keycommands.h"
 #include "ui/mainmenu.h"
 #include "ui/markers.h"
@@ -158,6 +160,7 @@ namespace gnubase::app
 		std::unique_ptr<ui::StatusLine> m_statusLine; // too
 		std::unique_ptr<ui::TrackList> m_trackList;   // and before the display
 		std::unique_ptr<ui::ColorMenu> m_colorMenu;   // before the track list
+		std::unique_ptr<ui::InfoLine> m_infoLine;     // and this too
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
 		bool m_canUndo = false;
 		bool m_canRedo = false;
@@ -167,6 +170,7 @@ namespace gnubase::app
 		Rml::ObserverPtr<Rml::Element> m_studioSetup;  // the open studio setup dialog's document
 		Rml::ObserverPtr<Rml::Element> m_projectSetup; // the open project setup dialog's document
 		std::weak_ptr<ui::PoolPanel> m_pool;           // the docking system owns it while it is there
+		std::weak_ptr<ui::Inspector> m_inspector;      // so too
 		std::vector<ui::Subscription> m_poolResults;   // what the pool commands did, for the pool
 	};
 }

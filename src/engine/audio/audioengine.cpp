@@ -255,6 +255,7 @@ namespace gnubase::engine
 					cue.position = m_transport.position();
 					cue.window = static_cast<time::Samples>(g_cueSeconds * m_device->format().sampleRate);
 					m_playback.cue(cue);
+					m_audition.cue(cue.window, true);
 					std::this_thread::sleep_for(g_cueInterval);
 				}
 			});
@@ -292,7 +293,9 @@ namespace gnubase::engine
 		{
 			const auto block = static_cast<uint32_t>(std::min<uint64_t>(blockSize, frames - done));
 			cue(m_transport.position(), false, block, false);
+			m_audition.cue(block, false);
 			m_playback.waitUntilBuffered(g_offlineWait);
+			m_audition.waitUntilBuffered(g_offlineWait);
 			device.render(*this, block);
 			done += block;
 		}
@@ -399,6 +402,8 @@ namespace gnubase::engine
 		std::map<ObjectId, std::string> paths;
 		for (const RenderMedia& media : snapshot.media)
 			paths[media.id] = media.path;
+		m_mediaPaths = paths;
+		m_auditionTracks.clear();
 		for (const RenderChannel& channel : snapshot.channels)
 		{
 			if (channel.type != TrackType::Audio)
@@ -408,6 +413,7 @@ namespace gnubase::engine
 			if (source >= 0)
 				desc.nodes[static_cast<size_t>(source)].processor =
 					std::make_shared<TrackPlayer>(playlist, channel.id, m_playback);
+			m_auditionTracks[channel.track] = {channel.id, playlist};
 			tracks.push_back({channel.id, std::move(playlist)});
 		}
 		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate);
@@ -436,6 +442,9 @@ namespace gnubase::engine
 			program->destinations.push_back(destination);
 		}
 		// Bus nodes come first, in bus order (graph::describe); child busses reach the device through their parent.
+		for (size_t b = 0; b < snapshot.busses.size(); ++b)
+			if (snapshot.busses[b].mainMix)
+				program->mainPorts = ports[b];
 		for (size_t b = 0; b < snapshot.busses.size(); ++b)
 			if (snapshot.busses[b].parent < 0)
 				(snapshot.busses[b].direction == BusDirection::Input ? program->inputs : program->outputs)
@@ -767,6 +776,7 @@ namespace gnubase::engine
 					out[i] += in[i];
 			}
 		}
+		m_audition.process(block.outputs, format.outputChannels, program.mainPorts, block.frames);
 
 		const std::chrono::duration<double> busy = std::chrono::steady_clock::now() - start;
 		std::array<double, PerformanceData::g_maxThreads> threads{};
@@ -1957,6 +1967,7 @@ namespace gnubase::engine
 		registerTransportCommands(engine);
 		m_midi.registerCommands(engine);
 		registerMidiTapCommands(engine);
+		registerAuditionCommands(engine);
 	}
 
 	void AudioEngine::sent(bool accepted)

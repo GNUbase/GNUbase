@@ -548,6 +548,18 @@
 	{
 		color: #c92d42;
 	}
+	.info-line.multiple .info-field
+	{
+		color: #0969da;
+	}
+	.info-line .info-label, .inspector-label
+	{
+		color: #566273;
+	}
+	.inspector .insert.bypassed, .inspector .insert.inactive
+	{
+		color: #566273;
+	}
 	.pool-message.error
 	{
 		color: #c92d42;

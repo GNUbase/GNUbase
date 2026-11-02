@@ -808,6 +808,52 @@ Engine command `audio.updatePlugins`.
 
 Builds the processing graph again with the plugins of the slots as they are now. The engine runs it on its own when a plugin is ready after it was loaded or activated, failed, or asked to be restarted; a slot's audio passes its plugin unchanged until then. Emits plugin.changed for the slots whose plugin's status changed. Left out of engine.commandLog.
 
+### audition
+
+#### `audition_scrub`
+
+Engine command `audition.scrub`.
+
+Scrubs an audio track, as the scrub tool does while the mouse drags: plays its events from where the last scrub of the track got to, to position (samples), forwards or backwards, in seconds (default: the time since that scrub, 0.01 to 0.1 seconds), so speed and pitch follow how fast the positions come; the first scrub only sets where the next one starts. Like audition.start it goes straight to the main mix's outputs; it also moves the project cursor to position (transport.changed). Ends with audition.stop. Announces audition.changed.
+
+Arguments:
+
+- `position`: integer, required
+- `seconds`: number
+- `track`: integer, required
+
+Result:
+
+- `mode`: one of "off" | "play" | "scrub", required
+- `track`: integer, required
+
+#### `audition_start`
+
+Engine command `audition.start`.
+
+Auditions an audio track, as the play tool does while the mouse is pressed: plays its events from position (samples) until audition.stop, straight to the main mix's outputs, without its channel's fader, pan, mute and effects, and without the transport. A mono clip plays on every channel. Ends what was auditioned before. Announces audition.changed.
+
+Arguments:
+
+- `position`: integer, required
+- `track`: integer, required
+
+Result:
+
+- `mode`: one of "off" | "play" | "scrub", required
+- `track`: integer, required
+
+#### `audition_stop`
+
+Engine command `audition.stop`.
+
+Ends auditioning and scrubbing. Does nothing if neither runs. Announces audition.changed.
+
+Result:
+
+- `mode`: one of "off" | "play" | "scrub", required
+- `track`: integer, required
+
 ### autoFades
 
 #### `autoFades_set`
@@ -1095,7 +1141,7 @@ Result:
 
 Engine command `channel.set`.
 
-Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts between formats where a channel feeds a destination of another one: speakers both formats have connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, or to L and R at the pan law's center). instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 (silence) to the project's maxVolume (default 0); values beyond them stop there. The panner depends on the routing: a mono channel on a stereo destination has its position pan, -1 (left) to 1 (right), placed with the project's pan law; a stereo channel on a stereo or mono destination has the balance panner (panner balance, the default: pan turns down the other side) or the combined panner (panner combined: panLeft and panRight place its left and right channel, by default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records (the default). Monitoring glides in and out over one audio block. mute silences a channel; while any channel is soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the channels that play into them are heard. Muting and soloing glide over one audio block.
+Changes a channel's format (or channels, as in bus.add), input (an input bus) or output (an output bus or a group channel; for MIDI tracks an instrument channel). 0 disconnects. Audio converts between formats where a channel feeds a destination of another one: speakers both formats have connect, the others are mixed down (5.1 to stereo: C and LFE into L and R at -3 dB, Ls into L and Rs into R at -6 dB; 7.1 to 5.1: Sl and Sr into the front and surround sides at -3 dB) or up (mono to C, or to L and R at the pan law's center). instrument is the built-in instrument an instrument track plays (see processor.list), or empty for none. volume is the fader in dB, from -144 (silence) to the project's maxVolume (default 0); values beyond them stop there. The panner depends on the routing: a mono channel on a stereo destination has its position pan, -1 (left) to 1 (right), placed with the project's pan law; a stereo channel on a stereo or mono destination has the balance panner (panner balance, the default: pan turns down the other side) or the combined panner (panner combined: panLeft and panRight place its left and right channel, by default -1 and 1). panBypass plays mono channels at the center and stereo ones hard left and right. Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when playback starts or jumps; automation of those controllers overrides them. monitor and recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records (the default). Monitoring glides in and out over one audio block. mute silences a channel; while any channel is soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the channels that play into them are heard. Muting and soloing glide over one audio block. notes is the channel's notepad, the user's text about it.
 
 Arguments:
 
@@ -1108,6 +1154,7 @@ Arguments:
 - `midiVolume`: integer or null
 - `monitor`: boolean
 - `mute`: boolean
+- `notes`: string
 - `output`: integer
 - `pan`: number
 - `panBypass`: boolean
