@@ -250,7 +250,8 @@ namespace gnubase::ui
 
 	void EventDisplay::loadProject(const Json& project)
 	{
-		m_time = projectTime(project);
+		if (!readTimeContext(project, m_time))
+			logging::warning("The event display can't read the project's tempo or signatures");
 		m_snap = engine::snapSettingsFrom(project.at("snap"), m_snap);
 		m_quantize = engine::midi::quantizeSettingsFromJson(project.at("quantize"));
 		showSnap();
