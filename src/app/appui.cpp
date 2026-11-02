@@ -308,11 +308,12 @@ namespace gnubase::app
 				m_keys.add({command.id, command.description,
 					[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "track-controls.rml"); }});
 			else
-				m_keys.add({command.id, command.description, [this, id](ui::Window&, Rml::Element*)
-					{
-						if (m_trackList)
-							m_trackList->actions().at(id)();
-					}});
+				m_keys.add(
+					{command.id, command.description, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
+						{
+							if (m_trackList)
+								m_trackList->actions().at(id)();
+						}});
 			// The commands for selected tracks wait for a selection, Enable and Disable Group Channel for a selected
 			// folder they change.
 			const bool selected =
