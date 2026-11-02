@@ -235,19 +235,20 @@ namespace gnubase::ui
 
 	void TransportControls::ProcessEvent(Rml::Event& event)
 	{
-		Rml::Element* root = m_root.get();
+		const Rml::Element* root = m_root.get();
 		Rml::Element* target = event.GetTargetElement();
 		if (root == nullptr || target == nullptr)
 			return;
 		if (event == Rml::EventId::Click)
 		{
-			if (Rml::Element* item = withAttribute(target, "slot"); item != nullptr && item->HasAttribute("format"))
+			if (const Rml::Element* item = withAttribute(target, "slot");
+				item != nullptr && item->HasAttribute("format"))
 			{
 				if (const std::optional<TimeFormat> format = timeFormatFromName(attribute(*item, "format")))
 					setFormat(attribute(*item, "slot"), *format);
 				return;
 			}
-			Rml::Element* button = withAttribute(target, "command");
+			const Rml::Element* button = withAttribute(target, "command");
 			if (button == nullptr || !inside(button, root) || button->HasAttribute("disabled"))
 				return;
 			const Json parameters = Json::parse(attribute(*button, "parameters", "{}"), nullptr, false);

@@ -195,7 +195,7 @@ TEST_CASE("positions typed in every time format read back as the engine converts
 			const std::optional<double> typed =
 				ui::parseTime(format, ui::formatTime(format, seconds, context), context);
 			REQUIRE(typed.has_value());
-			CHECK(*typed == Catch::Approx(seconds).margin(1e-6));
+			CHECK(typed.value_or(-1.0) == Catch::Approx(seconds).margin(1e-6));
 		}
 
 	// What is left out counts from the start of the bar, minute or second.

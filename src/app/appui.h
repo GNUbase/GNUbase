@@ -92,7 +92,7 @@ namespace gnubase::app
 			std::unique_ptr<ui::TransportControls> controls;
 
 			// The window, or null if it is closed, also when the user closed it.
-			ui::Window* shown(ui::Shell& shell) { return window == 0 ? nullptr : shell.find(window); }
+			ui::Window* shown(ui::Shell& shell) const { return window == 0 ? nullptr : shell.find(window); }
 		};
 
 		// Fills an element with the transport controls (resources/ui/transport.rml) and drives them.

@@ -16,8 +16,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <string>
+#include <utility>
 
 using namespace gnubase;
 using engine::Json;
@@ -64,9 +66,11 @@ namespace
 		return app.call("transport.get");
 	}
 
-	// The project window with its transport bar shown.
+	// The project window with its transport bar shown. The shell fits windows into their monitor, 1024 pixels wide on
+	// CI, where the transport bar's sections would shrink over each other at a dp ratio of 1: at 0.8 they all fit.
 	ui::EventDisplay& showBar(test::UiApp& app)
 	{
+		app.setDpRatio(0.8F);
 		ui::EventDisplay& display = app.appUi().showProject();
 		app.appUi().docking().setVisible("project", "transportBar", true);
 		app.shell().step(std::chrono::milliseconds(0));
@@ -94,7 +98,7 @@ namespace
 
 TEST_CASE("the transport bar's buttons run the transport and show its state", "[ui]")
 {
-	test::UiApp app({1400, 700});
+	test::UiApp app({1024, 700});
 	showBar(app);
 	app.call("transport.set", {{"left", 48000}, {"right", 96000}});
 
@@ -115,18 +119,20 @@ TEST_CASE("the transport bar's buttons run the transport and show its state", "[
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 0; }));
 
 	// The switches follow the engine's state, whoever changes it.
-	for (const char* id : {"cycle", "punch-in", "punch-out", "metronome"})
+	const std::array<std::pair<std::string, std::string>, 4> switches{
+		{{"#cycle", "cycle"}, {"#punch-in", "punchIn"}, {"#punch-out", "punchOut"}, {"#metronome", "metronome"}}};
+	for (const auto& each : switches)
 	{
-		INFO(id);
-		const std::string setting = std::string(id) == "punch-in" ? "punchIn"
-			: std::string(id) == "punch-out"                      ? "punchOut"
-																  : id;
-		CHECK_FALSE(checked(app, std::string("#") + id));
-		click(app, std::string("#") + id);
+		const std::string& button = each.first;
+		const std::string& setting = each.second;
+		INFO(button);
+		// Not CHECK_FALSE: Catch2's ContinueOnFailure | FalseTest trips clang-analyzer's EnumCastOutOfRange check
+		CHECK(!checked(app, button));
+		click(app, button);
 		REQUIRE(waitFor(app, [&setting](const Json& state) { return state.at(setting) == true; }));
-		REQUIRE(app.waitUntil([&app, id] { return checked(app, std::string("#") + id); }));
+		REQUIRE(app.waitUntil([&app, &button] { return checked(app, button); }));
 		app.call("transport.set", {{setting, false}});
-		REQUIRE(app.waitUntil([&app, id] { return !checked(app, std::string("#") + id); }));
+		REQUIRE(app.waitUntil([&app, &button] { return !checked(app, button); }));
 	}
 
 	// Start, record, stop.
@@ -146,7 +152,7 @@ TEST_CASE("the transport bar's buttons run the transport and show its state", "[
 
 TEST_CASE("the transport bar goes to markers, the project's ends and the selection", "[ui]")
 {
-	test::UiApp app({1400, 700});
+	test::UiApp app({1024, 700});
 	ui::EventDisplay& display = showBar(app);
 	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
 	const Json part =
@@ -171,17 +177,17 @@ TEST_CASE("the transport bar goes to markers, the project's ends and the selecti
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000; }));
 
 	// Locators to Selection: around the selected part, 2 to 4 seconds, with the button and with P in the project.
-	REQUIRE(app.waitUntil(
-		[&app]
-		{
-			Rml::Context& context = app.main().context();
-			for (int i = 0; i < context.GetNumDocuments(); ++i)
-				if (auto* lanes =
-						dynamic_cast<ui::EventLanes*>(context.GetDocument(i)->QuerySelector("event-lanes.events")))
-					return std::any_of(lanes->lanes().begin(), lanes->lanes().end(),
-						[](const ui::EventLanes::Lane& lane) { return !lane.events.empty(); });
-			return false;
-		}));
+	const auto partShown = [&app]
+	{
+		Rml::Context& context = app.main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (auto* lanes =
+					dynamic_cast<ui::EventLanes*>(context.GetDocument(i)->QuerySelector("event-lanes.events")))
+				return std::any_of(lanes->lanes().begin(), lanes->lanes().end(),
+					[](const ui::EventLanes::Lane& lane) { return !lane.events.empty(); });
+		return false;
+	};
+	REQUIRE(app.waitUntil(partShown));
 	display.select({part.at("id").get<uint64_t>()});
 	click(app, "#locators-to-selection");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("left") == 96000 && state.at("right") == 192000; }));
@@ -194,7 +200,7 @@ TEST_CASE("the transport bar goes to markers, the project's ends and the selecti
 
 TEST_CASE("the time displays show the cursor in their formats and take positions typed into them", "[ui]")
 {
-	test::UiApp app({1400, 700});
+	test::UiApp app({1024, 700});
 	showBar(app);
 	app.call("transport.locate", {{"position", 72000}}); // 1.5 seconds
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "1.4.1.0"; }));
@@ -271,7 +277,7 @@ TEST_CASE("the time displays show the cursor in their formats and take positions
 
 TEST_CASE("the transport bar and the transport panel show the same time formats", "[ui]")
 {
-	test::UiApp app({1400, 700});
+	test::UiApp app({1024, 700});
 	showBar(app);
 	app.ui().key(std::nullopt, "F2");
 	REQUIRE(app.appUi().transportPanel() != nullptr);
@@ -301,7 +307,7 @@ TEST_CASE("the transport bar and the transport panel show the same time formats"
 
 TEST_CASE("the tempo and signature fields set the project's first tempo and signature", "[ui]")
 {
-	test::UiApp app({1400, 700});
+	test::UiApp app({1024, 700});
 	showBar(app);
 	REQUIRE(app.waitUntil([&app] { return shows(app, "#signature") == "4/4"; }));
 	CHECK(element(app, "#tempo").at("attributes").at("value") == "120");
@@ -329,7 +335,7 @@ TEST_CASE("the tempo and signature fields set the project's first tempo and sign
 
 TEST_CASE("the transport's key commands", "[ui]")
 {
-	test::UiApp app({1400, 700});
+	test::UiApp app({1024, 700});
 	showBar(app);
 
 	app.ui().key(std::nullopt, "Num/");

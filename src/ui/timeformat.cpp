@@ -358,7 +358,7 @@ namespace gnubase::ui
 				point == std::string::npos ? std::optional<int64_t>(0) : integer(last.substr(point + 1));
 			if (!whole || !fraction)
 				return std::nullopt;
-			double seconds = static_cast<double>(*whole);
+			auto seconds = static_cast<double>(*whole);
 			if (point != std::string::npos)
 				seconds +=
 					static_cast<double>(*fraction) / std::pow(10.0, static_cast<double>(last.size() - point - 1));

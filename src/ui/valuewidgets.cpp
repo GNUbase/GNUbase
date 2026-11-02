@@ -389,14 +389,6 @@ namespace gnubase::ui
 			TextDisplay(TextDisplay&&) = delete;
 			TextDisplay& operator=(TextDisplay&&) = delete;
 
-		protected:
-			void OnAttributeChange(const Rml::ElementAttributes& changed) override
-			{
-				Rml::Element::OnAttributeChange(changed);
-				if (changed.count("value") != 0)
-					show();
-			}
-
 			void ProcessDefaultAction(Rml::Event& event) override
 			{
 				Rml::Element::ProcessDefaultAction(event);
@@ -409,6 +401,14 @@ namespace gnubase::ui
 					m_input->Focus(true);
 					m_input->Select();
 				}
+			}
+
+		protected:
+			void OnAttributeChange(const Rml::ElementAttributes& changed) override
+			{
+				Rml::Element::OnAttributeChange(changed);
+				if (changed.count("value") != 0)
+					show();
 			}
 
 		private:

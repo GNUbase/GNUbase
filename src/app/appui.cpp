@@ -141,11 +141,12 @@ namespace gnubase::app
 
 		std::string readText(const std::filesystem::path& file)
 		{
-			std::ifstream in(file, std::ios::binary);
+			const std::ifstream in(file, std::ios::binary);
 			std::ostringstream text;
 			text << in.rdbuf();
 			return text.str();
 		}
+
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
 		constexpr std::array<ProjectCommand, 13> g_trackCommands{{
 			{"track.selectPrevious", "Selects the track above the selected one.", "Up"},
@@ -356,7 +357,7 @@ namespace gnubase::app
 
 	void AppUi::toggle(TransportWindow& shown, const char* file, const char* title, ui::Size size)
 	{
-		if (ui::Window* window = shown.shown(m_shell))
+		if (const ui::Window* window = shown.shown(m_shell))
 		{
 			shown.controls.reset();
 			m_shell.close(window->id());
