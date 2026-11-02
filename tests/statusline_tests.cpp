@@ -54,12 +54,13 @@ TEST_CASE("the status line highlights a sample rate mismatch and shows a lost au
 	CHECK(app.waitUntil([&] { return !has(app, "#record-format", "mismatch"); }));
 	CHECK(text(app, "#record-format") == "Record: 44.1 kHz");
 
-	// Unplugged: shown with the reason as its tooltip, until it is plugged in again.
+	// Unplugged: shown by its name, with the reason and its id as the tooltip, until it is plugged in again.
 	app.call("audio.simulateDeviceLoss", {{"connected", false}});
 	CHECK(app.waitUntil([&] { return !has(app, "#lost-device", "hidden"); }));
-	CHECK_THAT(text(app, "#lost-device"), ContainsSubstring("Audio Device Lost"));
-	CHECK_THAT(
-		element(app, "#lost-device").at("attributes").at("title").get<std::string>(), ContainsSubstring("unplugged"));
+	CHECK(text(app, "#lost-device") == "Audio Device Lost: Dummy device");
+	const std::string title = element(app, "#lost-device").at("attributes").at("title").get<std::string>();
+	CHECK_THAT(title, ContainsSubstring("unplugged"));
+	CHECK_THAT(title, ContainsSubstring("(dummy)"));
 	app.call("audio.simulateDeviceLoss", {{"connected", true}});
 	CHECK(app.waitUntil([&] { return has(app, "#lost-device", "hidden"); }, std::chrono::seconds(10)));
 }

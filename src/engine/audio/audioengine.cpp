@@ -54,8 +54,9 @@ namespace gnubase::engine
 						"enum": [null, "multiProcessing", "hardware", "realtime", "system"]}},
 					"required": ["multiProcessing", "threads", "activeThreads", "limitedBy"]},
 				"lost": {"type": ["object", "null"], "properties": {"backend": {"type": "string"},
-					"device": {"type": "string"}, "reason": {"type": "string"}, "restart": {"type": "boolean"}},
-					"required": ["backend", "device", "reason", "restart"]}},
+					"device": {"type": "string"}, "name": {"type": "string"}, "reason": {"type": "string"},
+					"restart": {"type": "boolean"}},
+					"required": ["backend", "device", "name", "reason", "restart"]}},
 			"required": ["device", "running", "position", "projectSampleRate", "capturedFrames", "droppedFrames",
 				"playbackDropouts", "processing", "lost"]})");
 		}
@@ -865,6 +866,9 @@ namespace gnubase::engine
 		const std::string backend = lost ? lost->backend : m_backend;
 		const Json parameters = lost ? lost->parameters : m_parameters;
 		const std::string id = lost ? lost->device : m_device->info().id;
+		std::string name = lost ? lost->name : m_device->info().name;
+		if (name.empty()) // a driver that reports none: the status line shows something
+			name = id;
 		if (!lost)
 			logging::info("Resetting the audio device ({} {})", backend, id);
 		// The measurement goes on across the restart. Only a restart for a dropout is one (the reference manual,
@@ -896,7 +900,7 @@ namespace gnubase::engine
 			if (!lost)
 				logging::warning(
 					"The audio device ({} {}) is lost, trying again until it returns: {}", backend, id, error.what());
-			m_lost = Lost{backend, parameters, id, error.what(), running};
+			m_lost = Lost{backend, parameters, id, name, error.what(), running};
 			failOver();
 			waitForDevice();
 			return !lost || fellBack || m_device != nullptr;
@@ -1351,8 +1355,8 @@ namespace gnubase::engine
 		const double projectRate = m_snapshots.latest().sampleRate;
 		Json lost = nullptr;
 		if (m_lost)
-			lost = {{"backend", m_lost->backend}, {"device", m_lost->device}, {"reason", m_lost->reason},
-				{"restart", m_lost->restart}};
+			lost = {{"backend", m_lost->backend}, {"device", m_lost->device}, {"name", m_lost->name},
+				{"reason", m_lost->reason}, {"restart", m_lost->restart}};
 		if (!m_device)
 		{
 			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"projectSampleRate", projectRate},
@@ -1645,10 +1649,10 @@ namespace gnubase::engine
 				"was late, and the processing threads (see audio.setProcessing). projectSampleRate is the project's "
 				"sample rate, also in device, where sampleRateMismatch says that the device runs at another one, as "
 				"it doesn't support the project's or was asked for another, and plays faster or slower; a new project "
-				"sample rate sends audio.changed. lost: the device that went away "
-				"(its backend, device id, the reason it can't be opened and whether it ran and restarts), while the "
-				"engine waits for it to return (see audio.reset); otherwise null. While a device is lost, device is "
-				"the fallback that plays meanwhile (the user setting audio.fallbackDevice), or null.",
+				"sample rate sends audio.changed. lost: the device that went away (its backend, device id, its name "
+				"while it was open, the reason it can't be opened and whether it ran and restarts), while the engine "
+				"waits for it to return (see audio.reset); otherwise null. While a device is lost, device is the "
+				"fallback that plays meanwhile (the user setting audio.fallbackDevice), or null.",
 				noParameters(), statusSchema(), true},
 			[this](CommandContext&) { return status(); });
 		engine.registerCommand(

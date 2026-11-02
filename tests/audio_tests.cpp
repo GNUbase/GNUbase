@@ -125,13 +125,14 @@ namespace
 		// is connected or not, and the backend doesn't list presence.
 		std::atomic<bool> asioLike{false};
 		std::atomic<bool> failedOpen{false};
+		std::atomic<bool> unnamed{false}; // fake-1 has no name, as with a driver that reports none
 	};
 
-	DeviceInfo fakeInfo()
+	DeviceInfo fakeInfo(const FakeDriver& driver)
 	{
 		DeviceInfo info;
 		info.id = "fake-1";
-		info.name = "Fake interface";
+		info.name = driver.unnamed ? "" : "Fake interface";
 		info.inputs = {"Mic", "Line"};
 		info.outputs = {"Main L", "Main R"};
 		info.sampleRates = {44100.0, 48000.0};
@@ -153,7 +154,7 @@ namespace
 
 		DeviceInfo info() const override
 		{
-			DeviceInfo info = fakeInfo();
+			DeviceInfo info = fakeInfo(m_driver);
 			info.clockSource = m_clockSource;
 			return info;
 		}
@@ -185,7 +186,7 @@ namespace
 
 		std::vector<DeviceInfo> devices() override
 		{
-			DeviceInfo first = fakeInfo();
+			DeviceInfo first = fakeInfo(*m_driver);
 			if (m_driver->asioLike ? m_driver->failedOpen.load() : !m_driver->connected)
 				first.unavailableReason = "not connected";
 			DeviceInfo unplugged;
@@ -197,7 +198,7 @@ namespace
 
 		std::unique_ptr<Device> open(const DeviceConfig& config) override
 		{
-			const DeviceInfo info = fakeInfo();
+			const DeviceInfo info = fakeInfo(*m_driver);
 			if (!config.device.empty() && config.device != info.id)
 				throw DeviceError("no device " + config.device);
 			if (!m_driver->connected)
@@ -738,6 +739,8 @@ TEST_CASE("a device unplugged during playback leaves the engine running and play
 	CHECK(status.at("device").is_null());
 	CHECK(status.at("running") == false);
 	CHECK(status.at("lost").at("backend") == "dummy");
+	CHECK(status.at("lost").at("device") == "dummy");
+	CHECK(status.at("lost").at("name") == "Dummy device");
 	CHECK(status.at("lost").at("restart") == true);
 	CHECK_THAT(status.at("lost").at("reason").get<std::string>(), ContainsSubstring("unplugged"));
 	const Json transport = run(client, "transport.get");
@@ -769,7 +772,9 @@ TEST_CASE("a backend's device that went away is opened again with its settings o
 	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
 	const Json lost = run(client, "audio.get").at("lost");
 	CHECK(lost.at("backend") == "fake");
-	CHECK(lost.at("restart") == false); // it was stopped
+	CHECK(lost.at("device") == "fake-1");
+	CHECK(lost.at("name") == "Fake interface"); // as it was listed while it was open
+	CHECK(lost.at("restart") == false);         // it was stopped
 	CHECK_THAT(lost.at("reason").get<std::string>(), ContainsSubstring("not connected"));
 
 	driver->connected = true;
@@ -802,6 +807,19 @@ TEST_CASE("the unplugged dummy device plugs in again after another backend repla
 	CHECK(run(client, "audio.get").at("lost").is_null());
 	run(client, "audio.simulateDeviceLoss", {{"connected", true}});
 	CHECK(run(client, "audio.setDevice").at("device").at("backend") == "dummy");
+}
+
+TEST_CASE("a lost device that has no name reports its id as its name", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	driver->unnamed = true;
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	driver->connected = false;
+	driver->device.load()->requestReset();
+	CHECK(waitForEvent(client, "audio.changed", [](const Json& data) { return !data.at("lost").is_null(); }));
+	CHECK(run(client, "audio.get").at("lost").at("name") == "fake-1");
 }
 
 TEST_CASE("tries to open a lost device again run one at a time and stay out of the command log", "[integration]")
@@ -921,6 +939,7 @@ TEST_CASE("the default fallback is the lost device's backend's default device, e
 	CHECK(status.at("device").at("backend") == "dummy"); // the fake backend's default device is the lost one
 	CHECK(status.at("lost").at("backend") == "fake");
 	CHECK(status.at("lost").at("device") == "fake-1");
+	CHECK(status.at("lost").at("name") == "Fake interface"); // not the fallback's
 	CHECK(status.at("running") == true);
 	CHECK_THAT(reject(client, "audio.set", {{"blockSize", 512}}), ContainsSubstring("lost"));
 

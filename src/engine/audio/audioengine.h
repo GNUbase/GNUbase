@@ -275,6 +275,7 @@ namespace gnubase::engine
 			std::string backend;
 			Json parameters;    // what audio.setDevice opened it with
 			std::string device; // its id
+			std::string name;   // its name while it was open
 			std::string reason;
 			bool restart = false; // it ran, or the fallback runs
 		};
