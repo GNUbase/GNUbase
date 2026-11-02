@@ -38,7 +38,7 @@
 		<div class="dialog-titlebar">Repeat Events</div>
 		<div class="row">
 			<label for="repeat-count">Count</label>
-			<valuefield id="repeat-count" value="1" min="1" max="1000" step="1" decimals="0"/>
+			<valuefield id="repeat-count" value="1" min="1" max="1000" step="1" decimals="0" autofocus="autofocus"/>
 		</div>
 		<div class="row">
 			<label for="repeat-shared">Shared Copies</label>

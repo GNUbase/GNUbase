@@ -446,6 +446,10 @@ namespace gnubase::engine
 
 		// Commands.
 
+		// Events with no length in the block's unit (a frame of a 192 kHz clip at 48 kHz) can't be repeated: every
+		// copy would lie on the one before.
+		constexpr const char* g_tooShort = "the events are too short to repeat";
+
 		Json moveEvents(Project& project, CommandContext& context, bool follow)
 		{
 			const Json& parameters = context.parameters();
@@ -495,6 +499,7 @@ namespace gnubase::engine
 			const bool shared = parameters.value("shared", false);
 			const bool musical = allMusical(items);
 			const auto [start, end] = block(project, items, musical);
+			require(end > start, g_tooShort);
 			std::vector<Item> copies;
 			for (int64_t k = 1; k <= count; ++k)
 				for (const Item& item : items)
@@ -523,7 +528,7 @@ namespace gnubase::engine
 			const bool musical = allMusical(items);
 			const auto [start, end] = block(project, items, musical);
 			const int64_t length = end - start;
-			require(length > 0, "the events are too short to fill the range with");
+			require(length > 0, g_tooShort);
 			const int64_t from = inUnit(project, {time::TimeBase::Linear, left}, musical);
 			const int64_t to = inUnit(project, {time::TimeBase::Linear, right}, musical);
 			require((to - from) / length <= 1000, "the range holds more than 1000 copies");
