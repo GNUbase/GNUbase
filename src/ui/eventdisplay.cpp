@@ -116,6 +116,9 @@ namespace gnubase::ui
 					requestProject();
 					requestMarkers();
 				}));
+		// A new project opens with its own ruler format, not one followed from the project before.
+		m_subscriptions.push_back(
+			m_binding.on("project.reset", [this](const engine::Event&) { m_projectFormat.clear(); }));
 		m_subscriptions.push_back(
 			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
 		m_subscriptions.push_back(m_binding.on("snap.changed",
@@ -220,7 +223,7 @@ namespace gnubase::ui
 
 	double EventDisplay::projectLength() const
 	{
-		return std::max(m_end, g_minimumProjectLength);
+		return std::max(m_end, m_length);
 	}
 
 	double EventDisplay::overviewLength() const
@@ -358,7 +361,23 @@ namespace gnubase::ui
 		m_selection = std::move(selection);
 		setLanes();
 		showSelection();
-		showRuler(); // the tempo or signatures may have changed
+		m_length = project.value("length", g_defaultProjectLength);
+		// The ruler shows the snap settings' format, which the project keeps (#413), so a project opens with it. When
+		// the project setup's time format changes, the ruler follows it (reference manual p. 69); its menu picks
+		// another one of its own.
+		const std::string projectFormat = project.value("timeFormat", std::string());
+		const bool opened = m_projectFormat.empty();
+		std::optional<TimeFormat> follow;
+		if (projectFormat != m_projectFormat)
+		{
+			m_projectFormat = projectFormat;
+			if (!opened)
+				follow = timeFormatFromName(projectFormat);
+		}
+		if (follow)
+			setRulerFormat(*follow);
+		else
+			showRuler(); // the tempo, signatures, frame rate or start time may have changed
 		setCursor(m_cursorSample);
 		apply();
 	}

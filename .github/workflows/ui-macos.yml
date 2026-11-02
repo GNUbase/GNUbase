@@ -1,28 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The window tests (ctest label ui) on Apple Silicon, where SDL_GPU draws through Metal. CI's macOS job runs on an Intel
-# runner, whose virtual GPU SDL_GPU can't use, because hosted Apple Silicon runners often never pick jobs up. This
-# workflow is separate from CI so that a missing runner never blocks a merge.
+# runner, whose virtual GPU SDL_GPU can't use, because hosted Apple Silicon runners often never pick jobs up. For the
+# same reason this workflow runs only on main (and by hand), not on pull requests, which it would leave waiting.
 name: UI tests (macOS)
 
 on:
-  pull_request:
-    paths:
-      - src/ui/**
-      - src/app/**
-      - resources/**
-      - tests/CMakeLists.txt
-      - tests/uiapp*
-      - tests/window_tests.cpp
-      - tests/testutils/**
-      - tests/data/ui/**
-      - tests/golden/ui/**
-      - CMakeLists.txt
-      - CMakePresets.json
-      - ext/SDL
-      - ext/RmlUi
-      - ext/freetype
-      - ext/lunasvg
-      - .github/workflows/ui-macos.yml
   push:
     branches: [main]
   workflow_dispatch:

@@ -787,3 +787,49 @@ TEST_CASE("with the selection tools combined, a lane's upper half selects ranges
 	f.drag(150, 75, 250, 75);
 	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 4 * g_quarter; }));
 }
+
+TEST_CASE("the edit commands edit the selection range, and paste pastes at its start", "[unit]")
+{
+	Fixture f;
+	const std::map<std::string, std::function<void()>>& actions = f.display.actions();
+	for (const char* id : {"edit.cut", "edit.copy", "edit.paste", "edit.cutTime", "edit.deleteTime", "edit.pasteTime",
+			 "edit.insertSilence", "edit.splitRange", "edit.cropRange", "edit.globalCopy"})
+		CHECK(actions.count(id) == 1);
+	const Json tracks = f.call("project.get").at("tracks");
+	const auto audio = tracks[0].at("id").get<uint64_t>();
+	const auto midi = tracks[1].at("id").get<uint64_t>();
+
+	// From 1.5 to 2.25 seconds on both tracks: split cuts the event at 2.25 and the part at both edges.
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{72000, 108000, {audio, midi}});
+	f.run("edit.splitRange");
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+	CHECK(f.audioEvents().size() == 2);
+	f.call("history.undo");
+
+	// Delete Time removes what is in the range and moves what follows back by 0.75 seconds.
+	f.run("edit.deleteTime");
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+	CHECK(f.parts()[1].at("position") == 3 * g_quarter);
+	REQUIRE(f.audioEvents().size() == 1);
+	CHECK(f.audioEvents()[0].at("position") == 72000);
+	f.call("history.undo");
+
+	// Cut leaves the gap; paste puts the range back at its start, on its first track and the one below.
+	f.run("edit.cut");
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+	CHECK(f.audioEvents().size() == 1);
+	f.run("edit.paste");
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+	CHECK(f.audioEvents().size() == 2);
+	CHECK(f.display.range().has_value()); // the range stays (reference manual p. 287)
+
+	// Without a range, paste goes to the project cursor and selects what it pasted.
+	f.display.setTool(ui::Tool::ObjectSelection);
+	f.call("transport.locate", {{"position", 240000}});
+	REQUIRE(f.waitUntil([&f] { return f.display.cursor() == 5.0; }));
+	f.run("edit.paste");
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 4; }));
+	CHECK(f.parts()[3].at("position") == 10 * g_quarter);
+	REQUIRE(f.waitUntil([&f] { return f.display.selection().size() == 2; }));
+}

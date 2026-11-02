@@ -599,10 +599,11 @@ TEST_CASE("zooming in and out keeps the project cursor in place, and zoom steps 
 	fixture.display.zoomOut();
 	CHECK(!fixture.display.redoZoom());
 
-	// Zoom full: from the project start to its end, but at least a minute (the project length comes with #78).
+	// Zoom full: from the project start to the end of the project setup's length (#78), or of the last event.
 	fixture.display.zoomFull();
 	CHECK(fixture.display.view().start == 0.0);
-	CHECK(fixture.display.visibleLength() == Approx(ui::g_minimumProjectLength));
+	CHECK(fixture.display.visibleLength() == Approx(ui::g_defaultProjectLength));
+	fixture.call("project.set", {{"length", 60.0}});
 	fixture.call("transport.locate", {{"position", 0}});
 	fixture.call("midiPart.set",
 		{{"part", fixture.call("project.get").at("midiParts")[0].at("id")},
@@ -693,6 +694,9 @@ TEST_CASE("the overview line shows the whole project and moves and resizes the v
 {
 	Fixture fixture;
 	fixture.addEvents();
+	fixture.call("project.set", {{"length", 60.0}});
+	REQUIRE(fixture.waitUntil([&fixture] { return fixture.display.projectLength() == Approx(60.0); }));
+	fixture.step();
 	// The project is a minute long, the view shows its first 10 seconds: a sixth of the overview.
 	Rml::Element& overview = fixture.element(".overview");
 	Rml::Element& rectangle = fixture.element(".overview-view");
@@ -830,6 +834,35 @@ TEST_CASE("the ruler shows the chosen time format", "[unit]")
 	fixture.display.setRulerFormat(ui::TimeFormat::Timecode);
 	CHECK(fixture.display.rulerFormat() == ui::TimeFormat::Timecode);
 	CHECK(fixture.element("ruler").GetAttribute<std::string>("format", "") == "timecode");
+
+	// It follows the project's time format when that changes (#78), and keeps its own pick until then.
+	fixture.call("project.set", {{"timeFormat", "seconds"}});
+	REQUIRE(fixture.waitUntil([&fixture] { return fixture.display.rulerFormat() == ui::TimeFormat::Seconds; }));
+	CHECK(fixture.element("ruler").GetAttribute<std::string>("format", "") == "seconds");
+	fixture.display.setRulerFormat(ui::TimeFormat::Samples);
+	fixture.call("project.set", {{"length", 120.0}});
+	REQUIRE(fixture.waitUntil([&fixture] { return fixture.display.projectLength() == Approx(120.0); }));
+	CHECK(fixture.display.rulerFormat() == ui::TimeFormat::Samples);
+	// The ruler's format is the snap settings' (#413), so the project keeps it.
+	REQUIRE(fixture.waitUntil([&fixture] { return fixture.call("snap.get").at("format") == "samples"; }));
+
+	// A project opens with the ruler format it was saved with, whatever its project setup's time format.
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "ruler.dawproject").string();
+	fixture.call("project.set", {{"timeFormat", "timecode"}});
+	REQUIRE(fixture.waitUntil([&fixture] { return fixture.display.rulerFormat() == ui::TimeFormat::Timecode; }));
+	fixture.display.setRulerFormat(ui::TimeFormat::Seconds);
+	REQUIRE(fixture.waitUntil([&fixture] { return fixture.call("snap.get").at("format") == "seconds"; }));
+	fixture.call("project.save", {{"path", file}});
+	fixture.call("project.new");
+	REQUIRE(fixture.waitUntil([&fixture] { return fixture.display.rulerFormat() == ui::TimeFormat::BarsBeats; }));
+	fixture.call("project.load", {{"path", file}});
+	REQUIRE(fixture.waitUntil([&fixture] { return fixture.display.rulerFormat() == ui::TimeFormat::Seconds; }));
+	for (int i = 0; i < 10; ++i)
+		fixture.step();
+	CHECK(fixture.display.rulerFormat() == ui::TimeFormat::Seconds);
+	CHECK(fixture.call("snap.get").at("format") == "seconds");
+	CHECK(fixture.call("project.get").at("timeFormat") == "timecode");
 }
 
 TEST_CASE("the event display's actions are commands by name, for key commands", "[unit]")
