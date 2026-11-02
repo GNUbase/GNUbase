@@ -2089,10 +2089,11 @@ namespace gnubase::engine
 		if (const auto mode = parameters.find("audioRecordMode"); mode != parameters.end())
 		{
 			const auto name = mode->get<std::string>();
-			const auto found = std::find(g_audioRecordModes.begin(), g_audioRecordModes.end(), name);
-			require(found != g_audioRecordModes.end(),
+			const auto index = static_cast<size_t>(
+				std::find(g_audioRecordModes.begin(), g_audioRecordModes.end(), name) - g_audioRecordModes.begin());
+			require(index < g_audioRecordModes.size(),
 				"audioRecordMode must be keepHistory, cycleHistoryReplace or replace");
-			settings.audioRecordMode = static_cast<AudioRecordMode>(found - g_audioRecordModes.begin());
+			settings.audioRecordMode = static_cast<AudioRecordMode>(index);
 		}
 		sent(m_transport.set(settings));
 	}

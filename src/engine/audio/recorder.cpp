@@ -150,10 +150,10 @@ namespace gnubase::engine
 		chunk->deviceFrame = block.position + offset;
 		chunk->position = position;
 		chunk->frames = frames;
-		float* out = chunk->samples.data();
+		size_t n = 0;
 		for (uint32_t i = 0; i < frames; ++i)
 			for (int c = 0; c < m_channels; ++c)
-				*out++ = block.inputs[c][offset + i];
+				chunk->samples[n++] = block.inputs[c][offset + i];
 		m_filled->tryPush(chunk); // there is room for every chunk
 		return true;
 	}
@@ -249,7 +249,7 @@ namespace gnubase::engine
 
 		// Audio pre-record: the frames that came in just before, if none is missing in between.
 		const size_t capacity = m_channels > 0 ? m_history.size() / static_cast<size_t>(m_channels) : 0;
-		const size_t before = m_historyEnd == chunk.deviceFrame ? m_historyFrames : 0;
+		const size_t before = capacity > 0 && m_historyEnd == chunk.deviceFrame ? m_historyFrames : 0;
 		for (size_t done = 0; done < before;)
 		{
 			const size_t index = (m_historyStart + done) % capacity;
