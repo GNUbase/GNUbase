@@ -37,7 +37,7 @@ snapping them, with the toolbar's snap controls, in [snap.md](snap.md).
 `resources/styles/base.rcss` lays it out; the themes color it ([themes.md](themes.md)). Code sets only what comes from
 data: the canvas elements' attributes `start` (seconds at the left edge), `scale` (seconds per dp) and `scroll-top`,
 where the cursors are, and the overview's rectangle. The cross-hair cursor shows by style sheet while the mouse is over
-the lanes and the display has the class `cross-hair` (`setCrossHair`); tools that hide it come with #86. The
+the lanes and the display has the class `cross-hair` (`setCrossHair`), with the tools that use it ([tools.md](tools.md)). The
 attributes show the view to MCP's `ui_dom`.
 
 - **Data.** On `history.changed` (every change to the project and every undo) and `project.reset` it asks for
