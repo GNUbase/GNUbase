@@ -107,6 +107,9 @@ namespace gnubase::engine
 		// soloed, only soloed ones, where they play through and what plays into them are heard.
 		bool mute = false;
 		bool solo = false;
+		// The mixer's notepad (#106).
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		std::string notes = {};
 		// Audio channels: the plugin slots, from top to bottom; the audio passes through them before the fader.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		std::vector<ObjectId> slots = {};
@@ -340,6 +343,10 @@ namespace gnubase::engine
 		std::optional<AutoFades> autoFades; // audio tracks: settings of their own instead of the project's
 		std::string timeFormat;             // ruler tracks: one of g_rulerTimeFormats
 		bool enabled = true; // audio, instrument and MIDI tracks: a disabled one plays nothing and is silent
+		// An image file that the mixer shows on the track's channel (#106), or empty. The initializer lets Track{...}
+		// leave it out, as for Channel::instrumentParameters.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see above
+		std::string picture = {};
 	};
 
 	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
@@ -421,6 +428,18 @@ namespace gnubase::engine
 		std::map<ObjectId, AutomationPoint> points;
 	};
 
+	// The channel types a mixer's filter shows or hides (reference manual p. 454): input and output busses, and the
+	// channels of audio, instrument, MIDI, group and effect tracks; folders' group channels are group channels.
+	inline constexpr std::array<const char*, 7> g_mixerChannelTypes = {
+		"input", "audio", "instrument", "midi", "group", "effect", "output"};
+
+	// What a mixer hides (#106, docs/features/mixer-window.md): channels and busses by id, and channel types.
+	struct MixerView
+	{
+		std::vector<ObjectId> hidden;
+		std::vector<std::string> hiddenTypes; // from g_mixerChannelTypes
+	};
+
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct Project
 	{
@@ -453,6 +472,8 @@ namespace gnubase::engine
 		bool autoQuantize = false;
 		// Snap and grid (#87): settings, not part of undo.
 		SnapSettings snap;
+		// What each mixer hides (#106), by mixer: lower, window1 to window4. Settings, not part of undo.
+		std::map<std::string, MixerView> mixers;
 
 		ObjectId newId() { return nextId++; }
 
@@ -497,10 +518,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor, a.recordEnable,
-				   a.mute, a.solo, a.slots) ==
+				   a.mute, a.solo, a.notes, a.slots) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable,
-				b.mute, b.solo, b.slots);
+				b.mute, b.solo, b.notes, b.slots);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
@@ -611,9 +632,9 @@ namespace gnubase::engine
 	inline bool operator==(const Track& a, const Track& b)
 	{
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled) ==
+				   a.timeFormat, a.enabled, a.picture) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled);
+				b.timeFormat, b.enabled, b.picture);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

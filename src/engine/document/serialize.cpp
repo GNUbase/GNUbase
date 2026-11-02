@@ -441,7 +441,7 @@ namespace gnubase::engine
 		Json json = {{"id", track.id}, {"type", trackTypeName(track.type)}, {"name", track.name},
 			{"color", colorJson(track.color)}, {"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent},
 			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)},
-			{"enabled", track.enabled}};
+			{"enabled", track.enabled}, {"picture", track.picture}};
 		if (track.type == TrackType::Ruler)
 			json["timeFormat"] = track.timeFormat;
 		return json;
@@ -461,7 +461,7 @@ namespace gnubase::engine
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
 			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
 			{"recordEnable", channel.recordEnable}, {"mute", channel.mute}, {"solo", channel.solo},
-			{"slots", channel.slots}};
+			{"notes", channel.notes}, {"slots", channel.slots}};
 	}
 
 	Json toJson(const Slot& slot)
@@ -629,6 +629,22 @@ namespace gnubase::engine
 			{"points", std::move(list)}};
 	}
 
+	Json toJson(const MixerView& view)
+	{
+		return {{"hidden", view.hidden}, {"hiddenTypes", view.hiddenTypes}};
+	}
+
+	namespace
+	{
+		Json mixersJson(const std::map<std::string, MixerView>& mixers)
+		{
+			Json json = Json::object();
+			for (const auto& [name, view] : mixers)
+				json[name] = toJson(view);
+			return json;
+		}
+	}
+
 	Json toJson(const Project& project)
 	{
 		Json busses = Json::array();
@@ -653,7 +669,7 @@ namespace gnubase::engine
 			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
 			{"automation", toJsonArray(project.automation)}, {"quantize", midi::toJson(project.quantize)},
 			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
-			{"snap", toJson(project.snap)}};
+			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)}};
 	}
 
 	namespace
@@ -970,6 +986,7 @@ namespace gnubase::engine
 			track.channel = item.at("channel").get<ObjectId>();
 			// Files from before disabled tracks have every track enabled; only some types can be disabled.
 			track.enabled = !canDisable(track.type) || item.value("enabled", true);
+			track.picture = item.value("picture", std::string()); // files from before #106 have none
 			if (const Json autoFades = item.value("autoFades", Json()); !autoFades.is_null())
 				track.autoFades = autoFadesFromJson(autoFades);
 			if (track.type == TrackType::Ruler)
@@ -1017,6 +1034,7 @@ namespace gnubase::engine
 			channel.recordEnable = audio && item.value("recordEnable", false);
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
+			channel.notes = item.value("notes", std::string());           // files from before #106 have none
 			channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none
 			project.channels[id] = std::move(channel);
 		}
@@ -1176,6 +1194,10 @@ namespace gnubase::engine
 			project.quantize = midi::quantizeSettingsFromJson(json.at("quantize"));
 		project.autoQuantize = json.value("autoQuantize", false);
 		project.snap = snapSettingsFrom(json.value("snap", Json::object()), SnapSettings()); // files from before #87
+		const Json mixers = json.value("mixers", Json::object()); // files from before #106 have none
+		for (const auto& [name, view] : mixers.items())
+			project.mixers[name] = {
+				view.value("hidden", std::vector<ObjectId>()), view.value("hiddenTypes", std::vector<std::string>())};
 
 		// Without a counter, ids continue after the highest one.
 		ObjectId highest = 0;

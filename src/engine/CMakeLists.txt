@@ -110,6 +110,7 @@ add_library(gnubase-engine STATIC
 	document/markers.cpp
 	document/midiedits.cpp
 	document/midifilecommands.cpp
+	document/mixerviews.cpp document/mixerviews.h
 	document/parameters.cpp
 	document/pool.cpp
 	document/projectfiles.cpp

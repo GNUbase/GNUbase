@@ -4,6 +4,7 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
 #include "engine/dawproject/dawproject.h"
+#include "engine/document/mixerviews.h"
 #include "engine/document/serialize.h"
 #include "engine/dsp/timestretch.h"
 #include "engine/graph/graph.h"
@@ -999,6 +1000,7 @@ namespace gnubase::engine
 				track.name = parameters.at("name").get<std::string>();
 			track.color = newColor;
 			track.timeFormat = parameters.value("timeFormat", track.timeFormat);
+			track.picture = parameters.value("picture", track.picture);
 			if (parameters.contains("enabled"))
 			{
 				const bool enabled = parameters.at("enabled").get<bool>();
@@ -1252,6 +1254,7 @@ namespace gnubase::engine
 			}
 			changed.mute = parameters.value("mute", changed.mute);
 			changed.solo = parameters.value("solo", changed.solo);
+			changed.notes = parameters.value("notes", changed.notes);
 			channel = changed;
 			Json result = {{"channel", toJson(channel)}};
 			context.emit("channel.changed", result);
@@ -2849,10 +2852,11 @@ namespace gnubase::engine
 				"then plays through it, or without it through the next group channel up, or the main output, and "
 				"its automation and the routing of other channels to it go. Channels routed elsewhere by hand or "
 				"disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new "
-				"color goes to the tracks inside it.",
-				objectSchema(
-					{{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
-						{"timeFormat", timeFormats}, {"enabled", booleanSchema}, {"groupChannel", booleanSchema}},
+				"color goes to the tracks inside it. picture is an image file (PNG, JPEG or SVG) that the mixer shows "
+				"on the track's channel, or empty for none.",
+				objectSchema({{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
+								 {"timeFormat", timeFormats}, {"enabled", booleanSchema},
+								 {"groupChannel", booleanSchema}, {"picture", stringSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);
@@ -2908,15 +2912,16 @@ namespace gnubase::engine
 				"whileRecording while the transport records, tapeMachine while it stands or records (the default). "
 				"Monitoring glides in and out over one audio block. mute silences a channel; while any channel is "
 				"soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the "
-				"channels that play into them are heard. Muting and soloing glide over one audio block.",
-				objectSchema(
-					{{"channel", idSchema}, {"format", formats}, {"channels", integerSchema}, {"input", idSchema},
-						{"output", idSchema}, {"instrument", stringSchema},
-						{"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
-						{"panRight", numberSchema}, {"panBypass", booleanSchema},
-						{"midiVolume", {{"type", {"integer", "null"}}}}, {"midiPan", {{"type", {"integer", "null"}}}},
-						{"volume", numberSchema}, {"pan", numberSchema}, {"monitor", booleanSchema},
-						{"recordEnable", booleanSchema}, {"mute", booleanSchema}, {"solo", booleanSchema}},
+				"channels that play into them are heard. Muting and soloing glide over one audio block. notes is the "
+				"text of the channel's notepad in the mixer.",
+				objectSchema({{"channel", idSchema}, {"format", formats}, {"channels", integerSchema},
+								 {"input", idSchema}, {"output", idSchema}, {"instrument", stringSchema},
+								 {"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
+								 {"panRight", numberSchema}, {"panBypass", booleanSchema},
+								 {"midiVolume", {{"type", {"integer", "null"}}}},
+								 {"midiPan", {{"type", {"integer", "null"}}}}, {"volume", numberSchema},
+								 {"pan", numberSchema}, {"monitor", booleanSchema}, {"recordEnable", booleanSchema},
+								 {"mute", booleanSchema}, {"solo", booleanSchema}, {"notes", stringSchema}},
 					{"channel"}),
 				resultSchema({"channel"}), false},
 			setChannel);
@@ -3109,6 +3114,7 @@ namespace gnubase::engine
 		registerFadeCommands(engine);
 		registerEventEditCommands(engine);
 		registerSnapCommands(*this, engine);
+		registerMixerCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 		registerProjectFileCommands(engine);
