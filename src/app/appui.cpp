@@ -211,7 +211,13 @@ namespace gnubase::app
 				return follows;
 			});
 		m_shell.onUnusedKey([this](ui::Window& window, const ui::KeyPress& keys) { m_keys.press(window, keys); });
-		m_shell.onKeyReleased([this](ui::Window&, const ui::KeyPress& keys) { m_keys.released(keys); });
+		m_shell.onKeyReleased(
+			[this](ui::Window&, const ui::KeyPress& keys)
+			{
+				m_keys.released(keys);
+				if (keys.key == Rml::Input::KI_UNKNOWN)
+					m_winding.stop(); // the keyboard focus lost: also a button held
+			});
 		m_keys.add({"window.markers", "Opens or closes the markers window.",
 			// Later in the step: the key may be the markers window's own, which closing it would destroy.
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleMarkers(); }); }});

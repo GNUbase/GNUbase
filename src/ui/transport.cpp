@@ -4,6 +4,7 @@
 #include "platform/log.h"
 #include "ui/widgetutils.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Event.h>
@@ -22,8 +23,9 @@ namespace gnubase::ui
 
 		constexpr const char* g_formatsKey = "ui.timeFormats";
 		constexpr const char* g_timeDisplayKey = "ui.timeDisplay";
-		constexpr std::array<Rml::EventId, 6> g_events{Rml::EventId::Click, Rml::EventId::Change,
-			Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Dragstart, Rml::EventId::Dragend};
+		constexpr std::array<Rml::EventId, 7> g_events{Rml::EventId::Click, Rml::EventId::Change,
+			Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Mouseout, Rml::EventId::Dragstart,
+			Rml::EventId::Dragend};
 		constexpr int g_largestSize = 4;
 		// Wheel turns on the tempo field that follow each other within this are one gesture.
 		constexpr std::chrono::milliseconds g_wheelPause{400};
@@ -331,15 +333,32 @@ namespace gnubase::ui
 			release();
 			return;
 		}
+		if (event == Rml::EventId::Mouseout)
+		{
+			// The mouse leaving the button held, also out of the window, ends it as the mouse button going up would.
+			if (m_holding.empty())
+				return;
+			Rml::Context* context = root->GetContext();
+			Rml::Element* hover = context != nullptr ? context->GetHoverElement() : nullptr;
+			const Rml::Element* button = hover != nullptr ? withAttribute(hover, "hold") : nullptr;
+			if (button == nullptr || attribute(*button, "command") != m_holding)
+				release();
+			return;
+		}
 		if (event == Rml::EventId::Dragstart || event == Rml::EventId::Dragend)
 		{
 			const Rml::Element* field = withAttribute(target, "field");
 			if (field == nullptr || !inside(field, root) || attribute(*field, "field") != "tempo")
 				return;
 			if (event == Rml::EventId::Dragstart)
-				m_gesture = Gesture::Drag;
+			{
+				m_gesture = Gesture::Drag; // wheel turns just before go into the drag's undo step
+				m_wheelPause.reset();
+			}
 			else
+			{
 				endTempoGesture();
+			}
 			return;
 		}
 		if (event == Rml::EventId::Click)
@@ -407,7 +426,9 @@ namespace gnubase::ui
 	{
 		// Up is later, by as many steps as the wheel turned, at least one.
 		const long turned = std::lround(-delta);
-		const long steps = turned != 0 ? turned : (delta < 0.0F ? 1 : -1);
+		long steps = turned;
+		if (steps == 0)
+			steps = delta < 0.0F ? 1 : -1;
 		const std::string time = attribute(element, "time");
 		const double rate = m_time.sampleRate;
 		const double left = static_cast<double>(m_status.value("left", int64_t{0})) / rate;
@@ -537,13 +558,21 @@ namespace gnubase::ui
 				setText(*element, std::to_string(m_time.signatures.toBarsBeats(at).beat + 1));
 			}
 			else if (time == "position")
+			{
 				setText(*element, formatTime(format, static_cast<double>(m_position) / rate, m_time));
+			}
 			else if (time == "left")
+			{
 				setText(*element, formatTime(format, left, m_time));
+			}
 			else if (time == "right")
+			{
 				setText(*element, formatTime(format, right, m_time));
+			}
 			else if (time == "length")
+			{
 				setText(*element, formatLength(format, left, std::max(left, right), m_time));
+			}
 		}
 	}
 

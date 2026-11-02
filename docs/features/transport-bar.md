@@ -29,7 +29,8 @@ each other.
 - **Buttons** have a `command` with `parameters` (JSON), which run as a key would (`KeyCommands::run`): engine
   commands through the UI's engine client, the UI's own commands in `AppUi`. Buttons with `state` are checked, the
   state class `.checked`, while the transport's value is true; they follow `transport.changed`, whoever changed it.
-  Buttons with `hold` run their command when the mouse button goes down and end it when it goes up, as a key held.
+  Buttons with `hold` run their command when the mouse button goes down and end it, as a key held, when it goes up,
+  the mouse leaves the button or the window loses the keyboard focus.
 - **Winding** (pp. 297, 300): Rewind and Forward, and Fast Rewind and Fast Forward on the keys, move the cursor by a
   step at once (1 second, 4 for the fast ones), as a click or a key pressed and released does, and while their button
   or key stays down wind on after 0.3 seconds at four steps a second until it goes up (`ui::Winding`, which sends

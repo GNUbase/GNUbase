@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <utility>
@@ -568,6 +569,22 @@ TEST_CASE("Rewind and Forward wind while their key or button is held", "[ui]")
 	mouseButton(app, false);
 	stopped(app);
 
+	// The mouse leaving the button held ends winding, before the mouse button goes up; so does the window losing the
+	// keyboard focus.
+	app.call("transport.locate", {{"position", 0}});
+	app.ui().move(std::nullopt, at("#forward"));
+	mouseButton(app, true);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") > 2 * 48000; }));
+	app.ui().move(std::nullopt, at("#primary-time"));
+	stopped(app);
+	mouseButton(app, false);
+	app.ui().move(std::nullopt, at("#forward"));
+	mouseButton(app, true);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") > 4 * 48000; }));
+	app.shell().keyReleased(app.main(), ui::KeyPress{Rml::Input::KI_UNKNOWN, 0});
+	stopped(app);
+	mouseButton(app, false);
+
 	// A key pressed and released at once steps a second.
 	app.call("transport.locate", {{"position", 0}});
 	app.ui().key(std::nullopt, "Num+");
@@ -661,7 +678,7 @@ TEST_CASE("a drag or wheel gesture on the tempo field is one undo step", "[ui]")
 	// Turns of the wheel in a row are one step too.
 	for (int turn = 0; turn < 3; ++turn)
 		app.ui().wheel(std::nullopt, at("#tempo"), 0, -1);
-	REQUIRE(app.waitUntil([&app, dragged] { return tempo(app) == dragged + 3.0; }));
+	REQUIRE(app.waitUntil([&app, dragged] { return std::abs(tempo(app) - (dragged + 3.0)) < 0.001; }));
 	settle(app);
 	CHECK(undoSteps(app) == before + 2);
 

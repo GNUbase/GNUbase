@@ -50,6 +50,12 @@ namespace gnubase::ui
 	// focus zone (see KeyCommands::press), or null.
 	struct UiCommand
 	{
+		UiCommand(std::string id, std::string description, std::function<void(Window& window, Rml::Element* zone)> run,
+			std::function<void()> release = {})
+			: id(std::move(id)), description(std::move(description)), run(std::move(run)), release(std::move(release))
+		{
+		}
+
 		std::string id; // "area.action" like the engine's commands, e.g. "view.zoomIn"
 		std::string description;
 		std::function<void(Window& window, Rml::Element* zone)> run;
