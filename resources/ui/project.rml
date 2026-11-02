@@ -174,8 +174,24 @@
 		<menuitem command="history.undo">Undo</menuitem>
 		<menuitem command="history.redo">Redo</menuitem>
 		<menuseparator/>
+		<menuitem command="edit.cut">Cut</menuitem>
+		<menuitem command="edit.copy">Copy</menuitem>
+		<menuitem command="edit.paste">Paste</menuitem>
 		<menuitem command="edit.delete">Delete</menuitem>
 		<menuseparator/>
+		<menuitem id="range-submenu">Range
+			<menu>
+				<menuitem command="edit.globalCopy">Global Copy</menuitem>
+				<menuitem command="edit.cutTime">Cut Time</menuitem>
+				<menuitem command="edit.deleteTime">Delete Time</menuitem>
+				<menuitem command="edit.pasteTime">Paste Time</menuitem>
+				<menuseparator/>
+				<menuitem command="edit.splitRange">Split</menuitem>
+				<menuitem command="edit.cropRange">Crop</menuitem>
+				<menuseparator/>
+				<menuitem command="edit.insertSilence">Insert Silence</menuitem>
+			</menu>
+		</menuitem>
 		<menuitem id="functions-submenu">Functions
 			<menu>
 				<menuitem command="edit.splitAtCursor">Split at Cursor</menuitem>

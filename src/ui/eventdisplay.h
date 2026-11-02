@@ -229,7 +229,10 @@ namespace gnubase::ui
 		// edit.nudgeRight, edit.nudgeStartLeft, edit.nudgeStartRight, edit.nudgeEndLeft, edit.nudgeEndRight,
 		// edit.moveStartToCursor, edit.moveEndToCursor, edit.selectAll, edit.selectNone, edit.invertSelection,
 		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd and edit.selectUnderCursor; and
-		// edit.locatorsToSelection sets the locators around the selected events.
+		// edit.locatorsToSelection sets the locators around the selected events. With the range selection tool,
+		// edit.delete deletes the range; edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence,
+		// edit.splitRange and edit.cropRange edit it, edit.paste and edit.pasteTime paste at its start (without a
+		// range at the project cursor) and edit.globalCopy copies the locator range on every track.
 		// edit.snap (snap on or off) and edit.snapPointToCursor (the selected audio events' snap points); and the
 		// tools: tool.objectSelection, tool.rangeSelection, tool.draw, tool.erase, tool.split, tool.glue, tool.mute,
 		// tool.zoom, tool.line, tool.play, tool.next, tool.previous and tool.combineSelectionTools (on or off).
