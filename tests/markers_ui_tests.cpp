@@ -132,7 +132,7 @@ namespace
 		// then marker track 2, active, with a position marker at 5 s.
 		void addMarkers()
 		{
-			call("track.add", {{"type", "audio"}});
+			audio = call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
 			first = call("track.add", {{"type", "marker"}}).at("track").at("id").get<uint64_t>();
 			call("marker.add", {{"position", 2 * g_quarter}});
 			call("marker.add",
@@ -150,6 +150,7 @@ namespace
 		ui::EventDisplay display{engine, binding, *document.GetElementById("display")};
 		ui::MarkerLines markers{display, binding};
 		ui::Automation automation{ui.shell};
+		uint64_t audio = 0;
 		uint64_t first = 0;
 		uint64_t second = 0;
 	};
@@ -245,6 +246,69 @@ TEST_CASE("on a marker track, Alt-click adds a marker and a double click on a cy
 	CHECK(fixture.display.view().start == Approx(2.0));
 	CHECK(fixture.display.visibleLength() == Approx(2.0));
 	CHECK(count(fixture.first) == 3);
+}
+
+TEST_CASE("marker events and Alt-click follow each track's own height", "[unit]")
+{
+	Fixture fixture;
+	fixture.addMarkers();
+	const auto count = [&fixture](uint64_t track)
+	{ return fixture.call("marker.list", {{"track", track}}).at("markers").size(); };
+
+	// The audio track twice as high moves the marker tracks' lanes, labels and mouse targets down.
+	fixture.display.setTrackHeight(fixture.audio, 80);
+	fixture.step();
+	CHECK(fixture.lanes("event-lanes.marker-events")[0].height == Approx(80.0));
+	Rml::ElementList labels;
+	fixture.document.QuerySelectorAll(labels, ".marker-label");
+	REQUIRE(labels.size() == 3);
+	Rml::Element& events = fixture.element("event-lanes.events");
+	CHECK(labels[1]->GetAbsoluteTop() - events.GetAbsoluteTop() == Approx(80.0).margin(0.5));
+	fixture.automation.click(std::nullopt, fixture.lanesAt(600, 100), ui::MouseButton::Left, 1, {"alt"});
+	REQUIRE(fixture.waitUntil([&] { return count(fixture.first) == 3; }));
+	CHECK(count(fixture.second) == 1);
+}
+
+TEST_CASE("marker events and Alt-click skip hidden tracks", "[unit]")
+{
+	Fixture fixture;
+	fixture.addMarkers();
+	const auto count = [&fixture](uint64_t track)
+	{ return fixture.call("marker.list", {{"track", track}}).at("markers").size(); };
+	// The labels again each time, since a new marker replaces them.
+	const auto labels = [&fixture]
+	{
+		Rml::ElementList found;
+		fixture.document.QuerySelectorAll(found, ".marker-label");
+		return found;
+	};
+	Rml::Element& events = fixture.element("event-lanes.events");
+	const auto top = [&events](Rml::Element* label) { return label->GetAbsoluteTop() - events.GetAbsoluteTop(); };
+
+	// Marker track 1 hidden: its labels hide, marker track 2 moves up into its lane and takes the click.
+	fixture.display.setHiddenTracks({fixture.first});
+	fixture.step();
+	Rml::ElementList hidden = labels();
+	REQUIRE(hidden.size() == 3);
+	CHECK(hidden[0]->IsClassSet("hidden"));
+	CHECK(hidden[1]->IsClassSet("hidden"));
+	CHECK_FALSE(hidden[2]->IsClassSet("hidden"));
+	CHECK(top(hidden[2]) == Approx(40.0).margin(0.5));
+	fixture.automation.click(std::nullopt, fixture.lanesAt(600, 60), ui::MouseButton::Left, 1, {"alt"});
+	REQUIRE(fixture.waitUntil([&] { return count(fixture.second) == 2; }));
+	CHECK(count(fixture.first) == 2);
+
+	// Shown again, the labels go back to their lanes.
+	fixture.display.setHiddenTracks({});
+	fixture.step();
+	Rml::ElementList shown = labels();
+	REQUIRE(shown.size() == 4);
+	for (const Rml::Element* label : shown)
+		CHECK_FALSE(label->IsClassSet("hidden"));
+	CHECK(top(shown[0]) == Approx(40.0).margin(0.5));
+	CHECK(top(shown[1]) == Approx(40.0).margin(0.5));
+	CHECK(top(shown[2]) == Approx(80.0).margin(0.5));
+	CHECK(top(shown[3]) == Approx(80.0).margin(0.5));
 }
 
 namespace

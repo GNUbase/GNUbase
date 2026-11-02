@@ -108,7 +108,6 @@ namespace gnubase::app
 		engine::Engine& m_engine;
 		std::filesystem::path m_resources;
 		bool m_hidden = false; // the main window, and so the others
-
 		std::unique_ptr<ui::MarkersWindow> m_markers;
 		ui::WindowId m_markersWindow = 0;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
