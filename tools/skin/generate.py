@@ -480,6 +480,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("#lost-device", {"color": c["danger"]}),
         # The pool's message line (docs/features/pool.md): why a pool command failed stands out
         (".pool-message.error", {"color": c["danger"]}),
+        # The edit history (docs/features/edit-history.md): undone steps dimmed, and the separator after the done ones
+        (".history tr.undone, .history tr.undone input.text", {"color": c["textMuted"]}),
+        (".history .history-separator", {"background-color": c["accent"]}),
         # Menu bars (docs/features/main-menu.md): flat menu titles, lit under the mouse, the items' keys, and the arrows
         # of items with a submenu
         ("menubar", {"background-color": c["surface"]}),

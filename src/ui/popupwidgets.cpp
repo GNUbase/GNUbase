@@ -378,8 +378,9 @@ namespace gnubase::ui
 
 		// <dialog>: a dialog in a document of its own, which the app shows, usually modal. It opens in the middle of
 		// the window, and dragging its .dialog-titlebar moves it. Escape closes it with the result "cancel", Enter
-		// clicks its button.primary (also from a text field), and a click on an element with a result attribute closes
-		// it with that result. Closing sends a close event with the parameter "result", then closes the document.
+		// clicks its button.primary (also from a text field, and from a value field with autofocus, after it takes the
+		// number typed), and a click on an element with a result attribute closes it with that result. Closing sends a
+		// close event with the parameter "result", then closes the document.
 		class Dialog final : public Rml::Element
 		{
 		public:
@@ -413,9 +414,11 @@ namespace gnubase::ui
 			// A key pressed anywhere in the dialog's document, before text fields keep Enter to themselves.
 			void key(Rml::Event& event)
 			{
-				// A multi-line text field takes Enter, and a value field being edited both keys.
+				// A multi-line text field takes Enter, and a value field both keys, unless it has autofocus: then it is
+				// the dialog's main field, which works like a text field.
+				const Rml::Element* field = closestTag(event.GetTargetElement(), "valuefield", this);
 				if (closestTag(event.GetTargetElement(), "textarea", this) != nullptr ||
-					closestTag(event.GetTargetElement(), "valuefield", this) != nullptr)
+					(field != nullptr && !field->HasAttribute("autofocus")))
 					return;
 				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
 				if (key == Rml::Input::KI_ESCAPE)
@@ -429,6 +432,9 @@ namespace gnubase::ui
 					if (primary == nullptr || primary->HasAttribute("disabled"))
 						return;
 					event.StopPropagation();
+					// Leaving the value field being edited takes the number typed, before OK reads it.
+					if (field != nullptr && field->IsClassSet("editing"))
+						event.GetTargetElement()->Blur();
 					primary->Click();
 				}
 			}

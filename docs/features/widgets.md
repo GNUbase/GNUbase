@@ -47,7 +47,10 @@ The widgets:
 - `<slider>`: horizontal, `.slider-track` filled up to the `.slider-thumb` (`.slider-fill`).
 - `<valuefield>`: the value as text, with `decimals` (2) and a `unit`, drawn like a display. A double click edits it
   as text (state class `.editing`): Enter, or leaving the field, takes the number typed, clamped to the range; Escape,
-  or text that isn't a number, keeps the value. While the user types, the field's text field sends RmlUi's own
+  or text that isn't a number, keeps the value. With `autofocus`, it is edited, all of it selected, whenever it gets
+  a visible focus: when its document shows it focused, or Tab moves to it, but not on a click. Keys typed before the
+  next update go into it too. In a dialog it is then the main field, which works like a text field: Enter takes the
+  number typed and clicks OK, Escape cancels. While the user types, the field's text field sends RmlUi's own
   `change` events with the text; the field's `change`, with the field as its target, has the number.
 
 `<textdisplay>` shows text, its `value` attribute, such as a position in a time format; documents give it the look of
@@ -107,8 +110,8 @@ and on a click, a key or the wheel. Every document gets its tooltip element when
 `<dialog>` is a dialog in a document of its own, which the app loads and shows, usually modal
 (`ElementDocument::Show(Rml::ModalFlag::Modal)`). It opens in the middle of the window, and dragging its
 `.dialog-titlebar` moves it. Escape closes it with the result `cancel`; Enter clicks its `button.primary`, also from
-a text field, but not from a multi-line one or a value field being edited; a click on an element with a `result`
-attribute closes it with that result. Closing sends the event `close` (`ui::g_dialogCloseEvent`) with the parameter
+a text field and a value field with `autofocus`, but not from a multi-line text field or another value field; a click
+on an element with a `result` attribute closes it with that result. Closing sends the event `close` (`ui::g_dialogCloseEvent`) with the parameter
 `result`, then closes the document.
 
 How it works: an RmlUi plugin (`RmlUi::registerPlugin`) gives every document a tooltip and listens to it in the capture
@@ -178,7 +181,9 @@ closing a context menu, and closes it, leaving the focus out of the closed menu 
 a click, a mouse button going up or the wheel, nor when SDL releases Alt as the window loses the keyboard, nor
 behind a modal dialog).
 Tooltips show after a rest and go with the mouse.
-Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result.
+Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result;
+a value field with autofocus is edited as its dialog opens, even by keys typed before the next update, and Enter
+there clicks OK, while another value field keeps Enter.
 Tabs show their panels. List views select with clicks, Ctrl, Shift and the keys, and follow their data; trees expand
 and collapse by click and keys, with indents by level; tables select body rows only; splitters move the boundary in a
 row and in a column, never below nothing. The color picker picks from its field, its hue strip and its numbers,

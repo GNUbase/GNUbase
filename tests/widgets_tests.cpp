@@ -859,6 +859,81 @@ TEST_CASE("Alt leaves a menu bar behind a modal dialog closed", "[ui]")
 
 namespace
 {
+	// The results of the count dialog's close events, with the count it had.
+	struct CountCloses final : Rml::EventListener
+	{
+		void ProcessEvent(Rml::Event& event) override
+		{
+			results.push_back(event.GetParameter<Rml::String>("result", ""));
+			const Rml::Element* count = event.GetTargetElement()->GetOwnerDocument()->GetElementById("count");
+			counts.push_back(count != nullptr ? count->GetAttribute<Rml::String>("value", "") : "");
+		}
+
+		std::vector<std::string> results;
+		std::vector<std::string> counts;
+	};
+
+	// Shows the count dialog from tests/data/ui, without the update that follows.
+	void openCountDialog(test::UiApp& app, CountCloses& closes)
+	{
+		Rml::ElementDocument* dialog =
+			app.main().context().LoadDocument(std::string(GNUBASE_TEST_DATA_DIR) + "/ui/count-dialog.rml");
+		REQUIRE(dialog != nullptr);
+		dialog->AddEventListener(ui::g_dialogCloseEvent, &closes);
+		dialog->Show(Rml::ModalFlag::Modal);
+	}
+
+	bool countDialogOpen(test::UiApp& app)
+	{
+		return !app.ui().dom(std::nullopt, "#count-dialog", 0).at("elements").empty();
+	}
+}
+
+TEST_CASE(
+	"a value field with autofocus is edited as its dialog opens, and Enter takes the number and clicks OK", "[ui]")
+{
+	CountCloses closes; // outlives the documents it listens to
+	test::UiApp app;
+	app.show("popups.rml");
+
+	// Keys typed before the next update, as while the dialog's document loads, still go into the field.
+	openCountDialog(app, closes);
+	Rml::Context& context = app.main().context();
+	context.ProcessKeyDown(Rml::Input::KI_7, 0);
+	context.ProcessTextInput("7");
+	context.ProcessKeyDown(Rml::Input::KI_RETURN, 0);
+	CHECK(app.waitUntil([&app] { return !countDialogOpen(app); }));
+	CHECK(closes.results == std::vector<std::string>{"ok"});
+	CHECK(closes.counts == std::vector<std::string>{"7"});
+
+	// Escape while it is edited cancels the dialog.
+	openCountDialog(app, closes);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(has(element(app, "#count"), "classes", "editing"));
+	app.ui().key(std::nullopt, "Escape");
+	CHECK(app.waitUntil([&app] { return !countDialogOpen(app); }));
+	CHECK(closes.results == std::vector<std::string>{"ok", "cancel"});
+
+	// A value field without autofocus keeps Enter while it is edited. A click on the one with autofocus doesn't edit
+	// it, and Enter, also the numpad's, still clicks OK.
+	openCountDialog(app, closes);
+	app.shell().step(std::chrono::milliseconds(0));
+	app.ui().click(std::nullopt, at("#other"), ui::MouseButton::Left, 2, {});
+	app.ui().text(std::nullopt, "5");
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(countDialogOpen(app));
+	CHECK(element(app, "#other").at("attributes").at("value") == "5");
+	CHECK(!has(element(app, "#other"), "classes", "editing"));
+	click(app, "#count");
+	CHECK(!has(element(app, "#count"), "classes", "editing"));
+	app.ui().key(std::nullopt, "NumEnter");
+	CHECK(app.waitUntil([&app] { return !countDialogOpen(app); }));
+	CHECK(closes.results == std::vector<std::string>{"ok", "cancel", "ok"});
+	CHECK(closes.counts == std::vector<std::string>{"7", "1", "1"});
+}
+
+namespace
+{
 	// The page of views at dp ratio 1, with its data model.
 	struct ViewsPage
 	{

@@ -351,7 +351,7 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK(state ==
 		Json{{"playing", false}, {"recording", false}, {"position", 0}, {"left", 0}, {"right", 0}, {"cycle", false},
 			{"startMode", "cursor"}, {"returnToStart", false}, {"punchIn", false}, {"punchOut", false},
-			{"metronome", false}});
+			{"metronome", false}, {"audioRecordMode", "keepHistory"}});
 
 	state = run(client, "transport.set", {{"left", 48000}, {"right", 96000}, {"cycle", true}});
 	CHECK(state.at("left") == 48000);
