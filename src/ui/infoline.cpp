@@ -90,7 +90,8 @@ namespace gnubase::ui
 		// Ctrl+Enter took the value the field had, so it sent no change: that value goes to all selected the same.
 		if (m_absoluteTake)
 		{
-			const auto [field, text] = *std::exchange(m_absoluteTake, std::nullopt);
+			const auto [field, text] = *m_absoluteTake;
+			m_absoluteTake.reset();
 			const std::optional<float> number = widgets::parse(text);
 			if (!m_events.empty() && (field != "volume" || number))
 			{
