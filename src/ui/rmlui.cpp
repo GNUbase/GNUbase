@@ -33,7 +33,7 @@ namespace gnubase::ui
 
 	double SystemInterface::GetElapsedTime()
 	{
-		return std::chrono::duration<double>(std::chrono::steady_clock::now() - m_start).count();
+		return std::chrono::duration<double>(std::chrono::steady_clock::now() - m_start).count() + m_advanced;
 	}
 
 	bool SystemInterface::LogMessage(Rml::Log::Type type, const Rml::String& message)

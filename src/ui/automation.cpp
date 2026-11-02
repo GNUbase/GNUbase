@@ -2,8 +2,10 @@
 #include "ui/automation.h"
 
 #include "ui/keycommands.h"
+#include "ui/rmlui.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/ElementText.h>
@@ -24,6 +26,9 @@ namespace gnubase::ui
 	{
 		// A drag moves the mouse in this many steps, so that elements on the way see it pass.
 		constexpr int g_dragSteps = 8;
+		// And holds the button this long before it moves, as RmlUi's clock sees it, so that a press that becomes a
+		// drag only after a delay (the event display's drag delay) becomes one.
+		constexpr double g_dragHold = 1.0; // seconds
 
 		// Text as it shows with white-space: normal: runs of white space as one space, none at the ends.
 		std::string collapsed(const std::string& text)
@@ -314,6 +319,8 @@ namespace gnubase::ui
 		Rml::Context& context = updated(shown);
 		context.ProcessMouseMove(start.x, start.y, state);
 		context.ProcessMouseButtonDown(0, state);
+		if (auto* clock = dynamic_cast<SystemInterface*>(Rml::GetSystemInterface()))
+			clock->advance(g_dragHold);
 		for (int step = 1; step <= g_dragSteps; ++step)
 			context.ProcessMouseMove(start.x + ((end.x - start.x) * step / g_dragSteps),
 				start.y + ((end.y - start.y) * step / g_dragSteps), state);

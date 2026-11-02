@@ -30,6 +30,9 @@ namespace gnubase::ui
 		explicit SystemInterface(WindowSystem& windows) : m_windows(windows) {}
 
 		double GetElapsedTime() override;
+		// Moves the clock on by seconds, as if that much time passed, e.g. for a mouse button held down before a drag
+		// (Automation::drag).
+		void advance(double seconds) { m_advanced += seconds; }
 		bool LogMessage(Rml::Log::Type type, const Rml::String& message) override;
 		void SetClipboardText(const Rml::String& text) override;
 		void GetClipboardText(Rml::String& text) override;
@@ -39,6 +42,7 @@ namespace gnubase::ui
 	private:
 		WindowSystem& m_windows;
 		std::chrono::steady_clock::time_point m_start = std::chrono::steady_clock::now();
+		double m_advanced = 0.0; // seconds
 	};
 
 	// RmlUi's files: documents, style sheets, fonts and images. RmlUi names them in UTF-8, and they are read whole

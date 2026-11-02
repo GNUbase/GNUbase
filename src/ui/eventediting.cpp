@@ -6,11 +6,15 @@
 #include "platform/log.h"
 #include "ui/eventdisplay.h"
 
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/SystemInterface.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <functional>
 #include <map>
@@ -28,6 +32,9 @@ namespace gnubase::ui
 
 		constexpr double g_edge = 6.0;          // dp at an event's left and right edge that resize it
 		constexpr double g_dragThreshold = 3.0; // dp the mouse moves before a press becomes a drag
+		// Seconds a press on events is held before a drag moves them (reference manual p. 256), until the
+		// preferences have the setting.
+		constexpr double g_dragDelay = 0.2;
 		constexpr double g_magnet = 8.0;        // dp from which events, markers and the cursor attract
 		constexpr double g_minGridWidth = 12.0; // dp: adapt to zoom's finest note value is at least this wide
 
@@ -50,6 +57,21 @@ namespace gnubase::ui
 			add(held(event, "alt_key"), "alt");
 			add(held(event, "shift_key"), "shift");
 			return keys;
+		}
+
+		// The modifiers without ctrl.
+		std::string withoutCtrl(const std::string& keys)
+		{
+			if (keys == "ctrl")
+				return {};
+			return keys.rfind("ctrl+", 0) == 0 ? keys.substr(5) : keys;
+		}
+
+		// RmlUi's clock, in seconds.
+		double now()
+		{
+			Rml::SystemInterface* system = Rml::GetSystemInterface();
+			return system != nullptr ? system->GetElapsedTime() : 0.0;
 		}
 
 		bool inside(const Rml::Element* element, const Rml::Element* ancestor)
@@ -313,8 +335,68 @@ namespace gnubase::ui
 				{
 					selectWhere([this](const Shown& shown) { return shown.start <= m_cursor && shown.end > m_cursor; });
 				}},
+			{"edit.selectPrevious", [this] { selectNeighbour(-1, 0); }},
+			{"edit.selectNext", [this] { selectNeighbour(1, 0); }},
+			{"edit.selectAbove", [this] { selectNeighbour(0, -1); }},
+			{"edit.selectBelow", [this] { selectNeighbour(0, 1); }},
 		};
 		m_actions.insert(actions.begin(), actions.end());
+	}
+
+	void EventDisplay::selectNeighbour(int across, int down)
+	{
+		// From the last selected event in time going right, the first going left, the topmost going up and the
+		// bottommost going down, the earliest on its lane.
+		const auto key = [](const Shown& shown) { return std::make_pair(shown.start, shown.id); };
+		const Shown* from = nullptr;
+		for (const Shown& shown : m_events)
+		{
+			if (!std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+				continue;
+			bool better = from == nullptr;
+			if (!better && down < 0)
+				better = std::make_pair(shown.lane, key(shown)) < std::make_pair(from->lane, key(*from));
+			else if (!better && down > 0)
+				better = shown.lane > from->lane || (shown.lane == from->lane && key(shown) < key(*from));
+			else if (!better)
+				better = across < 0 ? key(shown) < key(*from) : key(shown) > key(*from);
+			if (better)
+				from = &shown;
+		}
+		if (from == nullptr)
+			return;
+		const Shown* to = nullptr;
+		if (across != 0)
+		{
+			for (const Shown& shown : m_events)
+				if (shown.lane == from->lane && (across < 0 ? key(shown) < key(*from) : key(shown) > key(*from)) &&
+					(to == nullptr || (across < 0 ? key(shown) > key(*to) : key(shown) < key(*to))))
+					to = &shown;
+		}
+		else
+		{
+			// On the nearest lane with events: the one under the start, the latest of them, or else the one that
+			// starts nearest to it, the earlier of two.
+			const double at = from->start;
+			const auto under = [at](const Shown& shown) { return shown.start <= at && at < shown.end; };
+			const auto closer = [at, &under](const Shown& a, const Shown& b)
+			{
+				if (under(a) != under(b))
+					return under(a);
+				if (under(a))
+					return a.start > b.start;
+				const double da = std::abs(a.start - at);
+				const double db = std::abs(b.start - at);
+				return da != db ? da < db : a.start < b.start;
+			};
+			for (auto lane = static_cast<int64_t>(from->lane) + down;
+				to == nullptr && lane >= 0 && lane < static_cast<int64_t>(m_laneTracks.size()); lane += down)
+				for (const Shown& shown : m_events)
+					if (static_cast<int64_t>(shown.lane) == lane && (to == nullptr || closer(shown, *to)))
+						to = &shown;
+		}
+		if (to != nullptr)
+			select({to->id});
 	}
 
 	size_t EventDisplay::laneAt(double y) const
@@ -348,6 +430,9 @@ namespace gnubase::ui
 	void EventDisplay::areaDown(Rml::Event& event, double x, double y)
 	{
 		m_dragMoved = false;
+		m_dragStarted = false;
+		m_dragToggles = false;
+		m_pressTime = now();
 		m_dragDx = 0.0;
 		m_dragLanes = 0;
 		m_dragLaneY = y + m_view.top;
@@ -380,13 +465,19 @@ namespace gnubase::ui
 			((atStart || atEnd) && modifiers("sizeObjects.disableSnapping"));
 		if (add && !toolModifier)
 		{
-			// Ctrl or Shift and a click adds an event to the selection or takes it out.
-			std::vector<uint64_t> events = m_selection;
+			// Ctrl or Shift and a click adds an event to the selection or, released without moving, takes it out; a
+			// drag moves the selection with it.
 			if (selected)
-				events.erase(std::find(events.begin(), events.end(), shown->id));
+			{
+				m_dragToggles = true;
+			}
 			else
+			{
+				std::vector<uint64_t> events = m_selection;
 				events.push_back(shown->id);
-			select(std::move(events));
+				select(std::move(events));
+			}
+			m_drag = Drag::Events;
 			return;
 		}
 		if (!selected)
@@ -399,7 +490,7 @@ namespace gnubase::ui
 			m_drag = Drag::Events;
 	}
 
-	void EventDisplay::areaMove(double dx, double dy)
+	void EventDisplay::areaMove(double dx, double dy, bool constrained)
 	{
 		if (!m_dragMoved && std::abs(dx) < g_dragThreshold && std::abs(dy) < g_dragThreshold)
 			return;
@@ -408,11 +499,46 @@ namespace gnubase::ui
 			toolMove(m_pressX + dx, m_pressY + dy);
 		if (m_drag != Drag::Events)
 			return;
-		m_dragDx = moveShift(dx).second / m_view.scale;
-		const auto lane = [this](double y)
-		{ return static_cast<int>(std::min(laneAt(y), m_laneTracks.empty() ? 0 : m_laneTracks.size() - 1)); };
-		m_dragLanes = lane(m_dragLaneY + dy) - lane(m_dragLaneY);
+		// The drag delay (reference manual p. 256): events move once the press is held that long.
+		if (!m_dragStarted && now() - m_pressTime < g_dragDelay)
+			return;
+		m_dragStarted = true;
+		const std::pair<double, double> shift = restricted(dx, dy, constrained);
+		m_dragDx = constrained && shift.first == 0.0 ? 0.0 : moveShift(shift.first).second / m_view.scale;
+		m_dragLanes = laneShift(shift.second);
 		setLanes();
+	}
+
+	// Ctrl (Cmd) keeps a drag across or up and down, whichever it went further (reference manual pp. 256, 271).
+	std::pair<double, double> EventDisplay::restricted(double dx, double dy, bool constrained)
+	{
+		if (!constrained)
+			return {dx, dy};
+		return std::abs(dx) >= std::abs(dy) ? std::make_pair(dx, 0.0) : std::make_pair(0.0, dy);
+	}
+
+	// Events only go onto tracks of their type (reference manual p. 256): audio events onto audio tracks, MIDI parts
+	// onto MIDI and instrument tracks.
+	int EventDisplay::laneShift(double dy) const
+	{
+		if (m_laneTracks.empty())
+			return 0;
+		const auto lane = [this](double y) { return static_cast<int>(std::min(laneAt(y), m_laneTracks.size() - 1)); };
+		const int lanes = lane(m_dragLaneY + dy) - lane(m_dragLaneY);
+		if (lanes == 0)
+			return 0;
+		for (const Shown& shown : m_events)
+		{
+			if (!std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+				continue;
+			const int64_t target = static_cast<int64_t>(shown.lane) + lanes;
+			if (target < 0 || target >= static_cast<int64_t>(m_laneTracks.size()))
+				return 0;
+			const std::string& to = m_laneTypes[static_cast<size_t>(target)];
+			if (m_laneTypes[shown.lane] == "audio" ? to != "audio" : (to != "midi" && to != "instrument"))
+				return 0;
+		}
+		return lanes;
 	}
 
 	// Where a drag dx dp across moves the selection: the pressed event's snap point, or its start, snaps (reference
@@ -444,10 +570,19 @@ namespace gnubase::ui
 		if (drag != Drag::Events && drag != Drag::ResizeStart && drag != Drag::ResizeEnd)
 			return;
 		const bool moved = std::exchange(m_dragMoved, false);
-		const int lanes = std::exchange(m_dragLanes, 0);
+		const bool started = std::exchange(m_dragStarted, false) || now() - m_pressTime >= g_dragDelay;
+		const bool toggles = std::exchange(m_dragToggles, false);
 		m_drag = Drag::None;
 		m_dragDx = 0.0;
+		m_dragLanes = 0;
 		setLanes(); // without the drag's preview
+		if (!moved && toggles)
+		{
+			std::vector<uint64_t> events = m_selection;
+			events.erase(std::remove(events.begin(), events.end(), m_dragEvent), events.end());
+			select(std::move(events));
+			return;
+		}
 		if (!moved)
 		{
 			const double at = m_view.start + (dpFrom(*m_lanes, m_dragX) * m_view.scale);
@@ -470,6 +605,7 @@ namespace gnubase::ui
 			return;
 		}
 		const double dx = (event.GetParameter<float>("mouse_x", 0.0F) - m_dragX) / dpRatio();
+		const double dy = (event.GetParameter<float>("mouse_y", 0.0F) - m_dragY) / dpRatio();
 		if (drag != Drag::Events)
 		{
 			// The pressed event's edge snaps, unless the tool modifier Disable Snapping is held; the selection's
@@ -492,6 +628,16 @@ namespace gnubase::ui
 			edit("event.resize", std::move(parameters));
 			return;
 		}
+		// Released before the drag delay: neither a move nor a click.
+		if (!started)
+			return;
+		// Ctrl (Cmd) restricts the drag, unless the keys held are a tool modifier's for copying.
+		const bool constrained = (held(event, "ctrl_key") || held(event, "meta_key")) && !modifiers("dragDrop.copy") &&
+			!modifiers("dragDrop.sharedCopy");
+		if (constrained)
+			m_pressed = withoutCtrl(m_pressed);
+		const std::pair<double, double> shift = restricted(dx, dy, constrained);
+		const int lanes = laneShift(shift.second);
 		const bool shared = modifiers("dragDrop.sharedCopy");
 		const bool copy = shared || modifiers("dragDrop.copy");
 		// Shuffle (reference manual p. 106): the selection trades places with the events it is dragged among.
@@ -501,39 +647,69 @@ namespace gnubase::ui
 			for (const Shown& shown : m_events)
 				if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
 					start = std::min(start, shown.start);
-			edit("event.shuffle", {{"events", m_selection}, {"position", samples(start + (dx * m_view.scale))}});
+			edit("event.shuffle",
+				{{"events", m_selection}, {"position", samples(start + (shift.first * m_view.scale))}});
 			return;
 		}
-		Json parameters = moveShift(dx).first;
-		parameters["events"] = m_selection;
-		// Onto another track when the selection is on one track.
-		// ponytail: a selection on several tracks moves only along them; one transaction per track would move it.
-		if (lanes != 0)
+		if (constrained && shift.first == 0.0)
 		{
-			size_t lane = 0;
-			bool oneLane = true;
-			bool first = true;
+			// Up or down only: onto other tracks at the same time, or nowhere.
+			if (lanes != 0 || copy)
+				moveSelection({{"delta", 0}}, lanes, copy, shared);
+			return;
+		}
+		moveSelection(moveShift(shift.first).first, lanes, copy, shared);
+	}
+
+	void EventDisplay::moveSelection(Json shift, int lanes, bool copy, bool shared)
+	{
+		// The tool modifiers Copy (Alt) and Shared Copy (Alt and Shift) copy (reference manual pp. 270-271).
+		const char* command = copy ? "event.copy" : "event.move";
+		if (copy)
+			shift["shared"] = shared;
+		// Onto other tracks, each event as many lanes down as the drag went: a command per track, in one undo step.
+		std::map<size_t, std::vector<uint64_t>> byLane;
+		if (lanes != 0)
 			for (const Shown& shown : m_events)
 				if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+					byLane[shown.lane].push_back(shown.id);
+		const auto track = [this, lanes](size_t lane)
+		{ return m_laneTracks[static_cast<size_t>(static_cast<int64_t>(lane) + lanes)]; };
+		if (byLane.size() <= 1)
+		{
+			shift["events"] = m_selection;
+			if (!byLane.empty())
+				shift["track"] = track(byLane.begin()->first);
+			edit(command, std::move(shift), copy);
+			return;
+		}
+		Json commands = Json::array();
+		for (const auto& [lane, events] : byLane)
+		{
+			Json parameters = shift;
+			parameters["events"] = events;
+			parameters["track"] = track(lane);
+			commands.push_back({{"command", command}, {"parameters", std::move(parameters)}});
+		}
+		m_binding.send("history.transaction",
+			{{"description", copy ? "Copy" : "Move"}, {"commands", std::move(commands)}},
+			[this, copy, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired())
+					return;
+				if (!result.ok())
 				{
-					oneLane = oneLane && (first || shown.lane == lane);
-					lane = shown.lane;
-					first = false;
+					logging::warning("An edit of events failed: {}", result.error);
+					return;
 				}
-			const auto target = static_cast<int64_t>(lane) + lanes;
-			if (oneLane && target >= 0 && target < static_cast<int64_t>(m_laneTracks.size()))
-				parameters["track"] = m_laneTracks[static_cast<size_t>(target)];
-		}
-		// The tool modifiers Copy (Alt) and Shared Copy (Alt and Shift) copy (reference manual pp. 270-271).
-		if (copy)
-		{
-			parameters["shared"] = shared;
-			edit("event.copy", std::move(parameters), true);
-		}
-		else
-		{
-			edit("event.move", std::move(parameters));
-		}
+				if (!copy)
+					return;
+				std::vector<uint64_t> copies;
+				for (const Json& done : result.value.at("results"))
+					for (const Json& id : done.at("events"))
+						copies.push_back(id.get<uint64_t>());
+				select(std::move(copies));
+			});
 	}
 
 	void EventDisplay::doubleClick(Rml::Event& event)

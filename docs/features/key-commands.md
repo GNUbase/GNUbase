@@ -89,6 +89,8 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Alt+Shift+Left, Alt+Right | `edit.nudgeEndLeft`, `edit.nudgeEndRight` | Nudge End Left, Right |
 | Mod+A, Mod+Shift+A | `edit.selectAll`, `edit.selectNone` | Select All, Select None |
 | Mod+Alt+I | `edit.invertSelection` | Invert Selection |
+| Left, Right | `edit.selectPrevious`, `edit.selectNext` | Navigate Left, Right |
+| Up, Down | `edit.selectAbove`, `edit.selectBelow`, with no event selected `track.selectPrevious`, `track.selectNext` | Navigate Up, Down |
 | J | `edit.snap` | Snap On/Off ([snap.md](snap.md)) |
 
 The other edit commands ([parts-and-events.md](parts-and-events.md)) have no default keys in the reference. The

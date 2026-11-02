@@ -9,6 +9,7 @@
 #include "ui/canvas.h"
 #include "ui/eventdisplay.h"
 #include "ui/themes.h"
+#include "ui/tracklist.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
@@ -20,6 +21,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
@@ -576,6 +578,54 @@ TEST_CASE("keys edit the selected events in the project window", "[ui]")
 	app.ui().key(std::nullopt, "Backspace");
 	REQUIRE(app.waitUntil([&parts] { return parts().size() == 1; }));
 	CHECK(app.keys().keysFor("edit.delete") == std::vector<std::string>{"Delete", "Backspace"});
+}
+
+TEST_CASE("the arrow keys select events in the project window, or tracks while no event is selected", "[ui]")
+{
+	test::UiApp app({800, 300});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const auto addTrack = [&app] { return app.call("track.add", {{"type", "midi"}}).at("track").at("id"); };
+	const Json upper = addTrack();
+	const Json lower = addTrack();
+	const auto addPart = [&app](const Json& track, int64_t position)
+	{
+		return app.call("midiPart.add", {{"track", track}, {"position", position}, {"length", 1720320}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t first = addPart(upper, 0);
+	const uint64_t second = addPart(upper, int64_t{4} * 1720320);
+	const uint64_t under = addPart(lower, 0);
+	REQUIRE(app.waitUntil(
+		[&app, &display]
+		{
+			app.ui().key(std::nullopt, "Mod+A");
+			return display.selection().size() == 3;
+		}));
+	using Ids = std::vector<uint64_t>;
+	display.select({first});
+	const auto press = [&app](const char* key)
+	{
+		app.ui().key(std::nullopt, key);
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+	press("Right");
+	CHECK(display.selection() == Ids{second});
+	press("Left");
+	CHECK(display.selection() == Ids{first});
+	press("Down");
+	CHECK(display.selection() == Ids{under});
+	press("Up");
+	CHECK(display.selection() == Ids{first});
+
+	// With no event selected, Up and Down step through the tracks.
+	display.select({});
+	ui::TrackList& tracks = *app.appUi().trackList();
+	tracks.select({upper.get<uint64_t>()});
+	press("Down");
+	CHECK(tracks.selection() == Ids{lower.get<uint64_t>()});
+	CHECK(display.selection().empty());
 }
 
 TEST_CASE("Mod+K opens the Repeat Events dialog, which repeats the selected events", "[ui]")

@@ -15,6 +15,7 @@
 
 #include <array>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -59,7 +60,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 51> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 55> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -96,6 +97,11 @@ namespace gnubase::app
 			{"edit.selectFromStartToCursor", "Selects the events that end before the project cursor.", nullptr},
 			{"edit.selectFromCursorToEnd", "Selects the events that start after the project cursor.", nullptr},
 			{"edit.selectUnderCursor", "Selects the events at the project cursor.", nullptr},
+			// The arrow keys (reference manual p. 253); Up and Down select tracks while no event is selected.
+			{"edit.selectPrevious", "Selects the event before the selected one on its track.", "Left"},
+			{"edit.selectNext", "Selects the event after the selected one on its track.", "Right"},
+			{"edit.selectAbove", "Selects the event on the track above, or the track above.", "Up"},
+			{"edit.selectBelow", "Selects the event on the track below, or the track below.", "Down"},
 			{"edit.locatorsToSelection", "Sets the locators around the selected events.", "P"},
 			// Snap and grid (docs/features/snap.md).
 			{"edit.snap", "Switches snap on or off.", "J"},
@@ -149,8 +155,8 @@ namespace gnubase::app
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
 		constexpr std::array<ProjectCommand, 17> g_trackCommands{{
-			{"track.selectPrevious", "Selects the track above the selected one.", "Up"},
-			{"track.selectNext", "Selects the track below the selected one.", "Down"},
+			{"track.selectPrevious", "Selects the track above the selected one.", nullptr},
+			{"track.selectNext", "Selects the track below the selected one.", nullptr},
 			{"track.rename", "Renames the first selected track.", "Alt+F2"},
 			{"track.removeSelected", "Removes the selected tracks.", nullptr},
 			{"track.removeEmpty", "Removes the tracks that hold nothing.", nullptr},
@@ -286,14 +292,27 @@ namespace gnubase::app
 					parameters.value("parameters", engine::Json::object()), m_main, nullptr);
 				return engine::Json::object();
 			});
+		// Up and Down select the event above or below, or while no event is selected the track (reference manual
+		// p. 253).
+		const std::map<std::string, std::string> trackSteps = {
+			{"edit.selectAbove", "track.selectPrevious"}, {"edit.selectBelow", "track.selectNext"}};
 		for (const ProjectCommand& command : g_projectCommands)
 		{
-			m_keys.add(
-				{command.id, command.description, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
+			const auto step = trackSteps.find(command.id);
+			m_keys.add({command.id, command.description,
+				[this, id = std::string(command.id), track = step == trackSteps.end() ? std::string() : step->second](
+					ui::Window&, Rml::Element*)
+				{
+					if (!track.empty() && (!m_eventDisplay || m_eventDisplay->selection().empty()))
 					{
-						if (m_eventDisplay)
-							m_eventDisplay->actions().at(id)();
-					}});
+						if (m_trackList)
+							m_trackList->actions().at(track)();
+					}
+					else if (m_eventDisplay)
+					{
+						m_eventDisplay->actions().at(id)();
+					}
+				}});
 			m_keys.enableWhen(command.id, [this](ui::Window&, Rml::Element*) { return m_eventDisplay != nullptr; });
 			if (command.keys != nullptr)
 				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});

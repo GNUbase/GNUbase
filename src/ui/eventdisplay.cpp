@@ -890,7 +890,8 @@ namespace gnubase::ui
 		case Drag::DrawPart:
 		case Drag::Play:
 		case Drag::Click:
-			areaMove(dx, dy);
+			areaMove(
+				dx, dy, event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0);
 			return;
 		case Drag::None:
 			return;

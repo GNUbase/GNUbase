@@ -178,10 +178,11 @@ namespace gnubase::ui
 
 		// Editing parts and events (#85, eventediting.cpp, docs/features/parts-and-events.md). The selection is the
 		// display's, not the project's: audio event and MIDI part ids, ascending, also in the root's attribute
-		// selection. Edits go to the engine as event.* commands; a click selects, a drag moves, Alt and a drag copies
-		// (with Shift too, shared copies), a drag at an event's left or right edge resizes it, Alt and a click splits
-		// there, and a double click on an empty MIDI or instrument lane adds a one-bar part, or one between the
-		// locators when the click is between them; one below the tracks adds a MIDI track.
+		// selection. Edits go to the engine as event.* commands; a click selects, a drag moves once the press is held
+		// for the drag delay, Alt and a drag copies (with Shift too, shared copies), Ctrl (Cmd) while dragging keeps
+		// a move or copy across or up and down, a drag at an event's left or right edge resizes it, Alt and a click
+		// splits there, and a double click on an empty MIDI or instrument lane adds a one-bar part, or one between
+		// the locators when the click is between them; one below the tracks adds a MIDI track.
 		const std::vector<uint64_t>& selection() const { return m_selection; }
 		void select(std::vector<uint64_t> events);
 		// Sizing moves contents instead of normal sizing when resizing with the mouse (reference manual p. 265).
@@ -228,7 +229,8 @@ namespace gnubase::ui
 		// edit.duplicate, edit.repeat (opens the Repeat Events dialog), edit.fillLoop, edit.toRealCopy, edit.nudgeLeft,
 		// edit.nudgeRight, edit.nudgeStartLeft, edit.nudgeStartRight, edit.nudgeEndLeft, edit.nudgeEndRight,
 		// edit.moveStartToCursor, edit.moveEndToCursor, edit.selectAll, edit.selectNone, edit.invertSelection,
-		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd and edit.selectUnderCursor; and
+		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd, edit.selectUnderCursor, and the
+		// arrow keys' edit.selectPrevious, edit.selectNext, edit.selectAbove and edit.selectBelow; and
 		// edit.locatorsToSelection sets the locators around the selected events.
 		// edit.snap (snap on or off) and edit.snapPointToCursor (the selected audio events' snap points); and the
 		// tools: tool.objectSelection, tool.rangeSelection, tool.draw, tool.erase, tool.split, tool.glue, tool.mute,
@@ -335,8 +337,15 @@ namespace gnubase::ui
 		const Shown* eventAt(double x, double y) const; // dp in the event lanes
 		size_t laneAt(double y) const; // dp from the top of the first lane; 0 above it, the lane count below the last
 		void areaDown(Rml::Event& event, double x, double y);
-		void areaMove(double dx, double dy);
+		void areaMove(double dx, double dy, bool constrained); // constrained: Ctrl (Cmd) is held
 		void areaUp(Rml::Event& event);
+		// A drag dx and dy dp from the press, across or up and down only when restricted.
+		static std::pair<double, double> restricted(double dx, double dy, bool constrained);
+		// How many lanes a drag dy dp down moves the selection: none unless every selected event lands on a lane of
+		// a track of its type.
+		int laneShift(double dy) const;
+		// Sends the move or copy of the selection: the shift's parameters (event.move's delta or ticks), lanes down.
+		void moveSelection(engine::Json shift, int lanes, bool copy, bool shared);
 		void doubleClick(Rml::Event& event);
 		void showSelection();
 		// Sends an event.* command for the selection; with selectResult, the events it returns become the selection.
@@ -351,6 +360,9 @@ namespace gnubase::ui
 		// is musical and every selected event is on a musical track, else samples. Also in seconds.
 		std::pair<engine::Json, double> shiftTo(const time::Position& to, double from) const;
 		std::pair<engine::Json, double> moveShift(double dx) const; // a drag of the selection, dx dp across
+		// The arrow keys (reference manual p. 253): the event before (-1) or after (1) the selected one on its lane, or
+		// down lanes away on the nearest lane above (-1) or below (1) with events, the one nearest in time.
+		void selectNeighbour(int across, int down);
 		// Adds a MIDI part on the lane from start to end, ticks, and selects it.
 		void addPart(size_t lane, time::Ticks start, time::Ticks end);
 		// The lane at y dp down the event lanes, if there is one there.
@@ -412,7 +424,10 @@ namespace gnubase::ui
 		bool m_sizingMovesContents = false;
 		uint64_t m_dragEvent = 0; // pressed on
 		bool m_dragMoved = false;
-		double m_dragDx = 0.0; // dp, while moving, snapped
+		bool m_dragStarted = false; // moving events, after the drag delay
+		bool m_dragToggles = false; // a click with Ctrl or Shift takes the pressed event out of the selection
+		double m_pressTime = 0.0;   // RmlUi's clock, in seconds
+		double m_dragDx = 0.0;      // dp, while moving, snapped
 		int m_dragLanes = 0;
 		double m_dragLaneY = 0.0; // where a drag of events started, in dp from the top of the first lane
 		double m_end = 0.0;       // of the last event

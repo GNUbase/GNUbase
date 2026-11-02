@@ -59,7 +59,8 @@ sends engine commands, so whatever another client changes shows at once.
   record, monitor and read on audio tracks; mute, solo and read on the others with a channel.
 - **Selection** (p. 218) is the list view's: a click selects a track, Ctrl-click adds or removes one, Shift-click
   selects a range; Up and Down step through the shown tracks, in the list and wherever the project window has the
-  focus (`track.selectPrevious`, `track.selectNext`), and scroll the selected track into view. A right click on a
+  focus (`track.selectPrevious`, `track.selectNext`), and scroll the selected track into view, while no event is
+  selected; with one, they select events ([parts-and-events.md](parts-and-events.md)). A right click on a
   track that isn't selected selects it for the context menu. The selection is the UI's, not the project's
   (`TrackList::selection`), like the event display's.
 - **Renaming** (p. 214): a double click on a name, or `track.rename` (Alt+F2) for the first selected track, shows a
