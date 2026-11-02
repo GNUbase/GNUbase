@@ -946,20 +946,23 @@ namespace gnubase::engine
 			return added;
 		}
 
-		// The events and parts on the tracks that lie within from and to, once both are split there: those whose middle
-		// lies at or after from and before to. Not by their edges: a cut in a clip at another sample rate than the
-		// project's lands up to half a clip frame off, and an event less than that past an edge isn't cut at all.
+		// Whether an event or part lies after a position it was split at: whether its middle lies at or after it. Not
+		// by its start: a cut in a clip at another sample rate than the project's lands up to half a clip frame off,
+		// and an event less than that past the position isn't cut at all.
+		bool after(const Project& project, const Item& item, time::Samples at)
+		{
+			const time::TimeBase base = item.position().base;
+			return item.position().value + endOf(project, item).value >= 2 * inBase(project, at, base);
+		}
+
+		// The events and parts on the tracks that lie within from and to, once both are split there.
 		std::vector<Item> within(
 			Project& project, const std::vector<ObjectId>& tracks, time::Samples from, time::Samples to, bool locked)
 		{
 			std::vector<Item> items;
 			for (const Item& item : itemsOn(project, tracks, locked))
-			{
-				const time::TimeBase base = item.position().base;
-				const int64_t twiceMiddle = item.position().value + endOf(project, item).value;
-				if (twiceMiddle >= 2 * inBase(project, from, base) && twiceMiddle < 2 * inBase(project, to, base))
+				if (after(project, item, from) && !after(project, item, to))
 					items.push_back(item);
-			}
 			return items;
 		}
 
@@ -983,19 +986,17 @@ namespace gnubase::engine
 				ticks(project, {time::TimeBase::Linear, to}) - ticks(project, {time::TimeBase::Linear, from})};
 		}
 
-		// Moves the unlocked events and parts on the tracks that start at or after a position by a gap, with sign 1
-		// later, with -1 earlier.
+		// Moves the unlocked events and parts on the tracks that lie after a position they were split at by a gap, with
+		// sign 1 later, with -1 earlier.
 		void moveFrom(Project& project, const std::vector<ObjectId>& tracks, time::Samples at, const Gap& gap,
 			int64_t sign, CommandContext& context)
 		{
 			for (const Item& item : itemsOn(project, tracks, false))
-			{
-				const time::TimeBase base = item.position().base;
-				if (item.position().value < inBase(project, at, base))
-					continue;
-				place(project, item, gap.shift(base, sign), item.track());
-				announce(context, item, "changed");
-			}
+				if (after(project, item, at))
+				{
+					place(project, item, gap.shift(item.position().base, sign), item.track());
+					announce(context, item, "changed");
+				}
 		}
 
 		// Automation in ranges. A lane's positions are in its track's time base.

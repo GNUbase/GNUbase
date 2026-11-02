@@ -699,9 +699,9 @@ TEST_CASE("range.delete and range.copy take the piece in the range of a clip at 
 		CHECK((event.at("position") == 0 || event.at("position") == end));
 }
 
-TEST_CASE("range.delete and range.copy leave an event that starts a sample before the range's end", "[unit]")
+TEST_CASE("Range edits take an event that starts a sample before an edge as after it", "[unit]")
 {
-	// A 22.05 kHz clip in a 48 kHz project: one project sample is less than half a clip frame, so the cut at the
+	// A 22.05 kHz clip in a 48 kHz project: one project sample is less than half a clip frame, so a cut at the
 	// range's end doesn't split the event, and only its first sample lies in the range.
 	Fixture f;
 	const int64_t track = f.track("audio", "linear");
@@ -717,6 +717,16 @@ TEST_CASE("range.delete and range.copy leave an event that starts a sample befor
 	CHECK(f.call("range.copy", range).at("events") == 0);
 	f.call("range.delete", range);
 	CHECK(f.call("project.get").at("audioEvents") == before);
+
+	// It comes after the range: Delete Time moves it back by the range's length, and Insert Silence at the range's
+	// end moves it on by the silence's.
+	const auto position = [&f] { return f.call("project.get").at("audioEvents").at(0).at("position"); };
+	f.call("range.delete", {{"start", g_second}, {"end", end}, {"tracks", {track}}, {"time", true}});
+	CHECK(position() == g_second - 1);
+	f.call("history.undo");
+	CHECK(f.call("project.get").at("audioEvents") == before);
+	f.call("range.insertSilence", {{"start", end}, {"end", end + g_second}, {"tracks", {track}}});
+	CHECK(position() == end - 1 + g_second);
 }
 
 TEST_CASE("range.paste doesn't paste what was copied in another project", "[unit]")
