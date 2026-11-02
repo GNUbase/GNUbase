@@ -413,6 +413,37 @@ TEST_CASE("File > Save As, Save and Save New Version save the project through fi
 	fileMenu(app, "file.saveAs");
 	answer(app, {}); // cancelled: nothing happens
 	CHECK(location(app).get<std::string>().find("Other") != std::string::npos);
+
+	// A name with a dot isn't taken for one with an extension.
+	fileMenu(app, "file.saveAs");
+	answer(app, {dir.path() / "Song v1.2"});
+	const std::string dotted = utf8(fs::absolute(dir.path() / "Song v1.2.dawproject"));
+	REQUIRE(app.waitUntil([&app, &dotted] { return location(app) == dotted; }));
+}
+
+TEST_CASE("a save or backup that fails shows its error", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path notFolder = dir.path() / "file";
+	std::ofstream(notFolder) << "not a folder";
+
+	fileMenu(app, "file.saveAs");
+	answer(app, {notFolder / "Song.dawproject"});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK(!elements(app, "#project-error-message").at(0).at("text").get<std::string>().empty());
+	click(app, "#project-error-dialog button[result=ok]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
+	CHECK(location(app).is_null());
+
+	// A backup fails in its job, after project.backup returned.
+	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	fileMenu(app, "file.backup");
+	answer(app, {notFolder / "Backup"});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	click(app, "#project-error-dialog button[result=ok]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
 }
 
 TEST_CASE("File > Open and Revert ask before unsaved changes are discarded", "[ui]")

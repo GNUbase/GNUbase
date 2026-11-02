@@ -12,6 +12,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -26,9 +27,10 @@ namespace gnubase::ui
 	// The File menu's project commands as UI commands with the reference's keys: file.new (the start screen),
 	// file.open, file.save, file.saveAs, file.saveNewVersion, file.saveTemplate, file.backup and file.revert, plus
 	// file.quit. They ask through the OS's file dialogs (Shell::showFileDialog) and GNUbase's own (the documents
-	// start-screen.rml, save-template.rml and discard-changes.rml in folder), and do everything with engine commands.
-	// Opening another project, reverting and quitting ask first if the project has unsaved changes. Use it on the UI
-	// thread; the key commands, the binding and the shell must outlive it.
+	// start-screen.rml, save-template.rml, discard-changes.rml and project-error.rml in folder), and do everything with
+	// engine commands. Opening another project, reverting and quitting ask first if the project has unsaved changes,
+	// and a command that fails shows its error. Use it on the UI thread; the key commands, the binding and the shell
+	// must outlive it.
 	class ProjectFiles final : private Rml::EventListener
 	{
 	public:
@@ -51,6 +53,10 @@ namespace gnubase::ui
 		Rml::ElementDocument* openDialog(Window& window, const char* file, Closed closed);
 		// Asks the engine for the project's file (project.location).
 		void readLocation();
+		// A command's done that shows its error in a dialog in the window if it failed (project-error.rml), so that a
+		// failed save isn't taken for done.
+		std::function<void(const engine::Result&)> reportFailure(Window& window);
+		void showError(WindowId window, const std::string& error);
 		// Runs action now if the project has no unsaved changes, or else once the user agreed to discard them.
 		void unlessUnsaved(Window& window, std::function<void()> action);
 		void open(Window& window);
@@ -63,6 +69,8 @@ namespace gnubase::ui
 		std::string m_file; // the project's file (project.location), empty for none
 		Subscription m_saved;
 		Subscription m_reset;
+		Subscription m_jobFinished;
+		std::optional<WindowId> m_backupWindow;  // where the last backup was asked for, which shows if it fails
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the open dialog's document
 		Closed m_closed;
 		std::vector<std::string> m_templates; // the start screen's templates, by name

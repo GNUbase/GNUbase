@@ -43,7 +43,7 @@
 	<dialog id="save-template-dialog">
 		<div class="dialog-titlebar">Save as Template</div>
 		<div class="row">
-			<label for="template-name">New Preset</label>
+			<label for="template-name">Template Name</label>
 			<input type="text" id="template-name" autofocus="autofocus"/>
 		</div>
 		<div class="row buttons">

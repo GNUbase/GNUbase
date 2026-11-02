@@ -11,13 +11,15 @@ saved, opened or started: `project.revision` has `modified`. The commands are in
 and `projectfiles.cpp` (the rest); none of them is an undo step.
 
 - **New.** `project.new` starts an empty project with the default busses, or with `template` a copy of that project
-  template. Either way it has no file until it is saved, and the undo history is cleared.
+  template. Either way it has no file until it is saved, and the undo history is cleared. A template name must be a
+  file name, as for `project.saveTemplate`, so that only templates in `Project Templates` open.
 - **Open.** `project.load` opens a DAWproject file.
 - **Save, Save As.** `project.save` with `path` saves the project as that file, which is then its file; without `path`
   it saves to the project's file and fails for a project that has none.
 - **Save New Version.** `project.saveNewVersion` saves the project next to its file with the next number, as the
   reference does: `Song-01.dawproject` after `Song.dawproject`, and after `Song-02` the number after the highest
-  `Song-NN` in the folder. The project goes on with the new file; the earlier versions stay.
+  `Song-NN` in the folder. The project goes on with the new file; the earlier versions stay. Numbers of more than nine
+  digits aren't versions.
 - **Revert.** `project.revert` opens the project's file again, which discards every change since it was saved.
 - **Recent projects.** Every file saved (not auto saved) or opened becomes the first of the recent projects, at most 10,
   kept in `recent-projects.json` in the settings folder ([settings.md](settings.md)), so they are the user's, not the
@@ -31,10 +33,13 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   the folder `Auto Saves` of its project folder as `<name>-01.bak`, `<name>-02.bak` and so on, up to the user setting
   `project.autoSaveFiles` (5), after which the oldest is overwritten. A project without a file goes to `Auto Saves` in
   the settings folder, named after the project; without a settings folder it isn't auto saved. Auto saves don't copy
-  media and don't save the project: it stays modified, and its file stays as it is. They open with `project.load`.
+  media and don't save the project: it stays modified, and its file stays as it is. `project.load` opens an auto save
+  without a file and as modified, and it isn't a recent project, so that saving asks for a path instead of overwriting
+  the auto save or making `Auto Saves` the project folder.
   The engine's ticker thread posts `project.autoSave` with `due` every 30 seconds; that saves only when the user
   setting `project.autoSave` is on (the default) and `project.autoSaveInterval` minutes (15) have passed since the last
-  save, opening or auto save, and stays out of `engine.commandLog` when it saves nothing.
+  save, opening or auto save, and stays out of `engine.commandLog` when it saves nothing. A failed auto save counts as
+  one, so that it is tried again only after the interval instead of every 30 seconds.
 - **Project folder.** The folder of the project's file. GNUbase puts the media folder `Audio` ([backup.md](backup.md))
   and `Auto Saves` into it; the other folders of the reference (Edits, Images, Track Pictures) come with their
   features.
@@ -49,7 +54,7 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
 | New Project | `file.new` | Mod+N | opens the start screen |
 | Open... | `file.open` | Mod+O | an open dialog for a DAWproject file, then `project.load` |
 | Save | `file.save` | Mod+S | `project.save`, or Save As for a project without a file |
-| Save As... | `file.saveAs` | Mod+Shift+S | a save dialog, then `project.save` with the path (`.dawproject` added without an extension) |
+| Save As... | `file.saveAs` | Mod+Shift+S | a save dialog, then `project.save` with the path (`.dawproject` added unless the name ends with it) |
 | Back up Project... | `file.backup` | | a folder dialog, then `project.backup` into it |
 | Save as Template... | `file.saveTemplate` | | the Save as Template dialog (`save-template.rml`) for the name, then `project.saveTemplate` |
 | Save New Version | `file.saveNewVersion` | Mod+Alt+S | `project.saveNewVersion`, or Save As for a project without a file |
@@ -66,6 +71,9 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
 - **File dialogs** are the OS's (`Shell::showFileDialog`). UI tests switch them off (`Shell::showOsFileDialogs`) and
   answer them with `Shell::answerFileDialog`; MCP's `ui_file_dialog` and Lua's `gnubase.ui.file_dialog` list the
   dialogs that wait and answer one the same way ([ui-automation.md](ui-automation.md)).
+- **Errors.** When saving, opening, reverting or backing up fails, the dialog `project-error.rml` shows the error, so
+  that a failed save isn't taken for done. Backups fail mostly in their job, so `job.finished` of a failed
+  `project.backup` the UI asked for shows it too.
 - The UI knows the project's file from `project.saved` and, after `project.reset`, from `project.location`.
 
 ## Not yet
@@ -80,7 +88,8 @@ New Project and Open Last Project on Startup.
 ## Checks
 
 `tests/projectfiles_tests.cpp` covers the engine commands with an engine whose settings folder is temporary: save and
-`modified`, save new version numbering, revert, auto save rotation and due checks, recent projects across restarts, and
-templates; and in the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As and Save New Version through
-file dialogs, Open and Revert with the unsaved changes dialog, the start screen's buttons and double clicks, Save as
-Template and Back up Project. `tests/uitools_tests.cpp` checks `ui_file_dialog`.
+`modified`, save new version numbering, revert, auto save rotation, opening auto saves, due and failing auto saves
+(`ProjectModel::advanceClock` moves their clock forward), recent projects across restarts, and templates; and in the
+app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a name with a dot) and Save New Version
+through file dialogs, Open and Revert with the unsaved changes dialog, the start screen's buttons and double clicks, Save
+as Template and Back up Project, and the error dialog for a failed save and backup. `tests/uitools_tests.cpp` checks `ui_file_dialog`.

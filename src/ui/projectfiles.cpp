@@ -25,13 +25,6 @@ namespace gnubase::ui
 			return filters;
 		}
 
-		// Logs a failed command, e.g. a file that can't be opened.
-		void logFailure(const engine::Result& result)
-		{
-			if (!result.ok())
-				logging::warning("Project handling: {}", result.error);
-		}
-
 		// The rows of a start screen list: value is the row's index in the list, text what it shows.
 		std::string listItems(const std::vector<std::string>& texts, const std::vector<std::string>& titles)
 		{
@@ -67,7 +60,15 @@ namespace gnubase::ui
 		: m_binding(binding), m_shell(shell), m_folder(std::move(folder)),
 		  m_saved(binding.on("project.saved",
 			  [this](const engine::Event& event) { m_file = event.data.at("file").get<std::string>(); })),
-		  m_reset(binding.on("project.reset", [this](const engine::Event&) { readLocation(); }))
+		  m_reset(binding.on("project.reset", [this](const engine::Event&) { readLocation(); })),
+		  m_jobFinished(binding.on("job.finished",
+			  [this](const engine::Event& event)
+			  {
+				  // A backup runs as a job, so most of its failures come after project.backup returned.
+				  const Json& job = event.data.at("job");
+				  if (m_backupWindow && job.at("kind") == "project.backup" && job.at("state") == "failed")
+					  showError(*m_backupWindow, job.at("error").get<std::string>());
+			  }))
 	{
 		readLocation();
 
@@ -81,7 +82,7 @@ namespace gnubase::ui
 				if (m_file.empty())
 					saveAs(window);
 				else
-					m_binding.send("project.save", Json::object(), logFailure);
+					m_binding.send("project.save", Json::object(), reportFailure(window));
 			}});
 		keys.add({"file.saveAs", "Saves the project as a file chosen in a file dialog.",
 			[this](Window& window, Rml::Element*) { saveAs(window); }});
@@ -91,17 +92,17 @@ namespace gnubase::ui
 				if (m_file.empty())
 					saveAs(window);
 				else
-					m_binding.send("project.saveNewVersion", Json::object(), logFailure);
+					m_binding.send("project.saveNewVersion", Json::object(), reportFailure(window));
 			}});
 		keys.add({"file.saveTemplate", "Saves the project as a template, named in a dialog.",
 			[this](Window& window, Rml::Element*)
 			{
 				openDialog(window, "save-template.rml",
-					[this](Rml::ElementDocument& dialog, const std::string& result)
+					[this, done = reportFailure(window)](Rml::ElementDocument& dialog, const std::string& result)
 					{
 						auto* name = dynamic_cast<Rml::ElementFormControl*>(dialog.GetElementById("template-name"));
 						if (result == "ok" && name != nullptr && !name->GetValue().empty())
-							m_binding.send("project.saveTemplate", {{"name", name->GetValue()}}, logFailure);
+							m_binding.send("project.saveTemplate", {{"name", name->GetValue()}}, done);
 					});
 			}});
 		keys.add({"file.backup", "Backs the project up into a folder chosen in a file dialog.",
@@ -112,14 +113,19 @@ namespace gnubase::ui
 				dialog.title = "Back up Project";
 				dialog.parent = window.id();
 				m_shell.showFileDialog(dialog,
-					[this](const FileDialogResult& chosen)
+					[this, id = window.id(), done = reportFailure(window)](const FileDialogResult& chosen)
 					{
-						if (!chosen.files.empty())
-							m_binding.send("project.backup", {{"folder", chosen.files.front().u8string()}}, logFailure);
+						if (chosen.files.empty())
+							return;
+						m_backupWindow = id;
+						m_binding.send("project.backup", {{"folder", chosen.files.front().u8string()}}, done);
 					});
 			}});
 		keys.add({"file.revert", "Goes back to the project as it was last saved.", [this](Window& window, Rml::Element*)
-			{ unlessUnsaved(window, [this] { m_binding.send("project.revert", Json::object(), logFailure); }); }});
+			{
+				unlessUnsaved(window,
+					[this, done = reportFailure(window)] { m_binding.send("project.revert", Json::object(), done); });
+			}});
 		keys.enableWhen("file.revert", [this](Window&, Rml::Element*) { return !m_file.empty(); });
 		// Quitting closes every window, so it waits until the event that asked for it is done with them.
 		keys.add({"file.quit", "Quits GNUbase.", [this](Window& window, Rml::Element*)
@@ -150,19 +156,20 @@ namespace gnubase::ui
 			{
 				if (result == "empty")
 				{
-					unlessUnsaved(window, [this] { m_binding.send("project.new", Json::object(), logFailure); });
+					unlessUnsaved(window,
+						[this, done = reportFailure(window)] { m_binding.send("project.new", Json::object(), done); });
 				}
 				else if (result == "template")
 				{
 					if (const std::string name = selected(closed, "start-templates", m_templates); !name.empty())
-						unlessUnsaved(
-							window, [this, name] { m_binding.send("project.new", {{"template", name}}, logFailure); });
+						unlessUnsaved(window, [this, name, done = reportFailure(window)]
+							{ m_binding.send("project.new", {{"template", name}}, done); });
 				}
 				else if (result == "recent")
 				{
 					if (const std::string file = selected(closed, "start-recent", m_recent); !file.empty())
-						unlessUnsaved(
-							window, [this, file] { m_binding.send("project.load", {{"path", file}}, logFailure); });
+						unlessUnsaved(window, [this, file, done = reportFailure(window)]
+							{ m_binding.send("project.load", {{"path", file}}, done); });
 				}
 				else if (result == "open")
 				{
@@ -269,6 +276,32 @@ namespace gnubase::ui
 			});
 	}
 
+	std::function<void(const engine::Result&)> ProjectFiles::reportFailure(Window& window)
+	{
+		return [this, id = window.id()](const engine::Result& result)
+		{
+			if (!result.ok())
+				showError(id, result.error);
+		};
+	}
+
+	void ProjectFiles::showError(WindowId window, const std::string& error)
+	{
+		logging::warning("Project handling: {}", error);
+		// The dialog that asked may still be closing.
+		m_shell.post(
+			[this, window, error]
+			{
+				Window* shown = m_shell.find(window);
+				Rml::ElementDocument* dialog = shown != nullptr
+					? openDialog(*shown, "project-error.rml", [](Rml::ElementDocument&, const std::string&) {})
+					: nullptr;
+				if (Rml::Element* message =
+						dialog != nullptr ? dialog->GetElementById("project-error-message") : nullptr)
+					message->SetInnerRML(Rml::StringUtilities::EncodeRml(error));
+			});
+	}
+
 	void ProjectFiles::unlessUnsaved(Window& window, std::function<void()> action)
 	{
 		m_binding.send("project.revision", Json::object(),
@@ -309,7 +342,8 @@ namespace gnubase::ui
 				if (chosen.files.empty() || window == nullptr)
 					return;
 				const std::string file = chosen.files.front().u8string();
-				unlessUnsaved(*window, [this, file] { m_binding.send("project.load", {{"path", file}}, logFailure); });
+				unlessUnsaved(*window, [this, file, done = reportFailure(*window)]
+					{ m_binding.send("project.load", {{"path", file}}, done); });
 			});
 	}
 
@@ -323,14 +357,14 @@ namespace gnubase::ui
 		dialog.location =
 			m_file.empty() ? std::filesystem::path("Untitled.dawproject") : std::filesystem::u8path(m_file);
 		m_shell.showFileDialog(dialog,
-			[this](const FileDialogResult& chosen)
+			[this, done = reportFailure(window)](const FileDialogResult& chosen)
 			{
 				if (chosen.files.empty())
 					return;
 				std::filesystem::path file = chosen.files.front();
-				if (!file.has_extension())
+				if (file.extension() != ".dawproject") // also for names with a dot, such as "Song v1.2"
 					file += ".dawproject";
-				m_binding.send("project.save", {{"path", file.u8string()}}, logFailure);
+				m_binding.send("project.save", {{"path", file.u8string()}}, done);
 			});
 	}
 }

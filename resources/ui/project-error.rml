@@ -1,0 +1,35 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Tells that a project command failed (docs/features/project-files.md): ui::ProjectFiles opens it with the error in
+     #project-error-message when saving, opening or backing up the project fails, so that a failed save isn't taken for
+     done. -->
+<rml>
+<head>
+	<title>Project Error</title>
+	<style>
+		dialog
+		{
+			width: 360dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="project-error-dialog">
+		<div class="dialog-titlebar">Project Error</div>
+		<div class="row" id="project-error-message"></div>
+		<div class="row buttons">
+			<button class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>
