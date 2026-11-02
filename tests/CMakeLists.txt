@@ -82,6 +82,7 @@ add_executable(gnubase-tests
 	processor_tests.cpp
 	projectfiles_tests.cpp
 	quantize_tests.cpp
+	recording_tests.cpp
 	rmlui_tests.cpp
 	rt_tests.cpp
 	scripting_tests.cpp
@@ -251,7 +252,13 @@ endif()
 # PRE_TEST discovery lets cross-compiled builds (e.g. Windows ARM64 on x64) configure and build.
 include(Catch)
 # A test that hangs fails after five minutes instead of blocking the run.
-catch_discover_tests(gnubase-tests DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS PROPERTIES TIMEOUT 300 ENVIRONMENT "${settingsEnvironment}")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	# The PipeWire tests share one daemon, whose graph some of them change: they never run at the same time (#423).
+	catch_discover_tests(gnubase-tests TEST_SPEC "~[pipewire]" DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS PROPERTIES TIMEOUT 300 ENVIRONMENT "${settingsEnvironment}")
+	catch_discover_tests(gnubase-tests TEST_SPEC "[pipewire]" DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS PROPERTIES TIMEOUT 300 RESOURCE_LOCK pipewire ENVIRONMENT "${settingsEnvironment}")
+else()
+	catch_discover_tests(gnubase-tests DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS PROPERTIES TIMEOUT 300 ENVIRONMENT "${settingsEnvironment}")
+endif()
 
 # Shell tests for the scripts in tools/. They use the sh next to Git, which on Windows is the one Git runs hooks with
 # (Git/bin, found from Git/cmd or Git/mingw64/bin).

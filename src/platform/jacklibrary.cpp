@@ -88,15 +88,19 @@ namespace gnubase
 		jack_time_t next = 0;
 		float period = 0.0f;
 		if (getCycleTimes == nullptr || getTime == nullptr ||
-			getCycleTimes(client, &frames, &current, &next, &period) != 0 || period <= 0.0f)
+			getCycleTimes(client, &frames, &current, &next, &period) != 0)
 			return {now, 0};
-		// The server's clock in microseconds, read right after the host's: their difference converts one to the other.
-		// A cycle that starts in the future or more than a second ago is a clock gone wrong.
-		const jack_time_t jackNow = getTime();
-		if (current > jackNow || jackNow - current > 1000000)
-			return {now, 0};
-		return {
-			now - (static_cast<HostTime>(jackNow - current) * 1000), static_cast<HostTime>(std::lround(period * 1e3))};
+		// The server's clock, read right after the host's: their difference converts one to the other.
+		return toHostClock(now, getTime(), current, period);
+	}
+
+	JackLibrary::Cycle JackLibrary::toHostClock(
+		HostTime hostNow, jack_time_t jackNow, jack_time_t start, float period) noexcept
+	{
+		const int64_t ago = static_cast<int64_t>(jackNow) - static_cast<int64_t>(start); // negative: ahead
+		if (period <= 0.0f || static_cast<float>(-ago) > period || ago > 1000000)
+			return {hostNow, 0};
+		return {hostNow - (ago * 1000), static_cast<HostTime>(std::lround(period * 1e3))};
 	}
 
 	const JackLibrary& JackLibrary::get(const std::string& path)

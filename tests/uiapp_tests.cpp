@@ -653,15 +653,14 @@ TEST_CASE("Mod+K opens the Repeat Events dialog, which repeats the selected even
 	CHECK(parts().size() == 1);
 	click(app, selector(".timeline-ruler")); // the project window has the focus again, for its keys
 
-	// A count of 3, typed into the field, and Shared Copies: three shared copies, one after the other.
+	// Shared Copies, then a count of 3 typed into the field after a double click, and Enter, which clicks OK: three
+	// shared copies, one after the other.
 	app.ui().key(std::nullopt, "Mod+K");
 	REQUIRE(app.waitUntil([&app] { return count(app, "#repeat-events-dialog") == 1; }));
+	click(app, selector("#repeat-shared"));
 	app.ui().click(std::nullopt, selector("#repeat-count"), ui::MouseButton::Left, 2, {});
 	app.ui().text(std::nullopt, "3");
 	app.ui().key(std::nullopt, "Enter");
-	CHECK(element(app, "#repeat-count").at("attributes").at("value") == "3");
-	click(app, selector("#repeat-shared"));
-	click(app, selector("#repeat-events-dialog button.primary"));
 	REQUIRE(app.waitUntil([&app] { return count(app, "#repeat-events-dialog") == 0; }));
 	REQUIRE(app.waitUntil([&parts] { return parts().size() == 4; }));
 	const Json all = parts();
@@ -673,4 +672,37 @@ TEST_CASE("Mod+K opens the Repeat Events dialog, which repeats the selected even
 	}
 	REQUIRE(app.waitUntil([&display] { return display.selection().size() == 3; }));
 	CHECK(app.keys().keysFor("edit.repeat").size() == 1); // Ctrl+K, Cmd+K on macOS
+}
+
+TEST_CASE("Mod+K, a count and Enter repeat the selected events", "[ui]")
+{
+	test::UiApp app({800, 300});
+	ui::EventDisplay& display = app.appUi().showProject();
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	const auto part = app.call("midiPart.add", {{"track", track.at("id")}, {"position", 0}, {"length", 4 * 1720320}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	const auto parts = [&app] { return app.call("project.get").at("midiParts"); };
+	REQUIRE(app.waitUntil(
+		[&app, &display, part]
+		{
+			app.ui().key(std::nullopt, "Mod+A");
+			return display.selection() == std::vector<uint64_t>{part};
+		}));
+
+	// The dialog opens with its count being edited, all of it selected: the number typed replaces it.
+	app.ui().key(std::nullopt, "Mod+K");
+	REQUIRE(app.waitUntil([&app] { return count(app, "#repeat-events-dialog") == 1; }));
+	REQUIRE(app.waitUntil([&app] { return hasClass(app, "#repeat-count", "editing"); }));
+	app.ui().text(std::nullopt, "2");
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&app] { return count(app, "#repeat-events-dialog") == 0; }));
+	REQUIRE(app.waitUntil([&parts] { return parts().size() == 3; }));
+	const Json all = parts();
+	for (size_t i = 1; i < 3; ++i)
+	{
+		CHECK(all[i].at("position") == static_cast<int64_t>(i) * 4 * 1720320);
+		CHECK(all[i].at("shared") == 0);
+	}
 }
