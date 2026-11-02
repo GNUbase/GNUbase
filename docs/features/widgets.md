@@ -45,8 +45,8 @@ The widgets:
 - `<knob>`: the theme's `.knob` with its `.knob-pointer` turned from -135 to 135 degrees.
 - `<fader>`: vertical, the `.fader` track with its `.fader-cap`.
 - `<slider>`: horizontal, `.slider-track` filled up to the `.slider-thumb` (`.slider-fill`).
-- `<valuefield>`: the value as text, with `decimals` (2) and a `unit`, drawn like a display. A double click edits it
-  as text (state class `.editing`): Enter, or leaving the field, takes the number typed, clamped to the range; Escape,
+- `<valuefield>`: the value as text, with `decimals` (2) and a `unit`, drawn like a display. A double click, or Enter
+  while it has the focus, edits it as text (state class `.editing`): Enter, or leaving the field, takes the number typed, clamped to the range; Escape,
   or text that isn't a number, keeps the value. While the user types, the field's text field sends RmlUi's own
   `change` events with the text; the field's `change`, with the field as its target, has the number.
 
@@ -92,9 +92,11 @@ and on a click, a key or the wheel. Every document gets its tooltip element when
 
 `<dialog>` is a dialog in a document of its own, which the app loads and shows, usually modal
 (`ElementDocument::Show(Rml::ModalFlag::Modal)`). It opens in the middle of the window, and dragging its
-`.dialog-titlebar` moves it. Escape closes it with the result `cancel`; Enter clicks its `button.primary`, also from
-a text field, but not from a multi-line one or a value field being edited; a click on an element with a `result`
-attribute closes it with that result. Closing sends the event `close` (`ui::g_dialogCloseEvent`) with the parameter
+`.dialog-titlebar` moves it. Escape closes it with the result `cancel`, or first an open drop-down list; Enter clicks
+its `button.primary`, also from a text field, but not from a multi-line one or a value field being edited, and not
+when the focused control takes Enter itself: a button clicks itself, a drop-down list opens and closes, a value field
+starts editing. A click on an element with a `result` attribute closes it with that result. Tab and Shift+Tab move
+the focus between its controls, around the ends ([accessibility.md](accessibility.md)). Closing sends the event `close` (`ui::g_dialogCloseEvent`) with the parameter
 `result`, then closes the document.
 
 How it works: an RmlUi plugin (`RmlUi::registerPlugin`) gives every document a tooltip and listens to it in the capture

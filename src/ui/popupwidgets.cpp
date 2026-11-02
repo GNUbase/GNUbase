@@ -9,6 +9,7 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/Plugin.h>
@@ -193,8 +194,9 @@ namespace gnubase::ui
 
 		// <dialog>: a dialog in a document of its own, which the app shows, usually modal. It opens in the middle of
 		// the window, and dragging its .dialog-titlebar moves it. Escape closes it with the result "cancel", Enter
-		// clicks its button.primary (also from a text field), and a click on an element with a result attribute closes
-		// it with that result. Closing sends a close event with the parameter "result", then closes the document.
+		// clicks its button.primary (also from a text field) unless the focused control takes Enter, and a click on an
+		// element with a result attribute closes it with that result. Closing sends a close event with the parameter
+		// "result", then closes the document.
 		class Dialog final : public Rml::Element
 		{
 		public:
@@ -229,8 +231,10 @@ namespace gnubase::ui
 			void key(Rml::Event& event)
 			{
 				// A multi-line text field takes Enter, and a value field being edited both keys.
-				if (closestTag(event.GetTargetElement(), "textarea", this) != nullptr ||
-					closestTag(event.GetTargetElement(), "valuefield", this) != nullptr)
+				Rml::Element* target = event.GetTargetElement();
+				const Rml::Element* valueField = closestTag(target, "valuefield", this);
+				if (closestTag(target, "textarea", this) != nullptr ||
+					(valueField != nullptr && valueField->IsClassSet("editing")))
 					return;
 				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
 				if (key == Rml::Input::KI_ESCAPE)
@@ -240,6 +244,10 @@ namespace gnubase::ui
 				}
 				else if (key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER)
 				{
+					// A focused button clicks itself, a drop-down list opens or closes, a value field starts editing.
+					if (valueField != nullptr || closestTag(target, "button", this) != nullptr ||
+						closestTag(target, "select", this) != nullptr)
+						return;
 					Rml::Element* primary = QuerySelector("button.primary");
 					if (primary == nullptr || primary->HasAttribute("disabled"))
 						return;
@@ -371,6 +379,14 @@ namespace gnubase::ui
 							for (Menu* menu : open)
 								menu->SetClass("open", false);
 							event.StopPropagation(); // Escape closed the menu, not the dialog around it
+							break;
+						}
+					if (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_ESCAPE)
+						if (auto* select = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(target);
+							select != nullptr && select->IsSelectBoxVisible())
+						{
+							select->CancelSelectBox(); // and the list keeps the option it had
+							event.StopPropagation();
 							break;
 						}
 					if (Dialog* dialog = dialogOf(*document))

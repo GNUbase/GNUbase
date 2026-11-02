@@ -254,8 +254,8 @@ namespace gnubase::ui
 		constexpr std::array<Rml::EventId, 2> g_inputEvents = {Rml::EventId::Blur, Rml::EventId::Keydown};
 
 		// <valuefield>: the value as text, with the decimals (2) and the unit that its attributes give. Besides
-		// dragging, a double click edits it as text, with the state class .editing: Enter or leaving the field takes
-		// the number typed, Escape keeps the value.
+		// dragging, a double click, or Enter while it has the focus, edits it as text, with the state class .editing:
+		// Enter or leaving the field takes the number typed, Escape keeps the value.
 		class ValueField final : public ValueControl
 		{
 		public:
@@ -314,8 +314,12 @@ namespace gnubase::ui
 			void ProcessDefaultAction(Rml::Event& event) override
 			{
 				ValueControl::ProcessDefaultAction(event);
-				if (event == Rml::EventId::Dblclick && active())
+				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
+				const bool enter = event == Rml::EventId::Keydown &&
+					(key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER);
+				if ((event == Rml::EventId::Dblclick || enter) && active())
 				{
+					event.StopPropagation(); // Enter edits the field, it doesn't click what's around it
 					m_editing = true;
 					SetClass("editing", true);
 					m_input->SetValue(format(value(), decimals()));

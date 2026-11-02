@@ -141,6 +141,17 @@ select selectbox option
 	padding: 3dp 12dp;
 }
 
+/* Form controls take the focus with Tab and Shift+Tab, disabled ones don't (docs/features/accessibility.md). */
+input.text, input.password, textarea, input.checkbox, input.radio, input.range, select
+{
+	tab-index: auto;
+}
+
+input:disabled, textarea:disabled, select:disabled
+{
+	tab-index: none;
+}
+
 /* Sliders and progress bars */
 input.range
 {

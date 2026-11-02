@@ -21,6 +21,7 @@ set(settingsEnvironment "GNUBASE_SETTINGS_DIR=${CMAKE_CURRENT_BINARY_DIR}/output
 
 # One file per line, sorted, so that pull requests adding tests rarely touch the same lines.
 add_executable(gnubase-tests
+	accessibility_tests.cpp
 	addtrack_tests.cpp
 	analysis_tests.cpp
 	app_tests.cpp
