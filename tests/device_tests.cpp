@@ -12,6 +12,7 @@
 #ifdef __linux__
 #include "platform/audio/jack.h"
 #include "platform/audio/pipewire.h"
+#include "platform/jacklibrary.h"
 #include "platform/process.h"
 
 #include <dlfcn.h>
@@ -507,21 +508,25 @@ TEST_CASE("a CoreAudio device opened at another rate keeps still and has that ra
 #ifdef __linux__
 namespace
 {
+	bool required(const char* variable)
+	{
+		const char* value = std::getenv(variable);
+		return value != nullptr && std::string(value) == "1";
+	}
+
 	// The PipeWire backend, or nothing if no PipeWire daemon runs here. GNUBASE_REQUIRE_PIPEWIRE=1 says one must, with
 	// a sink: CI starts one with a null sink and a null source (tools/start-pipewire.sh).
 	std::unique_ptr<Backend> pipeWireOrSkip()
 	{
 		std::unique_ptr<Backend> backend = makePipeWireBackend();
-		const char* require = std::getenv("GNUBASE_REQUIRE_PIPEWIRE");
-		const bool required = require != nullptr && std::string(require) == "1";
 		try
 		{
-			if (backend->devices().empty() && required)
+			if (backend->devices().empty() && required("GNUBASE_REQUIRE_PIPEWIRE"))
 				FAIL("the PipeWire daemon has no sink");
 		}
 		catch (const DeviceError& error)
 		{
-			if (required)
+			if (required("GNUBASE_REQUIRE_PIPEWIRE"))
 				FAIL(error.what());
 			return nullptr;
 		}
@@ -552,22 +557,66 @@ namespace
 		std::string name;
 	};
 
-	// Forces a setting of the graph (clock.force-rate, clock.force-quantum) as another client would, and clears it
-	// again when it goes out of scope, also when a check fails.
+	// One of the graph's settings (clock.force-rate, clock.force-quantum), empty if it has none of that name.
+	std::string graphSetting(const std::string& key)
+	{
+		// NOLINTNEXTLINE(bugprone-command-processor): the tests' own keys, and ChildProcess can't capture output
+		FILE* pipe = popen(("pw-metadata -n settings 0 " + key + " 2>/dev/null").c_str(), "r");
+		if (pipe == nullptr)
+			return {};
+		std::string output;
+		std::array<char, 256> chunk{};
+		while (fgets(chunk.data(), static_cast<int>(chunk.size()), pipe) != nullptr)
+			output += chunk.data();
+		pclose(pipe);
+		// update: id:0 key:'clock.force-quantum' value:'256' type:''
+		const std::string prefix = "key:'" + key + "' value:'";
+		const size_t at = output.find(prefix);
+		if (at == std::string::npos)
+			return {};
+		const size_t start = at + prefix.size();
+		return output.substr(start, output.find('\'', start) - start);
+	}
+
+	// The graph's forced quantum (clock.force-quantum), 0 if none is forced.
+	uint32_t forcedQuantum()
+	{
+		return static_cast<uint32_t>(std::strtoul(graphSetting("clock.force-quantum").c_str(), nullptr, 10));
+	}
+
+	// Forces a setting of the graph (clock.force-rate, clock.force-quantum) as another client would, and gives it the
+	// value it had back when it goes out of scope, also when a check fails, or removes it if it had none.
 	class ForcedSetting
 	{
 	public:
-		ForcedSetting(std::string key, uint32_t value) : m_key(std::move(key))
+		ForcedSetting(std::string key, uint32_t value) : m_key(std::move(key)), m_previous(graphSetting(m_key))
 		{
 			REQUIRE(pw("pw-metadata", {"-n", "settings", "0", m_key, std::to_string(value)}));
 		}
-		~ForcedSetting() { pw("pw-metadata", {"-n", "settings", "0", m_key, "0"}); }
+		~ForcedSetting()
+		{
+			if (m_previous.empty())
+				pw("pw-metadata", {"-n", "settings", "-d", "0", m_key});
+			else
+				pw("pw-metadata", {"-n", "settings", "0", m_key, m_previous});
+		}
 		ForcedSetting(const ForcedSetting&) = delete;
 		ForcedSetting& operator=(const ForcedSetting&) = delete;
 
 	private:
 		std::string m_key;
+		std::string m_previous;
 	};
+
+	// Forcing the graph's settings changes how everything in it plays, a desktop session's daemon too, and a test that
+	// is killed leaves them forced. So the tests that do run only against the private daemon that
+	// tools/start-pipewire.sh starts, which GNUBASE_REQUIRE_PIPEWIRE=1 says runs, and skip otherwise (#423).
+	void skipUnlessPrivateDaemon()
+	{
+		if (!required("GNUBASE_REQUIRE_PIPEWIRE"))
+			SKIP("forces the graph's settings, which only the private daemon of tools/start-pipewire.sh may have "
+				 "changed (GNUBASE_REQUIRE_PIPEWIRE=1)");
+	}
 
 	// The tests that change the graph need PipeWire's command line tools, which come with the daemon.
 	bool havePipeWireTools()
@@ -623,7 +672,7 @@ namespace
 
 TEST_CASE("the PipeWire backend keeps the device contract and asks for a reset when a sink's ports change or it goes "
 		  "away",
-	"[integration]")
+	"[integration][pipewire]")
 {
 	const std::unique_ptr<Backend> backend = pipeWireOrSkip();
 	if (!backend)
@@ -635,8 +684,9 @@ TEST_CASE("the PipeWire backend keeps the device contract and asks for a reset w
 // While another client forces the graph to another rate, a device would only play silence: it asks for a reset. Until
 // the force is lifted the listing has the forced rate only, and opening at another one says why it can't; a device
 // opened without a rate opens at the forced one. When the force is lifted, the device asks for a reset again.
-TEST_CASE("a PipeWire device asks for a reset when another client forces the graph to another rate", "[integration]")
+TEST_CASE("a PipeWire device asks for a reset when another client forces the graph to another rate", "[integration][pipewire]")
 {
+	skipUnlessPrivateDaemon();
 	std::unique_ptr<Backend> backend = pipeWireOrSkip();
 	if (!backend)
 		SKIP("no PipeWire daemon runs here");
@@ -707,8 +757,9 @@ TEST_CASE("a PipeWire device asks for a reset when another client forces the gra
 // The latency counts in quanta: when another client changes the graph's quantum while a device runs, the device
 // reports a latency change, and the engine moves the record offset with it once, without restarting the device over
 // and over (#386).
-TEST_CASE("a running PipeWire device reports a latency change when the graph's quantum changes", "[integration]")
+TEST_CASE("a running PipeWire device reports a latency change when the graph's quantum changes", "[integration][pipewire]")
 {
+	skipUnlessPrivateDaemon();
 	std::unique_ptr<Backend> backend = pipeWireOrSkip();
 	if (!backend)
 		SKIP("no PipeWire daemon runs here");
@@ -776,7 +827,7 @@ TEST_CASE("a running PipeWire device reports a latency change when the graph's q
 
 // tools/start-pipewire.sh adds the loopback: a null sink of media class Audio/Duplex, a device of its own
 // (<node>|<node>) whose capture ports are the monitor ports of its playback ports.
-TEST_CASE("a project plays and records over a loopback in the PipeWire graph", "[integration]")
+TEST_CASE("a project plays and records over a loopback in the PipeWire graph", "[integration][pipewire]")
 {
 	std::unique_ptr<Backend> backend = pipeWireOrSkip();
 	if (!backend)
@@ -785,8 +836,7 @@ TEST_CASE("a project plays and records over a loopback in the PipeWire graph", "
 	const std::vector<DeviceInfo> devices = backend->devices();
 	if (std::none_of(devices.begin(), devices.end(), [&id](const DeviceInfo& device) { return device.id == id; }))
 	{
-		const char* require = std::getenv("GNUBASE_REQUIRE_PIPEWIRE");
-		if (require != nullptr && std::string(require) == "1")
+		if (required("GNUBASE_REQUIRE_PIPEWIRE"))
 			FAIL("the PipeWire daemon has no loopback node gnubase-test-loopback (tools/start-pipewire.sh)");
 		SKIP("the PipeWire daemon has no loopback node gnubase-test-loopback (tools/start-pipewire.sh)");
 	}
@@ -814,7 +864,7 @@ TEST_CASE("a PipeWire device counts each xrun its driver's clock adds up as a dr
 	CHECK(xruns.cycle(9, 3100));
 }
 
-TEST_CASE("the PipeWire backend lists sinks with sources and names their channels", "[integration]")
+TEST_CASE("the PipeWire backend lists sinks with sources and names their channels", "[integration][pipewire]")
 {
 	const std::unique_ptr<Backend> backend = pipeWireOrSkip();
 	if (!backend)
@@ -842,12 +892,6 @@ TEST_CASE("the PipeWire backend lists sinks with sources and names their channel
 #ifdef __linux__
 namespace
 {
-	bool required(const char* variable)
-	{
-		const char* value = std::getenv(variable);
-		return value != nullptr && std::string(value) == "1";
-	}
-
 	// A JACK backend on this libjack, or nothing if no JACK server runs for it. With requireVariable set to 1, one
 	// must: CI starts jackd with its dummy driver (tools/start-jack.sh) and PipeWire (tools/start-pipewire.sh).
 	std::unique_ptr<Backend> jackOrSkip(const std::string& library, const char* requireVariable)
@@ -999,31 +1043,6 @@ namespace
 		std::atomic<int> m_close{0};
 	};
 
-	// Sets one of PipeWire's settings, e.g. clock.force-rate. True if it succeeds.
-	bool pwSetting(const std::string& key, const std::string& value)
-	{
-		gnubase::platform::ChildProcess process = gnubase::platform::ChildProcess::start(
-			"/usr/bin/pw-metadata", {"-n", "settings", "0", key, value}, "/dev/null");
-		return process.wait(std::chrono::seconds(10)) == 0;
-	}
-
-	// The graph's forced quantum (PipeWire's setting clock.force-quantum), 0 if none is forced.
-	uint32_t forcedQuantum()
-	{
-		// NOLINTNEXTLINE(bugprone-command-processor): a constant command, whose output ChildProcess can't capture
-		FILE* pipe = popen("pw-metadata -n settings 0 clock.force-quantum 2>/dev/null", "r");
-		if (pipe == nullptr)
-			return 0;
-		std::string output;
-		std::array<char, 256> chunk{};
-		while (fgets(chunk.data(), static_cast<int>(chunk.size()), pipe) != nullptr)
-			output += chunk.data();
-		pclose(pipe);
-		const std::string key = "key:'clock.force-quantum' value:'";
-		const size_t at = output.find(key);
-		return at == std::string::npos ? 0 : static_cast<uint32_t>(std::strtoul(&output[at + key.size()], nullptr, 10));
-	}
-
 	// Takes longer than a cycle once, a few blocks in, so that the server reports an xrun.
 	class LateCallback : public AudioCallback
 	{
@@ -1165,11 +1184,7 @@ namespace
 			ContractCallback callback(device->format());
 			device->start(callback);
 			REQUIRE(callback.waitFor(4));
-			struct RateRestorer
-			{
-				~RateRestorer() { pwSetting("clock.force-rate", "0"); }
-			} const restorer;
-			REQUIRE(pwSetting("clock.force-rate", rate != 44100.0 ? "44100" : "48000"));
+			const ForcedSetting forced("clock.force-rate", rate != 44100.0 ? 44100 : 48000);
 			CHECK(waitUntil([&resets] { return resets > 0; }));
 			const size_t blocks = callback.blocks();
 			std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -1280,10 +1295,12 @@ TEST_CASE("the JACK backend keeps the device contract and plays a project over a
 }
 
 TEST_CASE("the JACK backend keeps the device contract and plays a project over a loopback with PipeWire's JACK layer",
-	"[integration]")
+	"[integration][pipewire]")
 {
 	// GNUbase's clients ask for buffer sizes the way jack_bufsize does, through the graph's clock.force-quantum, which
-	// outlasts the client (#389); by default each client forces its own node's quantum, which goes with it.
+	// outlasts the client (#389); by default each client forces its own node's quantum, which goes with it. That, and
+	// the rate the test forces, are for the private daemon only.
+	skipUnlessPrivateDaemon();
 	struct GlobalBufferSize
 	{
 		GlobalBufferSize() { setenv("PIPEWIRE_PROPS", "{ jack.global-buffer-size = true }", 1); }
@@ -1292,9 +1309,9 @@ TEST_CASE("the JACK backend keeps the device contract and plays a project over a
 		GlobalBufferSize& operator=(const GlobalBufferSize&) = delete;
 	} const globalBufferSize;
 	const std::string library = pipeWireJack();
-	if (library.empty() && required("GNUBASE_REQUIRE_PIPEWIRE"))
+	if (library.empty())
 		FAIL("PipeWire's libjack isn't installed (pipewire-jack)");
-	std::unique_ptr<Backend> backend = library.empty() ? nullptr : jackOrSkip(library, "GNUBASE_REQUIRE_PIPEWIRE");
+	std::unique_ptr<Backend> backend = jackOrSkip(library, "GNUBASE_REQUIRE_PIPEWIRE");
 	if (!backend)
 		SKIP("no PipeWire daemon with its JACK layer runs here");
 	auto hardware = std::make_unique<TestClient>(library, "gnubase-test-hardware", true);
@@ -1328,6 +1345,28 @@ TEST_CASE("the JACK backend reports a missing libjack as a device error", "[unit
 	CHECK(backend->name() == "jack");
 	CHECK_THROWS_AS(backend->devices(), DeviceError);
 	CHECK_THROWS_AS(backend->open(config("")), DeviceError);
+}
+
+// jackd2's cycle start is its filter's estimate, which after an early wake-up can lie a little ahead of the time a
+// client reads it at: such a start stands, only one far off falls back to the time now (#434).
+TEST_CASE("JACK cycle times convert to the host clock, also a start slightly ahead of now", "[unit]")
+{
+	using gnubase::JackLibrary;
+	const gnubase::HostTime now = 5'000'000'000;
+	const jack_time_t jackNow = 70'000'000;
+	const float period = 1333.3f; // µs: 64 frames at 48 kHz
+	const auto check = [](JackLibrary::Cycle cycle, gnubase::HostTime start, gnubase::HostTime period)
+	{
+		CHECK(cycle.start == start);
+		CHECK(cycle.period == period);
+	};
+	check(JackLibrary::toHostClock(now, jackNow, jackNow - 500, period), now - 500'000, 1'333'300);
+	check(JackLibrary::toHostClock(now, jackNow, jackNow, period), now, 1'333'300);
+	check(JackLibrary::toHostClock(now, jackNow, jackNow + 100, period), now + 100'000, 1'333'300);
+	check(JackLibrary::toHostClock(now, jackNow, jackNow + 1333, period), now + 1'333'000, 1'333'300);
+	check(JackLibrary::toHostClock(now, jackNow, jackNow + 1400, period), now, 0);	   // more than a period ahead
+	check(JackLibrary::toHostClock(now, jackNow, jackNow - 1'000'001, period), now, 0); // more than a second ago
+	check(JackLibrary::toHostClock(now, jackNow, jackNow - 500, 0.0f), now, 0);		   // no period
 }
 #endif
 
