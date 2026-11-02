@@ -257,6 +257,15 @@
 		<menuitem command="transport.play">Start</menuitem>
 		<menuitem command="transport.stop">Stop</menuitem>
 		<menuitem command="transport.toggle">Start/Stop</menuitem>
+		<menuitem command="transport.record">Record</menuitem>
+		<menuseparator/>
+		<menuitem id="audio-record-mode-submenu">Audio Record Mode
+			<menu>
+				<menuitem command="transport.set" parameters='{"audioRecordMode": "keepHistory"}'>Keep History</menuitem>
+				<menuitem command="transport.set" parameters='{"audioRecordMode": "cycleHistoryReplace"}'>Cycle History + Replace</menuitem>
+				<menuitem id="audio-record-mode-replace" command="transport.set" parameters='{"audioRecordMode": "replace"}'>Replace</menuitem>
+			</menu>
+		</menuitem>
 		<menuseparator/>
 		<menuitem command="transport.locate" parameters='{"target": "projectStart"}'>Go to Project Start</menuitem>
 		<menuseparator/>
