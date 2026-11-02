@@ -350,7 +350,8 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	Json state = run(client, "transport.get");
 	CHECK(state ==
 		Json{{"playing", false}, {"recording", false}, {"position", 0}, {"left", 0}, {"right", 0}, {"cycle", false},
-			{"startMode", "cursor"}, {"returnToStart", false}});
+			{"startMode", "cursor"}, {"returnToStart", false}, {"punchIn", false}, {"punchOut", false},
+			{"metronome", false}});
 
 	state = run(client, "transport.set", {{"left", 48000}, {"right", 96000}, {"cycle", true}});
 	CHECK(state.at("left") == 48000);
@@ -386,7 +387,7 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK(std::all_of(names.begin(), names.end(), [](const std::string& name) { return name == "transport.changed"; }));
 
 	CHECK_THAT(reject(client, "transport.locate", {{"position", -1}}), ContainsSubstring("position"));
-	CHECK_THAT(reject(client, "transport.locate"), ContainsSubstring("position or target"));
+	CHECK_THAT(reject(client, "transport.locate"), ContainsSubstring("position, by or target"));
 	CHECK_THAT(reject(client, "transport.locate", {{"target", "nowhere"}}), ContainsSubstring("target"));
 	CHECK_THAT(reject(client, "transport.set", {{"right", -5}}), ContainsSubstring("right"));
 	CHECK_THAT(reject(client, "transport.set", {{"left", "somewhere"}}), ContainsSubstring("left"));
@@ -417,6 +418,73 @@ TEST_CASE("record starts playback and recording, punches in and out, and stop en
 	state = run(client, "transport.toggle");
 	CHECK(state.at("playing") == false);
 	CHECK(state.at("recording") == false);
+}
+
+TEST_CASE("toggle switches cycle, punch in and out, the metronome and recording", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	for (const char* setting : {"cycle", "punchIn", "punchOut", "metronome"})
+	{
+		INFO(setting);
+		CHECK(run(client, "transport.toggle", {{"setting", setting}}).at(setting) == true);
+		CHECK(run(client, "transport.get").at(setting) == true);
+		CHECK(run(client, "transport.set", {{setting, false}}).at(setting) == false);
+		CHECK(run(client, "transport.toggle", {{"setting", setting}}).at(setting) == true);
+		CHECK(run(client, "transport.toggle", {{"setting", setting}}).at(setting) == false);
+	}
+	CHECK(run(client, "transport.get").at("playing") == false); // none of them plays
+
+	// Recording: on starts playback as transport.record does, off punches out and playback goes on.
+	Json state = run(client, "transport.toggle", {{"setting", "record"}});
+	CHECK(state.at("playing") == true);
+	CHECK(state.at("recording") == true);
+	state = run(client, "transport.toggle", {{"setting", "record"}});
+	CHECK(state.at("playing") == true);
+	CHECK(state.at("recording") == false);
+	run(client, "transport.stop");
+	CHECK_THAT(reject(client, "transport.toggle", {{"setting", "tempo"}}), ContainsSubstring("setting"));
+}
+
+TEST_CASE("locate by moves the cursor by seconds, not before the project start", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "transport.locate", {{"position", 96000}});
+	CHECK(run(client, "transport.locate", {{"by", 1.0}}).at("position") == 144000); // 48 kHz
+	CHECK(run(client, "transport.locate", {{"by", -0.5}}).at("position") == 120000);
+	CHECK(run(client, "transport.locate", {{"by", -10.0}}).at("position") == 0);
+	run(client, "project.set", {{"sampleRate", 44100.0}});
+	CHECK(run(client, "transport.locate", {{"by", 2.0}}).at("position") == 88200);
+}
+
+TEST_CASE("project.set changes the project's first tempo and time signature, one undo step each", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	Client listener(engine);
+	run(client, "project.set", {{"tempo", 90.0}, {"signature", {{"numerator", 3}, {"denominator", 8}}}});
+	Json project = run(client, "project.get");
+	CHECK(project.at("tempo") == Json::array({{{"position", 0}, {"bpm", 90.0}, {"ramp", false}}}));
+	CHECK(project.at("signatures") == Json::array({{{"bar", 0}, {"numerator", 3}, {"denominator", 8}}}));
+	bool announced = false;
+	while (const auto message = listener.poll())
+		if (const auto* event = std::get_if<Event>(&*message))
+			announced = announced || event->name == "project.changed";
+	CHECK(announced);
+
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("tempo").at(0).at("bpm") == 120.0);
+	run(client, "history.redo");
+	CHECK(run(client, "project.get").at("tempo").at(0).at("bpm") == 90.0);
+
+	CHECK_THAT(reject(client, "project.set", {{"tempo", 0.5}}), ContainsSubstring("tempo"));
+	CHECK_THAT(reject(client, "project.set", {{"tempo", 1000.0}}), ContainsSubstring("tempo"));
+	CHECK_THAT(reject(client, "project.set", {{"signature", {{"numerator", 0}, {"denominator", 4}}}}),
+		ContainsSubstring("signature"));
+	CHECK_THAT(reject(client, "project.set", {{"signature", {{"numerator", 4}, {"denominator", 3}}}}),
+		ContainsSubstring("signature"));
+	CHECK(run(client, "project.get").at("signatures").at(0).at("numerator") == 3); // nothing changed
 }
 
 TEST_CASE("transport commands see a locate that the running device has not applied yet", "[integration]")

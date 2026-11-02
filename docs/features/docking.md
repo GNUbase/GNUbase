@@ -26,8 +26,8 @@ bar, which come in that order in the reference (pp. 54–56). Its toolbar has Sh
 Set up Window Layout menu, which shows or hides the menu bar (the reference's Show Menu Bar, p. 55), the zones and the
 info line, overview line, status line and transport bar (p. 65). The overview line is
 part of the event display: while a strip is hidden, the body has the class `no-<strip>`, which the style sheet uses to
-hide it. The status line has the record format and a lost audio device ([status-line.md](status-line.md)); the info
-line and transport bar are empty until their tickets fill them.
+hide it. The transport bar has the [transport controls](transport-bar.md). The [status line](status-line.md) shows the
+record format and a lost audio device. The info line is empty.
 
 States are classes for the themes: zones, their splitters and strips get `.hidden`, and the zone with the keyboard
 focus gets `.focused`, whose `.zone-frame` (an element the docking system adds over each zone) the theme draws as a

@@ -47,6 +47,9 @@ add_library(gnubase-ui STATIC
 	livereload.h
 	mainmenu.cpp
 	mainmenu.h
+	markers.cpp
+	markers.h
+	markerswindow.cpp
 	poolpanel.cpp
 	poolpanel.h
 	popupwidgets.cpp
@@ -69,6 +72,8 @@ add_library(gnubase-ui STATIC
 	timeformat.h
 	tracklist.cpp
 	tracklist.h
+	transport.cpp
+	transport.h
 	ui.cpp
 	ui.h
 	uisettings.cpp

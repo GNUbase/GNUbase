@@ -9,6 +9,7 @@
 #include "ui/gpurenderer.h"
 #include "ui/keycommands.h"
 #include "ui/mainmenu.h"
+#include "ui/markers.h"
 #include "ui/projectfiles.h"
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
@@ -16,6 +17,7 @@
 #include "ui/statusline.h"
 #include "ui/themes.h"
 #include "ui/tracklist.h"
+#include "ui/transport.h"
 #include "ui/uisettings.h"
 
 #include <RmlUi/Core/ObserverPtr.h>
@@ -28,6 +30,7 @@
 
 namespace Rml
 {
+	class Element;
 	class ElementDocument;
 }
 
@@ -56,11 +59,18 @@ namespace gnubase::app
 		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the main menu
 		// bar (ui/mainmenu.h) and the track list beside the event display in its main zone, whose commands are key
 		// commands in the focus zone "project". Throws std::runtime_error if the document can't be loaded.
-		// Also displays the status line.
+		// Also displays the project markers and status line.
 		ui::EventDisplay& showProject();
 		// The project window's track list, null before showProject.
 		ui::TrackList* trackList() { return m_trackList.get(); }
 
+		// Opens the markers window in a window of its own (resources/ui/markers.rml), hidden like the main window, or
+		// closes it if it is open: the UI command window.markers, Mod+M. Returns it, or null when it closed it.
+		// Throws std::runtime_error if the document can't be loaded.
+		ui::MarkersWindow* toggleMarkers();
+		// The markers window while it is open, or null.
+		ui::MarkersWindow* markers() { return m_shell.find(m_markersWindow) != nullptr ? m_markers.get() : nullptr; }
+		ui::WindowId markersWindow() const { return m_markersWindow; }
 		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
 		// window.studioSetup, which the main menu's Studio menu runs. While it is open, this brings it to the front
 		// instead: MCP and Lua can run the command then. Throws std::runtime_error if the document can't be loaded.
@@ -69,6 +79,15 @@ namespace gnubase::app
 		// Opens the start screen in the main window (ui/projectfiles.h, #77), as the app does when it starts without
 		// a project.
 		void openStartScreen() { m_files.openStartScreen(m_main); }
+
+		// The transport controls (#90, docs/features/transport-bar.md): the project window's transport bar, once it
+		// shows, and the transport panel and the time display window, windows of their own that the UI commands
+		// window.transportPanel (F2) and window.timeDisplay show and hide. Null or none while they don't show.
+		ui::TransportControls* transportBar() { return m_transportBar.get(); }
+		void toggleTransportPanel();
+		void toggleTimeDisplay();
+		ui::Window* transportPanel() { return m_transportPanel.shown(m_shell); }
+		ui::Window* timeDisplay() { return m_timeDisplay.shown(m_shell); }
 
 		ui::Shell& shell() { return m_shell; }
 		ui::Window& mainWindow() { return m_main; }
@@ -79,6 +98,21 @@ namespace gnubase::app
 		const ui::GpuRenderer& renderer() const { return m_renderer; }
 
 	private:
+		// A window of its own with transport controls.
+		struct TransportWindow
+		{
+			ui::WindowId window = 0;
+			std::unique_ptr<ui::TransportControls> controls;
+
+			// The window, or null if it is closed, also when the user closed it.
+			ui::Window* shown(ui::Shell& shell) const { return window == 0 ? nullptr : shell.find(window); }
+		};
+
+		// Fills an element with the transport controls (resources/ui/transport.rml) and drives them.
+		std::unique_ptr<ui::TransportControls> transportControls(Rml::Element& root, ui::Window& window, bool fill);
+		void toggle(TransportWindow& shown, const char* file, const char* title, ui::Size size);
+		// Edits a display of the transport bar, or of the transport panel, which opens if the bar doesn't show.
+		void enter(const std::string& field);
 		// File > Import: the OS's file dialog for the window, then the event display imports what the user chose;
 		// with clipsOnly into the pool only (Media > Import Medium).
 		void chooseImport(
@@ -104,9 +138,16 @@ namespace gnubase::app
 		ui::Docking m_docking;
 		engine::Engine& m_engine;
 		std::filesystem::path m_resources;
+		bool m_hidden = false; // the main window, and so the others
+		std::unique_ptr<ui::MarkersWindow> m_markers;
+		ui::WindowId m_markersWindow = 0;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
-		std::unique_ptr<ui::StatusLine> m_statusLine;     // too
-		std::unique_ptr<ui::TrackList> m_trackList;       // and before the display
+		std::unique_ptr<ui::MarkerLines> m_markerLines;   // and before the display
+		std::unique_ptr<ui::TransportControls> m_transportBar;
+		TransportWindow m_transportPanel;
+		TransportWindow m_timeDisplay;
+		std::unique_ptr<ui::StatusLine> m_statusLine; // too
+		std::unique_ptr<ui::TrackList> m_trackList;   // and before the display
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
 		bool m_canUndo = false;
 		bool m_canRedo = false;

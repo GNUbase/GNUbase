@@ -166,9 +166,22 @@ namespace gnubase::engine::settings
 					"window of "
 					"its own and that window's bounds. What it leaves out has its default.",
 					layoutSchema(), Json::object()},
+				{"ui.markerLines",
+					"Which markers the event display shows as lines across every track: the active marker track's "
+					"(active), every marker track's (all), or none (off).",
+					Json{{"type", "string"}, {"enum", Json::array({"active", "all", "off"})}}, "active"},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
+				{"ui.timeFormats",
+					"The time formats of the transport controls' displays: primary and secondary in the transport bar "
+					"and panel, timeDisplay in the time display window; each barsBeats, seconds, timecode, samples or "
+					"userFrames.",
+					Json{{"type", "object"},
+						{"additionalProperties",
+							{{"type", "string"},
+								{"enum", {"barsBeats", "seconds", "timecode", "samples", "userFrames"}}}}},
+					Json{{"primary", "barsBeats"}, {"secondary", "timecode"}, {"timeDisplay", "barsBeats"}}},
 				{"ui.toolModifiers",
 					"The modifier keys of the project window's tools, by action (docs/features/tools.md), each ctrl "
 					"(Cmd on macOS), alt and shift joined with +, or empty for none: dragDrop.copy (default alt), "
