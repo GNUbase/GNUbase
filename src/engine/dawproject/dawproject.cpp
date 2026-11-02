@@ -80,11 +80,23 @@ namespace gnubase::engine
 		// The built-in effect a slot's plugin id names, or nullptr.
 		const processors::BuiltinInfo* builtinPlugin(const std::string& plugin)
 		{
-			const std::string prefix = "builtin:";
-			if (plugin.compare(0, prefix.size(), prefix) != 0)
-				return nullptr;
-			const processors::BuiltinInfo* info = processors::findBuiltin(plugin.substr(prefix.size()));
+			const processors::BuiltinInfo* info = processors::findBuiltinPlugin(plugin);
 			return info != nullptr && !info->instrument ? info : nullptr;
+		}
+
+		// A built-in parameter's unit as a DAWproject unit, which RealParameter requires; "linear" for the values that
+		// have none there, such as milliseconds.
+		const char* dawprojectUnit(const std::string& unit)
+		{
+			if (unit == "dB")
+				return "decibel";
+			if (unit == "Hz")
+				return "hertz";
+			if (unit == "s")
+				return "seconds";
+			if (unit == "%")
+				return "percent";
+			return "linear";
 		}
 
 		// DAWproject has only a channel count: the format for it, the widest one for more than 8 channels.
@@ -514,6 +526,7 @@ namespace gnubase::engine
 						real.append_attribute("id") = (xmlId("d", slot.id) + "p" + std::to_string(parameter)).c_str();
 						real.append_attribute("name") = found->name.c_str();
 						real.append_attribute("parameterID") = parameter;
+						real.append_attribute("unit") = dawprojectUnit(found->unit);
 						real.append_attribute("min") = found->minimum;
 						real.append_attribute("max") = found->maximum;
 						real.append_attribute("value") = value;

@@ -550,9 +550,7 @@ TEST_CASE("a plugin slot takes parameter values and bypass while it processes, w
 	CHECK(!slot.failed());
 	CHECK(left[0] == 0.5f); // the last blocks, 98 and 99, were bypassed: no crossfade in 99
 	CHECK(right[127] == -0.5f);
-	CHECK(slot.latency() == 0);
-	slot.setBypass(false);
-	CHECK(slot.latency() == 48);
+	CHECK(slot.latency() == 48); // bypassed too: its input is delayed by as much
 	slot.deactivate();
 	CHECK(!slot.activeFor(48000.0, 128));
 	CHECK(slot.latency() == 0);

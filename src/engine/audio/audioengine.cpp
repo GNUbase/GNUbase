@@ -183,6 +183,8 @@ namespace gnubase::engine
 		if (m_reconnectThread.joinable())
 			m_reconnectThread.join();
 		stopDevice();
+		// Before the members its jobs use, such as m_updatingPlugins.
+		m_slots.reset();
 	}
 
 	void AudioEngine::waitForDevice()
@@ -322,33 +324,21 @@ namespace gnubase::engine
 		return AutoMonitoring::TapeMachine;
 	}
 
-	namespace
-	{
-		// The node that plays what a channel plays: its source node if it has plugin slots (graph::describe), else its
-		// own; -1 for none.
-		int sourceNode(const graph::GraphDesc& desc, ObjectId channel)
-		{
-			int found = -1;
-			for (size_t n = 0; n < desc.nodes.size(); ++n)
-			{
-				const graph::NodeDesc& node = desc.nodes[n];
-				if (node.object != channel)
-					continue;
-				if (node.kind == graph::NodeKind::ChannelSource)
-					return static_cast<int>(n);
-				if (node.kind == graph::NodeKind::Channel)
-					found = static_cast<int>(n);
-			}
-			return found;
-		}
-	}
-
 	void AudioEngine::rebuild()
 	{
 		const RenderSnapshot& snapshot = m_snapshots.latest();
 		m_autoMonitoring = autoMonitoring();
 		const audio::DeviceFormat& format = m_device->format();
 		graph::GraphDesc desc = graph::describe(snapshot);
+		m_sourceNodes.clear();
+		for (size_t n = 0; n < desc.nodes.size(); ++n)
+		{
+			const graph::NodeDesc& node = desc.nodes[n];
+			if (node.kind == graph::NodeKind::ChannelSource)
+				m_sourceNodes[node.object] = static_cast<int>(n);
+			else if (node.kind == graph::NodeKind::Channel)
+				m_sourceNodes.emplace(node.object, static_cast<int>(n)); // unless it has a source node
+		}
 
 		// Audio tracks play their playlists.
 		std::vector<Playback::Track> tracks;
@@ -360,7 +350,7 @@ namespace gnubase::engine
 			if (channel.type != TrackType::Audio)
 				continue;
 			auto playlist = std::make_shared<const Playlist>(makePlaylist(snapshot, channel));
-			const int source = sourceNode(desc, channel.id);
+			const int source = sourceNode(channel.id);
 			if (source >= 0)
 				desc.nodes[static_cast<size_t>(source)].processor =
 					std::make_shared<TrackPlayer>(playlist, channel.id, m_playback);
@@ -403,6 +393,32 @@ namespace gnubase::engine
 			m_programs = std::make_unique<rt::SnapshotPublisher<Program>>(std::move(program));
 		if (m_slots)
 			m_slots->retire(generation);
+	}
+
+	int AudioEngine::sourceNode(ObjectId channel) const
+	{
+		const auto found = m_sourceNodes.find(channel);
+		return found != m_sourceNodes.end() ? found->second : -1;
+	}
+
+	void AudioEngine::announceSlots(CommandContext& context)
+	{
+		std::map<ObjectId, std::string> statuses;
+		for (const RenderChannel& channel : m_snapshots.latest().channels)
+			for (const RenderSlot& slot : channel.slots)
+			{
+				std::string status = slotStatus(slot.id);
+				const auto announced = m_slotStatuses.find(slot.id);
+				// A new slot's command reported it loading.
+				if (status != (announced != m_slotStatuses.end() ? announced->second : "loading") && m_describeSlot)
+				{
+					Json described = m_describeSlot(slot.id);
+					if (!described.is_null())
+						context.emit("plugin.changed", {{"slot", std::move(described)}});
+				}
+				statuses[slot.id] = std::move(status);
+			}
+		m_slotStatuses = std::move(statuses);
 	}
 
 	std::string AudioEngine::slotStatus(ObjectId slot) const
@@ -492,7 +508,7 @@ namespace gnubase::engine
 				processor = instrument.channel;
 				instruments[channel.id] = instrument;
 			}
-			const int source = sourceNode(desc, channel.id);
+			const int source = sourceNode(channel.id);
 			if (source >= 0)
 				desc.nodes[static_cast<size_t>(source)].processor = processor;
 		}
@@ -528,7 +544,7 @@ namespace gnubase::engine
 			if (channel.input >= 0)
 				monitoring = Monitoring{channel.monitor, channel.recordEnable, m_autoMonitoring};
 			graph::NodeDesc& node = desc.nodes[firstChannel + i];
-			const auto source = static_cast<size_t>(sourceNode(desc, channel.id));
+			const auto source = static_cast<size_t>(sourceNode(channel.id));
 			if (source == firstChannel + i)
 			{
 				node.processor =
@@ -564,7 +580,7 @@ namespace gnubase::engine
 		{
 			if (!monitoredDirectly(channel))
 				continue;
-			const int node = sourceNode(desc, channel.id);
+			const int node = sourceNode(channel.id);
 			desc.audio.erase(std::remove_if(desc.audio.begin(), desc.audio.end(),
 								 [&channel, node](const graph::Connection& connection)
 								 { return connection.from == channel.input && connection.to == node; }),
@@ -1684,14 +1700,18 @@ namespace gnubase::engine
 				"Builds the processing graph again with the plugins of the slots as they are now. The engine runs it "
 				"on "
 				"its own when a plugin is ready after it was loaded or activated, failed, or asked to be restarted; a "
-				"slot's audio passes its plugin unchanged until then. Left out of engine.commandLog.",
+				"slot's audio passes its plugin unchanged until then. Emits plugin.changed for the slots whose "
+				"plugin's status changed. Left out of engine.commandLog.",
 				noParameters(), {{"type", "object"}}, false},
 			[this](CommandContext& context)
 			{
 				// Reset before the rebuild: a plugin that gets ready during it posts again.
 				m_updatingPlugins = false;
 				if (m_device)
+				{
 					rebuild();
+					announceSlots(context);
+				}
 				context.leaveOutOfLog();
 				return Json::object();
 			});

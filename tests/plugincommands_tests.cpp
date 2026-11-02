@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -72,6 +73,24 @@ namespace
 	Json pluginTarget(ObjectId slot, uint32_t parameter)
 	{
 		return {{"type", "plugin"}, {"slot", slot}, {"parameter", parameter}};
+	}
+
+	// The data of the events since the last call, by name.
+	std::map<std::string, std::vector<Json>> events(Client& client)
+	{
+		std::map<std::string, std::vector<Json>> found;
+		while (const auto message = client.poll())
+			if (const auto* event = std::get_if<Event>(&*message))
+				found[event->name].push_back(event->data);
+		return found;
+	}
+
+	std::vector<std::string> keys(const Json& object)
+	{
+		std::vector<std::string> result;
+		for (const auto& item : object.items())
+			result.push_back(item.key());
+		return result;
 	}
 }
 
@@ -329,7 +348,109 @@ TEST_CASE("slots are saved with their plugin's state, and files from before them
 	refused(
 		[](Json& p)
 		{
+			// 17 slots
 			for (int i = 0; i < 16; ++i)
-				p["channels"][0]["slots"].push_back(p["channels"][0]["slots"][0]);
+			{
+				Json extra = p["slots"][0];
+				extra["id"] = 9000 + i;
+				p["slots"].push_back(extra);
+				p["channels"][0]["slots"].push_back(9000 + i);
+			}
 		});
+	Json sixteen = saved; // the most a channel has
+	for (int i = 0; i < 15; ++i)
+	{
+		Json extra = sixteen["slots"][0];
+		extra["id"] = 9000 + i;
+		sixteen["slots"].push_back(extra);
+		sixteen["channels"][0]["slots"].push_back(9000 + i);
+	}
+	CHECK(projectFromJson(sixteen).channels.at(audio.channel).slots.size() == 16);
+}
+
+TEST_CASE("plugin states of any length are saved as base64, and texts that aren't base64 are refused", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const TestTrack audio = addTrack(client, "audio");
+	insert(client, audio.channel, "builtin:gainPan");
+	const Json saved = run(client, "project.get");
+
+	const std::vector<std::string> texts{"", "AA==", "AAE=", "AAEC", "AAECAw==", "AAECAwQ="};
+	for (size_t length = 0; length < texts.size(); ++length)
+	{
+		Json withState = saved;
+		withState["slots"][0]["state"] = texts[length];
+		const Project loaded = projectFromJson(withState);
+		const Slot& slot = loaded.slots.begin()->second;
+		REQUIRE(slot.state != nullptr);
+		std::vector<uint8_t> expected(length);
+		for (size_t i = 0; i < length; ++i)
+			expected[i] = static_cast<uint8_t>(i);
+		CHECK(*slot.state == expected);
+		CHECK(toJson(loaded) == withState);
+	}
+	for (const char* text : {"A", "AA", "AAA", "AA=", "A===", "=AAA", "AA=A", "AA==AA==", "AB==", "AAF=", "AA\nA"})
+	{
+		INFO(text);
+		Json bad = saved;
+		bad["slots"][0]["state"] = text;
+		CHECK_THROWS_AS(projectFromJson(bad), std::invalid_argument);
+	}
+}
+
+TEST_CASE("the plugin.* commands, parameter.set, undo and redo announce slots alike", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const TestTrack audio = addTrack(client, "audio");
+	events(client);
+
+	const ObjectId gain = insert(client, audio.channel, "builtin:gainPan");
+	std::map<std::string, std::vector<Json>> announced = events(client);
+	REQUIRE(announced["plugin.added"].size() == 1);
+	CHECK(announced["plugin.added"][0].at("slot") == run(client, "plugin.get", {{"slot", gain}}).at("slot"));
+	CHECK(announced["channel.changed"].size() == 1);
+
+	// plugin.changed has the slot as plugin.get describes it, whatever changed it.
+	run(client, "plugin.set", {{"slot", gain}, {"bypass", true}});
+	const Json set = events(client)["plugin.changed"].at(0).at("slot");
+	CHECK(set == run(client, "plugin.get", {{"slot", gain}}).at("slot"));
+	run(client, "parameter.set",
+		{{"channel", audio.channel}, {"target", pluginTarget(gain, processors::GainPan::Gain)}, {"value", -6.0}});
+	const Json parameter = events(client)["plugin.changed"].at(0).at("slot");
+	CHECK(keys(parameter) == keys(set));
+	CHECK(parameter == run(client, "plugin.get", {{"slot", gain}}).at("slot"));
+	for (const char* command : {"history.undo", "history.undo", "history.redo", "history.redo"})
+	{
+		INFO(command);
+		run(client, command);
+		const std::vector<Json> changed = events(client)["plugin.changed"];
+		REQUIRE(changed.size() == 1);
+		CHECK(keys(changed[0].at("slot")) == keys(set));
+		CHECK(changed[0].at("slot") == run(client, "plugin.get", {{"slot", gain}}).at("slot"));
+	}
+
+	// Removing it, and undo and redo of that.
+	run(client, "plugin.remove", {{"slot", gain}});
+	announced = events(client);
+	REQUIRE(announced["plugin.removed"].size() == 1);
+	CHECK(announced["plugin.removed"][0].at("slot") == gain);
+	CHECK(announced["channel.changed"].size() == 1);
+	run(client, "history.undo");
+	announced = events(client);
+	REQUIRE(announced["plugin.added"].size() == 1);
+	CHECK(announced["plugin.added"][0].at("slot") == run(client, "plugin.get", {{"slot", gain}}).at("slot"));
+	run(client, "history.redo");
+	CHECK(events(client)["plugin.removed"].size() == 1);
+
+	// The slots of a track that goes or comes back are in its channel's events.
+	run(client, "history.undo");
+	run(client, "track.remove", {{"track", audio.track}});
+	announced = events(client);
+	CHECK(announced["plugin.removed"].empty());
+	run(client, "history.undo");
+	announced = events(client);
+	CHECK(announced["plugin.added"].empty());
+	CHECK(!announced["channel.added"].empty());
 }

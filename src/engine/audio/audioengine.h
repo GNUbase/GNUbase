@@ -103,6 +103,9 @@ namespace gnubase::engine
 
 		// Command thread: the status of a slot's plugin, as the plugin.* commands report it.
 		std::string slotStatus(ObjectId slot) const;
+		// Command thread: describes a slot for the plugin.changed that audio.updatePlugins emits when the status of its
+		// plugin changed (ProjectModel::describeSlot).
+		void setSlotDescriber(std::function<Json(ObjectId slot)> describe) { m_describeSlot = std::move(describe); }
 
 		// Audio thread.
 		void process(const audio::DeviceBlock& block) noexcept override;
@@ -233,6 +236,11 @@ namespace gnubase::engine
 		void attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
 		// Brings the slots' plugins in line with the snapshot and gives the slot nodes those that are ready.
 		void attachSlots(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
+		// Emits plugin.changed for the slots whose plugin's status changed since the last call.
+		void announceSlots(CommandContext& context);
+		// The node that plays what a channel plays in the graph rebuild describes: its source node if it has plugin
+		// slots (graph::describe), else its own; -1 for none.
+		int sourceNode(ObjectId channel) const;
 		AutoMonitoring autoMonitoring() const; // the user setting
 		// Direct monitoring: audio tracks that play into an output bus hear their input bus through the device
 		// instead of the graph. ports: the device channels of each bus (devicePorts).
@@ -319,6 +327,9 @@ namespace gnubase::engine
 		// and destroys the plugins before the programs that hold their slots go.
 		std::unique_ptr<plugins::SlotInstances> m_slots;
 		std::atomic<bool> m_updatingPlugins{false}; // an audio.updatePlugins it posted hasn't run yet
+		std::function<Json(ObjectId)> m_describeSlot;
+		std::map<ObjectId, std::string> m_slotStatuses; // as announced last
+		std::map<ObjectId, int> m_sourceNodes;          // rebuild: per channel
 		Transport m_transport;                      // advanced by the audio thread
 		MidiPorts m_midi;
 		audio::MidiBuffer m_midiInput; // the block's messages from all MIDI inputs, for MIDI recording (#97)

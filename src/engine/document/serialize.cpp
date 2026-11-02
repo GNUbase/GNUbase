@@ -200,6 +200,9 @@ namespace gnubase::engine
 						return std::nullopt;
 					triple = (triple << 6) | static_cast<uint32_t>(digit);
 				}
+				// The bits after the last byte are zero, so that a state has one text.
+				if ((padding == 2 && (triple & 0xFFFFU) != 0) || (padding == 1 && (triple & 0xFFU) != 0))
+					return std::nullopt;
 				bytes.push_back(static_cast<uint8_t>(triple >> 16));
 				if (padding < 2)
 					bytes.push_back(static_cast<uint8_t>(triple >> 8));
@@ -778,10 +781,8 @@ namespace gnubase::engine
 		{
 			// A built-in plugin this build has: values as for an instrument. Others, e.g. one of a newer build, keep
 			// theirs.
-			const std::string prefix = "builtin:";
-			if (slot.plugin.compare(0, prefix.size(), prefix) == 0 &&
-				processors::findBuiltin(slot.plugin.substr(prefix.size())) != nullptr)
-				return instrumentParametersFromJson(json, slot.plugin.substr(prefix.size()), name);
+			if (const processors::BuiltinInfo* builtin = processors::findBuiltinPlugin(slot.plugin))
+				return instrumentParametersFromJson(json, builtin->id, name);
 			if (!json.is_array())
 				throw std::invalid_argument(name + " parameters must be a list");
 			std::map<uint32_t, double> values;
@@ -814,10 +815,7 @@ namespace gnubase::engine
 			slot.name = item.value("name", std::string());
 			slot.bypass = item.value("bypass", false);
 			slot.active = item.value("active", true);
-			const std::string prefix = "builtin:";
-			const processors::BuiltinInfo* builtin = slot.plugin.compare(0, prefix.size(), prefix) == 0
-				? processors::findBuiltin(slot.plugin.substr(prefix.size()))
-				: nullptr;
+			const processors::BuiltinInfo* builtin = processors::findBuiltinPlugin(slot.plugin);
 			if (builtin != nullptr && builtin->instrument)
 				throw std::invalid_argument(name + ": " + slot.plugin + " is an instrument, not an effect");
 			slot.parameters = slotParametersFromJson(item.value("parameters", Json::array()), slot, name);

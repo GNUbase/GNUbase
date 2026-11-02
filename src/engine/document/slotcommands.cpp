@@ -73,13 +73,10 @@ namespace gnubase::engine
 				"a channel has at most " + std::to_string(g_maxSlots) + " plugin slots");
 		}
 
-		// The built-in effect a plugin id names, or nullptr. Other formats come with the plugin scan (#66).
+		// The built-in plugin a plugin id names, or nullptr. Other formats come with the plugin scan (#66).
 		const processors::BuiltinInfo* knownPlugin(const std::string& plugin)
 		{
-			const std::string prefix = "builtin:";
-			if (plugin.compare(0, prefix.size(), prefix) != 0)
-				return nullptr;
-			return processors::findBuiltin(plugin.substr(prefix.size()));
+			return processors::findBuiltinPlugin(plugin);
 		}
 
 		Json insertPlugin(Project& project, CommandContext& context, const SlotStatus& status)
@@ -103,16 +100,20 @@ namespace gnubase::engine
 			const ObjectId id = slot.id;
 			project.slots[id] = std::move(slot);
 			context.emit("channel.changed", {{"channel", toJson(channel)}});
-			return {{"slot", describe(project, project.slots.at(id), status)}};
+			Json described = describe(project, project.slots.at(id), status);
+			context.emit("plugin.added", {{"slot", described}});
+			return {{"slot", std::move(described)}};
 		}
 
 		Json removePlugin(Project& project, CommandContext& context)
 		{
 			const Slot& slot = findSlot(project, context.parameters());
+			const ObjectId id = slot.id;
 			Channel& channel = project.channels.at(slot.channel);
-			channel.slots.erase(std::find(channel.slots.begin(), channel.slots.end(), slot.id));
-			project.slots.erase(slot.id);
+			channel.slots.erase(std::find(channel.slots.begin(), channel.slots.end(), id));
+			project.slots.erase(id);
 			context.emit("channel.changed", {{"channel", toJson(channel)}});
+			context.emit("plugin.removed", {{"slot", id}});
 			return Json::object();
 		}
 
@@ -164,6 +165,12 @@ namespace gnubase::engine
 		}
 	}
 
+	Json ProjectModel::describeSlot(const Project& project, ObjectId slot) const
+	{
+		const auto found = project.slots.find(slot);
+		return found != project.slots.end() ? describe(project, found->second, m_slotStatus) : Json();
+	}
+
 	void ProjectModel::registerSlotCommands(Engine& engine)
 	{
 		const Json idSchema = {{"type", "integer"}};
@@ -175,7 +182,7 @@ namespace gnubase::engine
 			"plugin (see parameter.list) and the status of its plugin in the audio engine: \"loading\" (being made or "
 			"activated, while the audio passes it unchanged), \"active\", \"inactive\", \"failed\" (it couldn't be "
 			"made or activated), \"unavailable\" (this build has no such plugin) or \"noDevice\" (no audio device is "
-			"open).";
+			"open). A command reports the status as of the command; plugin.changed announces it when it changes.";
 		const auto with = [this](Json (*handler)(Project&, CommandContext&, const SlotStatus&))
 		{
 			return [this, handler](Project& project, CommandContext& context)
@@ -189,7 +196,7 @@ namespace gnubase::engine
 				"audio passes through the slots from top to bottom before the fader. plugin is a built-in effect, "
 				"\"builtin:<id>\" with an id from processor.list that isn't an instrument; plugins of other formats "
 				"come with the plugin scan. The plugin starts with its parameters at their defaults, active and not "
-				"bypassed. Returns the slot. " +
+				"bypassed. Emits plugin.added with the slot. Returns the slot. " +
 					slotText,
 				objectSchema({{"channel", idSchema}, {"plugin", {{"type", "string"}}}, {"index", indexSchema}},
 					{"channel", "plugin"}),
@@ -197,8 +204,8 @@ namespace gnubase::engine
 			with(insertPlugin));
 		add(engine,
 			{"plugin.remove", 1,
-				"Removes a slot and its plugin; the slots below it move up. Undo puts the plugin back with its "
-				"parameters.",
+				"Removes a slot and its plugin; the slots below it move up. Emits plugin.removed with the slot's id. Undo "
+				"puts the plugin back with its parameters.",
 				objectSchema({{"slot", idSchema}}, {"slot"}), {{"type", "object"}}, false},
 			removePlugin);
 		add(engine,
@@ -211,8 +218,9 @@ namespace gnubase::engine
 		add(engine,
 			{"plugin.set", 1,
 				"Changes a slot: bypass lets the audio pass the plugin unchanged while the plugin keeps processing, so "
-				"switching it doesn't click; active false deactivates the plugin, which stays in its slot, and the "
-				"audio passes it unchanged. Returns the slot.",
+				"switching it doesn't click; the audio is delayed by the plugin's latency, so bypassing never shifts "
+				"timing. active false deactivates the plugin, which stays in its slot, and the audio passes it "
+				"unchanged. Emits plugin.changed with the slot. Returns the slot.",
 				objectSchema({{"slot", idSchema}, {"bypass", {{"type", "boolean"}}}, {"active", {{"type", "boolean"}}}},
 					{"slot"}),
 				slotResult, false},

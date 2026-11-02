@@ -32,11 +32,16 @@ namespace gnubase::engine::plugins
 			uint32_t channels = 2;
 		};
 
+		// [plugin job thread] Makes the plugin with this id for that many audio channels, or returns none if there is
+		// no such plugin.
+		using Factory =
+			std::function<std::unique_ptr<plugin::Plugin>(const std::string& plugin, uint32_t channels, plugin::Host&)>;
+
 		// changed is called on any thread when a plugin became ready or failed, or asked to be restarted; the engine
 		// then builds its graph again (update). retired(generation) tells whether the audio thread can no longer
-		// process a graph older than that generation.
-		SlotInstances(
-			HostManager& jobs, std::function<void()> changed, std::function<bool(uint64_t generation)> retired);
+		// process a graph older than that generation. Without a factory, slots get the built-in plugins.
+		SlotInstances(HostManager& jobs, std::function<void()> changed,
+			std::function<bool(uint64_t generation)> retired, Factory factory = {});
 		// Destroys the plugins on the job thread and waits for it; no graph may process them any more.
 		~SlotInstances();
 		SlotInstances(const SlotInstances&) = delete;

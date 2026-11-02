@@ -2123,7 +2123,8 @@ namespace gnubase::engine
 		}
 
 		// Called after the change was applied to project in the given direction.
-		void announce(const Project& project, const ProjectChange& change, Direction direction, CommandContext& context)
+		void announce(const ProjectModel& model, const Project& project, const ProjectChange& change,
+			Direction direction, CommandContext& context)
 		{
 			bool reordered = false;
 			bool activated = false;
@@ -2153,17 +2154,23 @@ namespace gnubase::engine
 			announceObjects(change.clips, direction, "clip", "clip", context);
 			announceObjects(change.audioEvents, direction, "audioEvent", "event", context);
 			announceObjects(change.markers, direction, "marker", "marker", context);
-			// Slots that came or went are in their channel's channel.changed, as with plugin.insert and plugin.remove.
+			// Slots as plugin.insert, plugin.remove and the other plugin.* commands announce them. Those of a channel that
+			// came or went are in its events.
+			std::set<ObjectId> channels; // that came or went
+			for (const ObjectChange<Channel>& channel : change.channels)
+				if (!channel.before || !channel.after)
+					channels.insert(channel.id);
 			for (const ObjectChange<Slot>& slot : change.slots)
 			{
-				const auto current = project.slots.find(slot.id);
-				if (!slot.before || !slot.after || current == project.slots.end())
+				const std::optional<Slot>& current = direction == Direction::Redo ? slot.after : slot.before;
+				const std::optional<Slot>& previous = direction == Direction::Redo ? slot.before : slot.after;
+				if (channels.count((current ? current : previous)->channel) != 0)
 					continue;
-				Json json = toJson(current->second);
-				json.erase("state");
-				const std::vector<ObjectId>& slots = project.channels.at(current->second.channel).slots;
-				json["index"] = std::distance(slots.begin(), std::find(slots.begin(), slots.end(), slot.id));
-				context.emit("plugin.changed", {{"slot", std::move(json)}});
+				if (!current)
+					context.emit("plugin.removed", {{"slot", slot.id}});
+				else
+					context.emit(previous ? "plugin.changed" : "plugin.added",
+						{{"slot", model.describeSlot(project, slot.id)}});
 			}
 			// After the tracks, so that a client knows the track that becomes active.
 			if (activated)
@@ -2278,7 +2285,7 @@ namespace gnubase::engine
 		{
 			const HistoryStep& step = undo ? m_history.undo() : m_history.redo();
 			apply(m_project, step.change, direction);
-			announce(m_project, step.change, direction, context);
+			announce(*this, m_project, step.change, direction, context);
 		}
 		announceHistory(context);
 		publish();

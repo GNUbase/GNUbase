@@ -4,7 +4,9 @@
 // slots change.
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "engine/plugins/hostmanager.h"
 #include "engine/plugins/pluginslot.h"
+#include "engine/plugins/slotinstances.h"
 #include "engine/processors/builtinplugin.h"
 #include "testutils/testutils.h"
 
@@ -13,14 +15,17 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase::engine;
@@ -97,6 +102,104 @@ namespace
 		run(client, "parameter.set",
 			{{"channel", channel}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", parameter}}},
 				{"value", value}});
+	}
+
+	class TestHost final : public gnubase::plugin::Host
+	{
+	public:
+		void requestRestart() override {}
+		void requestProcess() override {}
+		void requestCallback() override {}
+		void* extension(std::string_view /*id*/) override { return nullptr; }
+	};
+
+	// A plugin with parameters 0 to count - 1 that keeps the last value each got in a block; one that doesn't
+	// initialize, if asked. It has no audio ports.
+	class CountingPlugin final : public gnubase::plugin::Plugin, public gnubase::plugin::Params
+	{
+	public:
+		CountingPlugin(uint32_t count, bool initializes) : values(count, -1.0), m_initializes(initializes)
+		{
+			m_descriptor.id = "test:counting";
+		}
+
+		std::vector<double> values; // -1 until it gets one
+		std::atomic<size_t> changes{0};
+
+		const gnubase::plugin::Descriptor& descriptor() const override { return m_descriptor; }
+		bool init() override { return m_initializes; }
+		bool activate(double /*sampleRate*/, uint32_t /*minFrames*/, uint32_t /*maxFrames*/) override { return true; }
+		void deactivate() override {}
+		bool startProcessing() noexcept override { return true; }
+		void stopProcessing() noexcept override {}
+		void reset() noexcept override {}
+		gnubase::plugin::ProcessStatus process(const gnubase::plugin::Process& process) noexcept override
+		{
+			for (const gnubase::plugin::Event& event : process.eventsIn)
+				if (event.type == gnubase::plugin::EventType::ParamValue && event.param < values.size())
+				{
+					values[event.param] = event.value;
+					++changes;
+				}
+			return gnubase::plugin::ProcessStatus::Continue;
+		}
+		void* extension(std::string_view id) override
+		{
+			return gnubase::plugin::provide<gnubase::plugin::Params>(this, id);
+		}
+
+		uint32_t paramCount() const override { return static_cast<uint32_t>(values.size()); }
+		bool paramInfo(uint32_t index, gnubase::plugin::ParamInfo& info) const override
+		{
+			if (index >= values.size())
+				return false;
+			info.id = index;
+			info.name = "Parameter " + std::to_string(index);
+			return true;
+		}
+		bool paramValue(uint32_t param, double& value) const override
+		{
+			if (param >= values.size())
+				return false;
+			value = values[param];
+			return true;
+		}
+		bool paramValueToText(uint32_t /*param*/, double /*value*/, std::string& /*text*/) const override
+		{
+			return false;
+		}
+		bool paramTextToValue(uint32_t /*param*/, std::string_view /*text*/, double& /*value*/) const override
+		{
+			return false;
+		}
+		void flushParams(
+			const gnubase::plugin::EventList& /*in*/, gnubase::plugin::EventList& /*out*/) noexcept override
+		{
+		}
+
+	private:
+		gnubase::plugin::Descriptor m_descriptor;
+		bool m_initializes = true;
+	};
+
+	// Processes a stereo block of 128 frames of the samples.
+	void processBlock(plugins::PluginSlot& slot, std::vector<float>& left, std::vector<float>& right)
+	{
+		const graph::EventBuffer eventsIn(4);
+		graph::EventBuffer eventsOut(4);
+		const graph::TransportBlock transport;
+		const std::array<float*, 2> audio{left.data(), right.data()};
+		slot.process({audio.data(), 2, static_cast<uint32_t>(left.size()), eventsIn, eventsOut, transport});
+	}
+
+	// The data of the events since the last call, by name.
+	std::map<std::string, std::vector<Json>> events(Client& client)
+	{
+		std::map<std::string, std::vector<Json>> found;
+		while (const auto message = client.poll())
+			if (const auto* event = std::get_if<Event>(&*message))
+				found[event->name].push_back(event->data);
+		return found;
 	}
 }
 
@@ -227,15 +330,7 @@ TEST_CASE("plugins in slots render the same with any number of processing thread
 
 TEST_CASE("switching bypass crossfades over a block, so it doesn't click", "[unit]")
 {
-	class NullHost final : public gnubase::plugin::Host
-	{
-	public:
-		void requestRestart() override {}
-		void requestProcess() override {}
-		void requestCallback() override {}
-		void* extension(std::string_view /*id*/) override { return nullptr; }
-	};
-	NullHost host;
+	TestHost host;
 	std::unique_ptr<gnubase::plugin::Plugin> gain = processors::BuiltinFactory().create("builtin:gainPan", host);
 	REQUIRE(gain->init());
 	plugins::PluginSlot slot(std::move(gain));
@@ -304,4 +399,151 @@ TEST_CASE("plugins change while the device plays, and a new sample rate activate
 	waitFor(client, eq, "active");
 	run(client, "audio.stop");
 	CHECK(run(client, "plugin.get", {{"slot", limiter}}).at("slot").at("bypass") == true);
+}
+
+TEST_CASE("bypassing a plugin with latency delays the input by as much, so the timing stays", "[unit]")
+{
+	TestHost host;
+	std::unique_ptr<gnubase::plugin::Plugin> limiter = processors::BuiltinFactory().create("builtin:limiter", host);
+	REQUIRE(limiter->init());
+	plugins::PluginSlot slot(std::move(limiter));
+	slot.setParameters({{g_limiterCeiling, 0.0}}); // far above the input: it only delays it
+	REQUIRE(slot.activate(48000.0, 128));
+	const uint32_t latency = slot.latency();
+	REQUIRE(latency == 48);
+
+	std::vector<float> input;
+	std::vector<float> played;
+	std::vector<float> left(128);
+	std::vector<float> right(128);
+	for (int block = 0; block < 40; ++block)
+	{
+		slot.setBypass(block >= 30 || (block >= 10 && block < 20));
+		for (size_t i = 0; i < left.size(); ++i)
+		{
+			const double t = static_cast<double>(input.size()) / 48000.0;
+			left[i] = static_cast<float>(0.25 * std::sin(2.0 * 3.14159265358979 * 440.0 * t));
+			right[i] = left[i];
+			input.push_back(left[i]);
+		}
+		processBlock(slot, left, right);
+		played.insert(played.end(), left.begin(), left.end());
+		CHECK(slot.latency() == latency);
+	}
+	float largest = 0.0f;
+	for (size_t i = latency; i < played.size(); ++i)
+		largest = std::max(largest, std::abs(played[i] - input[i - latency]));
+	CHECK(largest < 1e-3f); // 0.23 where the undelayed input comes in
+}
+
+TEST_CASE("more parameter changes than a block has room for reach the plugin in the next blocks", "[unit]")
+{
+	constexpr uint32_t count = 3000; // almost three times graph::g_maxEventsPerBlock
+	auto made = std::make_unique<CountingPlugin>(count, true);
+	CountingPlugin& plugin = *made;
+	plugins::PluginSlot slot(std::move(made));
+	REQUIRE(slot.activate(48000.0, 128));
+	std::map<uint32_t, double> values;
+	for (uint32_t i = 0; i < count; ++i)
+		values[i] = 0.5;
+	slot.setParameters(values);
+
+	std::vector<float> left(128);
+	std::vector<float> right(128);
+	processBlock(slot, left, right);
+	CHECK(plugin.changes > 0);
+	CHECK(plugin.changes <= graph::g_maxEventsPerBlock / 2); // room for the block's own events
+	for (int block = 0; block < 10; ++block)
+		processBlock(slot, left, right);
+	CHECK(plugin.changes == count);
+	CHECK(std::all_of(plugin.values.begin(), plugin.values.end(), [](double value) { return value == 0.5; }));
+
+	// Later changes come once.
+	values[7] = 0.25;
+	slot.setParameters(values);
+	processBlock(slot, left, right);
+	processBlock(slot, left, right);
+	CHECK(plugin.changes == count + 1);
+	CHECK(plugin.values[7] == 0.25);
+}
+
+TEST_CASE("a slot whose plugin can't be made is unavailable, and one whose plugin doesn't initialize failed", "[unit]")
+{
+	plugins::HostManager jobs;
+	std::atomic<int> changed{0};
+	plugins::SlotInstances slots(
+		jobs, [&changed] { ++changed; }, [](uint64_t /*generation*/) { return true; },
+		[](const std::string& plugin, uint32_t /*channels*/,
+			gnubase::plugin::Host& /*host*/) -> std::unique_ptr<gnubase::plugin::Plugin>
+		{
+			if (plugin == "test:broken")
+				return std::make_unique<CountingPlugin>(1, false);
+			if (plugin == "test:working")
+				return std::make_unique<CountingPlugin>(1, true);
+			return nullptr;
+		});
+	RenderSlot missing;
+	missing.id = 1;
+	missing.plugin = "test:missing";
+	RenderSlot broken;
+	broken.id = 2;
+	broken.plugin = "test:broken";
+	RenderSlot working;
+	working.id = 3;
+	working.plugin = "test:working";
+	const std::vector<plugins::SlotInstances::Wanted> wanted{{&missing, 2}, {&broken, 2}, {&working, 2}};
+	slots.update(wanted, 48000.0, 128);
+	jobs.run([] {}).get(); // after the jobs that make them
+	CHECK(slots.status(1) == "unavailable");
+	CHECK(slots.status(2) == "failed");
+	CHECK(slots.processor(2) == nullptr);
+	CHECK(slots.status(3) == "active");
+	CHECK(changed == 3);
+
+	// Neither is tried again until the slot changes.
+	slots.update(wanted, 48000.0, 128);
+	slots.retire(1);
+	jobs.run([] {}).get();
+	CHECK(changed == 3);
+	CHECK(slots.status(1) == "unavailable");
+	CHECK(slots.processor(3) != nullptr);
+	CHECK(slots.status(4).empty());
+}
+
+TEST_CASE("the engine closes while plugins in slots are made and changed", "[integration]")
+{
+	for (int i = 0; i < 5; ++i)
+	{
+		Engine engine;
+		Client client(engine);
+		const ObjectId channel = monitorSine(client, 500.0, -24.0);
+		run(client, "audio.start");
+		insert(client, channel, "builtin:eq");
+		const Json limiter = insert(client, channel, "builtin:limiter");
+		run(client, "plugin.set", {{"slot", limiter}, {"active", false}});
+		// The engine goes now, with the plugins' jobs queued.
+	}
+	SUCCEED();
+}
+
+TEST_CASE("plugin.changed announces a slot once its plugin's status changed", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId channel = monitorSine(client, 500.0, -24.0);
+	const Json slot = insert(client, channel, "builtin:eq");
+	waitFor(client, slot, "active");
+	run(client, "plugin.set", {{"slot", slot}, {"active", false}});
+	waitFor(client, slot, "inactive");
+	run(client, "audio.updatePlugins"); // announces nothing new
+
+	const std::vector<Json> announced = events(client)["plugin.changed"];
+	std::vector<std::string> statuses;
+	statuses.reserve(announced.size());
+	for (const Json& changed : announced)
+		statuses.push_back(changed.at("slot").at("status").get<std::string>());
+	REQUIRE(!statuses.empty());
+	CHECK(std::count(statuses.begin(), statuses.end(), "active") >= 1);
+	CHECK(std::count(statuses.begin(), statuses.end(), "inactive") == 1);
+	CHECK(statuses.back() == "inactive");
 }

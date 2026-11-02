@@ -55,6 +55,9 @@ namespace gnubase::engine
 
 		// What the plugin.* commands report as a slot's status: the audio engine's (AudioEngine::slotStatus).
 		void setSlotStatus(std::function<std::string(ObjectId slot)> status) { m_slotStatus = std::move(status); }
+		// A slot of the project as the plugin.* commands and their plugin.changed events describe it, with its index
+		// and status; null for no such slot. Only on the command thread.
+		Json describeSlot(const Project& project, ObjectId slot) const;
 
 	private:
 		// Registers a query, or a command that changes the project. Such a command runs on the project, and if it

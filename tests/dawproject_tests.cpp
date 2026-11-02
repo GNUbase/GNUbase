@@ -1169,7 +1169,7 @@ TEST_CASE("built-in plugins in slots are devices in project.xml, and come back f
 								 .child("Channel")
 								 .child("Devices");
 	CHECK(devices == devices.parent().first_child()); // a Channel's first element
-	pugi::xml_node first = devices.child("BuiltinDevice");
+	const pugi::xml_node first = devices.child("BuiltinDevice");
 	CHECK(std::string(first.attribute("deviceID").as_string()) == "builtin:gainPan");
 	CHECK(std::string(first.attribute("deviceRole").as_string()) == "audioFX");
 	CHECK(first.attribute("loaded").as_bool());
@@ -1177,6 +1177,7 @@ TEST_CASE("built-in plugins in slots are devices in project.xml, and come back f
 	const pugi::xml_node parameter = first.child("Parameters").child("RealParameter");
 	CHECK(parameter.attribute("parameterID").as_uint(99) == 0);
 	CHECK(parameter.attribute("value").as_double() == -3.0);
+	CHECK(std::string(parameter.attribute("unit").as_string()) == "decibel"); // required by the format
 	CHECK(!first.next_sibling("BuiltinDevice").attribute("loaded").as_bool(true));
 
 	// Another application's file: its own devices and ones this build doesn't have are left out, values stop at

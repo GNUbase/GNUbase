@@ -37,14 +37,16 @@ namespace gnubase::engine::plugins
 			std::string status;
 		};
 
-		// [plugin job thread] Makes a slot's plugin and activates it if the slot wants it active.
-		Made make(
-			plugin::Host& host, const RenderSlot& wanted, uint32_t channels, double sampleRate, uint32_t maxFrames)
+		std::unique_ptr<plugin::Plugin> makeBuiltin(const std::string& plugin, uint32_t channels, plugin::Host& host)
 		{
-			std::unique_ptr<plugin::Plugin> plugin;
-			const std::string prefix = "builtin:";
-			if (wanted.plugin.compare(0, prefix.size(), prefix) == 0)
-				plugin = processors::BuiltinFactory(channels).create(wanted.plugin, host);
+			return processors::BuiltinFactory(channels).create(plugin, host);
+		}
+
+		// [plugin job thread] Makes a slot's plugin and activates it if the slot wants it active.
+		Made make(const SlotInstances::Factory& factory, plugin::Host& host, const RenderSlot& wanted,
+			uint32_t channels, double sampleRate, uint32_t maxFrames)
+		{
+			std::unique_ptr<plugin::Plugin> plugin = factory(wanted.plugin, channels, host);
 			if (!plugin)
 				return {nullptr, "unavailable"};
 			if (!plugin->init())
@@ -69,11 +71,14 @@ namespace gnubase::engine::plugins
 		HostManager& jobs;
 		std::function<void()> changed;
 		std::function<bool(uint64_t)> retired;
+		Factory factory;
 		std::atomic<bool> closing{false};
 		std::atomic<int> retiring{0}; // whenRetired jobs that haven't run their work
 
-		Shared(HostManager& manager, std::function<void()> onChange, std::function<bool(uint64_t)> isRetired)
-			: jobs(manager), changed(std::move(onChange)), retired(std::move(isRetired))
+		Shared(HostManager& manager, std::function<void()> onChange, std::function<bool(uint64_t)> isRetired,
+			Factory make)
+			: jobs(manager), changed(std::move(onChange)), retired(std::move(isRetired)),
+			  factory(make ? std::move(make) : Factory(makeBuiltin))
 		{
 		}
 	};
@@ -131,11 +136,52 @@ namespace gnubase::engine::plugins
 			processor = std::move(made.processor);
 			status = std::move(made.status);
 		}
+		void setStatus(std::string value)
+		{
+			const std::scoped_lock lock(mutex);
+			status = std::move(value);
+		}
+		std::shared_ptr<PluginSlot> currentProcessor() const
+		{
+			const std::scoped_lock lock(mutex);
+			return processor;
+		}
+		// [plugin job thread] Does what retire marked it for.
+		void apply(Action what, double sampleRate, uint32_t maxFrames)
+		{
+			const std::shared_ptr<PluginSlot> current = currentProcessor();
+			if (!current)
+				return;
+			try
+			{
+				switch (what)
+				{
+				case Action::Destroy:
+					current->destroy();
+					set({nullptr, "unavailable"});
+					break;
+				case Action::Deactivate:
+					current->deactivate();
+					set({current, "inactive"});
+					break;
+				case Action::Reactivate:
+					current->deactivate();
+					set(
+						{current, sampleRate > 0.0 && current->activate(sampleRate, maxFrames) ? "active" : "failed"});
+					break;
+				}
+			}
+			catch (const std::exception& error)
+			{
+				logging::warning("Plugin slot: changing its plugin failed: {}", error.what());
+				set({current, "failed"});
+			}
+		}
 	};
 
-	SlotInstances::SlotInstances(
-		HostManager& jobs, std::function<void()> changed, std::function<bool(uint64_t generation)> retired)
-		: m_shared(std::make_shared<Shared>(jobs, std::move(changed), std::move(retired)))
+	SlotInstances::SlotInstances(HostManager& jobs, std::function<void()> changed,
+		std::function<bool(uint64_t generation)> retired, Factory factory)
+		: m_shared(std::make_shared<Shared>(jobs, std::move(changed), std::move(retired), std::move(factory)))
 	{
 	}
 
@@ -151,7 +197,7 @@ namespace gnubase::engine::plugins
 				post(
 					[instance]
 					{
-						const std::shared_ptr<PluginSlot> processor = instance->processor;
+						const std::shared_ptr<PluginSlot> processor = instance->currentProcessor();
 						if (processor)
 							processor->destroy();
 					});
@@ -185,14 +231,15 @@ namespace gnubase::engine::plugins
 					return;
 				try
 				{
-					instance->set(make(*instance->host, *slot, channels, sampleRate, maxFrames));
+					instance->set(make(shared->factory, *instance->host, *slot, channels, sampleRate, maxFrames));
 				}
 				catch (const std::exception& error)
 				{
 					logging::warning("Plugin slot {}: {} failed: {}", slot->id, slot->plugin, error.what());
 					instance->set({nullptr, "failed"});
 				}
-				shared->changed();
+				if (!shared->closing)
+					shared->changed();
 			});
 	}
 
@@ -317,54 +364,36 @@ namespace gnubase::engine::plugins
 
 	void SlotInstances::retire(uint64_t generation)
 	{
+		if (m_leaving.empty())
+			return;
+		struct Leaving
+		{
+			std::shared_ptr<Instance> instance;
+			Action action;
+		};
+		std::vector<Leaving> leaving;
+		leaving.reserve(m_leaving.size());
+		for (const std::shared_ptr<Instance>& instance : m_leaving)
+		{
+			instance->leaving = false;
+			if (instance->action != Action::Destroy)
+				instance->setStatus("loading");
+			leaving.push_back({instance, instance->action});
+		}
+		m_leaving.clear();
+
 		const std::shared_ptr<Shared> shared = m_shared;
 		const double sampleRate = m_sampleRate;
 		const uint32_t maxFrames = m_maxFrames;
-		for (const std::shared_ptr<Instance>& instance : m_leaving)
-		{
-			const Action action = instance->action;
-			instance->leaving = false;
-			++shared->retiring;
-			if (action != Action::Destroy)
-				instance->set({instance->processor, "loading"});
-			whenRetired(shared, generation,
-				[shared, instance, action, sampleRate, maxFrames]
-				{
-					std::shared_ptr<PluginSlot> processor;
-					{
-						const std::scoped_lock lock(instance->mutex);
-						processor = instance->processor;
-					}
-					if (!processor)
-						return;
-					try
-					{
-						switch (action)
-						{
-						case Action::Destroy:
-							processor->destroy();
-							instance->set({nullptr, "unavailable"});
-							return;
-						case Action::Deactivate:
-							processor->deactivate();
-							instance->set({processor, "inactive"});
-							break;
-						case Action::Reactivate:
-							processor->deactivate();
-							instance->set({processor,
-								sampleRate > 0.0 && processor->activate(sampleRate, maxFrames) ? "active" : "failed"});
-							break;
-						}
-					}
-					catch (const std::exception& error)
-					{
-						logging::warning("Plugin slot: changing its plugin failed: {}", error.what());
-						instance->set({processor, "failed"});
-					}
-					if (!shared->closing)
-						shared->changed();
-				});
-		}
-		m_leaving.clear();
+		++shared->retiring;
+		whenRetired(shared, generation,
+			[shared, leaving = std::move(leaving), sampleRate, maxFrames]
+			{
+				for (const Leaving& item : leaving)
+					item.instance->apply(item.action, sampleRate, maxFrames);
+				if (!shared->closing)
+					shared->changed();
+			});
 	}
+
 }

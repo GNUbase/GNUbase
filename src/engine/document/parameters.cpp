@@ -71,13 +71,9 @@ namespace gnubase::engine
 				for (const processors::ParameterInfo& parameter : instrument->parameters)
 					parameters.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0, 0}, parameter});
 			// The plugins in its slots, top to bottom: built-in ones; others report theirs once they run (#283).
-			const std::string prefix = "builtin:";
 			for (const ObjectId id : channel.slots)
 			{
-				const Slot& slot = project.slots.at(id);
-				if (slot.plugin.compare(0, prefix.size(), prefix) != 0)
-					continue;
-				if (const processors::BuiltinInfo* plugin = processors::findBuiltin(slot.plugin.substr(prefix.size())))
+				if (const processors::BuiltinInfo* plugin = processors::findBuiltinPlugin(project.slots.at(id).plugin))
 					for (const processors::ParameterInfo& parameter : plugin->parameters)
 						parameters.push_back({{AutomationTargetType::Plugin, parameter.id, 0, 0, id}, parameter});
 			}
@@ -219,7 +215,7 @@ namespace gnubase::engine
 				describe(project, channel, findParameter(project, channel, target(parameters.at("target"))))}};
 		}
 
-		Json setParameter(Project& project, CommandContext& context)
+		Json setParameter(Project& project, CommandContext& context, const ProjectModel& model)
 		{
 			const Json& parameters = context.parameters();
 			Channel& channel = findChannel(project, parameters);
@@ -245,15 +241,9 @@ namespace gnubase::engine
 			}
 			setValue(project, channel, parameter, newValue);
 			if (parameter.target.type == AutomationTargetType::Plugin)
-			{
-				Json slot = toJson(project.slots.at(parameter.target.slot));
-				slot.erase("state");
-				context.emit("plugin.changed", {{"slot", std::move(slot)}});
-			}
+				context.emit("plugin.changed", {{"slot", model.describeSlot(project, parameter.target.slot)}});
 			else
-			{
 				context.emit("channel.changed", {{"channel", toJson(channel)}});
-			}
 			return {{"parameter", describe(project, channel, parameter)}};
 		}
 	}
@@ -301,6 +291,6 @@ namespace gnubase::engine
 								 {"text", {{"type", "string"}}}},
 					{"channel", "target"}),
 				parameterResult, false},
-			setParameter);
+			[this](Project& project, CommandContext& context) { return setParameter(project, context, *this); });
 	}
 }

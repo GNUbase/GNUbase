@@ -26,7 +26,7 @@ namespace gnubase::engine::plugins
 	// block it passes the node's audio to the plugin's main input port, its events as plugin events and the transport
 	// as transport segments, and the main output port back as the node's audio. Other ports get silence. A block the
 	// plugin fails (ProcessStatus::Error, which a remote plugin also returns once its host crashed or hung) outputs
-	// silence. A bypassed slot processes the plugin and outputs its input.
+	// silence. A bypassed slot processes the plugin and outputs its input, delayed by the plugin's latency.
 	//
 	// Threads: [main] calls are the plugin's main thread, the plugin job thread in the engine; they may only happen
 	// while no graph processes the slot.
@@ -53,13 +53,15 @@ namespace gnubase::engine::plugins
 		bool loadState(const std::vector<uint8_t>& state);
 
 		// [command thread] The values for the plugin's parameters, by parameter id: from the next block on, those
-		// that changed since the last call reach the plugin as parameter changes at the block's start. A parameter
+		// that changed since the last call reach the plugin as parameter changes at the block's start, up to half a
+		// block's events per block and the rest in the blocks after it. A parameter
 		// that has no value any more goes back to its default; others keep what the plugin has, e.g. from its state.
 		// Values of parameters the plugin doesn't have are ignored.
 		void setParameters(const std::map<uint32_t, double>& values);
 
 		// [any] From the next block on, the slot outputs its input while the plugin keeps processing, crossfading over
-		// that block, and reports no latency once the graph is compiled again.
+		// that block. The input is delayed by the plugin's latency, which the slot keeps reporting, so bypassing
+		// never shifts timing.
 		void setBypass(bool bypass) noexcept { m_bypass.store(bypass, std::memory_order_relaxed); }
 		bool bypassed() const noexcept { return m_bypass.load(std::memory_order_relaxed); }
 
@@ -121,8 +123,12 @@ namespace gnubase::engine::plugins
 		std::vector<plugin::TransportSegment> m_transport;
 		bool m_started = false;
 		int64_t m_steadyTime = 0;
-		std::vector<float> m_dry; // the input of a bypassed block: g_maxAudioChannels × maxFrames
-		bool m_bypassed = false;  // the last block's bypass
+		// The input, delayed by the plugin's latency for bypass: a ring of g_maxAudioChannels × m_dryLength.
+		std::vector<float> m_dry;
+		uint32_t m_dryLength = 0; // latency + maxFrames
+		uint32_t m_dryWrite = 0;
+		uint32_t m_delay = 0;    // the plugin's latency when it was activated
+		bool m_bypassed = false; // the last block's bypass
 		uint32_t m_maxFrames = 0;
 	};
 }

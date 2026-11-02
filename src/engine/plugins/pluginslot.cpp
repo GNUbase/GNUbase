@@ -164,7 +164,10 @@ namespace gnubase::engine::plugins
 		// The ports as activate left them: a plugin may change them while inactive, and a remote one reads them again.
 		allocate(true, maxFrames);
 		allocate(false, maxFrames);
-		m_dry.assign(size_t{g_maxAudioChannels} * maxFrames, 0.0f);
+		m_delay = m_active && m_latency != nullptr ? m_latency->latency() : 0;
+		m_dryLength = m_delay + maxFrames;
+		m_dry.assign(size_t{g_maxAudioChannels} * m_dryLength, 0.0f);
+		m_dryWrite = 0;
 		m_maxFrames = maxFrames;
 		m_bypassed = bypassed();
 		if (m_active)
@@ -177,7 +180,8 @@ namespace gnubase::engine::plugins
 
 	uint32_t PluginSlot::latency() const
 	{
-		return m_active && m_latency != nullptr && !bypassed() ? m_latency->latency() : 0;
+		// Bypassed too: the input is delayed by as much.
+		return m_active ? m_delay : 0;
 	}
 
 	void PluginSlot::addParameterChanges() noexcept
@@ -185,9 +189,12 @@ namespace gnubase::engine::plugins
 		const uint64_t changes = m_changes.load(std::memory_order_acquire);
 		if (changes == m_seenChanges)
 			return;
-		m_seenChanges = changes;
+		// At most half a block's events, so the block's own events have room; the rest follow in the next blocks.
+		size_t room = graph::g_maxEventsPerBlock / 2;
 		for (size_t i = 0; i < m_parameterIds.size(); ++i)
 		{
+			if (room == 0)
+				return; // m_seenChanges stays behind: the next block looks again
 			if (!m_changed[i].exchange(false, std::memory_order_acquire))
 				continue;
 			plugin::Event event;
@@ -197,8 +204,14 @@ namespace gnubase::engine::plugins
 			event.key = -1;
 			event.param = m_parameterIds[i];
 			event.value = m_targets[i].load(std::memory_order_relaxed);
-			m_eventsIn.push(event);
+			if (!m_eventsIn.push(event))
+			{
+				m_changed[i].store(true, std::memory_order_relaxed);
+				return;
+			}
+			--room;
 		}
+		m_seenChanges = changes;
 	}
 
 	void convertEvent(const graph::ProcessEvent& event, uint32_t frames, plugin::EventList& out) noexcept
@@ -305,11 +318,21 @@ namespace gnubase::engine::plugins
 		const bool crossfade = bypass != m_bypassed;
 		m_bypassed = bypass;
 		const int dryChannels = std::min(context.channels, g_maxAudioChannels);
-		const bool dry = (bypass || crossfade) && context.frames <= m_maxFrames;
-		if (dry)
+		const bool fits = context.frames <= m_maxFrames;
+		const bool dry = (bypass || crossfade) && fits;
+		// Every block's input goes into the ring, so a bypass that starts has the delayed input at hand.
+		const uint32_t written = m_dryWrite;
+		if (fits)
+		{
 			for (int c = 0; c < dryChannels; ++c)
-				std::memcpy(m_dry.data() + (static_cast<size_t>(c) * m_maxFrames), context.audio[c],
-					context.frames * sizeof(float));
+			{
+				float* ring = m_dry.data() + (static_cast<size_t>(c) * m_dryLength);
+				const uint32_t first = std::min(context.frames, m_dryLength - written);
+				std::memcpy(ring + written, context.audio[c], first * sizeof(float));
+				std::memcpy(ring, context.audio[c] + first, (context.frames - first) * sizeof(float));
+			}
+			m_dryWrite = (written + context.frames) % m_dryLength;
+		}
 
 		// The node's audio goes to the main input; a mono node feeds every channel of it.
 		for (uint32_t port = 0; port < m_inputs.size(); ++port)
@@ -343,20 +366,24 @@ namespace gnubase::engine::plugins
 			output(context, bypass);
 		if (!dry)
 			return;
-		// The input instead, or a crossfade to or from it over the block.
+		// The delayed input instead, or a crossfade to or from it over the block.
+		const uint32_t start = (written + m_dryLength - m_delay) % m_dryLength;
 		for (int c = 0; c < dryChannels; ++c)
 		{
-			const float* input = m_dry.data() + (static_cast<size_t>(c) * m_maxFrames);
+			const float* ring = m_dry.data() + (static_cast<size_t>(c) * m_dryLength);
 			float* samples = context.audio[c];
-			if (!crossfade)
-			{
-				std::memcpy(samples, input, context.frames * sizeof(float));
-				continue;
-			}
+			uint32_t read = start;
 			for (uint32_t i = 0; i < context.frames; ++i)
 			{
+				const float input = ring[read];
+				read = read + 1 == m_dryLength ? 0 : read + 1;
+				if (!crossfade)
+				{
+					samples[i] = input;
+					continue;
+				}
 				const float t = static_cast<float>(i + 1) / static_cast<float>(context.frames);
-				samples[i] += (bypass ? t : 1.0f - t) * (input[i] - samples[i]);
+				samples[i] += (bypass ? t : 1.0f - t) * (input - samples[i]);
 			}
 		}
 	}
