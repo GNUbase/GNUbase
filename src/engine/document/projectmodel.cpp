@@ -2948,7 +2948,7 @@ namespace gnubase::engine
 				"Monitoring glides in and out over one audio block. mute silences a channel; while any channel is "
 				"soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the "
 				"channels that play into them are heard. Muting and soloing glide over one audio block. notes is the "
-				"text of the channel's notepad in the mixer.",
+				"channel's notepad, the user's text about it.",
 				objectSchema({{"channel", idSchema}, {"format", formats}, {"channels", integerSchema},
 								 {"input", idSchema}, {"output", idSchema}, {"instrument", stringSchema},
 								 {"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},

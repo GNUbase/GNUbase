@@ -17,9 +17,10 @@ is in [mixer.md](mixer.md).
   reference, the lower zone's mixer and the windows don't follow each other's visibility (p. 442).
 - Views are settings, like snap: not undo steps (undo takes back a track, not what a mixer hides), saved with the
   project in GNUbase's extra entry (`mixers` in `project.get`), empty for files from before.
-- **Notes** (p. 497): `channel.set` `notes`, the text of a channel's notepad. **Pictures** (p. 497): `track.set`
-  `picture`, an image file (PNG, JPEG or SVG) that the mixer shows on the track's channel, or empty. Both are undo
-  steps, copied by `track.duplicate` and saved in GNUbase's extra entry.
+- **Notes** (p. 497): the channel's notes (`channel.set` `notes`), which the inspector's notepad edits too
+  ([inspector.md](inspector.md)). **Pictures** (p. 497): `track.set` `picture`, an image file (PNG, JPEG or SVG) that
+  the mixer shows on the track's channel, or empty. Both are undo steps and copied by `track.duplicate`; pictures are
+  saved in GNUbase's extra entry, notes also in DAWproject's `comment`.
 
 ## The mixer
 
@@ -84,8 +85,8 @@ once and the green drop line; the Zones tab (locking channels to the left and ri
 the right zone; the channel overview, the meter bridge, Channel Latency and the channel strip's
 sections (#107); Find Track/Channel, channel visibility configurations, Undo Visibility Change, syncing the visibility
 with the project window's track visibility, linking channels and mixers, the zoom palette and the transport and state
-buttons of the toolbar; the track pictures browser and pictures in the track list; faders of busses; notes in
-DAWproject's `comment`; and the windows' places, which workspaces will keep (#163).
+buttons of the toolbar; the track pictures browser and pictures in the track list; faders of busses; and the
+windows' places, which workspaces will keep (#163).
 
 ## Checks
 

@@ -1027,7 +1027,7 @@ TEST_CASE("saving keeps the history, loading starts a new one", "[integration]")
 	CHECK(run(client, "project.get").at("tracks").size() == 1);
 }
 
-TEST_CASE("mute, solo and disabled tracks are saved, also in project.xml", "[integration]")
+TEST_CASE("mute, solo, notes and disabled tracks are saved, also in project.xml", "[integration]")
 {
 	const test::TempDir dir;
 	Engine engine;
@@ -1035,7 +1035,7 @@ TEST_CASE("mute, solo and disabled tracks are saved, also in project.xml", "[int
 	const Json muted = run(client, "track.add", {{"type", "audio"}, {"name", "Muted"}});
 	const Json soloed = run(client, "track.add", {{"type", "group"}, {"name", "Soloed"}});
 	const Json disabled = run(client, "track.add", {{"type", "midi"}, {"name", "Disabled"}});
-	run(client, "channel.set", {{"channel", idOf(muted, "channel")}, {"mute", true}});
+	run(client, "channel.set", {{"channel", idOf(muted, "channel")}, {"mute", true}, {"notes", "Too loud"}});
 	run(client, "channel.set", {{"channel", idOf(soloed, "channel")}, {"solo", true}});
 	run(client, "track.set", {{"track", idOf(disabled, "track")}, {"enabled", false}});
 	const Json before = run(client, "project.get");
@@ -1053,6 +1053,8 @@ TEST_CASE("mute, solo and disabled tracks are saved, also in project.xml", "[int
 	CHECK(trackNode("Muted").child("Channel").child("Mute").attribute("value").as_bool());
 	CHECK_FALSE(trackNode("Soloed").child("Channel").child("Mute").attribute("value").as_bool(true));
 	CHECK(trackNode("Soloed").child("Channel").attribute("solo").as_bool());
+	CHECK(std::string(trackNode("Muted").child("Channel").attribute("comment").as_string()) == "Too loud");
+	CHECK_FALSE(trackNode("Soloed").child("Channel").attribute("comment"));
 	CHECK_FALSE(trackNode("Disabled").attribute("loaded").as_bool(true));
 	CHECK(trackNode("Muted").attribute("loaded").as_bool());
 
@@ -1065,6 +1067,8 @@ TEST_CASE("mute, solo and disabled tracks are saved, also in project.xml", "[int
 	CHECK(loaded.at("channels")[0].at("mute") == true);
 	CHECK(loaded.at("channels")[1].at("solo") == true);
 	CHECK(loaded.at("channels")[1].at("mute") == false);
+	CHECK(loaded.at("channels")[0].at("notes") == "Too loud");
+	CHECK(loaded.at("channels")[1].at("notes") == "");
 	CHECK(loaded.at("tracks")[2].at("enabled") == false);
 	CHECK(loaded.at("tracks")[0].at("enabled") == true);
 }

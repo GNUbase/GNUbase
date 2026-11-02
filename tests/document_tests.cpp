@@ -785,6 +785,27 @@ TEST_CASE("project.new starts over with an empty project", "[unit]")
 	CHECK(engine.renderSnapshots().acquire().channels.empty());
 }
 
+TEST_CASE("a channel's notepad keeps the user's notes, undoably", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId audio = addTrack(client, {{"type", "audio"}});
+	const ObjectId midi = addTrack(client, {{"type", "midi"}});
+	CHECK(channelOf(client, audio).at("notes") == "");
+	for (const ObjectId trackId : {audio, midi})
+	{
+		const ObjectId channel = channelOf(client, trackId).at("id").get<ObjectId>();
+		const Json result = run(client, "channel.set", {{"channel", channel}, {"notes", "Take 3 is best.\nRetune."}});
+		CHECK(result.at("channel").at("notes") == "Take 3 is best.\nRetune.");
+		CHECK(channelOf(client, trackId).at("notes") == "Take 3 is best.\nRetune.");
+	}
+	run(client, "history.undo");
+	CHECK(channelOf(client, midi).at("notes") == "");
+	CHECK(channelOf(client, audio).at("notes") == "Take 3 is best.\nRetune.");
+	CHECK_THAT(reject(client, "channel.set", {{"channel", channelOf(client, audio).at("id")}, {"notes", 3}}),
+		ContainsSubstring("notes"));
+}
+
 TEST_CASE("muted channels are silent; soloed ones silence the others, except where they play through and what plays "
 		  "into them",
 	"[unit]")

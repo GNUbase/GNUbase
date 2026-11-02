@@ -14,7 +14,8 @@
      menu.
      app::AppUi fills the transport bar with the transport controls (transport.rml).
      The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md).
-     ui::StatusLine fills #record-format and #lost-device (docs/features/status-line.md).
+     ui::StatusLine fills #record-format and #lost-device (docs/features/status-line.md). ui::InfoLine fills
+     #info-line; #inspector-setup is the inspector's Set up Sections pane (docs/features/inspector.md).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
 <head>
@@ -97,7 +98,7 @@
 		<button tool="mute" class="icon-only" title="Mute"><svg class="icon" src="../icons/tool-mute.svg"/></button>
 		<button tool="zoom" class="icon-only" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
 		<button tool="line" tool-menu="line-menu" class="icon-only" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></button>
-		<button id="play-tool" tool="play" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
+		<button id="play-tool" tool="play" tool-menu="play-menu" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
 		<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
 		<button id="auto-scroll-settings" class="icon-only" menu="auto-scroll-menu" title="Select Auto-Scroll Settings"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 		<button id="zoom-presets" class="icon-only" menu="zoom-presets-menu" title="Horizontal Zoom Presets"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
@@ -111,7 +112,7 @@
 		<button id="show-right-zone" type="toggle" toggle="right" class="icon-only" title="Show/Hide Right Zone"><svg class="icon" src="../icons/layout-right-zone.svg"/></button>
 		<button id="window-layout" class="icon-only" menu="window-layout-menu" title="Set up Window Layout"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 	</div>
-	<div id="info-line" class="strip" strip="infoLine" default="hidden"/>
+	<div id="info-line" class="strip info-line" strip="infoLine" default="hidden"/>
 	<div class="zones">
 		<div id="left-zone" zone="left" focuszone="left" size="240" default="hidden"/>
 		<splitter for="left"/>
@@ -327,6 +328,10 @@
 		<menuitem type="toggle" toggle="statusLine">Status Line</menuitem>
 		<menuitem type="toggle" toggle="transportBar">Transport Bar</menuitem>
 	</menu>
+	<!-- The inspector's Set up Sections pane (reference manual p. 167), its context menu -->
+	<menu id="inspector-setup" class="setup-pane">
+		<div setup="inspector"/>
+	</menu>
 	<menu id="ruler-format-menu">
 		<menuitem format="barsBeats">Bars+Beats</menuitem>
 		<menuitem format="seconds">Seconds</menuitem>
@@ -352,7 +357,7 @@
 		<menuitem snap-type="eventsGridCursor">Events + Grid + Cursor</menuitem>
 	</menu>
 	<menu id="grid-type-menu"/>
-	<!-- The tools' modes, which a second click on the tool's button opens (reference manual pp. 265, 873) -->
+	<!-- The tools' modes, which a second click on the tool's button opens (reference manual pp. 252, 265, 873) -->
 	<menu id="object-selection-menu">
 		<menuitem sizing="normal">Normal Sizing</menuitem>
 		<menuitem sizing="moveContents">Sizing Moves Contents</menuitem>
@@ -364,6 +369,10 @@
 		<menuitem line-mode="sine">Sine</menuitem>
 		<menuitem line-mode="triangle">Triangle</menuitem>
 		<menuitem line-mode="square">Square</menuitem>
+	</menu>
+	<menu id="play-menu">
+		<menuitem play-mode="play">Play</menuitem>
+		<menuitem play-mode="scrub">Scrub</menuitem>
 	</menu>
 	<menu id="auto-scroll-menu">
 		<menuitem id="page-scroll">Page Scroll</menuitem>

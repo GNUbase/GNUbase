@@ -86,6 +86,7 @@ add_library(gnubase-engine STATIC
 	analysis/analysis.cpp analysis/analysis.h
 	audio/analysiscommands.cpp
 	audio/audioengine.cpp audio/audioengine.h
+	audio/audition.cpp audio/audition.h
 	audio/automation.cpp audio/automation.h
 	audio/fades.cpp audio/fades.h
 	audio/midiports.cpp audio/midiports.h
