@@ -96,7 +96,8 @@ transport controls' commands (F2, the enter commands, Exchange Time Formats, P f
 [transport-bar.md](transport-bar.md).
 
 The UI command `file.quit` (Quit, in the main menu's File menu) has Mod+Q, everywhere. Commands that come with their
-tickets bring their keys: opening windows such as the mixer (F3), cycle, record and the rest of the reference's tables.
+tickets bring their keys, such as the mixer's F3 and Alt+F3 ([mixer-window.md](mixer-window.md)), cycle, record and the
+rest of the reference's tables.
 
 ## Checks
 

@@ -470,6 +470,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                   "border-bottom-color": c["border"]}),
         (".track-list listitem.disabled", {"color": c["textMuted"]}),
         (".track-list .drop-line", {"background-color": c["accent"]}),
+        # The mixer (docs/features/mixer-window.md): a line between the channel strips
+        (".mixer-channel", {"border-right-width": f"{widths['hairline']}dp", "border-right-color": c["border"]}),
         # Docking windows (docs/features/docking.md): zones, the frame of the zone with the keyboard focus, and strips
         (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
         (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),

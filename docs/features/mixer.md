@@ -1,6 +1,7 @@
 # Mixer
 
-The channels' faders and panners (#269); the channel strip UI comes with #107.
+The channels' faders and panners (#269); the mixer windows are in [mixer-window.md](mixer-window.md), the channel strip
+UI comes with #107.
 
 - **Fader.** Every audio channel has a volume in dB, from -144 (silence, -∞ dB) to the project's maximum volume, default 0 dB. `channel.set` stops values beyond the ends there instead of refusing them. The maximum is a project setting, `maxVolume` in `project.set`: +6 dB (the default) or +12 dB; lowering it brings faders above it down, in the same undo step. MIDI channels have no audio, so no fader or panner: they send MIDI volume and pan instead (below).
 - **Panner by routing.** Which panner a channel gets depends on its format and its destination's (`pannerFor` in `src/engine/document/channelformat.h`), worked out when the project compiles:

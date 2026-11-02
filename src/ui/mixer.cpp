@@ -1,0 +1,531 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "ui/mixer.h"
+
+#include "ui/docking.h"
+#include "ui/widgetutils.h"
+
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControl.h>
+#include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/StringUtilities.h>
+
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <iomanip>
+#include <locale>
+#include <optional>
+#include <sstream>
+#include <utility>
+
+namespace gnubase::ui
+{
+	using engine::Json;
+
+	namespace
+	{
+		// The channel type filter's types (reference manual p. 454), as mixer.set names them, and their labels.
+		constexpr std::array<std::pair<const char*, const char*>, 7> g_types = {{
+			{"input", "Input Channels"},
+			{"audio", "Audio Channels"},
+			{"instrument", "Instrument Channels"},
+			{"midi", "MIDI Channels"},
+			{"group", "Group Channels"},
+			{"effect", "Effect Channels"},
+			{"output", "Output Channels"},
+		}};
+
+		constexpr double g_silence = -144.0; // engine::g_minChannelVolume
+
+		std::string encode(const std::string& text)
+		{
+			return Rml::StringUtilities::EncodeRml(text);
+		}
+
+		std::string attribute(const Rml::Element& element, const char* name)
+		{
+			return element.GetAttribute<Rml::String>(name, "");
+		}
+
+		uint64_t idAttribute(const Rml::Element& element, const char* name)
+		{
+			const std::string value = attribute(element, name);
+			return value.empty() ? 0 : std::stoull(value);
+		}
+
+		// The element or its closest parent with the class, up to stop.
+		Rml::Element* closest(Rml::Element* element, const char* name, const Rml::Element* stop)
+		{
+			for (; element != nullptr && element != stop; element = element->GetParentNode())
+				if (element->IsClassSet(name))
+					return element;
+			return nullptr;
+		}
+
+		std::string trackType(const std::string& type)
+		{
+			return type == "folder" ? "group" : type;
+		}
+
+		// The fader's value as the strip shows it, e.g. "-6.0", or "-inf" for silence.
+		std::string decibels(double volume)
+		{
+			if (volume <= g_silence)
+				return "-inf";
+			std::ostringstream text;
+			text.imbue(std::locale::classic());
+			text << std::fixed << std::setprecision(1) << volume;
+			return text.str();
+		}
+
+		void setText(Rml::Element& element, const std::string& text)
+		{
+			const std::string rml = encode(text);
+			if (element.GetInnerRML() != rml)
+				element.SetInnerRML(rml);
+		}
+
+		void setChecked(Rml::Element& element, bool checked)
+		{
+			if (checked == element.HasAttribute("checked"))
+				return;
+			if (checked)
+				element.SetAttribute("checked", "");
+			else
+				element.RemoveAttribute("checked");
+		}
+
+		bool endsWith(const std::string& text, const std::string& end)
+		{
+			return text.size() >= end.size() &&
+				std::equal(end.rbegin(), end.rend(), text.rbegin(),
+					[](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; });
+		}
+
+		constexpr std::array<Rml::EventId, 5> g_rootEvents = {Rml::EventId::Click, Rml::EventId::Dblclick,
+			Rml::EventId::Change, Rml::EventId::Mousedown, Rml::EventId::Mouseup};
+	}
+
+	std::vector<MixerChannel> mixerChannels(const Json& project)
+	{
+		std::vector<MixerChannel> result;
+		const auto busses = [&](const char* direction)
+		{
+			for (const Json& bus : project.at("busses"))
+				if (bus.at("direction") == direction && bus.at("parent") == 0)
+					result.push_back(
+						{bus.at("id").get<uint64_t>(), 0, direction, bus.at("name").get<std::string>(), nullptr, {}});
+		};
+		busses("input");
+		std::map<uint64_t, const Json*> channels;
+		for (const Json& channel : project.at("channels"))
+			channels[channel.at("id").get<uint64_t>()] = &channel;
+		for (const Json& track : project.at("tracks"))
+		{
+			const auto channel = channels.find(track.at("channel").get<uint64_t>());
+			if (channel == channels.end())
+				continue;
+			result.push_back(
+				{channel->first, track.at("id").get<uint64_t>(), trackType(track.at("type").get<std::string>()),
+					track.at("name").get<std::string>(), channel->second, track.value("picture", std::string())});
+		}
+		busses("output");
+		return result;
+	}
+
+	Mixer::Mixer(EngineBinding& binding, Docking& docking, Rml::Element& root, std::string view, bool window,
+		std::function<void(uint64_t track)> choosePicture)
+		: m_binding(binding), m_docking(docking), m_root(root.GetObserverPtr()), m_view(std::move(view)),
+		  m_window(window), m_choosePicture(std::move(choosePicture))
+	{
+		Rml::ElementDocument* document = root.GetOwnerDocument();
+		// The toolbar (reference manual pp. 444-449): what the mixer shows. The menus go into the body, so that no
+		// zone clips them.
+		std::string rml = R"(<div class="mixer"><div class="toolbar mixer-toolbar">)"
+						  R"(<button id="mixer-filter" menu="mixer-filter-menu" title="Set Channel Type Filter">)"
+						  R"(Channel Types</button>)"
+						  R"(<button id="mixer-agents" menu="mixer-agents-menu" title="Set Channel Visibility Agents">)"
+						  R"(Visibility</button><div class="spacer"/>)";
+		if (m_window)
+			rml += R"(<button id="mixer-left-zone" type="toggle" toggle="left" class="icon-only" )"
+				   R"(title="Show/Hide Left Zone"><svg class="icon" src="../icons/layout-left-zone.svg"/></button>)";
+		rml += R"(<button id="mixer-layout" menu="mixer-layout-pane" class="icon-only" title="Set up Window Layout">)"
+			   R"(<svg class="icon" src="../icons/general-arrow-down.svg"/></button></div>)"
+			   R"(<div class="mixer-channels"/></div>)";
+		root.SetInnerRML(rml);
+		m_strips = root.QuerySelector(".mixer-channels")->GetObserverPtr();
+		m_filter = root.QuerySelector("#mixer-filter")->GetObserverPtr();
+
+		std::string filter;
+		for (const auto& [type, label] : g_types)
+			filter += std::string(R"(<menuitem type="toggle" channel-type=")") + type + R"(" checked="">)" + label +
+				"</menuitem>";
+		std::string layout = m_window ? R"(<button type="toggle" toggle="left">Left Zone</button>)" : "";
+		layout += R"(<div setup="channel"/>)";
+		const std::array<std::pair<std::string, std::string>, 3> menus = {{
+			{R"(<menu id="mixer-filter-menu">)", filter},
+			{R"(<menu id="mixer-agents-menu">)", R"(<menuitem agent="showAll">Show All Channels</menuitem>)"},
+			{R"(<menu id="mixer-layout-pane" class="setup-pane">)", layout},
+		}};
+		for (const auto& [open, items] : menus)
+		{
+			const Rml::ElementPtr holder = document->CreateElement("div");
+			holder->SetInnerRML(open + items + "</menu>");
+			Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
+			menu->AddEventListener(Rml::EventId::Click, this);
+			menu->AddEventListener(Rml::EventId::Change, this);
+			m_menus.push_back(menu->GetObserverPtr());
+		}
+		m_docking.arrangeSections(*m_menus.back().get()); // the setup pane, once the docking window knows the set
+		for (const Rml::EventId id : g_rootEvents)
+			root.AddEventListener(id, this);
+		root.AddEventListener(Rml::EventId::Blur, this, true); // the notepad's, which doesn't bubble
+
+		// Every change to the project is an undo step or a new project.
+		for (const char* event : {"history.changed", "project.reset"})
+			m_subscriptions.push_back(m_binding.on(event,
+				[this, reset = std::string(event) == "project.reset"](const engine::Event&)
+				{
+					requestProject();
+					if (reset)
+						requestView();
+				}));
+		m_subscriptions.push_back(m_binding.on("mixer.changed",
+			[this](const engine::Event& event)
+			{
+				if (event.data.at("mixer") != m_view)
+					return;
+				m_hidden.clear();
+				for (const Json& id : event.data.at("hidden"))
+					m_hidden.insert(id.get<uint64_t>());
+				m_hiddenTypes = event.data.at("hiddenTypes").get<std::set<std::string>>();
+				show();
+			}));
+		requestView();
+		requestProject();
+	}
+
+	Mixer::~Mixer()
+	{
+		if (Rml::Element* root = m_root.get())
+		{
+			for (const Rml::EventId id : g_rootEvents)
+				root->RemoveEventListener(id, this);
+			root->RemoveEventListener(Rml::EventId::Blur, this, true);
+		}
+		if (Rml::Element* visibility = m_visibility.get())
+			visibility->RemoveEventListener(Rml::EventId::Change, this);
+		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
+			if (Rml::Element* element = menu.get())
+			{
+				element->RemoveEventListener(Rml::EventId::Click, this);
+				element->RemoveEventListener(Rml::EventId::Change, this);
+				if (Rml::Element* parent = element->GetParentNode())
+					parent->RemoveChild(element);
+			}
+	}
+
+	void Mixer::showVisibility(Rml::Element& element)
+	{
+		if (Rml::Element* old = m_visibility.get())
+			old->RemoveEventListener(Rml::EventId::Change, this);
+		m_visibility = element.GetObserverPtr();
+		element.SetInnerRML(R"(<div class="mixer-visibility"/>)");
+		element.AddEventListener(Rml::EventId::Change, this);
+		showVisibilityList();
+	}
+
+	// ponytail: reads the whole project after every change, as the event display does.
+	void Mixer::requestProject()
+	{
+		if (m_loading)
+		{
+			m_stale = true;
+			return;
+		}
+		m_loading = true;
+		m_binding.send("project.get", Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired())
+					return;
+				m_loading = false;
+				if (result.ok())
+				{
+					m_project = result.value;
+					m_channels = mixerChannels(m_project);
+					show();
+				}
+				if (std::exchange(m_stale, false))
+					requestProject();
+			});
+	}
+
+	void Mixer::requestView()
+	{
+		m_binding.send("mixer.get", {{"mixer", m_view}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok())
+					return;
+				m_hidden.clear();
+				for (const Json& id : result.value.at("hidden"))
+					m_hidden.insert(id.get<uint64_t>());
+				m_hiddenTypes = result.value.at("hiddenTypes").get<std::set<std::string>>();
+				show();
+			});
+	}
+
+	void Mixer::show()
+	{
+		Rml::Element* strips = m_strips.get();
+		if (strips == nullptr)
+			return;
+		std::vector<const MixerChannel*> shown;
+		std::vector<uint64_t> ids;
+		for (const MixerChannel& channel : m_channels)
+			if (m_hidden.count(channel.id) == 0 && m_hiddenTypes.count(channel.type) == 0)
+			{
+				shown.push_back(&channel);
+				ids.push_back(channel.id);
+			}
+		if (ids != m_shown)
+		{
+			m_shown = ids;
+			buildStrips(shown);
+		}
+		for (const MixerChannel* channel : shown)
+			updateStrip(*m_stripOf.at(channel->id), *channel);
+
+		if (Rml::Element* filter = m_filter.get())
+			filter->SetClass("checked", !m_hiddenTypes.empty()); // the button shows that a type is hidden
+		if (Rml::Element* menu = m_menus.front().get())
+			for (const auto& [type, label] : g_types)
+				if (Rml::Element* item = menu->QuerySelector(std::string("[channel-type=") + type + "]"))
+					setChecked(*item, m_hiddenTypes.count(type) == 0);
+		showVisibilityList();
+		if (Rml::Context* context = strips->GetContext())
+			context->RequestNextUpdate(0);
+	}
+
+	void Mixer::buildStrips(const std::vector<const MixerChannel*>& strips)
+	{
+		Rml::Element& container = *m_strips.get();
+		while (container.GetNumChildren() > 0)
+			container.RemoveChild(container.GetFirstChild());
+		m_stripOf.clear();
+		Rml::ElementDocument* document = container.GetOwnerDocument();
+		for (const MixerChannel* channel : strips)
+		{
+			const bool audio = channel->channel != nullptr && channel->channel->at("format") != "none";
+			std::string rml = R"(<div class="mixer-channel-name"/>)"
+							  R"(<div class="mixer-picture" section="picture" label="Pictures" default="hidden"/>)"
+							  R"(<div class="mixer-notes" section="notes" label="Notepad" default="hidden">)";
+			if (channel->channel != nullptr)
+				rml += R"(<textarea class="mixer-notes-field" rows="4"/>)";
+			rml += R"(</div><div class="mixer-fader" section="fader" label="Fader">)";
+			if (channel->channel != nullptr)
+				rml +=
+					R"(<div class="mixer-buttons"><button class="toggle mute" control="mute" title="Mute">M</button>)"
+					R"(<button class="toggle solo" control="solo" title="Solo">S</button></div>)";
+			if (audio) // from -60 dB, linear until the channel strip's dB law (#107)
+				rml += R"(<fader min="-60" max="6" default="0" step="0.1"/><span class="mixer-volume"/>)";
+			rml += "</div>";
+			Rml::Element* strip = container.AppendChild(document->CreateElement("div"));
+			strip->SetClass("mixer-channel", true);
+			strip->SetAttribute("sections", "channel");
+			strip->SetAttribute("channel", std::to_string(channel->id));
+			strip->SetAttribute("type", channel->type);
+			strip->SetInnerRML(rml);
+			m_stripOf[channel->id] = strip;
+		}
+		m_docking.arrangeSections(container);
+	}
+
+	void Mixer::updateStrip(Rml::Element& strip, const MixerChannel& channel)
+	{
+		if (Rml::Element* name = strip.QuerySelector(".mixer-channel-name"))
+			setText(*name, channel.name);
+		if (Rml::Element* picture = strip.QuerySelector(".mixer-picture");
+			picture != nullptr && attribute(*picture, "picture") != channel.picture)
+		{
+			picture->SetAttribute("picture", channel.picture);
+			while (picture->GetNumChildren() > 0)
+				picture->RemoveChild(picture->GetFirstChild());
+			if (!channel.picture.empty())
+			{
+				Rml::Element* image = picture->AppendChild(
+					strip.GetOwnerDocument()->CreateElement(endsWith(channel.picture, ".svg") ? "svg" : "img"));
+				image->SetAttribute("src", channel.picture);
+			}
+		}
+		if (channel.channel == nullptr)
+			return;
+		const Json& json = *channel.channel;
+		if (auto* notes = dynamic_cast<Rml::ElementFormControl*>(strip.QuerySelector(".mixer-notes-field")))
+		{
+			Rml::Context* context = strip.GetContext();
+			const bool typing = context != nullptr && context->GetFocusElement() == notes;
+			if (!typing && notes->GetValue() != json.value("notes", std::string()))
+				notes->SetValue(json.value("notes", std::string()));
+		}
+		for (const char* control : {"mute", "solo"})
+			if (Rml::Element* button = strip.QuerySelector(std::string("button[control=") + control + "]"))
+				button->SetClass("checked", json.at(control).get<bool>());
+		if (Rml::Element* fader = strip.QuerySelector("fader"))
+		{
+			const double volume = json.at("volume").get<double>();
+			const std::string max = widgets::format(m_project.value("maxVolume", 6.0F));
+			if (attribute(*fader, "max") != max)
+				fader->SetAttribute("max", max);
+			const std::string value = widgets::format(static_cast<float>(volume));
+			if (attribute(*fader, "value") != value)
+				fader->SetAttribute("value", value);
+			if (Rml::Element* text = strip.QuerySelector(".mixer-volume"))
+				setText(*text, decibels(volume));
+		}
+	}
+
+	void Mixer::showVisibilityList()
+	{
+		Rml::Element* element = m_visibility.get();
+		Rml::Element* list = element != nullptr ? element->QuerySelector(".mixer-visibility") : nullptr;
+		if (list == nullptr)
+			return;
+		std::string rml;
+		for (const MixerChannel& channel : m_channels)
+			rml += R"(<button type="toggle" class="mixer-visibility-item" visibility=")" + std::to_string(channel.id) +
+				'"' + (m_hidden.count(channel.id) == 0 ? R"( checked="")" : "") + ">" + encode(channel.name) +
+				"</button>";
+		if (list->GetInnerRML() != rml)
+			list->SetInnerRML(rml);
+	}
+
+	void Mixer::setHidden(uint64_t id, bool hidden)
+	{
+		std::set<uint64_t> changed = m_hidden;
+		if (hidden)
+			changed.insert(id);
+		else
+			changed.erase(id);
+		sendView({{"hidden", changed}});
+	}
+
+	void Mixer::setTypeHidden(const std::string& type, bool hidden)
+	{
+		std::set<std::string> changed = m_hiddenTypes;
+		if (hidden)
+			changed.insert(type);
+		else
+			changed.erase(type);
+		sendView({{"hiddenTypes", changed}});
+	}
+
+	void Mixer::sendView(Json parameters)
+	{
+		parameters["mixer"] = m_view;
+		m_binding.send("mixer.set", std::move(parameters)); // mixer.changed shows it
+	}
+
+	const MixerChannel* Mixer::channelOf(Rml::Element* element) const
+	{
+		const Rml::Element* strip = closest(element, "mixer-channel", m_root.get());
+		if (strip == nullptr)
+			return nullptr;
+		const uint64_t id = idAttribute(*strip, "channel");
+		const auto found =
+			std::find_if(m_channels.begin(), m_channels.end(), [id](const MixerChannel& c) { return c.id == id; });
+		return found == m_channels.end() ? nullptr : &*found;
+	}
+
+	// The dragged channel takes the place of the one it is dropped on (reference manual p. 496): its track moves into
+	// that track's folder, after it when it came from the left, before it otherwise.
+	void Mixer::drop(uint64_t onto)
+	{
+		const auto find = [this](uint64_t id)
+		{
+			return std::find_if(
+				m_channels.begin(), m_channels.end(), [id](const MixerChannel& c) { return c.id == id; });
+		};
+		const auto from = find(m_dragged);
+		const auto to = find(onto);
+		if (from == m_channels.end() || to == m_channels.end() || from->track == 0 || to->track == 0 || from == to)
+			return;
+		std::map<uint64_t, uint64_t> parents;
+		std::map<uint64_t, std::vector<uint64_t>> children;
+		for (const Json& track : m_project.at("tracks"))
+		{
+			const auto id = track.at("id").get<uint64_t>();
+			parents[id] = track.at("parent").get<uint64_t>();
+			if (id != from->track)
+				children[parents[id]].push_back(id);
+		}
+		const uint64_t parent = parents[to->track];
+		for (uint64_t up = parent; up != 0; up = parents[up])
+			if (up == from->track)
+				return; // not into itself
+		const std::vector<uint64_t>& siblings = children[parent];
+		const auto index =
+			(std::find(siblings.begin(), siblings.end(), to->track) - siblings.begin()) + (from < to ? 1 : 0);
+		m_binding.send("track.move", {{"track", from->track}, {"parent", parent}, {"index", index}});
+	}
+
+	void Mixer::ProcessEvent(Rml::Event& event)
+	{
+		Rml::Element* target = event.GetTargetElement();
+		if (target == nullptr)
+			return;
+		switch (event.GetId())
+		{
+		case Rml::EventId::Change:
+			if (target->HasAttribute("channel-type"))
+				setTypeHidden(attribute(*target, "channel-type"), !event.GetParameter("value", true));
+			else if (target->HasAttribute("visibility"))
+				setHidden(idAttribute(*target, "visibility"), !event.GetParameter("value", true));
+			else if (target->GetTagName() == "fader")
+				if (const MixerChannel* channel = channelOf(target))
+					m_binding.send(
+						"channel.set", {{"channel", channel->id}, {"volume", event.GetParameter("value", 0.0F)}});
+			break;
+		case Rml::EventId::Click:
+			if (attribute(*target, "agent") == "showAll")
+				sendView({{"hidden", Json::array()}});
+			else if (target->HasAttribute("control"))
+				if (const MixerChannel* channel = channelOf(target); channel != nullptr && channel->channel != nullptr)
+				{
+					const std::string control = attribute(*target, "control");
+					m_binding.send("channel.set",
+						{{"channel", channel->id}, {control, !channel->channel->at(control).get<bool>()}});
+				}
+			break;
+		case Rml::EventId::Dblclick:
+			if (closest(target, "mixer-picture", m_root.get()) != nullptr)
+				if (const MixerChannel* channel = channelOf(target); channel != nullptr && channel->track != 0)
+					m_choosePicture(channel->track);
+			break;
+		case Rml::EventId::Mousedown:
+		{
+			const MixerChannel* channel =
+				closest(target, "mixer-channel-name", m_root.get()) != nullptr ? channelOf(target) : nullptr;
+			m_dragged = channel != nullptr ? channel->id : 0;
+			break;
+		}
+		case Rml::EventId::Mouseup:
+			if (const MixerChannel* channel = channelOf(target); channel != nullptr && m_dragged != 0)
+				drop(channel->id);
+			m_dragged = 0;
+			break;
+		case Rml::EventId::Blur:
+			if (target->IsClassSet("mixer-notes-field"))
+				if (const MixerChannel* channel = channelOf(target); channel != nullptr && channel->channel != nullptr)
+					if (auto* field = dynamic_cast<Rml::ElementFormControl*>(target);
+						field != nullptr && field->GetValue() != channel->channel->value("notes", std::string()))
+						m_binding.send("channel.set", {{"channel", channel->id}, {"notes", field->GetValue()}});
+			break;
+		default:
+			break;
+		}
+	}
+}

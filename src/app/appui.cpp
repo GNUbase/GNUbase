@@ -41,11 +41,10 @@ namespace gnubase::app
 			const char* zone;
 		};
 
-		constexpr std::array<ProjectPanel, 6> g_projectPanels{{
+		constexpr std::array<ProjectPanel, 5> g_projectPanels{{
 			{"inspector", "Inspector", "left"},
 			{"visibility", "Visibility", "left"},
 			{"editor", "Editor", "lower"},
-			{"mixer", "Mixer", "lower"},
 			{"media", "Media", "right"},
 			{"meter", "Meter", "right"},
 		}};
@@ -203,6 +202,9 @@ namespace gnubase::app
 					m_menu->update();
 				if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
 					pool->update();
+				for (MixerWindow& shown : m_mixers)
+					if (shown.mixer && m_shell.find(shown.window) == nullptr)
+						shown.mixer.reset(); // the user closed its window
 				return follows;
 			});
 		m_shell.onUnusedKey([this](ui::Window& window, const ui::KeyPress& keys) { m_keys.press(window, keys); });
@@ -214,6 +216,7 @@ namespace gnubase::app
 		// The project window's panels (reference manual pp. 54, 75-98), which their tickets fill.
 		for (const ProjectPanel& panel : g_projectPanels)
 			m_docking.add({panel.id, panel.title, "project", panel.zone, {}});
+		addMixers();
 		// The edit history (reference manual pp. 110-111), a dialog there, which Edit > History opens.
 		m_docking.add({"history", "History", "project", "right",
 			[this](Rml::Element& element) { return std::make_shared<ui::HistoryPanel>(m_binding, element); }});
@@ -514,6 +517,100 @@ namespace gnubase::app
 				for (const std::filesystem::path& file : result.files)
 					files.push_back(file.u8string());
 				m_eventDisplay->importFiles(files, std::nullopt, std::nullopt, clipsOnly);
+			});
+	}
+
+	void AppUi::addMixers()
+	{
+		// The mixer in the lower zone (reference manual pp. 434-436), with a view of its own.
+		m_docking.add({"mixer", "Mixer", "project", "lower", [this](Rml::Element& element)
+			{
+				auto mixer = std::make_shared<ui::Mixer>(
+					m_binding, m_docking, element, "lower", false, [this](uint64_t track) { choosePicture(track); });
+				m_lowerMixer = mixer;
+				return mixer;
+			}});
+		m_keys.add({"window.lowerZoneMixer",
+			"Shows the mixer in the project window's lower zone, or hides the zone while it shows the mixer.",
+			[this](ui::Window&, Rml::Element*)
+			{
+				if (m_docking.showing("mixer") && m_docking.windowOf("mixer") == nullptr)
+					m_docking.setVisible("project", "lower", false);
+				else
+					m_docking.open("mixer");
+			}});
+		m_keys.bind({"Alt+F3", "window.lowerZoneMixer"});
+		// The mixer windows (pp. 437-462), each with the Visibility tab in its left zone.
+		for (int number = 1; number <= static_cast<int>(m_mixers.size()); ++number)
+		{
+			const std::string name = "mixer" + std::to_string(number);
+			m_docking.add({name + "Visibility", "Visibility", name, "left", [this, number](Rml::Element& element)
+				{
+					if (ui::Mixer* found = mixer(number))
+						found->showVisibility(element);
+					return std::shared_ptr<void>();
+				}});
+			m_keys.add({number == 1 ? std::string("window.mixer") : "window.mixer" + std::to_string(number),
+				number == 1 ? std::string("Opens or closes the mixer window.")
+							: "Opens or closes mixer window " + std::to_string(number) + ".",
+				// Later in the step: the key may be the mixer window's own, which closing it would destroy.
+				[this, number](ui::Window&, Rml::Element*) { m_shell.post([this, number] { toggleMixer(number); }); }});
+		}
+		m_keys.bind({"F3", "window.mixer"});
+	}
+
+	ui::Mixer* AppUi::toggleMixer(int number)
+	{
+		MixerWindow& shown = m_mixers.at(static_cast<size_t>(number - 1));
+		const bool open = shown.window != 0 && m_shell.find(shown.window) != nullptr;
+		shown.mixer.reset();
+		if (open)
+		{
+			m_shell.close(shown.window);
+			shown.window = 0;
+			return nullptr;
+		}
+		ui::WindowSpec spec;
+		spec.title = number == 1 ? std::string("Mixer") : "Mixer " + std::to_string(number);
+		spec.size = {1000, 560};
+		spec.hidden = m_hidden;
+		ui::Window& window = m_shell.open(spec);
+		shown.window = window.id();
+		const std::filesystem::path file = m_resources / "ui" / "mixer.rml";
+		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
+		Rml::Element* root = document != nullptr ? document->GetElementById("mixer") : nullptr;
+		if (root == nullptr)
+		{
+			m_shell.close(shown.window);
+			shown.window = 0;
+			throw std::runtime_error("cannot load the mixer window from " + file.u8string());
+		}
+		document->Show();
+		shown.mixer = std::make_unique<ui::Mixer>(m_binding, m_docking, *root, "window" + std::to_string(number), true,
+			[this](uint64_t track) { choosePicture(track); });
+		m_docking.attach("mixer" + std::to_string(number), *document);
+		return shown.mixer.get();
+	}
+
+	ui::Mixer* AppUi::mixer(int number)
+	{
+		MixerWindow& shown = m_mixers.at(static_cast<size_t>(number - 1));
+		return shown.window != 0 && m_shell.find(shown.window) != nullptr ? shown.mixer.get() : nullptr;
+	}
+
+	void AppUi::choosePicture(uint64_t track)
+	{
+		ui::FileDialog dialog;
+		dialog.title = "Choose Track Picture";
+		dialog.filters = {{"Images", "png;jpg;jpeg;svg"}, {"All files", "*"}};
+		dialog.parent = m_main.id();
+		m_shell.showFileDialog(dialog,
+			[this, track](const ui::FileDialogResult& result)
+			{
+				if (!result.error.empty())
+					logging::warning("The file dialog failed: {}", result.error);
+				if (!result.files.empty())
+					m_binding.send("track.set", {{"track", track}, {"picture", result.files.front().u8string()}});
 			});
 	}
 

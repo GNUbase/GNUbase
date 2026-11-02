@@ -69,6 +69,7 @@ add_executable(gnubase-tests
 	miditap_tests.cpp
 	mixer_tests.cpp
 	mixerviews_tests.cpp
+	mixerwindow_tests.cpp
 	monitoring_tests.cpp
 	multicore_tests.cpp
 	parameter_tests.cpp
