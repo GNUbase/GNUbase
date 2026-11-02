@@ -329,7 +329,8 @@ namespace
 	{
 		REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
 		const auto [id, dialog] = *app.shell().fileDialogs().begin();
-		CHECK(app.shell().answerFileDialog(id, std::move(files)));
+		const bool answered = app.shell().answerFileDialog(id, std::move(files));
+		CHECK(answered);
 		return dialog;
 	}
 
