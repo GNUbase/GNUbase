@@ -684,7 +684,8 @@ TEST_CASE("the PipeWire backend keeps the device contract and asks for a reset w
 // While another client forces the graph to another rate, a device would only play silence: it asks for a reset. Until
 // the force is lifted the listing has the forced rate only, and opening at another one says why it can't; a device
 // opened without a rate opens at the forced one. When the force is lifted, the device asks for a reset again.
-TEST_CASE("a PipeWire device asks for a reset when another client forces the graph to another rate", "[integration][pipewire]")
+TEST_CASE("a PipeWire device asks for a reset when another client forces the graph to another rate",
+	"[integration][pipewire]")
 {
 	skipUnlessPrivateDaemon();
 	std::unique_ptr<Backend> backend = pipeWireOrSkip();
@@ -757,7 +758,8 @@ TEST_CASE("a PipeWire device asks for a reset when another client forces the gra
 // The latency counts in quanta: when another client changes the graph's quantum while a device runs, the device
 // reports a latency change, and the engine moves the record offset with it once, without restarting the device over
 // and over (#386).
-TEST_CASE("a running PipeWire device reports a latency change when the graph's quantum changes", "[integration][pipewire]")
+TEST_CASE(
+	"a running PipeWire device reports a latency change when the graph's quantum changes", "[integration][pipewire]")
 {
 	skipUnlessPrivateDaemon();
 	std::unique_ptr<Backend> backend = pipeWireOrSkip();
@@ -1355,18 +1357,18 @@ TEST_CASE("JACK cycle times convert to the host clock, also a start slightly ahe
 	const gnubase::HostTime now = 5'000'000'000;
 	const jack_time_t jackNow = 70'000'000;
 	const float period = 1333.3f; // µs: 64 frames at 48 kHz
-	const auto check = [](JackLibrary::Cycle cycle, gnubase::HostTime start, gnubase::HostTime period)
+	const auto check = [](JackLibrary::Cycle cycle, gnubase::HostTime start, gnubase::HostTime length)
 	{
 		CHECK(cycle.start == start);
-		CHECK(cycle.period == period);
+		CHECK(cycle.period == length);
 	};
 	check(JackLibrary::toHostClock(now, jackNow, jackNow - 500, period), now - 500'000, 1'333'300);
 	check(JackLibrary::toHostClock(now, jackNow, jackNow, period), now, 1'333'300);
 	check(JackLibrary::toHostClock(now, jackNow, jackNow + 100, period), now + 100'000, 1'333'300);
 	check(JackLibrary::toHostClock(now, jackNow, jackNow + 1333, period), now + 1'333'000, 1'333'300);
-	check(JackLibrary::toHostClock(now, jackNow, jackNow + 1400, period), now, 0);	   // more than a period ahead
+	check(JackLibrary::toHostClock(now, jackNow, jackNow + 1400, period), now, 0);      // more than a period ahead
 	check(JackLibrary::toHostClock(now, jackNow, jackNow - 1'000'001, period), now, 0); // more than a second ago
-	check(JackLibrary::toHostClock(now, jackNow, jackNow - 500, 0.0f), now, 0);		   // no period
+	check(JackLibrary::toHostClock(now, jackNow, jackNow - 500, 0.0f), now, 0);         // no period
 }
 #endif
 
