@@ -47,7 +47,9 @@ The widgets:
 - `<slider>`: horizontal, `.slider-track` filled up to the `.slider-thumb` (`.slider-fill`).
 - `<valuefield>`: the value as text, with `decimals` (2) and a `unit`, drawn like a display. A double click edits it
   as text (state class `.editing`): Enter, or leaving the field, takes the number typed, clamped to the range; Escape,
-  or text that isn't a number, keeps the value. While the user types, the field's text field sends RmlUi's own
+  or text that isn't a number, keeps the value. With `autofocus`, it is edited, all of it selected, whenever it gets
+  the focus without the mouse, as when its document shows it focused; in a dialog it is then the main field, which
+  works like a text field: Enter takes the number typed and clicks OK, Escape cancels. While the user types, the field's text field sends RmlUi's own
   `change` events with the text; the field's `change`, with the field as its target, has the number.
 
 `<textdisplay>` shows text, its `value` attribute, such as a position in a time format; documents give it the look of
@@ -93,7 +95,7 @@ and on a click, a key or the wheel. Every document gets its tooltip element when
 `<dialog>` is a dialog in a document of its own, which the app loads and shows, usually modal
 (`ElementDocument::Show(Rml::ModalFlag::Modal)`). It opens in the middle of the window, and dragging its
 `.dialog-titlebar` moves it. Escape closes it with the result `cancel`; Enter clicks its `button.primary`, also from
-a text field, but not from a multi-line one or a value field being edited; a click on an element with a `result`
+a text field and a value field with `autofocus`, but not from a multi-line text field or another value field; a click on an element with a `result`
 attribute closes it with that result. Closing sends the event `close` (`ui::g_dialogCloseEvent`) with the parameter
 `result`, then closes the document.
 
