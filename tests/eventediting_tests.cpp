@@ -17,6 +17,7 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Input.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -253,6 +254,13 @@ TEST_CASE("the object selection tool's modifiers act on events whatever keys the
 	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
 	CHECK(f.parts()[2].at("position") == 8 * g_quarter);
 	CHECK(f.parts()[2].at("shared") == 0);
+	// Ctrl copying, it doesn't restrict the drag: the copy goes later and down onto a new track.
+	const Json midi = f.call("track.add", {{"type", "midi"}}).at("track");
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events").size() == 3 && f.lanes("events")[1].events.size() == 3; }));
+	f.drag(450, 60, 650, 100, {"ctrl"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 4; }));
+	CHECK(f.parts()[3].at("position") == 12 * g_quarter);
+	CHECK(f.parts()[3].at("track") == midi.at("id"));
 }
 
 TEST_CASE("a double click below the tracks adds a MIDI track", "[unit]")
@@ -782,6 +790,12 @@ TEST_CASE("Ctrl and a drag moves or copies events only across or only up and dow
 	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[2].events.size() == 2; }));
 	f.click(450, 100, {"ctrl"});
 	CHECK(f.display.selection().empty());
+	// Ctrl and Alt on an event that isn't selected copies it alone, as Alt does, rather than adding it.
+	f.display.select({f.event});
+	f.drag(300, 100, 500, 105, {"ctrl", "alt"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+	CHECK(f.parts()[2].at("position") == 8 * g_quarter);
+	CHECK(f.audioEvents().size() == 1);
 }
 
 TEST_CASE("a press becomes a move of events only after the drag delay", "[unit]")
@@ -792,10 +806,11 @@ TEST_CASE("a press becomes a move of events only after the drag delay", "[unit]"
 	REQUIRE(lanes != nullptr);
 	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
 	REQUIRE(clock != nullptr);
-	const auto move = [&context, lanes](double x, double y)
+	clock->freeze(true); // RmlUi's time stands still but for advance()
+	const auto move = [&context, lanes](double x, double y, int keys = 0)
 	{
 		context.ProcessMouseMove(
-			static_cast<int>(lanes->GetAbsoluteLeft() + x), static_cast<int>(lanes->GetAbsoluteTop() + y), 0);
+			static_cast<int>(lanes->GetAbsoluteLeft() + x), static_cast<int>(lanes->GetAbsoluteTop() + y), keys);
 	};
 	const auto previewStart = [&f] { return f.lanes("selected-events")[1].events.at(0).start; };
 
@@ -809,6 +824,25 @@ TEST_CASE("a press becomes a move of events only after the drag delay", "[unit]"
 	f.run("edit.mute"); // after the move, if the click had sent one
 	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("mute") == true; }));
 	CHECK(f.parts()[0].at("position") == 2 * g_quarter);
+	clock->advance(1.0); // no double click with the next press
+
+	// The same with Ctrl, though the mouse moved a little: a click, which takes the part out of the selection.
+	move(150, 60, Rml::Input::KM_CTRL);
+	context.ProcessMouseButtonDown(0, Rml::Input::KM_CTRL);
+	move(155, 60, Rml::Input::KM_CTRL);
+	context.ProcessMouseButtonUp(0, Rml::Input::KM_CTRL);
+	f.step();
+	CHECK(f.display.selection().empty());
+	clock->advance(1.0);
+	// Resizing doesn't wait: the audio event's right edge 20 dp further at once.
+	move(248, 20);
+	context.ProcessMouseButtonDown(0, 0);
+	move(268, 20);
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 24000 + 9600; }));
+	clock->advance(1.0);
+	f.display.select({f.part});
 
 	// Held past the delay, the drag shows where the part goes and moves it there.
 	move(150, 60);
@@ -824,6 +858,7 @@ TEST_CASE("a press becomes a move of events only after the drag delay", "[unit]"
 	context.ProcessMouseButtonUp(0, 0);
 	f.step();
 	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 4 * g_quarter; }));
+	clock->freeze(false);
 }
 
 TEST_CASE("a selection on several tracks moves and copies onto other tracks of their types", "[unit]")

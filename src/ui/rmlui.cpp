@@ -33,7 +33,23 @@ namespace gnubase::ui
 
 	double SystemInterface::GetElapsedTime()
 	{
+		if (m_frozen)
+			return *m_frozen + m_advanced;
 		return std::chrono::duration<double>(std::chrono::steady_clock::now() - m_start).count() + m_advanced;
+	}
+
+	void SystemInterface::freeze(bool frozen)
+	{
+		const double now = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_start).count();
+		if (frozen && !m_frozen)
+		{
+			m_frozen = now;
+		}
+		else if (!frozen && m_frozen)
+		{
+			m_advanced -= now - *m_frozen; // runs on from where it stood
+			m_frozen.reset();
+		}
 	}
 
 	bool SystemInterface::LogMessage(Rml::Log::Type type, const Rml::String& message)

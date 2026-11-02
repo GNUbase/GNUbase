@@ -100,9 +100,10 @@ at the cursor, Mod and the arrows nudge, and so on.
   preferences. `ui::Automation::drag`, and so MCP's `ui_drag` and the UI tests, holds the button long enough: it
   moves RmlUi's clock on by a second between the press and the first step.
 - **Restricted drags.** With Ctrl (Cmd) held while dragging, a move or copy goes across, keeping its tracks, or up
-  and down, keeping its time, whichever way the mouse went further. Ctrl held at the press counts too: a click
-  without moving still adds the event to the selection or takes it out. Ctrl doesn't restrict when the keys held
-  are a copy's tool modifier ([tools.md](tools.md)). The reference's tool modifier for it comes with the
+  and down, keeping its time, whichever way the mouse went further. Ctrl held at the press counts too: a click,
+  also one that moved a little before the drag delay, still adds the event to the selection or takes it out. With a
+  copy's tool modifier and Ctrl (Alt and Ctrl), the press acts as with the tool modifier alone and the copy is
+  restricted. Ctrl doesn't restrict when the keys held are a copy's tool modifier themselves ([tools.md](tools.md)). The reference's tool modifier for it comes with the
   preferences; until then it is always Ctrl (Cmd).
 - **Onto other tracks.** Every selected event goes as many tracks up or down as the mouse, onto the lanes shown
   (hidden tracks don't count). It changes tracks only when every event lands on a track of its type (audio events

@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <functional>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <optional>
@@ -459,9 +460,10 @@ namespace gnubase::ui
 		const bool atStart = wide && x - left <= g_edge;
 		const bool atEnd = wide && !atStart && right - x <= g_edge;
 		// The tool modifiers for a press on an event (Set Cursor Position, Split Event, Copy, Shared Copy, and Disable
-		// Snapping at an edge) act on it rather than adding it to the selection, whatever keys they are set to.
+		// Snapping at an edge) act on it rather than adding it to the selection, whatever keys they are set to; so
+		// does a copy's with Ctrl, a restricted copy.
 		const bool toolModifier = modifiers("select.setCursorPosition") || modifiers("select.splitEvent") ||
-			modifiers("dragDrop.copy") || modifiers("dragDrop.sharedCopy") ||
+			copyKeys(m_pressed) || copyKeys(withoutCtrl(m_pressed)) ||
 			((atStart || atEnd) && modifiers("sizeObjects.disableSnapping"));
 		if (add && !toolModifier)
 		{
@@ -576,7 +578,8 @@ namespace gnubase::ui
 		m_dragDx = 0.0;
 		m_dragLanes = 0;
 		setLanes(); // without the drag's preview
-		if (!moved && toggles)
+		// A click with Ctrl or Shift on a selected event, also one that moved a little before the drag delay.
+		if (toggles && (!moved || (drag == Drag::Events && !started)))
 		{
 			std::vector<uint64_t> events = m_selection;
 			events.erase(std::remove(events.begin(), events.end(), m_dragEvent), events.end());
@@ -631,15 +634,20 @@ namespace gnubase::ui
 		// Released before the drag delay: neither a move nor a click.
 		if (!started)
 			return;
-		// Ctrl (Cmd) restricts the drag, unless the keys held are a tool modifier's for copying.
-		const bool constrained = (held(event, "ctrl_key") || held(event, "meta_key")) && !modifiers("dragDrop.copy") &&
-			!modifiers("dragDrop.sharedCopy");
+		const bool constrained = restricts(event);
 		if (constrained)
 			m_pressed = withoutCtrl(m_pressed);
 		const std::pair<double, double> shift = restricted(dx, dy, constrained);
 		const int lanes = laneShift(shift.second);
 		const bool shared = modifiers("dragDrop.sharedCopy");
 		const bool copy = shared || modifiers("dragDrop.copy");
+		if (constrained && shift.first == 0.0)
+		{
+			// Up or down only: onto other tracks at the same time, or nowhere.
+			if (lanes != 0 || copy)
+				moveSelection({{"delta", 0}}, lanes, copy, shared);
+			return;
+		}
 		// Shuffle (reference manual p. 106): the selection trades places with the events it is dragged among.
 		if (m_snap.on && m_snap.type == engine::SnapType::Shuffle && !copy && lanes == 0)
 		{
@@ -651,14 +659,24 @@ namespace gnubase::ui
 				{{"events", m_selection}, {"position", samples(start + (shift.first * m_view.scale))}});
 			return;
 		}
-		if (constrained && shift.first == 0.0)
-		{
-			// Up or down only: onto other tracks at the same time, or nowhere.
-			if (lanes != 0 || copy)
-				moveSelection({{"delta", 0}}, lanes, copy, shared);
-			return;
-		}
 		moveSelection(moveShift(shift.first).first, lanes, copy, shared);
+	}
+
+	bool EventDisplay::copyKeys(const std::string& keys) const
+	{
+		const auto copies = {"dragDrop.copy", "dragDrop.sharedCopy"};
+		return std::any_of(copies.begin(), copies.end(),
+			[this, &keys](const char* action)
+			{
+				const auto found = m_toolModifiers.find(action);
+				return found != m_toolModifiers.end() && !found->second.empty() && found->second == keys;
+			});
+	}
+
+	// Ctrl (Cmd) restricts a drag of events, unless the keys held are a copy's tool modifier.
+	bool EventDisplay::restricts(Rml::Event& event) const
+	{
+		return (held(event, "ctrl_key") || held(event, "meta_key")) && !copyKeys(modifiersOf(event));
 	}
 
 	void EventDisplay::moveSelection(Json shift, int lanes, bool copy, bool shared)

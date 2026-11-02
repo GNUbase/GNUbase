@@ -337,7 +337,11 @@ namespace gnubase::ui
 		const Shown* eventAt(double x, double y) const; // dp in the event lanes
 		size_t laneAt(double y) const; // dp from the top of the first lane; 0 above it, the lane count below the last
 		void areaDown(Rml::Event& event, double x, double y);
-		void areaMove(double dx, double dy, bool constrained); // constrained: Ctrl (Cmd) is held
+		void areaMove(double dx, double dy, bool constrained); // constrained: restricts() says so
+		// Whether the keys are exactly the tool modifier of Copy or Shared Copy.
+		bool copyKeys(const std::string& keys) const;
+		// Whether the keys held restrict a drag of events: Ctrl (Cmd), unless they are a copy's tool modifier.
+		bool restricts(Rml::Event& event) const;
 		void areaUp(Rml::Event& event);
 		// A drag dx and dy dp from the press, across or up and down only when restricted.
 		static std::pair<double, double> restricted(double dx, double dy, bool constrained);
