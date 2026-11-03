@@ -32,6 +32,13 @@ namespace gnubase::ui
 		// Shift makes drags, wheel turns and arrow keys this much finer.
 		constexpr float g_fine = 0.1F;
 
+		// What a ValueControl hears to change its value or to end a gesture.
+		constexpr std::array<Rml::EventId, 6> g_gestureEvents = {Rml::EventId::Mousescroll, Rml::EventId::Mouseout,
+			Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Dragend, Rml::EventId::Keyup};
+
+		// The last gesture of any ValueControl, so that no two gestures have the same number. Only on the UI thread.
+		int g_lastGesture = 0;
+
 		std::string percent(float fraction)
 		{
 			return format(fraction * 100.0F) + "%";
@@ -40,16 +47,24 @@ namespace gnubase::ui
 		// A widget with a number: the attributes value, min (0), max (1), default (min) and step (a hundredth of the
 		// range). Dragging changes the value, up or to the right for more, the wheel and the arrow keys by a step; all
 		// of them ten times finer with Shift. Ctrl-click (Cmd-click on macOS) sets the default. Each change sets the
-		// value attribute and sends a change event with the value as a float.
+		// value attribute and sends a change event with the value as a float and the gesture it belongs to as an
+		// integer: the changes of one drag, of wheel turns until the mouse leaves, of an arrow key until it is released
+		// and a typed value have the same gesture, and the next gesture has a higher one, so that a document can make
+		// each gesture one undo step (history.transaction's merge).
 		class ValueControl : public Rml::Element
 		{
 		public:
 			explicit ValueControl(const Rml::String& tag) : Rml::Element(tag)
 			{
-				AddEventListener(Rml::EventId::Mousescroll, &m_listener);
+				for (const Rml::EventId id : g_gestureEvents)
+					AddEventListener(id, &m_listener);
 			}
 
-			~ValueControl() override { RemoveEventListener(Rml::EventId::Mousescroll, &m_listener); }
+			~ValueControl() override
+			{
+				for (const Rml::EventId id : g_gestureEvents)
+					RemoveEventListener(id, &m_listener);
+			}
 
 			ValueControl(const ValueControl&) = delete;
 			ValueControl& operator=(const ValueControl&) = delete;
@@ -60,7 +75,19 @@ namespace gnubase::ui
 			// has none, and those of its parts.
 			virtual void listen(Rml::Event& event)
 			{
-				if (event.GetId() != Rml::EventId::Mousescroll || !active())
+				// What ends a gesture: a click, the end of a drag, the mouse leaving the widget outside a drag, a
+				// released key.
+				const Rml::EventId kind = event.GetId();
+				if (kind == Rml::EventId::Mousedown || kind == Rml::EventId::Mouseup || kind == Rml::EventId::Dragend ||
+					kind == Rml::EventId::Keyup ||
+					(kind == Rml::EventId::Mouseout && event.GetTargetElement() == this && !m_dragging))
+				{
+					if (kind == Rml::EventId::Dragend)
+						m_dragging = false;
+					endGesture();
+					return;
+				}
+				if (kind != Rml::EventId::Mousescroll || !active())
 					return;
 				change(value() - (event.GetParameter("wheel_delta_y", 0.0F) * step() * fineness(event)));
 				event.StopPropagation(); // the wheel turns the widget, it doesn't scroll what's around it
@@ -80,6 +107,7 @@ namespace gnubase::ui
 					break;
 				case Rml::EventId::Dragstart:
 					m_last = position(event);
+					m_dragging = true;
 					break;
 				case Rml::EventId::Drag:
 				{
@@ -130,10 +158,19 @@ namespace gnubase::ui
 				if (to == value() && HasAttribute("value"))
 					return;
 				SetAttribute("value", format(to));
+				if (!m_gesturing)
+				{
+					m_gesture = ++g_lastGesture;
+					m_gesturing = true;
+				}
 				Rml::Dictionary parameters;
 				parameters["value"] = to;
+				parameters["gesture"] = m_gesture;
 				DispatchEvent(Rml::EventId::Change, parameters);
 			}
+
+			// The next change starts another gesture.
+			void endGesture() { m_gesturing = false; }
 
 			// Whether the user can change it now.
 			virtual bool active() const { return !HasAttribute("disabled"); }
@@ -166,7 +203,10 @@ namespace gnubase::ui
 				return event.GetParameter("shift_key", false) ? g_fine : 1.0F;
 			}
 
-			float m_last = 0.0F; // where the mouse was in the drag
+			float m_last = 0.0F;      // where the mouse was in the drag
+			bool m_dragging = false;  // from dragstart to dragend
+			int m_gesture = 0;        // the gesture of the last change
+			bool m_gesturing = false; // the next change belongs to it
 
 		protected:
 			widgets::Listener m_listener{[this](Rml::Event& event) { listen(event); }};
@@ -397,7 +437,11 @@ namespace gnubase::ui
 				SetClass("editing", false);
 				if (take && m_typed)
 					if (const std::optional<float> typed = parse(m_input->GetValue()))
+					{
+						endGesture(); // a typed value is a gesture of its own
 						change(*typed);
+						endGesture();
+					}
 				if (GetContext() != nullptr && GetContext()->GetFocusElement() == m_input)
 					m_input->Blur(); // the field keeps the focus
 			}

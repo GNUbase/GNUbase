@@ -41,6 +41,10 @@ Widgets with a number share their behaviour (reference manual p. 1598, "Editing 
 - **Wheel and keys.** One wheel line or arrow key (Up and Right for more) changes it by a step. Over a widget the wheel
   turns it rather than scrolling what's around it. The widgets take the focus when clicked, and with Tab.
 - **Reset.** Ctrl-click (Cmd-click on macOS) sets the default.
+- **Gestures.** `change` also sends `gesture`, an integer: the changes of one drag, of wheel turns until the mouse
+  leaves the widget, of an arrow key until it is released, and a typed value each have one, and the next gesture of any
+  widget has a higher one. Documents make a gesture one undo step with it (`EngineBinding::sendStep`,
+  [edit-history.md](edit-history.md)).
 - `disabled` gives `:disabled` and ignores the user.
 
 The widgets:
@@ -82,10 +86,11 @@ attributes, through a data model or directly.
 
 - `<menu>` holds `<menuitem>`s and `<menuseparator>`s and stays hidden until it opens, with the state class `.open`:
   under a button whose `menu` attribute names it by id (a second click on the button closes it), or at the mouse on
-  a right click on an element whose `contextmenu` attribute names it; with a modifier key held (Ctrl, Alt, Shift or
-  Cmd), the menu that its `modifiercontextmenu` attribute names instead, if it has one, as the event display's toolbox
-  does ([tools.md](tools.md)). It opens inside the window, moved left or up where it would stick out. Put menus
-  straight into the body, so that no container clips them.
+  a right click on an element whose `contextmenu` attribute names it: the nearest one with the attribute, so an empty
+  `contextmenu` keeps the menu of an element around it from opening on a control. With a modifier key held (Ctrl,
+  Alt, Shift or Cmd), the menu that its `modifiercontextmenu` attribute names opens instead, if it has one, as the
+  event display's toolbox does ([tools.md](tools.md)). It opens inside the window, moved left or up where it would
+  stick out. Put menus straight into the body, so that no container clips them.
 - A click on an item is a click on that item, for the document to handle, and closes the menu. Escape and a click
   outside close it too. A `disabled` item gets `:disabled` and ignores clicks; `type="toggle"` makes an item checkable,
   as for buttons.

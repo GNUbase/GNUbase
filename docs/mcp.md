@@ -1794,12 +1794,13 @@ Arguments:
 
 Engine command `history.transaction`.
 
-Runs document commands in order as one undo step named description. If one fails, none of them changes the project. Returns each command's result.
+Runs document commands in order as one undo step named description. If one fails, none of them changes the project. Returns each command's result. With a merge key, a transaction joins the last step instead when that step is a transaction with the same key and nothing was undone since: a gesture such as a fader drag, sent as a transaction per step with a key of its own, is one undo step (none if it ends where it started).
 
 Arguments:
 
 - `commands`: array of object, required
 - `description`: string, required
+- `merge`: string
 
 Result:
 

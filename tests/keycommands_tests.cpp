@@ -268,6 +268,18 @@ TEST_CASE("elements keep the keys they use, and a modal dialog keeps every key",
 	CHECK(app.ui().dom(std::nullopt, "#pan", 0).at("elements")[0].at("attributes").at("value") == "1");
 	CHECK(recorder.take().empty());
 
+	// A text field keeps its arrow keys, also those it can't use at its first or last line or character and that
+	// move the focus to no other control (Down would move it to the button below: nav).
+	app.keys().bind({"Left", "test.anywhere"});
+	app.keys().bind({"Right", "test.anywhere"});
+	click(app, "#name");
+	for (const char* key : {"Up", "Left", "Right"})
+		press(app, key);
+	CHECK(recorder.take().empty());
+	app.keys().bind({"Alt+Up", "test.anywhere"});
+	press(app, "Alt+Up"); // a key it doesn't use
+	CHECK(recorder.take() == Strings{"test.anywhere"});
+
 	// No key runs a command while a modal dialog has the focus, so typing into it never edits the project.
 	Rml::ElementDocument* dialog =
 		app.main().context().LoadDocument(std::string(GNUBASE_TEST_DATA_DIR) + "/ui/automation-dialog.rml");

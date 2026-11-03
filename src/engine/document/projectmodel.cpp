@@ -2595,8 +2595,11 @@ namespace gnubase::engine
 					m_project = std::move(before);
 					throw;
 				}
-				record(action.empty() ? context.parameters().at("description").get<std::string>() : action, before,
-					context);
+				if (action.empty()) // a transaction
+					record(context.parameters().at("description").get<std::string>(), before, context,
+						context.parameters().value("merge", std::string()));
+				else
+					record(action, before, context);
 				publish();
 				return result;
 			});
@@ -2608,12 +2611,26 @@ namespace gnubase::engine
 		engine.registerCommand(std::move(info), std::move(handler));
 	}
 
-	void ProjectModel::record(std::string action, const Project& before, CommandContext& context)
+	void ProjectModel::record(std::string action, const Project& before, CommandContext& context, std::string merge)
 	{
+		const std::vector<HistoryStep>& steps = m_history.steps();
+		if (!merge.empty() && !steps.empty() && m_history.position() == steps.size() && steps.back().merge == merge)
+		{
+			// The step joins the last one: what changed since before that one.
+			Project start = before;
+			apply(start, steps.back().change, Direction::Undo);
+			ProjectChange change = difference(start, m_project);
+			if (change.empty())
+				m_history.removeLast();
+			else
+				m_history.step(steps.size() - 1).change = std::move(change);
+			announceHistory(context);
+			return;
+		}
 		ProjectChange change = difference(before, m_project);
 		if (change.empty())
 			return;
-		m_history.record({std::move(action), now(), {}, std::move(change)});
+		m_history.record({std::move(action), now(), {}, std::move(change), std::move(merge)});
 		announceHistory(context);
 	}
 
@@ -2758,8 +2775,12 @@ namespace gnubase::engine
 		add(engine,
 			{"history.transaction", 1,
 				"Runs document commands in order as one undo step named description. If one fails, none of them "
-				"changes the project. Returns each command's result.",
-				objectSchema({{"description", {{"type", "string"}}}, {"commands", arraySchema(command)}},
+				"changes the project. Returns each command's result. With a merge key, a transaction joins the last "
+				"step instead when that step is a transaction with the same key and nothing was undone since: a "
+				"gesture such as a fader drag, sent as a transaction per step with a key of its own, is one undo step "
+				"(none if it ends where it started).",
+				objectSchema({{"description", {{"type", "string"}}}, {"commands", arraySchema(command)},
+								 {"merge", {{"type", "string"}}}},
 					{"description", "commands"}),
 				{{"type", "object"}, {"properties", {{"results", {{"type", "array"}}}}}, {"required", {"results"}}},
 				false},
