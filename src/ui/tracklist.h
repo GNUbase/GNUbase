@@ -62,10 +62,12 @@ namespace gnubase::ui
 		void rename(uint64_t track);
 
 		// The commands that key commands and menus bind to, by id: track.selectPrevious and track.selectNext (Up and
-		// Down), track.rename (the first selected track), track.removeSelected, track.removeEmpty,
-		// track.duplicateSelected, track.disableSelected, track.enableSelected, track.toggleFolding (the selected
-		// folders), track.foldAll, track.unfoldAll and track.flipFolding; and for folder tracks
-		// track.enableSelectedGroupChannels, track.disableSelectedGroupChannels, track.moveSelectedToNewFolder and
+		// Down, which also select the first event on the new track while the event display has one selected),
+		// track.rename (the first selected track),
+		// track.removeSelected, track.removeEmpty, track.duplicateSelected, track.disableSelected,
+		// track.enableSelected, track.toggleFolding (the selected folders), track.foldAll, track.unfoldAll and
+		// track.flipFolding; and for folder tracks track.enableSelectedGroupChannels,
+		// track.disableSelectedGroupChannels, track.moveSelectedToNewFolder and
 		// track.moveSelectedToNewFolderWithGroupChannel.
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
 

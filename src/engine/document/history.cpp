@@ -14,16 +14,16 @@ namespace gnubase::engine
 	{
 		bool operator==(const ProjectSettings& a, const ProjectSettings& b)
 		{
-			return std::tie(a.name, a.sampleRate, a.tempo, a.signatures, a.autoFades, a.panLaw, a.maxVolume, a.setup,
-					   a.busses, a.tracks, a.activeMarkerTrack) ==
-				std::tie(b.name, b.sampleRate, b.tempo, b.signatures, b.autoFades, b.panLaw, b.maxVolume, b.setup,
-					b.busses, b.tracks, b.activeMarkerTrack);
+			return std::tie(a.name, a.sampleRate, a.tempo, a.signatures, a.autoFades, a.panLaw, a.maxVolume, a.colors,
+					   a.setup, a.busses, a.tracks, a.activeMarkerTrack) ==
+				std::tie(b.name, b.sampleRate, b.tempo, b.signatures, b.autoFades, b.panLaw, b.maxVolume, b.colors,
+					b.setup, b.busses, b.tracks, b.activeMarkerTrack);
 		}
 
 		ProjectSettings settings(const Project& project)
 		{
 			return {project.name, project.sampleRate, project.tempo, project.signatures, project.autoFades,
-				project.panLaw, project.maxVolume, project.setup, project.busses, project.tracks,
+				project.panLaw, project.maxVolume, project.colors, project.setup, project.busses, project.tracks,
 				project.activeMarkerTrack};
 		}
 
@@ -99,6 +99,7 @@ namespace gnubase::engine
 			copy.mute = part->mute;
 			copy.lock = part->lock;
 			copy.shared = part->shared;
+			copy.color = part->color;
 			return copy;
 		}
 
@@ -181,6 +182,7 @@ namespace gnubase::engine
 			project.autoFades = target.autoFades;
 			project.panLaw = target.panLaw;
 			project.maxVolume = target.maxVolume;
+			project.colors = target.colors;
 			project.setup = target.setup;
 			project.busses = target.busses;
 			project.tracks = target.tracks;
@@ -211,6 +213,7 @@ namespace gnubase::engine
 			part.mute = target->mute;
 			part.lock = target->lock;
 			part.shared = target->shared;
+			part.color = target->color;
 			applyObjects(part.notes, partChange.notes, direction);
 			applyObjects(part.controllers, partChange.controllers, direction);
 		}

@@ -91,6 +91,7 @@ TEST_CASE("keys are written the same way on every platform, Mod being Cmd on mac
 	CHECK(ui::parseKeys("Num+") == ui::KeyPress{KI_ADD, 0});
 	CHECK(ui::parseKeys("Alt+.") == ui::KeyPress{KI_OEM_PERIOD, KM_ALT});
 	CHECK(ui::parseKeys("Space") == ui::KeyPress{KI_SPACE, 0});
+	CHECK(ui::parseKeys("Alt") == ui::KeyPress{KI_LMENU, KM_ALT}); // as the keyboard sends it, Alt held
 	CHECK_THROWS_WITH(ui::parseKeys("Hyper+Q"), ContainsSubstring("Hyper"));
 	CHECK_THROWS_WITH(ui::parseKeys("Ctrl+Flux"), ContainsSubstring("Flux"));
 	CHECK_THROWS(ui::parseKeys(""));
@@ -102,7 +103,7 @@ TEST_CASE("keys are written the same way on every platform, Mod being Cmd on mac
 	CHECK(ui::keyName(ui::parseKeys("Alt+Ctrl+Num+", Platform::Mac), Platform::Mac) == "Ctrl+Opt+Num+");
 	for (const char* keys : {"A", "Z", "0", "9", "F1", "F24", "Num0", "Num9", "NumEnter", "Num*", "Num/", "Num-",
 			 "Num.", ".", ",", "-", "+", "Enter", "Escape", "Tab", "Backspace", "Delete", "Insert", "Home", "End",
-			 "PageUp", "PageDown", "Up", "Down", "Left", "Right", "Space", "Shift++"})
+			 "PageUp", "PageDown", "Up", "Down", "Left", "Right", "Space", "Alt", "Shift++"})
 	{
 		INFO(keys);
 		CHECK(ui::keyName(ui::parseKeys(keys, Platform::Windows), Platform::Windows) == keys);

@@ -5,6 +5,7 @@
 #include "platform/log.h"
 #include "ui/fonts.h"
 #include "ui/historypanel.h"
+#include "ui/inspector.h"
 #include "ui/poolpanel.h"
 #include "ui/timeformat.h"
 #include "ui/widgets.h"
@@ -42,11 +43,10 @@ namespace gnubase::app
 			const char* zone;
 		};
 
-		constexpr std::array<ProjectPanel, 6> g_projectPanels{{
+		constexpr std::array<ProjectPanel, 5> g_projectPanels{{
 			{"inspector", "Inspector", "left"},
 			{"visibility", "Visibility", "left"},
 			{"editor", "Editor", "lower"},
-			{"mixer", "Mixer", "lower"},
 			{"media", "Media", "right"},
 			{"meter", "Meter", "right"},
 		}};
@@ -60,7 +60,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 61> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 63> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -97,6 +97,10 @@ namespace gnubase::app
 			{"edit.selectFromStartToCursor", "Selects the events that end before the project cursor.", nullptr},
 			{"edit.selectFromCursorToEnd", "Selects the events that start after the project cursor.", nullptr},
 			{"edit.selectUnderCursor", "Selects the events at the project cursor.", nullptr},
+			// Left and Right (reference manual p. 253); Up and Down are the track list's track.selectPrevious and
+			// track.selectNext (p. 218).
+			{"edit.selectPrevious", "Selects the event before the selected one on its track.", "Left"},
+			{"edit.selectNext", "Selects the event after the selected one on its track.", "Right"},
 			{"edit.locatorsToSelection", "Sets the locators around the selected events.", "P"},
 			// Range editing (docs/features/range-editing.md), with the reference's keys (manual pp. 1562-1563).
 			{"edit.cut", "Cuts the selection range to the clipboard.", "Mod+X"},
@@ -161,8 +165,10 @@ namespace gnubase::app
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
 		constexpr std::array<ProjectCommand, 17> g_trackCommands{{
-			{"track.selectPrevious", "Selects the track above the selected one.", "Up"},
-			{"track.selectNext", "Selects the track below the selected one.", "Down"},
+			{"track.selectPrevious",
+				"Selects the track above the selected one, and its first event while an event is selected.", "Up"},
+			{"track.selectNext",
+				"Selects the track below the selected one, and its first event while an event is selected.", "Down"},
 			{"track.rename", "Renames the first selected track.", "Alt+F2"},
 			{"track.removeSelected", "Removes the selected tracks.", nullptr},
 			{"track.removeEmpty", "Removes the tracks that hold nothing.", nullptr},
@@ -215,6 +221,19 @@ namespace gnubase::app
 					m_menu->update();
 				if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
 					pool->update();
+				for (MixerWindow& shown : m_mixers)
+					if (shown.mixer && m_shell.find(shown.window) == nullptr)
+						shown.mixer.reset(); // the user closed its window
+				if (m_infoLine)
+					m_infoLine->update();
+				// The inspector shows the first selected track.
+				if (const std::shared_ptr<ui::Inspector> inspector = m_inspector.lock(); inspector && m_eventDisplay)
+				{
+					const std::vector<uint64_t> tracks =
+						m_trackList ? m_trackList->selection() : std::vector<uint64_t>();
+					inspector->update(
+						tracks.empty() ? 0 : tracks.front(), m_eventDisplay->project(), m_eventDisplay->loads());
+				}
 				return follows;
 			});
 		m_shell.onUnusedKey([this](ui::Window& window, const ui::KeyPress& keys) { m_keys.press(window, keys); });
@@ -223,9 +242,21 @@ namespace gnubase::app
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleMarkers(); }); }});
 		m_keys.bind({"Mod+M", "window.markers"});
 
-		// The project window's panels (reference manual pp. 54, 75-98), which their tickets fill.
+		// The project window's panels (reference manual pp. 54, 75-98), which their tickets fill: the inspector
+		// (docs/features/inspector.md) shows the selected track.
 		for (const ProjectPanel& panel : g_projectPanels)
-			m_docking.add({panel.id, panel.title, "project", panel.zone, {}});
+		{
+			ui::Panel added{panel.id, panel.title, "project", panel.zone, {}};
+			if (added.id == "inspector")
+				added.create = [this](Rml::Element& element)
+				{
+					auto inspector = std::make_shared<ui::Inspector>(m_binding, element);
+					m_inspector = inspector;
+					return std::shared_ptr<void>(inspector);
+				};
+			m_docking.add(std::move(added));
+		}
+		addMixers();
 		// The edit history (reference manual pp. 110-111), a dialog there, which Edit > History opens.
 		m_docking.add({"history", "History", "project", "right",
 			[this](Rml::Element& element) { return std::make_shared<ui::HistoryPanel>(m_binding, element); }});
@@ -313,6 +344,9 @@ namespace gnubase::app
 			m_keys.enableWhen(command, [this](ui::Window&, Rml::Element*) { return m_eventDisplay != nullptr; });
 		m_keys.add({"project.addTrack", "Opens the add track dialog.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "add-track.rml"); }});
+		// Project > Project Colors Setup (docs/features/colors.md).
+		m_keys.add({"project.colorsSetup", "Opens the project colors setup dialog, which edits the project's colors.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "project-colors.rml"); }});
 		// For documents' buttons and menu items: gnubase.ui.command{command = "project.addTrack"} runs a key command
 		// in the main window, as its keys would.
 		m_lua.addFunction("ui.command",
@@ -491,13 +525,19 @@ namespace gnubase::app
 		document->Show();
 		m_markerLines.reset();
 		m_docking.attach("project", *document);
+		m_colorMenu.reset();
 		m_trackList.reset();
+		m_infoLine.reset();
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
 		if (Rml::Element* bar = document->GetElementById("transport-bar"))
 			m_transportBar = transportControls(*bar, m_main, true);
 		m_statusLine = std::make_unique<ui::StatusLine>(m_binding, *document);
+		if (Rml::Element* info = document->GetElementById("info-line"))
+			m_infoLine = std::make_unique<ui::InfoLine>(*m_eventDisplay, m_binding, *info);
 		if (Rml::Element* tracks = document->GetElementById("track-list"))
 			m_trackList = std::make_unique<ui::TrackList>(*m_eventDisplay, m_binding, *tracks);
+		if (m_trackList)
+			m_colorMenu = std::make_unique<ui::ColorMenu>(*m_eventDisplay, *m_trackList, m_binding, *document);
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 		m_markerLines = std::make_unique<ui::MarkerLines>(*m_eventDisplay, m_binding);
 		m_markerLines->onSelect(
@@ -565,6 +605,100 @@ namespace gnubase::app
 				for (const std::filesystem::path& file : result.files)
 					files.push_back(file.u8string());
 				m_eventDisplay->importFiles(files, std::nullopt, std::nullopt, clipsOnly);
+			});
+	}
+
+	void AppUi::addMixers()
+	{
+		// The mixer in the lower zone (reference manual pp. 434-436), with a view of its own.
+		m_docking.add({"mixer", "Mixer", "project", "lower", [this](Rml::Element& element)
+			{
+				auto mixer = std::make_shared<ui::Mixer>(
+					m_binding, m_docking, element, "lower", false, [this](uint64_t track) { choosePicture(track); });
+				m_lowerMixer = mixer;
+				return mixer;
+			}});
+		m_keys.add({"window.lowerZoneMixer",
+			"Shows the mixer in the project window's lower zone, or hides the zone while it shows the mixer.",
+			[this](ui::Window&, Rml::Element*)
+			{
+				if (m_docking.showing("mixer") && m_docking.windowOf("mixer") == nullptr)
+					m_docking.setVisible("project", "lower", false);
+				else
+					m_docking.open("mixer");
+			}});
+		m_keys.bind({"Alt+F3", "window.lowerZoneMixer"});
+		// The mixer windows (pp. 437-462), each with the Visibility tab in its left zone.
+		for (int number = 1; number <= static_cast<int>(m_mixers.size()); ++number)
+		{
+			const std::string name = "mixer" + std::to_string(number);
+			m_docking.add({name + "Visibility", "Visibility", name, "left", [this, number](Rml::Element& element)
+				{
+					if (ui::Mixer* found = mixer(number))
+						found->showVisibility(element);
+					return std::shared_ptr<void>();
+				}});
+			m_keys.add({number == 1 ? std::string("window.mixer") : "window.mixer" + std::to_string(number),
+				number == 1 ? std::string("Opens or closes the mixer window.")
+							: "Opens or closes mixer window " + std::to_string(number) + ".",
+				// Later in the step: the key may be the mixer window's own, which closing it would destroy.
+				[this, number](ui::Window&, Rml::Element*) { m_shell.post([this, number] { toggleMixer(number); }); }});
+		}
+		m_keys.bind({"F3", "window.mixer"});
+	}
+
+	ui::Mixer* AppUi::toggleMixer(int number)
+	{
+		MixerWindow& shown = m_mixers.at(static_cast<size_t>(number - 1));
+		const bool open = shown.window != 0 && m_shell.find(shown.window) != nullptr;
+		shown.mixer.reset();
+		if (open)
+		{
+			m_shell.close(shown.window);
+			shown.window = 0;
+			return nullptr;
+		}
+		ui::WindowSpec spec;
+		spec.title = number == 1 ? std::string("Mixer") : "Mixer " + std::to_string(number);
+		spec.size = {1000, 560};
+		spec.hidden = m_hidden;
+		const ui::Window& window = m_shell.open(spec);
+		shown.window = window.id();
+		const std::filesystem::path file = m_resources / "ui" / "mixer.rml";
+		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
+		Rml::Element* root = document != nullptr ? document->GetElementById("mixer") : nullptr;
+		if (root == nullptr)
+		{
+			m_shell.close(shown.window);
+			shown.window = 0;
+			throw std::runtime_error("cannot load the mixer window from " + file.u8string());
+		}
+		document->Show();
+		shown.mixer = std::make_unique<ui::Mixer>(m_binding, m_docking, *root, "window" + std::to_string(number), true,
+			[this](uint64_t track) { choosePicture(track); });
+		m_docking.attach("mixer" + std::to_string(number), *document);
+		return shown.mixer.get();
+	}
+
+	ui::Mixer* AppUi::mixer(int number)
+	{
+		const MixerWindow& shown = m_mixers.at(static_cast<size_t>(number - 1));
+		return shown.window != 0 && m_shell.find(shown.window) != nullptr ? shown.mixer.get() : nullptr;
+	}
+
+	void AppUi::choosePicture(uint64_t track)
+	{
+		ui::FileDialog dialog;
+		dialog.title = "Choose Track Picture";
+		dialog.filters = {{"Images", "png;jpg;jpeg;svg"}, {"All files", "*"}};
+		dialog.parent = m_main.id();
+		m_shell.showFileDialog(dialog,
+			[this, track](const ui::FileDialogResult& result)
+			{
+				if (!result.error.empty())
+					logging::warning("The file dialog failed: {}", result.error);
+				if (!result.files.empty())
+					m_binding.send("track.set", {{"track", track}, {"picture", result.files.front().u8string()}});
 			});
 	}
 

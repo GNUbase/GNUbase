@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <variant>
@@ -79,6 +81,36 @@ namespace
 		settings.right = right;
 		settings.cycle = true;
 		return settings;
+	}
+
+	// Plays frames in blocks and returns the positions of the frames that recorded, in the order they played.
+	std::vector<Samples> recordedPositions(Transport& transport, size_t frames, uint32_t blockSize)
+	{
+		std::vector<Samples> result;
+		for (size_t done = 0; done < frames; done += blockSize)
+		{
+			const auto count = static_cast<uint32_t>(std::min<size_t>(blockSize, frames - done));
+			const TransportBlock& block = transport.advance(count);
+			bool any = false;
+			for (size_t s = 0; s < block.segmentCount; ++s)
+			{
+				const graph::TransportSegment& segment = block.segments[s];
+				any = any || segment.recording;
+				if (segment.recording)
+					for (uint32_t i = 0; i < segment.frames; ++i)
+						result.push_back(segment.position + i);
+			}
+			REQUIRE(block.recording == any);
+		}
+		return result;
+	}
+
+	std::vector<Samples> range(Samples from, Samples to)
+	{
+		std::vector<Samples> result;
+		for (Samples p = from; p < to; ++p)
+			result.push_back(p);
+		return result;
 	}
 
 	Json run(Client& client, const std::string& command, Json parameters = Json::object())
@@ -306,6 +338,284 @@ TEST_CASE("return to start position on stop goes back to where playback started"
 	CHECK(!transport.playing());
 }
 
+TEST_CASE("punch in starts recording at the left locator, sample-exactly", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(32u, 100u, 257u);
+	Transport transport;
+	TransportSettings settings;
+	settings.left = 1000;
+	settings.right = 3000;
+	settings.punchIn = true;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(500));
+	REQUIRE(transport.play()); // playback alone records from the punch in position on
+	CHECK(recordedPositions(transport, 3000, blockSize) == range(1000, 3500));
+	CHECK(transport.sync());
+	CHECK(transport.recording());
+	CHECK(!transport.sync()); // nothing new
+
+	// Started after the punch in position it doesn't record; neither does recording asked for before it.
+	REQUIRE(transport.stop());
+	REQUIRE(transport.locate(1500));
+	REQUIRE(transport.play());
+	CHECK(recordedPositions(transport, 1000, blockSize).empty());
+	REQUIRE(transport.stop());
+	REQUIRE(transport.locate(200));
+	REQUIRE(transport.record(true));
+	CHECK(recordedPositions(transport, 1000, blockSize) == range(1000, 1200));
+}
+
+TEST_CASE("punch out ends recording at the right locator and playback goes on", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(32u, 100u, 257u);
+	Transport transport;
+	TransportSettings settings;
+	settings.left = 1000;
+	settings.right = 3000;
+	settings.punchOut = true;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(500));
+	REQUIRE(transport.record(true)); // starts playback and recording at the cursor
+	CHECK(transport.playing());
+	CHECK(recordedPositions(transport, 4000, blockSize) == range(500, 3000));
+	CHECK(transport.sync());
+	CHECK(transport.playing());
+	CHECK(!transport.recording());
+	CHECK(transport.position() == 4500);
+}
+
+TEST_CASE("cycle recording with punch in and out records every lap, nothing before the left locator", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(32u, 100u, 257u);
+	TransportSettings settings = cycle(1000, 2000);
+	settings.punchIn = true;
+	settings.punchOut = true;
+	settings.stopAfterPunchOut = true; // a cycle plays on
+	Transport transport;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(500));
+	REQUIRE(transport.play());
+	std::vector<Samples> expected = model(settings, 500, 3000);
+	expected.pop_back();
+	expected.erase(expected.begin(), expected.begin() + 500);
+	CHECK(recordedPositions(transport, 3000, blockSize) == expected);
+	CHECK(transport.advance(blockSize).playing);
+}
+
+TEST_CASE("pre-roll starts playback before the cursor, and recording from stop at the cursor", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(32u, 100u, 257u);
+	Transport transport;
+	TransportSettings settings;
+	settings.preRoll = true;
+	settings.preRollAmount = 1000;
+	settings.returnToStart = true;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(5000));
+	CHECK(transport.startPosition() == 4000);
+	REQUIRE(transport.record(true));
+	CHECK(transport.advance(blockSize).position == 4000);
+	transport.locate(5000);
+	REQUIRE(transport.stop());
+	transport.update();
+
+	REQUIRE(transport.record(true));
+	const std::vector<Samples> recorded = recordedPositions(transport, 2000, blockSize);
+	CHECK(recorded == range(5000, 6000));
+	REQUIRE(transport.stop());
+	transport.update();
+	CHECK(transport.position() == 5000); // returns to the cursor, not to where the pre-roll started
+
+	// Not before the project start; without pre-roll playback starts at the cursor.
+	REQUIRE(transport.locate(300));
+	CHECK(transport.startPosition() == 0);
+	REQUIRE(transport.play());
+	CHECK(transport.advance(blockSize).position == 0);
+	REQUIRE(transport.stop());
+	settings.preRoll = false;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(300));
+	REQUIRE(transport.play());
+	CHECK(transport.advance(blockSize).position == 300);
+}
+
+TEST_CASE("stop after punch out stops playback at the right locator plus the post-roll", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(32u, 100u, 257u);
+	const bool postRoll = GENERATE(false, true);
+	Transport transport;
+	TransportSettings settings;
+	settings.left = 1000;
+	settings.right = 2000;
+	settings.punchIn = true;
+	settings.punchOut = true;
+	settings.stopAfterPunchOut = true;
+	settings.postRoll = postRoll;
+	settings.postRollAmount = 500;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.play());
+	const Samples stop = postRoll ? 2500 : 2000;
+	Samples last = -1; // the last frame played
+	std::vector<Samples> recorded;
+	for (int block = 0; block < 100; ++block)
+	{
+		const TransportBlock& played = transport.advance(blockSize);
+		if (!played.playing)
+			break;
+		for (size_t s = 0; s < played.segmentCount; ++s)
+		{
+			const graph::TransportSegment& segment = played.segments[s];
+			last = segment.position + segment.frames - 1;
+			if (segment.recording)
+				for (uint32_t i = 0; i < segment.frames; ++i)
+					recorded.push_back(segment.position + i);
+		}
+	}
+	CHECK(recorded == range(1000, 2000));
+	CHECK(last >= stop - 1);
+	CHECK(last < stop + blockSize); // it stops at the next block
+	CHECK(transport.position() == stop);
+	CHECK(transport.sync());
+	CHECK(!transport.playing());
+	CHECK(!transport.recording());
+
+	// Punching out by hand doesn't stop.
+	REQUIRE(transport.locate(1500));
+	REQUIRE(transport.record(true));
+	transport.advance(blockSize);
+	REQUIRE(transport.record(false));
+	recordedPositions(transport, 2000, blockSize);
+	CHECK(transport.playing());
+}
+
+TEST_CASE("a locate during the pre-roll moves the record start, and recording again cancels the stop", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(32u, 100u);
+	Transport transport;
+	TransportSettings settings;
+	settings.preRoll = true;
+	settings.preRollAmount = 1000;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(5000));
+	REQUIRE(transport.record(true)); // plays from 4000, records from 5000
+	transport.advance(blockSize);
+	REQUIRE(transport.locate(8000)); // during the pre-roll: recording starts there
+	CHECK(recordedPositions(transport, 500, blockSize) == range(8000, 8500));
+	REQUIRE(transport.stop());
+
+	// Recording again during the post-roll stops no more.
+	settings.preRoll = false;
+	settings.left = 1000;
+	settings.right = 2000;
+	settings.punchIn = true;
+	settings.punchOut = true;
+	settings.stopAfterPunchOut = true;
+	settings.postRoll = true;
+	settings.postRollAmount = 1000;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(0));
+	REQUIRE(transport.play());
+	recordedPositions(transport, 2200, blockSize); // punched out at 2000
+	REQUIRE(transport.record(true));
+	CHECK(recordedPositions(transport, 2000, blockSize).size() == 2000);
+	CHECK(transport.advance(blockSize).playing);
+}
+
+TEST_CASE("a locate while recording waits for the punch in keeps waiting for it", "[unit]")
+{
+	const bool preRoll = GENERATE(false, true);
+	Transport transport;
+	TransportSettings settings;
+	settings.left = 4800;
+	settings.right = 9600;
+	settings.punchIn = true;
+	settings.preRoll = preRoll;
+	settings.preRollAmount = 500;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(1000));
+	REQUIRE(transport.record(true)); // waits for the left locator
+	transport.advance(64);
+	REQUIRE(transport.locate(2000)); // still before it
+	CHECK(recordedPositions(transport, 3000, 64) == range(4800, 5000));
+	REQUIRE(transport.stop());
+	REQUIRE(transport.locate(1000));
+	REQUIRE(transport.record(true));
+	transport.advance(64);
+	REQUIRE(transport.locate(6000)); // past it: recording starts there
+	CHECK(recordedPositions(transport, 640, 64) == range(6000, 6640));
+}
+
+TEST_CASE("recording from stop in a cycle with punch in starts at the punch in if the cycle never reaches the cursor",
+	"[unit]")
+{
+	TransportSettings settings = cycle(1000, 2000);
+	settings.punchIn = true;
+	settings.preRoll = true;
+	settings.preRollAmount = 1500;
+	Transport transport;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(2200)); // the pre-roll starts at 700, before the cycle
+	REQUIRE(transport.record(true));
+	CHECK(!transport.recording());
+	const std::vector<Samples> recorded = recordedPositions(transport, 1000, 64);
+	REQUIRE(!recorded.empty());
+	CHECK(recorded.front() == 1000);
+	CHECK(transport.sync()); // the punch in, which the command thread takes over
+	CHECK(transport.recording());
+}
+
+TEST_CASE("recording from stop in a cycle starts where the pre-roll starts if the cycle never reaches it", "[unit]")
+{
+	TransportSettings settings = cycle(1000, 2000);
+	settings.preRoll = true;
+	settings.preRollAmount = 500;
+	Transport transport;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(2200)); // the pre-roll starts at 1700, in the cycle, which jumps back at 2000
+	REQUIRE(transport.record(true));
+	CHECK(transport.recording()); // the command thread expects what the audio thread does
+	const std::vector<Samples> recorded = recordedPositions(transport, 1000, 64);
+	REQUIRE(!recorded.empty());
+	CHECK(recorded.front() == 1700);
+	CHECK(!transport.sync());
+}
+
+TEST_CASE("the reply to recording from stop is exact where the pre-roll can't roll back", "[unit]")
+{
+	Transport transport;
+	TransportSettings settings;
+	settings.preRoll = true;
+	settings.preRollAmount = 1000;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.record(true)); // at 0: nothing to roll back
+	CHECK(transport.recording());
+	transport.update();
+	CHECK(!transport.sync());
+	CHECK(transport.recording());
+}
+
+TEST_CASE("the command thread takes over what the audio thread changed only once no request waits", "[unit]")
+{
+	Transport transport;
+	TransportSettings settings;
+	settings.left = 100;
+	settings.right = 1000;
+	settings.punchIn = true;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.play());
+	transport.advance(200);
+	REQUIRE(transport.stop()); // waiting: the punch in is old news
+	CHECK(!transport.sync());
+	CHECK(!transport.playing());
+	transport.advance(64);
+	CHECK(!transport.sync()); // the audio thread stopped as asked
+	CHECK(!transport.recording());
+	const uint64_t changes = transport.changes();
+	REQUIRE(transport.play());
+	transport.advance(64);
+	CHECK(transport.changes() != changes); // the cue thread sees that something happened
+}
+
 TEST_CASE("the position probe outputs each frame's project position, sample-exact across cycle jumps", "[unit]")
 {
 	const uint32_t blockSize = GENERATE(32u, 100u, 257u);
@@ -351,7 +661,8 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK(state ==
 		Json{{"playing", false}, {"recording", false}, {"position", 0}, {"left", 0}, {"right", 0}, {"cycle", false},
 			{"startMode", "cursor"}, {"returnToStart", false}, {"punchIn", false}, {"punchOut", false},
-			{"metronome", false}, {"audioRecordMode", "keepHistory"}});
+			{"preRoll", false}, {"preRollAmount", 0}, {"postRoll", false}, {"postRollAmount", 0}, {"metronome", false},
+			{"audioRecordMode", "keepHistory"}});
 
 	state = run(client, "transport.set", {{"left", 48000}, {"right", 96000}, {"cycle", true}});
 	CHECK(state.at("left") == 48000);
@@ -392,6 +703,8 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK_THAT(reject(client, "transport.set", {{"right", -5}}), ContainsSubstring("right"));
 	CHECK_THAT(reject(client, "transport.set", {{"left", "somewhere"}}), ContainsSubstring("left"));
 	CHECK_THAT(reject(client, "transport.set", {{"startMode", "selection"}}), ContainsSubstring("startMode"));
+	CHECK_THAT(reject(client, "transport.set", {{"preRollAmount", -1}}), ContainsSubstring("preRollAmount"));
+	CHECK_THAT(reject(client, "transport.set", {{"postRollAmount", -1}}), ContainsSubstring("postRollAmount"));
 }
 
 TEST_CASE("record starts playback and recording, punches in and out, and stop ends both", "[integration]")
@@ -420,11 +733,127 @@ TEST_CASE("record starts playback and recording, punches in and out, and stop en
 	CHECK(state.at("recording") == false);
 }
 
+TEST_CASE("transport commands set the pre-roll and post-roll", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	Json state = run(client, "transport.set",
+		{{"preRoll", true}, {"preRollAmount", 4800}, {"postRoll", true}, {"postRollAmount", 9600}});
+	CHECK(state.at("preRoll") == true);
+	CHECK(state.at("preRollAmount") == 4800);
+	CHECK(state.at("postRoll") == true);
+	CHECK(state.at("postRollAmount") == 9600);
+	CHECK(run(client, "transport.set", {{"postRoll", false}}).at("postRollAmount") == 9600); // the rest stays
+	CHECK_THAT(reject(client, "transport.set", {{"preRollAmount", (3600LL * 768000) + 1}}),
+		ContainsSubstring("preRollAmount"));
+	CHECK(run(client, "transport.set", {{"postRollAmount", 3600LL * 768000}}).at("postRollAmount") == 3600LL * 768000);
+	run(client, "transport.set", {{"postRollAmount", 9600}});
+
+	// Playback rolls back from the cursor; recording with punch in before the left locator waits for it.
+	run(client, "transport.set", {{"left", 48000}, {"right", 96000}, {"punchIn", true}});
+	run(client, "transport.locate", {{"position", 10000}});
+	state = run(client, "transport.record");
+	CHECK(state.at("playing") == true);
+	CHECK(state.at("recording") == false);
+	CHECK(state.at("position") == 5200);
+	run(client, "transport.stop");
+	run(client, "transport.locate", {{"position", 60000}});
+	CHECK(run(client, "transport.record").at("recording") == false); // after the punch in position: the pre-roll first
+	run(client, "transport.stop");
+	run(client, "transport.set", {{"preRoll", false}});
+	CHECK(run(client, "transport.record").at("recording") == true); // from the cursor, after the punch in position
+}
+
+TEST_CASE("the transport announces punching in and out and stopping after the post-roll", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	Client listener(engine);
+	run(client, "audio.setDevice", {{"blockSize", 64}});
+	run(client, "settings.set", {{"key", "audio.stopAfterPunchOut"}, {"value", true}});
+	run(client, "transport.set",
+		{{"left", 1000}, {"right", 2000}, {"punchIn", true}, {"punchOut", true}, {"postRoll", true},
+			{"postRollAmount", 500}});
+	run(client, "transport.play");
+	const auto states = [&listener]
+	{
+		std::vector<std::pair<bool, bool>> result; // playing, recording
+		while (const auto message = listener.poll())
+			if (const auto* event = std::get_if<Event>(&*message);
+				event != nullptr && event->name == "transport.changed")
+				result.emplace_back(event->data.at("playing").get<bool>(), event->data.at("recording").get<bool>());
+		return result;
+	};
+	states(); // what the commands announced
+	run(client, "audio.render", {{"frames", 1500}});
+	CHECK(run(client, "transport.get").at("recording") == true);
+	run(client, "audio.render", {{"frames", 1000}});
+	CHECK(run(client, "transport.get").at("recording") == false);
+	CHECK(run(client, "transport.get").at("playing") == true); // the post-roll
+	run(client, "audio.render", {{"frames", 128}});
+	const Json state = run(client, "transport.get");
+	CHECK(state.at("playing") == false);
+	CHECK(state.at("position") == 2500);
+	const std::vector<std::pair<bool, bool>> announced = states();
+	REQUIRE(!announced.empty());
+	CHECK(std::find(announced.begin(), announced.end(), std::pair{true, true}) != announced.end());
+	CHECK(announced.back() == std::pair{false, false});
+}
+
+TEST_CASE("while the device runs, the engine announces punching in and stopping after the punch out", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	Client listener(engine);
+	run(client, "audio.setDevice", {{"blockSize", 64}}); // a block every 1.3 ms
+	run(client, "settings.set", {{"key", "audio.stopAfterPunchOut"}, {"value", true}});
+	run(client, "transport.set",
+		{{"left", 24000}, {"right", 48000}, {"punchIn", true}, {"punchOut", true}, {"postRoll", true},
+			{"postRollAmount", 24000}});
+	run(client, "audio.start");
+	run(client, "transport.play");
+	// Waits up to 10 s for a transport.changed that matches; keeps the requests of all it sees.
+	std::set<RequestId> announced;
+	const auto waitFor = [&listener, &announced](bool playing, bool recording)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		while (std::chrono::steady_clock::now() < deadline)
+		{
+			const std::optional<Message> message = listener.wait(std::chrono::milliseconds(50));
+			const auto* event = message ? std::get_if<Event>(&*message) : nullptr;
+			if (event == nullptr || event->name != "transport.changed")
+				continue;
+			announced.insert(event->request);
+			if (event->data.at("playing") == playing && event->data.at("recording") == recording)
+				return true;
+		}
+		return false;
+	};
+	CHECK(waitFor(true, true));   // the punch in at 0.5 s
+	CHECK(waitFor(true, false));  // the punch out at 1 s
+	CHECK(waitFor(false, false)); // the stop after the post-roll at 1.5 s
+	const Json state = run(client, "transport.get");
+	CHECK(state.at("playing") == false);
+	CHECK(state.at("position") == 72000);
+	run(client, "audio.stop");
+
+	// The engine's runs of transport.update that changed nothing stay out of the command log.
+	int updates = 0;
+	const Json log = run(client, "engine.commandLog").at("commands");
+	for (const Json& entry : log)
+		if (entry.at("command") == "transport.update")
+		{
+			++updates;
+			CHECK(announced.count(entry.at("request").get<RequestId>()) == 1);
+		}
+	CHECK(updates == 3);
+}
+
 TEST_CASE("toggle switches cycle, punch in and out, the metronome and recording", "[integration]")
 {
 	Engine engine;
 	Client client(engine);
-	for (const char* setting : {"cycle", "punchIn", "punchOut", "metronome"})
+	for (const char* setting : {"cycle", "punchIn", "punchOut", "preRoll", "postRoll", "metronome"})
 	{
 		INFO(setting);
 		CHECK(run(client, "transport.toggle", {{"setting", setting}}).at(setting) == true);

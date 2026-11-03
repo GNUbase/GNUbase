@@ -100,6 +100,13 @@ namespace gnubase::ui
 		rmlui.registerElement<Ruler>("ruler");
 	}
 
+	uint32_t spanColor(const std::string& text)
+	{
+		if (!engine::isColor(text))
+			return 0;
+		return (static_cast<uint32_t>(std::stoul(text.substr(1), nullptr, 16)) << 8U) | 0xffU;
+	}
+
 	float Canvas::Frame::x(double position) const
 	{
 		return static_cast<float>(std::round(position / unitsPerPixel) - left);
@@ -219,6 +226,13 @@ namespace gnubase::ui
 		if (m_lanes.empty())
 			return;
 		const Colour body = fill();
+		const float opacity = GetComputedValues().opacity();
+		const auto own = [opacity](uint32_t rgba)
+		{
+			return Rml::Colourb(static_cast<uint8_t>(rgba >> 24U), static_cast<uint8_t>(rgba >> 16U),
+				static_cast<uint8_t>(rgba >> 8U), static_cast<uint8_t>(rgba))
+				.ToPremultiplied(opacity);
+		};
 		const Colour outline = stroke();
 		const float width = outline.alpha == 0 ? 0.0F : strokeWidth();
 		// Events reaching beyond the frame end just outside it, so their outline there stays out of view.
@@ -247,7 +261,7 @@ namespace gnubase::ui
 					continue;
 				const float x0 = std::max(frame.x(event->start), first);
 				const float x1 = std::max(std::min(frame.x(event->end()), last), x0 + 1.0F);
-				outlined(mesh, x0, y0, x1, y1, body, outline, width);
+				outlined(mesh, x0, y0, x1, y1, event->color == 0 ? body : own(event->color), outline, width);
 			}
 		}
 		meshes.push_back({std::move(mesh), {}});

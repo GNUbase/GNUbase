@@ -92,6 +92,7 @@ namespace gnubase::ui
 		}};
 
 		constexpr std::array<const char*, 5> g_lineModes = {"line", "parabola", "sine", "triangle", "square"};
+		constexpr std::array<const char*, 2> g_playModes = {"play", "scrub"};
 	}
 
 	const char* toolName(Tool tool)
@@ -125,6 +126,7 @@ namespace gnubase::ui
 		m_combineButton = m_document->GetElementById("combine-selection-tools");
 		m_objectMenu = m_document->GetElementById("object-selection-menu");
 		m_lineMenu = m_document->GetElementById("line-menu");
+		m_playMenu = m_document->GetElementById("play-menu");
 		if (m_formatMenu != nullptr)
 			m_ruler->SetAttribute("contextmenu", m_formatMenu->GetId()); // a right click in the ruler opens it
 	}
@@ -209,6 +211,10 @@ namespace gnubase::ui
 			for (size_t i = 0; i < g_lineModes.size(); ++i)
 				if (mode == g_lineModes[i])
 					setLineMode(static_cast<LineMode>(i));
+		}
+		else if (menu == m_playMenu)
+		{
+			setPlayMode(item->GetAttribute<Rml::String>("play-mode", "") == "scrub" ? PlayMode::Scrub : PlayMode::Play);
 		}
 		else if (menu == m_autoScrollMenu)
 		{
@@ -429,6 +435,7 @@ namespace gnubase::ui
 			return;
 		m_root->SetAttribute("tool", toolName(m_tool));
 		m_root->SetAttribute("line-mode", g_lineModes.at(static_cast<size_t>(m_lineMode)));
+		m_root->SetAttribute("play-mode", g_playModes.at(static_cast<size_t>(m_playMode)));
 		m_root->SetClass("cross-hair", m_crossHair && g_tools.at(static_cast<size_t>(m_tool)).crossHair);
 		for (Rml::Element* button : m_toolButtons)
 		{
@@ -453,6 +460,12 @@ namespace gnubase::ui
 					check(*item,
 						item->GetAttribute<Rml::String>("line-mode", "") ==
 							g_lineModes.at(static_cast<size_t>(m_lineMode)));
+		if (m_playMenu != nullptr)
+			for (int i = 0; i < m_playMenu->GetNumChildren(); ++i)
+				if (Rml::Element* item = m_playMenu->GetChild(i); item->HasAttribute("play-mode"))
+					check(*item,
+						item->GetAttribute<Rml::String>("play-mode", "") ==
+							g_playModes.at(static_cast<size_t>(m_playMode)));
 	}
 
 	void EventDisplay::showAutoScroll()
