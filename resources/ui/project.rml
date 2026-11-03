@@ -60,7 +60,7 @@
 
 		/* The track list, as wide as ui.layout or its size attribute says, the divider that sizes it, and the event
 		   display, which takes the rest. A narrow window takes the room from the track list once the event display is
-		   at its minimum. */
+		   at its minimum. The minimums and the divider fill the 200 dp that the zones' column keeps (base.rcss). */
 		#main-zone
 		{
 			display: flex;
@@ -77,7 +77,7 @@
 		#event-display
 		{
 			flex: 1 1 0;
-			min-width: 100dp;
+			min-width: 72dp;
 		}
 	</style>
 </head>

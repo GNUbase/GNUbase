@@ -102,7 +102,8 @@ the drag ends. A double click on a splitter collapses its zone; showing the zone
 
 A splitter also sizes a resizable element inside a zone, which isn't a zone itself: the project window's track list,
 whose divider sits between it and the event display in the main zone ([track-list.md](track-list.md)). Its size goes
-into `sizes` in the layout, and a double click leaves it alone.
+into `sizes` in the layout, and a double click leaves it alone. Sizes from the layout are held at 100,000 dp, so that a
+hand-edited or foreign value can't reach the layout as infinity.
 
 ## The layout and the engine
 

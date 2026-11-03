@@ -98,7 +98,8 @@
 		local settings = {} -- the setting as the dialog edits it, by type
 		local defaults = {}
 		local defaultWidth = 120 -- dp, where ui.trackWidths has no width (ui/tracklist.cpp)
-		local widths = {name = defaultWidth, controls = {}} -- ui.trackWidths as the dialog edits it
+		-- ui.trackWidths as the dialog edits it, with what it doesn't know, e.g. from a later GNUbase
+		local widths = {name = defaultWidth, controls = {}}
 		local defaultWidths = {name = defaultWidth, controls = {}}
 		local shownType = "audio" -- the type whose controls area width the field shows
 
@@ -159,22 +160,32 @@
 					defaultWidths = setting.default
 				end
 			end
-			local saved = gnubase.settings.get{key = "ui.trackWidths"}.value
-			widths.name = saved.name or defaultWidth
-			for key, value in pairs(saved.controls or {}) do
-				widths.controls[key] = value
+			for key, value in pairs(gnubase.settings.get{key = "ui.trackWidths"}.value) do
+				widths[key] = value
 			end
+			widths.name = widths.name or defaultWidth
+			local controls = {}
+			for key, value in pairs(widths.controls or {}) do
+				controls[key] = value
+			end
+			widths.controls = controls
 			document:GetElementById("track-name-width"):SetAttribute("value", string.format("%g", widths.name))
 			dialog.show(document)
 		end
 
+		-- A field's width in whole dp, or nil.
+		local function whole(element)
+			local value = tonumber(element:GetAttribute("value"))
+			return value and math.floor(value + 0.5)
+		end
+
 		-- The widths typed: the name's, and the controls area's of the type the field shows.
 		function dialog.nameWidth(element)
-			widths.name = tonumber(element:GetAttribute("value")) or widths.name
+			widths.name = whole(element) or widths.name
 		end
 
 		function dialog.controlsWidth(element)
-			widths.controls[shownType] = tonumber(element:GetAttribute("value")) or areaWidth(widths, shownType)
+			widths.controls[shownType] = whole(element) or areaWidth(widths, shownType)
 		end
 
 		-- Shows the selected type's lists, keeping the selected control selected.
@@ -255,14 +266,10 @@
 				value[type] = visible(type)
 			end
 			gnubase.settings.set{key = "ui.trackControls", value = value}
-			local controls = {}
 			for type in pairs(defaultWidths.controls) do
-				controls[type] = areaWidth(widths, type)
+				widths.controls[type] = areaWidth(widths, type)
 			end
-			for type in pairs(available) do
-				controls[type] = areaWidth(widths, type)
-			end
-			gnubase.settings.set{key = "ui.trackWidths", value = {name = widths.name, controls = controls}}
+			gnubase.settings.set{key = "ui.trackWidths", value = widths}
 			document:Close()
 		end
 	</script>
@@ -297,11 +304,11 @@
 		</div>
 		<div class="row widths">
 			<label for="controls-area-width">Controls Area Width</label>
-			<valuefield id="controls-area-width" value="120" min="0" max="800" step="1" decimals="0" unit="dp"
-				onchange="TrackControls.controlsWidth(element)"/>
+			<valuefield id="controls-area-width" value="120" default="120" min="0" max="800" step="1" decimals="0"
+				unit="dp" onchange="TrackControls.controlsWidth(element)"/>
 			<label for="track-name-width">Track Name Width (global)</label>
-			<valuefield id="track-name-width" value="120" min="20" max="400" step="1" decimals="0" unit="dp"
-				onchange="TrackControls.nameWidth(element)"/>
+			<valuefield id="track-name-width" value="120" default="120" min="20" max="400" step="1" decimals="0"
+				unit="dp" onchange="TrackControls.nameWidth(element)"/>
 		</div>
 		<div class="row">
 			<button id="controls-cancel" result="cancel">Cancel</button>

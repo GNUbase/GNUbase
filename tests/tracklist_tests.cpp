@@ -397,15 +397,14 @@ TEST_CASE("the divider beside the track list sizes it, and the width comes back 
 		CHECK(x("#event-display") + width("#event-display") == x("#main-zone") + width("#main-zone"));
 		CHECK(x("event-lanes.events") - x("#event-display") == lanes);
 	};
-	const auto saved = [&app]
+	const auto project = [&app]
 	{
 		const Json layout = app.call("settings.get", {{"key", "ui.layout"}}).at("value");
-		const Json* size = nullptr;
-		if (layout.contains("windows") && layout["windows"].contains("project") &&
-			layout["windows"]["project"].contains("sizes"))
-			size = &layout["windows"]["project"]["sizes"];
-		return size != nullptr ? size->value("trackList", 0.0) : 0.0;
+		return layout.value("windows", Json::object()).value("project", Json::object());
 	};
+	const auto saved = [&project] { return project().value("sizes", Json::object()).value("trackList", 0.0); };
+	const auto layout = [&app](const Json& sizes)
+	{ app.call("settings.set", {{"key", "ui.layout"}, {"value", {{"windows", {{"project", {{"sizes", sizes}}}}}}}}); };
 	const auto drag = [&](int dx)
 	{
 		const Json splitter = box("splitter[for=trackList]");
@@ -425,10 +424,11 @@ TEST_CASE("the divider beside the track list sizes it, and the width comes back 
 	REQUIRE(app.waitUntil([&] { return saved() == 315.0; }));
 
 	// Not below the track list's minimum, nor so far that the event display goes below its own.
+	const int most = width("#main-zone") - width("splitter[for=trackList]") - 72;
 	drag(-1000);
 	follows(120);
 	drag(2000);
-	follows(width("#main-zone") - width("splitter[for=trackList]") - 100);
+	follows(most);
 
 	// A double click doesn't hide the track list, as it hides a zone.
 	const Json splitter = box("splitter[for=trackList]");
@@ -440,27 +440,67 @@ TEST_CASE("the divider beside the track list sizes it, and the width comes back 
 	app.shell().step(std::chrono::milliseconds(0));
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(elements(app, "#track-list").at(0).at("visible").get<bool>());
-	follows(width("#main-zone") - width("splitter[for=trackList]") - 100);
+	follows(most);
+	CHECK(!project().value("strips", Json::object()).contains("trackList"));
 
-	// ui.layout from another client sizes it too; it is in dp, so a larger UI scale makes it wider in pixels.
-	app.call("settings.set",
-		{{"key", "ui.layout"}, {"value", {{"windows", {{"project", {{"sizes", {{"trackList", 300}}}}}}}}}});
+	// ui.layout from another client sizes it too, as Docking::setSize does; a size too large for the window is held
+	// where the event display keeps its minimum.
+	layout({{"trackList", 300}});
 	REQUIRE(app.waitUntil([&] { return width("#track-list") == 300; }));
 	app.shell().step(std::chrono::milliseconds(0));
 	follows(300);
+	app.appUi().docking().setSize("project", "trackList", 333);
+	app.shell().step(std::chrono::milliseconds(0));
+	follows(333);
+	CHECK(app.appUi().docking().layout().at("windows").at("project").at("sizes").at("trackList") == 333.0);
+	layout({{"trackList", 1e300}});
+	REQUIRE(app.waitUntil([&] { return width("#track-list") == most; }));
+	app.shell().step(std::chrono::milliseconds(0));
+	follows(most);
+
+	// A window too narrow for both takes the room from the track list once the event display is at its minimum.
+	layout({{"trackList", 600}});
+	REQUIRE(app.waitUntil([&] { return width("#track-list") == 600; }));
+	const ui::Rect bounds = app.shell().bounds(app.main().id());
+	app.shell().setBounds(app.main().id(), {bounds.x, bounds.y, 500, bounds.height});
+	REQUIRE(app.waitUntil([&] { return width("#main-zone") == 500; }));
+	app.shell().step(std::chrono::milliseconds(0));
+	follows(500 - width("splitter[for=trackList]") - 72);
+	app.shell().setBounds(app.main().id(), bounds);
+	REQUIRE(app.waitUntil([&] { return width("#main-zone") == 1000; }));
+	app.shell().step(std::chrono::milliseconds(0));
+	follows(600);
+
+	// Squeezed by a side zone, the main zone keeps the column's 200 dp, which the track list at its minimum, the
+	// divider and the event display at its minimum fill.
+	app.appUi().docking().setVisible("project", "left", true);
+	app.appUi().docking().setSize("project", "left", 900);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(width("#main-zone") == 200);
+	follows(120);
+
+	// It is in dp, so a larger UI scale makes it wider in pixels.
+	app.appUi().docking().setVisible("project", "left", false);
+	layout({{"trackList", 300}});
+	REQUIRE(app.waitUntil([&] { return width("#track-list") == 300; }));
 	app.setDpRatio(2.0F);
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(width("#track-list") == 600);
+	app.setDpRatio(1.0F);
+	app.shell().step(std::chrono::milliseconds(0));
 
-	// After a restart, with a new project.
+	// The width dragged last comes back after a restart, with a new project.
+	drag(20);
+	follows(320);
+	REQUIRE(app.waitUntil([&] { return saved() == 320.0; }));
 	app.restart();
 	app.setDpRatio(1.0F);
 	app.appUi().showProject();
 	const uint64_t again = app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
 	REQUIRE(app.waitUntil([&] { return elements(app, row(again)).size() == 1; }));
 	app.shell().step(std::chrono::milliseconds(0));
-	CHECK(width("#track-list") == 300);
-	CHECK(width(row(again)) == 300);
+	CHECK(width("#track-list") == 320);
+	CHECK(width(row(again)) == 320);
 	CHECK(x("#event-display") == x("splitter[for=trackList]") + width("splitter[for=trackList]"));
 }
 
@@ -469,8 +509,17 @@ TEST_CASE("the track name width and each track type's controls area width come f
 	Tracks tracks;
 	const uint64_t audio = tracks.add({{"type", "audio"}});
 	const uint64_t midi = tracks.add({{"type", "midi"}});
-	tracks.rows(2);
+	// An audio track two folders deep.
+	const uint64_t outer = tracks.add({{"type", "folder"}});
+	const uint64_t inner = tracks.add({{"type", "folder"}, {"parent", outer}});
+	const uint64_t deep = tracks.add({{"type", "audio"}, {"parent", inner}});
+	tracks.rows(5);
 	const auto width = [&tracks](const std::string& selector) { return tracks.box(selector).at("width").get<int>(); };
+	const auto right = [&tracks](const std::string& selector)
+	{
+		const Json box = tracks.box(selector);
+		return box.at("x").get<int>() + box.at("width").get<int>();
+	};
 	// The lines a row's controls take, by their buttons' tops.
 	const auto lines = [&tracks](uint64_t track)
 	{
@@ -486,10 +535,21 @@ TEST_CASE("the track name width and each track type's controls area width come f
 		REQUIRE(tracks.app.waitUntil([&] { return tracks.box("#track-list").at("width") == dp; }));
 		tracks.app.shell().step(std::chrono::milliseconds(0));
 	};
-	// By default names are 120 dp wide, and the controls area takes the rest of the row, on one line.
+	// By default names and controls areas are 120 dp wide, with audio's five controls on one line. Two folders deep,
+	// the name gives way, so that the controls still show whole.
 	CHECK(width(row(audio) + " .track-name") == 120);
 	CHECK(width(row(midi) + " .track-name") == 120);
+	CHECK(width(row(audio) + " .track-controls") == 120);
 	CHECK(lines(audio) == 1);
+	CHECK(width(row(deep) + " .track-name") < 120);
+	CHECK(width(row(deep) + " .track-controls") == 120);
+	CHECK(right(row(deep) + " .track-controls") <= right(row(deep)));
+	CHECK(lines(deep) == 1);
+
+	// The dialog keeps what it doesn't know of the setting, e.g. from a later GNUbase.
+	tracks.app.call("settings.set",
+		{{"key", "ui.trackWidths"},
+			{"value", {{"name", 120}, {"controls", {{"audio", 120}, {"chord", 200}}}, {"channel", 60}}}});
 
 	const auto open = [&tracks] { return !elements(tracks.app, "#track-controls-dialog").empty(); };
 	const auto type = [&tracks](const std::string& selector, const std::string& text)
@@ -507,7 +567,7 @@ TEST_CASE("the track name width and each track type's controls area width come f
 	CHECK(value("#track-name-width") == "120");
 	CHECK(value("#controls-area-width") == "120");
 	// Track Name Width is global; Controls Area Width is the selected type's, here audio's.
-	type("#track-name-width", "150");
+	type("#track-name-width", "130");
 	type("#controls-area-width", "48");
 	// MIDI's own width, which Reset sets back to its default.
 	tracks.click("#controls-types > [value=midi]");
@@ -517,36 +577,44 @@ TEST_CASE("the track name width and each track type's controls area width come f
 	CHECK(value("#controls-area-width") == "120");
 	tracks.click("#controls-types > [value=audio]");
 	CHECK(value("#controls-area-width") == "48");
-	// Out of range, it is held at the field's limits.
+	// Out of range, it is held at the field's limits; Ctrl-click sets the default.
 	type("#track-name-width", "5000");
 	CHECK(value("#track-name-width") == "400");
-	type("#track-name-width", "150");
+	tracks.click("#track-name-width", {"ctrl"});
+	CHECK(value("#track-name-width") == "120");
+	type("#track-name-width", "130");
 	tracks.click("#controls-ok");
 	REQUIRE(tracks.app.waitUntil([&] { return !open(); }));
 
 	const Json saved = tracks.app.call("settings.get", {{"key", "ui.trackWidths"}}).at("value");
-	CHECK(saved.at("name") == 150);
+	CHECK(saved.at("name") == 130);
 	CHECK(saved.at("controls").at("audio") == 48);
 	CHECK(saved.at("controls").at("midi") == 120);
-	REQUIRE(tracks.app.waitUntil([&] { return width(row(audio) + " .track-name") == 150; }));
-	CHECK(width(row(midi) + " .track-name") == 150);
+	CHECK(saved.at("controls").at("chord") == 200);
+	CHECK(saved.at("channel") == 60);
+	REQUIRE(tracks.app.waitUntil([&] { return width(row(audio) + " .track-name") == 130; }));
+	CHECK(width(row(midi) + " .track-name") == 130);
 
-	// In a narrow track list each controls area keeps its width: audio's five controls wrap onto three lines of two,
-	// MIDI's three fit on one. In a wide one they all go on one line.
-	trackList(200);
+	// Each controls area is as wide as its type's width, whatever the track list's: audio's five controls wrap onto
+	// three lines of two, MIDI's three fit on one. In a narrow track list the names give way.
 	CHECK(width(row(audio) + " .track-controls") == 48);
 	CHECK(lines(audio) == 3);
 	CHECK(lines(midi) == 1);
 	trackList(500);
-	CHECK(lines(audio) == 1);
-	CHECK(width(row(audio) + " .track-controls") > 48);
+	CHECK(width(row(audio) + " .track-controls") == 48);
+	CHECK(lines(audio) == 3);
+	trackList(200);
+	CHECK(width(row(audio) + " .track-controls") == 48);
+	CHECK(width(row(midi) + " .track-controls") == 120);
+	CHECK(width(row(midi) + " .track-name") < 130);
+	CHECK(right(row(midi) + " .track-controls") <= right(row(midi)));
 
 	// From another client: a type left out has the default controls area width.
 	tracks.app.call("settings.set", {{"key", "ui.trackWidths"}, {"value", {{"name", 90}}}});
+	trackList(300);
 	REQUIRE(tracks.app.waitUntil([&] { return width(row(audio) + " .track-name") == 90; }));
-	trackList(200);
-	CHECK(width(row(audio) + " .track-controls") >= 120);
-	CHECK(lines(midi) == 1);
+	CHECK(width(row(audio) + " .track-controls") == 120);
+	CHECK(lines(audio) == 1);
 }
 
 TEST_CASE("folder tracks: new folders for the selected tracks, group channels and data blocks", "[ui]")

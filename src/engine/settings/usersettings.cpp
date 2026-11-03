@@ -247,9 +247,8 @@ namespace gnubase::engine::settings
 						{"folder", {"mute", "solo", "read"}}, {"marker", Json::array()}, {"ruler", Json::array()}}},
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
-					"400), and controls, by track type, the least width of its controls area (0 to 800), which takes "
-					"the rest of the row and wraps the controls onto more lines when they don't fit. A width left out "
-					"is 120.",
+					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "
+					"onto more lines when they don't fit. A width left out is 120.",
 					Json{{"type", "object"},
 						{"properties",
 							{{"name", {{"type", "number"}, {"minimum", 20}, {"maximum", 400}}},

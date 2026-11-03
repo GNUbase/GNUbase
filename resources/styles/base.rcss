@@ -840,11 +840,12 @@ meter .meter-peak
 	width: 4dp;
 }
 
-/* The name and the controls area: code gives each the width of the user setting ui.trackWidths. The controls area
-   takes the rest of the row too, and its controls go onto more lines when they don't fit. */
+/* The name and the controls area: code gives each the width of the user setting ui.trackWidths. The controls go onto
+   more lines when they don't fit the controls area; in a row too narrow for both, e.g. deep in folders, the name gives
+   way. */
 .track-list .track-name
 {
-	flex: 0 0 auto;
+	flex: 0 1 auto;
 	overflow: hidden;
 	white-space: nowrap;
 	height: 18dp;
@@ -859,7 +860,7 @@ meter .meter-peak
 .track-list listitem.renaming .track-name-field
 {
 	display: block;
-	flex: 0 0 auto;
+	flex: 0 1 auto;
 	height: 18dp;
 }
 
@@ -867,7 +868,7 @@ meter .meter-peak
 {
 	display: flex;
 	flex-wrap: wrap;
-	flex: 1 0 auto;
+	flex: 0 0 auto;
 }
 
 .track-list .track-controls button

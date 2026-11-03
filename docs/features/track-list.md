@@ -51,15 +51,17 @@ sends engine commands, so whatever another client changes shows at once.
 
 - **Width.** The track list starts 280 dp wide (`size` in `project.rml`). Dragging the divider between it and the
   event display (`splitter for="trackList"`) sizes it, between its minimum of 120 dp and what leaves the event display
-  its own 100 dp; the event display takes the rest of the main zone. The docking system keeps the width in the user
+  its own 72 dp; the event display takes the rest of the main zone. Both minimums and the divider fill the 200 dp that
+  the zones' column keeps when side zones take the rest of the window. The docking system keeps the width in the user
   setting `ui.layout` (`windows.project.sizes.trackList`, [docking.md](docking.md)), so it comes back after a restart,
   and any client changes it with `settings.set`. A double click on the divider leaves it alone. A window too narrow for
   both takes the room from the track list once the event display is at its minimum.
 - **Name and controls widths** (p. 191). The user setting `ui.trackWidths` has the track name's width for every track
   type (`name`, 20 to 400 dp) and each type's controls area width (`controls`, 0 to 800 dp), 120 dp each by default
-  and where it has none. The name is as wide as that; the controls area is at least as wide as its type's width and
-  takes the rest of the row, and its controls go onto more lines when they don't fit, as many as the track's height
-  shows. A row narrower than the name and the controls area hides what doesn't fit at its right.
+  and where it has none. The name and the controls area are as wide as that, and the controls go onto more lines when
+  they don't fit, as many as the track's height shows. In a row too narrow for both, such as deep in folders or in a
+  narrow track list, the name gives way; what still doesn't fit is hidden at the row's right. The dialog keeps what
+  the setting has that it doesn't know, such as another type's width from a later GNUbase.
 - **Rows and lanes.** The event display has a lane per track that isn't hidden, each as high as its track
   (`EventDisplay::trackHeight`, `g_trackHeight` (40 dp) until set, 20 to 400 dp, times vertical zoom), and tells the
   track list when its lanes or view change (`onLayout`). The list sets each row's height from its lane and moves the
@@ -134,6 +136,8 @@ New Folder are in [folder-tracks.md](folder-tracks.md).
   disabling, enabling and removing from the context menu and the commands; the settings dialog's Add, Remove,
   Move Up and Reset, saved in the user setting and shown in the rows; the divider dragged both ways and to both
   limits, with the rows, the event display and its lanes following, its double click, the width in `ui.layout`, from
-  another client, at a larger UI scale and after a restart; and the track name and each type's controls area width
-  from the dialog, its limits and Reset, from another client and with defaults for what the setting leaves out, with
-  the controls on more lines in a narrow track list and on one line in a wide one.
+  another client and `Docking::setSize`, a size too large for the window, a narrow window, a side zone squeezing the
+  main zone, a larger UI scale and the dragged width after a restart; and the track name and each type's controls area
+  width from the dialog, its limits, Ctrl-click to the default and Reset, from another client and with defaults for
+  what the setting leaves out, the setting's unknown keys kept, the controls on more lines in a narrow controls area at
+  any track list width, and the name giving way deep in folders and in a narrow track list.

@@ -36,6 +36,7 @@ namespace gnubase::ui
 
 		// A panel in a window of its own opens this big, centred on the primary monitor, until the user moves it.
 		constexpr Size g_panelWindowSize{800, 500};
+		constexpr double g_mostSize = 100000.0; // dp a zone or resizable element can have, whatever ui.layout says
 
 		// The nearest element from element up that has the attribute, or null.
 		Rml::Element* closestWith(Rml::Element* element, const char* attribute)
@@ -416,7 +417,8 @@ namespace gnubase::ui
 
 	Json& Docking::size(const std::string& window, const std::string& name)
 	{
-		if (element(window, "[zone=" + name + "]") != nullptr)
+		// A zone's, also before the window is attached.
+		if (element(window, "[resizable=" + name + "]") == nullptr)
 			return zone(window, name)["size"];
 		Json& sizes = m_layout["windows"][window]["sizes"];
 		if (!sizes.is_object())
@@ -701,13 +703,13 @@ namespace gnubase::ui
 	{
 		const double dp =
 			saved != nullptr && saved->is_number() ? saved->get<double>() : element.GetAttribute<double>("size", -1.0);
-		if (dp < 0.0)
+		if (!(dp >= 0.0)) // NaN too
 			return;
 		const Rml::Element* parent = element.GetParentNode();
 		const bool column = parent != nullptr &&
 			(parent->GetComputedValues().flex_direction() == Rml::Style::FlexDirection::Column ||
 				parent->GetComputedValues().flex_direction() == Rml::Style::FlexDirection::ColumnReverse);
-		const Rml::Property length(static_cast<float>(dp), Rml::Unit::DP);
+		const Rml::Property length(static_cast<float>(std::min(dp, g_mostSize)), Rml::Unit::DP);
 		if (column)
 			element.SetProperty(Rml::PropertyId::Height, length);
 		else
