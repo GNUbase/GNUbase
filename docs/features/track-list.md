@@ -9,7 +9,8 @@ In the engine: mute and solo, disabled tracks and `track.duplicate`.
 
 ## In the engine
 
-- **Mute and solo** are the channel's switches `mute` and `solo` (`channel.set`, every channel type). A muted channel
+- **Mute and solo** are the channel's switches `mute` and `solo` (`channel.set`, every channel type; solo defeat,
+  exclusive solo and listen are in [solo-mute-listen.md](solo-mute-listen.md)). A muted channel
   is silent. While any channel is soloed, only the soloed channels are heard, with the channels they play through
   (their groups and folders' group channels, a MIDI track's instrument) and the channels that play into them (the
   tracks of a soloed group, the MIDI tracks of a soloed instrument track); a muted channel stays silent, soloed or
