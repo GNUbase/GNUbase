@@ -327,6 +327,26 @@ namespace gnubase::ui
 				}},
 			{"edit.fillLoop", onSelection("event.fillLoop", Json::object())},
 			{"edit.toRealCopy", onSelection("event.toRealCopy", Json::object())},
+			// Audio parts (reference manual p. 250): the selected audio events into a part, the selected audio parts
+			// back into events.
+			{"audio.eventsToPart",
+				[this]
+				{
+					if (const std::vector<uint64_t> events = selectedAudio(); !events.empty())
+						edit("event.toPart", {{"events", events}}, true);
+				}},
+			{"audio.dissolvePart",
+				[this]
+				{
+					std::vector<uint64_t> parts;
+					for (const Shown& shown : m_events)
+						if (m_laneTypes[shown.lane] == "audio" && m_fades.count(shown.id) == 0 &&
+							std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+							parts.push_back(shown.id);
+					if (!parts.empty())
+						edit("event.dissolvePart", {{"events", parts}}, true);
+				}},
+
 			{"locate.nudgeCursorLeft", nudgeCursor(-1)},
 			{"locate.nudgeCursorRight", nudgeCursor(1)},
 			{"edit.nudgeLeft", nudge(nullptr, -1)},
@@ -509,6 +529,15 @@ namespace gnubase::ui
 			return;
 		const bool add = held(event, "ctrl_key") || held(event, "meta_key") || held(event, "shift_key");
 		const Shown* shown = eventAt(x, y);
+		// The tool modifier Split Event (Alt) and a drag on an empty spot draws a part (reference manual p. 250).
+		if (shown == nullptr && modifiers("select.splitEvent"))
+		{
+			if (const std::optional<size_t> lane = visibleLaneAt(y); lane && takesParts(*lane))
+			{
+				m_drag = Drag::DrawPart;
+				return;
+			}
+		}
 		if (shown == nullptr)
 		{
 			// A rectangle selects what it touches (with Ctrl or Shift, adds it); a click selects nothing.
@@ -837,9 +866,10 @@ namespace gnubase::ui
 			return;
 		}
 		const size_t lane = *found;
-		if (m_laneTypes[lane] != "midi" && m_laneTypes[lane] != "instrument")
+		if (!takesParts(lane))
 			return;
-		// A one-bar part where the click is (reference manual p. 251), or one between the locators.
+		// A one-bar part where the click is (reference manual p. 251), or one between the locators; on audio tracks
+		// only that (p. 250).
 		const double seconds = m_view.start + (x * m_view.scale);
 		const int64_t sample = samples(seconds);
 		time::Ticks start = 0;
@@ -848,6 +878,10 @@ namespace gnubase::ui
 		{
 			start = m_time.tempo.toTicks(m_left, m_time.sampleRate);
 			end = m_time.tempo.toTicks(m_right, m_time.sampleRate);
+		}
+		else if (m_laneTypes[lane] == "audio")
+		{
+			return;
 		}
 		else
 		{
@@ -859,6 +893,12 @@ namespace gnubase::ui
 		addPart(lane, start, end);
 	}
 
+	bool EventDisplay::takesParts(size_t lane) const
+	{
+		const std::string& type = m_laneTypes[lane];
+		return type == "audio" || type == "midi" || type == "instrument";
+	}
+
 	void EventDisplay::addPart(size_t lane, time::Ticks start, time::Ticks end)
 	{
 		int64_t position = start;
@@ -868,7 +908,8 @@ namespace gnubase::ui
 			position = m_time.tempo.toSamples(start, m_time.sampleRate);
 			length = m_time.tempo.toSamples(end, m_time.sampleRate) - position;
 		}
-		m_binding.send("midiPart.add", {{"track", m_laneTracks[lane]}, {"position", position}, {"length", length}},
+		m_binding.send(m_laneTypes[lane] == "audio" ? "audioPart.add" : "midiPart.add",
+			{{"track", m_laneTracks[lane]}, {"position", position}, {"length", length}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (!alive.expired() && result.ok())

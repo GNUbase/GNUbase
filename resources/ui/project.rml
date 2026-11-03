@@ -276,8 +276,12 @@
 		<menuitem command="project.autoFades">Auto Fades Settings...</menuitem>
 		<menuitem command="window.projectSetup">Project Setup...</menuitem>
 	</menu>
-	<!-- Fades and crossfades (reference manual pp. 381-397, docs/features/fades.md) -->
+	<!-- Audio parts (reference manual p. 250, docs/features/audio-parts.md), fades and crossfades (reference manual
+	     pp. 381-397, docs/features/fades.md) -->
 	<menu id="audio-menu">
+		<menuitem command="audio.eventsToPart">Events to Part</menuitem>
+		<menuitem command="audio.dissolvePart">Dissolve Part</menuitem>
+		<menuseparator/>
 		<menuitem id="fades-submenu">Fades
 			<menu>
 				<menuitem command="audio.fadeInToRange">Fade In to Range Start</menuitem>

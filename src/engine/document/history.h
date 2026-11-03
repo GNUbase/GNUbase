@@ -75,6 +75,7 @@ namespace gnubase::engine
 		std::vector<ObjectChange<Clip>> clips;
 		std::vector<ObjectChange<PoolFolder>> poolFolders;
 		std::vector<ObjectChange<AudioEvent>> audioEvents;
+		std::vector<ObjectChange<AudioPart>> audioParts;
 		std::vector<MidiPartChange> midiParts;
 		std::vector<ObjectChange<Marker>> markers;
 		std::vector<AutomationLaneChange> automation;

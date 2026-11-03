@@ -47,8 +47,9 @@ namespace gnubase::engine
 		time::Samples end = 0;
 		time::Ticks startTicks = 0;
 		time::Ticks endTicks = 0;
-		std::vector<ObjectId> tracks; // the tracks it was copied from, from top to bottom
-		std::vector<AudioEvent> audioEvents;
+		std::vector<ObjectId> tracks;        // the tracks it was copied from, from top to bottom
+		std::vector<AudioEvent> audioEvents; // with those of the audio parts
+		std::vector<AudioPart> audioParts;
 		std::vector<MidiPart> midiParts;
 		std::vector<AutomationLane> automation; // the points in the range, with the curve's values at its edges
 	};
