@@ -36,6 +36,11 @@ namespace gnubase::ui
 		std::string picture;                   // the track's
 	};
 
+	// The channel.set parameters of a click on a channel's solo button (reference manual p. 466), from the channel's
+	// JSON: solo on or off, exclusive turns the other channels' solo off as it goes on, defeat switches solo defeat
+	// instead. The mixer and the track list use it.
+	engine::Json soloClick(const engine::Json& channel, bool exclusive, bool defeat);
+
 	// Every channel of a project in the mixer's order: the input busses, the tracks' channels from top to bottom, then
 	// the output busses.
 	std::vector<MixerChannel> mixerChannels(const engine::Json& project);
