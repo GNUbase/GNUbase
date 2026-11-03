@@ -331,3 +331,23 @@ TEST_CASE("soloing a channel keeps the effect channels it sends to heard", "[int
 	run(mixer.client, "audio.render", {{"frames", 1000}});
 	checkGain(mixer.output(1000), 2.0);
 }
+
+TEST_CASE("a lower maximum brings send levels above it down, and one undo takes them back up", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId audio = channelOf(run(client, "track.add", {{"type", "audio"}}));
+	const ObjectId effect = channelOf(run(client, "track.add", {{"type", "effect"}}));
+	run(client, "project.set", {{"maxVolume", 12.0}});
+	run(client, "channel.set",
+		sends(audio, {{{"send", 1}, {"destination", effect}, {"level", 12.0}}, {{"send", 2}, {"level", -3.0}}}));
+	CHECK(channel(client, audio).at("sends")[0].at("level") == 12.0);
+
+	run(client, "project.set", {{"maxVolume", 6.0}});
+	CHECK(channel(client, audio).at("sends")[0].at("level") == 6.0);
+	CHECK(channel(client, audio).at("sends")[1].at("level") == -3.0);
+
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("maxVolume") == 12.0);
+	CHECK(channel(client, audio).at("sends")[0].at("level") == 12.0);
+}
