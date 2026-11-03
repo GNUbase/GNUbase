@@ -89,6 +89,7 @@
 		<button menu="edit-menu">Edit</button>
 		<button menu="media-menu">Media</button>
 		<button menu="project-menu">Project</button>
+		<button menu="audio-menu">Audio</button>
 		<button menu="transport-menu">Transport</button>
 		<button menu="studio-menu">Studio</button>
 	</menubar>
@@ -266,7 +267,25 @@
 			</menu>
 		</menuitem>
 		<menuseparator/>
+		<menuitem command="project.autoFades">Auto Fades Settings...</menuitem>
 		<menuitem command="window.projectSetup">Project Setup...</menuitem>
+	</menu>
+	<!-- Fades and crossfades (reference manual pp. 381-397, docs/features/fades.md) -->
+	<menu id="audio-menu">
+		<menuitem id="fades-submenu">Fades
+			<menu>
+				<menuitem command="audio.fadeInToRange">Fade In to Range Start</menuitem>
+				<menuitem command="audio.fadeOutFromRange">Fade Out from Range End</menuitem>
+				<menuitem command="audio.adjustFadesToRange">Adjust Fades to Range</menuitem>
+				<menuitem command="audio.crossfade">Crossfade</menuitem>
+				<menuseparator/>
+				<menuitem command="audio.removeFadeIn">Remove Fade In</menuitem>
+				<menuitem command="audio.removeFadeOut">Remove Fade Out</menuitem>
+				<menuitem command="audio.removeFades">Remove Fades</menuitem>
+				<menuseparator/>
+				<menuitem command="audio.fadeEditor">Open Fade Editor(s)</menuitem>
+			</menu>
+		</menuitem>
 	</menu>
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
@@ -288,6 +307,7 @@
 			</menu>
 		</menuitem>
 		<menuseparator/>
+		<menuitem command="track.autoFades">Auto Fades Settings...</menuitem>
 		<menuitem command="track.controlsSettings">Track Controls Settings...</menuitem>
 	</menu>
 	<menu id="transport-menu">

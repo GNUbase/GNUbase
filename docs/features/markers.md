@@ -5,6 +5,7 @@ Marker tracks and markers, locating with them, and the markers in the UI (#91, r
 
 - **Markers** (#91) sit on marker tracks: tracks without a channel that stay at the top level, at most 10 per project. One marker track is active (`activeMarkerTrack`): marker commands without a track use it, a new marker track becomes it, and removing it activates the topmost one. A position marker marks a position, a cycle marker a range (position and end). Positions are in the marker track's time base; position and cycle markers are numbered separately on each track from 1 (the first free number), and the numbers are what key commands like "locate to marker 3" use. `marker.add`, `marker.put` (position marker N at the cursor: moved there, or added with that number), `marker.set` (move, rename, renumber, move to another marker track), `marker.remove`, `marker.renumber` and `marker.activateTrack` are undo steps with `marker.added`, `marker.changed`, `marker.removed` and `marker.trackActivated` events; `marker.add` and `marker.put` without a marker track add one in the same step. `marker.list` and `marker.range` (the range between the markers around a position, which a range selection by markers spans) are queries.
 - Locating with markers moves the transport, which is not in the document: `marker.locateNext`, `marker.locatePrevious`, `marker.locate` (marker N, or by id) and `marker.setLocators` (to a cycle marker) compute sample positions from the document and run `transport.locate` or `transport.set` inside the command (`CommandContext::call`), so clients see `transport.changed` and no undo step. Marker commands that default to the cursor or the locators read them with `transport.get` the same way.
+- **Cycle Follows When Locating to Markers** (p. 428), the user setting `transport.cycleFollowsMarkers` (off by default): `marker.locate`, `marker.locateNext` and `marker.locatePrevious` also set the locators to the marker they locate to: a cycle marker's range (also when they reach its end), or from a position marker to the next marker position or cycle marker end after it on its track. After the last marker, the locators stay.
 
 ## Key commands
 
@@ -31,9 +32,13 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
 - **Marker events** on the marker tracks' lanes, over the events: an `<event-lanes class="marker-events">` with a lane
   per track, position markers as lines and cycle markers as spans, and a `.marker-label` per marker with its number,
   in brackets for cycle markers, and its name; labels of the active marker track's markers have `.active`. The themes
-  color them; code places the labels.
-- **Mouse** on a marker track's lane: Alt-click adds a position marker there (but not on a cycle marker); a double
-  click on a cycle marker sets the locators to it (`marker.setLocators`), with Alt it zooms to it (p. 424). The event
+  color them; code places the labels. The user setting `ui.markerIds` (Show Marker IDs on Marker Track, on by
+  default) leaves out the numbers when it is off.
+- **Mouse** on a marker track's lane: a click selects the marker under the mouse (its label, a position marker's line
+  within 4 dp, or the cycle marker it is in) and Ctrl-click adds or removes it, its label getting `.selected`, and the info line shows and edits the selected markers ([inspector.md](inspector.md), p. 430); selecting
+  a marker deselects the events and selecting an event the markers;
+  Alt-click adds a position marker there (but not on a cycle marker); a double click on a cycle marker sets the
+  locators to it (`marker.setLocators`), with Alt it zooms to it (p. 424). The event
   display stops mouse downs, so RmlUi sends no `dblclick`: two clicks within half a second and 3 dp make one.
 - The event display tells it about every change of the view (`EventDisplay::onViewChanged`); the marker elements are
   its own, in its event area, so the display's code doesn't know about markers.
@@ -46,10 +51,26 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
 - `#marker-track` picks the active marker track (Set Focus to Marker Track), `marker.activateTrack`.
 - `#marker-list`, a table in a list view ([widgets.md](widgets.md)), has a row per marker of the active marker track:
   the locate column, whose arrow marks the marker at the project cursor or the last one before it (`.at-cursor`) and
-  where a click locates to the marker; the id number and the description in text fields, which Enter or leaving the
-  field changes (`marker.set`; a number that is taken or isn't one shows the old one again); the type; position, end
-  in bars and beats and length in seconds. Rows select with clicks, Ctrl, Shift and the arrow keys; Enter locates to
-  the selected marker.
+  where a click locates to the marker; then the id number, the type, the position, the end and length (cycle markers)
+  and the description. All but the type are text fields, which Enter or leaving the field changes (`marker.set`; a
+  number that is taken, text that isn't a number or a time, or an end before the position shows the old value
+  again). Times are in the transport's primary time format (`ui.timeFormats`), lengths as lengths ("0.2.0.0" for two
+  beats in bars and beats); a new position moves a cycle marker as a whole, a new length moves its end. Rows select
+  with clicks, Ctrl, Shift, the arrow keys, Page Up and Page Down, Home and End (p. 428); Enter locates to the
+  selected marker.
+- **Several markers at once** (p. 430): a description or a length typed into a row of a selection of several gives it
+  to all the selected markers (the length to the cycle markers among them), in one undo step (`history.transaction`).
+  The reference does this with checkbox attributes, which markers here don't have.
+- **Columns** (p. 429): a click on a header sorts by its column, a second one the other way round, the position always
+  second (`.sorted` and `.descending` on the header); dragging a header moves its column, dragging the line between
+  two headers resizes the column on its left. The locate column stays first. Their order, widths and sorting are the
+  user setting `ui.markerColumns`, whose changes from MCP or Lua apply at once.
+- **Auto-Scroll with Project Cursor** (`#marker-auto-scroll`, p. 427), the user setting `ui.markersAutoScroll` (on by
+  default): when the arrow moves to another marker, the list scrolls as little as it takes to show its row.
+- **Marker settings** (`#marker-settings`, p. 428): Show Marker IDs on Marker Track (`ui.markerIds`), Cycle Follows
+  When Locating to Markers (`transport.cycleFollowsMarkers`) and Sync Selection (`ui.markersSyncSelection`, on by
+  default), with which the markers window and the project window's marker events select the same markers
+  (`app::AppUi` gives each one's selection to the other), except while recording. When it starts syncing (the window opens, recording stops, the setting is turned on) the window takes the project window's selection.
 - Add Marker (`#add-position-marker`) adds a position marker at the cursor, Add Cycle Marker one at the locators,
   Remove the selected markers. The Functions menu moves the selected markers to the cursor in one undo step
   (`history.transaction` of `marker.set`s; cycle markers keep their length) and reassigns the position or cycle
@@ -67,11 +88,15 @@ events and on the display's timeline; marker events and labels on the marker tra
 Alt-click adding a marker only on a marker track and off cycle markers, a double click setting the locators and Alt
 zooming. In the app's UI (`test::UiApp`): Mod+M opening and closing the markers window, its rows, locating from the
 locate column and with Enter, the arrow at the cursor, editing descriptions and ids, the functions, adding and
-removing markers and picking the marker track; and the marker key commands locating, setting and recalling markers.
+removing markers and picking the marker track; editing positions, ends and lengths in the primary time format and
+refusing what isn't valid; sorting by a column with the position second, moving and resizing columns and the
+setting's changes from MCP; Auto-Scroll on and off, Page Up and Page Down; changing the descriptions and lengths of
+several selected markers in one undo step; the marker settings: marker ids on the marker track, cycle follows and
+sync selection both ways, paused while recording; and the marker key commands locating, setting and recalling
+markers. `tests/marker_tests.cpp` covers `transport.cycleFollowsMarkers` for the three locate commands.
 
 Not yet: dragging markers and resizing cycle markers on the marker track, Ctrl-drag for a cycle marker and Shift to
 rename at once (with parts editing, #85); range selections by markers (the range tool, #86; `marker.range` gives the
-range); editing positions in the markers window and on the info line; sorting and reordering its columns; the marker
-settings (marker ids on the track, Cycle Follows When Locating to Markers, Sync Selection); the track list's controls
+range); hiding columns; the track list's controls
 for marker tracks (add markers, activate, the Locate, Cycle and Zoom menus, #81); marker lines in the key editor;
 locking marker tracks; importing markers from wave files.

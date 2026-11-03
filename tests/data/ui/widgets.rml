@@ -36,10 +36,10 @@
 			<tab>Inserts</tab><panel/>
 		</tabset>
 		<div class="row">
-			<button>Cancel</button>
-			<button class="primary">Apply</button>
+			<button id="plain">Cancel</button>
+			<button class="primary" id="primary">Apply</button>
 			<button id="hovered">Hover</button>
-			<button class="checked">On</button>
+			<button class="checked" id="checked">On</button>
 			<button disabled="disabled">Off</button>
 		</div>
 		<div class="row">
@@ -62,10 +62,10 @@
 		</div>
 		<div class="row">
 			<input type="checkbox"/>
-			<input type="checkbox" checked="checked"/>
+			<input type="checkbox" checked="checked" id="checkbox-on"/>
 			<input type="checkbox" class="mixed"/>
 			<input type="radio" name="mode"/>
-			<input type="radio" name="mode" checked="checked"/>
+			<input type="radio" name="mode" checked="checked" id="radio-on"/>
 			<input type="range" min="0" max="100" value="60"/>
 			<progress value="0.4" style="width: 60dp;"/>
 		</div>

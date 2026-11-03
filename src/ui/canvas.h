@@ -20,8 +20,8 @@ namespace gnubase::ui
 {
 	class RmlUi;
 
-	// Registers <event-lanes>, <waveform>, <curve> and <ruler>, and the style properties they draw with (stroke-color
-	// and stroke-width). ui::RmlUi does it when it starts, so every document has them.
+	// Registers <event-lanes>, <waveform>, <curve>, <fade-lines> and <ruler>, and the style properties they draw with
+	// (stroke-color and stroke-width). ui::RmlUi does it when it starts, so every document has them.
 	void registerCanvas(RmlUi& rmlui);
 
 	// A stretch of a timeline, in the units of whoever fills the element: ticks, samples or seconds. The elements only
@@ -185,6 +185,40 @@ namespace gnubase::ui
 
 	private:
 		std::vector<CurvePoint> m_points;
+	};
+
+	// A fade of an audio event (#138): from start over length, rising from the bottom of its lane to the top (a fade
+	// in) or falling (a fade out), with the shape the engine plays (engine/audio/fades.h).
+	struct FadeLine
+	{
+		double start = 0.0;
+		double length = 0.0;
+		engine::FadeShape shape = engine::FadeShape::Linear;
+		bool in = true;
+	};
+
+	// <fade-lines>: the fades of the event lanes' events as lines in stroke-color, and fade handles, squares at the
+	// top of a lane at the positions given, filled with color.
+	class FadeLines final : public Canvas
+	{
+	public:
+		struct Lane
+		{
+			float height = 0.0F; // dp
+			std::vector<FadeLine> fades;
+			std::vector<double> handles;
+		};
+
+		using Canvas::Canvas;
+
+		void setLanes(std::vector<Lane> lanes);
+		const std::vector<Lane>& lanes() const { return m_lanes; }
+
+	protected:
+		void build(const Frame& frame, Rml::TexturedMeshList& meshes) override;
+
+	private:
+		std::vector<Lane> m_lanes;
 	};
 
 	// A tick of a ruler: labelled ticks reach to the top, the others are a quarter as high.

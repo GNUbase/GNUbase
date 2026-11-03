@@ -1,7 +1,7 @@
 # Themes
 
 GNUbase's look is a theme that can be switched while GNUbase runs: `gnubase` (the default), `dark` and `light` to start
-with (#53). Code never styles the UI. C++ and Lua change an element's classes and pseudo-classes, and style sheets decide
+with (#53), and `high-contrast` ([accessibility.md](accessibility.md), #60). Code never styles the UI. C++ and Lua change an element's classes and pseudo-classes, and style sheets decide
 how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/themes.h`, `src/ui/uisettings.h` and
 `Shell::setTheme`.
 
@@ -19,6 +19,8 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
   keep their size, the edges stretch along one axis and the middle along both, as with CSS's `border-image`. Fixed
   graphics (check marks, the slider's thumb, the knob, the fader cap, the meter) use `decorator: svg(<file>)`, which
   rasterizes at the element's size ([svg.md](svg.md)). Both find a file relative to the style sheet that names it.
+  A widget that the keyboard focused (`:focus-visible`) gets the theme's focus ring over the skin of its state, a
+  second decorator that the generator adds to each such rule ([accessibility.md](accessibility.md)).
   The default theme's glows are part of its skins, so they cost no extra render passes.
 - **Every document gets them.** While a `ui::Themes` exists, every document RmlUi loads gets the shared style sheets
   and every theme's style sheet ahead of its own style (an RmlUi plugin, on document load). Documents name neither a
@@ -71,7 +73,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
 - `tests/svg_tests.cpp`: a 9-slice skin keeps its corners at their size at 100, 150 and 200 %, and is rasterized once
   per scale for any number of widgets of any size; decorators find their files next to the style sheet.
 - `tests/theme_tests.cpp`: every theme's style sheet uses all its skins and styles the same widgets and states as the
-  others.
+  others, draws the focus ring on every focusable widget in each of its states, and the high contrast theme meets
+  WCAG's contrast ratios.
 - `tests/stylerules_tests.cpp`: C++ and Lua code (`src`, `resources`, `tests/lua`) never sets a style property other
   than geometry from data (position, size, transform), and documents and shared style sheets never name a theme.
 - `tests/window_tests.cpp`: a page of widgets (`tests/data/ui/widgets.rml`) in every theme, and in the default theme

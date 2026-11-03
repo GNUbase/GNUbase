@@ -45,12 +45,13 @@ The widgets:
 - `<knob>`: the theme's `.knob` with its `.knob-pointer` turned from -135 to 135 degrees.
 - `<fader>`: vertical, the `.fader` track with its `.fader-cap`.
 - `<slider>`: horizontal, `.slider-track` filled up to the `.slider-thumb` (`.slider-fill`).
-- `<valuefield>`: the value as text, with `decimals` (2) and a `unit`, drawn like a display. A double click edits it
-  as text (state class `.editing`): Enter, or leaving the field, takes the number typed, clamped to the range; Escape,
-  or text that isn't a number, keeps the value. With `autofocus`, it is edited, all of it selected, whenever it gets
-  a visible focus: when its document shows it focused, or Tab moves to it, but not on a click. Keys typed before the
-  next update go into it too. In a dialog it is then the main field, which works like a text field: Enter takes the
-  number typed and clicks OK, Escape cancels. While the user types, the field's text field sends RmlUi's own
+- `<valuefield>`: the value as text, with `decimals` (2) and a `unit`, drawn like a display. A double click, or Enter
+  while it has the focus, edits it as text (state class `.editing`): Enter, or leaving the field, takes the number
+  typed, clamped to the range; Escape, or text that isn't a number, keeps the value. With `autofocus`, it is edited,
+  all of it selected, whenever it gets a visible focus: when its document shows it focused, or Tab moves to it, but
+  not on a click. Keys typed before the next update go into it too. In a dialog it is then the main field, which works
+  like a text field: Enter takes the number typed and clicks OK, Escape cancels. While the user types, the field's
+  text field sends RmlUi's own
   `change` events with the text; the field's `change`, with the field as its target, has the number.
 
 `<textdisplay>` shows text, its `value` attribute, such as a position in a time format; documents give it the look of
@@ -110,9 +111,12 @@ and on a click, a key or the wheel. Every document gets its tooltip element when
 
 `<dialog>` is a dialog in a document of its own, which the app loads and shows, usually modal
 (`ElementDocument::Show(Rml::ModalFlag::Modal)`). It opens in the middle of the window, and dragging its
-`.dialog-titlebar` moves it. Escape closes it with the result `cancel`; Enter clicks its `button.primary`, also from
-a text field and a value field with `autofocus`, but not from a multi-line text field or another value field; a click
-on an element with a `result` attribute closes it with that result. Closing sends the event `close` (`ui::g_dialogCloseEvent`) with the parameter
+`.dialog-titlebar` moves it. Escape closes it with the result `cancel`, or first an open drop-down list; Enter clicks
+its `button.primary`, also from a text field and a value field with `autofocus`, but not from a multi-line text field
+or another value field being edited, and not when the focused control takes Enter itself: a button clicks itself, a
+drop-down list opens and closes, another value field starts editing. A click on an element with a `result` attribute
+closes it with that result. Tab and Shift+Tab move the focus between its controls, around the ends
+([accessibility.md](accessibility.md)). Closing sends the event `close` (`ui::g_dialogCloseEvent`) with the parameter
 `result`, then closes the document.
 
 How it works: an RmlUi plugin (`RmlUi::registerPlugin`) gives every document a tooltip and listens to it in the capture
@@ -131,7 +135,7 @@ The theme draws them; the widget library adds nothing.
 
 - **Selection.** A click selects a row. With the `multiple` attribute, Ctrl-click (Cmd-click on macOS) adds or removes
   a row and Shift-click selects the rows from the last one clicked. Up and Down move the selection, Shift extends it,
-  Home and End go to the first and last row. Selected rows have the state class `.selected`. The view's `value`
+  Page Up and Page Down move it by one row less than the view shows, Home and End go to the first and last row. Selected rows have the state class `.selected`. The view's `value`
   attribute is the selected rows' values separated by commas, and `change` sends it, so `data-value` binds the
   selection both ways, also when `data-for` makes the rows. Clicks and keys in a form control in a row, such as a text
   field, are the control's and don't change the selection.
