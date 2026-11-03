@@ -97,6 +97,10 @@ namespace gnubase::ui
 		Rect bounds(WindowId id) const { return m_windows.bounds(id); }
 		void setBounds(WindowId id, const Rect& bounds);
 
+		// Brings the window in front of the others with the keyboard focus, restoring it if it is minimized
+		// (WindowSystem::raise).
+		void raise(WindowId id);
+
 		// Runs handler when the user asks to close a window other than the main window, before the shell closes it,
 		// e.g. to dock the panel it shows again (ui/docking.h). The handler may close the window itself.
 		void onCloseRequest(std::function<void(Window&)> handler) { m_closeRequest = std::move(handler); }

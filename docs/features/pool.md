@@ -48,7 +48,7 @@ the pool and conforming files to the project's sample rate. The engine commands 
 
 - **Opening it.** Media > Open Pool Window and Ctrl+P (Cmd+P on macOS; the reference's key, p. 1567) run the UI command
   `window.pool`, which shows the panel Pool in the project window's lower zone; like every panel it can open in a
-  window of its own ([docking.md](docking.md)).
+  window of its own ([docking.md](docking.md)), which the command then brings to the front with the focus.
 - **What it shows.** A toolbar, the message line, the info line (Audio Files, Used, Total Size, External Files,
   Missing) and a tree (`<listview id="pool">`, [widgets.md](widgets.md)) with the Audio folder, its folders and their
   clips, folders first and each by name, ASCII letters in either case alike (alpha before Bass), in the columns Media,

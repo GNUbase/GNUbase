@@ -49,7 +49,9 @@ registers panels; the project window has the Inspector ([inspector.md](inspector
 Editor and Mixer in the lower zone, and Media and Meter on the right (pp. 75–98), the others empty until their tickets
 fill them, the Pool in the lower zone
 ([pool.md](pool.md), `window.pool`, Mod+P) and the edit history on the right ([edit-history.md](edit-history.md)).
-`open` shows a panel as its zone's active tab, with the zone shown. `showing` says whether a panel shows: in a window
+`open` shows a panel as its zone's active tab, with the zone shown; a panel in a window of its own stays there, and
+its window comes to the front with the keyboard focus, restored if it is minimized, so commands such as
+`window.history` show it even when it is behind another window. `showing` says whether a panel shows: in a window
 of its own, or as its zone's active tab while the zone shows; what its function returned stays while it doesn't, so a
 panel such as the pool can wait with refreshing until it shows again.
 
@@ -187,7 +189,9 @@ window of its own; Tab and Shift+Tab through the shown zones in the reference's 
 the project zone, around the ends and past hidden zones, with a zone's keys working in the zone they reach, and Tab in a
 text field, Ctrl+Tab and Tab in an open menu left alone; a panel moved into a window of its own through the tab menu, with its
 contents made there and gone from the zone, docked with the Dock button and by closing its window, which reopens where
-it was; and the complete layout, with zone sizes, tab orders, hidden and active tabs, strips and a panel's window,
+it was; `open` on a panel in a window of its own that is behind the project window, minimized, or both, which brings
+its window to the front, restored and with the focus, on the fake window system, which knows the windows' order,
+minimized state and focus, and leaves the layout alone; and the complete layout, with zone sizes, tab orders, hidden and active tabs, strips and a panel's window,
 back exactly after a restart. `tests/tracklist_tests.cpp` drags the track list's divider, a resizable element's
 splitter. On a test window with sections, the setup pane shows and hides sections in every
 channel and stays open, reorders them by drag and drop between the channel's other elements, and shows and hides a

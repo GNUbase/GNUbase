@@ -33,6 +33,7 @@ namespace gnubase::ui
 		void destroyWindow(WindowId window) override;
 		Rect bounds(WindowId window) const override;
 		void setBounds(WindowId window, const Rect& bounds) override;
+		void raise(WindowId window) override;
 		Size pixelSize(WindowId window) const override;
 		float scale(WindowId window) const override;
 		void setInputTarget(WindowId window, Rml::Context* context) override;

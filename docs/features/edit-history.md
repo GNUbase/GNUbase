@@ -6,7 +6,8 @@ shows it in a dialog from Edit > History; GNUbase shows it as the panel History 
 (`src/ui/historypanel.h`), which `app::AppUi` gives the docking system.
 
 - **Opening it.** The UI command `window.history` shows the panel as the right zone's active tab and shows the zone;
-  a panel in a window of its own stays there. The reference has no key for it; the main menu's Edit menu will run the
+  a panel in a window of its own stays there, and its window comes to the front with the focus, restored if it is
+  minimized ([docking.md](docking.md)). The reference has no key for it; the main menu's Edit menu will run the
   command.
 - **What it shows.** A table (a `<listview>`, [widgets.md](widgets.md)) with a row for the initial state, then a row
   per step from `history.get`: Action, Time (the local time of day, from the step's UTC time), State (Done or Undone)
