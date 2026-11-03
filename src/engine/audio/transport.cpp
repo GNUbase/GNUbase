@@ -43,9 +43,12 @@ namespace gnubase::engine
 	time::Samples Transport::recordStart(const TransportSettings& settings, time::Samples start, time::Samples from)
 	{
 		const time::Samples at = settings.punchIn ? std::max(start, settings.left) : start;
-		// A cycle that the pre-roll starts in jumps back before it reaches a record start after it.
+		// A cycle that the pre-roll starts in jumps back before it reaches a record start after it: from there, or
+		// from the punch in.
 		const bool cycles = settings.cycle && settings.left < settings.right;
-		return cycles && from < settings.right && at >= settings.right ? from : at;
+		if (cycles && from < settings.right && at >= settings.right)
+			return settings.punchIn ? std::max(from, settings.left) : from;
+		return at;
 	}
 
 	time::Samples Transport::startPosition() const
@@ -174,8 +177,8 @@ namespace gnubase::engine
 			locateTo(request.position);
 			m_locate = request.locate;
 			m_stopAt = -1;
-			if (m_recordAt >= 0) // during the pre-roll: recording starts where playback goes on
-				m_recordAt = request.position;
+			if (m_recordAt >= 0) // waiting for the record start: it moves along, but not before the punch in
+				m_recordAt = recordStart(m_settings, request.position, request.position);
 			return;
 		case Request::Type::Set:
 			m_settings = request.settings;

@@ -521,6 +521,49 @@ TEST_CASE("a locate during the pre-roll moves the record start, and recording ag
 	CHECK(transport.advance(blockSize).playing);
 }
 
+TEST_CASE("a locate while recording waits for the punch in keeps waiting for it", "[unit]")
+{
+	const bool preRoll = GENERATE(false, true);
+	Transport transport;
+	TransportSettings settings;
+	settings.left = 4800;
+	settings.right = 9600;
+	settings.punchIn = true;
+	settings.preRoll = preRoll;
+	settings.preRollAmount = 500;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(1000));
+	REQUIRE(transport.record(true)); // waits for the left locator
+	transport.advance(64);
+	REQUIRE(transport.locate(2000)); // still before it
+	CHECK(recordedPositions(transport, 3000, 64) == range(4800, 5000));
+	REQUIRE(transport.stop());
+	REQUIRE(transport.locate(1000));
+	REQUIRE(transport.record(true));
+	transport.advance(64);
+	REQUIRE(transport.locate(6000)); // past it: recording starts there
+	CHECK(recordedPositions(transport, 640, 64) == range(6000, 6640));
+}
+
+TEST_CASE("recording from stop in a cycle with punch in starts at the punch in if the cycle never reaches the cursor",
+	"[unit]")
+{
+	TransportSettings settings = cycle(1000, 2000);
+	settings.punchIn = true;
+	settings.preRoll = true;
+	settings.preRollAmount = 1500;
+	Transport transport;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(2200)); // the pre-roll starts at 700, before the cycle
+	REQUIRE(transport.record(true));
+	CHECK(!transport.recording());
+	const std::vector<Samples> recorded = recordedPositions(transport, 1000, 64);
+	REQUIRE(!recorded.empty());
+	CHECK(recorded.front() == 1000);
+	CHECK(transport.sync()); // the punch in, which the command thread takes over
+	CHECK(transport.recording());
+}
+
 TEST_CASE("recording from stop in a cycle starts where the pre-roll starts if the cycle never reaches it", "[unit]")
 {
 	TransportSettings settings = cycle(1000, 2000);
