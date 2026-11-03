@@ -35,7 +35,8 @@ namespace gnubase::ui
 		//
 		// A click selects a row. With the multiple attribute, Ctrl-click (Cmd-click on macOS) adds or removes a row
 		// and Shift-click selects the rows from the last one clicked. Up and Down move the selection (Shift extends
-		// it), Home and End go to the first and last row. Selected rows have the state class .selected. The view's
+		// it), Page Up and Page Down by one less than the rows the view shows, Home and End go to the first and last
+		// row. Selected rows have the state class .selected. The view's
 		// value attribute is the selected rows' values, separated by commas, and each change sends a change event
 		// with it, so data-value binds the selection; setting the attribute selects the rows.
 		//
@@ -170,6 +171,13 @@ namespace gnubase::ui
 				case Rml::Input::KI_END:
 					next = static_cast<std::ptrdiff_t>(shown.size()) - 1;
 					break;
+				case Rml::Input::KI_PRIOR:
+					next = std::max<std::ptrdiff_t>(index - pageRows(shown), 0);
+					break;
+				case Rml::Input::KI_NEXT:
+					next = std::min<std::ptrdiff_t>(std::max<std::ptrdiff_t>(index, 0) + pageRows(shown),
+						static_cast<std::ptrdiff_t>(shown.size()) - 1);
+					break;
 				case Rml::Input::KI_RIGHT:
 				case Rml::Input::KI_LEFT:
 					if (m_current && m_current->IsClassSet("parent"))
@@ -193,6 +201,15 @@ namespace gnubase::ui
 				setCurrent(row);
 				row->ScrollIntoView(false);
 				changed(all);
+			}
+
+			// How many rows Page Up and Page Down move: one less than the view shows, at least one.
+			std::ptrdiff_t pageRows(const std::vector<Rml::Element*>& shown)
+			{
+				const float row = shown.front()->GetOffsetHeight();
+				if (row <= 0.0F)
+					return 1;
+				return std::max<std::ptrdiff_t>(static_cast<std::ptrdiff_t>(GetClientHeight() / row) - 1, 1);
 			}
 
 			static void selectOnly(const std::vector<Rml::Element*>& all, const Rml::Element& chosen)

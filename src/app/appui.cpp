@@ -230,6 +230,13 @@ namespace gnubase::app
 				for (MixerWindow& shown : m_mixers)
 					if (shown.mixer && m_shell.find(shown.window) == nullptr)
 						shown.mixer.reset(); // the user closed its window
+				// The project window selects events or markers: an event selected deselects the markers.
+				if (m_eventDisplay && m_markerLines && m_eventDisplay->selection() != m_eventSelection)
+				{
+					m_eventSelection = m_eventDisplay->selection();
+					if (!m_eventSelection.empty())
+						m_markerLines->deselect();
+				}
 				if (m_infoLine)
 					m_infoLine->update();
 				// The inspector shows the first selected track.
@@ -615,6 +622,15 @@ namespace gnubase::app
 			m_colorMenu = std::make_unique<ui::ColorMenu>(*m_eventDisplay, *m_trackList, m_binding, *document);
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 		m_markerLines = std::make_unique<ui::MarkerLines>(*m_eventDisplay, m_binding);
+		if (m_infoLine)
+			m_infoLine->followMarkers(
+				[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
+		m_markerLines->onSelect(
+			[this](const std::vector<uint64_t>& selection)
+			{
+				if (ui::MarkersWindow* window = markers(); window != nullptr && window->syncsSelection())
+					window->setSelection(selection);
+			});
 		return *m_eventDisplay;
 	}
 
@@ -642,6 +658,15 @@ namespace gnubase::app
 		}
 		document->Show();
 		m_markers = std::make_unique<ui::MarkersWindow>(m_engine, m_binding, *document);
+		// Sync Selection: the markers window's selection is the project window's.
+		m_markers->onSelect(
+			[this](const std::vector<uint64_t>& selection)
+			{
+				if (m_markerLines != nullptr && m_markers != nullptr && m_markers->syncsSelection())
+					m_markerLines->setSelection(selection);
+			});
+		m_markers->syncFrom(
+			[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
 		return m_markers.get();
 	}
 

@@ -349,6 +349,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".list-item:hover, listitem:hover, listview tbody tr:hover", {"decorator": skin("list-item-hover")}),
         (".list-item.selected, listitem.selected, listview tr.selected, select selectbox option:checked",
          {"decorator": skin("list-item-selected")}),
+        ("listview thead td.sorted", {"color": c["accent"]}),
         # Tabs
         ("tabset tabs", {"decorator": skin("tabbar")}),
         ("tabset tab", {"decorator": skin("tab-normal"), "color": c["textMuted"]}),
@@ -462,6 +463,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                            "stroke-width": f"{widths['hairline']}dp"}),
         (".event-display .marker-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
         (".event-display .marker-label.active", {"color": c["text"]}),
+        (".event-display .marker-label.selected", {"color": c["background"], "background-color": c["accent2"]}),
         # The tools (docs/features/tools.md): the selection range and the rectangle a tool drags
         (".event-display .range-selection", {"border-width": f"{widths['hairline']}dp", "border-color": c["text"],
                                              "background-color": c["text"] + "33"}),
