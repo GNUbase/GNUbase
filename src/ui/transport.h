@@ -92,6 +92,8 @@ namespace gnubase::ui
 		void resize(int steps);
 		int size() const { return m_size; }
 		void onSize(std::function<void(int size)> sized) { m_sized = std::move(sized); }
+		// Where the project window's selection starts, in ticks, which Tap Tempo hands tempo.tap as its selection.
+		void followSelection(std::function<std::optional<int64_t>()> start) { m_selectionStart = std::move(start); }
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;
@@ -148,6 +150,7 @@ namespace gnubase::ui
 		bool m_tempoTrackActive = false;
 		std::vector<double> m_taps; // when Tap was clicked, by RmlUi's clock, in seconds
 		std::optional<Subscription> m_tapPause;
+		std::function<std::optional<int64_t>()> m_selectionStart;
 
 		std::vector<Subscription> m_subscriptions;
 		std::optional<Subscription> m_playback; // while playing

@@ -563,7 +563,10 @@ namespace gnubase::ui
 		m_tapPause.reset();
 		if (tempo)
 		{
-			m_binding.send("tempo.tap", {{"bpm", *tempo}});
+			engine::Json parameters = {{"bpm", *tempo}};
+			if (const std::optional<int64_t> start = m_selectionStart ? m_selectionStart() : std::nullopt)
+				parameters["selection"] = *start;
+			m_binding.send("tempo.tap", parameters);
 			requestProject();
 		}
 		show();

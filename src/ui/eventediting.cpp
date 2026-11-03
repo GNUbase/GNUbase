@@ -89,6 +89,19 @@ namespace gnubase::ui
 		return std::llround(seconds * m_time.sampleRate);
 	}
 
+	std::optional<int64_t> EventDisplay::selectionStart() const
+	{
+		if (m_range)
+			return m_time.tempo.toTicks(m_range->start, m_time.sampleRate);
+		std::optional<double> start;
+		for (const Shown& shown : m_events)
+			if (std::binary_search(m_selection.begin(), m_selection.end(), shown.id))
+				start = std::min(start.value_or(shown.start), shown.start);
+		if (!start)
+			return std::nullopt;
+		return m_time.tempo.toTicks(*start);
+	}
+
 	engine::SnapGrid EventDisplay::snapGrid() const
 	{
 		engine::SnapGrid grid;

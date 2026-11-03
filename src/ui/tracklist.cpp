@@ -141,10 +141,11 @@ namespace gnubase::ui
 				{
 					// Audio, instrument, MIDI and marker tracks without events, parts, markers or automation, and
 					// folders without tracks, unless other tracks play into them; groups and effects are where other
-					// tracks play through, ruler tracks never hold anything.
+					// tracks play through, ruler tracks never hold anything and the tempo track holds the tempo.
 					Json commands = Json::array();
 					for (const Row& row : m_tracks)
-						if (row.empty && row.type != "group" && row.type != "effect" && row.type != "ruler")
+						if (row.empty && row.type != "group" && row.type != "effect" && row.type != "ruler" &&
+							row.type != "tempo")
 							commands.push_back({{"command", "track.remove"}, {"parameters", {{"track", row.id}}}});
 					transaction("Remove Empty Tracks", std::move(commands));
 				}},
@@ -152,8 +153,14 @@ namespace gnubase::ui
 				[this, selected]
 				{
 					Json commands = Json::array();
-					selected([&commands](uint64_t track)
-						{ commands.push_back({{"command", "track.duplicate"}, {"parameters", {{"track", track}}}}); });
+					// The project has one tempo track.
+					selected(
+						[this, &commands](uint64_t track)
+						{
+							if (m_tracks[m_index.at(track)].type != "tempo")
+								commands.push_back(
+									{{"command", "track.duplicate"}, {"parameters", {{"track", track}}}});
+						});
 					transaction("Duplicate Tracks", std::move(commands));
 				}},
 			{"track.toggleFolding",
@@ -219,10 +226,11 @@ namespace gnubase::ui
 			m_actions[on ? "track.moveSelectedToNewFolderWithGroupChannel" : "track.moveSelectedToNewFolder"] =
 				[this, on]
 			{
-				// A new folder where the first of them was, with them inside; marker tracks stay at the top level.
+				// A new folder where the first of them was, with them inside; marker tracks and the tempo track stay at
+				// the top level.
 				Json tracks = Json::array();
 				for (const uint64_t track : topSelection())
-					if (m_tracks[m_index.at(track)].type != "marker")
+					if (const std::string& type = m_tracks[m_index.at(track)].type; type != "marker" && type != "tempo")
 						tracks.push_back(track);
 				if (tracks.empty())
 					return;
@@ -934,7 +942,7 @@ namespace gnubase::ui
 			if (inside || track == before)
 				continue;
 			const Row& row = m_tracks[m_index.at(track)];
-			if (row.type == "marker" && parent != 0)
+			if ((row.type == "marker" || row.type == "tempo") && parent != 0)
 				continue;
 			std::vector<uint64_t>& from = children[row.parent];
 			from.erase(std::find(from.begin(), from.end(), track));

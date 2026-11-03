@@ -51,8 +51,11 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
   mode; also the UI command `tempo.toggleTrack` in Project > Tempo Track.
 - **Tap Tempo** (pp. 1455-1458): the transport bar's `#tap-tempo` button. Clicks on it within two seconds of each other
   are a run; meanwhile the tempo field shows the tempo they beat (`ui::tappedTempo`: the average time between them),
-  and two seconds after the last one it goes to `tempo.tap`, by the user setting `transport.tapTempoMode`. The times
-  are RmlUi's clock, which tests stop and move on.
+  and two seconds after the last one it goes to `tempo.tap`, by the user setting `transport.tapTempoMode`, with the
+  start of the project window's selection range or selected events and parts as `selection`
+  (`EventDisplay::selectionStart`). The times are RmlUi's clock, which tests stop and move on.
+- The track list's Remove Empty Tracks, Duplicate Tracks, Move Selected Tracks to New Folder and drags into folders
+  leave the tempo track out: the project has one, at the top level.
 - **The tempo track editor** (`ui::TempoEditor`, `resources/ui/tempo-editor.rml`, pp. 1447-1449, 1455): Mod+T (the
   UI command `window.tempoTrack`, also Project > Tempo Track > Open Tempo Track Editor) opens it in a window of its own
   and closes it. The toolbar has Activate Tempo Track, the object selection, draw and erase tools, the type of new tempo
@@ -78,4 +81,5 @@ linear ones staying when tempo events are added, moved and removed, ramps, the f
 at the cursor, `editing.tempoType`, every tap tempo mode and saving and loading. `tests/transport_tests.cpp`: the
 playback start in `transport.get`. `tests/tempotrack_ui_tests.cpp`: the visible tempos, the tapped tempo, the curve on
 the tempo track's lane with clicks that add, drag and erase events, the tempo track editor with Mod+T, its toolbar, info
-line and tools, Activate Tempo Track in the track list and the transport bar, and Tap Tempo.
+line and tools, Activate Tempo Track in the track list and the transport bar, and Tap Tempo, also at a selected part.
+`tests/tracklist_tests.cpp`: the track list's commands leaving the tempo track out.

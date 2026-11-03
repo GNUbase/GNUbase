@@ -595,7 +595,7 @@ namespace gnubase::app
 		if (fill)
 			root.SetInnerRML(readText(m_resources / "ui" / "transport.rml"));
 		const ui::WindowId id = window.id();
-		return std::make_unique<ui::TransportControls>(
+		auto controls = std::make_unique<ui::TransportControls>(
 			m_engine, m_binding, root,
 			[this, id](const std::string& command, const engine::Json& parameters)
 			{
@@ -603,6 +603,9 @@ namespace gnubase::app
 					m_keys.run(command, parameters, *found, nullptr);
 			},
 			[this](const std::string& command) { m_keys.release(command); });
+		controls->followSelection(
+			[this] { return m_eventDisplay ? m_eventDisplay->selectionStart() : std::optional<int64_t>(); });
+		return controls;
 	}
 
 	void AppUi::toggle(TransportWindow& shown, const char* file, const char* title, ui::Size size)

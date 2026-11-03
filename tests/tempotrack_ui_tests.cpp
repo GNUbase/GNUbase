@@ -371,3 +371,45 @@ TEST_CASE("Tap Tempo sets the tempo the taps beat once they stop", "[ui]")
 	clock->freeze(false);
 	CHECK(set);
 }
+
+TEST_CASE("Tap Tempo in tempo track mode adds a tempo event at the start of the selected part", "[ui]")
+{
+	test::UiApp app{{1024, 500}};
+	app.setDpRatio(0.8F);
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.appUi().docking().setVisible("project", "transportBar", true);
+	app.shell().step(milliseconds(0));
+	app.call("track.add", {{"type", "tempo"}});
+	app.call("project.set", {{"tempoTrackActive", true}});
+	const auto midi = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const auto part = app.call("midiPart.add", {{"track", midi}, {"position", 4 * g_quarter}, {"length", g_quarter}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	// The reference manual, p. 1458: in tempo track mode, Automatic inserts at the start of the selected part.
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			display.select({part});
+			return display.selectionStart() == 4 * g_quarter;
+		}));
+
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true);
+	for (int tap = 0; tap < 3; ++tap)
+	{
+		if (tap > 0)
+			clock->advance(0.6);
+		app.ui().click(std::nullopt, {"#transport-bar #tap-tempo", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		app.shell().step(milliseconds(0));
+	}
+	clock->advance(2.5);
+	const bool added = app.waitUntil([&app] { return app.call("project.get").at("tempo").size() == 2; });
+	clock->freeze(false);
+	REQUIRE(added);
+	const Json tempo = app.call("project.get").at("tempo");
+	CHECK(tempo[0].at("bpm") == 120.0);
+	CHECK(tempo[1].at("position") == 4 * g_quarter);
+	CHECK(tempo[1].at("bpm") == 100.0);
+}
