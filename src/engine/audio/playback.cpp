@@ -95,6 +95,9 @@ namespace gnubase::engine
 			addRamp(entry, placed.fadeIn);
 			addRamp(entry, placed.fadeOut);
 			const time::Samples clipStart = placed.start - placed.frame;
+			entry.curve.reserve(placed.event->volumeCurve.size());
+			for (const GainPoint& point : placed.event->volumeCurve)
+				entry.curve.push_back({clipStart + scaled(point.position, placed.ratio), point.gain, point.curve});
 			const time::Samples clipEnd = clipStart + scaled(placed.media->length, placed.ratio);
 			if (const time::Samples length = scaled(placed.event->clipFadeIn.length, placed.ratio);
 				length > 0 && clipStart + length > placed.start)
@@ -458,7 +461,7 @@ namespace gnubase::engine
 
 	float PlaylistEntry::gainAt(time::Samples position) const noexcept
 	{
-		double result = gain;
+		double result = gain * curveGain(curve, static_cast<double>(position));
 		for (const GainRamp& ramp : ramps)
 			result *= ramp.gainAt(position);
 		return static_cast<float>(result);
@@ -466,8 +469,9 @@ namespace gnubase::engine
 
 	bool PlaylistEntry::fades(time::Samples position, time::Samples frames) const noexcept
 	{
-		return std::any_of(ramps.begin(), ramps.end(),
-			[&](const GainRamp& ramp) { return ramp.start < position + frames && ramp.end > position; });
+		return curveChanges(curve, position, frames) ||
+			std::any_of(ramps.begin(), ramps.end(),
+				[&](const GainRamp& ramp) { return ramp.start < position + frames && ramp.end > position; });
 	}
 
 	Playlist makePlaylist(const RenderSnapshot& snapshot, const RenderChannel& channel)

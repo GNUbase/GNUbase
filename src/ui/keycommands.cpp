@@ -219,18 +219,29 @@ namespace gnubase::ui
 		m_uiCommands.emplace(std::move(id), std::move(command));
 	}
 
+	void KeyCommands::check(const std::string& command, const Json& parameters) const
+	{
+		if (!parameters.is_object())
+			throw std::invalid_argument(command + ": the parameters must be a JSON object, not " + parameters.dump());
+		if (const auto schema = m_engineCommands.find(command); schema != m_engineCommands.end())
+		{
+			if (const std::string error = engine::validate(parameters, schema->second); !error.empty())
+				throw std::invalid_argument(command + ": " + error);
+		}
+		else if (m_uiCommands.count(command) == 0)
+		{
+			throw std::invalid_argument("there is no command " + command);
+		}
+		else if (!parameters.empty())
+		{
+			throw std::invalid_argument(command + " takes no parameters, but got " + parameters.dump());
+		}
+	}
+
 	void KeyCommands::bind(const KeyBinding& binding)
 	{
 		Bound bound{binding.zone, parseKeys(binding.keys, m_platform), binding.command, binding.parameters};
-		if (const auto command = m_engineCommands.find(binding.command); command != m_engineCommands.end())
-		{
-			if (const std::string error = engine::validate(binding.parameters, command->second); !error.empty())
-				throw std::invalid_argument(binding.command + ": " + error);
-		}
-		else if (m_uiCommands.count(binding.command) == 0)
-		{
-			throw std::invalid_argument("there is no command " + binding.command);
-		}
+		check(binding.command, binding.parameters);
 		const auto same = std::find_if(m_bindings.begin(), m_bindings.end(),
 			[&bound](const Bound& other) { return other.zone == bound.zone && other.keys == bound.keys; });
 		if (same != m_bindings.end())

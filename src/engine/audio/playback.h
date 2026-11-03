@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/fades.h"
 #include "engine/audio/transport.h"
 #include "engine/audiofile/diskstream.h"
 #include "engine/document/document.h"
@@ -50,10 +51,11 @@ namespace gnubase::engine
 		// Its event's fades and its clip's, and behind the front those of the transitions that join it to the event
 		// in front. Filled when the playlist is built; the audio thread only reads them.
 		std::vector<GainRamp> ramps;
+		std::vector<GainPoint> curve; // its event's volume curve, in the project's samples
 
-		// The gain at a position: the event volume times every fade.
+		// The gain at a position: the event volume times its volume curve and every fade.
 		float gainAt(time::Samples position) const noexcept;
-		// Whether a fade changes the gain anywhere from position to position + frames.
+		// Whether a fade or the volume curve changes the gain anywhere from position to position + frames.
 		bool fades(time::Samples position, time::Samples frames) const noexcept;
 	};
 

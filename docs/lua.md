@@ -604,11 +604,24 @@ Returns:
 
 - `event`: object, required
 
+#### `gnubase.audioEvent.setVolumeCurve`
+
+Sets an audio event's volume curve, on top of its volume: points at positions in the event's clip (sample frames, 0 to the clip's length; the curve moves with the event and stays with the audio when it is resized or split), each with a volume in dB (-144 to 6, default 0) and a curve (-1 to 1, default 0) that bends the way to the next point: from point to point the gain goes from one's to the next's along (1 - e^(-6cx)) / (1 - e^(-6c)), straight for 0, fast at first above 0, slowly at first below. Before the first point the curve is level with it, after the last one with that; points at the same position make a jump. No points: no curve. Returns the event, its points by position.
+
+Parameters:
+
+- `event`: integer, required
+- `points`: array of object, required
+
+Returns:
+
+- `event`: object, required
+
 ### audioFile
 
 #### `gnubase.audioFile.import`
 
-Imports audio files (WAV, RF64, Wave64, AIFF, FLAC, Ogg Vorbis or MP3) as audio events at position, in sample frames from the project start (default 0). Each file goes on a new audio track named after it, with its channels; with oneTrack, they go one after another on one new track, and with track, one after another on that audio track. copy copies files from outside the project folder into its media folder (see project.location) as a job, returned as job (null without one) with the result media.add's copy job has; the media are pointed at the copies as an undo step of its own. MP3 and Ogg Vorbis files are always written into the media folder as 32-bit float WAV files (FLAC files stay as they are); in a project without a file, into the folder its recordings go to. convert writes files at another sample rate than the project's into the media folder as 32-bit float WAV files at the project's sample rate, MP3 and Ogg Vorbis files included. splitChannels writes each channel of a file with several into the media folder as a mono WAV file, named after the file and its speaker (such as take-L.wav), on a new mono track of its own. copy, convert and splitChannels need a saved project. clipsOnly adds the media files and clips to the pool without tracks or events (the pool's Import Medium). One undo step. Returns the new tracks, and per file (per channel when split) the media files and events, in the order of files.
+Imports audio files (WAV, RF64, Wave64, AIFF, FLAC, Ogg Vorbis or MP3) as audio events at position, in sample frames from the project start (default 0). Each file goes on an audio track of its own: the first on track if given (such as the selected track), the others on new audio tracks named after them, with their channels. With oneTrack they go one after another on one track: track, or a new one. copy copies files from outside the project folder into its media folder (see project.location) as a job, returned as job (null without one) with the result media.add's copy job has; the media are pointed at the copies as an undo step of its own. MP3 and Ogg Vorbis files are always written into the media folder as 32-bit float WAV files (FLAC files stay as they are); in a project without a file, into the folder its recordings go to. convert writes files at another sample rate than the project's into the media folder as 32-bit float WAV files at the project's sample rate, MP3 and Ogg Vorbis files included. splitChannels writes each channel of a file with several into the media folder as a mono WAV file, named after the file and its speaker (such as take-L.wav), on a new mono track of its own at position; track and oneTrack only place the files that aren't split. copy, convert and splitChannels need a saved project. clipsOnly adds the media files and clips to the pool without tracks or events (the pool's Import Medium). One undo step. Returns the new tracks, and per file (per channel when split) the media files and events, in the order of files.
 
 Parameters:
 
@@ -1342,6 +1355,18 @@ Parameters:
 - `events`: array of integer, required
 - `fadeIn`: boolean
 - `fadeOut`: boolean
+
+Returns:
+
+- `events`: array of integer, required
+
+#### `gnubase.event.removeVolumeCurve`
+
+Remove Volume Curve: audio events play at their volume again, without a curve. Returns the events.
+
+Parameters:
+
+- `events`: array of integer, required
 
 Returns:
 
@@ -3101,6 +3126,21 @@ Returns:
 
 - `events`: array of integer, required
 
+#### `gnubase.range.volumeCurve`
+
+Sets the volume curves of the audio events on tracks (ids, default every track) that cross the range from start to end (project samples) to volume (dB, -144 to 6, default 0) inside the range, with jumps at its edges; outside it they stay as they were. With volume 0, Remove Volume Curve on a range: the original level there. A curve left at 0 dB everywhere is none. Returns the events changed.
+
+Parameters:
+
+- `end`: integer, required
+- `start`: integer, required
+- `tracks`: array of integer
+- `volume`: number
+
+Returns:
+
+- `events`: array of integer, required
+
 ### recording
 
 #### `gnubase.recording.add`
@@ -3211,7 +3251,7 @@ Returns:
 
 #### `gnubase.snap.position`
 
-Snaps a position (project samples) as editing in the project window does, with the project's snap settings, changed by settings: where a point that would go to position goes. from is where it was, for gridRelative; events are the events being edited, whose edges and snap points don't attract; range is how near (project samples, default a tenth of a second) events, markers and the cursor attract; zoomStep is adaptToZoom's note value in ticks (default: bars); framesPerSecond the frame grids' rate (default 25). Returns position in project samples, and ticks, which are exact when musical, that is when a bar, beat, quantize or zoom grid line put it there.
+Snaps a position (project samples) as editing in the project window does, with the project's snap settings, changed by settings: where a point that would go to position goes. from is where it was, for gridRelative; events are the events being edited, whose edges and snap points don't attract; range is how near (project samples, default a tenth of a second) events, markers and the cursor attract; zoomStep is adaptToZoom's note value in ticks (default: bars); framesPerSecond the frame grids' rate (default: the project's frameRate, see project.set, and for userFrames 30, as in the project window). Returns position in project samples, and ticks, which are exact when musical, that is when a bar, beat, quantize or zoom grid line put it there.
 
 Only reads; changes nothing.
 

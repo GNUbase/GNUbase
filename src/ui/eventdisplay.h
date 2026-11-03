@@ -245,6 +245,11 @@ namespace gnubase::ui
 		// (#93), without tracks or events.
 		void importFiles(const std::vector<std::string>& files, std::optional<uint64_t> track = std::nullopt,
 			std::optional<int64_t> sample = std::nullopt, bool clipsOnly = false);
+		// File > Import (#480, reference manual p. 360): at the project cursor, onto the first of the selected tracks
+		// (the track list's, top to bottom) if it is an audio track: the first file, or all of them one after another
+		// with Import Files on One Track, and the others onto new tracks. Without one, onto new tracks; with Split
+		// Channels, every channel of a file with several onto a new track of its own.
+		void importToSelection(const std::vector<std::string>& files, const std::vector<uint64_t>& selection);
 
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
 		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); locate.nudgeCursorLeft and
@@ -259,6 +264,8 @@ namespace gnubase::ui
 		// audio.fadeOutFromRange and audio.adjustFadesToRange on the selection range, audio.crossfade (crossfades the
 		// selected audio events, or opens the crossfade editor for a crossfade they have), audio.removeFadeIn,
 		// audio.removeFadeOut, audio.removeFades and audio.fadeEditor (the fade dialog) on the selected audio events.
+		// audio.removeVolumeCurve (#139, docs/features/volume-curves.md) resets the volume curves in the selection
+		// range, else removes the selected audio events'.
 		// With the range selection tool,
 		// edit.delete deletes the range; edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence,
 		// edit.splitRange and edit.cropRange edit it, edit.paste and edit.pasteTime paste at its start (without a
@@ -292,6 +299,8 @@ namespace gnubase::ui
 			Click,         // splits, glues or erases where it is released, unless it moved
 			FadeIn,        // the fade in handle of the pressed audio event
 			FadeOut,       // its fade out handle
+			Volume,        // its event volume handle
+			VolumePoint,   // a point of its volume curve, with the draw tool
 		};
 
 		// An audio event or a MIDI part as the display shows it.
@@ -354,7 +363,7 @@ namespace gnubase::ui
 		void showPresets();
 		void showAutoScroll();
 		void showSnap();
-		void setSnap(const engine::Json& settings); // sends snap.set
+		void setSnap(const engine::Json& settings); // sends snap.set; one with a format counts in m_formatsSent
 
 		// Importing files (fileimport.cpp).
 		struct Import
@@ -363,7 +372,9 @@ namespace gnubase::ui
 			std::optional<uint64_t> track;
 			int64_t sample = 0;
 			bool clipsOnly = false;
+			bool selected = false; // track is the selected one, which takes the first file, not all of them
 		};
+		void startImport(const std::vector<std::string>& files, Import import);
 		void dropFiles(Rml::Event& event);
 		void openImportOptions(bool saved);
 		void importAudio(Rml::Element& dialog);
@@ -415,7 +426,7 @@ namespace gnubase::ui
 		int edgeAt(const Shown& shown, double x) const;
 
 		// Fades and crossfades (eventfades.cpp): an audio event's fades and crossfade as project.get has them, its
-		// media file's sample rate and its length in clip frames.
+		// media file's sample rate, its offset and length in clip frames, and its volume and volume curve.
 		struct AudioFades
 		{
 			double rate = 0.0;
@@ -423,6 +434,9 @@ namespace gnubase::ui
 			engine::Fade in;
 			engine::Fade out;
 			engine::Crossfade crossfade;
+			int64_t offset = 0;
+			double volume = 0.0; // dB
+			std::vector<engine::VolumePoint> curve;
 		};
 		void addFadeActions();
 		void readFades(const engine::Json& event, double rate);
@@ -440,6 +454,23 @@ namespace gnubase::ui
 		std::vector<uint64_t> selectedAudio() const;
 		// Opens a dialog of the display's document folder whose Lua reads the attributes when it shows.
 		void openFadeDialog(const char* file, const std::vector<std::pair<std::string, std::string>>& attributes);
+
+		// Event volume and volume curves (eventvolume.cpp). The volume lines go from silence at the bottom of a lane
+		// to g_volumeLineTop at its top; volumeFraction is how far up the event's lane y dp in the event lanes is.
+		void addVolumeActions();
+		double volumeFraction(const Shown& shown, double y) const;
+		// The event volume handle at the top middle of the pressed audio event: dragging it gives every selected
+		// audio event the volume in dB that draggedVolume says.
+		bool volumeDown(const Shown& shown, double x, double y);
+		void volumeUp();
+		double draggedVolume(uint64_t event) const;
+		// The draw tool on an audio event: drags the curve point at x and y dp, or a new one there.
+		bool curveDown(const Shown& shown, double x, double y);
+		void curveUp();
+		std::vector<engine::VolumePoint> draggedCurve(uint64_t event) const;
+		std::optional<size_t> curvePointAt(const Shown& shown, double x, double y) const;
+		bool eraseCurvePoint(const Shown& shown, double x, double y);     // the erase tool, on a point
+		void showVolume(FadeLines::Lane& lane, const Shown& shown) const; // its line and volume handle
 
 		// The tools (eventtools.cpp).
 		void addToolActions();
@@ -510,10 +541,12 @@ namespace gnubase::ui
 		bool m_sizingMovesContents = false;
 		uint64_t m_dragEvent = 0; // pressed on
 		bool m_dragMoved = false;
-		bool m_dragStarted = false; // moving events, after the drag delay
-		bool m_dragToggles = false; // a click with Ctrl or Shift takes the pressed event out of the selection
-		double m_pressTime = 0.0;   // RmlUi's clock, in seconds
-		double m_dragDx = 0.0;      // dp, while moving, snapped
+		double m_dragDy = 0.0;             // dp, dragging the event volume or a curve point
+		std::optional<size_t> m_dragPoint; // the curve point dragged, none for a new one
+		bool m_dragStarted = false;        // moving events, after the drag delay
+		bool m_dragToggles = false;        // a click with Ctrl or Shift takes the pressed event out of the selection
+		double m_pressTime = 0.0;          // RmlUi's clock, in seconds
+		double m_dragDx = 0.0;             // dp, while moving, snapped
 		int m_dragLanes = 0;
 		double m_dragLaneY = 0.0; // where a drag of events started, in dp from the top of the first lane
 		double m_end = 0.0;       // of the last event
@@ -580,7 +613,7 @@ namespace gnubase::ui
 		std::vector<CycleMarker> m_cycleMarkers;
 		std::vector<int64_t> m_markers; // every marker's position and end, in samples, for snapping
 		engine::SnapSettings m_snap;
-		int m_formatsSent = 0; // snap.set {format} from the ruler that the engine hasn't answered yet
+		int m_formatsSent = 0; // snap.set {format} from the ruler or the grid type menu that isn't answered yet
 		engine::midi::QuantizeSettings m_quantize;
 		Rml::Element* m_snapButton = nullptr;
 		Rml::Element* m_snapTypeButton = nullptr;

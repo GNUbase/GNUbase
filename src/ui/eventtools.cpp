@@ -241,6 +241,9 @@ namespace gnubase::ui
 			m_drag = Drag::Rectangle;
 			return true;
 		case Tool::Draw:
+			// Volume curve points on audio events (reference manual p. 399).
+			if (shown != nullptr && curveDown(*shown, x, y))
+				return true;
 			// Empty MIDI parts on MIDI and instrument tracks, audio parts on audio tracks (reference manual p. 250).
 			if (lane && shown == nullptr && takesParts(*lane))
 				m_drag = Drag::DrawPart;
@@ -297,6 +300,11 @@ namespace gnubase::ui
 			showRectangle(true, std::min(at(m_pressX), at(x)), top, std::max(at(m_pressX), at(x)), top + height);
 			break;
 		}
+		case Drag::VolumePoint:
+			m_dragDx = x - m_pressX;
+			m_dragDy = y - m_pressY;
+			showFades();
+			break;
 		case Drag::Play:
 			if (m_playMode == PlayMode::Scrub)
 				m_binding.send("audition.scrub",
@@ -403,6 +411,9 @@ namespace gnubase::ui
 		case Drag::Play:
 			m_binding.send("audition.stop", Json::object());
 			break;
+		case Drag::VolumePoint:
+			curveUp();
+			break;
 		case Drag::Click:
 		{
 			if (moved || !onEvent)
@@ -441,7 +452,7 @@ namespace gnubase::ui
 					events.push_back(later[i]->id);
 				edit("event.glue", {{"events", events}});
 			}
-			else
+			else if (!eraseCurvePoint(event, m_pressX, m_pressY))
 			{
 				// Erase, with Delete Later Events everything after it on its track (reference manual p. 255).
 				std::vector<uint64_t> events = {event.id};
