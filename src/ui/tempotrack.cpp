@@ -636,7 +636,7 @@ namespace gnubase::ui
 
 	void TempoEditor::ProcessEvent(Rml::Event& event)
 	{
-		Rml::Element* target = event.GetTargetElement();
+		const Rml::Element* target = event.GetTargetElement();
 		if (target == nullptr || !m_curve)
 			return;
 		if (event == Rml::EventId::Resize)
@@ -655,12 +655,16 @@ namespace gnubase::ui
 		const std::string id = target->GetId();
 		if (event == Rml::EventId::Click)
 		{
-			for (Rml::Element* element = target; element != nullptr; element = element->GetParentNode())
+			for (const Rml::Element* element = target; element != nullptr; element = element->GetParentNode())
 				if (element->HasAttribute("tempo-tool"))
 				{
 					const std::string name = attribute(*element, "tempo-tool");
-					m_tool =
-						name == "draw" ? TempoTool::Draw : (name == "erase" ? TempoTool::Erase : TempoTool::Select);
+					if (name == "draw")
+						m_tool = TempoTool::Draw;
+					else if (name == "erase")
+						m_tool = TempoTool::Erase;
+					else
+						m_tool = TempoTool::Select;
 					show();
 					return;
 				}
@@ -671,7 +675,7 @@ namespace gnubase::ui
 		// Change: the type of new events, the current tempo and the info line's fields.
 		if (m_showing)
 			return;
-		const std::string value = event.GetParameter<Rml::String>("value", "");
+		const auto value = event.GetParameter<Rml::String>("value", "");
 		if (id == "tempo-type" && value != m_type && !value.empty())
 		{
 			m_type = value;

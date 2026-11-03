@@ -214,7 +214,7 @@ TEST_CASE("the tempo curve shows the tempo track's events on its lane, where cli
 	REQUIRE(fixture.waitUntil([&fixture] { return fixture.tempoTrack().size() == 3; }));
 	const Json added = fixture.tempoTrack()[2];
 	// Two seconds at 120 BPM, then one at 100 BPM: five thirds of a quarter.
-	CHECK(added.at("position").get<int64_t>() == Approx(4 * g_quarter + (5 * g_quarter / 3)).margin(g_quarter / 10));
+	CHECK(added.at("position").get<int64_t>() == Approx((4 * g_quarter) + (5 * g_quarter / 3)).margin(g_quarter / 10));
 	CHECK(added.at("bpm").get<double>() == Approx(110.0).margin(2.0));
 	CHECK(fixture.call("project.get").at("tracks").size() == 2); // and nothing else
 
@@ -225,7 +225,7 @@ TEST_CASE("the tempo curve shows the tempo track's events on its lane, where cli
 	REQUIRE(fixture.waitUntil(
 		[&fixture] { return std::abs(fixture.tempoTrack()[1].at("bpm").get<double>() - 80.0) <= 2.0; }));
 	CHECK(fixture.tempoTrack()[1].at("position").get<int64_t>() ==
-		Approx(4 * g_quarter + (5 * g_quarter / 6)).margin(g_quarter / 10));
+		Approx((4 * g_quarter) + (5 * g_quarter / 6)).margin(g_quarter / 10));
 	CHECK(fixture.lane.curve().selection().size() == 1);
 
 	// The erase tool removes events, but not the first.

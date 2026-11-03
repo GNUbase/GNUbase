@@ -252,7 +252,7 @@ TEST_CASE("a tapped tempo sets the project tempo or adds a tempo event, by the t
 	tapped = run(client, "tempo.tap", {{"bpm", 110.0}});
 	CHECK(tapped.at("applied") == "event");
 	// Four quarters at 120 BPM are two seconds: two quarters at 120, then one second at 100 BPM, 5/3 quarters.
-	CHECK(tapped.at("position") == 2 * g_ticksPerQuarter + (5 * g_ticksPerQuarter / 3));
+	CHECK(tapped.at("position") == (2 * g_ticksPerQuarter) + (5 * g_ticksPerQuarter / 3));
 	CHECK(run(client, "tempo.tap", {{"bpm", 110.0}, {"mode", "cursor"}}).at("position") == tapped.at("position"));
 
 	// Last playback start position: where playback started.
