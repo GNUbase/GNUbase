@@ -248,6 +248,8 @@ namespace gnubase::app
 				for (MixerWindow& shown : m_mixers)
 					if (shown.mixer && m_shell.find(shown.window) == nullptr)
 						shown.mixer.reset(); // the user closed its window
+				if (m_keyboard && m_shell.find(m_keyboardWindow) == nullptr)
+					m_keyboard.reset(); // so too: its notes end
 				// The project window selects events or markers: an event selected deselects the markers.
 				if (m_eventDisplay && m_markerLines && m_eventDisplay->selection() != m_eventSelection)
 				{
@@ -268,10 +270,17 @@ namespace gnubase::app
 				}
 				return follows;
 			});
-		m_shell.onUnusedKey([this](ui::Window& window, const ui::KeyPress& keys) { m_keys.press(window, keys); });
+		m_shell.onUnusedKey(
+			[this](ui::Window& window, const ui::KeyPress& keys)
+			{
+				if (ui::OnScreenKeyboard* keyboard = this->keyboard(); keyboard == nullptr || !keyboard->press(keys))
+					m_keys.press(window, keys);
+			});
 		m_shell.onKeyReleased(
 			[this](ui::Window&, const ui::KeyPress& keys)
 			{
+				if (ui::OnScreenKeyboard* keyboard = this->keyboard(); keyboard != nullptr)
+					keyboard->release(keys);
 				m_keys.released(keys);
 				if (keys.key == Rml::Input::KI_UNKNOWN)
 					m_winding.stop(); // the keyboard focus lost: also a button held
@@ -280,6 +289,9 @@ namespace gnubase::app
 			// Later in the step: the key may be the markers window's own, which closing it would destroy.
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleMarkers(); }); }});
 		m_keys.bind({"Mod+M", "window.markers"});
+		m_keys.add({"window.onScreenKeyboard", "Shows or hides the on-screen keyboard.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleKeyboard(); }); }});
+		m_keys.bind({"Alt+K", "window.onScreenKeyboard"});
 
 		// The project window's panels (reference manual pp. 54, 73, 75-98), which their tickets fill: the inspector
 		// (docs/features/inspector.md) shows the selected track, the Channel zone's will show its channel strip (#107).
@@ -733,6 +745,33 @@ namespace gnubase::app
 		m_markers->syncFrom(
 			[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
 		return m_markers.get();
+	}
+
+	ui::OnScreenKeyboard* AppUi::toggleKeyboard()
+	{
+		const bool open = m_keyboard != nullptr && m_shell.find(m_keyboardWindow) != nullptr;
+		m_keyboard.reset();
+		if (open)
+		{
+			m_shell.close(m_keyboardWindow);
+			return nullptr;
+		}
+		ui::WindowSpec spec;
+		spec.title = "On-Screen Keyboard";
+		spec.size = {640, 200};
+		spec.hidden = m_hidden;
+		const ui::Window& window = m_shell.open(spec);
+		m_keyboardWindow = window.id();
+		const std::filesystem::path file = m_resources / "ui" / "onscreen-keyboard.rml";
+		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
+		if (document == nullptr)
+		{
+			m_shell.close(m_keyboardWindow);
+			throw std::runtime_error("cannot load the on-screen keyboard from " + file.u8string());
+		}
+		document->Show();
+		m_keyboard = std::make_unique<ui::OnScreenKeyboard>(m_binding, *document, m_keyboardSettings);
+		return m_keyboard.get();
 	}
 
 	void AppUi::chooseImport(

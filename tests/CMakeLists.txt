@@ -84,6 +84,7 @@ add_executable(gnubase-tests
 	mixerwindow_tests.cpp
 	monitoring_tests.cpp
 	multicore_tests.cpp
+	onscreenkeyboard_tests.cpp
 	parameter_tests.cpp
 	plugincommands_tests.cpp
 	pluginslots_tests.cpp
