@@ -1361,7 +1361,7 @@ namespace gnubase::engine
 					readFades(clip, context, start, duration, content);
 				const TrackType type = m_project.trackById.at(context.track).type;
 				// On an audio track, a clip of clips is an audio part (#471), which mutes rather than its events.
-				if (type == TrackType::Audio && context.part == 0 && clip.child("Clips"))
+				if (type == TrackType::Audio && context.part == 0 && !clip.child("Clips").empty())
 				{
 					AudioPart part;
 					part.id = m_project.newId();

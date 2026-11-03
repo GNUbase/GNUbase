@@ -145,7 +145,9 @@ namespace gnubase::engine
 		void announce(Project& project, CommandContext& context, const Item& item, const std::string& what)
 		{
 			if (item.audio != nullptr)
+			{
 				context.emit("audioEvent." + what, {{"event", toJson(*item.audio)}});
+			}
 			else if (item.audioPart != nullptr)
 			{
 				context.emit("audioPart." + what, {{"part", toJson(*item.audioPart)}});
@@ -153,7 +155,9 @@ namespace gnubase::engine
 					context.emit("audioEvent." + what, {{"event", toJson(*event)}});
 			}
 			else
+			{
 				context.emit("midiPart." + what, {{"part", toJson(*item.part)}});
+			}
 		}
 
 		// Time.
@@ -248,10 +252,14 @@ namespace gnubase::engine
 					"audio events in a part stay on the part's track");
 			}
 			else if (item.audioPart != nullptr)
+			{
 				require(type == TrackType::Audio, "audio parts can only be on an audio track");
+			}
 			else
+			{
 				require(type == TrackType::Midi || type == TrackType::Instrument,
 					"MIDI parts can only be on a MIDI or instrument track");
+			}
 		}
 
 		// Moves an item by shift onto a track, keeping its length; a part's length goes into the track's time base.
@@ -266,7 +274,9 @@ namespace gnubase::engine
 				*length = std::max<int64_t>(1, end.value - start.value);
 			}
 			if (item.audio != nullptr)
+			{
 				item.audio->track = track;
+			}
 			else if (item.audioPart != nullptr)
 			{
 				// The events first: one before the project start refuses the move, as the part's own start does.
@@ -278,7 +288,9 @@ namespace gnubase::engine
 				item.audioPart->track = track;
 			}
 			else
+			{
 				item.part->track = track;
+			}
 			item.position() = start;
 		}
 
@@ -853,8 +865,9 @@ namespace gnubase::engine
 					continue;
 				for (AudioEvent* event : eventsIn(project, item.audioPart->id))
 					event->part = part->id;
-				project.audioParts.erase(item.audioPart->id);
-				context.emit("audioPart.removed", {{"part", item.id()}});
+				const ObjectId merged = item.id();
+				project.audioParts.erase(merged);
+				context.emit("audioPart.removed", {{"part", merged}});
 			}
 			context.emit(added ? "audioPart.added" : "audioPart.changed", {{"part", toJson(*part)}});
 			for (const AudioEvent* event : eventsIn(project, part->id))
@@ -1045,8 +1058,9 @@ namespace gnubase::engine
 					announce(project, context, kept, kept.id() == original ? "changed" : "added");
 					events.push_back(kept.id());
 				}
-				project.audioParts.erase(item.id());
-				context.emit("audioPart.removed", {{"part", item.id()}});
+				const ObjectId part = item.id();
+				project.audioParts.erase(part);
+				context.emit("audioPart.removed", {{"part", part}});
 			}
 			return {{"events", events}};
 		}
@@ -1523,8 +1537,11 @@ namespace gnubase::engine
 			clipboard.endTicks = ticks(project, {time::TimeBase::Linear, range.end});
 			clipboard.tracks = range.tracks;
 			for (const Item& item : within(scratch, range.tracks, range.start, range.end, true))
+			{
 				if (item.audio != nullptr)
+				{
 					clipboard.audioEvents.push_back(*item.audio);
+				}
 				else if (item.audioPart != nullptr)
 				{
 					clipboard.audioParts.push_back(*item.audioPart);
@@ -1532,7 +1549,10 @@ namespace gnubase::engine
 						clipboard.audioEvents.push_back(*event);
 				}
 				else
+				{
 					clipboard.midiParts.push_back(*item.part);
+				}
+			}
 			for (const auto& [id, lane] : project.automation)
 				if (contains(range.tracks, lane.track) && !lane.points.empty())
 				{
@@ -1545,7 +1565,7 @@ namespace gnubase::engine
 
 		Json clipboardInfo(const RangeClipboard& clipboard)
 		{
-			const size_t inParts = static_cast<size_t>(std::count_if(clipboard.audioEvents.begin(),
+			const auto inParts = static_cast<size_t>(std::count_if(clipboard.audioEvents.begin(),
 				clipboard.audioEvents.end(), [](const AudioEvent& event) { return event.part != 0; }));
 			return {
 				{"events",
