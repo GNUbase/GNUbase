@@ -107,6 +107,7 @@ namespace gnubase::ui
 			{"view.autoScroll", [this] { setAutoScroll(!m_autoScroll); }}};
 		addEditActions();
 		addFadeActions();
+		addVolumeActions();
 		addToolActions();
 		setToolModifiers(Json::object());
 
@@ -952,6 +953,8 @@ namespace gnubase::ui
 		case Drag::Click:
 		case Drag::FadeIn:
 		case Drag::FadeOut:
+		case Drag::Volume:
+		case Drag::VolumePoint:
 			areaMove(dx, dy, restricts(event));
 			return;
 		case Drag::None:
