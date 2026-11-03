@@ -262,6 +262,7 @@ namespace gnubase::engine
 				const Json& messages = parameters.at("messages");
 				require(messages.size() <= MidiTap::g_size, "at most 4096 messages at a time");
 				std::vector<MidiTap::Message> injected;
+				injected.reserve(messages.size());
 				for (size_t i = 0; i < messages.size(); ++i)
 				{
 					injected.push_back({channel, messages[i].at("position").get<uint64_t>(),
@@ -288,6 +289,7 @@ namespace gnubase::engine
 			{
 				const Json& messages = context.parameters().at("messages");
 				std::vector<audio::MidiMessage> played;
+				played.reserve(messages.size());
 				for (size_t i = 0; i < messages.size(); ++i)
 					played.push_back(channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: "));
 				for (size_t i = 0; i < played.size(); ++i)

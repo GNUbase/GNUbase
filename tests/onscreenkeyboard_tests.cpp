@@ -169,7 +169,7 @@ TEST_CASE("notes played on the on-screen keyboard with the computer keyboard and
 	// Alt+K opens it in a window of its own, with its 29 keys.
 	app.ui().key(std::nullopt, "Alt+K");
 	REQUIRE(app.waitUntil([&app] { return app.appUi().keyboard() != nullptr; }));
-	ui::OnScreenKeyboard& keyboard = *app.appUi().keyboard();
+	const ui::OnScreenKeyboard& keyboard = *app.appUi().keyboard();
 	CHECK(keyboard.note(0) == 60); // the lowest key is C3 at the usual octave
 	CHECK(keyElement(app, 28).IsClassSet("white-key"));
 	CHECK(keyElement(app, 27).IsClassSet("black-key"));

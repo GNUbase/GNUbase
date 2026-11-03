@@ -2,6 +2,7 @@
 // The on-screen keyboard window (ui/onscreenkeyboard.h).
 #include "ui/onscreenkeyboard.h"
 
+#include "platform/log.h"
 #include "ui/keycommands.h"
 
 #include <RmlUi/Core/Element.h>
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <exception>
 #include <string>
 #include <utility>
 
@@ -57,8 +59,8 @@ namespace gnubase::ui
 
 		std::string keyRml(int key)
 		{
-			return "<div class=\"" + std::string(black(key) ? "black-key" : "white-key") + "\" note=\"" +
-				std::to_string(key) + "\"><span class=\"key-label\">" + g_labels[static_cast<size_t>(key)] +
+			return R"(<div class=")" + std::string(black(key) ? "black-key" : "white-key") + R"(" note=")" +
+				std::to_string(key) + R"("><span class="key-label">)" + g_labels[static_cast<size_t>(key)] +
 				"</span></div>";
 		}
 	}
@@ -77,7 +79,7 @@ namespace gnubase::ui
 				continue;
 			white += keyRml(key);
 			blacks +=
-				"<div class=\"black-slot\">" + (key + 1 < g_keys && black(key + 1) ? keyRml(key + 1) : "") + "</div>";
+				R"(<div class="black-slot">)" + (key + 1 < g_keys && black(key + 1) ? keyRml(key + 1) : "") + "</div>";
 		}
 		if (Rml::Element* keys = document.GetElementById("white-keys"); keys != nullptr)
 			keys->SetInnerRML(white);
@@ -94,8 +96,15 @@ namespace gnubase::ui
 
 	OnScreenKeyboard::~OnScreenKeyboard()
 	{
-		while (!m_held.empty())
-			noteOff(m_held.back().source);
+		try
+		{
+			while (!m_held.empty())
+				noteOff(m_held.back().source);
+		}
+		catch (const std::exception& error)
+		{
+			logging::warning("The on-screen keyboard cannot end its notes: {}", error.what());
+		}
 		if (!m_document)
 			return;
 		for (const Rml::EventId id : g_events)
@@ -127,7 +136,7 @@ namespace gnubase::ui
 
 	void OnScreenKeyboard::ProcessEvent(Rml::Event& event)
 	{
-		Rml::Element* target = event.GetTargetElement();
+		const Rml::Element* target = event.GetTargetElement();
 		switch (event.GetId())
 		{
 		case Rml::EventId::Mousedown:
