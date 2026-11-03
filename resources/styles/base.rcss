@@ -840,9 +840,11 @@ meter .meter-peak
 	width: 4dp;
 }
 
+/* The name and the controls area: code gives each the width of the user setting ui.trackWidths. The controls area
+   takes the rest of the row too, and its controls go onto more lines when they don't fit. */
 .track-list .track-name
 {
-	flex: 1 1 0;
+	flex: 0 0 auto;
 	overflow: hidden;
 	white-space: nowrap;
 	height: 18dp;
@@ -857,8 +859,15 @@ meter .meter-peak
 .track-list listitem.renaming .track-name-field
 {
 	display: block;
-	flex: 1 1 0;
+	flex: 0 0 auto;
 	height: 18dp;
+}
+
+.track-list .track-controls
+{
+	display: flex;
+	flex-wrap: wrap;
+	flex: 1 0 auto;
 }
 
 .track-list .track-controls button

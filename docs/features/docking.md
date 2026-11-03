@@ -15,7 +15,8 @@ strips above and below a row of zones, where the main zone takes what the others
 | Attribute | What it is |
 |---|---|
 | `zone="main"`, `"channel"`, `"left"`, `"right"`, `"lower"` | A zone. Every zone but the main one gets a `<tabset>` with its panels' tabs. `size` is its default size in dp, `default="hidden"` hides it by default. Its size is its width, or its height in a flex column. `tabbar="bottom"` puts its tabs at its bottom. |
-| `splitter for="left"` | The splitter that sizes that zone; `resize="next"` for a zone after it. It hides with its zone. |
+| `splitter for="left"` | The splitter that sizes that zone or resizable element; `resize="next"` for one after it. It hides with its zone. |
+| `resizable="trackList"` | An element inside a zone that a splitter sizes, such as the track list; `size` is its default size in dp, its width, or its height in a flex column. |
 | `strip="infoLine"` | A strip; `default="hidden"` hides it by default. |
 | `toggle="left"` | A toggle button or menu item that shows or hides that zone or strip. |
 | `hide="lower"` | A button that hides that zone or strip, such as Close Lower Zone. |
@@ -24,8 +25,8 @@ strips above and below a row of zones, where the main zone takes what the others
 | `setup-all="channel"` | A button that shows every section of that set (Show All). |
 
 The project window (`resources/ui/project.rml`) has the menu bar ([main-menu.md](main-menu.md)), the toolbar, the info
-line, the Channel zone, the left zone, the main zone with the event display, the lower and right zones, the status line
-and the transport bar, which come in that order in the reference (pp. 54–56). The Channel zone (p. 73) has the panel
+line, the Channel zone, the left zone, the main zone with the track list and the event display, the lower and right
+zones, the status line and the transport bar, which come in that order in the reference (pp. 54–56). The Channel zone (p. 73) has the panel
 Channel, empty until the channel strip fills it with the selected track's channel (#107). The lower zone has
 its tabs at its bottom, with a Close Lower Zone button to their left that hides it (p. 83); the other zones have theirs
 at the top. Its toolbar has Show/Hide Channel, Show/Hide Left, Lower and Right Zone and the Set up Window Layout menu,
@@ -99,6 +100,10 @@ the column with the main zone 200 dp wide (base.rcss). So the Channel zone takes
 the left zone next to it, whether that shows or not. The size is saved when
 the drag ends. A double click on a splitter collapses its zone; showing the zone again restores its size.
 
+A splitter also sizes a resizable element inside a zone, which isn't a zone itself: the project window's track list,
+whose divider sits between it and the event display in the main zone ([track-list.md](track-list.md)). Its size goes
+into `sizes` in the layout, and a double click leaves it alone.
+
 ## The layout and the engine
 
 The whole layout is the user setting `ui.layout` ([settings.md](settings.md)), so it survives a restart and any client
@@ -111,7 +116,8 @@ their way to the engine it ignores the echoes, so a quick second change doesn't 
   "windows": {
     "project": {
       "zones": {"lower": {"visible": true, "size": 280, "tabs": ["mixer", "editor"], "hidden": [], "active": "mixer"}},
-      "strips": {"overviewLine": false, "infoLine": true}
+      "strips": {"overviewLine": false, "infoLine": true},
+      "sizes": {"trackList": 320}
     },
     "mixer1": {
       "sections": {"channel": {"order": ["fader", "routing", "inserts"], "hidden": ["inserts"]}}
@@ -181,7 +187,8 @@ the project zone, around the ends and past hidden zones, with a zone's keys work
 text field, Ctrl+Tab and Tab in an open menu left alone; a panel moved into a window of its own through the tab menu, with its
 contents made there and gone from the zone, docked with the Dock button and by closing its window, which reopens where
 it was; and the complete layout, with zone sizes, tab orders, hidden and active tabs, strips and a panel's window,
-back exactly after a restart. On a test window with sections, the setup pane shows and hides sections in every
+back exactly after a restart. `tests/tracklist_tests.cpp` drags the track list's divider, a resizable element's
+splitter. On a test window with sections, the setup pane shows and hides sections in every
 channel and stays open, reorders them by drag and drop between the channel's other elements, and shows and hides a
 strip and a zone; `ui.layout` from the engine reorders and hides them too, ignores names that aren't sections, is
 refused in the wrong shape and resets to the defaults; and the order and visibility come back after a restart. A

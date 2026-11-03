@@ -2,7 +2,9 @@
 
 The project window's track list and its track controls (#81, reference manual pp. 66–67, 189–196, 213–219, 225): a
 row per track beside the event display's lanes, with the track's name and controls, track selection, renaming,
-reordering, heights, folding, duplicating, disabling and removing tracks, and the track controls settings dialog.
+reordering, heights, folding, duplicating, disabling and removing tracks, and the track controls settings dialog. The
+divider beside the event display sizes the track list, and the track name and controls area widths size its rows
+(#493).
 In the engine: mute and solo, disabled tracks and `track.duplicate`.
 
 ## In the engine
@@ -47,6 +49,17 @@ sends engine commands, so whatever another client changes shows at once.
     .drop-line                    where dragged tracks go, .shown while dragging
 ```
 
+- **Width.** The track list starts 280 dp wide (`size` in `project.rml`). Dragging the divider between it and the
+  event display (`splitter for="trackList"`) sizes it, between its minimum of 120 dp and what leaves the event display
+  its own 100 dp; the event display takes the rest of the main zone. The docking system keeps the width in the user
+  setting `ui.layout` (`windows.project.sizes.trackList`, [docking.md](docking.md)), so it comes back after a restart,
+  and any client changes it with `settings.set`. A double click on the divider leaves it alone. A window too narrow for
+  both takes the room from the track list once the event display is at its minimum.
+- **Name and controls widths** (p. 191). The user setting `ui.trackWidths` has the track name's width for every track
+  type (`name`, 20 to 400 dp) and each type's controls area width (`controls`, 0 to 800 dp), 120 dp each by default
+  and where it has none. The name is as wide as that; the controls area is at least as wide as its type's width and
+  takes the rest of the row, and its controls go onto more lines when they don't fit, as many as the track's height
+  shows. A row narrower than the name and the controls area hides what doesn't fit at its right.
 - **Rows and lanes.** The event display has a lane per track that isn't hidden, each as high as its track
   (`EventDisplay::trackHeight`, `g_trackHeight` (40 dp) until set, 20 to 400 dp, times vertical zoom), and tells the
   track list when its lanes or view change (`onLayout`). The list sets each row's height from its lane and moves the
@@ -90,16 +103,18 @@ sends engine commands, so whatever another client changes shows at once.
 
 `resources/ui/track-controls.rml` (pp. 189–191), opened by `#track-controls-settings`, the context menu or the UI
 command `track.controlsSettings`: the track types on the left, the hidden and the visible controls of the selected
-type, Add, Remove (not for mute and solo), Move Up, Move Down and Reset (the type's defaults from `settings.list`).
-OK saves every type with `settings.set` `ui.trackControls`, which the track list follows; Cancel and Escape drop the
-changes.
+type, Add, Remove (not for mute and solo), Move Up, Move Down and Reset (the type's controls and controls area width,
+from `settings.list`), and below them Controls Area Width (`#controls-area-width`, the selected type's) and Track Name
+Width (`#track-name-width`, global), held at the setting's limits. OK saves every type with `settings.set`
+`ui.trackControls` and `ui.trackWidths`, which the track list follows; Cancel and Escape drop the changes.
 
 ## Not yet
 
 Lanes and comping (#99), write automation (#122),
 recording from instrument and MIDI tracks (#97), dividing the track list, track visibility agents and the track type
 filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
-the settings dialog's groups, widths and presets, the track height presets menu, snap track heights, Shift-click to
+the settings dialog's groups, controls area preview, presets, Reset All and the MIDI tracks' Output Group and
+Channel Width (p. 191), the track height presets menu, snap track heights, Shift-click to
 deselect, the warning before removing tracks that aren't empty, and the ruler and marker tracks' own controls (#447,
 #91). Adding a track below the selected one is #448. Folders' group channels, data blocks and Move Selected Tracks to
 New Folder are in [folder-tracks.md](folder-tracks.md).
@@ -116,5 +131,9 @@ New Folder are in [folder-tracks.md](folder-tracks.md).
   each type's controls; every control's button and the engine's state both ways; selection with clicks, modifiers,
   the arrow keys and the key commands; renaming with Enter and Escape; moving by a drag and undoing it; heights by a
   drag, with Ctrl for all; the wheel; folding from the toggle and the commands, in the event display too; duplicating,
-  disabling, enabling and removing from the context menu and the commands; and the settings dialog's Add, Remove,
-  Move Up and Reset, saved in the user setting and shown in the rows.
+  disabling, enabling and removing from the context menu and the commands; the settings dialog's Add, Remove,
+  Move Up and Reset, saved in the user setting and shown in the rows; the divider dragged both ways and to both
+  limits, with the rows, the event display and its lanes following, its double click, the width in `ui.layout`, from
+  another client, at a larger UI scale and after a restart; and the track name and each type's controls area width
+  from the dialog, its limits and Reset, from another client and with defaults for what the setting leaves out, with
+  the controls on more lines in a narrow track list and on one line in a wide one.

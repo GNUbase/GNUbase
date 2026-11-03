@@ -28,6 +28,7 @@ namespace gnubase::ui
 
 		constexpr double g_edge = 4.0;          // dp above a row's lower edge that size its track
 		constexpr double g_dragThreshold = 4.0; // dp a press moves before it drags
+		constexpr double g_width = 120.0;       // dp of a name or controls area that ui.trackWidths leaves out
 
 		constexpr std::array<Rml::EventId, 5> g_rootEvents = {Rml::EventId::Mousedown, Rml::EventId::Dblclick,
 			Rml::EventId::Click, Rml::EventId::Mousescroll, Rml::EventId::Change};
@@ -73,6 +74,22 @@ namespace gnubase::ui
 		{
 			if (element.IsClassSet(name) != set)
 				element.SetClass(name, set);
+		}
+
+		void setWidth(Rml::Element* element, double width)
+		{
+			const Rml::Property value = dp(width);
+			if (const Rml::Property* now =
+					element == nullptr ? nullptr : element->GetLocalProperty(Rml::PropertyId::Width);
+				element != nullptr && (now == nullptr || !(*now == value)))
+				element->SetProperty(Rml::PropertyId::Width, value);
+		}
+
+		// A width of ui.trackWidths, under key in widths, or the default where it has none.
+		double widthOf(const Json& widths, const std::string& key)
+		{
+			const auto found = widths.find(key);
+			return found != widths.end() && found->is_number() ? found->get<double>() : g_width;
 		}
 	}
 
@@ -227,12 +244,20 @@ namespace gnubase::ui
 				const Json& values = event.data.at("values");
 				if (const auto controls = values.find("ui.trackControls"); controls != values.end())
 					loadControls(*controls);
+				if (const auto widths = values.find("ui.trackWidths"); widths != values.end())
+					loadWidths(*widths);
 			}));
 		m_binding.send("settings.get", {{"key", "ui.trackControls"}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (!alive.expired() && result.ok())
 					loadControls(result.value.at("value"));
+			});
+		m_binding.send("settings.get", {{"key", "ui.trackWidths"}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok())
+					loadWidths(result.value.at("value"));
 			});
 		m_display.onLayout([this] { layout(); });
 		layout();
@@ -307,6 +332,13 @@ namespace gnubase::ui
 	void TrackList::loadControls(const Json& value)
 	{
 		m_controls = value.is_object() ? value : Json::object();
+		if (alive())
+			showState();
+	}
+
+	void TrackList::loadWidths(const Json& value)
+	{
+		m_widths = value.is_object() ? value : Json::object();
 		if (alive())
 			showState();
 	}
@@ -414,6 +446,8 @@ namespace gnubase::ui
 		for (const Json& lane : project.at("automation"))
 			reading[lane.at("track").get<uint64_t>()].push_back(lane.at("read").get<bool>());
 		const Json& tracks = project.at("tracks");
+		const double nameWidth = widthOf(m_widths, "name");
+		const Json controlsWidths = m_widths.value("controls", Json::object());
 		for (int i = 0; i < m_view->GetNumChildren() && static_cast<size_t>(i) < m_tracks.size(); ++i)
 		{
 			Rml::Element* element = m_view->GetChild(i);
@@ -443,15 +477,20 @@ namespace gnubase::ui
 				}
 			}
 			// The name, unless it's being typed.
-			if (Rml::Element* name = element->QuerySelector(".track-name"); name != nullptr && row.id != m_renaming)
+			Rml::Element* label = element->QuerySelector(".track-name");
+			if (label != nullptr && row.id != m_renaming)
 			{
 				const std::string text = Rml::StringUtilities::EncodeRml(track.at("name").get<std::string>());
-				if (name->GetInnerRML() != text)
-					name->SetInnerRML(text);
+				if (label->GetInnerRML() != text)
+					label->SetInnerRML(text);
 			}
+			// The widths of the name and the controls area (reference manual p. 191), which are user data.
+			setWidth(label, nameWidth);
+			setWidth(element->QuerySelector(".track-name-field"), nameWidth);
 			Rml::Element* controls = element->QuerySelector(".track-controls");
 			if (controls == nullptr)
 				continue;
+			setWidth(controls, widthOf(controlsWidths, row.type));
 			const std::vector<std::string> shown = controlsOf(row);
 			std::string rml;
 			for (const std::string& control : shown)

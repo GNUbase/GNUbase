@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The track controls settings dialog (#81, docs/features/track-list.md, reference manual pp. 189-191): which
-     controls the track list shows for each track type, and in which order. app::AppUi opens it (the UI command
-     track.controlsSettings, the track list's settings button and context menu). Its Lua edits a copy of the user
-     setting ui.trackControls and OK saves it with settings.set, which the track list follows. Mute and solo can't be
-     hidden. -->
+     controls the track list shows for each track type, and in which order, each type's controls area width and the
+     track name width (#493). app::AppUi opens it (the UI command track.controlsSettings, the track list's settings
+     button and context menu). Its Lua edits copies of the user settings ui.trackControls and ui.trackWidths and OK
+     saves them with settings.set, which the track list follows. Mute and solo can't be hidden. -->
 <rml>
 <head>
 	<title>Track Controls Settings</title>
@@ -61,6 +61,22 @@
 		{
 			margin-left: 6dp;
 		}
+
+		.widths
+		{
+			justify-content: flex-start;
+		}
+
+		.widths label
+		{
+			margin-right: 6dp;
+		}
+
+		.widths valuefield
+		{
+			width: 50dp;
+			margin-right: 18dp;
+		}
 	</style>
 	<script>
 		TrackControls = {}
@@ -81,6 +97,10 @@
 
 		local settings = {} -- the setting as the dialog edits it, by type
 		local defaults = {}
+		local defaultWidth = 120 -- dp, where ui.trackWidths has no width (ui/tracklist.cpp)
+		local widths = {name = defaultWidth, controls = {}} -- ui.trackWidths as the dialog edits it
+		local defaultWidths = {name = defaultWidth, controls = {}}
+		local shownType = "audio" -- the type whose controls area width the field shows
 
 		local function copy(list)
 			local result = {}
@@ -123,6 +143,11 @@
 			return shown
 		end
 
+		-- A type's controls area width in from, a value of ui.trackWidths.
+		local function areaWidth(from, type)
+			return (from.controls or {})[type] or defaultWidth
+		end
+
 		function dialog.load(document)
 			for key, value in pairs(gnubase.settings.get{key = "ui.trackControls"}.value) do
 				settings[key] = copy(value)
@@ -130,9 +155,26 @@
 			for _, setting in ipairs(gnubase.settings.list().settings) do
 				if setting.key == "ui.trackControls" then
 					defaults = setting.default
+				elseif setting.key == "ui.trackWidths" then
+					defaultWidths = setting.default
 				end
 			end
+			local saved = gnubase.settings.get{key = "ui.trackWidths"}.value
+			widths.name = saved.name or defaultWidth
+			for key, value in pairs(saved.controls or {}) do
+				widths.controls[key] = value
+			end
+			document:GetElementById("track-name-width"):SetAttribute("value", string.format("%g", widths.name))
 			dialog.show(document)
+		end
+
+		-- The widths typed: the name's, and the controls area's of the type the field shows.
+		function dialog.nameWidth(element)
+			widths.name = tonumber(element:GetAttribute("value")) or widths.name
+		end
+
+		function dialog.controlsWidth(element)
+			widths.controls[shownType] = tonumber(element:GetAttribute("value")) or areaWidth(widths, shownType)
 		end
 
 		-- Shows the selected type's lists, keeping the selected control selected.
@@ -151,6 +193,9 @@
 			visibleList.inner_rml = rows(shown)
 			hiddenList:SetAttribute("value", contains(hidden, selected) and selected or "")
 			visibleList:SetAttribute("value", contains(shown, selected) and selected or "")
+			shownType = type
+			document:GetElementById("controls-area-width"):SetAttribute("value",
+				string.format("%g", areaWidth(widths, type)))
 		end
 
 		function dialog.add(document)
@@ -195,9 +240,11 @@
 			dialog.show(document, control)
 		end
 
+		-- The type's defaults: its controls and its controls area width.
 		function dialog.reset(document)
 			local type = valueOf(document, "controls-types")
 			settings[type] = copy(defaults[type])
+			widths.controls[type] = areaWidth(defaultWidths, type)
 			dialog.show(document)
 		end
 
@@ -208,6 +255,14 @@
 				value[type] = visible(type)
 			end
 			gnubase.settings.set{key = "ui.trackControls", value = value}
+			local controls = {}
+			for type in pairs(defaultWidths.controls) do
+				controls[type] = areaWidth(widths, type)
+			end
+			for type in pairs(available) do
+				controls[type] = areaWidth(widths, type)
+			end
+			gnubase.settings.set{key = "ui.trackWidths", value = {name = widths.name, controls = controls}}
 			document:Close()
 		end
 	</script>
@@ -239,6 +294,14 @@
 				<div>Visible Controls</div>
 				<listview id="visible-controls"/>
 			</div>
+		</div>
+		<div class="row widths">
+			<label for="controls-area-width">Controls Area Width</label>
+			<valuefield id="controls-area-width" value="120" min="0" max="800" step="1" decimals="0" unit="dp"
+				onchange="TrackControls.controlsWidth(element)"/>
+			<label for="track-name-width">Track Name Width (global)</label>
+			<valuefield id="track-name-width" value="120" min="20" max="400" step="1" decimals="0" unit="dp"
+				onchange="TrackControls.nameWidth(element)"/>
 		</div>
 		<div class="row">
 			<button id="controls-cancel" result="cancel">Cancel</button>

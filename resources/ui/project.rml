@@ -1,17 +1,17 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The project window: a docking window (docs/features/docking.md) with the main menu bar, whose items
      ui::MainMenu runs (docs/features/main-menu.md), the toolbar, the info line, the zones (Channel, left, main, lower,
-     right) and their splitters, the status line and the transport bar. The main zone shows the track list (#81) beside the
-     event display (#84). ui::Docking lays out the elements with zone, splitter for, strip, toggle and hide
-     attributes and fills the other zones with their panels' tabs. ui::EventDisplay fills the element #event-display
-     and drives the controls and menus with these ids (docs/features/event-display.md): the ruler's arrow button
-     .ruler-format, #ruler-format-menu, #zoom-presets-menu, #auto-scroll and #auto-scroll-menu, and the snap controls
-     #snap, #snap-type, #snap-type-menu, #grid-type, #grid-type-menu (which the display fills with the ruler format's
-     grid types) and #snap-zero-crossing (docs/features/snap.md). Its dialogs are zoom-preset.rml,
-     zoom-presets.rml and repeat-events.rml, next to this file. ui::TrackList fills #track-list under its global track
-     controls (docs/features/track-list.md): #add-track opens the add track dialog (add-track.rml),
-     #track-controls-settings the track controls settings dialog (track-controls.rml); #track-list-menu is its context
-     menu.
+     right) and their splitters, the status line and the transport bar. The main zone shows the track list (#81) beside
+     the event display (#84), with the divider that sizes the track list between them (#493). ui::Docking lays out the
+     elements with zone, splitter for, resizable, strip, toggle and hide attributes and fills the other zones with their
+     panels' tabs. ui::EventDisplay fills the element #event-display and drives the controls and menus with these ids
+     (docs/features/event-display.md): the ruler's arrow button .ruler-format, #ruler-format-menu, #zoom-presets-menu,
+     #auto-scroll and #auto-scroll-menu, and the snap controls #snap, #snap-type, #snap-type-menu, #grid-type,
+     #grid-type-menu (which the display fills with the ruler format's grid types) and #snap-zero-crossing
+     (docs/features/snap.md). Its dialogs are zoom-preset.rml, zoom-presets.rml and repeat-events.rml, next to this
+     file. ui::TrackList fills #track-list under its global track controls (docs/features/track-list.md): #add-track
+     opens the add track dialog (add-track.rml), #track-controls-settings the track controls settings dialog
+     (track-controls.rml); #track-list-menu is its context menu.
      app::AppUi fills the transport bar with the transport controls (transport.rml).
      The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md), and
      #select-color with #color-menu, which ui::ColorMenu fills with the project's colors (docs/features/colors.md).
@@ -58,22 +58,26 @@
 			margin-right: 16dp;
 		}
 
+		/* The track list, as wide as ui.layout or its size attribute says, the divider that sizes it, and the event
+		   display, which takes the rest. A narrow window takes the room from the track list once the event display is
+		   at its minimum. */
+		#main-zone
+		{
+			display: flex;
+			flex-direction: row;
+		}
+
 		#track-list
 		{
-			position: absolute;
-			left: 0;
-			top: 0;
-			width: 280dp;
-			bottom: 0;
+			position: relative;
+			flex: 0 1 auto;
+			min-width: 120dp;
 		}
 
 		#event-display
 		{
-			position: absolute;
-			left: 280dp;
-			top: 0;
-			right: 0;
-			bottom: 0;
+			flex: 1 1 0;
+			min-width: 100dp;
 		}
 	</style>
 </head>
@@ -123,13 +127,14 @@
 		<splitter for="left"/>
 		<div class="zone-column">
 			<div id="main-zone" zone="main" focuszone="project">
-				<div id="track-list" class="track-list" contextmenu="track-list-menu">
+				<div id="track-list" class="track-list" contextmenu="track-list-menu" resizable="trackList" size="280">
 					<!-- The global track controls (reference manual p. 67) -->
 					<div class="track-list-header">
 						<button id="add-track" class="icon-only" title="Add Track" onclick="gnubase.ui.command{command = 'project.addTrack'}"><svg class="icon" src="../icons/general-add.svg"/></button>
 						<button id="track-controls-settings" class="icon-only" title="Open Track Controls Settings Dialog" onclick="gnubase.ui.command{command = 'track.controlsSettings'}"><svg class="icon" src="../icons/general-settings.svg"/></button>
 					</div>
 				</div>
+				<splitter for="trackList"/>
 				<div id="event-display" class="event-display">
 					<button class="ruler-format icon-only" menu="ruler-format-menu" title="Ruler Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 				</div>

@@ -32,8 +32,8 @@ namespace gnubase::engine::settings
 			return text + ", default " + definition.defaultValue.dump() + "): " + description;
 		}
 
-		// ui.layout: the windows' zones, strips and sections, and the panels in windows of their own
-		// (docs/features/docking.md).
+		// ui.layout: the windows' zones, strips, sections and the sizes of other elements that splitters size, and the
+		// panels in windows of their own (docs/features/docking.md).
 		Json layoutSchema()
 		{
 			const Json strings = {{"type", "array"}, {"items", {{"type", "string"}}}};
@@ -46,7 +46,9 @@ namespace gnubase::engine::settings
 				{"properties",
 					{{"zones", {{"type", "object"}, {"additionalProperties", zone}}},
 						{"strips", {{"type", "object"}, {"additionalProperties", {{"type", "boolean"}}}}},
-						{"sections", {{"type", "object"}, {"additionalProperties", sections}}}}}};
+						{"sections", {{"type", "object"}, {"additionalProperties", sections}}},
+						{"sizes",
+							{{"type", "object"}, {"additionalProperties", {{"type", "number"}, {"minimum", 0}}}}}}}};
 			const Json integer = {{"type", "integer"}};
 			const Json size = {{"type", "integer"}, {"minimum", 1}};
 			const Json bounds = {{"type", "object"},
@@ -193,9 +195,9 @@ namespace gnubase::engine::settings
 					"right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs "
 					"hidden and the active one, and its strips (toolbar, infoLine, overviewLine, statusLine, "
 					"transportBar) with whether each is shown, and its sets of sections (such as a mixer channel's) "
-					"with the order of their sections and those hidden; under panels, by panel, whether it is in a "
-					"window of "
-					"its own and that window's bounds. What it leaves out has its default.",
+					"with the order of their sections and those hidden, and the sizes in dp of other elements that "
+					"splitters size (trackList: the track list's width); under panels, by panel, whether it is in a "
+					"window of its own and that window's bounds. What it leaves out has its default.",
 					layoutSchema(), Json::object()},
 				{"ui.markerLines",
 					"Which markers the event display shows as lines across every track: the active marker track's "
@@ -243,6 +245,22 @@ namespace gnubase::engine::settings
 						{"instrument", {"mute", "solo", "read"}}, {"midi", {"mute", "solo", "read"}},
 						{"group", {"mute", "solo", "read"}}, {"effect", {"mute", "solo", "read"}},
 						{"folder", {"mute", "solo", "read"}}, {"marker", Json::array()}, {"ruler", Json::array()}}},
+				{"ui.trackWidths",
+					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
+					"400), and controls, by track type, the least width of its controls area (0 to 800), which takes "
+					"the rest of the row and wraps the controls onto more lines when they don't fit. A width left out "
+					"is 120.",
+					Json{{"type", "object"},
+						{"properties",
+							{{"name", {{"type", "number"}, {"minimum", 20}, {"maximum", 400}}},
+								{"controls",
+									{{"type", "object"},
+										{"additionalProperties",
+											{{"type", "number"}, {"minimum", 0}, {"maximum", 800}}}}}}}},
+					Json{{"name", 120},
+						{"controls",
+							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
+								{"folder", 120}, {"marker", 120}, {"ruler", 120}}}}},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "
 					"seconds the view shows.",
