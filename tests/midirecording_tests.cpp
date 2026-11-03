@@ -669,6 +669,25 @@ TEST_CASE("recording.add applies the MIDI cycle record modes to the takes", "[in
 		std::sort(lanes.begin(), lanes.end());
 		CHECK(lanes == std::vector<int64_t>{1, 2, 3});
 	}
+	SECTION("a single take isn't stacked: it goes by the MIDI record mode, on lane 0")
+	{
+		const std::string cycleMode = GENERATE("stacked", "mixStacked");
+		const ObjectId existing =
+			run(client, "midiPart.add", {{"track", setup.track}, {"position", 0}, {"length", 4 * g_beatTicks}})
+				.at("part")
+				.at("id")
+				.get<ObjectId>();
+		run(client, "recording.add",
+			{{"cycleMode", cycleMode}, {"midiMode", "merge"},
+				{"tracks",
+					{{{"track", setup.track}, {"takes", Json::array({lap})},
+						{"notes", Json::array({note(g_beat, g_beat, 48)})}}}}});
+		const std::vector<Json> parts = setup.parts();
+		REQUIRE(parts.size() == 1);
+		CHECK(parts[0].at("id") == existing);
+		CHECK(parts[0].at("lane") == 0);
+		CHECK(notesOf(parts[0]) == Notes{{g_beatTicks, g_beatTicks, 48}});
+	}
 	SECTION("a take that isn't there is refused")
 	{
 		CHECK_THAT(reject(client, "recording.add",
