@@ -625,6 +625,17 @@ meter .meter-peak
 	pointer-events: none;
 }
 
+/* The fades of audio events and their handles (#138), over the waveforms. */
+.event-display .event-area fade-lines
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
 .event-display .waveforms waveform
 {
 	position: absolute;
