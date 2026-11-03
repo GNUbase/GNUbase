@@ -117,11 +117,12 @@ TEST_CASE("the track list shows a row per track, and its controls change the tra
 	CHECK(first.at("height").get<int>() == static_cast<int>(ui::g_trackHeight));
 	CHECK(first.at("y") == elements(tracks.app, "event-lanes.events").at(0).at("box").at("y"));
 
-	// Each type's controls: audio tracks record and monitor, instrument tracks don't, marker tracks have none.
+	// Each type's controls: audio and instrument tracks record and monitor, groups don't, marker tracks have none.
 	CHECK(elements(tracks.app, row(audio) + " button[control]").size() == 5);
-	CHECK(elements(tracks.app, row(instrument) + " button[control]").size() == 3);
-	CHECK(elements(tracks.app, row(instrument) + " button.record").empty());
+	CHECK(elements(tracks.app, row(instrument) + " button[control]").size() == 5);
+	CHECK(elements(tracks.app, row(instrument) + " button.record").size() == 1);
 	CHECK(elements(tracks.app, row(group) + " button.mute").size() == 1);
+	CHECK(elements(tracks.app, row(group) + " button.record").empty());
 	CHECK(elements(tracks.app, row(marker) + " button[control]").empty());
 
 	// Every button sets its channel's switch, and shows it.
@@ -137,6 +138,9 @@ TEST_CASE("the track list shows a row per track, and its controls change the tra
 		tracks.app.call("channel.set", {{"channel", tracks.channel(audio).at("id")}, {key, false}});
 		REQUIRE(tracks.app.waitUntil([&] { return !hasClass(elements(tracks.app, button).at(0), "checked"); }));
 	}
+	// An instrument track's record button arms it for MIDI recording.
+	tracks.click(row(instrument) + " button.record");
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.channel(instrument).at("recordEnable") == true; }));
 
 	// Read switches the track's automation lanes; without lanes it's disabled.
 	const std::string read = row(instrument) + " button.read";
@@ -355,13 +359,13 @@ TEST_CASE("the track controls settings dialog chooses and orders each track type
 	tracks.click("#visible-controls > [value=read]");
 	tracks.click("#controls-remove");
 	tracks.click("#controls-reset");
-	CHECK(elements(tracks.app, "#visible-controls > listitem").size() == 3);
+	CHECK(elements(tracks.app, "#visible-controls > listitem").size() == 5);
 	tracks.click("#controls-ok");
 	REQUIRE(tracks.app.waitUntil([&] { return !open(); }));
 
 	REQUIRE(tracks.app.waitUntil(
 		[&] { return controls(audio) == std::vector<std::string>{"mute", "solo", "record", "timeBase", "read"}; }));
-	CHECK(controls(midi) == std::vector<std::string>{"mute", "solo", "read"});
+	CHECK(controls(midi) == std::vector<std::string>{"mute", "solo", "record", "monitor", "read"});
 	CHECK(tracks.app.call("settings.get", {{"key", "ui.trackControls"}}).at("value").at("audio") ==
 		Json{"mute", "solo", "record", "timeBase", "read"});
 	// Switch Time Base switches the track's time base.

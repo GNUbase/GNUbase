@@ -302,6 +302,13 @@
 				<menuitem id="audio-record-mode-replace" command="transport.set" parameters='{"audioRecordMode": "replace"}'>Replace</menuitem>
 			</menu>
 		</menuitem>
+		<menuitem id="midi-record-mode-submenu">MIDI Record Mode
+			<menu>
+				<menuitem command="transport.set" parameters='{"midiRecordMode": "newParts"}'>New Parts</menuitem>
+				<menuitem id="midi-record-mode-merge" command="transport.set" parameters='{"midiRecordMode": "merge"}'>Merge</menuitem>
+				<menuitem command="transport.set" parameters='{"midiRecordMode": "replace"}'>Replace</menuitem>
+			</menu>
+		</menuitem>
 		<menuseparator/>
 		<menuitem command="transport.locate" parameters='{"target": "projectStart"}'>Go to Project Start</menuitem>
 		<menuseparator/>
