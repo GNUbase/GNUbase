@@ -5,6 +5,7 @@
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <array>
+#include <cstdint>
 #include <cstdio>
 #include <string>
 
@@ -20,7 +21,8 @@ namespace gnubase::ui
 	}
 
 	StatusLine::StatusLine(EngineBinding& binding, Rml::Element& root)
-		: m_recordFormat(field(root, "record-format")), m_lostDevice(field(root, "lost-device")),
+		: m_binding(binding), m_recordFormat(field(root, "record-format")), m_lostDevice(field(root, "lost-device")),
+		  m_recordTime(field(root, "record-time")),
 		  m_changed(binding.on("audio.changed", [this](const engine::Event& event) { show(event.data); }))
 	{
 		binding.send("audio.get", engine::Json::object(),
@@ -29,6 +31,37 @@ namespace gnubase::ui
 				if (!alive.expired() && result.ok())
 					show(result.value);
 			});
+		update();
+	}
+
+	void StatusLine::update()
+	{
+		if (!m_recordTime || m_binding.waiting("recording.remainingTime") > 0)
+			return;
+		m_binding.send("recording.remainingTime", engine::Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok())
+					showRecordTime(result.value);
+			});
+	}
+
+	void StatusLine::showRecordTime(const engine::Json& time)
+	{
+		if (!m_recordTime)
+			return;
+		// "52 h 07 min", or under an hour "4 min 09 s"; "-" while no track would record.
+		std::string text = "-";
+		if (time.at("seconds").is_number())
+		{
+			const auto seconds = static_cast<int64_t>(time.at("seconds").get<double>());
+			const auto twoDigits = [](int64_t value) { return (value < 10 ? "0" : "") + std::to_string(value); };
+			text = seconds >= 3600 ? std::to_string(seconds / 3600) + " h " + twoDigits((seconds / 60) % 60) + " min"
+								   : std::to_string(seconds / 60) + " min " + twoDigits(seconds % 60) + " s";
+		}
+		const std::string shown = Rml::StringUtilities::EncodeRml("Max. Record Time: " + text);
+		if (m_recordTime->GetInnerRML() != shown)
+			m_recordTime->SetInnerRML(shown);
 	}
 
 	void StatusLine::show(const engine::Json& status)

@@ -15,7 +15,7 @@
      app::AppUi fills the transport bar with the transport controls (transport.rml).
      The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md), and
      #select-color with #color-menu, which ui::ColorMenu fills with the project's colors (docs/features/colors.md).
-     ui::StatusLine fills #record-format and #lost-device (docs/features/status-line.md). ui::InfoLine fills
+     ui::StatusLine fills #record-format, #record-time and #lost-device (docs/features/status-line.md). ui::InfoLine fills
      #info-line; #inspector-setup is the inspector's Set up Sections pane (docs/features/inspector.md).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
@@ -151,6 +151,7 @@
 	</div>
 	<div id="status-line" class="strip status-line" strip="statusLine" default="hidden">
 		<span id="record-format" class="status-field" title="Record Format" onclick="gnubase.ui.command{command = 'window.projectSetup'}"/>
+		<span id="record-time" class="status-field" title="Max. Record Time"/>
 		<span id="lost-device" class="status-field hidden"/>
 	</div>
 	<div id="transport-bar" class="strip transport" strip="transportBar" default="hidden" sections="transport" contextmenu="transport-setup"/>
@@ -322,6 +323,8 @@
 		<menuitem command="transport.stop">Stop</menuitem>
 		<menuitem command="transport.toggle">Start/Stop</menuitem>
 		<menuitem command="transport.record">Record</menuitem>
+		<menuitem id="lock-record" command="transport.set" parameters='{"lockRecord": true}'>Lock Record</menuitem>
+		<menuitem id="unlock-record" command="transport.set" parameters='{"lockRecord": false}'>Unlock Record</menuitem>
 		<menuseparator/>
 		<menuitem id="audio-record-mode-submenu">Audio Record Mode
 			<menu>

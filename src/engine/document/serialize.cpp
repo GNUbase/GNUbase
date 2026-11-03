@@ -4,6 +4,7 @@
 #include "engine/processors/builtin.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -511,7 +512,7 @@ namespace gnubase::engine
 		Json parameters = Json::array();
 		for (const auto& [parameter, value] : channel.instrumentParameters)
 			parameters.push_back({{"parameter", parameter}, {"value", value}});
-		return {{"id", channel.id}, {"track", channel.track}, {"format", formatName(channel.format)},
+		Json json = {{"id", channel.id}, {"track", channel.track}, {"format", formatName(channel.format)},
 			{"channels", channelCount(channel.format)}, {"input", channel.input}, {"output", channel.output},
 			{"instrument", channel.instrument}, {"instrumentParameters", std::move(parameters)},
 			{"volume", channel.volume}, {"pan", channel.pan},
@@ -521,6 +522,8 @@ namespace gnubase::engine
 			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
 			{"recordEnable", channel.recordEnable}, {"mute", channel.mute}, {"solo", channel.solo},
 			{"slots", channel.slots}, {"notes", channel.notes}};
+		json.update(toJson(channel.sections));
+		return json;
 	}
 
 	Json toJson(const Slot& slot)
@@ -1033,6 +1036,162 @@ namespace gnubase::engine
 		}
 	}
 
+	namespace
+	{
+		const std::array<const char*, 5> g_eqBandTypes = {"bell", "lowShelf", "highShelf", "lowCut", "highCut"};
+
+		Json toJson(const CutFilter& filter)
+		{
+			return {{"on", filter.on}, {"frequency", filter.frequency}, {"slope", filter.slope}};
+		}
+
+		// The object at key, or an empty one.
+		Json section(const Json& json, const char* key, const std::string& name)
+		{
+			if (!json.contains(key))
+				return Json::object();
+			if (!json.at(key).is_object())
+				throw std::invalid_argument(name + " must be an object");
+			return json.at(key);
+		}
+
+		void read(const Json& json, const char* key, bool& value, const std::string& name)
+		{
+			if (!json.contains(key))
+				return;
+			if (!json.at(key).is_boolean())
+				throw std::invalid_argument(name + "." + key + " must be true or false");
+			value = json.at(key).get<bool>();
+		}
+
+		void read(
+			const Json& json, const char* key, double& value, double minimum, double maximum, const std::string& name)
+		{
+			if (!json.contains(key))
+				return;
+			if (!json.at(key).is_number())
+				throw std::invalid_argument(name + "." + key + " must be a number");
+			value = checkedNumber(json.at(key), minimum, maximum, name + "." + key);
+		}
+
+		void read(const Json& json, const char* key, CutFilter& filter, double minimum, const std::string& name)
+		{
+			const std::string what = name + "." + key;
+			const Json given = section(json, key, what);
+			read(given, "on", filter.on, what);
+			read(given, "frequency", filter.frequency, minimum, 20000.0, what);
+			if (given.contains("slope"))
+			{
+				const Json& slope = given.at("slope");
+				const std::array<int64_t, 5> slopes = {6, 12, 24, 36, 48};
+				if (!slope.is_number_integer() ||
+					std::find(slopes.begin(), slopes.end(), slope.get<int64_t>()) == slopes.end())
+					throw std::invalid_argument(what + ".slope must be 6, 12, 24, 36 or 48");
+				filter.slope = slope.get<int>();
+			}
+		}
+
+		void read(const Json& json, int number, EqBand& band)
+		{
+			const std::string name = "eq band " + std::to_string(number);
+			read(json, "on", band.on, name);
+			read(json, "frequency", band.frequency, 20.0, 20000.0, name);
+			read(json, "gain", band.gain, -24.0, 24.0, name);
+			read(json, "q", band.q, 0.1, 12.0, name);
+			if (!json.contains("type"))
+				return;
+			// Bands 2 and 3 are always bells; band 1 can be a low shelf or cut, band 4 a high one.
+			const Json& type = json.at("type");
+			const auto position = static_cast<size_t>(std::find(g_eqBandTypes.begin(), g_eqBandTypes.end(),
+														  type.is_string() ? type.get<std::string>() : std::string()) -
+				g_eqBandTypes.begin());
+			const auto index = static_cast<EqBandType>(position);
+			const bool fits = position < g_eqBandTypes.size() &&
+				(index == EqBandType::Bell ||
+					(number == 1 && (index == EqBandType::LowShelf || index == EqBandType::LowCut)) ||
+					(number == 4 && (index == EqBandType::HighShelf || index == EqBandType::HighCut)));
+			if (!fits)
+				throw std::invalid_argument(name + " can't be of type " + type.dump());
+			band.type = index;
+		}
+	}
+
+	Json toJson(const ChannelSections& sections)
+	{
+		Json bands = Json::array();
+		for (size_t i = 0; i < sections.eq.size(); ++i)
+		{
+			const EqBand& band = sections.eq[i];
+			bands.push_back({{"band", i + 1}, {"on", band.on}, {"type", g_eqBandTypes[static_cast<size_t>(band.type)]},
+				{"frequency", band.frequency}, {"gain", band.gain}, {"q", band.q}});
+		}
+		const StripGate& gate = sections.gate;
+		const StripCompressor& compressor = sections.compressor;
+		const StripLimiter& limiter = sections.limiter;
+		return {{"pre",
+					{{"gain", sections.gain}, {"phase", sections.phase}, {"lowCut", toJson(sections.lowCut)},
+						{"highCut", toJson(sections.highCut)}}},
+			{"eq", {{"bypass", sections.eqBypass}, {"bands", std::move(bands)}}},
+			{"strip",
+				{{"gate",
+					 {{"on", gate.on}, {"threshold", gate.threshold}, {"range", gate.range}, {"attack", gate.attack},
+						 {"release", gate.release}}},
+					{"compressor",
+						{{"on", compressor.on}, {"threshold", compressor.threshold}, {"ratio", compressor.ratio},
+							{"attack", compressor.attack}, {"release", compressor.release},
+							{"makeup", compressor.makeup}}},
+					{"limiter",
+						{{"on", limiter.on}, {"threshold", limiter.threshold}, {"release", limiter.release}}}}}};
+	}
+
+	ChannelSections sectionsFromJson(const Json& json, const ChannelSections& fallback)
+	{
+		ChannelSections sections = fallback;
+		const Json pre = section(json, "pre", "pre");
+		read(pre, "gain", sections.gain, -24.0, 24.0, "pre");
+		read(pre, "phase", sections.phase, "pre");
+		read(pre, "lowCut", sections.lowCut, 20.0, "pre");
+		read(pre, "highCut", sections.highCut, 50.0, "pre");
+
+		const Json eq = section(json, "eq", "eq");
+		read(eq, "bypass", sections.eqBypass, "eq");
+		if (eq.contains("bands"))
+		{
+			if (!eq.at("bands").is_array())
+				throw std::invalid_argument("eq.bands must be an array");
+			for (const Json& band : eq.at("bands"))
+			{
+				const Json number = band.is_object() ? band.value("band", Json()) : Json();
+				if (!number.is_number_integer() || number.get<int64_t>() < 1 || number.get<int64_t>() > 4)
+					throw std::invalid_argument("each of eq.bands must have a band from 1 to 4");
+				read(band, number.get<int>(), sections.eq[number.get<size_t>() - 1]);
+			}
+		}
+
+		const Json strip = section(json, "strip", "strip");
+		const Json gate = section(strip, "gate", "strip.gate");
+		StripGate& g = sections.gate;
+		read(gate, "on", g.on, "strip.gate");
+		read(gate, "threshold", g.threshold, -80.0, 0.0, "strip.gate");
+		read(gate, "range", g.range, -80.0, 0.0, "strip.gate");
+		read(gate, "attack", g.attack, 0.01, 100.0, "strip.gate");
+		read(gate, "release", g.release, 1.0, 4000.0, "strip.gate");
+		const Json compressor = section(strip, "compressor", "strip.compressor");
+		StripCompressor& c = sections.compressor;
+		read(compressor, "on", c.on, "strip.compressor");
+		read(compressor, "threshold", c.threshold, -60.0, 0.0, "strip.compressor");
+		read(compressor, "ratio", c.ratio, 1.0, 20.0, "strip.compressor");
+		read(compressor, "attack", c.attack, 0.1, 100.0, "strip.compressor");
+		read(compressor, "release", c.release, 10.0, 2000.0, "strip.compressor");
+		read(compressor, "makeup", c.makeup, 0.0, 24.0, "strip.compressor");
+		const Json limiter = section(strip, "limiter", "strip.limiter");
+		StripLimiter& l = sections.limiter;
+		read(limiter, "on", l.on, "strip.limiter");
+		read(limiter, "threshold", l.threshold, -30.0, 0.0, "strip.limiter");
+		read(limiter, "release", l.release, 1.0, 1000.0, "strip.limiter");
+		return sections;
+	}
+
 	Project projectFromJson(const Json& json)
 	{
 		Project project;
@@ -1144,6 +1303,7 @@ namespace gnubase::engine
 			channel.solo = item.value("solo", false);
 			channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none
 			channel.notes = item.value("notes", std::string());           // files from before #89 have none
+			channel.sections = sectionsFromJson(item);                    // files from before #107 have them off
 			project.channels[id] = std::move(channel);
 		}
 		// Every slot is in the list of its channel, which has audio, once, and no channel lists more than it may.
