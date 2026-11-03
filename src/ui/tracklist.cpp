@@ -45,7 +45,7 @@ namespace gnubase::ui
 			if (!hasChannel)
 				return control == "timeBase" && type != "folder" && type != "ruler";
 			if (control == "record" || control == "monitor")
-				return type == "audio";
+				return type == "audio" || type == "instrument" || type == "midi";
 			if (control == "timeBase")
 				return type == "audio" || type == "instrument" || type == "midi";
 			return true;

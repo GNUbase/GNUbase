@@ -216,8 +216,9 @@ namespace gnubase::ui
 		for (const char* section : {"basics", "routing", "notepad"})
 			available("[section=" + std::string(section) + "]", channel != nullptr);
 		available("[section=inserts]", audio);
-		available("button[control=record]", type == "audio");
-		available("button[control=monitor]", type == "audio");
+		const bool records = type == "audio" || type == "instrument" || type == "midi";
+		available("button[control=record]", records);
+		available("button[control=monitor]", records);
 		available("[row=volume]", audio);
 		available("[row=pan]", audio);
 		available("[row=input]", type == "audio");

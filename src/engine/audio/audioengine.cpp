@@ -81,10 +81,11 @@ namespace gnubase::engine
 				"postRoll": {"type": "boolean"}, "postRollAmount": {"type": "integer"},
 				"metronome": {"type": "boolean"},
 				"audioRecordMode": {"type": "string", "enum": ["keepHistory", "cycleHistoryReplace", "replace"]},
+				"midiRecordMode": {"type": "string", "enum": ["newParts", "merge", "replace"]},
 				"lockRecord": {"type": "boolean"}},
 			"required": ["playing", "recording", "position", "left", "right", "cycle", "startMode",
 				"returnToStart", "punchIn", "punchOut", "preRoll", "preRollAmount", "postRoll", "postRollAmount",
-				"metronome", "audioRecordMode", "lockRecord"]})");
+				"metronome", "audioRecordMode", "midiRecordMode", "lockRecord"]})");
 		}
 
 		Json noParameters()
@@ -355,9 +356,18 @@ namespace gnubase::engine
 		RecordSetup setup;
 		if (m_describeRecording)
 			setup = m_describeRecording();
+		const double deviceRate = m_device->format().sampleRate;
 		setup.mode = m_transport.settings().audioRecordMode;
-		setup.preRecordFrames = std::llround(
-			std::clamp(m_settings.get(settings::g_audioPreRecordSeconds), 0.0, 60.0) * m_device->format().sampleRate);
+		setup.preRecordFrames =
+			std::llround(std::clamp(m_settings.get(settings::g_audioPreRecordSeconds), 0.0, 60.0) * deviceRate);
+		setup.midiMode = m_transport.settings().midiRecordMode;
+		setup.midiFilter = MidiRecordFilter::fromJson(m_settings.value("midi.recordFilter"));
+		setup.snapToBars = m_settings.get(settings::g_midiSnapPartsToBars);
+		setup.catchFrames = std::llround(
+			std::clamp(m_settings.get(settings::g_midiRecordCatchRange), 0.0, 1000.0) * deviceRate / 1000.0);
+		setup.retrospective =
+			static_cast<size_t>(std::max<int64_t>(m_settings.get(settings::g_midiRetrospectiveEvents), 0));
+		setup.pauseFrames = std::llround(30.0 * deviceRate); // reference manual p. 354
 		// Each channel of a track's file records the channel of its input bus with the same number; a bus with fewer
 		// channels gives the others its last one, so a mono input fills a stereo track.
 		const RenderSnapshot& snapshot = m_snapshots.latest();
@@ -453,6 +463,9 @@ namespace gnubase::engine
 				if (id == channel || instrument.sources.count(channel) != 0)
 					destination = instrument.channel->serial();
 			program->destinations.push_back(destination);
+			const auto found = std::find_if(snapshot.channels.begin(), snapshot.channels.end(),
+				[channel = channel](const RenderChannel& candidate) { return candidate.id == channel; });
+			program->thru.push_back(static_cast<uint8_t>(found != snapshot.channels.end() && found->midiThru));
 		}
 		// Bus nodes come first, in bus order (graph::describe); child busses reach the device through their parent.
 		for (size_t b = 0; b < snapshot.busses.size(); ++b)
@@ -782,9 +795,10 @@ namespace gnubase::engine
 		graph::TransportBlock transport = m_transport.advance(block.frames);
 		m_played.add(block.position, block.frames, transport);
 		captureInput(block);
-		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed));
-		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
 		m_tap.deliver(block.position, block.frames, program.sequencers);
+		MidiTap::thru(m_midiInput, program.sequencers, program.thru);
+		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers);
+		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
 		program.graph.process(block.frames, transport, m_workers.get());
 		m_tap.capture(block.position, program.instruments);
 		m_playback.endBlock();
@@ -2069,6 +2083,7 @@ namespace gnubase::engine
 			{"preRoll", settings.preRoll}, {"preRollAmount", settings.preRollAmount}, {"postRoll", settings.postRoll},
 			{"postRollAmount", settings.postRollAmount}, {"metronome", settings.metronome},
 			{"audioRecordMode", g_audioRecordModes.at(static_cast<size_t>(settings.audioRecordMode))},
+			{"midiRecordMode", g_midiRecordModes.at(static_cast<size_t>(settings.midiRecordMode))},
 			{"lockRecord", settings.lockRecord}};
 	}
 
@@ -2212,6 +2227,14 @@ namespace gnubase::engine
 				"audioRecordMode must be keepHistory, cycleHistoryReplace or replace");
 			settings.audioRecordMode = static_cast<AudioRecordMode>(index);
 		}
+		if (const auto mode = parameters.find("midiRecordMode"); mode != parameters.end())
+		{
+			const auto name = mode->get<std::string>();
+			const auto index = static_cast<size_t>(
+				std::find(g_midiRecordModes.begin(), g_midiRecordModes.end(), name) - g_midiRecordModes.begin());
+			require(index < g_midiRecordModes.size(), "midiRecordMode must be newParts, merge or replace");
+			settings.midiRecordMode = static_cast<MidiRecordMode>(index);
+		}
 		sent(m_transport.set(settings));
 	}
 
@@ -2338,7 +2361,9 @@ namespace gnubase::engine
 			"punches in or out and playback that stops on their own announce transport.changed. metronome is the "
 			"transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the "
 			"events it overlaps on its track (see "
-			"recording.add): keepHistory (the default), cycleHistoryReplace or replace. lockRecord: Lock Record, which "
+			"recording.add): keepHistory (the default), cycleHistoryReplace or replace. midiRecordMode: what a MIDI "
+			"recording does to the MIDI parts it overlaps (see recording.add): newParts (the default), merge or "
+			"replace. lockRecord: Lock Record, which "
 			"keeps a recording from stopping or punching out by accident: transport.stop stops it only with "
 			"confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at "
 			"the right locator; it stays on until it is set off.",
@@ -2349,7 +2374,8 @@ namespace gnubase::engine
 				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "preRoll": {"type": "boolean"},
 				"preRollAmount": {"type": "integer"}, "postRoll": {"type": "boolean"},
 				"postRollAmount": {"type": "integer"}, "metronome": {"type": "boolean"},
-				"audioRecordMode": {"type": "string"}, "lockRecord": {"type": "boolean"}}})",
+				"audioRecordMode": {"type": "string"}, "midiRecordMode": {"type": "string"},
+				"lockRecord": {"type": "boolean"}}})",
 			[this](const Json& parameters) { setTransport(parameters); });
 		command("transport.exchangeLocators", "Swaps the left and right locators.", nullptr,
 			[this](const Json&)

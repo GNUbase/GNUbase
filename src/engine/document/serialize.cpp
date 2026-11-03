@@ -520,8 +520,8 @@ namespace gnubase::engine
 			{"panRight", channel.panRight}, {"panBypass", channel.panBypass},
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
 			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
-			{"recordEnable", channel.recordEnable}, {"mute", channel.mute}, {"solo", channel.solo},
-			{"slots", channel.slots}, {"notes", channel.notes}};
+			{"recordEnable", channel.recordEnable}, {"midiInput", channel.midiInput}, {"mute", channel.mute},
+			{"solo", channel.solo}, {"slots", channel.slots}, {"notes", channel.notes}};
 		json.update(toJson(channel.sections));
 		return json;
 	}
@@ -1297,10 +1297,14 @@ namespace gnubase::engine
 			// Files from before instrument parameters have none.
 			channel.instrumentParameters = instrumentParametersFromJson(
 				item.value("instrumentParameters", Json::array()), channel.instrument, name);
-			// Only audio tracks have the buttons; files from before them have them off.
-			const bool audio = track != project.trackById.end() && track->second.type == TrackType::Audio;
-			channel.monitor = audio && item.value("monitor", false);
-			channel.recordEnable = audio && item.value("recordEnable", false);
+			// Audio, MIDI and instrument tracks have the buttons; files from before them have them off. MIDI input
+			// other than none is all MIDI inputs, also in files from before it.
+			const TrackType type = track != project.trackById.end() ? track->second.type : TrackType::Folder;
+			const bool midi = type == TrackType::Midi || type == TrackType::Instrument;
+			const bool buttons = type == TrackType::Audio || midi;
+			channel.monitor = buttons && item.value("monitor", false);
+			channel.recordEnable = buttons && item.value("recordEnable", false);
+			channel.midiInput = midi && item.value("midiInput", std::string()) == "none" ? "none" : "all";
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
 			channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none

@@ -77,6 +77,7 @@ add_executable(gnubase-tests
 	midieditor_tests.cpp
 	midifile_tests.cpp
 	midifunctions_tests.cpp
+	midirecording_tests.cpp
 	miditap_tests.cpp
 	mixer_tests.cpp
 	mixerviews_tests.cpp

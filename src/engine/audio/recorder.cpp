@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/recorder.h"
 
+#include "engine/document/serialize.h"
 #include "engine/media/backup.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
@@ -27,6 +28,11 @@ namespace gnubase::engine
 		// The chunks hold this many frames in all, at least g_minChunks of them: over a second at 48 kHz.
 		constexpr uint32_t g_queuedFrames = 65536;
 		constexpr uint32_t g_minChunks = 32;
+		// MIDI chunks: one per block while MIDI tracks record or MIDI input comes, each with up to this many events.
+		constexpr uint32_t g_midiChunks = 256;
+		constexpr size_t g_eventsPerChunk = 256;
+
+		using EventType = graph::ProcessEvent::Type;
 
 		// A track name as a file name: characters that some file system doesn't take become "_".
 		std::string fileName(const std::string& name)
@@ -104,6 +110,98 @@ namespace gnubase::engine
 		return options;
 	}
 
+	MidiRecordFilter MidiRecordFilter::fromJson(const Json& json)
+	{
+		MidiRecordFilter filter;
+		for (const Json& type : json.value("types", Json::array()))
+		{
+			const auto index = static_cast<size_t>(
+				std::find(g_midiFilterTypes.begin(), g_midiFilterTypes.end(), type.get<std::string>()) -
+				g_midiFilterTypes.begin());
+			if (index == 0)
+				filter.types.set(static_cast<size_t>(EventType::NoteOn)).set(static_cast<size_t>(EventType::NoteOff));
+			else if (index < g_midiFilterTypes.size())
+				filter.types.set(index + 1);
+		}
+		for (const Json& channel : json.value("channels", Json::array()))
+			if (const int number = channel.get<int>(); number >= 1 && number <= 16)
+				filter.channels.set(static_cast<size_t>(number - 1));
+		for (const Json& controller : json.value("controllers", Json::array()))
+			if (const int number = controller.get<int>(); number >= 0 && number < 128)
+				filter.controllers.set(static_cast<size_t>(number));
+		return filter;
+	}
+
+	bool MidiRecordFilter::records(const graph::ProcessEvent& event) const
+	{
+		return !types.test(static_cast<size_t>(event.type)) && !channels.test(event.channel % 16U) &&
+			(event.type != EventType::Controller || !controllers.test(event.key % 128U));
+	}
+
+	void MidiTakeBuilder::add(time::Samples position, const graph::ProcessEvent& event)
+	{
+		m_last = std::max(m_last, position);
+		const uint8_t channel = event.channel % 16U;
+		if (event.type == EventType::NoteOn || event.type == EventType::NoteOff)
+		{
+			Sounding& sounding = m_sounding[(size_t{channel} * 128) + (event.key % 128U)];
+			if (sounding.position >= 0)
+				m_notes.push_back({{"position", sounding.position},
+					{"length", std::max<time::Samples>(position - sounding.position, 1)}, {"pitch", event.key % 128U},
+					{"velocity", sounding.velocity / g_maxVelocity},
+					{"releaseVelocity",
+						(event.type == EventType::NoteOff ? event.velocity : g_defaultReleaseVelocity) / g_maxVelocity},
+					{"channel", channel}});
+			sounding.position = event.type == EventType::NoteOn ? position : -1;
+			sounding.velocity = event.velocity;
+			return;
+		}
+		Controller controller;
+		controller.channel = channel;
+		controller.value = event.value;
+		switch (event.type)
+		{
+		case EventType::Controller:
+			controller.type = ControllerType::Control;
+			controller.number = event.key % 128U;
+			break;
+		case EventType::PitchBend:
+			controller.type = ControllerType::PitchBend;
+			break;
+		case EventType::ChannelPressure:
+			controller.type = ControllerType::ChannelPressure;
+			break;
+		case EventType::PolyPressure:
+			controller.type = ControllerType::PolyPressure;
+			controller.number = event.key % 128U;
+			break;
+		case EventType::Program:
+			controller.type = ControllerType::Program;
+			controller.number = event.key % 128U;
+			break;
+		default: // SysEx and parameter changes don't come from MIDI input
+			return;
+		}
+		Json json = toJson(controller);
+		json.erase("id");
+		json["position"] = position;
+		m_controllers.push_back(std::move(json));
+	}
+
+	void MidiTakeBuilder::endNotes(time::Samples position)
+	{
+		graph::ProcessEvent off;
+		off.type = EventType::NoteOff;
+		off.velocity = g_defaultReleaseVelocity;
+		for (size_t index = 0; index < m_sounding.size(); ++index)
+			if (m_sounding[index].position >= 0)
+			{
+				off.channel = static_cast<uint8_t>(index / 128);
+				off.key = static_cast<uint8_t>(index % 128);
+				add(position, off);
+			}
+	}
+
 	Recorder::Recorder(Notify notify) : m_notify(std::move(notify))
 	{
 		m_thread = std::thread([this] { run(); });
@@ -116,6 +214,8 @@ namespace gnubase::engine
 			m_notify = nullptr; // the engine is going: the files stay, but nothing is added to the project
 			try
 			{
+				if (m_midiRecording)
+					endMidi();
 				if (m_recording)
 					end();
 			}
@@ -133,13 +233,18 @@ namespace gnubase::engine
 		rt::assertNotRealtime("engine::Recorder::prepare");
 		const std::scoped_lock lock(m_mutex);
 		drain(); // what the audio thread sent before it stopped
+		if (m_midiRecording)
+			endMidi();
 		if (m_recording)
 			end();
 		m_channels = std::max(channels, 0);
 		m_maxFrames = maxFrames;
 		m_sending = false;
+		m_midiSending = false;
 		m_chunks.clear();
+		m_midiChunks.clear();
 		m_free.reset();
+		m_midiFree.reset();
 		m_filled.reset();
 		m_history.assign(static_cast<size_t>(m_next.preRecordFrames) * static_cast<size_t>(m_channels), 0.0f);
 		m_historyFrames = 0;
@@ -147,12 +252,20 @@ namespace gnubase::engine
 			return;
 		const uint32_t count = std::max(g_minChunks, g_queuedFrames / maxFrames);
 		m_chunks.resize(count);
+		m_midiChunks.resize(g_midiChunks);
 		m_free = std::make_unique<rt::SpscQueue<Chunk*>>(count);
-		m_filled = std::make_unique<rt::SpscQueue<Chunk*>>(count);
+		m_midiFree = std::make_unique<rt::SpscQueue<Chunk*>>(g_midiChunks);
+		m_filled = std::make_unique<rt::SpscQueue<Chunk*>>(count + g_midiChunks);
 		for (Chunk& each : m_chunks)
 		{
 			each.samples.resize(static_cast<size_t>(maxFrames) * static_cast<size_t>(m_channels));
 			m_free->tryPush(&each);
+		}
+		for (Chunk& each : m_midiChunks)
+		{
+			each.midi = true;
+			each.events.resize(g_eventsPerChunk);
+			m_midiFree->tryPush(&each);
 		}
 	}
 
@@ -167,13 +280,39 @@ namespace gnubase::engine
 			m_historyFrames = 0;
 		}
 		m_armed = !setup.tracks.empty();
+		m_midiArmed = !setup.midiTracks.empty();
 		m_next = std::move(setup);
 	}
 
-	void Recorder::process(const audio::DeviceBlock& block, const PlayedPositions& played, int64_t offset) noexcept
+	std::vector<RetrospectiveEvent> Recorder::retrospective(ObjectId channel)
+	{
+		rt::assertNotRealtime("engine::Recorder::retrospective");
+		const std::scoped_lock lock(m_mutex);
+		drain();
+		const auto found = m_retrospective.find(channel);
+		if (found == m_retrospective.end())
+			return {};
+		found->second.taken = true;
+		return {found->second.events.begin(), found->second.events.end()};
+	}
+
+	void Recorder::clearRetrospective(ObjectId channel)
+	{
+		rt::assertNotRealtime("engine::Recorder::clearRetrospective");
+		const std::scoped_lock lock(m_mutex);
+		drain();
+		if (channel == 0)
+			m_retrospective.clear();
+		else
+			m_retrospective.erase(channel);
+	}
+
+	void Recorder::process(const audio::DeviceBlock& block, const PlayedPositions& played, int64_t offset,
+		const MidiTap::Sequencers& sequencers) noexcept
 	{
 		if (!m_filled)
 			return;
+		processMidi(block, played, sequencers); // first: a MIDI recording ends before the audio one it goes with
 		if (!m_armed.load(std::memory_order_relaxed))
 		{
 			// Disarmed while recording: the disk thread ends the recording on a chunk that isn't recorded.
@@ -216,6 +355,73 @@ namespace gnubase::engine
 		return true;
 	}
 
+	void Recorder::processMidi(
+		const audio::DeviceBlock& block, const PlayedPositions& played, const MidiTap::Sequencers& sequencers) noexcept
+	{
+		// Runs of frames recorded at consecutive positions, or not recorded, as for audio but without the record
+		// offset: MIDI input belongs where the transport plays as it comes. A run is sent only for its input, where
+		// the positions jump (a recording starts, a cycle lap) or where a recording ends: the disk thread counts
+		// the frames in between, so a recording takes few chunks.
+		const bool armed = m_midiArmed.load(std::memory_order_relaxed);
+		const auto deviceFrame = static_cast<int64_t>(block.position);
+		const auto recordedAt = [&](uint32_t i)
+		{ return armed ? played.recordedAt(deviceFrame + i) : time::Samples{-1}; };
+		const auto hasInput = [&sequencers](uint32_t from, uint32_t to)
+		{
+			for (const auto& entry : sequencers)
+				for (const graph::ProcessEvent& event : entry.second->input())
+					if (event.offset >= from && event.offset < to)
+						return true;
+			return false;
+		};
+		uint32_t start = 0;
+		time::Samples first = recordedAt(0);
+		for (uint32_t i = 1; i <= block.frames; ++i)
+		{
+			const time::Samples position = i < block.frames ? recordedAt(i) : -1;
+			if (i < block.frames && (first < 0 ? position < 0 : position == first + (i - start)))
+				continue;
+			const auto runFrame = static_cast<uint64_t>(deviceFrame) + start;
+			const bool goesOn = first >= 0 && m_midiSending && first == m_midiNext && runFrame == m_midiNextFrame;
+			const bool needed = first >= 0 ? !goesOn : m_midiSending;
+			if (needed || hasInput(start, i))
+			{
+				if (sendMidi(block, played, sequencers, start, i - start, first))
+					m_midiSending = first >= 0;
+				else if (needed)
+					m_midiSending = false; // the next recorded run is sent as a start
+			}
+			m_midiNext = first >= 0 ? first + (i - start) : -1;
+			m_midiNextFrame = runFrame + (i - start);
+			start = i;
+			first = position;
+		}
+	}
+
+	bool Recorder::sendMidi(const audio::DeviceBlock& block, const PlayedPositions& played,
+		const MidiTap::Sequencers& sequencers, uint32_t offset, uint32_t frames, time::Samples position) noexcept
+	{
+		Chunk* chunk = nullptr;
+		if (!m_midiFree->tryPop(chunk))
+			return false;
+		chunk->deviceFrame = block.position + offset;
+		chunk->position = position;
+		chunk->frames = frames;
+		chunk->eventCount = 0;
+		for (const auto& [channel, sequencer] : sequencers)
+			for (const graph::ProcessEvent& event : sequencer->input())
+			{
+				// ponytail: events beyond a chunk's room are dropped; a continuation chunk if a block ever has more.
+				if (event.offset < offset || event.offset - offset >= frames || event.type == EventType::SysEx ||
+					event.type == EventType::Parameter || chunk->eventCount == chunk->events.size())
+					continue;
+				chunk->events[chunk->eventCount++] = {channel, event.offset - offset,
+					played.at(static_cast<int64_t>(block.position + event.offset)), event};
+			}
+		m_filled->tryPush(chunk); // there is room for every chunk
+		return true;
+	}
+
 	void Recorder::run()
 	{
 		std::unique_lock lock(m_mutex);
@@ -233,8 +439,16 @@ namespace gnubase::engine
 		Chunk* chunk = nullptr;
 		while (m_filled && m_filled->tryPop(chunk))
 		{
-			handle(*chunk);
-			m_free->tryPush(chunk);
+			if (chunk->midi)
+			{
+				handleMidi(*chunk);
+				m_midiFree->tryPush(chunk);
+			}
+			else
+			{
+				handle(*chunk);
+				m_free->tryPush(chunk);
+			}
 			handled = true;
 		}
 		return handled;
@@ -379,10 +593,138 @@ namespace gnubase::engine
 			tracks.push_back({{"track", file.track.track}, {"path", file.path}, {"takes", std::move(takes)}});
 		}
 		m_files.clear();
-		if (!tracks.empty() && m_notify)
+		Json data = {
+			{"project", m_current.project}, {"mode", g_audioRecordModes.at(static_cast<size_t>(m_current.mode))}};
+		if (!m_pendingMidi.empty())
+		{
+			for (Json& track : m_pendingMidi)
+				tracks.push_back(std::move(track));
+			m_pendingMidi = Json::array();
+			data["midiMode"] = g_midiRecordModes.at(static_cast<size_t>(m_pendingMidiSetup.midiMode));
+			data["snapToBars"] = m_pendingMidiSetup.snapToBars;
+		}
+		data["tracks"] = std::move(tracks);
+		if (!data.at("tracks").empty() && m_notify)
+			m_notify("recording.finished", data);
+	}
+
+	void Recorder::handleMidi(const Chunk& chunk)
+	{
+		// A take's offset is the device frame it started at: the audio thread leaves out the chunks in between that
+		// have no input, so it reaches to where the next chunk starts, or at least past the last one.
+		const auto frame = static_cast<time::Samples>(chunk.deviceFrame);
+		if (m_midiRecording)
+		{
+			Take& take = m_midiTakes.back();
+			if (chunk.position < 0 || chunk.position != take.position + (frame - take.offset))
+				take.length = std::max(take.length, frame - take.offset);
+		}
+		if (chunk.position < 0)
+		{
+			if (m_midiRecording)
+				endMidi();
+			for (size_t i = 0; i < chunk.eventCount; ++i)
+				keepRetrospective(chunk.events[i], chunk.deviceFrame);
+			return;
+		}
+		if (!m_midiRecording)
+		{
+			beginMidi(chunk);
+		}
+		else if (const Take& take = m_midiTakes.back(); chunk.position != take.position + (frame - take.offset))
+		{
+			// Playback jumped, at the end of a cycle lap or a locate: the notes that sound end with the take before.
+			for (auto& [channel, builder] : m_midiBuilders)
+				builder.endNotes(take.position + take.length);
+			m_midiTakes.push_back({chunk.position, frame, 0});
+		}
+		Take& take = m_midiTakes.back();
+		take.length = std::max(take.length, frame + chunk.frames - take.offset);
+		for (size_t i = 0; i < chunk.eventCount; ++i)
+		{
+			const MidiInput& input = chunk.events[i];
+			const auto builder = m_midiBuilders.find(input.channel);
+			if (builder == m_midiBuilders.end())
+				keepRetrospective(input, chunk.deviceFrame);
+			else if (m_midiCurrent.midiFilter.records(input.event))
+				builder->second.add(chunk.position + input.offset, input.event);
+		}
+	}
+
+	void Recorder::beginMidi(const Chunk& chunk)
+	{
+		m_midiCurrent = m_next;
+		m_midiRecording = true;
+		m_midiTakes.assign(1, {chunk.position, static_cast<time::Samples>(chunk.deviceFrame), 0});
+		m_midiBuilders.clear();
+		for (const MidiRecordTrack& track : m_midiCurrent.midiTracks)
+			m_midiBuilders[track.channel];
+		// The catch range: input that came just before recording started belongs to its start.
+		if (m_midiCurrent.catchFrames <= 0)
+			return;
+		for (auto& [channel, builder] : m_midiBuilders)
+		{
+			const auto found = m_retrospective.find(channel);
+			if (found == m_retrospective.end())
+				continue;
+			for (const RetrospectiveEvent& kept : found->second.events)
+				if (kept.deviceFrame < chunk.deviceFrame &&
+					kept.deviceFrame + static_cast<uint64_t>(m_midiCurrent.catchFrames) >= chunk.deviceFrame &&
+					m_midiCurrent.midiFilter.records(kept.event))
+					builder.add(chunk.position, kept.event);
+		}
+	}
+
+	void Recorder::endMidi()
+	{
+		m_midiRecording = false;
+		const Take& last = m_midiTakes.back();
+		Json takes = Json::array();
+		for (const Take& take : m_midiTakes)
+			if (take.length > 0)
+				takes.push_back({{"position", take.position}, {"length", take.length}});
+		Json tracks = Json::array();
+		for (const MidiRecordTrack& track : m_midiCurrent.midiTracks)
+		{
+			MidiTakeBuilder& builder = m_midiBuilders[track.channel];
+			builder.endNotes(last.position + last.length);
+			if (!builder.empty() && !takes.empty())
+				tracks.push_back({{"track", track.track}, {"takes", takes}, {"notes", builder.notes()},
+					{"controllers", builder.controllers()}});
+		}
+		m_midiBuilders.clear();
+		if (tracks.empty())
+			return;
+		if (m_recording)
+		{
+			// The audio recording ends later, by the record offset: one recording.add for both.
+			for (Json& track : tracks)
+				m_pendingMidi.push_back(std::move(track));
+			m_pendingMidiSetup = m_midiCurrent;
+			return;
+		}
+		if (m_notify)
 			m_notify("recording.finished",
-				{{"project", m_current.project}, {"mode", g_audioRecordModes.at(static_cast<size_t>(m_current.mode))},
-					{"tracks", std::move(tracks)}});
+				{{"project", m_midiCurrent.project},
+					{"midiMode", g_midiRecordModes.at(static_cast<size_t>(m_midiCurrent.midiMode))},
+					{"snapToBars", m_midiCurrent.snapToBars}, {"tracks", std::move(tracks)}});
+	}
+
+	void Recorder::keepRetrospective(const MidiInput& input, uint64_t deviceFrame)
+	{
+		if (m_next.retrospective == 0)
+			return;
+		Retrospective& buffer = m_retrospective[input.channel];
+		const uint64_t frame = deviceFrame + input.offset;
+		// Input after the buffer was inserted, or in stop mode after a pause, starts it afresh.
+		if (buffer.taken ||
+			(input.played < 0 && !buffer.events.empty() && buffer.events.back().position < 0 &&
+				frame > buffer.events.back().deviceFrame + static_cast<uint64_t>(m_next.pauseFrames)))
+			buffer.events.clear();
+		buffer.taken = false;
+		buffer.events.push_back({frame, input.played, input.event});
+		while (buffer.events.size() > m_next.retrospective)
+			buffer.events.pop_front();
 	}
 
 	void Recorder::keepHistory(const Chunk& chunk)

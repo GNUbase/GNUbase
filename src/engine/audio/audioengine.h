@@ -161,6 +161,7 @@ namespace gnubase::engine
 			std::vector<Release> releases;
 			MidiTap::Sequencers sequencers;     // of the MIDI and instrument channels, for midi.inject
 			std::vector<uint64_t> destinations; // per sequencer, where it plays (MidiSequencer::playOn)
+			std::vector<uint8_t> thru;          // per sequencer, 1 if it plays all MIDI inputs (MidiTap::thru)
 			MidiTap::Instruments instruments;   // for midi.capture
 			std::vector<int> mainPorts;         // the main mix's device channels, for auditioning
 		};
@@ -364,7 +365,7 @@ namespace gnubase::engine
 		std::map<ObjectId, int> m_sourceNodes;          // rebuild: per channel
 		Transport m_transport;                          // advanced by the audio thread
 		MidiPorts m_midi;
-		audio::MidiBuffer m_midiInput; // the block's messages from all MIDI inputs, for MIDI recording (#97)
+		audio::MidiBuffer m_midiInput; // the block's messages from all MIDI inputs, for MIDI thru (MidiTap::thru)
 		MidiTap m_tap;                 // midi.inject and midi.capture
 
 		// Changed only while the device is stopped.

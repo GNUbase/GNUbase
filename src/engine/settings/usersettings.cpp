@@ -191,6 +191,36 @@ namespace gnubase::engine::settings
 									{{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}},
 										{"inAllInputs", {{"type", "boolean"}}}}}}}},
 					Json::object()},
+				{"midi.recordCatchRange",
+					"MIDI record catch range in ms, 0 to 1000: MIDI input that comes this long before a recording "
+					"starts is recorded at its start, so that the very start isn't lost.",
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 1000}}, 0.0},
+				{"midi.recordFilter",
+					"What MIDI recording leaves out (it still plays): types, of notes, controllers, pitchBend, "
+					"channelPressure, polyPressure and programs; channels, MIDI channels 1 to 16; controllers, "
+					"controller numbers 0 to 127.",
+					Json{{"type", "object"},
+						{"properties",
+							{{"types",
+								 {{"type", "array"},
+									 {"items",
+										 {{"type", "string"},
+											 {"enum",
+												 {"notes", "controllers", "pitchBend", "channelPressure",
+													 "polyPressure", "programs"}}}}}},
+								{"channels",
+									{{"type", "array"},
+										{"items", {{"type", "integer"}, {"minimum", 1}, {"maximum", 16}}}}},
+								{"controllers",
+									{{"type", "array"},
+										{"items", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}}}}}}},
+					Json::object()},
+				{"midi.retrospectiveEvents",
+					"How many MIDI events each MIDI or instrument track's retrospective buffer keeps of what came "
+					"from its MIDI input while it didn't record (midi.insertRetrospective); 0 keeps none.",
+					Json{{"type", "integer"}, {"minimum", 0}, {"maximum", 100000}}, 10000},
+				{"midi.snapPartsToBars", "Recorded MIDI parts start and end at whole bars.", Json{{"type", "boolean"}},
+					true},
 				{"project.autoSave",
 					"Saves a copy of a project with unsaved changes every project.autoSaveInterval minutes into the "
 					"folder Auto Saves of its project folder (see project.autoSave).",
@@ -274,8 +304,9 @@ namespace gnubase::engine::settings
 					Json{{"type", "boolean"}}, false},
 				{"ui.trackControls",
 					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
-					"folder, marker, ruler), in order: mute, solo, record, monitor (audio tracks), read (automation) "
-					"and timeBase. Mute and solo always show on tracks with a channel; a type left out shows none.",
+					"folder, marker, ruler), in order: mute, solo, record, monitor (audio, instrument and MIDI "
+					"tracks), read (automation) and timeBase. Mute and solo always show on tracks with a channel; a "
+					"type left out shows none.",
 					Json{{"type", "object"},
 						{"additionalProperties",
 							{{"type", "array"},
@@ -283,9 +314,10 @@ namespace gnubase::engine::settings
 									{{"type", "string"},
 										{"enum", {"mute", "solo", "record", "monitor", "read", "timeBase"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
-						{"instrument", {"mute", "solo", "read"}}, {"midi", {"mute", "solo", "read"}},
-						{"group", {"mute", "solo", "read"}}, {"effect", {"mute", "solo", "read"}},
-						{"folder", {"mute", "solo", "read"}}, {"marker", Json::array()}, {"ruler", Json::array()}}},
+						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
+						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
+						{"effect", {"mute", "solo", "read"}}, {"folder", {"mute", "solo", "read"}},
+						{"marker", Json::array()}, {"ruler", Json::array()}}},
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
 					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "

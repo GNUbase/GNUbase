@@ -195,18 +195,20 @@ TEST_CASE("monitoring glides in and out over a block instead of clicking", "[int
 	}
 }
 
-TEST_CASE("monitor and record enable are audio track settings saved with the project", "[integration]")
+TEST_CASE("monitor and record enable are track settings saved with the project", "[integration]")
 {
 	Engine engine;
 	Client client(engine);
-	const Json midi = run(client, "track.add", {{"type", "midi"}});
-	CHECK_THAT(reject(client, "channel.set", {{"channel", midi.at("channel").at("id")}, {"monitor", true}}),
-		ContainsSubstring("only audio tracks"));
-	CHECK_THAT(reject(client, "channel.set", {{"channel", midi.at("channel").at("id")}, {"recordEnable", true}}),
-		ContainsSubstring("only audio tracks"));
+	const Json group = run(client, "track.add", {{"type", "group"}});
+	CHECK_THAT(reject(client, "channel.set", {{"channel", group.at("channel").at("id")}, {"monitor", true}}),
+		ContainsSubstring("only audio, MIDI and instrument tracks"));
+	CHECK_THAT(reject(client, "channel.set", {{"channel", group.at("channel").at("id")}, {"recordEnable", true}}),
+		ContainsSubstring("only audio, MIDI and instrument tracks"));
 
 	const ObjectId channel = run(client, "track.add", {{"type", "audio"}}).at("channel").at("id").get<ObjectId>();
 	run(client, "channel.set", {{"channel", channel}, {"monitor", true}, {"recordEnable", true}});
+	const ObjectId midi = run(client, "track.add", {{"type", "midi"}}).at("channel").at("id").get<ObjectId>();
+	run(client, "channel.set", {{"channel", midi}, {"recordEnable", true}, {"midiInput", "none"}});
 	const gnubase::test::TempDir dir;
 	const std::string file = (dir.path() / "monitoring.dawproject").u8string();
 	run(client, "project.save", {{"path", file}});
@@ -218,4 +220,10 @@ TEST_CASE("monitor and record enable are audio track settings saved with the pro
 	REQUIRE(loaded != channels.end());
 	CHECK(loaded->at("monitor") == true);
 	CHECK(loaded->at("recordEnable") == true);
+	const auto loadedMidi =
+		std::find_if(channels.begin(), channels.end(), [midi](const Json& item) { return item.at("id") == midi; });
+	REQUIRE(loadedMidi != channels.end());
+	CHECK(loadedMidi->at("recordEnable") == true);
+	CHECK(loadedMidi->at("monitor") == false);
+	CHECK(loadedMidi->at("midiInput") == "none");
 }
