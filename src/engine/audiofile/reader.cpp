@@ -74,9 +74,10 @@ namespace gnubase::engine
 					throw AudioFileError("can't read " + path + ": not a valid WAV or AIFF file");
 				m_open = true;
 				m_info.format = m_wav.container == drwav_container_aiff ? AudioFormat::Aiff : AudioFormat::Wav;
-				m_info.sampleFormat = m_wav.translatedFormatTag == DR_WAVE_FORMAT_IEEE_FLOAT
-					? SampleFormat::Float32
-					: integerFormat(m_wav.bitsPerSample);
+				if (m_wav.translatedFormatTag == DR_WAVE_FORMAT_IEEE_FLOAT)
+					m_info.sampleFormat = m_wav.bitsPerSample == 64 ? SampleFormat::Float64 : SampleFormat::Float32;
+				else
+					m_info.sampleFormat = integerFormat(m_wav.bitsPerSample);
 				m_info.sampleRate = m_wav.sampleRate;
 				m_info.channels = m_wav.channels;
 				m_info.frames = static_cast<time::Samples>(m_wav.totalPCMFrameCount);

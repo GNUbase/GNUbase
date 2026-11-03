@@ -6,10 +6,14 @@
 #include "platform/rt/realtime.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cmath>
+#include <ctime>
 #include <exception>
 #include <string_view>
 #include <system_error>
+#include <tuple>
 #include <utility>
 
 namespace gnubase::engine
@@ -35,14 +39,68 @@ namespace gnubase::engine
 				result.pop_back(); // Windows drops them
 			return result.empty() ? "Audio" : result;
 		}
+
+		const char* extensionOf(AudioFormat format)
+		{
+			switch (format)
+			{
+			case AudioFormat::Aiff:
+				return ".aif";
+			case AudioFormat::Flac:
+				return ".flac";
+			default:
+				return ".wav";
+			}
+		}
+
+		// The local date and time now as the broadcast chunk takes them: yyyy-mm-dd and hh:mm:ss.
+		std::pair<std::string, std::string> originationNow()
+		{
+			const std::time_t now = std::time(nullptr);
+			std::tm local{};
+#ifdef _WIN32
+			localtime_s(&local, &now);
+#else
+			localtime_r(&now, &local);
+#endif
+			std::array<char, 16> date{};
+			std::array<char, 16> time{};
+			std::strftime(date.data(), date.size(), "%Y-%m-%d", &local);
+			std::strftime(time.data(), time.size(), "%H:%M:%S", &local);
+			return {date.data(), time.data()};
+		}
 	}
 
 	WriteOptions recordFormat(const Project& project)
 	{
 		WriteOptions options;
-		options.format = AudioFormat::Wav;
-		options.sampleFormat = SampleFormat::Float32;
+		const std::string& type = project.setup.recordFileType;
+		if (type == "aiff")
+			options.format = AudioFormat::Aiff;
+		else if (type == "flac")
+			options.format = AudioFormat::Flac;
+		else
+			options.format = AudioFormat::Wav;
+		const std::string& depth = project.setup.recordBitDepth;
+		if (depth == "int16")
+			options.sampleFormat = SampleFormat::Int16;
+		else if (depth == "int24")
+			options.sampleFormat = SampleFormat::Int24;
+		else if (depth == "int32")
+			options.sampleFormat = SampleFormat::Int32;
+		else if (depth == "float64")
+			options.sampleFormat = SampleFormat::Float64;
+		else
+			options.sampleFormat = SampleFormat::Float32;
 		options.sampleRate = project.sampleRate;
+		if (type == "broadcastWav")
+		{
+			// The recorder adds the description, the origination time and the first sample's project position.
+			BroadcastInfo broadcast;
+			broadcast.originator = "GNUbase";
+			broadcast.timeReference = static_cast<uint64_t>(std::llround(project.setup.startTime * project.sampleRate));
+			options.broadcast = broadcast;
+		}
 		return options;
 	}
 
@@ -231,14 +289,29 @@ namespace gnubase::engine
 			if (error)
 				fail("can't create the record folder " + m_current.folder.u8string() + ": " + error.message());
 		}
+		// Audio pre-record: the frames that came in just before, if none is missing in between.
+		const size_t capacity = m_channels > 0 ? m_history.size() / static_cast<size_t>(m_channels) : 0;
+		const size_t before = capacity > 0 && m_historyEnd == chunk.deviceFrame ? m_historyFrames : 0;
+		if (m_current.format.broadcast)
+		{
+			// The project start time plus the first frame's position, pre-recorded input included, not before midnight.
+			BroadcastInfo& broadcast = *m_current.format.broadcast;
+			std::tie(broadcast.originationDate, broadcast.originationTime) = originationNow();
+			const auto first = static_cast<time::Samples>(broadcast.timeReference) + chunk.position -
+				static_cast<time::Samples>(before);
+			broadcast.timeReference = static_cast<uint64_t>(std::max<time::Samples>(first, 0));
+		}
 		for (const RecordTrack& track : m_current.tracks)
 		{
 			try
 			{
-				const std::string path =
-					createFreeFile(m_current.folder, fs::u8path(fileName(track.name) + ".wav")).u8string();
+				const std::string path = createFreeFile(
+					m_current.folder, fs::u8path(fileName(track.name) + extensionOf(m_current.format.format)))
+											 .u8string();
 				WriteOptions options = m_current.format;
 				options.channels = static_cast<int>(track.ports.size());
+				if (options.broadcast)
+					options.broadcast->description = track.name.substr(0, 256);
 				m_files.push_back({track, path, AudioFileWriter::create(path, options)});
 			}
 			catch (const std::exception& error)
@@ -247,9 +320,6 @@ namespace gnubase::engine
 			}
 		}
 
-		// Audio pre-record: the frames that came in just before, if none is missing in between.
-		const size_t capacity = m_channels > 0 ? m_history.size() / static_cast<size_t>(m_channels) : 0;
-		const size_t before = capacity > 0 && m_historyEnd == chunk.deviceFrame ? m_historyFrames : 0;
 		for (size_t done = 0; done < before;)
 		{
 			const size_t index = (m_historyStart + done) % capacity;
