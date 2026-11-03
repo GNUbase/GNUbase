@@ -226,9 +226,9 @@ namespace gnubase::engine
 		void prepare(double sampleRate, uint32_t maxFrames) override;
 
 	private:
-		// Scales the block from gain to target, frame by frame, and keeps target as the gain; a gain below 0 (before
-		// the first block) starts at the target.
-		static void glide(const graph::ProcessContext& context, float& gain, float target) noexcept;
+		// Scales the block's first channels from gain to target, frame by frame, and keeps target as the gain; a gain
+		// below 0 (before the first block) starts at the target.
+		static void glide(const graph::ProcessContext& context, int channels, float& gain, float target) noexcept;
 		// The fader and its panner with the block's fader events, then muting.
 		void fade(const graph::ProcessContext& context, const graph::EventBuffer& events) noexcept;
 

@@ -328,3 +328,28 @@ TEST_CASE("meter.get reads a channel, the main mix and its loudness through the 
 
 	CHECK_THAT(reject(client, "meter.get", {{"channels", {999}}}), ContainsSubstring("999"));
 }
+
+TEST_CASE("a mono channel's meter reads both sides of its panner, and muting silences both", "[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "audio.setDevice",
+		{{"blockSize", 64},
+			{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 1000.0}, {"Level", 0.5}}}}}});
+	const Json added = run(client, "track.add", {{"type", "audio"}, {"channels", 1}});
+	const auto channel = added.at("channel").at("id").get<ObjectId>();
+	run(client, "channel.set", {{"channel", channel}, {"recordEnable", true}, {"pan", 1.0}}); // hard right
+	run(client, "audio.render", {{"frames", 9600}});
+	Json strip = run(client, "meter.get", {{"channels", {channel}}}).at("channels").at(0);
+	REQUIRE(strip.at("peak").size() == 2);
+	CHECK(strip.at("peak").at(0).is_null());
+	// The -3 dB pan law: hard right is 3 dB above the centre, which is the input's -6 dBFS.
+	CHECK(strip.at("peak").at(1).get<double>() == Approx(-3.01).margin(0.05));
+
+	run(client, "channel.set", {{"channel", channel}, {"mute", true}});
+	run(client, "audio.render", {{"frames", 9600}});
+	strip = run(client, "meter.get", {{"channels", {channel}}}).at("channels").at(0);
+	CHECK(strip.at("peak").at(0).is_null());
+	CHECK(strip.at("peak").at(1).is_null());
+	CHECK(run(client, "meter.get").at("main").at("peak").at(1).is_null());
+}
