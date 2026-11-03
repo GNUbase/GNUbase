@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/meters.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/graph/graph.h"
 #include "engine/graph/processor.h"
@@ -174,6 +175,7 @@ namespace gnubase::engine
 		// Audio thread: the fader's automation events of the block, from a channel's source node to its fader node
 		// when plugin slots are between them; the source node always runs first.
 		graph::EventBuffer faderEvents{graph::g_maxEventsPerBlock};
+		LevelMeter meter; // the channel's output after the fader, the panner and muting
 	};
 
 	// Which part of a channel a strip runs: all of it, or, on a channel with plugin slots, what comes before them in
@@ -224,9 +226,9 @@ namespace gnubase::engine
 		void prepare(double sampleRate, uint32_t maxFrames) override;
 
 	private:
-		// Scales the block from gain to target, frame by frame, and keeps target as the gain; a gain below 0 (before
-		// the first block) starts at the target.
-		static void glide(const graph::ProcessContext& context, float& gain, float target) noexcept;
+		// Scales the block's first channels from gain to target, frame by frame, and keeps target as the gain; a gain
+		// below 0 (before the first block) starts at the target.
+		static void glide(const graph::ProcessContext& context, int channels, float& gain, float target) noexcept;
 		// The fader and its panner with the block's fader events, then muting.
 		void fade(const graph::ProcessContext& context, const graph::EventBuffer& events) noexcept;
 
@@ -237,6 +239,7 @@ namespace gnubase::engine
 		bool m_silent = false;
 		StripPart m_part = StripPart::Whole;
 		uint32_t m_smoothing = 0; // g_faderSmoothing in frames
+		double m_sampleRate = 48000.0;
 		graph::EventBuffer m_sourceEvents;
 		graph::EventBuffer m_faderEvents;
 		graph::EventBuffer m_faderOut;

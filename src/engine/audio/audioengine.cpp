@@ -789,6 +789,7 @@ namespace gnubase::engine
 			}
 		}
 		m_audition.process(block.outputs, format.outputChannels, program.mainPorts, block.frames);
+		meterMainMix(block, program.mainPorts, transport.playing);
 
 		const std::chrono::duration<double> busy = std::chrono::steady_clock::now() - start;
 		std::array<double, PerformanceData::g_maxThreads> threads{};
@@ -798,6 +799,24 @@ namespace gnubase::engine
 		m_meter.cycle(busy.count(), block.frames / format.sampleRate, threads.data(), count);
 		publishPerformance(m_meter.data());
 		m_programs->release();
+	}
+
+	void AudioEngine::meterMainMix(
+		const audio::DeviceBlock& block, const std::vector<int>& ports, bool playing) noexcept
+	{
+		if (playing && !m_meterPlaying && m_meterResetOnStart.load(std::memory_order_relaxed))
+		{
+			m_mainMeter.reset();
+			m_loudness.reset();
+		}
+		m_meterPlaying = playing;
+		std::array<const float*, g_maxMeterChannels> channels{};
+		int count = 0;
+		for (const int port : ports)
+			if (port >= 0 && port < m_device->format().outputChannels && count < g_maxMeterChannels)
+				channels[static_cast<size_t>(count++)] = block.outputs[port];
+		m_mainMeter.process(channels.data(), count, block.frames, m_device->format().sampleRate);
+		m_loudness.process(channels.data(), count, block.frames, playing);
 	}
 
 	void AudioEngine::captureInput(const audio::DeviceBlock& block) noexcept
@@ -919,6 +938,7 @@ namespace gnubase::engine
 		m_recordOffset = recordOffset();
 		m_played = PlayedPositions(static_cast<size_t>(g_maxRecordOffset) + m_device->format().blockSize);
 		m_recorder.prepare(m_device->format().inputChannels, m_device->format().blockSize);
+		m_loudness.prepare(m_device->format().sampleRate);
 		m_recordSetup = {}; // its pre-record follows the device's sample rate
 		m_capturedInput.assign(static_cast<size_t>(m_device->format().inputChannels),
 			std::vector<float>(static_cast<size_t>(std::llround(captureSeconds * m_device->format().sampleRate))));
@@ -1978,6 +1998,7 @@ namespace gnubase::engine
 						samples.begin() + static_cast<std::ptrdiff_t>(end))}};
 			});
 		registerAnalysisCommands(engine);
+		registerMeterCommands(engine);
 		registerTransportCommands(engine);
 		m_midi.registerCommands(engine);
 		registerMidiTapCommands(engine);
