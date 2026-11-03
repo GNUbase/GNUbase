@@ -3431,6 +3431,19 @@ Result:
 - `events`: array of integer, required
 - `media`: array of integer, required
 
+#### `recording_remainingTime`
+
+Engine command `recording.remainingTime`. Read-only.
+
+The remaining record time (reference manual p. 356): how many seconds the record-enabled audio tracks can record before the disk with the record folder is full, at the project's sample rate and record bit depth; null while no track would record. With the space available there in bytes, the channels that would record and the record folder: the project's media folder Audio, or for an unsaved project a folder of the user's.
+
+Result:
+
+- `availableBytes`: integer, required
+- `channels`: integer, required
+- `folder`: string, required
+- `seconds`: number or null, required
+
 ### script
 
 #### `script_run`
@@ -3669,6 +3682,7 @@ Result:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3694,6 +3708,7 @@ Result:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3725,6 +3740,7 @@ Result:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3750,6 +3766,7 @@ Result:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3768,7 +3785,7 @@ Result:
 
 Engine command `transport.record`.
 
-Starts recording (record true, the default): playback starts as with transport.play if it stood, and recording where playback would start without the pre-roll; or recording punches in where it plays. With punchIn before the left locator, recording starts at the left locator instead. record false punches out and playback goes on. Record-enabled tracks may monitor their input meanwhile, by the user setting audio.autoMonitoring (see channel.set).
+Starts recording (record true, the default): playback starts as with transport.play if it stood, and recording where playback would start without the pre-roll; or recording punches in where it plays. With punchIn before the left locator, recording starts at the left locator instead. record false punches out and playback goes on, refused while lockRecord is on. Record-enabled tracks may monitor their input meanwhile, by the user setting audio.autoMonitoring (see channel.set).
 
 Arguments:
 
@@ -3779,6 +3796,7 @@ Result:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3797,13 +3815,14 @@ Result:
 
 Engine command `transport.set`.
 
-Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started. punchIn: playback that reaches the left locator starts recording there. punchOut: recording that reaches the right locator ends there and playback goes on, or stops with the user setting audio.stopAfterPunchOut, unless it cycles. preRoll and preRollAmount (samples, up to an hour at 768 kHz): playback starts that much before the cursor. postRoll and postRollAmount (the same): after an automatic punch out with audio.stopAfterPunchOut, playback goes on that much longer before it stops. Recording that punches in or out and playback that stops on their own announce transport.changed. metronome is the transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see recording.add): keepHistory (the default), cycleHistoryReplace or replace.
+Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started. punchIn: playback that reaches the left locator starts recording there. punchOut: recording that reaches the right locator ends there and playback goes on, or stops with the user setting audio.stopAfterPunchOut, unless it cycles. preRoll and preRollAmount (samples, up to an hour at 768 kHz): playback starts that much before the cursor. postRoll and postRollAmount (the same): after an automatic punch out with audio.stopAfterPunchOut, playback goes on that much longer before it stops. Recording that punches in or out and playback that stops on their own announce transport.changed. metronome is the transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see recording.add): keepHistory (the default), cycleHistoryReplace or replace. lockRecord: Lock Record, which keeps a recording from stopping or punching out by accident: transport.stop stops it only with confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at the right locator; it stays on until it is set off.
 
 Arguments:
 
 - `audioRecordMode`: string
 - `cycle`: boolean
 - `left`: integer or string
+- `lockRecord`: boolean
 - `metronome`: boolean
 - `postRoll`: boolean
 - `postRollAmount`: integer
@@ -3820,6 +3839,7 @@ Result:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3838,13 +3858,18 @@ Result:
 
 Engine command `transport.stop`.
 
-Stops playback and recording. With returnToStart the cursor goes back to where playback started or was last located to.
+Stops playback and recording. With returnToStart the cursor goes back to where playback started or was last located to. While lockRecord is on (see transport.set), a recording stops only with confirmed: the user confirmed it.
+
+Arguments:
+
+- `confirmed`: boolean
 
 Result:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3863,7 +3888,7 @@ Result:
 
 Engine command `transport.toggle`.
 
-Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, punchIn, punchOut, preRoll, postRoll, metronome (see transport.set), or record (on as transport.record, off punches out).
+Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, punchIn, punchOut, preRoll, postRoll, metronome (see transport.set), or record (on as transport.record, off punches out). While lockRecord is on, it neither stops nor punches out a recording.
 
 Arguments:
 
@@ -3874,6 +3899,7 @@ Result:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3899,6 +3925,7 @@ Result:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -4131,6 +4158,7 @@ Queries without required arguments can also be read as resources:
 - `gnubase://project.templates`: The project templates, which project.new starts new projects from, sorted by name: each a name and its file in the folder Project Templates in the user settings' folder. None without that folder.
 - `gnubase://quantize.get`: The project's quantize settings and whether auto quantize is on (see quantize.set for the settings).
 - `gnubase://quantize.presets`: The quantize presets: the factory presets (straight grids "1/1" to "1/128", triplets such as "1/8 Triplet" and dotted grids such as "1/4 Dotted") and the user's, each with its settings. The user's presets are kept in the settings folder, so they come back when GNUbase starts again: file is where (null if they are kept in memory only), readOnly whether changes are saved (not while the file belongs to a newer GNUbase), and problems what was wrong with it, such as presets that this GNUbase can't read and skips; they stay in the file.
+- `gnubase://recording.remainingTime`: The remaining record time (reference manual p. 356): how many seconds the record-enabled audio tracks can record before the disk with the record folder is full, at the project's sample rate and record bit depth; null while no track would record. With the space available there in bytes, the channels that would record and the record folder: the project's media folder Audio, or for an unsaved project a folder of the user's.
 - `gnubase://settings.list`: Every user setting with its key, description, JSON schema, default and value; the settings file, null when settings are kept in memory only; its version; and what happened when it was loaded: the status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the problems found, where the original file was kept, and whether the file is read-only for this session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be backed up or locked).
 - `gnubase://snap.get`: The project's snap settings. on: whether snap is on. type: grid (the nearest grid line), gridRelative (moves in grid steps, keeping the distance to the grid), events (the starts and ends of other events, audio events' snap points and markers, when near), shuffle (events trade places with their neighbours, see event.shuffle), cursor (the project cursor, when near), or the combinations gridCursor, eventsCursor and eventsGridCursor. format: the time format the grid follows, the project window's ruler: barsBeats, seconds, timecode, samples or userFrames. grid: the grid type in use, the format's: for barsBeats bar, beat, quantize (the project's quantize grid) or adaptToZoom (a note value that the view chooses); for seconds 1ms, 10ms, 100ms, 1000ms; for timecode and userFrames subframe, quarterFrame, halfFrame, frame, twoFrames, second; for samples 1sample, 10samples, 100samples, 44100samples. A grid type without a format switches to its format (the frames to timecode unless userFrames is in use). grids: the grid type each format keeps, by default bar, 100ms, frame, 100samples and frame. zeroCrossing: splitting and resizing audio events in the project window cut where the audio crosses zero.
 - `gnubase://transport.get`: Whether playback and recording run, the project cursor in samples, the locators and the modes. After a locate the cursor is where it goes, even before the audio thread has applied it.

@@ -2957,6 +2957,19 @@ Returns:
 - `events`: array of integer, required
 - `media`: array of integer, required
 
+#### `gnubase.recording.remainingTime`
+
+The remaining record time (reference manual p. 356): how many seconds the record-enabled audio tracks can record before the disk with the record folder is full, at the project's sample rate and record bit depth; null while no track would record. With the space available there in bytes, the channels that would record and the record folder: the project's media folder Audio, or for an unsaved project a folder of the user's.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `availableBytes`: integer, required
+- `channels`: integer, required
+- `folder`: string, required
+- `seconds`: number or null, required
+
 ### settings
 
 #### `gnubase.settings.get`
@@ -3162,6 +3175,7 @@ Returns:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3187,6 +3201,7 @@ Returns:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3216,6 +3231,7 @@ Returns:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3239,6 +3255,7 @@ Returns:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3255,7 +3272,7 @@ Returns:
 
 #### `gnubase.transport.record`
 
-Starts recording (record true, the default): playback starts as with transport.play if it stood, and recording where playback would start without the pre-roll; or recording punches in where it plays. With punchIn before the left locator, recording starts at the left locator instead. record false punches out and playback goes on. Record-enabled tracks may monitor their input meanwhile, by the user setting audio.autoMonitoring (see channel.set).
+Starts recording (record true, the default): playback starts as with transport.play if it stood, and recording where playback would start without the pre-roll; or recording punches in where it plays. With punchIn before the left locator, recording starts at the left locator instead. record false punches out and playback goes on, refused while lockRecord is on. Record-enabled tracks may monitor their input meanwhile, by the user setting audio.autoMonitoring (see channel.set).
 
 Parameters:
 
@@ -3266,6 +3283,7 @@ Returns:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3282,13 +3300,14 @@ Returns:
 
 #### `gnubase.transport.set`
 
-Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started. punchIn: playback that reaches the left locator starts recording there. punchOut: recording that reaches the right locator ends there and playback goes on, or stops with the user setting audio.stopAfterPunchOut, unless it cycles. preRoll and preRollAmount (samples, up to an hour at 768 kHz): playback starts that much before the cursor. postRoll and postRollAmount (the same): after an automatic punch out with audio.stopAfterPunchOut, playback goes on that much longer before it stops. Recording that punches in or out and playback that stops on their own announce transport.changed. metronome is the transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see recording.add): keepHistory (the default), cycleHistoryReplace or replace.
+Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started. punchIn: playback that reaches the left locator starts recording there. punchOut: recording that reaches the right locator ends there and playback goes on, or stops with the user setting audio.stopAfterPunchOut, unless it cycles. preRoll and preRollAmount (samples, up to an hour at 768 kHz): playback starts that much before the cursor. postRoll and postRollAmount (the same): after an automatic punch out with audio.stopAfterPunchOut, playback goes on that much longer before it stops. Recording that punches in or out and playback that stops on their own announce transport.changed. metronome is the transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see recording.add): keepHistory (the default), cycleHistoryReplace or replace. lockRecord: Lock Record, which keeps a recording from stopping or punching out by accident: transport.stop stops it only with confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at the right locator; it stays on until it is set off.
 
 Parameters:
 
 - `audioRecordMode`: string
 - `cycle`: boolean
 - `left`: integer or string
+- `lockRecord`: boolean
 - `metronome`: boolean
 - `postRoll`: boolean
 - `postRollAmount`: integer
@@ -3305,6 +3324,7 @@ Returns:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3321,13 +3341,18 @@ Returns:
 
 #### `gnubase.transport.stop`
 
-Stops playback and recording. With returnToStart the cursor goes back to where playback started or was last located to.
+Stops playback and recording. With returnToStart the cursor goes back to where playback started or was last located to. While lockRecord is on (see transport.set), a recording stops only with confirmed: the user confirmed it.
+
+Parameters:
+
+- `confirmed`: boolean
 
 Returns:
 
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3344,7 +3369,7 @@ Returns:
 
 #### `gnubase.transport.toggle`
 
-Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, punchIn, punchOut, preRoll, postRoll, metronome (see transport.set), or record (on as transport.record, off punches out).
+Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, punchIn, punchOut, preRoll, postRoll, metronome (see transport.set), or record (on as transport.record, off punches out). While lockRecord is on, it neither stops nor punches out a recording.
 
 Parameters:
 
@@ -3355,6 +3380,7 @@ Returns:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3378,6 +3404,7 @@ Returns:
 - `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
 - `cycle`: boolean, required
 - `left`: integer, required
+- `lockRecord`: boolean, required
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
