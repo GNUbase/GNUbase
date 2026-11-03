@@ -244,6 +244,16 @@
 		decorator: svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
 		color: #17202d;
 	}
+	button.toggle.listen.checked
+	{
+		decorator: svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+		color: #17202d;
+	}
+	button.toggle.solo.defeated
+	{
+		decorator: svg-ninepatch(toggle-hover.svg, 6 6 6 6);
+		color: #0969da;
+	}
 	input.text, input.password, textarea
 	{
 		decorator: svg-ninepatch(field-normal.svg, 6 6 6 6);
@@ -504,6 +514,32 @@
 		color: #eef1f5;
 		background-color: #6554c0;
 	}
+	.tempo-curve .tempo-line
+	{
+		stroke-color: #0969da;
+		stroke-width: 2dp;
+	}
+	.tempo-curve.inactive .tempo-line
+	{
+		stroke-color: #566273;
+	}
+	.tempo-curve .tempo-point
+	{
+		background-color: #0969da;
+	}
+	.tempo-curve.inactive .tempo-point
+	{
+		background-color: #566273;
+	}
+	.tempo-curve .tempo-point.selected
+	{
+		background-color: #17202d;
+	}
+	.tempo-editor .tempo-scale-label
+	{
+		color: #566273;
+		font-size: 11dp;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;
@@ -541,8 +577,9 @@
 	.midi-editor .editor-part
 	{
 		color: #566273;
-		border-bottom-width: 1dp;
-		border-bottom-color: #b9c1cc;
+		border-width: 1dp;
+		border-color: #b9c1cc;
+		background-color: #fbfcfe;
 	}
 	.midi-editor .editor-part.editable
 	{
@@ -563,6 +600,59 @@
 	.editor-visibility-check.partial
 	{
 		decorator: svg(checkbox-mixed.svg);
+	}
+	.key-editor-key
+	{
+		background-color: #444b56;
+		color: #eef1f5;
+		border-bottom-width: 1px;
+		border-bottom-color: #566273;
+	}
+	.key-editor-key.black
+	{
+		background-color: #eef1f5;
+		color: #17202d;
+	}
+	.key-editor-key.selected
+	{
+		background-color: #0969da;
+	}
+	.key-editor-grid
+	{
+		background-color: #ffffff;
+	}
+	.key-editor-row
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #dce0e6;
+	}
+	.key-editor-row.black
+	{
+		background-color: #f6f8fa;
+	}
+	.key-note
+	{
+		background-color: #68a3e8;
+		border-width: 1px;
+		border-color: #0969da;
+	}
+	.key-note.selected
+	{
+		background-color: #6554c0;
+		border-color: #17202d;
+	}
+	.key-note.inactive
+	{
+		background-color: #ccd0d5;
+		border-color: #566273;
+	}
+	.key-note.drawing
+	{
+		background-color: #0969da66;
+	}
+	.key-editor-step-cursor
+	{
+		background-color: #0969da;
 	}
 	.docking [zone]
 	{
@@ -719,6 +809,14 @@
 	button.toggle.monitor.checked:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+	}
+	button.toggle.listen.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+	}
+	button.toggle.solo.defeated:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-hover.svg, 6 6 6 6);
 	}
 	input.checkbox:focus-visible
 	{

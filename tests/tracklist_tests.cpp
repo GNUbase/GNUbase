@@ -327,6 +327,41 @@ TEST_CASE("Remove Empty Tracks keeps an instrument track without parts that a MI
 	CHECK(tracks.channel(midi).at("output") == synth);
 }
 
+TEST_CASE("the tempo track stays through Remove Empty Tracks, and out of new folders and duplicates", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t tempo = tracks.add({{"type", "tempo"}});
+	const uint64_t audio = tracks.add({{"type", "audio"}});
+	tracks.rows(2);
+
+	// Remove Empty Tracks removes the empty audio track, not the tempo track.
+	tracks.app.keys().run("track.removeEmpty", Json::object(), tracks.app.main(), nullptr);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.order() == std::vector<uint64_t>{tempo}; }));
+
+	// Move Selected Tracks to New Folder moves the other tracks and leaves the tempo track at the top level.
+	tracks.app.call("history.undo");
+	tracks.rows(2);
+	tracks.click(row(tempo) + " .track-name");
+	tracks.click(row(audio) + " .track-name", {"ctrl"});
+	tracks.app.keys().run("track.moveSelectedToNewFolder", Json::object(), tracks.app.main(), nullptr);
+	tracks.rows(3);
+	const std::vector<uint64_t> order = tracks.order();
+	REQUIRE(order.size() == 3);
+	CHECK(order[0] == tempo);
+	CHECK(tracks.track(tempo).at("parent") == 0);
+	CHECK(tracks.track(order[1]).at("type") == "folder");
+	CHECK(tracks.track(audio).at("parent") == order[1]);
+
+	// Duplicate Tracks duplicates the other tracks only.
+	tracks.click(row(tempo) + " .track-name");
+	tracks.click(row(audio) + " .track-name", {"ctrl"});
+	tracks.app.keys().run("track.duplicateSelected", Json::object(), tracks.app.main(), nullptr);
+	tracks.rows(4);
+	const std::vector<uint64_t> after = tracks.order();
+	CHECK(std::count_if(after.begin(), after.end(),
+			  [&tracks](uint64_t track) { return tracks.track(track).at("type") == "tempo"; }) == 1);
+}
+
 TEST_CASE("the track controls settings dialog chooses and orders each track type's controls", "[ui]")
 {
 	Tracks tracks;

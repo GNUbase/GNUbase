@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/transport.h"
 
+#include "engine/time/tempomap.h"
 #include "platform/log.h"
 #include "ui/widgetutils.h"
 
@@ -9,10 +10,12 @@
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/StringUtilities.h>
+#include <RmlUi/Core/SystemInterface.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <stdexcept>
 #include <utility>
 
 namespace gnubase::ui
@@ -29,6 +32,8 @@ namespace gnubase::ui
 		constexpr int g_largestSize = 4;
 		// Wheel turns on the tempo field that follow each other within this are one gesture.
 		constexpr std::chrono::milliseconds g_wheelPause{400};
+		// Taps on Tap Tempo that follow each other within this are one run; the run's tempo is set when it ends.
+		constexpr double g_tapPause = 2.0;
 		// Rewind and Forward held: how long they wait before they wind, and how many steps a second they wind.
 		constexpr std::chrono::milliseconds g_windDelay{300};
 		constexpr double g_windSpeed = 4.0;
@@ -90,15 +95,41 @@ namespace gnubase::ui
 				return std::nullopt;
 			return std::make_pair(static_cast<int>(*numerator), static_cast<int>(*denominator));
 		}
+
+		// Throws std::invalid_argument for a control whose parameters aren't a JSON object, or whose command and
+		// parameters check refuses.
+		void checkControls(Rml::Element& root, const CheckCommand& check)
+		{
+			Rml::ElementList found;
+			root.QuerySelectorAll(found, "[command]");
+			if (root.HasAttribute("command"))
+				found.insert(found.begin(), &root);
+			for (const Rml::Element* control : found)
+			{
+				const std::string command = attribute(*control, "command");
+				const std::string text = attribute(*control, "parameters", "{}");
+				const Json parameters = Json::parse(text, nullptr, false);
+				if (!parameters.is_object())
+				{
+					std::string message = "the parameters of the transport control for ";
+					message.append(command).append(" aren't a JSON object: ").append(text);
+					throw std::invalid_argument(message);
+				}
+				if (check)
+					check(command, parameters);
+			}
+		}
 	}
 
-	TransportControls::TransportControls(
-		engine::Engine& engine, EngineBinding& binding, Rml::Element& root, RunCommand run, ReleaseCommand release)
+	TransportControls::TransportControls(engine::Engine& engine, EngineBinding& binding, Rml::Element& root,
+		RunCommand run, ReleaseCommand release, const CheckCommand& check)
 		: m_engine(engine), m_binding(binding), m_run(std::move(run)), m_release(std::move(release)),
 		  m_root(root.GetObserverPtr()),
 		  m_formats{{"primary", TimeFormat::BarsBeats}, {"secondary", TimeFormat::Timecode},
 			  {"timeDisplay", TimeFormat::BarsBeats}}
 	{
+		// Before it listens to anything, so that a refused control leaves nothing behind.
+		checkControls(root, check);
 		if (Rml::ElementDocument* document = root.GetOwnerDocument())
 			m_document = document->GetObserverPtr();
 		listen(true);
@@ -136,6 +167,14 @@ namespace gnubase::ui
 					followTimeDisplay(result.value.at("value"));
 			});
 		show();
+	}
+
+	std::optional<double> tappedTempo(const std::vector<double>& taps)
+	{
+		if (taps.size() < 2 || taps.back() <= taps.front())
+			return std::nullopt;
+		const double beat = (taps.back() - taps.front()) / static_cast<double>(taps.size() - 1);
+		return std::clamp(60.0 / beat, time::g_minBpm, time::g_maxBpm);
 	}
 
 	TransportControls::~TransportControls()
@@ -265,6 +304,8 @@ namespace gnubase::ui
 				m_loading = false;
 				if (result.ok() && !readTimeContext(result.value, m_time))
 					logging::warning("The transport controls can't read the project's tempo or signatures");
+				if (result.ok())
+					m_tempoTrackActive = result.value.value("tempoTrackActive", false);
 				if (std::exchange(m_stale, false))
 					requestProject();
 				else
@@ -291,7 +332,11 @@ namespace gnubase::ui
 
 	int64_t TransportControls::samples(double seconds) const
 	{
-		return std::max<int64_t>(0, std::llround(seconds * m_time.sampleRate));
+		// In doubles first, as transport.locate's by: fifteen digits of seconds are more samples than 64 bits hold.
+		const double frames = seconds * m_time.sampleRate;
+		if (!(frames > 0.0)) // also NaN
+			return 0;
+		return std::llround(std::min(frames, static_cast<double>(time::g_maxPosition)));
 	}
 
 	void TransportControls::ProcessEvent(Rml::Event& event)
@@ -372,6 +417,22 @@ namespace gnubase::ui
 					setFormat(attribute(*item, "slot"), *format);
 				return;
 			}
+			if (const Rml::Element* field = withAttribute(target, "field");
+				field != nullptr && inside(field, root) && !field->HasAttribute("disabled"))
+			{
+				if (attribute(*field, "field") == "tempoTrack")
+				{
+					m_tempoTrackActive = !m_tempoTrackActive; // until the project is read again
+					m_binding.send("project.set", {{"tempoTrackActive", m_tempoTrackActive}});
+					show();
+					return;
+				}
+				if (attribute(*field, "field") == "tap")
+				{
+					tap();
+					return;
+				}
+			}
 			const Rml::Element* button = withAttribute(target, "command");
 			if (button == nullptr || !inside(button, root) || button->HasAttribute("disabled") ||
 				button->HasAttribute("hold"))
@@ -427,11 +488,11 @@ namespace gnubase::ui
 	void TransportControls::wheel(Rml::Element& element, float delta)
 	{
 		// Up is later, by as many steps as the wheel turned, at least one. A scroll sideways, as touchpads and tilt
-		// wheels send, has no vertical delta and moves nothing.
-		if (delta == 0.0F)
+		// wheels send, has no vertical delta and moves nothing. More than a billion steps, which only injected input
+		// sends, are a billion: that many fit a long, and that many beats in ticks fit 64 bits (#457).
+		if (!(std::abs(delta) > 0.0F)) // also NaN
 			return;
-		const long turned = std::lround(-delta);
-		long steps = turned;
+		long steps = std::lround(std::clamp(-delta, -1e9F, 1e9F));
 		if (steps == 0)
 			steps = delta < 0.0F ? 1 : -1;
 		const std::string time = attribute(element, "time");
@@ -510,6 +571,39 @@ namespace gnubase::ui
 		show();
 	}
 
+	void TransportControls::tap()
+	{
+		const double now = Rml::GetSystemInterface()->GetElapsedTime();
+		if (!m_taps.empty() && now - m_taps.back() >= g_tapPause)
+			m_taps.clear();
+		m_taps.push_back(now);
+		if (!m_tapPause)
+			m_tapPause = m_binding.watch<bool>([this]
+				{ return Rml::GetSystemInterface()->GetElapsedTime() - m_taps.back() >= g_tapPause; },
+				[this](const bool& paused)
+				{
+					if (paused)
+						endTap();
+				});
+		show();
+	}
+
+	void TransportControls::endTap()
+	{
+		const std::optional<double> tempo = tappedTempo(m_taps);
+		m_taps.clear();
+		m_tapPause.reset();
+		if (tempo)
+		{
+			engine::Json parameters = {{"bpm", *tempo}};
+			if (const std::optional<int64_t> start = m_selectionStart ? m_selectionStart() : std::nullopt)
+				parameters["selection"] = *start;
+			m_binding.send("tempo.tap", parameters);
+			requestProject();
+		}
+		show();
+	}
+
 	void TransportControls::release()
 	{
 		if (!m_holding.empty() && m_release)
@@ -526,12 +620,18 @@ namespace gnubase::ui
 			const auto value = m_status.find(attribute(*element, "state"));
 			setChecked(*element, value != m_status.end() && value->is_boolean() && value->get<bool>());
 		}
+		const std::optional<double> tapped = tappedTempo(m_taps); // while tapping, the tapped tempo
 		const std::string tempo =
-			widgets::format(m_sent.value_or(static_cast<float>(m_time.tempo.points().front().bpm)));
+			widgets::format(tapped ? static_cast<float>(*tapped)
+								   : m_sent.value_or(static_cast<float>(m_time.tempo.points().front().bpm)));
 		for (Rml::Element* element : all("[field=tempo]"))
 			if (m_gesture == Gesture::None && // during one, the field shows where the gesture took it
 				attribute(*element, "value") != tempo)
 				element->SetAttribute("value", tempo);
+		for (Rml::Element* element : all("[field=tempoTrack]"))
+			setChecked(*element, m_tempoTrackActive);
+		for (Rml::Element* element : all("[field=tap]"))
+			element->SetClass("tapping", !m_taps.empty());
 		const time::TimeSignature signature = m_time.signatures.signatureAt(0);
 		for (Rml::Element* element : all("[field=signature]"))
 			setText(*element, std::to_string(signature.numerator) + "/" + std::to_string(signature.denominator));

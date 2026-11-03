@@ -126,6 +126,16 @@ namespace gnubase::engine
 
 	private:
 		// Where a bus node meets the device.
+		// The user settings audio.listenDim and audio.listenLevel, as linear gains.
+		struct ListenGains
+		{
+			float dim = 0.0f;
+			float level = 1.0f;
+
+			bool operator==(const ListenGains& other) const { return dim == other.dim && level == other.level; }
+			bool operator!=(const ListenGains& other) const { return !(*this == other); }
+		};
+
 		struct BusLink
 		{
 			int node = 0;
@@ -163,7 +173,10 @@ namespace gnubase::engine
 			std::vector<uint64_t> destinations; // per sequencer, where it plays (MidiSequencer::playOn)
 			std::vector<uint8_t> thru;          // per sequencer, 1 if it plays all MIDI inputs (MidiTap::thru)
 			MidiTap::Instruments instruments;   // for midi.capture
-			std::vector<int> mainPorts;         // the main mix's device channels, for auditioning
+			std::vector<int> mainPorts;         // the main mix's device channels, for auditioning and listening
+			int mainOutput = -1;                // the main mix's index in outputs, or -1
+			int listenNode = -1;                // the listen bus (graph::NodeKind::ListenBus), or -1
+			ListenGains listen;
 		};
 
 		// A release waiting for the audio thread to start a program that has it.
@@ -263,6 +276,10 @@ namespace gnubase::engine
 		// slots (graph::describe), else its own; -1 for none.
 		int sourceNode(ObjectId channel) const;
 		AutoMonitoring autoMonitoring() const; // the user setting
+		ListenGains listenGains() const;       // the user settings
+		// Audio thread: adds the outputs to the device, the main mix turned down while channels listen, and the
+		// listening channels to the main mix's ports.
+		void output(const audio::DeviceBlock& block, const Program& program) noexcept;
 		// Direct monitoring: audio tracks that play into an output bus hear their input bus through the device
 		// instead of the graph. ports: the device channels of each bus (devicePorts).
 		void monitorDirectly(
@@ -282,6 +299,8 @@ namespace gnubase::engine
 		uint64_t m_revision = 0;
 		const settings::Store& m_settings;
 		AutoMonitoring m_autoMonitoring = AutoMonitoring::TapeMachine; // the graph's
+		ListenGains m_listenGains;                                     // the graph's
+		float m_dim = 1.0f; // audio thread: the main mix's gain at the end of the last block
 
 		Engine* m_engine = nullptr;
 		std::vector<std::unique_ptr<audio::Backend>> m_backends;

@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Snap and grid (#87, reference manual pp. 105-109): where editing in the project window puts positions. The project
@@ -75,6 +76,8 @@ namespace gnubase::engine
 
 	// Whether a grid type is one of the format's.
 	bool hasGrid(GridFormat format, GridType grid);
+	// The format's grid types, in the order of the grid type menu: those hasGrid accepts.
+	std::vector<GridType> gridTypes(GridFormat format);
 
 	// Settings, not undo steps; saved with the project.
 	struct SnapSettings
@@ -86,18 +89,24 @@ namespace gnubase::engine
 		std::array<GridType, g_gridFormatCount> grids = {
 			GridType::Bar, GridType::Ms100, GridType::Frame, GridType::Samples100, GridType::Frame};
 		bool zeroCrossing = false; // splitting and resizing audio events cut where the audio crosses zero
+		// The grids entries of a newer build that this one can't read, by format name: a format it doesn't know, or
+		// a grid type it doesn't know for one it does. Saving writes them back, until this build chooses another grid
+		// type for that format. In the order of the names, as JSON objects have them.
+		std::vector<std::pair<std::string, std::string>> newerGrids;
 
 		// The grid in use: the format's.
 		GridType grid() const { return grids.at(static_cast<size_t>(format)); }
 		// Chooses the grid type of its format; one that isn't the format's in use switches to its format (a frame
 		// grid to timecode).
 		void setGrid(GridType grid);
+		// Chooses the grid type of a format, which must be the format's.
+		void setGrid(GridFormat of, GridType grid);
 	};
 
 	inline bool operator==(const SnapSettings& a, const SnapSettings& b)
 	{
 		return a.on == b.on && a.type == b.type && a.format == b.format && a.grids == b.grids &&
-			a.zeroCrossing == b.zeroCrossing;
+			a.zeroCrossing == b.zeroCrossing && a.newerGrids == b.newerGrids;
 	}
 
 	const char* snapTypeName(SnapType type);
@@ -106,10 +115,12 @@ namespace gnubase::engine
 	std::optional<SnapType> snapTypeFromName(const std::string& name);
 	std::optional<GridType> gridTypeFromName(const std::string& name);
 	std::optional<GridFormat> gridFormatFromName(const std::string& name);
-	Json toJson(const SnapSettings& settings);
+	// The settings as snap.get has them; saving, with a newer build's grids entries (SnapSettings::newerGrids).
+	Json toJson(const SnapSettings& settings, bool saving = false);
 	// Changes what json names: grids, then format, then grid, which is the format's (without a format, as before
 	// #413, it chooses its format). Throws std::invalid_argument for unknown names and for a grid type that isn't its
-	// format's; loading a project, it leaves those out instead, so that a newer build's projects load.
+	// format's. Loading a project, it leaves those out instead, so that a newer build's projects load, keeps a newer
+	// build's grids entries in newerGrids, and reads grid only when grids has no entry for the format (before #413).
 	SnapSettings snapSettingsFrom(const Json& json, SnapSettings settings, bool loading = false);
 
 	// What the grid is made of.
@@ -144,8 +155,9 @@ namespace gnubase::engine
 	// magnetic types without anything near leave it where it is.
 	time::Position snap(const SnapSettings& settings, const SnapGrid& grid, const SnapTarget& target);
 
-	// The project's grid, with its tempo, signatures and quantize settings.
-	SnapGrid snapGrid(const Project& project);
+	// The project's grid, with its tempo, signatures, quantize settings and the frame rate of format: the project's
+	// (project setup, #78), or the user's for user frames.
+	SnapGrid snapGrid(const Project& project, GridFormat format);
 
 	// The position nearest to at (project samples) where an audio event's audio crosses zero, within 50 ms and the
 	// clip (with inside, strictly inside the event, for splitting it), or at if there is none or the file can't be

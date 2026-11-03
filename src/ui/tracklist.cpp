@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/tracklist.h"
 
+#include "ui/mixer.h"
 #include "ui/widgets.h"
 
 #include <RmlUi/Core/Context.h>
@@ -42,6 +43,9 @@ namespace gnubase::ui
 		// The controls a track type can have.
 		bool applies(const std::string& control, const std::string& type, bool hasChannel)
 		{
+			// The tempo track's only control is Activate Tempo Track (reference manual p. 162).
+			if (type == "tempo" || control == "tempoTrack")
+				return type == "tempo" && control == "tempoTrack";
 			if (!hasChannel)
 				return control == "timeBase" && type != "folder" && type != "ruler";
 			if (control == "record" || control == "monitor")
@@ -59,7 +63,7 @@ namespace gnubase::ui
 				{"record", {"Record Enable", R"(<svg class="icon" src="../icons/track-record-arm.svg"/>)"}},
 				{"monitor", {"Monitor", R"(<svg class="icon" src="../icons/track-monitor.svg"/>)"}},
 				{"read", {"Read Automation", R"(<svg class="icon" src="../icons/track-read-automation.svg"/>)"}},
-				{"timeBase", {"Switch Time Base", "L"}}};
+				{"timeBase", {"Switch Time Base", "L"}}, {"tempoTrack", {"Activate Tempo Track", "T"}}};
 			const auto& [title, content] = looks.at(control);
 			return R"(<button class="toggle )" + control + R"(" control=")" + control + R"(" title=")" + title +
 				R"(">)" + content + "</button>";
@@ -138,10 +142,11 @@ namespace gnubase::ui
 				{
 					// Audio, instrument, MIDI and marker tracks without events, parts, markers or automation, and
 					// folders without tracks, unless other tracks play into them; groups and effects are where other
-					// tracks play through, ruler tracks never hold anything.
+					// tracks play through, ruler tracks never hold anything and the tempo track holds the tempo.
 					Json commands = Json::array();
 					for (const Row& row : m_tracks)
-						if (row.empty && row.type != "group" && row.type != "effect" && row.type != "ruler")
+						if (row.empty && row.type != "group" && row.type != "effect" && row.type != "ruler" &&
+							row.type != "tempo")
 							commands.push_back({{"command", "track.remove"}, {"parameters", {{"track", row.id}}}});
 					transaction("Remove Empty Tracks", std::move(commands));
 				}},
@@ -149,8 +154,14 @@ namespace gnubase::ui
 				[this, selected]
 				{
 					Json commands = Json::array();
-					selected([&commands](uint64_t track)
-						{ commands.push_back({{"command", "track.duplicate"}, {"parameters", {{"track", track}}}}); });
+					// The project has one tempo track.
+					selected(
+						[this, &commands](uint64_t track)
+						{
+							if (m_tracks[m_index.at(track)].type != "tempo")
+								commands.push_back(
+									{{"command", "track.duplicate"}, {"parameters", {{"track", track}}}});
+						});
 					transaction("Duplicate Tracks", std::move(commands));
 				}},
 			{"track.toggleFolding",
@@ -216,10 +227,11 @@ namespace gnubase::ui
 			m_actions[on ? "track.moveSelectedToNewFolderWithGroupChannel" : "track.moveSelectedToNewFolder"] =
 				[this, on]
 			{
-				// A new folder where the first of them was, with them inside; marker tracks stay at the top level.
+				// A new folder where the first of them was, with them inside; marker tracks and the tempo track stay at
+				// the top level.
 				Json tracks = Json::array();
 				for (const uint64_t track : topSelection())
-					if (m_tracks[m_index.at(track)].type != "marker")
+					if (const std::string& type = m_tracks[m_index.at(track)].type; type != "marker" && type != "tempo")
 						tracks.push_back(track);
 				if (tracks.empty())
 					return;
@@ -511,11 +523,15 @@ namespace gnubase::ui
 					on = channel != nullptr && channel->at("recordEnable").get<bool>();
 				else if (name == "timeBase")
 					on = track.at("timeBase") == "linear";
+				else if (name == "tempoTrack")
+					on = project.value("tempoTrackActive", false);
 				else if (name == "read")
 					on = !lanes.empty() && std::all_of(lanes.begin(), lanes.end(), [](bool read) { return read; });
 				else
 					on = channel != nullptr && channel->value(name, false);
 				setClass(*button, "checked", on);
+				if (name == "solo")
+					setClass(*button, "defeated", channel != nullptr && channel->value("soloDefeat", false));
 				// Read needs automation lanes to read.
 				const bool disabled = name == "read" && lanes.empty();
 				if (disabled != button->HasAttribute("disabled"))
@@ -607,7 +623,8 @@ namespace gnubase::ui
 				if (element->HasAttribute("control"))
 				{
 					if (const Row* row = rowOf(element); row != nullptr && !element->HasAttribute("disabled"))
-						control(*row, element->GetAttribute<Rml::String>("control", ""));
+						control(*row, element->GetAttribute<Rml::String>("control", ""),
+							held(event, "ctrl_key") || held(event, "meta_key"), held(event, "alt_key"));
 					break;
 				}
 			break;
@@ -661,7 +678,7 @@ namespace gnubase::ui
 		}
 	}
 
-	void TrackList::control(const Row& row, const std::string& name)
+	void TrackList::control(const Row& row, const std::string& name, bool exclusive, bool defeat)
 	{
 		const Json& project = m_display.project();
 		if (name == "read")
@@ -682,6 +699,11 @@ namespace gnubase::ui
 			transaction("Read Automation", std::move(commands));
 			return;
 		}
+		if (name == "tempoTrack")
+		{
+			m_binding.send("project.set", {{"tempoTrackActive", !project.value("tempoTrackActive", false)}});
+			return;
+		}
 		if (name == "timeBase")
 		{
 			const Json& track = project.at("tracks").at(m_index.at(row.id));
@@ -693,7 +715,10 @@ namespace gnubase::ui
 		if (channel == nullptr)
 			return;
 		const std::string key = name == "record" ? "recordEnable" : name;
-		m_binding.send("channel.set", {{"channel", row.channel}, {key, !channel->value(key, false)}});
+		Json parameters =
+			key == "solo" ? soloClick(*channel, exclusive, defeat) : Json{{key, !channel->value(key, false)}};
+		parameters["channel"] = row.channel;
+		m_binding.send("channel.set", std::move(parameters));
 	}
 
 	void TrackList::transaction(const std::string& description, Json commands)
@@ -924,7 +949,7 @@ namespace gnubase::ui
 			if (inside || track == before)
 				continue;
 			const Row& row = m_tracks[m_index.at(track)];
-			if (row.type == "marker" && parent != 0)
+			if ((row.type == "marker" || row.type == "tempo") && parent != 0)
 				continue;
 			std::vector<uint64_t>& from = children[row.parent];
 			from.erase(std::find(from.begin(), from.end(), track));

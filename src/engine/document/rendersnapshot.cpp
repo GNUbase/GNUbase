@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/rendersnapshot.h"
 
+#include "engine/audio/fades.h"
+
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -78,15 +80,22 @@ namespace gnubase::engine
 		}
 
 		// Mute, solo and disabled tracks: with a channel soloed, only soloed channels, those they play into and those
-		// that play into them are heard (feeds: the channels each channel plays into, by index).
+		// that play into them are heard, and channels with solo defeat with those they play into (feeds: the channels
+		// each channel plays into, by index).
 		void markSilent(const Project& project, const std::vector<std::vector<size_t>>& feeds, RenderSnapshot& snapshot)
 		{
 			const size_t count = snapshot.channels.size();
 			std::vector<bool> heard(count, true);
 			std::vector<size_t> soloed;
+			std::vector<size_t> defeated;
 			for (size_t i = 0; i < count; ++i)
-				if (project.channels.at(snapshot.channels[i].id).solo)
+			{
+				const Channel& channel = project.channels.at(snapshot.channels[i].id);
+				if (channel.solo)
 					soloed.push_back(i);
+				else if (channel.soloDefeat)
+					defeated.push_back(i);
+			}
 			if (!soloed.empty())
 			{
 				std::vector<std::vector<size_t>> fedBy(count);
@@ -94,10 +103,9 @@ namespace gnubase::engine
 					for (const size_t to : feeds[i])
 						fedBy[to].push_back(i);
 				heard.assign(count, false);
-				for (const auto* links : {&feeds, &std::as_const(fedBy)})
+				const auto reach = [&heard](const std::vector<std::vector<size_t>>& links, std::vector<size_t> pending)
 				{
-					std::vector<bool> reached(count, false);
-					std::vector<size_t> pending = soloed;
+					std::vector<bool> reached(links.size(), false);
 					while (!pending.empty())
 					{
 						const size_t i = pending.back();
@@ -106,9 +114,12 @@ namespace gnubase::engine
 							continue;
 						reached[i] = true;
 						heard[i] = true;
-						pending.insert(pending.end(), (*links)[i].begin(), (*links)[i].end());
+						pending.insert(pending.end(), links[i].begin(), links[i].end());
 					}
-				}
+				};
+				reach(feeds, soloed);
+				reach(fedBy, soloed);
+				reach(feeds, defeated);
 			}
 			// Mute automation that plays overrides the mute button (ChannelFader::Mute).
 			std::set<ObjectId> automated;
@@ -189,6 +200,7 @@ namespace gnubase::engine
 			render.midiPan = channel.midiPan;
 			render.monitor = channel.monitor;
 			render.recordEnable = channel.recordEnable;
+			render.listen = channel.listen;
 			render.midiThru = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
 				channel.midiInput == "all" && (channel.monitor || channel.recordEnable);
 			render.autoFades = track.autoFades.value_or(project.autoFades);
@@ -226,11 +238,11 @@ namespace gnubase::engine
 			RenderAudioEvent render{id, toSamples(project, event.position), mediaIndex.at(clip.media), event.offset,
 				event.length, static_cast<float>(std::pow(10.0, event.volume / 20.0)), event.mute, event.fadeIn,
 				event.fadeOut, clip.fadeIn, clip.fadeOut,
-				crossfadeApplies(project, event) ? event.crossfade : Crossfade()};
+				crossfadeApplies(project, event) ? event.crossfade : Crossfade(), gainPoints(event.volumeCurve)};
 			if (const auto part = project.audioParts.find(event.part); part != project.audioParts.end() &&
 				!inPart(project, part->second, project.sampleRate / project.media.at(clip.media).sampleRate, render))
 				continue;
-			snapshot->channels[trackChannel.at(event.track)].audioEvents.push_back(render);
+			snapshot->channels[trackChannel.at(event.track)].audioEvents.push_back(std::move(render));
 		}
 		for (const auto& [id, part] : project.midiParts)
 		{

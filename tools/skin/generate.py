@@ -406,6 +406,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
     ]
     for kind in ("mute", "solo", "record", "monitor"):
         rules.append((f"button.toggle.{kind}.checked", {"decorator": skin(f"toggle-{kind}"), "color": c["text"]}))
+    # Listen is monitoring; solo defeat keeps the solo button off, in the solo color.
+    rules.append(("button.toggle.listen.checked", {"decorator": skin("toggle-monitor"), "color": c["text"]}))
+    rules.append(("button.toggle.solo.defeated", {"decorator": skin("toggle-hover"), "color": c["accent"]}))
     rules += [
         # Text fields
         ("input.text, input.password, textarea", {"decorator": skin("field-normal"), "color": c["text"]}),
@@ -499,6 +502,13 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".event-display .marker-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
         (".event-display .marker-label.active", {"color": c["text"]}),
         (".event-display .marker-label.selected", {"color": c["background"], "background-color": c["accent2"]}),
+        # The tempo track (docs/features/tempo-track.md): the tempo curve, muted in fixed tempo mode, and its points
+        (".tempo-curve .tempo-line", {"stroke-color": c["accent"], "stroke-width": f"{widths['focus']}dp"}),
+        (".tempo-curve.inactive .tempo-line", {"stroke-color": c["textMuted"]}),
+        (".tempo-curve .tempo-point", {"background-color": c["accent"]}),
+        (".tempo-curve.inactive .tempo-point", {"background-color": c["textMuted"]}),
+        (".tempo-curve .tempo-point.selected", {"background-color": c["text"]}),
+        (".tempo-editor .tempo-scale-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
         # The tools (docs/features/tools.md): the selection range and the rectangle a tool drags
         (".event-display .range-selection", {"border-width": f"{widths['hairline']}dp", "border-color": c["text"],
                                              "background-color": c["text"] + "33"}),
@@ -515,13 +525,33 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".mixer-channel", {"border-right-width": f"{widths['hairline']}dp", "border-right-color": c["border"]}),
         # The MIDI editors (docs/features/midi-editors.md): parts outside the part editing mode dimmed, the active part
         # and track lit, and the Visibility tab's checks: a check mark, or a rectangle while some parts show
-        (".midi-editor .editor-part", {"color": c["textMuted"], "border-bottom-width": f"{widths['hairline']}dp",
-                                       "border-bottom-color": c["border"]}),
+        (".midi-editor .editor-part", {"color": c["textMuted"], "border-width": f"{widths['hairline']}dp",
+                                       "border-color": c["border"],
+                                       "background-color": mix(c["surface"], c["surfaceRaised"], .5)}),
         (".midi-editor .editor-part.editable", {"color": c["text"]}),
         (".midi-editor .editor-part.active, .editor-visibility-track.active", {"color": c["accent"]}),
         (".editor-visibility-check", {"decorator": skin("checkbox-off")}),
         (".editor-visibility-check.checked", {"decorator": skin("checkbox-on")}),
         (".editor-visibility-check.partial", {"decorator": skin("checkbox-mixed")}),
+        # The key editor (docs/features/key-editor.md): the keyboard's white and black keys, the keys of selected
+        # notes lit, the grid's rows of black keys darker, the notes, selected ones in the second accent, those
+        # outside the part editing mode dimmed, the note being drawn, and the step input cursor
+        (".key-editor-key", {"background-color": mix(c["surfaceRaised"], c["text"], .8), "color": c["background"],
+                             "border-bottom-width": f"{widths['hairline']}px",
+                             "border-bottom-color": c["textMuted"]}),
+        (".key-editor-key.black", {"background-color": c["background"], "color": c["text"]}),
+        (".key-editor-key.selected", {"background-color": c["accent"]}),
+        (".key-editor-grid", {"background-color": c["surface"]}),
+        (".key-editor-row", {"border-bottom-width": f"{widths['hairline']}px",
+                             "border-bottom-color": mix(c["surface"], c["border"], .5)}),
+        (".key-editor-row.black", {"background-color": mix(c["background"], c["surface"], .5)}),
+        (".key-note", {"background-color": mix(c["surfaceRaised"], c["accent"], .6),
+                       "border-width": f"{widths['hairline']}px", "border-color": c["accent"]}),
+        (".key-note.selected", {"background-color": c["accent2"], "border-color": c["text"]}),
+        (".key-note.inactive", {"background-color": mix(c["surface"], c["textMuted"], .3),
+                                "border-color": c["textMuted"]}),
+        (".key-note.drawing", {"background-color": c["accent"] + "66"}),
+        (".key-editor-step-cursor", {"background-color": c["accent"]}),
         # Docking windows (docs/features/docking.md): zones, the frame of the zone with the keyboard focus, and strips
         (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
         (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),

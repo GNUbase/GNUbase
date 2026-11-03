@@ -10,7 +10,8 @@
 #include <vector>
 
 // The project document as JSON: what project.get returns and the events carry, and what the DAWproject extension
-// entry stores. projectFromJson(toJson(project)) gives back the same project.
+// entry stores. projectFromJson(toJson(project)) gives back the same project, except for the newer build's grid types
+// in its snap settings (SnapSettings::newerGrids), which only saving writes (saveDawProject).
 namespace gnubase::engine
 {
 	// Note velocities and controller values are 0 to 1 in JSON, whatever the internal resolution.
@@ -39,6 +40,9 @@ namespace gnubase::engine
 	Json toJson(const Fade& fade);
 	Json toJson(const Crossfade& crossfade); // null without one
 	Json toJson(const AutoFades& settings);
+	// An audio event's volume curve: [{position, volume, curve}], and back, unchecked.
+	Json toJson(const std::vector<VolumePoint>& curve);
+	std::vector<VolumePoint> volumeCurveFromJson(const Json& json);
 	// The inverses. Missing properties keep the value of fallback; unknown names throw std::invalid_argument.
 	Fade fadeFromJson(const Json& json, const Fade& fallback = {});
 	AutoFades autoFadesFromJson(const Json& json, const AutoFades& fallback = {});
@@ -88,6 +92,10 @@ namespace gnubase::engine
 	Json toJson(const AutomationPoint& point);
 	Json toJson(const AutomationLane& lane); // with its points, sorted by position
 	Json toJson(const MixerView& view);      // {"hidden": [ids], "hiddenTypes": [types]}
+	// [{"position": ticks, "bpm": ..., "ramp": ...}], and back; tempoFromJson throws std::invalid_argument for points a
+	// tempo map can't have.
+	Json toJson(const time::TempoMap& tempo);
+	time::TempoMap tempoFromJson(const Json& points);
 
 	// The whole project, with the tracks from top to bottom. The id counter is left out: undo doesn't restore it,
 	// so that ids stay unique.

@@ -10,8 +10,10 @@ it up in `app::AppUi`.
   go through the UI's engine client (`EngineBinding::send`), so a key can do nothing that MCP and Lua can't, and
   `engine.commandLog` shows what a key did as sent by `ui`. A failed command is logged.
 - **Key map.** A binding (`ui::KeyBinding`) has keys, a command, the command's parameters and a focus zone (none for
-  everywhere). `bind` checks the keys, that the command exists and an engine command's parameters against its schema;
-  keys bound again in the same zone replace what they did there. A command may have several keys, as in the reference
+  everywhere). `bind` checks the keys, and the command and its parameters with `check` (#446), which menu items and
+  transport controls use too: the command must exist, an engine command's parameters must fit its schema, and a UI
+  command, which takes no parameters, gets an empty object; it throws `std::invalid_argument` naming the command.
+  Keys bound again in the same zone replace what they did there. A command may have several keys, as in the reference
   ("Assign Additional Key"). `keysFor(command, parameters)` returns the keys bound to a command as the platform writes
   them, in the order they were bound, for menus (#54) and tooltips; `run` runs a command as a key would, for a menu
   item. `enableWhen(command, enabled)` says when a command can run and `canRun` asks, so that the main menu disables
@@ -72,6 +74,7 @@ The reference's defaults for the commands GNUbase has so far (`ui::defaultKeyMap
 | Shift+Num1 to Shift+Num9 | `marker.setLocators` with the number | Recall Cycle Marker 1 to 9 |
 | Insert | `marker.add` | Insert Marker |
 | Mod+M | `window.markers` (the app's) | Open Markers |
+| Mod+T | `window.tempoTrack` (the app's) | Open Tempo Track Editor ([tempo-track.md](tempo-track.md)) |
 | Mod+Z | `history.undo` | Undo |
 | Mod+Shift+Z | `history.redo` | Redo |
 
@@ -117,7 +120,9 @@ rest of the reference's tables.
 
 `tests/keycommands_tests.cpp`: keys read and written per platform (`Mod` as Cmd on macOS, Ctrl elsewhere; every key
 name reads back as written); the default key map passes the engine's schemas on every platform and binds no keys twice
-in a zone; UI commands, replacing bindings and refusing unknown commands, bad parameters and unknown keys. In the app's
+in a zone; UI commands, replacing bindings and refusing unknown commands, bad parameters and unknown keys; `check`
+refusing a typo in a command, parameters an engine command doesn't take or of the wrong type, and parameters for a UI
+command. In the app's
 UI (`test::UiApp`, [ui-tests.md](ui-tests.md)), keys pressed through `ui::Automation` start, stop and locate the
 transport and undo through the UI's client; the same keys run different commands in a project zone, an editor zone
 inside a lower zone, an element of the lower zone and outside any zone; lock keys don't count; a key from SDL's own

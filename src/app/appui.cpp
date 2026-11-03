@@ -62,7 +62,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 75> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 76> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -100,6 +100,10 @@ namespace gnubase::app
 			{"audio.removeFadeOut", "Removes the fade out of the selected audio events.", nullptr},
 			{"audio.removeFades", "Removes the fades and crossfades of the selected audio events.", nullptr},
 			{"audio.fadeEditor", "Opens the fade dialog for the selected audio events.", nullptr},
+			// Volume curves (docs/features/volume-curves.md).
+			{"audio.removeVolumeCurve",
+				"Resets the volume curves of the audio events in the selection range, or of the selected ones.",
+				nullptr},
 			// Audio parts (docs/features/audio-parts.md).
 			{"audio.eventsToPart", "Puts the selected audio events into an audio part.", nullptr},
 			{"audio.dissolvePart", "Makes the events of the selected audio parts events of their own.", nullptr},
@@ -292,6 +296,21 @@ namespace gnubase::app
 		m_keys.add({"window.onScreenKeyboard", "Shows or hides the on-screen keyboard.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleKeyboard(); }); }});
 		m_keys.bind({"Alt+K", "window.onScreenKeyboard"});
+		// The tempo track (reference manual pp. 1447, 1451).
+		m_keys.add({"window.tempoTrack", "Opens or closes the tempo track editor.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleTempoEditor(); }); }});
+		m_keys.bind({"Mod+T", "window.tempoTrack"});
+		m_keys.add({"tempo.toggleTrack", "Switches between fixed tempo and tempo track mode (Activate Tempo Track).",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+			{
+				m_binding.send("project.get", engine::Json::object(),
+					[this](const engine::Result& result)
+					{
+						if (result.ok())
+							m_binding.send(
+								"project.set", {{"tempoTrackActive", !result.value.value("tempoTrackActive", false)}});
+					});
+			}});
 
 		// The project window's panels (reference manual pp. 54, 73, 75-98), which their tickets fill: the inspector
 		// (docs/features/inspector.md) shows the selected track, the Channel zone's will show its channel strip (#107).
@@ -592,14 +611,18 @@ namespace gnubase::app
 		if (fill)
 			root.SetInnerRML(readText(m_resources / "ui" / "transport.rml"));
 		const ui::WindowId id = window.id();
-		return std::make_unique<ui::TransportControls>(
+		auto controls = std::make_unique<ui::TransportControls>(
 			m_engine, m_binding, root,
 			[this, id](const std::string& command, const engine::Json& parameters)
 			{
 				if (ui::Window* found = m_shell.find(id))
 					m_keys.run(command, parameters, *found, nullptr);
 			},
-			[this](const std::string& command) { m_keys.release(command); });
+			[this](const std::string& command) { m_keys.release(command); },
+			[this](const std::string& command, const engine::Json& parameters) { m_keys.check(command, parameters); });
+		controls->followSelection(
+			[this] { return m_eventDisplay ? m_eventDisplay->selectionStart() : std::optional<int64_t>(); });
+		return controls;
 	}
 
 	void AppUi::toggle(TransportWindow& shown, const char* file, const char* title, ui::Size size)
@@ -628,10 +651,20 @@ namespace gnubase::app
 			return;
 		}
 		document->Show();
-		shown.window = window.id();
 		// The transport panel's #transport gets the controls, a docking window for its sections; the time display
-		// window has its own, at the size it was given.
-		shown.controls = transportControls(*root, window, root == controls);
+		// window has its own, at the size it was given. Controls with a command that doesn't exist or parameters it
+		// doesn't take (#446) close the window again, as a document that doesn't load does.
+		try
+		{
+			shown.controls = transportControls(*root, window, root == controls);
+		}
+		catch (const std::invalid_argument& error)
+		{
+			m_shell.close(window.id());
+			logging::error("Cannot show {}: {}", path.u8string(), error.what());
+			return;
+		}
+		shown.window = window.id();
 		if (root == controls)
 			m_docking.attach("transportPanel", *document);
 		else
@@ -681,6 +714,7 @@ namespace gnubase::app
 		}
 		document->Show();
 		m_markerLines.reset();
+		m_tempoLane.reset();
 		// The transport bar's sections are there when the docking system reads them.
 		m_transportBar.reset();
 		if (Rml::Element* bar = document->GetElementById("transport-bar"))
@@ -699,6 +733,7 @@ namespace gnubase::app
 			m_colorMenu = std::make_unique<ui::ColorMenu>(*m_eventDisplay, *m_trackList, m_binding, *document);
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 		m_markerLines = std::make_unique<ui::MarkerLines>(*m_eventDisplay, m_binding);
+		m_tempoLane = std::make_unique<ui::TempoLane>(*m_eventDisplay, m_binding);
 		if (m_infoLine)
 			m_infoLine->followMarkers(
 				[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
@@ -774,6 +809,33 @@ namespace gnubase::app
 		return m_keyboard.get();
 	}
 
+	ui::TempoEditor* AppUi::toggleTempoEditor()
+	{
+		const bool open = m_tempoEditor != nullptr && m_shell.find(m_tempoWindow) != nullptr;
+		m_tempoEditor.reset();
+		if (open)
+		{
+			m_shell.close(m_tempoWindow);
+			return nullptr;
+		}
+		ui::WindowSpec spec;
+		spec.title = "Tempo Track";
+		spec.size = {800, 400};
+		spec.hidden = m_hidden;
+		const ui::Window& window = m_shell.open(spec);
+		m_tempoWindow = window.id();
+		const std::filesystem::path file = m_resources / "ui" / "tempo-editor.rml";
+		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
+		if (document == nullptr)
+		{
+			m_shell.close(m_tempoWindow);
+			throw std::runtime_error("cannot load the tempo track editor from " + file.u8string());
+		}
+		document->Show();
+		m_tempoEditor = std::make_unique<ui::TempoEditor>(m_binding, *document);
+		return m_tempoEditor.get();
+	}
+
 	void AppUi::chooseImport(
 		ui::Window& window, std::string title, std::vector<ui::FileFilter> filters, bool many, bool clipsOnly)
 	{
@@ -793,7 +855,12 @@ namespace gnubase::app
 				files.reserve(result.files.size());
 				for (const std::filesystem::path& file : result.files)
 					files.push_back(file.u8string());
-				m_eventDisplay->importFiles(files, std::nullopt, std::nullopt, clipsOnly);
+				// File > Import goes onto the selected track (#480), the pool's Import Medium into the pool only.
+				if (clipsOnly)
+					m_eventDisplay->importFiles(files, std::nullopt, std::nullopt, true);
+				else
+					m_eventDisplay->importToSelection(
+						files, m_trackList ? m_trackList->selection() : std::vector<uint64_t>());
 			});
 	}
 
