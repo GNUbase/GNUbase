@@ -200,14 +200,6 @@
 	{
 		decorator: svg-ninepatch(button-primary-pressed.svg, 6 6 6 6);
 	}
-	button:focus-visible
-	{
-		decorator: svg-ninepatch(button-normal.svg, 6 6 6 6), svg-ninepatch(focus-ring.svg, 6 6 6 6);
-	}
-	button.primary:focus-visible
-	{
-		decorator: svg-ninepatch(button-primary-normal.svg, 6 6 6 6), svg-ninepatch(focus-ring.svg, 6 6 6 6);
-	}
 	button svg.icon
 	{
 		image-color: #f3f4f5;
@@ -388,6 +380,10 @@
 	.tree-toggle
 	{
 		decorator: svg(dropdown-arrow.svg);
+	}
+	knob:focus-visible, fader:focus-visible, slider:focus-visible, input.range:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
 	}
 	colorpicker .color-field
 	{
@@ -631,5 +627,73 @@
 	{
 		font-size: 128dp;
 		line-height: 256dp;
+	}
+	valuefield:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(display.svg, 6 6 6 6);
+	}
+	listview:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(list.svg, 6 6 6 6);
+	}
+	button:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-normal.svg, 6 6 6 6);
+	}
+	button.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	button.suspended:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-normal.svg, 6 6 6 6);
+	}
+	button.primary:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-primary-normal.svg, 6 6 6 6);
+	}
+	button.toggle:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-off.svg, 6 6 6 6);
+	}
+	button.toggle.mute.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-mute.svg, 6 6 6 6);
+	}
+	button.toggle.solo.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-solo.svg, 6 6 6 6);
+	}
+	button.toggle.record.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-record.svg, 6 6 6 6);
+	}
+	button.toggle.monitor.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+	}
+	input.checkbox:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(checkbox-off.svg);
+	}
+	input.checkbox:checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(checkbox-on.svg);
+	}
+	input.checkbox.mixed:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(checkbox-mixed.svg);
+	}
+	input.radio:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(radio-off.svg);
+	}
+	input.radio:checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(radio-on.svg);
+	}
+	menubar button:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
 	}
 }
