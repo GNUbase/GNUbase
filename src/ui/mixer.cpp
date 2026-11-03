@@ -485,9 +485,12 @@ namespace gnubase::ui
 			else if (target->HasAttribute("visibility"))
 				setHidden(idAttribute(*target, "visibility"), !event.GetParameter("value", true));
 			else if (target->GetTagName() == "fader")
-				if (const MixerChannel* channel = channelOf(target))
-					m_binding.send(
-						"channel.set", {{"channel", channel->id}, {"volume", event.GetParameter("value", 0.0F)}});
+				if (const MixerChannel* channel = channelOf(target)) // a drag is one undo step
+					m_binding.sendStep(event.GetParameter("gesture", 0),
+						"channel " + std::to_string(channel->id) + " volume", "Change Volume",
+						Json::array({Json{{"command", "channel.set"},
+							{"parameters",
+								{{"channel", channel->id}, {"volume", event.GetParameter("value", 0.0F)}}}}}));
 			break;
 		case Rml::EventId::Click:
 			if (attribute(*target, "agent") == "showAll")

@@ -3,6 +3,7 @@
 // ui::Automation as MCP's UI tools drive them: the info line shows the first selected event or part and its edits
 // change every selected one, as one undo step; the inspector shows the selected track's basics, routing, inserts and
 // notepad, and its controls change the track's channel.
+#include "testutils/testutils.h"
 #include "uiapp.h"
 
 #include "engine/engine.h"
@@ -112,6 +113,8 @@ namespace
 		{
 			return app.waitUntil([&] { return attribute(app, selector, "value") == value; });
 		}
+
+		int64_t historyPosition() { return call("history.get").at("position").get<int64_t>(); }
 
 		test::UiApp app{{1200, 600}};
 		ui::EventDisplay& display;
@@ -264,6 +267,7 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 	}
 	window.type(".inspector valuefield[control=volume]", "-6");
 	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("volume") == -6.0; }));
+	CHECK(window.shows(".inspector valuefield[control=volume]", "-6")); // whatever the C locale is
 	window.type(".inspector valuefield[control=pan]", "-50");
 	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("pan") == -0.5; }));
 
@@ -305,7 +309,13 @@ TEST_CASE("the inspector shows the selected track, and its controls change the t
 	CHECK_FALSE(hasClass(window.app, ".inspector [section=basics]", "collapsed"));
 
 	// Set up Sections, from the context menu: hiding a section hides it and keeps it in the user's layout.
-	window.click(".inspector", ui::MouseButton::Right);
+	// From an empty area, not from a control or the notepad (p. 167).
+	for (const char* control : {".inspector valuefield[control=volume]", ".inspector textarea.notepad"})
+	{
+		window.click(control, ui::MouseButton::Right);
+		CHECK_FALSE(hasClass(window.app, "#inspector-setup", "open"));
+	}
+	window.click(".inspector [row=volume] .inspector-label", ui::MouseButton::Right);
 	REQUIRE(hasClass(window.app, "#inspector-setup", "open"));
 	window.click("#inspector-setup [setup-section=notepad]");
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=notepad]", "hidden"); }));
@@ -348,5 +358,153 @@ TEST_CASE("an edit in the inspector goes to the track it started on when another
 	window.list.select({vox});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
 	REQUIRE(window.app.waitUntil([&] { return window.find("tracks", bass).at("name") == "Low End"; }));
+	CHECK(window.find("tracks", vox).at("name") == "Vox");
+}
+
+TEST_CASE("a drag or wheel turns on a volume or pan field is one undo step, up to the project's maximum", "[ui]")
+{
+	Window window;
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"name", "Vox"}, {"timeBase", "linear"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 1; }));
+	window.list.select({audio});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+	window.call("project.set", {{"maxVolume", 12.0}});
+	REQUIRE(window.app.waitUntil(
+		[&] { return attribute(window.app, ".inspector valuefield[control=volume]", "max") == "12"; }));
+
+	// A drag up to the name, far past the maximum: one step, which goes back to 0 dB.
+	int64_t position = window.historyPosition();
+	window.app.ui().drag(std::nullopt, {".inspector valuefield[control=volume]", 0, std::nullopt},
+		{".inspector textdisplay.inspector-name", 0, std::nullopt});
+	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("volume") == 12.0; }));
+	CHECK(window.historyPosition() == position + 1);
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("volume") == 0.0; }));
+
+	// Wheel turns on the pan, until the mouse leaves: one step.
+	position = window.historyPosition();
+	for (int turn = 0; turn < 3; ++turn)
+		window.app.ui().wheel(std::nullopt, {".inspector valuefield[control=pan]", 0, std::nullopt}, 0.0F, -1.0F);
+	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("pan") == 0.03; }));
+	CHECK(window.historyPosition() == position + 1);
+	window.app.ui().move(std::nullopt, {".inspector [row=pan] .inspector-label", 0, std::nullopt});
+	window.app.ui().wheel(std::nullopt, {".inspector valuefield[control=pan]", 0, std::nullopt}, 0.0F, -1.0F);
+	REQUIRE(window.app.waitUntil([&] { return window.channel(audio).at("pan") == 0.04; }));
+	CHECK(window.historyPosition() == position + 2);
+
+	// The info line's volume of an audio event, dragged down.
+	const Json media =
+		window.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+			.at("media");
+	const Json clip = window.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const uint64_t event =
+		window
+			.call("audioEvent.add", {{"track", audio}, {"clip", clip.at("id")}, {"position", 96000}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 1; }));
+	window.display.select({event});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "take"));
+	position = window.historyPosition();
+	window.app.ui().drag(std::nullopt, {"#info-line valuefield[field=volume]", 0, std::nullopt},
+		{".inspector [section=notepad]", 0, std::nullopt});
+	REQUIRE(window.app.waitUntil([&] { return window.find("audioEvents", event).at("volume") < -1.0; }));
+	CHECK(window.historyPosition() == position + 1);
+	window.call("history.undo");
+	CHECK(window.app.waitUntil([&] { return window.find("audioEvents", event).at("volume") == 0.0; }));
+}
+
+TEST_CASE("the inspector shows the channel as it is when a change is refused", "[ui]")
+{
+	Window window;
+	const uint64_t drums = window.addTrack({{"type", "group"}, {"name", "Drums"}});
+	const uint64_t bus = window.addTrack({{"type", "group"}, {"name", "Bus"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 2; }));
+	// Drums play into Bus, so Bus into Drums would be a loop.
+	const uint64_t busChannel = window.channel(bus).at("id").get<uint64_t>();
+	window.call("channel.set", {{"channel", window.channel(drums).at("id")}, {"output", busChannel}});
+	const std::string output = std::to_string(window.channel(bus).at("output").get<uint64_t>());
+	window.list.select({bus});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Bus"));
+	REQUIRE(window.shows(".inspector select[control=output]", output));
+
+	// Drums is the choice after the output bus.
+	window.click(".inspector select[control=output]");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click(".inspector select[control=output]");
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			const Json last = window.call("engine.commandLog").at("commands").back();
+			return last.at("command") == "channel.set" && last.contains("error");
+		}));
+	CHECK(window.shows(".inspector select[control=output]", output));
+	CHECK(std::to_string(window.channel(bus).at("output").get<uint64_t>()) == output);
+}
+
+TEST_CASE("the info line asks for the selection only while it shows", "[ui]")
+{
+	Window window;
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t part = window.addPart(midi, 0, 4 * g_quarter, "Intro");
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 1; }));
+	window.display.select({part});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
+
+	window.app.appUi().docking().setVisible("project", "infoLine", false);
+	window.app.shell().step(std::chrono::milliseconds(0));
+	window.call("midiPart.set", {{"part", part}, {"name", "Verse"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts")[0].at("name") == "Verse"; }));
+	CHECK_FALSE(window.app.waitUntil([&]
+		{ return attribute(window.app, "#info-line textdisplay[field=name]", "value") == "Verse"; },
+		std::chrono::milliseconds(300)));
+	window.app.appUi().docking().setVisible("project", "infoLine", true);
+	CHECK(window.shows("#info-line textdisplay[field=name]", "Verse"));
+}
+
+TEST_CASE("another project drops the inspector's edits in progress, and text fields keep their arrow keys", "[ui]")
+{
+	Window window;
+	const test::TempDir folder;
+	const std::string file = (folder.path() / "song.dawproject").string();
+	const uint64_t vox = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
+	const uint64_t bass = window.addTrack({{"type", "audio"}, {"name", "Bass"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 2; }));
+	window.call("project.save", {{"path", file}});
+	window.list.select({bass});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Bass"));
+
+	// Up and Down in the notepad stay there: the selected track doesn't change.
+	window.click(".inspector textarea.notepad");
+	window.app.ui().text(std::nullopt, "Double the chorus");
+	for (const char* key : {"Up", "Down", "Down"})
+		window.app.ui().key(std::nullopt, key);
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.list.selection() == std::vector<uint64_t>{bass});
+
+	// Another client loads the project, whose tracks have the same ids: the notes typed are dropped, not saved to the
+	// loaded project's track.
+	const uint64_t loads = window.display.loads();
+	window.call("project.load", {{"path", file}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.loads() > loads; }));
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Bass"));
+	window.click(".inspector [row=volume] .inspector-label");
+	CHECK_FALSE(window.app.waitUntil(
+		[&] { return !window.channel(bass).value("notes", "").empty(); }, std::chrono::milliseconds(300)));
+
+	// The same for a name being typed.
+	window.click(".inspector textdisplay.inspector-name", ui::MouseButton::Left, 2);
+	window.app.ui().key(std::nullopt, "Ctrl+A");
+	window.app.ui().text(std::nullopt, "Low End");
+	window.app.ui().key(std::nullopt, "Up");
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.list.selection() == std::vector<uint64_t>{bass});
+	const uint64_t reloads = window.display.loads();
+	window.call("project.load", {{"path", file}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.loads() > reloads; }));
+	window.click(".inspector [row=volume] .inspector-label");
+	CHECK_FALSE(window.app.waitUntil(
+		[&] { return window.find("tracks", bass).at("name") != "Bass"; }, std::chrono::milliseconds(300)));
 	CHECK(window.find("tracks", vox).at("name") == "Vox");
 }

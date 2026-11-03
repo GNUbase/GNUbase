@@ -3,6 +3,7 @@
 
 #include "ui/widgetutils.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Elements/ElementFormControlInput.h>
 #include <RmlUi/Core/Event.h>
@@ -67,7 +68,19 @@ namespace gnubase::ui
 	}
 
 	InfoLine::InfoLine(EventDisplay& display, EngineBinding& binding, Rml::Element& root)
-		: m_display(display), m_binding(binding), m_root(root.GetObserverPtr())
+		: m_display(display), m_binding(binding), m_root(root.GetObserverPtr()),
+		  // Another project ends the edits in progress without taking them: the ids may be the new project's too.
+		  m_reset(binding.on("project.reset",
+			  [this](const engine::Event&)
+			  {
+				  Rml::Context* context = m_root ? m_root->GetContext() : nullptr;
+				  Rml::Element* focus = context != nullptr ? context->GetFocusElement() : nullptr;
+				  if (focus == nullptr || !m_root->Contains(focus))
+					  return;
+				  m_dropping = true;
+				  focus->Blur();
+				  m_dropping = false;
+			  }))
 	{
 		root.SetInnerRML(g_rml);
 		root.AddEventListener(Rml::EventId::Change, this);
@@ -102,7 +115,8 @@ namespace gnubase::ui
 		}
 		const std::vector<uint64_t>& selection = m_display.selection();
 		const TimeFormat format = m_display.rulerFormat();
-		if (selection == m_selection && m_display.loads() == m_loads && format == m_format)
+		if ((selection == m_selection && m_display.loads() == m_loads && format == m_format) ||
+			!m_root->IsVisible(true)) // hidden: it asks once it shows
 			return;
 		m_selection = selection;
 		m_loads = m_display.loads();
@@ -162,7 +176,7 @@ namespace gnubase::ui
 		if (Rml::Element* volume = root.QuerySelector("[info-field=volume]"))
 			setClass(*volume, "hidden", !audio);
 		if (Rml::Element* volume = root.QuerySelector("valuefield[field=volume]"); volume != nullptr && audio)
-			setValue(*volume, std::to_string(volumeOf(first.at("id").get<uint64_t>())));
+			setValue(*volume, widgets::format(static_cast<float>(volumeOf(first.at("id").get<uint64_t>()))));
 		for (const char* field : {"mute", "lock"})
 			if (Rml::Element* button = root.QuerySelector("button[field=" + std::string(field) + "]"))
 				setFlag(*button, "checked", first.at(field).get<bool>());
@@ -185,7 +199,7 @@ namespace gnubase::ui
 			return;
 		}
 		// A display's, a value field's or a button's change, not that of the text field inside a display.
-		if (target == nullptr || !target->HasAttribute("field") || m_events.empty())
+		if (target == nullptr || !target->HasAttribute("field") || m_events.empty() || m_dropping)
 			return;
 		const auto field = target->GetAttribute<Rml::String>("field", "");
 		m_absolute = m_absoluteTake && m_absoluteTake->first == field;
@@ -193,11 +207,12 @@ namespace gnubase::ui
 		if (target->GetTagName() == "button")
 			edit(field, {}, event.GetParameter<bool>("value", false) ? 1.0F : 0.0F);
 		else
-			edit(field, event.GetParameter<Rml::String>("value", ""), event.GetParameter<float>("value", 0.0F));
+			edit(field, event.GetParameter<Rml::String>("value", ""), event.GetParameter<float>("value", 0.0F),
+				event.GetParameter<int>("gesture", 0));
 		m_absolute = false;
 	}
 
-	void InfoLine::edit(const std::string& field, const std::string& text, float number)
+	void InfoLine::edit(const std::string& field, const std::string& text, float number, int gesture)
 	{
 		const TimeContext context = projectTime(m_display.project());
 		const double rate = context.sampleRate;
@@ -284,6 +299,7 @@ namespace gnubase::ui
 		}
 		std::string label = field;
 		label.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(label.front())));
-		m_binding.send("history.transaction", {{"description", "Change " + label}, {"commands", std::move(commands)}});
+		// A drag, wheel turns or a held arrow key on the volume: one undo step.
+		m_binding.sendStep(gesture, "info line " + field, "Change " + label, std::move(commands));
 	}
 }

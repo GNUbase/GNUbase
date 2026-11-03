@@ -46,19 +46,22 @@ namespace gnubase::ui
 	private:
 		void ProcessEvent(Rml::Event& event) override;
 		void show();
-		void edit(const std::string& field, const std::string& text, float number);
+		// Edits the selected events; gesture is the value field's (ValueControl), 0 for others.
+		void edit(const std::string& field, const std::string& text, float number, int gesture = 0);
 		// The selected event's volume in dB, from the display's project.
 		double volumeOf(uint64_t event) const;
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_root;
-		std::vector<uint64_t> m_selection;                                 // shown, or asked for
-		uint64_t m_loads = 0;                                              // the display's project shown
-		TimeFormat m_format = TimeFormat::BarsBeats;                       // the display's ruler's
-		engine::Json m_events = engine::Json::array();                     // event.get's, the first one first
-		bool m_absolute = false;                                           // while edit applies an absolute take
+		std::vector<uint64_t> m_selection;             // shown, or asked for
+		uint64_t m_loads = 0;                          // the display's project shown
+		TimeFormat m_format = TimeFormat::BarsBeats;   // the display's ruler's
+		engine::Json m_events = engine::Json::array(); // event.get's, the first one first
+		bool m_absolute = false;                       // while edit applies an absolute take
+		bool m_dropping = false; // while another project ends the edits in progress, which then aren't taken
 		std::optional<std::pair<std::string, std::string>> m_absoluteTake; // field and text taken with Ctrl+Enter
+		Subscription m_reset;                                              // project.reset
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};
 }
