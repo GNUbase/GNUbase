@@ -6,10 +6,12 @@
 #include "engine/audio/audioengine.h"
 #include "engine/engine.h"
 #include "engine/midi/midivalues.h"
+#include "engine/settings/usersettings.h"
 #include "platform/midi/port.h"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <string>
 
 namespace gnubase::engine
@@ -182,6 +184,24 @@ namespace gnubase::engine
 		m_waitingCount = kept;
 	}
 
+	void MidiTap::thru(
+		const audio::MidiBuffer& input, const Sequencers& sequencers, const std::vector<uint8_t>& thru) noexcept
+	{
+		if (input.empty())
+			return;
+		for (size_t i = 0; i < sequencers.size() && i < thru.size(); ++i)
+		{
+			if (thru[i] == 0)
+				continue;
+			graph::EventBuffer& events = sequencers[i].second->input();
+			events.nextSource();
+			for (const audio::MidiMessage& message : input)
+				if (message.size == gnubase::midi::messageSize(message.bytes[0]) && message.bytes[0] >= 0x80 &&
+					message.bytes[0] < 0xF0)
+					events.add(toEvent(message, message.offset));
+		}
+	}
+
 	void MidiTap::capture(uint64_t position, const Instruments& instruments) noexcept
 	{
 		std::array<audio::MidiMessage, 3> messages;
@@ -275,6 +295,77 @@ namespace gnubase::engine
 							std::vector<uint8_t>(
 								message.message.bytes.begin(), message.message.bytes.begin() + message.message.size)}});
 				return Json{{"captured", std::move(captured)}, {"dropped", dropped}};
+			});
+
+		// The channel of a MIDI or instrument track.
+		const auto midiChannel = [this](const Json& track)
+		{
+			const auto id = track.get<ObjectId>();
+			for (const RenderChannel& channel : m_snapshots.latest().channels)
+				if (channel.track == id && (channel.type == TrackType::Midi || channel.type == TrackType::Instrument))
+					return channel.id;
+			throw CommandError("track " + std::to_string(id) + " is not a MIDI or instrument track");
+		};
+		engine.registerCommand(
+			{"midi.insertRetrospective", 1,
+				"Retrospective recording (reference manual pp. 353-355): inserts what the MIDI or instrument track's "
+				"MIDI input played while it didn't record, which its retrospective buffer kept (at most the user "
+				"setting midi.retrospectiveEvents, by default 10000 events), as one MIDI part, through recording.add "
+				"with the new parts mode and the user settings midi.snapPartsToBars and midi.recordFilter. What "
+				"came during playback goes where it played; what came in stop mode goes at the project cursor, with "
+				"its timing. Input after a pause of over 30 s in stop mode starts the buffer afresh, and so does "
+				"input after an insert. Returns what recording.add returns.",
+				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["track"],
+					"properties": {"track": {"type": "integer"}}})"),
+				Json::parse(R"({"type": "object", "properties": {"parts": {"type": "array"}},
+					"required": ["parts"]})"),
+				false},
+			[this, midiChannel](CommandContext& context)
+			{
+				require(m_device != nullptr, "there is no audio device; set one with audio.setDevice");
+				const Json& track = context.parameters().at("track");
+				const std::vector<RetrospectiveEvent> events = m_recorder.retrospective(midiChannel(track));
+				const MidiRecordFilter filter = MidiRecordFilter::fromJson(m_settings.value("midi.recordFilter"));
+				const double ratio = m_snapshots.latest().sampleRate / m_device->format().sampleRate;
+				const time::Samples cursor = m_transport.position();
+				MidiTakeBuilder builder;
+				time::Samples start = -1;
+				int64_t stopped = -1; // the device frame of the first input in stop mode
+				for (const RetrospectiveEvent& kept : events)
+				{
+					time::Samples at = kept.position;
+					if (at < 0)
+					{
+						if (stopped < 0)
+							stopped = static_cast<int64_t>(kept.deviceFrame);
+						at = cursor +
+							std::llround(static_cast<double>(static_cast<int64_t>(kept.deviceFrame) - stopped) * ratio);
+					}
+					if (!filter.records(kept.event))
+						continue;
+					start = start < 0 ? at : std::min(start, at);
+					builder.add(at, kept.event);
+				}
+				require(!builder.empty(), "the track's retrospective buffer holds nothing to insert");
+				builder.endNotes(builder.last() + 1);
+				const Json take = {{"position", start}, {"length", builder.last() - start + 1}};
+				return context.call("recording.add",
+					{{"midiMode", "newParts"}, {"snapToBars", m_settings.get(settings::g_midiSnapPartsToBars)},
+						{"tracks",
+							Json::array({{{"track", track}, {"takes", Json::array({take})}, {"notes", builder.notes()},
+								{"controllers", builder.controllers()}}})}});
+			});
+		engine.registerCommand(
+			{"midi.clearRetrospective", 1,
+				"Empties the retrospective buffer of a MIDI or instrument track, or of every track without track.",
+				Json::parse(R"({"type": "object", "additionalProperties": false,
+					"properties": {"track": {"type": "integer"}}})"),
+				Json::object(), false},
+			[this, midiChannel](CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				m_recorder.clearRetrospective(parameters.contains("track") ? midiChannel(parameters.at("track")) : 0);
+				return Json::object();
 			});
 	}
 }

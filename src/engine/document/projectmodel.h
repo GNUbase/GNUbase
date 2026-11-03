@@ -47,8 +47,9 @@ namespace gnubase::engine
 		time::Samples end = 0;
 		time::Ticks startTicks = 0;
 		time::Ticks endTicks = 0;
-		std::vector<ObjectId> tracks; // the tracks it was copied from, from top to bottom
-		std::vector<AudioEvent> audioEvents;
+		std::vector<ObjectId> tracks;        // the tracks it was copied from, from top to bottom
+		std::vector<AudioEvent> audioEvents; // with those of the audio parts
+		std::vector<AudioPart> audioParts;
 		std::vector<MidiPart> midiParts;
 		std::vector<AutomationLane> automation; // the points in the range, with the curve's values at its edges
 	};
@@ -128,7 +129,8 @@ namespace gnubase::engine
 		// The project of the template with this name. Throws CommandError if there is none or the name isn't a file
 		// name.
 		Project loadTemplate(const std::string& name) const;
-		void record(std::string action, const Project& before, CommandContext& context);
+		// Records what changed since before as a step; one with a merge key joins the last step if that has the key.
+		void record(std::string action, const Project& before, CommandContext& context, std::string merge = {});
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);
 		void announceHistory(CommandContext& context) const;

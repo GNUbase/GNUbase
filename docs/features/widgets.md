@@ -41,6 +41,10 @@ Widgets with a number share their behaviour (reference manual p. 1598, "Editing 
 - **Wheel and keys.** One wheel line or arrow key (Up and Right for more) changes it by a step. Over a widget the wheel
   turns it rather than scrolling what's around it. The widgets take the focus when clicked, and with Tab.
 - **Reset.** Ctrl-click (Cmd-click on macOS) sets the default.
+- **Gestures.** `change` also sends `gesture`, an integer: the changes of one drag, of wheel turns until the mouse
+  leaves the widget, of an arrow key until it is released, and a typed value each have one, and the next gesture of any
+  widget has a higher one. Documents make a gesture one undo step with it (`EngineBinding::sendStep`,
+  [edit-history.md](edit-history.md)).
 - `disabled` gives `:disabled` and ignores the user.
 
 The widgets:
@@ -50,17 +54,20 @@ The widgets:
 - `<slider>`: horizontal, `.slider-track` filled up to the `.slider-thumb` (`.slider-fill`).
 - `<valuefield>`: the value as text, with `decimals` (2) and a `unit`, drawn like a display. A double click, or Enter
   while it has the focus, edits it as text (state class `.editing`): Enter, or leaving the field, takes the number
-  typed, clamped to the range; Escape, or text that isn't a number, keeps the value. With `autofocus`, it is edited,
-  all of it selected, whenever it gets a visible focus: when its document shows it focused, or Tab moves to it, but
-  not on a click. Keys typed before the next update go into it too. In a dialog it is then the main field, which works
-  like a text field: Enter takes the number typed and clicks OK, Escape cancels. While the user types, the field's
-  text field sends RmlUi's own
-  `change` events with the text; the field's `change`, with the field as its target, has the number.
+  typed, clamped to the range; Escape, text that isn't a number, or nothing typed keeps the value, so that a value with
+  more decimals than the field shows isn't rounded to them. Typing the number shown takes it. With `autofocus`, it is
+  edited, all of it selected, whenever it gets a visible focus: when its document shows it focused, or Tab moves to it,
+  but not on a click. Keys typed before the next update go into it too. In a dialog it is then the main field, which
+  works like a text field: Enter takes the number typed and clicks OK, Escape cancels. While the user types, the field's
+  text field sends RmlUi's own `change` events with the text; the field's `change`, with the field as its target, has
+  the number.
 
 `<textdisplay>` shows text, its `value` attribute, such as a position in a time format; documents give it the look of
 a display with the class `.display`. A double click edits it as text (`.editing`): Enter, or leaving the field, sends
 `change` with the text typed as `value`, a string, and the document reads it and sets the value it takes; Escape
-keeps the value, and so does a field whose text is still the one it started with. The transport controls use it for positions ([transport-bar.md](transport-bar.md)).
+keeps the value, and so does a field nothing was typed into. Any typing counts, also typing the text the field
+started with: a display may show a rounded value, or one that has moved on since, such as the position during
+playback. The transport controls use it for positions ([transport-bar.md](transport-bar.md)).
 
 Code places the parts from the value (the pointer's rotation, the cap's and the thumb's position, the fill's width),
 which is geometry from data; the shared style sheet lays out the rest. Value fields parse and print numbers in the C
@@ -79,10 +86,11 @@ attributes, through a data model or directly.
 
 - `<menu>` holds `<menuitem>`s and `<menuseparator>`s and stays hidden until it opens, with the state class `.open`:
   under a button whose `menu` attribute names it by id (a second click on the button closes it), or at the mouse on
-  a right click on an element whose `contextmenu` attribute names it; with a modifier key held (Ctrl, Alt, Shift or
-  Cmd), the menu that its `modifiercontextmenu` attribute names instead, if it has one, as the event display's toolbox
-  does ([tools.md](tools.md)). It opens inside the window, moved left or up where it would stick out. Put menus
-  straight into the body, so that no container clips them.
+  a right click on an element whose `contextmenu` attribute names it: the nearest one with the attribute, so an empty
+  `contextmenu` keeps the menu of an element around it from opening on a control. With a modifier key held (Ctrl,
+  Alt, Shift or Cmd), the menu that its `modifiercontextmenu` attribute names opens instead, if it has one, as the
+  event display's toolbox does ([tools.md](tools.md)). It opens inside the window, moved left or up where it would
+  stick out. Put menus straight into the body, so that no container clips them.
 - A click on an item is a click on that item, for the document to handle, and closes the menu. Escape and a click
   outside close it too. A `disabled` item gets `:disabled` and ignores clicks; `type="toggle"` makes an item checkable,
   as for buttons.
@@ -188,8 +196,9 @@ picker next to their OK and Cancel buttons. Not yet: the reference's context men
 buttons that turn on and off, look different when on, and follow a data model. Knobs, faders, sliders and value
 fields are dragged (also with Shift), turned with the wheel, stepped with the arrow keys and reset with Ctrl-click,
 their parts placed where the value says; data-value binds them both ways; the wheel turns them instead of scrolling
-the page; value fields take typed numbers and leave bad ones. Text displays send the text typed with Enter and nothing
-with Escape or when nothing was typed. Meters show their level and peak at the right heights.
+the page; value fields take typed numbers, also the number they show, and leave bad ones and values with more
+decimals than they show when nothing was typed. Text displays send the text typed with Enter, also the text they
+started with, and nothing with Escape or when nothing was typed. Meters show their level and peak at the right heights.
 Menus open under their button and at the mouse, inside the window, show submenus on hover, close on an item, a click
 elsewhere and Escape, skip disabled items, and work with the keys; items with a submenu show an arrow, and Right and
 Left go into and out of the submenu, but not into one with nothing to focus. In a menu bar the mouse and Right and

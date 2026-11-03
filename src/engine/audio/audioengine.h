@@ -171,6 +171,7 @@ namespace gnubase::engine
 			std::vector<Release> releases;
 			MidiTap::Sequencers sequencers;     // of the MIDI and instrument channels, for midi.inject
 			std::vector<uint64_t> destinations; // per sequencer, where it plays (MidiSequencer::playOn)
+			std::vector<uint8_t> thru;          // per sequencer, 1 if it plays all MIDI inputs (MidiTap::thru)
 			MidiTap::Instruments instruments;   // for midi.capture
 			std::vector<int> mainPorts;         // the main mix's device channels, for auditioning and listening
 			int mainOutput = -1;                // the main mix's index in outputs, or -1
@@ -264,7 +265,8 @@ namespace gnubase::engine
 		void attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc, uint64_t generation);
 		// The releases for a new program: those pending that the audio thread hasn't done yet.
 		std::vector<Release> releases();
-		// Puts every channel's processor into a channel strip with the channel's fader and automation.
+		// Puts every channel's processor into a channel strip with the channel's fader and automation, and the
+		// plugins of its slots into slot strips that get their automation; after attachSlots.
 		void attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
 		// Brings the slots' plugins in line with the snapshot and gives the slot nodes those that are ready.
 		void attachSlots(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
@@ -382,7 +384,7 @@ namespace gnubase::engine
 		std::map<ObjectId, int> m_sourceNodes;          // rebuild: per channel
 		Transport m_transport;                          // advanced by the audio thread
 		MidiPorts m_midi;
-		audio::MidiBuffer m_midiInput; // the block's messages from all MIDI inputs, for MIDI recording (#97)
+		audio::MidiBuffer m_midiInput; // the block's messages from all MIDI inputs, for MIDI thru (MidiTap::thru)
 		MidiTap m_tap;                 // midi.inject and midi.capture
 
 		// Changed only while the device is stopped.

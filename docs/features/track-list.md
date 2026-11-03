@@ -114,7 +114,7 @@ Width (`#track-name-width`, global), held at the setting's limits. OK saves ever
 ## Not yet
 
 Lanes and comping (#99), write automation (#122),
-recording from instrument and MIDI tracks (#97), dividing the track list, track visibility agents and the track type
+dividing the track list, track visibility agents and the track type
 filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
 the settings dialog's groups, controls area preview, presets, Reset All and the MIDI tracks' Output Group and
 Channel Width (p. 191), the track height presets menu, snap track heights, Shift-click to

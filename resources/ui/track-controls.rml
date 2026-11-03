@@ -85,8 +85,8 @@
 		-- The controls each type can show (ui/tracklist.h applies the same), and how the dialog names them.
 		local available = {
 			audio = {"mute", "solo", "record", "monitor", "read", "timeBase"},
-			instrument = {"mute", "solo", "read", "timeBase"},
-			midi = {"mute", "solo", "read", "timeBase"},
+			instrument = {"mute", "solo", "record", "monitor", "read", "timeBase"},
+			midi = {"mute", "solo", "record", "monitor", "read", "timeBase"},
 			group = {"mute", "solo", "read"},
 			effect = {"mute", "solo", "read"},
 			folder = {"mute", "solo", "read"},

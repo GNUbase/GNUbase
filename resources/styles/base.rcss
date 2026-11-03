@@ -1425,6 +1425,13 @@ splitter.column .splitter-grip-horizontal
 	padding: 4dp;
 }
 
+/* The notepad and the name keep their arrow keys, also at the first and last line: they move the focus to no other
+   control, and no key command runs for them (ui::KeyCommands::press). */
+.inspector textarea.notepad, .inspector-name input
+{
+	nav: none;
+}
+
 .inspector-header textdisplay
 {
 	display: block;
