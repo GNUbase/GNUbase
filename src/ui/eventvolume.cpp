@@ -181,7 +181,8 @@ namespace gnubase::ui
 		const double volume = draggedVolume(shown.id);
 		const std::vector<engine::VolumePoint> curve = draggedCurve(shown.id);
 		// Events at 0 dB without a curve show no line, unless the volume is being dragged.
-		if (curve.empty() && volume == 0.0 && !(selected && m_drag == Drag::Volume && m_dragMoved))
+		const bool dragging = selected && m_drag == Drag::Volume && m_dragMoved;
+		if (curve.empty() && volume == 0.0 && !dragging)
 			return;
 		lane.volumes.push_back(
 			{shown.start, shown.end, fades.rate, fades.offset, gain(volume), engine::gainPoints(curve), selected});
