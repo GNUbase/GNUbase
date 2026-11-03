@@ -3,13 +3,17 @@
 
 #include "engine/engine.h"
 #include "scripting/runtime.h"
+#include "ui/colormenu.h"
 #include "ui/docking.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/gpurenderer.h"
+#include "ui/infoline.h"
+#include "ui/inspector.h"
 #include "ui/keycommands.h"
 #include "ui/mainmenu.h"
 #include "ui/markers.h"
+#include "ui/mixer.h"
 #include "ui/poolpanel.h"
 #include "ui/projectfiles.h"
 #include "ui/rmlui.h"
@@ -23,6 +27,8 @@
 
 #include <RmlUi/Core/ObserverPtr.h>
 
+#include <array>
+#include <cstdint>
 #include <filesystem>
 #include <iosfwd>
 #include <memory>
@@ -72,6 +78,16 @@ namespace gnubase::app
 		// The markers window while it is open, or null.
 		ui::MarkersWindow* markers() { return m_shell.find(m_markersWindow) != nullptr ? m_markers.get() : nullptr; }
 		ui::WindowId markersWindow() const { return m_markersWindow; }
+		// The mixers (#106, docs/features/mixer-window.md): mixer window number 1 to 4 opens in a window of its own
+		// (resources/ui/mixer.rml), hidden like the main window, or closes if it is open: the UI commands window.mixer
+		// (F3), window.mixer2, window.mixer3 and window.mixer4. Returns it, or null when it closed it. Throws
+		// std::runtime_error if the document can't be loaded. mixer is the mixer of an open window, or null;
+		// lowerZoneMixer the project window's, while the docking system shows its panel somewhere.
+		ui::Mixer* toggleMixer(int number);
+		ui::Mixer* mixer(int number);
+		ui::WindowId mixerWindow(int number) const { return m_mixers.at(static_cast<size_t>(number - 1)).window; }
+		ui::Mixer* lowerZoneMixer() { return m_lowerMixer.lock().get(); }
+
 		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
 		// window.studioSetup, which the main menu's Studio menu runs. While it is open, this brings it to the front
 		// instead: MCP and Lua can run the command then. Throws std::runtime_error if the document can't be loaded.
@@ -123,6 +139,10 @@ namespace gnubase::app
 			ui::Window& window, std::string title, std::vector<ui::FileFilter> filters, bool many, bool clipsOnly);
 		// Media > Find Missing Files: the OS's folder dialog, then media.locate looks for the missing files there.
 		void chooseMissingFolder(ui::Window& window);
+		// The lower zone's mixer panel, the mixer windows' Visibility tabs and their UI commands.
+		void addMixers();
+		// The OS's file dialog for a track's picture in the mixer, then track.set.
+		void choosePicture(uint64_t track);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name) const;
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
@@ -157,6 +177,8 @@ namespace gnubase::app
 		TransportWindow m_timeDisplay;
 		std::unique_ptr<ui::StatusLine> m_statusLine; // too
 		std::unique_ptr<ui::TrackList> m_trackList;   // and before the display
+		std::unique_ptr<ui::ColorMenu> m_colorMenu;   // before the track list
+		std::unique_ptr<ui::InfoLine> m_infoLine;     // and this too
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
 		bool m_canUndo = false;
 		bool m_canRedo = false;
@@ -166,6 +188,15 @@ namespace gnubase::app
 		Rml::ObserverPtr<Rml::Element> m_studioSetup;  // the open studio setup dialog's document
 		Rml::ObserverPtr<Rml::Element> m_projectSetup; // the open project setup dialog's document
 		std::weak_ptr<ui::PoolPanel> m_pool;           // the docking system owns it while it is there
+		std::weak_ptr<ui::Inspector> m_inspector;      // so too
 		std::vector<ui::Subscription> m_poolResults;   // what the pool commands did, for the pool
+		// A mixer window: open while the shell has it; the app lets go of the mixer once the user closed the window.
+		struct MixerWindow
+		{
+			ui::WindowId window = 0;
+			std::unique_ptr<ui::Mixer> mixer;
+		};
+		std::array<MixerWindow, 4> m_mixers;
+		std::weak_ptr<ui::Mixer> m_lowerMixer; // the docking system owns it while it is there
 	};
 }

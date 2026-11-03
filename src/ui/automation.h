@@ -76,8 +76,10 @@ namespace gnubase::ui
 		engine::Json click(std::optional<WindowId> window, const Target& target, MouseButton button, int count,
 			const std::vector<std::string>& modifiers);
 
-		// Presses the left button at from, moves to to in steps and releases it there, holding the modifiers. Returns
-		// the element under the mouse at the end.
+		// Presses the left button at from, moves to to in steps and releases it there, holding the modifiers. RmlUi's
+		// clock (ui/rmlui.h) moves on by a second between the press and the first step, as if the button were held
+		// that long, so that presses that become drags only after a delay do. Returns the element under the mouse at
+		// the end.
 		engine::Json drag(std::optional<WindowId> window, const Target& from, const Target& to,
 			const std::vector<std::string>& modifiers = {});
 

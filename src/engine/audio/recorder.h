@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -34,8 +35,8 @@ namespace gnubase::engine
 		}
 	};
 
-	// The format of the project's record files: 32-bit float WAV at its sample rate, until the project setup has a
-	// record file type and bit depth (#78); then this function reads them.
+	// The format of the project's record files: the project setup's record file type and bit depth at the project's
+	// sample rate. A Broadcast Wave file gets a bext chunk; the recorder fills in what belongs to each file.
 	WriteOptions recordFormat(const Project& project);
 
 	// Where and how a recording that starts writes its files.
@@ -50,9 +51,12 @@ namespace gnubase::engine
 
 		bool operator==(const RecordSetup& other) const
 		{
+			const auto timeReference = [](const WriteOptions& options)
+			{ return options.broadcast ? std::optional(options.broadcast->timeReference) : std::nullopt; };
 			return project == other.project && folder == other.folder && format.format == other.format.format &&
 				format.sampleFormat == other.format.sampleFormat && format.sampleRate == other.format.sampleRate &&
-				mode == other.mode && preRecordFrames == other.preRecordFrames && tracks == other.tracks;
+				timeReference(format) == timeReference(other.format) && mode == other.mode &&
+				preRecordFrames == other.preRecordFrames && tracks == other.tracks;
 		}
 	};
 

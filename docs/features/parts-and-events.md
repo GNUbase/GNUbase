@@ -73,8 +73,11 @@ modifiers, which change the keys below):
 |---|---|---|
 | Click | Selects the event, or nothing on an empty spot | p. 253 |
 | Ctrl (Cmd) or Shift and a click | Adds the event to the selection or takes it out | |
-| Drag | Moves the selection, and onto the track it is dragged to when it is on one track; snapped ([snap.md](snap.md)) | p. 256 |
+| Drag | Moves the selection, also onto other tracks; snapped ([snap.md](snap.md)) | p. 256 |
 | Alt and a drag; with Shift too | Copies the selection; shared copies of MIDI parts | pp. 270–271 |
+| Ctrl (Cmd) while dragging | Keeps a move or copy across or up and down, whichever the mouse went further | pp. 256, 271 |
+| Left, Right | Selects the event before or after the selected one on its track | p. 253 |
+| Up, Down | Selects the event on the nearest track above or below that has events; tracks while no event is selected | p. 253 |
 | Drag within 6 dp of an event's left or right edge | Resizes the selection: normal sizing, or sizing moves contents (`setSizingMovesContents`) | p. 265 |
 | Alt and a click | Splits the event there | p. 268 |
 | Double click on an empty MIDI or instrument lane | Adds a one-bar part at the bar, or one between the locators when the click is between them | p. 251 |
@@ -94,8 +97,30 @@ Copies, duplicates and new parts become the selection. `app::AppUi` binds the re
 window ([key-commands.md](key-commands.md)): Delete and Backspace delete, Mod+D duplicates, Mod+K repeats, Alt+X splits
 at the cursor, Mod and the arrows nudge, and so on.
 
-Not yet: the info line (#89, which `event.get` feeds), the arrow keys' selection, the drag
-delay, a lock and a shared copy icon on events, and moving a selection on several tracks to other tracks.
+- **Drag delay** (p. 256). A press on events moves them only once it is held for 200 ms, so that a click doesn't
+  move them by accident; a drag released sooner does nothing. The reference's Drag Delay setting comes with the
+  preferences. `ui::Automation::drag`, and so MCP's `ui_drag` and the UI tests, holds the button long enough: it
+  moves RmlUi's clock on by a second between the press and the first step.
+- **Restricted drags.** With Ctrl (Cmd) held while dragging, a move or copy goes across, keeping its tracks, or up
+  and down, keeping its time, whichever way the mouse went further. Ctrl held at the press counts too: a click,
+  also one that moved a little before the drag delay, still adds the event to the selection or takes it out. With a
+  copy's tool modifier and Ctrl (Alt and Ctrl), the press acts as with the tool modifier alone and the copy is
+  restricted. Ctrl doesn't restrict when the keys held are a copy's tool modifier themselves ([tools.md](tools.md)). The reference's tool modifier for it comes with the
+  preferences; until then it is always Ctrl (Cmd).
+- **Onto other tracks.** Every selected event goes as many tracks up or down as the mouse, onto the lanes shown
+  (hidden tracks don't count). It changes tracks only when every event lands on a track of its type (audio events
+  on audio tracks, MIDI parts on MIDI and instrument tracks); otherwise it only moves in time. A selection on
+  several tracks moves or copies with an `event.move` or `event.copy` per track in one `history.transaction`, one
+  undo step.
+- **The arrow keys** (pp. 218, 253): Left and Right (`edit.selectPrevious`, `edit.selectNext`) select the event
+  before the first selected one or after the last on its track; at the first or last event, or with no event
+  selected, they do nothing. Up and Down always step the track selection (`track.selectPrevious`,
+  `track.selectNext`, [track-list.md](track-list.md)); while an event is selected, they also select the first event
+  on the newly selected track. On a track without events the selected events stay selected, so the next Up or Down
+  goes on selecting events.
+
+Not yet: the info line (#89, which `event.get` feeds), a lock and a shared copy icon on events, and scrolling an event
+that the arrow keys select into view.
 
 ## Checks
 
@@ -104,13 +129,17 @@ delay, a lock and a shared copy icon on events, and moving a selection on severa
   copy; resizing both edges in both modes and its limits; splitting at the cursor and the locators, with and without
   splitting notes; gluing; filling the locators; `event.get`.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): selecting with clicks and Ctrl, moving and copying
-  with drags, shared copies with Alt and Shift, onto another track; resizing at the edges, splitting with Alt, adding
+  with drags, shared copies with Alt and Shift, onto another track; drags restricted with Ctrl, across and down, moving
+  and copying, and Ctrl and a click still deselecting; the drag delay (a drag released at once is a click, one held
+  past it shows and moves); a selection on two tracks moved two tracks down and copied back in one undo step each, and
+  only in time when a track's type doesn't fit; the arrow keys' commands along a track and at its ends; resizing at the edges, splitting with Alt, adding
   parts with a double click at a bar and between the locators; the edit commands on the selection (delete, mute,
   lock, nudging, duplicating, moving to the cursor, splitting at the cursor and the locators, gluing, filling the
   locators with the last copy cut, converting a shared copy to a real one), the select submenu, muted events shown
   greyed out and locked ones kept.
 - `tests/uiapp_tests.cpp` presses the default keys in the app's project window: select all, duplicate, mute, nudge
-  and Backspace; and Mod+K, whose Repeat Events dialog makes three shared copies, and real copies from just a number
-  typed and Enter.
+  and Backspace; Left and Right selecting parts, Up and Down stepping the tracks and selecting their first parts, also across a track
+  without parts, and only the track with no part selected; and Mod+K,
+  whose Repeat Events dialog makes three shared copies, and real copies from just a number typed and Enter.
 - `tests/lua/events.lua`: a muted part is silent and plays again after undo; duplicating, shared copies, splitting and
   gluing from Lua.

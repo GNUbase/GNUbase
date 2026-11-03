@@ -299,11 +299,12 @@ namespace gnubase::app
 		tools.push_back({"ui_key",
 			"Presses and releases a key with modifiers, written like \"Enter\", \"Ctrl+Shift+S\" or \"Mod+Z\": "
 			"letters, digits, F1 to F24, Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, "
-			"Up, Down, Left, Right, Space, . , - +, and on the keypad Num0 to Num9, NumEnter, Num* Num/ Num+ Num- "
-			"Num.; modifiers Mod (the platform's command key: Cmd on macOS, Ctrl elsewhere), Ctrl, Shift, Alt and Meta "
-			"(Cmd). A key that the focused element doesn't use runs its key command, e.g. Space starts or stops "
-			"playback. With action down the key stays pressed until an action up for it, e.g. Num+, Forward, winds "
-			"until then. Keys don't type text: use ui_text for that. Returns the element with the keyboard focus.",
+			"Up, Down, Left, Right, Space, . , - +, Alt on its own (which opens the menu bar on Windows and Linux), "
+			"and on the keypad Num0 to Num9, NumEnter, Num* Num/ Num+ Num- Num.; modifiers Mod (the platform's "
+			"command key: Cmd on macOS, Ctrl elsewhere), Ctrl, Shift, Alt and Meta (Cmd). A key that the focused "
+			"element doesn't use runs its key command, e.g. Space starts or stops playback. With action down the key "
+			"stays pressed until an action up for it, e.g. Num+, Forward, winds until then. Keys don't type text: use "
+			"ui_text for that. Returns the element with the keyboard focus.",
 			object({{"window", windowProperty()}, {"keys", {{"type", "string"}}},
 					   {"action",
 						   {{"type", "string"}, {"enum", {"press", "down", "up"}},

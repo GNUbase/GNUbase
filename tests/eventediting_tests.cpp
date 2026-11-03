@@ -10,16 +10,21 @@
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/fonts.h"
+#include "ui/rmlui.h"
 #include "ui/shell.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Input.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -249,6 +254,13 @@ TEST_CASE("the object selection tool's modifiers act on events whatever keys the
 	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
 	CHECK(f.parts()[2].at("position") == 8 * g_quarter);
 	CHECK(f.parts()[2].at("shared") == 0);
+	// Ctrl copying, it doesn't restrict the drag: the copy goes later and down onto a new track.
+	const Json midi = f.call("track.add", {{"type", "midi"}}).at("track");
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events").size() == 3 && f.lanes("events")[1].events.size() == 3; }));
+	f.drag(450, 60, 650, 100, {"ctrl"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 4; }));
+	CHECK(f.parts()[3].at("position") == 12 * g_quarter);
+	CHECK(f.parts()[3].at("track") == midi.at("id"));
 }
 
 TEST_CASE("a double click below the tracks adds a MIDI track", "[unit]")
@@ -657,22 +669,48 @@ TEST_CASE("the draw tool draws parts on MIDI tracks, snapped; the line tool wait
 	CHECK(f.audioEvents().size() == 1);
 }
 
-TEST_CASE("the play tool plays from where it presses until it is released", "[unit]")
+TEST_CASE("the play tool auditions the pressed audio track until it is released, or scrubs it", "[unit]")
 {
 	Fixture f;
 	f.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
 	f.call("audio.start");
-	std::vector<std::pair<bool, int64_t>> states; // playing, position
-	const ui::Subscription subscription = f.binding.on("transport.changed", [&states](const engine::Event& event)
-		{ states.emplace_back(event.data.at("playing").get<bool>(), event.data.at("position").get<int64_t>()); });
-	const auto started = [&states]
-	{ return std::find_if(states.begin(), states.end(), [](const auto& state) { return state.first; }); };
+	const auto audio = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
+	std::vector<Json> auditions;
+	const ui::Subscription subscription =
+		f.binding.on("audition.changed", [&auditions](const engine::Event& event) { auditions.push_back(event.data); });
+	const auto modes = [&auditions]
+	{
+		std::vector<std::string> result;
+		result.reserve(auditions.size());
+		for (const Json& audition : auditions)
+			result.push_back(audition.at("mode").get<std::string>());
+		return result;
+	};
 	f.display.setTool(ui::Tool::Play);
+	CHECK(f.display.playMode() == ui::PlayMode::Play);
+	CHECK(f.document.GetElementById("display")->GetAttribute<std::string>("play-mode", "") == "play");
+
+	// A click on the audio lane at 3 seconds auditions its track from there until the release; the transport stays.
+	f.click(300, 10);
+	REQUIRE(f.waitUntil([&modes] { return modes() == std::vector<std::string>{"play", "off"}; }));
+	CHECK(auditions[0].at("track") == audio);
+	CHECK(f.call("transport.get").at("playing") == false);
+	CHECK(f.call("transport.get").at("position") == 0);
+	// On the MIDI lane it does nothing.
 	f.click(300, 60);
-	REQUIRE(f.waitUntil([&states, &started] { return started() != states.end(); }));
-	CHECK(started()->second >= 144000);
-	REQUIRE(f.waitUntil([&f] { return f.call("transport.get").at("playing") == false; }));
+	f.step();
+	CHECK(auditions.size() == 2);
+
+	// Scrubbing: a drag from 2.2 to 2.4 seconds scrubs the track and moves the cursor along.
+	f.display.setPlayMode(ui::PlayMode::Scrub);
+	CHECK(f.document.GetElementById("display")->GetAttribute<std::string>("play-mode", "") == "scrub");
+	f.drag(220, 10, 240, 10);
+	REQUIRE(f.waitUntil([&modes] { return modes().size() >= 4 && modes().back() == "off"; }));
+	CHECK(modes()[2] == "scrub");
+	CHECK(f.call("transport.get").at("position") == 115200);
+	CHECK(f.call("transport.get").at("playing") == false);
 	CHECK(f.parts().size() == 1); // nothing edited
+	CHECK(f.audioEvents().size() == 1);
 }
 
 TEST_CASE("the range selection tool selects ranges, snapped, by dragging and double clicking", "[unit]")
@@ -750,6 +788,169 @@ TEST_CASE("with the selection tools combined, a lane's upper half selects ranges
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
 	f.drag(150, 75, 250, 75);
 	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 4 * g_quarter; }));
+}
+
+TEST_CASE("Ctrl and a drag moves or copies events only across or only up and down", "[unit]")
+{
+	Fixture f;
+	const Json from = f.parts()[0].at("track");
+	const Json midi = f.call("track.add", {{"type", "midi"}}).at("track");
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events").size() == 3; }));
+	// Mostly across: the part moves a second later and stays on its track, though the mouse ends a lane lower.
+	f.drag(150, 60, 250, 100, {"ctrl"});
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 4 * g_quarter; }));
+	CHECK(f.parts()[0].at("track") == from);
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+	// Mostly down: onto the track below, at the same time, though the mouse ends 20 dp later.
+	f.drag(250, 60, 270, 100, {"ctrl"});
+	REQUIRE(f.waitUntil([&f, &midi] { return f.parts()[0].at("track") == midi.at("id"); }));
+	CHECK(f.parts()[0].at("position") == 4 * g_quarter);
+	// With Alt too, a copy two seconds later on the same track, though the mouse ends lower.
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[2].events.size() == 1; })); // once the display shows it
+	f.drag(250, 100, 450, 130, {"ctrl", "alt"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2; }));
+	CHECK(f.parts()[1].at("position") == 8 * g_quarter);
+	CHECK(f.parts()[1].at("track") == midi.at("id"));
+	// Ctrl and a click still takes a selected event out of the selection.
+	REQUIRE(f.waitUntil([&f] { return f.display.selection().size() == 1 && f.display.selection()[0] != f.part; }));
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[2].events.size() == 2; }));
+	f.click(450, 100, {"ctrl"});
+	CHECK(f.display.selection().empty());
+	// Ctrl and Alt on an event that isn't selected copies it alone, as Alt does, rather than adding it.
+	f.display.select({f.event});
+	f.drag(300, 100, 500, 105, {"ctrl", "alt"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 3; }));
+	CHECK(f.parts()[2].at("position") == 8 * g_quarter);
+	CHECK(f.audioEvents().size() == 1);
+}
+
+TEST_CASE("a press becomes a move of events only after the drag delay", "[unit]")
+{
+	Fixture f;
+	Rml::Context& context = f.window.context();
+	Rml::Element* lanes = f.document.QuerySelector("event-lanes.events");
+	REQUIRE(lanes != nullptr);
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true); // RmlUi's time stands still but for advance()
+	const auto move = [&context, lanes](double x, double y, int keys = 0)
+	{
+		context.ProcessMouseMove(
+			static_cast<int>(lanes->GetAbsoluteLeft() + x), static_cast<int>(lanes->GetAbsoluteTop() + y), keys);
+	};
+	const auto previewStart = [&f] { return f.lanes("selected-events")[1].events.at(0).start; };
+
+	// Pressed, dragged and released at once: a click, which selects the part and leaves it where it is.
+	move(150, 60);
+	context.ProcessMouseButtonDown(0, 0);
+	move(250, 60);
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+	f.run("edit.mute"); // after the move, if the click had sent one
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("mute") == true; }));
+	CHECK(f.parts()[0].at("position") == 2 * g_quarter);
+	clock->advance(1.0); // no double click with the next press
+
+	// The same with Ctrl, though the mouse moved a little: a click, which takes the part out of the selection.
+	move(150, 60, Rml::Input::KM_CTRL);
+	context.ProcessMouseButtonDown(0, Rml::Input::KM_CTRL);
+	move(155, 60, Rml::Input::KM_CTRL);
+	context.ProcessMouseButtonUp(0, Rml::Input::KM_CTRL);
+	f.step();
+	CHECK(f.display.selection().empty());
+	clock->advance(1.0);
+	// Resizing doesn't wait: the audio event's right edge 20 dp further at once.
+	move(248, 20);
+	context.ProcessMouseButtonDown(0, 0);
+	move(268, 20);
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 24000 + 9600; }));
+	clock->advance(1.0);
+	f.display.select({f.part});
+
+	// Held past the delay, the drag shows where the part goes and moves it there.
+	move(150, 60);
+	context.ProcessMouseButtonDown(0, 0);
+	move(250, 60);
+	f.step();
+	CHECK(std::abs(previewStart() - 1.0) < 1e-9);
+	clock->advance(0.5);
+	move(252, 60);
+	f.step();
+	CHECK(previewStart() > 1.5);
+	move(250, 60);
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 4 * g_quarter; }));
+	clock->freeze(false);
+}
+
+TEST_CASE("a selection on several tracks moves and copies onto other tracks of their types", "[unit]")
+{
+	Fixture f;
+	const Json from = f.parts()[0].at("track");
+	const Json firstAudio = f.audioEvents()[0].at("track");
+	const Json audio = f.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
+	const Json midi = f.call("track.add", {{"type", "midi"}}).at("track");
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events").size() == 4; }));
+	const auto undo = [&f] { return f.call("history.get").at("steps").size(); };
+	const size_t before = undo();
+	f.display.select({f.event, f.part});
+
+	// A lane down would put the audio event on a MIDI track and the part on an audio track: they only move later.
+	f.drag(150, 60, 250, 100);
+	REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("position") == 4 * g_quarter; }));
+	CHECK(f.parts()[0].at("track") == from);
+	CHECK(f.audioEvents()[0].at("position") == 96000 + 48000);
+
+	// Two lanes down, each onto the track of its type there, in one undo step.
+	f.drag(250, 60, 250, 140);
+	REQUIRE(f.waitUntil([&f, &midi] { return f.parts()[0].at("track") == midi.at("id"); }));
+	CHECK(f.audioEvents()[0].at("track") == audio.at("id"));
+	CHECK(f.parts()[0].at("position") == 4 * g_quarter);
+	CHECK(f.audioEvents()[0].at("position") == 96000 + 48000);
+	CHECK(undo() == before + 2);
+
+	// Alt and a drag two lanes up copies both back onto the first two tracks, and selects the copies.
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[3].events.size() == 1; })); // once the display shows it
+	f.drag(250, 140, 250, 60, {"alt"});
+	REQUIRE(f.waitUntil([&f] { return f.parts().size() == 2 && f.audioEvents().size() == 2; }));
+	CHECK(f.parts()[1].at("track") == from);
+	CHECK(f.audioEvents()[1].at("track") == firstAudio);
+	std::vector<uint64_t> copies{f.audioEvents()[1].at("id").get<uint64_t>(), f.parts()[1].at("id").get<uint64_t>()};
+	std::sort(copies.begin(), copies.end());
+	REQUIRE(f.waitUntil([&f, &copies] { return f.display.selection() == copies; }));
+	CHECK(undo() == before + 3);
+}
+
+TEST_CASE("the arrow keys' commands select the event before or after on its track", "[unit]")
+{
+	Fixture f;
+	const Json midi = f.parts()[0].at("track");
+	const uint64_t later =
+		f.call("midiPart.add", {{"track", midi}, {"position", 8 * g_quarter}, {"length", 2 * g_quarter}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[1].events.size() == 2; }));
+	using Ids = std::vector<uint64_t>;
+
+	// Without a selection, nothing.
+	f.run("edit.selectNext");
+	CHECK(f.display.selection().empty());
+	// Along the track, and no further than its ends.
+	f.display.select({f.part});
+	f.run("edit.selectNext");
+	CHECK(f.display.selection() == Ids{later});
+	CHECK(f.document.GetElementById("display")->GetAttribute<std::string>("selection", "") == std::to_string(later));
+	f.run("edit.selectNext");
+	CHECK(f.display.selection() == Ids{later});
+	f.run("edit.selectPrevious");
+	CHECK(f.display.selection() == Ids{f.part});
+	f.run("edit.selectPrevious");
+	CHECK(f.display.selection() == Ids{f.part});
 }
 
 TEST_CASE("the edit commands edit the selection range, and paste pastes at its start", "[unit]")

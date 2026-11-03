@@ -41,6 +41,7 @@ sends engine commands, so whatever another client changes shows at once.
     listview.tracks[multiple]     the list view (widgets.md), scrolled with the event display
       listitem[value=<id>][level][type]   a tree row per track; .selected, .disabled, .renaming
         .tree-indent, .tree-toggle        from the list view, by level
+        .track-color                      the track's color strip, attribute color (colors.md)
         .track-name, input.track-name-field
         .track-controls > button.toggle[control]   .checked while on, disabled without anything to do
     .drop-line                    where dragged tracks go, .shown while dragging
@@ -59,9 +60,10 @@ sends engine commands, so whatever another client changes shows at once.
   record, monitor and read on audio tracks; mute, solo and read on the others with a channel.
 - **Selection** (p. 218) is the list view's: a click selects a track, Ctrl-click adds or removes one, Shift-click
   selects a range; Up and Down step through the shown tracks, in the list and wherever the project window has the
-  focus (`track.selectPrevious`, `track.selectNext`), and scroll the selected track into view. A right click on a
-  track that isn't selected selects it for the context menu. The selection is the UI's, not the project's
-  (`TrackList::selection`), like the event display's.
+  focus (`track.selectPrevious`, `track.selectNext`), and scroll the selected track into view. While an event is
+  selected, they also select the first event on the new track ([parts-and-events.md](parts-and-events.md)). A right
+  click on a track that isn't selected selects it for the context menu. The selection is the UI's, not the
+  project's (`TrackList::selection`), like the event display's.
 - **Renaming** (p. 214): a double click on a name, or `track.rename` (Alt+F2) for the first selected track, shows a
   text field with the name selected; Enter or leaving it sends `track.set` `name`, Escape keeps the name.
 - **Moving** (pp. 213–214): dragging a row moves the selected tracks (or the dragged one, if it isn't selected) to
@@ -94,7 +96,7 @@ changes.
 
 ## Not yet
 
-Lanes and comping (#99), write automation (#122), track colors and the color strip (#94), the inspector (#89),
+Lanes and comping (#99), write automation (#122),
 recording from instrument and MIDI tracks (#97), dividing the track list, track visibility agents and the track type
 filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
 the settings dialog's groups, widths and presets, the track height presets menu, snap track heights, Shift-click to

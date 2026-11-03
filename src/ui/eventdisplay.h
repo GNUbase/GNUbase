@@ -83,6 +83,13 @@ namespace gnubase::ui
 		Square,
 	};
 
+	// The play tool's modes (reference manual pp. 252-253): auditioning the pressed track, or scrubbing it.
+	enum class PlayMode : uint8_t
+	{
+		Play,
+		Scrub,
+	};
+
 	// A selection range (reference manual p. 285): from start to end in project samples, on these tracks (by id, in
 	// the project's order). A click makes one of no length.
 	struct RangeSelection
@@ -179,12 +186,16 @@ namespace gnubase::ui
 
 		// Editing parts and events (#85, eventediting.cpp, docs/features/parts-and-events.md). The selection is the
 		// display's, not the project's: audio event and MIDI part ids, ascending, also in the root's attribute
-		// selection. Edits go to the engine as event.* commands; a click selects, a drag moves, Alt and a drag copies
-		// (with Shift too, shared copies), a drag at an event's left or right edge resizes it, Alt and a click splits
-		// there, and a double click on an empty MIDI or instrument lane adds a one-bar part, or one between the
-		// locators when the click is between them; one below the tracks adds a MIDI track.
+		// selection. Edits go to the engine as event.* commands; a click selects, a drag moves once the press is held
+		// for the drag delay, Alt and a drag copies (with Shift too, shared copies), Ctrl (Cmd) while dragging keeps
+		// a move or copy across or up and down, a drag at an event's left or right edge resizes it, Alt and a click
+		// splits there, and a double click on an empty MIDI or instrument lane adds a one-bar part, or one between
+		// the locators when the click is between them; one below the tracks adds a MIDI track.
 		const std::vector<uint64_t>& selection() const { return m_selection; }
 		void select(std::vector<uint64_t> events);
+		// Selects the first event on the track's lane, by start; with none there or the track not shown, the
+		// selection stays (Up and Down while an event is selected, reference manual p. 218, ui/tracklist.h).
+		void selectFirstOn(uint64_t track);
 		// Sizing moves contents instead of normal sizing when resizing with the mouse (reference manual p. 265).
 		void setSizingMovesContents(bool moves);
 		bool sizingMovesContents() const { return m_sizingMovesContents; }
@@ -199,17 +210,20 @@ namespace gnubase::ui
 
 		// The tools (#86, eventtools.cpp, docs/features/tools.md), also in the root's attribute tool. The object
 		// selection tool edits as above; the others send the same event.* commands (split, glue, erase, mute), zoom,
-		// draw MIDI parts, play from where they press, or select a range. With the selection tools combined, the
-		// object selection tool selects ranges in a lane's upper half. Their tool modifiers are the user setting
-		// ui.toolModifiers. The document's toolbar may have a button per tool, button[tool=<name>], whose attribute
-		// tool-menu names a menu of its modes that a second click opens (#object-selection-menu with the sizing modes,
-		// #line-menu with the line modes), and a toggle button #combine-selection-tools.
+		// draw MIDI parts, audition or scrub the pressed audio track, or select a range. With the selection tools
+		// combined, the object selection tool selects ranges in a lane's upper half. Their tool modifiers are the user
+		// setting ui.toolModifiers. The document's toolbar may have a button per tool, button[tool=<name>], whose
+		// attribute tool-menu names a menu of its modes that a second click opens (#object-selection-menu with the
+		// sizing modes, #line-menu with the line modes, #play-menu with the play modes), and a toggle button
+		// #combine-selection-tools.
 		void setTool(Tool tool);
 		Tool tool() const { return m_tool; }
 		void setCombineSelectionTools(bool on);
 		bool combineSelectionTools() const { return m_combine; }
 		void setLineMode(LineMode mode);
 		LineMode lineMode() const { return m_lineMode; }
+		void setPlayMode(PlayMode mode);
+		PlayMode playMode() const { return m_playMode; }
 		// The selection range, also in the root's attributes range ("start end") and range-tracks (ids); none
 		// without the range selection tool. Choosing another tool selects the events in the range instead.
 		const std::optional<RangeSelection>& range() const { return m_range; }
@@ -230,8 +244,9 @@ namespace gnubase::ui
 		// edit.duplicate, edit.repeat (opens the Repeat Events dialog), edit.fillLoop, edit.toRealCopy, edit.nudgeLeft,
 		// edit.nudgeRight, edit.nudgeStartLeft, edit.nudgeStartRight, edit.nudgeEndLeft, edit.nudgeEndRight,
 		// edit.moveStartToCursor, edit.moveEndToCursor, edit.selectAll, edit.selectNone, edit.invertSelection,
-		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd and edit.selectUnderCursor; and
-		// edit.locatorsToSelection sets the locators around the selected events. With the range selection tool,
+		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd, edit.selectUnderCursor, and
+		// Left and Right's edit.selectPrevious and edit.selectNext; and edit.locatorsToSelection sets the locators
+		// around the selected events. With the range selection tool,
 		// edit.delete deletes the range; edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence,
 		// edit.splitRange and edit.cropRange edit it, edit.paste and edit.pasteTime paste at its start (without a
 		// range at the project cursor) and edit.globalCopy copies the locator range on every track.
@@ -260,7 +275,7 @@ namespace gnubase::ui
 			Rectangle,     // a rectangle that selects, mutes or zooms
 			Range,         // a selection range
 			DrawPart,      // a new MIDI part
-			Play,          // plays until the mouse is released
+			Play,          // auditions or scrubs until the mouse is released
 			Click,         // splits, glues or erases where it is released, unless it moved
 		};
 
@@ -340,8 +355,19 @@ namespace gnubase::ui
 		const Shown* eventAt(double x, double y) const; // dp in the event lanes
 		size_t laneAt(double y) const; // dp from the top of the first lane; 0 above it, the lane count below the last
 		void areaDown(Rml::Event& event, double x, double y);
-		void areaMove(double dx, double dy);
+		void areaMove(double dx, double dy, bool constrained); // constrained: restricts() says so
+		// Whether the keys are exactly the tool modifier of Copy or Shared Copy.
+		bool copyKeys(const std::string& keys) const;
+		// Whether the keys held restrict a drag of events: Ctrl (Cmd), unless they are a copy's tool modifier.
+		bool restricts(Rml::Event& event) const;
 		void areaUp(Rml::Event& event);
+		// A drag dx and dy dp from the press, across or up and down only when restricted.
+		static std::pair<double, double> restricted(double dx, double dy, bool constrained);
+		// How many lanes a drag dy dp down moves the selection: none unless every selected event lands on a lane of
+		// a track of its type.
+		int laneShift(double dy) const;
+		// Sends the move or copy of the selection: the shift's parameters (event.move's delta or ticks), lanes down.
+		void moveSelection(engine::Json shift, int lanes, bool copy, bool shared);
 		void doubleClick(Rml::Event& event);
 		void showSelection();
 		// Sends an event.* command for the selection; with selectResult, the events it returns become the selection.
@@ -356,6 +382,8 @@ namespace gnubase::ui
 		// is musical and every selected event is on a musical track, else samples. Also in seconds.
 		std::pair<engine::Json, double> shiftTo(const time::Position& to, double from) const;
 		std::pair<engine::Json, double> moveShift(double dx) const; // a drag of the selection, dx dp across
+		// Left and Right (reference manual p. 253): the event before (-1) or after (1) the selected ones on the lane.
+		void selectNeighbour(int direction);
 		// Adds a MIDI part on the lane from start to end, ticks, and selects it.
 		void addPart(size_t lane, time::Ticks start, time::Ticks end);
 		// The lane at y dp down the event lanes, if there is one there.
@@ -417,7 +445,10 @@ namespace gnubase::ui
 		bool m_sizingMovesContents = false;
 		uint64_t m_dragEvent = 0; // pressed on
 		bool m_dragMoved = false;
-		double m_dragDx = 0.0; // dp, while moving, snapped
+		bool m_dragStarted = false; // moving events, after the drag delay
+		bool m_dragToggles = false; // a click with Ctrl or Shift takes the pressed event out of the selection
+		double m_pressTime = 0.0;   // RmlUi's clock, in seconds
+		double m_dragDx = 0.0;      // dp, while moving, snapped
 		int m_dragLanes = 0;
 		double m_dragLaneY = 0.0; // where a drag of events started, in dp from the top of the first lane
 		double m_end = 0.0;       // of the last event
@@ -458,6 +489,8 @@ namespace gnubase::ui
 		Tool m_pressTool = Tool::ObjectSelection; // the tool of the press now, upper or lower half when combined
 		bool m_combine = false;
 		LineMode m_lineMode = LineMode::Line;
+		PlayMode m_playMode = PlayMode::Play;
+		uint64_t m_auditioned = 0; // the track the play tool auditions or scrubs while pressed
 		std::optional<RangeSelection> m_range;
 		std::optional<RangeSelection> m_rangeBase; // what a drag with Shift adds to
 		double m_pressX = 0.0;                     // dp in the event lanes
@@ -471,6 +504,7 @@ namespace gnubase::ui
 		Rml::Element* m_combineButton = nullptr;
 		Rml::Element* m_objectMenu = nullptr;
 		Rml::Element* m_lineMenu = nullptr;
+		Rml::Element* m_playMenu = nullptr;
 		std::vector<CycleMarker> m_cycleMarkers;
 		std::vector<int64_t> m_markers; // every marker's position and end, in samples, for snapping
 		engine::SnapSettings m_snap;

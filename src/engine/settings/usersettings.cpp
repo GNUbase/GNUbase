@@ -121,12 +121,25 @@ namespace gnubase::engine::settings
 					"record-enabled audio tracks, 0 to 60 (0: none). The events start where recording started; "
 					"resizing an event's start to the left brings out what was played before.",
 					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 60}}, 0.0},
+				{"audio.stopAfterPunchOut",
+					"Stop after automatic punch out: playback stops when recording punches out at the right locator, "
+					"after the post-roll if it's on (see transport.set), unless it cycles.",
+					Json{{"type", "boolean"}}, false},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
 				{"editing.applyFolderColor",
 					"Folder tracks give their color to the tracks inside them: when the folder's color changes and "
 					"when tracks are added or moved into it.",
 					Json{{"type", "boolean"}}, false},
+				{"editing.autoTrackColor",
+					"The color new tracks get when none is given (reference manual p. 1621): default (the default "
+					"color), previous (the color of the track above), previousPlusOne (the color after that one in "
+					"the project's color set, or its first color), lastApplied (the color last given to events or "
+					"parts) or random (a color of the set). With editing.applyFolderColor, a folder's color wins "
+					"inside it.",
+					Json{{"type", "string"},
+						{"enum", {"default", "previous", "previousPlusOne", "lastApplied", "random"}}},
+					"default"},
 				{"midi.chaseBeyondParts",
 					"Chases controller events from the whole track; off, only from the MIDI parts under the "
 					"position, so none outside parts.",

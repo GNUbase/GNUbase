@@ -522,6 +522,11 @@
 	{
 		background-color: #0969da;
 	}
+	.mixer-channel
+	{
+		border-right-width: 1dp;
+		border-right-color: #b9c1cc;
+	}
 	.docking [zone]
 	{
 		background-color: #f6f8fa;
@@ -548,6 +553,18 @@
 	{
 		color: #c92d42;
 	}
+	.info-line.multiple .info-field
+	{
+		color: #0969da;
+	}
+	.info-line .info-label, .inspector-label
+	{
+		color: #566273;
+	}
+	.inspector .insert.bypassed, .inspector .insert.inactive
+	{
+		color: #566273;
+	}
 	.pool-message.error
 	{
 		color: #c92d42;
@@ -560,22 +577,26 @@
 	{
 		background-color: #0969da;
 	}
-	.menubar
+	menubar
 	{
 		background-color: #ffffff;
 	}
-	.menubar button
+	menubar button
 	{
 		decorator: none;
 		color: #17202d;
 	}
-	.menubar button:hover
+	menubar button:hover
 	{
 		decorator: svg-ninepatch(menu-item-hover.svg, 6 6 6 6);
 	}
 	menuitem .menu-keys
 	{
 		color: #566273;
+	}
+	menuitem > .menu-arrow
+	{
+		decorator: svg(dropdown-arrow.svg);
 	}
 	.time-display.size-0
 	{

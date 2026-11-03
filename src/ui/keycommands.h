@@ -38,8 +38,8 @@ namespace gnubase::ui
 	// Reads keys written like "Space", "Mod+S", "Shift+Alt+F5" or "Ctrl+Num+", in any case. Modifiers: Mod, the
 	// platform's command key (Cmd on macOS, Ctrl elsewhere), Ctrl, Alt (or Opt), Shift and Meta (or Cmd). Keys:
 	// letters, digits, F1 to F24, Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, Up, Down,
-	// Left, Right, Space, the punctuation keys . , - +, and on the numeric keypad Num0 to Num9, NumEnter, Num* Num/
-	// Num+ Num- and Num. . Throws std::invalid_argument, naming what it can't read.
+	// Left, Right, Space, the punctuation keys . , - +, Alt on its own, and on the numeric keypad Num0 to Num9,
+	// NumEnter, Num* Num/ Num+ Num- and Num. . Throws std::invalid_argument, naming what it can't read.
 	KeyPress parseKeys(const std::string& keys, Platform platform = buildPlatform());
 
 	// The keys as the platform writes them, modifiers first in the order Ctrl, Alt, Shift, Cmd: "Ctrl+Shift+Z",

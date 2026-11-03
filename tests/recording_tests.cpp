@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -145,13 +146,15 @@ namespace
 	}
 
 	// A saved project (recordings go into its media folder) with a record-enabled stereo audio track on the main
-	// input bus, which doesn't monitor: the loopback would feed it back.
+	// input bus, which doesn't monitor: the loopback would feed it back. It records 32-bit float files, which hold
+	// the input exactly.
 	struct Setup
 	{
 		explicit Setup(const Json& device)
 		{
 			run(client, "audio.setDevice", device);
 			run(client, "settings.set", {{"key", "audio.autoMonitoring"}, {"value", "manual"}});
+			run(client, "project.set", {{"recordBitDepth", "float32"}});
 			run(client, "project.save", {{"path", (dir.path() / "take.dawproject").u8string()}});
 			const Json added = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 2}});
 			track = idOf(added, "track");
@@ -227,6 +230,102 @@ TEST_CASE("recording through the dummy device matches its input sample-exactly",
 	CHECK(eventsOn(client, setup.track).empty());
 }
 
+TEST_CASE("recordings are written in the project setup's record file type and bit depth", "[integration]")
+{
+	using gnubase::engine::AudioFormat;
+	using gnubase::engine::SampleFormat;
+	struct Case
+	{
+		const char* type;
+		const char* depth;
+		AudioFormat format;
+		SampleFormat sampleFormat;
+		const char* extension;
+		float tolerance; // the quantization step
+	};
+	const Case cases[] = {
+		{"wav", "int16", AudioFormat::Wav, SampleFormat::Int16, ".wav", 1.0f / 32768.0f},
+		{"wav", "float64", AudioFormat::Wav, SampleFormat::Float64, ".wav", 0.0f},
+		{"aiff", "int24", AudioFormat::Aiff, SampleFormat::Int24, ".aif", 1.0f / 8388608.0f},
+		{"aiff", "int32", AudioFormat::Aiff, SampleFormat::Int32, ".aif", 1.0f / 8388608.0f},
+		{"flac", "int16", AudioFormat::Flac, SampleFormat::Int16, ".flac", 1.0f / 32768.0f},
+		{"broadcastWav", "float32", AudioFormat::Wav, SampleFormat::Float32, ".wav", 0.0f},
+	};
+	for (const Case& each : cases)
+	{
+		DYNAMIC_SECTION(each.type << " " << each.depth)
+		{
+			Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+			Client& client = setup.client;
+			run(client, "project.set", {{"recordFileType", each.type}, {"recordBitDepth", each.depth}});
+			run(client, "transport.record");
+			run(client, "audio.render", {{"frames", 2000}});
+			REQUIRE(setup.stop().is_object());
+
+			const std::vector<Json> events = eventsOn(client, setup.track);
+			REQUIRE(events.size() == 1);
+			const std::string path = pathOf(client, events[0]);
+			CHECK(std::filesystem::u8path(path).extension() == each.extension);
+			const auto reader = AudioFileReader::open(path);
+			CHECK(reader->info().format == each.format);
+			CHECK(reader->info().sampleFormat == each.sampleFormat);
+			CHECK(reader->info().broadcast.has_value() == (std::string(each.type) == "broadcastWav"));
+			const std::vector<float> file = channelOf(path, 0);
+			const std::vector<float> input = recorded(client, 0, 0, 2000);
+			REQUIRE(file.size() == input.size());
+			for (size_t f = 0; f < file.size(); ++f)
+				if (std::abs(file[f] - input[f]) > each.tolerance)
+					FAIL("frame " << f << ": " << file[f] << " instead of " << input[f]);
+		}
+	}
+}
+
+TEST_CASE("Broadcast Wave recordings describe the track and where the file starts", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "track.set", {{"track", setup.track}, {"name", "Lead vocals"}});
+	run(client, "project.set",
+		{{"recordFileType", "broadcastWav"}, {"recordBitDepth", "int24"}, {"startTime", 3600.0}});
+	run(client, "transport.locate", {{"position", 48000}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 1000}});
+	REQUIRE(setup.stop().is_object());
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].at("position") == 48000);
+	const auto reader = AudioFileReader::open(pathOf(client, events[0]));
+	CHECK(reader->info().sampleFormat == gnubase::engine::SampleFormat::Int24);
+	REQUIRE(reader->info().broadcast.has_value());
+	const gnubase::engine::BroadcastInfo info = reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{});
+	CHECK(info.description == "Lead vocals");
+	CHECK(info.originator == "GNUbase");
+	CHECK(info.originationDate.size() == 10);
+	CHECK(info.originationTime.size() == 8);
+	CHECK(info.timeReference == 3601ULL * 48000); // the project start shows 1:00:00, and the file starts 1 s later
+}
+
+TEST_CASE("a Broadcast Wave recording's time reference includes the pre-recorded input", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "audio.preRecordSeconds"}, {"value", 0.05}}); // 2400 frames
+	run(client, "project.set", {{"recordFileType", "broadcastWav"}, {"startTime", 3600.0}});
+	run(client, "audio.render", {{"frames", 4800}}); // stopped
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 1000}});
+	REQUIRE(setup.stop().is_object());
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].at("offset") == 2400);
+	const auto reader = AudioFileReader::open(pathOf(client, events[0]));
+	REQUIRE(reader->info().broadcast.has_value());
+	CHECK(
+		reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).timeReference == (3600ULL * 48000) - 2400);
+}
+
 TEST_CASE("cycle recording makes a take per lap, all in one file", "[integration]")
 {
 	std::string mode = "keepHistory";
@@ -300,6 +399,42 @@ TEST_CASE("audio pre-record keeps the input from before recording started in the
 	REQUIRE(file.size() == 3400);
 	CHECK(slice(file, 2400, 1000) == recorded(client, 0, 0, 1000));
 	CHECK(std::any_of(file.begin(), file.begin() + 2400, [](float sample) { return sample != 0.0f; }));
+}
+
+TEST_CASE("punch recording replaces only the punch range, after the pre-roll and before the post-roll", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	const ObjectId media = idOf(run(client, "media.add", {{"path", writeRamp(setup.dir, 9600)}}), "media");
+	const ObjectId clip = idOf(run(client, "clip.add", {{"media", media}}), "clip");
+	run(client, "audioEvent.add", {{"track", setup.track}, {"clip", clip}, {"position", 0}});
+	run(client, "settings.set", {{"key", "audio.stopAfterPunchOut"}, {"value", true}});
+	run(client, "transport.set",
+		{{"left", 2400}, {"right", 4800}, {"punchIn", true}, {"punchOut", true}, {"preRoll", true},
+			{"preRollAmount", 1200}, {"postRoll", true}, {"postRollAmount", 960}, {"audioRecordMode", "replace"}});
+	run(client, "transport.locate", {{"position", 2400}});
+	const Json started = run(client, "transport.record");
+	CHECK(started.at("playing") == true);
+	CHECK(started.at("recording") == false); // the pre-roll first
+	CHECK(started.at("position") == 1200);
+	run(client, "audio.render", {{"frames", 9600}});
+	REQUIRE(waitForRecording(client).is_object()); // the punch out ended the recording
+	const Json transport = run(client, "transport.get");
+	CHECK(transport.at("playing") == false); // stopped after the post-roll
+	CHECK(transport.at("recording") == false);
+	CHECK(transport.at("position") == 5760);
+
+	// The take replaced the event between the locators and nothing else.
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 3);
+	const auto span = [](const Json& event)
+	{ return std::pair{event.at("position").get<int64_t>(), event.at("length").get<int64_t>()}; };
+	CHECK(span(events[0]) == std::pair<int64_t, int64_t>{0, 2400});
+	CHECK(span(events[1]) == std::pair<int64_t, int64_t>{2400, 2400});
+	CHECK(span(events[2]) == std::pair<int64_t, int64_t>{4800, 4800});
+	const std::vector<float> take = channelOf(pathOf(client, events[1]), 0);
+	REQUIRE(take.size() == 2400);
+	CHECK(take == recorded(client, 0, 2400, 2400));
 }
 
 TEST_CASE("only record-enabled audio tracks record, and nothing records without recording", "[integration]")

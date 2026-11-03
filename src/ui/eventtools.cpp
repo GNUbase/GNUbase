@@ -128,6 +128,12 @@ namespace gnubase::ui
 		showTools();
 	}
 
+	void EventDisplay::setPlayMode(PlayMode mode)
+	{
+		m_playMode = mode;
+		showTools();
+	}
+
 	void EventDisplay::setSizingMovesContents(bool moves)
 	{
 		m_sizingMovesContents = moves;
@@ -166,11 +172,15 @@ namespace gnubase::ui
 				m_drag = Drag::DrawPart;
 			return true;
 		case Tool::Play:
-			// ponytail: plays the whole project from there; only the pressed track, through the control room, when
-			// the engine can audition one (reference manual p. 252).
-			m_drag = Drag::Play;
-			m_binding.send("transport.locate", {{"position", samples(m_view.start + (x * m_view.scale))}});
-			m_binding.send("transport.play", Json::object());
+			// Auditions or scrubs the pressed audio track (reference manual pp. 252-253); auditioning MIDI waits.
+			if (lane && m_laneTypes[*lane] == "audio")
+			{
+				m_drag = Drag::Play;
+				m_auditioned = m_laneTracks[*lane];
+				m_binding.send(m_playMode == PlayMode::Scrub ? "audition.scrub" : "audition.start",
+					{{"track", m_auditioned},
+						{"position", std::max<int64_t>(0, samples(m_view.start + (x * m_view.scale)))}});
+			}
 			return true;
 		case Tool::Split:
 		case Tool::Glue:
@@ -213,6 +223,12 @@ namespace gnubase::ui
 			showRectangle(true, std::min(at(m_pressX), at(x)), top, std::max(at(m_pressX), at(x)), top + height);
 			break;
 		}
+		case Drag::Play:
+			if (m_playMode == PlayMode::Scrub)
+				m_binding.send("audition.scrub",
+					{{"track", m_auditioned},
+						{"position", std::max<int64_t>(0, samples(m_view.start + (x * m_view.scale)))}});
+			break;
 		default:
 			break;
 		}
@@ -311,7 +327,7 @@ namespace gnubase::ui
 			break;
 		}
 		case Drag::Play:
-			m_binding.send("transport.stop", Json::object());
+			m_binding.send("audition.stop", Json::object());
 			break;
 		case Drag::Click:
 		{

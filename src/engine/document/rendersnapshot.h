@@ -20,6 +20,7 @@ namespace gnubase::engine
 		std::vector<std::string> ports; // as in Bus
 		int parent = -1;                // child busses: an index into RenderSnapshot::busses
 		std::vector<int> parentChannels;
+		bool mainMix = false; // the default output
 	};
 
 	struct RenderMedia
