@@ -54,6 +54,9 @@ namespace gnubase::engine
 		// The transport bar's switch for the metronome click, whose behaviour comes with #101.
 		bool metronome = false;
 		AudioRecordMode audioRecordMode = AudioRecordMode::KeepHistory;
+		// Lock Record (reference manual p. 356): the commands refuse to stop or punch out a recording unless the stop
+		// is confirmed, and recording ignores the automatic punch out.
+		bool lockRecord = false;
 	};
 
 	// The project cursor, play and stop, recording, and cycle playback. The command thread sends requests; the audio
