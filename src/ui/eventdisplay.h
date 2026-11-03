@@ -172,6 +172,7 @@ namespace gnubase::ui
 		bool suspendAutoScrollWhenEditing() const { return m_suspendWhenEditing; }
 		bool autoScrollSuspended() const { return m_suspended; }
 
+		// The ruler's time format, and with it the snap grid's (snap.set's format).
 		void setRulerFormat(TimeFormat format);
 		TimeFormat rulerFormat() const { return m_format; }
 		void setCrossHair(bool shown);
@@ -238,7 +239,8 @@ namespace gnubase::ui
 			std::optional<int64_t> sample = std::nullopt, bool clipsOnly = false);
 
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
-		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); and the edits of parts and events:
+		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); locate.nudgeCursorLeft and
+		// locate.nudgeCursorRight move the project cursor by a grid step; and the edits of parts and events:
 		// edit.delete, edit.mute, edit.unmute, edit.lock, edit.unlock, edit.splitAtCursor, edit.splitLoop, edit.glue,
 		// edit.duplicate, edit.repeat (opens the Repeat Events dialog), edit.fillLoop, edit.toRealCopy, edit.nudgeLeft,
 		// edit.nudgeRight, edit.nudgeStartLeft, edit.nudgeStartRight, edit.nudgeEndLeft, edit.nudgeEndRight,
@@ -332,6 +334,9 @@ namespace gnubase::ui
 		void dialogEvent(Rml::Event& event);
 		void openDialog(const char* file);
 		void showFormat();
+		void showRuler();
+		void takeSnap(const engine::Json& settings); // from snap.changed or project.get
+		void followSnapFormat();                     // the ruler shows the snap settings' format
 		void showPresets();
 		void showAutoScroll();
 		void showSnap();
@@ -452,7 +457,6 @@ namespace gnubase::ui
 		double m_dragLaneY = 0.0; // where a drag of events started, in dp from the top of the first lane
 		double m_end = 0.0;       // of the last event
 		double m_length = g_defaultProjectLength; // the project setup's
-		std::string m_projectFormat;              // the project setup's time format the ruler last followed
 		bool m_loading = false;
 		bool m_stale = false;
 		int64_t m_cursorSample = 0;
@@ -507,6 +511,7 @@ namespace gnubase::ui
 		std::vector<CycleMarker> m_cycleMarkers;
 		std::vector<int64_t> m_markers; // every marker's position and end, in samples, for snapping
 		engine::SnapSettings m_snap;
+		int m_formatsSent = 0; // snap.set {format} from the ruler that the engine hasn't answered yet
 		engine::midi::QuantizeSettings m_quantize;
 		Rml::Element* m_snapButton = nullptr;
 		Rml::Element* m_snapTypeButton = nullptr;

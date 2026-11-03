@@ -8,6 +8,7 @@
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -27,28 +28,39 @@ namespace gnubase::ui
 {
 	// Runs a command, the engine's or the UI's, with its parameters as a key would (KeyCommands::run).
 	using RunCommand = std::function<void(const std::string& command, const engine::Json& parameters)>;
+	// Ends a command that runs while its button is held, as its key going up would (KeyCommands::release).
+	using ReleaseCommand = std::function<void(const std::string& command)>;
 
 	// Drives the transport controls in an element and follows the transport, the project's tempo and signature and the
 	// time formats through the engine binding. The element's markup says what each control is:
 	//
 	//   command="transport.toggle" parameters='{"setting": "cycle"}'
 	//                                a button that runs the command with the parameters (default none)
+	//   hold                         with command: runs it when the mouse button goes down on it and ends it when the
+	//                                button goes up, as a key held would, e.g. Forward, which winds while held
 	//   state="cycle"                checked while the transport's value is true: cycle, punchIn, punchOut,
 	//                                metronome, playing or recording
 	//   time="position|left|right|length" format="primary|secondary|timeDisplay"
 	//                                the project cursor, a locator or the locator range in the time format of that slot
-	//                                (default primary); a <textdisplay> takes a position or length typed into it
-	//   field="tempo"                a <valuefield> with the first tempo in BPM
+	//                                (default primary); a <textdisplay> takes a position or length typed into it,
+	//                                and the mouse wheel moves it by a beat (bars and beats), a frame (timecode,
+	//                                user frames) or a second. Those in the slot timeDisplay follow ui.timeDisplay:
+	//                                only the beat in its bar with beatCountOnly, and the state class size-0 to
+	//                                size-4 of its size
+	//   field="tempo"                a <valuefield> with the first tempo in BPM; a drag or a run of wheel turns on it
+	//                                sets the tempo once, at its end, one undo step
 	//   field="signature"            a <textdisplay> with the first time signature, "4/4"
 	//   menuitem slot="primary" format="seconds"
 	//                                anywhere in the document: picks the slot's time format, checked while it has it
+	//   option="beatCountOnly"       anywhere in the document: checked while ui.timeDisplay has it
 	//
 	// The time formats are the user setting ui.timeFormats, so every transport control shows the same. Use it on the UI
 	// thread; the engine and the binding must outlive it. If the element goes, it shows nothing more.
 	class TransportControls final : private Rml::EventListener
 	{
 	public:
-		TransportControls(engine::Engine& engine, EngineBinding& binding, Rml::Element& root, RunCommand run);
+		TransportControls(engine::Engine& engine, EngineBinding& binding, Rml::Element& root, RunCommand run,
+			ReleaseCommand release = {});
 		~TransportControls() override;
 		TransportControls(const TransportControls&) = delete;
 		TransportControls& operator=(const TransportControls&) = delete;
@@ -65,6 +77,13 @@ namespace gnubase::ui
 		// Switches the primary and secondary formats.
 		void exchangeFormats();
 
+		// The time display window's options, in ui.timeDisplay: Show Beat Count Only on or off, and its size, 0 to 4,
+		// changed by steps. onSize hears of the size whenever the setting says it, e.g. to size the window.
+		void toggleBeatCountOnly();
+		void resize(int steps);
+		int size() const { return m_size; }
+		void onSize(std::function<void(int size)> sized) { m_sized = std::move(sized); }
+
 	private:
 		void ProcessEvent(Rml::Event& event) override;
 		void listen(bool on);
@@ -73,7 +92,13 @@ namespace gnubase::ui
 		void requestProject();
 		void followTransport(const engine::Json& status);
 		void followFormats(const engine::Json& formats);
+		void followTimeDisplay(const engine::Json& options);
+		void saveTimeDisplay();
 		void changed(Rml::Element& element, const std::string& text);
+		void wheel(Rml::Element& element, float delta);
+		void wheelTempo();
+		void endTempoGesture();
+		void release();
 		void show();     // everything
 		void showTime(); // the displays with times, e.g. once a frame while playing
 		int64_t samples(double seconds) const;
@@ -81,6 +106,7 @@ namespace gnubase::ui
 		engine::Engine& m_engine;
 		EngineBinding& m_binding;
 		RunCommand m_run;
+		ReleaseCommand m_release;
 		Rml::ObserverPtr<Rml::Element> m_root;
 		Rml::ObserverPtr<Rml::Element> m_document;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for the binding's answers after it went
@@ -91,8 +117,46 @@ namespace gnubase::ui
 		std::map<std::string, TimeFormat> m_formats;    // by slot
 		bool m_loading = false;
 		bool m_stale = false;
+		bool m_beatCountOnly = false;
+		int m_size = 1;
+		std::function<void(int)> m_sized;
+		std::string m_holding; // the command of the button held
+
+		// A gesture on the tempo field: a drag, or wheel turns until a pause. It sets the tempo at its end.
+		enum class Gesture : uint8_t
+		{
+			None,
+			Drag,
+			Wheel,
+		};
+		Gesture m_gesture = Gesture::None;
+		std::optional<float> m_tempo; // where the gesture took it
+		std::optional<float> m_sent;  // what the gesture's end set, until the project's tempo is read again
+		std::chrono::steady_clock::time_point m_wheeled;
+		std::optional<Subscription> m_wheelPause;
 
 		std::vector<Subscription> m_subscriptions;
 		std::optional<Subscription> m_playback; // while playing
+	};
+
+	// Rewind and Forward, and their fast variants, while their key or button is held (reference manual pp. 297,
+	// 300): start moves the project cursor by the step at once, as a click does, and after a moment winds on at four
+	// steps a second until stop. It sends transport.locate with a distance each frame; step returns whether it
+	// winds, for Shell::eachStep. Use it on the UI thread; the binding must outlive it.
+	class Winding
+	{
+	public:
+		explicit Winding(EngineBinding& binding) : m_binding(binding) {}
+
+		void start(double seconds); // the step: negative to rewind
+		void stop() { m_step = 0.0; }
+		bool step();
+
+	private:
+		using Clock = std::chrono::steady_clock;
+
+		EngineBinding& m_binding;
+		double m_step = 0.0;
+		Clock::time_point m_last; // until when it wound
 	};
 }

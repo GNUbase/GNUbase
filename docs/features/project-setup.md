@@ -11,7 +11,7 @@ so MCP and Lua scripts can do all it does.
   level: `sampleRate`, `panLaw` and `maxVolume` as before ([mixer.md](mixer.md)), and the settings of
   `ProjectSetup` (`src/engine/document/document.h`):
   - `recordFileType`: `wav` (the default), `broadcastWav`, `aiff` or `flac`, and `recordBitDepth`: `int16`, `int24`
-    (the default), `int32`, `float32` or `float64`. They are what recording (#96) writes. Only combinations the audio
+    (the default), `int32`, `float32` or `float64`. They are what recording writes ([recording.md](recording.md)). Only combinations the audio
     file writer can write are accepted: AIFF only integers, FLAC 16 or 24 bit, 64 bit float only Wave; a change of
     the type that doesn't fit the bit depth needs both in one `project.set`.
   - `frameRate`: the timecode's, one of the reference's rates with names such as `25` (the default), `29.97`,
@@ -38,8 +38,10 @@ so MCP and Lua scripts can do all it does.
   seconds, timecode and user frames and the bar offset to bars, and the ruler's marks do the same
   (`src/ui/timeformat.h`). Lengths (`formatLength`, `parseLength`) count from zero. A typed position before the
   project start is no position. Samples count from the project start.
-- **The event display's ruler** starts with the project's time format and follows it when it changes; its menu picks
-  one of its own meanwhile ([event-display.md](event-display.md)). Zoom Full and the overview line show the project's
+- **The event display's ruler** follows the project's time format when it changes: `project.set` (and undo and
+  redo of it) makes a new time format the snap settings' format, and emits `snap.changed`; the ruler's menu picks one
+  of its own meanwhile. The ruler's format is the snap settings' `format`, so a project opens with the one it was saved with
+  ([event-display.md](event-display.md), [snap.md](snap.md)). Zoom Full and the overview line show the project's
   length, or up to the end of the last event if that is later.
 - **The status line** shows the record format, e.g. "Record: 48 kHz - 24 bit", and a click on it opens the dialog.
 
@@ -73,7 +75,6 @@ so MCP and Lua scripts can do all it does.
   audio device doesn't support shown in another color.
 - The transport's primary time display still keeps its format in the user setting `ui.timeFormats`; that it and the
   project's time format set each other (p. 69) is a follow-up.
-- Recording in these formats is #96; the audio file writer has no 64 bit float yet.
 
 ## Tests
 

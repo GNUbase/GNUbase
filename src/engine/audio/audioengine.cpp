@@ -28,6 +28,8 @@ namespace gnubase::engine
 		constexpr double g_maxCaptureSeconds = 600.0;
 		constexpr double g_cueSeconds = 2.0; // how far ahead the cue thread positions disk streams
 		constexpr auto g_cueInterval = std::chrono::milliseconds(5);
+		// The longest pre-roll and post-roll: an hour at 768 kHz.
+		constexpr time::Samples g_maxRollAmount = time::Samples{3600} * 768000;
 		constexpr auto g_startWait = std::chrono::seconds(2);    // for the streams before playback starts or locates
 		constexpr auto g_offlineWait = std::chrono::seconds(30); // for the streams before an offline block
 		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20;   // frames one audio.capture returns at most
@@ -75,10 +77,13 @@ namespace gnubase::engine
 				"left": {"type": "integer"}, "right": {"type": "integer"}, "cycle": {"type": "boolean"},
 				"startMode": {"type": "string", "enum": ["cursor", "cycleStart"]},
 				"returnToStart": {"type": "boolean"}, "punchIn": {"type": "boolean"},
-				"punchOut": {"type": "boolean"}, "metronome": {"type": "boolean"},
+				"punchOut": {"type": "boolean"}, "preRoll": {"type": "boolean"}, "preRollAmount": {"type": "integer"},
+				"postRoll": {"type": "boolean"}, "postRollAmount": {"type": "integer"},
+				"metronome": {"type": "boolean"},
 				"audioRecordMode": {"type": "string", "enum": ["keepHistory", "cycleHistoryReplace", "replace"]}},
 			"required": ["playing", "recording", "position", "left", "right", "cycle", "startMode",
-				"returnToStart", "punchIn", "punchOut", "metronome", "audioRecordMode"]})");
+				"returnToStart", "punchIn", "punchOut", "preRoll", "preRollAmount", "postRoll", "postRollAmount",
+				"metronome", "audioRecordMode"]})");
 		}
 
 		Json noParameters()
@@ -244,8 +249,15 @@ namespace gnubase::engine
 		m_cueThread = std::thread(
 			[this]
 			{
+				uint64_t changes = m_transport.changes();
 				while (m_cueing)
 				{
+					// The audio thread changed what it plays or records, maybe on its own: the command thread syncs.
+					if (const uint64_t now = m_transport.changes(); now != changes && m_engine != nullptr)
+					{
+						changes = now;
+						m_engine->post("transport.update");
+					}
 					Playback::Cue cue;
 					{
 						const std::scoped_lock lock(m_cueMutex);
@@ -777,6 +789,7 @@ namespace gnubase::engine
 			}
 		}
 		m_audition.process(block.outputs, format.outputChannels, program.mainPorts, block.frames);
+		meterMainMix(block, program.mainPorts, transport.playing);
 
 		const std::chrono::duration<double> busy = std::chrono::steady_clock::now() - start;
 		std::array<double, PerformanceData::g_maxThreads> threads{};
@@ -786,6 +799,24 @@ namespace gnubase::engine
 		m_meter.cycle(busy.count(), block.frames / format.sampleRate, threads.data(), count);
 		publishPerformance(m_meter.data());
 		m_programs->release();
+	}
+
+	void AudioEngine::meterMainMix(
+		const audio::DeviceBlock& block, const std::vector<int>& ports, bool playing) noexcept
+	{
+		if (playing && !m_meterPlaying && m_meterResetOnStart.load(std::memory_order_relaxed))
+		{
+			m_mainMeter.reset();
+			m_loudness.reset();
+		}
+		m_meterPlaying = playing;
+		std::array<const float*, g_maxMeterChannels> channels{};
+		int count = 0;
+		for (const int port : ports)
+			if (port >= 0 && port < m_device->format().outputChannels && count < g_maxMeterChannels)
+				channels[static_cast<size_t>(count++)] = block.outputs[port];
+		m_mainMeter.process(channels.data(), count, block.frames, m_device->format().sampleRate);
+		m_loudness.process(channels.data(), count, block.frames, playing);
 	}
 
 	void AudioEngine::captureInput(const audio::DeviceBlock& block) noexcept
@@ -907,6 +938,7 @@ namespace gnubase::engine
 		m_recordOffset = recordOffset();
 		m_played = PlayedPositions(static_cast<size_t>(g_maxRecordOffset) + m_device->format().blockSize);
 		m_recorder.prepare(m_device->format().inputChannels, m_device->format().blockSize);
+		m_loudness.prepare(m_device->format().sampleRate);
 		m_recordSetup = {}; // its pre-record follows the device's sample rate
 		m_capturedInput.assign(static_cast<size_t>(m_device->format().inputChannels),
 			std::vector<float>(static_cast<size_t>(std::llround(captureSeconds * m_device->format().sampleRate))));
@@ -1855,6 +1887,8 @@ namespace gnubase::engine
 				audio::DummyDevice& device = requireDummy();
 				require(!device.running(), "the audio device is running");
 				render(device, static_cast<uint64_t>(frames));
+				if (syncTransport()) // punched in or out, or stopped after a punch out
+					context.emit("transport.changed", transportStatus());
 				Json result = status();
 				context.emit("audio.changed", result);
 				return result;
@@ -1964,6 +1998,7 @@ namespace gnubase::engine
 						samples.begin() + static_cast<std::ptrdiff_t>(end))}};
 			});
 		registerAnalysisCommands(engine);
+		registerMeterCommands(engine);
 		registerTransportCommands(engine);
 		m_midi.registerCommands(engine);
 		registerMidiTapCommands(engine);
@@ -1975,21 +2010,37 @@ namespace gnubase::engine
 		require(accepted, "the transport is busy; try again");
 		if (!m_device || !m_device->running())
 			m_transport.update(); // no audio thread applies the request
+		m_transport.sync();
 		const std::scoped_lock lock(m_cueMutex);
 		m_cueState.playing = m_transport.playing();
 		m_cueState.settings = m_transport.settings();
 	}
 
+	bool AudioEngine::syncTransport()
+	{
+		if (!m_transport.sync())
+			return false;
+		{
+			const std::scoped_lock lock(m_cueMutex);
+			m_cueState.playing = m_transport.playing();
+		}
+		if (m_device && m_directMonitoring) // as after a transport command
+			routeDirectly(m_snapshots.latest(), devicePorts(m_snapshots.latest().busses, m_inputPorts, m_outputPorts));
+		return true;
+	}
+
 	void AudioEngine::play()
 	{
 		if (m_device && !m_transport.playing())
-		{
-			const TransportSettings& settings = m_transport.settings();
-			const time::Samples start =
-				settings.startMode == StartMode::CycleStart ? settings.left : m_transport.position();
-			cue(start, false, m_device->format().blockSize, true);
-		}
+			cue(m_transport.startPosition(), false, m_device->format().blockSize, true);
 		sent(m_transport.play());
+	}
+
+	void AudioEngine::record(bool on)
+	{
+		if (on && m_device && !m_transport.playing())
+			cue(m_transport.startPosition(), false, m_device->format().blockSize, true);
+		sent(m_transport.record(on));
 	}
 
 	Json AudioEngine::transportStatus() const
@@ -2000,7 +2051,8 @@ namespace gnubase::engine
 			{"cycle", settings.cycle},
 			{"startMode", settings.startMode == StartMode::CycleStart ? "cycleStart" : "cursor"},
 			{"returnToStart", settings.returnToStart}, {"punchIn", settings.punchIn}, {"punchOut", settings.punchOut},
-			{"metronome", settings.metronome},
+			{"preRoll", settings.preRoll}, {"preRollAmount", settings.preRollAmount}, {"postRoll", settings.postRoll},
+			{"postRollAmount", settings.postRollAmount}, {"metronome", settings.metronome},
 			{"audioRecordMode", g_audioRecordModes.at(static_cast<size_t>(settings.audioRecordMode))}};
 	}
 
@@ -2010,6 +2062,15 @@ namespace gnubase::engine
 			context.emit("audio.portsChanged", ports());
 		if (midiPorts)
 			m_midi.applySettings(context);
+	}
+
+	void AudioEngine::setStopAfterPunchOut(bool stop)
+	{
+		if (m_transport.settings().stopAfterPunchOut == stop)
+			return;
+		TransportSettings settings = m_transport.settings();
+		settings.stopAfterPunchOut = stop;
+		sent(m_transport.set(settings));
 	}
 
 	void AudioEngine::setChase(const MidiChase& chase)
@@ -2048,15 +2109,18 @@ namespace gnubase::engine
 		if (const auto value = parameters.find("position"); value != parameters.end())
 		{
 			position = value->get<time::Samples>();
-			require(position >= 0, "position must not be negative");
+			require(position >= 0 && position <= g_maxPosition,
+				"position must be 0 to " + std::to_string(g_maxPosition) + " samples");
 		}
 		else if (const auto by = parameters.find("by"); by != parameters.end())
 		{
 			const double seconds = by->get<double>();
 			require(std::isfinite(seconds), "by must be a number of seconds");
 			const double rate = m_snapshots.latest().sampleRate;
-			position = std::max<time::Samples>(
-				0, m_transport.position() + static_cast<time::Samples>(std::llround(seconds * rate)));
+			// In doubles first: seconds times the rate may be past what an integer holds.
+			const double target = static_cast<double>(m_transport.position()) + (seconds * rate);
+			position =
+				static_cast<time::Samples>(std::llround(std::clamp(target, 0.0, static_cast<double>(g_maxPosition))));
 		}
 		else if (const auto target = parameters.find("target"); target != parameters.end())
 		{
@@ -2096,7 +2160,8 @@ namespace gnubase::engine
 				return;
 			}
 			value = found->get<time::Samples>();
-			require(value >= 0, name + " must not be negative");
+			require(value >= 0 && value <= g_maxPosition,
+				name + " must be 0 to " + std::to_string(g_maxPosition) + " samples");
 		};
 		locator("left", settings.left);
 		locator("right", settings.right);
@@ -2104,6 +2169,16 @@ namespace gnubase::engine
 		settings.returnToStart = parameters.value("returnToStart", settings.returnToStart);
 		settings.punchIn = parameters.value("punchIn", settings.punchIn);
 		settings.punchOut = parameters.value("punchOut", settings.punchOut);
+		settings.preRoll = parameters.value("preRoll", settings.preRoll);
+		settings.postRoll = parameters.value("postRoll", settings.postRoll);
+		for (const auto& [name, value] : {std::pair{"preRollAmount", &settings.preRollAmount},
+				 std::pair{"postRollAmount", &settings.postRollAmount}})
+			if (const auto found = parameters.find(name); found != parameters.end())
+			{
+				*value = found->get<time::Samples>();
+				require(*value >= 0 && *value <= g_maxRollAmount,
+					std::string(name) + " must be 0 to " + std::to_string(g_maxRollAmount) + " samples");
+			}
 		settings.metronome = parameters.value("metronome", settings.metronome);
 		if (const auto mode = parameters.find("startMode"); mode != parameters.end())
 		{
@@ -2146,39 +2221,33 @@ namespace gnubase::engine
 				});
 		};
 		command("transport.play",
-			"Starts playback from the project cursor, or from the left locator if startMode is cycleStart. Does "
-			"nothing while playing.",
+			"Starts playback from the project cursor, or from the left locator if startMode is cycleStart, less the "
+			"pre-roll if preRoll is on (not before the project start). Does nothing while playing.",
 			nullptr, [this](const Json&) { play(); });
 		command("transport.stop",
 			"Stops playback and recording. With returnToStart the cursor goes back to where playback started or was "
 			"last located to.",
 			nullptr, [this](const Json&) { sent(m_transport.stop()); });
 		command("transport.record",
-			"Starts recording (record true, the default): playback starts as with transport.play if it stood, or "
-			"recording punches in where it plays. record false punches out and playback goes on. Record-enabled "
-			"tracks may monitor their input meanwhile, by the user setting audio.autoMonitoring (see channel.set).",
+			"Starts recording (record true, the default): playback starts as with transport.play if it stood, and "
+			"recording where playback would start without the pre-roll; or recording punches in where it plays. With "
+			"punchIn before the left locator, recording starts at the left locator instead. record false punches out "
+			"and playback goes on. Record-enabled tracks may monitor their input meanwhile, by the user setting "
+			"audio.autoMonitoring (see channel.set).",
 			R"({"type": "object", "additionalProperties": false, "properties": {"record": {"type": "boolean"}}})",
-			[this](const Json& parameters)
-			{
-				const bool record = parameters.value("record", true);
-				if (record && !m_transport.playing())
-					play();
-				sent(m_transport.record(record));
-			});
+			[this](const Json& parameters) { record(parameters.value("record", true)); });
 		command("transport.toggle",
 			"Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, "
-			"punchIn, punchOut, metronome (see transport.set), or record (on as transport.record, off punches out).",
+			"punchIn, punchOut, preRoll, postRoll, metronome (see transport.set), or record (on as transport.record, "
+			"off punches out).",
 			R"({"type": "object", "additionalProperties": false, "properties": {"setting": {"type": "string",
-				"enum": ["cycle", "punchIn", "punchOut", "metronome", "record"]}}})",
+				"enum": ["cycle", "punchIn", "punchOut", "preRoll", "postRoll", "metronome", "record"]}}})",
 			[this](const Json& parameters)
 			{
 				const std::string setting = parameters.value("setting", "");
 				if (setting == "record")
 				{
-					const bool record = !m_transport.recording();
-					if (record && !m_transport.playing())
-						play();
-					sent(m_transport.record(record));
+					record(!m_transport.recording());
 					return;
 				}
 				if (!setting.empty())
@@ -2191,6 +2260,10 @@ namespace gnubase::engine
 						value = &settings.punchIn;
 					else if (setting == "punchOut")
 						value = &settings.punchOut;
+					else if (setting == "preRoll")
+						value = &settings.preRoll;
+					else if (setting == "postRoll")
+						value = &settings.postRoll;
 					*value = !*value;
 					sent(m_transport.set(settings));
 					return;
@@ -2205,21 +2278,30 @@ namespace gnubase::engine
 			"before the project start: the transport bar's rewind and forward), or to a target: projectStart, "
 			"projectEnd (the end of the last event), leftLocator or rightLocator. While playing, playback continues "
 			"from there.",
-			R"({"type": "object", "additionalProperties": false, "properties": {"position": {"type": "integer"},
-				"by": {"type": "number"}, "target": {"type": "string"}}})",
+			R"({"type": "object", "additionalProperties": false, "properties": {"position": {"type": "integer",
+				"minimum": 0, "maximum": 281474976710656}, "by": {"type": "number"}, "target": {"type": "string"}}})",
 			[this](const Json& parameters) { locate(parameters); });
 		command("transport.set",
 			"Changes the given settings and keeps the rest. left and right: the locators, in samples, or \"cursor\" "
 			"for the cursor position. cycle: cycle playback between the locators; with the right locator before the "
 			"left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). "
-			"returnToStart: on stop, return to where playback started. punchIn, punchOut and metronome are the "
-			"transport bar's switches; punching in and out at the locators and the click come with recording and the "
-			"metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see "
+			"returnToStart: on stop, return to where playback started. punchIn: playback that reaches the left "
+			"locator starts recording there. punchOut: recording that reaches the right locator ends there and "
+			"playback goes on, or stops with the user setting audio.stopAfterPunchOut, unless it cycles. preRoll and "
+			"preRollAmount (samples, up to an hour at 768 kHz): playback starts that much before the cursor. postRoll "
+			"and postRollAmount (the same): after an automatic punch out with audio.stopAfterPunchOut, playback goes "
+			"on that much longer before it stops. Recording that "
+			"punches in or out and playback that stops on their own announce transport.changed. metronome is the "
+			"transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the "
+			"events it overlaps on its track (see "
 			"recording.add): keepHistory (the default), cycleHistoryReplace or replace.",
 			R"({"type": "object", "additionalProperties": false, "properties": {
-				"left": {"type": ["integer", "string"]}, "right": {"type": ["integer", "string"]},
+				"left": {"type": ["integer", "string"], "maximum": 281474976710656},
+				"right": {"type": ["integer", "string"], "maximum": 281474976710656},
 				"cycle": {"type": "boolean"}, "startMode": {"type": "string"}, "returnToStart": {"type": "boolean"},
-				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "metronome": {"type": "boolean"},
+				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "preRoll": {"type": "boolean"},
+				"preRollAmount": {"type": "integer"}, "postRoll": {"type": "boolean"},
+				"postRollAmount": {"type": "integer"}, "metronome": {"type": "boolean"},
 				"audioRecordMode": {"type": "string"}}})",
 			[this](const Json& parameters) { setTransport(parameters); });
 		command("transport.exchangeLocators", "Swaps the left and right locators.", nullptr,
@@ -2228,6 +2310,24 @@ namespace gnubase::engine
 				TransportSettings settings = m_transport.settings();
 				std::swap(settings.left, settings.right);
 				sent(m_transport.set(settings));
+			});
+		engine.registerCommand(
+			{"transport.update", 1,
+				"Takes over what the audio thread changed on its own: recording that punched in or out at the "
+				"locators, and playback that stopped after a punch out, and announces it with transport.changed. The "
+				"engine runs it itself when the audio thread played or recorded differently or applied a request; "
+				"runs that change nothing stay out of engine.commandLog.",
+				noParameters(), transportSchema(), false},
+			[this](CommandContext& context)
+			{
+				if (!syncTransport())
+				{
+					context.leaveOutOfLog(); // the engine's own run that changed nothing
+					return transportStatus();
+				}
+				Json result = transportStatus();
+				context.emit("transport.changed", result);
+				return result;
 			});
 		engine.registerCommand(
 			{"transport.get", 1,

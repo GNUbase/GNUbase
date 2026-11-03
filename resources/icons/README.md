@@ -40,6 +40,7 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `track-group.svg` — Group tracks into one bus.
 - `track-effect.svg` — Effect track (`fx`).
 - `track-marker.svg` — Marker track.
+- `layout-channel-zone.svg` — Show or hide the Channel zone.
 - `layout-left-zone.svg` — Show or hide the left zone.
 - `layout-lower-zone.svg` — Show or hide the lower zone.
 - `layout-right-zone.svg` — Show or hide the right zone.
@@ -60,5 +61,6 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `general-open.svg` — Open a project or file.
 - `general-snap.svg` — Toggle snapping to the grid.
 - `general-zero-crossing.svg` — Toggle snapping to zero crossings.
+- `general-color.svg` — Choose a color for the selected tracks or events.
 - `general-lock.svg` — Lock the selected item.
 - `general-link.svg` — Link selected items.

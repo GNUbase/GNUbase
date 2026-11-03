@@ -33,6 +33,7 @@ add_executable(gnubase-tests
 	bus_tests.cpp
 	canvas_tests.cpp
 	channelformat_tests.cpp
+	color_tests.cpp
 	coverage_tests.cpp
 	dawproject_tests.cpp
 	debugreports.cpp
@@ -63,6 +64,7 @@ add_executable(gnubase-tests
 	mcp_tests.cpp
 	mcpevents_tests.cpp
 	mcptools_tests.cpp
+	meter_tests.cpp
 	midi_tests.cpp
 	mididevice_tests.cpp
 	midiedit_tests.cpp

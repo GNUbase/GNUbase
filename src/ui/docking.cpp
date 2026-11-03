@@ -123,6 +123,13 @@ namespace gnubase::ui
 			}
 		}
 
+		bool inside(const Rml::Element* element, const Rml::Element& ancestor)
+		{
+			while (element != nullptr && element != &ancestor)
+				element = element->GetParentNode();
+			return element != nullptr;
+		}
+
 		Json boundsJson(const Rect& bounds)
 		{
 			return {{"x", bounds.x}, {"y", bounds.y}, {"width", bounds.width}, {"height", bounds.height}};
@@ -336,8 +343,9 @@ namespace gnubase::ui
 			const char* description;
 			std::vector<const char*> keys; // the reference's (manual p. 1572)
 		};
-		const std::array<Toggle, 9> toggles = {{
+		const std::array<Toggle, 10> toggles = {{
 			{"window.menuBar", "menuBar", "Shows or hides the menu bar.", {}},
+			{"window.channelZone", "channel", "Shows or hides the Channel zone.", {"Mod+Alt+C"}},
 			{"window.leftZone", "left", "Shows or hides the left zone.", {"Mod+Alt+L", "Alt+I"}},
 			{"window.rightZone", "right", "Shows or hides the right zone.", {"Mod+Alt+R"}},
 			{"window.lowerZone", "lower", "Shows or hides the lower zone.", {"Mod+Alt+E", "Mod+Alt+B"}},
@@ -699,6 +707,10 @@ namespace gnubase::ui
 				continue;
 			const bool shown = visible(window, zoneName);
 			zone->SetClass("hidden", !shown);
+			// The keyboard focus leaves a zone that hides, for the main zone, so that the zone's keys no longer apply.
+			if (const Rml::Element* focus = document->GetContext()->GetFocusElement(); !shown && inside(focus, *zone))
+				if (Rml::Element* main = document->QuerySelector("[zone=main]"))
+					main->Focus();
 			for (Rml::Element* splitter : elements(*document, "splitter[for=" + zoneName + "]"))
 				splitter->SetClass("hidden", !shown);
 			const Json* size = find(m_layout, {"windows", window, "zones", zoneName, "size"});
@@ -1000,10 +1012,24 @@ namespace gnubase::ui
 					id = attribute(*tab, "panel");
 				later([this, id] { setFloating(id, true); });
 			}
+			else if (const Rml::Element* all = closestWith(target, "setup-all"); all != nullptr && !window.empty())
+			{
+				later(
+					[this, window = std::move(window), set = attribute(*all, "setup-all")]
+					{
+						for (const std::string& id : sections(window, set))
+							setSectionHidden(window, set, id, false);
+					});
+			}
 			else if (const Rml::Element* button = closestWith(target, "id");
 				button != nullptr && button->GetId() == "dock")
 			{
 				later([this, id = attribute(*target->GetOwnerDocument(), "panel")] { setFloating(id, false); });
+			}
+			else if (const Rml::Element* hider = closestWith(target, "hide"); hider != nullptr && !window.empty())
+			{
+				later([this, window = std::move(window), name = attribute(*hider, "hide")]
+					{ setVisible(window, name, false); });
 			}
 			break;
 		case Rml::EventId::Mousedown:

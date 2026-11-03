@@ -14,10 +14,12 @@ namespace gnubase::engine::graph
 		uint32_t offset = 0;  // the segment's first frame in the block
 		uint32_t frames = 0;  // at least 1
 		int64_t position = 0; // the project position, in samples, of the segment's first frame
+		bool recording = false;
 	};
 
 	// Where a block plays in the project. While playing, the segments cover the block in order; a new segment starts
-	// where cycle playback jumps from the right to the left locator. While stopped there are none.
+	// where cycle playback jumps from the right to the left locator, and where recording punches in or out. While
+	// stopped there are none.
 	struct TransportBlock
 	{
 		bool playing = false;
@@ -25,7 +27,7 @@ namespace gnubase::engine::graph
 		const TransportSegment* segments = nullptr;
 		size_t segmentCount = 0;
 		double tempo = 120.0;   // quarter notes per minute at the block's first frame, from the project's tempo map
-		bool recording = false; // only while playing
+		bool recording = false; // whether any segment records
 	};
 
 	// What a processor gets for one block.

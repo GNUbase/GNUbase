@@ -7,11 +7,16 @@
 #include "platform/rt/spscqueue.h"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <vector>
 
 namespace gnubase::engine
 {
+	// The largest project position, in samples: about 11 years at 768 kHz, far from where adding a block, a cycle or
+	// a post-roll could overflow.
+	inline constexpr time::Samples g_maxPosition = time::Samples{1} << 48;
+
 	// Where playback starts.
 	enum class StartMode : uint8_t
 	{
@@ -38,10 +43,15 @@ namespace gnubase::engine
 		bool cycle = false;      // cycle playback between the locators, or skips them if the right comes first
 		StartMode startMode = StartMode::Cursor;
 		bool returnToStart = false; // on stop the cursor goes back to where playback started
-		// Switches of the transport bar whose behaviour comes with their tickets: punching in and out at the locators
-		// (#102) and the metronome click (#101).
-		bool punchIn = false;
-		bool punchOut = false;
+		bool punchIn = false;       // reaching the left locator while playing starts recording
+		bool punchOut = false;      // reaching the right locator while recording ends it; playback goes on
+		bool stopAfterPunchOut =
+			false; // ... unless this is set (audio.stopAfterPunchOut): then playback stops, after the post-roll
+		bool preRoll = false; // playback starts preRollAmount before the cursor
+		time::Samples preRollAmount = 0;
+		bool postRoll = false; // playback stops postRollAmount after an automatic punch out
+		time::Samples postRollAmount = 0;
+		// The transport bar's switch for the metronome click, whose behaviour comes with #101.
 		bool metronome = false;
 		AudioRecordMode audioRecordMode = AudioRecordMode::KeepHistory;
 	};
@@ -52,6 +62,10 @@ namespace gnubase::engine
 	// Cycle playback: while the cursor is before the right locator, reaching the right locator jumps to the left one.
 	// With the right locator after the left one that loops the range; with it before, it skips the range. Playback
 	// from the right locator or after it plays on.
+	//
+	// Punching in and out at the locators (reference manual pp. 318-319, 336-338) happens on the audio thread at the
+	// exact sample, and so does stopping after an automatic punch out, at the first block that starts at or after
+	// the right locator plus the post-roll. The command thread takes such changes over with sync().
 	class Transport
 	{
 	public:
@@ -59,9 +73,13 @@ namespace gnubase::engine
 		explicit Transport(uint32_t maxFrames = 8192);
 
 		// Command thread. Each returns false, and changes nothing, if too many requests are waiting.
-		bool play();                                 // from the cursor, or the left locator in StartMode::CycleStart
-		bool stop();                                 // ends recording; returns to the start if returnToStart is set
-		bool record(bool on);                        // while playing: punches in or out; stopped, does nothing
+		bool play(); // from startPosition: the cursor, or the left locator in StartMode::CycleStart, less the pre-roll
+		bool stop(); // ends recording; returns to the start if returnToStart is set
+		// While playing: punches in, or with punchIn before the left locator lets the punch in start recording there;
+		// off punches out. Stopped, on starts playback as play does and recording where play would start without the
+		// pre-roll, or at the left locator with punchIn if that comes later; off does nothing.
+		bool record(bool on);
+		// Positions and locators are clamped to 0 to g_maxPosition.
 		bool locate(time::Samples position);         // also the new start position for returnToStart
 		bool set(const TransportSettings& settings); // new locators and modes
 
@@ -69,6 +87,22 @@ namespace gnubase::engine
 		const TransportSettings& settings() const { return m_requested; }
 		bool playing() const { return m_requestedPlaying; }
 		bool recording() const { return m_requestedRecording; }
+		// Command thread: where play starts playback.
+		time::Samples startPosition() const;
+		// Where recording from stop starts, for playback that starts at start before the pre-roll and at from with
+		// it: at start, or the left locator with punch in if that comes later. In a cycle that would jump back before
+		// reaching that, at from, or with punch in at from or the left locator, whichever comes later; in one that
+		// skips the range it lies in, at the left locator, where playback lands. A locate while recording waits uses
+		// it too, with start and from where the locate goes.
+		static time::Samples recordStart(const TransportSettings& settings, time::Samples start, time::Samples from);
+
+		// Command thread: once the audio thread has applied every request, takes over whether it plays and records,
+		// which punching in and out and stopping after a punch out change on their own. Returns whether that changed
+		// anything.
+		bool sync();
+		// Any thread: counts the blocks and requests after which the audio thread played or recorded differently, or
+		// applied a request: a thread that sees it change has the command thread sync.
+		uint64_t changes() const { return m_changes.load(std::memory_order_acquire); }
 
 		// Any thread but the audio thread (the cue thread reads it while a device runs): the cursor, where the last
 		// locate goes until the audio thread has applied it, then as of the last block.
@@ -103,21 +137,28 @@ namespace gnubase::engine
 		bool send(const Request& request);
 		void apply(const Request& request) noexcept;
 		void locateTo(time::Samples position) noexcept;
+		void start() noexcept;
+		void autoStop() noexcept;
+		void publish(bool changed) noexcept;
 
 		// Command thread.
 		rt::SpscQueue<Request> m_requests;
 		TransportSettings m_requested;
 		bool m_requestedPlaying = false;
 		bool m_requestedRecording = false;
-		uint64_t m_locates = 0; // how many locates were sent
+		uint64_t m_locates = 0;      // how many locates were sent
+		uint64_t m_sentRequests = 0; // how many requests were sent
 
 		// Audio thread.
 		TransportSettings m_settings;
 		bool m_playing = false;
 		bool m_recording = false;
 		time::Samples m_position = 0;
-		time::Samples m_start = 0; // where playback started or was last located to
-		uint64_t m_locate = 0;     // the last locate applied
+		time::Samples m_start = 0;     // where playback started or was last located to
+		time::Samples m_recordAt = -1; // a recording from stop starts here, after the pre-roll
+		time::Samples m_stopAt = -1;   // after an automatic punch out: where playback stops
+		uint64_t m_locate = 0;         // the last locate applied
+		uint8_t m_published = 0;       // what m_state says
 		std::vector<graph::TransportSegment> m_segments;
 		graph::TransportBlock m_block;
 
@@ -126,6 +167,11 @@ namespace gnubase::engine
 		// Written by the audio thread: m_locate and m_position after each block. Each pair is read whole, so the cursor
 		// never mixes one locate's count with another's target, or one block's position with another's locate.
 		rt::SeqLockPair<uint64_t, time::Samples> m_applied;
+		// Written by the audio thread: how many requests it applied, whether it plays (1) and records (2), and
+		// changes().
+		std::atomic<uint64_t> m_appliedRequests{0};
+		std::atomic<uint8_t> m_state{0};
+		std::atomic<uint64_t> m_changes{0};
 	};
 
 	// Where the transport played each of the device's last frames, so recorded input finds where it belongs: with

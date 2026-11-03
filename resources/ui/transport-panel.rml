@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The transport panel (reference manual p. 295), a window of its own that F2 shows and hides: app::AppUi fills
-     #transport with the transport controls (transport.rml) and ui::TransportControls drives them. -->
+     #transport with the transport controls (transport.rml) and ui::TransportControls drives them. The panel is a
+     docking window of its own, transportPanel, for its sections. -->
 <rml>
 <head>
 	<title>Transport</title>
@@ -16,6 +17,6 @@
 	</style>
 </head>
 <body>
-	<div id="transport" class="transport toolbar"/>
+	<div id="transport" class="transport toolbar" sections="transport" contextmenu="transport-setup"/>
 </body>
 </rml>

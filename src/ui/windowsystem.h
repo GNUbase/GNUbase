@@ -70,6 +70,7 @@ namespace gnubase::ui
 		uint64_t dialog = 0;                      // FileDialogClosed: the id showFileDialog was given
 		std::string error;                        // FileDialogClosed: why the dialog failed; empty if it didn't
 		std::optional<KeyPress> key;              // Input: a key pressed that no element used, for key commands
+		std::optional<KeyPress> keyUp; // Input: a key released; KI_UNKNOWN for every key, as when the focus went
 	};
 
 	enum class FileDialogKind : uint8_t

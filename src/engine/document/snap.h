@@ -7,6 +7,8 @@
 #include "engine/time/tempomap.h"
 #include "engine/time/timecode.h"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -58,27 +60,57 @@ namespace gnubase::engine
 		Samples44100,
 	};
 
+	// The time format the grid follows: the project window's ruler (reference manual pp. 105, 107-109). The names
+	// are those of g_rulerTimeFormats.
+	enum class GridFormat : uint8_t
+	{
+		BarsBeats,  // bar, beat, quantize, adaptToZoom
+		Seconds,    // the milliseconds
+		Timecode,   // the frames
+		Samples,    // the samples
+		UserFrames, // the frames, at the user's frame rate
+	};
+
+	inline constexpr size_t g_gridFormatCount = 5;
+
+	// Whether a grid type is one of the format's.
+	bool hasGrid(GridFormat format, GridType grid);
+
 	// Settings, not undo steps; saved with the project.
 	struct SnapSettings
 	{
 		bool on = false;
 		SnapType type = SnapType::Grid;
-		GridType grid = GridType::Bar;
+		GridFormat format = GridFormat::BarsBeats;
+		// The grid type of each format, by GridFormat.
+		std::array<GridType, g_gridFormatCount> grids = {
+			GridType::Bar, GridType::Ms100, GridType::Frame, GridType::Samples100, GridType::Frame};
 		bool zeroCrossing = false; // splitting and resizing audio events cut where the audio crosses zero
+
+		// The grid in use: the format's.
+		GridType grid() const { return grids.at(static_cast<size_t>(format)); }
+		// Chooses the grid type of its format; one that isn't the format's in use switches to its format (a frame
+		// grid to timecode).
+		void setGrid(GridType grid);
 	};
 
 	inline bool operator==(const SnapSettings& a, const SnapSettings& b)
 	{
-		return a.on == b.on && a.type == b.type && a.grid == b.grid && a.zeroCrossing == b.zeroCrossing;
+		return a.on == b.on && a.type == b.type && a.format == b.format && a.grids == b.grids &&
+			a.zeroCrossing == b.zeroCrossing;
 	}
 
 	const char* snapTypeName(SnapType type);
 	const char* gridTypeName(GridType grid);
+	const char* gridFormatName(GridFormat format);
 	std::optional<SnapType> snapTypeFromName(const std::string& name);
 	std::optional<GridType> gridTypeFromName(const std::string& name);
+	std::optional<GridFormat> gridFormatFromName(const std::string& name);
 	Json toJson(const SnapSettings& settings);
-	// Changes what json names; throws std::invalid_argument for unknown names.
-	SnapSettings snapSettingsFrom(const Json& json, SnapSettings settings);
+	// Changes what json names: grids, then format, then grid, which is the format's (without a format, as before
+	// #413, it chooses its format). Throws std::invalid_argument for unknown names and for a grid type that isn't its
+	// format's; loading a project, it leaves those out instead, so that a newer build's projects load.
+	SnapSettings snapSettingsFrom(const Json& json, SnapSettings settings, bool loading = false);
 
 	// What the grid is made of.
 	struct SnapGrid

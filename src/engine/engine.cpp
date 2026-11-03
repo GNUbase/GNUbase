@@ -215,6 +215,8 @@ namespace gnubase::engine
 		chase.pitchBend = m_settings->get(settings::g_midiChasePitchBend);
 		chase.beyondParts = m_settings->get(settings::g_midiChaseBeyondParts);
 		m_audio->setChase(chase);
+		m_audio->setStopAfterPunchOut(m_settings->get(settings::g_audioStopAfterPunchOut));
+		m_audio->setMeterResetOnStart(m_settings->get(settings::g_meterResetOnStart));
 	}
 
 	void Engine::settingsChanged(CommandContext& context, const std::vector<std::string>& keys)

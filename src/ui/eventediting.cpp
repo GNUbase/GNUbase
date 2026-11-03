@@ -238,12 +238,30 @@ namespace gnubase::ui
 					return;
 				// A selection the display doesn't show yet takes the step at the project's start.
 				const time::Position step =
-					engine::gridStep(m_snap.grid, snapGrid(), samples(edge(false).value_or(0.0)));
+					engine::gridStep(m_snap.grid(), snapGrid(), samples(edge(false).value_or(0.0)));
 				Json parameters = {{"events", m_selection},
 					{step.base == time::TimeBase::Musical ? "ticks" : "delta", direction * step.value}};
 				if (edgeName != nullptr)
 					parameters["edge"] = edgeName;
 				edit(edgeName == nullptr ? "event.move" : "event.resize", std::move(parameters));
+			};
+		};
+		// Nudge Cursor Left and Right: a grid step from the cursor (reference manual p. 300), never before the start.
+		const auto nudgeCursor = [this](int direction)
+		{
+			return [this, direction]
+			{
+				const engine::SnapGrid grid = snapGrid();
+				const time::Position step = engine::gridStep(m_snap.grid(), grid, m_cursorSample);
+				int64_t to = m_cursorSample + (direction * step.value);
+				if (step.base == time::TimeBase::Musical)
+					to = grid.tempo.toSamples(
+						std::max<time::Ticks>(
+							0, grid.tempo.toTicks(m_cursorSample, grid.sampleRate) + (direction * step.value)),
+						grid.sampleRate);
+				// The next nudge goes on from here, even before transport.changed says so.
+				setCursor(std::max<int64_t>(0, to));
+				m_binding.send("transport.locate", {{"position", m_cursorSample}});
 			};
 		};
 		// A range command for the selection range, if there is one (reference manual pp. 287-294), with a length
@@ -309,6 +327,8 @@ namespace gnubase::ui
 				}},
 			{"edit.fillLoop", onSelection("event.fillLoop", Json::object())},
 			{"edit.toRealCopy", onSelection("event.toRealCopy", Json::object())},
+			{"locate.nudgeCursorLeft", nudgeCursor(-1)},
+			{"locate.nudgeCursorRight", nudgeCursor(1)},
 			{"edit.nudgeLeft", nudge(nullptr, -1)},
 			{"edit.nudgeRight", nudge(nullptr, 1)},
 			{"edit.nudgeStartLeft", nudge("start", -1)},

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/playback.h"
+#include "engine/audio/transport.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
 #include "engine/graph/events.h"
@@ -9,6 +10,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <array>
@@ -24,6 +26,7 @@
 #include <vector>
 
 using namespace gnubase::engine;
+using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::WithinAbs;
 
 namespace
@@ -563,7 +566,10 @@ TEST_CASE("auditioning needs a device and an audio track", "[integration]")
 	CHECK(client.call("audition.start", parameters).error.find("no audio device") != std::string::npos);
 	run(client, "audio.setDevice", {{"blockSize", 64}});
 	CHECK(client.call("audition.start", parameters).error == "no audio track " + std::to_string(midi));
-	CHECK(client.call("audition.scrub", {{"track", midi}, {"position", -1}}).error == "position must not be negative");
+	CHECK_THAT(client.call("audition.scrub", {{"track", midi}, {"position", -1}}).error,
+		ContainsSubstring("position must be 0 to"));
+	CHECK_THAT(client.call("audition.scrub", {{"track", midi}, {"position", g_maxPosition + 1}}).error,
+		ContainsSubstring("position must be 0 to"));
 	CHECK(run(client, "audition.stop") == Json{{"track", 0}, {"mode", "off"}});
 }
 

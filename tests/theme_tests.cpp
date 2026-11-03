@@ -159,6 +159,16 @@ TEST_CASE("every theme has the same assets, each a renderable SVG of its manifes
 		CHECK(tokens.at("trackPalette").size() == 8);
 		CHECK(tokens.at("fontFamilies").contains("ui"));
 		CHECK(tokens.at("fontFamilies").contains("counter"));
+		// The time display window's digits at each of its sizes (docs/features/transport-bar.md), larger each time.
+		const nlohmann::json& digits = tokens.at("timeDisplaySizes");
+		REQUIRE(digits.size() == 5);
+		for (size_t size = 0; size < digits.size(); ++size)
+		{
+			INFO("time display size " << size);
+			CHECK(sheet.find(".time-display.size-" + std::to_string(size)) != std::string::npos);
+			if (size > 0)
+				CHECK(digits.at(size).get<int>() > digits.at(size - 1).get<int>());
+		}
 	}
 }
 
@@ -216,4 +226,11 @@ TEST_CASE("the high contrast theme's text, accents and borders stand out from it
 	// The focus ring is thicker than in the other themes.
 	CHECK(gnubase::test::readText(themesDir() / "high-contrast" / "focus-ring.svg").find("stroke-width=\"2\"") !=
 		std::string::npos);
+}
+
+TEST_CASE("the shared style sheets leave font sizes to the themes", "[unit]")
+{
+	const std::string base =
+		gnubase::test::readText(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "styles" / "base.rcss");
+	CHECK(base.find("font-size") == std::string::npos);
 }

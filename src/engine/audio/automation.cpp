@@ -487,13 +487,13 @@ namespace gnubase::engine
 		return false;
 	}
 
-	void ChannelStrip::glide(const graph::ProcessContext& context, float& gain, float target) noexcept
+	void ChannelStrip::glide(const graph::ProcessContext& context, int channels, float& gain, float target) noexcept
 	{
 		const float from = gain < 0.0f ? target : gain;
 		gain = target;
 		const float step = (target - from) / static_cast<float>(context.frames);
 		if (from != 1.0f || target != 1.0f)
-			for (int c = 0; c < context.channels; ++c)
+			for (int c = 0; c < channels; ++c)
 				for (uint32_t i = 0; i < context.frames; ++i)
 					context.audio[c][i] *= from + (step * static_cast<float>(i + 1));
 	}
@@ -511,6 +511,7 @@ namespace gnubase::engine
 		if (m_source)
 			m_source->prepareFor(sampleRate, maxFrames);
 		m_smoothing = static_cast<uint32_t>(std::llround(sampleRate * g_faderSmoothing));
+		m_sampleRate = sampleRate;
 	}
 
 	void ChannelStrip::process(const graph::ProcessContext& context) noexcept
@@ -531,7 +532,7 @@ namespace gnubase::engine
 		if (m_monitoring && context.frames > 0)
 		{
 			const graph::TransportBlock& transport = context.transport;
-			glide(context, m_state->monitorGain,
+			glide(context, context.channels, m_state->monitorGain,
 				m_monitoring->active(transport.playing, transport.recording) ? 1.0f : 0.0f);
 		}
 
@@ -559,7 +560,11 @@ namespace gnubase::engine
 		m_faderOut.clear();
 		m_state->fader->process(
 			{context.audio, context.channels, context.frames, events, m_faderOut, context.transport}, m_panning);
+		// A mono channel's panner makes its output stereo, as graph::describe gives its node.
+		const ChannelFormat wider = pannerOutput(m_panning.panner);
+		const int outputs = wider == ChannelFormat::None ? context.channels : channelCount(wider);
 		if (context.frames > 0)
-			glide(context, m_state->outputGain, m_silent ? 0.0f : 1.0f);
+			glide(context, outputs, m_state->outputGain, m_silent ? 0.0f : 1.0f);
+		m_state->meter.process(context.audio, outputs, context.frames, m_sampleRate);
 	}
 }

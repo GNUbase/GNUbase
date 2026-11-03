@@ -157,6 +157,16 @@ namespace gnubase::ui
 		// input, and ui::Automation for the keys it presses.
 		void unusedKey(Window& window, const KeyPress& keys);
 
+		// Runs handler for every key released in a window, e.g. for key commands that run while their key is held;
+		// a key of KI_UNKNOWN is every key, as when the window lost the keyboard focus.
+		void onKeyReleased(std::function<void(Window&, const KeyPress&)> handler)
+		{
+			m_keyReleased = std::move(handler);
+		}
+		// Hands a released key to that handler; the shell calls it for the window system's input, and ui::Automation
+		// for the keys it releases.
+		void keyReleased(Window& window, const KeyPress& keys);
+
 		// From any thread: makes the shell step soon, e.g. when the engine sent the UI something.
 		void wake() { m_windows.wake(); }
 
@@ -202,6 +212,7 @@ namespace gnubase::ui
 		std::vector<std::function<bool()>> m_stepTasks;
 		Clock::time_point m_nextFrame = Clock::time_point::max(); // when a step task that follows values runs again
 		std::function<void(Window&, const KeyPress&)> m_unusedKey;
+		std::function<void(Window&, const KeyPress&)> m_keyReleased;
 		std::function<void(Window&)> m_closeRequest;
 	};
 }

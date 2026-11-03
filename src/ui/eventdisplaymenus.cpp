@@ -413,7 +413,7 @@ namespace gnubase::ui
 					m_snapTypeButton->SetInnerRML(item->GetInnerRML());
 			}
 		if (m_gridTypeButton != nullptr)
-			m_gridTypeButton->SetInnerRML(Rml::StringUtilities::EncodeRml(gridText(m_snap.grid)));
+			m_gridTypeButton->SetInnerRML(Rml::StringUtilities::EncodeRml(gridText(m_snap.grid())));
 		if (m_gridTypeMenu == nullptr)
 			return;
 		while (m_gridTypeMenu->GetNumChildren() > 0)
@@ -422,7 +422,7 @@ namespace gnubase::ui
 		{
 			Rml::ElementPtr item =
 				menuElement(*m_gridTypeMenu, "menuitem", "grid-type", engine::gridTypeName(grid.grid), grid.text);
-			check(*item, grid.grid == m_snap.grid);
+			check(*item, grid.grid == m_snap.grid());
 			m_gridTypeMenu->AppendChild(std::move(item));
 		}
 	}

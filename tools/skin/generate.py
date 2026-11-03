@@ -30,6 +30,7 @@ THEMES = {
         "radii": {"small": 3, "control": 5, "panel": 6, "round": 999},
         "borderWidths": {"hairline": 1, "control": 1, "focus": 2},
         "fontSizes": {"small": 11, "body": 13, "label": 12, "title": 15, "display": 20},
+        "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": True,
     },
@@ -48,6 +49,7 @@ THEMES = {
         "radii": {"small": 3, "control": 4, "panel": 5, "round": 999},
         "borderWidths": {"hairline": 1, "control": 1, "focus": 2},
         "fontSizes": {"small": 11, "body": 13, "label": 12, "title": 15, "display": 20},
+        "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
     },
@@ -66,6 +68,7 @@ THEMES = {
         "radii": {"small": 3, "control": 5, "panel": 6, "round": 999},
         "borderWidths": {"hairline": 1, "control": 1, "focus": 2},
         "fontSizes": {"small": 11, "body": 13, "label": 12, "title": 15, "display": 20},
+        "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
     },
@@ -86,6 +89,7 @@ THEMES = {
         "radii": {"small": 2, "control": 3, "panel": 3, "round": 999},
         "borderWidths": {"hairline": 1, "control": 1, "focus": 3},
         "fontSizes": {"small": 11, "body": 13, "label": 12, "title": 15, "display": 20},
+        "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
         "focusRing": 2,
@@ -305,6 +309,7 @@ def tokens_for(theme: dict) -> dict:
     result["cornerRadii"] = theme["radii"]
     result["borderWidths"] = theme["borderWidths"]
     result["fontSizes"] = theme["fontSizes"]
+    result["timeDisplaySizes"] = theme["timeDisplaySizes"]
     result["fontFamilies"] = theme["fontFamilies"]
     return result
 
@@ -529,6 +534,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("menuitem .menu-keys", {"color": c["textMuted"]}),
         ("menuitem > .menu-arrow", {"decorator": skin("dropdown-arrow")}),
     ]
+    # The time display window's digits at each of its sizes (docs/features/transport-bar.md), a line twice as high.
+    rules.extend((f".time-display.size-{i}", {"font-size": f"{size}dp", "line-height": f"{2 * size}dp"})
+                 for i, size in enumerate(theme["timeDisplaySizes"]))
 
     rules = with_focus_rings(rules, skin("focus-ring"))
     lines = ["/* SPDX-License-Identifier: GPL-3.0-or-later */",
