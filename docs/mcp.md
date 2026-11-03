@@ -327,6 +327,25 @@ Result:
 - `media`: array of integer, required
 - `tracks`: array of integer, required
 
+### audioPart
+
+#### `audioPart_add`
+
+Engine command `audioPart.add`.
+
+Adds an empty audio part to an audio track (reference manual p. 250): a container of audio events, which play only within it and move, copy, split and glue with it through the event commands. position and length are in the track's time base; name defaults to the track's. event.toPart puts events into a part, event.dissolvePart takes them out again.
+
+Arguments:
+
+- `length`: integer, required
+- `name`: string
+- `position`: integer, required
+- `track`: integer, required
+
+Result:
+
+- `part`: object, required
+
 ### audio
 
 #### `audio_analyze`
@@ -1369,6 +1388,20 @@ Result:
 
 - `events`: array of integer, required
 
+#### `event_dissolvePart`
+
+Engine command `event.dissolvePart`.
+
+Dissolve Part (Audio menu): removes audio parts (events, by id) and makes their audio events events of their own on the track, cut at the part's edges so that they play as they did; events the part hid entirely are removed. Locked parts are refused. Returns the events.
+
+Arguments:
+
+- `events`: array of integer, required
+
+Result:
+
+- `events`: array of integer, required
+
 #### `event_duplicate`
 
 Engine command `event.duplicate`.
@@ -1406,7 +1439,7 @@ Result:
 
 Engine command `event.get`. Read-only.
 
-Tells where audio events and MIDI parts are, as the info line shows them: for each its kind (audio or midi), track, name (an audio event's clip's), start, end and length in project samples, start and end in ticks, mute, lock and its shared copies' group (0: none).
+Tells where audio events and parts are, as the info line shows them: for each its kind (audio, audioPart or midi), track, name (an audio event's clip's), start, end and length in project samples, start and end in ticks, mute, lock and its shared copies' group (0: none).
 
 Arguments:
 
@@ -1420,7 +1453,7 @@ Result:
 
 Engine command `event.glue`.
 
-Glues audio events or MIDI parts of one track into the first of them. Audio events glue where one continues the other in the same clip, as after a split; MIDI parts become one part from the first start to the last end, with all their notes and controllers. Returns the event.
+Glues audio events and parts or MIDI parts of one track together. Audio events that continue each other in the same clip, as after a split, become one event; other audio events and audio parts become one audio part from the first start to the last end, the first of the parts or a new one, holding all their events. MIDI parts become the first of them, from the first start to the last end, with all their notes and controllers. Returns the event or part.
 
 Arguments:
 
@@ -1551,6 +1584,20 @@ Arguments:
 - `positions`: array of integer, required
 - `splitNotes`: boolean
 - `zeroCrossing`: boolean
+
+Result:
+
+- `events`: array of integer, required
+
+#### `event_toPart`
+
+Engine command `event.toPart`.
+
+Events to Part (Audio menu): puts audio events (events, by id) into a new audio part on their track, from the first start to the last end; events on several tracks make a part on each. Events already in a part, and locked ones, are refused. Returns the parts in events.
+
+Arguments:
+
+- `events`: array of integer, required
 
 Result:
 

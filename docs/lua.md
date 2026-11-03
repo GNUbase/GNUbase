@@ -628,6 +628,23 @@ Returns:
 - `media`: array of integer, required
 - `tracks`: array of integer, required
 
+### audioPart
+
+#### `gnubase.audioPart.add`
+
+Adds an empty audio part to an audio track (reference manual p. 250): a container of audio events, which play only within it and move, copy, split and glue with it through the event commands. position and length are in the track's time base; name defaults to the track's. event.toPart puts events into a part, event.dissolvePart takes them out again.
+
+Parameters:
+
+- `length`: integer, required
+- `name`: string
+- `position`: integer, required
+- `track`: integer, required
+
+Returns:
+
+- `part`: object, required
+
 ### audition
 
 #### `gnubase.audition.scrub`
@@ -1127,6 +1144,18 @@ Returns:
 
 - `events`: array of integer, required
 
+#### `gnubase.event.dissolvePart`
+
+Dissolve Part (Audio menu): removes audio parts (events, by id) and makes their audio events events of their own on the track, cut at the part's edges so that they play as they did; events the part hid entirely are removed. Locked parts are refused. Returns the events.
+
+Parameters:
+
+- `events`: array of integer, required
+
+Returns:
+
+- `events`: array of integer, required
+
 #### `gnubase.event.duplicate`
 
 Duplicates audio events and MIDI parts count times (default 1, at most 1000; Edit > Repeat) one after the other, from the end of the last one, keeping their positions relative to each other; shared makes shared copies of MIDI parts. Returns the copies.
@@ -1158,7 +1187,7 @@ Returns:
 
 #### `gnubase.event.get`
 
-Tells where audio events and MIDI parts are, as the info line shows them: for each its kind (audio or midi), track, name (an audio event's clip's), start, end and length in project samples, start and end in ticks, mute, lock and its shared copies' group (0: none).
+Tells where audio events and parts are, as the info line shows them: for each its kind (audio, audioPart or midi), track, name (an audio event's clip's), start, end and length in project samples, start and end in ticks, mute, lock and its shared copies' group (0: none).
 
 Only reads; changes nothing.
 
@@ -1172,7 +1201,7 @@ Returns:
 
 #### `gnubase.event.glue`
 
-Glues audio events or MIDI parts of one track into the first of them. Audio events glue where one continues the other in the same clip, as after a split; MIDI parts become one part from the first start to the last end, with all their notes and controllers. Returns the event.
+Glues audio events and parts or MIDI parts of one track together. Audio events that continue each other in the same clip, as after a split, become one event; other audio events and audio parts become one audio part from the first start to the last end, the first of the parts or a new one, holding all their events. MIDI parts become the first of them, from the first start to the last end, with all their notes and controllers. Returns the event or part.
 
 Parameters:
 
@@ -1287,6 +1316,18 @@ Parameters:
 - `positions`: array of integer, required
 - `splitNotes`: boolean
 - `zeroCrossing`: boolean
+
+Returns:
+
+- `events`: array of integer, required
+
+#### `gnubase.event.toPart`
+
+Events to Part (Audio menu): puts audio events (events, by id) into a new audio part on their track, from the first start to the last end; events on several tracks make a part on each. Events already in a part, and locked ones, are refused. Returns the parts in events.
+
+Parameters:
+
+- `events`: array of integer, required
 
 Returns:
 

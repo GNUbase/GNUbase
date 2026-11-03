@@ -557,7 +557,13 @@ namespace gnubase::engine
 			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute},
 			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
 			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()},
-			{"color", colorJson(event.color)}};
+			{"color", colorJson(event.color)}, {"part", event.part}};
+	}
+
+	Json toJson(const AudioPart& part)
+	{
+		return {{"id", part.id}, {"track", part.track}, {"name", part.name}, {"position", part.position.value},
+			{"length", part.length}, {"mute", part.mute}, {"lock", part.lock}, {"color", colorJson(part.color)}};
 	}
 
 	Json toJson(const Note& note)
@@ -750,10 +756,11 @@ namespace gnubase::engine
 			{"channels", toJsonArray(project.channels)}, {"slots", toJsonArray(project.slots)},
 			{"media", toJsonArray(project.media)}, {"clips", toJsonArray(project.clips)},
 			{"poolFolders", toJsonArray(project.poolFolders)}, {"audioEvents", toJsonArray(project.audioEvents)},
-			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
-			{"automation", toJsonArray(project.automation)}, {"quantize", midi::toJson(project.quantize)},
-			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
-			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)}};
+			{"audioParts", toJsonArray(project.audioParts)}, {"midiParts", toJsonArray(project.midiParts)},
+			{"markers", toJsonArray(project.markers)}, {"automation", toJsonArray(project.automation)},
+			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
+			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
+			{"mixers", mixersJson(project.mixers)}};
 		json.update(toJson(project.setup));
 		return json;
 	}
@@ -1214,8 +1221,27 @@ namespace gnubase::engine
 			if (const Json snapPoint = item.value("snapPoint", Json()); !snapPoint.is_null()) // files from before #87
 				event.snapPoint = snapPoint.get<time::Samples>();
 			event.color = eventColorFrom(item);
+			event.part = item.value("part", ObjectId{0}); // files from before #471 have no audio parts
 			project.audioEvents[event.id] = event;
 		}
+		for (const Json& item : json.value("audioParts", Json::array()))
+		{
+			AudioPart part;
+			part.id = item.at("id").get<ObjectId>();
+			part.track = item.at("track").get<ObjectId>();
+			part.name = item.at("name").get<std::string>();
+			part.position = {base(part.track), item.at("position").get<int64_t>()};
+			part.length = item.at("length").get<int64_t>();
+			part.mute = item.value("mute", false);
+			part.lock = item.value("lock", false);
+			part.color = eventColorFrom(item);
+			project.audioParts[part.id] = part;
+		}
+		// An event in a part that isn't there, or on another track, is an event of its own.
+		for (auto& [id, event] : project.audioEvents)
+			if (const auto part = project.audioParts.find(event.part);
+				part == project.audioParts.end() || part->second.track != event.track)
+				event.part = 0;
 		for (const Json& item : json.at("midiParts"))
 		{
 			MidiPart part;
@@ -1310,6 +1336,9 @@ namespace gnubase::engine
 			see(id);
 		for (const auto& [id, event] : project.audioEvents)
 			see(id);
+		for (const auto& [id, part] : project.audioParts)
+			see(id);
+
 		for (const auto& [id, part] : project.midiParts)
 		{
 			see(id);

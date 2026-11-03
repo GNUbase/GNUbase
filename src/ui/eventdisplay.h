@@ -394,8 +394,11 @@ namespace gnubase::ui
 		std::pair<engine::Json, double> moveShift(double dx) const; // a drag of the selection, dx dp across
 		// Left and Right (reference manual p. 253): the event before (-1) or after (1) the selected ones on the lane.
 		void selectNeighbour(int direction);
-		// Adds a MIDI part on the lane from start to end, ticks, and selects it.
+		// Adds a part on the lane from start to end, ticks, and selects it: an audio part on an audio track, a MIDI
+		// part on a MIDI or instrument track.
 		void addPart(size_t lane, time::Ticks start, time::Ticks end);
+		// Whether the lane's track takes empty parts: audio, MIDI and instrument tracks.
+		bool takesParts(size_t lane) const;
 		// The lane at y dp down the event lanes, if there is one there.
 		std::optional<size_t> visibleLaneAt(double y) const;
 

@@ -328,6 +328,17 @@ namespace gnubase::ui
 				{event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false), std::nullopt});
 			m_end = std::max(m_end, end);
 		};
+		// Audio parts (#471) show as parts; their events only as the waveforms within them.
+		std::map<uint64_t, std::pair<double, double>> audioParts;
+		for (const Json& part : project.at("audioParts"))
+		{
+			const auto track = part.at("track").get<uint64_t>();
+			const auto position = part.at("position").get<int64_t>();
+			const double start = seconds(position, linear[track]);
+			const double end = seconds(position + part.at("length").get<int64_t>(), linear[track]);
+			audioParts[part.at("id").get<uint64_t>()] = {start, end};
+			addEvent(part, start, end);
+		}
 		std::vector<EventWaveforms::Event> waves;
 		for (const Json& event : project.at("audioEvents"))
 		{
@@ -336,7 +347,18 @@ namespace gnubase::ui
 			const double rate = file == media.end() ? 0.0 : file->second->at("sampleRate").get<double>();
 			const double start = seconds(event.at("position").get<int64_t>(), linear[track]);
 			const double length = rate > 0.0 ? event.at("length").get<double>() / rate : 0.0;
+			if (const auto part = audioParts.find(event.value("part", uint64_t{0})); part != audioParts.end())
+			{
+				const double from = std::max(start, part->second.first);
+				const double to = std::min(start + length, part->second.second);
+				if (file != media.end() && rate > 0.0 && lanes.count(track) != 0 && to > from)
+					waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {from, to - from}, file->first, rate,
+						file->second->at("channels").get<int>(),
+						event.at("offset").get<int64_t>() + static_cast<int64_t>(std::llround((from - start) * rate))});
+				continue;
+			}
 			addEvent(event, start, start + length);
+
 			// The snap point counts while it is inside the event.
 			const Json& snapPoint = event.at("snapPoint");
 			const double into = snapPoint.is_null() || rate <= 0.0

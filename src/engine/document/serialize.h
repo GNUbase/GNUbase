@@ -64,6 +64,7 @@ namespace gnubase::engine
 	Json toJson(const Clip& clip);
 	Json toJson(const PoolFolder& folder);
 	Json toJson(const AudioEvent& event);
+	Json toJson(const AudioPart& part);
 	Json toJson(const Note& note);
 	Json toJson(const Controller& controller);
 	// A controller's type and the values the type uses, without checking them; the others are zero. Its id and

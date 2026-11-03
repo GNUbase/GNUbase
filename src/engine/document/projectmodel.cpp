@@ -440,6 +440,15 @@ namespace gnubase::engine
 					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
 					context.emit("audioEvent.changed", {{"event", toJson(event)}});
 				}
+			for (auto& [id, part] : project.audioParts)
+				if (part.track == track.id)
+				{
+					const time::Position end = time::rebase({part.position.base, part.position.value + part.length},
+						base, project.tempo, project.sampleRate);
+					part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
+					part.length = end.value - part.position.value;
+					context.emit("audioPart.changed", {{"part", toJson(part)}});
+				}
 			for (auto& [id, part] : project.midiParts)
 				if (part.track == track.id)
 				{
@@ -482,6 +491,13 @@ namespace gnubase::engine
 					part.position.value = rescale(part.position.value, factor);
 					part.length = rescale(part.length, factor);
 					context.emit("midiPart.changed", {{"part", toJson(part)}});
+				}
+			for (auto& [id, part] : project.audioParts)
+				if (part.position.base == time::TimeBase::Linear)
+				{
+					part.position.value = rescale(part.position.value, factor);
+					part.length = rescale(part.length, factor);
+					context.emit("audioPart.changed", {{"part", toJson(part)}});
 				}
 			for (auto& [id, lane] : project.automation)
 			{
@@ -1089,6 +1105,20 @@ namespace gnubase::engine
 			added.emplace_back("track.added", Json{{"track", nullptr}, {"channel", nullptr}});
 			const size_t trackEvent = added.size() - 1;
 
+			// Audio parts hold the copies of their events.
+			std::map<ObjectId, ObjectId> audioParts;
+			std::vector<AudioPart> copiedParts;
+			for (const auto& [partId, part] : project.audioParts)
+				if (part.track == id)
+					copiedParts.push_back(part);
+			for (AudioPart& part : copiedParts)
+			{
+				audioParts[part.id] = project.newId();
+				part.id = audioParts.at(part.id);
+				part.track = copy.id;
+				project.audioParts[part.id] = part;
+				added.emplace_back("audioPart.added", Json{{"part", toJson(part)}});
+			}
 			// Crossfades join the copies of the events they joined.
 			std::map<ObjectId, ObjectId> events;
 			std::vector<AudioEvent> audio;
@@ -1104,6 +1134,8 @@ namespace gnubase::engine
 				event.track = copy.id;
 				const auto from = events.find(event.crossfade.from);
 				event.crossfade.from = from == events.end() ? 0 : from->second;
+				const auto part = audioParts.find(event.part);
+				event.part = part == audioParts.end() ? 0 : part->second;
 				project.audioEvents[event.id] = event;
 				added.emplace_back("audioEvent.added", Json{{"event", toJson(event)}});
 			}
@@ -1211,6 +1243,8 @@ namespace gnubase::engine
 					channels.push_back(gone.channel);
 				for (auto event = project.audioEvents.begin(); event != project.audioEvents.end();)
 					event = event->second.track == removed ? project.audioEvents.erase(event) : std::next(event);
+				for (auto part = project.audioParts.begin(); part != project.audioParts.end();)
+					part = part->second.track == removed ? project.audioParts.erase(part) : std::next(part);
 				for (auto part = project.midiParts.begin(); part != project.midiParts.end();)
 					part = part->second.track == removed ? project.midiParts.erase(part) : std::next(part);
 				for (auto marker = project.markers.begin(); marker != project.markers.end();)
@@ -1989,6 +2023,24 @@ namespace gnubase::engine
 			return result;
 		}
 
+		Json addAudioPart(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			AudioPart part;
+			part.track = parameters.at("track").get<ObjectId>();
+			const Track& track = find(project.trackById, part.track, "track");
+			require(track.type == TrackType::Audio, "audio parts can only be on an audio track");
+			part.position = position(track, parameters.at("position"), "position");
+			part.length = parameters.at("length").get<int64_t>();
+			require(part.length > 0, "length must be positive");
+			part.name = parameters.value("name", track.name);
+			part.id = project.newId();
+			project.audioParts[part.id] = part;
+			Json result = {{"part", toJson(part)}};
+			context.emit("audioPart.added", result);
+			return result;
+		}
+
 		Json setMidiPart(Project& project, CommandContext& context, bool follow)
 		{
 			const Json& parameters = context.parameters();
@@ -2285,6 +2337,7 @@ namespace gnubase::engine
 			{"crossfade.set", "Crossfade"},
 			{"crossfade.remove", "Remove crossfades"},
 			{"autoFades.set", "Change auto fades"},
+			{"audioPart.add", "Add audio part"},
 			{"midiPart.add", "Add MIDI part"},
 			{"midiPart.set", "Change MIDI part"},
 			{"midiPart.remove", "Remove MIDI part"},
@@ -2388,6 +2441,7 @@ namespace gnubase::engine
 			announceObjects(change.media, direction, "media", "media", context);
 			announceObjects(change.poolFolders, direction, "poolFolder", "folder", context);
 			announceObjects(change.clips, direction, "clip", "clip", context);
+			announceObjects(change.audioParts, direction, "audioPart", "part", context);
 			announceObjects(change.audioEvents, direction, "audioEvent", "event", context);
 			announceObjects(change.markers, direction, "marker", "marker", context);
 			// Slots as plugin.insert, plugin.remove and the other plugin.* commands announce them. Those of a channel
@@ -3146,7 +3200,19 @@ namespace gnubase::engine
 			removeAudioEvent);
 
 		add(engine,
+			{"audioPart.add", 1,
+				"Adds an empty audio part to an audio track (reference manual p. 250): a container of audio events, "
+				"which play only within it and move, copy, split and glue with it through the event commands. "
+				"position and length are in the track's time base; name defaults to the track's. event.toPart puts "
+				"events into a part, event.dissolvePart takes them out again.",
+				objectSchema({{"track", idSchema}, {"position", integerSchema}, {"length", integerSchema},
+								 {"name", stringSchema}},
+					{"track", "position", "length"}),
+				resultSchema({"part"}), false},
+			addAudioPart);
+		add(engine,
 			{"midiPart.add", 1,
+
 				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base.",
 				objectSchema({{"track", idSchema}, {"position", integerSchema}, {"length", integerSchema},
 								 {"name", stringSchema}},
