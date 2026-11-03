@@ -239,7 +239,11 @@ TEST_CASE("the lower zone's editor follows the project window's selection unless
 	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.keys2}; }));
 	CHECK(app.appUi().docking().showing("editor"));
 
-	// Hiding the lower zone closes its editor.
+	// Another tab in front of it leaves it open; hiding the lower zone closes it.
+	app.appUi().docking().open("mixer");
+	for (int i = 0; i < 5; ++i)
+		app.shell().step(std::chrono::milliseconds(0));
+	CHECK(view(app, "lower").at("open") == true);
 	app.appUi().docking().setVisible("project", "lower", false);
 	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
 }
