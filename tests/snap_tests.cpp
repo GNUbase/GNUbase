@@ -11,10 +11,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -450,6 +452,129 @@ TEST_CASE("snap settings from before #413 take the format of their grid type", "
 	settings.format = engine::GridFormat::UserFrames;
 	settings.setGrid(GridType::TwoFrames);
 	CHECK(engine::snapSettingsFrom(engine::toJson(settings), engine::SnapSettings()) == settings);
+}
+
+// #565: the grid type menu is built from the engine's table, so the two can't disagree.
+TEST_CASE("gridTypes lists each time format's grid types in the order of the grid type menu", "[unit]")
+{
+	using engine::GridFormat;
+	const auto names = [](GridFormat format)
+	{
+		std::vector<std::string> result;
+		for (const GridType grid : engine::gridTypes(format))
+			result.emplace_back(engine::gridTypeName(grid));
+		return result;
+	};
+	CHECK(names(GridFormat::BarsBeats) == std::vector<std::string>{"bar", "beat", "quantize", "adaptToZoom"});
+	CHECK(names(GridFormat::Seconds) == std::vector<std::string>{"1ms", "10ms", "100ms", "1000ms"});
+	const std::vector<std::string> frames = {"subframe", "quarterFrame", "halfFrame", "frame", "twoFrames", "second"};
+	CHECK(names(GridFormat::Timecode) == frames);
+	CHECK(names(GridFormat::UserFrames) == frames);
+	CHECK(names(GridFormat::Samples) == std::vector<std::string>{"1sample", "10samples", "100samples", "44100samples"});
+
+	// Exactly the grid types hasGrid accepts, and each format's default among them.
+	const engine::SnapSettings defaults;
+	for (size_t i = 0; i < engine::g_gridFormatCount; ++i)
+	{
+		const auto format = static_cast<GridFormat>(i);
+		const std::vector<GridType> grids = engine::gridTypes(format);
+		for (int g = 0; g <= static_cast<int>(GridType::Samples44100); ++g)
+		{
+			const auto grid = static_cast<GridType>(g);
+			CHECK(engine::hasGrid(format, grid) == (std::find(grids.begin(), grids.end(), grid) != grids.end()));
+		}
+		CHECK(engine::hasGrid(format, defaults.grids.at(i)));
+	}
+}
+
+// #565: a newer build's grid types (and formats) survive being loaded and saved by this one.
+TEST_CASE("grid types of a newer build are kept and written back until this build chooses one", "[unit]")
+{
+	const Json newer = {{"on", true}, {"format", "seconds"}, {"grid", "5ms"},
+		{"grids", {{"barsBeats", "beat"}, {"seconds", "5ms"}, {"samples", "bar"}, {"feet", "1foot"}}}};
+	const engine::SnapSettings loaded = engine::snapSettingsFrom(newer, engine::SnapSettings(), true);
+	CHECK(loaded.grid() == GridType::Ms100); // what this build knows
+	CHECK(loaded.grids.at(0) == GridType::Beat);
+
+	// The API shows only what this build knows; saving writes the newer build's entries back, but a grid type that
+	// isn't its format's (samples: bar) is a mistake, not a newer build's, and is left out.
+	const Json shown = engine::toJson(loaded);
+	CHECK(shown.at("grids") ==
+		Json{{"barsBeats", "beat"}, {"seconds", "100ms"}, {"timecode", "frame"}, {"samples", "100samples"},
+			{"userFrames", "frame"}});
+	const Json saved = engine::toJson(loaded, true);
+	CHECK(saved.at("grids") ==
+		Json{{"barsBeats", "beat"}, {"seconds", "5ms"}, {"timecode", "frame"}, {"samples", "100samples"},
+			{"userFrames", "frame"}, {"feet", "1foot"}});
+	CHECK(saved.at("format") == "seconds");
+	CHECK(saved.at("grid") == "100ms"); // older builds read the grid in use
+
+	// Loaded again (by the newer build or this one), the kept entries are kept again: grids, not grid, has the
+	// format's grid type.
+	const engine::SnapSettings again = engine::snapSettingsFrom(saved, engine::SnapSettings(), true);
+	CHECK(again == loaded);
+	CHECK(engine::toJson(again, true) == saved);
+
+	// Choosing a grid type for a format replaces the kept one, with snap.set's grid or grids alike.
+	engine::SnapSettings chosen = loaded;
+	chosen.setGrid(GridType::Ms10);
+	CHECK(engine::toJson(chosen, true).at("grids").at("seconds") == "10ms");
+	CHECK(engine::toJson(chosen, true).at("grids").at("feet") == "1foot");
+	chosen = engine::snapSettingsFrom({{"grids", {{"seconds", "1000ms"}}}}, loaded);
+	CHECK(engine::toJson(chosen, true).at("grids").at("seconds") == "1000ms");
+	chosen = engine::snapSettingsFrom({{"grid", "1ms"}}, loaded);
+	CHECK(engine::toJson(chosen, true).at("grids").at("seconds") == "1ms");
+	// Switching formats or anything else keeps them, as does snap.set with what snap.get returned.
+	chosen = engine::snapSettingsFrom({{"format", "samples"}, {"on", false}}, loaded);
+	CHECK(engine::toJson(chosen, true).at("grids").at("seconds") == "5ms");
+	CHECK(engine::snapSettingsFrom(engine::toJson(loaded), loaded) == loaded);
+	// A grid entry this build can't use leaves grid to choose, as before #413.
+	for (const Json& unusable : {Json("bar"), Json(3)})
+	{
+		const Json damaged = {{"format", "timecode"}, {"grid", "quarterFrame"}, {"grids", {{"timecode", unusable}}}};
+		CHECK(engine::snapSettingsFrom(damaged, engine::SnapSettings(), true).grid() == GridType::QuarterFrame);
+	}
+
+	// Entries that aren't names are left out, as are the newer build's when the settings are changed, not loaded.
+	CHECK_THROWS(engine::snapSettingsFrom({{"grids", {{"seconds", "5ms"}}}}, engine::SnapSettings()));
+	const engine::SnapSettings odd =
+		engine::snapSettingsFrom({{"grids", {{"seconds", 5}, {"feet", Json::array()}}}}, engine::SnapSettings(), true);
+	CHECK(engine::toJson(odd, true) == engine::toJson(engine::SnapSettings()));
+	CHECK(engine::snapSettingsFrom({{"grids", "frame"}, {"type", 3}}, engine::SnapSettings(), true) ==
+		engine::SnapSettings());
+	const Json numbers = {{"on", 1}, {"zeroCrossing", "yes"}, {"format", "seconds"}};
+	CHECK(engine::snapSettingsFrom(numbers, engine::SnapSettings(), true).format == engine::GridFormat::Seconds);
+	CHECK(!engine::snapSettingsFrom(numbers, engine::SnapSettings(), true).on);
+	CHECK_THROWS_AS(engine::snapSettingsFrom(numbers, engine::SnapSettings()), std::invalid_argument);
+	CHECK(engine::snapSettingsFrom(Json(5), engine::SnapSettings(), true) == engine::SnapSettings());
+}
+
+// #565: the frame grids follow the project's frame rate (project setup, #78); user frames have the user's.
+TEST_CASE("snap.position's frame grids have the project's frame rate", "[unit]")
+{
+	Fixture f;
+	const auto at = [&f](int64_t position, const Json& settings, const Json& more = Json::object())
+	{
+		Json parameters = more;
+		parameters["position"] = position;
+		parameters["settings"] = settings;
+		return f.call("snap.position", parameters).at("position").get<int64_t>();
+	};
+	const Json frame = {{"on", true}, {"format", "timecode"}, {"grid", "frame"}};
+	CHECK(at(2900, frame) == 3840); // 25 fps: 1920 samples
+	f.call("project.set", {{"frameRate", "24"}});
+	CHECK(at(2900, frame) == 2000);
+	f.call("project.set", {{"frameRate", "29.97"}});
+	CHECK(at(3300, frame) == 3203); // 1.001 / 30 seconds
+	CHECK(at(3300, {{"on", true}, {"format", "timecode"}, {"grid", "halfFrame"}}) == 3203);
+	// User frames: the user's rate, 30 fps as the event display has it until it is a setting.
+	f.call("project.set", {{"frameRate", "24"}});
+	CHECK(at(2500, {{"on", true}, {"format", "userFrames"}, {"grid", "frame"}}) == 3200);
+	// framesPerSecond chooses a rate for both.
+	CHECK(at(2900, frame, {{"framesPerSecond", 60}}) == 3200);
+	CHECK(at(2500, {{"on", true}, {"format", "userFrames"}, {"grid", "frame"}}, {{"framesPerSecond", 24}}) == 2000);
+	// The other grids don't depend on it.
+	CHECK(at(2900, {{"on", true}, {"format", "seconds"}, {"grid", "10ms"}}) == 2880);
 }
 
 TEST_CASE("snap.position snaps as the project window does", "[unit]")

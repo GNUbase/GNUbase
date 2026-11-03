@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <stdexcept>
 #include <utility>
 
 namespace gnubase::ui
@@ -91,15 +92,41 @@ namespace gnubase::ui
 				return std::nullopt;
 			return std::make_pair(static_cast<int>(*numerator), static_cast<int>(*denominator));
 		}
+
+		// Throws std::invalid_argument for a control whose parameters aren't a JSON object, or whose command and
+		// parameters check refuses.
+		void checkControls(Rml::Element& root, const CheckCommand& check)
+		{
+			Rml::ElementList found;
+			root.QuerySelectorAll(found, "[command]");
+			if (root.HasAttribute("command"))
+				found.insert(found.begin(), &root);
+			for (const Rml::Element* control : found)
+			{
+				const std::string command = attribute(*control, "command");
+				const std::string text = attribute(*control, "parameters", "{}");
+				const Json parameters = Json::parse(text, nullptr, false);
+				if (!parameters.is_object())
+				{
+					std::string message = "the parameters of the transport control for ";
+					message.append(command).append(" aren't a JSON object: ").append(text);
+					throw std::invalid_argument(message);
+				}
+				if (check)
+					check(command, parameters);
+			}
+		}
 	}
 
-	TransportControls::TransportControls(
-		engine::Engine& engine, EngineBinding& binding, Rml::Element& root, RunCommand run, ReleaseCommand release)
+	TransportControls::TransportControls(engine::Engine& engine, EngineBinding& binding, Rml::Element& root,
+		RunCommand run, ReleaseCommand release, const CheckCommand& check)
 		: m_engine(engine), m_binding(binding), m_run(std::move(run)), m_release(std::move(release)),
 		  m_root(root.GetObserverPtr()),
 		  m_formats{{"primary", TimeFormat::BarsBeats}, {"secondary", TimeFormat::Timecode},
 			  {"timeDisplay", TimeFormat::BarsBeats}}
 	{
+		// Before it listens to anything, so that a refused control leaves nothing behind.
+		checkControls(root, check);
 		if (Rml::ElementDocument* document = root.GetOwnerDocument())
 			m_document = document->GetObserverPtr();
 		listen(true);
