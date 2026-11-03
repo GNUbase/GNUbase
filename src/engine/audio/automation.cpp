@@ -499,9 +499,10 @@ namespace gnubase::engine
 	}
 
 	ChannelStrip::ChannelStrip(std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source,
-		Panning panning, std::optional<Monitoring> monitoring, bool silent, StripPart part)
+		Panning panning, std::optional<Monitoring> monitoring, bool silent, StripPart part,
+		const ChannelSections& sections)
 		: m_state(std::move(state)), m_source(std::move(source)), m_panning(panning), m_monitoring(monitoring),
-		  m_silent(silent), m_part(part), m_sourceEvents(graph::g_maxEventsPerBlock),
+		  m_silent(silent), m_part(part), m_sections(sections), m_sourceEvents(graph::g_maxEventsPerBlock),
 		  m_faderEvents(graph::g_maxEventsPerBlock), m_faderOut(graph::g_maxEventsPerBlock)
 	{
 	}
@@ -510,8 +511,15 @@ namespace gnubase::engine
 	{
 		if (m_source)
 			m_source->prepareFor(sampleRate, maxFrames);
+		m_state->sections.prepare(sampleRate, maxFrames);
 		m_smoothing = static_cast<uint32_t>(std::llround(sampleRate * g_faderSmoothing));
 		m_sampleRate = sampleRate;
+	}
+
+	uint32_t ChannelStrip::latency() const
+	{
+		const uint32_t source = m_source ? m_source->latency() : 0;
+		return source + (m_part == StripPart::Source ? 0 : m_state->sections.latency(m_sections));
 	}
 
 	void ChannelStrip::process(const graph::ProcessContext& context) noexcept
@@ -542,6 +550,7 @@ namespace gnubase::engine
 		else
 			for (const graph::ProcessEvent& event : m_sourceEvents)
 				context.eventsOut.add(event);
+		m_state->sections.processPre(m_sections, context.audio, context.channels, context.frames);
 
 		if (m_part == StripPart::Source)
 		{
@@ -557,6 +566,7 @@ namespace gnubase::engine
 	{
 		if (context.channels == 0)
 			return;
+		m_state->sections.processPost(m_sections, context.audio, context.channels, context.frames);
 		m_faderOut.clear();
 		m_state->fader->process(
 			{context.audio, context.channels, context.frames, events, m_faderOut, context.transport}, m_panning);
