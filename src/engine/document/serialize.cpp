@@ -35,6 +35,7 @@ namespace gnubase::engine
 			{TrackType::Effect, "effect"},
 			{TrackType::Marker, "marker"},
 			{TrackType::Ruler, "ruler"},
+			{TrackType::Tempo, "tempo"},
 		};
 
 		constexpr struct
@@ -757,6 +758,23 @@ namespace gnubase::engine
 		}
 	}
 
+	Json toJson(const time::TempoMap& tempo)
+	{
+		Json points = Json::array();
+		for (const time::TempoPoint& point : tempo.points())
+			points.push_back({{"position", point.position}, {"bpm", point.bpm}, {"ramp", point.ramp}});
+		return points;
+	}
+
+	time::TempoMap tempoFromJson(const Json& points)
+	{
+		std::vector<time::TempoPoint> tempo;
+		for (const Json& point : points)
+			tempo.push_back(
+				{point.at("position").get<time::Ticks>(), point.at("bpm").get<double>(), point.at("ramp").get<bool>()});
+		return time::TempoMap(tempo);
+	}
+
 	Json toJson(const Project& project)
 	{
 		Json busses = Json::array();
@@ -765,15 +783,13 @@ namespace gnubase::engine
 		Json tracks = Json::array();
 		for (const ObjectId id : project.trackOrder())
 			tracks.push_back(toJson(project.trackById.at(id)));
-		Json tempo = Json::array();
-		for (const time::TempoPoint& point : project.tempo.points())
-			tempo.push_back({{"position", point.position}, {"bpm", point.bpm}, {"ramp", point.ramp}});
 		Json signatures = Json::array();
 		for (const time::SignatureChange& change : project.signatures.changes())
 			signatures.push_back({{"bar", change.bar}, {"numerator", change.signature.numerator},
 				{"denominator", change.signature.denominator}});
-		Json json = {{"name", project.name}, {"sampleRate", project.sampleRate}, {"tempo", tempo},
-			{"signatures", signatures}, {"autoFades", toJson(project.autoFades)},
+		Json json = {{"name", project.name}, {"sampleRate", project.sampleRate}, {"tempo", toJson(project.tempo)},
+			{"tempoTrackActive", project.tempoTrackActive}, {"tempoTrack", toJson(project.tempoTrack())},
+			{"fixedTempo", project.fixedTempo()}, {"signatures", signatures}, {"autoFades", toJson(project.autoFades)},
 			{"panLaw", panLawName(project.panLaw)}, {"maxVolume", project.maxVolume},
 			{"colors", toJson(project.colors)}, {"busses", busses}, {"tracks", tracks},
 			{"channels", toJsonArray(project.channels)}, {"slots", toJsonArray(project.slots)},
@@ -1219,11 +1235,13 @@ namespace gnubase::engine
 		Project project;
 		project.name = json.at("name").get<std::string>();
 		project.sampleRate = json.at("sampleRate").get<double>();
-		std::vector<time::TempoPoint> tempo;
-		for (const Json& point : json.at("tempo"))
-			tempo.push_back(
-				{point.at("position").get<time::Ticks>(), point.at("bpm").get<double>(), point.at("ramp").get<bool>()});
-		project.tempo = time::TempoMap(tempo);
+		project.tempo = tempoFromJson(json.at("tempo"));
+		// Files from before tempo modes (#155) follow their tempo changes, if they have any.
+		project.tempoTrackActive = json.value("tempoTrackActive", project.tempo.points().size() > 1);
+		if (project.tempoTrackActive)
+			project.otherTempo = time::TempoMap(json.value("fixedTempo", project.tempo.points().front().bpm));
+		else
+			project.otherTempo = json.contains("tempoTrack") ? tempoFromJson(json.at("tempoTrack")) : project.tempo;
 		std::vector<time::SignatureChange> signatures;
 		for (const Json& change : json.at("signatures"))
 			signatures.push_back({change.at("bar").get<int64_t>(),

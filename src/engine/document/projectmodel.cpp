@@ -58,6 +58,7 @@ namespace gnubase::engine
 			{TrackType::Effect, "effect", "FX"},
 			{TrackType::Marker, "marker", "Marker"},
 			{TrackType::Ruler, "ruler", "Ruler"},
+			{TrackType::Tempo, "tempo", "Tempo"},
 		};
 
 		const TrackTypeName& trackTypeEntry(TrackType type)
@@ -374,6 +375,7 @@ namespace gnubase::engine
 		{
 			Track& track = find(project.trackById, id, "track");
 			require(track.type != TrackType::Marker || parent == 0, "marker tracks can't be inside a folder");
+			require(track.type != TrackType::Tempo || parent == 0, "the tempo track can't be inside a folder");
 			const std::vector<ObjectId> moved = subtree(project, id);
 			require(std::find(moved.begin(), moved.end(), parent) == moved.end(),
 				"can't move a folder into itself or a folder inside it");
@@ -540,6 +542,8 @@ namespace gnubase::engine
 			const auto count = countTracks(project, type);
 			if (type == TrackType::Marker && count == 0)
 				return "Markers";
+			if (type == TrackType::Tempo)
+				return "Tempo";
 			const std::string number = std::to_string(type == TrackType::Marker ? count : count + 1);
 			return trackTypeEntry(type).defaultName + std::string(number.size() < 2 ? " 0" : " ") + number;
 		}
@@ -967,8 +971,14 @@ namespace gnubase::engine
 				require(countTracks(project, TrackType::Marker) < g_maxMarkerTracks,
 					"a project has at most " + std::to_string(g_maxMarkerTracks) + " marker tracks");
 			}
-			const bool hasChannel =
-				(type != TrackType::Folder && type != TrackType::Marker && type != TrackType::Ruler) || groupChannel;
+			if (type == TrackType::Tempo)
+			{
+				require(parent == 0, "the tempo track can't be inside a folder");
+				require(countTracks(project, TrackType::Tempo) == 0, "a project has one tempo track at most");
+			}
+			const bool hasChannel = (type != TrackType::Folder && type != TrackType::Marker &&
+										type != TrackType::Ruler && type != TrackType::Tempo) ||
+				groupChannel;
 			const bool hasAudio = hasChannel && type != TrackType::Midi;
 			require(hasAudio || (!parameters.contains("channels") && !parameters.contains("format")),
 				"this track has no audio channels");
@@ -1258,6 +1268,7 @@ namespace gnubase::engine
 			const Track& track = find(project.trackById, id, "track");
 			require(track.type != TrackType::Marker || countTracks(project, TrackType::Marker) < g_maxMarkerTracks,
 				"a project has at most " + std::to_string(g_maxMarkerTracks) + " marker tracks");
+			require(track.type != TrackType::Tempo, "a project has one tempo track at most");
 			const ObjectId parent = track.parent;
 			std::map<ObjectId, ObjectId> channels;
 			std::vector<std::pair<std::string, Json>> added;
@@ -2348,7 +2359,17 @@ namespace gnubase::engine
 			{
 				throw CommandError(problem.what());
 			}
-			// The first tempo and signature, which the transport bar shows; tempo and signature tracks edit the rest.
+			// Fixed tempo or tempo track mode (reference manual p. 1446): the tempo of the other mode waits in
+			// otherTempo.
+			const time::TempoMap tempoBefore = project.tempo;
+			const bool tempoModeBefore = project.tempoTrackActive;
+			if (parameters.value("tempoTrackActive", project.tempoTrackActive) != project.tempoTrackActive)
+			{
+				std::swap(project.tempo, project.otherTempo);
+				project.tempoTrackActive = !project.tempoTrackActive;
+			}
+			// The first tempo and signature, which the transport bar shows: the fixed tempo, or the tempo track's
+			// first event; tempo.* and signature tracks edit the rest.
 			std::vector<time::TempoPoint> tempo = project.tempo.points();
 			tempo.front().bpm = parameters.value("tempo", tempo.front().bpm);
 			require(tempo.front().bpm >= time::g_minBpm && tempo.front().bpm <= time::g_maxBpm,
@@ -2366,14 +2387,10 @@ namespace gnubase::engine
 			}
 			const time::TempoMap tempoMap(tempo);
 			const time::SignatureMap signatureMap(signatures);
-			const bool retimed = tempoMap != project.tempo || signatureMap != project.signatures;
 			project.tempo = tempoMap;
 			project.signatures = signatureMap;
-			if (retimed)
-				// A cycle marker in ticks can get shorter than a sample at a faster tempo.
-				for (auto& [id, marker] : project.markers)
-					if (keepMinimumLength(project, marker))
-						context.emit("marker.changed", {{"marker", toJson(marker)}});
+			if (project.tempo != tempoBefore || project.tempoTrackActive != tempoModeBefore)
+				tempoChanged(project, context);
 			project.name = parameters.value("name", project.name);
 			if (parameters.contains("panLaw"))
 				project.panLaw = panLawFromName(parameters.at("panLaw").get<std::string>()).value_or(project.panLaw);
@@ -2468,6 +2485,10 @@ namespace gnubase::engine
 			{"marker.set", "Change marker"},
 			{"marker.remove", "Remove markers"},
 			{"marker.renumber", "Renumber markers"},
+			{"tempo.add", "Add tempo event"},
+			{"tempo.set", "Change tempo events"},
+			{"tempo.remove", "Remove tempo events"},
+			{"tempo.tap", "Tap tempo"},
 			{"marker.activateTrack", "Activate marker track"},
 			{"automationLane.add", "Add automation lane"},
 			{"automationLane.set", "Change automation lane"},
@@ -2842,7 +2863,7 @@ namespace gnubase::engine
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json noResult = Json::object();
 		const Json trackTypes =
-			enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker", "ruler"});
+			enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker", "ruler", "tempo"});
 		const Json timeBases = enumSchema({"musical", "linear"});
 		const Json timeFormats =
 			enumSchema(std::vector<std::string>(g_rulerTimeFormats.begin(), g_rulerTimeFormats.end()));
@@ -2964,8 +2985,12 @@ namespace gnubase::engine
 				"wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the "
 				"faders, 6 (the default) or 12 dB; faders above a lower maximum come down to it. tempo (1 to 999 BPM) "
 				"and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} are the project's first tempo and "
-				"time signature, as the transport bar sets them; later changes stay, and musical positions keep their "
-				"ticks. colors is the project's color set, which track and event colors are picked from: at least "
+				"time signature, as the transport bar sets them: the fixed tempo, or in tempo track mode the tempo "
+				"track's first event; later changes stay, and musical positions keep their ticks. tempoTrackActive "
+				"switches between fixed tempo mode (false, a new project's) and tempo track mode, in which the "
+				"project plays the tempo track's events (tempo.add); each mode keeps its tempo while the other is in "
+				"use (emits tempo.changed). colors is the project's color set, which track and event colors are picked "
+				"from: at least "
 				"one {name, color (#rrggbb)}, in order. recordFileType (wav, the default, broadcastWav, aiff or "
 				"flac) and recordBitDepth (int16, int24, the default, int32, float32 or float64) are what recording "
 				"writes: AIFF only integers, FLAC 16 or 24 bit, 64 bit float only Wave. frameRate is the timecode's "
@@ -2976,6 +3001,7 @@ namespace gnubase::engine
 				"emits snap.changed).",
 				objectSchema({{"name", stringSchema}, {"sampleRate", numberSchema},
 					{"panLaw", enumSchema(panLawNames())}, {"maxVolume", numberSchema}, {"tempo", numberSchema},
+					{"tempoTrackActive", booleanSchema},
 					{"colors",
 						{{"type", "array"},
 							{"items",
@@ -3132,7 +3158,9 @@ namespace gnubase::engine
 				"Tracks to New Folder). With the user setting editing.applyFolderColor, a track added to a folder "
 				"without a color takes the folder's. Marker tracks have no channel and stay at the top level; a "
 				"project has at most 10, and a new one becomes the active marker track. Ruler tracks have no channel "
-				"either; timeFormat is the time format their ruler shows (default barsBeats).",
+				"either; timeFormat is the time format their ruler shows (default barsBeats). The tempo track shows "
+				"and "
+				"edits the project's tempo (tempo.*): a project has one at most, without a channel, at the top level.",
 				objectSchema({{"type", trackTypes}, {"name", stringSchema}, {"color", color}, {"parent", idSchema},
 								 {"index", integerSchema}, {"format", formats}, {"channels", integerSchema},
 								 {"timeBase", timeBases}, {"groupChannel", booleanSchema}, {"input", idSchema},
@@ -3449,6 +3477,7 @@ namespace gnubase::engine
 
 		registerMidiEditCommands(engine);
 		registerMarkerCommands(engine);
+		registerTempoCommands(engine);
 		registerAutomationCommands(engine);
 		registerParameterCommands(engine);
 		registerSlotCommands(engine);

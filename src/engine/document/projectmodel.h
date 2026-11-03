@@ -34,6 +34,14 @@ namespace gnubase::engine
 	void followAutomation(Project& project, ObjectId track, const time::Position& from, const time::Position& end,
 		const time::Position& to, CommandContext& context);
 
+	// The project's tempo as project.get and the tempo.changed event report it (tempo.cpp): the tempo it plays, whether
+	// the tempo track is active, the tempo track's events and the fixed tempo.
+	Json tempoJson(const Project& project);
+
+	// After the tempo or the tempo mode changed (tempo.cpp): lengthens cycle markers that got shorter than a sample and
+	// announces tempo.changed.
+	void tempoChanged(Project& project, CommandContext& context);
+
 	// After a command, and after each command of a transaction (eventedits.cpp): the first shared copy of a MIDI part
 	// whose notes or controllers changed since before gives them to its other copies, and a copy without others is no
 	// longer shared.
@@ -108,6 +116,7 @@ namespace gnubase::engine
 		void registerMediaFolderCommands(Engine& engine, Jobs& jobs); // project.backup, media.prepareArchive and more
 		void registerMidiEditCommands(Engine& engine);                // midiedits.cpp: note.set and controller.set
 		void registerMarkerCommands(Engine& engine);                  // markers.cpp: marker.*
+		void registerTempoCommands(Engine& engine);                   // tempo.cpp: tempo.*
 		void registerMidiFileCommands(Engine& engine); // midifilecommands.cpp: midiFile.export and midiFile.import
 		Json importMidiFile(Project& project, CommandContext& context);
 		void registerAudioFileCommands(Engine& engine, Jobs& jobs); // audiofilecommands.cpp: audioFile.import

@@ -73,7 +73,7 @@ namespace gnubase::engine
 		{
 			return Json::parse(R"({"type": "object",
 			"properties": {"playing": {"type": "boolean"}, "recording": {"type": "boolean"},
-				"position": {"type": "integer"},
+				"position": {"type": "integer"}, "start": {"type": "integer"},
 				"left": {"type": "integer"}, "right": {"type": "integer"}, "cycle": {"type": "boolean"},
 				"startMode": {"type": "string", "enum": ["cursor", "cycleStart"]},
 				"returnToStart": {"type": "boolean"}, "punchIn": {"type": "boolean"},
@@ -83,7 +83,7 @@ namespace gnubase::engine
 				"audioRecordMode": {"type": "string", "enum": ["keepHistory", "cycleHistoryReplace", "replace"]},
 				"midiRecordMode": {"type": "string", "enum": ["newParts", "merge", "replace"]},
 				"lockRecord": {"type": "boolean"}},
-			"required": ["playing", "recording", "position", "left", "right", "cycle", "startMode",
+			"required": ["playing", "recording", "position", "start", "left", "right", "cycle", "startMode",
 				"returnToStart", "punchIn", "punchOut", "preRoll", "preRollAmount", "postRoll", "postRollAmount",
 				"metronome", "audioRecordMode", "midiRecordMode", "lockRecord"]})");
 		}
@@ -2127,8 +2127,8 @@ namespace gnubase::engine
 	{
 		const TransportSettings& settings = m_transport.settings();
 		return {{"playing", m_transport.playing()}, {"recording", m_transport.recording()},
-			{"position", m_transport.position()}, {"left", settings.left}, {"right", settings.right},
-			{"cycle", settings.cycle},
+			{"position", m_transport.position()}, {"start", m_transport.playbackStart()}, {"left", settings.left},
+			{"right", settings.right}, {"cycle", settings.cycle},
 			{"startMode", settings.startMode == StartMode::CycleStart ? "cycleStart" : "cursor"},
 			{"returnToStart", settings.returnToStart}, {"punchIn", settings.punchIn}, {"punchOut", settings.punchOut},
 			{"preRoll", settings.preRoll}, {"preRollAmount", settings.preRollAmount}, {"postRoll", settings.postRoll},
@@ -2455,7 +2455,8 @@ namespace gnubase::engine
 			});
 		engine.registerCommand(
 			{"transport.get", 1,
-				"Whether playback and recording run, the project cursor in samples, the locators and the modes. "
+				"Whether playback and recording run, the project cursor in samples, where the last playback started "
+				"(start, in samples, without the pre-roll), the locators and the modes. "
 				"After a locate the cursor is where it goes, even before the audio thread has applied it.",
 				noParameters(), transportSchema(), true},
 			[this](CommandContext&) { return transportStatus(); });

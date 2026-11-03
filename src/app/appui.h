@@ -21,6 +21,7 @@
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
 #include "ui/statusline.h"
+#include "ui/tempotrack.h"
 #include "ui/themes.h"
 #include "ui/tracklist.h"
 #include "ui/transport.h"
@@ -81,6 +82,18 @@ namespace gnubase::app
 		ui::WindowId markersWindow() const { return m_markersWindow; }
 		// The markers in the project window's event display, null before showProject.
 		ui::MarkerLines* markerLines() { return m_markerLines.get(); }
+
+		// Opens the tempo track editor in a window of its own (resources/ui/tempo-editor.rml), hidden like the main
+		// window, or closes it if it is open: the UI command window.tempoTrack, Mod+T (reference manual p. 1447).
+		// Returns it, or null when it closed it. Throws std::runtime_error if the document can't be loaded.
+		ui::TempoEditor* toggleTempoEditor();
+		ui::TempoEditor* tempoEditor()
+		{
+			return m_shell.find(m_tempoWindow) != nullptr ? m_tempoEditor.get() : nullptr;
+		}
+		ui::WindowId tempoWindow() const { return m_tempoWindow; }
+		// The tempo curve on the tempo track's lane in the project window, null before showProject.
+		ui::TempoLane* tempoLane() { return m_tempoLane.get(); }
 
 		// The mixers (#106, docs/features/mixer-window.md): mixer window number 1 to 4 opens in a window of its own
 		// (resources/ui/mixer.rml), hidden like the main window, or closes if it is open: the UI commands window.mixer
@@ -194,8 +207,11 @@ namespace gnubase::app
 		ui::WindowId m_markersWindow = 0;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
 		std::unique_ptr<ui::MarkerLines> m_markerLines;   // and before the display
-		std::vector<uint64_t> m_eventSelection;           // the display's, as the last step saw it
-		ui::Winding m_winding{m_binding};                 // Rewind and Forward held, which the transport controls end
+		std::unique_ptr<ui::TempoLane> m_tempoLane;       // as well
+		std::unique_ptr<ui::TempoEditor> m_tempoEditor;
+		ui::WindowId m_tempoWindow = 0;
+		std::vector<uint64_t> m_eventSelection; // the display's, as the last step saw it
+		ui::Winding m_winding{m_binding};       // Rewind and Forward held, which the transport controls end
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;

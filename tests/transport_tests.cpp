@@ -724,10 +724,11 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 
 	Json state = run(client, "transport.get");
 	CHECK(state ==
-		Json{{"playing", false}, {"recording", false}, {"position", 0}, {"left", 0}, {"right", 0}, {"cycle", false},
-			{"startMode", "cursor"}, {"returnToStart", false}, {"punchIn", false}, {"punchOut", false},
-			{"preRoll", false}, {"preRollAmount", 0}, {"postRoll", false}, {"postRollAmount", 0}, {"metronome", false},
-			{"audioRecordMode", "keepHistory"}, {"midiRecordMode", "newParts"}, {"lockRecord", false}});
+		Json{{"playing", false}, {"recording", false}, {"position", 0}, {"start", 0}, {"left", 0}, {"right", 0},
+			{"cycle", false}, {"startMode", "cursor"}, {"returnToStart", false}, {"punchIn", false},
+			{"punchOut", false}, {"preRoll", false}, {"preRollAmount", 0}, {"postRoll", false}, {"postRollAmount", 0},
+			{"metronome", false}, {"audioRecordMode", "keepHistory"}, {"midiRecordMode", "newParts"},
+			{"lockRecord", false}});
 
 	state = run(client, "transport.set", {{"left", 48000}, {"right", 96000}, {"cycle", true}});
 	CHECK(state.at("left") == 48000);
@@ -751,7 +752,10 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK(state.at("right") == 1000);
 
 	CHECK(run(client, "transport.play").at("playing") == true);
+	// Where playback started stays after it stops, until it starts again (tempo.tap).
+	CHECK(run(client, "transport.get").at("start") == 1000);
 	CHECK(run(client, "transport.toggle").at("playing") == false);
+	CHECK(run(client, "transport.get").at("start") == 1000);
 	CHECK(run(client, "transport.toggle").at("playing") == true);
 	CHECK(run(client, "transport.stop").at("playing") == false);
 

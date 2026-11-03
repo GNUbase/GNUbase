@@ -514,6 +514,32 @@
 		color: #090b18;
 		background-color: #e12ad8;
 	}
+	.tempo-curve .tempo-line
+	{
+		stroke-color: #10dff2;
+		stroke-width: 2dp;
+	}
+	.tempo-curve.inactive .tempo-line
+	{
+		stroke-color: #aeb7d0;
+	}
+	.tempo-curve .tempo-point
+	{
+		background-color: #10dff2;
+	}
+	.tempo-curve.inactive .tempo-point
+	{
+		background-color: #aeb7d0;
+	}
+	.tempo-curve .tempo-point.selected
+	{
+		background-color: #f1f4ff;
+	}
+	.tempo-editor .tempo-scale-label
+	{
+		color: #aeb7d0;
+		font-size: 11dp;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;

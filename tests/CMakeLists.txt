@@ -112,6 +112,8 @@ add_executable(gnubase-tests
 	studiosetup_tests.cpp
 	stylerules_tests.cpp
 	svg_tests.cpp
+	tempo_tests.cpp
+	tempotrack_ui_tests.cpp
 	testing_tests.cpp
 	testutils_tests.cpp
 	theme_tests.cpp

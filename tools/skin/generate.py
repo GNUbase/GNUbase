@@ -502,6 +502,13 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".event-display .marker-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
         (".event-display .marker-label.active", {"color": c["text"]}),
         (".event-display .marker-label.selected", {"color": c["background"], "background-color": c["accent2"]}),
+        # The tempo track (docs/features/tempo-track.md): the tempo curve, muted in fixed tempo mode, and its points
+        (".tempo-curve .tempo-line", {"stroke-color": c["accent"], "stroke-width": f"{widths['focus']}dp"}),
+        (".tempo-curve.inactive .tempo-line", {"stroke-color": c["textMuted"]}),
+        (".tempo-curve .tempo-point", {"background-color": c["accent"]}),
+        (".tempo-curve.inactive .tempo-point", {"background-color": c["textMuted"]}),
+        (".tempo-curve .tempo-point.selected", {"background-color": c["text"]}),
+        (".tempo-editor .tempo-scale-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
         # The tools (docs/features/tools.md): the selection range and the rectangle a tool drags
         (".event-display .range-selection", {"border-width": f"{widths['hairline']}dp", "border-color": c["text"],
                                              "background-color": c["text"] + "33"}),
