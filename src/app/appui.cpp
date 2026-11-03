@@ -834,7 +834,9 @@ namespace gnubase::app
 							m_docking.open("editor");
 					}
 					else
+					{
 						m_binding.send("editor.close", {{"editor", editor}});
+					}
 				}});
 		}
 		m_keys.bind({"Mod+E", "editor.openClose", engine::Json::object(), "project"});
