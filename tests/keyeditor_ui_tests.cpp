@@ -176,8 +176,8 @@ namespace
 
 		void tool(const std::string& name)
 		{
-			click(of(".key-tool[tool=" + name + "]"));
-			REQUIRE(has(".key-tool[tool=" + name + "]", "checked"));
+			click(of(".key-tool[key-tool=" + name + "]"));
+			REQUIRE(has(".key-tool[key-tool=" + name + "]", "checked"));
 		}
 
 		test::UiApp app{{1200, 800}};

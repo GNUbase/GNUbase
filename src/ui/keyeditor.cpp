@@ -151,7 +151,7 @@ namespace gnubase::ui
 	{
 		std::string tools;
 		for (size_t i = 0; i < g_tools.size(); ++i)
-			tools += std::string(R"(<button class="key-tool" tool=")") + g_tools[i].second + R"(" title=")" +
+			tools += std::string(R"(<button class="key-tool" key-tool=")") + g_tools[i].second + R"(" title=")" +
 				g_toolTitles[i] + R"(">)" + g_toolLabels[i] + "</button>";
 		std::string transpose;
 		for (const Transpose& each : g_transpose)
@@ -226,7 +226,7 @@ namespace gnubase::ui
 		Rml::ElementList buttons;
 		root->QuerySelectorAll(buttons, ".key-tool");
 		for (Rml::Element* button : buttons)
-			setClass(button, "checked", attribute(*button, "tool") == keyToolName(tool));
+			setClass(button, "checked", attribute(*button, "key-tool") == keyToolName(tool));
 		root->SetAttribute("tool", keyToolName(tool));
 	}
 
@@ -690,9 +690,9 @@ namespace gnubase::ui
 
 	void KeyEditor::toolbar(Rml::Element& target)
 	{
-		if (target.HasAttribute("tool"))
+		if (target.HasAttribute("key-tool"))
 		{
-			if (const std::optional<KeyTool> tool = keyToolFromName(attribute(target, "tool")))
+			if (const std::optional<KeyTool> tool = keyToolFromName(attribute(target, "key-tool")))
 				setTool(*tool);
 		}
 		else if (target.HasAttribute("semitones"))

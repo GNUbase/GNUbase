@@ -51,7 +51,7 @@ the edits of several parts go in one `history.transaction`.
 ```
 .key-editor[tool=objectSelection|draw|erase|trim|split|glue]
   .toolbar.key-editor-toolbar
-    button.key-tool[tool]             the tools; .checked for the current one
+    button.key-tool[key-tool]         the tools; .checked for the current one
     button.key-transpose[semitones]   Move Up, Move Down, Move Up More, Move Down More (+1, -1, +12, -12)
     button.key-input[setting]         Step Input, MIDI Input, Move Insert Mode, Record Pitch, Record Note On and
                                       Note Off Velocity, Keep Existing Notes; .checked while on
