@@ -2926,7 +2926,7 @@ Only reads; changes nothing.
 
 Parameters:
 
-- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.portSettings" | "audio.fallbackDevice" | "audio.preRecordSeconds" | "audio.sampleRate" | "editing.applyFolderColor" | "editing.autoTrackColor" | "meter.resetOnStart" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "midi.portSettings" | "project.autoSave" | "project.autoSaveFiles" | "project.autoSaveInterval" | "ui.folderData" | "ui.layout" | "ui.markerLines" | "ui.scale" | "ui.theme" | "ui.timeFormats" | "ui.toolModifiers" | "ui.trackControls" | "ui.zoomPresets", required. The setting.
+- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.portSettings" | "audio.fallbackDevice" | "audio.preRecordSeconds" | "audio.stopAfterPunchOut" | "audio.sampleRate" | "editing.applyFolderColor" | "editing.autoTrackColor" | "meter.resetOnStart" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "midi.portSettings" | "project.autoSave" | "project.autoSaveFiles" | "project.autoSaveInterval" | "ui.folderData" | "ui.layout" | "ui.markerLines" | "ui.scale" | "ui.theme" | "ui.timeFormats" | "ui.toolModifiers" | "ui.trackControls" | "ui.zoomPresets", required. The setting.
 
 Returns:
 
@@ -2952,7 +2952,7 @@ Puts a user setting back to its default, or every one without key, and saves the
 
 Parameters:
 
-- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.portSettings" | "audio.fallbackDevice" | "audio.preRecordSeconds" | "audio.sampleRate" | "editing.applyFolderColor" | "editing.autoTrackColor" | "meter.resetOnStart" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "midi.portSettings" | "project.autoSave" | "project.autoSaveFiles" | "project.autoSaveInterval" | "ui.folderData" | "ui.layout" | "ui.markerLines" | "ui.scale" | "ui.theme" | "ui.timeFormats" | "ui.toolModifiers" | "ui.trackControls" | "ui.zoomPresets". The setting.
+- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.portSettings" | "audio.fallbackDevice" | "audio.preRecordSeconds" | "audio.stopAfterPunchOut" | "audio.sampleRate" | "editing.applyFolderColor" | "editing.autoTrackColor" | "meter.resetOnStart" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "midi.portSettings" | "project.autoSave" | "project.autoSaveFiles" | "project.autoSaveInterval" | "ui.folderData" | "ui.layout" | "ui.markerLines" | "ui.scale" | "ui.theme" | "ui.timeFormats" | "ui.toolModifiers" | "ui.trackControls" | "ui.zoomPresets". The setting.
 
 Returns:
 
@@ -2960,11 +2960,11 @@ Returns:
 
 #### `gnubase.settings.set`
 
-Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.autoMonitoring` (one of ["manual","whileRecordEnabled","whileRecording","tapeMachine"], default "tapeMachine"): When record-enabled audio tracks monitor their input, besides the monitor button: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records; `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.busPresets` (object, default {"input":{},"output":{}}): The user's own bus presets, per direction (input, output) by name: each a list of busses with their name, format, ports and child busses (bus.savePreset); `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.portSettings` (object, default {}): How the audio devices' ports are shown (audio.setPort), by backend/device id/in or out/system name, also for devices that aren't connected: the name shown (showAs) and whether it is visible. Ports without an entry show their system name and are visible. Members of an entry that this GNUbase doesn't know, from a later one, stay; `audio.fallbackDevice` (one of ["none","default","dummy"], default "none"): The device that plays while the chosen audio device is lost, until it returns: none, default (the lost device's backend's default device, or the dummy device if that doesn't open), or dummy (the dummy device: no sound, but the transport moves and the project plays on). The engine switches back once the lost device returns; `audio.preRecordSeconds` (number, 0 to 60, default 0.0): Audio pre-record: how many seconds of input from before recording starts go into the files of record-enabled audio tracks, 0 to 60 (0: none). The events start where recording started; resizing an event's start to the left brings out what was played before; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `editing.applyFolderColor` (boolean, default false): Folder tracks give their color to the tracks inside them: when the folder's color changes and when tracks are added or moved into it; `editing.autoTrackColor` (one of ["default","previous","previousPlusOne","lastApplied","random"], default "default"): The color new tracks get when none is given (reference manual p. 1621): default (the default color), previous (the color of the track above), previousPlusOne (the color after that one in the project's color set, or its first color), lastApplied (the color last given to events or parts) or random (a color of the set). With editing.applyFolderColor, a folder's color wins inside it; `meter.resetOnStart` (boolean, default false): Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when playback starts (see meter.get); `midi.chaseBeyondParts` (boolean, default true): Chases controller events from the whole track; off, only from the MIDI parts under the position, so none outside parts; `midi.chaseControllers` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each control change's last value before that position; `midi.chaseNotes` (boolean, default true): Where playback starts or jumps, MIDI tracks start the notes that sound at that position; `midi.chasePitchBend` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last pitch bend before that position; `midi.chasePrograms` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last program change before that position; `midi.portSettings` (object, default {}): The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to all MIDI inputs (inAllInputs). Ports without an entry show their system name, are visible and belong to all MIDI inputs. Members of an entry that this GNUbase doesn't know, from a later one, stay; `project.autoSave` (boolean, default true): Saves a copy of a project with unsaved changes every project.autoSaveInterval minutes into the folder Auto Saves of its project folder (see project.autoSave); `project.autoSaveFiles` (integer, 1 to 100, default 5): How many auto saves a project keeps; the next one overwrites the oldest; `project.autoSaveInterval` (integer, 1 to 120, default 15): Minutes between auto saves; `ui.folderData` (one of ["always","never","hideWhenExpanded"], default "always"): When folder tracks show the events and parts of the tracks inside them as data blocks in the event display: always, never, or hideWhenExpanded (only while the folder is folded); `ui.layout` (object, default {}): The layout of the windows with zones: under windows, by window (project), its zones (left, right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs hidden and the active one, and its strips (toolbar, infoLine, overviewLine, statusLine, transportBar) with whether each is shown, and its sets of sections (such as a mixer channel's) with the order of their sections and those hidden; under panels, by panel, whether it is in a window of its own and that window's bounds. What it leaves out has its default; `ui.markerLines` (one of ["active","all","off"], default "active"): Which markers the event display shows as lines across every track: the active marker track's (active), every marker track's (all), or none (off); `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes; `ui.timeFormats` (object, default {"primary":"barsBeats","secondary":"timecode","timeDisplay":"barsBeats"}): The time formats of the transport controls' displays: primary and secondary in the transport bar and panel, timeDisplay in the time display window; each barsBeats, seconds, timecode, samples or userFrames; `ui.toolModifiers` (object, default {}): The modifier keys of the project window's tools, by action (docs/features/tools.md), each ctrl (Cmd on macOS), alt and shift joined with +, or empty for none: dragDrop.copy (default alt), dragDrop.sharedCopy (alt+shift), erase.deleteLaterEvents (alt), glue.glueAllFollowing (alt), range.selectFullVertical (alt+shift), select.setCursorPosition (alt+shift), select.splitEvent (alt), sizeObjects.disableSnapping (ctrl) and split.splitRepeated (alt). What it leaves out has its default; `ui.trackControls` (object, default {"audio":["mute","solo","record","monitor","read"],"effect":["mute","solo","read"],"folder":["mute","solo","read"],"group":["mute","solo","read"],"instrument":["mute","solo","read"],"marker":[],"midi":["mute","solo","read"],"ruler":[]}): The controls the track list shows, by track type (audio, instrument, midi, group, effect, folder, marker, ruler), in order: mute, solo, record, monitor (audio tracks), read (automation) and timeBase. Mute and solo always show on tracks with a channel; a type left out shows none; `ui.zoomPresets` (array, default []): The horizontal zoom presets of the event display, for every project: each a name and the seconds the view shows.
+Changes a user setting and saves the settings file, unless settings.list reports it read-only. User settings belong to the user, not to a project. Emits settings.changed with the changed value, unless it had that value already. The settings: `audio.autoMonitoring` (one of ["manual","whileRecordEnabled","whileRecording","tapeMachine"], default "tapeMachine"): When record-enabled audio tracks monitor their input, besides the monitor button: manual never, whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it stands or records; `audio.backend` (string, default ""): The audio backend, such as wasapi or coreaudio, or empty for the preferred one; `audio.blockSize` (integer, 16 to 8192, default 256): Frames per audio block; `audio.busPresets` (object, default {"input":{},"output":{}}): The user's own bus presets, per direction (input, output) by name: each a list of busses with their name, format, ports and child busses (bus.savePreset); `audio.device` (string, default ""): The audio device's id, or empty for the backend's default device; `audio.portSettings` (object, default {}): How the audio devices' ports are shown (audio.setPort), by backend/device id/in or out/system name, also for devices that aren't connected: the name shown (showAs) and whether it is visible. Ports without an entry show their system name and are visible. Members of an entry that this GNUbase doesn't know, from a later one, stay; `audio.fallbackDevice` (one of ["none","default","dummy"], default "none"): The device that plays while the chosen audio device is lost, until it returns: none, default (the lost device's backend's default device, or the dummy device if that doesn't open), or dummy (the dummy device: no sound, but the transport moves and the project plays on). The engine switches back once the lost device returns; `audio.preRecordSeconds` (number, 0 to 60, default 0.0): Audio pre-record: how many seconds of input from before recording starts go into the files of record-enabled audio tracks, 0 to 60 (0: none). The events start where recording started; resizing an event's start to the left brings out what was played before; `audio.stopAfterPunchOut` (boolean, default false): Stop after automatic punch out: playback stops when recording punches out at the right locator, after the post-roll if it's on (see transport.set), unless it cycles; `audio.sampleRate` (number, 8000 to 768000, default 48000.0): The audio device's sample rate in Hz; `editing.applyFolderColor` (boolean, default false): Folder tracks give their color to the tracks inside them: when the folder's color changes and when tracks are added or moved into it; `editing.autoTrackColor` (one of ["default","previous","previousPlusOne","lastApplied","random"], default "default"): The color new tracks get when none is given (reference manual p. 1621): default (the default color), previous (the color of the track above), previousPlusOne (the color after that one in the project's color set, or its first color), lastApplied (the color last given to events or parts) or random (a color of the set). With editing.applyFolderColor, a folder's color wins inside it; `meter.resetOnStart` (boolean, default false): Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when playback starts (see meter.get); `midi.chaseBeyondParts` (boolean, default true): Chases controller events from the whole track; off, only from the MIDI parts under the position, so none outside parts; `midi.chaseControllers` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each control change's last value before that position; `midi.chaseNotes` (boolean, default true): Where playback starts or jumps, MIDI tracks start the notes that sound at that position; `midi.chasePitchBend` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last pitch bend before that position; `midi.chasePrograms` (boolean, default true): Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each channel's last program change before that position; `midi.portSettings` (object, default {}): The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to all MIDI inputs (inAllInputs). Ports without an entry show their system name, are visible and belong to all MIDI inputs. Members of an entry that this GNUbase doesn't know, from a later one, stay; `project.autoSave` (boolean, default true): Saves a copy of a project with unsaved changes every project.autoSaveInterval minutes into the folder Auto Saves of its project folder (see project.autoSave); `project.autoSaveFiles` (integer, 1 to 100, default 5): How many auto saves a project keeps; the next one overwrites the oldest; `project.autoSaveInterval` (integer, 1 to 120, default 15): Minutes between auto saves; `ui.folderData` (one of ["always","never","hideWhenExpanded"], default "always"): When folder tracks show the events and parts of the tracks inside them as data blocks in the event display: always, never, or hideWhenExpanded (only while the folder is folded); `ui.layout` (object, default {}): The layout of the windows with zones: under windows, by window (project), its zones (left, right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs hidden and the active one, and its strips (toolbar, infoLine, overviewLine, statusLine, transportBar) with whether each is shown, and its sets of sections (such as a mixer channel's) with the order of their sections and those hidden; under panels, by panel, whether it is in a window of its own and that window's bounds. What it leaves out has its default; `ui.markerLines` (one of ["active","all","off"], default "active"): Which markers the event display shows as lines across every track: the active marker track's (active), every marker track's (all), or none (off); `ui.scale` (number, 0.5 to 4, default 1.0): The UI scale, applied on top of each monitor's own scale; `ui.theme` (string, default "gnubase"): The theme's folder name in resources/themes; `ui.timeFormats` (object, default {"primary":"barsBeats","secondary":"timecode","timeDisplay":"barsBeats"}): The time formats of the transport controls' displays: primary and secondary in the transport bar and panel, timeDisplay in the time display window; each barsBeats, seconds, timecode, samples or userFrames; `ui.toolModifiers` (object, default {}): The modifier keys of the project window's tools, by action (docs/features/tools.md), each ctrl (Cmd on macOS), alt and shift joined with +, or empty for none: dragDrop.copy (default alt), dragDrop.sharedCopy (alt+shift), erase.deleteLaterEvents (alt), glue.glueAllFollowing (alt), range.selectFullVertical (alt+shift), select.setCursorPosition (alt+shift), select.splitEvent (alt), sizeObjects.disableSnapping (ctrl) and split.splitRepeated (alt). What it leaves out has its default; `ui.trackControls` (object, default {"audio":["mute","solo","record","monitor","read"],"effect":["mute","solo","read"],"folder":["mute","solo","read"],"group":["mute","solo","read"],"instrument":["mute","solo","read"],"marker":[],"midi":["mute","solo","read"],"ruler":[]}): The controls the track list shows, by track type (audio, instrument, midi, group, effect, folder, marker, ruler), in order: mute, solo, record, monitor (audio tracks), read (automation) and timeBase. Mute and solo always show on tracks with a channel; a type left out shows none; `ui.zoomPresets` (array, default []): The horizontal zoom presets of the event display, for every project: each a name and the seconds the view shows.
 
 Parameters:
 
-- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.portSettings" | "audio.fallbackDevice" | "audio.preRecordSeconds" | "audio.sampleRate" | "editing.applyFolderColor" | "editing.autoTrackColor" | "meter.resetOnStart" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "midi.portSettings" | "project.autoSave" | "project.autoSaveFiles" | "project.autoSaveInterval" | "ui.folderData" | "ui.layout" | "ui.markerLines" | "ui.scale" | "ui.theme" | "ui.timeFormats" | "ui.toolModifiers" | "ui.trackControls" | "ui.zoomPresets", required. The setting.
+- `key`: one of "audio.autoMonitoring" | "audio.backend" | "audio.blockSize" | "audio.busPresets" | "audio.device" | "audio.portSettings" | "audio.fallbackDevice" | "audio.preRecordSeconds" | "audio.stopAfterPunchOut" | "audio.sampleRate" | "editing.applyFolderColor" | "editing.autoTrackColor" | "meter.resetOnStart" | "midi.chaseBeyondParts" | "midi.chaseControllers" | "midi.chaseNotes" | "midi.chasePitchBend" | "midi.chasePrograms" | "midi.portSettings" | "project.autoSave" | "project.autoSaveFiles" | "project.autoSaveInterval" | "ui.folderData" | "ui.layout" | "ui.markerLines" | "ui.scale" | "ui.theme" | "ui.timeFormats" | "ui.toolModifiers" | "ui.trackControls" | "ui.zoomPresets", required. The setting.
 - `value`: any, required. The new value; it must fit the setting's schema.
 
 Returns:
@@ -3118,6 +3118,10 @@ Returns:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required
@@ -3139,6 +3143,10 @@ Returns:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required
@@ -3164,6 +3172,10 @@ Returns:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required
@@ -3173,7 +3185,7 @@ Returns:
 
 #### `gnubase.transport.play`
 
-Starts playback from the project cursor, or from the left locator if startMode is cycleStart. Does nothing while playing.
+Starts playback from the project cursor, or from the left locator if startMode is cycleStart, less the pre-roll if preRoll is on (not before the project start). Does nothing while playing.
 
 Returns:
 
@@ -3183,6 +3195,10 @@ Returns:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required
@@ -3192,7 +3208,7 @@ Returns:
 
 #### `gnubase.transport.record`
 
-Starts recording (record true, the default): playback starts as with transport.play if it stood, or recording punches in where it plays. record false punches out and playback goes on. Record-enabled tracks may monitor their input meanwhile, by the user setting audio.autoMonitoring (see channel.set).
+Starts recording (record true, the default): playback starts as with transport.play if it stood, and recording where playback would start without the pre-roll; or recording punches in where it plays. With punchIn before the left locator, recording starts at the left locator instead. record false punches out and playback goes on. Record-enabled tracks may monitor their input meanwhile, by the user setting audio.autoMonitoring (see channel.set).
 
 Parameters:
 
@@ -3206,6 +3222,10 @@ Returns:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required
@@ -3215,7 +3235,7 @@ Returns:
 
 #### `gnubase.transport.set`
 
-Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started. punchIn, punchOut and metronome are the transport bar's switches; punching in and out at the locators and the click come with recording and the metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see recording.add): keepHistory (the default), cycleHistoryReplace or replace.
+Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started. punchIn: playback that reaches the left locator starts recording there. punchOut: recording that reaches the right locator ends there and playback goes on, or stops with the user setting audio.stopAfterPunchOut, unless it cycles. preRoll and preRollAmount (samples, up to an hour at 768 kHz): playback starts that much before the cursor. postRoll and postRollAmount (the same): after an automatic punch out with audio.stopAfterPunchOut, playback goes on that much longer before it stops. Recording that punches in or out and playback that stops on their own announce transport.changed. metronome is the transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see recording.add): keepHistory (the default), cycleHistoryReplace or replace.
 
 Parameters:
 
@@ -3223,6 +3243,10 @@ Parameters:
 - `cycle`: boolean
 - `left`: integer or string
 - `metronome`: boolean
+- `postRoll`: boolean
+- `postRollAmount`: integer
+- `preRoll`: boolean
+- `preRollAmount`: integer
 - `punchIn`: boolean
 - `punchOut`: boolean
 - `returnToStart`: boolean
@@ -3237,6 +3261,10 @@ Returns:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required
@@ -3256,6 +3284,10 @@ Returns:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required
@@ -3265,11 +3297,11 @@ Returns:
 
 #### `gnubase.transport.toggle`
 
-Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, punchIn, punchOut, metronome (see transport.set), or record (on as transport.record, off punches out).
+Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, punchIn, punchOut, preRoll, postRoll, metronome (see transport.set), or record (on as transport.record, off punches out).
 
 Parameters:
 
-- `setting`: one of "cycle" | "punchIn" | "punchOut" | "metronome" | "record"
+- `setting`: one of "cycle" | "punchIn" | "punchOut" | "preRoll" | "postRoll" | "metronome" | "record"
 
 Returns:
 
@@ -3279,6 +3311,33 @@ Returns:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
+- `punchIn`: boolean, required
+- `punchOut`: boolean, required
+- `recording`: boolean, required
+- `returnToStart`: boolean, required
+- `right`: integer, required
+- `startMode`: one of "cursor" | "cycleStart", required
+
+#### `gnubase.transport.update`
+
+Takes over what the audio thread changed on its own: recording that punched in or out at the locators, and playback that stopped after a punch out, and announces it with transport.changed. The engine runs it itself when the audio thread played or recorded differently or applied a request; runs that change nothing stay out of engine.commandLog.
+
+Returns:
+
+- `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `cycle`: boolean, required
+- `left`: integer, required
+- `metronome`: boolean, required
+- `playing`: boolean, required
+- `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required

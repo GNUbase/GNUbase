@@ -121,6 +121,10 @@ namespace gnubase::engine::settings
 					"record-enabled audio tracks, 0 to 60 (0: none). The events start where recording started; "
 					"resizing an event's start to the left brings out what was played before.",
 					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 60}}, 0.0},
+				{"audio.stopAfterPunchOut",
+					"Stop after automatic punch out: playback stops when recording punches out at the right locator, "
+					"after the post-roll if it's on (see transport.set), unless it cycles.",
+					Json{{"type", "boolean"}}, false},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
 				{"editing.applyFolderColor",

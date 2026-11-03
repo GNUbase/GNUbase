@@ -93,6 +93,8 @@ namespace gnubase::engine
 		void registerCommands(Engine& engine);
 
 		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
+		// The user setting audio.stopAfterPunchOut, for the transport.
+		void setStopAfterPunchOut(bool stop);
 		// The user setting meter.resetOnStart.
 		void setMeterResetOnStart(bool reset) { m_meterResetOnStart.store(reset, std::memory_order_relaxed); }
 		void setChase(const MidiChase& chase);
@@ -233,7 +235,9 @@ namespace gnubase::engine
 		void setTransport(const Json& parameters);
 		void locate(const Json& parameters);
 		void sent(bool accepted); // after a transport request
+		bool syncTransport();     // Transport::sync, and the cue thread's copy; whether anything changed
 		void play();
+		void record(bool on);
 		Json transportStatus() const;
 		time::Samples projectEnd() const;
 		void render(audio::DummyDevice& device, uint64_t frames);
