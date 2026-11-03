@@ -584,6 +584,15 @@ TEST_CASE(
 	moveTo(200, 60);
 	CHECK(pointer() == "objectSelection");
 	CHECK(shown().empty());
+	// The view scrolls the event's end under the mouse, which stays where it is: the pointer follows.
+	const double start = f.display.view().start;
+	f.display.scrollTo(start + (98 * f.display.view().scale));
+	f.step();
+	CHECK(pointer() == "resize");
+	CHECK(shown() == "resize");
+	f.display.scrollTo(start);
+	f.step();
+	CHECK(pointer() == "objectSelection");
 
 	// With the selection tools combined, the range selection tool's in a lane's upper half (reference manual p. 253).
 	f.display.setCombineSelectionTools(true);

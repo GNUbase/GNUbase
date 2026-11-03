@@ -101,6 +101,8 @@ setting, and the widget library opens the one the keys ask for ([widgets.md](wid
 - The **context menu** has a Tools submenu with the same items, then the edit commands that act on the selection or
   the selection range, as the Edit menu runs them ([main-menu.md](main-menu.md)): Cut, Copy, Paste, Delete, Split at
   Cursor, Split Range, Crop Range, Glue, Duplicate, Repeat, Select All, Select None, Mute, Unmute, Lock and Unlock.
+  A right click that opens it on an event that isn't selected selects that event first, so that they act on it; on a
+  selected event, or on nothing, the selection stays. The toolbox leaves the selection as it is.
 
 ## Mouse pointers
 
@@ -115,8 +117,9 @@ RmlUi's `cursor` property; the pointers are SVG files in `resources/cursors` ([s
 | `rangeSelection` | The range selection tool, and with the selection tools combined a lane's upper half (p. 253) | `tool-range` |
 | `draw`, `erase`, `split`, `glue`, `mute`, `zoom`, `line`, `play` | That tool | `tool-<name>`, the play tool's `tool-play` |
 
-The pointer changes as the mouse moves and at once when a tool is chosen while the mouse rests; a drag keeps the one
-it started with. MCP's `ui_windows` reports the pointer shown, as `cursor`.
+The pointer changes as the mouse moves, and at once when a tool is chosen or the view scrolls or zooms while the mouse
+rests; over the event lanes a drag keeps the one it started with (outside them, the pointer of what's under the mouse).
+MCP's `ui_windows` reports the pointer shown, as `cursor`.
 
 Not yet: the time warp, comp and color tools, the drumstick tool, resizing an event's edge with the scrub tool,
 which scrubs as it resizes (p. 268), and pointers of their own for the sizing modes; the rest of the reference's context
@@ -138,7 +141,7 @@ menu, with the Audio and MIDI menus' functions, follows with those menus. The Pr
   window, the object selection tool's, the line tool's and the play tool's mode menus on a second click; scrubbing an
   audio track with the mouse; the split tool and the range
   tool driven with the mouse as MCP's UI tools drive it; the toolbox and the context menu on right clicks with and
-  without modifiers, with the setting on and off, a tool chosen from each; the notification after a key, not after a
+  without modifiers, with the setting on and off, a tool chosen from each, a right click selecting the event for the context menu; the notification after a key, not after a
   button or with the setting off; the pointer as `ui_windows` reports it. The project window's golden image shows the
   toolbar.
 - `tests/widgets_tests.cpp`: `modifiercontextmenu` with each modifier key, and notifications.

@@ -441,6 +441,7 @@ namespace gnubase::ui
 		std::sort(all.begin(), all.end(), [](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
 		std::vector<EventLanes::Lane> overview{{10000.0F, std::move(all)}};
 		m_overviewEvents->setLanes(std::move(overview));
+		showPointer();
 	}
 
 	void EventDisplay::followTransport(const Json& status)
@@ -595,6 +596,7 @@ namespace gnubase::ui
 		view.top = std::clamp(view.top, 0.0, std::max(0.0, m_laneTops.back() - height()));
 		m_view = view;
 		apply();
+		showPointer(); // what's under a mouse that stays where it was
 	}
 
 	void EventDisplay::apply()
@@ -813,6 +815,9 @@ namespace gnubase::ui
 		case Rml::EventId::Mousedown:
 			if (target != nullptr && event.GetParameter<int>("button", 0) == 0)
 				mouseDown(event, *target);
+			else if (event.GetParameter<int>("button", 0) == 1 && inside(target, m_area))
+				areaRightDown(event, dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
+					(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
 			break;
 		case Rml::EventId::Mousemove:
 			if (event.GetCurrentElement() == m_document)

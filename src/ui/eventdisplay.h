@@ -367,6 +367,8 @@ namespace gnubase::ui
 		const Shown* eventAt(double x, double y) const; // dp in the event lanes
 		size_t laneAt(double y) const; // dp from the top of the first lane; 0 above it, the lane count below the last
 		void areaDown(Rml::Event& event, double x, double y);
+		// A right click that opens the context menu selects the event there, unless it's selected already.
+		void areaRightDown(Rml::Event& event, double x, double y);
 		void areaMove(double dx, double dy, bool constrained); // constrained: restricts() says so
 		// Whether the keys are exactly the tool modifier of Copy or Shared Copy.
 		bool copyKeys(const std::string& keys) const;

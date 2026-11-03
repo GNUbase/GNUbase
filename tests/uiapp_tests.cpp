@@ -553,6 +553,67 @@ TEST_CASE(
 		[&app] { return element(app, ".event-area").at("attributes").at("contextmenu") == "event-display-menu"; }));
 }
 
+TEST_CASE("a right click on an event selects it for the context menu, unless it's selected already", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	const ui::EventDisplay& display = window.display;
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	for (const int quarter : {2, 6}) // from 1 to 2 and from 3 to 4 seconds at 120 BPM, 100 to 200 and 300 to 400 dp
+		app.call("midiPart.add",
+			{{"track", track.at("id")}, {"position", quarter * time::g_ticksPerQuarter},
+				{"length", 2 * time::g_ticksPerQuarter}});
+	const auto parts = [&app]
+	{
+		auto* lanes =
+			dynamic_cast<ui::EventLanes*>(app.main().context().GetDocument(0)->QuerySelector("event-lanes.events"));
+		return lanes == nullptr || lanes->lanes().empty() ? size_t{0} : lanes->lanes()[0].events.size();
+	};
+	REQUIRE(app.waitUntil([&parts] { return parts() == 2; }));
+	const Json lanes = element(app, "event-lanes.events").at("box");
+	const auto at = [&lanes](int x) { return ui::Point{lanes.at("x").get<int>() + x, lanes.at("y").get<int>() + 20}; };
+	const auto press = [&app](ui::Point point, ui::MouseButton button, const std::vector<std::string>& modifiers)
+	{
+		app.ui().click(std::nullopt, {"", 0, point}, button, 1, modifiers);
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+	press(at(150), ui::MouseButton::Left, {});
+	REQUIRE(display.selection().size() == 1);
+	const uint64_t first = display.selection()[0];
+
+	// Another event: the context menu acts on it, not on the one selected before.
+	press(at(350), ui::MouseButton::Right, {});
+	REQUIRE(visible(app, "#event-display-menu"));
+	REQUIRE(display.selection().size() == 1);
+	const uint64_t second = display.selection()[0];
+	CHECK(second != first);
+	click(app, selector("#event-display-menu > menuitem[command=edit.delete]"));
+	REQUIRE(app.waitUntil([&parts] { return parts() == 1; }));
+	CHECK(app.call("event.get", {{"events", Json::array({first})}}).at("events").size() == 1);
+
+	// A selected event keeps the selection, the others in it too; so does a right click on nothing, and one that
+	// opens the toolbox.
+	app.call("midiPart.add",
+		{{"track", track.at("id")}, {"position", 6 * time::g_ticksPerQuarter},
+			{"length", 2 * time::g_ticksPerQuarter}});
+	REQUIRE(app.waitUntil([&parts] { return parts() == 2; }));
+	press(at(150), ui::MouseButton::Left, {});
+	press(at(350), ui::MouseButton::Left, {"ctrl"});
+	REQUIRE(display.selection().size() == 2);
+	const std::vector<uint64_t> both = display.selection();
+	press(at(150), ui::MouseButton::Right, {});
+	CHECK(display.selection() == both);
+	app.ui().key(std::nullopt, "Escape");
+	press(at(500), ui::MouseButton::Right, {});
+	CHECK(display.selection() == both);
+	app.ui().key(std::nullopt, "Escape");
+	press(at(500), ui::MouseButton::Left, {}); // selects nothing
+	press(at(150), ui::MouseButton::Left, {});
+	press(at(350), ui::MouseButton::Right, {"shift"});
+	CHECK(visible(app, "#toolbox"));
+	CHECK(display.selection() == std::vector<uint64_t>{first});
+}
+
 TEST_CASE("a tool chosen with a key command shows its name for a moment, unless the setting is off", "[ui]")
 {
 	ProjectWindow window;

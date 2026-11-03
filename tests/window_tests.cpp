@@ -759,6 +759,27 @@ TEST_CASE("text fields copy to and paste from SDL's clipboard", "[ui]")
 	SDL_free(saved);
 }
 
+TEST_CASE("style sheets' mouse pointers become SDL cursors, made once, the OS's arrow for none", "[ui]")
+{
+	const Gpu gpu;
+	gpu.rmlui->loadCursors(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "cursors");
+	Rml::SystemInterface* system = Rml::GetSystemInterface();
+	REQUIRE(system != nullptr);
+	// Pictures for several scales show the one for the monitor's scale on Windows too.
+	CHECK(SDL_GetHintBoolean(SDL_HINT_MOUSE_DPI_SCALE_CURSORS, false));
+
+	system->SetMouseCursor("tool-draw");
+	SDL_Cursor* draw = SDL_GetCursor();
+	CHECK(draw != SDL_GetDefaultCursor());
+	system->SetMouseCursor("text"); // one of the OS's
+	CHECK(SDL_GetCursor() != draw);
+	CHECK(SDL_GetCursor() != SDL_GetDefaultCursor());
+	system->SetMouseCursor("tool-draw");
+	CHECK(SDL_GetCursor() == draw);
+	system->SetMouseCursor("");
+	CHECK(SDL_GetCursor() == SDL_GetDefaultCursor());
+}
+
 TEST_CASE("a file dialog's answer reaches its caller on the UI thread", "[ui]")
 {
 	Gpu gpu;

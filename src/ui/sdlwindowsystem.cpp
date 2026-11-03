@@ -71,7 +71,15 @@ namespace gnubase::ui
 		{
 			// NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast): SDL's surfaces take non-const pixels
 			auto* pixels = const_cast<uint8_t*>(image.pixels.data());
-			return SDL_CreateSurfaceFrom(image.width, image.height, SDL_PIXELFORMAT_RGBA32, pixels, image.width * 4);
+			SDL_Surface* surface =
+				SDL_CreateSurfaceFrom(image.width, image.height, SDL_PIXELFORMAT_RGBA32, pixels, image.width * 4);
+			if (surface == nullptr)
+				return nullptr;
+			// Each scale's own hotspot, which SDL takes for that scale's picture (else the first one's, unscaled).
+			const SDL_PropertiesID properties = SDL_GetSurfaceProperties(surface);
+			SDL_SetNumberProperty(properties, SDL_PROP_SURFACE_HOTSPOT_X_NUMBER, image.hotspot.x);
+			SDL_SetNumberProperty(properties, SDL_PROP_SURFACE_HOTSPOT_Y_NUMBER, image.hotspot.y);
+			return surface;
 		}
 
 		// A file dialog that is open: what SDL needs until the dialog calls back.
@@ -216,6 +224,8 @@ namespace gnubase::ui
 
 	SdlWindowSystem::SdlWindowSystem()
 	{
+		// On Windows, mouse pointers with pictures for several scales show the one for the monitor's scale.
+		SDL_SetHint(SDL_HINT_MOUSE_DPI_SCALE_CURSORS, "1");
 		if (!SDL_InitSubSystem(SDL_INIT_VIDEO))
 			throw sdlError("SDL cannot start its video subsystem");
 		m_dialogEvent = SDL_RegisterEvents(1);
@@ -372,7 +382,8 @@ namespace gnubase::ui
 			SDL_Cursor* made = nullptr;
 			if (!cursor.images.empty())
 			{
-				// The picture at scale 1, with the others for HiDPI monitors, of which SDL takes the nearest.
+				// The picture at scale 1, with the others for HiDPI monitors, of which SDL takes the nearest to the
+				// monitor's scale (Windows, macOS, Wayland; X11 shows the first).
 				SDL_Surface* base = surfaceOf(cursor.images.front());
 				for (size_t i = 1; base != nullptr && i < cursor.images.size(); ++i)
 					if (SDL_Surface* scaled = surfaceOf(cursor.images[i]))

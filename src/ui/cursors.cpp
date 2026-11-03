@@ -43,12 +43,16 @@ namespace gnubase::ui
 			const engine::Json* hotspot =
 				cursor.is_object() && cursor.contains("hotspot") ? &cursor["hotspot"] : nullptr;
 			if (hotspot == nullptr || !hotspot->is_array() || hotspot->size() != 2 || !(*hotspot)[0].is_number() ||
-				!(*hotspot)[1].is_number())
+				!(*hotspot)[1].is_number() || !std::isfinite((*hotspot)[0].get<double>()) ||
+				!std::isfinite((*hotspot)[1].get<double>()))
 			{
 				logging::warning("The mouse pointer {} in {} has no hotspot [x, y]", name, file.u8string());
 				continue;
 			}
-			m_hotspots[name] = {(*hotspot)[0].get<float>(), (*hotspot)[1].get<float>()};
+			// Inside the largest picture; load() clamps it to the picture's own size.
+			const auto inside = [](const engine::Json& value)
+			{ return static_cast<float>(std::clamp(value.get<double>(), 0.0, double{g_maxCursorSize})); };
+			m_hotspots[name] = {inside((*hotspot)[0]), inside((*hotspot)[1])};
 		}
 	}
 
@@ -72,7 +76,8 @@ namespace gnubase::ui
 		const std::filesystem::path file = m_folder / std::filesystem::u8path(name + ".svg");
 		const std::optional<std::string> text = readText(file);
 		const std::unique_ptr<lunasvg::Document> document = text ? lunasvg::Document::loadFromData(*text) : nullptr;
-		if (document == nullptr || !(document->width() > 0.0F) || !(document->height() > 0.0F))
+		if (document == nullptr || !(document->width() > 0.0F) || !(document->height() > 0.0F) ||
+			document->width() > g_maxCursorSize || document->height() > g_maxCursorSize)
 		{
 			logging::warning("The mouse pointer {} can't be read", file.u8string());
 			return std::nullopt;

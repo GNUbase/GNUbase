@@ -482,6 +482,17 @@ namespace gnubase::ui
 		return right - x <= g_edge ? 1 : 0;
 	}
 
+	void EventDisplay::areaRightDown(Rml::Event& event, double x, double y)
+	{
+		const bool modified =
+			held(event, "ctrl_key") || held(event, "meta_key") || held(event, "shift_key") || held(event, "alt_key");
+		if (modified != m_toolboxOnRightClick) // the toolbox, which chooses a tool and leaves the selection
+			return;
+		const Shown* shown = eventAt(x, y);
+		if (shown != nullptr && !std::binary_search(m_selection.begin(), m_selection.end(), shown->id))
+			select({shown->id});
+	}
+
 	void EventDisplay::areaDown(Rml::Event& event, double x, double y)
 	{
 		m_dragMoved = false;

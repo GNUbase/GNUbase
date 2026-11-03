@@ -10,12 +10,14 @@ library PlutoVG that comes with it.
   (`tools/skin/generate.py` makes them). LunaSVG draws shapes, paths, gradients, clip paths and masks. GNUbase's
   graphics have no text: LunaSVG is built without loading system fonts, so text would have no font. It is built so
   that an SVG can't make it read other files either: an image inside an SVG must be a `data:` URI.
-- **Mouse pointers.** GNUbase's own pointers (#469) are in `resources/cursors`, whose README lists them: 24 × 24 dp,
+- **Mouse pointers.** GNUbase's own pointers (#469) are in `resources/cursors`, whose README lists them: 24 × 24 pixels at 100 %,
   black lines on a white outline so that they show on any background. Style sheets name them with RmlUi's `cursor`
   property (`cursor: tool-draw;`), as the event display's tools do ([tools.md](tools.md)). `ui::Cursors`
   (`src/ui/cursors.h`) reads `cursors.json`, which gives each pointer its hotspot, the point it points with, and
   rasterizes a pointer through LunaSVG the first time it is asked for, at the display scales 1, 1.5, 2 and 3; the
-  window system makes an OS pointer of them once (SDL takes the nearest scale for each monitor). A `cursor` name that
+  window system makes an OS pointer of them once, each scale with its own hotspot. They follow the monitor's scale, not
+  the UI scale: SDL shows the scale nearest to the monitor's on Windows, macOS and Wayland, and the first on X11. At
+  most 128 × 128 at 100 %, and a hotspot outside the picture points at its nearest edge. A `cursor` name that
   isn't there is one of the OS's pointers by its CSS name (`text`, `pointer`, `move`, `ew-resize`, ...), an empty one
   or a pointer that can't be read the OS's arrow. RmlUi's system interface (`ui/rmlui.h`) passes the name for the
   element under the mouse to the window system, and MCP's `ui_windows` reports it as `cursor`.

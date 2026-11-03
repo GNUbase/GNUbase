@@ -423,18 +423,33 @@ TEST_CASE("a pointer whose picture or manifest can't be read is the OS's arrow",
 {
 	const test::TempDir folder;
 	write(folder.path() / "cursors.json",
-		R"({"broken": {"hotspot": [1, 1]}, "missing": {"hotspot": [1, 1]}, "nohotspot": {}})");
+		R"({"broken": {"hotspot": [1, 1]}, "missing": {"hotspot": [1, 1]}, "nohotspot": {}, "huge": {"hotspot": [1, 1]},)"
+		R"( "far": {"hotspot": [1e40, -5]}, "nan": {"hotspot": ["x", 1]}})");
 	write(folder.path() / "broken.svg", "<svg");
+	// Bigger than any OS shows a pointer: not rasterized at all.
+	write(folder.path() / "huge.svg",
+		R"(<svg xmlns="http://www.w3.org/2000/svg" width="100000" height="8"><rect width="8" height="8"/></svg>)");
+	// A hotspot outside the picture points at its nearest corner.
+	write(folder.path() / "far.svg",
+		R"(<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>)");
 	write(folder.path() / "nohotspot.svg",
 		R"(<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>)");
 	ui::Cursors cursors(folder.path());
-	for (const char* name : {"broken", "missing"})
+	for (const char* name : {"broken", "missing", "huge"})
 	{
 		INFO(name);
 		CHECK(cursors.get(name).name.empty());
 		CHECK(cursors.get(name).images.empty());
 	}
 	CHECK(!cursors.has("nohotspot"));
+	CHECK(!cursors.has("nan"));
+	const ui::Cursor& far = cursors.get("far");
+	REQUIRE(far.images.size() == ui::g_cursorScales.size());
+	for (const ui::CursorImage& image : far.images)
+	{
+		CHECK(image.hotspot.x == image.width - 1);
+		CHECK(image.hotspot.y == 0);
+	}
 	CHECK(cursors.get("nohotspot").images.empty());
 	// A manifest that isn't JSON: every pointer is the OS's.
 	write(folder.path() / "cursors.json", "{");
