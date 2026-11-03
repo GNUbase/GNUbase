@@ -71,8 +71,10 @@ sends engine commands, so whatever another client changes shows at once.
   `mute` (M) and `solo` (S), which tracks with a channel always show, `record` and `monitor` (audio tracks), `read`
   (every automation lane of the track reads, or with a click none does; disabled without lanes) and `timeBase`
   (musical or linear, `.checked` when linear). A click sends `channel.set`, `automationLane.set` in one transaction,
-  or `track.set`. Folders without a group channel, marker and ruler tracks show none. The defaults: mute, solo,
-  record, monitor and read on audio tracks; mute, solo and read on the others with a channel.
+  or `track.set`. Folders without a group channel, marker and ruler tracks show none. The tempo track's only control
+  is `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`, [tempo-track.md](tempo-track.md)). The
+  defaults: mute, solo, record, monitor and read on audio tracks; mute, solo and read on the others with a channel;
+  tempoTrack on the tempo track.
 - **Selection** (p. 218) is the list view's: a click selects a track, Ctrl-click adds or removes one, Shift-click
   selects a range; Up and Down step through the shown tracks, in the list and wherever the project window has the
   focus (`track.selectPrevious`, `track.selectNext`), and scroll the selected track into view. While an event is

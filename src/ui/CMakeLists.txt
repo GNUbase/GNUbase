@@ -75,6 +75,8 @@ add_library(gnubase-ui STATIC
 	shell.h
 	statusline.cpp
 	statusline.h
+	tempotrack.cpp
+	tempotrack.h
 	themes.cpp
 	themes.h
 	timeformat.cpp

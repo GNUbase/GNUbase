@@ -767,6 +767,41 @@ meter .meter-peak
 	white-space: nowrap;
 }
 
+/* The tempo track (docs/features/tempo-track.md): the tempo curve over the tempo track's lane, or filling the tempo
+   track editor's curve area, with a point per tempo event. Code places the curve on its lane and the points where their
+   events are. */
+.tempo-curve
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 100%;
+}
+
+.tempo-curve.hidden
+{
+	display: none;
+}
+
+.tempo-curve .tempo-line, .tempo-curve .tempo-points
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.tempo-curve .tempo-point
+{
+	position: absolute;
+	width: 7dp;
+	height: 7dp;
+	margin-left: -3.5dp;
+	margin-top: -3.5dp;
+}
+
 /* The tools (docs/features/tools.md): the selection range, at least a line wide, and the rectangle a tool drags. Code
    sets where they are and the state class .shown. */
 .event-display .range-selection, .event-display .tool-rectangle

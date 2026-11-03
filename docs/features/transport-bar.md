@@ -19,7 +19,7 @@ are by attributes, which `TransportControls` follows:
 | Punch Points | Punch In, Punch Out | `transport.toggle` `punchIn`, `punchOut` |
 | Transport Controls | Go to Previous Marker/Zero, Go to Next Marker/Project End, Rewind, Forward, Cycle, Stop, Start, Record | `locate.previousMarker`, `locate.nextMarker`, `wind.rewind`, `wind.forward`, `transport.toggle` `cycle`, `transport.stop`, `transport.play`, `transport.toggle` `record` |
 | Time Displays | primary and secondary time format menus and displays, Exchange Time Formats | the project cursor; `transport.locate`; `time.exchangeFormats` |
-| Tempo & Time Signature | tempo, time signature | `project.set` `tempo`, `signature` |
+| Tempo & Time Signature | Activate Tempo Track, tempo, Tap Tempo, time signature | `project.set` `tempoTrackActive`, `tempo`, `signature`; `tempo.tap` ([tempo-track.md](tempo-track.md)) |
 | Click | Activate Metronome Click | `transport.toggle` `metronome` |
 
 The sections keep the width of their controls. A window too narrow for all of them, such as the transport bar of a
@@ -116,8 +116,7 @@ transport pop-up window.
 ## Not yet
 
 The sections that come with their features: the record modes (#96, #97), retrospective record, pre-roll and post-roll
-and the punch positions (#102), the punch and click behaviour itself (#101, #102), the tempo track switch and tap tempo
-(#155), external sync, count-in and the click pattern (#101), the markers section (#91), input and output activity and
+and the punch positions (#102), the punch and click behaviour itself (#101, #102), external sync, count-in and the click pattern (#101), the markers section (#91), input and output activity and
 the audio performance meter. Also: Start from selection; the left and right dividers, which keep the sections outside
 them shown in a window too narrow for all (pp. 307, 310); the time display window's transparency (a studio setup page,
 p. 313).

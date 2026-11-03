@@ -274,6 +274,21 @@ namespace gnubase::app
 			// Later in the step: the key may be the markers window's own, which closing it would destroy.
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleMarkers(); }); }});
 		m_keys.bind({"Mod+M", "window.markers"});
+		// The tempo track (reference manual pp. 1447, 1451).
+		m_keys.add({"window.tempoTrack", "Opens or closes the tempo track editor.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleTempoEditor(); }); }});
+		m_keys.bind({"Mod+T", "window.tempoTrack"});
+		m_keys.add({"tempo.toggleTrack", "Switches between fixed tempo and tempo track mode (Activate Tempo Track).",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
+			{
+				m_binding.send("project.get", engine::Json::object(),
+					[this](const engine::Result& result)
+					{
+						if (result.ok())
+							m_binding.send(
+								"project.set", {{"tempoTrackActive", !result.value.value("tempoTrackActive", false)}});
+					});
+			}});
 
 		// The project window's panels (reference manual pp. 54, 73, 75-98), which their tickets fill: the inspector
 		// (docs/features/inspector.md) shows the selected track, the Channel zone's will show its channel strip (#107).
@@ -628,6 +643,7 @@ namespace gnubase::app
 		}
 		document->Show();
 		m_markerLines.reset();
+		m_tempoLane.reset();
 		// The transport bar's sections are there when the docking system reads them.
 		m_transportBar.reset();
 		if (Rml::Element* bar = document->GetElementById("transport-bar"))
@@ -646,6 +662,7 @@ namespace gnubase::app
 			m_colorMenu = std::make_unique<ui::ColorMenu>(*m_eventDisplay, *m_trackList, m_binding, *document);
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 		m_markerLines = std::make_unique<ui::MarkerLines>(*m_eventDisplay, m_binding);
+		m_tempoLane = std::make_unique<ui::TempoLane>(*m_eventDisplay, m_binding);
 		if (m_infoLine)
 			m_infoLine->followMarkers(
 				[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
@@ -692,6 +709,33 @@ namespace gnubase::app
 		m_markers->syncFrom(
 			[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
 		return m_markers.get();
+	}
+
+	ui::TempoEditor* AppUi::toggleTempoEditor()
+	{
+		const bool open = m_tempoEditor != nullptr && m_shell.find(m_tempoWindow) != nullptr;
+		m_tempoEditor.reset();
+		if (open)
+		{
+			m_shell.close(m_tempoWindow);
+			return nullptr;
+		}
+		ui::WindowSpec spec;
+		spec.title = "Tempo Track";
+		spec.size = {800, 400};
+		spec.hidden = m_hidden;
+		const ui::Window& window = m_shell.open(spec);
+		m_tempoWindow = window.id();
+		const std::filesystem::path file = m_resources / "ui" / "tempo-editor.rml";
+		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
+		if (document == nullptr)
+		{
+			m_shell.close(m_tempoWindow);
+			throw std::runtime_error("cannot load the tempo track editor from " + file.u8string());
+		}
+		document->Show();
+		m_tempoEditor = std::make_unique<ui::TempoEditor>(m_binding, *document);
+		return m_tempoEditor.get();
 	}
 
 	void AppUi::chooseImport(

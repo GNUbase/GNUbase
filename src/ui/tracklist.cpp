@@ -42,6 +42,9 @@ namespace gnubase::ui
 		// The controls a track type can have.
 		bool applies(const std::string& control, const std::string& type, bool hasChannel)
 		{
+			// The tempo track's only control is Activate Tempo Track (reference manual p. 162).
+			if (type == "tempo" || control == "tempoTrack")
+				return type == "tempo" && control == "tempoTrack";
 			if (!hasChannel)
 				return control == "timeBase" && type != "folder" && type != "ruler";
 			if (control == "record" || control == "monitor")
@@ -59,7 +62,7 @@ namespace gnubase::ui
 				{"record", {"Record Enable", R"(<svg class="icon" src="../icons/track-record-arm.svg"/>)"}},
 				{"monitor", {"Monitor", R"(<svg class="icon" src="../icons/track-monitor.svg"/>)"}},
 				{"read", {"Read Automation", R"(<svg class="icon" src="../icons/track-read-automation.svg"/>)"}},
-				{"timeBase", {"Switch Time Base", "L"}}};
+				{"timeBase", {"Switch Time Base", "L"}}, {"tempoTrack", {"Activate Tempo Track", "T"}}};
 			const auto& [title, content] = looks.at(control);
 			return R"(<button class="toggle )" + control + R"(" control=")" + control + R"(" title=")" + title +
 				R"(">)" + content + "</button>";
@@ -511,6 +514,8 @@ namespace gnubase::ui
 					on = channel != nullptr && channel->at("recordEnable").get<bool>();
 				else if (name == "timeBase")
 					on = track.at("timeBase") == "linear";
+				else if (name == "tempoTrack")
+					on = project.value("tempoTrackActive", false);
 				else if (name == "read")
 					on = !lanes.empty() && std::all_of(lanes.begin(), lanes.end(), [](bool read) { return read; });
 				else
@@ -680,6 +685,11 @@ namespace gnubase::ui
 				commands.push_back(
 					{{"command", "automationLane.set"}, {"parameters", {{"lane", lane}, {"read", !all}}}});
 			transaction("Read Automation", std::move(commands));
+			return;
+		}
+		if (name == "tempoTrack")
+		{
+			m_binding.send("project.set", {{"tempoTrackActive", !project.value("tempoTrackActive", false)}});
 			return;
 		}
 		if (name == "timeBase")

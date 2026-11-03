@@ -69,6 +69,7 @@ The reference's defaults for the commands GNUbase has so far (`ui::defaultKeyMap
 | Shift+Num1 to Shift+Num9 | `marker.setLocators` with the number | Recall Cycle Marker 1 to 9 |
 | Insert | `marker.add` | Insert Marker |
 | Mod+M | `window.markers` (the app's) | Open Markers |
+| Mod+T | `window.tempoTrack` (the app's) | Open Tempo Track Editor ([tempo-track.md](tempo-track.md)) |
 | Mod+Z | `history.undo` | Undo |
 | Mod+Shift+Z | `history.redo` | Redo |
 

@@ -250,6 +250,14 @@
 		<menuseparator/>
 		<menuitem command="project.colorsSetup">Project Colors Setup...</menuitem>
 		<menuseparator/>
+		<!-- The tempo track (reference manual pp. 1447, 1451, docs/features/tempo-track.md) -->
+		<menuitem id="tempo-track-submenu">Tempo Track
+			<menu>
+				<menuitem command="window.tempoTrack">Open Tempo Track Editor</menuitem>
+				<menuitem command="tempo.toggleTrack">Activate Tempo Track</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
 		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
 		<menuitem command="track.duplicateSelected">Duplicate Tracks</menuitem>

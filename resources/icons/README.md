@@ -16,6 +16,8 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `transport-punch-in.svg` — Punch into recording at the left boundary.
 - `transport-punch-out.svg` — Punch out of recording at the right boundary.
 - `transport-metronome.svg` — Toggle the metronome.
+- `transport-tempo-track.svg` — Activate the tempo track (a tempo curve).
+- `transport-tap-tempo.svg` — Tap the tempo.
 - `tool-pointer.svg` — Select and move objects.
 - `tool-range.svg` — Select a time range.
 - `tool-split.svg` — Split events with scissors.
