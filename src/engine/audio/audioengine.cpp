@@ -622,17 +622,17 @@ namespace gnubase::engine
 			const auto source = static_cast<size_t>(sourceNode(channel.id));
 			if (source == firstChannel + i)
 			{
-				node.processor =
-					std::make_shared<ChannelStrip>(state, node.processor, panning, monitoring, channel.silent);
+				node.processor = std::make_shared<ChannelStrip>(
+					state, node.processor, panning, monitoring, channel.silent, StripPart::Whole, channel.sections);
 				continue;
 			}
 			// Plugin slots between them: the source node plays the source and the automation, the channel's node
 			// fades.
 			graph::NodeDesc& sourceDesc = desc.nodes[source];
 			sourceDesc.processor = std::make_shared<ChannelStrip>(
-				state, sourceDesc.processor, panning, monitoring, channel.silent, StripPart::Source);
-			node.processor =
-				std::make_shared<ChannelStrip>(state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader);
+				state, sourceDesc.processor, panning, monitoring, channel.silent, StripPart::Source, channel.sections);
+			node.processor = std::make_shared<ChannelStrip>(
+				state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, channel.sections);
 		}
 		m_channelStates = std::move(states);
 	}

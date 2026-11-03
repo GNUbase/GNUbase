@@ -2,6 +2,7 @@
 #pragma once
 
 #include "engine/audio/meters.h"
+#include "engine/audio/stripsections.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/graph/graph.h"
 #include "engine/graph/processor.h"
@@ -165,10 +166,11 @@ namespace gnubase::engine
 		Ramp m_panRight;
 	};
 
-	// What a channel keeps across graph rebuilds: its automation and its fader.
+	// What a channel keeps across graph rebuilds: its automation, its strip's sections and its fader.
 	struct ChannelState
 	{
 		AutomationPlayer automation;
+		StripSections sections;
 		std::shared_ptr<ChannelFader> fader = std::make_shared<ChannelFader>();
 		float monitorGain = -1.0f; // audio thread: the input's gain after the last block, -1 before the first
 		float outputGain = -1.0f;  // and the output's, 0 while the channel is silent (mute, solo)
@@ -208,19 +210,20 @@ namespace gnubase::engine
 	};
 
 	// The processor of a channel node: the channel's source (a track player, a sequencer or an instrument, or
-	// nothing for a group or effect channel) with the automation events added to its input, then the fader and its
-	// panner. A new strip is made for every graph, around the source and the state that the channel keeps. With
-	// monitoring, the input reaches the source only while the track monitors it, gliding in and out over a block. A
-	// silent strip (mute, solo, a disabled track) glides its output to silence over a block, and back.
+	// nothing for a group or effect channel) with the automation events added to its input, the strip's sections
+	// (the pre section after the source, the others before the fader), then the fader and its panner. A new strip is
+	// made for every graph, around the source and the state that the channel keeps. With monitoring, the input reaches
+	// the source only while the track monitors it, gliding in and out over a block. A silent strip (mute, solo, a
+	// disabled track) glides its output to silence over a block, and back.
 	class ChannelStrip : public graph::Processor
 	{
 	public:
 		ChannelStrip(std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source,
 			Panning panning = {}, std::optional<Monitoring> monitoring = std::nullopt, bool silent = false,
-			StripPart part = StripPart::Whole);
+			StripPart part = StripPart::Whole, const ChannelSections& sections = {});
 
 		void process(const graph::ProcessContext& context) noexcept override;
-		uint32_t latency() const override { return m_source ? m_source->latency() : 0; }
+		uint32_t latency() const override;
 
 	protected:
 		void prepare(double sampleRate, uint32_t maxFrames) override;
@@ -238,6 +241,7 @@ namespace gnubase::engine
 		std::optional<Monitoring> m_monitoring;
 		bool m_silent = false;
 		StripPart m_part = StripPart::Whole;
+		ChannelSections m_sections;
 		uint32_t m_smoothing = 0; // g_faderSmoothing in frames
 		double m_sampleRate = 48000.0;
 		graph::EventBuffer m_sourceEvents;
