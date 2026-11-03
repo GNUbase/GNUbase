@@ -854,6 +854,32 @@ TEST_CASE(
 	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
 }
 
+TEST_CASE("a quit question that goes with its window doesn't keep the next quit request from asking", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "audio"}});
+	// File > Quit's key in a panel's own window asks there.
+	app.appUi().docking().setFloating("history", true);
+	const gnubase::ui::Window* floating = app.appUi().docking().windowOf("history");
+	REQUIRE(floating != nullptr);
+	const gnubase::ui::WindowId panel = floating->id();
+	gnubase::ui::Window* window = app.shell().find(panel);
+	REQUIRE(window != nullptr);
+	app.keys().run("file.quit", Json::object(), *window, nullptr);
+	REQUIRE(app.waitUntil(
+		[&app, panel] { return app.ui().dom(panel, "#discard-changes-dialog", 0).at("elements").size() == 1; }));
+
+	// Closing the window, which docks the panel again, takes the question along unanswered.
+	app.ui().close(panel, false);
+	REQUIRE(app.waitUntil([&app, panel] { return app.shell().find(panel) == nullptr; }));
+	REQUIRE(app.shell().running());
+
+	closeLastWindow(app);
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+}
+
 TEST_CASE("the start screen creates projects, from templates too, and opens recent ones", "[ui]")
 {
 	test::UiApp app({900, 640});

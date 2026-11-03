@@ -990,20 +990,37 @@ TEST_CASE("dialogs open in the middle, move by their title bar, and close with E
 	CHECK(closes.results == std::vector<std::string>{"ok", "cancel", "cancel"});
 }
 
+namespace
+{
+	// Closes the dialog again from its own close event, and remembers what that returned.
+	struct CloseAgain final : Rml::EventListener
+	{
+		void ProcessEvent(Rml::Event& event) override
+		{
+			if (auto* document = dynamic_cast<Rml::ElementDocument*>(event.GetCurrentElement()))
+				results.push_back(ui::closeDialog(*document, "again"));
+		}
+
+		std::vector<bool> results;
+	};
+}
+
 TEST_CASE("the app closes a dialog with a result as its buttons do, and only once", "[ui]")
 {
 	Closes closes;
+	CloseAgain again;
 	test::UiApp app;
 	Rml::ElementDocument& page = app.show("popups.rml");
 	CHECK(!ui::closeDialog(page, "cancel")); // no <dialog> in it
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(page.IsVisible());
 
+	// Closing already, also while its close event is on its way, it doesn't close again.
 	Rml::ElementDocument& dialog = openDialog(app, closes);
+	dialog.AddEventListener(ui::g_dialogCloseEvent, &again);
 	CHECK(ui::closeDialog(dialog, "discard"));
-	// Closing already: neither the app nor the user's Escape closes it again before it is gone.
+	CHECK(again.results == std::vector<bool>{false});
 	CHECK(!ui::closeDialog(dialog, "cancel"));
-	app.ui().key(std::nullopt, "Escape");
 	CHECK(app.waitUntil([&app] { return !dialogOpen(app); }));
 	CHECK(closes.results == std::vector<std::string>{"discard"});
 }

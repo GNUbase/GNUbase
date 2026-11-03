@@ -41,7 +41,8 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
   docks the panel again ([docking.md](docking.md)), and the main window asks to quit. With `quit` it asks to quit as
   the OS does (`Shell::requestQuit`): the macOS app menu's and the Dock's Quit, SDL's quit request after the last
   window closed, a signal. Both ask the unsaved changes question first ([project-files.md](project-files.md)). The
-  request is posted and runs in the UI's next step, as the OS's arrive, so that it never closes a window under the
-  event handler or Lua script that asked; `ui_wait` then waits for what it opens.
+  request is posted and runs in the UI's next step, as the OS's arrive, so that it doesn't close a window under the
+  event handler that asked; `ui_wait` then waits for what it opens. Lua's `gnubase.ui.wait` steps the UI itself, so
+  a script that closes its own window and then waits runs on without it.
 - **Waiting.** `ui_wait` asks the UI thread every 20 ms whether an element that a selector matches is visible (with a
   given text), or that none is, for at most 60 seconds.

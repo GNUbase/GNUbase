@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <RmlUi/Core/Types.h>
+
 #include <string>
 
 namespace Rml

@@ -90,7 +90,8 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   cancelled first (`ui::closeDialog`, as its Cancel button would), so that the question can open. One question
   answers every quit request that comes while it is coming or open: SDL follows the close request of the last visible
   window with its own quit request in the same step, and the user may close the window again while the question
-  waits. After Cancel the next request asks again.
+  waits. After Cancel the next request asks again, and so it does when the question went unanswered with its window,
+  such as a panel's own window where File > Quit's key asked.
 - **Start screen.** `start-screen.rml`, the minimal version of the reference's hub: the templates with Create, Create
   Empty Project, the recent projects that are still there with Open, and Open Other..., which asks for a file. A double
   click on a row does what its button does. File > New Project opens it, and the app at its start when no project was
@@ -133,7 +134,8 @@ app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a na
 extension in upper case) and Save New Version after each through file dialogs, Open and Revert with the unsaved changes
 dialog, Save asking for a file after Open of an auto save, quitting through the main window's close button and the OS's
 quit request with and without unsaved changes, SDL's close and quit requests for the last window and more requests while
-the question is open asking one question (the same document stays open) that Cancel and Discard answer, the start
+the question is open asking one question (the same document stays open) that Cancel and Discard answer, a question
+asked in a panel's own window that closes with it leaving the next quit request to ask again, the start
 screen's buttons and double clicks, Save as Template and Back up Project, and the error dialog for a failed save and
 backup. `tests/uitools_tests.cpp` checks `ui_file_dialog` and `ui_close`, `tests/lua/ui/dialog.lua` the unsaved
 changes question through `gnubase.ui.close`, and `tests/widgets_tests.cpp` `ui::closeDialog`.

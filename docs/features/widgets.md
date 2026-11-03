@@ -210,7 +210,7 @@ presses it as the window gets it, nor behind a modal dialog). A right click with
 `modifiercontextmenu`, and the `contextmenu` where an element has no other.
 Tooltips show after a rest and go with the mouse. Notifications show for their duration, again when set again.
 Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result,
-and with `ui::closeDialog` once, not again by Escape while closing; a value field with autofocus is edited as its dialog opens, even by keys typed before the next update, and Enter
+and with `ui::closeDialog`, once, also when closed again from its own close event; a value field with autofocus is edited as its dialog opens, even by keys typed before the next update, and Enter
 there clicks OK, while another value field keeps Enter.
 Tabs show their panels. List views select with clicks, Ctrl, Shift and the keys, and follow their data; trees expand
 and collapse by click and keys, with indents by level; tables select body rows only; splitters move the boundary in a
