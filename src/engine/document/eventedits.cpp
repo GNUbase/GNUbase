@@ -49,6 +49,7 @@ namespace gnubase::engine
 			bool& lock() const { return pick(&AudioEvent::lock, &AudioPart::lock, &MidiPart::lock); }
 			bool& mute() const { return pick(&AudioEvent::mute, &AudioPart::mute, &MidiPart::mute); }
 			std::string& color() const { return pick(&AudioEvent::color, &AudioPart::color, &MidiPart::color); }
+			int& lane() const { return pick(&AudioEvent::lane, &AudioPart::lane, &MidiPart::lane); }
 			bool locked() const { return lock(); }
 			time::Position& position() const
 			{
@@ -551,6 +552,7 @@ namespace gnubase::engine
 			right.mute = part.mute;
 			right.lock = part.lock;
 			right.color = part.color;
+			right.lane = part.lane;
 			for (auto it = part.notes.begin(); it != part.notes.end();)
 			{
 				Note& note = it->second;
@@ -963,6 +965,7 @@ namespace gnubase::engine
 			{
 				item.mute() = parameters.value("mute", item.mute());
 				item.lock() = parameters.value("lock", item.lock());
+				item.lane() = parameters.value("lane", item.lane());
 				if (recolor)
 					item.color() = color;
 				announce(project, context, item, "changed");
@@ -1095,7 +1098,7 @@ namespace gnubase::engine
 				Json info = {{"id", item.id()}, {"kind", kind}, {"track", item.track()}, {"name", name},
 					{"start", start}, {"end", samples(project, end)}, {"length", samples(project, end) - start},
 					{"startTicks", ticks(project, item.position())}, {"endTicks", ticks(project, end)},
-					{"mute", item.mute()}, {"lock", item.locked()},
+					{"mute", item.mute()}, {"lock", item.locked()}, {"lane", item.lane()},
 					{"shared", item.part != nullptr ? item.part->shared : ObjectId{0}}};
 				result.push_back(std::move(info));
 			}
@@ -1909,9 +1912,11 @@ namespace gnubase::engine
 			{"event.set", 1,
 				"Mutes or unmutes, locks or unlocks and colors audio events and MIDI parts. Muted ones don't play; "
 				"locked ones can't be moved, resized, split, glued or removed by the event commands. color (#rrggbb) "
-				"is a color of their own; null makes them follow their track's color again. Returns the events.",
+				"is a color of their own; null makes them follow their track's color again. lane puts them on that "
+				"lane of their track, from 0, as cycle recordings put their takes (recording.add). Returns the events.",
 				schema({{"events", events()}, {"mute", boolean()}, {"lock", boolean()},
-						   {"color", {{"type", {"string", "null"}}}}},
+						   {"color", {{"type", {"string", "null"}}}},
+						   {"lane", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000}}}},
 					{"events"}),
 				eventsResult(), false},
 			"Change events", setEvents);
@@ -1927,7 +1932,7 @@ namespace gnubase::engine
 				"audioPart or midi), track, name (an audio event's clip's), start, end and length in project samples, "
 				"start and end "
 
-				"in ticks, mute, lock and its shared copies' group (0: none).",
+				"in ticks, mute, lock, lane and its shared copies' group (0: none).",
 				schema({{"events", events()}}, {"events"}),
 				schema({{"events", {{"type", "array"}, {"items", {{"type", "object"}}}}}}, {"events"}), true},
 			{}, eventInfo);

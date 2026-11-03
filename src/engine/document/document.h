@@ -364,6 +364,7 @@ namespace gnubase::engine
 		// The audio part it is in, on the same track, or 0 for none. It keeps its position on the track: it plays
 		// only where the part is, and moves, splits and goes with the part.
 		ObjectId part = 0;
+		int lane = 0; // the track's lane it is on, from 0: cycle recordings put their takes on lanes (#98)
 	};
 
 	// A container of audio events on an audio track (#471, reference manual p. 250). Its events are the audio events
@@ -378,6 +379,7 @@ namespace gnubase::engine
 		bool mute = false;       // its events don't play
 		bool lock = false;       // event.* commands don't move, resize, split, glue or remove it
 		std::string color;       // "#rrggbb", or empty to follow the track's color
+		int lane = 0;            // the track's lane it is on, from 0
 	};
 
 	inline constexpr double g_minEventVolume = -144.0;
@@ -456,6 +458,7 @@ namespace gnubase::engine
 		// with the same ids: a change to one goes to the others. 0: not shared.
 		ObjectId shared = 0;
 		std::string color; // "#rrggbb", or empty to follow the track's color
+		int lane = 0;      // the track's lane it is on, from 0: cycle recordings put their takes on lanes (#98)
 		std::map<ObjectId, Note> notes;
 		std::map<ObjectId, Controller> controllers;
 	};
@@ -746,15 +749,15 @@ namespace gnubase::engine
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
-				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part) ==
+				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.lane) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
-				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part);
+				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.lane);
 	}
 
 	inline bool operator==(const AudioPart& a, const AudioPart& b)
 	{
-		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.color) ==
-			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.color);
+		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.color, a.lane) ==
+			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.color, b.lane);
 	}
 
 	inline bool operator==(const NoteTiming& a, const NoteTiming& b)
@@ -782,8 +785,8 @@ namespace gnubase::engine
 	// A MIDI part's own properties, without its notes and controllers.
 	inline bool sameProperties(const MidiPart& a, const MidiPart& b)
 	{
-		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color) ==
-			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color);
+		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color, a.lane) ==
+			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color, b.lane);
 	}
 
 	inline bool operator==(const ProjectColor& a, const ProjectColor& b)
