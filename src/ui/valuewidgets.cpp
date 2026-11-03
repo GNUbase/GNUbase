@@ -250,14 +250,23 @@ namespace gnubase::ui
 			Rml::Element* m_thumb = nullptr;
 		};
 
-		// What a value field hears from its text field.
-		constexpr std::array<Rml::EventId, 2> g_inputEvents = {Rml::EventId::Blur, Rml::EventId::Keydown};
+		// What a value field or a text display hears from its text field: change tells that the user typed.
+		constexpr std::array<Rml::EventId, 3> g_inputEvents = {
+			Rml::EventId::Blur, Rml::EventId::Keydown, Rml::EventId::Change};
+
+		// Whether a change of the text field is typing, rather than the line break that Enter sends without changing
+		// the text.
+		bool typed(const Rml::Event& change)
+		{
+			return !change.GetParameter("linebreak", false);
+		}
 
 		// <valuefield>: the value as text, with the decimals (2) and the unit that its attributes give. Besides
 		// dragging, a double click, or Enter while it has the focus, edits it as text, with the state class .editing:
-		// Enter or leaving the field takes the number typed, Escape keeps the value. With autofocus, it is edited, all
-		// of it selected so that the number typed replaces it, whenever it gets a visible focus: when its document
-		// shows it focused, or Tab moves to it, but not on a click.
+		// Enter or leaving the field takes the number typed, Escape keeps the value, and so does a field nothing was
+		// typed into, so that a value with more decimals than it shows isn't rounded to them. With autofocus, it is
+		// edited, all of it selected so that the number typed replaces it, whenever it gets a visible focus: when its
+		// document shows it focused, or Tab moves to it, but not on a click.
 		class ValueField final : public ValueControl
 		{
 		public:
@@ -295,6 +304,9 @@ namespace gnubase::ui
 				{
 				case Rml::EventId::Blur:
 					finishEditing(true);
+					break;
+				case Rml::EventId::Change:
+					m_typed = m_typed || typed(event);
 					break;
 				case Rml::EventId::Keydown:
 				{
@@ -372,6 +384,7 @@ namespace gnubase::ui
 				m_editing = true;
 				SetClass("editing", true);
 				m_input->SetValue(format(value(), decimals()));
+				m_typed = false; // after SetValue, whose text the text field may clean up with a change
 				m_input->Focus(true);
 				m_input->Select();
 			}
@@ -382,7 +395,7 @@ namespace gnubase::ui
 					return;
 				m_editing = false;
 				SetClass("editing", false);
-				if (take)
+				if (take && m_typed)
 					if (const std::optional<float> typed = parse(m_input->GetValue()))
 						change(*typed);
 				if (GetContext() != nullptr && GetContext()->GetFocusElement() == m_input)
@@ -391,15 +404,16 @@ namespace gnubase::ui
 
 			Rml::Element* m_text = nullptr;
 			Rml::ElementFormControlInput* m_input = nullptr;
-			Rml::String m_started; // the text the field started with
 			bool m_editing = false;
+			bool m_typed = false;   // the user typed while editing, even if the text is the same again
 			bool m_focused = false; // it has autofocus and got a visible focus, and editing hasn't started yet
 		};
 
 		// <textdisplay>: its value attribute as text, drawn like a display, such as a position in a time format. A
 		// double click edits it as text, with the state class .editing: Enter, or leaving the field, sends change with
-		// the text typed as value (a string), for the document to read and set, unless the text is still what the field
-		// started with; Escape keeps the value.
+		// the text typed as value (a string), for the document to read and set, if anything was typed, even the text it
+		// started with (the display may round, or have moved on, such as a position during playback); Escape keeps the
+		// value.
 		class TextDisplay final : public Rml::Element
 		{
 		public:
@@ -433,8 +447,8 @@ namespace gnubase::ui
 				{
 					m_editing = true;
 					SetClass("editing", true);
-					m_started = GetAttribute<Rml::String>("value", "");
-					m_input->SetValue(m_started);
+					m_input->SetValue(GetAttribute<Rml::String>("value", ""));
+					m_typed = false; // after SetValue, whose text the text field may clean up with a change
 					m_input->Focus(true);
 					m_input->Select();
 				}
@@ -454,6 +468,11 @@ namespace gnubase::ui
 				if (event == Rml::EventId::Blur)
 				{
 					finishEditing(true);
+					return;
+				}
+				if (event == Rml::EventId::Change)
+				{
+					m_typed = m_typed || typed(event);
 					return;
 				}
 				// Before the text field, which keeps Enter to itself.
@@ -479,7 +498,7 @@ namespace gnubase::ui
 				SetClass("editing", false);
 				if (GetContext() != nullptr && GetContext()->GetFocusElement() == m_input)
 					m_input->Blur(); // the field keeps the focus
-				if (take && m_input->GetValue() != m_started)
+				if (take && m_typed)
 				{
 					Rml::Dictionary parameters;
 					parameters["value"] = m_input->GetValue();
@@ -490,8 +509,8 @@ namespace gnubase::ui
 			widgets::Listener m_listener{[this](Rml::Event& event) { listen(event); }};
 			Rml::Element* m_text = nullptr;
 			Rml::ElementFormControlInput* m_input = nullptr;
-			Rml::String m_started; // the text the field started with
 			bool m_editing = false;
+			bool m_typed = false; // the user typed while editing, even if the text is the same again
 		};
 
 		// <meter>: a level meter, value and peak in dB between min (-60) and max (6). The level shows the lower part
