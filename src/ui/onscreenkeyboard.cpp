@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <exception>
 #include <string>
 #include <utility>
@@ -53,8 +54,9 @@ namespace gnubase::ui
 				return -1;
 			if (keys.key == KI_OEM_COMMA)
 				return g_c;
-			const auto found = std::find(g_computerKeys.begin(), g_computerKeys.end(), keys.key);
-			return found == g_computerKeys.end() ? -1 : static_cast<int>(found - g_computerKeys.begin());
+			const auto index =
+				std::find(g_computerKeys.begin(), g_computerKeys.end(), keys.key) - g_computerKeys.begin();
+			return index == static_cast<std::ptrdiff_t>(g_computerKeys.size()) ? -1 : static_cast<int>(index);
 		}
 
 		std::string keyRml(int key)
