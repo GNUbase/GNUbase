@@ -129,9 +129,13 @@ namespace gnubase::ui
 					value = &value->at(index);
 				}
 				else if (value->is_object() && value->contains(key))
+				{
 					value = &value->at(key);
+				}
 				else
+				{
 					return nullptr;
+				}
 			}
 			return *value;
 		}
@@ -491,7 +495,9 @@ namespace gnubase::ui
 		{
 			const Json value = paramValue(json, attribute(*control, "param"));
 			if (value.is_boolean())
+			{
 				setChecked(*control, value.get<bool>());
+			}
 			else if (value.is_number())
 			{
 				const std::string text = widgets::format(value.get<float>());
@@ -606,9 +612,13 @@ namespace gnubase::ui
 		{
 		case Rml::EventId::Change:
 			if (target->HasAttribute("channel-type"))
+			{
 				setTypeHidden(attribute(*target, "channel-type"), !event.GetParameter("value", true));
+			}
 			else if (target->HasAttribute("visibility"))
+			{
 				setHidden(idAttribute(*target, "visibility"), !event.GetParameter("value", true));
+			}
 			else if (target->GetTagName() == "fader")
 			{
 				if (const MixerChannel* channel = channelOf(target))
@@ -616,6 +626,7 @@ namespace gnubase::ui
 						"channel.set", {{"channel", channel->id}, {"volume", event.GetParameter("value", 0.0F)}});
 			}
 			else if (target->HasAttribute("param"))
+			{
 				if (const MixerChannel* channel = channelOf(target); channel != nullptr && channel->channel != nullptr)
 				{
 					const Rml::Variant* given =
@@ -628,6 +639,7 @@ namespace gnubase::ui
 					parameters["channel"] = channel->id;
 					m_binding.send("channel.set", std::move(parameters));
 				}
+			}
 			break;
 		case Rml::EventId::Click:
 			if (attribute(*target, "agent") == "showAll")
