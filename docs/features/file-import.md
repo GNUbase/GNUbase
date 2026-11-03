@@ -10,7 +10,9 @@ WAV (also RF64 and Wave64), AIFF, FLAC, Ogg Vorbis and MP3. Each file becomes a 
 audio event at `position` (sample frames from the project start, rebased to the track's time base), each on an audio
 track of its own: the first on `track` if given, the others on new audio tracks named after them with their channel
 format (stereo beyond 8 channels), all at `position`. With `oneTrack` the files go one after another on one track:
-`track`, or a new one.
+`track`, or a new one. Files that are split (below) aren't placed by either: `track` takes the first file that isn't.
+Before #480, `track` alone put every file on that track; `oneTrack` with `track` does that now, so the command's
+version is 2.
 
 MP3 and Ogg Vorbis files are always converted, whatever the options say (reference manual p. 360): each is written as
 a 32-bit float WAV file at its own sample rate into the media folder, and the media file, clip and event use the WAV
@@ -34,8 +36,9 @@ The options of the reference's Import Options dialog:
   at the project's sample rate (`convertSampleRate` in `resampler.h`), the format `media.convert` writes; MP3 and Ogg
   Vorbis files then go to the project's sample rate as well. There is no project bit depth to convert to yet.
 - **splitChannels** writes each channel of a file with several channels into the media folder as a mono WAV file named
-  after the file and its speaker (`take-L.wav`, `take-R.wav`; numbers beyond 8 channels), each on a new mono track. It
-  converts in the same pass when both are on, and doesn't go with `track` or `oneTrack`.
+  after the file and its speaker (`take-L.wav`, `take-R.wav`; numbers beyond 8 channels), each on a new mono track at
+  `position`. It converts in the same pass when both are on. Mono files aren't split and go where `track` and
+  `oneTrack` say.
 
 With **clipsOnly** the files only go into the pool, as clips without tracks or events (the pool's Import Medium,
 [pool.md](pool.md)). `copy`, `convert` and `splitChannels` need a saved project. Files are read, converted and split on the command thread, as
@@ -54,17 +57,20 @@ and the files the import wrote are removed. Undo leaves written files on disk, a
   `ui::EventDisplay::importToSelection` (`src/ui/fileimport.cpp`), at the project cursor, with the track list's
   selection (#480).
 - **The selected track** (reference manual p. 360): audio files go onto the selected track, and onto new tracks only
-  when no track is selected. For the other cases GNUbase follows the Import Options dialog (p. 358) and the pool's
-  Insert into Project (p. 745):
-  - With several tracks selected, the first of them, top to bottom, takes the files (p. 745).
+  when no track is selected. The manual describes one file and one selected track; for the other cases GNUbase
+  follows the pool's Insert into Project (pp. 745-746), which inserts clips onto one track or each onto a different
+  track:
+  - With several tracks selected, the first of them, top to bottom, takes the files (p. 746). An audio track inside a
+    folded folder stays selected and takes them too.
   - With several files, the selected track takes the first one and the others go onto new tracks, all at the project
-    cursor, as Import Files on One Track off means "each on a track of its own" (p. 358); with it on, they all go
-    onto the selected track, one after another.
+    cursor; with Import Files on One Track (p. 358) they all go onto the selected track, one after another. That
+    several files go onto several tracks unless the option is on is GNUbase's reading of the option, not something
+    the manual says.
   - A selected track that isn't an audio track (MIDI, instrument, folder, group, effect) takes no audio: the files go
-    onto new tracks, as without a selected track (the Pool's insert puts a clip "on the selected track or on a new
-    audio track").
-  - Split Channels puts every channel onto a new mono track of its own (p. 358, "events on separate tracks"), whatever
-    is selected.
+    onto new tracks, as without a selected track (p. 746: the clip goes onto the selected track "or on a new audio
+    track").
+  - Split Channels puts every channel of a file with several onto a new mono track of its own (p. 358), whatever is
+    selected; mono files still go onto the selected track.
   - New tracks go to the end of the project, as Add Track's do; below the selected track comes with #448.
 - **Drag and drop**: files dropped on the event display (the shell's `filedrop` event) go to the track of the lane
   under the mouse if it is an audio track, else to new tracks, at the time under the mouse (dropped outside the lanes:
@@ -93,11 +99,13 @@ an unsaved project into `Recordings`, where they stay after saving until `media.
 removed again when a later file fails) and leaves FLAC files as they are, converts a
 44.1 kHz WAV file and an MP3 file
 into the media folder and leaves a 48 kHz file where it is, splits stereo and 5.1 files into mono files per speaker,
-copies with one job, puts the first file on a given track and the others on new tracks (one undo step), and rejects
-what it can't do, removing converted files when a later file fails.
+copies with one job, puts the first file on a given track and the others on new tracks (one undo step), places only
+the files that aren't split with `track`, and rejects what it can't do, removing converted files when a later file
+fails.
 `tests/fileimport_tests.cpp` drives the app's UI through the automation API: the File > Import items, the Import Options dialog with its disabled
 options, Cancel and Import Files on One Track at the project cursor; File > Import > Audio File with the file dialog
-answered as the user would, onto the selected audio track (the first file, all of them with Import Files on One Track,
-the first of several selected tracks), onto new tracks with no track or a MIDI track first in the selection, and with
-Split Channels onto new tracks whatever is selected, each one undo step; audio files dropped on an audio track's lane,
-one and two of them, and MIDI files of type 0 and 1 dropped below the tracks.
+answered as the user would, onto the selected musical audio track (the first file, all of them with Import Files on
+One Track, the first of several selected tracks, one inside a folded folder), onto new tracks with no track or a MIDI
+track first in the selection, and with Split Channels a stereo file onto new tracks and a mono file onto the selected
+track, each one undo step; audio files dropped on an audio track's lane, one and two of them, and MIDI files of type 0
+and 1 dropped below the tracks.

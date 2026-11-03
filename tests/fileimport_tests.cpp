@@ -67,8 +67,8 @@ namespace
 	}
 
 	// File > Import > Audio File: the file dialog answered with files as the user would, then OK in the Import
-	// Options dialog with Import Files on One Track as oneTrack says.
-	void importAudio(test::UiApp& app, const std::vector<std::string>& files, bool oneTrack = false)
+	// Options dialog with Import Files on One Track and Split Channels as oneTrack and split say.
+	void importAudio(test::UiApp& app, const std::vector<std::string>& files, bool oneTrack = false, bool split = false)
 	{
 		app.keys().run("file.importAudio", Json::object(), app.main(), nullptr);
 		REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
@@ -80,6 +80,8 @@ namespace
 		REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
 		if (files.size() > 1 && checked(app, "#import-one-track") != oneTrack)
 			click(app, "#import-one-track");
+		if (!disabled(app, "#import-split") && checked(app, "#import-split") != split)
+			click(app, "#import-split");
 		click(app, "#import-options-dialog button.primary");
 		REQUIRE(app.waitUntil([&app] { return !dialogShown(app); }));
 	}
@@ -234,28 +236,24 @@ TEST_CASE("File > Import > Audio File puts the files on the selected audio track
 	const std::string snare = writeAudio(dir.path() / "snare.wav", 4800);
 	test::UiApp app({900, 640});
 	ui::EventDisplay& display = app.appUi().showProject();
-	const auto add = [&app](const char* type, const char* name)
-	{
-		return app.call("track.add", {{"type", type}, {"timeBase", "linear"}, {"name", name}})
-			.at("track")
-			.at("id")
-			.get<uint64_t>();
-	};
-	const uint64_t keys = add("midi", "Keys");
-	const uint64_t drums = add("audio", "Drums");
-	const uint64_t bass = add("audio", "Bass");
+	const auto add = [&app](const Json& parameters)
+	{ return app.call("track.add", parameters).at("track").at("id").get<uint64_t>(); };
+	const uint64_t keys = add({{"type", "midi"}, {"name", "Keys"}});
+	const uint64_t drums = add({{"type", "audio"}, {"name", "Drums"}}); // musical
+	const uint64_t bass = add({{"type", "audio"}, {"timeBase", "linear"}, {"name", "Bass"}});
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list listitem").size() == 3; }));
 	ui::TrackList* list = app.appUi().trackList();
 	REQUIRE(list != nullptr);
 	app.call("transport.locate", {{"position", 48000}});
 	REQUIRE(app.waitUntil([&display] { return display.cursor() == 1.0; }));
 	const time::TempoMap tempo(120.0);
+	const auto ticks = [&tempo](int64_t sample) { return tempo.toTicks(sample, 48000.0); };
 	const auto events = [&app] { return app.call("project.get").at("audioEvents"); };
-	const auto undo = [&app]
+	const auto undo = [&app](size_t tracks)
 	{
 		app.call("history.undo");
 		const Json project = app.call("project.get");
-		CHECK(project.at("tracks").size() == 3);
+		CHECK(project.at("tracks").size() == tracks);
 		CHECK(project.at("audioEvents").empty());
 	};
 
@@ -268,10 +266,10 @@ TEST_CASE("File > Import > Audio File puts the files on the selected audio track
 	REQUIRE(project.at("tracks").size() == 4);
 	CHECK(project.at("tracks")[3].at("name") == "snare");
 	CHECK(project.at("audioEvents")[0].at("track") == drums);
-	CHECK(project.at("audioEvents")[0].at("position") == 48000);
+	CHECK(project.at("audioEvents")[0].at("position") == ticks(48000));
 	CHECK(project.at("audioEvents")[1].at("track") == project.at("tracks")[3].at("id"));
-	CHECK(project.at("audioEvents")[1].at("position") == tempo.toTicks(48000, 48000.0));
-	undo();
+	CHECK(project.at("audioEvents")[1].at("position") == ticks(48000));
+	undo(3);
 
 	// With Import Files on One Track, all of them go on it, one after the other.
 	importAudio(app, {kick, snare}, true);
@@ -279,17 +277,21 @@ TEST_CASE("File > Import > Audio File puts the files on the selected audio track
 	project = app.call("project.get");
 	CHECK(project.at("tracks").size() == 3);
 	CHECK(project.at("audioEvents")[0].at("track") == drums);
-	CHECK(project.at("audioEvents")[0].at("position") == 48000);
+	CHECK(project.at("audioEvents")[0].at("position") == ticks(48000));
 	CHECK(project.at("audioEvents")[1].at("track") == drums);
-	CHECK(project.at("audioEvents")[1].at("position") == 52800);
-	undo();
+	CHECK(project.at("audioEvents")[1].at("position") == ticks(52800));
+	undo(3);
 
-	// Several tracks selected: the first of them, top to bottom.
+	// Several tracks selected: the first of them, top to bottom, takes the first file; the others go on new tracks,
+	// not on the other selected tracks.
 	list->select({bass, drums});
-	importAudio(app, {kick});
-	REQUIRE(app.waitUntil([&events] { return events().size() == 1; }));
-	CHECK(events()[0].at("track") == drums);
-	undo();
+	importAudio(app, {kick, snare});
+	REQUIRE(app.waitUntil([&events] { return events().size() == 2; }));
+	project = app.call("project.get");
+	REQUIRE(project.at("tracks").size() == 4);
+	CHECK(project.at("audioEvents")[0].at("track") == drums);
+	CHECK(project.at("audioEvents")[1].at("track") == project.at("tracks")[3].at("id"));
+	undo(3);
 
 	// The first selected track isn't an audio track: a new track, as with none selected.
 	list->select({keys, bass});
@@ -298,7 +300,7 @@ TEST_CASE("File > Import > Audio File puts the files on the selected audio track
 	project = app.call("project.get");
 	REQUIRE(project.at("tracks").size() == 4);
 	CHECK(project.at("audioEvents")[0].at("track") == project.at("tracks")[3].at("id"));
-	undo();
+	undo(3);
 	list->select({});
 	importAudio(app, {kick, snare});
 	REQUIRE(app.waitUntil([&events] { return events().size() == 2; }));
@@ -306,22 +308,30 @@ TEST_CASE("File > Import > Audio File puts the files on the selected audio track
 	REQUIRE(project.at("tracks").size() == 5);
 	CHECK(project.at("audioEvents")[0].at("track") == project.at("tracks")[3].at("id"));
 	CHECK(project.at("audioEvents")[1].at("track") == project.at("tracks")[4].at("id"));
-	undo();
+	undo(3);
 
-	// Split Channels puts every channel on a new mono track of its own, whatever is selected.
+	// Split Channels puts every channel of a file with several on a new mono track of its own; a mono file still
+	// goes on the selected track.
 	app.call("project.save", {{"path", (dir.path() / "Song.dawproject").u8string()}, {"embedMedia", false}});
 	const std::string stereo = writeAudio(dir.path() / "take.wav", 4800, 2);
 	list->select({drums});
-	app.keys().run("file.importAudio", Json::object(), app.main(), nullptr);
-	REQUIRE(app.waitUntil([&app] { return app.shell().fileDialogs().size() == 1; }));
-	CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {std::filesystem::u8path(stereo)}));
-	REQUIRE(app.waitUntil([&app] { return dialogShown(app) && !disabled(app, "#import-split"); }));
-	if (!checked(app, "#import-split"))
-		click(app, "#import-split");
-	click(app, "#import-options-dialog button.primary");
-	REQUIRE(app.waitUntil([&events] { return events().size() == 2; }));
+	importAudio(app, {stereo, kick}, false, true);
+	REQUIRE(app.waitUntil([&events] { return events().size() == 3; }));
 	project = app.call("project.get");
 	REQUIRE(project.at("tracks").size() == 5);
-	for (size_t i = 0; i < 2; ++i)
-		CHECK(project.at("audioEvents")[i].at("track") == project.at("tracks")[3 + i].at("id"));
+	CHECK(project.at("audioEvents")[0].at("track") == project.at("tracks")[3].at("id"));
+	CHECK(project.at("audioEvents")[1].at("track") == project.at("tracks")[4].at("id"));
+	CHECK(project.at("audioEvents")[2].at("track") == drums);
+	undo(3);
+
+	// An audio track inside a folded folder stays selected and takes the file.
+	const uint64_t folder = add({{"type", "folder"}, {"name", "Strings"}});
+	const uint64_t violin = add({{"type", "audio"}, {"name", "Violin"}, {"parent", folder}});
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list listitem").size() == 5; }));
+	list->select({violin});
+	list->setFolded(folder, true);
+	REQUIRE(app.waitUntil([&display] { return display.laneTracks().size() == 4; }));
+	importAudio(app, {kick});
+	REQUIRE(app.waitUntil([&events] { return events().size() == 1; }));
+	CHECK(events()[0].at("track") == violin);
 }

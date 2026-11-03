@@ -60,14 +60,18 @@ namespace gnubase::ui
 	{
 		Import import;
 		import.sample = std::max<int64_t>(m_cursorSample, 0);
-		import.selected = true;
-		// The first selected track (reference manual p. 745), if it is an audio track; otherwise new tracks, as
-		// without a selected track.
-		if (!selection.empty())
+		// The first selected track (reference manual p. 746), if it is an audio track, also inside a folded folder;
+		// otherwise new tracks, as without a selected track.
+		if (!selection.empty() && m_project.is_object())
 		{
-			const auto lane = std::find(m_laneTracks.begin(), m_laneTracks.end(), selection.front());
-			if (lane != m_laneTracks.end() && m_laneTypes[static_cast<size_t>(lane - m_laneTracks.begin())] == "audio")
-				import.track = selection.front();
+			for (const Json& track : m_project.at("tracks"))
+			{
+				if (track.at("id") == selection.front() && track.at("type") == "audio")
+				{
+					import.track = selection.front();
+					import.selected = true;
+				}
+			}
 		}
 		startImport(files, std::move(import));
 	}
@@ -155,10 +159,10 @@ namespace gnubase::ui
 		{
 			parameters["clipsOnly"] = true;
 		}
-		else if (!split)
+		else
 		{
 			// Files dropped on a track all go on it; the selected track takes the first file, or all of them with
-			// Import Files on One Track.
+			// Import Files on One Track. Files that are split go on new tracks either way.
 			if (m_import.track)
 				parameters["track"] = *m_import.track;
 			if (oneTrack || (m_import.track && !m_import.selected))

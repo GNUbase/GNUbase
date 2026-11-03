@@ -91,7 +91,7 @@ namespace gnubase::engine
 		job["type"] = {"object", "null"};
 
 		add(engine,
-			{"audioFile.import", 1,
+			{"audioFile.import", 2,
 				"Imports audio files (WAV, RF64, Wave64, AIFF, FLAC, Ogg Vorbis or MP3) as audio events at position, "
 				"in sample frames from the project start (default 0). Each file goes on an audio track of its own: "
 				"the first on track if given (such as the selected track), the others on new audio tracks named "
@@ -104,7 +104,8 @@ namespace gnubase::engine
 				"writes files at another sample rate than the project's into the media folder as 32-bit float WAV "
 				"files at the project's sample rate, MP3 and Ogg Vorbis files included. splitChannels writes each "
 				"channel of a file with several into the media folder as a mono WAV file, named after the file and "
-				"its speaker (such as take-L.wav), on a new mono track of its own. copy, convert and splitChannels "
+				"its speaker (such as take-L.wav), on a new mono track of its own at position; track and oneTrack "
+				"only place the files that aren't split. copy, convert and splitChannels "
 				"need a saved project. clipsOnly adds the media files and clips to the pool without tracks or events "
 				"(the pool's Import Medium). One undo step. Returns the new tracks, and per file (per channel when "
 				"split) the media files and events, in the order of files.",
@@ -133,8 +134,6 @@ namespace gnubase::engine
 		const bool clipsOnly = parameters.value("clipsOnly", false);
 		ObjectId target = parameters.value("track", ObjectId{0});
 		require(!clipsOnly || (target == 0 && !oneTrack), "clipsOnly adds no events: leave out track and oneTrack");
-		require(!split || (target == 0 && !oneTrack),
-			"splitChannels puts every channel on a track of its own: leave out track and oneTrack");
 		if (target != 0)
 		{
 			const auto track = project.trackById.find(target);
@@ -191,7 +190,7 @@ namespace gnubase::engine
 					if (clipsOnly)
 						continue;
 
-					ObjectId track = target;
+					ObjectId track = splits ? 0 : target; // every channel of a split file on a track of its own
 					if (track == 0)
 					{
 						Json trackParameters = {{"type", "audio"}, {"name", clip.at("name")}};
@@ -199,14 +198,14 @@ namespace gnubase::engine
 							trackParameters["channels"] = channels;
 						track = run("track.add", trackParameters).at("track").at("id").get<ObjectId>();
 						tracks.push_back(track);
-						if (oneTrack)
+						if (oneTrack && !splits)
 							target = track;
 					}
 					else if (!oneTrack)
 					{
 						target = 0; // only the first file goes on the given track
 					}
-					const time::Position at = time::rebase({time::TimeBase::Linear, next},
+					const time::Position at = time::rebase({time::TimeBase::Linear, splits ? position : next},
 						project.trackById.at(track).timeBase, project.tempo, project.sampleRate);
 					events.push_back(
 						run("audioEvent.add", {{"track", track}, {"clip", clip.at("id")}, {"position", at.value}})
@@ -215,7 +214,7 @@ namespace gnubase::engine
 					length = std::llround(static_cast<double>(added.at("length").get<time::Samples>()) *
 						project.sampleRate / added.at("sampleRate").get<double>());
 				}
-				if (oneTrack)
+				if (oneTrack && !splits)
 					next += length;
 			}
 		}

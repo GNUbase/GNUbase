@@ -488,8 +488,24 @@ TEST_CASE("audioFile.import splits channels into mono files on tracks of their o
 	for (size_t frame = 0; frame < 1000; ++frame)
 		CHECK(right[frame] == stereo[(frame * 2) + 1]);
 
-	CHECK_THAT(reject(song.client, "audioFile.import", {{"files", files}, {"splitChannels", true}, {"oneTrack", true}}),
-		ContainsSubstring("splitChannels"));
+	// track places the first file that isn't split; the channels of the others go on new tracks, all at position.
+	writeFile(song.library / "kit.wav", 1000, 2);
+	writeFile(song.library / "clap.wav", 1000, 1);
+	const Json drums = run(song.client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
+	const Json placed = run(song.client, "audioFile.import",
+		{{"files", {utf8(song.library / "kit.wav"), utf8(song.library / "clap.wav")}}, {"splitChannels", true},
+			{"track", drums.at("id")}, {"position", 4800}});
+	REQUIRE(placed.at("tracks").size() == 2);
+	const Json after = run(song.client, "project.get");
+	for (size_t i = 0; i < 2; ++i)
+	{
+		const Json channel = byId(after.at("audioEvents"), placed.at("events")[i]);
+		CHECK(channel.at("track") == placed.at("tracks")[i]);
+		CHECK(channel.at("position") == ticksAt(4800)); // new tracks are musical
+	}
+	const Json clap = byId(after.at("audioEvents"), placed.at("events")[2]);
+	CHECK(clap.at("track") == drums.at("id"));
+	CHECK(clap.at("position") == 4800);
 }
 
 TEST_CASE("audioFile.import copies files into the media folder with one job", "[integration]")
