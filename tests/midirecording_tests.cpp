@@ -307,6 +307,30 @@ TEST_CASE(
 		CHECK(parts[0].at("length") == 8 * g_beatTicks);
 		CHECK(notesOf(parts[0]) == std::vector<std::vector<int64_t>>{{2 * g_beatTicks, g_beatTicks, 60}});
 	}
+	SECTION("replace snapped to bars removes only what the take overlaps")
+	{
+		const ObjectId part =
+			run(client, "midiPart.add", {{"track", setup.track}, {"position", 0}, {"length", 8 * g_beatTicks}})
+				.at("part")
+				.at("id")
+				.get<ObjectId>();
+		run(client, "note.add",
+			{{"part", part},
+				{"notes", {note(4 * g_beatTicks, g_beatTicks, 48), note(6 * g_beatTicks, g_beatTicks, 50)}}});
+		// Bar 2 beat 3 to bar 3 beat 2.
+		run(client, "recording.add",
+			{{"midiMode", "replace"}, {"snapToBars", true},
+				{"tracks",
+					{{{"track", setup.track}, {"takes", {{{"position", 6 * g_beat}, {"length", 3 * g_beat}}}},
+						{"notes", {note(7 * g_beat, g_beat, 60)}}}}}});
+		const std::vector<Json> parts = setup.parts();
+		REQUIRE(parts.size() == 1);
+		CHECK(parts[0].at("position") == 0);
+		CHECK(parts[0].at("length") == 12 * g_beatTicks); // grown to the end of bar 3
+		CHECK(notesOf(parts[0]) ==
+			std::vector<std::vector<int64_t>>{
+				{4 * g_beatTicks, g_beatTicks, 48}, {7 * g_beatTicks, g_beatTicks, 60}}); // bar 2 beat 1 survives
+	}
 }
 
 TEST_CASE("recording.add checks what it gets for MIDI and audio tracks", "[integration]")

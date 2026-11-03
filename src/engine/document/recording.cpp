@@ -76,11 +76,16 @@ namespace gnubase::engine
 			}
 			const Json notes = entry.value("notes", Json::array());
 			const Json controllers = entry.value("controllers", Json::array());
+			const time::Samples takesEnd = end;
 			for (const Json& note : notes)
 				end = std::max(end, note.at("position").get<time::Samples>() + note.at("length").get<time::Samples>());
 			require(start < end, "a MIDI track's recording needs a take");
 
-			time::Ticks startTick = tempo.toTicks(start, rate);
+			// The takes' range picks the overlapped parts and what replace removes; snapping to bars only lengthens
+			// the part the recording adds or grows (reference manual pp. 352, 1616).
+			const time::Ticks takesStartTick = tempo.toTicks(start, rate);
+			const time::Ticks takesEndTick = tempo.toTicks(takesEnd, rate);
+			time::Ticks startTick = takesStartTick;
 			time::Ticks endTick = tempo.toTicks(end, rate);
 			if (snap)
 			{
@@ -94,8 +99,8 @@ namespace gnubase::engine
 			std::vector<ObjectId> overlapping; // unlocked parts the recording overlaps, by position
 			if (mode != "newParts")
 			{
-				const time::Samples from = tempo.toSamples(startTick, rate);
-				const time::Samples to = tempo.toSamples(endTick, rate);
+				const time::Samples from = start;
+				const time::Samples to = takesEnd;
 				std::vector<std::pair<time::Samples, ObjectId>> found;
 				for (const auto& [id, part] : project.midiParts)
 				{
@@ -116,7 +121,7 @@ namespace gnubase::engine
 					const auto inside = [&](time::Ticks position)
 					{
 						const time::Ticks at = partTick + position;
-						return at >= startTick && at < endTick;
+						return at >= takesStartTick && at < takesEndTick;
 					};
 					Json removedNotes = Json::array();
 					for (const auto& [noteId, note] : part.notes)
@@ -150,11 +155,12 @@ namespace gnubase::engine
 				const time::Ticks partStart = time::toTicks(target.position, tempo, rate);
 				const time::Ticks partEnd =
 					time::toTicks({target.position.base, target.position.value + target.length}, tempo, rate);
-				// Normal sizing keeps the part's events where they are.
-				if (startTick < partStart)
+				// Normal sizing keeps the part's events where they are. It grows only where the recording reaches
+				// past it, then to the bar line with snapToBars.
+				if (takesStartTick < partStart)
 					run("event.resize",
 						{{"events", Json::array({part})}, {"edge", "start"}, {"ticks", startTick - partStart}});
-				if (endTick > partEnd)
+				if (tempo.toTicks(end, rate) > partEnd)
 					run("event.resize",
 						{{"events", Json::array({part})}, {"edge", "end"}, {"ticks", endTick - partEnd}});
 			}
