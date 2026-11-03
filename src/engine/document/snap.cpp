@@ -205,8 +205,11 @@ namespace gnubase::engine
 
 	void SnapSettings::setGrid(GridFormat of, GridType grid)
 	{
+		// Another grid type chosen here replaces a newer build's; the same one again (snap.set with what snap.get
+		// returned) keeps it.
+		if (grids.at(static_cast<size_t>(of)) != grid)
+			forgetNewerGrid(*this, g_gridFormatNames[static_cast<size_t>(of)]);
 		grids.at(static_cast<size_t>(of)) = grid;
-		forgetNewerGrid(*this, g_gridFormatNames[static_cast<size_t>(of)]); // this build's choice replaces it
 	}
 
 	const char* snapTypeName(SnapType type)
@@ -285,8 +288,20 @@ namespace gnubase::engine
 			if (!loading)
 				throw error;
 		};
-		settings.on = json.value("on", settings.on);
-		settings.zeroCrossing = json.value("zeroCrossing", settings.zeroCrossing);
+		if (!json.is_object())
+		{
+			refuse(std::invalid_argument("snap settings aren't an object: " + json.dump()));
+			return settings;
+		}
+		for (const auto& [name, value] : {std::pair<const char*, bool*>{"on", &settings.on},
+				 std::pair<const char*, bool*>{"zeroCrossing", &settings.zeroCrossing}})
+			if (const auto found = json.find(name); found != json.end())
+			{
+				if (found->is_boolean())
+					*value = found->get<bool>();
+				else
+					refuse(std::invalid_argument(std::string(name) + " isn't true or false: " + found->dump()));
+			}
 		if (json.contains("type"))
 			try
 			{
@@ -305,6 +320,7 @@ namespace gnubase::engine
 			refuse(std::invalid_argument("grids isn't an object: " + grids.dump()));
 			grids = Json::object();
 		}
+		std::vector<std::string> taken; // the grids entries applied or kept
 		for (const auto& [name, grid] : grids.items())
 			try
 			{
@@ -314,6 +330,7 @@ namespace gnubase::engine
 				{
 					forgetNewerGrid(settings, name);
 					settings.newerGrids.emplace_back(name, grid.get<std::string>());
+					taken.push_back(name);
 					continue;
 				}
 				if (!format)
@@ -321,6 +338,7 @@ namespace gnubase::engine
 				const GridType type = gridFrom(grid);
 				requireGrid(*format, type);
 				settings.setGrid(*format, type);
+				taken.push_back(name);
 			}
 			catch (const std::invalid_argument& error)
 			{
@@ -342,7 +360,7 @@ namespace gnubase::engine
 		if (!json.contains("grid") || (json.contains("format") && !format)) // or an unknown format's grid type
 			return settings;
 		// Loading, grids has the format's grid type; grid is for builds from before #413, which read only that.
-		if (loading && format && grids.contains(gridFormatName(*format)))
+		if (loading && format && std::find(taken.begin(), taken.end(), gridFormatName(*format)) != taken.end())
 			return settings;
 		try
 		{

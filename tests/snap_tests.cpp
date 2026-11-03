@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -523,9 +524,16 @@ TEST_CASE("grid types of a newer build are kept and written back until this buil
 	CHECK(engine::toJson(chosen, true).at("grids").at("seconds") == "1000ms");
 	chosen = engine::snapSettingsFrom({{"grid", "1ms"}}, loaded);
 	CHECK(engine::toJson(chosen, true).at("grids").at("seconds") == "1ms");
-	// Switching formats or anything else keeps them.
+	// Switching formats or anything else keeps them, as does snap.set with what snap.get returned.
 	chosen = engine::snapSettingsFrom({{"format", "samples"}, {"on", false}}, loaded);
 	CHECK(engine::toJson(chosen, true).at("grids").at("seconds") == "5ms");
+	CHECK(engine::snapSettingsFrom(engine::toJson(loaded), loaded) == loaded);
+	// A grid entry this build can't use leaves grid to choose, as before #413.
+	for (const Json& unusable : {Json("bar"), Json(3)})
+	{
+		const Json damaged = {{"format", "timecode"}, {"grid", "quarterFrame"}, {"grids", {{"timecode", unusable}}}};
+		CHECK(engine::snapSettingsFrom(damaged, engine::SnapSettings(), true).grid() == GridType::QuarterFrame);
+	}
 
 	// Entries that aren't names are left out, as are the newer build's when the settings are changed, not loaded.
 	CHECK_THROWS(engine::snapSettingsFrom({{"grids", {{"seconds", "5ms"}}}}, engine::SnapSettings()));
@@ -534,6 +542,11 @@ TEST_CASE("grid types of a newer build are kept and written back until this buil
 	CHECK(engine::toJson(odd, true) == engine::toJson(engine::SnapSettings()));
 	CHECK(engine::snapSettingsFrom({{"grids", "frame"}, {"type", 3}}, engine::SnapSettings(), true) ==
 		engine::SnapSettings());
+	const Json numbers = {{"on", 1}, {"zeroCrossing", "yes"}, {"format", "seconds"}};
+	CHECK(engine::snapSettingsFrom(numbers, engine::SnapSettings(), true).format == engine::GridFormat::Seconds);
+	CHECK(!engine::snapSettingsFrom(numbers, engine::SnapSettings(), true).on);
+	CHECK_THROWS_AS(engine::snapSettingsFrom(numbers, engine::SnapSettings()), std::invalid_argument);
+	CHECK(engine::snapSettingsFrom(Json(5), engine::SnapSettings(), true) == engine::SnapSettings());
 }
 
 // #565: the frame grids follow the project's frame rate (project setup, #78); user frames have the user's.

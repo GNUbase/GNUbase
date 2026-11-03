@@ -22,8 +22,9 @@ format too; without one (as before #413) it switches to the grid type's format, 
 `grid`, the grid in use. A project from a newer build with a snap type, time format or grid type this build doesn't
 know loads with what it knows; those are left out. Its `grids` entries with a time format or a grid type this build
 doesn't know are kept, though (`SnapSettings::newerGrids`, #565): `snap.get` doesn't show them, but saving writes them
-back for the newer build, until a grid type is chosen here for that format. Loading reads a format's grid type from
-`grids`, and `grid` only when `grids` has none for it (settings from before #413). The grid follows the project
+back for the newer build, until another grid type is chosen here for that format. Loading reads a format's grid
+type from `grids`, and `grid` only when `grids` has none it can use (settings from before #413). Damaged values
+(`on` that isn't true or false, a number for a name) are left out, not the rest of the project's extension entry. The grid follows the project
 window's ruler, which the project keeps. Two things set `format`: the ruler's time format menu (`snap.set`), and a
 new time format in the project setup (`project.set {timeFormat}`, #78, p. 69), which the engine makes the snap
 format in the same command, and again on undo and redo of it, emitting `snap.changed`; the ruler follows. So the
@@ -112,10 +113,11 @@ Not yet: grid lines and snap point lines in the event display, the editors' own 
   edges, markers, snap points, the cursor, the zoom's note value, the frame rate and grid relative; a grid type per
   time format, switching formats, grid types of another format refused or choosing their format, and settings from
   before #413; each format's grid types (`gridTypes`) exactly those `hasGrid` accepts; a newer build's grids
-  entries kept, written back when saved and replaced by a grid type chosen here, entries that aren't names left out;
-  the frame grids at the project's frame rate, with pull-down, and user frames at 30 fps; a new project time format
-  switching the snap format, also on undo and redo, and a format set after it staying; snap points set and refused; shuffling forwards, backwards, to the end and to the front, its errors and a locked neighbour; splitting
-  and resizing at zero crossings of a real file, not when sizing moves the contents or the file is missing; a split
+  entries kept, written back when saved and replaced by another grid type chosen here, not by `snap.set` with what
+  `snap.get` returned, and a `grid` read when the format's entry is unusable; damaged entries left out; the frame
+  grids at the project's frame rate, with pull-down, and user frames at 30 fps; a new project time format switching
+  the snap format, also on undo and redo, and a format set after it staying; snap points set and refused; shuffling
+  forwards, backwards, to the end and to the front, its errors and a locked neighbour; splitting and resizing at zero crossings of a real file, not when sizing moves the contents or the file is missing; a split
   near an event's start still splits it, and one just outside an event leaves it alone.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): with snap on, a drag, a resize and an Alt click land
   on bars, shuffle swaps two parts, events, a position marker and the cursor attract, a snap point set at the cursor
@@ -129,4 +131,4 @@ Not yet: grid lines and snap point lines in the event display, the editors' own 
   the engine switches to another format going to the format shown; the project window's golden image shows the
   toolbar.
 - `tests/dawproject_tests.cpp`: an extension entry with the snap settings as #87 saved them loads with the grid
-  type's format; a newer build's grid types saved again.
+  type's format; a newer build's grid types saved again; damaged snap settings loading with the rest of the entry.

@@ -10,7 +10,8 @@
 #include <vector>
 
 // The project document as JSON: what project.get returns and the events carry, and what the DAWproject extension
-// entry stores. projectFromJson(toJson(project)) gives back the same project.
+// entry stores. projectFromJson(toJson(project)) gives back the same project, except for the newer build's grid types
+// in its snap settings (SnapSettings::newerGrids), which only saving writes (saveDawProject).
 namespace gnubase::engine
 {
 	// Note velocities and controller values are 0 to 1 in JSON, whatever the internal resolution.

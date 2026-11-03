@@ -558,11 +558,21 @@ TEST_CASE("the ruler keeps the format it chose until the engine has it", "[unit]
 	CHECK(f.display.snap().grid() == engine::GridType::Ms100);
 
 	// A project.get answer that the display asked for before the ruler switched.
+	// The display asks for the project when history.changed comes in; this handler, after the display's, switches the
+	// ruler before the answer can be handed on.
 	const uint64_t loads = f.display.loads();
-	f.call("track.add", {{"type", "audio"}});
-	f.step(); // history.changed: the display asks for the project
-	f.display.setRulerFormat(ui::TimeFormat::Samples);
-	CHECK(settle(ui::TimeFormat::Samples, "samples"));
+	bool asked = false;
+	{
+		const ui::Subscription history = f.binding.on("history.changed",
+			[&f, &asked](const engine::Event&)
+			{
+				asked = f.binding.waiting("project.get") > 0;
+				f.display.setRulerFormat(ui::TimeFormat::Samples);
+			});
+		f.call("track.add", {{"type", "audio"}});
+		CHECK(settle(ui::TimeFormat::Samples, "samples"));
+	}
+	CHECK(asked);
 	CHECK(f.display.loads() > loads);
 
 	// Several switches in a row end on the last one.

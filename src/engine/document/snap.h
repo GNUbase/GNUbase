@@ -90,8 +90,8 @@ namespace gnubase::engine
 			GridType::Bar, GridType::Ms100, GridType::Frame, GridType::Samples100, GridType::Frame};
 		bool zeroCrossing = false; // splitting and resizing audio events cut where the audio crosses zero
 		// The grids entries of a newer build that this one can't read, by format name: a format it doesn't know, or
-		// a grid type it doesn't know for one it does. Saving writes them back, until this build chooses a grid type
-		// for that format. In the order of the names, as JSON objects have them.
+		// a grid type it doesn't know for one it does. Saving writes them back, until this build chooses another grid
+		// type for that format. In the order of the names, as JSON objects have them.
 		std::vector<std::pair<std::string, std::string>> newerGrids;
 
 		// The grid in use: the format's.
