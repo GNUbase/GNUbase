@@ -32,14 +32,20 @@ MINGW* | MSYS* | CYGWIN*)
 		cmd //c "$(cygpath -w "$script")"
 	}
 	# clang-tidy matches the line filter's names as suffixes of the paths clang uses: a source file's has backslashes;
-	# a header's is the include folder (src or tests) with backslashes, then the #include's path as written.
-	names() { printf '%s\n' "${1//\//\\\\}" "${1#*/}"; }
+	# a header's is the include folder (src or tests) with backslashes, then the #include's path as written. Each name
+	# starts at a folder boundary, so that rt_tests.cpp can't stand for transport_tests.cpp.
+	names()
+	{
+		local inFolder=${1#*/}
+		printf '\\\\%s\n' "${1//\//\\\\}"
+		[ "$inFolder" = "${inFolder#*/}" ] || printf '\\\\%s\n' "$inFolder"
+	}
 	;;
 Linux)
 	tidy=${CLANG_TIDY:-clang-tidy}
 	# shellcheck disable=SC2086 # $options holds several arguments
 	configure() { cmake --preset linux-clang -B "$build" $options; }
-	names() { printf '%s\n' "$1"; }
+	names() { printf '/%s\n' "$1"; }
 	;;
 *)
 	echo "Only Windows and Linux for now; CI checks the pull request."
@@ -67,8 +73,15 @@ mapfile -t candidates < <(
 	} | sed -n -e 's/\.h$/.cpp/p' -e '/\.cpp$/p' | sort -u | while IFS= read -r file; do [ -f "$file" ] && echo "$file"; done
 )
 inDatabase() { grep -qF "/$1\"" "$build/compile_commands.json"; }
+# A file new to CMake since the last configure. A file that no target of this platform builds stays missing, so only
+# a CMake file newer than the database reconfigures.
+cmakeChanged()
+{
+	[ -n "$(find . \( -path ./build -o -path ./ext \) -prune -o \( -name CMakeLists.txt -o -name '*.cmake' \) \
+		-newer "$build/compile_commands.json" -print -quit)" ]
+}
 for file in "${candidates[@]}"; do
-	inDatabase "$file" || { reconfigure; break; } # a file new to CMake since the last configure
+	inDatabase "$file" || { cmakeChanged && reconfigure; break; }
 done
 files=() skipped=()
 for file in "${candidates[@]}"; do
