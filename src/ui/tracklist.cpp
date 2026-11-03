@@ -700,7 +700,7 @@ namespace gnubase::ui
 
 	void TrackList::parameterEvent(Rml::Event& event)
 	{
-		Rml::Element* target = event.GetTargetElement();
+		const Rml::Element* target = event.GetTargetElement();
 		const Json* json = laneOf(m_parameterLane);
 		if (json == nullptr || target == nullptr)
 			return;

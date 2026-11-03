@@ -122,10 +122,10 @@ namespace
 				static_cast<int>(std::lround((1.0 - value) * lane.at("height").get<double>()));
 		}
 
-		std::vector<ui::CurvePoint> curve(const char* which, const Json& id)
+		std::vector<ui::CurvePoint> curve(const char* which, const Json& id) const
 		{
 			const std::string selector = ".automation-lane[lane=\"" + id.dump() + "\"] curve." + which;
-			auto* found = dynamic_cast<ui::Curve*>(display.eventArea().QuerySelector(selector));
+			const auto* found = dynamic_cast<const ui::Curve*>(display.eventArea().QuerySelector(selector));
 			REQUIRE(found != nullptr);
 			return found->points();
 		}

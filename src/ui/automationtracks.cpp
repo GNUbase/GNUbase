@@ -454,14 +454,15 @@ namespace gnubase::ui
 		const AutomationView* view = automationAt(lane);
 		if (view == nullptr || !alive())
 			return;
+		std::sort(points.begin(), points.end(),
+			[](const CurvePoint& a, const CurvePoint& b) { return a.position < b.position; });
 		for (int i = 0; i < m_automationArea->GetNumChildren(); ++i)
-			if (Rml::Element* element = m_automationArea->GetChild(i);
+			if (const Rml::Element* element = m_automationArea->GetChild(i);
 				element->GetAttribute<Rml::String>("lane", "") == std::to_string(view->id))
 				if (auto* curve = dynamic_cast<Curve*>(element->GetChild(1)))
 				{
-					std::sort(points.begin(), points.end(),
-						[](const CurvePoint& a, const CurvePoint& b) { return a.position < b.position; });
 					curve->setPoints(std::move(points), true);
+					return;
 				}
 	}
 
@@ -600,7 +601,9 @@ namespace gnubase::ui
 	{
 		std::vector<std::pair<uint64_t, CurvePoint>> points;
 		const AutomationView* lane = automationAt(m_gestureLane);
-		const auto selected = lane == nullptr ? m_selectedPoints.end() : m_selectedPoints.find(lane->id);
+		if (lane == nullptr)
+			return points;
+		const auto selected = m_selectedPoints.find(lane->id);
 		if (selected == m_selectedPoints.end())
 			return points;
 		const double height = m_laneTops[m_gestureLane + 1] - m_laneTops[m_gestureLane];
@@ -645,15 +648,25 @@ namespace gnubase::ui
 			}
 			else if (m_control == EditorControl::MoveVertically ||
 				(m_control == EditorControl::ScaleVertically && high <= low))
+			{
 				point.value += dv;
+			}
 			else if (m_control == EditorControl::ScaleVertically)
+			{
 				point.value = low + ((point.value - low) * (high + dv - low) / (high - low));
+			}
 			else if (m_control == EditorControl::TiltLeft)
+			{
 				point.value += span > 0.0 ? dv * (last - point.position) / span : dv;
+			}
 			else if (m_control == EditorControl::TiltRight)
+			{
 				point.value += span > 0.0 ? dv * (point.position - first) / span : dv;
+			}
 			else if (span > 0.0) // stretch
+			{
 				point.position = first + ((point.position - first) * std::max(0.0, span + dt) / span);
+			}
 			point.value = std::clamp(point.value, 0.0, 1.0);
 		}
 		return points;
@@ -909,6 +922,7 @@ namespace gnubase::ui
 				[](const CurvePoint& a, const CurvePoint& b) { return a.position < b.position; });
 			const double height = m_laneTops[m_gestureLane + 1] - m_laneTops[m_gestureLane];
 			std::vector<std::pair<double, double>> path;
+			path.reserve(m_drawn.size());
 			for (const CurvePoint& point : m_drawn)
 				path.emplace_back(point.position / m_view.scale, point.value * height);
 			std::vector<bool> keep(path.size(), false);
