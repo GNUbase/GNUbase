@@ -329,6 +329,12 @@ namespace gnubase::ui
 
 	void ProjectFiles::quit(Window& window)
 	{
+		// A dialog that is open, such as the start screen, would keep the question from opening: quitting cancels it.
+		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get()))
+		{
+			dialog->DispatchEvent(g_dialogCloseEvent, {{"result", Rml::Variant(std::string("cancel"))}});
+			dialog->Close();
+		}
 		// Quitting closes every window, so it waits until the event that asked for it is done with them.
 		unlessUnsaved(window, [this] { m_shell.post([this] { m_shell.quit(); }); });
 	}

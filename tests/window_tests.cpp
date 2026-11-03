@@ -663,12 +663,12 @@ TEST_CASE("closing the main window or a quit request ends the shell", "[ui]")
 
 TEST_CASE("a quit request handler decides when closing the main window or a quit request ends the shell", "[ui]")
 {
+	std::vector<ui::WindowId> asked; // before the shell, which outlives them otherwise
+	bool agree = false;
 	Gpu gpu;
 	const ui::WindowId main = gpu.open("boxes.rml").id();
 	gpu.open("other.rml");
 	gpu.shell->step(milliseconds(0));
-	std::vector<ui::WindowId> asked;
-	bool agree = false;
 	gpu.shell->onQuitRequest(
 		[&](ui::Window& window)
 		{
@@ -693,8 +693,6 @@ TEST_CASE("a quit request handler decides when closing the main window or a quit
 	push(close);
 	CHECK(gpu.shell->run() == 0);
 	CHECK(gpu.shell->windows().empty());
-
-	gpu.shell->onQuitRequest({});
 }
 
 TEST_CASE("files dropped on a window reach the element under the mouse", "[ui]")

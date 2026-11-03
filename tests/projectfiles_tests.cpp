@@ -513,6 +513,15 @@ TEST_CASE("closing the main window or quitting through the OS asks before unsave
 		click(app, "#discard-changes");
 		REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
 	}
+	SECTION("a dialog that is open closes for the question")
+	{
+		app.call("track.add", {{"type", "audio"}});
+		fileMenu(app, "file.new");
+		REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+		REQUIRE(SDL_PushEvent(&request));
+		click(app, "#discard-changes");
+		REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+	}
 }
 
 TEST_CASE("the start screen creates projects, from templates too, and opens recent ones", "[ui]")

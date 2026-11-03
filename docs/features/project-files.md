@@ -65,7 +65,8 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   `project.revision`; if the project is modified, the dialog `discard-changes.rml` asks whether to discard the changes,
   and only Discard goes on. Quitting asks the same however it is asked for: File > Quit, the main window's close button
   or Alt+F4, and the OS's quit request (the macOS app menu's Quit, SIGTERM), which `Shell::onQuitRequest` hands to
-  `ProjectFiles` instead of quitting at once.
+  `ProjectFiles` instead of quitting at once. A project dialog that is open then, such as the start screen, closes as
+  cancelled first, so that the question can open.
 - **Start screen.** `start-screen.rml`, the minimal version of the reference's hub: the templates with Create, Create
   Empty Project, the recent projects that are still there with Open, and Open Other..., which asks for a file. A double
   click on a row does what its button does. File > New Project opens it, and the app at its start when no project was
