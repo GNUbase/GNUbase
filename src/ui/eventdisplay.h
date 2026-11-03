@@ -255,7 +255,11 @@ namespace gnubase::ui
 		// edit.moveStartToCursor, edit.moveEndToCursor, edit.selectAll, edit.selectNone, edit.invertSelection,
 		// edit.selectInLoop, edit.selectFromStartToCursor, edit.selectFromCursorToEnd, edit.selectUnderCursor, and
 		// Left and Right's edit.selectPrevious and edit.selectNext; and edit.locatorsToSelection sets the locators
-		// around the selected events. With the range selection tool,
+		// around the selected events. The Fades menu (#138, docs/features/fades.md): audio.fadeInToRange,
+		// audio.fadeOutFromRange and audio.adjustFadesToRange on the selection range, audio.crossfade (crossfades the
+		// selected audio events, or opens the crossfade editor for a crossfade they have), audio.removeFadeIn,
+		// audio.removeFadeOut, audio.removeFades and audio.fadeEditor (the fade dialog) on the selected audio events.
+		// With the range selection tool,
 		// edit.delete deletes the range; edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence,
 		// edit.splitRange and edit.cropRange edit it, edit.paste and edit.pasteTime paste at its start (without a
 		// range at the project cursor) and edit.globalCopy copies the locator range on every track.
@@ -286,6 +290,8 @@ namespace gnubase::ui
 			DrawPart,      // a new MIDI part
 			Play,          // auditions or scrubs until the mouse is released
 			Click,         // splits, glues or erases where it is released, unless it moved
+			FadeIn,        // the fade in handle of the pressed audio event
+			FadeOut,       // its fade out handle
 		};
 
 		// An audio event or a MIDI part as the display shows it.
@@ -405,6 +411,33 @@ namespace gnubase::ui
 		// The edge of the event at x dp across the lanes that a press there resizes: -1 its start, 1 its end, 0 none.
 		int edgeAt(const Shown& shown, double x) const;
 
+		// Fades and crossfades (eventfades.cpp): an audio event's fades and crossfade as project.get has them, its
+		// media file's sample rate and its length in clip frames.
+		struct AudioFades
+		{
+			double rate = 0.0;
+			int64_t length = 0;
+			engine::Fade in;
+			engine::Fade out;
+			engine::Crossfade crossfade;
+		};
+		void addFadeActions();
+		void readFades(const engine::Json& event, double rate);
+		// The fade handle of the event at x and y dp in the event lanes: -1 its fade in's, 1 its fade out's, 0 none.
+		int fadeHandleAt(const Shown& shown, double x, double y) const;
+		// Starts dragging a fade handle when x and y dp in the event lanes are at one of the pressed event's.
+		bool fadeDown(const Shown& shown, double x, double y);
+		void fadeUp();
+		// The fade length in seconds that a drag of a handle gives an event's fade in or fade out.
+		double draggedFade(uint64_t event, bool in) const;
+		void showFades(); // the fade lines and the selected audio events' handles
+		// A double click on an event at seconds: in a crossfade's zone, opens the crossfade editor.
+		void openCrossfadeAt(const Shown& shown, double seconds);
+		// The selected audio events, by id.
+		std::vector<uint64_t> selectedAudio() const;
+		// Opens a dialog of the display's document folder whose Lua reads the attributes when it shows.
+		void openFadeDialog(const char* file, const std::vector<std::pair<std::string, std::string>>& attributes);
+
 		// The tools (eventtools.cpp).
 		void addToolActions();
 		void showTools();
@@ -462,9 +495,11 @@ namespace gnubase::ui
 		std::vector<bool> m_laneLinear;       // and whether its time base is linear
 		std::vector<Shown> m_events;
 		std::vector<uint64_t> m_selection;
-		EventLanes* m_mutedLanes = nullptr;    // muted events over the others
-		EventLanes* m_selectedLanes = nullptr; // selected events over those
-		EventLanes* m_folderLanes = nullptr;   // folders' data blocks, under the events
+		EventLanes* m_mutedLanes = nullptr;     // muted events over the others
+		EventLanes* m_selectedLanes = nullptr;  // selected events over those
+		EventLanes* m_folderLanes = nullptr;    // folders' data blocks, under the events
+		FadeLines* m_fadeLines = nullptr;       // over the waveforms
+		std::map<uint64_t, AudioFades> m_fades; // by audio event
 		std::vector<EventLanes::Lane> m_folderData;
 		std::string m_folderMode = "always"; // ui.folderData
 		int64_t m_left = 0;                  // the locators, in samples

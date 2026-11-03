@@ -113,7 +113,7 @@ RmlUi's `cursor` property; the pointers are SVG files in `resources/cursors` ([s
 | `pointer` | Where | Pointer |
 |---|---|---|
 | `objectSelection` | The object selection tool | The OS's arrow |
-| `resize` | The object selection tool at an event's left or right edge, where a drag resizes it (6 dp, on events wider than 18 dp) | `resize` |
+| `resize` | The object selection tool at an event's left or right edge, where a drag resizes it (6 dp, on events wider than 18 dp), except on a fade handle ([fades.md](fades.md)) | `resize` |
 | `rangeSelection` | The range selection tool, and with the selection tools combined a lane's upper half (p. 253) | `tool-range` |
 | `draw`, `erase`, `split`, `glue`, `mute`, `zoom`, `line`, `play` | That tool | `tool-<name>`, the play tool's `tool-play` |
 

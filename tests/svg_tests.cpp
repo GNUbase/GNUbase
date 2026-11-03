@@ -67,7 +67,7 @@ namespace
 	std::vector<std::filesystem::path> themeGraphics()
 	{
 		std::vector<std::filesystem::path> files;
-		for (const char* theme : {"gnubase", "dark", "light"})
+		for (const char* theme : {"gnubase", "dark", "light", "high-contrast"})
 			for (const std::filesystem::path& file : svgFiles(resources() / "themes" / theme))
 				files.push_back(file);
 		return files;

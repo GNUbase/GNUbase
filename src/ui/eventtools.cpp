@@ -175,7 +175,8 @@ namespace gnubase::ui
 	{
 		const Tool tool = toolAt(y);
 		if (tool == Tool::ObjectSelection)
-			if (const Shown* shown = eventAt(x, y); shown != nullptr && edgeAt(*shown, x) != 0)
+			if (const Shown* shown = eventAt(x, y);
+				shown != nullptr && edgeAt(*shown, x) != 0 && fadeHandleAt(*shown, x, y) == 0) // a press drags a fade
 				return "resize";
 		return toolName(tool);
 	}

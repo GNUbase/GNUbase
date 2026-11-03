@@ -1108,3 +1108,156 @@ TEST_CASE("the edit commands edit the selection range, and paste pastes at its s
 	CHECK(f.parts()[3].at("position") == 10 * g_quarter);
 	REQUIRE(f.waitUntil([&f] { return f.display.selection().size() == 2; }));
 }
+
+namespace
+{
+	const ui::FadeLines& fadeLines(const Fixture& f)
+	{
+		auto* found = dynamic_cast<ui::FadeLines*>(f.document.QuerySelector("fade-lines"));
+		REQUIRE(found != nullptr);
+		return *found;
+	}
+
+	int64_t fadeLength(const Json& event, const char* fade)
+	{
+		return event.at(fade).at("length").get<int64_t>();
+	}
+}
+
+TEST_CASE("fade handles at the top corners of audio events drag the selected events' fades", "[unit]")
+{
+	Fixture f;
+	// A second event on the audio track, from 4 to 4.5 seconds.
+	const Json first = f.audioEvents()[0];
+	const auto second =
+		f.call("audioEvent.add",
+			 {{"track", first.at("track")}, {"clip", first.at("clip")}, {"position", 192000}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 2; }));
+
+	// Over a handle the mouse pointer isn't the resize one, as a press there drags the fade; lower down it is.
+	const Rml::Element* area = f.document.QuerySelector(".event-area");
+	f.automation.move(std::nullopt, f.at(200, 3));
+	f.step();
+	CHECK(area->GetAttribute<std::string>("pointer", "") == "objectSelection");
+	f.automation.move(std::nullopt, f.at(200, 20));
+	f.step();
+	CHECK(area->GetAttribute<std::string>("pointer", "") == "resize");
+
+	// The fade in handle at the event's top left corner, dragged 10 dp right: a tenth of a second.
+	f.drag(200, 3, 210, 3);
+	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeIn") == 4800; }));
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
+	REQUIRE(f.waitUntil([&f] { return !fadeLines(f).lanes().empty() && fadeLines(f).lanes()[0].fades.size() == 1; }));
+	const ui::FadeLine line = fadeLines(f).lanes()[0].fades[0];
+	CHECK(line.in);
+	CHECK(line.start == 2.0);
+	CHECK(std::abs(line.length - 0.1) < 1e-9);
+	// The selected event shows its handles, where its fade in ends and its fade out starts.
+	CHECK(fadeLines(f).lanes()[0].handles.size() == 2);
+
+	// The fade out handle at the top right corner, 20 dp left: a fifth of a second.
+	f.drag(249, 3, 229, 3);
+	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeOut") == 9600; }));
+
+	// With both events selected, a drag gives both the fade the pressed one gets, as one undo step.
+	f.display.select({f.event, second});
+	f.drag(210, 3, 220, 3);
+	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[1], "fadeIn") == 9600; }));
+	CHECK(fadeLength(f.audioEvents()[0], "fadeIn") == 9600);
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[1], "fadeIn") == 0; }));
+	CHECK(fadeLength(f.audioEvents()[0], "fadeIn") == 4800);
+
+	// Lower down, the event's edge still resizes it.
+	f.drag(248, 20, 268, 20);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 24000 + 9600; }));
+}
+
+TEST_CASE("a fade handle drag ends without changes when the pressed event goes during it", "[unit]")
+{
+	Fixture f;
+	const Json first = f.audioEvents()[0];
+	const auto second =
+		f.call("audioEvent.add",
+			 {{"track", first.at("track")}, {"clip", first.at("clip")}, {"position", 192000}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 2; }));
+	f.display.select({f.event, second});
+	Rml::Context& context = f.window.context();
+	Rml::Element* lanes = f.document.QuerySelector("event-lanes.events");
+	REQUIRE(lanes != nullptr);
+	const auto move = [&context, lanes](double x, double y)
+	{
+		context.ProcessMouseMove(
+			static_cast<int>(lanes->GetAbsoluteLeft() + x), static_cast<int>(lanes->GetAbsoluteTop() + y), 0);
+	};
+
+	// The first event's fade in handle pressed and dragged, then the event removed through the engine.
+	move(200, 3);
+	context.ProcessMouseButtonDown(0, 0);
+	move(210, 3);
+	f.step();
+	f.call("event.remove", {{"events", {f.event}}});
+	REQUIRE(f.waitUntil([&f, second] { return f.display.selection() == std::vector<uint64_t>{second}; }));
+	move(220, 3);
+	f.step();
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	REQUIRE(f.audioEvents().size() == 1);
+	CHECK(fadeLength(f.audioEvents()[0], "fadeIn") == 0);
+	CHECK(fadeLength(f.audioEvents()[0], "fadeOut") == 0);
+}
+
+TEST_CASE("the Fades menu's commands fade to the range, crossfade and remove fades", "[unit]")
+{
+	Fixture f;
+	const std::map<std::string, std::function<void()>>& actions = f.display.actions();
+	for (const char* id : {"audio.fadeInToRange", "audio.fadeOutFromRange", "audio.adjustFadesToRange",
+			 "audio.crossfade", "audio.removeFadeIn", "audio.removeFadeOut", "audio.removeFades", "audio.fadeEditor"})
+		CHECK(actions.count(id) == 1);
+	const Json first = f.audioEvents()[0];
+	const auto track = first.at("track").get<uint64_t>();
+
+	// Fade In to Range Start: the event from 2 seconds, the range from 2.1 to 2.3.
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{100800, 110400, {track}});
+	f.run("audio.fadeInToRange");
+	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeIn") == 4800; }));
+	f.run("audio.fadeOutFromRange");
+	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeOut") == 9600; }));
+
+	// Crossfade: the selected event and one that starts inside it.
+	f.display.setTool(ui::Tool::ObjectSelection);
+	const auto second = f.call("audioEvent.add",
+							 {{"track", track}, {"clip", first.at("clip")}, {"position", 115200}, {"length", 24000}})
+							.at("event")
+							.at("id")
+							.get<uint64_t>();
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 2; }));
+	f.display.select({f.event, second});
+	f.run("audio.crossfade");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[1].at("crossfade").is_object(); }));
+	// The crossfade replaces the first event's fade out and the second's fade in, over the overlap.
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			const std::vector<ui::FadeLine>& fades = fadeLines(f).lanes()[0].fades;
+			return fades.size() == 3 &&
+				std::count_if(fades.begin(), fades.end(),
+					[](const ui::FadeLine& fade) { return std::abs(fade.start - 2.4) < 1e-9; }) == 2;
+		}));
+
+	// Remove Fade In takes the crossfade into the second event; Remove Fades the first event's fade in too.
+	f.display.select({second});
+	f.run("audio.removeFadeIn");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[1].at("crossfade").is_null(); }));
+	f.display.select({f.event});
+	f.run("audio.removeFades");
+	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeIn") == 0; }));
+	CHECK(fadeLength(f.audioEvents()[0], "fadeOut") == 0);
+}

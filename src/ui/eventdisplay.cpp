@@ -86,6 +86,7 @@ namespace gnubase::ui
 		m_mutedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "muted-events");
 		m_selectedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "selected-events");
 		m_waveforms = std::make_unique<EventWaveforms>(binding, add(*m_area, "div", "waveforms"));
+		m_fadeLines = &addCanvas<FadeLines>(*m_area, "fade-lines", "fades");
 		m_rangeElement = &add(*m_area, "div", "range-selection");
 		m_rectangle = &add(*m_area, "div", "tool-rectangle");
 		m_crossVertical = &add(*m_area, "div", "cross-hair-vertical");
@@ -105,6 +106,7 @@ namespace gnubase::ui
 			{"zoom.undo", [this] { undoZoom(); }}, {"zoom.redo", [this] { redoZoom(); }},
 			{"view.autoScroll", [this] { setAutoScroll(!m_autoScroll); }}};
 		addEditActions();
+		addFadeActions();
 		addToolActions();
 		setToolModifiers(Json::object());
 
@@ -304,6 +306,7 @@ namespace gnubase::ui
 		m_laneTypes.clear();
 		m_laneLinear.clear();
 		m_events.clear();
+		m_fades.clear();
 		for (const Json& track : project.at("tracks"))
 		{
 			const auto id = track.at("id").get<uint64_t>();
@@ -366,6 +369,8 @@ namespace gnubase::ui
 				: (snapPoint.get<double>() - event.at("offset").get<double>()) / rate;
 			if (!m_events.empty() && m_events.back().id == event.at("id") && into >= 0.0 && into < length)
 				m_events.back().snapPoint = start + into;
+			if (rate > 0.0)
+				readFades(event, rate);
 			if (file != media.end() && rate > 0.0 && lanes.count(track) != 0)
 				waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {start, length}, file->first, rate,
 					file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});
@@ -441,6 +446,7 @@ namespace gnubase::ui
 		std::sort(all.begin(), all.end(), [](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
 		std::vector<EventLanes::Lane> overview{{10000.0F, std::move(all)}};
 		m_overviewEvents->setLanes(std::move(overview));
+		showFades();
 		showPointer();
 	}
 
@@ -604,12 +610,14 @@ namespace gnubase::ui
 		if (!alive())
 			return;
 		for (Rml::Element* canvas : {static_cast<Rml::Element*>(m_ruler), static_cast<Rml::Element*>(m_lanes),
-				 static_cast<Rml::Element*>(m_mutedLanes), static_cast<Rml::Element*>(m_selectedLanes)})
+				 static_cast<Rml::Element*>(m_mutedLanes), static_cast<Rml::Element*>(m_selectedLanes),
+				 static_cast<Rml::Element*>(m_fadeLines)})
 		{
 			canvas->SetAttribute("start", m_view.start);
 			canvas->SetAttribute("scale", m_view.scale);
 		}
-		for (Rml::Element* canvas : {m_lanes, m_mutedLanes, m_selectedLanes})
+		for (Rml::Element* canvas : {static_cast<Rml::Element*>(m_lanes), static_cast<Rml::Element*>(m_mutedLanes),
+				 static_cast<Rml::Element*>(m_selectedLanes), static_cast<Rml::Element*>(m_fadeLines)})
 			canvas->SetAttribute("scroll-top", m_view.top);
 		m_waveforms->show({m_view.start, m_view.scale, m_view.top, m_laneTops, width(), height(), dpRatio()});
 		setCursor(m_cursorSample);
@@ -977,6 +985,8 @@ namespace gnubase::ui
 		case Drag::DrawPart:
 		case Drag::Play:
 		case Drag::Click:
+		case Drag::FadeIn:
+		case Drag::FadeOut:
 			areaMove(dx, dy, restricts(event));
 			return;
 		case Drag::None:

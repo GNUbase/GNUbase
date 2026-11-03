@@ -34,6 +34,7 @@ add_library(gnubase-ui STATIC
 	eventdisplay.h
 	eventdisplaymenus.cpp
 	eventediting.cpp
+	eventfades.cpp
 	eventtools.cpp
 	eventwaveforms.cpp
 	eventwaveforms.h

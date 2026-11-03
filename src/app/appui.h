@@ -78,6 +78,9 @@ namespace gnubase::app
 		// The markers window while it is open, or null.
 		ui::MarkersWindow* markers() { return m_shell.find(m_markersWindow) != nullptr ? m_markers.get() : nullptr; }
 		ui::WindowId markersWindow() const { return m_markersWindow; }
+		// The markers in the project window's event display, null before showProject.
+		ui::MarkerLines* markerLines() { return m_markerLines.get(); }
+
 		// The mixers (#106, docs/features/mixer-window.md): mixer window number 1 to 4 opens in a window of its own
 		// (resources/ui/mixer.rml), hidden like the main window, or closes if it is open: the UI commands window.mixer
 		// (F3), window.mixer2, window.mixer3 and window.mixer4. Returns it, or null when it closed it. Throws
@@ -145,6 +148,8 @@ namespace gnubase::app
 		void choosePicture(uint64_t track);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name) const;
+		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
+		void openAutoFades(ui::Window& window, uint64_t track) const;
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
 		// is open, brings it to the front instead.
 		Rml::ElementDocument& openOnce(
@@ -171,6 +176,7 @@ namespace gnubase::app
 		ui::WindowId m_markersWindow = 0;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
 		std::unique_ptr<ui::MarkerLines> m_markerLines;   // and before the display
+		std::vector<uint64_t> m_eventSelection;           // the display's, as the last step saw it
 		ui::Winding m_winding{m_binding};                 // Rewind and Forward held, which the transport controls end
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;

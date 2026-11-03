@@ -9,6 +9,7 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/Plugin.h>
@@ -418,8 +419,9 @@ namespace gnubase::ui
 		// <dialog>: a dialog in a document of its own, which the app shows, usually modal. It opens in the middle of
 		// the window, and dragging its .dialog-titlebar moves it. Escape closes it with the result "cancel", Enter
 		// clicks its button.primary (also from a text field, and from a value field with autofocus, after it takes the
-		// number typed), and a click on an element with a result attribute closes it with that result. Closing sends a
-		// close event with the parameter "result", then closes the document.
+		// number typed) unless the focused control takes Enter, and a click on an element with a result attribute
+		// closes it with that result. Closing sends a close event with the parameter "result", then closes the
+		// document.
 		class Dialog final : public Rml::Element
 		{
 		public:
@@ -453,11 +455,13 @@ namespace gnubase::ui
 			// A key pressed anywhere in the dialog's document, before text fields keep Enter to themselves.
 			void key(Rml::Event& event)
 			{
-				// A multi-line text field takes Enter, and a value field both keys, unless it has autofocus: then it is
-				// the dialog's main field, which works like a text field.
-				const Rml::Element* field = closestTag(event.GetTargetElement(), "valuefield", this);
-				if (closestTag(event.GetTargetElement(), "textarea", this) != nullptr ||
-					(field != nullptr && !field->HasAttribute("autofocus")))
+				// A multi-line text field takes Enter, and a value field being edited both keys, unless it has
+				// autofocus: then it is the dialog's main field, which works like a text field.
+				Rml::Element* target = event.GetTargetElement();
+				const Rml::Element* field = closestTag(target, "valuefield", this);
+				const bool mainField = field != nullptr && field->HasAttribute("autofocus");
+				if (closestTag(target, "textarea", this) != nullptr ||
+					(field != nullptr && !mainField && field->IsClassSet("editing")))
 					return;
 				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
 				if (key == Rml::Input::KI_ESCAPE)
@@ -467,13 +471,18 @@ namespace gnubase::ui
 				}
 				else if (key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER)
 				{
+					// A focused button clicks itself, a drop-down list opens or closes, a value field other than the
+					// main one starts editing.
+					if ((field != nullptr && !mainField) || closestTag(target, "button", this) != nullptr ||
+						closestTag(target, "select", this) != nullptr)
+						return;
 					Rml::Element* primary = QuerySelector("button.primary");
 					if (primary == nullptr || primary->HasAttribute("disabled"))
 						return;
 					event.StopPropagation();
 					// Leaving the value field being edited takes the number typed, before OK reads it.
 					if (field != nullptr && field->IsClassSet("editing"))
-						event.GetTargetElement()->Blur();
+						target->Blur();
 					primary->Click();
 				}
 			}
@@ -627,6 +636,14 @@ namespace gnubase::ui
 							for (Menu* menu : open)
 								menu->close();
 							event.StopPropagation(); // Escape closed the menu, not the dialog around it
+							break;
+						}
+					if (event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_ESCAPE)
+						if (auto* select = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(target);
+							select != nullptr && select->IsSelectBoxVisible())
+						{
+							select->CancelSelectBox(); // and the list keeps the option it had
+							event.StopPropagation();
 							break;
 						}
 					if (Dialog* dialog = dialogOf(*document))
