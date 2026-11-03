@@ -244,6 +244,13 @@ TEST_CASE("the lower zone's editor follows the project window's selection unless
 	for (int i = 0; i < 5; ++i)
 		app.shell().step(std::chrono::milliseconds(0));
 	CHECK(view(app, "lower").at("open") == true);
+	// Behind the Mixer it still follows the selection, and the Mixer stays in front.
+	f.select({f.keys1});
+	REQUIRE(app.waitUntil([&] { return parts(view(app, "lower")) == std::vector<uint64_t>{f.keys1}; }));
+	for (int i = 0; i < 5; ++i)
+		app.shell().step(std::chrono::milliseconds(0));
+	CHECK(app.appUi().docking().showing("mixer"));
+	CHECK_FALSE(app.appUi().docking().showing("editor"));
 	app.appUi().docking().setVisible("project", "lower", false);
 	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
 }

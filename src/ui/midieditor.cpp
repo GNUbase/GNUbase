@@ -110,10 +110,14 @@ namespace gnubase::ui
 			}
 		}
 		else if (m_part == EditorPart::Visibility)
+		{
 			root.SetInnerRML(R"(<div class="editor-visibility"/>)");
+		}
 		else
+		{
 			root.SetInnerRML(R"(<div class="editor-global-tracks-section"><div class="section-header">Global )"
 							 R"(Tracks</div><div class="editor-global-track-list"/></div>)");
+		}
 		for (const Rml::EventId event : g_events)
 			root.AddEventListener(event, this);
 
@@ -238,9 +242,13 @@ namespace gnubase::ui
 			fillMenus();
 		}
 		else if (m_part == EditorPart::Visibility)
+		{
 			setInner(root->QuerySelector(".editor-visibility"), visibilityRml());
+		}
 		else
+		{
 			setInner(root->QuerySelector(".editor-global-track-list"), globalTracksRml());
+		}
 		if (Rml::Context* context = root->GetContext())
 			context->RequestNextUpdate(0);
 	}
@@ -386,11 +394,17 @@ namespace gnubase::ui
 			return;
 		}
 		if (target->HasAttribute("editing-mode"))
+		{
 			set({{"editingMode", attribute(*target, "editing-mode")}});
+		}
 		else if (target->HasAttribute("active-part"))
+		{
 			set({{"activePart", idOf(target, "active-part", nullptr)}});
+		}
 		else if (target->GetId() == "editor-keep-contents")
+		{
 			set({{"keepContents", !m_view.at("keepContents").get<bool>()}});
+		}
 		else if (target->GetId() == "editor-move")
 		{
 			// Open in Separate Window and Open in Lower Zone (p. 1196): the other editor takes the parts.
@@ -402,7 +416,9 @@ namespace gnubase::ui
 			m_binding.send("editor.close", {{"editor", m_name}});
 		}
 		else if (closest(target, "editor-visibility-check", root) != nullptr)
+		{
 			toggleTrack(idOf(target, "track", root), shift);
+		}
 		else if (closest(target, "editor-visibility-name", root) != nullptr)
 		{
 			// Clicking a shown track's name activates it for editing (p. 1149).
@@ -422,6 +438,8 @@ namespace gnubase::ui
 			set({{"globalTracks", tracks}});
 		}
 		else if (const uint64_t part = idOf(target, "part", root); part != 0)
+		{
 			set({{"activePart", part}}); // clicking an event of a part activates it (p. 1152)
+		}
 	}
 }

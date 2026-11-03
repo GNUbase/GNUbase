@@ -253,7 +253,7 @@ namespace gnubase::engine
 					for (const ObjectId part : partsOf(project, track))
 						view.parts.erase(std::remove(view.parts.begin(), view.parts.end(), part), view.parts.end());
 				view.parts = ordered(project, view.parts);
-				require(!view.open || !view.parts.empty(), "at least one track must stay shown");
+				require(!changesParts || !view.parts.empty(), "at least one track must stay shown");
 				if (parameters.contains("activeTrack"))
 				{
 					const auto track = parameters.at("activeTrack").get<ObjectId>();

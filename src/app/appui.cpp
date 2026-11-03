@@ -782,10 +782,13 @@ namespace gnubase::app
 	{
 		const std::string editor = view.at("editor").get<std::string>();
 		const bool open = view.at("open").get<bool>();
+		const bool wasOpen = m_editorViews.value(editor, engine::Json::object()).value("open", false);
 		m_editorViews[editor] = view;
 		if (editor == "lower")
 		{
-			if (open && !m_docking.showing("editor"))
+			// Only opening the view brings the Editor tab to the front: while it's open behind another tab, such as
+			// the Mixer, it follows the selection there.
+			if (open && !wasOpen && !m_docking.showing("editor"))
 				m_docking.open("editor");
 			return;
 		}

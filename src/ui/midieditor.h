@@ -7,6 +7,7 @@
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -22,7 +23,7 @@ namespace Rml
 namespace gnubase::ui
 {
 	// What a MidiEditor shows of its editor.
-	enum class EditorPart
+	enum class EditorPart : std::uint8_t
 	{
 		Editor,       // the toolbar and the events
 		Visibility,   // the Visibility tab (reference manual pp. 1148-1153)

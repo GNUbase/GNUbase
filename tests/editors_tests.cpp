@@ -191,6 +191,25 @@ TEST_CASE("the Visibility tab shows and hides tracks' parts in an editor", "[uni
 	CHECK(ids(f.view("window").at("parts")) == std::vector<uint64_t>{keys1, keys2, synth1}); // nothing changed
 }
 
+TEST_CASE("an editor whose parts are all removed still takes settings that don't change its parts", "[unit]")
+{
+	Fixture f;
+	const uint64_t keys = f.track("midi");
+	const uint64_t part = f.part(keys, 0);
+	f.call("editor.open", {{"editor", "lower"}, {"parts", {part}}});
+	f.call("editor.set", {{"editor", "lower"}, {"keepContents", true}});
+	f.call("track.remove", {{"track", keys}});
+	REQUIRE(f.view("lower").at("parts").empty());
+
+	Json view = f.call("editor.set", {{"editor", "lower"}, {"keepContents", false}});
+	CHECK(view.at("keepContents") == false);
+	view = f.call("editor.set", {{"editor", "lower"}, {"editingMode", "allParts"}});
+	CHECK(view.at("editingMode") == "allParts");
+	// Changing the parts still needs one to stay shown.
+	CHECK_THAT(f.fails("editor.set", {{"editor", "lower"}, {"parts", Json::array()}}),
+		ContainsSubstring("at least one track"));
+}
+
 TEST_CASE("the editor window shows global tracks, and a new project closes the editors", "[unit]")
 {
 	Fixture f;
