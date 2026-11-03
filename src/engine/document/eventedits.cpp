@@ -910,10 +910,14 @@ namespace gnubase::engine
 				return glueIntoPart(project, items, context); // reference manual p. 269
 			if (first.audio != nullptr)
 			{
-				// The glued event's volume curve: each event's own where it plays, with its volume's difference to
-				// the first one's.
+				// The glued event plays at the loudest event's volume, and its volume curve is each event's own where
+				// it plays, lowered by its volume's difference to the loudest: no difference is above 0 dB, so none
+				// is cut at the curve's +6 dB.
 				const bool curves = std::any_of(items.begin(), items.end(), [&first](const Item& item)
 					{ return !item.audio->volumeCurve.empty() || item.audio->volume != first.audio->volume; });
+				double loudest = g_minEventVolume;
+				for (const Item& item : items)
+					loudest = std::max(loudest, item.audio->volume);
 				std::vector<VolumePoint> curve;
 				for (const Item& item : items)
 				{
@@ -922,8 +926,8 @@ namespace gnubase::engine
 						each.volumeCurve.empty() ? std::vector<VolumePoint>{{0, 0.0, 0.0}} : each.volumeCurve,
 						each.offset, each.offset + each.length);
 					for (VolumePoint& point : own)
-						point.volume = std::clamp(
-							point.volume + each.volume - first.audio->volume, g_minEventVolume, g_maxEventVolume);
+						point.volume =
+							std::clamp(point.volume + each.volume - loudest, g_minEventVolume, g_maxEventVolume);
 					curve.insert(curve.end(), own.begin(), own.end());
 				}
 				// Events that continue each other in a clip become one event.
@@ -933,7 +937,10 @@ namespace gnubase::engine
 					first.audio->fadeOut = items[i].audio->fadeOut;
 				}
 				if (curves)
+				{
+					first.audio->volume = loudest;
 					first.audio->volumeCurve = std::move(curve);
+				}
 			}
 			else
 			{

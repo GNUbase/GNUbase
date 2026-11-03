@@ -1377,6 +1377,33 @@ TEST_CASE("the draw tool adds and drags volume curve points, the erase tool remo
 	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("position") == 19200);
 }
 
+TEST_CASE("the draw tool's click near a curve point leaves it, a drag moves it by the drag's distance", "[unit]")
+{
+	Fixture f;
+	// A point at 0 dB (half way up the lane), 0.2 seconds into the event.
+	f.call("audioEvent.setVolumeCurve", {{"event", f.event}, {"points", {{{"position", 9600}, {"volume", 0.0}}}}});
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			return !fadeLines(f).lanes().empty() && fadeLines(f).lanes()[0].volumes.size() == 1 &&
+				fadeLines(f).lanes()[0].volumes[0].points.size() == 1;
+		}));
+	f.display.setTool(ui::Tool::Draw);
+	// A click 5 dp below the point only presses it.
+	f.click(220, 25);
+	// A drag that starts 2 dp right of and 4 dp below the point moves it 10 dp right and up: 0.1 seconds later and
+	// a quarter of the lane higher (+3.5 dB), not to where the mouse is.
+	f.drag(222, 24, 232, 14);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve")[0].at("position") == 14400; }));
+	const Json point = f.audioEvents()[0].at("volumeCurve")[0];
+	CHECK(std::abs(point.at("volume").get<double>() - 3.5) < 0.1);
+	CHECK(f.audioEvents()[0].at("volumeCurve").size() == 1);
+	// One undo goes back to the point as it was: the click made no undo step.
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve")[0].at("position") == 9600; }));
+	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("volume") == 0.0);
+}
+
 TEST_CASE("Remove Volume Curve removes the selected events' curves, or resets them in the selection range", "[unit]")
 {
 	Fixture f;

@@ -131,16 +131,29 @@ namespace gnubase::ui
 		if (m_drag != Drag::VolumePoint || event != m_dragEvent || shown == m_events.end() ||
 			(m_dragPoint && *m_dragPoint >= curve.size()))
 			return curve;
-		// The pressed point, or a new one where the press was, where the mouse is now: inside the event.
-		const double seconds = m_view.start + ((m_pressX + m_dragDx) * m_view.scale);
+		// A new point goes where the press was and follows the mouse. The pressed point moves from where it is by the
+		// drag's movement (reference manual p. 400: a click only selects it): inside the event.
+		double fromX = m_pressX;
+		double fromY = m_pressY;
+		if (m_dragPoint)
+		{
+			const engine::VolumePoint& point = curve[*m_dragPoint];
+			const double height = m_laneTops[shown->lane + 1] - m_laneTops[shown->lane];
+			const double at = shown->start + (static_cast<double>(point.position - fades.offset) / fades.rate);
+			fromX = (at - m_view.start) / m_view.scale;
+			fromY = m_laneTops[shown->lane + 1] - m_view.top -
+				(std::clamp(gain(fades.volume) * gain(point.volume) / g_volumeLineTop, 0.0, 1.0) * height);
+		}
+		const double seconds = m_view.start + ((fromX + m_dragDx) * m_view.scale);
 		const int64_t frame =
 			fades.offset + std::clamp<int64_t>(std::llround((seconds - shown->start) * fades.rate), 0, fades.length);
-		const double fraction = volumeFraction(*shown, m_pressY + m_dragDy);
+		const double fraction = volumeFraction(*shown, fromY + m_dragDy);
 		const double volume = engine::volumeDb(fraction * g_volumeLineTop / gain(fades.volume));
 		if (m_dragPoint)
 		{
 			curve[*m_dragPoint].position = frame;
-			curve[*m_dragPoint].volume = volume;
+			if (m_dragDy != 0.0) // a sideways drag keeps the volume exactly
+				curve[*m_dragPoint].volume = volume;
 		}
 		else
 		{
@@ -153,7 +166,9 @@ namespace gnubase::ui
 
 	void EventDisplay::curveUp()
 	{
-		if (m_fades.count(m_dragEvent) != 0)
+		// A click on a point, without moving it, changes nothing.
+		const bool clicked = m_dragPoint && m_dragDx == 0.0 && m_dragDy == 0.0;
+		if (m_fades.count(m_dragEvent) != 0 && !clicked)
 			edit("audioEvent.setVolumeCurve",
 				{{"event", m_dragEvent}, {"points", engine::toJson(draggedCurve(m_dragEvent))}});
 		m_dragPoint.reset();

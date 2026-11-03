@@ -286,6 +286,33 @@ TEST_CASE("a volume curve shapes an event's gain sample by sample, for any block
 	checkSamples(moved, [&](int64_t at) { return at >= 4000 ? 0.0 : gain(-6.0) * curveGain(points, at + 2000); });
 }
 
+TEST_CASE("glue keeps how split events played, whatever their volumes differ by", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Session session;
+	const ObjectId clip = session.addClip(writeOnes(dir, 10000));
+	const ObjectId event = session.addEvent(clip, 0, 8000);
+	const Json pieces = run(session.client, "event.split", {{"events", {event}}, {"positions", {4000}}}).at("events");
+	REQUIRE(pieces.size() == 1);
+	// The first half is 12 dB below the second, more than a curve point's +6 dB.
+	const std::vector<Point> points = {{6000, 0.0, 0.0}, {7000, 6.0, 0.0}};
+	run(session.client, "audioEvent.set", {{"event", event}, {"volume", -12.0}});
+	run(session.client, "audioEvent.setVolumeCurve", {{"event", pieces[0]}, {"points", pointsJson(points)}});
+	const auto expected = [&points](int64_t at)
+	{
+		if (at >= 8000)
+			return 0.0;
+		return at < 4000 ? gain(-12.0) : curveGain(points, at);
+	};
+	checkSamples(session.render(9000), expected);
+
+	run(session.client, "event.glue", {{"events", {event, pieces[0]}}});
+	const Json glued = run(session.client, "project.get").at("audioEvents");
+	REQUIRE(glued.size() == 1);
+	CHECK(glued[0].at("volume") == 0.0);
+	checkSamples(session.render(9000), expected);
+}
+
 TEST_CASE("a render of volume curves matches its golden file", "[integration]")
 {
 	const gnubase::test::TempDir dir;
