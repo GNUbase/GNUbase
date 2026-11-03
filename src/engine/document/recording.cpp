@@ -59,8 +59,8 @@ namespace gnubase::engine
 		{
 			time::Samples position = 0;
 			time::Samples length = 0;
-			Json notes = Json::array();
-			Json controllers = Json::array();
+			std::vector<Json> notes;
+			std::vector<Json> controllers;
 
 			bool empty() const { return notes.empty() && controllers.empty(); }
 			time::Samples end() const { return position + length; }
@@ -235,13 +235,13 @@ namespace gnubase::engine
 			{
 				const time::Samples end = takes[later].end();
 				time::Samples from = end;
-				for (const Json* items : {&takes[later].notes, &takes[later].controllers})
+				for (const std::vector<Json>* items : {&takes[later].notes, &takes[later].controllers})
 					for (const Json& item : *items)
 						from = std::min(from, at(item));
 				for (size_t earlier = 0; earlier < later; ++earlier)
-					for (Json* items : {&takes[earlier].notes, &takes[earlier].controllers})
+					for (std::vector<Json>* items : {&takes[earlier].notes, &takes[earlier].controllers})
 					{
-						Json kept = Json::array();
+						std::vector<Json> kept;
 						for (Json& item : *items)
 							if (at(item) < from || at(item) >= end)
 								kept.push_back(std::move(item));
@@ -287,7 +287,7 @@ namespace gnubase::engine
 				takes.push_back(std::move(next));
 			}
 			require(!takes.empty(), "a MIDI track's recording needs a take");
-			const auto distribute = [&takes](const Json& items, Json MidiTake::* into)
+			const auto distribute = [&takes](const Json& items, std::vector<Json> MidiTake::* into)
 			{
 				for (Json item : items)
 				{
@@ -319,8 +319,8 @@ namespace gnubase::engine
 					for (size_t index = 0; index < recorded.size(); ++index)
 					{
 						const MidiTake& take = *recorded[index];
-						const ObjectId part = addMidi(project, run, track, take.position, take.end(), take.notes,
-							take.controllers, "newParts", snap);
+						const ObjectId part = addMidi(project, run, track, take.position, take.end(), Json(take.notes),
+							Json(take.controllers), "newParts", snap);
 						run("event.set",
 							{{"events", Json::array({part})}, {"lane", lane + static_cast<int>(index)},
 								{"mute", cycleMode == "stacked" && index + 1 < recorded.size()}});
@@ -337,8 +337,8 @@ namespace gnubase::engine
 
 			time::Samples start = std::numeric_limits<time::Samples>::max();
 			time::Samples end = std::numeric_limits<time::Samples>::min();
-			Json notes = Json::array();
-			Json controllers = Json::array();
+			std::vector<Json> notes;
+			std::vector<Json> controllers;
 			for (const MidiTake& take : takes)
 			{
 				start = std::min(start, take.position);
@@ -346,7 +346,7 @@ namespace gnubase::engine
 				notes.insert(notes.end(), take.notes.begin(), take.notes.end());
 				controllers.insert(controllers.end(), take.controllers.begin(), take.controllers.end());
 			}
-			return Json::array({addMidi(project, run, track, start, end, notes, controllers, mode, snap)});
+			return Json::array({addMidi(project, run, track, start, end, Json(notes), Json(controllers), mode, snap)});
 		}
 	}
 

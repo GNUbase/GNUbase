@@ -556,7 +556,7 @@ TEST_CASE("a four-lap stacked cycle recording makes four parts on lanes of their
 	std::vector<Json> messages;
 	for (int lap = 0; lap < 4; ++lap)
 	{
-		const int64_t start = lap * 4 * g_beat;
+		const int64_t start = static_cast<int64_t>(lap) * 4 * g_beat;
 		messages.push_back(message(start + g_beat, {0x90, 60 + lap, 100}));
 		messages.push_back(message(start + (2 * g_beat), {0x80, 60 + lap, 0}));
 	}
