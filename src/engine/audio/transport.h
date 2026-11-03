@@ -38,11 +38,12 @@ namespace gnubase::engine
 		time::Samples right = 0; // the right locator
 		bool cycle = false;      // cycle playback between the locators, or skips them if the right comes first
 		StartMode startMode = StartMode::Cursor;
-		bool returnToStart = false;     // on stop the cursor goes back to where playback started
-		bool punchIn = false;           // reaching the left locator while playing starts recording
-		bool punchOut = false;          // reaching the right locator while recording ends it; playback goes on
-		bool stopAfterPunchOut = false; // ... unless this is set: then playback stops, after the post-roll
-		bool preRoll = false;           // playback starts preRollAmount before the cursor
+		bool returnToStart = false; // on stop the cursor goes back to where playback started
+		bool punchIn = false;       // reaching the left locator while playing starts recording
+		bool punchOut = false;      // reaching the right locator while recording ends it; playback goes on
+		bool stopAfterPunchOut =
+			false; // ... unless this is set (audio.stopAfterPunchOut): then playback stops, after the post-roll
+		bool preRoll = false; // playback starts preRollAmount before the cursor
 		time::Samples preRollAmount = 0;
 		bool postRoll = false; // playback stops postRollAmount after an automatic punch out
 		time::Samples postRollAmount = 0;
@@ -83,6 +84,10 @@ namespace gnubase::engine
 		bool recording() const { return m_requestedRecording; }
 		// Command thread: where play starts playback.
 		time::Samples startPosition() const;
+		// Where recording from stop starts, for playback that starts at start before the pre-roll and at from with
+		// it: at start, or the left locator with punch in if that comes later, or at from in a cycle that would never
+		// reach it.
+		static time::Samples recordStart(const TransportSettings& settings, time::Samples start, time::Samples from);
 
 		// Command thread: once the audio thread has applied every request, takes over whether it plays and records,
 		// which punching in and out and stopping after a punch out change on their own. Returns whether that changed

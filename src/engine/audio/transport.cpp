@@ -26,10 +26,31 @@ namespace gnubase::engine
 		return true;
 	}
 
+	namespace
+	{
+		// Where playback from stop would start without the pre-roll.
+		time::Samples startWithoutPreRoll(const TransportSettings& settings, time::Samples cursor)
+		{
+			return settings.startMode == StartMode::CycleStart ? settings.left : cursor;
+		}
+
+		time::Samples withPreRoll(const TransportSettings& settings, time::Samples start)
+		{
+			return std::max<time::Samples>(0, start - (settings.preRoll ? settings.preRollAmount : 0));
+		}
+	}
+
+	time::Samples Transport::recordStart(const TransportSettings& settings, time::Samples start, time::Samples from)
+	{
+		const time::Samples at = settings.punchIn ? std::max(start, settings.left) : start;
+		// A cycle that the pre-roll starts in jumps back before it reaches a record start after it.
+		const bool cycles = settings.cycle && settings.left < settings.right;
+		return cycles && from < settings.right && at >= settings.right ? from : at;
+	}
+
 	time::Samples Transport::startPosition() const
 	{
-		const time::Samples from = m_requested.startMode == StartMode::CycleStart ? m_requested.left : position();
-		return std::max<time::Samples>(0, from - (m_requested.preRoll ? m_requested.preRollAmount : 0));
+		return withPreRoll(m_requested, startWithoutPreRoll(m_requested, position()));
 	}
 
 	bool Transport::sync()
@@ -79,10 +100,13 @@ namespace gnubase::engine
 		if (!send(request))
 			return false;
 		// What the audio thread will do, unless playback reaches a locator meanwhile; sync() corrects it.
-		const time::Samples from = m_requestedPlaying ? position() : startPosition();
-		const bool waits = m_requested.punchIn && from < m_requested.left;
-		const bool rollsBack = !m_requestedPlaying && m_requested.preRoll && m_requested.preRollAmount > 0;
-		m_requestedRecording = on && !waits && !rollsBack;
+		bool now = !m_requested.punchIn || position() >= m_requested.left; // while playing
+		if (!m_requestedPlaying)
+		{
+			const time::Samples from = startPosition();
+			now = from == recordStart(m_requested, startWithoutPreRoll(m_requested, position()), from);
+		}
+		m_requestedRecording = on && now;
 		m_requestedPlaying = m_requestedPlaying || on;
 		return true;
 	}
@@ -113,10 +137,8 @@ namespace gnubase::engine
 	// Starts playback from the cursor or the left locator, less the pre-roll; returnToStart comes back to the former.
 	void Transport::start() noexcept
 	{
-		if (m_settings.startMode == StartMode::CycleStart)
-			m_position = m_settings.left;
-		m_start = m_position;
-		m_position = std::max<time::Samples>(0, m_position - (m_settings.preRoll ? m_settings.preRollAmount : 0));
+		m_start = startWithoutPreRoll(m_settings, m_position);
+		m_position = withPreRoll(m_settings, m_start);
 		m_playing = true;
 		m_stopAt = -1;
 	}
@@ -152,6 +174,8 @@ namespace gnubase::engine
 			locateTo(request.position);
 			m_locate = request.locate;
 			m_stopAt = -1;
+			if (m_recordAt >= 0) // during the pre-roll: recording starts where playback goes on
+				m_recordAt = request.position;
 			return;
 		case Request::Type::Set:
 			m_settings = request.settings;
@@ -163,10 +187,11 @@ namespace gnubase::engine
 				m_recordAt = -1;
 				return;
 			}
+			m_stopAt = -1; // recording again during the post-roll
 			if (!m_playing)
 			{
 				start();
-				m_recordAt = m_settings.punchIn ? std::max(m_start, m_settings.left) : m_start;
+				m_recordAt = recordStart(m_settings, m_start, m_position);
 				m_recording = m_position == m_recordAt;
 				if (m_recording)
 					m_recordAt = -1;

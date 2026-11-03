@@ -28,6 +28,8 @@ namespace gnubase::engine
 		constexpr double g_maxCaptureSeconds = 600.0;
 		constexpr double g_cueSeconds = 2.0; // how far ahead the cue thread positions disk streams
 		constexpr auto g_cueInterval = std::chrono::milliseconds(5);
+		// The longest pre-roll and post-roll: an hour at 768 kHz.
+		constexpr time::Samples g_maxRollAmount = time::Samples{3600} * 768000;
 		constexpr auto g_startWait = std::chrono::seconds(2);    // for the streams before playback starts or locates
 		constexpr auto g_offlineWait = std::chrono::seconds(30); // for the streams before an offline block
 		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20;   // frames one audio.capture returns at most
@@ -75,14 +77,13 @@ namespace gnubase::engine
 				"left": {"type": "integer"}, "right": {"type": "integer"}, "cycle": {"type": "boolean"},
 				"startMode": {"type": "string", "enum": ["cursor", "cycleStart"]},
 				"returnToStart": {"type": "boolean"}, "punchIn": {"type": "boolean"},
-				"punchOut": {"type": "boolean"}, "stopAfterPunchOut": {"type": "boolean"},
-				"preRoll": {"type": "boolean"}, "preRollAmount": {"type": "integer"},
+				"punchOut": {"type": "boolean"}, "preRoll": {"type": "boolean"}, "preRollAmount": {"type": "integer"},
 				"postRoll": {"type": "boolean"}, "postRollAmount": {"type": "integer"},
 				"metronome": {"type": "boolean"},
 				"audioRecordMode": {"type": "string", "enum": ["keepHistory", "cycleHistoryReplace", "replace"]}},
 			"required": ["playing", "recording", "position", "left", "right", "cycle", "startMode",
-				"returnToStart", "punchIn", "punchOut", "stopAfterPunchOut", "preRoll", "preRollAmount", "postRoll",
-				"postRollAmount", "metronome", "audioRecordMode"]})");
+				"returnToStart", "punchIn", "punchOut", "preRoll", "preRollAmount", "postRoll", "postRollAmount",
+				"metronome", "audioRecordMode"]})");
 		}
 
 		Json noParameters()
@@ -2029,8 +2030,7 @@ namespace gnubase::engine
 			{"cycle", settings.cycle},
 			{"startMode", settings.startMode == StartMode::CycleStart ? "cycleStart" : "cursor"},
 			{"returnToStart", settings.returnToStart}, {"punchIn", settings.punchIn}, {"punchOut", settings.punchOut},
-			{"stopAfterPunchOut", settings.stopAfterPunchOut}, {"preRoll", settings.preRoll},
-			{"preRollAmount", settings.preRollAmount}, {"postRoll", settings.postRoll},
+			{"preRoll", settings.preRoll}, {"preRollAmount", settings.preRollAmount}, {"postRoll", settings.postRoll},
 			{"postRollAmount", settings.postRollAmount}, {"metronome", settings.metronome},
 			{"audioRecordMode", g_audioRecordModes.at(static_cast<size_t>(settings.audioRecordMode))}};
 	}
@@ -2041,6 +2041,15 @@ namespace gnubase::engine
 			context.emit("audio.portsChanged", ports());
 		if (midiPorts)
 			m_midi.applySettings(context);
+	}
+
+	void AudioEngine::setStopAfterPunchOut(bool stop)
+	{
+		if (m_transport.settings().stopAfterPunchOut == stop)
+			return;
+		TransportSettings settings = m_transport.settings();
+		settings.stopAfterPunchOut = stop;
+		sent(m_transport.set(settings));
 	}
 
 	void AudioEngine::setChase(const MidiChase& chase)
@@ -2135,7 +2144,6 @@ namespace gnubase::engine
 		settings.returnToStart = parameters.value("returnToStart", settings.returnToStart);
 		settings.punchIn = parameters.value("punchIn", settings.punchIn);
 		settings.punchOut = parameters.value("punchOut", settings.punchOut);
-		settings.stopAfterPunchOut = parameters.value("stopAfterPunchOut", settings.stopAfterPunchOut);
 		settings.preRoll = parameters.value("preRoll", settings.preRoll);
 		settings.postRoll = parameters.value("postRoll", settings.postRoll);
 		for (const auto& [name, value] : {std::pair{"preRollAmount", &settings.preRollAmount},
@@ -2143,7 +2151,8 @@ namespace gnubase::engine
 			if (const auto found = parameters.find(name); found != parameters.end())
 			{
 				*value = found->get<time::Samples>();
-				require(*value >= 0, std::string(name) + " must not be negative");
+				require(*value >= 0 && *value <= g_maxRollAmount,
+					std::string(name) + " must be 0 to " + std::to_string(g_maxRollAmount) + " samples");
 			}
 		settings.metronome = parameters.value("metronome", settings.metronome);
 		if (const auto mode = parameters.find("startMode"); mode != parameters.end())
@@ -2253,9 +2262,10 @@ namespace gnubase::engine
 			"left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). "
 			"returnToStart: on stop, return to where playback started. punchIn: playback that reaches the left "
 			"locator starts recording there. punchOut: recording that reaches the right locator ends there and "
-			"playback goes on, or stops with stopAfterPunchOut, unless it cycles. preRoll and preRollAmount (samples): "
-			"playback starts that much before the cursor. postRoll and postRollAmount (samples): after an automatic "
-			"punch out with stopAfterPunchOut, playback goes on that much longer before it stops. Recording that "
+			"playback goes on, or stops with the user setting audio.stopAfterPunchOut, unless it cycles. preRoll and "
+			"preRollAmount (samples, up to an hour at 768 kHz): playback starts that much before the cursor. postRoll "
+			"and postRollAmount (the same): after an automatic punch out with audio.stopAfterPunchOut, playback goes "
+			"on that much longer before it stops. Recording that "
 			"punches in or out and playback that stops on their own announce transport.changed. metronome is the "
 			"transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the "
 			"events it overlaps on its track (see "
@@ -2263,8 +2273,7 @@ namespace gnubase::engine
 			R"({"type": "object", "additionalProperties": false, "properties": {
 				"left": {"type": ["integer", "string"]}, "right": {"type": ["integer", "string"]},
 				"cycle": {"type": "boolean"}, "startMode": {"type": "string"}, "returnToStart": {"type": "boolean"},
-				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"},
-				"stopAfterPunchOut": {"type": "boolean"}, "preRoll": {"type": "boolean"},
+				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "preRoll": {"type": "boolean"},
 				"preRollAmount": {"type": "integer"}, "postRoll": {"type": "boolean"},
 				"postRollAmount": {"type": "integer"}, "metronome": {"type": "boolean"},
 				"audioRecordMode": {"type": "string"}}})",
