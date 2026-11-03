@@ -137,7 +137,7 @@ namespace
 		void reset() noexcept override {}
 		gnubase::plugin::ProcessStatus process(const gnubase::plugin::Process& process) noexcept override
 		{
-			transportCount = std::min<uint32_t>(process.transportCount, transport.size());
+			transportCount = std::min(process.transportCount, static_cast<uint32_t>(transport.size()));
 			std::copy_n(process.transport, transportCount, transport.begin());
 			for (const gnubase::plugin::Event& event : process.eventsIn)
 				if (event.type == gnubase::plugin::EventType::ParamValue && event.param < values.size())
