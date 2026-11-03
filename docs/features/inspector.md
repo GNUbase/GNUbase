@@ -28,10 +28,12 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   With Ctrl (Cmd) held when Enter takes the value, every one gets the value typed: the same start, end, length or
   volume, also when it is the first one's own value. Names go to every selected part (`midiPart.set`), the volume to every selected audio event
   (`audioEvent.set`, -144 to 6 dB), mute and lock to all (`event.set`). Each edit is one `history.transaction`, so one
-  undo restores every event.
+  undo restores every event; a drag, wheel turns or a held arrow key on the volume are one undo step too
+  ([edit-history.md](edit-history.md), gestures).
 - **Positions.** In bars and beats the moves and resizes are in ticks, exact on musical tracks; in the other formats
   in samples. Lengths are typed as `formatLength` shows them, e.g. "2.0.0.0" for two bars.
 - The themes give `.multiple` its own color, as the reference shows a multiple selection "in another color".
+- **While hidden** it doesn't ask for the selection; it asks once it shows again.
 - **Markers** (p. 430). `AppUi` gives the info line the markers selected on the marker tracks
   (`ui::MarkerLines::selection`, [markers.md](markers.md)). When that selection changed last, the info line has the
   class `markers` and shows the first selected marker in timeline order: its description (`field=name`, labelled
@@ -63,16 +65,24 @@ one it has the class `empty` and says "No Track Selected".
   tracks without a channel (marker and ruler tracks, folders without a group channel), record, monitor and input on
   tracks other than audio tracks, inserts, volume and pan on MIDI tracks, which have no audio.
 - **Basics** (pp. 170–182): the channel's switches, fader and panner, sent with `channel.set` (`mute`, `solo`,
-  `recordEnable`, `monitor`, `volume`, `pan`).
+  `recordEnable`, `monitor`, `volume`, `pan`). The volume goes up to the project's `maxVolume` (`project.set`). A drag,
+  wheel turns or a held arrow key on the volume or the pan are one undo step ([edit-history.md](edit-history.md),
+  gestures), sent step by step so that they are heard.
+- **Refused changes.** When the engine refuses a change, such as an output that would make a routing loop, the
+  inspector shows the channel as it is again.
 - **Routing** (p. 168): the input bus of an audio track, and where the channel plays: an output bus or a group
   channel, for MIDI tracks an instrument track's channel, as in the add track dialog (`channel.set` `input` and
   `output`).
 - **Inserts**: an overview of the channel's plugin slots by name, top to bottom (`plugin.*` changes them).
 - **Notepad** (p. 168): the channel's notes. What is typed goes to the engine when the field loses the focus, also
   with Escape (`channel.set` `notes`, one undo step). When another track shows while the notepad or the name is being
-  edited, the edit is taken first, for the track it started on. The mixer's notepad (p. 497,
+  edited, the edit is taken first, for the track it started on. When another client replaces the project
+  (`project.reset`) the edits in progress are dropped, in the info line too, since the new project's tracks, channels
+  and events may have the same ids. The notepad and the name keep their arrow keys, also at the first and last line
+  ([key-commands.md](key-commands.md)), so that they don't select another track. The mixer's notepad (p. 497,
   [mixer-window.md](mixer-window.md)) shows the same notes.
-- **Set up Sections** (p. 167): a right click in the inspector opens the setup pane `#inspector-setup`, which the
+- **Set up Sections** (p. 167): a right click on an empty area of the inspector (not on a control, the inserts or the
+  notepad, which have an empty `contextmenu`) opens the setup pane `#inspector-setup`, which the
   docking system fills with a toggle per section: it shows and hides sections, and dragging one onto another reorders
   them. The choice is the user setting `ui.layout`, under the set `inspector` ([docking.md](docking.md)).
 
@@ -88,7 +98,9 @@ context menu, and its own modifier setting (Preferences, Editing - Tool Modifier
 (track versions, chords, articulations, MIDI inserts and modifiers, equalizer, fader, cue sends, remote controls),
 sends (#108), the MIDI tracks' MIDI volume and pan, the folder track inspector's list of the tracks inside, the
 editor tab and the tempo, signature and marker track inspectors, Show All, Reset All and presets in Set up Sections,
-Expand Sections Exclusively, and the Channel zone's channel strip (#107).
+Expand Sections Exclusively, and the Channel zone's channel strip (#107). Record and monitor on instrument and MIDI
+tracks (pp. 173–176) wait for #97. Set up Sections for the inspector in a window of its own, where `#inspector-setup`,
+which is in the project window's document, doesn't open, waits for #517.
 
 ## Checks
 
@@ -97,10 +109,14 @@ Expand Sections Exclusively, and the Channel zone's channel strip (#107).
 - `tests/inspector_tests.cpp` drives the app's project window with `ui::Automation`: the info line of one and of two
   selected parts, start, length (relative and with Ctrl+Enter absolute, also with the first part's own value, after
   which an edit taken by leaving the field is relative again) and end edits with undo, name, mute and lock
-  for every selected part, changes from another client, an audio event's volume; a marker selected on the marker
-  track with each field edited, two markers changed relatively and with Ctrl+Enter in one undo step, and an event
-  selected after it; a marker clicked again after a part, Ctrl+Enter on the first marker's own position with a part
-  shown before, and a selection naming removed markers; the inspector's buttons, volume and
-  pan both ways, the output from another client and from the drop-down list, the inserts overview with a bypassed
-  slot, the notepad, renaming, notes and a name being typed when another track is selected, closing a section, hiding one in Set up Sections, and what a group and a marker track
-  don't have.
+  for every selected part, changes from another client, an audio event's volume, and asking only while it shows; a
+  marker selected on the marker track with each field edited, two markers changed relatively and with Ctrl+Enter in
+  one undo step, and an event selected after it; a marker clicked again after a part, Ctrl+Enter on the first marker's
+  own position with a part shown before, and a selection naming removed markers; the inspector's buttons, volume and
+  pan both ways, the output from another client and from the drop-down list, a refused output, the inserts overview
+  with a bypassed slot, the notepad, renaming, notes and a name being typed when another track is selected and when
+  another client loads a project, arrow keys in the notepad and the name, closing a section, hiding one in Set up
+  Sections and opening it only from an empty area, and what a group and a marker track don't have. A drag of the
+  inspector's volume up to the project's maximum, wheel turns on the pan and a drag of the info line's volume are one
+  undo step each.
+- `tests/mixerwindow_tests.cpp`: a drag of a mixer fader is one undo step.

@@ -284,8 +284,12 @@
 		<menuitem command="project.autoFades">Auto Fades Settings...</menuitem>
 		<menuitem command="window.projectSetup">Project Setup...</menuitem>
 	</menu>
-	<!-- Fades and crossfades (reference manual pp. 381-397, docs/features/fades.md) -->
+	<!-- Audio parts (reference manual p. 250, docs/features/audio-parts.md), fades and crossfades (reference manual
+	     pp. 381-397, docs/features/fades.md) -->
 	<menu id="audio-menu">
+		<menuitem command="audio.eventsToPart">Events to Part</menuitem>
+		<menuitem command="audio.dissolvePart">Dissolve Part</menuitem>
+		<menuseparator/>
 		<menuitem id="fades-submenu">Fades
 			<menu>
 				<menuitem command="audio.fadeInToRange">Fade In to Range Start</menuitem>
@@ -337,6 +341,13 @@
 				<menuitem command="transport.set" parameters='{"audioRecordMode": "keepHistory"}'>Keep History</menuitem>
 				<menuitem command="transport.set" parameters='{"audioRecordMode": "cycleHistoryReplace"}'>Cycle History + Replace</menuitem>
 				<menuitem id="audio-record-mode-replace" command="transport.set" parameters='{"audioRecordMode": "replace"}'>Replace</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem id="midi-record-mode-submenu">MIDI Record Mode
+			<menu>
+				<menuitem command="transport.set" parameters='{"midiRecordMode": "newParts"}'>New Parts</menuitem>
+				<menuitem id="midi-record-mode-merge" command="transport.set" parameters='{"midiRecordMode": "merge"}'>Merge</menuitem>
+				<menuitem command="transport.set" parameters='{"midiRecordMode": "replace"}'>Replace</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>

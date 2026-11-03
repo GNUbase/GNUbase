@@ -32,6 +32,13 @@ namespace gnubase::ui
 		// Shift makes drags, wheel turns and arrow keys this much finer.
 		constexpr float g_fine = 0.1F;
 
+		// What a ValueControl hears to change its value or to end a gesture.
+		constexpr std::array<Rml::EventId, 6> g_gestureEvents = {Rml::EventId::Mousescroll, Rml::EventId::Mouseout,
+			Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Dragend, Rml::EventId::Keyup};
+
+		// The last gesture of any ValueControl, so that no two gestures have the same number. Only on the UI thread.
+		int g_lastGesture = 0;
+
 		std::string percent(float fraction)
 		{
 			return format(fraction * 100.0F) + "%";
@@ -40,16 +47,24 @@ namespace gnubase::ui
 		// A widget with a number: the attributes value, min (0), max (1), default (min) and step (a hundredth of the
 		// range). Dragging changes the value, up or to the right for more, the wheel and the arrow keys by a step; all
 		// of them ten times finer with Shift. Ctrl-click (Cmd-click on macOS) sets the default. Each change sets the
-		// value attribute and sends a change event with the value as a float.
+		// value attribute and sends a change event with the value as a float and the gesture it belongs to as an
+		// integer: the changes of one drag, of wheel turns until the mouse leaves, of an arrow key until it is released
+		// and a typed value have the same gesture, and the next gesture has a higher one, so that a document can make
+		// each gesture one undo step (history.transaction's merge).
 		class ValueControl : public Rml::Element
 		{
 		public:
 			explicit ValueControl(const Rml::String& tag) : Rml::Element(tag)
 			{
-				AddEventListener(Rml::EventId::Mousescroll, &m_listener);
+				for (const Rml::EventId id : g_gestureEvents)
+					AddEventListener(id, &m_listener);
 			}
 
-			~ValueControl() override { RemoveEventListener(Rml::EventId::Mousescroll, &m_listener); }
+			~ValueControl() override
+			{
+				for (const Rml::EventId id : g_gestureEvents)
+					RemoveEventListener(id, &m_listener);
+			}
 
 			ValueControl(const ValueControl&) = delete;
 			ValueControl& operator=(const ValueControl&) = delete;
@@ -60,7 +75,19 @@ namespace gnubase::ui
 			// has none, and those of its parts.
 			virtual void listen(Rml::Event& event)
 			{
-				if (event.GetId() != Rml::EventId::Mousescroll || !active())
+				// What ends a gesture: a click, the end of a drag, the mouse leaving the widget outside a drag, a
+				// released key.
+				const Rml::EventId kind = event.GetId();
+				if (kind == Rml::EventId::Mousedown || kind == Rml::EventId::Mouseup || kind == Rml::EventId::Dragend ||
+					kind == Rml::EventId::Keyup ||
+					(kind == Rml::EventId::Mouseout && event.GetTargetElement() == this && !m_dragging))
+				{
+					if (kind == Rml::EventId::Dragend)
+						m_dragging = false;
+					endGesture();
+					return;
+				}
+				if (kind != Rml::EventId::Mousescroll || !active())
 					return;
 				change(value() - (event.GetParameter("wheel_delta_y", 0.0F) * step() * fineness(event)));
 				event.StopPropagation(); // the wheel turns the widget, it doesn't scroll what's around it
@@ -80,6 +107,7 @@ namespace gnubase::ui
 					break;
 				case Rml::EventId::Dragstart:
 					m_last = position(event);
+					m_dragging = true;
 					break;
 				case Rml::EventId::Drag:
 				{
@@ -130,10 +158,19 @@ namespace gnubase::ui
 				if (to == value() && HasAttribute("value"))
 					return;
 				SetAttribute("value", format(to));
+				if (!m_gesturing)
+				{
+					m_gesture = ++g_lastGesture;
+					m_gesturing = true;
+				}
 				Rml::Dictionary parameters;
 				parameters["value"] = to;
+				parameters["gesture"] = m_gesture;
 				DispatchEvent(Rml::EventId::Change, parameters);
 			}
+
+			// The next change starts another gesture.
+			void endGesture() { m_gesturing = false; }
 
 			// Whether the user can change it now.
 			virtual bool active() const { return !HasAttribute("disabled"); }
@@ -166,7 +203,10 @@ namespace gnubase::ui
 				return event.GetParameter("shift_key", false) ? g_fine : 1.0F;
 			}
 
-			float m_last = 0.0F; // where the mouse was in the drag
+			float m_last = 0.0F;      // where the mouse was in the drag
+			bool m_dragging = false;  // from dragstart to dragend
+			int m_gesture = 0;        // the gesture of the last change
+			bool m_gesturing = false; // the next change belongs to it
 
 		protected:
 			widgets::Listener m_listener{[this](Rml::Event& event) { listen(event); }};
@@ -250,14 +290,23 @@ namespace gnubase::ui
 			Rml::Element* m_thumb = nullptr;
 		};
 
-		// What a value field hears from its text field.
-		constexpr std::array<Rml::EventId, 2> g_inputEvents = {Rml::EventId::Blur, Rml::EventId::Keydown};
+		// What a value field or a text display hears from its text field: change tells that the user typed.
+		constexpr std::array<Rml::EventId, 3> g_inputEvents = {
+			Rml::EventId::Blur, Rml::EventId::Keydown, Rml::EventId::Change};
+
+		// Whether a change of the text field is typing, rather than the line break that Enter sends without changing
+		// the text.
+		bool typed(const Rml::Event& change)
+		{
+			return !change.GetParameter("linebreak", false);
+		}
 
 		// <valuefield>: the value as text, with the decimals (2) and the unit that its attributes give. Besides
 		// dragging, a double click, or Enter while it has the focus, edits it as text, with the state class .editing:
-		// Enter or leaving the field takes the number typed, Escape keeps the value. With autofocus, it is edited, all
-		// of it selected so that the number typed replaces it, whenever it gets a visible focus: when its document
-		// shows it focused, or Tab moves to it, but not on a click.
+		// Enter or leaving the field takes the number typed, Escape keeps the value, and so does a field nothing was
+		// typed into, so that a value with more decimals than it shows isn't rounded to them. With autofocus, it is
+		// edited, all of it selected so that the number typed replaces it, whenever it gets a visible focus: when its
+		// document shows it focused, or Tab moves to it, but not on a click.
 		class ValueField final : public ValueControl
 		{
 		public:
@@ -295,6 +344,9 @@ namespace gnubase::ui
 				{
 				case Rml::EventId::Blur:
 					finishEditing(true);
+					break;
+				case Rml::EventId::Change:
+					m_typed = m_typed || typed(event);
 					break;
 				case Rml::EventId::Keydown:
 				{
@@ -372,6 +424,7 @@ namespace gnubase::ui
 				m_editing = true;
 				SetClass("editing", true);
 				m_input->SetValue(format(value(), decimals()));
+				m_typed = false; // after SetValue, whose text the text field may clean up with a change
 				m_input->Focus(true);
 				m_input->Select();
 			}
@@ -382,24 +435,29 @@ namespace gnubase::ui
 					return;
 				m_editing = false;
 				SetClass("editing", false);
-				if (take)
+				if (take && m_typed)
 					if (const std::optional<float> typed = parse(m_input->GetValue()))
+					{
+						endGesture(); // a typed value is a gesture of its own
 						change(*typed);
+						endGesture();
+					}
 				if (GetContext() != nullptr && GetContext()->GetFocusElement() == m_input)
 					m_input->Blur(); // the field keeps the focus
 			}
 
 			Rml::Element* m_text = nullptr;
 			Rml::ElementFormControlInput* m_input = nullptr;
-			Rml::String m_started; // the text the field started with
 			bool m_editing = false;
+			bool m_typed = false;   // the user typed while editing, even if the text is the same again
 			bool m_focused = false; // it has autofocus and got a visible focus, and editing hasn't started yet
 		};
 
 		// <textdisplay>: its value attribute as text, drawn like a display, such as a position in a time format. A
 		// double click edits it as text, with the state class .editing: Enter, or leaving the field, sends change with
-		// the text typed as value (a string), for the document to read and set, unless the text is still what the field
-		// started with; Escape keeps the value.
+		// the text typed as value (a string), for the document to read and set, if anything was typed, even the text it
+		// started with (the display may round, or have moved on, such as a position during playback); Escape keeps the
+		// value.
 		class TextDisplay final : public Rml::Element
 		{
 		public:
@@ -433,8 +491,8 @@ namespace gnubase::ui
 				{
 					m_editing = true;
 					SetClass("editing", true);
-					m_started = GetAttribute<Rml::String>("value", "");
-					m_input->SetValue(m_started);
+					m_input->SetValue(GetAttribute<Rml::String>("value", ""));
+					m_typed = false; // after SetValue, whose text the text field may clean up with a change
 					m_input->Focus(true);
 					m_input->Select();
 				}
@@ -454,6 +512,11 @@ namespace gnubase::ui
 				if (event == Rml::EventId::Blur)
 				{
 					finishEditing(true);
+					return;
+				}
+				if (event == Rml::EventId::Change)
+				{
+					m_typed = m_typed || typed(event);
 					return;
 				}
 				// Before the text field, which keeps Enter to itself.
@@ -479,7 +542,7 @@ namespace gnubase::ui
 				SetClass("editing", false);
 				if (GetContext() != nullptr && GetContext()->GetFocusElement() == m_input)
 					m_input->Blur(); // the field keeps the focus
-				if (take && m_input->GetValue() != m_started)
+				if (take && m_typed)
 				{
 					Rml::Dictionary parameters;
 					parameters["value"] = m_input->GetValue();
@@ -490,8 +553,8 @@ namespace gnubase::ui
 			widgets::Listener m_listener{[this](Rml::Event& event) { listen(event); }};
 			Rml::Element* m_text = nullptr;
 			Rml::ElementFormControlInput* m_input = nullptr;
-			Rml::String m_started; // the text the field started with
 			bool m_editing = false;
+			bool m_typed = false; // the user typed while editing, even if the text is the same again
 		};
 
 		// <meter>: a level meter, value and peak in dB between min (-60) and max (6). The level shows the lower part

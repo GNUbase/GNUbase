@@ -74,6 +74,7 @@ namespace gnubase::engine
 			{AutomationTargetType::PanRight, "panRight"},
 			{AutomationTargetType::Instrument, "instrument"},
 			{AutomationTargetType::Plugin, "plugin"},
+			{AutomationTargetType::Mute, "mute"},
 			{AutomationTargetType::Controller, "controller"},
 			{AutomationTargetType::PitchBend, "pitchBend"},
 			{AutomationTargetType::ChannelPressure, "channelPressure"},
@@ -520,8 +521,8 @@ namespace gnubase::engine
 			{"panRight", channel.panRight}, {"panBypass", channel.panBypass},
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
 			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
-			{"recordEnable", channel.recordEnable}, {"mute", channel.mute}, {"solo", channel.solo},
-			{"slots", channel.slots}, {"notes", channel.notes}};
+			{"recordEnable", channel.recordEnable}, {"midiInput", channel.midiInput}, {"mute", channel.mute},
+			{"solo", channel.solo}, {"slots", channel.slots}, {"notes", channel.notes}};
 		json.update(toJson(channel.sections));
 		return json;
 	}
@@ -561,7 +562,13 @@ namespace gnubase::engine
 			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute},
 			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
 			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()},
-			{"color", colorJson(event.color)}};
+			{"color", colorJson(event.color)}, {"part", event.part}};
+	}
+
+	Json toJson(const AudioPart& part)
+	{
+		return {{"id", part.id}, {"track", part.track}, {"name", part.name}, {"position", part.position.value},
+			{"length", part.length}, {"mute", part.mute}, {"lock", part.lock}, {"color", colorJson(part.color)}};
 	}
 
 	Json toJson(const Note& note)
@@ -649,6 +656,7 @@ namespace gnubase::engine
 		case AutomationTargetType::Pan:
 		case AutomationTargetType::PanLeft:
 		case AutomationTargetType::PanRight:
+		case AutomationTargetType::Mute:
 			break;
 		case AutomationTargetType::Instrument:
 			json["parameter"] = target.parameter;
@@ -769,10 +777,11 @@ namespace gnubase::engine
 			{"channels", toJsonArray(project.channels)}, {"slots", toJsonArray(project.slots)},
 			{"media", toJsonArray(project.media)}, {"clips", toJsonArray(project.clips)},
 			{"poolFolders", toJsonArray(project.poolFolders)}, {"audioEvents", toJsonArray(project.audioEvents)},
-			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
-			{"automation", toJsonArray(project.automation)}, {"quantize", midi::toJson(project.quantize)},
-			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
-			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)}};
+			{"audioParts", toJsonArray(project.audioParts)}, {"midiParts", toJsonArray(project.midiParts)},
+			{"markers", toJsonArray(project.markers)}, {"automation", toJsonArray(project.automation)},
+			{"quantize", midi::toJson(project.quantize)}, {"autoQuantize", project.autoQuantize},
+			{"activeMarkerTrack", project.activeMarkerTrack}, {"snap", toJson(project.snap)},
+			{"mixers", mixersJson(project.mixers)}};
 		json.update(toJson(project.setup));
 		return json;
 	}
@@ -984,6 +993,7 @@ namespace gnubase::engine
 				static_cast<uint32_t>(checkedInteger(target, "parameter", UINT32_MAX, name + " target"));
 			lane.target.number = static_cast<uint8_t>(checkedInteger(target, "number", 127, name + " target"));
 			lane.target.channel = static_cast<uint8_t>(checkedInteger(target, "channel", 15, name + " target"));
+			lane.target.slot = target.value("slot", ObjectId{0});
 			const bool midi = track.type == TrackType::Midi || track.type == TrackType::Instrument;
 			bool fits = midi;
 			double minimum = 0.0;
@@ -998,9 +1008,19 @@ namespace gnubase::engine
 				minimum = lane.target.type == AutomationTargetType::Volume ? g_minChannelVolume : -1.0;
 				maximum = lane.target.type == AutomationTargetType::Volume ? project.maxVolume : 1.0;
 				break;
-			case AutomationTargetType::Plugin:
-				fits = false; // plugin parameters are automated with #70
+			case AutomationTargetType::Mute:
+				fits = project.channels.at(track.channel).format != ChannelFormat::None;
+				maximum = 1.0;
 				break;
+			case AutomationTargetType::Plugin:
+			{
+				// A slot of the track's channel; the plugin's range applies when it plays, like an instrument's.
+				const auto slot = project.slots.find(lane.target.slot);
+				fits = slot != project.slots.end() && slot->second.channel == track.channel;
+				minimum = std::numeric_limits<double>::lowest();
+				maximum = std::numeric_limits<double>::max();
+				break;
+			}
 			case AutomationTargetType::Instrument:
 				// The instrument's range applies when it plays; the instrument may have changed since.
 				fits = track.type == TrackType::Instrument;
@@ -1295,10 +1315,14 @@ namespace gnubase::engine
 			// Files from before instrument parameters have none.
 			channel.instrumentParameters = instrumentParametersFromJson(
 				item.value("instrumentParameters", Json::array()), channel.instrument, name);
-			// Only audio tracks have the buttons; files from before them have them off.
-			const bool audio = track != project.trackById.end() && track->second.type == TrackType::Audio;
-			channel.monitor = audio && item.value("monitor", false);
-			channel.recordEnable = audio && item.value("recordEnable", false);
+			// Audio, MIDI and instrument tracks have the buttons; files from before them have them off. MIDI input
+			// other than none is all MIDI inputs, also in files from before it.
+			const TrackType type = track != project.trackById.end() ? track->second.type : TrackType::Folder;
+			const bool midi = type == TrackType::Midi || type == TrackType::Instrument;
+			const bool buttons = type == TrackType::Audio || midi;
+			channel.monitor = buttons && item.value("monitor", false);
+			channel.recordEnable = buttons && item.value("recordEnable", false);
+			channel.midiInput = midi && item.value("midiInput", std::string()) == "none" ? "none" : "all";
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
 			channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none
@@ -1392,8 +1416,27 @@ namespace gnubase::engine
 			if (const Json snapPoint = item.value("snapPoint", Json()); !snapPoint.is_null()) // files from before #87
 				event.snapPoint = snapPoint.get<time::Samples>();
 			event.color = eventColorFrom(item);
+			event.part = item.value("part", ObjectId{0}); // files from before #471 have no audio parts
 			project.audioEvents[event.id] = event;
 		}
+		for (const Json& item : json.value("audioParts", Json::array()))
+		{
+			AudioPart part;
+			part.id = item.at("id").get<ObjectId>();
+			part.track = item.at("track").get<ObjectId>();
+			part.name = item.at("name").get<std::string>();
+			part.position = {base(part.track), item.at("position").get<int64_t>()};
+			part.length = item.at("length").get<int64_t>();
+			part.mute = item.value("mute", false);
+			part.lock = item.value("lock", false);
+			part.color = eventColorFrom(item);
+			project.audioParts[part.id] = part;
+		}
+		// An event in a part that isn't there, or on another track, is an event of its own.
+		for (auto& [id, event] : project.audioEvents)
+			if (const auto part = project.audioParts.find(event.part);
+				part == project.audioParts.end() || part->second.track != event.track)
+				event.part = 0;
 		for (const Json& item : json.at("midiParts"))
 		{
 			MidiPart part;
@@ -1488,6 +1531,9 @@ namespace gnubase::engine
 			see(id);
 		for (const auto& [id, event] : project.audioEvents)
 			see(id);
+		for (const auto& [id, part] : project.audioParts)
+			see(id);
+
 		for (const auto& [id, part] : project.midiParts)
 		{
 			see(id);

@@ -62,7 +62,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 73> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 75> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -100,6 +100,9 @@ namespace gnubase::app
 			{"audio.removeFadeOut", "Removes the fade out of the selected audio events.", nullptr},
 			{"audio.removeFades", "Removes the fades and crossfades of the selected audio events.", nullptr},
 			{"audio.fadeEditor", "Opens the fade dialog for the selected audio events.", nullptr},
+			// Audio parts (docs/features/audio-parts.md).
+			{"audio.eventsToPart", "Puts the selected audio events into an audio part.", nullptr},
+			{"audio.dissolvePart", "Makes the events of the selected audio parts events of their own.", nullptr},
 			{"edit.nudgeLeft", "Moves the selected events left.", "Mod+Left"},
 			{"edit.nudgeRight", "Moves the selected events right.", "Mod+Right"},
 			{"edit.nudgeStartLeft", "Moves the start of the selected events left.", "Alt+Left"},

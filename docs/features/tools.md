@@ -17,7 +17,7 @@ project or undo.
 |---|---|---|---|---|
 | Object Selection (`objectSelection`) | Selects ([parts-and-events.md](parts-and-events.md)) | Moves, copies, resizes; from an empty spot a rectangle that selects what it touches (Ctrl or Shift: adds it) | Adds a part on an empty MIDI lane | pp. 253, 256-270 |
 | Range Selection (`rangeSelection`) | A range of no length there | A range from where it started, across the lanes it passes | The range of the event, or of the gap between two events; with Shift added to the range | pp. 285-287 |
-| Draw (`draw`) | The bar there as an empty MIDI part | An empty MIDI part from where it started, shown while dragging | | p. 250 |
+| Draw (`draw`) | The bar there as an empty part | An empty part from where it started, shown while dragging | | p. 250 |
 | Erase (`erase`) | Deletes the event | | | p. 255 |
 | Split (`split`) | Splits the event there | | | p. 268 |
 | Glue (`glue`) | Glues the event to the next one on its track | | | p. 269 |
@@ -31,7 +31,8 @@ project or undo.
   triangle and square (`setLineMode`, the root's attribute `line-mode`); it draws on automation tracks, which the event
   display shows with #121, and does nothing on parts and events until then. The play tool has the modes play and
   scrub (`setPlayMode`, the root's attribute `play-mode`).
-- **Draw** makes MIDI parts on MIDI and instrument tracks; on audio tracks it waits for audio parts. A drag's ends snap.
+- **Draw** makes MIDI parts on MIDI and instrument tracks and audio parts on audio tracks
+  ([audio-parts.md](audio-parts.md)). A drag's ends snap.
 - **Play** auditions the pressed audio track from where it presses until the mouse is released, past its channel
   and without the transport (`audition.start`, `audition.stop`, [audition.md](audition.md)). In scrub mode the
   press and every move of the drag scrub the track to the mouse's position (`audition.scrub`), forwards or

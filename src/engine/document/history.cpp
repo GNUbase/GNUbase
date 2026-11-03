@@ -120,8 +120,8 @@ namespace gnubase::engine
 	bool ProjectChange::empty() const
 	{
 		return !settingsBefore && tracks.empty() && channels.empty() && slots.empty() && media.empty() &&
-			clips.empty() && poolFolders.empty() && audioEvents.empty() && midiParts.empty() && markers.empty() &&
-			automation.empty();
+			clips.empty() && poolFolders.empty() && audioEvents.empty() && audioParts.empty() && midiParts.empty() &&
+			markers.empty() && automation.empty();
 	}
 
 	ProjectChange difference(const Project& before, const Project& after)
@@ -141,6 +141,7 @@ namespace gnubase::engine
 		change.clips = differences(before.clips, after.clips);
 		change.poolFolders = differences(before.poolFolders, after.poolFolders);
 		change.audioEvents = differences(before.audioEvents, after.audioEvents);
+		change.audioParts = differences(before.audioParts, after.audioParts);
 		change.markers = differences(before.markers, after.markers);
 
 		const MidiPart empty;
@@ -197,6 +198,7 @@ namespace gnubase::engine
 		applyObjects(project.clips, change.clips, direction);
 		applyObjects(project.poolFolders, change.poolFolders, direction);
 		applyObjects(project.audioEvents, change.audioEvents, direction);
+		applyObjects(project.audioParts, change.audioParts, direction);
 		applyObjects(project.markers, change.markers, direction);
 		for (const MidiPartChange& partChange : change.midiParts)
 		{
@@ -255,6 +257,14 @@ namespace gnubase::engine
 	{
 		GNUBASE_ASSERT(m_position < m_steps.size());
 		return m_steps[m_position++];
+	}
+
+	void History::removeLast()
+	{
+		GNUBASE_ASSERT(!m_steps.empty());
+		GNUBASE_ASSERT(m_position == m_steps.size());
+		m_steps.pop_back();
+		m_position = m_steps.size();
 	}
 
 	void History::clear()

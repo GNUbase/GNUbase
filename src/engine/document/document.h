@@ -204,11 +204,15 @@ namespace gnubase::engine
 		// the members above with default values.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::map<uint32_t, double> instrumentParameters = {};
-		// Audio tracks: the monitor and record enable buttons (docs/features/latency-and-monitoring.md).
+		// Audio, MIDI and instrument tracks: the monitor and record enable buttons
+		// (docs/features/latency-and-monitoring.md, docs/features/midi-recording.md).
 		bool monitor = false;
 		bool recordEnable = false;
-		// The mute and solo buttons (docs/features/track-list.md): a muted channel is silent; while any channel is
-		// soloed, only soloed ones, where they play through and what plays into them are heard.
+		// MIDI and instrument tracks: where their MIDI input comes from, "all" (all MIDI inputs) or "none".
+		std::string midiInput = "all";
+		// The mute and solo buttons (docs/features/track-list.md): a muted channel is silent, unless mute automation
+		// plays (docs/features/automation.md); while any channel is soloed, only soloed ones, where they play through
+		// and what plays into them are heard.
 		bool mute = false;
 		bool solo = false;
 		// Audio channels: the plugin slots, from top to bottom; the audio passes through them before the fader.
@@ -358,6 +362,23 @@ namespace gnubase::engine
 		// event: its start.
 		std::optional<time::Samples> snapPoint;
 		std::string color; // "#rrggbb", or empty to follow the track's color
+		// The audio part it is in, on the same track, or 0 for none. It keeps its position on the track: it plays
+		// only where the part is, and moves, splits and goes with the part.
+		ObjectId part = 0;
+	};
+
+	// A container of audio events on an audio track (#471, reference manual p. 250). Its events are the audio events
+	// whose part it is; they play only within it.
+	struct AudioPart
+	{
+		ObjectId id = 0;
+		ObjectId track = 0;
+		std::string name;
+		time::Position position; // in the track's time base
+		int64_t length = 0;      // in the unit of the position's time base: ticks or samples
+		bool mute = false;       // its events don't play
+		bool lock = false;       // event.* commands don't move, resize, split, glue or remove it
+		std::string color;       // "#rrggbb", or empty to follow the track's color
 	};
 
 	inline constexpr double g_minEventVolume = -144.0;
@@ -492,6 +513,7 @@ namespace gnubase::engine
 		Pan,             // the channel's pan, -1 to 1
 		PanLeft,         // the combined panner's position of the left channel, -1 to 1
 		PanRight,        // and of the right channel
+		Mute,            // the channel's mute button: 0 off, 1 on; a step curve
 		Instrument,      // a parameter of the channel's built-in instrument, in its range
 		Plugin,          // a parameter of the plugin in one of the channel's slots, in its range: slot and parameter
 		Controller,      // a MIDI control change: number and channel; 0 to 1
@@ -610,6 +632,7 @@ namespace gnubase::engine
 		std::map<ObjectId, Clip> clips;
 		std::map<ObjectId, PoolFolder> poolFolders;
 		std::map<ObjectId, AudioEvent> audioEvents;
+		std::map<ObjectId, AudioPart> audioParts;
 		std::map<ObjectId, MidiPart> midiParts;
 		std::map<ObjectId, Marker> markers;
 		ObjectId activeMarkerTrack = 0; // the marker track that marker commands use by default, or 0
@@ -683,10 +706,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor, a.recordEnable,
-				   a.mute, a.solo, a.slots, a.notes, a.sections) ==
+				   a.midiInput, a.mute, a.solo, a.slots, a.notes, a.sections) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable,
-				b.mute, b.solo, b.slots, b.notes, b.sections);
+				b.midiInput, b.mute, b.solo, b.slots, b.notes, b.sections);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
@@ -736,9 +759,15 @@ namespace gnubase::engine
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
-				   a.fadeOut, a.crossfade, a.snapPoint, a.color) ==
+				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
-				b.fadeOut, b.crossfade, b.snapPoint, b.color);
+				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part);
+	}
+
+	inline bool operator==(const AudioPart& a, const AudioPart& b)
+	{
+		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.color) ==
+			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.color);
 	}
 
 	inline bool operator==(const NoteTiming& a, const NoteTiming& b)
