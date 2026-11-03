@@ -31,7 +31,7 @@ undo step.
   recorder hands each track that recorded anything to `recording.add` with its takes, notes and controller events in
   project samples. A recording of MIDI tracks only runs `recording.add` at once; with audio tracks, the MIDI tracks
   join the audio recording's `recording.add`, which ends later by the record offset. A cycle recording mixes every
-  lap into one part (the reference's Mix cycle mode, p. 352).
+  lap into one part by default; the MIDI cycle record modes decide otherwise ([cycle-recording.md](cycle-recording.md)).
 - **MIDI record modes** (p. 352). `transport.set` with `midiRecordMode`, which `transport.get` reports and the
   Transport menu's MIDI Record Mode sets: `newParts` (the default) puts the recording into a part of its own from the
   first take's start to the last one's end; `merge` adds it to the first unlocked part on the track that this range
@@ -55,7 +55,7 @@ undo step.
 
 ## Not yet
 
-Choosing a single MIDI input port for a track; the cycle record modes other than Mix (Overwrite, Keep Last, Stacked,
-p. 352), which need lanes; Record in Editor (p. 349); Length Adjustment, Insert Reset Events after Record and the
-latency compensation for live playing (p. 350, p. 1616); the MIDI thru filter and the reference's Record-Enable allows
-MIDI Thru switch; retrospective recording from all MIDI inputs (p. 354) and its menu items; SysEx from the inputs.
+Choosing a single MIDI input port for a track; Record in Editor (p. 349); Length Adjustment, Insert Reset Events
+after Record and the latency compensation for live playing (p. 350, p. 1616); the MIDI thru filter and the
+reference's Record-Enable allows MIDI Thru switch; retrospective recording from all MIDI inputs (p. 354) and its menu
+items; SysEx from the inputs.

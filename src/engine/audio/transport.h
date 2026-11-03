@@ -47,6 +47,20 @@ namespace gnubase::engine
 	// The modes' names, by MidiRecordMode.
 	inline constexpr std::array<const char*, 3> g_midiRecordModes = {"newParts", "merge", "replace"};
 
+	// What a MIDI cycle recording makes of its laps (reference manual pp. 352-353), as recording.add takes it.
+	enum class MidiCycleRecordMode : uint8_t
+	{
+		Mix,        // every lap goes into one part
+		Overwrite,  // input in a lap replaces what the laps before recorded from there to the lap's end
+		KeepLast,   // the last complete lap that recorded anything replaces the others
+		Stacked,    // a part per lap, each on a lane of its own; all but the last are muted
+		MixStacked, // the same, none muted
+	};
+
+	// The modes' names, by MidiCycleRecordMode.
+	inline constexpr std::array<const char*, 5> g_midiCycleRecordModes = {
+		"mix", "overwrite", "keepLast", "stacked", "mixStacked"};
+
 	struct TransportSettings
 	{
 		time::Samples left = 0;  // the left locator
@@ -66,6 +80,7 @@ namespace gnubase::engine
 		bool metronome = false;
 		AudioRecordMode audioRecordMode = AudioRecordMode::KeepHistory;
 		MidiRecordMode midiRecordMode = MidiRecordMode::NewParts;
+		MidiCycleRecordMode midiCycleRecordMode = MidiCycleRecordMode::Mix;
 		// Lock Record (reference manual p. 356): the commands refuse to stop or punch out a recording unless the stop
 		// is confirmed, and recording ignores the automatic punch out.
 		bool lockRecord = false;

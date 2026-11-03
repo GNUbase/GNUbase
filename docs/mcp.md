@@ -1544,7 +1544,7 @@ Result:
 
 Engine command `event.get`. Read-only.
 
-Tells where audio events and parts are, as the info line shows them: for each its kind (audio, audioPart or midi), track, name (an audio event's clip's), start, end and length in project samples, start and end in ticks, mute, lock and its shared copies' group (0: none).
+Tells where audio events and parts are, as the info line shows them: for each its kind (audio, audioPart or midi), track, name (an audio event's clip's), start, end and length in project samples, start and end in ticks, mute, lock, lane and its shared copies' group (0: none).
 
 Arguments:
 
@@ -1634,12 +1634,13 @@ Result:
 
 Engine command `event.set`.
 
-Mutes or unmutes, locks or unlocks and colors audio events and MIDI parts. Muted ones don't play; locked ones can't be moved, resized, split, glued or removed by the event commands. color (#rrggbb) is a color of their own; null makes them follow their track's color again. Returns the events.
+Mutes or unmutes, locks or unlocks and colors audio events and MIDI parts. Muted ones don't play; locked ones can't be moved, resized, split, glued or removed by the event commands. color (#rrggbb) is a color of their own; null makes them follow their track's color again. lane puts them on that lane of their track, from 0, as cycle recordings put their takes (recording.add). Returns the events.
 
 Arguments:
 
 - `color`: string or null
 - `events`: array of integer, required
+- `lane`: integer
 - `lock`: boolean
 - `mute`: boolean
 
@@ -3594,10 +3595,11 @@ Result:
 
 Engine command `recording.add`.
 
-Adds what a recording wrote, as the engine does when a recording ends. Per audio track its file (path) as a media file and clip, and an audio event per take. A take is a run of the file (offset and length in its frames) recorded at position (project samples), such as a cycle lap; a file may start with audio pre-record before its first take. mode, the audio record mode (transport.set), says what happens to the track's unlocked events where the takes overlap them: keepHistory (the default) keeps them, cycleHistoryReplace cuts them out and keeps every take, replace cuts out what each take overlaps, also of the takes before it. Per MIDI or instrument track the takes (position and length) and what was recorded, all in project samples: notes as note.add takes them and controllers as controller.add does, with positions and lengths in project samples. They go into a MIDI part from the first take's start to the last one's end, whole bars with snapToBars, by midiMode, the MIDI record mode: newParts (the default) adds a part of their own; merge adds them to the first unlocked part they overlap, which grows to hold them; replace does too, after it removed the notes that start and the controller events that lie in that range from the unlocked parts it overlaps. With the project's auto quantize (quantize.set) the recorded notes are quantized. One undo step. Announces recording.added with the result: the media files, clips and events added and the MIDI parts recorded into. project, as project.revision reports it, is the project the recording was made in: if another project is open by now, nothing is added and recording.failed is announced. A track that is gone is skipped and announced with recording.failed; the others are added.
+Adds what a recording wrote, as the engine does when a recording ends. Per audio track its file (path) as a media file and clip, and an audio event per take. A take is a run of the file (offset and length in its frames) recorded at position (project samples), such as a cycle lap; a file may start with audio pre-record before its first take. mode, the audio record mode (transport.set), says what happens to the track's unlocked events where the takes overlap them: keepHistory (the default) keeps them, cycleHistoryReplace cuts them out and keeps every take, replace cuts out what each take overlaps, also of the takes before it. With keepHistory and cycleHistoryReplace, the events of a recording of several takes go onto lanes of their own (event.set's lane), one per take from the lane after the highest one that the track's events where they lie are on; the last take plays where they overlap. Per MIDI or instrument track the takes (position and length) and what was recorded, all in project samples: notes as note.add takes them and controllers as controller.add does, with positions and lengths in project samples, and each with take, the index of the take it was recorded in (0 by default). They go into a MIDI part from the first take's start to the last one's end, whole bars with snapToBars, by midiMode, the MIDI record mode: newParts (the default) adds a part of their own; merge adds them to the first unlocked part they overlap, which grows to hold them; replace does too, after it removed the notes that start and the controller events that lie in that range from the unlocked parts it overlaps. cycleMode, the MIDI cycle record mode, says what becomes of the takes: mix (the default) puts them all into the part; overwrite first drops what earlier takes recorded from where a take's first note or controller event lies to that take's end; keepLast keeps only the last complete take that recorded anything (the last take is complete if it ends where an earlier one does), or the last that recorded anything if none is complete; stacked adds a new part per take that recorded anything, each on a lane of its own as for audio, and mutes all of them but the last; mixStacked does too without muting. With the project's auto quantize (quantize.set) the recorded notes are quantized. One undo step. Announces recording.added with the result: the media files, clips and events added and the MIDI parts recorded into. project, as project.revision reports it, is the project the recording was made in: if another project is open by now, nothing is added and recording.failed is announced. A track that is gone is skipped and announced with recording.failed; the others are added.
 
 Arguments:
 
+- `cycleMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked"
 - `midiMode`: one of "newParts" | "merge" | "replace"
 - `mode`: one of "keepHistory" | "cycleHistoryReplace" | "replace"
 - `project`: integer
@@ -3864,6 +3866,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3891,6 +3894,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3924,6 +3928,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3951,6 +3956,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -3982,6 +3988,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -4000,7 +4007,7 @@ Result:
 
 Engine command `transport.set`.
 
-Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started. punchIn: playback that reaches the left locator starts recording there. punchOut: recording that reaches the right locator ends there and playback goes on, or stops with the user setting audio.stopAfterPunchOut, unless it cycles. preRoll and preRollAmount (samples, up to an hour at 768 kHz): playback starts that much before the cursor. postRoll and postRollAmount (the same): after an automatic punch out with audio.stopAfterPunchOut, playback goes on that much longer before it stops. Recording that punches in or out and playback that stops on their own announce transport.changed. metronome is the transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see recording.add): keepHistory (the default), cycleHistoryReplace or replace. midiRecordMode: what a MIDI recording does to the MIDI parts it overlaps (see recording.add): newParts (the default), merge or replace. lockRecord: Lock Record, which keeps a recording from stopping or punching out by accident: transport.stop stops it only with confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at the right locator; it stays on until it is set off.
+Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started. punchIn: playback that reaches the left locator starts recording there. punchOut: recording that reaches the right locator ends there and playback goes on, or stops with the user setting audio.stopAfterPunchOut, unless it cycles. preRoll and preRollAmount (samples, up to an hour at 768 kHz): playback starts that much before the cursor. postRoll and postRollAmount (the same): after an automatic punch out with audio.stopAfterPunchOut, playback goes on that much longer before it stops. Recording that punches in or out and playback that stops on their own announce transport.changed. metronome is the transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see recording.add): keepHistory (the default), cycleHistoryReplace or replace. midiRecordMode: what a MIDI recording does to the MIDI parts it overlaps (see recording.add): newParts (the default), merge or replace. midiCycleRecordMode: what a MIDI cycle recording makes of its laps (see recording.add): mix (the default), overwrite, keepLast, stacked or mixStacked. lockRecord: Lock Record, which keeps a recording from stopping or punching out by accident: transport.stop stops it only with confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at the right locator; it stays on until it is set off.
 
 Arguments:
 
@@ -4009,6 +4016,7 @@ Arguments:
 - `left`: integer or string
 - `lockRecord`: boolean
 - `metronome`: boolean
+- `midiCycleRecordMode`: string
 - `midiRecordMode`: string
 - `postRoll`: boolean
 - `postRollAmount`: integer
@@ -4027,6 +4035,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -4058,6 +4067,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -4089,6 +4099,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
@@ -4116,6 +4127,7 @@ Result:
 - `left`: integer, required
 - `lockRecord`: boolean, required
 - `metronome`: boolean, required
+- `midiCycleRecordMode`: one of "mix" | "overwrite" | "keepLast" | "stacked" | "mixStacked", required
 - `midiRecordMode`: one of "newParts" | "merge" | "replace", required
 - `playing`: boolean, required
 - `position`: integer, required
