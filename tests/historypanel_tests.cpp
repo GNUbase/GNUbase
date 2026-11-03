@@ -558,7 +558,13 @@ TEST_CASE("dragging the edit history's separator follows the wheel and scrolls t
 	REQUIRE(app.waitUntil([&] { return position(app) == wheeled; }));
 	CHECK(historyChanges(listener) == 1);
 
-	// Held still below the list's bottom edge, the mouse scrolls it on over time: the separator reaches the last step.
+	// Held still below the list's bottom edge, the mouse scrolls it on over time: the separator reaches the last step,
+	// and the list goes on to its end, which brings the separator into view.
+	const auto inView = [&app, bottom]
+	{
+		const Json found = elements(app, "#history .history-separator");
+		return found.size() == 1 && boxOf(found[0], "y") + boxOf(found[0], "height") <= bottom;
+	};
 	const auto drag = [&](int to)
 	{
 		const ui::Point start = separator(app).point.value_or(ui::Point{});
@@ -569,6 +575,7 @@ TEST_CASE("dragging the edit history's separator follows the wheel and scrolls t
 	};
 	drag(bottom + 80);
 	REQUIRE(app.waitUntil([&app] { return undoneAfter(app, steps); }));
+	REQUIRE(app.waitUntil(inView));
 	context.ProcessMouseButtonUp(0, 0);
 	REQUIRE(app.waitUntil([&app] { return position(app) == steps; }));
 
