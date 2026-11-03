@@ -81,10 +81,13 @@ namespace gnubase::ui
 		const double own = static_cast<double>((in ? fades.in : fades.out).length) / fades.rate;
 		const double other = static_cast<double>((in ? fades.out : fades.in).length) / fades.rate;
 		const bool dragged = (m_drag == Drag::FadeIn && in) || (m_drag == Drag::FadeOut && !in);
-		if (!dragged || !m_dragMoved || !std::binary_search(m_selection.begin(), m_selection.end(), event))
+		// The pressed event can go during the drag, with an undo or a remote client: then no fade changes.
+		const auto found = m_fades.find(m_dragEvent);
+		if (!dragged || !m_dragMoved || found == m_fades.end() ||
+			!std::binary_search(m_selection.begin(), m_selection.end(), event))
 			return own;
 		// Every selected event gets the fade that the pressed one gets (reference manual p. 384).
-		const AudioFades& pressed = m_fades.at(m_dragEvent);
+		const AudioFades& pressed = found->second;
 		const double from = static_cast<double>((in ? pressed.in : pressed.out).length) / pressed.rate;
 		const double to = from + ((in ? m_dragDx : -m_dragDx) * m_view.scale);
 		return std::clamp(to, 0.0, std::max(0.0, length - other));
@@ -113,7 +116,7 @@ namespace gnubase::ui
 	{
 		const bool in = m_drag == Drag::FadeIn;
 		Json commands = Json::array();
-		for (const uint64_t id : selectedAudio())
+		for (const uint64_t id : m_fades.count(m_dragEvent) != 0 ? selectedAudio() : std::vector<uint64_t>())
 		{
 			const AudioFades& fades = m_fades.at(id);
 			const engine::Fade& other = in ? fades.out : fades.in;
@@ -135,6 +138,7 @@ namespace gnubase::ui
 		if (!alive() || m_fadeLines == nullptr)
 			return;
 		std::vector<FadeLines::Lane> lanes;
+		lanes.reserve(m_laneTracks.size());
 		for (const uint64_t track : m_laneTracks)
 			lanes.push_back({static_cast<float>(trackHeight(track) * m_view.trackZoom), {}, {}});
 		std::map<uint64_t, const Shown*> shown;

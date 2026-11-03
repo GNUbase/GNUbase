@@ -1093,6 +1093,43 @@ TEST_CASE("fade handles at the top corners of audio events drag the selected eve
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 24000 + 9600; }));
 }
 
+TEST_CASE("a fade handle drag ends without changes when the pressed event goes during it", "[unit]")
+{
+	Fixture f;
+	const Json first = f.audioEvents()[0];
+	const auto second =
+		f.call("audioEvent.add",
+			 {{"track", first.at("track")}, {"clip", first.at("clip")}, {"position", 192000}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 2; }));
+	f.display.select({f.event, second});
+	Rml::Context& context = f.window.context();
+	Rml::Element* lanes = f.document.QuerySelector("event-lanes.events");
+	REQUIRE(lanes != nullptr);
+	const auto move = [&context, lanes](double x, double y)
+	{
+		context.ProcessMouseMove(
+			static_cast<int>(lanes->GetAbsoluteLeft() + x), static_cast<int>(lanes->GetAbsoluteTop() + y), 0);
+	};
+
+	// The first event's fade in handle pressed and dragged, then the event removed through the engine.
+	move(200, 3);
+	context.ProcessMouseButtonDown(0, 0);
+	move(210, 3);
+	f.step();
+	f.call("event.remove", {{"events", {f.event}}});
+	REQUIRE(f.waitUntil([&f, second] { return f.display.selection() == std::vector<uint64_t>{second}; }));
+	move(220, 3);
+	f.step();
+	context.ProcessMouseButtonUp(0, 0);
+	f.step();
+	REQUIRE(f.audioEvents().size() == 1);
+	CHECK(fadeLength(f.audioEvents()[0], "fadeIn") == 0);
+	CHECK(fadeLength(f.audioEvents()[0], "fadeOut") == 0);
+}
+
 TEST_CASE("the Fades menu's commands fade to the range, crossfade and remove fades", "[unit]")
 {
 	Fixture f;

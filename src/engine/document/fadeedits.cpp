@@ -239,11 +239,8 @@ namespace gnubase::engine
 				const bool coversEnd = end >= span.end;
 				if (end <= span.start || start >= span.end || (coversStart && coversEnd))
 					continue;
-				const auto frames = [&span, &event](time::Samples samples)
-				{
-					return std::clamp<time::Samples>(
-						std::llround(static_cast<double>(samples) / span.ratio), 0, event.length);
-				};
+				const auto frames = [ratio = span.ratio, length = event.length](time::Samples samples)
+				{ return std::clamp<time::Samples>(std::llround(static_cast<double>(samples) / ratio), 0, length); };
 				Fade in = event.fadeIn;
 				Fade out = event.fadeOut;
 				// Adjust sets only the fades at the edges the range crosses, both when it is inside the event.
@@ -296,11 +293,11 @@ namespace gnubase::engine
 				{
 					const EventSpan& out = row[i - 1].first;
 					const EventSpan& in = row[i].first;
-					AudioEvent& from = *row[i - 1].second;
+					const AudioEvent& from = *row[i - 1].second;
 					AudioEvent& to = *row[i].second;
 					const bool chosen =
 						single ? isGiven(from.id) || isGiven(to.id) : isGiven(from.id) && isGiven(to.id);
-					if (!chosen || !(out.start < in.start && in.start < out.end && out.end <= in.end))
+					if (!chosen || out.start >= in.start || in.start >= out.end || out.end > in.end)
 						continue;
 					if (to.crossfade.from != from.id)
 					{
