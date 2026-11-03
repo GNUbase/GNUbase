@@ -7,11 +7,14 @@
 #include "testutils/fakeui.h"
 #include "testutils/testutils.h"
 #include "ui/cursors.h"
+#include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
+#include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <SDL3/SDL.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -454,4 +457,24 @@ TEST_CASE("a pointer whose picture or manifest can't be read is the OS's arrow",
 	// A manifest that isn't JSON: every pointer is the OS's.
 	write(folder.path() / "cursors.json", "{");
 	CHECK(!ui::Cursors(folder.path()).has("broken"));
+}
+
+TEST_CASE("GNUbase's pointers become SDL cursors, made once, the OS's arrow for none", "[ui]")
+{
+	test::useTestDisplay();
+	ui::SdlWindowSystem windows;
+	ui::Cursors cursors(resources() / "cursors");
+	// Pictures for several scales show the one for the monitor's scale on Windows too.
+	CHECK(SDL_GetHintBoolean(SDL_HINT_MOUSE_DPI_SCALE_CURSORS, false));
+
+	windows.setCursor(cursors.get("tool-draw"));
+	SDL_Cursor* draw = SDL_GetCursor();
+	CHECK(draw != SDL_GetDefaultCursor());
+	windows.setCursor(cursors.get("text")); // one of the OS's
+	CHECK(SDL_GetCursor() != draw);
+	CHECK(SDL_GetCursor() != SDL_GetDefaultCursor());
+	windows.setCursor(cursors.get("tool-draw"));
+	CHECK(SDL_GetCursor() == draw);
+	windows.setCursor(cursors.get(""));
+	CHECK(SDL_GetCursor() == SDL_GetDefaultCursor());
 }
