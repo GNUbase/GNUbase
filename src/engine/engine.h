@@ -120,13 +120,21 @@ namespace gnubase::engine
 		// the project record their own undo step, so call only commands outside the document this way.
 		Json call(const std::string& command, const Json& parameters = Json::object());
 
-		// Leaves the command out of engine.commandLog, and if the engine runs it on its own and it fails, out of the
-		// error log: for a command that the engine runs on its own and that changed nothing, such as a try to open a
-		// lost audio device again, or a due auto save that fails again. Inside another command, the outer one decides.
+		// Leaves the command out of engine.commandLog: for a command that the engine runs on its own and that changed
+		// nothing, such as a try to open a lost audio device again. Inside another command, the outer one decides.
 		void leaveOutOfLog()
 		{
 			if (m_outer == nullptr)
 				m_unlogged = true;
+		}
+
+		// If the command fails, leaves the failure out of engine.commandLog and the error log: for a command that the
+		// engine runs on its own and whose failure was reported already, such as a due auto save that fails again.
+		// Inside another command, the outer one decides.
+		void failQuietly()
+		{
+			if (m_outer == nullptr)
+				m_quietFailure = true;
 		}
 
 	private:
@@ -136,7 +144,8 @@ namespace gnubase::engine
 		CommandContext* m_outer = nullptr;
 		Engine* m_engine = nullptr; // set on the outermost context
 		std::vector<Event> m_events;
-		bool m_unlogged = false; // leaveOutOfLog
+		bool m_unlogged = false;     // leaveOutOfLog
+		bool m_quietFailure = false; // failQuietly
 	};
 
 	using CommandHandler = std::function<Json(CommandContext& context)>;

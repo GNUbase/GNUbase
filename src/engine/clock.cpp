@@ -24,10 +24,9 @@ namespace gnubase::engine
 		GNUBASE_ASSERT(!m_started);
 		if (m_started || m_stopped)
 			return;
-		// Before the thread runs, so that an advance right away already waits for it.
-		m_started = true;
 		m_next = std::chrono::steady_clock::now() + m_offset + period;
 		m_thread = std::thread([this, period, tick = std::move(tick)] { run(period, tick); });
+		m_started = true; // before the thread can lock, so that an advance right away waits for it
 	}
 
 	void Clock::stop()

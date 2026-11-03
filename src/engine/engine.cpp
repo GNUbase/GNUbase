@@ -402,7 +402,7 @@ namespace gnubase::engine
 			result.error = error.what();
 			context.m_events.clear(); // a failed command changes nothing
 		}
-		if (!query && !context.m_unlogged)
+		if (!query && !context.m_unlogged && (result.ok() || !context.m_quietFailure))
 		{
 			Json entry = {{"request", request.id}, {"client", request.sender ? request.sender->name : "engine"},
 				{"command", request.command}, {"parameters", request.parameters}};
@@ -436,7 +436,7 @@ namespace gnubase::engine
 			request.sender->post(std::move(result));
 		else if (request.done)
 			request.done(std::move(result));
-		else if (!result.ok() && !context.m_unlogged)
+		else if (!result.ok() && !context.m_quietFailure)
 			logging::error("{} failed: {}", request.command, result.error);
 	}
 

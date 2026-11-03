@@ -140,6 +140,7 @@ namespace gnubase::engine
 		m_savedRevision = m_revision;
 		m_autoSavedRevision = m_revision;
 		m_lastSave = m_clock->now();
+		m_autoSaveFailed = false; // it may have moved to another folder
 		remember(file);
 		context.emit("project.saved", {{"file", m_file}});
 	}
@@ -245,7 +246,7 @@ namespace gnubase::engine
 				"project.autoSaveInterval minutes have passed since the project was saved, opened or auto saved, or "
 				"an auto save failed. Returns the file, or null if nothing was saved; emits project.autoSaved with "
 				"the file. If it fails, emits project.autoSaveFailed with the file and the error although the "
-				"command fails. A due auto save that fails again, before one succeeded or another project was "
+				"command fails. A due auto save that fails again, before one succeeded or the project was saved or "
 				"opened, stays out of engine.commandLog and the error log.",
 				objectSchema({{"due", booleanSchema}}),
 				objectSchema({{"file", {{"type", {"string", "null"}}}}}, {"file"}), false},
@@ -287,7 +288,7 @@ namespace gnubase::engine
 					// engine.commandLog keep only so much.
 					engine.broadcast("project.autoSaveFailed", {{"file", file.u8string()}, {"error", error.what()}});
 					if (due && m_autoSaveFailed)
-						context.leaveOutOfLog();
+						context.failQuietly();
 					m_autoSaveFailed = true;
 					throw CommandError(error.what());
 				}

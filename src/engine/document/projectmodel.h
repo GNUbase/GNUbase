@@ -150,7 +150,7 @@ namespace gnubase::engine
 		uint64_t m_openedRevision = 0;    // when it was loaded or made: openedRevision
 		const Clock* m_clock = nullptr;   // the engine's, which auto saves go by
 		Clock::TimePoint m_lastSave;      // or auto save, or failed auto save
-		bool m_autoSaveFailed = false;    // the last auto save since the project was opened failed
+		bool m_autoSaveFailed = false;    // the last auto save since the project was saved or opened failed
 		std::filesystem::path m_settingsDirectory; // the user settings' folder, empty without one
 		std::shared_ptr<settings::Store> m_recent; // the recent projects
 		bool m_automationFollowsEvents = false;    // a setting, not part of the project

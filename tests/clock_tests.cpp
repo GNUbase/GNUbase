@@ -15,19 +15,20 @@ TEST_CASE("the clock ticks once for every advance past the period, before advanc
 {
 	Clock clock;
 	std::atomic<int> ticks{0};
-	clock.start(30s, [&ticks] { ++ticks; });
+	// A period far longer than a slow test machine takes between two steps.
+	clock.start(1h, [&ticks] { ++ticks; });
 
-	clock.advance(29s);
+	clock.advance(50min);
 	CHECK(ticks == 0);
-	clock.advance(1s);
+	clock.advance(10min);
 	CHECK(ticks == 1);
-	clock.advance(29s);
+	clock.advance(50min);
 	CHECK(ticks == 1); // the next period started with the tick
-	clock.advance(15min);
+	clock.advance(5h);
 	CHECK(ticks == 2); // one tick however many periods passed, as after a long sleep of the computer
 
 	clock.stop();
-	clock.advance(15min); // nothing waits anymore
+	clock.advance(5h); // nothing waits anymore
 	CHECK(ticks == 2);
 }
 

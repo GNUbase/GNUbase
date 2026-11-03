@@ -43,10 +43,10 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
 - **Failed auto saves**, such as when `Auto Saves` can't be made or the disk is full, count as auto saves for the
   interval, so that they are tried again only after it instead of every 30 seconds. Each one emits
   `project.autoSaveFailed` with the file and the error, although the command fails (`Engine::broadcast`, so the event
-  names no request). A due auto save that fails again, before one succeeded or another project was opened, stays out
-  of `engine.commandLog` and the error log (`CommandContext::leaveOutOfLog`), so that a project that can't be auto
-  saved for days doesn't push the user's own commands out of the log's 256 entries. A client's own `project.autoSave`
-  is always in the log and fails with the reason.
+  names no request). A due auto save that fails again, before one succeeded or the project was saved or opened, stays
+  out of `engine.commandLog` and the error log (`CommandContext::failQuietly`), so that a project that can't be auto
+  saved for days doesn't push the user's own commands out of the log's 256 entries. A client's own failing
+  `project.autoSave` without `due` is always in the log and fails with the reason.
 - **Project folder.** The folder of the project's file. GNUbase puts the media folder `Audio` ([backup.md](backup.md))
   and `Auto Saves` into it; the other folders of the reference (Edits, Images, Track Pictures) come with their
   features.
