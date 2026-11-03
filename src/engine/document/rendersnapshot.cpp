@@ -5,6 +5,7 @@
 #include <cmath>
 #include <map>
 #include <numeric>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -78,11 +79,16 @@ namespace gnubase::engine
 					}
 				}
 			}
+			// Mute automation that plays overrides the mute button (ChannelFader::Mute).
+			std::set<ObjectId> automated;
+			for (const auto& [id, lane] : project.automation)
+				if (lane.target.type == AutomationTargetType::Mute && lane.read && !lane.points.empty())
+					automated.insert(lane.track);
 			for (size_t i = 0; i < count; ++i)
 			{
 				RenderChannel& channel = snapshot.channels[i];
-				channel.silent =
-					!heard[i] || project.channels.at(channel.id).mute || !project.trackById.at(channel.track).enabled;
+				const bool muted = project.channels.at(channel.id).mute && automated.count(channel.track) == 0;
+				channel.silent = !heard[i] || muted || !project.trackById.at(channel.track).enabled;
 			}
 		}
 	}

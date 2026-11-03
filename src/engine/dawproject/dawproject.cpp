@@ -69,12 +69,13 @@ namespace gnubase::engine
 			return false;
 		}
 
-		// Automation lanes DAWproject can describe: the fader and MIDI controllers. Instrument parameters stay in
-		// GNUbase's entry until plugin slots are written as devices (#72).
+		// Automation lanes DAWproject can describe: the fader and MIDI controllers. Instrument and plugin parameters
+		// and mute stay in GNUbase's entry until plugin slots are written as devices (#72).
 		bool exportable(const AutomationTarget& target)
 		{
 			return target.type != AutomationTargetType::Instrument && target.type != AutomationTargetType::Plugin &&
-				target.type != AutomationTargetType::PanLeft && target.type != AutomationTargetType::PanRight;
+				target.type != AutomationTargetType::PanLeft && target.type != AutomationTargetType::PanRight &&
+				target.type != AutomationTargetType::Mute;
 		}
 
 		// The built-in effect a slot's plugin id names, or nullptr.
@@ -614,6 +615,7 @@ namespace gnubase::engine
 				case AutomationTargetType::Plugin:
 				case AutomationTargetType::PanLeft:
 				case AutomationTargetType::PanRight:
+				case AutomationTargetType::Mute:
 					break;
 				}
 				const auto value = [&target](double v)
@@ -1301,6 +1303,7 @@ namespace gnubase::engine
 						break;
 					case AutomationTargetType::Instrument:
 					case AutomationTargetType::Plugin:
+					case AutomationTargetType::Mute:
 					case AutomationTargetType::Controller:
 					case AutomationTargetType::PitchBend:
 					case AutomationTargetType::ChannelPressure:

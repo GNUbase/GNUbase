@@ -98,7 +98,7 @@ TEST_CASE("parameter.list returns a channel's parameters with their ranges, valu
 	std::vector<std::string> types;
 	for (const Json& parameter : parameters)
 		types.push_back(parameter.at("target").at("type").get<std::string>());
-	CHECK(types == std::vector<std::string>{"volume", "pan", "panLeft", "panRight"});
+	CHECK(types == std::vector<std::string>{"volume", "pan", "panLeft", "panRight", "mute"});
 
 	const Json& volume = parameters.at(0);
 	CHECK(volume.at("name") == "Volume");
@@ -110,6 +110,14 @@ TEST_CASE("parameter.list returns a channel's parameters with their ranges, valu
 	CHECK(volume.at("text") == "0.00 dB");
 	CHECK(parameters.at(2).at("value") == -1.0);
 	CHECK(parameters.at(2).at("text") == "-1.00");
+	// Mute is the channel's mute button, a stepped parameter.
+	const Json& mute = parameters.at(4);
+	CHECK(mute.at("stepped") == true);
+	CHECK(mute.at("options") == Json::array({"Off", "On"}));
+	CHECK(mute.at("value") == 0.0);
+	set(client, audio.channel, {{"type", "mute"}}, "value", 1.0);
+	CHECK(get(client, audio.channel, {{"type", "mute"}}).at("text") == "On");
+	set(client, audio.channel, {{"type", "mute"}}, "value", 0.0);
 
 	run(client, "project.set", {{"maxVolume", 12.0}});
 	run(client, "channel.set", {{"channel", audio.channel}, {"volume", -6.0}, {"pan", 0.25}});
@@ -120,13 +128,13 @@ TEST_CASE("parameter.list returns a channel's parameters with their ranges, valu
 	// An instrument track's channel also has its instrument's parameters, with targets automation lanes take.
 	const TestTrack synth = addSynth(client);
 	const Json synthParameters = run(client, "parameter.list", {{"channel", synth.channel}}).at("parameters");
-	REQUIRE(synthParameters.size() == 7);
-	const Json& level = synthParameters.at(4);
+	REQUIRE(synthParameters.size() == 8);
+	const Json& level = synthParameters.at(5);
 	CHECK(level.at("target") == instrumentTarget(processors::TestSynth::Level));
 	CHECK(level.at("name") == "Level");
 	CHECK(level.at("value") == 0.25);
 	CHECK(level.at("text") == "0.25");
-	CHECK(synthParameters.at(5).at("unit") == "s");
+	CHECK(synthParameters.at(6).at("unit") == "s");
 	run(client, "automationLane.add", {{"track", synth.track}, {"target", level.at("target")}});
 
 	// MIDI channels have none: their volume and pan are MIDI controllers (channel.set).
@@ -206,7 +214,7 @@ TEST_CASE("instrument parameters keep their values per channel until the instrum
 
 	// Another instrument, or the same one again, starts at its defaults.
 	run(client, "channel.set", {{"channel", synth.channel}, {"instrument", ""}});
-	CHECK(run(client, "parameter.list", {{"channel", synth.channel}}).at("parameters").size() == 4);
+	CHECK(run(client, "parameter.list", {{"channel", synth.channel}}).at("parameters").size() == 5);
 	CHECK_THAT(reject(client, "parameter.get", {{"channel", synth.channel}, {"target", level}}),
 		ContainsSubstring("instrument"));
 	run(client, "channel.set", {{"channel", synth.channel}, {"instrument", "testSynth"}});
