@@ -137,6 +137,13 @@ namespace gnubase::engine
 			return json.is_null() ? std::string() : json.get<std::string>();
 		}
 
+		// An event's or part's color: files from before #94 have none, and one that isn't #rrggbb follows the track.
+		std::string eventColorFrom(const Json& item)
+		{
+			const Json color = item.value("color", Json());
+			return color.is_string() && isColor(color.get<std::string>()) ? color.get<std::string>() : std::string();
+		}
+
 		Json timingJson(const NoteTiming& timing)
 		{
 			return {{"position", timing.position}, {"length", timing.length},
@@ -492,7 +499,7 @@ namespace gnubase::engine
 		Json json = {{"id", track.id}, {"type", trackTypeName(track.type)}, {"name", track.name},
 			{"color", colorJson(track.color)}, {"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent},
 			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)},
-			{"enabled", track.enabled}};
+			{"enabled", track.enabled}, {"picture", track.picture}};
 		if (track.type == TrackType::Ruler)
 			json["timeFormat"] = track.timeFormat;
 		return json;
@@ -512,7 +519,7 @@ namespace gnubase::engine
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
 			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
 			{"recordEnable", channel.recordEnable}, {"mute", channel.mute}, {"solo", channel.solo},
-			{"slots", channel.slots}};
+			{"slots", channel.slots}, {"notes", channel.notes}};
 	}
 
 	Json toJson(const Slot& slot)
@@ -549,7 +556,8 @@ namespace gnubase::engine
 		return {{"id", event.id}, {"track", event.track}, {"clip", event.clip}, {"position", event.position.value},
 			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute},
 			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
-			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()}};
+			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()},
+			{"color", colorJson(event.color)}};
 	}
 
 	Json toJson(const Note& note)
@@ -616,7 +624,8 @@ namespace gnubase::engine
 	{
 		return {{"id", part.id}, {"track", part.track}, {"name", part.name}, {"position", part.position.value},
 			{"length", part.length}, {"mute", part.mute}, {"lock", part.lock}, {"shared", part.shared},
-			{"notes", toJsonArray(part.notes)}, {"controllers", toJsonArray(part.controllers)}};
+			{"color", colorJson(part.color)}, {"notes", toJsonArray(part.notes)},
+			{"controllers", toJsonArray(part.controllers)}};
 	}
 
 	Json toJson(const Marker& marker)
@@ -680,6 +689,45 @@ namespace gnubase::engine
 			{"points", std::move(list)}};
 	}
 
+	Json toJson(const std::vector<ProjectColor>& colors)
+	{
+		Json json = Json::array();
+		for (const ProjectColor& color : colors)
+			json.push_back({{"name", color.name}, {"color", color.color}});
+		return json;
+	}
+
+	std::vector<ProjectColor> colorsFromJson(const Json& json)
+	{
+		std::vector<ProjectColor> colors;
+		for (const Json& item : json)
+		{
+			ProjectColor color{item.at("name").get<std::string>(), item.at("color").get<std::string>()};
+			if (!isColor(color.color))
+				throw std::invalid_argument("color " + color.color + " isn't #rrggbb");
+			colors.push_back(std::move(color));
+		}
+		if (colors.empty())
+			throw std::invalid_argument("a color set has at least one color");
+		return colors;
+	}
+
+	Json toJson(const MixerView& view)
+	{
+		return {{"hidden", view.hidden}, {"hiddenTypes", view.hiddenTypes}};
+	}
+
+	namespace
+	{
+		Json mixersJson(const std::map<std::string, MixerView>& mixers)
+		{
+			Json json = Json::object();
+			for (const auto& [name, view] : mixers)
+				json[name] = toJson(view);
+			return json;
+		}
+	}
+
 	Json toJson(const Project& project)
 	{
 		Json busses = Json::array();
@@ -697,14 +745,15 @@ namespace gnubase::engine
 				{"denominator", change.signature.denominator}});
 		Json json = {{"name", project.name}, {"sampleRate", project.sampleRate}, {"tempo", tempo},
 			{"signatures", signatures}, {"autoFades", toJson(project.autoFades)},
-			{"panLaw", panLawName(project.panLaw)}, {"maxVolume", project.maxVolume}, {"busses", busses},
-			{"tracks", tracks}, {"channels", toJsonArray(project.channels)}, {"slots", toJsonArray(project.slots)},
+			{"panLaw", panLawName(project.panLaw)}, {"maxVolume", project.maxVolume},
+			{"colors", toJson(project.colors)}, {"busses", busses}, {"tracks", tracks},
+			{"channels", toJsonArray(project.channels)}, {"slots", toJsonArray(project.slots)},
 			{"media", toJsonArray(project.media)}, {"clips", toJsonArray(project.clips)},
 			{"poolFolders", toJsonArray(project.poolFolders)}, {"audioEvents", toJsonArray(project.audioEvents)},
 			{"midiParts", toJsonArray(project.midiParts)}, {"markers", toJsonArray(project.markers)},
 			{"automation", toJsonArray(project.automation)}, {"quantize", midi::toJson(project.quantize)},
 			{"autoQuantize", project.autoQuantize}, {"activeMarkerTrack", project.activeMarkerTrack},
-			{"snap", toJson(project.snap)}};
+			{"snap", toJson(project.snap)}, {"mixers", mixersJson(project.mixers)}};
 		json.update(toJson(project.setup));
 		return json;
 	}
@@ -994,6 +1043,8 @@ namespace gnubase::engine
 		project.maxVolume = json.value("maxVolume", 6.0);
 		if (project.maxVolume != 6.0 && project.maxVolume != 12.0)
 			throw std::invalid_argument("maxVolume must be 6 or 12");
+		if (json.contains("colors")) // files from before #94 have the factory colors
+			project.colors = colorsFromJson(json.at("colors"));
 		// Files from before the project setup have its defaults.
 		project.setup = projectSetupFromJson(json);
 
@@ -1025,6 +1076,7 @@ namespace gnubase::engine
 			track.channel = item.at("channel").get<ObjectId>();
 			// Files from before disabled tracks have every track enabled; only some types can be disabled.
 			track.enabled = !canDisable(track.type) || item.value("enabled", true);
+			track.picture = item.value("picture", std::string()); // files from before #106 have none
 			if (const Json autoFades = item.value("autoFades", Json()); !autoFades.is_null())
 				track.autoFades = autoFadesFromJson(autoFades);
 			if (track.type == TrackType::Ruler)
@@ -1073,6 +1125,7 @@ namespace gnubase::engine
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
 			channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none
+			channel.notes = item.value("notes", std::string());           // files from before #89 have none
 			project.channels[id] = std::move(channel);
 		}
 		// Every slot is in the list of its channel, which has audio, once, and no channel lists more than it may.
@@ -1160,6 +1213,7 @@ namespace gnubase::engine
 			event.crossfade = crossfadeFrom(item.value("crossfade", Json()));
 			if (const Json snapPoint = item.value("snapPoint", Json()); !snapPoint.is_null()) // files from before #87
 				event.snapPoint = snapPoint.get<time::Samples>();
+			event.color = eventColorFrom(item);
 			project.audioEvents[event.id] = event;
 		}
 		for (const Json& item : json.at("midiParts"))
@@ -1173,6 +1227,7 @@ namespace gnubase::engine
 			part.mute = item.value("mute", false);
 			part.lock = item.value("lock", false);
 			part.shared = item.value("shared", ObjectId{0});
+			part.color = eventColorFrom(item);
 			for (const Json& n : item.at("notes"))
 			{
 				Note note;
@@ -1231,6 +1286,10 @@ namespace gnubase::engine
 			project.quantize = midi::quantizeSettingsFromJson(json.at("quantize"));
 		project.autoQuantize = json.value("autoQuantize", false);
 		project.snap = snapSettingsFrom(json.value("snap", Json::object()), SnapSettings(), true); // before #87: none
+		const Json mixers = json.value("mixers", Json::object()); // files from before #106 have none
+		for (const auto& [name, view] : mixers.items())
+			project.mixers[name] = {
+				view.value("hidden", std::vector<ObjectId>()), view.value("hiddenTypes", std::vector<std::string>())};
 
 		// Without a counter, ids continue after the highest one.
 		ObjectId highest = 0;

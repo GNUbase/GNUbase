@@ -347,6 +347,52 @@ TEST_CASE("each time format keeps a grid type of its own, and the snap grid is t
 	CHECK(f.call("snap.get") == before);
 }
 
+// The ruler follows the project setup's time format (#78, reference manual p. 69); the engine switches the snap
+// format with it, so snapping doesn't depend on a UI being open.
+TEST_CASE("a new project time format is the snap format, also after undo and redo", "[unit]")
+{
+	Fixture f;
+	std::mutex mutex;
+	std::vector<Json> changes;
+	const engine::Listener listener(f.engine,
+		[&](const engine::Event& event)
+		{
+			const std::scoped_lock lock(mutex);
+			if (event.name == "snap.changed")
+				changes.push_back(event.data);
+		});
+	auto changed = [&]
+	{
+		const std::scoped_lock lock(mutex);
+		return changes.size();
+	};
+	f.call("project.set", {{"timeFormat", "seconds"}});
+	CHECK(f.call("snap.get").at("format") == "seconds");
+	CHECK(f.call("snap.get").at("grid") == "100ms");
+	CHECK(changed() == 1);
+	// A format of its own right after it stays.
+	f.call("snap.set", {{"format", "barsBeats"}});
+	CHECK(f.call("snap.get").at("format") == "barsBeats");
+	// Other project settings, and the same time format again, leave the snap format alone.
+	f.call("project.set", {{"length", 120.0}, {"timeFormat", "seconds"}});
+	CHECK(f.call("snap.get").at("format") == "barsBeats");
+	CHECK(changed() == 2);
+	// Undo and redo change the time format back and forth, and the snap format with it.
+	f.call("history.undo"); // the length
+	CHECK(f.call("snap.get").at("format") == "barsBeats");
+	f.call("history.undo"); // the time format
+	CHECK(f.call("project.get").at("timeFormat") == "barsBeats");
+	CHECK(f.call("snap.get").at("format") == "barsBeats");
+	f.call("history.redo");
+	CHECK(f.call("snap.get").at("format") == "seconds");
+	CHECK(changed() == 3);
+	f.call("project.set", {{"timeFormat", "timecode"}});
+	f.call("snap.set", {{"format", "samples"}});
+	f.call("history.undo");
+	CHECK(f.call("snap.get").at("format") == "seconds");
+	CHECK(changed() == 6);
+}
+
 TEST_CASE("snap settings from before #413 take the format of their grid type", "[unit]")
 {
 	// The names are the ruler's.

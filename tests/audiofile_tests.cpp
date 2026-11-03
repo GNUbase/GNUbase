@@ -111,6 +111,8 @@ TEST_CASE("every writable format reads back through an independent decoder", "[i
 		{AudioFormat::Wav, SampleFormat::Int24, 3, 96000, 1.0f / 8388608.0f},
 		{AudioFormat::Wav, SampleFormat::Int32, 1, 44100, 1e-6f},
 		{AudioFormat::Wav, SampleFormat::Float32, 6, 48000, 0.0f},
+		{AudioFormat::Wav, SampleFormat::Float64, 2, 48000, 0.0f},
+		{AudioFormat::Wav, SampleFormat::Float64, 3, 44100, 0.0f}, // WAVE_FORMAT_EXTENSIBLE
 		{AudioFormat::Aiff, SampleFormat::Int16, 2, 44100, 1.0f / 32768.0f},
 		{AudioFormat::Aiff, SampleFormat::Int24, 1, 96000, 1.0f / 8388608.0f},
 		{AudioFormat::Aiff, SampleFormat::Int32, 2, 88200, 1e-6f},
@@ -316,7 +318,9 @@ TEST_CASE("formats and sample formats that can't be written are rejected", "[int
 		CHECK_THROWS_AS(AudioFileWriter::create(path, options), AudioFileError);
 	};
 	reject(AudioFormat::Aiff, SampleFormat::Float32);
+	reject(AudioFormat::Aiff, SampleFormat::Float64);
 	reject(AudioFormat::Flac, SampleFormat::Float32);
+	reject(AudioFormat::Flac, SampleFormat::Float64);
 	reject(AudioFormat::Flac, SampleFormat::Int32);
 	reject(AudioFormat::OggVorbis, SampleFormat::Int16);
 	reject(AudioFormat::Mp3, SampleFormat::Int16);

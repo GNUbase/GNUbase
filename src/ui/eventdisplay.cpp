@@ -116,9 +116,6 @@ namespace gnubase::ui
 					requestProject();
 					requestMarkers();
 				}));
-		// A new project opens with its own ruler format, not one followed from the project before.
-		m_subscriptions.push_back(
-			m_binding.on("project.reset", [this](const engine::Event&) { m_projectFormat.clear(); }));
 		m_subscriptions.push_back(
 			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
 		m_subscriptions.push_back(m_binding.on("snap.changed",
@@ -274,7 +271,8 @@ namespace gnubase::ui
 		std::map<uint64_t, size_t> lanes;
 		std::map<uint64_t, bool> linear;
 		std::map<uint64_t, uint64_t> parents;
-		std::set<uint64_t> folded; // folders whose tracks are hidden
+		std::set<uint64_t> folded;           // folders whose tracks are hidden
+		std::map<uint64_t, uint32_t> colors; // each track's color, 0 for the default
 		m_tracks.clear();
 		m_laneTracks.clear();
 		m_laneTypes.clear();
@@ -285,6 +283,7 @@ namespace gnubase::ui
 			const auto id = track.at("id").get<uint64_t>();
 			linear[id] = track.at("timeBase") == "linear";
 			parents[id] = track.at("parent").get<uint64_t>();
+			colors[id] = track.at("color").is_string() ? spanColor(track.at("color").get<std::string>()) : 0;
 			if (m_hidden.count(id) != 0)
 			{
 				folded.insert(parents[id]);
@@ -309,14 +308,18 @@ namespace gnubase::ui
 		const auto addEvent = [&](const Json& event, double start, double end)
 		{
 			const auto track = event.at("track").get<uint64_t>();
+			// Its own color, or else its track's (reference manual p. 114).
+			const Json& own = event.at("color");
+			TimeSpan span{start, end - start};
+			span.color = own.is_string() ? spanColor(own.get<std::string>()) : colors[track];
 			// The folders around the track show it as a data block.
 			for (uint64_t folder = parents[track]; folder != 0; folder = parents[folder])
 				if (const auto lane = lanes.find(folder); lane != lanes.end() &&
 					(m_folderMode == "always" || (m_folderMode == "hideWhenExpanded" && folded.count(folder) != 0)))
-					m_folderData[lane->second].events.push_back({start, end - start});
+					m_folderData[lane->second].events.push_back(span);
 			if (lanes.count(track) == 0)
 				return;
-			m_tracks[lanes[track]].events.push_back({start, end - start});
+			m_tracks[lanes[track]].events.push_back(span);
 			m_events.push_back(
 				{event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false), std::nullopt});
 			m_end = std::max(m_end, end);
@@ -362,22 +365,9 @@ namespace gnubase::ui
 		setLanes();
 		showSelection();
 		m_length = project.value("length", g_defaultProjectLength);
-		// The ruler shows the snap settings' format, which the project keeps (#413), so a project opens with it. When
-		// the project setup's time format changes, the ruler follows it (reference manual p. 69); its menu picks
-		// another one of its own.
-		const std::string projectFormat = project.value("timeFormat", std::string());
-		const bool opened = m_projectFormat.empty();
-		std::optional<TimeFormat> follow;
-		if (projectFormat != m_projectFormat)
-		{
-			m_projectFormat = projectFormat;
-			if (!opened)
-				follow = timeFormatFromName(projectFormat);
-		}
-		if (follow)
-			setRulerFormat(*follow);
-		else
-			showRuler(); // the tempo, signatures, frame rate or start time may have changed
+		// The ruler shows the snap settings' format (#413), which the project keeps and the engine switches when the
+		// project setup's time format changes (reference manual p. 69).
+		showRuler(); // the tempo, signatures, frame rate or start time may have changed
 		setCursor(m_cursorSample);
 		apply();
 	}
@@ -951,7 +941,7 @@ namespace gnubase::ui
 		case Drag::DrawPart:
 		case Drag::Play:
 		case Drag::Click:
-			areaMove(dx, dy);
+			areaMove(dx, dy, restricts(event));
 			return;
 		case Drag::None:
 			return;

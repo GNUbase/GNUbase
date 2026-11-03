@@ -43,6 +43,10 @@ namespace gnubase::engine
 	Fade fadeFromJson(const Json& json, const Fade& fallback = {});
 	AutoFades autoFadesFromJson(const Json& json, const AutoFades& fallback = {});
 
+	// A color set as an array of {name, color}, and back: at least one color, each #rrggbb, or std::invalid_argument.
+	Json toJson(const std::vector<ProjectColor>& colors);
+	std::vector<ProjectColor> colorsFromJson(const Json& json);
+
 	// The project setup's settings, which project.get has at its top level. projectSetupFromJson changes those the
 	// JSON has, and throws std::invalid_argument for unknown names and values that don't go together (see
 	// projectSetupProblem).
@@ -78,6 +82,7 @@ namespace gnubase::engine
 	Json toJson(const AutomationTarget& target);
 	Json toJson(const AutomationPoint& point);
 	Json toJson(const AutomationLane& lane); // with its points, sorted by position
+	Json toJson(const MixerView& view);      // {"hidden": [ids], "hiddenTypes": [types]}
 
 	// The whole project, with the tracks from top to bottom. The id counter is left out: undo doesn't restore it,
 	// so that ids stay unique.

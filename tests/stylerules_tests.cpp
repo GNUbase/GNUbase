@@ -27,11 +27,14 @@ namespace
 	}
 
 	// The color properties a file may set to colors that are user data: background-color only, and only where the
-	// color is the data itself, such as the color picker's field (its hue) and swatches. Track and event colors come
-	// with #94.
+	// color is the data itself: the color picker's field (its hue) and swatches, the track list's track colors, and
+	// the swatches of the project's color set in the color menu and the project colors setup dialog (#94). Event
+	// colors are data that <event-lanes> draws (docs/features/canvas.md), not a style property.
 	std::set<std::string> dataColors(const std::filesystem::path& file)
 	{
-		if (file.filename() == "colorwidgets.cpp")
+		static const std::set<std::string> files = {
+			"colorwidgets.cpp", "colormenu.cpp", "project-colors.rml", "tracklist.cpp"};
+		if (files.count(file.filename().string()) != 0)
 			return {"background-color"};
 		return {};
 	}
@@ -153,7 +156,8 @@ TEST_CASE("the style check finds code that sets a style property, but allows geo
 TEST_CASE("GNUbase's C++ and Lua code style elements through classes, never through style properties", "[unit]")
 {
 	std::vector<std::filesystem::path> code = files(sourceTree() / "src", {".cpp", ".h", ".lua"});
-	for (const std::filesystem::path& file : files(sourceTree() / "resources", {".lua"}))
+	// Documents have Lua in their scripts and event handlers.
+	for (const std::filesystem::path& file : files(sourceTree() / "resources", {".lua", ".rml"}))
 		code.push_back(file);
 	for (const std::filesystem::path& file : files(sourceTree() / "tests" / "lua", {".lua"}))
 		code.push_back(file);

@@ -30,6 +30,7 @@ namespace gnubase::engine
 		Int24,
 		Int32,
 		Float32,
+		Float64, // WAV only
 	};
 
 	// The Broadcast Wave description chunk ("bext", EBU Tech 3285).

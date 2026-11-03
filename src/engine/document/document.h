@@ -111,6 +111,9 @@ namespace gnubase::engine
 		// Audio channels: the plugin slots, from top to bottom; the audio passes through them before the fader.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		std::vector<ObjectId> slots = {};
+		// The notepad (reference manual p. 168): the user's notes on the channel, in the inspector and the mixer.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		std::string notes = {};
 	};
 
 	// A channel has at most this many plugin slots (reference manual p. 544).
@@ -247,6 +250,7 @@ namespace gnubase::engine
 		// Where in the clip (its sample frames) the event snaps (reference manual p. 105); none, or outside the
 		// event: its start.
 		std::optional<time::Samples> snapPoint;
+		std::string color; // "#rrggbb", or empty to follow the track's color
 	};
 
 	inline constexpr double g_minEventVolume = -144.0;
@@ -324,6 +328,7 @@ namespace gnubase::engine
 		// Shared copies (docs/features/parts-and-events.md) have the same id here and the same notes and controllers,
 		// with the same ids: a change to one goes to the others. 0: not shared.
 		ObjectId shared = 0;
+		std::string color; // "#rrggbb", or empty to follow the track's color
 		std::map<ObjectId, Note> notes;
 		std::map<ObjectId, Controller> controllers;
 	};
@@ -341,6 +346,10 @@ namespace gnubase::engine
 		std::optional<AutoFades> autoFades; // audio tracks: settings of their own instead of the project's
 		std::string timeFormat;             // ruler tracks: one of g_rulerTimeFormats
 		bool enabled = true; // audio, instrument and MIDI tracks: a disabled one plays nothing and is silent
+		// An image file that the mixer shows on the track's channel (#106), or empty. The initializer lets Track{...}
+		// leave it out, as for Channel::instrumentParameters.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see above
+		std::string picture = {};
 	};
 
 	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
@@ -422,6 +431,31 @@ namespace gnubase::engine
 		std::map<ObjectId, AutomationPoint> points;
 	};
 
+	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
+	struct ProjectColor
+	{
+		std::string name;
+		std::string color; // "#rrggbb"
+	};
+
+	// The color set of new projects.
+	std::vector<ProjectColor> factoryColors();
+
+	// Whether text is a color as "#rrggbb".
+	bool isColor(const std::string& text);
+
+	// The channel types a mixer's filter shows or hides (reference manual p. 454): input and output busses, and the
+	// channels of audio, instrument, MIDI, group and effect tracks; folders' group channels are group channels.
+	inline constexpr std::array<const char*, 7> g_mixerChannelTypes = {
+		"input", "audio", "instrument", "midi", "group", "effect", "output"};
+
+	// What a mixer hides (#106, docs/features/mixer-window.md): channels and busses by id, and channel types.
+	struct MixerView
+	{
+		std::vector<ObjectId> hidden;
+		std::vector<std::string> hiddenTypes; // from g_mixerChannelTypes
+	};
+
 	// The record file types and bit depths of the project setup (reference manual pp. 129-130), as the engine API
 	// names them. Recording (#96) writes its files in them.
 	inline constexpr std::array<const char*, 4> g_recordFileTypes = {"wav", "broadcastWav", "aiff", "flac"};
@@ -449,7 +483,8 @@ namespace gnubase::engine
 		time::SignatureMap signatures;
 		AutoFades autoFades; // for audio tracks without settings of their own
 		PanLaw panLaw = PanLaw::Minus3;
-		double maxVolume = 6.0; // the top of the faders, in dB: 6 or 12
+		double maxVolume = 6.0;                             // the top of the faders, in dB: 6 or 12
+		std::vector<ProjectColor> colors = factoryColors(); // at least one
 		ProjectSetup setup;
 		ObjectId nextId = 1;
 
@@ -473,6 +508,11 @@ namespace gnubase::engine
 		bool autoQuantize = false;
 		// Snap and grid (#87): settings, not part of undo.
 		SnapSettings snap;
+		// The color last given to events or parts, for editing.autoTrackColor's lastApplied: not part of undo or the
+		// file.
+		std::string lastAppliedColor;
+		// What each mixer hides (#106), by mixer: lower, window1 to window4. Settings, not part of undo.
+		std::map<std::string, MixerView> mixers;
 
 		ObjectId newId() { return nextId++; }
 
@@ -524,10 +564,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor, a.recordEnable,
-				   a.mute, a.solo, a.slots) ==
+				   a.mute, a.solo, a.slots, a.notes) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable,
-				b.mute, b.solo, b.slots);
+				b.mute, b.solo, b.slots, b.notes);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
@@ -577,9 +617,9 @@ namespace gnubase::engine
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
-				   a.fadeOut, a.crossfade, a.snapPoint) ==
+				   a.fadeOut, a.crossfade, a.snapPoint, a.color) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
-				b.fadeOut, b.crossfade, b.snapPoint);
+				b.fadeOut, b.crossfade, b.snapPoint, b.color);
 	}
 
 	inline bool operator==(const NoteTiming& a, const NoteTiming& b)
@@ -607,8 +647,13 @@ namespace gnubase::engine
 	// A MIDI part's own properties, without its notes and controllers.
 	inline bool sameProperties(const MidiPart& a, const MidiPart& b)
 	{
-		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared) ==
-			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared);
+		return std::tie(a.id, a.track, a.name, a.position, a.length, a.mute, a.lock, a.shared, a.color) ==
+			std::tie(b.id, b.track, b.name, b.position, b.length, b.mute, b.lock, b.shared, b.color);
+	}
+
+	inline bool operator==(const ProjectColor& a, const ProjectColor& b)
+	{
+		return std::tie(a.name, a.color) == std::tie(b.name, b.color);
 	}
 
 	inline bool operator==(const Marker& a, const Marker& b)
@@ -638,9 +683,9 @@ namespace gnubase::engine
 	inline bool operator==(const Track& a, const Track& b)
 	{
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled) ==
+				   a.timeFormat, a.enabled, a.picture) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled);
+				b.timeFormat, b.enabled, b.picture);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

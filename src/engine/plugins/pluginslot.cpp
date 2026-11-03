@@ -300,6 +300,8 @@ namespace gnubase::engine::plugins
 			converted = plugin::TransportSegment{};
 			converted.offset = segment.offset;
 			converted.transport.flags = plugin::Transport::Playing;
+			if (segment.recording)
+				converted.transport.flags |= plugin::Transport::Recording;
 			converted.transport.position = segment.position;
 		}
 		return count;

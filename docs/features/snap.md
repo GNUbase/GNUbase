@@ -21,8 +21,11 @@ format too; without one (as before #413) it switches to the grid type's format, 
 `userFrames` is in use. Settings saved before #413 have only `grid`, and load with its format; older builds read
 `grid`, the grid in use. A project from a newer build with a snap type, time format or grid type this build doesn't
 know loads with what it knows; those are left out (and not saved again). The grid follows the project window's
-ruler, which the project keeps; the transport's time displays have formats of their own (`ui.timeFormats`), so the
-ruler and the primary time display can differ.
+ruler, which the project keeps. Two things set `format`: the ruler's time format menu (`snap.set`), and a new time
+format in the project setup (`project.set {timeFormat}`, #78, p. 69), which the engine makes the snap format in the
+same command, and again on undo and redo of it, emitting `snap.changed`; the ruler follows. So snapping is the same
+with and without a UI, and a `snap.set {format}` right after it stays. The transport's time displays have formats of
+their own (`ui.timeFormats`), so the ruler and the primary time display can differ.
 
 | Snap type | A position goes to | Reference |
 |---|---|---|
@@ -94,7 +97,8 @@ Not yet: grid lines and snap point lines in the event display, the editors' own 
   and on a linear grid; `snap.get` and `snap.set` saved with the project and not undone; `snap.position` with event
   edges, markers, snap points, the cursor, the zoom's note value, the frame rate and grid relative; a grid type per
   time format, switching formats, grid types of another format refused or choosing their format, and settings from
-  before #413; snap points set and
+  before #413; a new project time format switching the snap format, also on undo and redo, and a format set after
+  it staying; snap points set and
   refused; shuffling forwards, backwards, to the end and to the front, its errors and a locked neighbour; splitting
   and resizing at zero crossings of a real file, not when sizing moves the contents or the file is missing; a split
   near an event's start still splits it, and one just outside an event leaves it alone.

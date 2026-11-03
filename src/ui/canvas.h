@@ -30,9 +30,15 @@ namespace gnubase::ui
 	{
 		double start = 0.0;
 		double length = 0.0;
+		// <event-lanes>: a color that is user data, such as an event's or its track's color (#94), as 0xRRGGBBAA,
+		// drawn instead of the style sheet's color; 0 for the style sheet's.
+		uint32_t color = 0;
 
 		double end() const { return start + length; }
 	};
+
+	// A color as "#rrggbb" for TimeSpan::color: opaque, or 0 if it isn't one.
+	uint32_t spanColor(const std::string& text);
 
 	// Base of the canvas elements. The attributes start (the timeline position at the left edge, default 0) and scale
 	// (units per dp, default 1) are the time axis, scroll-top (dp, default 0) scrolls vertically. Geometry is built
@@ -102,7 +108,7 @@ namespace gnubase::ui
 	};
 
 	// <event-lanes>: rows of rectangles, such as the events of tracks or the notes of a key editor (one lane per
-	// pitch). Fills them with color, outlined by stroke-color.
+	// pitch). Fills them with color, or with their own color if they have one, outlined by stroke-color.
 	class EventLanes final : public Canvas
 	{
 	public:

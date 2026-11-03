@@ -898,10 +898,11 @@ TEST_CASE("minimized files at another sample rate play sample for sample the sam
 	CHECK(render(client, frames) == played);
 }
 
-TEST_CASE("minimizing copies 32-bit integer and Broadcast Wave files whole", "[integration]")
+TEST_CASE("minimizing copies 32-bit integer, 64-bit float and Broadcast Wave files whole", "[integration]")
 {
 	const test::TempDir dir;
 	writeNoise(dir.path() / "int32.wav", 96000, 2, 1, SampleFormat::Int32);
+	writeNoise(dir.path() / "float64.wav", 96000, 2, 4, SampleFormat::Float64);
 	WriteOptions broadcast;
 	broadcast.broadcast = BroadcastInfo{};
 	broadcast.broadcast->description = "Take 1";
@@ -909,20 +910,22 @@ TEST_CASE("minimizing copies 32-bit integer and Broadcast Wave files whole", "[i
 	writeNoise(dir.path() / "bwf.wav", 96000, broadcast, 2);
 	writeNoise(dir.path() / "plain.wav", 96000, 2, 3);
 	Song song;
-	for (const char* name : {"int32.wav", "bwf.wav", "plain.wav"})
+	for (const char* name : {"int32.wav", "float64.wav", "bwf.wav", "plain.wav"})
 		song.addEvent(song.addClip(song.addMedia(dir.path() / name)), 0, 50000, 1000);
 
 	const fs::path folder = dir.path() / "backup";
 	const Json result = backup(song.client, {{"folder", utf8(folder)}, {"minimize", true}, {"handles", 0.01}});
 	CHECK(sameFiles(folder / "Audio" / "int32.wav", dir.path() / "int32.wav"));
+	CHECK(sameFiles(folder / "Audio" / "float64.wav", dir.path() / "float64.wav"));
 	CHECK(sameFiles(folder / "Audio" / "bwf.wav", dir.path() / "bwf.wav"));
 	CHECK(framesOf(utf8(folder / "Audio" / "plain.wav")) == 1960);
 	Engine engine;
 	Client client(engine);
 	run(client, "project.load", {{"path", result.at("file").get<std::string>()}});
 	const Json events = run(client, "project.get").at("audioEvents");
-	REQUIRE(events.size() == 3);
+	REQUIRE(events.size() == 4);
 	CHECK(events[0].at("offset") == 50000);
 	CHECK(events[1].at("offset") == 50000);
-	CHECK(events[2].at("offset") == 480);
+	CHECK(events[2].at("offset") == 50000);
+	CHECK(events[3].at("offset") == 480);
 }

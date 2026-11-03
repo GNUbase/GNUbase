@@ -49,6 +49,7 @@ attributes show the view to MCP's `ui_dom`.
   scrolls before the project start.
 - **Live reload** loads `project.rml` again without the display in it; reopen the app.
 - **Markers** draw into the event area, with lanes of their own, through `onViewChanged` ([markers.md](markers.md)).
+- **Colors.** Events and parts show their own color, or else their track's ([colors.md](colors.md)).
 
 ## Ruler and time formats
 
@@ -70,7 +71,8 @@ project keeps it ([snap.md](snap.md)). `ui::rulerScale` puts labels at least the
 document) and a right click anywhere in the ruler open it, with Bars+Beats, Seconds, Timecode, Samples and fps (User);
 the ruler's format is checked. The ruler's time formats follow the reference's (p. 69). The ruler's format is the
 snap settings' `format`, which the project keeps, so a project opens with it ([snap.md](snap.md)); when the project
-setup's time format changes, the ruler follows it, and the menu picks one of the ruler's own meanwhile. Timecode
+setup's time format changes, the engine makes it the snap format and the ruler follows, and the menu picks one of
+the ruler's own meanwhile. Timecode
 runs at the project's frame rate, seconds and timecode count from its start time and bars from its bar offset
 ([project-setup.md](project-setup.md)). Its mode "bars and beats linear" (p. 70), which keeps bars evenly spaced across
 tempo changes, comes with the tempo track (#155).
