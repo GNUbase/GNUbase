@@ -383,3 +383,133 @@ TEST_CASE("automation points are selected, moved, scaled and deleted with the ob
 	f.clickAt(f.x(0.5), elements(f.app, "event-lanes.events").at(0).at("box").at("y").get<int>() + 10);
 	CHECK(selection().empty());
 }
+
+TEST_CASE("a Ctrl-drag moves the selected automation points in one direction, and the editor tilts and stretches them",
+	"[ui]")
+{
+	Automation f;
+	const Json volume = f.show();
+	f.app.call("automationPoint.add",
+		{{"lane", volume},
+			{"points", {{{"position", 48000}, {"value", -27.0}}, {{"position", 96000}, {"value", -10.5}}}}});
+	f.settle(volume);
+	const Json ids = {f.lane(volume).at("points")[0].at("id"), f.lane(volume).at("points")[1].at("id")};
+	const std::set<uint64_t> both = {ids[0].get<uint64_t>(), ids[1].get<uint64_t>()};
+	const auto selected = [&]
+	{
+		const auto selection = f.display.selectedPoints();
+		const auto found = selection.find(volume.get<uint64_t>());
+		return found == selection.end() ? std::set<uint64_t>() : found->second;
+	};
+	const auto value = [&](size_t i) { return f.lane(volume).at("points")[i].at("value").get<double>(); };
+	const auto position = [&](size_t i) { return f.lane(volume).at("points")[i].at("position").get<double>(); };
+	f.clickAt(f.x(1.0), f.y(volume, 0.5));
+	f.clickAt(f.x(2.0), f.y(volume, 0.75), {"ctrl"});
+	REQUIRE(selected() == both);
+
+	// Ctrl-dragging one of the selected points moves both, across only (reference manual p. 877), and keeps them
+	// selected.
+	f.drag(f.x(2.0), f.y(volume, 0.75), f.x(2.5), f.y(volume, 0.75) + 4, {"ctrl"});
+	REQUIRE(f.app.waitUntil([&] { return position(1) > 2.4 * 48000.0; }));
+	CHECK(position(0) == Approx(1.5 * 48000.0).margin(960.0));
+	CHECK(value(0) == Approx(-27.0).margin(0.01));
+	CHECK(value(1) == Approx(-10.5).margin(0.01));
+	CHECK(selected() == both);
+	f.settle(volume);
+
+	// A Ctrl-click on a selected point without moving takes it out of the selection.
+	f.clickAt(f.x(2.5), f.y(volume, 0.75), {"ctrl"});
+	CHECK(selected() == std::set<uint64_t>{ids[0].get<uint64_t>()});
+	f.clickAt(f.x(2.5), f.y(volume, 0.75), {"ctrl"});
+	REQUIRE(selected() == both);
+
+	// The automation event editor's top left corner tilts the curve there and leaves the right point (reference manual
+	// p. 876).
+	const auto editor = [&]
+	{
+		REQUIRE(f.app.waitUntil([&] { return hasClass(elements(f.app, ".automation-editor").at(0), "shown"); }));
+		return elements(f.app, ".automation-editor").at(0).at("box");
+	};
+	Json box = editor();
+	double left = value(0);
+	double right = value(1);
+	f.drag(
+		box.at("x").get<int>() + 2, box.at("y").get<int>() + 1, box.at("x").get<int>() + 2, box.at("y").get<int>() + 5);
+	REQUIRE(f.app.waitUntil([&] { return value(0) < left - 1.0; }));
+	CHECK(value(1) == Approx(right).margin(0.01));
+	f.settle(volume);
+
+	// Its top right corner tilts the right side and leaves the left point.
+	box = editor();
+	left = value(0);
+	right = value(1);
+	const int boxRight = box.at("x").get<int>() + box.at("width").get<int>() - 2;
+	f.drag(boxRight, box.at("y").get<int>() + 1, boxRight, box.at("y").get<int>() + 5);
+	REQUIRE(f.app.waitUntil([&] { return value(1) < right - 1.0; }));
+	CHECK(value(0) == Approx(left).margin(0.01));
+	f.settle(volume);
+
+	// Its bottom border stretches the points' times from the box's left.
+	box = editor();
+	const int middle = box.at("x").get<int>() + (box.at("width").get<int>() / 2);
+	const int bottom = box.at("y").get<int>() + box.at("height").get<int>() - 1;
+	f.drag(middle, bottom, middle + (f.x(2.0) - f.x(1.5)), bottom);
+	REQUIRE(f.app.waitUntil([&] { return position(1) > 2.9 * 48000.0; }));
+	CHECK(position(0) == Approx(1.5 * 48000.0).margin(960.0));
+	CHECK(position(1) == Approx(3.0 * 48000.0).margin(960.0));
+	CHECK(selected() == both);
+}
+
+TEST_CASE("Show Only Automation Tracks of a plugin shows its lanes and hides the track's others", "[ui]")
+{
+	Automation f;
+	const Json volume = f.show();
+	const Json project = f.app.call("project.get");
+	uint64_t channel = 0;
+	for (const Json& track : project.at("tracks"))
+		if (track.at("id").get<uint64_t>() == f.track)
+			channel = track.at("channel").get<uint64_t>();
+	REQUIRE(channel != 0);
+	const Json slot =
+		f.app.call("plugin.insert", {{"channel", channel}, {"plugin", "builtin:gainPan"}}).at("slot").at("id");
+	const auto addPluginLane = [&](uint32_t parameter)
+	{
+		return f.app
+			.call("automationLane.add",
+				{{"track", f.track}, {"target", {{"type", "plugin"}, {"slot", slot}, {"parameter", parameter}}}})
+			.at("lane")
+			.at("id");
+	};
+	const Json gain = addPluginLane(0);
+	const Json pan = addPluginLane(1);
+	for (const Json& lane : {volume, gain, pan})
+		f.app.call("automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", 0.0}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("automation").size() == 3; }));
+	f.app.keys().run("track.showUsedAutomation", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return elements(f.app, ".automation-row").size() == 3; }));
+	// The selector names the plugin once the track's targets include its parameters.
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json* targets = f.display.automationTargets(f.track);
+			return targets != nullptr &&
+				std::any_of(targets->begin(), targets->end(),
+					[](const Json& target) { return target.at("target").at("type") == "plugin"; });
+		}));
+
+	// The parameter selector of a plugin's automation track offers Show Only Automation Tracks of the plugin (reference
+	// manual p. 880).
+	const std::vector<uint64_t> shown = f.display.laneAutomation();
+	const auto at = std::find(shown.begin(), shown.end(), gain.get<uint64_t>());
+	REQUIRE(at != shown.end());
+	const auto index = static_cast<int>(at - shown.begin()) - 1; // lane 0 is the track's own
+	f.app.ui().click(std::nullopt, {".automation-parameter", index, std::nullopt}, ui::MouseButton::Left, 1, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.click("#automation-parameter-menu menuitem[automation-function=\"onlyPlugin\"]");
+	REQUIRE(f.app.waitUntil([&] { return elements(f.app, ".automation-row").size() == 2; }));
+	std::vector<uint64_t> only = f.display.laneAutomation();
+	std::sort(only.begin(), only.end());
+	std::vector<uint64_t> expected = {0, gain.get<uint64_t>(), pan.get<uint64_t>()};
+	std::sort(expected.begin(), expected.end());
+	CHECK(only == expected);
+}

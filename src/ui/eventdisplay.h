@@ -659,7 +659,7 @@ namespace gnubase::ui
 		double m_dragDy = 0.0;             // dp, dragging the event volume or a curve point
 		std::optional<size_t> m_dragPoint; // the curve point dragged, none for a new one
 		bool m_dragStarted = false;        // moving events, after the drag delay
-		bool m_dragToggles = false;        // a click with Ctrl or Shift takes the pressed event out of the selection
+		bool m_dragToggles = false;        // a Ctrl/Shift click takes the pressed event or point out of the selection
 		double m_pressTime = 0.0;          // RmlUi's clock, in seconds
 		double m_dragDx = 0.0;             // dp, while moving, snapped
 		int m_dragLanes = 0;

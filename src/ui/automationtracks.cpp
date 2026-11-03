@@ -788,18 +788,18 @@ namespace gnubase::ui
 		case Tool::ObjectSelection:
 			if (const std::optional<size_t> point = pointAt(*lane, index, x, y))
 			{
-				// A press selects the point (with Ctrl or Shift adds or removes it) and a drag moves the selection.
+				// A press selects the point (with Ctrl or Shift adds it, or released without moving takes it out) and
+				// a drag moves the selection, as with events.
 				const uint64_t id = lane->ids[*point];
 				std::map<uint64_t, std::set<uint64_t>> points = m_selectedPoints;
 				const bool selected = points[lane->id].count(id) != 0;
-				if (add && selected)
-					points[lane->id].erase(id);
-				else if (add)
+				m_dragToggles = add && selected;
+				if (add && !selected)
 					points[lane->id].insert(id);
 				else if (!selected)
 					points = {{lane->id, {id}}};
 				m_dragEvent = id;
-				m_gesture = add && selected ? AutomationGesture::None : AutomationGesture::Move;
+				m_gesture = AutomationGesture::Move;
 				selectPoints(std::move(points));
 				return true;
 			}
@@ -946,6 +946,12 @@ namespace gnubase::ui
 		case AutomationGesture::Move:
 		case AutomationGesture::Editor:
 		{
+			if (!m_dragMoved && std::exchange(m_dragToggles, false))
+			{
+				std::map<uint64_t, std::set<uint64_t>> points = m_selectedPoints;
+				points[lane->id].erase(m_dragEvent);
+				selectPoints(std::move(points));
+			}
 			if (!m_dragMoved)
 				break;
 			Json changes = Json::array();
