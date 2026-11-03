@@ -96,6 +96,15 @@ namespace
 		return entries;
 	}
 
+	// Puts a folder, with a file in it, in the place of the temporary file that saving writes before it renames it to
+	// file: saving fails, and can't remove the folder afterwards, so it fails again for the same reason.
+	void blockSaving(const fs::path& file)
+	{
+		const fs::path folder = fs::u8path(file.u8string() + ".saving");
+		fs::create_directories(folder);
+		std::ofstream(folder / "blocked") << "not a temporary file";
+	}
+
 	// Collects project.autoSaved and project.autoSaveFailed, which the engine's own auto saves announce.
 	class AutoSaveEvents
 	{
@@ -493,8 +502,8 @@ TEST_CASE("a failing auto save is logged again when its reason changes, not when
 	// Then it can be made, but the auto save can't be written, as a folder is in the place of its temporary file:
 	// another reason, which is logged and announced as new.
 	fs::remove(autoSaves);
-	fs::create_directories(autoSaves / "Song-01.bak.saving");
-	fs::create_directories(autoSaves / "Song-02.bak.saving");
+	blockSaving(autoSaves / "Song-01.bak");
+	blockSaving(autoSaves / "Song-02.bak");
 	engine.advanceClock(g_pastInterval);
 	CHECK(events.names(client).size() == 3);
 	CHECK(events.last(client).at("file") == utf8(autoSaves / "Song-01.bak"));
@@ -803,7 +812,7 @@ TEST_CASE("an auto save that fails shows its error once, and again when it fails
 
 	// Another reason: Auto Saves can be made, but a folder is in the place of the auto save's temporary file.
 	fs::remove(autoSaves);
-	fs::create_directories(autoSaves / "Song-01.bak.saving");
+	blockSaving(autoSaves / "Song-01.bak");
 	app.engine().advanceClock(g_pastInterval);
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
 	closeError(app);
@@ -821,6 +830,15 @@ TEST_CASE("an auto save that fails shows its error once, and again when it fails
 	CHECK(!shown(app, "#project-error-dialog"));
 	click(app, "#start-screen button[result=cancel]");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#start-screen"); }));
+	app.engine().advanceClock(g_pastInterval);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+
+	// A dialog that the user asks for meanwhile takes the error's place, and the error shows again at the next failure.
+	app.keys().run("file.revert", Json::object(), app.main(), nullptr); // with unsaved changes
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	CHECK(!shown(app, "#project-error-dialog"));
+	click(app, "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
 	app.engine().advanceClock(g_pastInterval);
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
 	closeError(app);

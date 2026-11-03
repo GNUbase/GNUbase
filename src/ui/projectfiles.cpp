@@ -20,6 +20,9 @@ namespace gnubase::ui
 
 	namespace
 	{
+		// The result of a dialog that closed to make way for another one.
+		const std::string g_replaced = "replaced";
+
 		const std::vector<FileFilter>& projectFilters()
 		{
 			static const std::vector<FileFilter> filters{{"DAWproject", "dawproject"}, {"All files", "*"}};
@@ -228,6 +231,10 @@ namespace gnubase::ui
 
 	Rml::ElementDocument* ProjectFiles::openDialog(Window& window, const char* file, Closed closed)
 	{
+		// A failed auto save's error came on its own, not from what the user does: it makes way for the dialog of
+		// something the user does, such as a failed save or the unsaved changes question, and shows again later.
+		if (m_dialog && m_autoSaveErrorOpen)
+			closeDialog(g_replaced);
 		if (m_dialog)
 			return nullptr; // one at a time
 		const std::filesystem::path path = m_folder / file;
@@ -269,6 +276,7 @@ namespace gnubase::ui
 		dialog->RemoveEventListener(Rml::EventId::Dblclick, this);
 		dialog->RemoveEventListener(g_dialogCloseEvent, this);
 		m_dialog.reset();
+		m_autoSaveErrorOpen = false;
 		// Before the document closes, so that the callback can read its fields; m_dialog is free for another dialog.
 		const Closed closed = std::move(m_closed);
 		closed(*dialog, result);
@@ -297,26 +305,44 @@ namespace gnubase::ui
 	void ProjectFiles::showError(WindowId window, const std::string& error)
 	{
 		logging::warning("Project handling: {}", error);
-		openError(window, error, {});
+		openError(window, error, false);
 	}
 
-	void ProjectFiles::openError(WindowId window, const std::string& error, std::function<void()> shown)
+	void ProjectFiles::openError(WindowId window, const std::string& error, bool autoSave)
 	{
 		// The dialog that asked may still be closing.
 		m_shell.post(
-			[this, window, error, shown = std::move(shown)]
+			[this, window, error, autoSave]
 			{
 				Window* showing = m_shell.find(window);
 				Rml::ElementDocument* dialog = showing != nullptr
-					? openDialog(*showing, "project-error.rml", [](Rml::ElementDocument&, const std::string&) {})
+					? openDialog(*showing, "project-error.rml",
+						  [this, autoSave](Rml::ElementDocument&, const std::string& result)
+						  {
+							  // Shown again at the next failure if another dialog took its place.
+							  if (autoSave && result == g_replaced)
+								  m_autoSaveFailureShown = false;
+						  })
 					: nullptr;
 				if (dialog == nullptr)
-					return;
+					return; // an auto save's error shows at the next failure instead
 				if (Rml::Element* message = dialog->GetElementById("project-error-message"))
 					message->SetInnerRML(Rml::StringUtilities::EncodeRml(error));
-				if (shown)
-					shown();
+				if (autoSave)
+				{
+					m_autoSaveFailureShown = true;
+					m_autoSaveErrorOpen = true;
+				}
 			});
+	}
+
+	void ProjectFiles::closeDialog(const std::string& result)
+	{
+		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get()))
+		{
+			dialog->DispatchEvent(g_dialogCloseEvent, {{"result", Rml::Variant(result)}});
+			dialog->Close();
+		}
 	}
 
 	void ProjectFiles::autoSaveFailed(const Json& failure)
@@ -329,9 +355,8 @@ namespace gnubase::ui
 		for (const Window* window : m_shell.windows())
 			if (window->main())
 			{
-				// Shown at the next failure if another dialog keeps it from opening now.
-				openError(window->id(), "The project can't be auto saved: " + failure.at("error").get<std::string>(),
-					[this] { m_autoSaveFailureShown = true; });
+				openError(
+					window->id(), "The project can't be auto saved: " + failure.at("error").get<std::string>(), true);
 				return;
 			}
 	}
@@ -364,11 +389,7 @@ namespace gnubase::ui
 	void ProjectFiles::quit(Window& window)
 	{
 		// A dialog that is open, such as the start screen, would keep the question from opening: quitting cancels it.
-		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get()))
-		{
-			dialog->DispatchEvent(g_dialogCloseEvent, {{"result", Rml::Variant(std::string("cancel"))}});
-			dialog->Close();
-		}
+		closeDialog("cancel");
 		// Quitting closes every window, so it waits until the event that asked for it is done with them.
 		unlessUnsaved(window, [this] { m_shell.post([this] { m_shell.quit(); }); });
 	}

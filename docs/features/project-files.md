@@ -103,7 +103,11 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   `project.backup` the UI asked for shows it too. A failed auto save (`project.autoSaveFailed`) shows in the main
   window, so that the user learns that auto save stopped working: once, not at every interval, and again only when
   the engine says the failure isn't `repeated`, after a new reason or after an auto save succeeded or the project was
-  saved or opened. If another dialog is open then, the error shows at the next failure instead.
+  saved or opened. As it comes on its own, it never keeps away a dialog of something the user does: a project dialog
+  that opens meanwhile, such as a failed save's error or the unsaved changes question, takes its place, and the auto
+  save's error shows again at the next failure. If another project dialog, such as the start screen, is open when the
+  auto save fails, the error shows at the next failure instead. Other modal dialogs, such as the fade editor, don't
+  know about it yet, so the error can open over them.
 - The UI knows the project's file from `project.saved` and, after `project.reset`, from `project.location`.
 
 ## Not yet
@@ -122,11 +126,12 @@ New Project and Open Last Project on Startup.
 dot), revert, auto save rotation, opening auto saves (also of untitled projects and of projects whose file is gone, and
 under paths in other case or with `.`) and where their media and next auto saves go, the engine's own auto saves once
 the interval passed and failing ones with their events and log entries, also when the reason or only the file changes
-(`Engine::advanceClock` moves the clock forward and returns once its tick ran, so no test waits), recent projects across restarts, and templates; and in the
-app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a name with a dot and of one with the
-extension in upper case) and Save New Version after each through file dialogs, Open and Revert with the unsaved changes
-dialog, Save asking for a file after Open of an auto save, quitting through the main window's close button and the OS's
-quit request with and without unsaved changes, the start screen's buttons and double clicks, Save as Template and Back
-up Project, and the error dialog for a failed save and backup, and for failed auto saves: once per reason, and at
-the next failure if another dialog kept it from showing. `tests/uitools_tests.cpp` checks `ui_file_dialog`.
-`tests/clock_tests.cpp` checks the clock's ticks and `advance` on their own.
+(`Engine::advanceClock` moves the clock forward and returns once its tick ran, so no test waits), recent projects across
+restarts, and templates; and in the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a name
+with a dot and of one with the extension in upper case) and Save New Version after each through file dialogs, Open and
+Revert with the unsaved changes dialog, Save asking for a file after Open of an auto save, quitting through the main
+window's close button and the OS's quit request with and without unsaved changes, the start screen's buttons and double
+clicks, Save as Template and Back up Project, and the error dialog for a failed save and backup, and for failed auto
+saves: once per reason, at the next failure if another project dialog kept it from showing, and again after the unsaved
+changes question took its place. `tests/uitools_tests.cpp` checks `ui_file_dialog`. `tests/clock_tests.cpp` checks the
+clock's ticks and `advance` on their own.

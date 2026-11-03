@@ -50,8 +50,11 @@ namespace gnubase::ui
 		using Closed = std::function<void(Rml::ElementDocument& dialog, const std::string& result)>;
 
 		void ProcessEvent(Rml::Event& event) override;
-		// Opens one of the dialogs in the window, modal; closed runs when it closes, with its result.
+		// Opens one of the dialogs in the window, modal; closed runs when it closes, with its result. One at a time:
+		// returns null while another one is open, unless that is a failed auto save's error, which makes way.
 		Rml::ElementDocument* openDialog(Window& window, const char* file, Closed closed);
+		// Closes the open dialog, if any, with the result.
+		void closeDialog(const std::string& result);
 		// Asks the engine for the project's file (project.location).
 		void readLocation();
 		// A command's done that shows its error in a dialog in the window if it failed (project-error.rml), so that a
@@ -59,9 +62,9 @@ namespace gnubase::ui
 		std::function<void(const engine::Result&)> reportFailure(Window& window);
 		// Logs the error and shows it in a dialog in the window (project-error.rml).
 		void showError(WindowId window, const std::string& error);
-		// Shows the error in project-error.rml in the window once the event that asked is done; shown runs if the
-		// dialog opened, which it doesn't while another one is open.
-		void openError(WindowId window, const std::string& error, std::function<void()> shown);
+		// Shows the error in project-error.rml in the window once the event that asked is done. A failed auto save's
+		// error (autoSave) counts as shown only once it opened and while no other dialog took its place.
+		void openError(WindowId window, const std::string& error, bool autoSave);
 		// Tells the user in the main window that the project can't be auto saved (project.autoSaveFailed): once, not
 		// at every interval, until it fails for another reason or after an auto save succeeded or the project was
 		// saved or opened, as the engine says with repeated.
@@ -84,6 +87,7 @@ namespace gnubase::ui
 		Subscription m_jobFinished;
 		Subscription m_autoSaveFailed;
 		bool m_autoSaveFailureShown = false;     // since the last auto save that failed for a new reason
+		bool m_autoSaveErrorOpen = false;        // the open dialog is a failed auto save's error
 		std::optional<WindowId> m_backupWindow;  // where the last backup was asked for, which shows if it fails
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the open dialog's document
 		Closed m_closed;
