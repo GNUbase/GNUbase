@@ -2280,16 +2280,18 @@ namespace gnubase::engine
 			{"transport.update", 1,
 				"Takes over what the audio thread changed on its own: recording that punched in or out at the "
 				"locators, and playback that stopped after a punch out, and announces it with transport.changed. The "
-				"engine runs it itself when that happens.",
+				"engine runs it itself when the audio thread played or recorded differently or applied a request; "
+				"runs that change nothing stay out of engine.commandLog.",
 				noParameters(), transportSchema(), false},
 			[this](CommandContext& context)
 			{
-				Json result = transportStatus();
-				if (syncTransport())
+				if (!syncTransport())
 				{
-					result = transportStatus();
-					context.emit("transport.changed", result);
+					context.leaveOutOfLog(); // the engine's own run that changed nothing
+					return transportStatus();
 				}
+				Json result = transportStatus();
+				context.emit("transport.changed", result);
 				return result;
 			});
 		engine.registerCommand(

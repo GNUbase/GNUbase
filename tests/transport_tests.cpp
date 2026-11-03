@@ -13,6 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <variant>
@@ -697,29 +698,43 @@ TEST_CASE("while the device runs, the engine announces punching in and stopping 
 	Client listener(engine);
 	run(client, "audio.setDevice", {{"blockSize", 64}}); // a block every 1.3 ms
 	run(client, "transport.set",
-		{{"left", 2400}, {"right", 4800}, {"punchIn", true}, {"punchOut", true}, {"stopAfterPunchOut", true}});
+		{{"left", 24000}, {"right", 48000}, {"punchIn", true}, {"punchOut", true}, {"stopAfterPunchOut", true}});
 	run(client, "audio.start");
 	run(client, "transport.play");
-	// Waits up to 10 s for a transport.changed that matches.
-	const auto waitFor = [&listener](bool playing, bool recording)
+	// Waits up to 10 s for a transport.changed that matches; keeps the requests of all it sees.
+	std::set<RequestId> announced;
+	const auto waitFor = [&listener, &announced](bool playing, bool recording)
 	{
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 		while (std::chrono::steady_clock::now() < deadline)
 		{
 			const std::optional<Message> message = listener.wait(std::chrono::milliseconds(50));
 			const auto* event = message ? std::get_if<Event>(&*message) : nullptr;
-			if (event != nullptr && event->name == "transport.changed" && event->data.at("playing") == playing &&
-				event->data.at("recording") == recording)
+			if (event == nullptr || event->name != "transport.changed")
+				continue;
+			announced.insert(event->request);
+			if (event->data.at("playing") == playing && event->data.at("recording") == recording)
 				return true;
 		}
 		return false;
 	};
-	CHECK(waitFor(true, true));   // the punch in at 50 ms
-	CHECK(waitFor(false, false)); // the stop at the punch out at 100 ms
+	CHECK(waitFor(true, true));   // the punch in at 0.5 s
+	CHECK(waitFor(false, false)); // the stop at the punch out at 1 s
 	const Json state = run(client, "transport.get");
 	CHECK(state.at("playing") == false);
-	CHECK(state.at("position") == 4800);
+	CHECK(state.at("position") == 48000);
 	run(client, "audio.stop");
+
+	// The engine's runs of transport.update that changed nothing stay out of the command log.
+	int updates = 0;
+	const Json log = run(client, "engine.commandLog").at("commands");
+	for (const Json& entry : log)
+		if (entry.at("command") == "transport.update")
+		{
+			++updates;
+			CHECK(announced.count(entry.at("request").get<RequestId>()) == 1);
+		}
+	CHECK(updates == 2);
 }
 
 TEST_CASE("toggle switches cycle, punch in and out, the metronome and recording", "[integration]")
