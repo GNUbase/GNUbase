@@ -255,6 +255,13 @@ namespace gnubase::engine
 		return m_steps[m_position++];
 	}
 
+	void History::removeLast()
+	{
+		GNUBASE_ASSERT(!m_steps.empty() && m_position == m_steps.size());
+		m_steps.pop_back();
+		m_position = m_steps.size();
+	}
+
 	void History::clear()
 	{
 		m_steps.clear();

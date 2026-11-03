@@ -98,6 +98,7 @@ namespace gnubase::engine
 		std::string time;    // when, ISO 8601 in UTC
 		std::string details; // notes the user can add
 		ProjectChange change;
+		std::string merge; // a transaction's merge key: later transactions with the same key join this step
 	};
 
 	// The steps before position() are done; the ones after it were undone and can be redone.
@@ -114,6 +115,9 @@ namespace gnubase::engine
 		const HistoryStep& redo();
 
 		void clear();
+
+		// Removes the last step. Requires that it is done: position() == steps().size() > 0.
+		void removeLast();
 
 		// 0 means no limit. Drops the oldest steps beyond a new limit.
 		void setMaxSteps(size_t maxSteps);
