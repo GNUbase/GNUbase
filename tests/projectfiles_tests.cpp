@@ -9,7 +9,9 @@
 #include "ui/automation.h"
 #include "uiapp.h"
 
+#include <SDL3/SDL.h>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
@@ -630,6 +632,47 @@ TEST_CASE("File > Open and Revert ask before unsaved changes are discarded", "[u
 
 	app.call("project.new");
 	REQUIRE(app.waitUntil([&app] { return disabled(app, "menuitem[command=\"file.revert\"]"); })); // no file
+}
+
+TEST_CASE("closing the main window or quitting through the OS asks before unsaved changes are discarded", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	// The main window's close button or Alt+F4, or SDL's quit request, as from the macOS app menu's Quit.
+	SDL_Event request{};
+	request.type = GENERATE(as<Uint32>(), SDL_EVENT_WINDOW_CLOSE_REQUESTED, SDL_EVENT_QUIT);
+	request.window.windowID = app.main().id();
+
+	SECTION("without unsaved changes it quits at once")
+	{
+		REQUIRE(SDL_PushEvent(&request));
+		REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+	}
+	SECTION("with unsaved changes Cancel keeps GNUbase running, and Discard quits")
+	{
+		app.call("track.add", {{"type", "audio"}});
+		REQUIRE(SDL_PushEvent(&request));
+		REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+		click(app, "#discard-changes-dialog button[result=cancel]");
+		REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
+		app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(app.shell().running());
+		CHECK(app.call("project.get").at("tracks").size() == 1); // kept
+		CHECK(app.call("project.revision").at("modified").get<bool>());
+
+		REQUIRE(SDL_PushEvent(&request));
+		click(app, "#discard-changes");
+		REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+	}
+	SECTION("a dialog that is open closes for the question")
+	{
+		app.call("track.add", {{"type", "audio"}});
+		fileMenu(app, "file.new");
+		REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+		REQUIRE(SDL_PushEvent(&request));
+		click(app, "#discard-changes");
+		REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+	}
 }
 
 TEST_CASE("the start screen creates projects, from templates too, and opens recent ones", "[ui]")
