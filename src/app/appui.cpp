@@ -570,7 +570,8 @@ namespace gnubase::app
 				if (ui::Window* found = m_shell.find(id))
 					m_keys.run(command, parameters, *found, nullptr);
 			},
-			[this](const std::string& command) { m_keys.release(command); });
+			[this](const std::string& command) { m_keys.release(command); },
+			[this](const std::string& command, const engine::Json& parameters) { m_keys.check(command, parameters); });
 	}
 
 	void AppUi::toggle(TransportWindow& shown, const char* file, const char* title, ui::Size size)
@@ -599,10 +600,20 @@ namespace gnubase::app
 			return;
 		}
 		document->Show();
-		shown.window = window.id();
 		// The transport panel's #transport gets the controls, a docking window for its sections; the time display
-		// window has its own, at the size it was given.
-		shown.controls = transportControls(*root, window, root == controls);
+		// window has its own, at the size it was given. Controls with a command that doesn't exist or parameters it
+		// doesn't take (#446) close the window again, as a document that doesn't load does.
+		try
+		{
+			shown.controls = transportControls(*root, window, root == controls);
+		}
+		catch (const std::invalid_argument& error)
+		{
+			m_shell.close(window.id());
+			logging::error("Cannot show {}: {}", path.u8string(), error.what());
+			return;
+		}
+		shown.window = window.id();
 		if (root == controls)
 			m_docking.attach("transportPanel", *document);
 		else

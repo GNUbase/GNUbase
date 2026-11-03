@@ -92,8 +92,14 @@ namespace gnubase::ui
 		// Adds a command of the UI's own. Throws std::invalid_argument if a command has its id.
 		void add(UiCommand command);
 
+		// Checks that a key, a menu item or a button can run the command with these parameters: throws
+		// std::invalid_argument, naming the command, for a command it doesn't know, parameters that the engine's
+		// command doesn't take (its parameter schema), or parameters other than an empty object for a UI command,
+		// which takes none.
+		void check(const std::string& command, const engine::Json& parameters) const;
+
 		// Binds the keys to a command in a zone, replacing what they did there. Throws std::invalid_argument for keys
-		// it can't read, a command it doesn't know, or parameters that the engine's command doesn't take.
+		// it can't read, or a command and parameters that check refuses.
 		void bind(const KeyBinding& binding);
 
 		// The keys bound to the command with these parameters, in every zone, as the platform writes them, e.g. for a

@@ -1,28 +1,37 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // UI tests of the transport controls (#90, ui/transport.h): every control of the project window's transport bar, the
 // transport panel and the time display window, driven through ui::Automation as MCP's UI tools drive them
-// (tests/uiapp.h), and the transport's key commands.
+// (tests/uiapp.h), and the transport's key commands. Controls with a command that doesn't exist or parameters it
+// doesn't take are refused (#446).
 #include "uiapp.h"
 
+#include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/fakeui.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
+#include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
+#include "ui/keycommands.h"
 #include "ui/transport.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <SDL3/SDL.h>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
 using namespace gnubase;
+using Catch::Matchers::ContainsSubstring;
 using engine::Json;
 
 namespace
@@ -818,4 +827,62 @@ TEST_CASE("setup panes show and hide the transport bar's and the transport panel
 	app.ui().key(std::nullopt, "F2");
 	REQUIRE(app.appUi().transportPanel() != nullptr);
 	CHECK(!visible(app, "[section=click]", app.appUi().transportPanel()->id()));
+}
+
+TEST_CASE("the transport controls refuse buttons and menu items with a command that doesn't exist or parameters it "
+		  "doesn't take (#446)",
+	"[unit]")
+{
+	engine::Engine engine;
+	test::FakeUi fake({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}});
+	ui::Window& window = fake.shell.open(ui::WindowSpec{});
+	ui::EngineBinding binding(engine);
+	ui::KeyCommands keys(engine, binding);
+	keys.add({"timeDisplay.increaseSize", "Makes the time display bigger.", {}});
+	const auto run = [](const std::string& /*command*/, const Json& /*parameters*/) {};
+	const auto check = [&keys](const std::string& command, const Json& parameters) { keys.check(command, parameters); };
+	const auto load = [&window](const std::string& controls)
+	{ return window.context().LoadDocumentFromMemory("<rml><body>" + controls + "</body></rml>"); };
+	const std::string good =
+		R"(<button command="transport.toggle" parameters='{"setting": "cycle"}'>Cycle</button>)"
+		R"(<menu><menuitem command="timeDisplay.increaseSize">Increase Window Size</menuitem></menu>)";
+
+	Rml::ElementDocument* document = load(good);
+	REQUIRE(document != nullptr);
+	CHECK_NOTHROW(std::make_unique<ui::TransportControls>(engine, binding, *document, run, nullptr, check));
+	document->Close();
+
+	struct Bad
+	{
+		const char* control;
+		const char* named; // in the message
+	};
+	const Bad bad[] = {
+		{R"(<button command="transport.toggel">Cycle</button>)", "transport.toggel"},
+		{R"(<button command="transport.toggle" parameters='{"setting": 1}'>Cycle</button>)", "setting"},
+		{R"(<button command="wind.forward" hold="">Forward</button>)", "wind.forward"},
+		{R"(<menu><menuitem command="timeDisplay.increaseSize" parameters='{"steps": 2}'>Bigger</menuitem></menu>)",
+			"timeDisplay.increaseSize"},
+		{R"(<button command="transport.play" parameters='{"setting"'>Start</button>)", "JSON object"},
+	};
+	for (const Bad& control : bad)
+	{
+		INFO(control.control);
+		document = load(good + control.control);
+		REQUIRE(document != nullptr);
+		CHECK_THROWS_AS(std::make_unique<ui::TransportControls>(engine, binding, *document, run, nullptr, check),
+			std::invalid_argument);
+		CHECK_THROWS_WITH(std::make_unique<ui::TransportControls>(engine, binding, *document, run, nullptr, check),
+			ContainsSubstring(control.named));
+		document->Close();
+	}
+	// Without a check, only parameters that aren't a JSON object.
+	document = load(good + R"(<button command="transport.toggel">Cycle</button>)");
+	REQUIRE(document != nullptr);
+	CHECK_NOTHROW(std::make_unique<ui::TransportControls>(engine, binding, *document, run));
+	document->Close();
+	document = load(good + R"(<button command="transport.play" parameters='[]'>Start</button>)");
+	REQUIRE(document != nullptr);
+	CHECK_THROWS_AS(std::make_unique<ui::TransportControls>(engine, binding, *document, run), std::invalid_argument);
+	document->Close();
 }

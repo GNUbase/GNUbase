@@ -18,6 +18,7 @@
 
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -162,6 +163,28 @@ TEST_CASE("key commands take the UI's own commands, and bindings replace what th
 	CHECK_THROWS_WITH(keys.bind({"F5", "transport.locate", {{"target", 5}}}), ContainsSubstring("target"));
 	CHECK_THROWS_WITH(keys.bind({"Flux", "transport.play"}), ContainsSubstring("Flux"));
 	CHECK(keys.keysFor("transport.locate", {{"target", 5}}).empty());
+	CHECK_THROWS_WITH(keys.bind({"F5", "view.zoomIn", {{"factor", 2}}}), ContainsSubstring("view.zoomIn"));
+}
+
+TEST_CASE("key commands check a command and its parameters, for keys and menu items (#446)", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	ui::KeyCommands keys(engine, binding, Platform::Windows);
+	keys.add({"view.zoomIn", "Zooms in.", {}});
+
+	CHECK_NOTHROW(keys.check("transport.play", Json::object()));
+	CHECK_NOTHROW(keys.check("transport.locate", {{"target", "leftLocator"}}));
+	CHECK_NOTHROW(keys.check("view.zoomIn", Json::object()));
+
+	// A typo in the command, parameters the engine's command doesn't take or of the wrong type, and parameters for a
+	// UI command, which takes none.
+	CHECK_THROWS_AS(keys.check("transport.ply", Json::object()), std::invalid_argument);
+	CHECK_THROWS_WITH(keys.check("transport.ply", Json::object()), ContainsSubstring("transport.ply"));
+	CHECK_THROWS_WITH(keys.check("transport.locate", {{"target", 5}}), ContainsSubstring("target"));
+	CHECK_THROWS_WITH(keys.check("transport.locate", {{"traget", "leftLocator"}}), ContainsSubstring("traget"));
+	CHECK_THROWS_WITH(keys.check("transport.play", Json::array()), ContainsSubstring("transport.play"));
+	CHECK_THROWS_WITH(keys.check("view.zoomIn", {{"factor", 2}}), ContainsSubstring("view.zoomIn"));
 }
 
 TEST_CASE("keys pressed in GNUbase's UI run the engine's commands from the default key map", "[ui]")
