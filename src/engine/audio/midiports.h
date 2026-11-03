@@ -3,6 +3,7 @@
 
 #include "engine/schema.h"
 #include "platform/audio/device.h"
+#include "platform/hosttime.h"
 #include "platform/midi/inputqueue.h"
 #include "platform/midi/port.h"
 #include "platform/rt/spscqueue.h"
@@ -57,6 +58,10 @@ namespace gnubase::engine
 		// belongs to all MIDI inputs, and to the monitor (midi.monitor) at their frame position.
 		void take(const audio::DeviceBlock& block, double sampleRate, audio::MidiBuffer& allInputs) noexcept;
 
+		// Any thread but an audio thread: a message from the on-screen keyboard (midi.keyboard), which belongs to all
+		// MIDI inputs and arrives now, as a port's would. False if the input queue is full.
+		bool play(const audio::MidiMessage& message) { return m_queue.push(g_keyboardSlot, message, hostTime()); }
+
 		// Drops the input that waits for the audio thread. Only while no audio thread takes.
 		void clear() { m_queue.clear(); }
 
@@ -64,6 +69,7 @@ namespace gnubase::engine
 		static constexpr size_t g_maxInputs = 256;
 
 	private:
+		static constexpr int g_keyboardSlot = -1; // the on-screen keyboard's in the input queue
 		struct Port
 		{
 			gnubase::midi::Backend* backend = nullptr;

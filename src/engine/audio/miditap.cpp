@@ -13,6 +13,7 @@
 #include <array>
 #include <cmath>
 #include <string>
+#include <vector>
 
 namespace gnubase::engine
 {
@@ -26,6 +27,24 @@ namespace gnubase::engine
 		{
 			if (!condition)
 				throw CommandError(message);
+		}
+
+		// A MIDI 1.0 channel message from a command's parameters; where names it in errors.
+		audio::MidiMessage channelMessage(const Json& value, const std::string& where)
+		{
+			const auto bytes = value.get<std::vector<uint8_t>>();
+			require(!bytes.empty() && bytes[0] >= 0x80 && bytes[0] < 0xF0,
+				where + "not a MIDI 1.0 channel message, which starts with a status byte from 0x80 to 0xEF");
+			const int size = gnubase::midi::messageSize(bytes[0]);
+			require(bytes.size() == static_cast<size_t>(size),
+				where + "a message with the status byte " + std::to_string(bytes[0]) + " has " + std::to_string(size) +
+					" bytes");
+			require(std::all_of(bytes.begin() + 1, bytes.end(), [](uint8_t data) { return data < 0x80; }),
+				where + "data bytes must be below 0x80");
+			audio::MidiMessage message;
+			message.size = static_cast<uint8_t>(size);
+			std::copy(bytes.begin(), bytes.end(), message.bytes.begin());
+			return message;
 		}
 
 		// A MIDI 1.0 channel message as an event; a note-on of velocity 0 is a note-off of velocity 64.
@@ -245,23 +264,36 @@ namespace gnubase::engine
 				std::vector<MidiTap::Message> injected;
 				for (size_t i = 0; i < messages.size(); ++i)
 				{
-					const std::string where = "messages[" + std::to_string(i) + "]: ";
-					const auto bytes = messages[i].at("bytes").get<std::vector<uint8_t>>();
-					require(!bytes.empty() && bytes[0] >= 0x80 && bytes[0] < 0xF0,
-						where + "not a MIDI 1.0 channel message, which starts with a status byte from 0x80 to 0xEF");
-					const int size = gnubase::midi::messageSize(bytes[0]);
-					require(bytes.size() == static_cast<size_t>(size),
-						where + "a message with the status byte " + std::to_string(bytes[0]) + " has " +
-							std::to_string(size) + " bytes");
-					require(std::all_of(bytes.begin() + 1, bytes.end(), [](uint8_t data) { return data < 0x80; }),
-						where + "data bytes must be below 0x80");
-					MidiTap::Message message{channel, messages[i].at("position").get<uint64_t>(), {}};
-					message.message.size = static_cast<uint8_t>(size);
-					std::copy(bytes.begin(), bytes.end(), message.message.bytes.begin());
-					injected.push_back(message);
+					injected.push_back({channel, messages[i].at("position").get<uint64_t>(),
+						channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: ")});
 				}
 				require(m_tap.inject(injected),
 					"too many MIDI messages wait for the audio device; none were injected, try again later");
+				return Json::object();
+			});
+		engine.registerCommand(
+			{"midi.keyboard", 1,
+				"Plays MIDI 1.0 channel messages from the on-screen keyboard, one of all MIDI inputs: they arrive now, "
+				"as a MIDI input port's do, and the audio device places them in its next block. The MIDI and "
+				"instrument tracks set to all MIDI inputs play them while they monitor or are record-enabled (MIDI "
+				"thru), and the record-enabled ones record them. bytes: a status byte from 0x80 to 0xEF and its data "
+				"bytes. The UI's on-screen keyboard window plays its notes through this. If the input waiting for the "
+				"audio device has no room left, the call fails and says how many of its messages were played.",
+				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["messages"],
+					"properties": {"messages": {"type": "array", "items": {"type": "object",
+						"additionalProperties": false, "required": ["bytes"], "properties": {"bytes": {"type": "array",
+							"items": {"type": "integer", "minimum": 0, "maximum": 255}}}}}}})"),
+				Json::object(), false},
+			[this](CommandContext& context)
+			{
+				const Json& messages = context.parameters().at("messages");
+				std::vector<audio::MidiMessage> played;
+				for (size_t i = 0; i < messages.size(); ++i)
+					played.push_back(channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: "));
+				for (size_t i = 0; i < played.size(); ++i)
+					require(m_midi.play(played[i]),
+						"too much MIDI input waits for the audio device; " + std::to_string(i) +
+							" of the messages were played");
 				return Json::object();
 			});
 		engine.registerCommand(
