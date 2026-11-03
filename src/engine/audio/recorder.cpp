@@ -294,10 +294,12 @@ namespace gnubase::engine
 		const size_t before = capacity > 0 && m_historyEnd == chunk.deviceFrame ? m_historyFrames : 0;
 		if (m_current.format.broadcast)
 		{
+			// The project start time plus the first frame's position, pre-recorded input included, not before midnight.
 			BroadcastInfo& broadcast = *m_current.format.broadcast;
 			std::tie(broadcast.originationDate, broadcast.originationTime) = originationNow();
-			const time::Samples first = std::max<time::Samples>(chunk.position - static_cast<time::Samples>(before), 0);
-			broadcast.timeReference += static_cast<uint64_t>(first);
+			const auto first = static_cast<time::Samples>(broadcast.timeReference) + chunk.position -
+				static_cast<time::Samples>(before);
+			broadcast.timeReference = static_cast<uint64_t>(std::max<time::Samples>(first, 0));
 		}
 		for (const RecordTrack& track : m_current.tracks)
 		{

@@ -306,6 +306,25 @@ TEST_CASE("Broadcast Wave recordings describe the track and where the file start
 	CHECK(info.timeReference == 3601ULL * 48000); // the project start shows 1:00:00, and the file starts 1 s later
 }
 
+TEST_CASE("a Broadcast Wave recording's time reference includes the pre-recorded input", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "audio.preRecordSeconds"}, {"value", 0.05}}); // 2400 frames
+	run(client, "project.set", {{"recordFileType", "broadcastWav"}, {"startTime", 3600.0}});
+	run(client, "audio.render", {{"frames", 4800}}); // stopped
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 1000}});
+	REQUIRE(setup.stop().is_object());
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].at("offset") == 2400);
+	const auto reader = AudioFileReader::open(pathOf(client, events[0]));
+	REQUIRE(reader->info().broadcast.has_value());
+	CHECK(reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).timeReference == 3600ULL * 48000 - 2400);
+}
+
 TEST_CASE("cycle recording makes a take per lap, all in one file", "[integration]")
 {
 	std::string mode = "keepHistory";
