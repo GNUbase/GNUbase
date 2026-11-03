@@ -115,11 +115,13 @@ namespace gnubase::engine
 		MidiRecordFilter filter;
 		for (const Json& type : json.value("types", Json::array()))
 		{
-			const auto found = std::find(g_midiFilterTypes.begin(), g_midiFilterTypes.end(), type.get<std::string>());
-			if (found == g_midiFilterTypes.begin())
+			const auto index = static_cast<size_t>(
+				std::find(g_midiFilterTypes.begin(), g_midiFilterTypes.end(), type.get<std::string>()) -
+				g_midiFilterTypes.begin());
+			if (index == 0)
 				filter.types.set(static_cast<size_t>(EventType::NoteOn)).set(static_cast<size_t>(EventType::NoteOff));
-			else if (found != g_midiFilterTypes.end())
-				filter.types.set(static_cast<size_t>(found - g_midiFilterTypes.begin()) + 1);
+			else if (index < g_midiFilterTypes.size())
+				filter.types.set(index + 1);
 		}
 		for (const Json& channel : json.value("channels", Json::array()))
 			if (const int number = channel.get<int>(); number >= 1 && number <= 16)
@@ -133,7 +135,7 @@ namespace gnubase::engine
 	bool MidiRecordFilter::records(const graph::ProcessEvent& event) const
 	{
 		return !types.test(static_cast<size_t>(event.type)) && !channels.test(event.channel % 16U) &&
-			!(event.type == EventType::Controller && controllers.test(event.key % 128U));
+			(event.type != EventType::Controller || !controllers.test(event.key % 128U));
 	}
 
 	void MidiTakeBuilder::add(time::Samples position, const graph::ProcessEvent& event)
