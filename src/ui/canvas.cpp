@@ -466,6 +466,56 @@ namespace gnubase::ui
 						last = next;
 					}
 				}
+			if (colour.alpha != 0 && width > 0.0F)
+				for (const VolumeLine& volume : lane.volumes)
+				{
+					if (!(volume.rate > 0.0) || volume.end <= from || volume.start >= to)
+						continue;
+					const double x0 = std::round(volume.start / frame.unitsPerPixel) - frame.left;
+					const double x1 = std::round(volume.end / frame.unitsPerPixel) - frame.left;
+					const double begin = std::max(x0, -2.0);
+					const double end = std::min(x1, right + 2.0);
+					const auto gain = [&](double x)
+					{
+						const double seconds = (x + frame.left) * frame.unitsPerPixel;
+						const double clipFrame =
+							static_cast<double>(volume.offset) + ((seconds - volume.start) * volume.rate);
+						return std::clamp(
+							volume.gain * engine::curveGain(volume.points, clipFrame) / g_volumeLineTop, 0.0, 1.0);
+					};
+					// A piece every 2 pixels, and one to each point, so that jumps stay upright.
+					std::vector<double> xs;
+					for (int64_t i = 0; begin + (2.0 * static_cast<double>(i)) < end; ++i)
+						xs.push_back(begin + (2.0 * static_cast<double>(i)));
+					for (const engine::GainPoint& point : volume.points)
+					{
+						const double x =
+							std::round(
+								(volume.start + (static_cast<double>(point.position - volume.offset) / volume.rate)) /
+								frame.unitsPerPixel) -
+							frame.left;
+						if (x > begin && x < end)
+							xs.insert(xs.end(), {x - 0.01, x});
+					}
+					xs.push_back(end);
+					std::sort(xs.begin(), xs.end());
+					for (size_t i = 1; i < xs.size(); ++i)
+						line(mesh, {xs[i - 1], y(gain(xs[i - 1]))}, {xs[i], y(gain(xs[i]))}, colour, width);
+					if (handle.alpha == 0 || !volume.handles)
+						continue;
+					for (const engine::GainPoint& point : volume.points)
+					{
+						const double seconds =
+							volume.start + (static_cast<double>(point.position - volume.offset) / volume.rate);
+						if (seconds < volume.start || seconds > volume.end)
+							continue;
+						const double x = std::round(seconds / frame.unitsPerPixel) - frame.left;
+						const double at = y(std::clamp(volume.gain * point.gain / g_volumeLineTop, 0.0, 1.0));
+						quad(mesh, static_cast<float>(x - (handleSize / 2.0)),
+							static_cast<float>(at - (handleSize / 2.0)), static_cast<float>(x + (handleSize / 2.0)),
+							static_cast<float>(at + (handleSize / 2.0)), handle);
+					}
+				}
 			if (handle.alpha != 0)
 				for (const double at : lane.handles)
 					if (at >= from - (handleSize * frame.unitsPerPixel) &&

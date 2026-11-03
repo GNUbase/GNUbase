@@ -60,6 +60,9 @@ namespace gnubase::ui
 			fades.crossfade.length = crossfade.at("length").get<int64_t>();
 			fades.crossfade.outLength = crossfade.at("outLength").get<int64_t>();
 		}
+		fades.offset = event.at("offset").get<int64_t>();
+		fades.volume = event.at("volume").get<double>();
+		fades.curve = engine::volumeCurveFromJson(event.at("volumeCurve"));
 		m_fades[event.at("id").get<uint64_t>()] = fades;
 	}
 
@@ -148,7 +151,7 @@ namespace gnubase::ui
 		std::vector<FadeLines::Lane> lanes;
 		lanes.reserve(m_laneTracks.size());
 		for (const uint64_t track : m_laneTracks)
-			lanes.push_back({static_cast<float>(trackHeight(track) * m_view.trackZoom), {}, {}});
+			lanes.push_back({static_cast<float>(trackHeight(track) * m_view.trackZoom), {}, {}, {}});
 		std::map<uint64_t, const Shown*> shown;
 		for (const Shown& event : m_events)
 			if (const auto fades = m_fades.find(event.id);
@@ -194,6 +197,7 @@ namespace gnubase::ui
 				lane.fades.push_back({event->end - out, out, fades.out.shape, false});
 			if (std::binary_search(m_selection.begin(), m_selection.end(), id))
 				lane.handles.insert(lane.handles.end(), {event->start + in, event->end - out});
+			showVolume(lane, *event);
 		}
 		m_fadeLines->setLanes(std::move(lanes));
 	}

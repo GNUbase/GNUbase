@@ -40,6 +40,9 @@ namespace gnubase::engine
 	Json toJson(const Fade& fade);
 	Json toJson(const Crossfade& crossfade); // null without one
 	Json toJson(const AutoFades& settings);
+	// An audio event's volume curve: [{position, volume, curve}], and back, unchecked.
+	Json toJson(const std::vector<VolumePoint>& curve);
+	std::vector<VolumePoint> volumeCurveFromJson(const Json& json);
 	// The inverses. Missing properties keep the value of fallback; unknown names throw std::invalid_argument.
 	Fade fadeFromJson(const Json& json, const Fade& fallback = {});
 	AutoFades autoFadesFromJson(const Json& json, const AutoFades& fallback = {});
