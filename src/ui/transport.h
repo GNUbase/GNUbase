@@ -30,6 +30,9 @@ namespace gnubase::ui
 	using RunCommand = std::function<void(const std::string& command, const engine::Json& parameters)>;
 	// Ends a command that runs while its button is held, as its key going up would (KeyCommands::release).
 	using ReleaseCommand = std::function<void(const std::string& command)>;
+	// Checks that a control can run the command with its parameters: throws std::invalid_argument if it can't
+	// (KeyCommands::check).
+	using CheckCommand = std::function<void(const std::string& command, const engine::Json& parameters)>;
 
 	// Drives the transport controls in an element and follows the transport, the project's tempo and signature and the
 	// time formats through the engine binding. The element's markup says what each control is:
@@ -59,8 +62,10 @@ namespace gnubase::ui
 	class TransportControls final : private Rml::EventListener
 	{
 	public:
+		// Throws std::invalid_argument for a control in the element whose parameters aren't a JSON object, or whose
+		// command and parameters check refuses (#446).
 		TransportControls(engine::Engine& engine, EngineBinding& binding, Rml::Element& root, RunCommand run,
-			ReleaseCommand release = {});
+			ReleaseCommand release = {}, const CheckCommand& check = {});
 		~TransportControls() override;
 		TransportControls(const TransportControls&) = delete;
 		TransportControls& operator=(const TransportControls&) = delete;

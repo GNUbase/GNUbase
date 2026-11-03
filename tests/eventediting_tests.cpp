@@ -529,6 +529,68 @@ TEST_CASE("the ruler's time format chooses the grid that moves snap to", "[unit]
 	CHECK(f.display.rulerFormat() == ui::TimeFormat::Timecode);
 }
 
+// #565: settings the engine sent before it had the ruler's new format, in a snap.changed or a project.get answer,
+// never switch the ruler, the snap grid or the grid type menu back, not even for a step.
+TEST_CASE("the ruler keeps the format it chose until the engine has it", "[unit]")
+{
+	Fixture f;
+	// The display's ruler and snap format right after it took each snap.changed and project.get answer (the
+	// display's handlers run first), and after each step.
+	std::vector<std::pair<ui::TimeFormat, std::string>> seen;
+	const auto see = [&f, &seen]
+	{ seen.emplace_back(f.display.rulerFormat(), engine::gridFormatName(f.display.snap().format)); };
+	const ui::Subscription changed = f.binding.on("snap.changed", [&see](const engine::Event&) { see(); });
+	const ui::Subscription answered = f.binding.onResult("project.get", [&see](const engine::Result&) { see(); });
+	// Steps until the engine has the format and the display has taken everything sent before; whether the display
+	// had the format all the while.
+	const auto settle = [&f, &see, &seen](ui::TimeFormat format, const std::string& name)
+	{
+		seen.clear();
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		for (int confirmed = 0; confirmed < 3 && std::chrono::steady_clock::now() < deadline;)
+		{
+			f.ui.shell.step(milliseconds(5));
+			see();
+			if (f.call("snap.get").at("format") == name)
+				++confirmed;
+		}
+		return std::all_of(seen.begin(), seen.end(),
+			[&format, &name](const auto& each) { return each.first == format && each.second == name; });
+	};
+
+	// A snap.changed of another setting, sent before the ruler switches.
+	f.call("snap.set", {{"on", true}});
+	f.display.setRulerFormat(ui::TimeFormat::Seconds);
+	CHECK(settle(ui::TimeFormat::Seconds, "seconds"));
+	CHECK(f.display.snap().on);
+	CHECK(f.display.snap().grid() == engine::GridType::Ms100);
+
+	// A project.get answer that the display asked for before the ruler switched.
+	// The display asks for the project when history.changed comes in; this handler, after the display's, switches the
+	// ruler before the answer can be handed on.
+	const uint64_t loads = f.display.loads();
+	bool asked = false;
+	{
+		const ui::Subscription history = f.binding.on("history.changed",
+			[&f, &asked](const engine::Event&)
+			{
+				asked = f.binding.waiting("project.get") > 0;
+				f.display.setRulerFormat(ui::TimeFormat::Samples);
+			});
+		f.call("track.add", {{"type", "audio"}});
+		CHECK(settle(ui::TimeFormat::Samples, "samples"));
+	}
+	CHECK(asked);
+	CHECK(f.display.loads() > loads);
+
+	// Several switches in a row end on the last one.
+	f.call("snap.set", {{"zeroCrossing", true}});
+	f.display.setRulerFormat(ui::TimeFormat::Timecode);
+	f.display.setRulerFormat(ui::TimeFormat::BarsBeats);
+	CHECK(settle(ui::TimeFormat::BarsBeats, "barsBeats"));
+	CHECK(f.display.snap().zeroCrossing);
+}
+
 // The project window's tools (#86, reference manual pp. 57-65): what a press in the event lanes does with each.
 TEST_CASE("the tools are chosen by command, and the display names the one chosen", "[unit]")
 {
