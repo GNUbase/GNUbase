@@ -104,8 +104,9 @@ namespace gnubase::ui
 		// Runs the command that the keys, pressed in the window, are bound to. The focus zones are the elements with a
 		// focuszone attribute around the focused element: the innermost zone's binding counts first, then the outer
 		// zones', then the one for everywhere. A UI command gets the zone of its binding, or for one bound everywhere
-		// the innermost zone. Lock keys don't count, and nothing runs while a modal document has the focus. Returns
-		// whether a command ran.
+		// the innermost zone. Lock keys don't count, and nothing runs while a modal document has the focus. A focused
+		// text field keeps the arrow keys without modifiers, also those it can't use at its first or last line or
+		// character, which the text field lets through. Returns whether a command ran.
 		bool press(Window& window, const KeyPress& keys);
 		// The key went up: ends the commands that its presses run while it is held (UiCommand::release), whatever
 		// the modifiers are now. KI_UNKNOWN ends every one, as when the window lost the keyboard focus.
