@@ -394,6 +394,23 @@ namespace gnubase::engine
 			{"crossfadeShape", fadeShapeName(settings.crossfadeShape)}};
 	}
 
+	Json toJson(const std::vector<VolumePoint>& curve)
+	{
+		Json json = Json::array();
+		for (const VolumePoint& point : curve)
+			json.push_back({{"position", point.position}, {"volume", point.volume}, {"curve", point.curve}});
+		return json;
+	}
+
+	std::vector<VolumePoint> volumeCurveFromJson(const Json& json)
+	{
+		std::vector<VolumePoint> curve;
+		for (const Json& point : json)
+			curve.push_back(
+				{point.at("position").get<time::Samples>(), point.value("volume", 0.0), point.value("curve", 0.0)});
+		return curve;
+	}
+
 	Fade fadeFromJson(const Json& json, const Fade& fallback)
 	{
 		Fade fade = fallback;
@@ -557,7 +574,7 @@ namespace gnubase::engine
 			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute},
 			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
 			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()},
-			{"color", colorJson(event.color)}};
+			{"color", colorJson(event.color)}, {"volumeCurve", toJson(event.volumeCurve)}};
 	}
 
 	Json toJson(const Note& note)
@@ -1214,6 +1231,7 @@ namespace gnubase::engine
 			if (const Json snapPoint = item.value("snapPoint", Json()); !snapPoint.is_null()) // files from before #87
 				event.snapPoint = snapPoint.get<time::Samples>();
 			event.color = eventColorFrom(item);
+			event.volumeCurve = volumeCurveFromJson(item.value("volumeCurve", Json::array())); // files from before #139
 			project.audioEvents[event.id] = event;
 		}
 		for (const Json& item : json.at("midiParts"))

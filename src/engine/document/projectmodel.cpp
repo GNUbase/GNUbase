@@ -6,6 +6,7 @@
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/mixerviews.h"
 #include "engine/document/serialize.h"
+#include "engine/document/volumecurves.h"
 #include "engine/dsp/timestretch.h"
 #include "engine/graph/graph.h"
 #include "engine/jobs/jobs.h"
@@ -3222,6 +3223,7 @@ namespace gnubase::engine
 		registerRecordingCommands(engine);
 		registerPoolCommands(engine);
 		registerFadeCommands(engine);
+		registerVolumeCurveCommands(*this, engine);
 		registerEventEditCommands(engine);
 		registerSnapCommands(*this, engine);
 		registerMixerCommands(*this, engine);

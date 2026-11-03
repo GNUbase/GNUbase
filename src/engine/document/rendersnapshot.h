@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/fades.h"
 #include "engine/document/document.h"
 
 #include <cstdint>
@@ -59,7 +60,8 @@ namespace gnubase::engine
 		Fade fadeOut;
 		Fade clipFadeIn; // at the media file's start and end
 		Fade clipFadeOut;
-		Crossfade crossfade; // only one that applies (crossfadeApplies)
+		Crossfade crossfade;                // only one that applies (crossfadeApplies)
+		std::vector<GainPoint> volumeCurve; // in the media file's sample frames
 	};
 
 	struct RenderNote

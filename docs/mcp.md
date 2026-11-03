@@ -301,6 +301,21 @@ Result:
 
 - `event`: object, required
 
+#### `audioEvent_setVolumeCurve`
+
+Engine command `audioEvent.setVolumeCurve`.
+
+Sets an audio event's volume curve, on top of its volume: points at positions in the event's clip (sample frames, 0 to the clip's length; the curve moves with the event and stays with the audio when it is resized or split), each with a volume in dB (-144 to 6, default 0) and a curve (-1 to 1, default 0) that bends the way to the next point: from point to point the gain goes from one's to the next's along (1 - e^(-6cx)) / (1 - e^(-6c)), straight for 0, fast at first above 0, slowly at first below. Before the first point the curve is level with it, after the last one with that; points at the same position make a jump. No points: no curve. Returns the event, its points by position.
+
+Arguments:
+
+- `event`: integer, required
+- `points`: array of object, required
+
+Result:
+
+- `event`: object, required
+
 ### audioFile
 
 #### `audioFile_import`
@@ -1468,6 +1483,20 @@ Arguments:
 - `events`: array of integer, required
 - `fadeIn`: boolean
 - `fadeOut`: boolean
+
+Result:
+
+- `events`: array of integer, required
+
+#### `event_removeVolumeCurve`
+
+Engine command `event.removeVolumeCurve`.
+
+Remove Volume Curve: audio events play at their volume again, without a curve. Returns the events.
+
+Arguments:
+
+- `events`: array of integer, required
 
 Result:
 
@@ -3406,6 +3435,23 @@ Arguments:
 - `splitNotes`: boolean
 - `start`: integer
 - `tracks`: array of integer
+
+Result:
+
+- `events`: array of integer, required
+
+#### `range_volumeCurve`
+
+Engine command `range.volumeCurve`.
+
+Sets the volume curves of the audio events on tracks (ids, default every track) that cross the range from start to end (project samples) to volume (dB, -144 to 6, default 0) inside the range, with jumps at its edges; outside it they stay as they were. With volume 0, Remove Volume Curve on a range: the original level there. A curve left at 0 dB everywhere is none. Returns the events changed.
+
+Arguments:
+
+- `end`: integer, required
+- `start`: integer, required
+- `tracks`: array of integer
+- `volume`: number
 
 Result:
 

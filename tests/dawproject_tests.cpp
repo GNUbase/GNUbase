@@ -799,6 +799,9 @@ TEST_CASE(
 	run(client, "audioEvent.setFades",
 		{{"event", c}, {"fadeIn", {{"length", 4410}, {"shape", "sCurve"}}}, {"fadeOut", {{"length", 2205}}}});
 	run(client, "clip.setFades", {{"clip", clip}, {"fadeIn", {{"length", 441}, {"shape", "exponential"}}}});
+	// The volume curve is GNUbase-only too (#139).
+	run(client, "audioEvent.setVolumeCurve",
+		{{"event", c}, {"points", {{{"position", 1000}, {"volume", -12.5}, {"curve", 0.25}}, {{"position", 9000}}}}});
 	run(client, "autoFades.set", {{"crossfades", true}, {"length", 3.0}});
 	run(client, "autoFades.set", {{"track", track}, {"fadeIn", true}, {"crossfadeMode", "equalPower"}});
 	const Json before = run(client, "project.get");

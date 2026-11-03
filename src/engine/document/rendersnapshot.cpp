@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/document/rendersnapshot.h"
 
+#include "engine/audio/fades.h"
+
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -186,7 +188,8 @@ namespace gnubase::engine
 			snapshot->channels[trackChannel.at(event.track)].audioEvents.push_back(
 				{id, toSamples(project, event.position), mediaIndex.at(clip.media), event.offset, event.length,
 					static_cast<float>(std::pow(10.0, event.volume / 20.0)), event.mute, event.fadeIn, event.fadeOut,
-					clip.fadeIn, clip.fadeOut, crossfadeApplies(project, event) ? event.crossfade : Crossfade()});
+					clip.fadeIn, clip.fadeOut, crossfadeApplies(project, event) ? event.crossfade : Crossfade(),
+					gainPoints(event.volumeCurve)});
 		}
 		for (const auto& [id, part] : project.midiParts)
 		{

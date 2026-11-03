@@ -5,6 +5,7 @@
 // reference manual pp. 285-294): the range.* commands and the range clipboard.
 // docs/features/parts-and-events.md and docs/features/range-editing.md describe them.
 #include "engine/audio/automation.h"
+#include "engine/audio/fades.h"
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/rendersnapshot.h"
@@ -660,6 +661,22 @@ namespace gnubase::engine
 			const Item& first = items[0];
 			if (first.audio != nullptr)
 			{
+				// The glued event's volume curve: each event's own where it plays, with its volume's difference to
+				// the first one's.
+				const bool curves = std::any_of(items.begin(), items.end(), [&first](const Item& item)
+					{ return !item.audio->volumeCurve.empty() || item.audio->volume != first.audio->volume; });
+				std::vector<VolumePoint> curve;
+				for (const Item& item : items)
+				{
+					const AudioEvent& each = *item.audio;
+					std::vector<VolumePoint> own = cutVolumeCurve(
+						each.volumeCurve.empty() ? std::vector<VolumePoint>{{0, 0.0, 0.0}} : each.volumeCurve,
+						each.offset, each.offset + each.length);
+					for (VolumePoint& point : own)
+						point.volume = std::clamp(
+							point.volume + each.volume - first.audio->volume, g_minEventVolume, g_maxEventVolume);
+					curve.insert(curve.end(), own.begin(), own.end());
+				}
 				// ponytail: audio events glue only where one continues the other, until audio parts hold the rest.
 				for (size_t i = 1; i < items.size(); ++i)
 				{
@@ -671,6 +688,8 @@ namespace gnubase::engine
 					first.audio->length += after.length;
 					first.audio->fadeOut = after.fadeOut;
 				}
+				if (curves)
+					first.audio->volumeCurve = std::move(curve);
 			}
 			else
 			{
