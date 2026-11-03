@@ -153,9 +153,11 @@ namespace gnubase::engine
 			{
 				const std::optional<midi::Voicing> voicing =
 					midi::voicingFromName(parameters.at("voicing").get<std::string>());
-				require(voicing.has_value(), "no voicing " + parameters.at("voicing").dump());
+				if (!voicing)
+					throw CommandError("no voicing " + parameters.at("voicing").dump());
 				const std::optional<std::vector<int>> revoiced = midi::revoice(pitches, *voicing);
-				require(revoiced.has_value(), "the notes can't take that voicing: too few, or out of range");
+				if (!revoiced)
+					throw CommandError("the notes can't take that voicing: too few, or out of range");
 				changed = *revoiced;
 			}
 			Json result = Json::array();
