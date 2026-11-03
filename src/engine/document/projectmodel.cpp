@@ -4,6 +4,7 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
 #include "engine/dawproject/dawproject.h"
+#include "engine/document/editors.h"
 #include "engine/document/mixerviews.h"
 #include "engine/document/serialize.h"
 #include "engine/dsp/timestretch.h"
@@ -3270,6 +3271,7 @@ namespace gnubase::engine
 		registerEventEditCommands(engine);
 		registerSnapCommands(*this, engine);
 		registerMixerCommands(*this, engine);
+		registerEditorCommands(*this, engine);
 		registerHistoryCommands(engine);
 		registerMediaFolderCommands(engine, jobs);
 		registerProjectFileCommands(engine);
