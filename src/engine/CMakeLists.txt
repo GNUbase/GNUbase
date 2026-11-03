@@ -104,6 +104,7 @@ add_library(gnubase-engine STATIC
 	audiofile/reader.cpp
 	audiofile/resampler.cpp audiofile/resampler.h
 	audiofile/writer.cpp
+	clock.cpp clock.h
 	dawproject/dawproject.cpp dawproject/dawproject.h
 	document/audiofilecommands.cpp
 	document/channelformat.cpp document/channelformat.h

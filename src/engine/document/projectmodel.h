@@ -87,10 +87,6 @@ namespace gnubase::engine
 		// and status; null for no such slot. Only on the command thread.
 		Json describeSlot(const Project& project, ObjectId slot) const;
 
-		// For tests of due auto saves (project.autoSave): moves the clock they go by forward, for every project model
-		// in the process.
-		static void advanceClock(std::chrono::steady_clock::duration by);
-
 	private:
 		// Registers a query, or a command that changes the project. Such a command runs on the project, and if it
 		// fails the project is restored from a copy, so a failed command changes nothing. If it succeeds, what it
@@ -152,7 +148,9 @@ namespace gnubase::engine
 		uint64_t m_savedRevision = 0;     // when it was last saved, loaded or made: unchanged since if m_revision
 		uint64_t m_autoSavedRevision = 0; // when it was last saved or auto saved
 		uint64_t m_openedRevision = 0;    // when it was loaded or made: openedRevision
-		std::chrono::steady_clock::time_point m_lastSave = std::chrono::steady_clock::now(); // or auto save
+		const Clock* m_clock = nullptr;   // the engine's, which auto saves go by
+		Clock::TimePoint m_lastSave;      // or auto save, or failed auto save
+		bool m_autoSaveFailed = false;    // the last auto save since the project was saved or opened failed
 		std::filesystem::path m_settingsDirectory; // the user settings' folder, empty without one
 		std::shared_ptr<settings::Store> m_recent; // the recent projects
 		bool m_automationFollowsEvents = false;    // a setting, not part of the project
