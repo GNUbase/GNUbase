@@ -20,7 +20,8 @@ when no MIDI keyboard is at hand.
   the upper row plays from that C up, Q 2 W 3 E R 5 T 6 Y 7 U I 9 O 0 P for C to E. Several keys play at once. A key
   plays from its press to its release, and a held key's OS repeats play nothing more. Keys follow the keyboard layout,
   as key commands do ([key-commands.md](key-commands.md)).
-- **Mouse.** Pressing the left button on a key plays it until the button goes up.
+- **Mouse.** Pressing the left button on a key plays it until the button goes up, or until the mouse leaves the window,
+  where the button going up sends no event.
 - **Octave and velocity.** The Octave slider moves the keyboard by octaves, seven in all: its lowest key is C0 to C6,
   C3 (middle C, note 60) by default. The Velocity slider sets the notes' velocity, 1 to 127, 100 by default. A note
   ends at the pitch it started at, also when the octave changes while it sounds. Both stay while the window is closed,
@@ -45,5 +46,6 @@ octave and velocity as user settings that last across restarts; dragging the mou
 record-enabled and set to all MIDI inputs, a record-enabled track records it, and it takes only MIDI 1.0 channel
 messages. In the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)), Alt+K opens the window; with the transport
 recording onto a record-enabled instrument track, Z held down and released and a mouse button held on a key after
-the octave and velocity changed record two notes at those pitches and velocities; Num/ keeps its key command, Num0
+the octave and velocity changed record two notes at those pitches and velocities, and a key held with the mouse ends
+when the button goes up out of the window; Num/ keeps its key command, Num0
 runs none; and Alt+K closes the window, which keeps its octave for the next time.

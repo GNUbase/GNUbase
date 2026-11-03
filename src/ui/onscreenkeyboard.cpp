@@ -23,8 +23,8 @@ namespace gnubase::ui
 	{
 		using namespace Rml::Input;
 
-		constexpr std::array<Rml::EventId, 3> g_events = {
-			Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Change};
+		constexpr std::array<Rml::EventId, 4> g_events = {
+			Rml::EventId::Mousedown, Rml::EventId::Mouseup, Rml::EventId::Mouseout, Rml::EventId::Change};
 
 		// The computer keys that play the keys, from the lowest: the lower row's octave, then the upper row's from
 		// the next C up. Comma plays that C too.
@@ -153,6 +153,11 @@ namespace gnubase::ui
 			return;
 		case Rml::EventId::Mouseup:
 			if (event.GetParameter("button", 0) == 0)
+				noteOff(g_mouse);
+			return;
+		case Rml::EventId::Mouseout:
+			// The mouse leaving the window ends its note: the button going up out there sends no mouseup.
+			if (target == m_document.get())
 				noteOff(g_mouse);
 			return;
 		case Rml::EventId::Change:

@@ -212,11 +212,35 @@ TEST_CASE("notes played on the on-screen keyboard with the computer keyboard and
 	context.ProcessMouseButtonUp(0, 0);
 	CHECK(!w.IsClassSet("pressed"));
 	render(app);
+
+	// The mouse button going up out of the window, where no mouseup arrives, ends the note too: E's (key 16).
+	Rml::Element& e = keyElement(app, 16);
+	context.ProcessMouseMove(static_cast<int>(e.GetAbsoluteLeft() + (e.GetOffsetWidth() / 2.0F)),
+		static_cast<int>(e.GetAbsoluteTop() + (e.GetOffsetHeight() * 0.8F)), 0);
+	context.ProcessMouseButtonDown(0, 0);
+	CHECK(e.IsClassSet("pressed"));
+	render(app);
+	context.ProcessMouseMove(-50, -50, 0);
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, 0);
+	CHECK(!e.IsClassSet("pressed"));
+	render(app);
+	render(app);
+	render(app);
 	app.call("transport.stop");
 	render(app);
 	REQUIRE(app.waitUntil(
-		[&app, track] { return recordedNotes(app.call("project.get"), track).size() == 2; }, std::chrono::seconds(10)));
-	CHECK(recordedNotes(app.call("project.get"), track) == std::vector<std::vector<int>>{{60, 100}, {86, 64}});
+		[&app, track] { return recordedNotes(app.call("project.get"), track).size() == 3; }, std::chrono::seconds(10)));
+	const Json project = app.call("project.get");
+	CHECK(recordedNotes(project, track) == std::vector<std::vector<int>>{{60, 100}, {86, 64}, {88, 64}});
+	// It lasts as long as the button was held, as W's did, not until the recording stopped.
+	std::vector<int64_t> lengths;
+	for (const Json& part : project.at("midiParts"))
+		if (part.at("track") == track)
+			for (const Json& note : part.at("notes"))
+				lengths.push_back(note.at("length").get<int64_t>());
+	REQUIRE(lengths.size() == 3);
+	CHECK(lengths[2] < lengths[1] * 2);
 
 	// Alt+K keeps its key command and closes it again; the octave and velocity stay for the next time.
 	app.ui().key(std::nullopt, "Alt+K");
