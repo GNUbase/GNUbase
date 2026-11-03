@@ -380,8 +380,12 @@ TEST_CASE("the project window selects events or markers, and the info line shows
 	// A selection naming a marker the project no longer has shows nothing.
 	window.call("marker.remove", {{"markers", {verse, intro}}});
 	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("markers").empty(); }));
+	REQUIRE(window.app.waitUntil([&] { return lines.selection().empty(); }));
+	REQUIRE(window.app.waitUntil([&] { return !hasClass(window.app, "#info-line", "markers"); }));
 	window.app.appUi().markerLines()->setSelection({verse});
-	CHECK(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "empty"); }));
+	// Only showMarkers' branch for markers the project doesn't have sets both.
+	CHECK(window.app.waitUntil(
+		[&] { return hasClass(window.app, "#info-line", "markers") && hasClass(window.app, "#info-line", "empty"); }));
 }
 
 TEST_CASE("the inspector shows the selected track, and its controls change the track's channel", "[ui]")
