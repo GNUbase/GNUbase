@@ -540,6 +540,9 @@ namespace gnubase::app
 			m_colorMenu = std::make_unique<ui::ColorMenu>(*m_eventDisplay, *m_trackList, m_binding, *document);
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 		m_markerLines = std::make_unique<ui::MarkerLines>(*m_eventDisplay, m_binding);
+		if (m_infoLine)
+			m_infoLine->followMarkers(
+				[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
 		m_markerLines->onSelect(
 			[this](const std::vector<uint64_t>& selection)
 			{

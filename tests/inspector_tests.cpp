@@ -235,6 +235,81 @@ TEST_CASE("the info line edits an audio event's volume", "[ui]")
 	CHECK(window.app.waitUntil([&] { return window.find("audioEvents", event).at("volume") == 0.0; }));
 }
 
+TEST_CASE(
+	"the info line shows the marker selected on the marker track, and its edits change every selected one", "[ui]")
+{
+	Window window;
+	window.addTrack({{"type", "marker"}});
+	const auto add = [&window](const Json& parameters)
+	{ return window.call("marker.add", parameters).at("marker").at("id").get<uint64_t>(); };
+	const uint64_t intro = add({{"position", g_quarter}, {"name", "Intro"}});
+	const uint64_t verse =
+		add({{"type", "cycle"}, {"position", 4 * g_quarter}, {"end", 8 * g_quarter}, {"name", "Verse"}});
+	const auto marker = [&window](uint64_t id) { return window.find("markers", id); };
+	REQUIRE(window.app.waitUntil([&] { return elements(window.app, ".marker-label").size() == 2; }));
+	const size_t steps = window.call("history.get").at("steps").size();
+
+	// A click on a marker on the marker track shows it: its description, position, end and length.
+	window.app.ui().click(std::nullopt, {".marker-label", 1, std::nullopt}, ui::MouseButton::Left, 1, {});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Verse"));
+	CHECK(hasClass(window.app, "#info-line", "markers"));
+	CHECK_FALSE(hasClass(window.app, "#info-line", "empty"));
+	CHECK(attribute(window.app, "#info-line textdisplay[field=start]", "value") == "2.1.1.0");
+	CHECK(attribute(window.app, "#info-line textdisplay[field=end]", "value") == "3.1.1.0");
+	CHECK(attribute(window.app, "#info-line textdisplay[field=length]", "value") == "1.0.0.0");
+	for (const char* field : {"volume", "mute", "lock"})
+		CHECK(hasClass(window.app, std::string("#info-line [info-field=") + field + "]", "hidden"));
+
+	// Each field edits it with marker.set; a new position keeps a cycle marker's length.
+	window.type("#info-line textdisplay[field=name]", "Chorus");
+	REQUIRE(window.app.waitUntil([&] { return marker(verse).at("name") == "Chorus"; }));
+	window.type("#info-line textdisplay[field=start]", "3.1.1.0");
+	REQUIRE(window.app.waitUntil([&] { return marker(verse).at("position") == 8 * g_quarter; }));
+	CHECK(marker(verse).at("end") == 12 * g_quarter);
+	REQUIRE(window.shows("#info-line textdisplay[field=end]", "4.1.1.0"));
+	window.type("#info-line textdisplay[field=end]", "5.1.1.0");
+	REQUIRE(window.app.waitUntil([&] { return marker(verse).at("end") == 16 * g_quarter; }));
+	REQUIRE(window.shows("#info-line textdisplay[field=length]", "2.0.0.0"));
+	window.type("#info-line textdisplay[field=length]", "1.0.0.0");
+	REQUIRE(window.app.waitUntil([&] { return marker(verse).at("end") == 12 * g_quarter; }));
+	CHECK(window.call("history.get").at("steps").size() == steps + 4);
+
+	// With several selected the first one shows, a position marker without end and length, and an edit changes all
+	// of them, relative to the first one's value, in one undo step.
+	window.app.ui().click(std::nullopt, {".marker-label", 0, std::nullopt}, ui::MouseButton::Left, 1, {"ctrl"});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
+	CHECK(hasClass(window.app, "#info-line", "multiple"));
+	CHECK(hasClass(window.app, "#info-line [info-field=end]", "hidden"));
+	CHECK(hasClass(window.app, "#info-line [info-field=length]", "hidden"));
+	window.type("#info-line textdisplay[field=start]", "1.3.1.0");
+	REQUIRE(window.app.waitUntil([&] { return marker(intro).at("position") == 2 * g_quarter; }));
+	CHECK(marker(verse).at("position") == 9 * g_quarter);
+	CHECK(marker(verse).at("end") == 13 * g_quarter);
+	REQUIRE(window.shows("#info-line textdisplay[field=start]", "1.3.1.0"));
+	window.type("#info-line textdisplay[field=name]", "Song");
+	REQUIRE(window.app.waitUntil([&] { return marker(intro).at("name") == "Song"; }));
+	CHECK(marker(verse).at("name") == "Song");
+	CHECK(window.call("history.get").at("steps").size() == steps + 6);
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return marker(intro).at("name") == "Intro"; }));
+	CHECK(marker(verse).at("name") == "Chorus");
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
+
+	// With Ctrl+Enter every one gets the value typed.
+	window.type("#info-line textdisplay[field=start]", "4.1.1.0", "Ctrl+Enter");
+	REQUIRE(window.app.waitUntil([&] { return marker(intro).at("position") == 12 * g_quarter; }));
+	CHECK(marker(verse).at("position") == 12 * g_quarter);
+
+	// Selecting an event shows the event again.
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t part = window.addPart(midi, 0, 4 * g_quarter, "Part");
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 1; }));
+	window.display.select({part});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Part"));
+	CHECK_FALSE(hasClass(window.app, "#info-line", "markers"));
+	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=mute]", "hidden"));
+}
+
 TEST_CASE("the inspector shows the selected track, and its controls change the track's channel", "[ui]")
 {
 	Window window;

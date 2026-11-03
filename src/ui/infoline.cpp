@@ -57,6 +57,13 @@ namespace gnubase::ui
 				element.SetAttribute("value", value);
 		}
 
+		void setLabel(Rml::Element& root, const std::string& field, const char* label)
+		{
+			if (Rml::Element* span = root.QuerySelector("[info-field=" + field + "] .info-label");
+				span != nullptr && span->GetInnerRML() != label)
+				span->SetInnerRML(label);
+		}
+
 		void setFlag(Rml::Element& element, const char* name, bool set)
 		{
 			if (set && !element.HasAttribute(name))
@@ -93,7 +100,7 @@ namespace gnubase::ui
 			const auto [field, text] = *m_absoluteTake;
 			m_absoluteTake.reset();
 			const std::optional<float> number = widgets::parse(text);
-			if (!m_events.empty() && (field != "volume" || number))
+			if (shows() && (field != "volume" || number))
 			{
 				m_absolute = true;
 				edit(field, text, number.value_or(0.0F));
@@ -102,11 +109,29 @@ namespace gnubase::ui
 		}
 		const std::vector<uint64_t>& selection = m_display.selection();
 		const TimeFormat format = m_display.rulerFormat();
-		if (selection == m_selection && m_display.loads() == m_loads && format == m_format)
+		std::vector<uint64_t> markers = m_markerSource ? m_markerSource() : std::vector<uint64_t>();
+		const bool markersChanged = markers != m_markerSelection;
+		if (selection == m_selection && m_display.loads() == m_loads && format == m_format && !markersChanged)
 			return;
+		// Whichever selection changed last shows; a marker clicked on the marker track wins.
+		if (selection != m_selection && !selection.empty())
+			m_showsMarkers = false;
+		if (markersChanged)
+			m_showsMarkers = !markers.empty();
+		m_markerSelection = std::move(markers);
+		m_markers.clear();
+		if (m_showsMarkers)
+			for (const MarkerItem& marker : readMarkers(m_display.project()).markers)
+				if (std::find(m_markerSelection.begin(), m_markerSelection.end(), marker.id) != m_markerSelection.end())
+					m_markers.push_back(marker);
 		m_selection = selection;
 		m_loads = m_display.loads();
 		m_format = format;
+		if (m_showsMarkers)
+		{
+			show();
+			return;
+		}
 		if (selection.empty())
 		{
 			m_events = Json::array();
@@ -142,10 +167,21 @@ namespace gnubase::ui
 		if (!m_root)
 			return;
 		Rml::Element& root = *m_root.get();
+		setClass(root, "markers", m_showsMarkers);
+		if (m_showsMarkers)
+		{
+			showMarkers();
+			return;
+		}
 		setClass(root, "empty", m_events.empty());
 		setClass(root, "multiple", m_events.size() > 1);
 		if (m_events.empty())
 			return;
+		setLabel(root, "name", "Name");
+		setLabel(root, "start", "Start");
+		for (const char* field : {"end", "length", "mute", "lock"})
+			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
+				setClass(*shown, "hidden", false);
 		const Json& first = m_events.front();
 		const TimeContext context = projectTime(m_display.project());
 		const double start = first.at("start").get<double>() / context.sampleRate;
@@ -185,16 +221,118 @@ namespace gnubase::ui
 			return;
 		}
 		// A display's, a value field's or a button's change, not that of the text field inside a display.
-		if (target == nullptr || !target->HasAttribute("field") || m_events.empty())
+		if (target == nullptr || !target->HasAttribute("field") || !shows())
 			return;
 		const auto field = target->GetAttribute<Rml::String>("field", "");
 		m_absolute = m_absoluteTake && m_absoluteTake->first == field;
 		m_absoluteTake.reset();
-		if (target->GetTagName() == "button")
+		if (m_showsMarkers)
+			editMarkers(field, event.GetParameter<Rml::String>("value", ""));
+		else if (target->GetTagName() == "button")
 			edit(field, {}, event.GetParameter<bool>("value", false) ? 1.0F : 0.0F);
 		else
 			edit(field, event.GetParameter<Rml::String>("value", ""), event.GetParameter<float>("value", 0.0F));
 		m_absolute = false;
+	}
+
+	// The first selected marker: its description and position, and a cycle marker's end and length.
+	void InfoLine::showMarkers()
+	{
+		Rml::Element& root = *m_root.get();
+		setClass(root, "empty", false);
+		setClass(root, "multiple", m_markers.size() > 1);
+		const MarkerItem& first = m_markers.front();
+		const TimeContext context = projectTime(m_display.project());
+		const std::map<std::string, std::string> texts = {{"name", first.name},
+			{"start", formatTime(m_format, first.start, context)}, {"end", formatTime(m_format, first.end, context)},
+			{"length", formatLength(m_format, first.start, first.end, context)}};
+		for (const auto& [field, text] : texts)
+			if (Rml::Element* display = root.QuerySelector("textdisplay[field=" + field + "]"))
+				setValue(*display, text);
+		if (Rml::Element* name = root.QuerySelector("textdisplay[field=name]"))
+			setFlag(*name, "disabled", false);
+		setLabel(root, "name", "Description");
+		setLabel(root, "start", "Position");
+		for (const char* field : {"end", "length"})
+			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
+				setClass(*shown, "hidden", !first.cycle);
+		for (const char* field : {"volume", "mute", "lock"})
+			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
+				setClass(*shown, "hidden", true);
+	}
+
+	// As for events: relative to the first marker's value, or with Ctrl+Enter the value typed for every one. A new
+	// position keeps a cycle marker's length; end and length change the cycle markers.
+	void InfoLine::editMarkers(const std::string& field, const std::string& text)
+	{
+		const ProjectMarkers project = readMarkers(m_display.project());
+		const TimeContext& context = project.time;
+		const MarkerItem& first = m_markers.front();
+		const auto cycle =
+			std::find_if(m_markers.begin(), m_markers.end(), [](const MarkerItem& m) { return m.cycle; });
+		Json commands = Json::array();
+		const auto set = [&commands, &project](const MarkerItem& marker, double start, double end)
+		{
+			const auto track = std::find_if(project.tracks.begin(), project.tracks.end(),
+				[&marker](const ProjectMarkers::Track& each) { return each.id == marker.track; });
+			if (track == project.tracks.end() || start < 0.0 || (marker.cycle && end <= start))
+				return;
+			Json parameters = {{"marker", marker.id}};
+			if (start != marker.start)
+				parameters["position"] = project.position(*track, start);
+			if (marker.cycle && (end != marker.end || start != marker.start))
+				parameters["end"] = project.position(*track, end);
+			if (parameters.size() > 1)
+				commands.push_back({{"command", "marker.set"}, {"parameters", std::move(parameters)}});
+		};
+		if (field == "name")
+		{
+			for (const MarkerItem& marker : m_markers)
+				if (marker.name != text)
+					commands.push_back(
+						{{"command", "marker.set"}, {"parameters", {{"marker", marker.id}, {"name", text}}}});
+		}
+		else if (field == "start")
+		{
+			if (const std::optional<double> typed = parseTime(m_format, text, context))
+				for (const MarkerItem& marker : m_markers)
+				{
+					const double start = m_absolute ? *typed : marker.start + (*typed - first.start);
+					set(marker, start, start + (marker.end - marker.start));
+				}
+		}
+		else if ((field == "end" || field == "length") && cycle != m_markers.end())
+		{
+			// How long each cycle marker gets.
+			std::optional<double> length;
+			if (field == "end")
+			{
+				if (const std::optional<double> typed = parseTime(m_format, text, context))
+					length = *typed - cycle->start;
+			}
+			else
+			{
+				length = parseLength(m_format, text, cycle->start, context);
+			}
+			if (length)
+				for (const MarkerItem& marker : m_markers)
+					if (marker.cycle)
+					{
+						const double change = *length - (cycle->end - cycle->start);
+						const double to = m_absolute ? *length : marker.end - marker.start + change;
+						set(marker, marker.start,
+							field == "end" && m_absolute ? cycle->start + *length : marker.start + to);
+					}
+		}
+		if (commands.empty())
+		{
+			show(); // the value that holds
+			return;
+		}
+		const std::map<std::string, const char*> labels = {
+			{"name", "Description"}, {"start", "Position"}, {"end", "End"}, {"length", "Length"}};
+		const std::string description = std::string("Change Marker ") + labels.at(field);
+		m_binding.send("history.transaction", {{"description", description}, {"commands", std::move(commands)}});
 	}
 
 	void InfoLine::edit(const std::string& field, const std::string& text, float number)

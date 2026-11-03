@@ -35,7 +35,7 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
   color them; code places the labels. The user setting `ui.markerIds` (Show Marker IDs on Marker Track, on by
   default) leaves out the numbers when it is off.
 - **Mouse** on a marker track's lane: a click selects the marker under the mouse (its label, a position marker's line
-  within 4 dp, or the cycle marker it is in) and Ctrl-click adds or removes it, its label getting `.selected`;
+  within 4 dp, or the cycle marker it is in) and Ctrl-click adds or removes it, its label getting `.selected`, and the info line shows and edits the selected markers ([inspector.md](inspector.md), p. 430);
   Alt-click adds a position marker there (but not on a cycle marker); a double click on a cycle marker sets the
   locators to it (`marker.setLocators`), with Alt it zooms to it (p. 424). The event
   display stops mouse downs, so RmlUi sends no `dblclick`: two clicks within half a second and 3 dp make one.
@@ -96,6 +96,6 @@ markers. `tests/marker_tests.cpp` covers `transport.cycleFollowsMarkers` for the
 
 Not yet: dragging markers and resizing cycle markers on the marker track, Ctrl-drag for a cycle marker and Shift to
 rename at once (with parts editing, #85); range selections by markers (the range tool, #86; `marker.range` gives the
-range); editing markers on the info line (there is none yet); hiding columns; the track list's controls
+range); hiding columns; the track list's controls
 for marker tracks (add markers, activate, the Locate, Cycle and Zoom menus, #81); marker lines in the key editor;
 locking marker tracks; importing markers from wave files.
