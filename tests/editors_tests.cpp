@@ -77,7 +77,12 @@ TEST_CASE("a MIDI editor opens with several parts on several tracks, in the trac
 	const Json closed = {{"editor", "window"}, {"open", false}, {"parts", Json::array()}, {"activePart", 0},
 		{"activeTrack", 0}, {"editable", Json::array()}, {"editingMode", "allParts"}, {"keepContents", false},
 		{"globalTracks", Json::array()}};
-	CHECK(f.view("window") == closed);
+	// The key editor's settings (tests/keyeditor_tests.cpp) aside.
+	Json shown = f.view("window");
+	for (const char* key : {"selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch",
+			 "recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize"})
+		shown.erase(key);
+	CHECK(shown == closed);
 
 	const uint64_t keys = f.track("midi");
 	const uint64_t synth = f.track("instrument");

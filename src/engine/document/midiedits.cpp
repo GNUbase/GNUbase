@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Changing the notes and controllers of a MIDI part (#27): note.set and controller.set. Like every command that
-// changes the project, each is one undo step and changes nothing if it fails (ProjectModel::add).
+// Changing the notes and controllers of a MIDI part (#27): note.set and controller.set, and the key editor's chord
+// editing (#127): note.chord and note.voicing. Like every command that changes the project, each is one undo step and
+// changes nothing if it fails (ProjectModel::add).
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "engine/midi/chords.h"
 
 #include <cmath>
 #include <cstdint>
@@ -97,6 +99,74 @@ namespace gnubase::engine
 				result.push_back(toJson(note));
 			}
 			context.emit("note.changed", {{"part", part.id}, {"notes", result}});
+			return {{"notes", result}};
+		}
+
+		// The part's notes that the parameters' notes name, in that order.
+		std::vector<Note*> namedNotes(MidiPart& part, const Json& parameters)
+		{
+			std::vector<Note*> notes;
+			for (const Json& id : parameters.at("notes"))
+			{
+				const auto found = part.notes.find(id.get<ObjectId>());
+				require(found != part.notes.end(), "the part has no note " + id.dump());
+				notes.push_back(&found->second);
+			}
+			require(!notes.empty(), "notes must name at least one note");
+			return notes;
+		}
+
+		std::vector<int> pitchesOf(const std::vector<Note*>& notes)
+		{
+			std::vector<int> pitches;
+			pitches.reserve(notes.size());
+			for (const Note* note : notes)
+				pitches.push_back(note->pitch);
+			return pitches;
+		}
+
+		Json chordOf(Project& project, CommandContext& context)
+		{
+			MidiPart& part = findPart(project, context.parameters());
+			const std::optional<midi::Chord> chord =
+				midi::recognizeChord(pitchesOf(namedNotes(part, context.parameters())));
+			if (!chord)
+				return {{"chord", nullptr}};
+			return {{"chord", {{"root", chord->root}, {"type", chord->type->name}, {"name", chord->name()}}}};
+		}
+
+		Json voiceNotes(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			MidiPart& part = findPart(project, parameters);
+			const std::vector<Note*> notes = namedNotes(part, parameters);
+			const std::vector<int> pitches = pitchesOf(notes);
+			require(parameters.contains("chord") != parameters.contains("voicing"), "give either chord or voicing");
+			std::vector<int> changed;
+			if (parameters.contains("chord"))
+			{
+				const midi::ChordType* type = midi::chordType(parameters.at("chord").get<std::string>());
+				require(type != nullptr, "no chord type " + parameters.at("chord").dump());
+				changed = midi::fitChord(pitches, *type);
+			}
+			else
+			{
+				const std::optional<midi::Voicing> voicing =
+					midi::voicingFromName(parameters.at("voicing").get<std::string>());
+				require(voicing.has_value(), "no voicing " + parameters.at("voicing").dump());
+				const std::optional<std::vector<int>> revoiced = midi::revoice(pitches, *voicing);
+				require(revoiced.has_value(), "the notes can't take that voicing: too few, or out of range");
+				changed = *revoiced;
+			}
+			Json result = Json::array();
+			for (size_t i = 0; i < notes.size(); ++i)
+				if (notes[i]->pitch != changed[i])
+				{
+					notes[i]->pitch = static_cast<uint8_t>(changed[i]);
+					result.push_back(toJson(*notes[i]));
+				}
+			if (!result.empty())
+				context.emit("note.changed", {{"part", part.id}, {"notes", result}});
 			return {{"notes", result}};
 		}
 
@@ -204,5 +274,38 @@ namespace gnubase::engine
 						{"bank", {{"type", {"integer", "null"}}}}, {"data", {{"type", "array"}, {"items", integer}}}}),
 				resultSchema("controllers"), false},
 			setControllers);
+
+		Json chordTypes = Json::array();
+		for (const midi::ChordType& type : midi::chordTypes())
+			chordTypes.push_back(type.name);
+		const Json notesOfPart = {{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "notes"}},
+			{"properties", {{"part", integer}, {"notes", {{"type", "array"}, {"items", integer}}}}}};
+		add(engine,
+			{"note.chord", 1,
+				"The chord that notes of a MIDI part make, in any octave and order (arpeggiated notes too), as the key "
+				"editor's Chord Editing section shows it: chord {root, the pitch class (0 is C), type, as note.voicing "
+				"takes it, and name, such as Cm7}, or null if they make none of the chord types exactly. Of several "
+				"roots that fit, the lowest note's.",
+				notesOfPart,
+				{{"type", "object"}, {"required", {"chord"}},
+					{"properties", {{"chord", {{"type", {"object", "null"}}}}}}},
+				true},
+			chordOf);
+		Json voicingSchema = notesOfPart;
+		voicingSchema["properties"]["chord"] = {{"type", "string"}, {"enum", chordTypes}};
+		voicingSchema["properties"]["voicing"] = {
+			{"type", "string"}, {"enum", {"invertUp", "invertDown", "drop2", "drop3", "drop24"}}};
+		add(engine,
+			{"note.voicing", 1,
+				"Transposes notes of a MIDI part as the key editor's Chord Editing section does (reference manual pp. "
+				"1215-1217). chord fits them to a chord type (major, minor, diminished, augmented, sus2, sus4; major7, "
+				"minor7, dominant7, halfDiminished7, diminished7, minorMajor7) on the root of the chord they make, or "
+				"else of the lowest note: from the lowest up, each moves to the nearest pitch of a chord tone that no "
+				"lower note took since every tone last had one, down on a tie. voicing changes the voicing: invertUp "
+				"moves the lowest note up by octaves until it is the highest, invertDown the highest down until it is "
+				"the lowest, drop2, drop3 and drop24 move the second, the third, or the second and fourth highest "
+				"notes down an octave. Give chord or voicing. Returns the notes that changed.",
+				voicingSchema, resultSchema("notes"), false},
+			voiceNotes);
 	}
 }

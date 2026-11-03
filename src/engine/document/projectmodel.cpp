@@ -2304,6 +2304,7 @@ namespace gnubase::engine
 			{"note.add", "Add notes"},
 			{"note.remove", "Remove notes"},
 			{"note.set", "Change notes"},
+			{"note.voicing", "Change chord"},
 			{"controller.add", "Add controllers"},
 			{"controller.remove", "Remove controllers"},
 			{"controller.set", "Change controllers"},
