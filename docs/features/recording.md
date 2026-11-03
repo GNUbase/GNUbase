@@ -56,6 +56,22 @@ transport's record state and the record mode setting.
   the armed tracks' input from before recording starts, while stopped or playing, on the disk thread, and puts it at
   the start of the file. The event starts where recording started, with its offset after the pre-recorded frames, so
   resizing its start to the left brings them out. Input from before a gap (a lost chunk, a new device) isn't kept.
+- **Lock Record** (#104, p. 356) keeps a recording from ending by accident. `transport.set` with `lockRecord`, which
+  the Transport menu's Lock Record and Unlock Record set (the reference has key commands without default keys for
+  them; the key commands editor will bind them), turns it on and off; it stays on for later recordings until it is
+  turned off. While it is on and the transport records, `transport.stop` refuses unless it gets `confirmed`, and
+  `transport.toggle` and `transport.record` refuse to stop or punch out; playback that doesn't record stops as
+  usual. The audio thread ignores the automatic punch out at the right locator, so with `audio.stopAfterPunchOut`
+  playback doesn't stop there either. In the UI, a stop, Start/Stop or Record that the engine refused this way opens
+  `resources/ui/lock-record.rml` (`app::AppUi` hears the refusal with `EngineBinding::onResult` and checks
+  `transport.get`): Stop sends `transport.stop` with `confirmed`, Cancel goes on recording. Tests:
+  `tests/transport_tests.cpp` (the punch out ignored for any block size, the commands) and
+  `tests/lockrecord_tests.cpp` (the menu and the dialog in the app's UI).
+- **Remaining record time** (#104, p. 356). `recording.remainingTime` divides the space available on the disk of the
+  record folder (the nearest folder above it that exists, while it doesn't yet) by what the tracks that would record
+  write a second: the project's sample rate times the record bit depth's bytes times their channels, uncompressed,
+  so a FLAC recording lasts longer. It is null while no track would record (record-enabled, enabled, with an input
+  bus). The status line shows it ([status-line.md](status-line.md)).
 
 ## Not yet
 
@@ -63,4 +79,6 @@ Record folders per track (p. 343); the common record modes (Punch In/Out, Re-Rec
 the selection, p. 339); punch points apart from the locators (p. 319); stacking cycle takes in lanes and comping;
 drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); setting up the Broadcast Wave chunk's
 description, author and reference (#580); MIDI recording (#97); recording the output of a bus or channel (p. 345);
-adjusting for plugin latency on the input (#71); moving undone recordings' files to the pool's trash.
+adjusting for plugin latency on the input (#71); moving undone recordings' files to the pool's trash; the Max. Record
+Time window of its own (Studio > More Options, p. 356), which the status line field stands for, and with record
+folders per track the time of the fullest disk.

@@ -1292,6 +1292,18 @@ namespace gnubase::engine
 			changed.mute = parameters.value("mute", changed.mute);
 			changed.solo = parameters.value("solo", changed.solo);
 			changed.notes = parameters.value("notes", changed.notes);
+			if (parameters.contains("pre") || parameters.contains("eq") || parameters.contains("strip"))
+			{
+				require(changed.format != ChannelFormat::None, "a MIDI channel has no pre, eq or strip section");
+				try
+				{
+					changed.sections = sectionsFromJson(parameters, changed.sections);
+				}
+				catch (const std::invalid_argument& error)
+				{
+					throw CommandError(error.what());
+				}
+			}
 			channel = changed;
 			Json result = {{"channel", toJson(channel)}};
 			context.emit("channel.changed", result);
@@ -3043,15 +3055,27 @@ namespace gnubase::engine
 				"Monitoring glides in and out over one audio block. mute silences a channel; while any channel is "
 				"soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the "
 				"channels that play into them are heard. Muting and soloing glide over one audio block. notes is the "
-				"channel's notepad, the user's text about it.",
-				objectSchema({{"channel", idSchema}, {"format", formats}, {"channels", integerSchema},
-								 {"input", idSchema}, {"output", idSchema}, {"instrument", stringSchema},
-								 {"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
-								 {"panRight", numberSchema}, {"panBypass", booleanSchema},
-								 {"midiVolume", {{"type", {"integer", "null"}}}},
-								 {"midiPan", {{"type", {"integer", "null"}}}}, {"volume", numberSchema},
-								 {"pan", numberSchema}, {"monitor", booleanSchema}, {"recordEnable", booleanSchema},
-								 {"mute", booleanSchema}, {"solo", booleanSchema}, {"notes", stringSchema}},
+				"channel's notepad, the user's text about it. The channel strip's sections (audio channels only; "
+				"each object changes only what it has, as project.get shows them) run before the fader: pre "
+				"{gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or "
+				"for the high cut 50 to 20000), slope (6, 12, 24, 36 or 48 dB per octave)}} before the plugin slots; "
+				"after them strip {gate {on, threshold (dB, -80 to 0), range (dB, -80 to 0), attack (ms, 0.01 to "
+				"100), release (ms, 1 to 4000)}, compressor {on, threshold (dB, -60 to 0), ratio (1 to 20), attack "
+				"(ms, 0.1 to 100), release (ms, 10 to 2000), makeup (dB, 0 to 24)}}, then eq {bypass, bands: "
+				"[{band (1 to 4), on, type (bell; band 1 also lowShelf or lowCut, band 4 highShelf or highCut, cuts "
+				"at 12 dB per octave), frequency (Hz, 20 to 20000), gain (dB, -24 to 24), q (0.1 to 12)}]}, then "
+				"the strip's limiter {on, threshold (dB, -30 to 0: no sample leaves above it, 1 ms of latency), "
+				"release (ms, 1 to 1000)}. Everything starts off; changes glide.",
+				objectSchema(
+					{{"channel", idSchema}, {"format", formats}, {"channels", integerSchema}, {"input", idSchema},
+						{"output", idSchema}, {"instrument", stringSchema},
+						{"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
+						{"panRight", numberSchema}, {"panBypass", booleanSchema},
+						{"midiVolume", {{"type", {"integer", "null"}}}}, {"midiPan", {{"type", {"integer", "null"}}}},
+						{"volume", numberSchema}, {"pan", numberSchema}, {"monitor", booleanSchema},
+						{"recordEnable", booleanSchema}, {"mute", booleanSchema}, {"solo", booleanSchema},
+						{"notes", stringSchema}, {"pre", {{"type", "object"}}}, {"eq", {{"type", "object"}}},
+						{"strip", {{"type", "object"}}}},
 					{"channel"}),
 				resultSchema({"channel"}), false},
 			setChannel);

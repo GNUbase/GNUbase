@@ -97,6 +97,7 @@ add_library(gnubase-engine STATIC
 	audio/playback.cpp audio/playback.h
 	audio/recorder.cpp audio/recorder.h
 	audio/sequencer.cpp audio/sequencer.h
+	audio/stripsections.cpp audio/stripsections.h
 	audio/transport.cpp audio/transport.h
 	audiofile/audiofile.h
 	audiofile/diskstream.cpp audiofile/diskstream.h
