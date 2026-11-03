@@ -21,7 +21,7 @@ namespace gnubase::ui
 	namespace
 	{
 		// The result of a dialog that closed to make way for another one.
-		const std::string g_replaced = "replaced";
+		constexpr const char* g_replaced = "replaced";
 
 		const std::vector<FileFilter>& projectFilters()
 		{
