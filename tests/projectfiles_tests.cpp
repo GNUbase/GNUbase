@@ -264,6 +264,73 @@ TEST_CASE(
 	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null());
 }
 
+TEST_CASE("a project opened from an auto save goes on untitled, outside Auto Saves, until it is saved as a file",
+	"[integration]")
+{
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const fs::path file = dir.path() / "Song" / "Song.dawproject";
+	fs::create_directories(file.parent_path());
+	run(client, "project.save", {{"path", utf8(file)}});
+	run(client, "track.add", {{"type", "audio"}});
+	const fs::path autoSave = dir.path() / "Song" / "Auto Saves" / "Song-01.bak";
+	REQUIRE(run(client, "project.autoSave").at("file") == utf8(autoSave));
+
+	// Also when the path names the auto save another way: with "." in it, or with other case, as the file systems of
+	// Windows and macOS allow.
+	const fs::path otherCase = dir.path() / "Other" / "auto saves" / "Other-01.BAK";
+	fs::create_directories(otherCase.parent_path());
+	fs::copy_file(autoSave, otherCase);
+	for (const fs::path& path : {autoSave, dir.path() / "Song" / "Auto Saves" / "." / "Song-01.bak", otherCase})
+	{
+		INFO(utf8(path));
+		run(client, "project.load", {{"path", utf8(path)}});
+		CHECK(trackCount(client) == 1);
+		const Json location = run(client, "project.location");
+		CHECK(location.at("file").is_null());
+		CHECK(location.at("mediaFolder").is_null()); // so media aren't copied to Auto Saves/Audio
+		CHECK(modified(client));
+		CHECK_THAT(reject(client, "project.save"), ContainsSubstring("no file"));
+		CHECK_THAT(reject(client, "project.revert"), ContainsSubstring("no file"));
+		CHECK(recent(client) == std::vector<std::string>{utf8(fs::absolute(file))});
+	}
+
+	// Its next auto saves go where those of untitled projects go, not to Auto Saves/Auto Saves.
+	run(client, "track.add", {{"type", "audio"}});
+	CHECK(
+		run(client, "project.autoSave").at("file") == utf8(dir.path() / "settings" / "Auto Saves" / "Untitled-01.bak"));
+	CHECK(!fs::exists(autoSave.parent_path() / "Auto Saves"));
+
+	// Saving it as the project file makes that its file again, with its folders.
+	run(client, "project.save", {{"path", utf8(file)}});
+	CHECK(run(client, "project.location").at("folder") == utf8(fs::absolute(file.parent_path())));
+	CHECK(recent(client) == std::vector<std::string>{utf8(fs::absolute(file))});
+	run(client, "track.add", {{"type", "audio"}});
+	CHECK(run(client, "project.autoSave").at("file") == utf8(dir.path() / "Song" / "Auto Saves" / "Song-02.bak"));
+
+	// The auto save of a project that never had a file, and one whose project file is gone, open untitled too.
+	run(client, "project.new");
+	run(client, "track.add", {{"type", "midi"}});
+	const fs::path untitled = dir.path() / "settings" / "Auto Saves" / "Untitled-02.bak";
+	REQUIRE(run(client, "project.autoSave").at("file") == utf8(untitled));
+	fs::remove(file);
+	for (const fs::path& path : {untitled, autoSave})
+	{
+		INFO(utf8(path));
+		run(client, "project.load", {{"path", utf8(path)}});
+		CHECK(run(client, "project.location").at("file").is_null());
+		CHECK(modified(client));
+	}
+	CHECK(recent(client) == std::vector<std::string>{utf8(fs::absolute(file))});
+
+	// A .bak elsewhere isn't an auto save: it opens as the project's file.
+	const fs::path copy = dir.path() / "Song-01.bak";
+	fs::copy_file(autoSave, copy);
+	run(client, "project.load", {{"path", utf8(copy)}});
+	CHECK(run(client, "project.location").at("file") == utf8(fs::absolute(copy)));
+}
+
 TEST_CASE("the engine auto saves a changed project on its own once the interval passed", "[integration]")
 {
 	const test::TempDir dir;
@@ -632,6 +699,22 @@ TEST_CASE("File > Open and Revert ask before unsaved changes are discarded", "[u
 
 	app.call("project.new");
 	REQUIRE(app.waitUntil([&app] { return disabled(app, "menuitem[command=\"file.revert\"]"); })); // no file
+
+	// An auto save opens untitled: there is nothing to revert to, and Save asks where instead of overwriting it.
+	app.call("project.load", {{"path", utf8(file)}});
+	REQUIRE(app.waitUntil([&app] { return !disabled(app, "menuitem[command=\"file.revert\"]"); }));
+	app.call("track.add", {{"type", "audio"}});
+	const fs::path autoSave = fs::u8path(app.call("project.autoSave").at("file").get<std::string>());
+	const fs::file_time_type autoSaved = fs::last_write_time(autoSave);
+	fileMenu(app, "file.open");
+	answer(app, {autoSave});
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return disabled(app, "menuitem[command=\"file.revert\"]"); }));
+	CHECK(location(app).is_null());
+	fileMenu(app, "file.save");
+	CHECK(answer(app, {}).kind == gnubase::ui::FileDialogKind::Save);
+	CHECK(location(app).is_null());
+	CHECK(fs::last_write_time(autoSave) == autoSaved);
 }
 
 TEST_CASE("closing the main window or quitting through the OS asks before unsaved changes are discarded", "[ui]")

@@ -9,6 +9,7 @@
 #include "platform/log.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -106,6 +107,23 @@ namespace gnubase::engine
 			return oldest;
 		}
 
+		// Folded to lower case, as the file systems of Windows and macOS don't tell names apart by case.
+		std::string folded(const fs::path& name)
+		{
+			std::string text = name.u8string();
+			std::transform(text.begin(), text.end(), text.begin(),
+				[](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+			return text;
+		}
+
+		// Whether a file is an auto save: a .bak in a folder Auto Saves, however the path writes them.
+		bool isAutoSave(const fs::path& file)
+		{
+			const fs::path path = file.lexically_normal();
+			return folded(path.extension()) == ".bak" &&
+				folded(path.parent_path().filename()) == folded(fs::u8path(g_autoSaves));
+		}
+
 		Json userSetting(CommandContext& context, const char* key)
 		{
 			return context.call("settings.get", {{"key", key}}).at("value");
@@ -116,8 +134,7 @@ namespace gnubase::engine
 	{
 		// An auto save opens untitled and unsaved, so that saving it neither overwrites the auto save nor makes Auto
 		// Saves the project folder.
-		const fs::path path = fs::u8path(file);
-		const bool autoSave = path.extension() == ".bak" && path.parent_path().filename() == g_autoSaves;
+		const bool autoSave = isAutoSave(fs::u8path(file));
 		m_project = std::move(project);
 		m_file = autoSave ? std::string() : file;
 		m_history.clear();

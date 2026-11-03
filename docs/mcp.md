@@ -1356,6 +1356,20 @@ Result:
 
 - `events`: array of integer, required
 
+#### `event_crossfade`
+
+Engine command `event.crossfade`.
+
+Crossfades audio events with the overlapping ones next to them on their tracks, with the default settings of crossfade.set: several events with each other where one starts inside the one before it and ends after it, one event with the events on either side of it like that. Crossfades there already stay as they are. Returns the events that fade in.
+
+Arguments:
+
+- `events`: array of integer, required
+
+Result:
+
+- `events`: array of integer, required
+
 #### `event_duplicate`
 
 Engine command `event.duplicate`.
@@ -1441,6 +1455,22 @@ Engine command `event.remove`.
 Removes audio events and MIDI parts. Locked ones can't be removed.
 
 Arguments:
+
+- `events`: array of integer, required
+
+#### `event_removeFades`
+
+Engine command `event.removeFades`.
+
+Removes the fade in (fadeIn, default true) and the fade out (fadeOut, default true) of audio events, with the crossfades at those ends. Returns the events.
+
+Arguments:
+
+- `events`: array of integer, required
+- `fadeIn`: boolean
+- `fadeOut`: boolean
+
+Result:
 
 - `events`: array of integer, required
 
@@ -3342,6 +3372,23 @@ Arguments:
 - `start`: integer
 - `time`: boolean
 - `tracks`: array of integer
+
+#### `range_fades`
+
+Engine command `range.fades`.
+
+The Fades menu's range functions on the audio events on tracks (ids, default every track) that cross the range from start to end (project samples). fade in (Fade In to Range Start): fades in from the event's start to the range's start, or to its end where the range covers the event's start. out (Fade Out from Range End): fades out from the range's end to the event's end, or from its start where the range covers the event's end. adjust (Adjust Fades to Range): the fades at the edges of the event that the range covers, both when the range is inside it. Shapes stay; a fade that no longer fits next to the one set gets shorter. Returns the events changed.
+
+Arguments:
+
+- `end`: integer, required
+- `fade`: one of "in" | "out" | "adjust", required
+- `start`: integer, required
+- `tracks`: array of integer
+
+Result:
+
+- `events`: array of integer, required
 
 #### `range_insertSilence`
 
