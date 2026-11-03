@@ -140,6 +140,27 @@ TEST_CASE("each automatic monitoring mode monitors record-enabled tracks in its 
 	}
 }
 
+TEST_CASE("monitoring follows punching in and out at the locators and the stop after punch out", "[integration]")
+{
+	const bool direct = GENERATE(false, true);
+	INFO((direct ? "direct monitoring" : "monitoring through the graph"));
+	Setup setup(direct);
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "audio.autoMonitoring"}, {"value", "whileRecording"}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", true}});
+	run(client, "transport.set",
+		{{"left", 1280}, {"right", 2560}, {"punchIn", true}, {"punchOut", true}, {"stopAfterPunchOut", true}});
+	run(client, "transport.play");
+	CHECK(!setup.hears()); // 0 to 640
+	CHECK(!setup.hears()); // 640 to 1280
+	setup.render();        // punches in at 1280; direct monitoring switches when audio.render is done
+	CHECK(run(client, "transport.get").at("recording") == true);
+	CHECK(setup.hears()); // 1920 to 2560, punching out at the end
+	setup.render();       // stops at its first block
+	CHECK(run(client, "transport.get").at("playing") == false);
+	CHECK(!setup.hears());
+}
+
 TEST_CASE("the automatic monitoring mode is a user setting, tape machine style by default", "[integration]")
 {
 	Setup setup;

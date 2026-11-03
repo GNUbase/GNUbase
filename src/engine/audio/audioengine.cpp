@@ -1998,8 +1998,12 @@ namespace gnubase::engine
 	{
 		if (!m_transport.sync())
 			return false;
-		const std::scoped_lock lock(m_cueMutex);
-		m_cueState.playing = m_transport.playing();
+		{
+			const std::scoped_lock lock(m_cueMutex);
+			m_cueState.playing = m_transport.playing();
+		}
+		if (m_device && m_directMonitoring) // as after a transport command
+			routeDirectly(m_snapshots.latest(), devicePorts(m_snapshots.latest().busses, m_inputPorts, m_outputPorts));
 		return true;
 	}
 
