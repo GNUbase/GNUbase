@@ -754,7 +754,12 @@ namespace gnubase::app
 				{
 					const std::vector<uint64_t> parts = selectedParts();
 					if (!parts.empty())
+					{
 						m_binding.send("editor.open", {{"editor", editor}, {"parts", parts}});
+						// Opening it explicitly brings the Editor tab forward, even from behind the Mixer.
+						if (editor == "lower")
+							m_docking.open("editor");
+					}
 					else
 						m_binding.send("editor.close", {{"editor", editor}});
 				}});
@@ -819,7 +824,9 @@ namespace gnubase::app
 			return;
 		}
 		document->Show();
-		m_editor.editor = std::make_unique<ui::MidiEditor>(m_binding, *root, "window");
+		// Open in Lower Zone opens the Editor tab in the lower zone (reference manual, p. 1198).
+		m_editor.editor = std::make_unique<ui::MidiEditor>(
+			m_binding, *root, "window", ui::EditorPart::Editor, [this] { m_docking.open("editor"); });
 		m_docking.attach("editorWindow", *document);
 	}
 

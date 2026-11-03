@@ -79,8 +79,10 @@ namespace gnubase::ui
 		}
 	}
 
-	MidiEditor::MidiEditor(EngineBinding& binding, Rml::Element& root, std::string view, EditorPart part)
-		: m_binding(binding), m_root(root.GetObserverPtr()), m_name(std::move(view)), m_part(part)
+	MidiEditor::MidiEditor(
+		EngineBinding& binding, Rml::Element& root, std::string view, EditorPart part, std::function<void()> moved)
+		: m_binding(binding), m_root(root.GetObserverPtr()), m_name(std::move(view)), m_part(part),
+		  m_moved(std::move(moved))
 	{
 		if (m_part == EditorPart::Editor)
 		{
@@ -414,6 +416,8 @@ namespace gnubase::ui
 				{{"editor", m_name == "window" ? "lower" : "window"}, {"parts", m_view.at("parts")},
 					{"activePart", m_view.at("activePart")}});
 			m_binding.send("editor.close", {{"editor", m_name}});
+			if (m_moved)
+				m_moved();
 		}
 		else if (closest(target, "editor-visibility-check", root) != nullptr)
 		{

@@ -8,6 +8,7 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -35,11 +36,13 @@ namespace gnubase::ui
 	// editor's toolbar has Keep Editor Contents, the Part Editing Mode menu, the Activate Part for Editing menu and
 	// Open in Separate Window or Open in Lower Zone; under it the global tracks (window only) and the parts it shows,
 	// the stand-in for the key editor's note display (#127), where a click activates a part. Every change goes to the
-	// engine as editor.* commands. Use it on the UI thread; the binding must outlive it.
+	// engine as editor.* commands. moved, if given, runs once Open in Separate Window or Open in Lower Zone has sent
+	// the parts to the other editor. Use it on the UI thread; the binding must outlive it.
 	class MidiEditor final : private Rml::EventListener
 	{
 	public:
-		MidiEditor(EngineBinding& binding, Rml::Element& root, std::string view, EditorPart part = EditorPart::Editor);
+		MidiEditor(EngineBinding& binding, Rml::Element& root, std::string view, EditorPart part = EditorPart::Editor,
+			std::function<void()> moved = {});
 		~MidiEditor() override;
 		MidiEditor(const MidiEditor&) = delete;
 		MidiEditor& operator=(const MidiEditor&) = delete;
@@ -69,6 +72,7 @@ namespace gnubase::ui
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus; // in the document's body
 		std::string m_name;
 		EditorPart m_part;
+		std::function<void()> m_moved;
 		engine::Json m_project = engine::Json::object();
 		engine::Json m_view = engine::Json::object();
 		bool m_loading = false;

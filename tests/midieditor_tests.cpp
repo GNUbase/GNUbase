@@ -251,6 +251,17 @@ TEST_CASE("the lower zone's editor follows the project window's selection unless
 		app.shell().step(std::chrono::milliseconds(0));
 	CHECK(app.appUi().docking().showing("mixer"));
 	CHECK_FALSE(app.appUi().docking().showing("editor"));
+	// Opening it explicitly brings the Editor tab forward from behind the Mixer: Open Editor in Lower Zone ...
+	app.keys().run("window.lowerZoneEditor", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("editor"); }));
+	// ... and the editor window's Open in Lower Zone (p. 1198).
+	app.appUi().docking().open("mixer");
+	app.keys().run("editor.openClose", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
+	CHECK_FALSE(app.appUi().docking().showing("editor"));
+	click(app, app.appUi().editorWindowId(), "#editor-move");
+	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() == nullptr; }));
+	REQUIRE(app.waitUntil([&] { return app.appUi().docking().showing("editor"); }));
 	app.appUi().docking().setVisible("project", "lower", false);
 	REQUIRE(app.waitUntil([&] { return view(app, "lower").at("open") == false; }));
 }
