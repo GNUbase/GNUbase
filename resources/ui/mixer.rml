@@ -1,0 +1,38 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- A mixer window (docs/features/mixer-window.md, reference manual pp. 437-462): a docking window
+     (docs/features/docking.md) with the left zone, whose Visibility tab lists the channels, and the main zone, which
+     ui::Mixer fills with its toolbar and the fader section (#mixer). app::AppUi opens up to four of them, each with
+     the channels it hides kept in the project (mixer.set). -->
+<rml>
+<head>
+	<title>Mixer</title>
+	<style>
+		body
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+
+		#mixer
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+	</style>
+</head>
+<body class="docking">
+	<div class="zones">
+		<div id="left-zone" zone="left" focuszone="left" size="200" default="hidden"/>
+		<splitter for="left"/>
+		<div id="main-zone" zone="main" focuszone="mixer">
+			<div id="mixer"/>
+		</div>
+	</div>
+</body>
+</rml>

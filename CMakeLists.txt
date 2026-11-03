@@ -17,6 +17,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 option(GNUBASE_WARNINGS_AS_ERRORS "Treat compiler warnings in GNUbase code as errors" ON)
 set(GNUBASE_SANITIZERS "" CACHE STRING "Sanitizers for GNUbase code (GCC/Clang), e.g. address,undefined or thread")
 option(GNUBASE_CLANG_TIDY "Run clang-tidy on GNUbase code while compiling" OFF)
+# CI keeps clang-tidy's passes here and checks only files whose input changed (tools/clang-tidy-cache.sh, Linux).
+set(GNUBASE_CLANG_TIDY_CACHE "" CACHE PATH "Folder for clang-tidy's passes to reuse; empty: check every file")
 # Release builds are optimized across files, as they ship. tools/ci-local.sh turns it off: it makes every link of the
 # tests take minutes.
 option(GNUBASE_LTO "Link-time optimization in Release builds, where the compiler supports it" ON)
@@ -28,6 +30,10 @@ if(GNUBASE_SANITIZERS AND MSVC)
 endif()
 if(GNUBASE_CLANG_TIDY)
 	find_program(GNUBASE_CLANG_TIDY_EXE NAMES clang-tidy REQUIRED)
+	set(clangTidy "${GNUBASE_CLANG_TIDY_EXE};--warnings-as-errors=*")
+	if(GNUBASE_CLANG_TIDY_CACHE)
+		list(PREPEND clangTidy "${PROJECT_SOURCE_DIR}/tools/clang-tidy-cache.sh" "${GNUBASE_CLANG_TIDY_CACHE}")
+	endif()
 endif()
 
 if(GNUBASE_LTO)
@@ -164,7 +170,7 @@ function(gnubase_target_defaults target)
 		target_link_options(${target} PRIVATE -fsanitize=${GNUBASE_SANITIZERS})
 	endif()
 	if(GNUBASE_CLANG_TIDY)
-		set_target_properties(${target} PROPERTIES CXX_CLANG_TIDY "${GNUBASE_CLANG_TIDY_EXE};--warnings-as-errors=*")
+		set_target_properties(${target} PROPERTIES CXX_CLANG_TIDY "${clangTidy}")
 	endif()
 endfunction()
 

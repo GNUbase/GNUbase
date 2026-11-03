@@ -17,6 +17,8 @@ add_library(gnubase-ui STATIC
 	automation.h
 	canvas.cpp
 	canvas.h
+	colormenu.cpp
+	colormenu.h
 	colorwidgets.cpp
 	datamodel.cpp
 	datamodel.h
@@ -41,6 +43,10 @@ add_library(gnubase-ui STATIC
 	historypanel.cpp
 	historypanel.h
 	image.cpp
+	infoline.cpp
+	infoline.h
+	inspector.cpp
+	inspector.h
 	keycommands.cpp
 	keycommands.h
 	livereload.cpp
@@ -50,6 +56,8 @@ add_library(gnubase-ui STATIC
 	markers.cpp
 	markers.h
 	markerswindow.cpp
+	mixer.cpp
+	mixer.h
 	poolpanel.cpp
 	poolpanel.h
 	popupwidgets.cpp

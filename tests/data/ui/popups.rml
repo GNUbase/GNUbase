@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Menus, context menus and tooltips of the widget library (#54) for tests/widgets_tests.cpp: a menu button, a track
-     with a context menu that has a submenu and a disabled item, and elements with tooltips. -->
+     with a context menu that has submenus (one with only a disabled item) and a disabled item, elements with
+     tooltips, and a menu bar whose File menu has a submenu and whose Tools title is disabled. -->
 <rml>
 <head>
 	<title>Popups</title>
@@ -9,6 +10,7 @@
 		#track { position: absolute; left: 200dp; top: 100dp; width: 200dp; height: 40dp; }
 		#plain { position: absolute; left: 200dp; top: 200dp; width: 200dp; height: 40dp; }
 		#corner { position: absolute; right: 0; bottom: 0; width: 40dp; height: 20dp; }
+		#menubar { position: absolute; left: 200dp; top: 300dp; }
 	</style>
 </head>
 <body>
@@ -31,6 +33,36 @@
 			</menu>
 		</menuitem>
 		<menuitem id="remove" disabled="disabled">Remove</menuitem>
+		<menuitem id="lock">Lock
+			<menu id="locks">
+				<menuitem id="locked" disabled="disabled">Locked</menuitem>
+			</menu>
+		</menuitem>
+	</menu>
+	<menubar id="menubar">
+		<button id="file-title" menu="file">File</button>
+		<button id="view-title" menu="view">View</button>
+		<button id="tools-title" menu="tools" disabled="disabled">Tools</button>
+		<button id="help-title" menu="help">Help</button>
+	</menubar>
+	<menu id="file">
+		<menuitem id="new">New</menuitem>
+		<menuitem id="recent">Recent
+			<menu id="recent-menu">
+				<menuitem id="first-recent">Song 1</menuitem>
+				<menuitem id="second-recent">Song 2</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem id="close">Close</menuitem>
+	</menu>
+	<menu id="view">
+		<menuitem id="zoom-in">Zoom In</menuitem>
+	</menu>
+	<menu id="tools">
+		<menuitem id="setup">Setup</menuitem>
+	</menu>
+	<menu id="help">
+		<menuitem id="about">About</menuitem>
 	</menu>
 </body>
 </rml>

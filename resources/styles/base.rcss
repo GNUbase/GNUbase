@@ -823,6 +823,17 @@ meter .meter-peak
 	align-items: flex-start;
 	padding: 3dp 4dp 0 4dp;
 	overflow: hidden;
+	position: relative;
+}
+
+/* The track's color (#94), which code gives it as user data; without one it shows nothing. */
+.track-list .track-color
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 4dp;
 }
 
 .track-list .track-name
@@ -919,8 +930,18 @@ menuseparator
 	height: 8dp;
 }
 
-/* The main menu bar (docs/features/main-menu.md): the menus' titles in a row, and an item's key on its right. */
-.menubar
+/* An item's arrow to its submenu, on its right: the theme's dropdown arrow, turned to point right. */
+menuitem > .menu-arrow
+{
+	float: right;
+	width: 12dp;
+	height: 8dp;
+	margin: 5dp -2dp 0 16dp;
+	transform: rotate(-90deg);
+}
+
+/* A menu bar (docs/features/main-menu.md): the menus' titles in a row, and an item's key on its right. */
+menubar
 {
 	display: flex;
 	align-items: center;
@@ -929,7 +950,7 @@ menuseparator
 	box-sizing: border-box;
 }
 
-.menubar button
+menubar button
 {
 	min-width: 0;
 	height: 22dp;
@@ -940,6 +961,16 @@ menuitem .menu-keys
 {
 	float: right;
 	padding-left: 24dp;
+}
+
+/* A color of the project's color set before its name (docs/features/colors.md); code gives it the color. */
+.color-swatch
+{
+	display: inline-block;
+	width: 12dp;
+	height: 12dp;
+	margin-right: 6dp;
+	vertical-align: middle;
 }
 
 /* Every document's tooltip, under the mouse; it lets the mouse through. */
@@ -1191,6 +1222,131 @@ splitter.column .splitter-grip-horizontal
 .setup-pane [setup-section]
 {
 	drag: drag-drop;
+}
+
+/* The info line (docs/features/inspector.md): the first selected event's fields in a row; without a selection only
+   its message. */
+.info-line
+{
+	display: flex;
+	align-items: center;
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.docking .strip.info-line
+{
+	height: 32dp;
+	padding: 0 6dp;
+}
+
+.info-field
+{
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	margin-right: 12dp;
+}
+
+.info-label
+{
+	margin-right: 4dp;
+}
+
+.info-line textdisplay[field=name]
+{
+	min-width: 120dp;
+	text-align: left;
+}
+
+.info-empty, .info-line.empty .info-field
+{
+	display: none;
+}
+
+.info-line.empty .info-empty
+{
+	display: inline;
+}
+
+/* The inspector (docs/features/inspector.md): the track's name over its sections, each a header that opens and
+   closes it. What the track doesn't have is unavailable. */
+.inspector
+{
+	overflow-y: auto;
+	padding: 4dp;
+}
+
+.inspector-header textdisplay
+{
+	display: block;
+	width: 100%;
+	text-align: left;
+}
+
+.inspector-empty, .inspector.empty .inspector-header, .inspector.empty .inspector-sections,
+.inspector .unavailable, .inspector-section.collapsed .section-body
+{
+	display: none;
+}
+
+.inspector.empty .inspector-empty
+{
+	display: block;
+	padding: 8dp;
+}
+
+.inspector-section .section-header
+{
+	display: block;
+	width: 100%;
+	margin-top: 4dp;
+	text-align: left;
+}
+
+.section-body
+{
+	padding: 4dp 0;
+}
+
+.inspector-buttons
+{
+	display: flex;
+	margin-bottom: 4dp;
+}
+
+.inspector-buttons button
+{
+	margin-right: 2dp;
+}
+
+.inspector-row
+{
+	display: flex;
+	align-items: center;
+	margin-bottom: 2dp;
+}
+
+.inspector-label
+{
+	width: 56dp;
+	flex-shrink: 0;
+}
+
+.inspector-row select, .inspector-row valuefield
+{
+	flex: 1 1 0;
+	width: auto;
+}
+
+.insert
+{
+	padding: 2dp 6dp;
+}
+
+.inspector textarea.notepad
+{
+	width: 100%;
 }
 
 /* The edit history panel (ui/historypanel.h): a table of the undo steps that fills its panel, cut by the separator

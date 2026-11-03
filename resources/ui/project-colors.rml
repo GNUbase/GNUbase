@@ -1,0 +1,206 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The project colors setup dialog (#94, docs/features/colors.md, reference manual pp. 115-119): the project's
+     color set, which track and event colors are picked from. app::AppUi opens it (Project > Project Colors Setup,
+     the UI command project.colorsSetup). Its Lua edits a copy of the set from project.get: a click on a color selects
+     it, the name field renames it and the color picker changes it; Insert Color, Duplicate Color, Remove Color and
+     Reset Color (to the factory color in its place, project.factoryColors) change the list, Reset to Factory
+     Settings takes the whole factory set. Apply sends project.set, one undo step; Cancel drops the changes. The
+     swatches show the colors, which are user data: the one place in Lua that sets background-color
+     (tests/stylerules_tests.cpp). -->
+<rml>
+<head>
+	<title>Project Colors Setup</title>
+	<style>
+		dialog
+		{
+			width: 600dp;
+		}
+
+		.content
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.colors
+		{
+			width: 210dp;
+			margin-right: 12dp;
+		}
+
+		#project-colors
+		{
+			height: 200dp;
+		}
+
+		.editor input
+		{
+			width: 336dp;
+			margin-bottom: 8dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.row button
+		{
+			margin-right: 6dp;
+		}
+
+		.row .spacer
+		{
+			flex: 1;
+		}
+	</style>
+	<script>
+		ProjectColors = {}
+		local dialog = ProjectColors
+
+		local colors = {} -- the set as the dialog edits it: {name, color}
+		local factory = {}
+		local selected = 1
+
+		local function copy(list)
+			local result = {}
+			for index, item in ipairs(list or {}) do
+				result[index] = {name = item.name, color = item.color}
+			end
+			return result
+		end
+
+		local function escape(text)
+			return (text:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
+		end
+
+		-- The list, a row per color with its swatch, and the editor showing the selected one.
+		function dialog.show(document)
+			selected = math.max(1, math.min(selected, #colors))
+			local rml = {}
+			for index, item in ipairs(colors) do
+				rml[#rml + 1] = '<listitem value="' .. index .. '"><span class="color-swatch"/>' .. escape(item.name)
+					.. "</listitem>"
+			end
+			local list = document:GetElementById("project-colors")
+			list.inner_rml = table.concat(rml)
+			for index, item in ipairs(colors) do
+				list.child_nodes[index]:QuerySelector(".color-swatch").style["background-color"] = item.color
+			end
+			list:SetAttribute("value", tostring(selected))
+			local current = colors[selected]
+			document:GetElementById("color-name"):SetAttribute("value", current and current.name or "")
+			local picker = document:GetElementById("color-picker")
+			-- The picker's old color is the selected color as it was.
+			local old = picker:QuerySelector(".color-old")
+			if old ~= nil then
+				old:RemoveAttribute("color")
+			end
+			picker:SetAttribute("value", current and current.color or "#000000")
+		end
+
+		function dialog.load(document)
+			colors = copy(gnubase.project.get().colors)
+			factory = copy(gnubase.project.factoryColors().colors)
+			selected = 1
+			dialog.show(document)
+		end
+
+		function dialog.select(document)
+			local value = tonumber(tostring(document:GetElementById("project-colors"):GetAttribute("value") or ""))
+			if value ~= nil and value ~= selected and colors[value] ~= nil then
+				selected = value
+				dialog.show(document)
+			end
+		end
+
+		function dialog.rename(document, event)
+			local current = colors[selected]
+			if current == nil or event.target_element.id ~= "color-name" then
+				return
+			end
+			current.name = tostring(event.parameters.value or "")
+			local row = document:GetElementById("project-colors").child_nodes[selected]
+			if row ~= nil then
+				row.inner_rml = '<span class="color-swatch"/>' .. escape(current.name)
+				row:QuerySelector(".color-swatch").style["background-color"] = current.color
+			end
+		end
+
+		function dialog.recolor(document, event)
+			local value = event.parameters.value
+			local current = colors[selected]
+			if current == nil or type(value) ~= "string" or event.target_element.tag_name ~= "colorpicker" then
+				return -- the picker's own value fields
+			end
+			current.color = value
+			local row = document:GetElementById("project-colors").child_nodes[selected]
+			if row ~= nil then
+				row:QuerySelector(".color-swatch").style["background-color"] = value
+			end
+		end
+
+		function dialog.insert(document, duplicate)
+			local current = colors[selected]
+			local item = duplicate and current and {name = current.name, color = current.color}
+				or {name = "Color " .. (#colors + 1), color = "#808080"}
+			table.insert(colors, selected + 1, item)
+			selected = selected + 1
+			dialog.show(document)
+		end
+
+		function dialog.remove(document)
+			if #colors > 1 then -- a set has at least one color
+				table.remove(colors, selected)
+				dialog.show(document)
+			end
+		end
+
+		function dialog.reset(document)
+			local original = factory[selected]
+			if colors[selected] ~= nil and original ~= nil then
+				colors[selected] = {name = original.name, color = original.color}
+				dialog.show(document)
+			end
+		end
+
+		function dialog.factory(document)
+			colors = copy(factory)
+			dialog.show(document)
+		end
+
+		function dialog.apply(document)
+			gnubase.project.set{colors = colors}
+			document:Close()
+		end
+	</script>
+</head>
+<body onload="ProjectColors.load(document)">
+	<dialog id="project-colors-dialog">
+		<div class="dialog-titlebar">Project Colors Setup</div>
+		<div class="content">
+			<div class="colors">
+				<listview id="project-colors" onchange="ProjectColors.select(document)"/>
+			</div>
+			<div class="editor">
+				<input type="text" id="color-name" class="text" onchange="ProjectColors.rename(document, event)"/>
+				<colorpicker id="color-picker" onchange="ProjectColors.recolor(document, event)"/>
+			</div>
+		</div>
+		<div class="row">
+			<button id="color-insert" onclick="ProjectColors.insert(document, false)">Insert Color</button>
+			<button id="color-duplicate" onclick="ProjectColors.insert(document, true)">Duplicate Color</button>
+			<button id="color-remove" onclick="ProjectColors.remove(document)">Remove Color</button>
+			<button id="color-reset" onclick="ProjectColors.reset(document)">Reset Color</button>
+		</div>
+		<div class="row">
+			<button id="colors-factory" onclick="ProjectColors.factory(document)">Reset to Factory Settings</button>
+			<div class="spacer"/>
+			<button id="colors-cancel" result="cancel">Cancel</button>
+			<button id="colors-apply" class="primary" onclick="ProjectColors.apply(document)">Apply</button>
+		</div>
+	</dialog>
+</body>
+</rml>

@@ -21,9 +21,10 @@ UI setup as the app, and drive it with the interface behind MCP's UI tools ([ui-
     and one pixel in 500 by more, for GPUs that round an edge or a blend differently. `GNUBASE_UPDATE_GOLDEN=1`
     accepts a new look; look at the images before committing them.
 - **Where they run.** UI tests are tagged `[ui]`. On Linux they use SDL's offscreen video driver and Mesa's software
-  Vulkan driver, so they need no display; CI runs them on Linux and Windows, and on Apple Silicon in
-  `.github/workflows/ui-macos.yml`. Where SDL_GPU has no device, such as CI's macOS Intel runner, they are skipped,
-  unless `GNUBASE_REQUIRE_GPU=1` says the machine must have one.
+  Vulkan driver, so they need no display; CI runs them on Linux and Windows, and on Apple Silicon after every push to
+  main in `.github/workflows/ui-macos.yml` (not on pull requests: its runners often never pick jobs up). Where SDL_GPU
+  has no device, such as CI's macOS Intel runner, they are skipped, unless `GNUBASE_REQUIRE_GPU=1` says the machine
+  must have one.
 - **In Lua.** UI tests can be written in Lua, in `tests/lua/ui/`, and run in the same harness: see
   [ui-lua.md](ui-lua.md).
 - **Tests:** `tests/uiapp_tests.cpp`.

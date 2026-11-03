@@ -18,8 +18,9 @@ it up in `app::AppUi`.
   its items ([main-menu.md](main-menu.md)); keys run their commands either way.
 - **Writing keys.** `ui::parseKeys` reads `Space`, `Mod+Z`, `Shift+Alt+F5` or `Ctrl+Num+`, in any case: letters,
   digits, F1 to F24, the named keys (Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, the
-  arrows Up, Down, Left, Right, Space), the punctuation keys `. , - +`, and the keypad's own keys Num0 to Num9,
-  NumEnter, `Num*`, `Num/`, `Num+`, `Num-` and `Num.`, which the reference uses for the transport. Letters and
+  arrows Up, Down, Left, Right, Space), the punctuation keys `. , - +`, `Alt` on its own (with Alt held, as the
+  keyboard sends it, so that MCP's `ui_key` can press it to open the menu bar, [main-menu.md](main-menu.md)), and the
+  keypad's own keys Num0 to Num9, NumEnter, `Num*`, `Num/`, `Num+`, `Num-` and `Num.`, which the reference uses for the transport. Letters and
   punctuation follow the keyboard layout (SDL's key codes); digits are digits on French layouts too.
 - **Per platform.** `Mod` is the platform's command key: Cmd on macOS, Ctrl on Windows and Linux, the reference's
   "Ctrl/Cmd". `Ctrl` is the Control key everywhere, for the reference's few bindings with a real Ctrl on macOS; `Alt`
@@ -89,6 +90,12 @@ UI commands are added after the key map, so their keys are bound where the app a
 | Alt+Shift+Left, Alt+Right | `edit.nudgeEndLeft`, `edit.nudgeEndRight` | Nudge End Left, Right |
 | Mod+A, Mod+Shift+A | `edit.selectAll`, `edit.selectNone` | Select All, Select None |
 | Mod+Alt+I | `edit.invertSelection` | Invert Selection |
+| Left, Right | `edit.selectPrevious`, `edit.selectNext` | Navigate Left, Right |
+| Up, Down | `track.selectPrevious`, `track.selectNext`, and the first event on the track while an event is selected | Navigate Up, Down |
+| Mod+X, Mod+C, Mod+V | `edit.cut`, `edit.copy`, `edit.paste` | Cut, Copy, Paste ([range-editing.md](range-editing.md)) |
+| Mod+Shift+X, Shift+Backspace, Mod+Shift+V | `edit.cutTime`, `edit.deleteTime`, `edit.pasteTime` | Cut Time, Delete Time, Paste Time |
+| Mod+Shift+E | `edit.insertSilence` | Insert Silence |
+| Shift+X | `edit.splitRange` | Split (range) |
 | J | `edit.snap` | Snap On/Off ([snap.md](snap.md)) |
 
 The other edit commands ([parts-and-events.md](parts-and-events.md)) have no default keys in the reference. The
@@ -96,7 +103,8 @@ transport controls' commands (F2, the enter commands, Exchange Time Formats, P f
 [transport-bar.md](transport-bar.md).
 
 The UI command `file.quit` (Quit, in the main menu's File menu) has Mod+Q, everywhere. Commands that come with their
-tickets bring their keys: opening windows such as the mixer (F3), cycle, record and the rest of the reference's tables.
+tickets bring their keys, such as the mixer's F3 and Alt+F3 ([mixer-window.md](mixer-window.md)), cycle, record and the
+rest of the reference's tables.
 
 ## Checks
 

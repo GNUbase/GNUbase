@@ -3,8 +3,8 @@
 Windows built from zones, tab groups, splitters and strips, and panels that dock in a zone or open in a window of
 their own (#56), setup panes that show, hide and reorder sections (#372), and the project window's Channel zone and
 lower zone tab bar (#380) (reference manual pp. 54–100, 439–440, 1572, 1575–1578). The code is `ui::Docking`
-(`src/ui/docking.h`); `app::AppUi` makes the project window a docking window, and the mixer and the editors will be the
-next ones.
+(`src/ui/docking.h`); `app::AppUi` makes the project window and the mixer windows ([mixer-window.md](mixer-window.md))
+docking windows, and the editors will be the next ones.
 
 ## Structure
 
@@ -25,14 +25,14 @@ strips above and below a row of zones, where the main zone takes what the others
 The project window (`resources/ui/project.rml`) has the menu bar ([main-menu.md](main-menu.md)), the toolbar, the info
 line, the Channel zone, the left zone, the main zone with the event display, the lower and right zones, the status line
 and the transport bar, which come in that order in the reference (pp. 54–56). The Channel zone (p. 73) has the panel
-Channel, empty until the mixer's channel strip fills it with the selected track's channel (#106). The lower zone has
+Channel, empty until the channel strip fills it with the selected track's channel (#107). The lower zone has
 its tabs at its bottom, with a Close Lower Zone button to their left that hides it (p. 83); the other zones have theirs
 at the top. Its toolbar has Show/Hide Channel, Show/Hide Left, Lower and Right Zone and the Set up Window Layout menu,
 which shows or hides the menu bar (the reference's Show Menu Bar, p. 55), the zones and the info line, overview line,
 status line and transport bar (p. 65). The overview line is
 part of the event display: while a strip is hidden, the body has the class `no-<strip>`, which the style sheet uses to
 hide it. The transport bar has the [transport controls](transport-bar.md). The [status line](status-line.md) shows the
-record format and a lost audio device. The info line is empty.
+record format and a lost audio device. The [info line](inspector.md) shows the selected event or part.
 
 States are classes for the themes: zones, their splitters and strips get `.hidden`, and the zone with the keyboard
 focus gets `.focused`, whose `.zone-frame` (an element the docking system adds over each zone) the theme draws as a
@@ -43,8 +43,9 @@ Close Lower Zone, gives the focus to the main zone, so that its keys no longer a
 
 A panel (`ui::Panel`) has an id, a title, the docking window and the zone it docks in, and a function that fills the
 element it shows in, wherever that is; what the function returns lives as long as the panel shows there. `add`
-registers panels; the project window has Inspector and Visibility on the left, Editor and Mixer in the lower zone, and
-Media and Meter on the right (pp. 75–98), empty until their tickets fill them, the Pool in the lower zone
+registers panels; the project window has the Inspector ([inspector.md](inspector.md)) and Visibility on the left,
+Editor and Mixer in the lower zone, and Media and Meter on the right (pp. 75–98), the others empty until their tickets
+fill them, the Pool in the lower zone
 ([pool.md](pool.md), `window.pool`, Mod+P) and the edit history on the right ([edit-history.md](edit-history.md)).
 `open` shows a panel as its zone's active tab, with the zone shown. `showing` says whether a panel shows: in a window
 of its own, or as its zone's active tab while the zone shows; what its function returned stays while it doesn't, so a
@@ -83,8 +84,8 @@ the set `channel` (`setup-section="eq"`, with the section's label), in the user'
   that adds containers asks for this, rather than the docking system looking for new ones: RmlUi reports no changes to
   the document, and searching every document in each frame would cost time on a large mixer.
 
-The sections of the mixer come with the mixer window; `tests/data/ui/sections.rml` is a test window with sections, and
-`tests/data/ui/sections-later.rml` one whose channels only come after `attach`.
+The mixer's channels are such containers ([mixer-window.md](mixer-window.md)); `tests/data/ui/sections.rml` is a test
+window with sections, and `tests/data/ui/sections-later.rml` one whose channels only come after `attach`.
 
 ## Splitters
 
@@ -108,7 +109,7 @@ their way to the engine it ignores the echoes, so a quick second change doesn't 
       "zones": {"lower": {"visible": true, "size": 280, "tabs": ["mixer", "editor"], "hidden": [], "active": "mixer"}},
       "strips": {"overviewLine": false, "infoLine": true}
     },
-    "mixer": {
+    "mixer1": {
       "sections": {"channel": {"order": ["fader", "routing", "inserts"], "hidden": ["inserts"]}}
     }
   },
@@ -154,12 +155,11 @@ and a panel in a window of its own, whose document has no zones. Ctrl+Tab, Alt+T
 
 ## Not yet
 
-The mixer's window layout pane and its sections (p. 439) come with the mixer window; sections in a panel that shows in
-a window of its own keep the document's order; the Channel zone's contents (p. 73) with the mixer's channel strip
-(#106), shown as its zone's one tab until then; a theme look for tabs at the bottom, whose active tab has its marker on
-the side away from the panels; dragging a tab out of its zone to open it in a window; the editor in the lower zone
-taking the focus when it opens (p. 100), once editors open there; and live reload keeps the panels' contents only when
-the app opens again.
+Sections in a panel that shows in a window of its own keep the document's order; the Channel zone's contents (p. 73)
+with the channel strip (#107), shown as its zone's one tab until then; a theme look for tabs at the bottom, whose
+active tab has its marker on the side away from the panels; dragging a tab out of its zone to open it in a window; the
+editor in the lower zone taking the focus when it opens (p. 100), once editors open there; and live reload keeps the
+panels' contents only when the app opens again.
 
 ## Checks
 

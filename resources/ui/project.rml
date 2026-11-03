@@ -13,8 +13,10 @@
      #track-controls-settings the track controls settings dialog (track-controls.rml); #track-list-menu is its context
      menu.
      app::AppUi fills the transport bar with the transport controls (transport.rml).
-     The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md).
-     ui::StatusLine fills #record-format and #lost-device (docs/features/status-line.md).
+     The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md), and
+     #select-color with #color-menu, which ui::ColorMenu fills with the project's colors (docs/features/colors.md).
+     ui::StatusLine fills #record-format and #lost-device (docs/features/status-line.md). ui::InfoLine fills
+     #info-line; #inspector-setup is the inspector's Set up Sections pane (docs/features/inspector.md).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
 <rml>
 <head>
@@ -78,14 +80,14 @@
 <body class="docking" focuszone="project">
 	<!-- The main menus (reference manual p. 55, docs/features/main-menu.md): an item with a command attribute runs that
 	     engine or UI command, with the JSON object in its parameters attribute, and shows its key. -->
-	<div id="menu-bar" class="menubar" strip="menuBar">
+	<menubar id="menu-bar" strip="menuBar">
 		<button menu="file-menu">File</button>
 		<button menu="edit-menu">Edit</button>
 		<button menu="media-menu">Media</button>
 		<button menu="project-menu">Project</button>
 		<button menu="transport-menu">Transport</button>
 		<button menu="studio-menu">Studio</button>
-	</div>
+	</menubar>
 	<div id="toolbar" class="toolbar" strip="toolbar">
 		<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
 		<button tool="objectSelection" tool-menu="object-selection-menu" class="icon-only" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
@@ -97,7 +99,7 @@
 		<button tool="mute" class="icon-only" title="Mute"><svg class="icon" src="../icons/tool-mute.svg"/></button>
 		<button tool="zoom" class="icon-only" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
 		<button tool="line" tool-menu="line-menu" class="icon-only" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></button>
-		<button id="play-tool" tool="play" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
+		<button id="play-tool" tool="play" tool-menu="play-menu" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
 		<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
 		<button id="auto-scroll-settings" class="icon-only" menu="auto-scroll-menu" title="Select Auto-Scroll Settings"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 		<button id="zoom-presets" class="icon-only" menu="zoom-presets-menu" title="Horizontal Zoom Presets"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
@@ -105,6 +107,7 @@
 		<button id="snap-type" menu="snap-type-menu" title="Snap Type">Grid</button>
 		<button id="grid-type" menu="grid-type-menu" title="Grid Type">Bar</button>
 		<button id="snap-zero-crossing" type="toggle" class="icon-only" title="Snap to Zero Crossing"><svg class="icon" src="../icons/general-zero-crossing.svg"/></button>
+		<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
 		<div class="spacer"/>
 		<button id="show-channel-zone" type="toggle" toggle="channel" class="icon-only" title="Show/Hide Channel"><svg class="icon" src="../icons/layout-channel-zone.svg"/></button>
 		<button id="show-left-zone" type="toggle" toggle="left" class="icon-only" title="Show/Hide Left Zone"><svg class="icon" src="../icons/layout-left-zone.svg"/></button>
@@ -112,7 +115,7 @@
 		<button id="show-right-zone" type="toggle" toggle="right" class="icon-only" title="Show/Hide Right Zone"><svg class="icon" src="../icons/layout-right-zone.svg"/></button>
 		<button id="window-layout" class="icon-only" menu="window-layout-menu" title="Set up Window Layout"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 	</div>
-	<div id="info-line" class="strip" strip="infoLine" default="hidden"/>
+	<div id="info-line" class="strip info-line" strip="infoLine" default="hidden"/>
 	<div class="zones">
 		<div id="channel-zone" zone="channel" focuszone="channel" size="200" default="hidden"/>
 		<splitter for="channel"/>
@@ -141,7 +144,7 @@
 		<div id="right-zone" zone="right" focuszone="right" size="240" default="hidden"/>
 	</div>
 	<div id="status-line" class="strip status-line" strip="statusLine" default="hidden">
-		<span id="record-format" class="status-field" title="Record Format"/>
+		<span id="record-format" class="status-field" title="Record Format" onclick="gnubase.ui.command{command = 'window.projectSetup'}"/>
 		<span id="lost-device" class="status-field hidden"/>
 	</div>
 	<div id="transport-bar" class="strip transport" strip="transportBar" default="hidden"/>
@@ -181,8 +184,24 @@
 		<menuitem command="history.undo">Undo</menuitem>
 		<menuitem command="history.redo">Redo</menuitem>
 		<menuseparator/>
+		<menuitem command="edit.cut">Cut</menuitem>
+		<menuitem command="edit.copy">Copy</menuitem>
+		<menuitem command="edit.paste">Paste</menuitem>
 		<menuitem command="edit.delete">Delete</menuitem>
 		<menuseparator/>
+		<menuitem id="range-submenu">Range
+			<menu>
+				<menuitem command="edit.globalCopy">Global Copy</menuitem>
+				<menuitem command="edit.cutTime">Cut Time</menuitem>
+				<menuitem command="edit.deleteTime">Delete Time</menuitem>
+				<menuitem command="edit.pasteTime">Paste Time</menuitem>
+				<menuseparator/>
+				<menuitem command="edit.splitRange">Split</menuitem>
+				<menuitem command="edit.cropRange">Crop</menuitem>
+				<menuseparator/>
+				<menuitem command="edit.insertSilence">Insert Silence</menuitem>
+			</menu>
+		</menuitem>
 		<menuitem id="functions-submenu">Functions
 			<menu>
 				<menuitem command="edit.splitAtCursor">Split at Cursor</menuitem>
@@ -219,8 +238,11 @@
 		<menuitem command="edit.unlock">Unlock</menuitem>
 	</menu>
 	<!-- Track handling (reference manual pp. 213-225) -->
+	<menu id="color-menu"/>
 	<menu id="project-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
+		<menuseparator/>
+		<menuitem command="project.colorsSetup">Project Colors Setup...</menuitem>
 		<menuseparator/>
 		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
@@ -237,6 +259,8 @@
 				<menuitem command="track.moveSelectedToNewFolderWithGroupChannel">Move Selected Tracks to New Folder with Group Channel</menuitem>
 			</menu>
 		</menuitem>
+		<menuseparator/>
+		<menuitem command="window.projectSetup">Project Setup...</menuitem>
 	</menu>
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
@@ -293,6 +317,12 @@
 		</menuitem>
 	</menu>
 	<menu id="studio-menu">
+		<menuitem command="window.mixer">Mixer</menuitem>
+		<menuitem command="window.lowerZoneMixer">Mixer in Project Window</menuitem>
+		<menuitem command="window.mixer2">Mixer 2</menuitem>
+		<menuitem command="window.mixer3">Mixer 3</menuitem>
+		<menuitem command="window.mixer4">Mixer 4</menuitem>
+		<menuseparator/>
 		<menuitem command="window.studioSetup">Studio Setup...</menuitem>
 	</menu>
 
@@ -309,6 +339,10 @@
 		<menuitem type="toggle" toggle="overviewLine">Overview Line</menuitem>
 		<menuitem type="toggle" toggle="statusLine">Status Line</menuitem>
 		<menuitem type="toggle" toggle="transportBar">Transport Bar</menuitem>
+	</menu>
+	<!-- The inspector's Set up Sections pane (reference manual p. 167), its context menu -->
+	<menu id="inspector-setup" class="setup-pane">
+		<div setup="inspector"/>
 	</menu>
 	<menu id="ruler-format-menu">
 		<menuitem format="barsBeats">Bars+Beats</menuitem>
@@ -335,7 +369,7 @@
 		<menuitem snap-type="eventsGridCursor">Events + Grid + Cursor</menuitem>
 	</menu>
 	<menu id="grid-type-menu"/>
-	<!-- The tools' modes, which a second click on the tool's button opens (reference manual pp. 265, 873) -->
+	<!-- The tools' modes, which a second click on the tool's button opens (reference manual pp. 252, 265, 873) -->
 	<menu id="object-selection-menu">
 		<menuitem sizing="normal">Normal Sizing</menuitem>
 		<menuitem sizing="moveContents">Sizing Moves Contents</menuitem>
@@ -347,6 +381,10 @@
 		<menuitem line-mode="sine">Sine</menuitem>
 		<menuitem line-mode="triangle">Triangle</menuitem>
 		<menuitem line-mode="square">Square</menuitem>
+	</menu>
+	<menu id="play-menu">
+		<menuitem play-mode="play">Play</menuitem>
+		<menuitem play-mode="scrub">Scrub</menuitem>
 	</menu>
 	<menu id="auto-scroll-menu">
 		<menuitem id="page-scroll">Page Scroll</menuitem>
