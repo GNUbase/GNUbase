@@ -79,6 +79,7 @@ namespace gnubase::engine
 		// off punches out. Stopped, on starts playback as play does and recording where play would start without the
 		// pre-roll, or at the left locator with punchIn if that comes later; off does nothing.
 		bool record(bool on);
+		// Positions and locators are clamped to 0 to g_maxPosition.
 		bool locate(time::Samples position);         // also the new start position for returnToStart
 		bool set(const TransportSettings& settings); // new locators and modes
 

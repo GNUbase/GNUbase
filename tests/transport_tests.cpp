@@ -627,6 +627,19 @@ TEST_CASE("recording started by hand during the pre-roll doesn't start again lat
 	CHECK(recordedPositions(transport, 3000, 64) == range(764, 2000));
 }
 
+TEST_CASE("the transport clamps positions and locators to the largest position", "[unit]")
+{
+	Transport transport;
+	TransportSettings settings;
+	settings.left = -5;
+	settings.right = g_maxPosition + 100;
+	REQUIRE(transport.set(settings));
+	CHECK(transport.settings().left == 0);
+	CHECK(transport.settings().right == g_maxPosition);
+	REQUIRE(transport.locate(g_maxPosition + 1));
+	CHECK(transport.position() == g_maxPosition);
+}
+
 TEST_CASE("the command thread takes over what the audio thread changed only once no request waits", "[unit]")
 {
 	Transport transport;
@@ -1012,6 +1025,12 @@ TEST_CASE("go to project end locates to the end of the last event", "[integratio
 	run(client, "audioEvent.add",
 		{{"track", audio.at("track").at("id")}, {"clip", clip.at("clip").at("id")}, {"position", 12345}});
 	CHECK(run(client, "transport.locate", {{"target", "projectEnd"}}).at("position") == 12345 + 48000);
+
+	// An event past the largest position: the cursor stops there, as do locators set to it.
+	run(client, "audioEvent.add",
+		{{"track", audio.at("track").at("id")}, {"clip", clip.at("clip").at("id")}, {"position", g_maxPosition}});
+	CHECK(run(client, "transport.locate", {{"target", "projectEnd"}}).at("position") == g_maxPosition);
+	CHECK(run(client, "transport.set", {{"right", "cursor"}}).at("right") == g_maxPosition);
 }
 
 TEST_CASE("the engine's transport plays the device's blocks sample-exactly, offline and in cycles", "[integration]")
