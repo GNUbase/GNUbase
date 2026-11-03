@@ -97,7 +97,7 @@ namespace gnubase::ui
 		for (const Rml::EventId id : g_documentEvents)
 			m_document->AddEventListener(id, this);
 		findControls();
-		setRulerFormat(m_format);
+		showRuler();
 
 		m_actions = {{"zoom.in", [this] { zoomIn(); }}, {"zoom.out", [this] { zoomOut(); }},
 			{"zoom.inVertically", [this] { zoomInVertically(); }},
@@ -121,7 +121,7 @@ namespace gnubase::ui
 		m_subscriptions.push_back(m_binding.on("snap.changed",
 			[this](const engine::Event& event)
 			{
-				m_snap = engine::snapSettingsFrom(event.data, m_snap);
+				takeSnap(event.data);
 				showSnap();
 			}));
 		m_subscriptions.push_back(m_binding.on("quantize.changed", [this](const engine::Event& event)
@@ -252,6 +252,9 @@ namespace gnubase::ui
 				{
 					m_project = result.value;
 					++m_loads;
+					// Settings, not undo steps: only a fresh answer has them, not m_project shown again later.
+					takeSnap(m_project.at("snap"));
+					m_quantize = engine::midi::quantizeSettingsFromJson(m_project.at("quantize"));
 					loadProject(m_project);
 				}
 				if (std::exchange(m_stale, false))
@@ -263,8 +266,6 @@ namespace gnubase::ui
 	{
 		if (!readTimeContext(project, m_time))
 			logging::warning("The event display can't read the project's tempo or signatures");
-		m_snap = engine::snapSettingsFrom(project.at("snap"), m_snap);
-		m_quantize = engine::midi::quantizeSettingsFromJson(project.at("quantize"));
 		showSnap();
 
 		// A lane per track that isn't hidden, in the project's order.
@@ -365,15 +366,9 @@ namespace gnubase::ui
 		setLanes();
 		showSelection();
 		m_length = project.value("length", g_defaultProjectLength);
-		// The ruler starts with the project's time format, and follows it when it changes (reference manual p. 69); its
-		// menu picks another one of its own.
-		const std::string projectFormat = project.value("timeFormat", std::string());
-		if (projectFormat != m_projectFormat)
-		{
-			m_projectFormat = projectFormat;
-			m_format = timeFormatFromName(projectFormat).value_or(m_format);
-		}
-		setRulerFormat(m_format); // the tempo, signatures, frame rate or start time may have changed too
+		// The ruler shows the snap settings' format (#413), which the project keeps and the engine switches when the
+		// project setup's time format changes (reference manual p. 69).
+		showRuler(); // the tempo, signatures, frame rate or start time may have changed
 		setCursor(m_cursorSample);
 		apply();
 	}
@@ -668,13 +663,55 @@ namespace gnubase::ui
 		showAutoScroll();
 	}
 
+	// The snap grid follows the format at once; the engine's snap.changed confirms it.
 	void EventDisplay::setRulerFormat(TimeFormat format)
 	{
 		m_format = format;
+		const std::string name = timeFormatName(format);
+		if (const std::optional<engine::GridFormat> grid = engine::gridFormatFromName(name);
+			grid && *grid != m_snap.format)
+		{
+			m_snap.format = *grid;
+			++m_formatsSent;
+			m_binding.send("snap.set", {{"format", name}},
+				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+				{
+					if (alive.expired())
+						return;
+					--m_formatsSent;
+					if (!result.ok())
+						logging::warning("The event display can't change the snap settings: {}", result.error);
+				});
+		}
+		showRuler();
+	}
+
+	// Settings the engine sent before it had the format the ruler chose keep that format.
+	void EventDisplay::takeSnap(const Json& settings)
+	{
+		const engine::GridFormat chosen = m_snap.format;
+		m_snap = engine::snapSettingsFrom(settings, m_snap);
+		if (m_formatsSent > 0)
+			m_snap.format = chosen;
+		followSnapFormat();
+	}
+
+	void EventDisplay::followSnapFormat()
+	{
+		if (const std::optional<TimeFormat> format = timeFormatFromName(engine::gridFormatName(m_snap.format));
+			format && *format != m_format)
+		{
+			m_format = *format;
+			showRuler();
+		}
+	}
+
+	void EventDisplay::showRuler()
+	{
 		if (!alive())
 			return;
-		m_ruler->setScale(rulerScale(format, m_time));
-		m_ruler->SetAttribute("format", timeFormatName(format));
+		m_ruler->setScale(rulerScale(m_format, m_time));
+		m_ruler->SetAttribute("format", timeFormatName(m_format));
 		showFormat();
 		showSnap(); // the grid types are the format's
 	}

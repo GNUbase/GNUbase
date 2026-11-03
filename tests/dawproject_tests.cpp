@@ -1027,6 +1027,50 @@ TEST_CASE("saving keeps the history, loading starts a new one", "[integration]")
 	CHECK(run(client, "project.get").at("tracks").size() == 1);
 }
 
+TEST_CASE("snap settings saved before #413 load with the time format of their grid type", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+
+	// An entry as GNUbase wrote it before #413: a single grid type, no time format.
+	std::map<std::string, std::string> entries = readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	extension.at("project")["snap"] = {
+		{"on", true}, {"type", "grid"}, {"grid", "quarterFrame"}, {"zeroCrossing", false}};
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+
+	run(client, "project.load", {{"path", file}});
+	const Json snap = run(client, "snap.get");
+	CHECK(snap.at("on") == true);
+	CHECK(snap.at("format") == "timecode");
+	CHECK(snap.at("grid") == "quarterFrame");
+	CHECK(snap.at("grids") ==
+		Json{{"barsBeats", "bar"}, {"seconds", "100ms"}, {"timecode", "quarterFrame"}, {"samples", "100samples"},
+			{"userFrames", "frame"}});
+	// A newer build's names keep the defaults, the rest loads.
+	extension.at("project")["snap"] = {{"on", true}, {"type", "wobble"}, {"format", "feetFrames"}, {"grid", "5ms"},
+		{"grids", {{"seconds", "5ms"}, {"samples", "10samples"}, {"timecode", "bar"}, {"feetFrames", "1foot"}}},
+		{"zeroCrossing", true}};
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "snap.get") ==
+		Json{{"on", true}, {"type", "grid"}, {"format", "barsBeats"}, {"grid", "bar"},
+			{"grids",
+				{{"barsBeats", "bar"}, {"seconds", "100ms"}, {"timecode", "frame"}, {"samples", "10samples"},
+					{"userFrames", "frame"}}},
+			{"zeroCrossing", true}});
+
+	// Older builds read the grid type in use.
+	run(client, "snap.set", {{"format", "seconds"}});
+	run(client, "project.save", {{"path", file}});
+	CHECK(Json::parse(readZip(file).at("gnubase.json")).at("project").at("snap").at("grid") == "100ms");
+}
+
 TEST_CASE("mute, solo, notes and disabled tracks are saved, also in project.xml", "[integration]")
 {
 	const test::TempDir dir;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Snap and grid (#87): every snap type and grid type, across tempo and signature changes; the snap.* commands, snap
 // points, shuffle and snapping to zero crossings. tests/eventediting_tests.cpp snaps through the event display.
+#include "engine/document/document.h"
 #include "engine/document/snap.h"
 #include "engine/engine.h"
 #include "engine/midi/quantizesettings.h"
@@ -57,7 +58,7 @@ namespace
 		engine::SnapSettings result;
 		result.on = true;
 		result.type = type;
-		result.grid = grid;
+		result.setGrid(grid);
 		return result;
 	}
 
@@ -253,10 +254,18 @@ TEST_CASE("snap.get and snap.set keep the project's settings, saved with it but 
 			if (event.name == "snap.changed")
 				changes.push_back(event.data);
 		});
-	CHECK(f.call("snap.get") == Json{{"on", false}, {"type", "grid"}, {"grid", "bar"}, {"zeroCrossing", false}});
+	const Json grids = {{"barsBeats", "bar"}, {"seconds", "100ms"}, {"timecode", "frame"}, {"samples", "100samples"},
+		{"userFrames", "frame"}};
+	CHECK(f.call("snap.get") ==
+		Json{{"on", false}, {"type", "grid"}, {"format", "barsBeats"}, {"grid", "bar"}, {"grids", grids},
+			{"zeroCrossing", false}});
 	f.track("midi"); // an undo step
 	const Json set = {{"on", true}, {"type", "eventsGridCursor"}, {"grid", "beat"}, {"zeroCrossing", true}};
-	CHECK(f.call("snap.set", set) == set);
+	Json beat = set;
+	beat["format"] = "barsBeats";
+	beat["grids"] = grids;
+	beat["grids"]["barsBeats"] = "beat";
+	CHECK(f.call("snap.set", set) == beat);
 	CHECK(f.call("snap.set", {{"grid", "10ms"}}).at("grid") == "10ms"); // what isn't given stays
 	CHECK(f.call("snap.get").at("type") == "eventsGridCursor");
 	CHECK(f.call("project.get").at("snap").at("grid") == "10ms");
@@ -279,8 +288,168 @@ TEST_CASE("snap.get and snap.set keep the project's settings, saved with it but 
 	f.call("project.new");
 	CHECK(f.call("snap.get").at("on") == false);
 	f.call("project.load", {{"path", file}});
-	CHECK(f.call("snap.get") ==
-		Json{{"on", true}, {"type", "eventsGridCursor"}, {"grid", "10ms"}, {"zeroCrossing", true}});
+	Json saved = beat;
+	saved["format"] = "seconds";
+	saved["grid"] = "10ms";
+	saved["grids"]["seconds"] = "10ms";
+	CHECK(f.call("snap.get") == saved);
+}
+
+// Reference manual pp. 105, 107-109: the grid types depend on the time format.
+TEST_CASE("each time format keeps a grid type of its own, and the snap grid is the format's", "[unit]")
+{
+	Fixture f;
+	const auto at = [&f](int64_t position) { return f.call("snap.position", {{"position", position}}); };
+	f.call("snap.set", {{"on", true}});
+	CHECK(at(100000) == Json{{"position", 2 * g_second}, {"ticks", g_bar}, {"musical", true}}); // a bar
+
+	// Seconds: 100 ms until another one is chosen; the bars are kept for bars and beats.
+	Json changed = f.call("snap.set", {{"format", "seconds"}});
+	CHECK(changed.at("format") == "seconds");
+	CHECK(changed.at("grid") == "100ms");
+	CHECK(at(100000) == Json{{"position", 100800}, {"ticks", (100800 * g_quarter) / 24000}, {"musical", false}});
+	CHECK(f.call("snap.set", {{"grid", "10ms"}}).at("grids").at("seconds") == "10ms");
+	CHECK(at(100000).at("position") == 99840);
+	CHECK(f.call("snap.set", {{"format", "barsBeats"}}).at("grid") == "bar");
+	CHECK(at(100000).at("position") == 2 * g_second);
+	CHECK(f.call("snap.set", {{"format", "seconds"}}).at("grid") == "10ms");
+	f.call("snap.set", {{"format", "samples"}});
+	CHECK(at(100049).at("position") == 100000);
+
+	// The two timecode formats keep their own frame grids.
+	f.call("snap.set", {{"format", "userFrames"}, {"grid", "halfFrame"}});
+	changed = f.call("snap.set", {{"format", "timecode"}});
+	CHECK(changed.at("grid") == "frame");
+	CHECK(changed.at("grids").at("userFrames") == "halfFrame");
+	// The settings given to snap.position may choose another format.
+	CHECK(f.call("snap.position", {{"position", 100000}, {"settings", {{"format", "barsBeats"}}}}).at("position") ==
+		2 * g_second);
+
+	// A grid type without a format, as before #413, chooses its format: frames stay in the timecode format in use.
+	changed = f.call("snap.set", {{"grid", "beat"}});
+	CHECK(changed.at("format") == "barsBeats");
+	CHECK(f.call("snap.set", {{"grid", "1000ms"}}).at("format") == "seconds");
+	CHECK(f.call("snap.set", {{"grid", "twoFrames"}}).at("format") == "timecode");
+	f.call("snap.set", {{"format", "userFrames"}});
+	changed = f.call("snap.set", {{"grid", "second"}});
+	CHECK(changed.at("format") == "userFrames");
+	CHECK(changed.at("grids").at("timecode") == "twoFrames");
+	changed = f.call("snap.set", {{"grids", {{"samples", "10samples"}, {"barsBeats", "quantize"}}}});
+	CHECK(changed.at("grid") == "second");
+	CHECK(changed.at("grids").at("samples") == "10samples");
+	CHECK(changed.at("grids").at("barsBeats") == "quantize");
+
+	// A grid type that isn't the format's, and unknown formats, change nothing.
+	const Json before = f.call("snap.get");
+	CHECK_THAT(f.fails("snap.set", {{"format", "seconds"}, {"grid", "bar"}}), ContainsSubstring("seconds"));
+	CHECK_THAT(f.fails("snap.set", {{"grids", {{"seconds", "frame"}}}}), ContainsSubstring("seconds"));
+	CHECK(!f.client.call("snap.set", {{"format", "feet"}}).ok());
+	CHECK(f.call("snap.get") == before);
+}
+
+// The ruler follows the project setup's time format (#78, reference manual p. 69); the engine switches the snap
+// format with it, so snapping doesn't depend on a UI being open.
+TEST_CASE("a new project time format is the snap format, also after undo and redo", "[unit]")
+{
+	Fixture f;
+	std::mutex mutex;
+	std::vector<Json> changes;
+	const engine::Listener listener(f.engine,
+		[&](const engine::Event& event)
+		{
+			const std::scoped_lock lock(mutex);
+			if (event.name == "snap.changed")
+				changes.push_back(event.data);
+		});
+	auto changed = [&]
+	{
+		const std::scoped_lock lock(mutex);
+		return changes.size();
+	};
+	f.call("project.set", {{"timeFormat", "seconds"}});
+	CHECK(f.call("snap.get").at("format") == "seconds");
+	CHECK(f.call("snap.get").at("grid") == "100ms");
+	CHECK(changed() == 1);
+	// A format of its own right after it stays.
+	f.call("snap.set", {{"format", "barsBeats"}});
+	CHECK(f.call("snap.get").at("format") == "barsBeats");
+	// Other project settings, and the same time format again, leave the snap format alone.
+	f.call("project.set", {{"length", 120.0}, {"timeFormat", "seconds"}});
+	CHECK(f.call("snap.get").at("format") == "barsBeats");
+	CHECK(changed() == 2);
+	// Undo and redo change the time format back and forth, and the snap format with it.
+	f.call("history.undo"); // the length
+	CHECK(f.call("snap.get").at("format") == "barsBeats");
+	f.call("history.undo"); // the time format
+	CHECK(f.call("project.get").at("timeFormat") == "barsBeats");
+	CHECK(f.call("snap.get").at("format") == "barsBeats");
+	f.call("history.redo");
+	CHECK(f.call("snap.get").at("format") == "seconds");
+	CHECK(changed() == 3);
+	f.call("project.set", {{"timeFormat", "timecode"}});
+	f.call("snap.set", {{"format", "samples"}});
+	f.call("history.undo");
+	CHECK(f.call("snap.get").at("format") == "seconds");
+	CHECK(changed() == 6);
+}
+
+TEST_CASE("snap settings from before #413 take the format of their grid type", "[unit]")
+{
+	// The names are the ruler's.
+	for (size_t i = 0; i < engine::g_rulerTimeFormats.size(); ++i)
+		CHECK(std::string(engine::gridFormatName(static_cast<engine::GridFormat>(i))) ==
+			engine::g_rulerTimeFormats.at(i));
+
+	// Settings as #87 saved them: on, type, grid and zeroCrossing.
+	const auto old = [](const char* grid)
+	{
+		return engine::snapSettingsFrom(
+			Json{{"on", true}, {"type", "gridRelative"}, {"grid", grid}, {"zeroCrossing", true}},
+			engine::SnapSettings());
+	};
+	const engine::SnapSettings defaults;
+	CHECK(engine::snapSettingsFrom(Json::object(), defaults) == defaults);
+	CHECK(defaults.format == engine::GridFormat::BarsBeats);
+	CHECK(defaults.grid() == GridType::Bar);
+	engine::SnapSettings expected = defaults;
+	expected.on = true;
+	expected.type = SnapType::GridRelative;
+	expected.zeroCrossing = true;
+	CHECK(old("bar") == expected);
+	expected.grids.at(static_cast<size_t>(engine::GridFormat::BarsBeats)) = GridType::AdaptToZoom;
+	CHECK(old("adaptToZoom") == expected);
+	CHECK(old("1ms").format == engine::GridFormat::Seconds);
+	CHECK(old("1ms").grid() == GridType::Ms1);
+	CHECK(old("1ms").grids.at(0) == GridType::Bar);
+	CHECK(old("subframe").format == engine::GridFormat::Timecode);
+	CHECK(old("subframe").grid() == GridType::Subframe);
+	CHECK(old("44100samples").format == engine::GridFormat::Samples);
+	CHECK(old("44100samples").grid() == GridType::Samples44100);
+
+	// Every grid type is one format's, the frames the two timecode formats'.
+	for (int i = 0; i <= static_cast<int>(GridType::Samples44100); ++i)
+	{
+		const auto grid = static_cast<GridType>(i);
+		int formats = 0;
+		for (size_t format = 0; format < engine::g_gridFormatCount; ++format)
+			formats += engine::hasGrid(static_cast<engine::GridFormat>(format), grid) ? 1 : 0;
+		CHECK(formats == (engine::hasGrid(engine::GridFormat::Timecode, grid) ? 2 : 1));
+	}
+
+	// Loading, names a newer build may have keep what there was; a grid type that isn't its format's is left out.
+	const Json newer = {{"format", "seconds"}, {"grid", "5ms"}, {"grids", {{"seconds", "1000ms"}, {"samples", "bar"}}}};
+	CHECK_THROWS(engine::snapSettingsFrom(newer, defaults));
+	const engine::SnapSettings loaded = engine::snapSettingsFrom(newer, defaults, true);
+	CHECK(loaded.format == engine::GridFormat::Seconds);
+	CHECK(loaded.grid() == GridType::Ms1000);
+	CHECK(loaded.grids.at(static_cast<size_t>(engine::GridFormat::Samples)) == GridType::Samples100);
+	CHECK(engine::snapSettingsFrom({{"format", "seconds"}, {"grid", "bar"}}, defaults, true).grid() == GridType::Ms100);
+
+	// And what is saved now reads back the same.
+	engine::SnapSettings settings = old("halfFrame");
+	settings.format = engine::GridFormat::UserFrames;
+	settings.setGrid(GridType::TwoFrames);
+	CHECK(engine::snapSettingsFrom(engine::toJson(settings), engine::SnapSettings()) == settings);
 }
 
 TEST_CASE("snap.position snaps as the project window does", "[unit]")

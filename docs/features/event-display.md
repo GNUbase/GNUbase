@@ -55,7 +55,8 @@ attributes show the view to MCP's `ui_dom`.
 
 The ruler shows bars and beats (the default), seconds, timecode at the project's frame rate, samples, or timecode at a
 frame rate of the user's (`setRulerFormat`; its `format` attribute names it: `barsBeats`, `seconds`, `timecode`,
-`samples`, `userFrames`). `ui::rulerScale` puts labels at least their width and an em apart:
+`samples`, `userFrames`). The format is the project's snap settings' `format`, so the snap grid follows it and the
+project keeps it ([snap.md](snap.md)). `ui::rulerScale` puts labels at least their width and an em apart:
 
 - **Bars and beats** where the tempo and signature maps put them: every few bars (powers of two), every beat, every
   sixteenth, or every 60, 30, 15, 5 or 1 display ticks (120 per sixteenth), the finest step that keeps labels apart
@@ -68,8 +69,10 @@ frame rate of the user's (`setRulerFormat`; its `format` attribute names it: `ba
 
 **Time format menu** (`#ruler-format-menu`): the arrow button at the ruler's right end (`.ruler-format`, in the
 document) and a right click anywhere in the ruler open it, with Bars+Beats, Seconds, Timecode, Samples and fps (User);
-the ruler's format is checked. The ruler's time formats follow the reference's (p. 69). The ruler starts with the
-project setup's time format and follows it when it changes; the menu picks one of the ruler's own meanwhile. Timecode
+the ruler's format is checked. The ruler's time formats follow the reference's (p. 69). The ruler's format is the
+snap settings' `format`, which the project keeps, so a project opens with it ([snap.md](snap.md)); when the project
+setup's time format changes, the engine makes it the snap format and the ruler follows, and the menu picks one of
+the ruler's own meanwhile. Timecode
 runs at the project's frame rate, seconds and timecode count from its start time and bars from its bar offset
 ([project-setup.md](project-setup.md)). Its mode "bars and beats linear" (p. 70), which keeps bars evenly spaced across
 tempo changes, comes with the tempo track (#155).
