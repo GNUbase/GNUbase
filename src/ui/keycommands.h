@@ -50,9 +50,17 @@ namespace gnubase::ui
 	// focus zone (see KeyCommands::press), or null.
 	struct UiCommand
 	{
+		UiCommand(std::string id, std::string description, std::function<void(Window& window, Rml::Element* zone)> run,
+			std::function<void()> release = {})
+			: id(std::move(id)), description(std::move(description)), run(std::move(run)), release(std::move(release))
+		{
+		}
+
 		std::string id; // "area.action" like the engine's commands, e.g. "view.zoomIn"
 		std::string description;
 		std::function<void(Window& window, Rml::Element* zone)> run;
+		// For a command that runs while its key or button is held, such as winding: when it goes up. Optional.
+		std::function<void()> release;
 	};
 
 	// Keys bound to a command, with the parameters an engine command gets, in a focus zone or, without one, everywhere.
@@ -99,9 +107,14 @@ namespace gnubase::ui
 		// the innermost zone. Lock keys don't count, and nothing runs while a modal document has the focus. Returns
 		// whether a command ran.
 		bool press(Window& window, const KeyPress& keys);
+		// The key went up: ends the commands that its presses run while it is held (UiCommand::release), whatever
+		// the modifiers are now. KI_UNKNOWN ends every one, as when the window lost the keyboard focus.
+		void released(const KeyPress& keys);
 
 		// Runs a command as a key would, e.g. for a menu item.
 		void run(const std::string& command, const engine::Json& parameters, Window& window, Rml::Element* zone);
+		// Ends a command that runs while held, as its key going up would, e.g. for a button released.
+		void release(const std::string& command);
 
 		// Says when the command can run, for menu items (ui/mainmenu.h): enabled gets the window and the zone it
 		// would run in. Throws std::invalid_argument for a command it doesn't know.
@@ -111,6 +124,9 @@ namespace gnubase::ui
 		bool canRun(const std::string& command, Window& window, Rml::Element* zone) const;
 
 	private:
+		// Remembers a key that runs a command while it is held.
+		void hold(int key, const std::string& command);
+
 		struct Bound
 		{
 			std::string zone;
@@ -125,5 +141,6 @@ namespace gnubase::ui
 		std::map<std::string, UiCommand> m_uiCommands;
 		std::map<std::string, std::function<bool(Window&, Rml::Element*)>> m_enabled; // by command
 		std::vector<Bound> m_bindings;                                                // in the order they were bound
+		std::vector<std::pair<int, std::string>> m_held; // the keys down with the commands they run while held
 	};
 }

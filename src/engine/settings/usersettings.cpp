@@ -204,6 +204,14 @@ namespace gnubase::engine::settings
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
+				{"ui.timeDisplay",
+					"The time display window's options: beatCountOnly shows only the beat in its bar, size is the "
+					"window's and its digits' size from 0 (smallest) to 4.",
+					Json{{"type", "object"},
+						{"properties",
+							{{"beatCountOnly", {{"type", "boolean"}}},
+								{"size", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4}}}}}},
+					Json{{"beatCountOnly", false}, {"size", 1}}},
 				{"ui.timeFormats",
 					"The time formats of the transport controls' displays: primary and secondary in the transport bar "
 					"and panel, timeDisplay in the time display window; each barsBeats, seconds, timecode, samples or "

@@ -171,6 +171,7 @@ namespace gnubase::app
 		ui::WindowId m_markersWindow = 0;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
 		std::unique_ptr<ui::MarkerLines> m_markerLines;   // and before the display
+		ui::Winding m_winding{m_binding};                 // Rewind and Forward held, which the transport controls end
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;

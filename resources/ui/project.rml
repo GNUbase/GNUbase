@@ -141,7 +141,7 @@
 		<span id="record-format" class="status-field" title="Record Format" onclick="gnubase.ui.command{command = 'window.projectSetup'}"/>
 		<span id="lost-device" class="status-field hidden"/>
 	</div>
-	<div id="transport-bar" class="strip transport" strip="transportBar" default="hidden"/>
+	<div id="transport-bar" class="strip transport" strip="transportBar" default="hidden" sections="transport" contextmenu="transport-setup"/>
 
 	<menu id="file-menu">
 		<menuitem command="file.new">New Project</menuitem>
