@@ -41,6 +41,7 @@ sends engine commands, so whatever another client changes shows at once.
     listview.tracks[multiple]     the list view (widgets.md), scrolled with the event display
       listitem[value=<id>][level][type]   a tree row per track; .selected, .disabled, .renaming
         .tree-indent, .tree-toggle        from the list view, by level
+        .track-color                      the track's color strip, attribute color (colors.md)
         .track-name, input.track-name-field
         .track-controls > button.toggle[control]   .checked while on, disabled without anything to do
     .drop-line                    where dragged tracks go, .shown while dragging
@@ -95,7 +96,7 @@ changes.
 
 ## Not yet
 
-Lanes and comping (#99), write automation (#122), track colors and the color strip (#94),
+Lanes and comping (#99), write automation (#122),
 recording from instrument and MIDI tracks (#97), dividing the track list, track visibility agents and the track type
 filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
 the settings dialog's groups, widths and presets, the track height presets menu, snap track heights, Shift-click to

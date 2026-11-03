@@ -169,6 +169,25 @@ TEST_CASE("event lanes fill events with color, outlined by stroke-color, in thei
 	CHECK(fill[3] - fill[1] == 50.0F);
 }
 
+TEST_CASE("an event with a color of its own is filled with it, outlined by stroke-color", "[unit]")
+{
+	OneWindow fixture;
+	fixture.show(
+		"event-lanes { width: 400dp; height: 100dp; color: #ff0000; stroke-color: #0000ff; stroke-width: 2dp; }",
+		R"(<event-lanes id="lanes" scale="10"/>)");
+	auto& lanes = fixture.element<ui::EventLanes>("lanes");
+	// The second event's own color (#94): user data, drawn instead of the style sheet's color.
+	ui::TimeSpan own{2000.0, 1000.0};
+	own.color = 0x00ff00ff;
+	lanes.setLanes({{20.0F, {{1000.0, 500.0}, own}}});
+	const std::vector<Rml::Vertex> vertices = fixture.draw();
+	CHECK(count(vertices, red()) == 4);
+	CHECK(count(vertices, green()) == 4);
+	CHECK(count(vertices, blue()) == 16);
+	const std::vector<float> fill = extent(vertices, green());
+	CHECK(fill[2] - fill[0] == 96.0F);
+}
+
 TEST_CASE("event lanes build only the events around the view, and scrolling within that only moves them", "[unit]")
 {
 	// 10,000 events on 100 tracks, ten views wide and ten high: building one view and its surroundings takes the

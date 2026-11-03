@@ -13,7 +13,8 @@
      #track-controls-settings the track controls settings dialog (track-controls.rml); #track-list-menu is its context
      menu.
      app::AppUi fills the transport bar with the transport controls (transport.rml).
-     The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md).
+     The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md), and
+     #select-color with #color-menu, which ui::ColorMenu fills with the project's colors (docs/features/colors.md).
      ui::StatusLine fills #record-format and #lost-device (docs/features/status-line.md). ui::InfoLine fills
      #info-line; #inspector-setup is the inspector's Set up Sections pane (docs/features/inspector.md).
      The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
@@ -106,6 +107,7 @@
 		<button id="snap-type" menu="snap-type-menu" title="Snap Type">Grid</button>
 		<button id="grid-type" menu="grid-type-menu" title="Grid Type">Bar</button>
 		<button id="snap-zero-crossing" type="toggle" class="icon-only" title="Snap to Zero Crossing"><svg class="icon" src="../icons/general-zero-crossing.svg"/></button>
+		<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
 		<div class="spacer"/>
 		<button id="show-left-zone" type="toggle" toggle="left" class="icon-only" title="Show/Hide Left Zone"><svg class="icon" src="../icons/layout-left-zone.svg"/></button>
 		<button id="show-lower-zone" type="toggle" toggle="lower" class="icon-only" title="Show/Hide Lower Zone"><svg class="icon" src="../icons/layout-lower-zone.svg"/></button>
@@ -230,8 +232,11 @@
 		<menuitem command="edit.unlock">Unlock</menuitem>
 	</menu>
 	<!-- Track handling (reference manual pp. 213-225) -->
+	<menu id="color-menu"/>
 	<menu id="project-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
+		<menuseparator/>
+		<menuitem command="project.colorsSetup">Project Colors Setup...</menuitem>
 		<menuseparator/>
 		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>

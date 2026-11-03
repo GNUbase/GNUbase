@@ -3,6 +3,7 @@
 
 #include "engine/engine.h"
 #include "scripting/runtime.h"
+#include "ui/colormenu.h"
 #include "ui/docking.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
@@ -175,6 +176,7 @@ namespace gnubase::app
 		TransportWindow m_timeDisplay;
 		std::unique_ptr<ui::StatusLine> m_statusLine; // too
 		std::unique_ptr<ui::TrackList> m_trackList;   // and before the display
+		std::unique_ptr<ui::ColorMenu> m_colorMenu;   // before the track list
 		std::unique_ptr<ui::InfoLine> m_infoLine;     // and this too
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
 		bool m_canUndo = false;

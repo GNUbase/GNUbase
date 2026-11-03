@@ -1073,6 +1073,49 @@ TEST_CASE("mute, solo, notes and disabled tracks are saved, also in project.xml"
 	CHECK(loaded.at("tracks")[0].at("enabled") == true);
 }
 
+TEST_CASE("track, event and part colors and the color set are saved; the colors also in project.xml", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const ObjectId audio = idOf(run(client, "track.add", {{"type", "audio"}, {"color", "#102030"}}), "track");
+	const ObjectId midi = idOf(run(client, "track.add", {{"type", "midi"}}), "track");
+	const std::string wav = utf8(dir.path() / "tone.wav");
+	writeWav(wav, 48000.0, 1, 48000);
+	const ObjectId media = idOf(run(client, "media.add", {{"path", wav}}), "media");
+	const ObjectId clip = idOf(run(client, "clip.add", {{"media", media}}), "clip");
+	const ObjectId event =
+		idOf(run(client, "audioEvent.add", {{"track", audio}, {"clip", clip}, {"position", 0}}), "event");
+	run(client, "audioEvent.add", {{"track", audio}, {"clip", clip}, {"position", 7680}});
+	const ObjectId part =
+		idOf(run(client, "midiPart.add", {{"track", midi}, {"position", 0}, {"length", 1920}}), "part");
+	run(client, "event.set", {{"events", {event, part}}, {"color", "#c08040"}});
+	run(client, "project.set", {{"colors", {{{"name", "Mine"}, {"color", "#abcdef"}}}}});
+	const Json before = run(client, "project.get");
+	const std::string file = utf8(dir.path() / "colors.dawproject");
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "project.get") == before);
+
+	// project.xml has the track and clip colors; the color set and "follows its track" are GNUbase's.
+	std::map<std::string, std::string> entries = readZip(file);
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	const std::string other = utf8(dir.path() / "other.dawproject");
+	writeZip(other, entries);
+	run(client, "project.load", {{"path", other}});
+	const Json loaded = run(client, "project.get");
+	CHECK(loaded.at("tracks")[0].at("color") == "#102030");
+	REQUIRE(loaded.at("audioEvents").size() == 2);
+	std::vector<Json> eventColors;
+	for (const Json& item : loaded.at("audioEvents"))
+		eventColors.push_back(item.at("color"));
+	CHECK(std::count(eventColors.begin(), eventColors.end(), Json("#c08040")) == 1);
+	CHECK(std::count_if(eventColors.begin(), eventColors.end(), [](const Json& c) { return c.is_null(); }) == 1);
+	REQUIRE(loaded.at("midiParts").size() == 1);
+	CHECK(loaded.at("midiParts")[0].at("color") == "#c08040");
+	CHECK(loaded.at("colors").size() == 16); // the factory set
+}
+
 TEST_CASE("automation on linear tracks is written in seconds; numbers that aren't finite don't load", "[integration]")
 {
 	const test::TempDir dir;

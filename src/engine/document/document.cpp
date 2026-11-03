@@ -2,6 +2,7 @@
 #include "engine/document/document.h"
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <utility>
 
@@ -17,6 +18,21 @@ namespace gnubase::engine
 				appendTracks(project, project.trackById.at(id).children, order);
 			}
 		}
+	}
+
+	std::vector<ProjectColor> factoryColors()
+	{
+		return {{"Red", "#d0453e"}, {"Orange", "#e07a35"}, {"Amber", "#e0a834"}, {"Yellow", "#d8cf3c"},
+			{"Lime", "#9ccc3e"}, {"Green", "#4caf50"}, {"Mint", "#3fbf8f"}, {"Teal", "#2fa8a8"}, {"Cyan", "#3ab4d8"},
+			{"Sky", "#4a90e0"}, {"Blue", "#4a62d8"}, {"Indigo", "#6a52cc"}, {"Violet", "#9050c8"},
+			{"Magenta", "#c04cb4"}, {"Pink", "#d84c86"}, {"Grey", "#8c8c8c"}};
+	}
+
+	bool isColor(const std::string& text)
+	{
+		return text.size() == 7 && text[0] == '#' &&
+			std::all_of(
+				text.begin() + 1, text.end(), [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; });
 	}
 
 	std::vector<ObjectId> Project::trackOrder() const
