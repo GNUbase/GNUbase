@@ -912,6 +912,7 @@ TEST_CASE("with a fallback device, playback goes on there while the device is lo
 	CHECK(status.at("running") == true);
 	CHECK(status.at("lost").at("backend") == "dummy");
 	CHECK(status.at("lost").at("restart") == true);
+	run(client, "audio.simulateDeviceLoss", {{"connected", false}}); // the lost dummy device, still unplugged
 	const Json transport = run(client, "transport.get");
 	CHECK(waitForTransport(client, transport.at("position").get<int64_t>()));
 
@@ -962,6 +963,35 @@ TEST_CASE("the default fallback is the lost device's backend's default device, e
 	CHECK(status.at("device").at("backend") == "fake");
 	CHECK(status.at("device").at("blockSize") == 128);
 	CHECK(status.at("running") == false);
+}
+
+TEST_CASE("the dummy device can't be unplugged while it plays as another backend's fallback", "[integration]")
+{
+	const auto driver = std::make_shared<FakeDriver>();
+	Engine engine(fakeBackends(driver));
+	Client client(engine);
+	run(client, "settings.set", {{"key", "audio.fallbackDevice"}, {"value", "dummy"}});
+	run(client, "audio.setDevice", {{"backend", "fake"}});
+	run(client, "audio.start");
+	driver->connected = false;
+	driver->device.load()->requestReset();
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return !data.at("lost").is_null() && data.at("device").is_object(); }));
+	REQUIRE(run(client, "audio.get").at("device").at("backend") == "dummy");
+
+	// Refused, and nothing changes: the fallback plays on and the fake device is still the one that's lost.
+	CHECK_THAT(reject(client, "audio.simulateDeviceLoss", {{"connected", false}}), ContainsSubstring("fallback"));
+	const Json status = run(client, "audio.get");
+	CHECK(status.at("device").at("backend") == "dummy");
+	CHECK(status.at("running") == true);
+	CHECK(status.at("lost").at("backend") == "fake");
+
+	// Once the fake device has returned, the dummy device opens as usual.
+	driver->connected = true;
+	CHECK(waitForEvent(client, "audio.changed",
+		[](const Json& data) { return data.at("lost").is_null() && data.at("device").is_object(); }));
+	CHECK(run(client, "audio.get").at("device").at("backend") == "fake");
+	CHECK(run(client, "audio.setDevice").at("device").at("backend") == "dummy");
 }
 
 TEST_CASE("a fallback gives way to a lost device whose backend learns only by opening it whether it is there",
