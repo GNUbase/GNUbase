@@ -42,7 +42,7 @@ namespace gnubase::test
 		bool minimized(ui::WindowId window) const { return m_windows.at(window).minimized; }
 
 		// The window in front of all others, minimized or not, and the one with the keyboard focus; 0 for none. A
-		// window opens in front of the others, with the focus unless it is hidden.
+		// window opens in front of the others with the focus, unless it is hidden: then it is neither.
 		ui::WindowId front() const { return m_stack.empty() ? 0 : m_stack.back(); }
 		ui::WindowId focused() const { return m_focused; }
 

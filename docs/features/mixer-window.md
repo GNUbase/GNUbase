@@ -76,8 +76,7 @@ engine commands, so whichever client changes the project or the view, the mixer 
 - **The lower zone's mixer** (pp. 434–436): the project window's Mixer panel, with the view `lower`.
   `window.lowerZoneMixer` (Alt+F3, Studio > Mixer in Project Window) shows it as the lower zone's tab, or hides the
   lower zone while it shows it; while the panel is in a window of its own, it brings that window to the front with the
-  focus. Its toolbar has no left zone button: the project window's left zone isn't the
-  mixer's.
+  focus. Its toolbar has no left zone button: the project window's left zone isn't the mixer's.
 
 ## Not yet
 

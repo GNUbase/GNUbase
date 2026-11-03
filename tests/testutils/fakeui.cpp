@@ -45,9 +45,11 @@ namespace gnubase::test
 		window.bounds = spec.bounds.value_or(ui::Rect{0, 0, spec.size.width, spec.size.height});
 		if (const ui::Display* display = ui::displayOf(window.bounds, m_displays))
 			window.scale = display->scale;
-		m_stack.push_back(id);
-		if (!spec.hidden)
+		if (!spec.hidden) // hidden windows aren't in the order
+		{
+			m_stack.push_back(id);
 			m_focused = id;
+		}
 		return id;
 	}
 
@@ -80,7 +82,7 @@ namespace gnubase::test
 			return;
 		m_focused = 0;
 		for (auto it = m_stack.rbegin(); it != m_stack.rend() && m_focused == 0; ++it)
-			if (const FakeWindow& other = m_windows.at(*it); !other.minimized && !other.spec.hidden)
+			if (!m_windows.at(*it).minimized)
 				m_focused = *it;
 	}
 
