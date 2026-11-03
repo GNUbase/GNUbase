@@ -243,6 +243,10 @@
 		<menuitem command="edit.unmute">Unmute</menuitem>
 		<menuitem command="edit.lock">Lock</menuitem>
 		<menuitem command="edit.unlock">Unlock</menuitem>
+		<menuseparator/>
+		<!-- The MIDI editors (docs/features/midi-editors.md) -->
+		<menuitem command="editor.openClose">Open/Close Editor</menuitem>
+		<menuitem command="window.lowerZoneEditor">Open Editor in Lower Zone</menuitem>
 	</menu>
 	<!-- Track handling (reference manual pp. 213-225) -->
 	<menu id="color-menu"/>
