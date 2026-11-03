@@ -1,6 +1,7 @@
 # Project window tools
 
-The tools of the project window's toolbar (#86, reference manual pp. 57-65): what a press in the event display does.
+The tools of the project window's toolbar (#86, reference manual pp. 57-65): what a press in the event display does,
+the toolbox, the mouse pointers and the notification when a key chooses a tool (#469, pp. 65, 1602).
 The code is in `src/ui/eventtools.cpp` (the gestures, the selection range, the tool modifiers) and
 `src/ui/eventdisplaymenus.cpp` (the buttons and menus), on top of the object selection tool in `eventediting.cpp`
 ([parts-and-events.md](parts-and-events.md)). Every edit goes to the engine as the `event.*`, `midiPart.add` and
@@ -81,8 +82,46 @@ window: `tool.objectSelection` 1, `tool.rangeSelection` 2, `tool.split` 3, `tool
 6, `tool.mute` 7, `tool.draw` 8, `tool.play` 9, `tool.line` (no key), `tool.previous` F9, `tool.next` F10 (along the
 toolbar, around at the ends) and `tool.combineSelectionTools` Alt+Shift+1.
 
-Not yet: the toolbox on a right click, tool cursors, the time warp, comp and color tools, the drumstick tool, and
-resizing an event's edge with the scrub tool, which scrubs as it resizes (p. 268).
+A tool chosen with one of these commands, by its key or from Lua's `gnubase.ui.command`, shows its name for a
+moment over the event display (p. 1602): `#tool-notification`, a `<notification>` ([widgets.md](widgets.md)), also
+"Combine Selection Tools On" or "Off". The user setting `ui.toolSwitchNotification` (default on) switches it off.
+The toolbar's buttons and the toolbox show none.
+
+## Toolbox and context menu
+
+A right click in the event lanes opens the context menu `#event-display-menu` or the toolbox `#toolbox` (p. 65), at
+the mouse. With the user setting `ui.toolboxOnRightClick` (Show Toolbox on Right-Click, p. 1602; default off) a right
+click opens the toolbox and a right click with any modifier key (Ctrl, Alt, Shift, Cmd) the context menu; while it is
+off, the other way round. The display sets the event area's `contextmenu` and `modifiercontextmenu` attributes from the
+setting, and the widget library opens the one the keys ask for ([widgets.md](widgets.md)); it follows
+`settings.changed`, so MCP's and Lua's `settings.set` apply at once.
+
+- The **toolbox** has the toolbar's tools as icons, `menuitem[tool=<name>]` with the tool chosen checked; a click
+  chooses the tool and closes it.
+- The **context menu** has a Tools submenu with the same items, then the edit commands that act on the selection or
+  the selection range, as the Edit menu runs them ([main-menu.md](main-menu.md)): Cut, Copy, Paste, Delete, Split at
+  Cursor, Split Range, Crop Range, Glue, Duplicate, Repeat, Select All, Select None, Mute, Unmute, Lock and Unlock.
+
+## Mouse pointers
+
+Over the event lanes, the pointer shows what a press there does. The display names it in the event area's attribute
+`pointer`, by the tool and where the mouse is, and `resources/styles/base.rcss` gives each name its pointer with
+RmlUi's `cursor` property; the pointers are SVG files in `resources/cursors` ([svg.md](svg.md)).
+
+| `pointer` | Where | Pointer |
+|---|---|---|
+| `objectSelection` | The object selection tool | The OS's arrow |
+| `resize` | The object selection tool at an event's left or right edge, where a drag resizes it (6 dp, on events wider than 18 dp) | `resize` |
+| `rangeSelection` | The range selection tool, and with the selection tools combined a lane's upper half (p. 253) | `tool-range` |
+| `draw`, `erase`, `split`, `glue`, `mute`, `zoom`, `line`, `play` | That tool | `tool-<name>`, the play tool's `tool-play` |
+
+The pointer changes as the mouse moves and at once when a tool is chosen while the mouse rests; a drag keeps the one
+it started with. MCP's `ui_windows` reports the pointer shown, as `cursor`.
+
+Not yet: the time warp, comp and color tools, the drumstick tool, resizing an event's edge with the scrub tool,
+which scrubs as it resizes (p. 268), and pointers of their own for the sizing modes; the rest of the reference's context
+menu, with the Audio and MIDI menus' functions, follows with those menus. The Preferences dialog's Editing - Tools page
+(#162) will show the two settings, which `settings.get` and `settings.set` reach until then.
 
 ## Checks
 
@@ -93,8 +132,15 @@ resizing an event's edge with the scrub tool, which scrubs as it resizes (p. 268
   unmuting with clicks and a rectangle; zooming in, out, to a rectangle and back with a double click; drawing parts,
   snapped, by dragging and with a click, none on audio tracks or with the line tool; auditioning the audio lane's
   track on the dummy device while the mouse is pressed, nothing on a MIDI lane, and scrubbing with a drag; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
-  every track, and the events they select when another tool takes over; the combined selection tools.
+  every track, and the events they select when another tool takes over; the combined selection tools; the pointer
+  per tool, at events' edges and in a combined lane's upper half, also when a tool is chosen while the mouse rests.
 - `tests/uiapp_tests.cpp`: the toolbar's tool buttons, the keys 1 to 9, F9, F10 and Alt+Shift+1 in the app's project
   window, the object selection tool's, the line tool's and the play tool's mode menus on a second click; scrubbing an
   audio track with the mouse; the split tool and the range
-  tool driven with the mouse as MCP's UI tools drive it. The project window's golden image shows the toolbar.
+  tool driven with the mouse as MCP's UI tools drive it; the toolbox and the context menu on right clicks with and
+  without modifiers, with the setting on and off, a tool chosen from each; the notification after a key, not after a
+  button or with the setting off; the pointer as `ui_windows` reports it. The project window's golden image shows the
+  toolbar.
+- `tests/widgets_tests.cpp`: `modifiercontextmenu` with each modifier key, and notifications.
+  `tests/svg_tests.cpp`: every pointer rasterizes at each scale with its hotspot inside it, and broken ones fall back
+  to the OS's arrow.

@@ -6,6 +6,7 @@
 // SDL_GPU at 100 %, 150 % and 200 % and compares them with golden images.
 #include "testutils/fakeui.h"
 #include "testutils/testutils.h"
+#include "ui/cursors.h"
 #include "ui/shell.h"
 
 #include <RmlUi/Core/Context.h>
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -376,4 +378,65 @@ TEST_CASE("a 9-slice skin is rasterized once per scale, whatever the sizes of th
 	const std::vector<ui::Image> scaled = graphics.draw();
 	REQUIRE(scaled.size() == 1);
 	CHECK(scaled[0].width == 48);
+}
+
+TEST_CASE("GNUbase's mouse pointers rasterize at every scale, pointing at their hotspot", "[unit]")
+{
+	ui::Cursors cursors(resources() / "cursors");
+	const std::vector<std::filesystem::path> files = svgFiles(resources() / "cursors");
+	CHECK(files.size() >= 10);
+	for (const std::filesystem::path& file : files)
+	{
+		const std::string name = file.stem().u8string();
+		INFO(name);
+		REQUIRE(cursors.has(name)); // cursors.json names every picture
+		const ui::Cursor& cursor = cursors.get(name);
+		CHECK(cursor.name == name);
+		REQUIRE(cursor.images.size() == ui::g_cursorScales.size());
+		for (size_t i = 0; i < cursor.images.size(); ++i)
+		{
+			const ui::CursorImage& image = cursor.images[i];
+			const float scale = ui::g_cursorScales.at(i);
+			CHECK(image.scale == scale);
+			CHECK(image.width == static_cast<int>(std::lround(24.0F * scale)));
+			CHECK(image.height == image.width);
+			CHECK(image.pixels.size() == static_cast<size_t>(image.width) * static_cast<size_t>(image.height) * 4);
+			CHECK(image.hotspot.x >= 0);
+			CHECK(image.hotspot.x < image.width);
+			CHECK(image.hotspot.y >= 0);
+			CHECK(image.hotspot.y < image.height);
+			// Black lines on white, visible on any background, and transparent around them.
+			const ui::Image picture{image.width, image.height, image.pixels};
+			CHECK(showsSomething(picture));
+			CHECK(picture.pixel(0, 0)[3] == 0);
+		}
+		// Once rasterized, kept.
+		CHECK(&cursors.get(name) == &cursor);
+	}
+	// What the folder doesn't have is one of the OS's pointers, by its name.
+	CHECK(cursors.get("ew-resize").name == "ew-resize");
+	CHECK(cursors.get("ew-resize").images.empty());
+	CHECK(!cursors.has("ew-resize"));
+}
+
+TEST_CASE("a pointer whose picture or manifest can't be read is the OS's arrow", "[unit]")
+{
+	const test::TempDir folder;
+	write(folder.path() / "cursors.json",
+		R"({"broken": {"hotspot": [1, 1]}, "missing": {"hotspot": [1, 1]}, "nohotspot": {}})");
+	write(folder.path() / "broken.svg", "<svg");
+	write(folder.path() / "nohotspot.svg",
+		R"(<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>)");
+	ui::Cursors cursors(folder.path());
+	for (const char* name : {"broken", "missing"})
+	{
+		INFO(name);
+		CHECK(cursors.get(name).name.empty());
+		CHECK(cursors.get(name).images.empty());
+	}
+	CHECK(!cursors.has("nohotspot"));
+	CHECK(cursors.get("nohotspot").images.empty());
+	// A manifest that isn't JSON: every pointer is the OS's.
+	write(folder.path() / "cursors.json", "{");
+	CHECK(!ui::Cursors(folder.path()).has("broken"));
 }

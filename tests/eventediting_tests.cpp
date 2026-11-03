@@ -28,6 +28,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -552,6 +553,70 @@ TEST_CASE("the tools are chosen by command, and the display names the one chosen
 	CHECK(root->IsClassSet("cross-hair"));
 }
 
+TEST_CASE(
+	"the mouse pointer shows the tool over the event lanes, the resize and range pointers where they apply", "[unit]")
+{
+	Fixture f;
+	const Rml::Element* area = f.document.QuerySelector(".event-area");
+	// The pointer the display names and the one the window system shows, as the style sheets name it.
+	const auto pointer = [area] { return area->GetAttribute<std::string>("pointer", ""); };
+	const auto shown = [&f]
+	{
+		f.window.context().Update();
+		return f.ui.windows.cursor().name;
+	};
+	const auto moveTo = [&f](double x, double y)
+	{
+		f.automation.move(std::nullopt, f.at(x, y));
+		f.step();
+	};
+
+	// The object selection tool has the OS's arrow; at an event's left or right edge, where a drag resizes it, the
+	// resize pointer.
+	moveTo(500, 20);
+	CHECK(pointer() == "objectSelection");
+	CHECK(shown().empty());
+	moveTo(102, 60);
+	CHECK(pointer() == "resize");
+	CHECK(shown() == "resize");
+	moveTo(298, 60);
+	CHECK(pointer() == "resize");
+	moveTo(200, 60);
+	CHECK(pointer() == "objectSelection");
+	CHECK(shown().empty());
+
+	// With the selection tools combined, the range selection tool's in a lane's upper half (reference manual p. 253).
+	f.display.setCombineSelectionTools(true);
+	moveTo(150, 45);
+	CHECK(pointer() == "rangeSelection");
+	CHECK(shown() == "tool-range");
+	moveTo(150, 75);
+	CHECK(pointer() == "objectSelection");
+	f.display.setCombineSelectionTools(false);
+
+	// Every other tool its own, at once when it is chosen while the mouse rests; no resize pointer at the edges.
+	moveTo(102, 60);
+	const std::vector<std::pair<ui::Tool, std::string>> tools = {{ui::Tool::RangeSelection, "tool-range"},
+		{ui::Tool::Draw, "tool-draw"}, {ui::Tool::Erase, "tool-erase"}, {ui::Tool::Split, "tool-split"},
+		{ui::Tool::Glue, "tool-glue"}, {ui::Tool::Mute, "tool-mute"}, {ui::Tool::Zoom, "tool-zoom"},
+		{ui::Tool::Line, "tool-line"}, {ui::Tool::Play, "tool-play"}};
+	for (const auto& [tool, cursor] : tools)
+	{
+		INFO(ui::toolName(tool));
+		f.display.setTool(tool);
+		CHECK(pointer() == ui::toolName(tool));
+		CHECK(shown() == cursor);
+	}
+
+	// Over the ruler, the OS's arrow.
+	f.display.setTool(ui::Tool::ObjectSelection);
+	CHECK(pointer() == "resize");
+	Rml::Element* ruler = f.document.QuerySelector("ruler");
+	f.automation.move(
+		std::nullopt, point(ruler->GetAbsoluteLeft() + 100, ruler->GetAbsoluteTop() + (ruler->GetClientHeight() / 2)));
+	CHECK(shown().empty());
+}
+
 TEST_CASE("the object selection tool selects with a rectangle and sets the cursor with Alt and Shift", "[unit]")
 {
 	Fixture f;
@@ -802,7 +867,7 @@ TEST_CASE("the range selection tool selects ranges, snapped, by dragging and dou
 	f.display.setTool(ui::Tool::ObjectSelection);
 	CHECK(!f.display.range().has_value());
 	CHECK(!f.document.QuerySelector(".range-selection")->IsClassSet("shown"));
-	CHECK(root->GetAttribute<std::string>("range", "") == "");
+	CHECK(root->GetAttribute<std::string>("range", "").empty());
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.event, f.part});
 }
 

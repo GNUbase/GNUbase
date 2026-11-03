@@ -491,6 +491,132 @@ TEST_CASE("the toolbar's tool buttons and the keys choose the tools, a second cl
 	app.ui().key(std::nullopt, "Escape");
 }
 
+TEST_CASE(
+	"a right click in the event display opens the toolbox or the context menu, by the setting and modifiers", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	const ui::EventDisplay& display = window.display;
+	const Json lanes = element(app, "event-lanes.events").at("box");
+	const ui::Point at{lanes.at("x").get<int>() + 100, lanes.at("y").get<int>() + 20};
+	const auto rightClick = [&app, &at](const std::vector<std::string>& modifiers)
+	{
+		app.ui().click(std::nullopt, {"", 0, at}, ui::MouseButton::Right, 1, modifiers);
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// Off, as by default: the context menu, and with any modifier key the toolbox (reference manual p. 65).
+	rightClick({});
+	REQUIRE(visible(app, "#event-display-menu"));
+	CHECK(!visible(app, "#toolbox"));
+	CHECK(element(app, "#event-display-menu").at("box").at("x") == at.x);
+	app.ui().key(std::nullopt, "Escape");
+	rightClick({"shift"});
+	CHECK(visible(app, "#toolbox"));
+	CHECK(!visible(app, "#event-display-menu"));
+	app.ui().key(std::nullopt, "Escape");
+
+	// On (p. 1602): the toolbox at the mouse, with the tool chosen checked; a click on a tool chooses it and closes
+	// it. With a modifier key, the context menu, whose Tools submenu chooses tools too.
+	app.call("settings.set", {{"key", "ui.toolboxOnRightClick"}, {"value", true}});
+	REQUIRE(
+		app.waitUntil([&app] { return element(app, ".event-area").at("attributes").at("contextmenu") == "toolbox"; }));
+	rightClick({});
+	REQUIRE(visible(app, "#toolbox"));
+	CHECK(!visible(app, "#event-display-menu"));
+	CHECK(element(app, "#toolbox").at("box").at("x") == at.x);
+	CHECK(hasClass(app, "#toolbox > menuitem[tool=objectSelection]", "checked"));
+	click(app, selector("#toolbox > menuitem[tool=draw]"));
+	CHECK(display.tool() == ui::Tool::Draw);
+	CHECK(!visible(app, "#toolbox"));
+	CHECK(hasClass(app, "button[tool=draw]", "checked"));
+	for (const char* modifier : {"ctrl", "alt", "shift"})
+	{
+		INFO(modifier);
+		rightClick({modifier});
+		CHECK(visible(app, "#event-display-menu"));
+		CHECK(!visible(app, "#toolbox"));
+		app.ui().key(std::nullopt, "Escape");
+	}
+	rightClick({"ctrl"});
+	app.ui().move(std::nullopt, selector("#tools-submenu"));
+	click(app, menuItem(app, "#tools-submenu > menu", "Split"));
+	CHECK(display.tool() == ui::Tool::Split);
+	CHECK(!visible(app, "#event-display-menu"));
+	// Its edit commands act on the selection, as the Edit menu's do.
+	CHECK(count(app, "#event-display-menu > menuitem[command=edit.delete]") == 1);
+
+	// The setting survives in the settings, for the next start; off again, the context menu.
+	CHECK(app.call("settings.get", {{"key", "ui.toolboxOnRightClick"}}).at("value") == true);
+	app.call("settings.set", {{"key", "ui.toolboxOnRightClick"}, {"value", false}});
+	REQUIRE(app.waitUntil(
+		[&app] { return element(app, ".event-area").at("attributes").at("contextmenu") == "event-display-menu"; }));
+}
+
+TEST_CASE("a tool chosen with a key command shows its name for a moment, unless the setting is off", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	CHECK(!visible(app, "#tool-notification"));
+	// 8 chooses the draw tool: its name shows over the event display (reference manual p. 1602), then goes.
+	app.ui().key(std::nullopt, "8");
+	REQUIRE(visible(app, "#tool-notification"));
+	CHECK(element(app, "#tool-notification").at("text") == "Draw");
+	REQUIRE(app.waitUntil([&app] { return !visible(app, "#tool-notification"); }));
+	app.ui().key(std::nullopt, "Alt+Shift+1");
+	CHECK(element(app, "#tool-notification").at("text") == "Combine Selection Tools On");
+	REQUIRE(app.waitUntil([&app] { return !visible(app, "#tool-notification"); }));
+
+	// A tool button shows none: the notification is for keys.
+	click(app, selector("button[tool=split]"));
+	CHECK(!visible(app, "#tool-notification"));
+	// Nor a key with the setting off.
+	app.call("settings.set", {{"key", "ui.toolSwitchNotification"}, {"value", false}});
+	app.shell().step(std::chrono::milliseconds(0));
+	app.ui().key(std::nullopt, "3");
+	CHECK(window.display.tool() == ui::Tool::Split);
+	CHECK(!visible(app, "#tool-notification"));
+}
+
+TEST_CASE("the mouse pointer over the event display shows the tool, and the resize pointer at an event's edge", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	app.call("midiPart.add", // from 1 to 3 seconds at 120 BPM
+		{{"track", track.at("id")}, {"position", 2 * time::g_ticksPerQuarter},
+			{"length", 4 * time::g_ticksPerQuarter}});
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			auto* lanes =
+				dynamic_cast<ui::EventLanes*>(app.main().context().GetDocument(0)->QuerySelector("event-lanes.events"));
+			return lanes != nullptr && !lanes->lanes().empty() && !lanes->lanes()[0].events.empty();
+		}));
+	const Json lanes = element(app, "event-lanes.events").at("box");
+	const auto cursorAt = [&app, &lanes](int x, int y)
+	{
+		app.ui().move(std::nullopt, {"", 0, ui::Point{lanes.at("x").get<int>() + x, lanes.at("y").get<int>() + y}});
+		app.shell().step(std::chrono::milliseconds(0));
+		return app.ui().windows().at("cursor").get<std::string>();
+	};
+
+	// As MCP's ui_windows reports it: the OS's arrow for the object selection tool, the resize pointer at the
+	// part's edge, the tool's own pointer for the others.
+	CHECK(cursorAt(500, 20).empty());
+	CHECK(cursorAt(101, 20) == "resize");
+	app.ui().key(std::nullopt, "8");
+	CHECK(cursorAt(500, 20) == "tool-draw");
+	app.ui().key(std::nullopt, "3");
+	CHECK(cursorAt(200, 20) == "tool-split");
+	app.ui().key(std::nullopt, "2");
+	CHECK(cursorAt(200, 20) == "tool-range");
+	// Not over the toolbar.
+	app.ui().move(std::nullopt, selector("button[tool=draw]"));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(app.ui().windows().at("cursor").get<std::string>().empty());
+}
+
 TEST_CASE("the scrub tool scrubs an audio track and moves the project cursor in the project window", "[ui]")
 {
 	ProjectWindow window;

@@ -766,6 +766,72 @@ meter .meter-peak
 	display: block;
 }
 
+/* The mouse pointer over the event lanes (docs/features/tools.md): code names it in the event area's attribute
+   pointer, by the tool and where the mouse is; the object selection tool has the OS's arrow. The pointers are
+   resources/cursors. */
+.event-display .event-area[pointer=rangeSelection]
+{
+	cursor: tool-range;
+}
+
+.event-display .event-area[pointer=draw]
+{
+	cursor: tool-draw;
+}
+
+.event-display .event-area[pointer=erase]
+{
+	cursor: tool-erase;
+}
+
+.event-display .event-area[pointer=split]
+{
+	cursor: tool-split;
+}
+
+.event-display .event-area[pointer=glue]
+{
+	cursor: tool-glue;
+}
+
+.event-display .event-area[pointer=mute]
+{
+	cursor: tool-mute;
+}
+
+.event-display .event-area[pointer=zoom]
+{
+	cursor: tool-zoom;
+}
+
+.event-display .event-area[pointer=line]
+{
+	cursor: tool-line;
+}
+
+.event-display .event-area[pointer=play]
+{
+	cursor: tool-play;
+}
+
+.event-display .event-area[pointer=resize]
+{
+	cursor: resize;
+}
+
+/* The name of a tool chosen with a key command, for a moment, at the top of the event lanes; the document gives it
+   the tooltip's look. */
+.event-display .tool-notification
+{
+	position: absolute;
+	z-index: 10;
+	top: 64dp;
+	left: 50%;
+	width: 200dp;
+	margin-left: -100dp;
+	text-align: center;
+}
+
 /* The track list (docs/features/track-list.md): the global track controls over a row per track, level with the
    event display's lanes under its overview line and ruler. Code sets the rows' heights from the tracks' and where the
    list is scrolled to; the line where dragged tracks go shows while they are dragged. */
@@ -971,6 +1037,27 @@ menubar button
 	padding: 3dp 8dp;
 }
 
+/* The toolbox (docs/features/tools.md): the toolbar's tools as a row of icons at the mouse. */
+menu.toolbox
+{
+	min-width: 0;
+	padding: 4dp;
+	white-space: nowrap;
+}
+
+menu.toolbox menuitem
+{
+	display: inline-block;
+	padding: 4dp;
+}
+
+menu.toolbox svg.icon
+{
+	display: block;
+	width: 20dp;
+	height: 20dp;
+}
+
 menuitem .menu-keys
 {
 	float: right;
@@ -999,6 +1086,24 @@ tooltip
 }
 
 tooltip.shown
+{
+	display: block;
+}
+
+/* A notification shows only while it has a message, also with a class such as .tooltip for its look; it lets the
+   mouse through. */
+notification
+{
+	padding: 4dp 8dp;
+	pointer-events: none;
+}
+
+notification:not(.shown)
+{
+	display: none;
+}
+
+notification.shown
 {
 	display: block;
 }

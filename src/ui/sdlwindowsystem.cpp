@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -49,6 +51,27 @@ namespace gnubase::ui
 			default:
 				return false;
 			}
+		}
+
+		// The OS's pointer for a CSS cursor name.
+		std::optional<SDL_SystemCursor> systemCursor(const std::string& name)
+		{
+			static const std::map<std::string, SDL_SystemCursor> cursors = {{"crosshair", SDL_SYSTEM_CURSOR_CROSSHAIR},
+				{"ew-resize", SDL_SYSTEM_CURSOR_EW_RESIZE}, {"move", SDL_SYSTEM_CURSOR_MOVE},
+				{"nesw-resize", SDL_SYSTEM_CURSOR_NESW_RESIZE}, {"not-allowed", SDL_SYSTEM_CURSOR_NOT_ALLOWED},
+				{"ns-resize", SDL_SYSTEM_CURSOR_NS_RESIZE}, {"nwse-resize", SDL_SYSTEM_CURSOR_NWSE_RESIZE},
+				{"pointer", SDL_SYSTEM_CURSOR_POINTER}, {"progress", SDL_SYSTEM_CURSOR_PROGRESS},
+				{"text", SDL_SYSTEM_CURSOR_TEXT}, {"wait", SDL_SYSTEM_CURSOR_WAIT}};
+			const auto found = cursors.find(name);
+			return found != cursors.end() ? std::optional<SDL_SystemCursor>(found->second) : std::nullopt;
+		}
+
+		// An SDL surface over the picture's pixels, which SDL only reads.
+		SDL_Surface* surfaceOf(const CursorImage& image)
+		{
+			// NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast): SDL's surfaces take non-const pixels
+			auto* pixels = const_cast<uint8_t*>(image.pixels.data());
+			return SDL_CreateSurfaceFrom(image.width, image.height, SDL_PIXELFORMAT_RGBA32, pixels, image.width * 4);
 		}
 
 		// A file dialog that is open: what SDL needs until the dialog calls back.
@@ -205,6 +228,8 @@ namespace gnubase::ui
 		SDL_Event event;
 		while (m_dialogEvent != 0 && SDL_PeepEvents(&event, 1, SDL_GETEVENT, m_dialogEvent, m_dialogEvent) == 1)
 			const std::unique_ptr<DialogResult> unused(static_cast<DialogResult*>(event.user.data1));
+		SDL_SetCursor(SDL_GetDefaultCursor());
+		m_cursors.clear();
 		SDL_QuitSubSystem(SDL_INIT_VIDEO);
 	}
 
@@ -332,6 +357,45 @@ namespace gnubase::ui
 	void SdlWindowSystem::setClipboardText(const std::string& text)
 	{
 		SDL_SetClipboardText(text.c_str());
+	}
+
+	void SdlWindowSystem::DestroyCursor::operator()(SDL_Cursor* cursor) const
+	{
+		SDL_DestroyCursor(cursor);
+	}
+
+	void SdlWindowSystem::setCursor(const Cursor& cursor)
+	{
+		auto found = m_cursors.find(cursor.name);
+		if (found == m_cursors.end())
+		{
+			SDL_Cursor* made = nullptr;
+			if (!cursor.images.empty())
+			{
+				// The picture at scale 1, with the others for HiDPI monitors, of which SDL takes the nearest.
+				SDL_Surface* base = surfaceOf(cursor.images.front());
+				for (size_t i = 1; base != nullptr && i < cursor.images.size(); ++i)
+					if (SDL_Surface* scaled = surfaceOf(cursor.images[i]))
+					{
+						SDL_AddSurfaceAlternateImage(base, scaled);
+						SDL_DestroySurface(scaled); // the base keeps a reference
+					}
+				if (base != nullptr)
+				{
+					const Point hotspot = cursor.images.front().hotspot;
+					made = SDL_CreateColorCursor(base, hotspot.x, hotspot.y);
+					SDL_DestroySurface(base);
+				}
+			}
+			else if (const std::optional<SDL_SystemCursor> system = systemCursor(cursor.name))
+			{
+				made = SDL_CreateSystemCursor(*system);
+			}
+			if (made == nullptr && !cursor.name.empty())
+				logging::debug("The mouse pointer {} is the OS's arrow: {}", cursor.name, SDL_GetError());
+			found = m_cursors.emplace(cursor.name, std::unique_ptr<SDL_Cursor, DestroyCursor>(made)).first;
+		}
+		SDL_SetCursor(found->second != nullptr ? found->second.get() : SDL_GetDefaultCursor());
 	}
 
 	void SdlWindowSystem::showFileDialog(uint64_t id, const FileDialog& dialog)

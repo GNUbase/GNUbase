@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The project window's tools in the event display (#86, reference manual pp. 57-65): what a press in the event lanes
 // does with each tool other than the object selection tool (eventediting.cpp), the selection range, and the tool
-// modifiers. Edits go to the engine as event.* and midiPart.add commands. docs/features/tools.md describes them.
+// modifiers, plus the mouse pointer per tool, the toolbox or context menu on a right click and the notification when a
+// key command switches the tool (#469). Edits go to the engine as event.* and midiPart.add commands.
+// docs/features/tools.md describes them.
 #include "engine/time/tempomap.h"
 #include "ui/eventdisplay.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Property.h>
 
 #include <algorithm>
@@ -89,12 +93,27 @@ namespace gnubase::ui
 		for (int i = 0; i < count; ++i)
 		{
 			const auto tool = static_cast<Tool>(i);
-			m_actions[std::string("tool.") + toolName(tool)] = [this, tool] { setTool(tool); };
+			m_actions[std::string("tool.") + toolName(tool)] = [this, tool]
+			{
+				setTool(tool);
+				notify(toolTitle(tool));
+			};
 		}
-		m_actions["tool.next"] = [this] { setTool(static_cast<Tool>((static_cast<int>(m_tool) + 1) % count)); };
+		m_actions["tool.next"] = [this]
+		{
+			setTool(static_cast<Tool>((static_cast<int>(m_tool) + 1) % count));
+			notify(toolTitle(m_tool));
+		};
 		m_actions["tool.previous"] = [this]
-		{ setTool(static_cast<Tool>((static_cast<int>(m_tool) + count - 1) % count)); };
-		m_actions["tool.combineSelectionTools"] = [this] { setCombineSelectionTools(!m_combine); };
+		{
+			setTool(static_cast<Tool>((static_cast<int>(m_tool) + count - 1) % count));
+			notify(toolTitle(m_tool));
+		};
+		m_actions["tool.combineSelectionTools"] = [this]
+		{
+			setCombineSelectionTools(!m_combine);
+			notify(m_combine ? "Combine Selection Tools On" : "Combine Selection Tools Off");
+		};
 	}
 
 	void EventDisplay::setTool(Tool tool)
@@ -109,6 +128,7 @@ namespace gnubase::ui
 			select({});
 		m_tool = tool;
 		showTools();
+		showPointer();
 	}
 
 	void EventDisplay::setCombineSelectionTools(bool on)
@@ -120,6 +140,7 @@ namespace gnubase::ui
 			setRange(std::nullopt);
 		}
 		showTools();
+		showPointer();
 	}
 
 	void EventDisplay::setLineMode(LineMode mode)
@@ -140,14 +161,66 @@ namespace gnubase::ui
 		showTools();
 	}
 
+	Tool EventDisplay::toolAt(double y) const
+	{
+		// Combined, the object selection tool selects ranges in a lane's upper half (reference manual p. 253).
+		const std::optional<size_t> lane = visibleLaneAt(y);
+		if (m_combine && m_tool == Tool::ObjectSelection && lane &&
+			y + m_view.top < (m_laneTops[*lane] + m_laneTops[*lane + 1]) * 0.5)
+			return Tool::RangeSelection;
+		return m_tool;
+	}
+
+	std::string EventDisplay::pointerAt(double x, double y) const
+	{
+		const Tool tool = toolAt(y);
+		if (tool == Tool::ObjectSelection)
+			if (const Shown* shown = eventAt(x, y); shown != nullptr && edgeAt(*shown, x) != 0)
+				return "resize";
+		return toolName(tool);
+	}
+
+	void EventDisplay::showPointer()
+	{
+		if (!alive() || !m_mouse || m_drag != Drag::None)
+			return;
+		const std::string pointer = pointerAt(m_mouse->first, m_mouse->second);
+		if (m_area->GetAttribute<Rml::String>("pointer", "") == pointer)
+			return;
+		m_area->SetAttribute("pointer", pointer);
+		// RmlUi takes the pointer for the element under the mouse from its style as the last update left it: style
+		// it now, and update again, so that the pointer changes at once, also when the mouse doesn't move.
+		m_document->GetOwnerDocument()->UpdateDocument();
+		if (Rml::Context* context = m_root->GetContext())
+			context->RequestNextUpdate(0);
+	}
+
+	void EventDisplay::showContextMenus()
+	{
+		if (!alive())
+			return;
+		const Rml::Element* plain = m_toolboxOnRightClick ? m_toolbox : m_contextMenu;
+		const Rml::Element* modified = m_toolboxOnRightClick ? m_contextMenu : m_toolbox;
+		if (plain != nullptr)
+			m_area->SetAttribute("contextmenu", plain->GetId());
+		else
+			m_area->RemoveAttribute("contextmenu");
+		if (modified != nullptr)
+			m_area->SetAttribute("modifiercontextmenu", modified->GetId());
+		else
+			m_area->RemoveAttribute("modifiercontextmenu");
+	}
+
+	void EventDisplay::notify(const std::string& text)
+	{
+		if (m_notifies && m_notification != nullptr && alive())
+			m_notification->SetAttribute("text", text);
+	}
+
 	bool EventDisplay::toolDown(double x, double y)
 	{
 		const std::optional<size_t> lane = visibleLaneAt(y);
-		m_pressTool = m_tool;
-		// Combined, the object selection tool selects ranges in a lane's upper half (reference manual p. 253).
-		if (m_combine && m_tool == Tool::ObjectSelection && lane &&
-			y + m_view.top < (m_laneTops[*lane] + m_laneTops[*lane + 1]) * 0.5)
-			m_pressTool = Tool::RangeSelection;
+		m_pressTool = toolAt(y);
 		const Shown* shown = eventAt(x, y);
 		m_dragEvent = shown == nullptr ? 0 : shown->id;
 		switch (m_pressTool)

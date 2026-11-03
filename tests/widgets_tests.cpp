@@ -6,9 +6,11 @@
 
 #include "ui/automation.h"
 #include "ui/datamodel.h"
+#include "ui/rmlui.h"
 #include "ui/widgets.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/EventListener.h>
@@ -528,6 +530,53 @@ TEST_CASE("context menus open at the mouse on a right click, inside the window, 
 	app.ui().click(std::nullopt, at("#plain"), ui::MouseButton::Right, 1, {});
 	click(app, "#track");
 	CHECK_FALSE(visible(app, "#track-menu"));
+}
+
+TEST_CASE("a right click with a modifier key opens the element's modifier context menu if it has one", "[ui]")
+{
+	test::UiApp app;
+	app.show("popups.rml");
+	app.ui().click(std::nullopt, at("#modified"), ui::MouseButton::Right, 1, {});
+	REQUIRE(visible(app, "#track-menu"));
+	CHECK(!visible(app, "#edit"));
+	app.ui().key(std::nullopt, "Escape");
+	for (const char* modifier : {"ctrl", "shift", "alt", "meta"})
+	{
+		INFO(modifier);
+		app.ui().click(std::nullopt, at("#modified"), ui::MouseButton::Right, 1, {modifier});
+		CHECK(visible(app, "#edit"));
+		CHECK(!visible(app, "#track-menu"));
+		app.ui().key(std::nullopt, "Escape");
+	}
+	// Without one, a right click with a modifier opens the context menu.
+	app.ui().click(std::nullopt, at("#track"), ui::MouseButton::Right, 1, {"ctrl"});
+	CHECK(visible(app, "#track-menu"));
+	CHECK(!visible(app, "#edit"));
+}
+
+TEST_CASE("notifications show their text for a moment, again when it is set again", "[ui]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true);
+	const auto after = [&app, clock](double seconds)
+	{
+		clock->advance(seconds);
+		app.main().context().Update();
+		return visible(app, "#message");
+	};
+	Rml::Element* message = document.GetElementById("message");
+	CHECK(!visible(app, "#message"));
+	message->SetAttribute("text", "Draw");
+	CHECK(after(0.0));
+	CHECK(element(app, "#message").at("text") == "Draw");
+	CHECK(after(0.4));
+	message->SetAttribute("text", "Draw"); // its duration, half a second, starts again
+	CHECK(after(0.4));
+	CHECK(!after(0.2));
+	clock->freeze(false);
 }
 
 namespace

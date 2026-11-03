@@ -84,6 +84,12 @@ namespace gnubase::ui
 		text = m_windows.clipboardText();
 	}
 
+	void SystemInterface::SetMouseCursor(const Rml::String& name)
+	{
+		m_cursor = name;
+		m_windows.setCursor(m_cursors.get(name));
+	}
+
 	void SystemInterface::JoinPath(
 		Rml::String& translatedPath, const Rml::String& documentPath, const Rml::String& path)
 	{

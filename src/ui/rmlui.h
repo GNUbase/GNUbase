@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "ui/cursors.h"
+
 #include <RmlUi/Core/ElementInstancer.h>
 #include <RmlUi/Core/FileInterface.h>
 #include <RmlUi/Core/Plugin.h>
@@ -23,8 +25,10 @@ namespace gnubase::ui
 	// and "mouse_y" (where they were dropped, in the window's pixels).
 	inline constexpr const char* g_fileDropEvent = "filedrop";
 
-	// RmlUi's clock, log, clipboard and paths: elapsed time since start, messages into GNUbase's log, the window
-	// system's clipboard, which text fields copy to and paste from, and links in documents resolved as file paths.
+	// RmlUi's clock, log, clipboard, mouse pointer and paths: elapsed time since start, messages into GNUbase's log,
+	// the window system's clipboard, which text fields copy to and paste from, the pointer that the style sheets'
+	// cursor property names for the element under the mouse (ui/cursors.h), and links in documents resolved as file
+	// paths.
 	class SystemInterface final : public Rml::SystemInterface
 	{
 	public:
@@ -39,6 +43,10 @@ namespace gnubase::ui
 		bool LogMessage(Rml::Log::Type type, const Rml::String& message) override;
 		void SetClipboardText(const Rml::String& text) override;
 		void GetClipboardText(Rml::String& text) override;
+		void SetMouseCursor(const Rml::String& name) override;
+		// The pointer named last, as MCP's UI tools report it; empty for the OS's arrow.
+		const std::string& cursor() const { return m_cursor; }
+		void setCursors(Cursors cursors) { m_cursors = std::move(cursors); }
 		// A link (a style sheet, an image, a template) relative to the document that has it, or an absolute path.
 		void JoinPath(Rml::String& translatedPath, const Rml::String& documentPath, const Rml::String& path) override;
 
@@ -47,6 +55,8 @@ namespace gnubase::ui
 		std::chrono::steady_clock::time_point m_start = std::chrono::steady_clock::now();
 		double m_advanced = 0.0;        // seconds
 		std::optional<double> m_frozen; // seconds since the start, while frozen
+		Cursors m_cursors;
+		std::string m_cursor;
 	};
 
 	// RmlUi's files: documents, style sheets, fonts and images. RmlUi names them in UTF-8, and they are read whole
@@ -119,6 +129,9 @@ namespace gnubase::ui
 		void registerPlugin(std::unique_ptr<Rml::Plugin> plugin);
 
 		FileInterface& files() { return m_files; }
+
+		// GNUbase's own mouse pointers, from resources/cursors; without them, every pointer is the OS's.
+		void loadCursors(const std::filesystem::path& folder) { m_system.setCursors(Cursors(folder)); }
 
 	private:
 		SystemInterface m_system;
