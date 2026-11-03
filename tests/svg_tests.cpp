@@ -470,9 +470,13 @@ TEST_CASE("GNUbase's pointers become SDL cursors, made once, the OS's arrow for 
 	windows.setCursor(cursors.get("tool-draw"));
 	SDL_Cursor* draw = SDL_GetCursor();
 	CHECK(draw != SDL_GetDefaultCursor());
-	windows.setCursor(cursors.get("text")); // one of the OS's
+	// One of the OS's, where the video driver has them (the offscreen one on Linux runners has none: the arrow).
+	SDL_Cursor* probe = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_TEXT);
+	const bool systemCursors = probe != nullptr;
+	SDL_DestroyCursor(probe);
+	windows.setCursor(cursors.get("text"));
 	CHECK(SDL_GetCursor() != draw);
-	CHECK(SDL_GetCursor() != SDL_GetDefaultCursor());
+	CHECK((SDL_GetCursor() != SDL_GetDefaultCursor()) == systemCursors);
 	windows.setCursor(cursors.get("tool-draw"));
 	CHECK(SDL_GetCursor() == draw);
 	windows.setCursor(cursors.get(""));
