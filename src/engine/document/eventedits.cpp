@@ -36,36 +36,84 @@ namespace gnubase::engine
 				throw CommandError(message);
 		}
 
-		// An audio event or a MIDI part. Pointers into the project's maps stay valid while other objects are added.
+		// An audio event, an audio part or a MIDI part. Pointers into the project's maps stay valid while other objects
+		// are added.
 		struct Item
 		{
 			AudioEvent* audio = nullptr;
 			MidiPart* part = nullptr;
+			AudioPart* audioPart = nullptr;
 
-			explicit operator bool() const { return audio != nullptr || part != nullptr; }
-			ObjectId id() const { return audio != nullptr ? audio->id : midi().id; }
-			ObjectId track() const { return audio != nullptr ? audio->track : midi().track; }
-			bool locked() const { return audio != nullptr ? audio->lock : midi().lock; }
-			time::Position& position() const { return audio != nullptr ? audio->position : midi().position; }
+			explicit operator bool() const { return audio != nullptr || part != nullptr || audioPart != nullptr; }
+			ObjectId id() const { return pick(&AudioEvent::id, &AudioPart::id, &MidiPart::id); }
+			ObjectId track() const { return pick(&AudioEvent::track, &AudioPart::track, &MidiPart::track); }
+			bool& lock() const { return pick(&AudioEvent::lock, &AudioPart::lock, &MidiPart::lock); }
+			bool& mute() const { return pick(&AudioEvent::mute, &AudioPart::mute, &MidiPart::mute); }
+			std::string& color() const { return pick(&AudioEvent::color, &AudioPart::color, &MidiPart::color); }
+			bool locked() const { return lock(); }
+			time::Position& position() const
+			{
+				return pick(&AudioEvent::position, &AudioPart::position, &MidiPart::position);
+			}
+			// A part's length, in the unit of its position's time base; nullptr for an audio event.
+			int64_t* length() const
+			{
+				if (audio != nullptr)
+					return nullptr;
+				return audioPart != nullptr ? &audioPart->length : &midi().length;
+			}
 
 		private:
-			// The MIDI part of an item that isn't an audio event. Checked, so the static analyzer sees that one of the
-			// two is always set.
+			// A member of whichever object the item is.
+			template <typename T>
+			T& pick(T AudioEvent::* inAudio, T AudioPart::* inAudioPart, T MidiPart::* inMidi) const
+			{
+				if (audio != nullptr)
+					return audio->*inAudio;
+				if (audioPart != nullptr)
+					return audioPart->*inAudioPart;
+				return midi().*inMidi;
+			}
+
+			// The MIDI part of an item that is neither an audio event nor an audio part. Checked, so the static
+			// analyzer sees that one of the three is always set.
 			MidiPart& midi() const
 			{
 				if (part == nullptr)
-					throw CommandError("an event is neither an audio event nor a MIDI part");
+					throw CommandError("an event is neither an audio event nor a part");
 				return *part;
 			}
 		};
 
+		Item audioItem(AudioEvent& event)
+		{
+			return {&event, nullptr, nullptr};
+		}
+
+		Item audioPartItem(AudioPart& part)
+		{
+			return {nullptr, nullptr, &part};
+		}
+
 		Item findItem(Project& project, ObjectId id)
 		{
 			if (const auto audio = project.audioEvents.find(id); audio != project.audioEvents.end())
-				return {&audio->second, nullptr};
+				return audioItem(audio->second);
+			if (const auto audioPart = project.audioParts.find(id); audioPart != project.audioParts.end())
+				return audioPartItem(audioPart->second);
 			const auto part = project.midiParts.find(id);
-			require(part != project.midiParts.end(), "no audio event or MIDI part " + std::to_string(id));
+			require(part != project.midiParts.end(), "no audio event or part " + std::to_string(id));
 			return {nullptr, &part->second};
+		}
+
+		// The audio events in a part.
+		std::vector<AudioEvent*> eventsIn(Project& project, ObjectId part)
+		{
+			std::vector<AudioEvent*> events;
+			for (auto& [id, event] : project.audioEvents)
+				if (event.part == part)
+					events.push_back(&event);
+			return events;
 		}
 
 		// The items a command names in events, each once. Editing ones must not be locked.
@@ -94,12 +142,23 @@ namespace gnubase::engine
 			return ids;
 		}
 
-		void announce(CommandContext& context, const Item& item, const std::string& what)
+		// Announces an item; an audio part's events come and change with it.
+		void announce(Project& project, CommandContext& context, const Item& item, const std::string& what)
 		{
 			if (item.audio != nullptr)
+			{
 				context.emit("audioEvent." + what, {{"event", toJson(*item.audio)}});
+			}
+			else if (item.audioPart != nullptr)
+			{
+				context.emit("audioPart." + what, {{"part", toJson(*item.audioPart)}});
+				for (const AudioEvent* event : eventsIn(project, item.audioPart->id))
+					context.emit("audioEvent." + what, {{"event", toJson(*event)}});
+			}
 			else
+			{
 				context.emit("midiPart." + what, {{"part", toJson(*item.part)}});
+			}
 		}
 
 		// Time.
@@ -121,8 +180,8 @@ namespace gnubase::engine
 
 		time::Position endOf(const Project& project, const Item& item)
 		{
-			if (item.part != nullptr)
-				return {item.part->position.base, item.part->position.value + item.part->length};
+			if (const int64_t* length = item.length())
+				return {item.position().base, item.position().value + *length};
 			return rebased(
 				project, {time::TimeBase::Linear, eventSpan(project, *item.audio).end}, item.audio->position.base);
 		}
@@ -188,27 +247,50 @@ namespace gnubase::engine
 			require(found != project.trackById.end(), "no track " + std::to_string(track));
 			const TrackType type = found->second.type;
 			if (item.audio != nullptr)
+			{
 				require(type == TrackType::Audio, "audio events can only be on an audio track");
+				require(item.audio->part == 0 || track == item.audio->track,
+					"audio events in a part stay on the part's track");
+			}
+			else if (item.audioPart != nullptr)
+			{
+				require(type == TrackType::Audio, "audio parts can only be on an audio track");
+			}
 			else
+			{
 				require(type == TrackType::Midi || type == TrackType::Instrument,
 					"MIDI parts can only be on a MIDI or instrument track");
+			}
 		}
 
-		// Moves an item by shift onto a track, keeping its length; a MIDI part's length goes into the track's time
-		// base.
+		// Moves an item by shift onto a track, keeping its length; a part's length goes into the track's time base.
+		// An audio part's events go with it.
 		void place(Project& project, const Item& item, const Shift& shift, ObjectId track)
 		{
 			const time::TimeBase base = project.trackById.at(track).timeBase;
 			const time::Position start = rebased(project, shifted(project, item.position(), shift, true), base);
-			if (item.part != nullptr)
+			if (int64_t* length = item.length())
 			{
 				const time::Position end = rebased(project, shifted(project, endOf(project, item), shift, true), base);
-				item.part->length = std::max<int64_t>(1, end.value - start.value);
-				item.part->track = track;
+				*length = std::max<int64_t>(1, end.value - start.value);
+			}
+			if (item.audio != nullptr)
+			{
+				item.audio->track = track;
+			}
+			else if (item.audioPart != nullptr)
+			{
+				// The events first: one before the project start refuses the move, as the part's own start does.
+				for (AudioEvent* event : eventsIn(project, item.audioPart->id))
+				{
+					event->position = rebased(project, shifted(project, event->position, shift, true), base);
+					event->track = track;
+				}
+				item.audioPart->track = track;
 			}
 			else
 			{
-				item.audio->track = track;
+				item.part->track = track;
 			}
 			item.position() = start;
 		}
@@ -232,12 +314,39 @@ namespace gnubase::engine
 				copy.id = project.newId();
 				copy.lock = false;
 				copy.crossfade = Crossfade();
-				return {&(project.audioEvents[copy.id] = copy), nullptr};
+				return audioItem(project.audioEvents[copy.id] = copy);
+			}
+			if (item.audioPart != nullptr)
+			{
+				// Copies of its events, with the crossfades between them.
+				AudioPart part = *item.audioPart;
+				part.id = project.newId();
+				part.lock = false;
+				AudioPart& copy = project.audioParts[part.id] = part;
+				std::map<ObjectId, ObjectId> ids;
+				std::vector<AudioEvent> events;
+				for (const AudioEvent* event : eventsIn(project, item.audioPart->id))
+				{
+					ids[event->id] = project.newId();
+					events.push_back(*event);
+				}
+				for (AudioEvent& event : events)
+				{
+					const auto from = ids.find(event.crossfade.from);
+					if (from == ids.end())
+						event.crossfade = Crossfade();
+					else
+						event.crossfade.from = from->second;
+					event.id = ids.at(event.id);
+					event.part = copy.id;
+					project.audioEvents[event.id] = event;
+				}
+				return audioPartItem(copy);
 			}
 			if (shared && item.part->shared == 0)
 			{
 				item.part->shared = project.newId();
-				announce(context, item, "changed");
+				announce(project, context, item, "changed");
 			}
 			MidiPart copy = *item.part;
 			copy.id = project.newId();
@@ -268,11 +377,32 @@ namespace gnubase::engine
 			}
 		}
 
+		// Moves an audio part's events by ticks.
+		void shiftEvents(Project& project, const AudioPart& part, time::Ticks delta)
+		{
+			for (AudioEvent* event : eventsIn(project, part.id))
+				event->position = shifted(project, event->position, {delta, true}, false);
+		}
+
 		// Resizing (reference manual p. 265): the start or the end goes to a position, within the clip and at least a
 		// sample frame (or a tick) long. Normal sizing reveals or hides content; sizing moves contents moves the
 		// content with the edge.
 		void setStart(Project& project, const Item& item, const time::Position& start, bool moveContents)
 		{
+			if (item.audioPart != nullptr)
+			{
+				// Its events keep their time: normal sizing reveals or hides them.
+				AudioPart& part = *item.audioPart;
+				const int64_t end = part.position.value + part.length;
+				const int64_t value =
+					std::clamp<int64_t>(rebased(project, start, part.position.base).value, 0, end - 1);
+				const time::Position moved{part.position.base, value};
+				if (moveContents)
+					shiftEvents(project, part, ticks(project, moved) - ticks(project, part.position));
+				part.position = moved;
+				part.length = end - value;
+				return;
+			}
 			if (item.audio != nullptr)
 			{
 				AudioEvent& event = *item.audio;
@@ -308,6 +438,16 @@ namespace gnubase::engine
 
 		void setEnd(Project& project, const Item& item, const time::Position& end, bool moveContents)
 		{
+			if (item.audioPart != nullptr)
+			{
+				AudioPart& part = *item.audioPart;
+				const time::Position oldEnd = endOf(project, item);
+				part.length =
+					std::max<int64_t>(1, rebased(project, end, part.position.base).value - part.position.value);
+				if (moveContents)
+					shiftEvents(project, part, ticks(project, endOf(project, item)) - ticks(project, oldEnd));
+				return;
+			}
 			if (item.audio != nullptr)
 			{
 				AudioEvent& event = *item.audio;
@@ -345,6 +485,32 @@ namespace gnubase::engine
 		// isn't inside it.
 		Item splitAt(Project& project, const Item& item, time::Samples at, bool splitNotes, CommandContext& context)
 		{
+			if (item.audioPart != nullptr)
+			{
+				// The events that the position cuts are split too; those after it go into the part after it.
+				AudioPart& part = *item.audioPart;
+				const int64_t end = part.position.value + part.length;
+				const int64_t split = rebased(project, {time::TimeBase::Linear, at}, part.position.base).value;
+				if (split <= part.position.value || split >= end)
+					return {};
+				AudioPart right = part;
+				right.id = project.newId();
+				right.position = {part.position.base, split};
+				right.length = end - split;
+				part.length = split - part.position.value;
+				project.audioParts[right.id] = right;
+				for (AudioEvent* event : eventsIn(project, part.id))
+				{
+					if (eventSpan(project, *event).start >= at)
+					{
+						event->part = right.id;
+						continue;
+					}
+					if (const Item piece = splitAt(project, audioItem(*event), at, false, context))
+						piece.audio->part = right.id;
+				}
+				return audioPartItem(project.audioParts.at(right.id));
+			}
 			if (item.audio != nullptr)
 			{
 				AudioEvent& event = *item.audio;
@@ -434,6 +600,14 @@ namespace gnubase::engine
 		void removeItem(Project& project, const Item& item, ObjectId replacement, CommandContext& context)
 		{
 			const ObjectId id = item.id();
+			if (item.audioPart != nullptr)
+			{
+				for (AudioEvent* event : eventsIn(project, id))
+					removeItem(project, audioItem(*event), 0, context);
+				project.audioParts.erase(id);
+				context.emit("audioPart.removed", {{"part", id}});
+				return;
+			}
 			if (item.audio != nullptr)
 			{
 				project.audioEvents.erase(id);
@@ -473,7 +647,7 @@ namespace gnubase::engine
 				place(project, item, shift, track);
 				if (follow && track == from)
 					followAutomation(project, track, start, end, item.position(), context);
-				announce(context, item, "changed");
+				announce(project, context, item, "changed");
 			}
 			return {{"events", idsOf(items)}};
 		}
@@ -492,7 +666,7 @@ namespace gnubase::engine
 				checkTrack(project, item, track);
 				const Item copy = copyOf(project, item, shared, context);
 				place(project, copy, shift, track);
-				announce(context, copy, "added");
+				announce(project, context, copy, "added");
 				copies.push_back(copy);
 			}
 			return {{"events", idsOf(copies)}};
@@ -514,7 +688,7 @@ namespace gnubase::engine
 				{
 					const Item copy = copyOf(project, item, shared, context);
 					place(project, copy, {k * (end - start), musical}, copy.track());
-					announce(context, copy, "added");
+					announce(project, context, copy, "added");
 					copies.push_back(copy);
 				}
 			return {{"events", idsOf(copies)}};
@@ -563,7 +737,7 @@ namespace gnubase::engine
 					place(project, copy, {k * length, musical}, copy.track());
 					if (inUnit(project, endOf(project, copy), musical) > to)
 						setEnd(project, copy, {time::TimeBase::Linear, right}, false);
-					announce(context, copy, "added");
+					announce(project, context, copy, "added");
 					copies.push_back(copy);
 				}
 			}
@@ -588,7 +762,7 @@ namespace gnubase::engine
 					setStart(project, item, to, moveContents);
 				else
 					setEnd(project, item, to, moveContents);
-				announce(context, item, "changed");
+				announce(project, context, item, "changed");
 			}
 			return {{"events", idsOf(items)}};
 		}
@@ -610,9 +784,13 @@ namespace gnubase::engine
 			}
 			else
 			{
+				// An audio part's events split with it.
 				for (auto& [id, event] : project.audioEvents)
-					if (!event.lock)
-						items.push_back({&event, nullptr});
+					if (!event.lock && event.part == 0)
+						items.push_back(audioItem(event));
+				for (auto& [id, part] : project.audioParts)
+					if (!part.lock)
+						items.push_back(audioPartItem(part));
 				for (auto& [id, part] : project.midiParts)
 					if (!part.lock)
 						items.push_back({nullptr, &part});
@@ -634,16 +812,85 @@ namespace gnubase::engine
 					}
 					if (const Item right = splitAt(project, current, at, splitNotes, context))
 					{
-						announce(context, right, "added");
+						announce(project, context, right, "added");
 						added.push_back(right);
 						current = right;
 						split = true;
 					}
 				}
 				if (split)
-					announce(context, item, "changed");
+					announce(project, context, item, "changed");
 			}
 			return {{"events", idsOf(added)}};
+		}
+
+		// Glues audio events and parts of one track into an audio part from the first start to the last end: the first
+		// of the parts, or a new one. The others' events go into it.
+		Json glueIntoPart(Project& project, const std::vector<Item>& items, CommandContext& context)
+		{
+			for (const Item& item : items)
+				require(
+					item.audio == nullptr || item.audio->part == 0, "audio events in a part don't glue with others");
+			const auto found =
+				std::find_if(items.begin(), items.end(), [](const Item& item) { return item.audioPart != nullptr; });
+			const bool added = found == items.end();
+			AudioPart* part = nullptr;
+			if (added)
+			{
+				const Track& track = project.trackById.at(items[0].track());
+				AudioPart created;
+				created.id = project.newId();
+				created.track = track.id;
+				created.name = track.name;
+				part = &(project.audioParts[created.id] = created);
+			}
+			else
+			{
+				part = found->audioPart;
+			}
+			const time::TimeBase base = project.trackById.at(part->track).timeBase;
+			const int64_t start = rebased(project, items[0].position(), base).value;
+			int64_t end = start + 1;
+			for (const Item& item : items)
+				end = std::max(end, rebased(project, endOf(project, item), base).value);
+			part->position = {base, start};
+			part->length = end - start;
+			for (const Item& item : items)
+			{
+				if (item.audio != nullptr)
+				{
+					item.audio->part = part->id;
+					continue;
+				}
+				if (item.audioPart == part)
+					continue;
+				for (AudioEvent* event : eventsIn(project, item.audioPart->id))
+					event->part = part->id;
+				const ObjectId merged = item.id();
+				project.audioParts.erase(merged);
+				context.emit("audioPart.removed", {{"part", merged}});
+			}
+			context.emit(added ? "audioPart.added" : "audioPart.changed", {{"part", toJson(*part)}});
+			for (const AudioEvent* event : eventsIn(project, part->id))
+				context.emit("audioEvent.changed", {{"event", toJson(*event)}});
+			return {{"event", part->id}};
+		}
+
+		// Whether audio events continue each other in a clip, in order, as after a split.
+		bool continuous(const Project& project, const std::vector<Item>& items)
+		{
+			for (size_t i = 1; i < items.size(); ++i)
+			{
+				if (items[i - 1].audio == nullptr || items[i].audio == nullptr)
+					return false;
+				const AudioEvent& before = *items[i - 1].audio;
+				const AudioEvent& after = *items[i].audio;
+				if (after.clip != before.clip || after.part != before.part ||
+					after.offset != before.offset + before.length ||
+					std::abs(samples(project, after.position) - eventSpan(project, before).end) > 1)
+					return false;
+			}
+			return true;
 		}
 
 		Json glueEvents(Project& project, CommandContext& context)
@@ -653,12 +900,14 @@ namespace gnubase::engine
 			for (const Item& item : items)
 			{
 				require(item.track() == items[0].track(), "only events on the same track glue");
-				require((item.audio != nullptr) == (items[0].audio != nullptr),
+				require((item.part != nullptr) == (items[0].part != nullptr),
 					"audio events and MIDI parts don't glue together");
 			}
 			std::sort(items.begin(), items.end(), [&project](const Item& a, const Item& b)
 				{ return samples(project, a.position()) < samples(project, b.position()); });
 			const Item& first = items[0];
+			if (first.part == nullptr && !continuous(project, items))
+				return glueIntoPart(project, items, context); // reference manual p. 269
 			if (first.audio != nullptr)
 			{
 				// The glued event's volume curve: each event's own where it plays, with its volume's difference to
@@ -677,16 +926,11 @@ namespace gnubase::engine
 							point.volume + each.volume - first.audio->volume, g_minEventVolume, g_maxEventVolume);
 					curve.insert(curve.end(), own.begin(), own.end());
 				}
-				// ponytail: audio events glue only where one continues the other, until audio parts hold the rest.
+				// Events that continue each other in a clip become one event.
 				for (size_t i = 1; i < items.size(); ++i)
 				{
-					const AudioEvent& before = *items[i - 1].audio;
-					const AudioEvent& after = *items[i].audio;
-					require(after.clip == before.clip && after.offset == before.offset + before.length &&
-							std::abs(samples(project, after.position) - eventSpan(project, before).end) <= 1,
-						"audio events glue only where one continues the other in the same clip");
-					first.audio->length += after.length;
-					first.audio->fadeOut = after.fadeOut;
+					first.audio->length += items[i].audio->length;
+					first.audio->fadeOut = items[i].audio->fadeOut;
 				}
 				if (curves)
 					first.audio->volumeCurve = std::move(curve);
@@ -721,7 +965,7 @@ namespace gnubase::engine
 			}
 			for (size_t i = 1; i < items.size(); ++i)
 				removeItem(project, items[i], first.id(), context);
-			announce(context, first, "changed");
+			announce(project, context, first, "changed");
 			return {{"event", first.id()}};
 		}
 
@@ -736,13 +980,11 @@ namespace gnubase::engine
 			require(color.empty() || isColor(color), "color must be #rrggbb");
 			for (const Item& item : items)
 			{
-				bool& mute = item.audio != nullptr ? item.audio->mute : item.part->mute;
-				bool& lock = item.audio != nullptr ? item.audio->lock : item.part->lock;
-				mute = parameters.value("mute", mute);
-				lock = parameters.value("lock", lock);
+				item.mute() = parameters.value("mute", item.mute());
+				item.lock() = parameters.value("lock", item.lock());
 				if (recolor)
-					(item.audio != nullptr ? item.audio->color : item.part->color) = color;
-				announce(context, item, "changed");
+					item.color() = color;
+				announce(project, context, item, "changed");
 			}
 			if (!color.empty())
 				project.lastAppliedColor = color;
@@ -761,22 +1003,85 @@ namespace gnubase::engine
 			const std::vector<Item> items = itemsFrom(project, context.parameters(), false);
 			for (const Item& item : items)
 			{
+				// An audio event, or each of an audio part's, gets a clip of its own (reference manual p. 272), as
+				// the pool's new version.
+				std::vector<AudioEvent*> events;
 				if (item.audio != nullptr)
+					events.push_back(item.audio);
+				else if (item.audioPart != nullptr)
+					events = eventsIn(project, item.id());
+				else
+					detach(project, *item.part);
+				for (AudioEvent* event : events)
 				{
-					// A clip of its own (reference manual p. 272), as the pool's new version.
-					Clip clip = project.clips.at(item.audio->clip);
+					Clip clip = project.clips.at(event->clip);
 					clip.id = project.newId();
 					project.clips[clip.id] = clip;
 					context.emit("clip.added", {{"clip", toJson(clip)}});
-					item.audio->clip = clip.id;
+					event->clip = clip.id;
 				}
-				else
-				{
-					detach(project, *item.part);
-				}
-				announce(context, item, "changed");
+				announce(project, context, item, "changed");
 			}
 			return {{"events", idsOf(items)}};
+		}
+
+		// Events to Part (reference manual p. 250): audio events go into a new audio part on their track, from the
+		// first start to the last end; events on several tracks make a part on each.
+		Json eventsToPart(Project& project, CommandContext& context)
+		{
+			std::map<ObjectId, std::vector<Item>> byTrack;
+			for (const Item& item : itemsFrom(project, context.parameters(), true))
+			{
+				require(item.audio != nullptr && item.audio->part == 0,
+					"event " + std::to_string(item.id()) + " isn't an audio event outside a part");
+				byTrack[item.track()].push_back(item);
+			}
+			Json parts = Json::array();
+			for (auto& [track, events] : byTrack)
+			{
+				std::sort(events.begin(), events.end(), [&project](const Item& a, const Item& b)
+					{ return samples(project, a.position()) < samples(project, b.position()); });
+				parts.push_back(glueIntoPart(project, events, context).at("event"));
+			}
+			return {{"events", parts}};
+		}
+
+		// Dissolve Part (reference manual p. 250): an audio part's events become events of their own on its track, cut
+		// at its edges so that they play as they did; those it hid entirely go.
+		Json dissolveParts(Project& project, CommandContext& context)
+		{
+			Json events = Json::array();
+			for (const Item& item : itemsFrom(project, context.parameters(), true))
+			{
+				require(item.audioPart != nullptr, "event " + std::to_string(item.id()) + " isn't an audio part");
+				const time::Samples start = samples(project, item.position());
+				const time::Samples end = samples(project, endOf(project, item));
+				for (AudioEvent* event : eventsIn(project, item.id()))
+				{
+					const ObjectId original = event->id;
+					Item kept = audioItem(*event);
+					if (const Item right = splitAt(project, kept, start, false, context))
+					{
+						removeItem(project, kept, right.id(), context);
+						kept = right;
+					}
+					if (const Item right = splitAt(project, kept, end, false, context))
+						removeItem(project, right, 0, context);
+					const EventSpan span = eventSpan(project, *kept.audio);
+					if (span.end <= start || span.start >= end)
+					{
+						removeItem(project, kept, 0, context);
+						continue;
+					}
+					kept.audio->part = 0;
+					announce(project, context, kept, kept.id() == original ? "changed" : "added");
+					events.push_back(kept.id());
+				}
+				const ObjectId part = item.id();
+				project.audioParts.erase(part);
+				context.emit("audioPart.removed", {{"part", part}});
+			}
+			return {{"events", events}};
 		}
 
 		// What the info line shows of an event or part (reference manual p. 72): where it is in project samples and
@@ -788,13 +1093,29 @@ namespace gnubase::engine
 			{
 				const time::Position end = endOf(project, item);
 				const bool audio = item.audio != nullptr;
+				const bool audioPart = item.audioPart != nullptr;
 				const time::Samples start = samples(project, item.position());
-				Json info = {{"id", item.id()}, {"kind", audio ? "audio" : "midi"}, {"track", item.track()},
-					{"name", audio ? project.clips.at(item.audio->clip).name : item.part->name}, {"start", start},
-					{"end", samples(project, end)}, {"length", samples(project, end) - start},
+				std::string kind = "midi";
+				std::string name;
+				if (audio)
+				{
+					kind = "audio";
+					name = project.clips.at(item.audio->clip).name;
+				}
+				else if (audioPart)
+				{
+					kind = "audioPart";
+					name = item.audioPart->name;
+				}
+				else
+				{
+					name = item.part->name;
+				}
+				Json info = {{"id", item.id()}, {"kind", kind}, {"track", item.track()}, {"name", name},
+					{"start", start}, {"end", samples(project, end)}, {"length", samples(project, end) - start},
 					{"startTicks", ticks(project, item.position())}, {"endTicks", ticks(project, end)},
-					{"mute", audio ? item.audio->mute : item.part->mute}, {"lock", item.locked()},
-					{"shared", audio ? ObjectId{0} : item.part->shared}};
+					{"mute", item.mute()}, {"lock", item.locked()},
+					{"shared", item.part != nullptr ? item.part->shared : ObjectId{0}}};
 				result.push_back(std::move(info));
 			}
 			return {{"events", std::move(result)}};
@@ -816,7 +1137,7 @@ namespace gnubase::engine
 					at >= span.start && at < span.end, "the position isn't inside event " + std::to_string(item.id()));
 				item.audio->snapPoint =
 					item.audio->offset + std::llround(static_cast<double>(at - span.start) / span.ratio);
-				announce(context, item, "changed");
+				announce(project, context, item, "changed");
 			}
 			return {{"events", idsOf(items)}};
 		}
@@ -836,8 +1157,11 @@ namespace gnubase::engine
 			// The track's events by start.
 			std::vector<Item> row;
 			for (auto& [id, event] : project.audioEvents)
-				if (event.track == track)
-					row.push_back({&event, nullptr});
+				if (event.track == track && event.part == 0)
+					row.push_back(audioItem(event));
+			for (auto& [id, part] : project.audioParts)
+				if (part.track == track)
+					row.push_back(audioPartItem(part));
 			for (auto& [id, part] : project.midiParts)
 				if (part.track == track)
 					row.push_back({nullptr, &part});
@@ -902,7 +1226,7 @@ namespace gnubase::engine
 					if (delta == 0)
 						continue;
 					place(project, item, {delta, musical}, track);
-					announce(context, item, "changed");
+					announce(project, context, item, "changed");
 				}
 			return {{"events", idsOf(moved)}};
 		}
@@ -951,8 +1275,11 @@ namespace gnubase::engine
 		{
 			std::vector<Item> items;
 			for (auto& [id, event] : project.audioEvents)
-				if (contains(tracks, event.track) && (locked || !event.lock))
-					items.push_back({&event, nullptr});
+				if (contains(tracks, event.track) && (locked || !event.lock) && event.part == 0)
+					items.push_back(audioItem(event));
+			for (auto& [id, part] : project.audioParts)
+				if (contains(tracks, part.track) && (locked || !part.lock))
+					items.push_back(audioPartItem(part));
 			for (auto& [id, part] : project.midiParts)
 				if (contains(tracks, part.track) && (locked || !part.lock))
 					items.push_back({nullptr, &part});
@@ -973,8 +1300,8 @@ namespace gnubase::engine
 			for (const Item& item : itemsOn(project, tracks, locked))
 				if (const Item right = splitAt(project, item, at, splitNotes, context))
 				{
-					announce(context, item, "changed");
-					announce(context, right, "added");
+					announce(project, context, item, "changed");
+					announce(project, context, right, "added");
 					added.push_back(right);
 				}
 			return added;
@@ -1029,7 +1356,7 @@ namespace gnubase::engine
 				if (after(project, item, at))
 				{
 					place(project, item, gap.shift(item.position().base, sign), item.track());
-					announce(context, item, "changed");
+					announce(project, context, item, "changed");
 				}
 		}
 
@@ -1229,10 +1556,22 @@ namespace gnubase::engine
 			clipboard.endTicks = ticks(project, {time::TimeBase::Linear, range.end});
 			clipboard.tracks = range.tracks;
 			for (const Item& item : within(scratch, range.tracks, range.start, range.end, true))
+			{
 				if (item.audio != nullptr)
+				{
 					clipboard.audioEvents.push_back(*item.audio);
+				}
+				else if (item.audioPart != nullptr)
+				{
+					clipboard.audioParts.push_back(*item.audioPart);
+					for (const AudioEvent* event : eventsIn(scratch, item.id()))
+						clipboard.audioEvents.push_back(*event);
+				}
 				else
+				{
 					clipboard.midiParts.push_back(*item.part);
+				}
+			}
 			for (const auto& [id, lane] : project.automation)
 				if (contains(range.tracks, lane.track) && !lane.points.empty())
 				{
@@ -1245,7 +1584,11 @@ namespace gnubase::engine
 
 		Json clipboardInfo(const RangeClipboard& clipboard)
 		{
-			return {{"events", clipboard.audioEvents.size() + clipboard.midiParts.size()},
+			const auto inParts = static_cast<size_t>(std::count_if(clipboard.audioEvents.begin(),
+				clipboard.audioEvents.end(), [](const AudioEvent& event) { return event.part != 0; }));
+			return {
+				{"events",
+					clipboard.audioEvents.size() - inParts + clipboard.audioParts.size() + clipboard.midiParts.size()},
 				{"lanes", clipboard.automation.size()}};
 		}
 
@@ -1323,7 +1666,7 @@ namespace gnubase::engine
 					if (const Item right = splitAt(project, kept, range.end, range.splitNotes, context))
 						removeItem(project, right, 0, context);
 				}
-				announce(context, kept, kept.id() == original ? "changed" : "added");
+				announce(project, context, kept, kept.id() == original ? "changed" : "added");
 				cropped.push_back(kept);
 			}
 			return {{"events", idsOf(cropped)}};
@@ -1382,9 +1725,20 @@ namespace gnubase::engine
 				const ObjectId track = onto(item.track());
 				checkTrack(project, item, track);
 				place(project, item, shift.shift(item.position().base, 1), track);
-				announce(context, item, "added");
+				announce(project, context, item, "added");
 				added.push_back(item);
 			};
+			// Audio parts, then their events, which they then take along to where they land.
+			std::map<ObjectId, ObjectId> parts;
+			std::vector<AudioPart*> pastedParts;
+			for (const AudioPart& copied : clipboard.audioParts)
+			{
+				AudioPart part = copied;
+				part.id = project.newId();
+				part.lock = false;
+				parts[copied.id] = part.id;
+				pastedParts.push_back(&(project.audioParts[part.id] = part));
+			}
 			for (const AudioEvent& copied : clipboard.audioEvents)
 			{
 				require(project.clips.count(copied.clip) != 0, "the clip of a copied audio event is gone");
@@ -1392,8 +1746,14 @@ namespace gnubase::engine
 				event.id = project.newId();
 				event.lock = false;
 				event.crossfade = Crossfade();
-				paste({&(project.audioEvents[event.id] = event), nullptr});
+				const auto part = parts.find(copied.part);
+				event.part = part == parts.end() ? 0 : part->second;
+				AudioEvent& pasted = project.audioEvents[event.id] = event;
+				if (pasted.part == 0)
+					paste(audioItem(pasted));
 			}
+			for (AudioPart* part : pastedParts)
+				paste(audioPartItem(*part));
 			for (const MidiPart& copied : clipboard.midiParts)
 			{
 				MidiPart part = copied;
@@ -1556,9 +1916,11 @@ namespace gnubase::engine
 
 		addEdit(engine,
 			{"event.glue", 1,
-				"Glues audio events or MIDI parts of one track into the first of them. Audio events glue where one "
-				"continues the other in the same clip, as after a split; MIDI parts become one part from the first "
-				"start to the last end, with all their notes and controllers. Returns the event.",
+				"Glues audio events and parts or MIDI parts of one track together. Audio events that continue each "
+				"other in the same clip, as after a split, become one event; other audio events and audio parts "
+				"become one audio part from the first start to the last end, the first of the parts or a new one, "
+				"holding all their events. MIDI parts become the first of them, from the first start to the last "
+				"end, with all their notes and controllers. Returns the event or part.",
 				schema({{"events", events()}}, {"events"}), schema({{"event", integer()}}, {"event"}), false},
 			"Glue", glueEvents);
 
@@ -1580,8 +1942,10 @@ namespace gnubase::engine
 
 		addEdit(engine,
 			{"event.get", 1,
-				"Tells where audio events and MIDI parts are, as the info line shows them: for each its kind (audio or "
-				"midi), track, name (an audio event's clip's), start, end and length in project samples, start and end "
+				"Tells where audio events and parts are, as the info line shows them: for each its kind (audio, "
+				"audioPart or midi), track, name (an audio event's clip's), start, end and length in project samples, "
+				"start and end "
+
 				"in ticks, mute, lock and its shared copies' group (0: none).",
 				schema({{"events", events()}}, {"events"}),
 				schema({{"events", {{"type", "array"}, {"items", {{"type", "object"}}}}}}, {"events"}), true},
@@ -1606,7 +1970,25 @@ namespace gnubase::engine
 			"Shuffle", shuffleEvents);
 
 		addEdit(engine,
+			{"event.toPart", 1,
+				"Events to Part (Audio menu): puts audio events (events, by id) into a new audio part on their track, "
+				"from the first start to the last end; events on several tracks make a part on each. Events already "
+				"in a part, and locked ones, are refused. Returns the parts in events.",
+				schema({{"events", events()}}, {"events"}), eventsResult(), false},
+			"Events to Part", eventsToPart);
+
+		addEdit(engine,
+			{"event.dissolvePart", 1,
+				"Dissolve Part (Audio menu): removes audio parts (events, by id) and makes their audio events events "
+				"of "
+				"their own on the track, cut at the part's edges so that they play as they did; events the part hid "
+				"entirely are removed. Locked parts are refused. Returns the events.",
+				schema({{"events", events()}}, {"events"}), eventsResult(), false},
+			"Dissolve Part", dissolveParts);
+
+		addEdit(engine,
 			{"event.toRealCopy", 1,
+
 				"Converts shared copies to real copies: a MIDI part gets notes and controllers of its own, an audio "
 				"event a clip of its own. Returns the events.",
 				schema({{"events", events()}}, {"events"}), eventsResult(), false},

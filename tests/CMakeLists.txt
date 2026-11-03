@@ -28,11 +28,13 @@ add_executable(gnubase-tests
 	audio_tests.cpp
 	audiofile_tests.cpp
 	audioimport_tests.cpp
+	audiopart_tests.cpp
 	automation_tests.cpp
 	backup_tests.cpp
 	bus_tests.cpp
 	canvas_tests.cpp
 	channelformat_tests.cpp
+	channelstrip_tests.cpp
 	clock_tests.cpp
 	color_tests.cpp
 	coverage_tests.cpp
@@ -41,6 +43,7 @@ add_executable(gnubase-tests
 	device_tests.cpp
 	docking_tests.cpp
 	document_tests.cpp
+	editors_tests.cpp
 	effects_tests.cpp
 	engine_tests.cpp
 	enginebinding_tests.cpp
@@ -59,6 +62,7 @@ add_executable(gnubase-tests
 	ipc_tests.cpp
 	keycommands_tests.cpp
 	latency_tests.cpp
+	lockrecord_tests.cpp
 	log_tests.cpp
 	mainmenu_tests.cpp
 	marker_tests.cpp
@@ -70,6 +74,7 @@ add_executable(gnubase-tests
 	midi_tests.cpp
 	mididevice_tests.cpp
 	midiedit_tests.cpp
+	midieditor_tests.cpp
 	midifile_tests.cpp
 	midifunctions_tests.cpp
 	miditap_tests.cpp

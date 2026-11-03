@@ -20,7 +20,10 @@ so every document in the app and in UI tests has them.
 
 - `<button>` is clicked with the mouse, or with Space or Enter while it has the focus. With the `disabled` attribute it
   gets `:disabled`, takes no focus, and clicks pass through it. `button.primary`, `button.icon-only` and the small
-  track buttons `button.toggle` (`.mute`, `.solo`, `.record`, `.monitor`) are looks from the theme.
+  track buttons `button.toggle` (`.mute`, `.solo`, `.record`, `.monitor`) are looks from the theme. Buttons in a
+  `.toolbar` (the project window's, the mixer's, the pool's) and in the transport controls (`.transport`) are for the
+  mouse, as in the reference (reference manual pp. 295-311): a click focuses them, but Tab skips them and Space and
+  Enter go on to the key commands, so Space still starts and stops playback after a click on Cycle or Snap (#456).
 - `<button type="toggle">` is a toggle button: a click turns it on or off. Its state is the `checked` attribute, as
   for check boxes, shown by the state class `.checked`; it sends `change` with the new state as a bool, so
   `data-checked="muted"` binds it.
@@ -76,8 +79,10 @@ attributes, through a data model or directly.
 
 - `<menu>` holds `<menuitem>`s and `<menuseparator>`s and stays hidden until it opens, with the state class `.open`:
   under a button whose `menu` attribute names it by id (a second click on the button closes it), or at the mouse on
-  a right click on an element whose `contextmenu` attribute names it. It opens inside the window, moved left or up
-  where it would stick out. Put menus straight into the body, so that no container clips them.
+  a right click on an element whose `contextmenu` attribute names it; with a modifier key held (Ctrl, Alt, Shift or
+  Cmd), the menu that its `modifiercontextmenu` attribute names instead, if it has one, as the event display's toolbox
+  does ([tools.md](tools.md)). It opens inside the window, moved left or up where it would stick out. Put menus
+  straight into the body, so that no container clips them.
 - A click on an item is a click on that item, for the document to handle, and closes the menu. Escape and a click
   outside close it too. A `disabled` item gets `:disabled` and ignores clicks; `type="toggle"` makes an item checkable,
   as for buttons.
@@ -106,6 +111,13 @@ An element's `title` attribute is its tooltip: when the mouse has rested 0.6 sec
 inside it without a title of its own, the document's `<tooltip>` shows the text 20 dp under the mouse, inside the
 window, with the state class `.shown`. It goes when the mouse moves to an element without a title or leaves the window,
 and on a click, a key or the wheel. Every document gets its tooltip element when it loads; it lets the mouse through.
+
+## Notifications
+
+`<notification>` shows a message for a moment, such as the tool that a key command chose ([tools.md](tools.md)):
+setting its attribute `text`, also to the text it has, shows the text with the state class `.shown` for `duration`
+seconds (its attribute, 1.5 by default), then hides it. It lets the mouse through; the document places it, and a
+class such as `.tooltip` gives it the theme's look.
 
 ## Dialogs
 
@@ -184,8 +196,9 @@ Left go into and out of the submenu, but not into one with nothing to focus. In 
 Left move between the open menus, also from a submenu, skipping a disabled title, and Alt alone opens the first menu,
 closing a context menu, and closes it, leaving the focus out of the closed menu (not on macOS, nor with another key,
 a click, a mouse button going up or the wheel, nor when SDL releases Alt as the window loses the keyboard or
-presses it as the window gets it, nor behind a modal dialog).
-Tooltips show after a rest and go with the mouse.
+presses it as the window gets it, nor behind a modal dialog). A right click with each modifier key opens the
+`modifiercontextmenu`, and the `contextmenu` where an element has no other.
+Tooltips show after a rest and go with the mouse. Notifications show for their duration, again when set again.
 Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result;
 a value field with autofocus is edited as its dialog opens, even by keys typed before the next update, and Enter
 there clicks OK, while another value field keeps Enter.

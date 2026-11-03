@@ -154,6 +154,7 @@ namespace gnubase::engine
 		std::vector<RenderPart> midiParts;            // sorted by start
 		std::vector<RenderAutomationLane> automation; // in the order of the lanes' ids
 		std::vector<RenderSlot> slots;                // from top to bottom
+		ChannelSections sections;                     // the strip's sections before the fader
 	};
 
 	// A channel volume in dB as a linear gain; the fader's bottom, g_minChannelVolume, is silence.

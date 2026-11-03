@@ -130,7 +130,7 @@ TEST_CASE("event.move moves events and parts by samples or ticks, onto tracks of
 	CHECK_THAT(f.fails("event.move", {{"events", {part}}, {"delta", -10 * g_second}}),
 		ContainsSubstring("before the project start"));
 	CHECK_THAT(f.fails("event.move", {{"events", {part}}, {"delta", 1}, {"ticks", 1}}), ContainsSubstring("not both"));
-	CHECK_THAT(f.fails("event.move", {{"events", {12345}}}), ContainsSubstring("no audio event or MIDI part"));
+	CHECK_THAT(f.fails("event.move", {{"events", {12345}}}), ContainsSubstring("no audio event or part"));
 
 	// Locked events stay where they are, and a failed command changes nothing.
 	f.call("event.set", {{"events", {event}}, {"lock", true}});
@@ -349,9 +349,11 @@ TEST_CASE("event.glue joins split audio events and MIDI parts", "[unit]")
 	CHECK(f.audio(event).at("length") == 2 * g_second);
 	CHECK(f.audio(event).at("offset") == 2 * g_second);
 
-	// Audio events that don't continue each other don't glue.
+	// Audio events that don't continue each other glue into an audio part (tests/audiopart_tests.cpp).
 	const Json copy = f.call("event.copy", {{"events", {event}}, {"delta", 3 * g_second}}).at("events");
-	CHECK_THAT(f.fails("event.glue", {{"events", {event, copy[0]}}}), ContainsSubstring("continues"));
+	const Json audioPart = f.call("event.glue", {{"events", {event, copy[0]}}}).at("event");
+	CHECK(f.audio(event).at("part") == audioPart);
+	CHECK(f.audio(copy[0]).at("part") == audioPart);
 
 	// Parts become one from the first start to the last end, with every note.
 	const int64_t midiTrack = f.track("midi");

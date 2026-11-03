@@ -80,10 +80,11 @@ namespace gnubase::engine
 				"punchOut": {"type": "boolean"}, "preRoll": {"type": "boolean"}, "preRollAmount": {"type": "integer"},
 				"postRoll": {"type": "boolean"}, "postRollAmount": {"type": "integer"},
 				"metronome": {"type": "boolean"},
-				"audioRecordMode": {"type": "string", "enum": ["keepHistory", "cycleHistoryReplace", "replace"]}},
+				"audioRecordMode": {"type": "string", "enum": ["keepHistory", "cycleHistoryReplace", "replace"]},
+				"lockRecord": {"type": "boolean"}},
 			"required": ["playing", "recording", "position", "left", "right", "cycle", "startMode",
 				"returnToStart", "punchIn", "punchOut", "preRoll", "preRollAmount", "postRoll", "postRollAmount",
-				"metronome", "audioRecordMode"]})");
+				"metronome", "audioRecordMode", "lockRecord"]})");
 		}
 
 		Json noParameters()
@@ -431,8 +432,8 @@ namespace gnubase::engine
 		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate);
 		const uint64_t generation = ++m_generation;
 		attachMidi(snapshot, desc, generation);
-		attachStrips(snapshot, desc);
 		attachSlots(snapshot, desc);
+		attachStrips(snapshot, desc);
 		std::vector<std::vector<int>> ports = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
 		if (m_directMonitoring)
 			monitorDirectly(snapshot, desc, ports);
@@ -595,6 +596,10 @@ namespace gnubase::engine
 	{
 		std::map<ObjectId, std::shared_ptr<ChannelState>> states;
 		const size_t firstChannel = snapshot.busses.size();
+		std::map<ObjectId, size_t> slotNodes;
+		for (size_t n = 0; n < desc.nodes.size(); ++n)
+			if (desc.nodes[n].kind == graph::NodeKind::PluginSlot)
+				slotNodes[desc.nodes[n].object] = n;
 		for (size_t i = 0; i < snapshot.channels.size(); ++i)
 		{
 			const RenderChannel& channel = snapshot.channels[i];
@@ -622,17 +627,27 @@ namespace gnubase::engine
 			const auto source = static_cast<size_t>(sourceNode(channel.id));
 			if (source == firstChannel + i)
 			{
-				node.processor =
-					std::make_shared<ChannelStrip>(state, node.processor, panning, monitoring, channel.silent);
+				node.processor = std::make_shared<ChannelStrip>(
+					state, node.processor, panning, monitoring, channel.silent, StripPart::Whole, channel.sections);
 				continue;
 			}
-			// Plugin slots between them: the source node plays the source and the automation, the channel's node
-			// fades.
+			// Plugin slots between them: the source node plays the source and the automation, the slot nodes give
+			// their plugins their automation, the channel's node fades.
+			std::vector<const void*> plugins;
+			std::vector<ObjectId> slotIds;
+			for (size_t index = 0; index < channel.slots.size(); ++index)
+			{
+				graph::NodeDesc& slot = desc.nodes[slotNodes.at(channel.slots[index].id)];
+				plugins.push_back(slot.processor.get());
+				slotIds.push_back(channel.slots[index].id);
+				if (slot.processor)
+					slot.processor = std::make_shared<SlotStrip>(state, slot.processor, static_cast<uint8_t>(index));
+			}
 			graph::NodeDesc& sourceDesc = desc.nodes[source];
-			sourceDesc.processor = std::make_shared<ChannelStrip>(
-				state, sourceDesc.processor, panning, monitoring, channel.silent, StripPart::Source);
-			node.processor =
-				std::make_shared<ChannelStrip>(state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader);
+			sourceDesc.processor = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
+				channel.silent, StripPart::Source, channel.sections, std::move(plugins), std::move(slotIds));
+			node.processor = std::make_shared<ChannelStrip>(
+				state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, channel.sections);
 		}
 		m_channelStates = std::move(states);
 	}
@@ -2053,7 +2068,8 @@ namespace gnubase::engine
 			{"returnToStart", settings.returnToStart}, {"punchIn", settings.punchIn}, {"punchOut", settings.punchOut},
 			{"preRoll", settings.preRoll}, {"preRollAmount", settings.preRollAmount}, {"postRoll", settings.postRoll},
 			{"postRollAmount", settings.postRollAmount}, {"metronome", settings.metronome},
-			{"audioRecordMode", g_audioRecordModes.at(static_cast<size_t>(settings.audioRecordMode))}};
+			{"audioRecordMode", g_audioRecordModes.at(static_cast<size_t>(settings.audioRecordMode))},
+			{"lockRecord", settings.lockRecord}};
 	}
 
 	void AudioEngine::portSettingsChanged(CommandContext& context, bool audioPorts, bool midiPorts)
@@ -2180,6 +2196,7 @@ namespace gnubase::engine
 					std::string(name) + " must be 0 to " + std::to_string(g_maxRollAmount) + " samples");
 			}
 		settings.metronome = parameters.value("metronome", settings.metronome);
+		settings.lockRecord = parameters.value("lockRecord", settings.lockRecord);
 		if (const auto mode = parameters.find("startMode"); mode != parameters.end())
 		{
 			const auto name = mode->get<std::string>();
@@ -2224,29 +2241,51 @@ namespace gnubase::engine
 			"Starts playback from the project cursor, or from the left locator if startMode is cycleStart, less the "
 			"pre-roll if preRoll is on (not before the project start). Does nothing while playing.",
 			nullptr, [this](const Json&) { play(); });
+		// Lock Record: a recording doesn't stop or punch out by these commands, only by a confirmed stop.
+		const auto unlocked = [this]
+		{
+			require(!m_transport.settings().lockRecord || !m_transport.recording(),
+				"recording is locked: stop it with transport.stop confirmed, or unlock it with transport.set "
+				"lockRecord false first");
+		};
 		command("transport.stop",
 			"Stops playback and recording. With returnToStart the cursor goes back to where playback started or was "
-			"last located to.",
-			nullptr, [this](const Json&) { sent(m_transport.stop()); });
+			"last located to. While lockRecord is on (see transport.set), a recording stops only with confirmed: the "
+			"user confirmed it.",
+			R"({"type": "object", "additionalProperties": false, "properties": {"confirmed": {"type": "boolean"}}})",
+			[this, unlocked](const Json& parameters)
+			{
+				if (!parameters.value("confirmed", false))
+					unlocked();
+				sent(m_transport.stop());
+			});
 		command("transport.record",
 			"Starts recording (record true, the default): playback starts as with transport.play if it stood, and "
 			"recording where playback would start without the pre-roll; or recording punches in where it plays. With "
 			"punchIn before the left locator, recording starts at the left locator instead. record false punches out "
-			"and playback goes on. Record-enabled tracks may monitor their input meanwhile, by the user setting "
-			"audio.autoMonitoring (see channel.set).",
+			"and playback goes on, refused while lockRecord is on. Record-enabled tracks may monitor their input "
+			"meanwhile, by the user setting audio.autoMonitoring (see channel.set).",
 			R"({"type": "object", "additionalProperties": false, "properties": {"record": {"type": "boolean"}}})",
-			[this](const Json& parameters) { record(parameters.value("record", true)); });
+			[this, unlocked](const Json& parameters)
+			{
+				const bool on = parameters.value("record", true);
+				if (!on)
+					unlocked();
+				record(on);
+			});
 		command("transport.toggle",
 			"Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, "
 			"punchIn, punchOut, preRoll, postRoll, metronome (see transport.set), or record (on as transport.record, "
-			"off punches out).",
+			"off punches out). While lockRecord is on, it neither stops nor punches out a recording.",
 			R"({"type": "object", "additionalProperties": false, "properties": {"setting": {"type": "string",
 				"enum": ["cycle", "punchIn", "punchOut", "preRoll", "postRoll", "metronome", "record"]}}})",
-			[this](const Json& parameters)
+			[this, unlocked](const Json& parameters)
 			{
 				const std::string setting = parameters.value("setting", "");
 				if (setting == "record")
 				{
+					if (m_transport.recording())
+						unlocked();
 					record(!m_transport.recording());
 					return;
 				}
@@ -2269,9 +2308,14 @@ namespace gnubase::engine
 					return;
 				}
 				if (m_transport.playing())
+				{
+					unlocked();
 					sent(m_transport.stop());
+				}
 				else
+				{
 					play();
+				}
 			});
 		command("transport.locate",
 			"Moves the project cursor to a position in samples, by seconds from where it is (back if negative, not "
@@ -2294,7 +2338,10 @@ namespace gnubase::engine
 			"punches in or out and playback that stops on their own announce transport.changed. metronome is the "
 			"transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the "
 			"events it overlaps on its track (see "
-			"recording.add): keepHistory (the default), cycleHistoryReplace or replace.",
+			"recording.add): keepHistory (the default), cycleHistoryReplace or replace. lockRecord: Lock Record, which "
+			"keeps a recording from stopping or punching out by accident: transport.stop stops it only with "
+			"confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at "
+			"the right locator; it stays on until it is set off.",
 			R"({"type": "object", "additionalProperties": false, "properties": {
 				"left": {"type": ["integer", "string"], "maximum": 281474976710656},
 				"right": {"type": ["integer", "string"], "maximum": 281474976710656},
@@ -2302,7 +2349,7 @@ namespace gnubase::engine
 				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "preRoll": {"type": "boolean"},
 				"preRollAmount": {"type": "integer"}, "postRoll": {"type": "boolean"},
 				"postRollAmount": {"type": "integer"}, "metronome": {"type": "boolean"},
-				"audioRecordMode": {"type": "string"}}})",
+				"audioRecordMode": {"type": "string"}, "lockRecord": {"type": "boolean"}}})",
 			[this](const Json& parameters) { setTransport(parameters); });
 		command("transport.exchangeLocators", "Swaps the left and right locators.", nullptr,
 			[this](const Json&)

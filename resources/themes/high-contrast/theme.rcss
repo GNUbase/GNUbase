@@ -137,6 +137,10 @@
 	{
 		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
+	listview thead td.sorted
+	{
+		color: #ffff00;
+	}
 	tabset tabs
 	{
 		decorator: svg-ninepatch(tabbar.svg, 6 6 6 6);
@@ -452,6 +456,12 @@
 		color: #b6b604;
 		stroke-color: #ffffff;
 	}
+	.event-display fade-lines
+	{
+		color: #ffffff;
+		stroke-color: #ffffff;
+		stroke-width: 1dp;
+	}
 	.event-display event-lanes.folder-data
 	{
 		color: #4c4c00;
@@ -489,6 +499,11 @@
 	{
 		color: #ffffff;
 	}
+	.event-display .marker-label.selected
+	{
+		color: #000000;
+		background-color: #00ffff;
+	}
 	.event-display .range-selection
 	{
 		border-width: 1dp;
@@ -522,6 +537,32 @@
 	{
 		border-right-width: 1dp;
 		border-right-color: #ffffff;
+	}
+	.midi-editor .editor-part
+	{
+		color: #c8c8c8;
+		border-bottom-width: 1dp;
+		border-bottom-color: #ffffff;
+	}
+	.midi-editor .editor-part.editable
+	{
+		color: #ffffff;
+	}
+	.midi-editor .editor-part.active, .editor-visibility-track.active
+	{
+		color: #ffff00;
+	}
+	.editor-visibility-check
+	{
+		decorator: svg(checkbox-off.svg);
+	}
+	.editor-visibility-check.checked
+	{
+		decorator: svg(checkbox-on.svg);
+	}
+	.editor-visibility-check.partial
+	{
+		decorator: svg(checkbox-mixed.svg);
 	}
 	.docking [zone]
 	{

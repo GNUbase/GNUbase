@@ -62,11 +62,16 @@ namespace gnubase::engine
 	Json toJson(const Bus& bus);
 	Json toJson(const Track& track);
 	Json toJson(const Channel& channel);
+	// A channel's strip sections as its pre, eq and strip objects, and back: sectionsFromJson changes what the JSON
+	// has and throws std::invalid_argument for values out of range.
+	Json toJson(const ChannelSections& sections);
+	ChannelSections sectionsFromJson(const Json& json, const ChannelSections& fallback = {});
 	Json toJson(const Slot& slot); // its state as base64
 	Json toJson(const MediaFile& media);
 	Json toJson(const Clip& clip);
 	Json toJson(const PoolFolder& folder);
 	Json toJson(const AudioEvent& event);
+	Json toJson(const AudioPart& part);
 	Json toJson(const Note& note);
 	Json toJson(const Controller& controller);
 	// A controller's type and the values the type uses, without checking them; the others are zero. Its id and

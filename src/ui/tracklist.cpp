@@ -381,7 +381,7 @@ namespace gnubase::ui
 			index[row.id] = tracks.size();
 			tracks.push_back(row);
 		}
-		for (const char* kind : {"audioEvents", "midiParts", "markers", "automation"})
+		for (const char* kind : {"audioEvents", "audioParts", "midiParts", "markers", "automation"})
 			for (const Json& item : project.at(kind))
 				if (const auto track = index.find(item.at("track").get<uint64_t>()); track != index.end())
 					tracks[track->second].empty = false;
