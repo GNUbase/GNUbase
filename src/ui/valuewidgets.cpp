@@ -294,10 +294,10 @@ namespace gnubase::ui
 		constexpr std::array<Rml::EventId, 2> g_inputEvents = {Rml::EventId::Blur, Rml::EventId::Keydown};
 
 		// <valuefield>: the value as text, with the decimals (2) and the unit that its attributes give. Besides
-		// dragging, a double click edits it as text, with the state class .editing: Enter or leaving the field takes
-		// the number typed, Escape keeps the value. With autofocus, it is edited, all of it selected so that the
-		// number typed replaces it, whenever it gets a visible focus: when its document shows it focused, or Tab moves
-		// to it, but not on a click.
+		// dragging, a double click, or Enter while it has the focus, edits it as text, with the state class .editing:
+		// Enter or leaving the field takes the number typed, Escape keeps the value. With autofocus, it is edited, all
+		// of it selected so that the number typed replaces it, whenever it gets a visible focus: when its document
+		// shows it focused, or Tab moves to it, but not on a click.
 		class ValueField final : public ValueControl
 		{
 		public:
@@ -360,11 +360,19 @@ namespace gnubase::ui
 				if (event == Rml::EventId::Keydown && m_focused)
 					startFocused();
 				ValueControl::ProcessDefaultAction(event);
-				if (event == Rml::EventId::Dblclick && active())
+				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
+				const bool enter = event == Rml::EventId::Keydown &&
+					(key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER);
+				if ((event == Rml::EventId::Dblclick || enter) && active())
+				{
+					event.StopPropagation(); // Enter edits the field, it doesn't click what's around it
 					startEditing();
+				}
 				else if (event == Rml::EventId::Focus && event.GetTargetElement() == this &&
 					HasAttribute("autofocus") && event.GetParameter("focus_visible", false))
+				{
 					m_focused = true;
+				}
 			}
 
 		protected:

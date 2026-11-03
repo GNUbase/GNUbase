@@ -148,6 +148,8 @@ namespace gnubase::app
 		void choosePicture(uint64_t track);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name) const;
+		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
+		void openAutoFades(ui::Window& window, uint64_t track) const;
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
 		// is open, brings it to the front instead.
 		Rml::ElementDocument& openOnce(

@@ -141,6 +141,17 @@ select selectbox option
 	padding: 3dp 12dp;
 }
 
+/* Form controls take the focus with Tab and Shift+Tab, disabled ones don't (docs/features/accessibility.md). */
+input.text, input.password, textarea, input.checkbox, input.radio, input.range, select
+{
+	tab-index: auto;
+}
+
+input:disabled, textarea:disabled, select:disabled
+{
+	tab-index: none;
+}
+
 /* Sliders and progress bars */
 input.range
 {
@@ -616,6 +627,17 @@ meter .meter-peak
 
 /* The waveforms of audio events (#83): code puts each over its event's lane. */
 .event-display .waveforms
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+/* The fades of audio events and their handles (#138), over the waveforms. */
+.event-display .event-area fade-lines
 {
 	position: absolute;
 	left: 0;

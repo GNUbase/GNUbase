@@ -1,7 +1,7 @@
 # Canvas elements
 
-What editors show on a timeline is drawn by four custom RmlUi elements (#55): `<event-lanes>`, `<waveform>`,
-`<curve>` and `<ruler>`. They build geometry from data that code gives them and draw it through RmlUi's render
+What editors show on a timeline is drawn by five custom RmlUi elements (#55): `<event-lanes>`, `<waveform>`,
+`<curve>`, `<fade-lines>` (#138) and `<ruler>`. They build geometry from data that code gives them and draw it through RmlUi's render
 interface, so they work wherever the UI does (SDL_GPU on Metal, Direct3D 12 and Vulkan, [render-backend.md](
 ../render-backend.md)). The code is in `src/ui/canvas.h`. The event display (#84), the waveform cache (#83), the key
 editor and the automation lanes fill them.
@@ -13,6 +13,7 @@ editor and the automation lanes fill them.
 | `<event-lanes>` | `setLanes`: lanes with a height in dp and their events (start, length and an optional color), by start | events as rectangles in `color`, or in their own color, which is user data such as an event's or its track's color ([colors.md](colors.md)), outlined in `stroke-color`: the events of tracks, or a key editor's notes with one lane per pitch |
 | `<waveform>` | `setPeaks`: a time span and peak columns per channel as `media.peaks` returns them | the channels one above the other in `color`; a pixel shows the lowest and highest sample of the columns it covers, silence a line one pixel high |
 | `<curve>` | `setPoints`: points with a value from 0 to 1 and the shape of the segment that starts at them, by position | a line in `stroke-color`, `stroke-width` wide, level with the first point before it and with the last after it; steps, ramps and bent curves as the engine plays them (`engine::automationBend`) |
+| `<fade-lines>` | `setLanes`: per lane its height in dp, the fades of its audio events (start, length, shape, in or out) and the positions of fade handles | each fade's curve as the engine plays it (`engine::fadeGain`) from the bottom of its lane to the top, in `stroke-color`, `stroke-width` wide; the handles as squares at the top of the lane, in `color` ([fades.md](fades.md)) |
 | `<ruler>` | `setScale`: how to divide the timeline and label it (`RulerScale`: the marks between two positions, labelled ones at least a given distance apart) | ticks in `stroke-color` along the bottom, labelled ticks to the top, labels in `color` and the element's font, at least their width and an em apart. The default counts in decimal steps of 1, 2 and 5; `ui/timeformat.h` has bars and beats, seconds, timecode and samples ([event-display.md](event-display.md)) |
 
 - **Time axis.** Positions are in whatever units the code that fills an element uses: ticks, samples or seconds. The

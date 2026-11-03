@@ -1115,6 +1115,18 @@ Returns:
 
 - `events`: array of integer, required
 
+#### `gnubase.event.crossfade`
+
+Crossfades audio events with the overlapping ones next to them on their tracks, with the default settings of crossfade.set: several events with each other where one starts inside the one before it and ends after it, one event with the events on either side of it like that. Crossfades there already stay as they are. Returns the events that fade in.
+
+Parameters:
+
+- `events`: array of integer, required
+
+Returns:
+
+- `events`: array of integer, required
+
 #### `gnubase.event.duplicate`
 
 Duplicates audio events and MIDI parts count times (default 1, at most 1000; Edit > Repeat) one after the other, from the end of the last one, keeping their positions relative to each other; shared makes shared copies of MIDI parts. Returns the copies.
@@ -1190,6 +1202,20 @@ Returns:
 Removes audio events and MIDI parts. Locked ones can't be removed.
 
 Parameters:
+
+- `events`: array of integer, required
+
+#### `gnubase.event.removeFades`
+
+Removes the fade in (fadeIn, default true) and the fade out (fadeOut, default true) of audio events, with the crossfades at those ends. Returns the events.
+
+Parameters:
+
+- `events`: array of integer, required
+- `fadeIn`: boolean
+- `fadeOut`: boolean
+
+Returns:
 
 - `events`: array of integer, required
 
@@ -2858,6 +2884,21 @@ Parameters:
 - `start`: integer
 - `time`: boolean
 - `tracks`: array of integer
+
+#### `gnubase.range.fades`
+
+The Fades menu's range functions on the audio events on tracks (ids, default every track) that cross the range from start to end (project samples). fade in (Fade In to Range Start): fades in from the event's start to the range's start, or to its end where the range covers the event's start. out (Fade Out from Range End): fades out from the range's end to the event's end, or from its start where the range covers the event's end. adjust (Adjust Fades to Range): the fades at the edges of the event that the range covers, both when the range is inside it. Shapes stay; a fade that no longer fits next to the one set gets shorter. Returns the events changed.
+
+Parameters:
+
+- `end`: integer, required
+- `fade`: one of "in" | "out" | "adjust", required
+- `start`: integer, required
+- `tracks`: array of integer
+
+Returns:
+
+- `events`: array of integer, required
 
 #### `gnubase.range.insertSilence`
 
