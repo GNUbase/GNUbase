@@ -92,11 +92,11 @@ namespace gnubase::engine
 		// miditap.cpp.
 		void registerCommands(Engine& engine);
 
-		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
-		// The user setting audio.stopAfterPunchOut, for the transport.
+		// Command thread: the user setting audio.stopAfterPunchOut, for the transport.
 		void setStopAfterPunchOut(bool stop);
 		// The user setting meter.resetOnStart.
 		void setMeterResetOnStart(bool reset) { m_meterResetOnStart.store(reset, std::memory_order_relaxed); }
+		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
 		void setChase(const MidiChase& chase);
 
 		// Command thread, after a command changed the user settings audio.portSettings (audioPorts) or

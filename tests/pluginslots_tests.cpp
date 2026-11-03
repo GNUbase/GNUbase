@@ -467,6 +467,31 @@ TEST_CASE("a plugin sees which segments of a block record", "[unit]")
 	CHECK(plugin.transport[1].transport.position == 1064);
 }
 
+TEST_CASE("a built-in processor behind the plugin wrapper sees which segments record", "[unit]")
+{
+	std::array<gnubase::plugin::TransportSegment, 2> transport{};
+	using gnubase::plugin::Transport;
+	transport[0].transport.flags = Transport::Playing;
+	transport[0].transport.position = 1000;
+	transport[1].offset = 64;
+	transport[1].transport.flags = Transport::Playing | Transport::Recording;
+	transport[1].transport.position = 1064;
+	const gnubase::plugin::EventList in(4);
+	gnubase::plugin::EventList out(4);
+	const gnubase::plugin::Process process{
+		128, -1, gnubase::plugin::ProcessMode::Realtime, nullptr, 0, nullptr, 0, in, out, transport.data(), 2};
+	std::vector<graph::TransportSegment> segments(4);
+	const graph::TransportBlock block = processors::toTransportBlock(process, segments);
+	CHECK(block.playing);
+	CHECK(block.recording);
+	REQUIRE(block.segmentCount == 2);
+	CHECK(!block.segments[0].recording);
+	CHECK(block.segments[1].recording);
+	CHECK(block.segments[1].offset == 64);
+	CHECK(block.segments[1].frames == 64);
+	CHECK(block.segments[1].position == 1064);
+}
+
 TEST_CASE("more parameter changes than a block has room for reach the plugin in the next blocks", "[unit]")
 {
 	constexpr uint32_t count = 3000; // almost three times graph::g_maxEventsPerBlock

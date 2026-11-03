@@ -304,7 +304,8 @@ namespace gnubase::engine
 			Source result;
 			result.track = given.at("track").get<ObjectId>();
 			result.position = given.at("position").get<time::Samples>();
-			require(result.position >= 0, "position must not be negative");
+			require(result.position >= 0 && result.position <= g_maxPosition,
+				"position must be 0 to " + std::to_string(g_maxPosition) + " samples");
 			const auto found = m_auditionTracks.find(result.track);
 			require(found != m_auditionTracks.end(), "no audio track " + std::to_string(result.track));
 			result.playback = &found->second;

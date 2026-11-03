@@ -48,6 +48,10 @@ namespace gnubase::engine
 		const bool cycles = settings.cycle && settings.left < settings.right;
 		if (cycles && from < settings.right && at >= settings.right)
 			return settings.punchIn ? std::max(from, settings.left) : from;
+		// One that skips the range from the right to the left locator jumps over a record start in it: at the left.
+		const bool skips = settings.cycle && settings.right < settings.left;
+		if (skips && from < settings.right && at >= settings.right && at < settings.left)
+			return settings.left;
 		return at;
 	}
 
@@ -116,6 +120,8 @@ namespace gnubase::engine
 
 	bool Transport::locate(time::Samples position)
 	{
+		position =
+			std::clamp<time::Samples>(position, 0, g_maxPosition); // whoever asks: the audio thread can't overflow
 		if (!send({Request::Type::Locate, position, {}, m_locates + 1}))
 			return false;
 		++m_locates;
@@ -125,9 +131,12 @@ namespace gnubase::engine
 
 	bool Transport::set(const TransportSettings& settings)
 	{
-		if (!send({Request::Type::Set, 0, settings, 0}))
+		TransportSettings clamped = settings;
+		clamped.left = std::clamp<time::Samples>(clamped.left, 0, g_maxPosition);
+		clamped.right = std::clamp<time::Samples>(clamped.right, 0, g_maxPosition);
+		if (!send({Request::Type::Set, 0, clamped, 0}))
 			return false;
-		m_requested = settings;
+		m_requested = clamped;
 		return true;
 	}
 
@@ -202,7 +211,10 @@ namespace gnubase::engine
 			}
 			// With punch in before the left locator, the punch in starts recording.
 			if (!m_settings.punchIn || m_position >= m_settings.left)
+			{
 				m_recording = true;
+				m_recordAt = -1; // started by hand during the pre-roll: no second start later
+			}
 			return;
 		}
 	}
