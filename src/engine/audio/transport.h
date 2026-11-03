@@ -13,6 +13,10 @@
 
 namespace gnubase::engine
 {
+	// The largest project position, in samples: about 11 years at 768 kHz, far from where adding a block, a cycle or
+	// a post-roll could overflow.
+	inline constexpr time::Samples g_maxPosition = time::Samples{1} << 48;
+
 	// Where playback starts.
 	enum class StartMode : uint8_t
 	{
@@ -86,8 +90,9 @@ namespace gnubase::engine
 		time::Samples startPosition() const;
 		// Where recording from stop starts, for playback that starts at start before the pre-roll and at from with
 		// it: at start, or the left locator with punch in if that comes later. In a cycle that would jump back before
-		// reaching that, at from, or with punch in at from or the left locator, whichever comes later. A locate while
-		// recording waits uses it too, with start and from where the locate goes.
+		// reaching that, at from, or with punch in at from or the left locator, whichever comes later; in one that
+		// skips the range it lies in, at the left locator, where playback lands. A locate while recording waits uses
+		// it too, with start and from where the locate goes.
 		static time::Samples recordStart(const TransportSettings& settings, time::Samples start, time::Samples from);
 
 		// Command thread: once the audio thread has applied every request, takes over whether it plays and records,

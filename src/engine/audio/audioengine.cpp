@@ -2088,15 +2088,18 @@ namespace gnubase::engine
 		if (const auto value = parameters.find("position"); value != parameters.end())
 		{
 			position = value->get<time::Samples>();
-			require(position >= 0, "position must not be negative");
+			require(position >= 0 && position <= g_maxPosition,
+				"position must be 0 to " + std::to_string(g_maxPosition) + " samples");
 		}
 		else if (const auto by = parameters.find("by"); by != parameters.end())
 		{
 			const double seconds = by->get<double>();
 			require(std::isfinite(seconds), "by must be a number of seconds");
 			const double rate = m_snapshots.latest().sampleRate;
-			position = std::max<time::Samples>(
-				0, m_transport.position() + static_cast<time::Samples>(std::llround(seconds * rate)));
+			// In doubles first: seconds times the rate may be past what an integer holds.
+			const double target = static_cast<double>(m_transport.position()) + (seconds * rate);
+			position =
+				static_cast<time::Samples>(std::llround(std::clamp(target, 0.0, static_cast<double>(g_maxPosition))));
 		}
 		else if (const auto target = parameters.find("target"); target != parameters.end())
 		{
@@ -2136,7 +2139,8 @@ namespace gnubase::engine
 				return;
 			}
 			value = found->get<time::Samples>();
-			require(value >= 0, name + " must not be negative");
+			require(value >= 0 && value <= g_maxPosition,
+				name + " must be 0 to " + std::to_string(g_maxPosition) + " samples");
 		};
 		locator("left", settings.left);
 		locator("right", settings.right);
@@ -2253,8 +2257,8 @@ namespace gnubase::engine
 			"before the project start: the transport bar's rewind and forward), or to a target: projectStart, "
 			"projectEnd (the end of the last event), leftLocator or rightLocator. While playing, playback continues "
 			"from there.",
-			R"({"type": "object", "additionalProperties": false, "properties": {"position": {"type": "integer"},
-				"by": {"type": "number"}, "target": {"type": "string"}}})",
+			R"({"type": "object", "additionalProperties": false, "properties": {"position": {"type": "integer",
+				"minimum": 0, "maximum": 281474976710656}, "by": {"type": "number"}, "target": {"type": "string"}}})",
 			[this](const Json& parameters) { locate(parameters); });
 		command("transport.set",
 			"Changes the given settings and keeps the rest. left and right: the locators, in samples, or \"cursor\" "
@@ -2271,7 +2275,8 @@ namespace gnubase::engine
 			"events it overlaps on its track (see "
 			"recording.add): keepHistory (the default), cycleHistoryReplace or replace.",
 			R"({"type": "object", "additionalProperties": false, "properties": {
-				"left": {"type": ["integer", "string"]}, "right": {"type": ["integer", "string"]},
+				"left": {"type": ["integer", "string"], "maximum": 281474976710656},
+				"right": {"type": ["integer", "string"], "maximum": 281474976710656},
 				"cycle": {"type": "boolean"}, "startMode": {"type": "string"}, "returnToStart": {"type": "boolean"},
 				"punchIn": {"type": "boolean"}, "punchOut": {"type": "boolean"}, "preRoll": {"type": "boolean"},
 				"preRollAmount": {"type": "integer"}, "postRoll": {"type": "boolean"},

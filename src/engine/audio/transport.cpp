@@ -48,6 +48,10 @@ namespace gnubase::engine
 		const bool cycles = settings.cycle && settings.left < settings.right;
 		if (cycles && from < settings.right && at >= settings.right)
 			return settings.punchIn ? std::max(from, settings.left) : from;
+		// One that skips the range from the right to the left locator jumps over a record start in it: at the left.
+		const bool skips = settings.cycle && settings.right < settings.left;
+		if (skips && from < settings.right && at >= settings.right && at < settings.left)
+			return settings.left;
 		return at;
 	}
 
@@ -202,7 +206,10 @@ namespace gnubase::engine
 			}
 			// With punch in before the left locator, the punch in starts recording.
 			if (!m_settings.punchIn || m_position >= m_settings.left)
+			{
 				m_recording = true;
+				m_recordAt = -1; // started by hand during the pre-roll: no second start later
+			}
 			return;
 		}
 	}
