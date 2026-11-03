@@ -81,7 +81,8 @@ namespace gnubase::ui
 			uint64_t parent = 0;
 			int level = 0;
 			uint64_t channel = 0;
-			bool empty = true; // no events, parts, markers, automation or tracks inside
+			uint64_t output = 0; // where its channel plays into, 0 for none
+			bool holds = false;  // events, parts, markers or automation
 		};
 
 		enum class Drag : uint8_t

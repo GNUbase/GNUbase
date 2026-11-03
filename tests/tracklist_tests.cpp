@@ -295,17 +295,17 @@ TEST_CASE("folders fold in the list and the event display; the menus duplicate, 
 	menu(full, "track.enableSelected");
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(full).at("enabled") == true; }));
 
-	// Remove Empty Tracks leaves the tracks with events and the folders with tracks; Remove Selected Tracks removes the
-	// selection, in one undo step.
+	// Remove Empty Tracks leaves the tracks with events, and removes the empty track and with it the folder it leaves
+	// empty; Remove Selected Tracks removes the selection, in one undo step.
 	menu(full, "track.removeEmpty");
-	tracks.rows(3);
-	CHECK(tracks.order() == std::vector<uint64_t>{folder, full, order[3]});
+	tracks.rows(2);
+	CHECK(tracks.order() == std::vector<uint64_t>{full, order[3]});
 	tracks.click(row(full) + " .track-name");
 	tracks.click(row(order[3]) + " .track-name", {"ctrl"});
 	tracks.app.keys().run("track.removeSelected", Json::object(), tracks.app.main(), nullptr);
-	tracks.rows(1);
+	tracks.rows(0);
 	tracks.app.call("history.undo");
-	tracks.rows(3);
+	tracks.rows(2);
 }
 
 TEST_CASE("Remove Empty Tracks keeps an instrument track without parts that a MIDI track plays", "[ui]")
@@ -321,6 +321,46 @@ TEST_CASE("Remove Empty Tracks keeps an instrument track without parts that a MI
 	tracks.app.keys().run("track.removeEmpty", Json::object(), tracks.app.main(), nullptr);
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.order() == std::vector<uint64_t>{instrument, midi}; }));
 	CHECK(tracks.channel(midi).at("output") == synth);
+}
+
+TEST_CASE("Remove Empty Tracks also removes what only the empty tracks played into or filled, in one undo step", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t instrument = tracks.add({{"type", "instrument"}});
+	const Json synth = tracks.track(instrument).at("channel");
+	const uint64_t midi = tracks.add({{"type", "midi"}, {"output", synth}});
+	const uint64_t folder = tracks.add({{"type", "folder"}, {"groupChannel", true}});
+	const Json group = tracks.track(folder).at("channel");
+	const uint64_t audio = tracks.add({{"type", "audio"}, {"parent", folder}});
+	REQUIRE(tracks.channel(audio).at("output") == group);
+	tracks.rows(4);
+
+	tracks.app.keys().run("track.removeEmpty", Json::object(), tracks.app.main(), nullptr);
+	tracks.rows(0);
+	CHECK(tracks.order().empty());
+
+	tracks.app.call("history.undo");
+	tracks.rows(4);
+	CHECK(tracks.order() == std::vector<uint64_t>{instrument, midi, folder, audio});
+	CHECK(tracks.channel(midi).at("output") == synth);
+	CHECK(tracks.channel(audio).at("output") == group);
+}
+
+TEST_CASE(
+	"Remove Empty Tracks keeps a folder that a track outside it plays into and removes nested empty folders", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t folder = tracks.add({{"type", "folder"}, {"groupChannel", true}});
+	tracks.add({{"type", "audio"}, {"parent", folder}}); // empty, goes
+	const uint64_t full = tracks.add({{"type", "instrument"}, {"output", tracks.track(folder).at("channel")}});
+	tracks.app.call("midiPart.add", {{"track", full}, {"position", 0}, {"length", 1000}});
+	const uint64_t outer = tracks.add({{"type", "folder"}});
+	const uint64_t inner = tracks.add({{"type", "folder"}, {"parent", outer}});
+	tracks.add({{"type", "midi"}, {"parent", inner}});
+	tracks.rows(6);
+
+	tracks.app.keys().run("track.removeEmpty", Json::object(), tracks.app.main(), nullptr);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.order() == std::vector<uint64_t>{folder, full}; }));
 }
 
 TEST_CASE("the track controls settings dialog chooses and orders each track type's controls", "[ui]")
