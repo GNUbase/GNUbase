@@ -74,7 +74,7 @@ TEST_CASE("the status line highlights a sample rate mismatch and shows a lost au
 TEST_CASE(
 	"recording.remainingTime divides the free disk space by what the armed tracks record a second", "[integration]")
 {
-	test::TempDir dir;
+	const test::TempDir dir;
 	engine::Engine engine;
 	engine::Client client(engine);
 	const auto run = [&client](const std::string& command, const Json& parameters = Json::object())
