@@ -79,6 +79,7 @@ flowchart TD
 |---|---|---|
 | UI (main thread) | SDL event loop, RmlUi layout and rendering, Lua UI scripts | Sends commands, renders from events, never blocks on the engine |
 | Engine command thread | Every command: document changes, undo, building render snapshots, user settings | The only thread that writes the document and the user settings |
+| Engine clock | Posts the check for a due auto save every 30 seconds (`Clock` in `src/engine/clock.h`, whose time tests move forward) | Only posts commands |
 | Audio thread | The device callback, one processing cycle at a time | Real-time rules |
 | Audio workers | Track chains in parallel (#212) | Real-time rules, real-time priority |
 | Prefetch threads | Nodes without live input, ahead of the device in larger blocks (#23) | Real-time rules, real-time priority below the audio workers |

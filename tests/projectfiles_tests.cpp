@@ -4,6 +4,7 @@
 // screen in the app's UI.
 #include "engine/document/projectmodel.h"
 #include "engine/engine.h"
+#include "platform/log.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "uiapp.h"
@@ -65,6 +66,71 @@ namespace
 			files.push_back(project.at("file").get<std::string>());
 		return files;
 	}
+
+	// A second more than the auto save interval (project.autoSaveInterval): a due auto save takes the time when it
+	// runs, a moment after the clock's tick, as the time of the last one.
+	constexpr auto g_pastInterval = std::chrono::minutes(15) + std::chrono::seconds(1);
+
+	// How many failed auto saves the engine's error log has.
+	size_t loggedFailures(const fs::path& logFile)
+	{
+		gnubase::logging::flush();
+		const std::string text = test::readText(logFile);
+		const std::string failure = "project.autoSave failed";
+		size_t count = 0;
+		for (size_t at = text.find(failure); at != std::string::npos; at = text.find(failure, at + 1))
+			++count;
+		return count;
+	}
+
+	// project.autoSave in engine.commandLog.
+	Json autoSaveLog(Client& client)
+	{
+		Json entries = Json::array();
+		const Json log = run(client, "engine.commandLog");
+		for (const Json& entry : log.at("commands"))
+			if (entry.at("command") == "project.autoSave")
+				entries.push_back(entry);
+		return entries;
+	}
+
+	// Collects project.autoSaved and project.autoSaveFailed, which the engine's own auto saves announce.
+	class AutoSaveEvents
+	{
+	public:
+		explicit AutoSaveEvents(Engine& engine)
+			: m_listener(engine,
+				  [this](const Event& event)
+				  {
+					  if (event.name != "project.autoSaved" && event.name != "project.autoSaveFailed")
+						  return;
+					  const std::scoped_lock lock(m_mutex);
+					  m_names.push_back(event.name);
+					  m_last = event.data;
+				  })
+		{
+		}
+
+		// The names of the events so far, once the commands queued before, such as the engine's auto saves, ran.
+		std::vector<std::string> names(Client& client)
+		{
+			run(client, "engine.commandLog"); // runs after them
+			const std::scoped_lock lock(m_mutex);
+			return m_names;
+		}
+
+		Json last()
+		{
+			const std::scoped_lock lock(m_mutex);
+			return m_last;
+		}
+
+	private:
+		std::mutex m_mutex;
+		std::vector<std::string> m_names;
+		Json m_last;
+		Listener m_listener; // last, so that it stops before the rest goes
+	};
 }
 
 TEST_CASE(
@@ -196,32 +262,117 @@ TEST_CASE(
 	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null());
 }
 
-TEST_CASE("a due auto save saves once the interval passed, and one that fails waits for the next", "[integration]")
+TEST_CASE("the engine auto saves a changed project on its own once the interval passed", "[integration]")
 {
 	const test::TempDir dir;
 	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
 	Client client(engine);
+	AutoSaveEvents events(engine);
+	const fs::path file = dir.path() / "Song.dawproject";
+	const fs::path autoSave = dir.path() / "Auto Saves" / "Song-01.bak";
+	run(client, "project.save", {{"path", utf8(file)}});
+	run(client, "track.add", {{"type", "audio"}});
+
+	// The engine checks every 30 seconds; the interval is 15 minutes since the project was saved.
+	engine.clock().advance(std::chrono::minutes(14));
+	CHECK(events.names(client).empty());
+	CHECK(autoSaveLog(client).empty()); // checks that save nothing stay out of the log
+	engine.clock().advance(std::chrono::minutes(1) + std::chrono::seconds(1));
+	CHECK(events.names(client) == std::vector<std::string>{"project.autoSaved"});
+	CHECK(fs::is_regular_file(autoSave));
+	const Json log = autoSaveLog(client);
+	REQUIRE(log.size() == 1);
+	CHECK(log[0].at("client") == "engine");
+	CHECK(log[0].at("parameters") == Json{{"due", true}});
+	CHECK(!log[0].contains("error"));
+	CHECK(modified(client)); // an auto save isn't a save
+
+	// Nothing changed since: the next interval saves nothing.
+	engine.clock().advance(g_pastInterval);
+	CHECK(events.names(client).size() == 1);
+	CHECK(autoSaveLog(client).size() == 1);
+
+	// Off, nothing is saved however long it waits.
+	run(client, "settings.set", {{"key", "project.autoSave"}, {"value", false}});
+	run(client, "track.add", {{"type", "audio"}});
+	engine.clock().advance(std::chrono::minutes(60));
+	CHECK(events.names(client).size() == 1);
+}
+
+TEST_CASE("a failing auto save waits for the next interval, is logged once and announces each failure", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path logFile = dir.path() / "gnubase.log";
+	const gnubase::logging::Session session(logFile);
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	AutoSaveEvents events(engine);
 	const fs::path file = dir.path() / "Song.dawproject";
 	const fs::path autoSaves = dir.path() / "Auto Saves";
 	run(client, "project.save", {{"path", utf8(file)}});
 	run(client, "track.add", {{"type", "audio"}});
-	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null()); // just saved
 
-	// A file in the place of the Auto Saves folder: the auto save fails, and the checks every 30 seconds don't try
-	// again until the interval (15 minutes) passed.
+	// A file in the place of the Auto Saves folder: the folder can't be made.
 	std::ofstream(autoSaves) << "not a folder";
-	ProjectModel::advanceClock(std::chrono::minutes(15));
-	reject(client, "project.autoSave", {{"due", true}});
-	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null());
-	ProjectModel::advanceClock(std::chrono::minutes(14));
-	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null());
-	ProjectModel::advanceClock(std::chrono::minutes(1));
-	reject(client, "project.autoSave", {{"due", true}});
+	engine.clock().advance(g_pastInterval);
+	CHECK(events.names(client) == std::vector<std::string>{"project.autoSaveFailed"});
+	CHECK(events.last().at("file") == utf8(autoSaves / "Song-01.bak"));
+	CHECK(!events.last().at("error").get<std::string>().empty());
+	Json log = autoSaveLog(client);
+	REQUIRE(log.size() == 1);
+	CHECK(log[0].contains("error"));
+	CHECK(loggedFailures(logFile) == 1);
 
+	// Not tried again every 30 seconds but after the interval, and only the first failure is in the log.
+	engine.clock().advance(std::chrono::minutes(14));
+	CHECK(events.names(client).size() == 1);
+	engine.clock().advance(std::chrono::minutes(1) + std::chrono::seconds(1));
+	CHECK(events.names(client) == std::vector<std::string>{"project.autoSaveFailed", "project.autoSaveFailed"});
+	CHECK(autoSaveLog(client).size() == 1);
+	for (size_t interval = 1; interval <= 10; ++interval)
+	{
+		engine.clock().advance(g_pastInterval);
+		CHECK(events.names(client).size() == 2 + interval); // after the auto save ran, before the clock goes on
+	}
+	CHECK(autoSaveLog(client).size() == 1);
+	CHECK(loggedFailures(logFile) == 1);
+
+	// A client's own auto save is its command: it is in the log, and fails with the reason.
+	CHECK(!reject(client, "project.autoSave").empty());
+	CHECK(autoSaveLog(client).size() == 2);
+	CHECK(events.names(client).size() == 13);
+
+	// Once one succeeds, the next failure is logged again.
 	fs::remove(autoSaves);
-	ProjectModel::advanceClock(std::chrono::minutes(15));
-	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file") == utf8(autoSaves / "Song-01.bak"));
-	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null()); // just auto saved
+	engine.clock().advance(g_pastInterval);
+	CHECK(events.names(client).back() == "project.autoSaved");
+	CHECK(fs::is_regular_file(autoSaves / "Song-01.bak"));
+	CHECK(autoSaveLog(client).size() == 3);
+	fs::remove_all(autoSaves);
+	std::ofstream(autoSaves) << "not a folder";
+	run(client, "track.add", {{"type", "audio"}});
+	engine.clock().advance(g_pastInterval);
+	CHECK(events.names(client).back() == "project.autoSaveFailed");
+	log = autoSaveLog(client);
+	REQUIRE(log.size() == 4);
+	CHECK(log[3].contains("error"));
+	CHECK(loggedFailures(logFile) == 2);
+
+	// So is the next failure after saving or opening the project.
+	engine.clock().advance(g_pastInterval);
+	CHECK(autoSaveLog(client).size() == 4);
+	run(client, "project.save");
+	run(client, "track.add", {{"type", "audio"}});
+	engine.clock().advance(g_pastInterval);
+	CHECK(autoSaveLog(client).size() == 5);
+	engine.clock().advance(g_pastInterval);
+	CHECK(autoSaveLog(client).size() == 5);
+	run(client, "project.load", {{"path", utf8(file)}});
+	run(client, "track.add", {{"type", "audio"}});
+	engine.clock().advance(g_pastInterval);
+	CHECK(autoSaveLog(client).size() == 6);
+	CHECK(loggedFailures(logFile) == 4);
+	CHECK(events.names(client).size() == 19);
 }
 
 TEST_CASE("saved and opened projects are recent projects, newest first, until forgotten", "[integration]")

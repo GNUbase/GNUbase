@@ -9,7 +9,6 @@
 #include "platform/log.h"
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -32,13 +31,6 @@ namespace gnubase::engine
 		constexpr const char* g_templates = "Project Templates"; // in the settings folder
 		constexpr const char* g_recentKey = "project.recent";
 		constexpr size_t g_recentCount = 10;
-		// How far ProjectModel::advanceClock moved the clock that auto saves go by, in steady_clock ticks.
-		std::atomic<std::chrono::steady_clock::rep> g_clockOffset{0};
-
-		std::chrono::steady_clock::time_point now()
-		{
-			return std::chrono::steady_clock::now() + std::chrono::steady_clock::duration(g_clockOffset.load());
-		}
 
 		void require(bool condition, const std::string& message)
 		{
@@ -136,7 +128,8 @@ namespace gnubase::engine
 		m_savedRevision = autoSave ? 0 : m_revision; // publish() made m_revision at least 1
 		m_autoSavedRevision = m_revision;
 		m_openedRevision = m_revision;
-		m_lastSave = now();
+		m_lastSave = m_clock->now();
+		m_autoSaveFailed = false;
 		if (!m_file.empty())
 			remember(m_file);
 	}
@@ -146,7 +139,8 @@ namespace gnubase::engine
 		m_file = file;
 		m_savedRevision = m_revision;
 		m_autoSavedRevision = m_revision;
-		m_lastSave = now();
+		m_lastSave = m_clock->now();
+		m_autoSaveFailed = false; // it may have moved to another folder
 		remember(file);
 		context.emit("project.saved", {{"file", m_file}});
 	}
@@ -191,15 +185,11 @@ namespace gnubase::engine
 		}
 	}
 
-	void ProjectModel::advanceClock(std::chrono::steady_clock::duration by)
-	{
-		g_clockOffset += by.count();
-	}
-
 	void ProjectModel::registerProjectFileCommands(Engine& engine)
 	{
 		m_settingsDirectory = engine.settingsDirectory();
-		m_lastSave = now();
+		m_clock = &engine.clock();
+		m_lastSave = m_clock->now();
 		m_recent = std::make_shared<settings::Store>(recentFormat(), m_settingsDirectory);
 		const Json stringSchema = {{"type", "string"}};
 		const Json booleanSchema = {{"type", "boolean"}};
@@ -255,13 +245,16 @@ namespace gnubase::engine
 				"engine asks every 30 seconds, only if the user setting project.autoSave is on and "
 				"project.autoSaveInterval minutes have passed since the project was saved, opened or auto saved, or "
 				"an auto save failed. Returns the file, or null if nothing was saved; emits project.autoSaved with "
-				"the file.",
+				"the file. If it fails, emits project.autoSaveFailed with the file and the error although the "
+				"command fails. A due auto save that fails again, before one succeeded or the project was saved or "
+				"opened, stays out of engine.commandLog and the error log.",
 				objectSchema({{"due", booleanSchema}}),
 				objectSchema({{"file", {{"type", {"string", "null"}}}}}, {"file"}), false},
-			[this](CommandContext& context)
+			[this, &engine](CommandContext& context)
 			{
-				const auto current = now();
-				if (context.parameters().value("due", false) &&
+				const bool due = context.parameters().value("due", false);
+				const Clock::TimePoint current = m_clock->now();
+				if (due &&
 					(!userSetting(context, "project.autoSave").get<bool>() ||
 						current - m_lastSave <
 							std::chrono::minutes(userSetting(context, "project.autoSaveInterval").get<int>())))
@@ -290,8 +283,16 @@ namespace gnubase::engine
 				}
 				catch (const std::exception& error)
 				{
+					// Announced although the command fails, so that the user learns that auto save doesn't work. One
+					// that keeps failing is logged only the first time, as the engine's error log and
+					// engine.commandLog keep only so much.
+					engine.broadcast("project.autoSaveFailed", {{"file", file.u8string()}, {"error", error.what()}});
+					if (due && m_autoSaveFailed)
+						context.failQuietly();
+					m_autoSaveFailed = true;
 					throw CommandError(error.what());
 				}
+				m_autoSaveFailed = false;
 				m_autoSavedRevision = m_revision;
 				context.emit("project.autoSaved", {{"file", file.u8string()}});
 				return Json{{"file", file.u8string()}};
