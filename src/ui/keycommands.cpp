@@ -29,7 +29,7 @@ namespace gnubase::ui
 
 		bool isTextField(const Rml::Element& element)
 		{
-			const Rml::String type = element.GetAttribute<Rml::String>("type", "text");
+			const auto type = element.GetAttribute<Rml::String>("type", "text");
 			return element.GetTagName() == "textarea" ||
 				(element.GetTagName() == "input" && (type == "text" || type == "password" || type == "search"));
 		}
