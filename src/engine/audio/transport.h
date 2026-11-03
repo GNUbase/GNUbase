@@ -85,8 +85,9 @@ namespace gnubase::engine
 		// Command thread: where play starts playback.
 		time::Samples startPosition() const;
 		// Where recording from stop starts, for playback that starts at start before the pre-roll and at from with
-		// it: at start, or the left locator with punch in if that comes later, or at from in a cycle that would never
-		// reach it.
+		// it: at start, or the left locator with punch in if that comes later. In a cycle that would jump back before
+		// reaching that, at from, or with punch in at from or the left locator, whichever comes later. A locate while
+		// recording waits uses it too, with start and from where the locate goes.
 		static time::Samples recordStart(const TransportSettings& settings, time::Samples start, time::Samples from);
 
 		// Command thread: once the audio thread has applied every request, takes over whether it plays and records,
