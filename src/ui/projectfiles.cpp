@@ -127,9 +127,8 @@ namespace gnubase::ui
 					[this, done = reportFailure(window)] { m_binding.send("project.revert", Json::object(), done); });
 			}});
 		keys.enableWhen("file.revert", [this](Window&, Rml::Element*) { return !m_file.empty(); });
-		// Quitting closes every window, so it waits until the event that asked for it is done with them.
-		keys.add({"file.quit", "Quits GNUbase.", [this](Window& window, Rml::Element*)
-			{ unlessUnsaved(window, [this] { m_shell.post([this] { m_shell.quit(); }); }); }});
+		keys.add({"file.quit", "Quits GNUbase.", [this](Window& window, Rml::Element*) { quit(window); }});
+		m_shell.onQuitRequest([this](Window& main) { quit(main); });
 
 		// The reference's keys (manual pp. 1564-1565).
 		keys.bind({"Mod+N", "file.new"});
@@ -142,6 +141,7 @@ namespace gnubase::ui
 
 	ProjectFiles::~ProjectFiles()
 	{
+		m_shell.onQuitRequest({});
 		if (Rml::Element* dialog = m_dialog.get())
 		{
 			dialog->RemoveEventListener(Rml::EventId::Dblclick, this);
@@ -325,6 +325,18 @@ namespace gnubase::ui
 								});
 					});
 			});
+	}
+
+	void ProjectFiles::quit(Window& window)
+	{
+		// A dialog that is open, such as the start screen, would keep the question from opening: quitting cancels it.
+		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get()))
+		{
+			dialog->DispatchEvent(g_dialogCloseEvent, {{"result", Rml::Variant(std::string("cancel"))}});
+			dialog->Close();
+		}
+		// Quitting closes every window, so it waits until the event that asked for it is done with them.
+		unlessUnsaved(window, [this] { m_shell.post([this] { m_shell.quit(); }); });
 	}
 
 	void ProjectFiles::open(Window& window)
