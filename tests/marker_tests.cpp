@@ -418,6 +418,53 @@ TEST_CASE("locating to the next and previous marker and to marker N", "[unit]")
 	CHECK(run(client, "history.get").at("steps").size() == steps);
 }
 
+TEST_CASE("with transport.cycleFollowsMarkers, locating to a marker sets the locators to it", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	addMarkerTrack(client);
+	const Json one = addPosition(client, 2, "One");
+	const Json verse = addCycle(client, 4, 8, "Verse");
+	addPosition(client, 10, "Two");
+	run(client, "transport.set", {{"left", 1}, {"right", 2}});
+	const auto locators = [&client]
+	{
+		const Json transport = run(client, "transport.get");
+		return std::make_pair(transport.at("left").get<int64_t>(), transport.at("right").get<int64_t>());
+	};
+
+	// Off by default: the locators stay.
+	run(client, "marker.locate", {{"number", 1}, {"type", "cycle"}});
+	CHECK(locators() == std::make_pair<int64_t, int64_t>(1, 2));
+
+	// A cycle marker's range; a position marker up to the next marker after it on its track.
+	run(client, "settings.set", {{"key", "transport.cycleFollowsMarkers"}, {"value", true}});
+	run(client, "marker.locate", {{"marker", idOf(verse)}});
+	CHECK(locators() == std::make_pair(4 * g_quarterSamples, 8 * g_quarterSamples));
+	run(client, "marker.locate", {{"marker", idOf(one)}});
+	CHECK(locators() == std::make_pair(2 * g_quarterSamples, 4 * g_quarterSamples));
+	CHECK(cursor(client) == 2 * g_quarterSamples);
+
+	// Locating to the next and previous marker too; the last marker has nothing after it, the locators stay.
+	run(client, "marker.locateNext");
+	CHECK(locators() == std::make_pair(4 * g_quarterSamples, 8 * g_quarterSamples));
+	run(client, "marker.locateNext"); // the cycle marker's end
+	CHECK(locators() == std::make_pair(4 * g_quarterSamples, 8 * g_quarterSamples));
+	run(client, "marker.locateNext");
+	CHECK(cursor(client) == 10 * g_quarterSamples);
+	CHECK(locators() == std::make_pair(4 * g_quarterSamples, 8 * g_quarterSamples));
+	run(client, "marker.locatePrevious");
+	run(client, "marker.locatePrevious");
+	run(client, "marker.locatePrevious");
+	CHECK(cursor(client) == 2 * g_quarterSamples);
+	CHECK(locators() == std::make_pair(2 * g_quarterSamples, 4 * g_quarterSamples));
+
+	// Off again, they stay.
+	run(client, "settings.set", {{"key", "transport.cycleFollowsMarkers"}, {"value", false}});
+	run(client, "marker.locate", {{"marker", idOf(verse)}});
+	CHECK(locators() == std::make_pair(2 * g_quarterSamples, 4 * g_quarterSamples));
+}
+
 TEST_CASE("marker commands see a locate that the running audio device has not applied yet", "[integration]")
 {
 	Engine engine;
