@@ -9,6 +9,7 @@
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/StringUtilities.h>
 
+#include <filesystem>
 #include <string>
 #include <utility>
 #include <vector>
@@ -23,6 +24,12 @@ namespace gnubase::ui
 		{
 			static const std::vector<FileFilter> filters{{"DAWproject", "dawproject"}, {"All files", "*"}};
 			return filters;
+		}
+
+		// Whether a chosen file has the DAWproject extension, in any case: "Song.DAWPROJECT" does, "Song v1.2" doesn't.
+		bool hasProjectExtension(const std::filesystem::path& file)
+		{
+			return Rml::StringUtilities::ToLower(file.extension().u8string()) == ".dawproject";
 		}
 
 		// The rows of a start screen list: value is the row's index in the list, text what it shows.
@@ -374,7 +381,7 @@ namespace gnubase::ui
 				if (chosen.files.empty())
 					return;
 				std::filesystem::path file = chosen.files.front();
-				if (file.extension() != ".dawproject") // also for names with a dot, such as "Song v1.2"
+				if (!hasProjectExtension(file))
 					file += ".dawproject";
 				m_binding.send("project.save", {{"path", file.u8string()}}, done);
 			});
