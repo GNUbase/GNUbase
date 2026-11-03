@@ -322,7 +322,8 @@ TEST_CASE("a Broadcast Wave recording's time reference includes the pre-recorded
 	CHECK(events[0].at("offset") == 2400);
 	const auto reader = AudioFileReader::open(pathOf(client, events[0]));
 	REQUIRE(reader->info().broadcast.has_value());
-	CHECK(reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).timeReference == 3600ULL * 48000 - 2400);
+	CHECK(
+		reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{}).timeReference == (3600ULL * 48000) - 2400);
 }
 
 TEST_CASE("cycle recording makes a take per lap, all in one file", "[integration]")
