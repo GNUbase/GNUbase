@@ -3,12 +3,14 @@
 // dummy device, driven with ui::Automation as MCP's UI tools drive it, with screenshots compared with golden images.
 #include "uiapp.h"
 
+#include "engine/document/snap.h"
 #include "engine/time/tempomap.h"
 #include "scripting/runtime.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
 #include "ui/eventdisplay.h"
 #include "ui/themes.h"
+#include "ui/timeformat.h"
 #include "ui/tracklist.h"
 
 #include <RmlUi/Core/Context.h>
@@ -433,6 +435,51 @@ TEST_CASE("the snap buttons, the snap and grid type menus and J change the proje
 	click(app, selector("#grid-type"));
 	CHECK(hasClass(app, "#grid-type-menu > menuitem[grid-type=quantize]", "checked"));
 	app.ui().key(std::nullopt, "Escape");
+}
+
+// #565: the grid type menu has the engine's grid types of the ruler's format, and a pick sends that format with it.
+TEST_CASE("the grid type menu has the format's grid types and picks them in the format shown", "[ui]")
+{
+	ProjectWindow window;
+	test::UiApp& app = window.app;
+	ui::EventDisplay& display = window.display;
+	const auto snap = [&app] { return app.call("snap.get"); };
+
+	for (size_t i = 0; i < engine::g_gridFormatCount; ++i)
+	{
+		const auto format = static_cast<engine::GridFormat>(i);
+		const ui::TimeFormat ruler =
+			ui::timeFormatFromName(engine::gridFormatName(format)).value_or(ui::TimeFormat::BarsBeats);
+		CHECK(ui::timeFormatName(ruler) == engine::gridFormatName(format));
+		display.setRulerFormat(ruler);
+		app.shell().step(std::chrono::milliseconds(0));
+		std::vector<std::string> items;
+		const Json menu = app.ui().dom(std::nullopt, "#grid-type-menu > menuitem", 0);
+		for (const Json& item : menu.at("elements"))
+			items.push_back(item.at("attributes").at("grid-type").get<std::string>());
+		std::vector<std::string> expected;
+		for (const engine::GridType grid : engine::gridTypes(format))
+			expected.emplace_back(engine::gridTypeName(grid));
+		INFO(engine::gridFormatName(format));
+		CHECK(items == expected);
+	}
+
+	// The ruler shows fps (User) when the engine switches to timecode from elsewhere: a grid type picked from the
+	// menu that is still shown is the user frames', and the ruler stays there.
+	REQUIRE(app.waitUntil([&snap] { return snap().at("format") == "userFrames"; }));
+	click(app, selector("#grid-type"));
+	REQUIRE(visible(app, "#grid-type-menu"));
+	app.call("snap.set", {{"format", "timecode"}});
+	click(app, menuItem(app, "#grid-type-menu", "1/2 Frame"));
+	for (int i = 0; i < 20; ++i)
+	{
+		app.shell().step(std::chrono::milliseconds(5));
+		CHECK(display.rulerFormat() == ui::TimeFormat::UserFrames);
+	}
+	REQUIRE(app.waitUntil([&snap] { return snap().at("grids").at("userFrames") == "halfFrame"; }));
+	CHECK(snap().at("format") == "userFrames");
+	CHECK(snap().at("grids").at("timecode") == "frame");
+	CHECK(display.rulerFormat() == ui::TimeFormat::UserFrames);
 }
 
 TEST_CASE("the toolbar's tool buttons and the keys choose the tools, a second click opens a tool's modes", "[ui]")

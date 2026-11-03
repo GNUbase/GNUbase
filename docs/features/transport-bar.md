@@ -30,7 +30,11 @@ each other.
   commands through the UI's engine client, the UI's own commands in `AppUi`. Buttons with `state` are checked, the
   state class `.checked`, while the transport's value is true; they follow `transport.changed`, whoever changed it.
   Buttons with `hold` run their command when the mouse button goes down and end it, as a key held, when it goes up,
-  the mouse leaves the button or the window loses the keyboard focus.
+  the mouse leaves the button or the window loses the keyboard focus. `ui::TransportControls` checks every control
+  with a `command`, the time display's menu items too, before it attaches (#446): parameters that aren't a JSON object
+  throw `std::invalid_argument`, and so does a command or parameters that `KeyCommands::check` refuses, which `AppUi`
+  passes in. A window whose controls are refused closes again with an error logged, as one whose document doesn't
+  load.
 - **Winding** (pp. 297, 300): Rewind and Forward, and Fast Rewind and Fast Forward on the keys, move the cursor by a
   step at once (1 second, 4 for the fast ones), as a click or a key pressed and released does, and while their button
   or key stays down wind on after 0.3 seconds at four steps a second until it goes up (`ui::Winding`, which sends
@@ -141,5 +145,7 @@ Shift; Nudge Cursor on bar, beat and second grids and at the project start; the 
 displays in three formats; a drag and wheel turns on the tempo field as one undo step each; a tempo with more decimals
 than the field shows, kept when the field is left untouched and set when its number is typed; the position typed back
 into the primary display during playback; Show Beat Count Only and the window sizes, kept for the window opened again;
-and the setup panes of the transport bar and the panel, each with its own sections, and Show All.
+and the setup panes of the transport bar and the panel, each with its own sections, and Show All. A button or menu
+item with a command that doesn't exist, parameters it doesn't take or parameters that aren't JSON makes
+`TransportControls` throw; without a check, only the last.
 `tests/keycommands_tests.cpp` checks held keys, `tests/theme_tests.cpp` the themes' time display sizes.
