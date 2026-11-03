@@ -173,8 +173,8 @@ TEST_CASE("Events to Part puts audio events into a part, Dissolve Part takes the
 	REQUIRE(f.audio(hidden).at("part") != parts[0]);
 	const Json glued = f.call("event.glue", {{"events", {parts[0], f.audio(hidden).at("part")}}});
 	CHECK(glued.at("event") == parts[0]);
-	f.call("event.resize", {{"events", {parts[0]}}, {"edge", "end"}, {"delta", -(5 * g_second + (g_second / 2))}});
-	CHECK(f.part(parts[0]).at("length") == 2 * g_second + (g_second / 2));
+	f.call("event.resize", {{"events", {parts[0]}}, {"edge", "end"}, {"delta", -((5 * g_second) + (g_second / 2))}});
+	CHECK(f.part(parts[0]).at("length") == (2 * g_second) + (g_second / 2));
 
 	const Json events = f.call("event.dissolvePart", {{"events", {parts[0]}}}).at("events");
 	CHECK(events.size() == 2);
@@ -221,14 +221,14 @@ TEST_CASE("audio parts move, copy, split, glue, mute, lock and go with their eve
 	CHECK(f.eventsIn(part).size() == 2);
 
 	// Splitting cuts the event across the position; what lies after it goes into the new part.
-	const Json right =
-		f.call("event.split", {{"events", {copy}}, {"positions", {7 * g_second + (g_second / 2)}}}).at("events").at(0);
+	const int64_t splitAt = (7 * g_second) + (g_second / 2);
+	const Json right = f.call("event.split", {{"events", {copy}}, {"positions", {splitAt}}}).at("events").at(0);
 	CHECK(f.part(copy).at("length") == g_second + (g_second / 2));
-	CHECK(f.part(right).at("position") == 7 * g_second + (g_second / 2));
+	CHECK(f.part(right).at("position") == splitAt);
 	CHECK(f.eventsIn(copy).size() == 2);
 	const std::vector<Json> after = f.eventsIn(right);
 	REQUIRE(after.size() == 1);
-	CHECK(after[0].at("position") == 7 * g_second + (g_second / 2));
+	CHECK(after[0].at("position") == splitAt);
 	CHECK(after[0].at("length") == g_second + (g_second / 2));
 
 	// Gluing the two pieces makes one part again with all three events.
@@ -275,8 +275,8 @@ TEST_CASE("an audio part's events play only within it, and not while it is muted
 	const int64_t outside = f.audioEvent(audio, 6 * g_second, g_second);
 	const Json part = f.call("event.toPart", {{"events", {inside, across, outside}}}).at("events").at(0);
 	f.call("event.resize", {{"events", {part}}, {"edge", "start"}, {"delta", g_second + (g_second / 2)}});
-	f.call("event.resize", {{"events", {part}}, {"edge", "end"}, {"delta", -(2 * g_second + (g_second / 2))}});
-	REQUIRE(f.part(part).at("position") == 2 * g_second + (g_second / 2));
+	f.call("event.resize", {{"events", {part}}, {"edge", "end"}, {"delta", -((2 * g_second) + (g_second / 2))}});
+	REQUIRE(f.part(part).at("position") == (2 * g_second) + (g_second / 2));
 	REQUIRE(f.part(part).at("length") == 2 * g_second);
 
 	const RenderChannel& channel = f.channel(audio);
