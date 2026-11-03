@@ -1043,7 +1043,7 @@ TEST_CASE("plugin automation reaches the slots by their ids while a program for 
 	auto pluginA = std::make_shared<ParameterRecorder>();
 	auto pluginB = std::make_shared<ParameterRecorder>();
 	ChannelStrip source(
-		state, nullptr, {}, std::nullopt, false, StripPart::Source, {pluginA.get(), pluginB.get()}, {a, b});
+		state, nullptr, {}, std::nullopt, false, StripPart::Source, {}, {pluginA.get(), pluginB.get()}, {a, b});
 	SlotStrip slotA(state, pluginA, 0);
 	SlotStrip slotB(state, pluginB, 1);
 	for (graph::Processor* processor : std::initializer_list<graph::Processor*>{&source, &slotA, &slotB})
