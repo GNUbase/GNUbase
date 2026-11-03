@@ -76,7 +76,8 @@ namespace
 		paths.reserve(files.size());
 		for (const std::string& file : files)
 			paths.push_back(std::filesystem::u8path(file));
-		CHECK(app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, std::move(paths)));
+		const bool answered = app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, std::move(paths));
+		CHECK(answered);
 		REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
 		if (files.size() > 1 && checked(app, "#import-one-track") != oneTrack)
 			click(app, "#import-one-track");
