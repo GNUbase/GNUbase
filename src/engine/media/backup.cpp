@@ -298,6 +298,14 @@ namespace gnubase::engine
 		return fs::absolute(projectFile).parent_path() / "Audio";
 	}
 
+	fs::path unsavedMediaFolder(const fs::path& settingsDirectory)
+	{
+		if (!settingsDirectory.empty())
+			return settingsDirectory / "Recordings";
+		std::error_code error;
+		return fs::temp_directory_path(error) / "GNUbase Recordings";
+	}
+
 	bool isInside(const std::string& file, const fs::path& folder)
 	{
 		std::error_code error;

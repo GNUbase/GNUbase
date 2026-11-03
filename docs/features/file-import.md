@@ -9,16 +9,28 @@ by dropping them from the OS's file manager onto the event display.
 WAV (also RF64 and Wave64), AIFF, FLAC, Ogg Vorbis and MP3. Each file becomes a media file, a clip named after it and an
 audio event at `position` (sample frames from the project start, rebased to the track's time base), on a new audio
 track named after the file with its channel format (stereo beyond 8 channels). With `oneTrack` the files go one after
-another on one new track; with `track`, one after another on that audio track. The options of the reference's Import
-Options dialog:
+another on one new track; with `track`, one after another on that audio track.
+
+MP3 and Ogg Vorbis files are always converted, whatever the options say (reference manual p. 360): each is written as
+a 32-bit float WAV file at its own sample rate into the media folder, and the media file, clip and event use the WAV
+file, while the clip and track keep the name of the file imported. FLAC files stay as they are. A project without a
+file has no media folder yet, so its MP3 and Ogg Vorbis files go where its recordings go: `Recordings` in the settings
+folder, or the temporary folder without one (`unsavedMediaFolder` in `src/engine/media/backup.h`,
+[recording.md](recording.md)), and are referenced from there. Saving the project doesn't move them, as it doesn't move
+recordings; Copy Files to Project Folder and `media.prepareArchive` bring them into the project. That keeps one place
+and one rule for the files an unsaved project makes. Converting only once the project is saved would play the
+compressed file until then and make saving a long conversion; a temporary folder of their own that saving moves into
+the project would be a second such place, with recordings left out.
+
+The options of the reference's Import Options dialog:
 
 - **copy** copies files from outside the project folder into its media folder (`Audio` next to the project file) as one
   job, the one `media.prepareArchive` and `media.add` with copy use (`startMediaCopy` in `src/engine/media/backup.h`):
   the import adds the files where they are, and when the copy is done the media are pointed at the copies as an undo
   step of their own.
-- **convert** writes files at another sample rate than the project's, and MP3 and Ogg Vorbis files, into the media
-  folder as 32-bit float WAV files at the project's sample rate (`convertSampleRate` in `resampler.h`), the format
-  `media.convert` writes. FLAC stays as it is. There is no project bit depth to convert to yet.
+- **convert** writes files at another sample rate than the project's into the media folder as 32-bit float WAV files
+  at the project's sample rate (`convertSampleRate` in `resampler.h`), the format `media.convert` writes; MP3 and Ogg
+  Vorbis files then go to the project's sample rate as well. There is no project bit depth to convert to yet.
 - **splitChannels** writes each channel of a file with several channels into the media folder as a mono WAV file named
   after the file and its speaker (`take-L.wav`, `take-R.wav`; numbers beyond 8 channels), each on a new mono track. It
   converts in the same pass when both are on, and doesn't go with `track` or `oneTrack`.
@@ -58,7 +70,10 @@ until the track list (#81) selects tracks.
 
 `tests/audioimport_tests.cpp` imports files of every supported format (WAV, RF64, Wave64, AIFF, FLAC, Ogg Vorbis and
 MP3) onto new tracks at a position and undoes it in
-one step, lays files out one after another with `oneTrack` and `track`, converts a 44.1 kHz WAV file and an MP3 file
+one step, lays files out one after another with `oneTrack` and `track`, converts MP3 and Ogg Vorbis files without
+`convert` to WAV files with the signal they decode to (into the media folder, also with `copy` and `clipsOnly`, and in
+an unsaved project into `Recordings`, where they stay after saving) and leaves FLAC files as they are, converts a
+44.1 kHz WAV file and an MP3 file
 into the media folder and leaves a 48 kHz file where it is, splits stereo and 5.1 files into mono files per speaker,
 copies with one job, and rejects what it can't do, removing converted files when a later file fails.
 `tests/fileimport_tests.cpp` drives the app's UI through the automation API: the File > Import items, the Import Options dialog with its disabled
