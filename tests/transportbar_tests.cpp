@@ -151,6 +151,36 @@ TEST_CASE("the transport bar's buttons run the transport and show its state", "[
 	CHECK(transport(app).at("playing") == false);
 }
 
+TEST_CASE("Space starts and stops playback after a click on a toolbar or transport button (#456)", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.ui().key(std::nullopt, "F2");
+	ui::Window* panel = app.appUi().transportPanel();
+	REQUIRE(panel != nullptr);
+
+	// A click beside the button's icon focuses the button itself, but Space runs its key command rather than clicking
+	// the button again.
+	const auto spaceToggles = [&app](const std::string& button, std::optional<ui::WindowId> window)
+	{
+		INFO(button);
+		const bool on = !checked(app, button, window);
+		const Json box = element(app, button, window).at("box");
+		const ui::Point edge{box.at("x").get<int>() + 2, box.at("y").get<int>() + (box.at("height").get<int>() / 2)};
+		app.ui().click(window, {"", 0, edge}, ui::MouseButton::Left, 1, {});
+		REQUIRE(app.waitUntil([&app, &button, window, on] { return checked(app, button, window) == on; }));
+		const Json focus = app.ui().key(window, "Space").at("focus");
+		CHECK(focus.value("id", std::string()) == button.substr(1));
+		REQUIRE(waitFor(app, [](const Json& state) { return state.at("playing") == true; }));
+		app.ui().key(window, "Space");
+		REQUIRE(waitFor(app, [](const Json& state) { return state.at("playing") == false; }));
+		CHECK(checked(app, button, window) == on);
+	};
+	spaceToggles("#cycle", std::nullopt);
+	spaceToggles("#metronome", panel->id());
+	spaceToggles("#snap", std::nullopt);
+}
+
 TEST_CASE("a narrow window cuts off the transport bar's last sections instead of drawing them over each other", "[ui]")
 {
 	test::UiApp app({1024, 700});
