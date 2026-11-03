@@ -136,11 +136,13 @@ namespace gnubase::ui
 	{
 		// The rows move between the tables when the position changes, so that the separator stays between them; RmlUi
 		// lays both tables' columns out the same from their first rows. The separator is a line in a grip that is
-		// taller than the line and reaches over the rows next to it, to be easier to grab.
-		element.SetInnerRML(R"(<listview id="history" class="history"><table><thead><tr><td class="action">Action</td>)"
-							R"(<td class="time">Time</td><td class="state">State</td><td class="details">Details</td>)"
-							R"(</tr></thead><tbody/></table><div class="history-grip"><div class="history-separator"/>)"
-							R"(</div><table><tbody/></table></listview>)");
+		// taller than the line and reaches over the rows next to it, to be easier to grab. A drag of it past the
+		// list's edges scrolls the list (dragscroll).
+		element.SetInnerRML(
+			R"(<listview id="history" class="history" dragscroll="dragscroll"><table><thead><tr><td class="action">Action</td>)"
+			R"(<td class="time">Time</td><td class="state">State</td><td class="details">Details</td>)"
+			R"(</tr></thead><tbody/></table><div class="history-grip"><div class="history-separator"/>)"
+			R"(</div><table><tbody/></table></listview>)");
 		Rml::Element* view = element.GetFirstChild();
 		m_view = view->GetObserverPtr();
 		m_separator = view->GetChild(1)->GetObserverPtr();
@@ -219,8 +221,8 @@ namespace gnubase::ui
 		m_position = history.at("position").get<int>();
 		const auto count = static_cast<int>(m_steps.size());
 		// What is typed goes on in the field of its step, wherever that is now, and goes with its step if another
-		// client's action dropped that (the oldest steps past the maximum, or the undone steps): it never becomes
-		// another step's. Nothing sends what the field had when it loses the focus here.
+		// client's action dropped that (the oldest steps past the maximum, or the undone steps), rather than becoming
+		// the step's that took its row. Nothing sends what the field had when it loses the focus here.
 		m_placing = true;
 		if (body->rows() != count + 1)
 		{
@@ -268,13 +270,13 @@ namespace gnubase::ui
 			return;
 		// The initial state's row and those of the steps up to the position go before the separator. RmlUi moves the
 		// focus from a row it removes to its parent: a details field the user is typing in gets it back, without
-		// sending what it has so far.
+		// sending what it has so far. Nothing else gets the focus here, e.g. not the list as it loses it.
 		Rml::ObserverPtr<Rml::Element> field;
 		if (Rml::Context* context = m_view->GetContext(); context != nullptr)
-			for (const Rml::Element* parent = context->GetFocusElement(); parent != nullptr;
-				parent = parent->GetParentNode())
-				if (parent == m_view.get())
-					field = context->GetFocusElement()->GetObserverPtr();
+			if (Rml::Element* focus = context->GetFocusElement(); focus != nullptr && focus->GetTagName() == "input")
+				for (const Rml::Element* parent = focus; parent != nullptr; parent = parent->GetParentNode())
+					if (parent == m_view.get())
+						field = focus->GetObserverPtr();
 		m_placing = true;
 		while (body->done->GetNumChildren() > position + 1)
 			body->undone->InsertBefore(
@@ -315,15 +317,8 @@ namespace gnubase::ui
 		}
 		else if (event == Rml::EventId::Drag && m_dragging)
 		{
-			// Past the list's top or bottom edge, each move scrolls it on by as far as the mouse is past the edge, so
-			// that the separator reaches the rows it doesn't show; a scroll follows the mouse.
+			// Past the list's top or bottom edge, the list view scrolls (dragscroll), and the separator follows.
 			m_mouse = event.GetParameter("mouse_y", 0.0F);
-			const float top = m_view->GetAbsoluteOffset(Rml::BoxArea::Padding).y;
-			const float bottom = top + m_view->GetClientHeight();
-			if (m_mouse < top)
-				m_view->SetScrollTop(m_view->GetScrollTop() - (top - m_mouse));
-			else if (m_mouse > bottom)
-				m_view->SetScrollTop(m_view->GetScrollTop() + (m_mouse - bottom));
 			follow();
 		}
 		else if (event == Rml::EventId::Dragend && m_dragging)
@@ -351,8 +346,8 @@ namespace gnubase::ui
 	void HistoryPanel::cancelDrag()
 	{
 		// RmlUi drops a drag without a dragend when the separator leaves the document, e.g. as the docking moves the
-		// panel; the list, which the press on the separator gave the focus, loses it first. The rows show the steps
-		// as they are again.
+		// panel; the list, which the press on the separator gave the focus (the grip takes none), loses it first. The
+		// rows show the steps as they are again.
 		m_dragging = false;
 		place(m_position);
 	}

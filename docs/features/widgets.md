@@ -153,6 +153,10 @@ rows are in the document's order. Each row has a `value` attribute (without comm
   attribute is the selected rows' values separated by commas, and `change` sends it, so `data-value` binds the
   selection both ways, also when `data-for` makes the rows. Clicks and keys in a form control in a row, such as a text
   field, are the control's and don't change the selection.
+- **Scrolling while dragging.** With the `dragscroll` attribute, a drag of an element in the view (`drag: drag`)
+  scrolls the view while the mouse is above or below it, by ten times as far as the mouse is past the edge each second,
+  also while the mouse is held still. The drag's end, the button going up or the view losing the focus stop it. The
+  edit history's separator uses it.
 - **Trees.** Rows with a `level` attribute (0 at the top) make a tree: the rows that follow a row with a higher level
   are its children, shown while it has the `expanded` attribute. The view gives tree rows a `.tree-indent`, sized from
   the level (16 dp a level), and a `.tree-toggle`, which the theme draws as an arrow; parents get the state classes
@@ -204,7 +208,8 @@ Tooltips show after a rest and go with the mouse. Notifications show for their d
 Dialogs open in the middle, move by their title bar, and close with Enter, Escape and their buttons, with the result;
 a value field with autofocus is edited as its dialog opens, even by keys typed before the next update, and Enter
 there clicks OK, while another value field keeps Enter.
-Tabs show their panels. List views select with clicks, Ctrl, Shift and the keys, and follow their data; trees expand
-and collapse by click and keys, with indents by level; tables select body rows only, and the keys go through several
-tables in the document's order; splitters move the boundary in a row and in a column, never below nothing. The color
-picker picks from its field, its hue strip and its numbers, draws the old and the new color, and follows its data.
+Tabs show their panels. List views select with clicks, Ctrl, Shift and the keys, and follow their data; trees expand and
+collapse by click and keys, with indents by level; tables select body rows only, and the keys go through several tables
+in the document's order; a drag held past a view's edge scrolls it with `dragscroll` only; splitters move the boundary
+in a row and in a column, never below nothing. The color picker picks from its field, its hue strip and its numbers,
+draws the old and the new color, and follows its data.

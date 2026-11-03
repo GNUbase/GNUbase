@@ -1532,13 +1532,14 @@ listview.history
 }
 
 /* The separator's line is in a grip that is dragged, as tall as a splitter: it reaches over the rows on both sides,
-   and is positioned so that it is in front of them. */
+   and is positioned so that it is in front of them. A press on it leaves the focus to the list. */
 .history .history-grip
 {
 	position: relative;
 	padding: 3dp 0;
 	margin: -3dp 0;
 	drag: drag;
+	focus: none;
 }
 
 .history .history-separator

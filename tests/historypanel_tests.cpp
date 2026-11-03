@@ -508,6 +508,23 @@ TEST_CASE(
 	CHECK(steps.at(1).at("details").get<std::string>().empty());
 	CHECK(steps.at(2).at("details").get<std::string>().empty());
 	CHECK(changesSoon(app, listener, 3) == 3); // history.set, the new step and the note
+
+	// A note for the oldest step, which a new step drops: as many rows as before, but the note goes with its step.
+	click(app, "#history tbody tr input", 0);
+	app.ui().text(std::nullopt, "gone");
+	app.call("project.set", {{"name", "Fourth"}});
+	REQUIRE(app.waitUntil(
+		[&app] { return elements(app, "#history tbody tr").size() == 4 && cell(app, 1, "action") == "Add track"; }));
+	for (const Json& input : elements(app, "#history tbody tr input"))
+	{
+		CHECK(input.at("attributes").value("value", "").find("gone") == std::string::npos);
+		CHECK(!focused(input));
+	}
+	CHECK(focused(list(app)));
+	CHECK(changesSoon(app, listener, 1) == 1); // the new step only
+	const Json after = app.call("history.get");
+	for (const Json& step : after.at("steps"))
+		CHECK(step.at("details").get<std::string>().find("gone") == std::string::npos);
 }
 
 TEST_CASE("dragging the edit history's separator follows the wheel and scrolls the list past its edges", "[ui]")
@@ -541,24 +558,22 @@ TEST_CASE("dragging the edit history's separator follows the wheel and scrolls t
 	REQUIRE(app.waitUntil([&] { return position(app) == wheeled; }));
 	CHECK(historyChanges(listener) == 1);
 
-	// Below the list's bottom edge, each move scrolls it on by as far as the mouse is past the edge: the separator
-	// reaches the last step.
+	// Held still below the list's bottom edge, the mouse scrolls it on over time: the separator reaches the last step.
 	const auto drag = [&](int to)
 	{
 		const ui::Point start = separator(app).point.value_or(ui::Point{});
 		context.ProcessMouseMove(start.x, start.y, 0);
 		context.ProcessMouseButtonDown(0, 0);
 		context.ProcessMouseMove(start.x, start.y + 2, 0);
-		for (int i = 0; i < 40; ++i)
-			context.ProcessMouseMove(start.x, to + (i % 2), 0);
+		context.ProcessMouseMove(start.x, to, 0);
 	};
-	drag(bottom + 40);
+	drag(bottom + 80);
 	REQUIRE(app.waitUntil([&app] { return undoneAfter(app, steps); }));
 	context.ProcessMouseButtonUp(0, 0);
 	REQUIRE(app.waitUntil([&app] { return position(app) == steps; }));
 
 	// Above its top edge, back to the initial state.
-	drag(top - 40);
+	drag(top - 80);
 	REQUIRE(app.waitUntil([&app] { return undoneAfter(app, 0); }));
 	context.ProcessMouseButtonUp(0, 0);
 	REQUIRE(app.waitUntil([&app] { return position(app) == 0; }));
@@ -578,6 +593,7 @@ TEST_CASE("a drag of the edit history's separator that the docking drops puts th
 	for (const int y : {from.y - 2, to})
 		context.ProcessMouseMove(from.x, y, 0);
 	REQUIRE(app.waitUntil([&app] { return undoneAfter(app, 1); }));
+	CHECK(focused(list(app)));
 
 	// The panel's tab moves in its tab group, which is made again with the panel moved into it: RmlUi drops the drag
 	// without a dragend, and the rows show the steps as they are again.
@@ -586,6 +602,10 @@ TEST_CASE("a drag of the edit history's separator that the docking drops puts th
 	docking.open("history");
 	REQUIRE(app.waitUntil([&app] { return showsPosition(app, 3); }));
 	CHECK(cell(app, 2, "state") == "Done");
+	// The press gave the list the focus, which the docking moved away; the grip never had it.
+	CHECK(!focused(list(app)));
+	CHECK(!focused(elements(app, "#history .history-grip").at(0)));
+	CHECK(!focused(elements(app, "#history .history-separator").at(0)));
 	context.ProcessMouseMove(from.x, to + 2, 0);
 	context.ProcessMouseButtonUp(0, 0);
 	CHECK(changesSoon(app, listener, 0) == 0);

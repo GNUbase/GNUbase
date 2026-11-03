@@ -1175,6 +1175,55 @@ TEST_CASE("table views with several tables go through their rows in the document
 	CHECK(element(app, "#table").at("attributes").at("value") == "third");
 }
 
+TEST_CASE("list views with dragscroll scroll while a drag in them is held past their edge", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	Rml::Element* view = page.document->GetElementById("table");
+	REQUIRE(view != nullptr);
+	std::string rml = R"(<div id="handle" style="drag: drag; height: 10dp;"/><table><tbody>)";
+	for (int i = 0; i < 40; ++i)
+		rml += R"(<tr value=")" + std::to_string(i) + R"("><td>Row</td></tr>)";
+	view->SetInnerRML(rml + "</tbody></table>");
+	view->SetAttribute("dragscroll", "dragscroll");
+	const Json handle = element(app, "#handle").at("box");
+	const Json box = element(app, "#table").at("box");
+	const int x = handle.at("x").get<int>() + 5;
+	const int y = handle.at("y").get<int>() + 5;
+	const int top = box.at("y").get<int>();
+	const int bottom = top + box.at("height").get<int>();
+	Rml::Context& context = app.main().context();
+	const auto end = [view] { return view->GetScrollHeight() - view->GetClientHeight(); };
+	REQUIRE(end() > 0.0F);
+
+	// The mouse held still below the view scrolls it down to its end, above it back up.
+	context.ProcessMouseMove(x, y, 0);
+	context.ProcessMouseButtonDown(0, 0);
+	context.ProcessMouseMove(x, y + 2, 0);
+	context.ProcessMouseMove(x, bottom + 60, 0);
+	CHECK(app.waitUntil([&] { return view->GetScrollTop() >= end(); }));
+	context.ProcessMouseMove(x, top - 60, 0);
+	CHECK(app.waitUntil([view] { return view->GetScrollTop() <= 0.0F; }));
+	context.ProcessMouseMove(x, bottom + 60, 0);
+	context.ProcessMouseButtonUp(0, 0);
+	app.waitUntil([] { return false; }, std::chrono::milliseconds(200));
+	const float released = view->GetScrollTop();
+	CHECK(released < end()); // the drag ended before it got there
+	app.waitUntil([] { return false; }, std::chrono::milliseconds(200));
+	CHECK(view->GetScrollTop() == released);
+
+	// Without dragscroll, the view stays where it is.
+	view->RemoveAttribute("dragscroll");
+	view->SetScrollTop(0.0F);
+	context.ProcessMouseMove(x, y, 0);
+	context.ProcessMouseButtonDown(0, 0);
+	context.ProcessMouseMove(x, y + 2, 0);
+	context.ProcessMouseMove(x, bottom + 60, 0);
+	app.waitUntil([] { return false; }, std::chrono::milliseconds(300));
+	CHECK(view->GetScrollTop() == 0.0F);
+	context.ProcessMouseButtonUp(0, 0);
+}
+
 TEST_CASE("table views keep the selection of rows rebuilt twice between two updates", "[ui]")
 {
 	test::UiApp app;

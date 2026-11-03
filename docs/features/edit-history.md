@@ -23,12 +23,13 @@ shows it in a dialog from Edit > History; GNUbase shows it as the panel History 
   boundary nearest the mouse, measured from where the rows were when the drag started, and the rows show Done or Undone
   as they will be; one `history.undo` or `history.redo` with `steps` goes to the engine when the drag ends, and none if
   it ends where it started or if the steps changed under it (another client added one, so the rows were made again).
-  Dropped above the list it undoes everything, below the last row it redoes everything. The rows' places are measured
-  in the list's content, so the separator follows them when the wheel scrolls the list during a drag; above or below
-  the list, each move of the mouse scrolls it on by as far as the mouse is past its edge, so the separator reaches
-  rows that a long history has outside the panel. If RmlUi drops the drag without its end, as it does when the docking
-  moves the panel during the drag, the list loses the focus that the press on the separator gave it: the drag is over,
-  nothing is sent, and the rows show the steps as they are again. The row of the last done step is also selected:
+  The rows' places are measured in the list's content, so the separator follows them when the wheel scrolls the list
+  during a drag. Held above or below the list, the mouse scrolls it (the list view's `dragscroll`,
+  [widgets.md](widgets.md)), faster the further it is past the edge, so the separator reaches rows that a long history
+  has outside the panel: dropped above the list once it shows its first row, the drag undoes everything, and dropped
+  below the last row, it redoes everything. If RmlUi drops the drag without its end, as it does when the docking moves
+  the panel during the drag, the list loses the focus that the press on the separator gave it (the grip takes none):
+  the drag is over, nothing is sent, and the rows show the steps as they are again. The row of the last done step is also selected:
   selecting another row, with a click or the arrow keys, undoes the steps after it or redoes the steps up to it. The
   initial state's row undoes everything.
 - **Details.** Each step's Details field is a note for the user: what is typed in it becomes the step's details
@@ -40,7 +41,9 @@ shows it in a dialog from Edit > History; GNUbase shows it as the panel History 
   action drops the undone steps, or the step was the oldest), what was typed goes with it and the list gets the focus.
   Nothing is sent before Enter or the user moving the focus. `history.get` has no step ids, so the panel recognizes a
   step by its action and time and by where it is: steps only go at the end (the undone ones) and, at the maximum, at
-  the start.
+  the start. At the maximum, a run of steps of the same action within one second can't be told apart, and Enter
+  racing another client's action sends the note by the step's index; step ids in `history.get` and
+  `history.describe` would settle both.
 - **Through the engine.** Everything the panel does goes through these engine commands, so MCP and Lua clients jump
   with `history.undo` and `history.redo` by the difference between the position they want and `history.get`'s.
 - **Not yet:** the maximum number of undo steps in the preferences (p. 112), which `history.set` already sets; and a
@@ -53,9 +56,11 @@ shows it in a dialog from Edit > History; GNUbase shows it as the panel History 
   also dropped above the list and below the last row, and a drag that ends where it started sends none; it is grabbed
   just above and just below its line, over the rows. Driving the window's context directly, the rows show where the
   separator goes before the button is released, and a drag the steps changed under sends nothing; with 60 steps, the
-  separator follows the wheel during a drag and scrolls the list past its bottom and top edges to the last step and the
-  initial state; and a drag the docking drops by moving the panel's tab puts the rows back and sends nothing. Typing
+  separator follows the wheel during a drag, and the mouse held below and above the list scrolls it to the last step
+  and the initial state; and a drag the docking drops by moving the panel's tab puts the rows back and sends nothing,
+  with the focus taken from the list and never on the grip. Typing
   details while another client undoes and redoes keeps the focus and sends the whole text once; at position 1 of 3, a
   note for step 2 isn't sent when another client's new step takes that step's place, a note for a step that stays goes
-  on in its field when the rows are made again, and at the maximum number of steps it moves up a row with its step.
+  on in its field when the rows are made again, at the maximum number of steps it moves up a row with its step, and a
+  note for the oldest step goes with it when a new step drops it.
   `tests/uithemes_tests.cpp` checks that every theme dims the undone rows and their details and draws the separator.
