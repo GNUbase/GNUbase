@@ -330,7 +330,9 @@ namespace gnubase::ui
 				}
 				else if (event == Rml::EventId::Focus && event.GetTargetElement() == this &&
 					HasAttribute("autofocus") && event.GetParameter("focus_visible", false))
+				{
 					m_focused = true;
+				}
 			}
 
 		protected:
