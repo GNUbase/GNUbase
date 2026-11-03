@@ -149,6 +149,8 @@ namespace gnubase::ui
 		std::sort(events.begin(), events.end());
 		events.erase(std::unique(events.begin(), events.end()), events.end());
 		m_selection = std::move(events);
+		if (!m_selection.empty())
+			m_selectedPoints.clear(); // events or automation points (#121); setLanes shows it
 		setLanes();
 		showSelection();
 	}
@@ -525,6 +527,8 @@ namespace gnubase::ui
 		m_pressX = x;
 		m_pressY = y;
 		m_pressed = modifiersOf(event);
+		if (automationDown(x, y))
+			return;
 		if (toolDown(x, y))
 			return;
 		const bool add = held(event, "ctrl_key") || held(event, "meta_key") || held(event, "shift_key");
@@ -592,6 +596,11 @@ namespace gnubase::ui
 		if (!m_dragMoved && std::abs(dx) < g_dragThreshold && std::abs(dy) < g_dragThreshold)
 			return;
 		m_dragMoved = true;
+		if (m_drag == Drag::Automation)
+		{
+			automationMove(m_pressX + dx, m_pressY + dy);
+			return;
+		}
 		if (m_drag == Drag::FadeIn || m_drag == Drag::FadeOut)
 		{
 			m_dragDx = dx;
@@ -661,6 +670,14 @@ namespace gnubase::ui
 		if (!alive())
 			return;
 		m_pressed = modifiersOf(event); // what is held now decides, e.g. whether a drag copies
+		if (drag == Drag::Automation)
+		{
+			automationUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
+				(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
+			m_dragMoved = false;
+			m_drag = Drag::None;
+			return;
+		}
 		if (drag == Drag::Rectangle || drag == Drag::Range || drag == Drag::DrawPart || drag == Drag::Play ||
 			drag == Drag::Click)
 		{

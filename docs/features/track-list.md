@@ -101,6 +101,9 @@ sends engine commands, so whatever another client changes shows at once.
   window's focus zone, enabled while the list exists and, for those of selected tracks, while tracks are selected,
   so the menus disable them otherwise.
 
+- **Automation tracks** (#121) have rows below their track's own, which reaches down over them; Show/Hide
+  Automation is in the lower left corner of each track with a channel ([automation-tracks.md](automation-tracks.md)).
+
 ## Track controls settings
 
 `resources/ui/track-controls.rml` (pp. 189–191), opened by `#track-controls-settings`, the context menu or the UI

@@ -511,6 +511,22 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                   "border-bottom-color": c["border"]}),
         (".track-list listitem.disabled", {"color": c["textMuted"]}),
         (".track-list .drop-line", {"background-color": c["accent"]}),
+        # Automation tracks (docs/features/automation-tracks.md): their rows and lanes below their track's, the
+        # curve with its points, grayed out while it doesn't read, the static value line and the automation event
+        # editor around selected points
+        (".track-list .automation-rows", {"background-color": mix(c["surface"], c["background"], .5)}),
+        (".track-list .automation-row", {"border-top-width": f"{widths['hairline']}dp",
+                                         "border-top-color": c["border"]}),
+        (".event-display .automation-lane", {"background-color": c["surface"] + "80",
+                                             "border-top-width": f"{widths['hairline']}dp",
+                                             "border-top-color": c["border"]}),
+        (".event-display .automation-curve", {"color": c["text"], "stroke-color": c["accent2"]}),
+        (".event-display .automation-lane.off .automation-curve", {"color": c["textMuted"],
+                                                                   "stroke-color": c["textMuted"]}),
+        (".event-display .static-value", {"stroke-color": c["text"], "stroke-width": f"{widths['hairline']}dp"}),
+        (".event-display .automation-editor", {"border-width": f"{widths['hairline']}dp",
+                                               "border-color": c["accent2"],
+                                               "background-color": c["accent2"] + "1a"}),
         # The mixer (docs/features/mixer-window.md): a line between the channel strips
         (".mixer-channel", {"border-right-width": f"{widths['hairline']}dp", "border-right-color": c["border"]}),
         # The MIDI editors (docs/features/midi-editors.md): parts outside the part editing mode dimmed, the active part

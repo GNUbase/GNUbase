@@ -168,23 +168,28 @@ namespace gnubase::ui
 		double value = 0.0;
 		engine::AutomationShape shape = engine::AutomationShape::Linear;
 		double curve = 0.0;
+		bool selected = false; // its handle is drawn as selected
 	};
 
 	// <curve>: an automation curve, a line in stroke-color, level with the first point before it and with the last
-	// one after it.
+	// one after it. With handles, each point is a square filled with color, a selected one a larger one in
+	// stroke-color (automation tracks, #121); dashed draws the line in dashes, as automation tracks' static value line.
 	class Curve final : public Canvas
 	{
 	public:
 		using Canvas::Canvas;
 
 		// Points by position.
-		void setPoints(std::vector<CurvePoint> points);
+		void setPoints(std::vector<CurvePoint> points, bool handles = false, bool dashed = false);
+		const std::vector<CurvePoint>& points() const { return m_points; }
 
 	protected:
 		void build(const Frame& frame, Rml::TexturedMeshList& meshes) override;
 
 	private:
 		std::vector<CurvePoint> m_points;
+		bool m_handles = false;
+		bool m_dashed = false;
 	};
 
 	// A fade of an audio event (#138): from start over length, rising from the bottom of its lane to the top (a fade

@@ -306,6 +306,11 @@
 		<menuitem command="track.disableSelected">Disable Selected Tracks</menuitem>
 		<menuitem command="track.enableSelected">Enable Selected Tracks</menuitem>
 		<menuseparator/>
+		<!-- Automation tracks (reference manual p. 880) -->
+		<menuitem command="track.toggleAutomationSelected">Show/Hide Automation</menuitem>
+		<menuitem command="track.showUsedAutomation">Show All Used Automation</menuitem>
+		<menuitem command="track.hideAllAutomation">Hide All Automation</menuitem>
+		<menuseparator/>
 		<!-- Folder tracks (reference manual pp. 222-224) -->
 		<menuitem command="track.enableSelectedGroupChannels">Enable Group Channel</menuitem>
 		<menuitem command="track.disableSelectedGroupChannels">Disable Group Channel</menuitem>
@@ -320,6 +325,8 @@
 		<menuitem command="track.autoFades">Auto Fades Settings...</menuitem>
 		<menuitem command="track.controlsSettings">Track Controls Settings...</menuitem>
 	</menu>
+	<!-- The parameter selector of an automation track, which ui::TrackList fills (reference manual p. 880) -->
+	<menu id="automation-parameter-menu"/>
 	<menu id="transport-menu">
 		<menuitem command="transport.play">Start</menuitem>
 		<menuitem command="transport.stop">Stop</menuitem>

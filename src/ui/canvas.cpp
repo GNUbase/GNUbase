@@ -332,9 +332,11 @@ namespace gnubase::ui
 		meshes.push_back({std::move(mesh), {}});
 	}
 
-	void Curve::setPoints(std::vector<CurvePoint> points)
+	void Curve::setPoints(std::vector<CurvePoint> points, bool handles, bool dashed)
 	{
 		m_points = std::move(points);
+		m_handles = handles;
+		m_dashed = dashed;
 		changed();
 	}
 
@@ -411,7 +413,48 @@ namespace gnubase::ui
 				cut(a, b, low);
 			if (b.x > high)
 				cut(b, a, high);
-			line(mesh, a, b, colour, width);
+			if (!m_dashed)
+			{
+				line(mesh, a, b, colour, width);
+				continue;
+			}
+			// Dashes of 4 dp with gaps as long, counted from timeline position 0 so that they stay put when scrolling.
+			const double dash = std::round(4.0 * frame.dpRatio);
+			const double length = std::hypot(b.x - a.x, b.y - a.y);
+			const auto at = [&](double along)
+			{
+				return Rml::Vector2<double>{a.x + ((b.x - a.x) * along / length), a.y + ((b.y - a.y) * along / length)};
+			};
+			for (double along = 0.0; along < length && dash > 0.0;)
+			{
+				const double phase =
+					std::fmod(std::fmod(a.x + frame.left + along, 2.0 * dash) + (2.0 * dash), 2.0 * dash);
+				if (phase < dash)
+				{
+					const double end = std::min(length, along + (dash - phase));
+					line(mesh, at(along), at(end), colour, width);
+					along = end;
+				}
+				else
+				{
+					along += (2.0 * dash) - phase;
+				}
+			}
+		}
+		if (m_handles)
+		{
+			const Colour body = fill();
+			for (const CurvePoint& handle : m_points)
+			{
+				const double size = std::round((handle.selected ? 7.0 : 5.0) * frame.dpRatio);
+				const double px = x(handle.position);
+				if (px < -size || px > right + size)
+					continue;
+				const double py = y(handle.value);
+				quad(mesh, static_cast<float>(px - (size / 2.0)), static_cast<float>(py - (size / 2.0)),
+					static_cast<float>(px + (size / 2.0)), static_cast<float>(py + (size / 2.0)),
+					handle.selected ? colour : body);
+			}
 		}
 		meshes.push_back({std::move(mesh), {}});
 	}
