@@ -245,6 +245,11 @@ namespace gnubase::ui
 		// (#93), without tracks or events.
 		void importFiles(const std::vector<std::string>& files, std::optional<uint64_t> track = std::nullopt,
 			std::optional<int64_t> sample = std::nullopt, bool clipsOnly = false);
+		// File > Import (#480, reference manual p. 360): at the project cursor, onto the first of the selected tracks
+		// (the track list's, top to bottom) if it is an audio track: the first file, or all of them one after another
+		// with Import Files on One Track, and the others onto new tracks. Without one, onto new tracks; with Split
+		// Channels, every channel of a file with several onto a new track of its own.
+		void importToSelection(const std::vector<std::string>& files, const std::vector<uint64_t>& selection);
 
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
 		// zoom.full, zoom.undo, zoom.redo and view.autoScroll (on or off); locate.nudgeCursorLeft and
@@ -363,7 +368,9 @@ namespace gnubase::ui
 			std::optional<uint64_t> track;
 			int64_t sample = 0;
 			bool clipsOnly = false;
+			bool selected = false; // track is the selected one, which takes the first file, not all of them
 		};
+		void startImport(const std::vector<std::string>& files, Import import);
 		void dropFiles(Rml::Event& event);
 		void openImportOptions(bool saved);
 		void importAudio(Rml::Element& dialog);
