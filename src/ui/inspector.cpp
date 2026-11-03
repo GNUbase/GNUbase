@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/inspector.h"
 
+#include "ui/widgetutils.h"
+
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Elements/ElementFormControlSelect.h>
@@ -61,11 +63,11 @@ namespace gnubase::ui
 		}
 
 		// The object with that id in a list of the project, or null.
-		const Json* findIn(const Json& project, const char* list, const Json& id)
+		const Json* findIn(const Json* project, const char* list, const Json& id)
 		{
-			if (!project.is_object())
+			if (project == nullptr || !project->is_object())
 				return nullptr;
-			for (const Json& object : project.at(list))
+			for (const Json& object : project->at(list))
 				if (object.at("id") == id)
 					return &object;
 			return nullptr;
@@ -130,11 +132,19 @@ namespace gnubase::ui
 		}
 	}
 
-	Inspector::Inspector(EngineBinding& binding, Rml::Element& root) : m_binding(binding), m_root(root.GetObserverPtr())
+	Inspector::Inspector(EngineBinding& binding, Rml::Element& root)
+		: m_binding(binding), m_root(root.GetObserverPtr()),
+		  // Another project replaces the edits in progress: the ids they were for may be the new project's too.
+		  m_reset(binding.on("project.reset", [this](const engine::Event&) { dropEdits(); }))
 	{
 		root.SetClass("inspector", true);
-		root.SetAttribute("contextmenu", "inspector-setup"); // Set up Sections, in the project window's document
+		// Set up Sections from an empty area (p. 167), in the project window's document; the controls have none.
+		root.SetAttribute("contextmenu", "inspector-setup");
 		root.SetInnerRML(g_rml);
+		Rml::ElementList controls;
+		root.QuerySelectorAll(controls, "[control], textarea, .inserts");
+		for (Rml::Element* control : controls)
+			control->SetAttribute("contextmenu", "");
 		root.AddEventListener(Rml::EventId::Click, this);
 		root.AddEventListener(Rml::EventId::Change, this);
 		root.AddEventListener(Rml::EventId::Blur, this, true);    // blur doesn't bubble
@@ -154,8 +164,10 @@ namespace gnubase::ui
 
 	void Inspector::update(uint64_t track, const Json& project, uint64_t loads)
 	{
-		if (track == m_track && loads == m_loads)
+		m_project = &project;
+		if (track == m_track && loads == m_loads && !m_stale)
 			return;
+		m_stale = false;
 		// An edit belongs to the track it started on: leaving the field takes it there before another track shows.
 		Rml::Context* context = m_root ? m_root->GetContext() : nullptr;
 		if (Rml::Element* focus = context != nullptr ? context->GetFocusElement() : nullptr;
@@ -163,8 +175,19 @@ namespace gnubase::ui
 			focus->Blur();
 		m_track = track;
 		m_loads = loads;
-		m_project = project;
 		show();
+	}
+
+	void Inspector::dropEdits()
+	{
+		Rml::Context* context = m_root ? m_root->GetContext() : nullptr;
+		Rml::Element* focus = context != nullptr ? context->GetFocusElement() : nullptr;
+		if (focus == nullptr || focus == m_root.get() || !m_root->Contains(focus))
+			return;
+		m_dropping = true;
+		focus->Blur();
+		m_dropping = false;
+		m_stale = true; // the fields show the channel's values again
 	}
 
 	void Inspector::show()
@@ -212,15 +235,18 @@ namespace gnubase::ui
 			if (audio)
 			{
 				if (Rml::Element* volume = element("valuefield[control=volume]"))
-					volume->SetAttribute("value", std::to_string(channel->at("volume").get<double>()));
+				{
+					volume->SetAttribute("max", widgets::format(m_project->value("maxVolume", 6.0F)));
+					volume->SetAttribute("value", widgets::format(channel->at("volume").get<float>()));
+				}
 				if (Rml::Element* pan = element("valuefield[control=pan]"))
-					pan->SetAttribute("value", std::to_string(channel->at("pan").get<double>() * 100.0));
+					pan->SetAttribute("value", widgets::format(channel->at("pan").get<float>() * 100.0F));
 			}
 			const auto id = channel->at("id").get<uint64_t>();
 			if (Rml::Element* output = element("select[control=output]"))
-				fill(*output, outputs(m_project, type, id), std::to_string(channel->at("output").get<uint64_t>()));
+				fill(*output, outputs(*m_project, type, id), std::to_string(channel->at("output").get<uint64_t>()));
 			if (Rml::Element* input = element("select[control=input]"); input != nullptr && type == "audio")
-				fill(*input, inputs(m_project), std::to_string(channel->at("input").get<uint64_t>()));
+				fill(*input, inputs(*m_project), std::to_string(channel->at("input").get<uint64_t>()));
 
 			// The inserts: an overview of the slots, bypassed and deactivated ones marked.
 			std::string slots;
@@ -259,11 +285,11 @@ namespace gnubase::ui
 				}
 			break;
 		case Rml::EventId::Change:
-			if (!m_showing && target->HasAttribute("control"))
+			if (!m_showing && !m_dropping && target->HasAttribute("control"))
 				change(*target, event);
 			break;
 		case Rml::EventId::Blur:
-			if (target->IsClassSet("notepad"))
+			if (target->IsClassSet("notepad") && !m_dropping)
 				saveNotes();
 			break;
 		case Rml::EventId::Keydown:
@@ -289,20 +315,23 @@ namespace gnubase::ui
 		}
 		if (!m_channel.is_object())
 			return;
+		if (name == "volume" || name == "pan")
+		{
+			// A drag, wheel turns or a held arrow key: one undo step.
+			const double number = event.GetParameter<float>("value", 0.0F);
+			const Json channel = m_channel.at("id");
+			const Json step = {{"command", "channel.set"},
+				{"parameters", {{"channel", channel}, {name, name == "volume" ? number : number / 100.0}}}};
+			m_binding.sendStep(event.GetParameter<int>("gesture", 0), "channel " + channel.dump() + " " + name,
+				name == "volume" ? "Change Volume" : "Change Pan", Json::array({step}), whenRefused());
+			return;
+		}
 		std::string key = name;
 		Json value;
 		if (name == "mute" || name == "solo" || name == "monitor" || name == "record")
 		{
 			key = name == "record" ? "recordEnable" : name;
 			value = event.GetParameter<bool>("value", false);
-		}
-		else if (name == "volume")
-		{
-			value = event.GetParameter<float>("value", 0.0F);
-		}
-		else if (name == "pan")
-		{
-			value = event.GetParameter<float>("value", 0.0F) / 100.0;
 		}
 		else if (name == "input" || name == "output")
 		{
@@ -311,7 +340,22 @@ namespace gnubase::ui
 		// Not what it is already, such as a drop-down list that show filled.
 		if (value.is_null() || m_channel.value(key, Json()) == value)
 			return;
-		m_binding.send("channel.set", {{"channel", m_channel.at("id")}, {key, std::move(value)}});
+		sendChannel({{key, std::move(value)}});
+	}
+
+	void Inspector::sendChannel(Json parameters)
+	{
+		parameters["channel"] = m_channel.at("id");
+		m_binding.send("channel.set", std::move(parameters), whenRefused());
+	}
+
+	std::function<void(const engine::Result&)> Inspector::whenRefused()
+	{
+		return [this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+		{
+			if (!alive.expired() && !result.ok())
+				m_stale = true;
+		};
 	}
 
 	void Inspector::saveNotes()
@@ -321,6 +365,6 @@ namespace gnubase::ui
 			: nullptr;
 		if (notes == nullptr || !m_channel.is_object() || notes->GetValue() == m_channel.value("notes", std::string()))
 			return;
-		m_binding.send("channel.set", {{"channel", m_channel.at("id")}, {"notes", notes->GetValue()}});
+		sendChannel({{"notes", notes->GetValue()}});
 	}
 }

@@ -26,11 +26,18 @@ shows it in a dialog from Edit > History; GNUbase shows it as the panel History 
   (`history.describe`) with Enter or when the field loses the focus. Clicks and keys in the field don't select its row,
   and the field keeps the focus and what was typed so far when another client's undo or redo moves its row across the
   separator.
+- **Gestures.** A `history.transaction` with a `merge` key joins the last step instead of adding one when that step is
+  a transaction with the same key and nothing was undone since; a gesture that ends where it started leaves no step.
+  The UI makes each gesture on a value widget one step this way (`EngineBinding::sendStep`, with the gesture number of
+  the widget's `change`, [widgets.md](widgets.md)): a drag of the mixer's faders, of the inspector's volume and pan
+  and of the info line's volume ([inspector.md](inspector.md)), wheel turns until the mouse leaves, an arrow key until
+  it is released. The steps of a gesture still go to the engine one by one, so that it is heard while it lasts.
 - **Through the engine.** Everything the panel does goes through these engine commands, so MCP and Lua clients jump
   with `history.undo` and `history.redo` by the difference between the position they want and `history.get`'s.
 - **Not yet:** the maximum number of undo steps in the preferences (p. 112), which `history.set` already sets; and a
   wider default for the panel, whose zone the user sizes with its splitter.
-- **Tests:** `tests/historypanel_tests.cpp` opens the panel through its UI command in the app's project window and
+- **Tests:** `tests/history_tests.cpp` checks merged transactions: one undo step per key, none after another step or
+  an undo, and none for a gesture that ends where it started. `tests/historypanel_tests.cpp` opens the panel through its UI command in the app's project window and
   drives it with `ui::Automation`: it lists the steps with their action, time and state with the separator after the
   done ones, clicks undo several steps, undo everything and redo some again, typing details reaches the engine without
   moving the position, undo, redo and details from another client show, and a new project empties it. Dragging the

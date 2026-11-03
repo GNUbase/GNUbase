@@ -592,7 +592,7 @@ namespace gnubase::engine
 				const std::set<ObjectId> edited(ids.begin(), ids.end());
 				for (const auto& [id, event] : project.audioEvents)
 				{
-					if (edited.count(id) != 0)
+					if (edited.count(id) != 0 || edited.count(event.part) != 0) // an edited part's events move with it
 						continue;
 					const EventSpan span = eventSpan(project, event);
 					target.magnets.push_back(span.start);
@@ -602,14 +602,18 @@ namespace gnubase::engine
 						target.magnets.push_back(span.start +
 							std::llround(static_cast<double>(*event.snapPoint - event.offset) * span.ratio));
 				}
+				const auto partEdges = [&](ObjectId id, const time::Position& position, int64_t length)
+				{
+					if (edited.count(id) != 0)
+						return;
+					target.magnets.push_back(time::toSamples(position, project.tempo, project.sampleRate));
+					target.magnets.push_back(
+						time::toSamples({position.base, position.value + length}, project.tempo, project.sampleRate));
+				};
 				for (const auto& [id, part] : project.midiParts)
-					if (edited.count(id) == 0)
-					{
-						target.magnets.push_back(time::toSamples(part.position, project.tempo, project.sampleRate));
-						target.magnets.push_back(
-							time::toSamples({part.position.base, part.position.value + part.length}, project.tempo,
-								project.sampleRate));
-					}
+					partEdges(id, part.position, part.length);
+				for (const auto& [id, part] : project.audioParts)
+					partEdges(id, part.position, part.length);
 				for (const auto& [id, marker] : project.markers)
 				{
 					target.magnets.push_back(time::toSamples(marker.position, project.tempo, project.sampleRate));

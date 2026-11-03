@@ -7,8 +7,9 @@ gestures and edit commands in `src/ui/eventediting.cpp` ([event-display.md](even
 
 ## Engine commands
 
-The `event.*` commands take audio events and MIDI parts alike, by id (`events`), as the reference treats both as
-events. Each is one undo step and changes nothing if it fails.
+The `event.*` commands take audio events, audio parts and MIDI parts alike, by id (`events`), as the reference treats
+them all as events; [audio-parts.md](audio-parts.md) has what they do to audio parts. Each is one undo step and changes
+nothing if it fails.
 
 | Command | What it does | Reference |
 |---|---|---|
@@ -37,9 +38,9 @@ events. Each is one undo step and changes nothing if it fails.
 - **Splitting** an audio event gives the piece before the split its fade in, the piece after it its fade out; an event
   that crossfaded from it now crossfades from the piece it overlaps. A MIDI part's notes stay in the part they start in,
   sticking out of it, or with `splitNotes` (the reference's Split MIDI Events preference) are cut in two.
-- **Gluing** audio events works where one continues the other in the same clip, as after a split, and makes one event;
-  the reference makes an audio part of other events, which waits for audio parts. MIDI parts become one part from the
-  first start to the last end, with every note and controller.
+- **Gluing** audio events where one continues the other in the same clip, as after a split, makes one event; other
+  audio events and audio parts become one audio part ([audio-parts.md](audio-parts.md)). MIDI parts become one part
+  from the first start to the last end, with every note and controller.
 - **Muting.** Muted audio events and MIDI parts don't play (the render snapshot leaves muted parts out). In DAWproject a
   muted part, like a muted event, is a disabled clip.
 - **Locks.** A locked event can't be moved, resized, split, glued or removed through the `event.*` commands; it can
@@ -81,6 +82,8 @@ modifiers, which change the keys below):
 | Drag within 6 dp of an event's left or right edge | Resizes the selection: normal sizing, or sizing moves contents (`setSizingMovesContents`) | p. 265 |
 | Alt and a click | Splits the event there | p. 268 |
 | Double click on an empty MIDI or instrument lane | Adds a one-bar part at the bar, or one between the locators when the click is between them | p. 251 |
+| Double click on an empty audio lane between the locators | Adds an audio part from one locator to the other | p. 250 |
+| Alt and a drag or click on an empty lane | Draws a part, as the draw tool does ([tools.md](tools.md)) | p. 250 |
 | Double click below the tracks | Adds a MIDI track ([add-track.md](add-track.md)) | p. 198 |
 
 The edit commands are in `actions()`, for the key command system to bind (#57): `edit.delete`, `edit.mute`,

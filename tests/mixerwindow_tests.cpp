@@ -152,6 +152,9 @@ TEST_CASE("a mixer window opens with F3 and follows the track list live", "[ui]"
 	app.ui().drag(window, {strip(guitar.channel) + " .fader-cap", 0, std::nullopt},
 		{strip(guitar.channel) + " .mixer-volume", 0, std::nullopt});
 	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("volume").get<double>() < -30.0; }));
+	// The drag is one undo step.
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("volume") == -6.0; }));
 	click(app, window, strip(guitar.channel) + " button[control=mute]");
 	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("mute") == true; }));
 	REQUIRE(app.waitUntil(

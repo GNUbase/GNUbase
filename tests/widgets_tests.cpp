@@ -391,7 +391,7 @@ TEST_CASE("text displays show their value, and a double click edits it as text",
 	};
 	CHECK(count() == 1);
 
-	// Nor do Enter or leaving the field while the text is still what the field started with.
+	// Nor do Enter or leaving the field when nothing was typed.
 	app.ui().click(std::nullopt, at("#position"), ui::MouseButton::Left, 2, {});
 	app.ui().key(std::nullopt, "Enter");
 	CHECK_FALSE(has(element(app, "#position"), "classes", "editing"));
@@ -399,6 +399,67 @@ TEST_CASE("text displays show their value, and a double click edits it as text",
 	click(app, "#left");
 	CHECK_FALSE(has(element(app, "#position"), "classes", "editing"));
 	CHECK(count() == 1);
+
+	// Typing the text it started with sends it: the display may show a rounded value, or one that has moved on since.
+	type("5.1.1.0", "Enter");
+	CHECK(count() == 2);
+	CHECK(page.events->changes.back().second.Get<Rml::String>() == "5.1.1.0");
+
+	// A starting text that the text field cleans up, such as one with a tab, isn't typing either.
+	page.document->GetElementById("position")->SetAttribute("value", "a\tb");
+	app.shell().step(std::chrono::milliseconds(0));
+	app.ui().click(std::nullopt, at("#position"), ui::MouseButton::Left, 2, {});
+	app.ui().key(std::nullopt, "Enter");
+	CHECK_FALSE(has(element(app, "#position"), "classes", "editing"));
+	CHECK(count() == 2);
+}
+
+TEST_CASE("value fields change when a number is typed, also the one they show, and not without typing", "[ui]")
+{
+	test::UiApp app;
+	ValuesPage page(app);
+	const auto text = [&app] { return element(app, "#gain .valuefield-text").at("text").get<std::string>(); };
+	const auto changes = [&page]
+	{
+		size_t found = 0;
+		for (const auto& change : page.events->changes)
+			found += change.first == "gain" ? 1 : 0;
+		return found;
+	};
+
+	// A value with more decimals than the field shows stays as it is after Enter or leaving the field untouched.
+	page.gain = 1.234F;
+	page.model.changed("gain");
+	REQUIRE(app.waitUntil([&text] { return text() == "1.2 dB"; }));
+	app.ui().click(std::nullopt, at("#gain"), ui::MouseButton::Left, 2, {});
+	CHECK(element(app, "#gain input").at("value") == "1.2");
+	app.ui().key(std::nullopt, "Enter");
+	CHECK_FALSE(has(element(app, "#gain"), "classes", "editing"));
+	app.ui().click(std::nullopt, at("#gain"), ui::MouseButton::Left, 2, {});
+	app.ui().click(std::nullopt, {"", 0, ui::Point{300, 400}}, ui::MouseButton::Left, 1, {});
+	CHECK_FALSE(has(element(app, "#gain"), "classes", "editing"));
+	CHECK(changes() == 0);
+	CHECK(page.gain == 1.234F);
+
+	// Typing the number it shows takes that number.
+	app.ui().click(std::nullopt, at("#gain"), ui::MouseButton::Left, 2, {});
+	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().text(std::nullopt, "1.2");
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(changes() == 1);
+	CHECK(page.gain == Catch::Approx(1.2F));
+
+	// Typing and then Escape keeps the value, and the next edit starts untouched again.
+	page.gain = 1.234F;
+	page.model.changed("gain");
+	REQUIRE(app.waitUntil([&page] { return page.value("#gain") == 1.234F; }));
+	app.ui().click(std::nullopt, at("#gain"), ui::MouseButton::Left, 2, {});
+	app.ui().text(std::nullopt, "7");
+	app.ui().key(std::nullopt, "Escape");
+	app.ui().click(std::nullopt, at("#gain"), ui::MouseButton::Left, 2, {});
+	app.ui().key(std::nullopt, "Enter");
+	CHECK(changes() == 1);
+	CHECK(page.gain == 1.234F);
 }
 
 TEST_CASE("meters show the level and the peak in dB", "[ui]")
