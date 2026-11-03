@@ -74,6 +74,108 @@ namespace gnubase::engine
 		Combined, // pans the left and the right channel each on its own, linked or apart
 	};
 
+	// The channel strip's sections before the fader (#107, docs/features/channel-strip.md): the pre section's gain,
+	// phase and cut filters, the four-band equalizer and the strip's dynamics. All of them start off, so a new
+	// channel passes its audio unchanged.
+	struct CutFilter
+	{
+		bool on = false;
+		double frequency = 20.0; // Hz: a low cut from 20 to 20000, a high cut from 50 to 20000
+		int slope = 12;          // dB per octave: 6, 12, 24, 36 or 48
+	};
+
+	enum class EqBandType : uint8_t
+	{
+		Bell,
+		LowShelf,  // band 1
+		HighShelf, // band 4
+		LowCut,    // band 1, 12 dB per octave
+		HighCut,   // band 4, 12 dB per octave
+	};
+
+	struct EqBand
+	{
+		bool on = false;
+		EqBandType type = EqBandType::Bell;
+		double frequency = 1000.0; // Hz, 20 to 20000
+		double gain = 0.0;         // dB, -24 to 24
+		double q = 1.0;            // 0.1 to 12
+	};
+
+	struct StripGate
+	{
+		bool on = false;
+		double threshold = -40.0; // dB, -80 to 0
+		double range = -80.0;     // dB, -80 to 0: the gain while closed
+		double attack = 0.1;      // ms, 0.01 to 100
+		double release = 100.0;   // ms, 1 to 4000
+	};
+
+	struct StripCompressor
+	{
+		bool on = false;
+		double threshold = -20.0; // dB, -60 to 0
+		double ratio = 4.0;       // 1 to 20
+		double attack = 10.0;     // ms, 0.1 to 100
+		double release = 100.0;   // ms, 10 to 2000
+		double makeup = 0.0;      // dB, 0 to 24
+	};
+
+	struct StripLimiter
+	{
+		bool on = false;
+		double threshold = 0.0; // dB, -30 to 0: no sample leaves above it
+		double release = 50.0;  // ms, 1 to 1000
+	};
+
+	struct ChannelSections
+	{
+		double gain = 0.0;  // the pre gain, dB, -24 to 24
+		bool phase = false; // inverts the polarity
+		CutFilter lowCut{false, 20.0, 12};
+		CutFilter highCut{false, 20000.0, 12};
+		bool eqBypass = false;
+		std::array<EqBand, 4> eq = {
+			{{false, EqBandType::LowShelf, 100.0, 0.0, 0.71}, {false, EqBandType::Bell, 500.0, 0.0, 1.0},
+				{false, EqBandType::Bell, 2000.0, 0.0, 1.0}, {false, EqBandType::HighShelf, 8000.0, 0.0, 0.71}}};
+		StripGate gate;
+		StripCompressor compressor;
+		StripLimiter limiter;
+	};
+
+	inline bool operator==(const CutFilter& a, const CutFilter& b)
+	{
+		return std::tie(a.on, a.frequency, a.slope) == std::tie(b.on, b.frequency, b.slope);
+	}
+
+	inline bool operator==(const EqBand& a, const EqBand& b)
+	{
+		return std::tie(a.on, a.type, a.frequency, a.gain, a.q) == std::tie(b.on, b.type, b.frequency, b.gain, b.q);
+	}
+
+	inline bool operator==(const StripGate& a, const StripGate& b)
+	{
+		return std::tie(a.on, a.threshold, a.range, a.attack, a.release) ==
+			std::tie(b.on, b.threshold, b.range, b.attack, b.release);
+	}
+
+	inline bool operator==(const StripCompressor& a, const StripCompressor& b)
+	{
+		return std::tie(a.on, a.threshold, a.ratio, a.attack, a.release, a.makeup) ==
+			std::tie(b.on, b.threshold, b.ratio, b.attack, b.release, b.makeup);
+	}
+
+	inline bool operator==(const StripLimiter& a, const StripLimiter& b)
+	{
+		return std::tie(a.on, a.threshold, a.release) == std::tie(b.on, b.threshold, b.release);
+	}
+
+	inline bool operator==(const ChannelSections& a, const ChannelSections& b)
+	{
+		return std::tie(a.gain, a.phase, a.lowCut, a.highCut, a.eqBypass, a.eq, a.gate, a.compressor, a.limiter) ==
+			std::tie(b.gain, b.phase, b.lowCut, b.highCut, b.eqBypass, b.eq, b.gate, b.compressor, b.limiter);
+	}
+
 	// The mixer channel of a track. MIDI tracks have a MIDI channel: no audio channels, and their output is an
 	// instrument track's channel.
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
@@ -117,6 +219,10 @@ namespace gnubase::engine
 		// The notepad (reference manual p. 168): the user's notes on the channel, in the inspector and the mixer.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		std::string notes = {};
+		// Audio channels: the strip's sections before the fader. Pre runs before the plugin slots, the equalizer and
+		// the dynamics after them.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		ChannelSections sections = {};
 	};
 
 	// A channel has at most this many plugin slots (reference manual p. 544).
@@ -567,10 +673,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor, a.recordEnable,
-				   a.midiInput, a.mute, a.solo, a.slots, a.notes) ==
+				   a.midiInput, a.mute, a.solo, a.slots, a.notes, a.sections) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable,
-				b.midiInput, b.mute, b.solo, b.slots, b.notes);
+				b.midiInput, b.mute, b.solo, b.slots, b.notes, b.sections);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)

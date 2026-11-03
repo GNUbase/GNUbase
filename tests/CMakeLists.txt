@@ -33,6 +33,7 @@ add_executable(gnubase-tests
 	bus_tests.cpp
 	canvas_tests.cpp
 	channelformat_tests.cpp
+	channelstrip_tests.cpp
 	clock_tests.cpp
 	color_tests.cpp
 	coverage_tests.cpp
@@ -59,6 +60,7 @@ add_executable(gnubase-tests
 	ipc_tests.cpp
 	keycommands_tests.cpp
 	latency_tests.cpp
+	lockrecord_tests.cpp
 	log_tests.cpp
 	mainmenu_tests.cpp
 	marker_tests.cpp

@@ -66,6 +66,9 @@ namespace gnubase::engine
 		bool metronome = false;
 		AudioRecordMode audioRecordMode = AudioRecordMode::KeepHistory;
 		MidiRecordMode midiRecordMode = MidiRecordMode::NewParts;
+		// Lock Record (reference manual p. 356): the commands refuse to stop or punch out a recording unless the stop
+		// is confirmed, and recording ignores the automatic punch out.
+		bool lockRecord = false;
 	};
 
 	// The project cursor, play and stop, recording, and cycle playback. The command thread sends requests; the audio

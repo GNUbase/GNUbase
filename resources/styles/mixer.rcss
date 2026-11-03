@@ -85,6 +85,47 @@
 	box-sizing: border-box;
 }
 
+/* The pre section, the equalizer and the strip's dynamics: small knobs and fields in rows that wrap */
+.mixer-section
+{
+	display: flex;
+	flex-direction: column;
+	flex-shrink: 0;
+	margin-bottom: 4dp;
+}
+
+.mixer-row
+{
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	margin-top: 2dp;
+}
+
+.mixer-section knob, .mixer-pan
+{
+	width: 22dp;
+	height: 22dp;
+	margin: 1dp;
+}
+
+.mixer-section valuefield
+{
+	width: 100%;
+	height: 18dp;
+}
+
+.mixer-section button.toggle
+{
+	margin: 1dp;
+}
+
+.mixer-pan
+{
+	flex-shrink: 0;
+	margin-bottom: 4dp;
+}
+
 .mixer-fader
 {
 	flex: 1 1 0;
