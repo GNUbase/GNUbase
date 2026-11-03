@@ -503,7 +503,10 @@ namespace gnubase::engine
 			clips.push_back(clip);
 
 			const auto endOf = [ratio](const Take& each)
-			{ return each.position + std::llround(static_cast<double>(each.length) * ratio); };
+			{
+				return each.position +
+					static_cast<time::Samples>(std::llround(static_cast<double>(each.length) * ratio));
+			};
 			if (mode == "cycleHistoryReplace")
 				for (const Take& each : takes) // before any take is added, so that every take stays
 					replace(trackId, each.position, endOf(each));
