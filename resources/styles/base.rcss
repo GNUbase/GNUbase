@@ -45,6 +45,13 @@ button
 	nav: auto;
 }
 
+/* Toolbar and transport buttons are for the mouse: a click focuses them, but Tab skips them and Space and Enter go to
+   the key commands, so Space still starts and stops playback (#456, docs/features/widgets.md). */
+.toolbar button, .transport button
+{
+	tab-index: none;
+}
+
 /* A disabled button lets clicks pass and takes no focus (ui/widgets.h). */
 button:disabled
 {

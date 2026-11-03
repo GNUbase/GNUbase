@@ -20,7 +20,10 @@ so every document in the app and in UI tests has them.
 
 - `<button>` is clicked with the mouse, or with Space or Enter while it has the focus. With the `disabled` attribute it
   gets `:disabled`, takes no focus, and clicks pass through it. `button.primary`, `button.icon-only` and the small
-  track buttons `button.toggle` (`.mute`, `.solo`, `.record`, `.monitor`) are looks from the theme.
+  track buttons `button.toggle` (`.mute`, `.solo`, `.record`, `.monitor`) are looks from the theme. Buttons in a
+  `.toolbar` (the project window's, the mixer's, the pool's) and in the transport controls (`.transport`) are for the
+  mouse, as in the reference (reference manual pp. 295-311): a click focuses them, but Tab skips them and Space and
+  Enter go on to the key commands, so Space still starts and stops playback after a click on Cycle or Snap (#456).
 - `<button type="toggle">` is a toggle button: a click turns it on or off. Its state is the `checked` attribute, as
   for check boxes, shown by the state class `.checked`; it sends `change` with the new state as a bool, so
   `data-checked="muted"` binds it.
