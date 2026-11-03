@@ -32,6 +32,15 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
 - **Positions.** In bars and beats the moves and resizes are in ticks, exact on musical tracks; in the other formats
   in samples. Lengths are typed as `formatLength` shows them, e.g. "2.0.0.0" for two bars.
 - The themes give `.multiple` its own color, as the reference shows a multiple selection "in another color".
+- **Markers** (p. 430). `AppUi` gives the info line the markers selected on the marker tracks
+  (`ui::MarkerLines::selection`, [markers.md](markers.md)). When that selection changed last, the info line has the
+  class `markers` and shows the first selected marker in timeline order: its description (`field=name`, labelled
+  Description) and position (`field=start`, labelled Position), and for a cycle marker its end and length; volume,
+  mute and lock are `.hidden`. Edits go to every selected marker as one `history.transaction` of `marker.set`s, as for
+  events: relative to the first one's value, or with Ctrl+Enter the same value for all. A new position keeps a cycle
+  marker's length; end and length change the cycle markers. The project window selects events or markers:
+  selecting an event deselects the markers (`AppUi`, `MarkerLines::deselect`), a marker clicked deselects the events.
+  A selection that names only markers the project no longer has shows `.empty`, until the marker lines drop them.
 
 ## Inspector
 
@@ -88,7 +97,10 @@ Expand Sections Exclusively, and the Channel zone's channel strip (#107).
 - `tests/inspector_tests.cpp` drives the app's project window with `ui::Automation`: the info line of one and of two
   selected parts, start, length (relative and with Ctrl+Enter absolute, also with the first part's own value, after
   which an edit taken by leaving the field is relative again) and end edits with undo, name, mute and lock
-  for every selected part, changes from another client, an audio event's volume; the inspector's buttons, volume and
+  for every selected part, changes from another client, an audio event's volume; a marker selected on the marker
+  track with each field edited, two markers changed relatively and with Ctrl+Enter in one undo step, and an event
+  selected after it; a marker clicked again after a part, Ctrl+Enter on the first marker's own position with a part
+  shown before, and a selection naming removed markers; the inspector's buttons, volume and
   pan both ways, the output from another client and from the drop-down list, the inserts overview with a bypassed
   slot, the notepad, renaming, notes and a name being typed when another track is selected, closing a section, hiding one in Set up Sections, and what a group and a marker track
   don't have.

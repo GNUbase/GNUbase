@@ -1,0 +1,171 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The fade dialog for event fades (#138, docs/features/fades.md, reference manual pp. 385-387): the fade in and
+     fade out of the audio events in the document's attribute events (ids). ui::EventDisplay opens it
+     (audio.fadeEditor). Its Lua shows the first event's fades when the dialog shows; OK gives every event the curves
+     and, with Apply Length, the lengths in milliseconds, as one undo step (history.transaction of
+     audioEvent.setFades). Cancel drops them. -->
+<rml>
+<head>
+	<title>Fades</title>
+	<style>
+		dialog
+		{
+			width: 420dp;
+		}
+
+		#fade-editor-fields
+		{
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.field
+		{
+			display: flex;
+			align-items: center;
+			height: 28dp;
+		}
+
+		.field .label
+		{
+			width: 180dp;
+		}
+
+		.field select, .field input.text
+		{
+			width: 180dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#fade-editor-message
+		{
+			flex: 1;
+		}
+
+		.row button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		-- The dialog's state, in the UI's Lua: each event's length and its clip's frames per millisecond.
+		FadeEditor = {}
+		local dialog = FadeEditor
+
+		local shapes = {{"linear", "Linear"}, {"exponential", "Exponential"}, {"logarithmic", "Logarithmic"},
+			{"sCurve", "S-Curve"}, {"equalPower", "Equal Power"}}
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local function field(label, control)
+			return '<div class="field"><span class="label">' .. escape(label) .. "</span>" .. control .. "</div>"
+		end
+
+		local function dropDown(id, choices, current)
+			local options = {}
+			for _, choice in ipairs(choices) do
+				options[#options + 1] = '<option value="' .. choice[1] .. '"' .. (choice[1] == current and " selected" or "") ..
+					">" .. escape(choice[2]) .. "</option>"
+			end
+			return '<select id="' .. id .. '">' .. table.concat(options) .. "</select>"
+		end
+
+		local function valueOf(document, id)
+			local value = document:GetElementById(id):GetAttribute("value")
+			return value ~= nil and tostring(value) or ""
+		end
+
+		local function framesPerMs(project, event)
+			local media = nil
+			for _, clip in ipairs(project.clips) do
+				if clip.id == event.clip then
+					media = clip.media
+				end
+			end
+			for _, file in ipairs(project.media) do
+				if file.id == media then
+					return file.sampleRate / 1000
+				end
+			end
+			return project.sampleRate / 1000
+		end
+
+		function dialog.load(document)
+			local wanted = {}
+			for id in tostring(document:GetAttribute("events") or ""):gmatch("%d+") do
+				wanted[tonumber(id)] = true
+			end
+			local project = gnubase.project.get()
+			dialog.events = {}
+			local first = nil
+			for _, event in ipairs(project.audioEvents) do
+				if wanted[event.id] then
+					dialog.events[#dialog.events + 1] = {id = event.id, length = event.length,
+						rate = framesPerMs(project, event)}
+					first = first or {event = event, rate = framesPerMs(project, event)}
+				end
+			end
+			if first == nil then
+				document:Close()
+				return
+			end
+			local function ms(fade)
+				return string.format("%.1f", fade.length / first.rate)
+			end
+			document:GetElementById("fade-editor-fields").inner_rml =
+				field("Fade In", dropDown("fade-in-shape", shapes, first.event.fadeIn.shape)) ..
+				field("Fade In Length (ms)",
+					'<input type="text" id="fade-in-length" value="' .. ms(first.event.fadeIn) .. '"/>') ..
+				field("Fade Out", dropDown("fade-out-shape", shapes, first.event.fadeOut.shape)) ..
+				field("Fade Out Length (ms)",
+					'<input type="text" id="fade-out-length" value="' .. ms(first.event.fadeOut) .. '"/>') ..
+				field("Apply Length", '<input type="checkbox" id="fade-apply-length" checked/>')
+		end
+
+		function dialog.ok(document)
+			local applyLength = document:GetElementById("fade-apply-length"):HasAttribute("checked")
+			local inMs = tonumber(valueOf(document, "fade-in-length"))
+			local outMs = tonumber(valueOf(document, "fade-out-length"))
+			if applyLength and (inMs == nil or outMs == nil or inMs < 0 or outMs < 0) then
+				document:GetElementById("fade-editor-message").inner_rml = "Lengths must be milliseconds, 0 or more"
+				return
+			end
+			local commands = {}
+			for _, event in ipairs(dialog.events) do
+				local fadeIn = {shape = valueOf(document, "fade-in-shape")}
+				local fadeOut = {shape = valueOf(document, "fade-out-shape")}
+				if applyLength then
+					-- Both fit into the event: the fade in first.
+					fadeIn.length = math.min(event.length, math.floor(inMs * event.rate + 0.5))
+					fadeOut.length = math.min(event.length - fadeIn.length, math.floor(outMs * event.rate + 0.5))
+				end
+				commands[#commands + 1] = {command = "audioEvent.setFades",
+					parameters = {event = event.id, fadeIn = fadeIn, fadeOut = fadeOut}}
+			end
+			local ok, failure = pcall(gnubase.history.transaction, {description = "Change fades", commands = commands})
+			if ok then
+				document:Close()
+			else
+				document:GetElementById("fade-editor-message").inner_rml = escape(tostring(failure))
+			end
+		end
+	</script>
+</head>
+<body onshow="FadeEditor.load(document)">
+	<dialog id="fade-editor">
+		<div class="dialog-titlebar">Fades</div>
+		<div id="fade-editor-fields"/>
+		<div class="row">
+			<div id="fade-editor-message"/>
+			<button id="fade-editor-cancel" result="cancel">Cancel</button>
+			<button id="fade-editor-ok" class="primary" onclick="FadeEditor.ok(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

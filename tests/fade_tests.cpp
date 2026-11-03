@@ -864,3 +864,132 @@ TEST_CASE("a render of equal power crossfades matches its golden file", "[integr
 	INFO(diff.report);
 	CHECK(diff.equal);
 }
+
+namespace
+{
+	// An audio event as project.get has it.
+	Json eventOf(Client& client, ObjectId id)
+	{
+		const Json project = run(client, "project.get");
+		for (const Json& event : project.at("audioEvents"))
+			if (event.at("id") == id)
+				return event;
+		FAIL("no audio event " << id);
+	}
+
+	// Its fade in's and fade out's lengths.
+	std::pair<int64_t, int64_t> fadeLengths(Client& client, ObjectId id)
+	{
+		const Json event = eventOf(client, id);
+		return {event.at("fadeIn").at("length").get<int64_t>(), event.at("fadeOut").at("length").get<int64_t>()};
+	}
+
+	ObjectId crossfadeFrom(Client& client, ObjectId id)
+	{
+		const Json crossfade = eventOf(client, id).at("crossfade");
+		return crossfade.is_null() ? 0 : crossfade.at("from").get<ObjectId>();
+	}
+
+	using Lengths = std::pair<int64_t, int64_t>;
+}
+
+TEST_CASE("range.fades fades events in to or out from a range's edges, and adjusts both to it", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	Session session;
+	Client& client = session.client;
+	const ObjectId track = session.addTrack();
+	const ObjectId other = session.addTrack();
+	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 20000, one));
+	const ObjectId a = session.addEvent(track, clip, 1000, 4000); // 1000 to 5000
+	const ObjectId b = session.addEvent(other, clip, 1000, 4000);
+
+	// Fade In to Range Start: from the event's start to the range's start; a range that covers the start fades in
+	// up to its end. Only the range's tracks.
+	CHECK(run(client, "range.fades", {{"start", 2000}, {"end", 3000}, {"tracks", {track}}, {"fade", "in"}})
+			  .at("events") == Json{a});
+	CHECK(fadeLengths(client, a) == Lengths{1000, 0});
+	CHECK(fadeLengths(client, b) == Lengths{0, 0});
+	run(client, "range.fades", {{"start", 0}, {"end", 2500}, {"tracks", {track}}, {"fade", "in"}});
+	CHECK(fadeLengths(client, a) == Lengths{1500, 0});
+
+	// Fade Out from Range End: from the range's end to the event's end; one that covers the end from its start.
+	run(client, "range.fades", {{"start", 3000}, {"end", 4000}, {"fade", "out"}});
+	CHECK(fadeLengths(client, a) == Lengths{1500, 1000});
+	CHECK(fadeLengths(client, b) == Lengths{0, 1000});
+	run(client, "range.fades", {{"start", 4500}, {"end", 6000}, {"tracks", {other}}, {"fade", "out"}});
+	CHECK(fadeLengths(client, b) == Lengths{0, 500});
+
+	// Adjust Fades to Range: inside the event, both fades up to the range's edges.
+	run(client, "range.fades", {{"start", 1200}, {"end", 4200}, {"tracks", {track}}, {"fade", "adjust"}});
+	CHECK(fadeLengths(client, a) == Lengths{200, 800});
+	// A fade that no longer fits shortens the other one.
+	run(client, "range.fades", {{"start", 0}, {"end", 4500}, {"tracks", {track}}, {"fade", "adjust"}});
+	CHECK(fadeLengths(client, a) == Lengths{3500, 500});
+
+	// One undo step each.
+	run(client, "history.undo");
+	CHECK(fadeLengths(client, a) == Lengths{200, 800});
+
+	CHECK_THAT(reject(client, "range.fades", {{"start", 6000}, {"end", 7000}, {"fade", "in"}}),
+		ContainsSubstring("no audio event"));
+	CHECK_THAT(
+		reject(client, "range.fades", {{"start", 3000}, {"end", 3000}, {"fade", "in"}}), ContainsSubstring("empty"));
+	CHECK(!client.call("range.fades", {{"start", 2000}, {"end", 3000}, {"fade", "sideways"}}).ok());
+}
+
+TEST_CASE("event.crossfade joins selected events with the overlapping ones next to them", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	Session session;
+	Client& client = session.client;
+	const ObjectId track = session.addTrack();
+	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 20000, one));
+	const ObjectId a = session.addEvent(track, clip, 0, 3000);
+	const ObjectId b = session.addEvent(track, clip, 2000, 3000);
+	const ObjectId c = session.addEvent(track, clip, 4000, 3000);
+	const ObjectId d = session.addEvent(track, clip, 8000, 1000); // apart
+
+	// Two events: the crossfade between them, with the default settings.
+	CHECK(run(client, "event.crossfade", {{"events", {a, b}}}).at("events") == Json{b});
+	CHECK(crossfadeFrom(client, b) == a);
+	CHECK(crossfadeFrom(client, c) == 0);
+	CHECK(eventOf(client, b).at("crossfade").at("mode") == "equalGain");
+	// One event: with the events on either side that it overlaps.
+	run(client, "history.undo");
+	CHECK(run(client, "event.crossfade", {{"events", {b}}}).at("events") == Json{b, c});
+	CHECK(crossfadeFrom(client, b) == a);
+	CHECK(crossfadeFrom(client, c) == b);
+
+	CHECK_THAT(reject(client, "event.crossfade", {{"events", {d}}}), ContainsSubstring("overlap"));
+	CHECK_THAT(reject(client, "event.crossfade", {{"events", {999}}}), ContainsSubstring("no audio event 999"));
+}
+
+TEST_CASE("event.removeFades removes the fades and crossfades at an event's ends", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	Session session;
+	Client& client = session.client;
+	const ObjectId track = session.addTrack();
+	const ObjectId clip = session.addClip(writeClip(dir, "one", 1, 20000, one));
+	const ObjectId a = session.addEvent(track, clip, 0, 3000);
+	const ObjectId b = session.addEvent(track, clip, 2000, 3000);
+	run(client, "audioEvent.setFades", {{"event", a}, {"fadeIn", {{"length", 500}}}, {"fadeOut", {{"length", 400}}}});
+	run(client, "audioEvent.setFades", {{"event", b}, {"fadeOut", {{"length", 300}}}});
+	run(client, "crossfade.set", {{"from", a}, {"to", b}});
+
+	// The fade in only: b's crossfade from a goes, its fade out stays.
+	run(client, "event.removeFades", {{"events", {b}}, {"fadeOut", false}});
+	CHECK(crossfadeFrom(client, b) == 0);
+	CHECK(fadeLengths(client, b) == Lengths{0, 300});
+	run(client, "history.undo");
+	// The fade out of a: its crossfade into b goes too.
+	run(client, "event.removeFades", {{"events", {a}}, {"fadeIn", false}});
+	CHECK(fadeLengths(client, a) == Lengths{500, 0});
+	CHECK(crossfadeFrom(client, b) == 0);
+	// Both.
+	CHECK(run(client, "event.removeFades", {{"events", {a, b}}}).at("events") == Json{a, b});
+	CHECK(fadeLengths(client, a) == Lengths{0, 0});
+	CHECK(fadeLengths(client, b) == Lengths{0, 0});
+	CHECK_THAT(reject(client, "event.removeFades", {{"events", {999}}}), ContainsSubstring("no audio event 999"));
+}

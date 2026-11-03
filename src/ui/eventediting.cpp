@@ -508,6 +508,9 @@ namespace gnubase::ui
 		const bool toolModifier = modifiers("select.setCursorPosition") || modifiers("select.splitEvent") ||
 			copyKeys(m_pressed) || copyKeys(withoutCtrl(m_pressed)) ||
 			((atStart || atEnd) && modifiers("sizeObjects.disableSnapping"));
+		// A fade handle (reference manual p. 383).
+		if (!add && !toolModifier && fadeDown(*shown, x, y))
+			return;
 		if (add && !toolModifier)
 		{
 			// Ctrl or Shift and a click adds an event to the selection or, released without moving, takes it out; a
@@ -540,6 +543,12 @@ namespace gnubase::ui
 		if (!m_dragMoved && std::abs(dx) < g_dragThreshold && std::abs(dy) < g_dragThreshold)
 			return;
 		m_dragMoved = true;
+		if (m_drag == Drag::FadeIn || m_drag == Drag::FadeOut)
+		{
+			m_dragDx = dx;
+			showFades();
+			return;
+		}
 		if (m_drag != Drag::Events && m_drag != Drag::ResizeStart && m_drag != Drag::ResizeEnd)
 			toolMove(m_pressX + dx, m_pressY + dy);
 		if (m_drag != Drag::Events)
@@ -609,6 +618,13 @@ namespace gnubase::ui
 			toolUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
 				(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
 			m_dragMoved = false;
+			m_drag = Drag::None;
+			return;
+		}
+		if (drag == Drag::FadeIn || drag == Drag::FadeOut)
+		{
+			if (m_dragMoved)
+				fadeUp();
 			m_drag = Drag::None;
 			return;
 		}
@@ -786,7 +802,12 @@ namespace gnubase::ui
 				m_drag = Drag::None; // the second press's release does nothing more
 			return;
 		}
-		if (y + m_view.top < 0.0 || eventAt(x, y) != nullptr)
+		if (const Shown* shown = eventAt(x, y); shown != nullptr)
+		{
+			openCrossfadeAt(*shown, m_view.start + (x * m_view.scale));
+			return;
+		}
+		if (y + m_view.top < 0.0)
 			return;
 		const std::optional<size_t> found = visibleLaneAt(y);
 		// Below the tracks, a new MIDI track (reference manual p. 198, the track list's empty area, #80).

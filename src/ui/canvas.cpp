@@ -2,6 +2,7 @@
 #include "ui/canvas.h"
 
 #include "engine/audio/automation.h"
+#include "engine/audio/fades.h"
 #include "ui/rmlui.h"
 
 #include <RmlUi/Core/ComputedValues.h>
@@ -97,6 +98,7 @@ namespace gnubase::ui
 		rmlui.registerElement<EventLanes>("event-lanes");
 		rmlui.registerElement<Waveform>("waveform");
 		rmlui.registerElement<Curve>("curve");
+		rmlui.registerElement<FadeLines>("fade-lines");
 		rmlui.registerElement<Ruler>("ruler");
 	}
 
@@ -410,6 +412,69 @@ namespace gnubase::ui
 			if (b.x > high)
 				cut(b, a, high);
 			line(mesh, a, b, colour, width);
+		}
+		meshes.push_back({std::move(mesh), {}});
+	}
+
+	void FadeLines::setLanes(std::vector<Lane> lanes)
+	{
+		m_lanes = std::move(lanes);
+		changed();
+	}
+
+	void FadeLines::build(const Frame& frame, Rml::TexturedMeshList& meshes)
+	{
+		const Colour colour = stroke();
+		const float width = strokeWidth();
+		const Colour handle = fill();
+		const double from = frame.from();
+		const double to = frame.to();
+		const double right = frame.right - frame.left;
+		const double handleSize = std::round(6.0 * frame.dpRatio);
+		Rml::Mesh mesh;
+		double top = 0.0; // dp
+		for (const Lane& lane : m_lanes)
+		{
+			const double y0 = std::round(top * frame.dpRatio);
+			top += lane.height;
+			const double y1 = std::round(top * frame.dpRatio);
+			if (y1 <= frame.top || y0 >= frame.bottom || y1 - y0 < 2.0)
+				continue;
+			const auto y = [&](double gain) { return frame.y(y1 - (gain * (y1 - y0 - width)) - (width / 2.0)); };
+			if (colour.alpha != 0 && width > 0.0F)
+				for (const FadeLine& fade : lane.fades)
+				{
+					if (!(fade.length > 0.0) || fade.start + fade.length <= from || fade.start >= to)
+						continue;
+					// A piece every 2 pixels, cut to the frame.
+					const double x0 = std::round(fade.start / frame.unitsPerPixel) - frame.left;
+					const double x1 = std::round((fade.start + fade.length) / frame.unitsPerPixel) - frame.left;
+					const double begin = std::max(x0, -2.0);
+					const double end = std::min(x1, right + 2.0);
+					const auto gain = [&](double x)
+					{
+						const double at = x1 > x0 ? (x - x0) / (x1 - x0) : 1.0;
+						return engine::fadeGain(fade.shape, fade.in ? at : 1.0 - at);
+					};
+					Rml::Vector2<double> last{begin, y(gain(begin))};
+					const auto pieces = static_cast<int64_t>(std::ceil((end - begin) / 2.0));
+					for (int64_t i = 1; i <= pieces; ++i)
+					{
+						const double x = std::min(begin + (2.0 * static_cast<double>(i)), end);
+						const Rml::Vector2<double> next{x, y(gain(x))};
+						line(mesh, last, next, colour, width);
+						last = next;
+					}
+				}
+			if (handle.alpha != 0)
+				for (const double at : lane.handles)
+					if (at >= from - (handleSize * frame.unitsPerPixel) &&
+						at <= to + (handleSize * frame.unitsPerPixel))
+					{
+						const double x = std::round(at / frame.unitsPerPixel) - frame.left;
+						quad(mesh, static_cast<float>(x - (handleSize / 2.0)), frame.y(y0),
+							static_cast<float>(x + (handleSize / 2.0)), frame.y(y0 + handleSize), handle);
+					}
 		}
 		meshes.push_back({std::move(mesh), {}});
 	}
