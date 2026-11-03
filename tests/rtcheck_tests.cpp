@@ -822,8 +822,8 @@ TEST_CASE("playing MIDI parts through an instrument, with edits, stops and cycle
 	CHECK(g_violations == 0);
 }
 
-TEST_CASE(
-	"playing automation of volume, pan, instrument parameters and controllers passes the RT checker", "[integration]")
+TEST_CASE("playing automation of volume, pan, instrument and plugin parameters and controllers passes the RT checker",
+	"[integration]")
 {
 	using gnubase::engine::Json;
 	gnubase::engine::Engine engine;
@@ -859,6 +859,19 @@ TEST_CASE(
 			{"points", points({{0, -30.0}, {2000, 0.0}, {5000, -6.0}, {9000, -60.0}}, "linear")}});
 	run("automationPoint.add",
 		{{"lane", lane(audio, {{"type", "pan"}})}, {"points", points({{0, -1.0}, {4000, 1.0}, {8000, 0.0}}, "curve")}});
+	const Json slot = run("plugin.insert", {{"channel", audio.at("channel").at("id")}, {"plugin", "builtin:gainPan"}})
+						  .at("slot")
+						  .at("id");
+	const auto active = [&run, &slot]()
+	{ return run("plugin.get", {{"slot", slot}}).at("slot").at("status") == "active"; };
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (!active() && std::chrono::steady_clock::now() < deadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	REQUIRE(active());
+	run("audio.updatePlugins", Json::object());
+	run("automationPoint.add",
+		{{"lane", lane(audio, {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}})},
+			{"points", points({{0, -12.0}, {3000, 0.0}, {6000, -6.0}}, "linear")}});
 	run("automationPoint.add",
 		{{"lane", lane(instrument, {{"type", "instrument"}, {"parameter", 0}})},
 			{"points", points({{0, 0.0}, {3000, 1.0}, {6000, 0.5}}, "linear")}});

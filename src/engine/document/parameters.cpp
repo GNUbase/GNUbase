@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Parameters (#30): parameter.list, parameter.get and parameter.set read and change the static value of every
-// automatable parameter of a channel: the fader's volume, pan, panLeft and panRight, and the parameters of an
+// automatable parameter of a channel: the fader's volume, pan, panLeft and panRight, mute, and the parameters of an
 // instrument track's built-in instrument (plugins: M05). They name parameters by the targets automation lanes take,
 // and give values with their display text. parameter.set is one undo step and changes nothing if it fails
 // (ProjectModel::add); playback takes the values from the render snapshot like those of channel.set.
@@ -66,6 +66,8 @@ namespace gnubase::engine
 				parameters.push_back({{AutomationTargetType::Pan, 0, 0, 0, 0}, pan("Pan", 0.0)});
 				parameters.push_back({{AutomationTargetType::PanLeft, 0, 0, 0, 0}, pan("Pan left", -1.0)});
 				parameters.push_back({{AutomationTargetType::PanRight, 0, 0, 0, 0}, pan("Pan right", 1.0)});
+				parameters.push_back(
+					{{AutomationTargetType::Mute, 0, 0, 0, 0}, {0, "Mute", 0.0, 1.0, 0.0, {}, true, {"Off", "On"}}});
 			}
 			if (const processors::BuiltinInfo* instrument = processors::findBuiltin(channel.instrument))
 				for (const processors::ParameterInfo& parameter : instrument->parameters)
@@ -90,8 +92,9 @@ namespace gnubase::engine
 			if (!type.has_value() ||
 				(*type != AutomationTargetType::Volume && *type != AutomationTargetType::Pan &&
 					*type != AutomationTargetType::PanLeft && *type != AutomationTargetType::PanRight &&
-					*type != AutomationTargetType::Instrument && *type != AutomationTargetType::Plugin))
-				throw CommandError("target.type must be volume, pan, panLeft, panRight, instrument or plugin");
+					*type != AutomationTargetType::Mute && *type != AutomationTargetType::Instrument &&
+					*type != AutomationTargetType::Plugin))
+				throw CommandError("target.type must be volume, pan, panLeft, panRight, mute, instrument or plugin");
 			const bool plugin = *type == AutomationTargetType::Plugin;
 			const bool parameter = *type == AutomationTargetType::Instrument || plugin;
 			for (const auto& item : json.items())
@@ -153,6 +156,8 @@ namespace gnubase::engine
 				return channel.panLeft;
 			case AutomationTargetType::PanRight:
 				return channel.panRight;
+			case AutomationTargetType::Mute:
+				return channel.mute ? 1.0 : 0.0;
 			default:
 			{
 				const auto set = channel.instrumentParameters.find(parameter.target.parameter);
@@ -181,6 +186,9 @@ namespace gnubase::engine
 				break;
 			case AutomationTargetType::PanRight:
 				channel.panRight = value;
+				break;
+			case AutomationTargetType::Mute:
+				channel.mute = value != 0.0;
 				break;
 			default:
 				channel.instrumentParameters[parameter.target.parameter] = value;
@@ -251,19 +259,22 @@ namespace gnubase::engine
 	void ProjectModel::registerParameterCommands(Engine& engine)
 	{
 		const Json idSchema = {{"type", "integer"}};
-		const Json targetSchema = objectSchema(
-			{{"type", {{"type", "string"}, {"enum", {"volume", "pan", "panLeft", "panRight", "instrument", "plugin"}}}},
-				{"parameter", {{"type", "integer"}, {"minimum", 0}, {"maximum", UINT32_MAX}}},
-				{"slot", {{"type", "integer"}, {"minimum", 0}}}},
-			{"type"});
+		const Json targetSchema =
+			objectSchema({{"type",
+							  {{"type", "string"},
+								  {"enum", {"volume", "pan", "panLeft", "panRight", "mute", "instrument", "plugin"}}}},
+							 {"parameter", {{"type", "integer"}, {"minimum", 0}, {"maximum", UINT32_MAX}}},
+							 {"slot", {{"type", "integer"}, {"minimum", 0}}}},
+				{"type"});
 		const Json parameterResult = {
 			{"type", "object"}, {"properties", {{"parameter", {{"type", "object"}}}}}, {"required", {"parameter"}}};
 
 		add(engine,
 			{"parameter.list", 1,
 				"The automatable parameters of a channel: on channels with audio the fader's volume (in dB, up to the "
-				"project's maxVolume), pan, panLeft and panRight (-1 to 1, see channel.set), and on instrument "
-				"tracks the parameters of their built-in instrument (see processor.list), then those of the built-in "
+				"project's maxVolume), pan, panLeft and panRight (-1 to 1, see channel.set) and mute (0 off, 1 on, the "
+				"channel's mute button), and on instrument tracks the parameters of their built-in instrument (see "
+				"processor.list), then those of the built-in "
 				"plugins in its slots, top to bottom, with targets of type plugin that name the slot. Each "
 				"has its target, as automationLane.add takes it, its name, minimum, maximum, default, unit, whether "
 				"it is stepped (whole numbers only), options (the names of a stepped parameter's values from the "

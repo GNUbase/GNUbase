@@ -15,13 +15,16 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -459,8 +462,9 @@ TEST_CASE("the automation player turns curves into parameter and controller even
 
 	graph::EventBuffer source(graph::g_maxEventsPerBlock);
 	graph::EventBuffer fader(graph::g_maxEventsPerBlock);
+	graph::EventBuffer plugins(graph::g_maxEventsPerBlock);
 	const graph::TransportSegment segment{0, 512, 0};
-	player.play({true, 0, &segment, 1}, nullptr, source, fader);
+	player.play({true, 0, &segment, 1}, {}, {}, source, fader, plugins);
 
 	// The fader: its value at the start and the ramp, which arrives at the value the curve then keeps.
 	REQUIRE(fader.size() == 2);
@@ -506,11 +510,11 @@ TEST_CASE("the automation player turns curves into parameter and controller even
 	source.clear();
 	fader.clear();
 	const graph::TransportSegment on{0, 512, 512};
-	player.play({true, 512, &on, 1}, nullptr, source, fader);
+	player.play({true, 512, &on, 1}, {}, {}, source, fader, plugins);
 	CHECK(source.empty());
 	CHECK(fader.empty());
 	const graph::TransportSegment jump{0, 64, 200};
-	player.play({true, 200, &jump, 1}, nullptr, source, fader);
+	player.play({true, 200, &jump, 1}, {}, {}, source, fader, plugins);
 	REQUIRE(fader.size() == 2);
 	CHECK(fader[0].parameterValue == 1.0); // mid-ramp
 	CHECK(fader[0].ramp == 0);
@@ -520,12 +524,12 @@ TEST_CASE("the automation player turns curves into parameter and controller even
 	// Stopped: the values at the cursor, once per cursor position.
 	source.clear();
 	fader.clear();
-	player.play({false, 50, nullptr, 0}, nullptr, source, fader);
+	player.play({false, 50, nullptr, 0}, {}, {}, source, fader, plugins);
 	REQUIRE(fader.size() == 1);
 	CHECK(fader[0].parameterValue == 0.5);
 	fader.clear();
 	source.clear();
-	player.play({false, 50, nullptr, 0}, nullptr, source, fader);
+	player.play({false, 50, nullptr, 0}, {}, {}, source, fader, plugins);
 	CHECK(fader.empty());
 	CHECK(source.empty());
 }
@@ -723,12 +727,13 @@ namespace
 		std::vector<PlayedEvent> result;
 		graph::EventBuffer source(graph::g_maxEventsPerBlock);
 		graph::EventBuffer fader(graph::g_maxEventsPerBlock);
+		graph::EventBuffer plugins(graph::g_maxEventsPerBlock);
 		for (int64_t start = 0; start < frames; start += blockSize)
 		{
 			source.clear();
 			fader.clear();
 			const graph::TransportSegment segment{0, static_cast<uint32_t>(std::min(blockSize, frames - start)), start};
-			player.play({true, start, &segment, 1}, nullptr, source, fader);
+			player.play({true, start, &segment, 1}, {}, {}, source, fader, plugins);
 			for (const graph::ProcessEvent& event : source)
 				result.push_back({start + event.offset, event.type, event.parameter,
 					event.type == graph::ProcessEvent::Type::Parameter ? event.parameterValue
@@ -794,24 +799,25 @@ TEST_CASE("a new source processor gets every automation value again", "[unit]")
 	const int newInstrument = 0;
 	graph::EventBuffer source(graph::g_maxEventsPerBlock);
 	graph::EventBuffer fader(graph::g_maxEventsPerBlock);
+	graph::EventBuffer plugins(graph::g_maxEventsPerBlock);
 	const graph::TransportSegment first{0, 64, 0};
-	player.play({true, 0, &first, 1}, &oldInstrument, source, fader);
+	player.play({true, 0, &first, 1}, {&oldInstrument}, {}, source, fader, plugins);
 	CHECK(source.size() == 1);
 	source.clear();
 	const graph::TransportSegment second{0, 64, 64};
-	player.play({true, 64, &second, 1}, &oldInstrument, source, fader);
+	player.play({true, 64, &second, 1}, {&oldInstrument}, {}, source, fader, plugins);
 	CHECK(source.empty());
 
 	// Then the graph with the new instrument: it gets the values at once.
 	const graph::TransportSegment third{0, 64, 128};
-	player.play({true, 128, &third, 1}, &newInstrument, source, fader);
+	player.play({true, 128, &third, 1}, {&newInstrument}, {}, source, fader, plugins);
 	REQUIRE(source.size() == 1);
 	CHECK(source[0].offset == 0);
 	CHECK(source[0].parameterValue == 0.25);
 	source.clear();
-	player.play({false, 192, nullptr, 0}, &newInstrument, source, fader);
+	player.play({false, 192, nullptr, 0}, {&newInstrument}, {}, source, fader, plugins);
 	source.clear();
-	player.play({false, 192, nullptr, 0}, &oldInstrument, source, fader); // stopped too
+	player.play({false, 192, nullptr, 0}, {&oldInstrument}, {}, source, fader, plugins); // stopped too
 	CHECK(source.size() == 1);
 }
 
@@ -915,4 +921,323 @@ TEST_CASE("projects whose automation or channels have values out of range or not
 	refused([](Json& p) { p["automation"][1]["target"]["channel"] = 16; });
 	refused([](Json& p) { p["channels"][0]["volume"] = 1000.0; });
 	refused([nan](Json& p) { p["channels"][0]["pan"] = nan; });
+}
+
+namespace
+{
+	Json insertPlugin(Client& client, ObjectId channel, const char* plugin)
+	{
+		return run(client, "plugin.insert", {{"channel", channel}, {"plugin", plugin}}).at("slot").at("id");
+	}
+
+	// Waits until a slot's plugin is active, then builds the graph with it, as the engine does on its own then.
+	void waitUntilActive(Client& client, const Json& slot)
+	{
+		const auto status = [&]()
+		{ return run(client, "plugin.get", {{"slot", slot}}).at("slot").at("status").get<std::string>(); };
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		while (status() != "active" && std::chrono::steady_clock::now() < deadline)
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		REQUIRE(status() == "active");
+		run(client, "audio.updatePlugins");
+	}
+
+	Json pluginTarget(const Json& slot, uint32_t parameter)
+	{
+		return {{"type", "plugin"}, {"slot", slot}, {"parameter", parameter}};
+	}
+
+	std::vector<ObjectId> laneIds(Client& client)
+	{
+		std::vector<ObjectId> ids;
+		const Json lanes = run(client, "automationLane.list").at("lanes");
+		for (const Json& lane : lanes)
+			ids.push_back(lane.at("id").get<ObjectId>());
+		return ids;
+	}
+}
+
+TEST_CASE("the automation player sends plugin parameters to their slots, and new plugins get every value", "[unit]")
+{
+	using Kind = PlayedLane::Kind;
+	using Type = graph::ProcessEvent::Type;
+	AutomationPlayer player;
+	auto automation = std::make_unique<ChannelAutomation>();
+	automation->lanes.push_back({{AutomationTargetType::Plugin, 3, 0, 0, 77}, Kind::Plugin, 3, 0.5, 0.0, 1.0,
+		{{0, 0.0, AutomationShape::Step, 0.0}, {100, 1.0, AutomationShape::Step, 0.0}}});
+	player.setAutomation(std::move(automation));
+
+	graph::EventBuffer source(graph::g_maxEventsPerBlock);
+	graph::EventBuffer fader(graph::g_maxEventsPerBlock);
+	graph::EventBuffer plugins(graph::g_maxEventsPerBlock);
+	const int instrument = 0;
+	const int plugin = 0;
+	const int newPlugin = 0;
+	const std::vector<ObjectId> slots{11, 12, 77};
+	const graph::TransportSegment first{0, 200, 0};
+	player.play({true, 0, &first, 1}, {&instrument, nullptr, nullptr, &plugin}, slots, source, fader, plugins);
+	CHECK(source.empty());
+	CHECK(fader.empty());
+	// The value at the start, then the step at its sample, both keyed by the slot's index.
+	REQUIRE(plugins.size() == 2);
+	for (const graph::ProcessEvent& event : plugins)
+	{
+		CHECK(event.type == Type::Parameter);
+		CHECK(event.parameter == 3);
+		CHECK(event.key == 2);
+	}
+	CHECK(plugins[0].offset == 0);
+	CHECK(plugins[0].parameterValue == 0.0);
+	CHECK(plugins[1].offset == 100);
+	CHECK(plugins[1].parameterValue == 1.0);
+
+	plugins.clear();
+	const graph::TransportSegment second{0, 64, 200};
+	player.play({true, 200, &second, 1}, {&instrument, nullptr, nullptr, &plugin}, slots, source, fader, plugins);
+	CHECK(plugins.empty());
+
+	// The slot's plugin is made again (e.g. activated anew): it gets the value at once.
+	const graph::TransportSegment third{0, 64, 264};
+	player.play({true, 264, &third, 1}, {&instrument, nullptr, nullptr, &newPlugin}, slots, source, fader, plugins);
+	REQUIRE(plugins.size() == 1);
+	CHECK(plugins[0].offset == 0);
+	CHECK(plugins[0].parameterValue == 1.0);
+}
+
+namespace
+{
+	// A plugin that keeps the values of parameter 0 that it gets.
+	class ParameterRecorder : public graph::Processor
+	{
+	public:
+		void process(const graph::ProcessContext& context) noexcept override
+		{
+			for (const graph::ProcessEvent& event : context.eventsIn)
+				if (event.type == graph::ProcessEvent::Type::Parameter && event.parameter == 0)
+					values.push_back(event.parameterValue);
+		}
+
+		std::vector<double> values;
+	};
+}
+
+TEST_CASE("plugin automation reaches the slots by their ids while a program for another chain still plays", "[unit]")
+{
+	// A plugin C was inserted above A and B: the automation for [C, A, B] arrives before the program, whose strips
+	// are still those for [A, B].
+	const ObjectId a = 1;
+	const ObjectId b = 2;
+	const ObjectId c = 3;
+	RenderChannel channel;
+	for (const auto& [id, gain] : {std::pair{c, 3.0}, std::pair{a, -6.0}, std::pair{b, -12.0}})
+	{
+		RenderSlot slot;
+		slot.id = id;
+		slot.plugin = "builtin:gainPan";
+		slot.parameters[0] = gain;
+		channel.slots.push_back(slot);
+	}
+	auto state = std::make_shared<ChannelState>();
+	state->automation.setAutomation(channelAutomation(channel, 6.0));
+
+	auto pluginA = std::make_shared<ParameterRecorder>();
+	auto pluginB = std::make_shared<ParameterRecorder>();
+	ChannelStrip source(
+		state, nullptr, {}, std::nullopt, false, StripPart::Source, {}, {pluginA.get(), pluginB.get()}, {a, b});
+	SlotStrip slotA(state, pluginA, 0);
+	SlotStrip slotB(state, pluginB, 1);
+	for (graph::Processor* processor : std::initializer_list<graph::Processor*>{&source, &slotA, &slotB})
+		processor->prepareFor(48000.0, 64);
+	const graph::EventBuffer in(graph::g_maxEventsPerBlock);
+	graph::EventBuffer out(graph::g_maxEventsPerBlock);
+	const graph::TransportSegment segment{0, 64, 0};
+	const graph::TransportBlock transport{true, 0, &segment, 1};
+	for (graph::Processor* processor : std::initializer_list<graph::Processor*>{&source, &slotA, &slotB})
+		processor->process({nullptr, 0, 64, in, out, transport});
+
+	// Each plugin gets its own value, none of C's or the other one's.
+	CHECK(pluginA->values == std::vector<double>{-6.0});
+	CHECK(pluginB->values == std::vector<double>{-12.0});
+}
+
+TEST_CASE("plugin parameters in slots have automation lanes that go with the plugin", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = idOf(run(client, "track.add", {{"type", "audio"}}), "track");
+	const ObjectId other = idOf(run(client, "track.add", {{"type", "audio"}}), "track");
+	const ObjectId channel = channelOf(client, track);
+	const Json gain = insertPlugin(client, channel, "builtin:gainPan");
+	const Json eq = insertPlugin(client, channel, "builtin:eq");
+	const Json elsewhere = insertPlugin(client, channelOf(client, other), "builtin:gainPan");
+
+	const Json added = run(client, "automationLane.add", {{"track", track}, {"target", pluginTarget(gain, 0)}});
+	CHECK(added.at("lane").at("target") == pluginTarget(gain, 0));
+	const ObjectId lane = idOf(added, "lane");
+	CHECK_THAT(reject(client, "automationLane.add", {{"track", track}, {"target", pluginTarget(elsewhere, 0)}}),
+		ContainsSubstring("has no plugin slot"));
+	CHECK_THAT(reject(client, "automationLane.add", {{"track", track}, {"target", pluginTarget(gain, 99)}}),
+		ContainsSubstring("has no parameter 99"));
+	CHECK_THAT(
+		reject(client, "automationLane.add", {{"track", track}, {"target", {{"type", "plugin"}, {"parameter", 0}}}}),
+		ContainsSubstring("target.slot"));
+	CHECK_THAT(
+		reject(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", -100.0}}}}}),
+		ContainsSubstring("from -96 to 12"));
+	run(client, "automationPoint.add",
+		{{"lane", lane}, {"points", {{{"position", 0}, {"value", -6.0}, {"shape", "curve"}, {"curve", 0.5}}}}});
+
+	// A stepped parameter has a step curve with whole values (reference manual p. 870).
+	Json stepped;
+	const Json parameters = run(client, "parameter.list", {{"channel", channel}}).at("parameters");
+	for (const Json& parameter : parameters)
+		if (stepped.is_null() && parameter.at("target").value("slot", Json()) == eq &&
+			parameter.at("stepped") == true && parameter.at("maximum").get<double>() >= 1.0)
+			stepped = parameter;
+	REQUIRE(!stepped.is_null());
+	const ObjectId steps =
+		idOf(run(client, "automationLane.add", {{"track", track}, {"target", stepped.at("target")}}), "lane");
+	const Json point =
+		run(client, "automationPoint.add", {{"lane", steps}, {"points", {{{"position", 0}, {"value", 0.75}}}}})
+			.at("points")
+			.at(0);
+	CHECK(point.at("shape") == "step");
+	CHECK(point.at("value") == 1.0);
+	const Json changed = run(client, "automationPoint.set",
+		{{"lane", steps}, {"points", {{{"id", point.at("id")}, {"value", 0.25}, {"shape", "linear"}}}}})
+							 .at("points")
+							 .at(0);
+	CHECK(changed.at("shape") == "step");
+	CHECK(changed.at("value") == 0.0);
+
+	// The lanes are saved and loaded with the project.
+	const Project loaded = projectFromJson(run(client, "project.get"));
+	CHECK(loaded.automation.at(lane).target.slot == gain.get<ObjectId>());
+
+	// A copy of the track automates the copies of its plugins.
+	const ObjectId copy = idOf(run(client, "track.duplicate", {{"track", track}}), "track");
+	const Json copySlots = run(client, "plugin.list", {{"channel", channelOf(client, copy)}}).at("slots");
+	const Json copyLanes = run(client, "automationLane.list", {{"track", copy}}).at("lanes");
+	REQUIRE(copyLanes.size() == 2);
+	CHECK(copyLanes.at(0).at("target") == pluginTarget(copySlots.at(0).at("id"), 0));
+	CHECK(copyLanes.at(0).at("points").size() == 1);
+
+	// Moving the plugin to another slot of the channel keeps its automation; to another channel, or removing it,
+	// takes it away, as one undo step each.
+	run(client, "plugin.move", {{"slot", gain}, {"index", 1}});
+	CHECK(run(client, "automationLane.list", {{"track", track}}).at("lanes").size() == 2);
+	const std::vector<ObjectId> before = laneIds(client);
+	run(client, "plugin.move", {{"slot", gain}, {"channel", channelOf(client, other)}, {"index", 0}});
+	CHECK(run(client, "automationLane.list", {{"track", track}}).at("lanes").size() == 1);
+	run(client, "history.undo");
+	CHECK(laneIds(client) == before);
+	run(client, "plugin.remove", {{"slot", gain}});
+	CHECK(run(client, "automationLane.list", {{"track", track}}).at("lanes").size() == 1);
+	run(client, "history.undo");
+	CHECK(laneIds(client) == before);
+}
+
+TEST_CASE("plugin parameter automation plays sample-accurately in its slot", "[integration]")
+{
+	const int blockSize = GENERATE(64, 100);
+	INFO("block size " << blockSize);
+	Mixer mixer(blockSize);
+	const Json slot = insertPlugin(mixer.client, mixer.channel, "builtin:gainPan");
+	waitUntilActive(mixer.client, slot);
+	const ObjectId lane = idOf(
+		run(mixer.client, "automationLane.add", {{"track", mixer.track}, {"target", pluginTarget(slot, 0)}}), "lane");
+	// Steps at their samples; a ramp as the value of every 64th frame from its start, since gainPan doesn't glide.
+	mixer.add(lane, {{1000, -12.0, "step"}, {2000, -12.0, "linear"}, {3000, 0.0, "step"}, {3500, -6.0, "step"}});
+	run(mixer.client, "transport.play");
+	run(mixer.client, "audio.render", {{"frames", 4000}});
+	// Without reading, the plugin returns to its static value.
+	run(mixer.client, "automationLane.set", {{"lane", lane}, {"read", false}});
+	run(mixer.client, "audio.render", {{"frames", 500}});
+
+	const auto expected = [](int64_t position)
+	{
+		if (position >= 4000)
+			return 1.0;
+		double decibels = -12.0;
+		if (position >= 3500)
+		{
+			decibels = -6.0;
+		}
+		else if (position >= 3000)
+		{
+			decibels = 0.0;
+		}
+		else if (position >= 2000)
+		{
+			const int64_t sinceRamp = (position - 2000) / 64 * 64;
+			decibels = -12.0 + (12.0 * static_cast<double>(sinceRamp) / 1000.0);
+		}
+		return gain(decibels);
+	};
+	Mixer reference(64);
+	run(reference.client, "audio.render", {{"frames", 4500}});
+	const std::vector<float> input = reference.capture(0, 4500);
+	size_t wrong = 0;
+	size_t first = 0;
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const std::vector<float> output = mixer.capture(channel, 4500);
+		for (size_t i = 0; i < output.size(); ++i)
+			if (std::abs(output[i] - (input[i] * expected(static_cast<int64_t>(i)))) > 1e-6 && wrong++ == 0)
+				first = i;
+	}
+	INFO(wrong << " wrong samples, the first at frame " << first);
+	CHECK(wrong == 0);
+}
+
+TEST_CASE("mute automation is a step curve that mutes from its sample and overrides the mute button", "[integration]")
+{
+	const int blockSize = GENERATE(64, 100);
+	INFO("block size " << blockSize);
+	Mixer mixer(blockSize);
+	CHECK_THAT(reject(mixer.client, "automationLane.add",
+				   {{"track", idOf(run(mixer.client, "track.add", {{"type", "midi"}}), "track")},
+					   {"target", {{"type", "mute"}}}}),
+		ContainsSubstring("MIDI"));
+	run(mixer.client, "channel.set", {{"channel", mixer.channel}, {"mute", true}});
+	const ObjectId lane = mixer.lane({{"type", "mute"}});
+	const Json points = run(mixer.client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", 0.0}}, {{"position", ticks(1000)}, {"value", 0.6}},
+					{{"position", ticks(3000)}, {"value", 0.0}, {"shape", "linear"}}}}})
+							.at("points");
+	for (const Json& point : points)
+		CHECK(point.at("shape") == "step");
+	CHECK(points.at(1).at("value") == 1.0);
+	run(mixer.client, "transport.play");
+	run(mixer.client, "audio.render", {{"frames", 4000}});
+	// Without reading, the mute button mutes again.
+	run(mixer.client, "automationLane.set", {{"lane", lane}, {"read", false}});
+	run(mixer.client, "audio.render", {{"frames", 1000}});
+
+	// Mute glides over 5 ms (240 frames) from the point's sample on, so it doesn't click.
+	const auto audible = [](int64_t position)
+	{
+		if (position < 1000)
+			return 1.0;
+		if (position < 3000)
+			return std::max(0.0, 1.0 - (static_cast<double>(position - 1000) / 240.0));
+		return std::min(1.0, static_cast<double>(position - 3000) / 240.0);
+	};
+	Mixer reference(64);
+	run(reference.client, "audio.render", {{"frames", 5000}});
+	const std::vector<float> input = reference.capture(0, 5000);
+	size_t wrong = 0;
+	size_t first = 0;
+	for (int channel = 0; channel < 2; ++channel)
+	{
+		const std::vector<float> output = mixer.capture(channel, 5000);
+		for (size_t i = 0; i < 4000; ++i)
+			if (std::abs(output[i] - (input[i] * audible(static_cast<int64_t>(i)))) > 1e-6 && wrong++ == 0)
+				first = i;
+		CHECK(std::all_of(output.begin() + 4500, output.end(), [](float sample) { return sample == 0.0f; }));
+	}
+	INFO(wrong << " wrong samples, the first at frame " << first);
+	CHECK(wrong == 0);
 }
