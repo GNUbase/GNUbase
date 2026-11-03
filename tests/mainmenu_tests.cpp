@@ -23,6 +23,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <regex>
 #include <stdexcept>
 #include <string>
 
@@ -298,6 +299,8 @@ TEST_CASE(
 	// And so does every item in the documents and fragments in resources/ui, whatever attaches them.
 	const ui::KeyCommands& keys = app.keys();
 	int items = 0;
+	int calls = 0;
+	const std::regex uiCommand(R"(ui\.command\s*\{\s*command\s*=\s*['"]([^'"]*)['"]\s*\})");
 	for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "ui"))
 	{
 		if (entry.path().extension() != ".rml")
@@ -322,6 +325,17 @@ TEST_CASE(
 			++items;
 		}
 		document->Close();
+
+		// Buttons that run a key command from Lua: gnubase.ui.command{command = 'project.addTrack'}.
+		for (auto call = std::sregex_iterator(text.begin(), text.end(), uiCommand); call != std::sregex_iterator();
+			++call)
+		{
+			const std::string command = (*call)[1].str();
+			INFO(command);
+			CHECK_NOTHROW(keys.check(command, Json::object()));
+			++calls;
+		}
 	}
 	CHECK(items > 100);
+	CHECK(calls >= 3);
 }

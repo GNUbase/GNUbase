@@ -839,12 +839,14 @@ TEST_CASE("the transport controls refuse buttons and menu items with a command t
 	ui::EngineBinding binding(engine);
 	ui::KeyCommands keys(engine, binding);
 	keys.add({"timeDisplay.increaseSize", "Makes the time display bigger.", {}});
+	keys.add({"wind.forward", "Winds forward while held.", {}, [] {}});
 	const auto run = [](const std::string& /*command*/, const Json& /*parameters*/) {};
 	const auto check = [&keys](const std::string& command, const Json& parameters) { keys.check(command, parameters); };
 	const auto load = [&window](const std::string& controls)
 	{ return window.context().LoadDocumentFromMemory("<rml><body>" + controls + "</body></rml>"); };
 	const std::string good =
 		R"(<button command="transport.toggle" parameters='{"setting": "cycle"}'>Cycle</button>)"
+		R"(<button command="wind.forward" hold="">Forward</button>)"
 		R"(<menu><menuitem command="timeDisplay.increaseSize">Increase Window Size</menuitem></menu>)";
 
 	Rml::ElementDocument* document = load(good);
@@ -860,7 +862,8 @@ TEST_CASE("the transport controls refuse buttons and menu items with a command t
 	const Bad bad[] = {
 		{R"(<button command="transport.toggel">Cycle</button>)", "transport.toggel"},
 		{R"(<button command="transport.toggle" parameters='{"setting": 1}'>Cycle</button>)", "setting"},
-		{R"(<button command="wind.forward" hold="">Forward</button>)", "wind.forward"},
+		{R"(<button command="wind.backward" hold="">Rewind</button>)", "wind.backward"},
+		{R"(<button command="wind.forward" hold="" parameters='{"fast": true}'>Forward</button>)", "wind.forward"},
 		{R"(<menu><menuitem command="timeDisplay.increaseSize" parameters='{"steps": 2}'>Bigger</menuitem></menu>)",
 			"timeDisplay.increaseSize"},
 		{R"(<button command="transport.play" parameters='{"setting"'>Start</button>)", "JSON object"},

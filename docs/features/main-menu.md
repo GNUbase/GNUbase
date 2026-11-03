@@ -63,4 +63,5 @@ and Alt opens and closes the File menu (mouse moves and key presses, as MCP's `u
 an item whose command doesn't exist or is empty, whose parameters an engine command doesn't take or has of the wrong
 type, that gives a UI command parameters, or whose parameters aren't a JSON object throws and leaves the document as
 it was; the project window, the transport panel and the time display window open, and every `command` in the
-documents and fragments of `resources/ui` passes `KeyCommands::check`.
+documents and fragments of `resources/ui` passes `KeyCommands::check`, as does every command their buttons run from
+Lua with `gnubase.ui.command`.
