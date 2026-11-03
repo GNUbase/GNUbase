@@ -72,6 +72,8 @@ namespace gnubase::ui
 	// The tool's name, as the display's attribute tool and the toolbar's buttons name it: objectSelection, split, ...
 	const char* toolName(Tool tool);
 	std::optional<Tool> toolFromName(const std::string& name);
+	// The tool's name as the toolbar's tooltips show it: Object Selection, Split, ...
+	const char* toolTitle(Tool tool);
 
 	// The line tool's modes (reference manual p. 873), for automation tracks (#121).
 	enum class LineMode : uint8_t
@@ -216,7 +218,13 @@ namespace gnubase::ui
 		// setting ui.toolModifiers. The document's toolbar may have a button per tool, button[tool=<name>], whose
 		// attribute tool-menu names a menu of its modes that a second click opens (#object-selection-menu with the
 		// sizing modes, #line-menu with the line modes, #play-menu with the play modes), and a toggle button
-		// #combine-selection-tools.
+		// #combine-selection-tools. Menu items with a tool attribute choose it too: the toolbox #toolbox and the
+		// context menu #event-display-menu, which a right click in the event lanes opens, the toolbox with the user
+		// setting ui.toolboxOnRightClick and the context menu with a modifier key, or the other way round while it is
+		// off. A tool chosen with its command (actions()) shows its name in the notification #tool-notification,
+		// unless the user setting ui.toolSwitchNotification is off. Over the lanes, the attribute pointer of the
+		// event area names the mouse pointer for the style sheets: the tool's name, the range selection tool's in a
+		// lane's upper half with the selection tools combined, or resize at an event's edge that a drag resizes.
 		void setTool(Tool tool);
 		Tool tool() const { return m_tool; }
 		void setCombineSelectionTools(bool on);
@@ -365,6 +373,8 @@ namespace gnubase::ui
 		const Shown* eventAt(double x, double y) const; // dp in the event lanes
 		size_t laneAt(double y) const; // dp from the top of the first lane; 0 above it, the lane count below the last
 		void areaDown(Rml::Event& event, double x, double y);
+		// A right click that opens the context menu selects the event there, unless it's selected already.
+		void areaRightDown(Rml::Event& event, double x, double y);
 		void areaMove(double dx, double dy, bool constrained); // constrained: restricts() says so
 		// Whether the keys are exactly the tool modifier of Copy or Shared Copy.
 		bool copyKeys(const std::string& keys) const;
@@ -398,6 +408,8 @@ namespace gnubase::ui
 		void addPart(size_t lane, time::Ticks start, time::Ticks end);
 		// The lane at y dp down the event lanes, if there is one there.
 		std::optional<size_t> visibleLaneAt(double y) const;
+		// The edge of the event at x dp across the lanes that a press there resizes: -1 its start, 1 its end, 0 none.
+		int edgeAt(const Shown& shown, double x) const;
 
 		// Fades and crossfades (eventfades.cpp): an audio event's fades and crossfade as project.get has them, its
 		// media file's sample rate and its length in clip frames.
@@ -411,6 +423,8 @@ namespace gnubase::ui
 		};
 		void addFadeActions();
 		void readFades(const engine::Json& event, double rate);
+		// The fade handle of the event at x and y dp in the event lanes: -1 its fade in's, 1 its fade out's, 0 none.
+		int fadeHandleAt(const Shown& shown, double x, double y) const;
 		// Starts dragging a fade handle when x and y dp in the event lanes are at one of the pressed event's.
 		bool fadeDown(const Shown& shown, double x, double y);
 		void fadeUp();
@@ -427,6 +441,17 @@ namespace gnubase::ui
 		// The tools (eventtools.cpp).
 		void addToolActions();
 		void showTools();
+		// The tool a press y dp down the event lanes uses: the range selection tool in a lane's upper half when the
+		// selection tools are combined, else the tool.
+		Tool toolAt(double y) const;
+		// The mouse pointer over the lanes at x and y dp, as the event area's attribute pointer names it; showPointer
+		// shows the one where the mouse was last, unless a drag goes on.
+		std::string pointerAt(double x, double y) const;
+		void showPointer();
+		// The menus that a right click in the lanes opens, without and with a modifier key.
+		void showContextMenus();
+		// The notification for a tool chosen with a key command.
+		void notify(const std::string& text);
 		// Whether the pressed modifiers are the ones the user setting ui.toolModifiers gives the action.
 		bool modifiers(const char* action) const;
 		// What a press at x and y dp in the event lanes does with the tool, unless the object selection tool takes it.
@@ -541,6 +566,14 @@ namespace gnubase::ui
 		Rml::Element* m_objectMenu = nullptr;
 		Rml::Element* m_lineMenu = nullptr;
 		Rml::Element* m_playMenu = nullptr;
+		Rml::Element* m_toolbox = nullptr;
+		Rml::Element* m_contextMenu = nullptr;
+		Rml::Element* m_notification = nullptr;
+		bool m_toolboxOnRightClick = false; // ui.toolboxOnRightClick
+		bool m_toolboxKnown = false;        // changed since it was asked for
+		bool m_notifies = true;             // ui.toolSwitchNotification
+		bool m_notifiesKnown = false;
+		std::optional<std::pair<double, double>> m_mouse; // over the lanes, in dp, when the mouse was there last
 		std::vector<CycleMarker> m_cycleMarkers;
 		std::vector<int64_t> m_markers; // every marker's position and end, in samples, for snapping
 		engine::SnapSettings m_snap;

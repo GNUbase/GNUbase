@@ -13,7 +13,8 @@
      opens the add track dialog (add-track.rml), #track-controls-settings the track controls settings dialog
      (track-controls.rml); #track-list-menu is its context menu.
      app::AppUi fills the transport bar with the transport controls (transport.rml).
-     The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md), and
+     The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md), which the
+     display drives too, with the toolbox #toolbox, the context menu #event-display-menu and #tool-notification, and
      #select-color with #color-menu, which ui::ColorMenu fills with the project's colors (docs/features/colors.md).
      ui::StatusLine fills #record-format, #record-time and #lost-device (docs/features/status-line.md). ui::InfoLine fills
      #info-line; #inspector-setup is the inspector's Set up Sections pane (docs/features/inspector.md).
@@ -138,6 +139,7 @@
 				<splitter for="trackList"/>
 				<div id="event-display" class="event-display">
 					<button class="ruler-format icon-only" menu="ruler-format-menu" title="Ruler Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
+					<notification id="tool-notification" class="tool-notification tooltip"/>
 				</div>
 			</div>
 			<splitter for="lower" resize="next"/>
@@ -243,6 +245,10 @@
 		<menuitem command="edit.unmute">Unmute</menuitem>
 		<menuitem command="edit.lock">Lock</menuitem>
 		<menuitem command="edit.unlock">Unlock</menuitem>
+		<menuseparator/>
+		<!-- The MIDI editors (docs/features/midi-editors.md) -->
+		<menuitem command="editor.openClose">Open/Close Editor</menuitem>
+		<menuitem command="window.lowerZoneEditor">Open Editor in Lower Zone</menuitem>
 	</menu>
 	<!-- Track handling (reference manual pp. 213-225) -->
 	<menu id="color-menu"/>
@@ -421,6 +427,56 @@
 	<menu id="play-menu">
 		<menuitem play-mode="play">Play</menuitem>
 		<menuitem play-mode="scrub">Scrub</menuitem>
+	</menu>
+	<!-- A right click in the event lanes opens the toolbox or, with a modifier key, the context menu, or the other way
+	     round (reference manual pp. 65, 1602) -->
+	<menu id="toolbox" class="toolbox">
+		<menuitem tool="objectSelection" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></menuitem>
+		<menuitem tool="rangeSelection" title="Range Selection"><svg class="icon" src="../icons/tool-range.svg"/></menuitem>
+		<menuitem tool="draw" title="Draw"><svg class="icon" src="../icons/tool-draw.svg"/></menuitem>
+		<menuitem tool="erase" title="Erase"><svg class="icon" src="../icons/tool-erase.svg"/></menuitem>
+		<menuitem tool="split" title="Split"><svg class="icon" src="../icons/tool-split.svg"/></menuitem>
+		<menuitem tool="glue" title="Glue"><svg class="icon" src="../icons/tool-glue.svg"/></menuitem>
+		<menuitem tool="mute" title="Mute"><svg class="icon" src="../icons/tool-mute.svg"/></menuitem>
+		<menuitem tool="zoom" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></menuitem>
+		<menuitem tool="line" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></menuitem>
+		<menuitem tool="play" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></menuitem>
+	</menu>
+	<menu id="event-display-menu">
+		<menuitem id="tools-submenu">Tools
+			<menu>
+				<menuitem tool="objectSelection">Object Selection</menuitem>
+				<menuitem tool="rangeSelection">Range Selection</menuitem>
+				<menuitem tool="draw">Draw</menuitem>
+				<menuitem tool="erase">Erase</menuitem>
+				<menuitem tool="split">Split</menuitem>
+				<menuitem tool="glue">Glue</menuitem>
+				<menuitem tool="mute">Mute</menuitem>
+				<menuitem tool="zoom">Zoom</menuitem>
+				<menuitem tool="line">Line</menuitem>
+				<menuitem tool="play">Play</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
+		<menuitem command="edit.cut">Cut</menuitem>
+		<menuitem command="edit.copy">Copy</menuitem>
+		<menuitem command="edit.paste">Paste</menuitem>
+		<menuitem command="edit.delete">Delete</menuitem>
+		<menuseparator/>
+		<menuitem command="edit.splitAtCursor">Split at Cursor</menuitem>
+		<menuitem command="edit.splitRange">Split Range</menuitem>
+		<menuitem command="edit.cropRange">Crop Range</menuitem>
+		<menuitem command="edit.glue">Glue</menuitem>
+		<menuitem command="edit.duplicate">Duplicate</menuitem>
+		<menuitem command="edit.repeat">Repeat...</menuitem>
+		<menuseparator/>
+		<menuitem command="edit.selectAll">Select All</menuitem>
+		<menuitem command="edit.selectNone">Select None</menuitem>
+		<menuseparator/>
+		<menuitem command="edit.mute">Mute</menuitem>
+		<menuitem command="edit.unmute">Unmute</menuitem>
+		<menuitem command="edit.lock">Lock</menuitem>
+		<menuitem command="edit.unlock">Unlock</menuitem>
 	</menu>
 	<menu id="auto-scroll-menu">
 		<menuitem id="page-scroll">Page Scroll</menuitem>

@@ -168,9 +168,11 @@ namespace gnubase::app
 		tools.push_back({"ui_windows",
 			"Lists GNUbase's open windows: each window's id, whether it's the main window, its size in pixels, its dp "
 			"ratio (pixels per density-independent pixel: its monitor's scale times the UI scale) and its documents "
-			"(title, source file, whether visible and modal). Coordinates in the other ui_ tools are in the window's "
+			"(title, source file, whether visible and modal), and cursor, the mouse pointer the UI shows as its style "
+			"sheets name it (empty for the OS's arrow). Coordinates in the other ui_ tools are in the window's "
 			"pixels, as in its screenshots.",
-			object(Json::object()), object({{"windows", {{"type", "array"}}}}, {"windows"}), true,
+			object(Json::object()),
+			object({{"windows", {{"type", "array"}}}, {"cursor", {{"type", "string"}}}}, {"windows", "cursor"}), true,
 			run([](ui::Automation& ui, const Json& /*arguments*/) { return ui.windows(); })});
 
 		tools.push_back({"ui_dom",

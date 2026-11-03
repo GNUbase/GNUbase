@@ -15,6 +15,7 @@
 #include <RmlUi/Lua.h>
 #include <lua.h>
 
+#include <algorithm>
 #include <array>
 #include <fstream>
 #include <memory>
@@ -225,6 +226,7 @@ namespace gnubase::app
 		  m_files(m_keys, m_binding, m_shell, resources / "ui")
 	{
 		ui::registerWidgets(m_rmlui);
+		m_rmlui.loadCursors(resources / "cursors");
 		lua_State* state = m_lua.state();
 		lua_getglobal(state, "print");
 		Rml::Lua::Initialise(state);   // until Rml::Shutdown
@@ -252,6 +254,7 @@ namespace gnubase::app
 				}
 				if (m_infoLine)
 					m_infoLine->update();
+				followSelection();
 				// The inspector shows the first selected track.
 				if (const std::shared_ptr<ui::Inspector> inspector = m_inspector.lock(); inspector && m_eventDisplay)
 				{
@@ -302,9 +305,20 @@ namespace gnubase::app
 					m_inspector = inspector;
 					return std::shared_ptr<void>(inspector);
 				};
+			// The lower zone's editor (reference manual pp. 1132-1156) and, in the Visibility tab, its visibility.
+			else if (added.id == "editor" || added.id == "visibility")
+				added.create = [this, editor = added.id == "editor"](Rml::Element& element)
+				{
+					auto shown = std::make_shared<ui::MidiEditor>(
+						m_binding, element, "lower", editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
+					if (editor)
+						m_lowerEditor = shown;
+					return std::shared_ptr<void>(shown);
+				};
 			m_docking.add(std::move(added));
 		}
 		addMixers();
+		addEditors();
 		// The edit history (reference manual pp. 110-111), a dialog there, which Edit > History opens.
 		m_docking.add({"history", "History", "project", "right",
 			[this](Rml::Element& element) { return std::make_shared<ui::HistoryPanel>(m_binding, element); }});
@@ -822,6 +836,147 @@ namespace gnubase::app
 				[this, number](ui::Window&, Rml::Element*) { m_shell.post([this, number] { toggleMixer(number); }); }});
 		}
 		m_keys.bind({"F3", "window.mixer"});
+	}
+
+	void AppUi::addEditors()
+	{
+		// The editor window's left zone: the Visibility tab and the inspector's Global Tracks section (pp. 1144-1149).
+		m_docking.add({"editorVisibility", "Visibility", "editorWindow", "left", [this](Rml::Element& element)
+			{ return std::make_shared<ui::MidiEditor>(m_binding, element, "window", ui::EditorPart::Visibility); }});
+		m_docking.add({"editorInspector", "Inspector", "editorWindow", "left", [this](Rml::Element& element)
+			{ return std::make_shared<ui::MidiEditor>(m_binding, element, "window", ui::EditorPart::GlobalTracks); }});
+		m_editorSubscriptions.push_back(
+			m_binding.on("editor.changed", [this](const engine::Event& event) { followEditor(event.data); }));
+		// A new project closes the editors.
+		const auto request = [this]
+		{
+			for (const char* editor : {"window", "lower"})
+				m_binding.send("editor.get", {{"editor", editor}},
+					[this](const engine::Result& result)
+					{
+						if (result.ok())
+							followEditor(result.value);
+					});
+		};
+		m_editorSubscriptions.push_back(m_binding.on("project.reset", [request](const engine::Event&) { request(); }));
+		request();
+		// Open/Close Editor (Mod+E and Return, p. 1189) opens the selected MIDI parts in the editor window, or closes
+		// it without any; the other one does the same in the lower zone.
+		for (const bool lower : {false, true})
+		{
+			const std::string editor = lower ? "lower" : "window";
+			m_keys.add({lower ? "window.lowerZoneEditor" : "editor.openClose",
+				lower ? "Opens the selected MIDI parts in the editor in the project window's lower zone, or closes it."
+					  : "Opens the selected MIDI parts in the editor window, or closes it.",
+				[this, editor](ui::Window&, Rml::Element*)
+				{
+					const std::vector<uint64_t> parts = selectedParts();
+					if (!parts.empty())
+					{
+						m_binding.send("editor.open", {{"editor", editor}, {"parts", parts}});
+						// Opening it explicitly brings the Editor tab forward, even from behind the Mixer.
+						if (editor == "lower")
+							m_docking.open("editor");
+					}
+					else
+					{
+						m_binding.send("editor.close", {{"editor", editor}});
+					}
+				}});
+		}
+		m_keys.bind({"Mod+E", "editor.openClose", engine::Json::object(), "project"});
+		m_keys.bind({"Return", "editor.openClose", engine::Json::object(), "project"});
+	}
+
+	std::vector<uint64_t> AppUi::selectedParts() const
+	{
+		std::vector<uint64_t> parts;
+		if (!m_eventDisplay || !m_eventDisplay->project().is_object())
+			return parts;
+		const std::vector<uint64_t>& selected = m_eventDisplay->selection();
+		for (const engine::Json& part : m_eventDisplay->project().value("midiParts", engine::Json::array()))
+		{
+			const auto id = part.at("id").get<uint64_t>();
+			if (std::find(selected.begin(), selected.end(), id) != selected.end())
+				parts.push_back(id);
+		}
+		return parts;
+	}
+
+	void AppUi::followEditor(const engine::Json& view)
+	{
+		const std::string editor = view.at("editor").get<std::string>();
+		const bool open = view.at("open").get<bool>();
+		const bool wasOpen = m_editorViews.value(editor, engine::Json::object()).value("open", false);
+		m_editorViews[editor] = view;
+		if (editor == "lower")
+		{
+			// Only opening the view brings the Editor tab to the front: while it's open behind another tab, such as
+			// the Mixer, it follows the selection there.
+			if (open && !wasOpen && !m_docking.showing("editor"))
+				m_docking.open("editor");
+			return;
+		}
+		const bool shown = m_editor.window != 0 && m_shell.find(m_editor.window) != nullptr;
+		if (open == shown)
+			return;
+		m_editor.editor.reset();
+		if (shown)
+		{
+			m_shell.close(m_editor.window);
+			m_editor.window = 0;
+			return;
+		}
+		ui::WindowSpec spec;
+		spec.title = "Editor";
+		spec.size = {1000, 600};
+		spec.hidden = m_hidden;
+		const ui::Window& window = m_shell.open(spec);
+		m_editor.window = window.id();
+		const std::filesystem::path file = m_resources / "ui" / "editor.rml";
+		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
+		Rml::Element* root = document != nullptr ? document->GetElementById("midi-editor") : nullptr;
+		if (root == nullptr)
+		{
+			m_shell.close(m_editor.window);
+			m_editor.window = 0;
+			logging::error("Cannot load the editor window from {}", file.u8string());
+			return;
+		}
+		document->Show();
+		// Open in Lower Zone opens the Editor tab in the lower zone (reference manual, p. 1198).
+		m_editor.editor = std::make_unique<ui::MidiEditor>(
+			m_binding, *root, "window", ui::EditorPart::Editor, [this] { m_docking.open("editor"); });
+		m_docking.attach("editorWindow", *document);
+	}
+
+	void AppUi::followSelection()
+	{
+		// The user closed the editor window or the lower zone's editor: Keep Editor Contents goes off with it (p.
+		// 1153).
+		if (m_editor.window != 0 && m_shell.find(m_editor.window) == nullptr)
+		{
+			m_editor.editor.reset();
+			m_editor.window = 0;
+			m_binding.send("editor.close", {{"editor", "window"}});
+		}
+		const auto open = [this](const char* editor)
+		{ return m_editorViews.value(editor, engine::Json::object()).value("open", false); };
+		if (open("lower") && m_docking.windowOf("editor") == nullptr && !m_docking.visible("project", "lower"))
+		{
+			m_editorViews["lower"]["open"] = false; // until editor.changed says so
+			m_binding.send("editor.close", {{"editor", "lower"}});
+		}
+		if (!m_eventDisplay || m_eventDisplay->selection() == m_followed)
+			return;
+		// Editor Content Follows Event Selection (p. 1153): the MIDI parts selected in the project window.
+		m_followed = m_eventDisplay->selection();
+		const std::vector<uint64_t> parts = selectedParts();
+		if (parts.empty())
+			return;
+		for (const char* editor : {"window", "lower"})
+			if (open(editor) && !m_editorViews.at(editor).at("keepContents").get<bool>())
+				m_binding.send("editor.open", {{"editor", editor}, {"parts", parts}});
 	}
 
 	ui::Mixer* AppUi::toggleMixer(int number)

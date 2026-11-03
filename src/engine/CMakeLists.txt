@@ -110,6 +110,7 @@ add_library(gnubase-engine STATIC
 	document/audiofilecommands.cpp
 	document/channelformat.cpp document/channelformat.h
 	document/document.cpp document/document.h
+	document/editors.cpp document/editors.h
 	document/eventedits.cpp
 	document/fadeedits.cpp
 	document/history.cpp document/history.h
