@@ -28,6 +28,7 @@ add_executable(gnubase-tests
 	audio_tests.cpp
 	audiofile_tests.cpp
 	audioimport_tests.cpp
+	audiopart_tests.cpp
 	automation_tests.cpp
 	backup_tests.cpp
 	bus_tests.cpp
@@ -76,6 +77,7 @@ add_executable(gnubase-tests
 	midieditor_tests.cpp
 	midifile_tests.cpp
 	midifunctions_tests.cpp
+	midirecording_tests.cpp
 	miditap_tests.cpp
 	mixer_tests.cpp
 	mixerviews_tests.cpp

@@ -30,7 +30,9 @@ it up in `app::AppUi`.
   does, modifiers in the order Ctrl, Alt, Shift, Cmd: `Ctrl+Shift+Z` on Windows and Linux, `Shift+Cmd+Z` on macOS
   (`Opt` for Alt). The default key map is written with `Mod`, so it is the same on every platform.
 - **Elements first.** RmlUi gets every key first, at the focused element, from where it bubbles up. An element that
-  uses a key stops its propagation: a text field keeps the keys typed into it, a focused button is clicked by Space
+  uses a key stops its propagation: a text field keeps the keys typed into it, and also the arrow keys without
+  modifiers that it can't use at its first or last line or character, which RmlUi lets through to move the focus
+  (`nav`): where they move it nowhere, `KeyCommands::press` runs no command for them. A focused button is clicked by Space
   and Enter (not a toolbar or transport button, [widgets.md](widgets.md)), a focused knob, fader or slider turns with
   the arrow keys, menus and dialogs keep their keys, Tab moves the focus: between the zones of a docking window
   ([docking.md](docking.md)), and between controls in text fields and dialogs. A key command runs only for a key that
@@ -122,8 +124,9 @@ command. In the app's
 UI (`test::UiApp`, [ui-tests.md](ui-tests.md)), keys pressed through `ui::Automation` start, stop and locate the
 transport and undo through the UI's client; the same keys run different commands in a project zone, an editor zone
 inside a lower zone, an element of the lower zone and outside any zone; lock keys don't count; a key from SDL's own
-event queue runs its command; and text fields, a focused button, a focused knob and a modal dialog keep their keys,
-while Space after a click on a toolbar or transport button starts and stops playback (`tests/transportbar_tests.cpp`).
+event queue runs its command; and text fields, also their arrow keys at the ends, a focused button, a focused knob and
+a modal dialog keep their keys, while Space after a click on a toolbar or transport button starts and stops playback
+(`tests/transportbar_tests.cpp`).
 
 Not yet: the key commands editor, presets and macros, which will keep the key map in the user settings, so that MCP
 and Lua reach it too; exporting the assignments; keys in tooltips; the On-Screen Keyboard, which takes most keys while

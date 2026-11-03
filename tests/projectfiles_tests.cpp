@@ -189,6 +189,23 @@ TEST_CASE("save new version saves under the next free number and goes on with it
 	CHECK(run(client, "project.saveNewVersion").at("file") ==
 		utf8(fs::absolute(dir.path() / "My Project-07.dawproject")));
 
+	// Versions whose name or extension is written in another case count too: the file systems of Windows and macOS
+	// don't tell them apart, so the next version would overwrite them there.
+	fs::copy_file(file, dir.path() / "My Project-08.DAWPROJECT");
+	CHECK(run(client, "project.saveNewVersion").at("file") ==
+		utf8(fs::absolute(dir.path() / "My Project-09.dawproject")));
+	fs::copy_file(file, dir.path() / "MY PROJECT-10.dawproject");
+	CHECK(run(client, "project.saveNewVersion").at("file") ==
+		utf8(fs::absolute(dir.path() / "My Project-11.dawproject")));
+
+	// Only .dawproject, in any case, is the extension that a version replaces: a file saved through the API under a
+	// name with a dot is numbered from its whole name.
+	run(client, "project.save", {{"path", utf8(dir.path() / "Song v2.1")}});
+	CHECK(
+		run(client, "project.saveNewVersion").at("file") == utf8(fs::absolute(dir.path() / "Song v2.1-01.dawproject")));
+	run(client, "project.save", {{"path", utf8(dir.path() / "Mix-03.DAWPROJECT")}});
+	CHECK(run(client, "project.saveNewVersion").at("file") == utf8(fs::absolute(dir.path() / "Mix-04.dawproject")));
+
 	// Each version has the project as it was.
 	run(client, "project.load", {{"path", utf8(file)}});
 	CHECK(trackCount(client) == 0);
@@ -639,6 +656,18 @@ TEST_CASE("File > Save As, Save and Save New Version save the project through fi
 	answer(app, {dir.path() / "Song v1.2"});
 	const std::string dotted = utf8(fs::absolute(dir.path() / "Song v1.2.dawproject"));
 	REQUIRE(app.waitUntil([&app, &dotted] { return location(app) == dotted; }));
+	fileMenu(app, "file.saveNewVersion"); // numbered from the whole name
+	const std::string dottedVersion = utf8(fs::absolute(dir.path() / "Song v1.2-01.dawproject"));
+	REQUIRE(app.waitUntil([&app, &dottedVersion] { return location(app) == dottedVersion; }));
+
+	// The extension in another case is the extension.
+	fileMenu(app, "file.saveAs");
+	answer(app, {dir.path() / "Mix.DAWPROJECT"});
+	const std::string upper = utf8(fs::absolute(dir.path() / "Mix.DAWPROJECT"));
+	REQUIRE(app.waitUntil([&app, &upper] { return location(app) == upper; }));
+	fileMenu(app, "file.saveNewVersion");
+	const std::string upperVersion = utf8(fs::absolute(dir.path() / "Mix-01.dawproject"));
+	REQUIRE(app.waitUntil([&app, &upperVersion] { return location(app) == upperVersion; }));
 }
 
 TEST_CASE("a save or backup that fails shows its error", "[ui]")

@@ -143,6 +143,18 @@ TEST_CASE("Transport > Audio Record Mode sets the transport's audio record mode"
 	REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("audioRecordMode") == "replace"; }));
 }
 
+TEST_CASE("Transport > MIDI Record Mode sets the transport's MIDI record mode", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	app.shell().step(std::chrono::milliseconds(0));
+	click(app, "#menu-bar button[menu=transport-menu]");
+	app.ui().move(std::nullopt, {"#midi-record-mode-submenu", 0, std::nullopt});
+	app.shell().step(std::chrono::milliseconds(0));
+	click(app, "#midi-record-mode-merge");
+	REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("midiRecordMode") == "merge"; }));
+}
+
 TEST_CASE("main menu items are disabled while their command can't run", "[ui]")
 {
 	test::UiApp app({900, 640});

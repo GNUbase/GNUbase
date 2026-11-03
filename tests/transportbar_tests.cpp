@@ -305,7 +305,9 @@ TEST_CASE("the time displays show the cursor in their formats and take positions
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(transport(app).at("position") == 72001);
 	CHECK(transport(app).at("left") == 0);
-	app.call("transport.locate", {{"position", 72000}});
+
+	// Typing the position it shows moves the cursor onto it.
+	type(app, "#primary-time", "1.4.1.0");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 72000; }));
 
 	// The format menus, saved in ui.timeFormats.
@@ -735,6 +737,56 @@ TEST_CASE("a drag or wheel gesture on the tempo field is one undo step", "[ui]")
 	REQUIRE(app.waitUntil([&app, dragged] { return tempo(app) == dragged; }));
 	app.call("history.undo");
 	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "120"; }));
+}
+
+TEST_CASE("the tempo field changes the tempo only when a number is typed, also the one it shows", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	// A tempo with more decimals than the field shows, e.g. from a MIDI file.
+	app.call("project.set", {{"tempo", 130.0001}});
+	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "130.0001"; }));
+	const size_t before = undoSteps(app);
+
+	// Enter or leaving the field without typing keeps the tempo and adds no undo step.
+	app.ui().click(std::nullopt, at("#tempo"), ui::MouseButton::Left, 2, {});
+	CHECK(element(app, "#tempo input").at("value") == "130.000");
+	app.ui().key(std::nullopt, "Enter");
+	app.ui().click(std::nullopt, at("#tempo"), ui::MouseButton::Left, 2, {});
+	click(app, "#signature");
+	CHECK(!hasClass(app, "#tempo", "editing"));
+	settle(app);
+	CHECK(tempo(app) == 130.0001);
+	CHECK(undoSteps(app) == before);
+
+	// Typing the number it shows sets that tempo.
+	type(app, "#tempo", "130.000");
+	REQUIRE(app.waitUntil([&app] { return tempo(app) == 130.0; }));
+	settle(app);
+	CHECK(undoSteps(app) == before + 1);
+}
+
+TEST_CASE("typing the position the primary time display showed during playback jumps back to it", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+	app.call("audio.start");
+	app.call("transport.play");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") > 0; }));
+
+	app.ui().click(std::nullopt, at("#primary-time"), ui::MouseButton::Left, 2, {});
+	const std::string shown = element(app, "#primary-time input").at("value").get<std::string>();
+	const int64_t from = position(app);
+	REQUIRE(waitFor(app, [from](const Json& state) { return state.at("position") > from + 24000; })); // a beat on
+	app.ui().key(std::nullopt, "Ctrl+A");
+	app.ui().text(std::nullopt, shown);
+	const int64_t typed = position(app);
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(waitFor(app, [typed](const Json& state) { return state.at("position") < typed; }));
+	CHECK(transport(app).at("playing") == true);
+	app.call("transport.stop");
+	app.call("audio.stop");
 }
 
 TEST_CASE("the time display window shows beat counts only and changes its size", "[ui]")

@@ -241,8 +241,8 @@ namespace gnubase::ui
 			m_drag = Drag::Rectangle;
 			return true;
 		case Tool::Draw:
-			// Empty MIDI parts on MIDI and instrument tracks (reference manual p. 250); audio parts come later.
-			if (lane && shown == nullptr && (m_laneTypes[*lane] == "midi" || m_laneTypes[*lane] == "instrument"))
+			// Empty MIDI parts on MIDI and instrument tracks, audio parts on audio tracks (reference manual p. 250).
+			if (lane && shown == nullptr && takesParts(*lane))
 				m_drag = Drag::DrawPart;
 			return true;
 		case Tool::Play:

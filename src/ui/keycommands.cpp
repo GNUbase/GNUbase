@@ -27,6 +27,13 @@ namespace gnubase::ui
 		// The modifiers that make a key another one; lock keys don't.
 		constexpr int g_modifiers = KM_CTRL | KM_ALT | KM_SHIFT | KM_META;
 
+		bool isTextField(const Rml::Element& element)
+		{
+			const auto type = element.GetAttribute<Rml::String>("type", "text");
+			return element.GetTagName() == "textarea" ||
+				(element.GetTagName() == "input" && (type == "text" || type == "password" || type == "search"));
+		}
+
 		struct NamedKey
 		{
 			const char* name;
@@ -257,6 +264,9 @@ namespace gnubase::ui
 		const KeyPress pressed{keys.key, keys.modifiers & g_modifiers};
 		Rml::Element* focus = window.context().GetFocusElement();
 		if (focus != nullptr && focus->GetOwnerDocument() != nullptr && focus->GetOwnerDocument()->IsModal())
+			return false;
+		if (focus != nullptr && pressed.modifiers == 0 && isTextField(*focus) &&
+			(pressed.key == KI_UP || pressed.key == KI_DOWN || pressed.key == KI_LEFT || pressed.key == KI_RIGHT))
 			return false;
 
 		// A copy of the binding, since a UI command may bind keys.
