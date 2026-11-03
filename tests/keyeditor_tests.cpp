@@ -139,6 +139,37 @@ TEST_CASE("the key editor's selected notes are view state of the editable parts"
 	CHECK(f.view().at("selection").empty());
 }
 
+TEST_CASE("the selection keeps only notes of the parts the editing mode makes editable", "[unit]")
+{
+	Fixture f;
+	const uint64_t other =
+		f.call("midiPart.add", {{"track", f.track}, {"position", 8 * g_quarter}, {"length", 4 * g_quarter}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	f.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part, other})}});
+	const uint64_t mine = f.notes({{0, 60}}).front();
+	const uint64_t theirs =
+		f.call("note.add",
+			 {{"part", other},
+				 {"notes",
+					 Json::array({{{"position", 0}, {"length", g_sixteenth}, {"pitch", 62}, {"velocity", 0.5}}})}})
+			.at("notes")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	const Json both = Json::array({{{"part", f.part}, {"note", mine}}, {{"part", other}, {"note", theirs}}});
+	f.call("editor.set", {{"editor", "window"}, {"selection", both}});
+	CHECK(f.view().at("selection") == both);
+	// Active Part mode (p. 1197): editor.changed and editor.get keep only the active part's notes.
+	const Json changed = f.call("editor.set", {{"editor", "window"}, {"editingMode", "activePart"}});
+	CHECK(changed.at("selection") == f.selection({mine}));
+	CHECK(f.view().at("selection") == f.selection({mine}));
+	// Another active part in that mode drops them as well.
+	f.call("editor.set", {{"editor", "window"}, {"activePart", other}});
+	CHECK(f.view().at("selection").empty());
+}
+
 TEST_CASE("step input inserts notes and chords at the step input cursor and moves it on", "[unit]")
 {
 	Fixture f;
@@ -238,6 +269,13 @@ TEST_CASE("MIDI input changes the selected note and selects the next one", "[uni
 	CHECK(notes[3].at("pitch") == 64);
 	CHECK(notes[4].at("pitch") == 76);
 	CHECK(notes[4].at("position") == 2 * g_sixteenth);
+
+	// A played pitch above the selected note's: the next note is selected, not the changed one (p. 1219).
+	f.call("editor.set",
+		{{"editor", "window"}, {"keepNotes", false}, {"recordPitch", true}, {"selection", f.selection({ids[0]})}});
+	f.call("editor.input", {{"editor", "window"}, {"notes", Json::array({{{"pitch", 72}}})}});
+	CHECK(f.pitches({ids[0]}) == std::vector<int>{72});
+	CHECK(f.view().at("selection") == f.selection({ids[1]}));
 
 	f.call("editor.set", {{"editor", "window"}, {"selection", Json::array()}});
 	CHECK_THAT(f.fails("editor.input", {{"editor", "window"}, {"notes", Json::array({{{"pitch", 60}}})}}),

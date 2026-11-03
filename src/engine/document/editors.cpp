@@ -88,6 +88,38 @@ namespace gnubase::engine
 			return parts;
 		}
 
+		ObjectId trackOf(const Project& project, ObjectId part)
+		{
+			return part == 0 ? 0 : project.midiParts.at(part).track;
+		}
+
+		// The parts that selecting and editing reach in the editing mode (p. 1197).
+		std::vector<ObjectId> editableParts(const Project& project, const EditorView& view)
+		{
+			const ObjectId activeTrack = trackOf(project, view.activePart);
+			std::vector<ObjectId> editable;
+			for (const ObjectId part : view.parts)
+				if (view.editingMode == "allParts" || (view.editingMode == "activePart" && part == view.activePart) ||
+					(view.editingMode == "activeTrack" && trackOf(project, part) == activeTrack))
+					editable.push_back(part);
+			return editable;
+		}
+
+		// Leaves only the selected notes that still exist in the editable parts.
+		void dropUneditable(const Project& project, EditorView& view)
+		{
+			const std::vector<ObjectId> editable = editableParts(project, view);
+			view.selection.erase(
+				std::remove_if(view.selection.begin(), view.selection.end(),
+					[&](const std::pair<ObjectId, ObjectId>& selected)
+					{
+						const auto part = project.midiParts.find(selected.first);
+						return std::find(editable.begin(), editable.end(), selected.first) == editable.end() ||
+							part == project.midiParts.end() || part->second.notes.count(selected.second) == 0;
+					}),
+				view.selection.end());
+		}
+
 		// The editor's view now: closed and empty once another project is open, without what is gone since.
 		EditorView current(const Views& views, const ProjectModel& model, const std::string& editor)
 		{
@@ -102,31 +134,14 @@ namespace gnubase::engine
 			view.globalTracks.erase(std::remove_if(view.globalTracks.begin(), view.globalTracks.end(),
 										[&project](ObjectId id) { return !isGlobal(project, id); }),
 				view.globalTracks.end());
-			view.selection.erase(
-				std::remove_if(view.selection.begin(), view.selection.end(),
-					[&](const std::pair<ObjectId, ObjectId>& selected)
-					{
-						const auto part = project.midiParts.find(selected.first);
-						return std::find(view.parts.begin(), view.parts.end(), selected.first) == view.parts.end() ||
-							part == project.midiParts.end() || part->second.notes.count(selected.second) == 0;
-					}),
-				view.selection.end());
+			dropUneditable(project, view);
 			return view;
-		}
-
-		ObjectId trackOf(const Project& project, ObjectId part)
-		{
-			return part == 0 ? 0 : project.midiParts.at(part).track;
 		}
 
 		Json viewJson(const Project& project, const std::string& editor, const EditorView& view)
 		{
 			const ObjectId activeTrack = trackOf(project, view.activePart);
-			std::vector<ObjectId> editable;
-			for (const ObjectId part : view.parts)
-				if (view.editingMode == "allParts" || (view.editingMode == "activePart" && part == view.activePart) ||
-					(view.editingMode == "activeTrack" && trackOf(project, part) == activeTrack))
-					editable.push_back(part);
+			const std::vector<ObjectId> editable = editableParts(project, view);
 			Json selection = Json::array();
 			for (const auto& [part, note] : view.selection)
 				selection.push_back({{"part", part}, {"note", note}});
@@ -299,7 +314,8 @@ namespace gnubase::engine
 			EditorView& stored = (*views)[editor];
 			stored = view;
 			stored.project = model.openedRevision();
-			Json result = viewJson(model.project(), editor, view);
+			dropUneditable(model.project(), stored);
+			Json result = viewJson(model.project(), editor, stored);
 			context.emit("editor.changed", result);
 			return result;
 		};
@@ -413,13 +429,13 @@ namespace gnubase::engine
 				}
 				if (parameters.contains("selection"))
 				{
-					const Json editable = viewJson(project, editor, view).at("editable");
+					const std::vector<ObjectId> editable = editableParts(project, view);
 					view.selection.clear();
 					for (const Json& item : parameters.at("selection"))
 					{
 						const auto part = item.at("part").get<ObjectId>();
 						const auto note = item.at("note").get<ObjectId>();
-						require(std::find(editable.begin(), editable.end(), Json(part)) != editable.end(),
+						require(contains(editable, part),
 							"part " + std::to_string(part) + " isn't editable in the " + editor + " editor");
 						require(project.midiParts.at(part).notes.count(note) != 0,
 							"part " + std::to_string(part) + " has no note " + std::to_string(note));
@@ -588,7 +604,8 @@ namespace gnubase::engine
 					// The next note of the part, before the new ones come.
 					std::optional<std::tuple<time::Ticks, uint8_t, ObjectId>> next;
 					for (const auto& [id, note] : part.notes)
-						if (std::make_tuple(note.position, note.pitch, id) > std::make_tuple(at, pitch, shape.id) &&
+						if (id != shape.id &&
+							std::make_tuple(note.position, note.pitch, id) > std::make_tuple(at, pitch, shape.id) &&
 							(!next || std::make_tuple(note.position, note.pitch, id) < *next))
 							next = std::make_tuple(note.position, note.pitch, id);
 					for (const Played& each : extra)

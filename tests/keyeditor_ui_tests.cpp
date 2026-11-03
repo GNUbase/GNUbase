@@ -269,6 +269,21 @@ TEST_CASE("the draw tool draws notes of the length quantize's length or a multip
 	CHECK(f.partNotes()[1].at("length") == 6 * g_sixteenth);
 }
 
+TEST_CASE("the draw tool follows a quantize grid changed in the project window", "[ui]")
+{
+	Fixture f;
+	f.add({});
+	f.app.call("quantize.set", {{"settings", {{"grid", "1/8"}}}});         // no undo step, so no history.changed
+	f.app.waitUntil([] { return false; }, std::chrono::milliseconds(300)); // time for the editor to fetch the project
+	f.tool("draw");
+	// On the eighth grid a click at three and a half sixteenths draws an eighth note (Quantize Link) at one eighth.
+	f.click(f.at(3.5, 64));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
+	f.settle();
+	CHECK(f.partNotes()[0].at("position") == 2 * g_sixteenth);
+	CHECK(f.partNotes()[0].at("length") == 2 * g_sixteenth);
+}
+
 TEST_CASE("the erase, trim, split and glue tools", "[ui]")
 {
 	Fixture f;

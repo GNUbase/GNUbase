@@ -142,7 +142,8 @@ namespace gnubase::ui
 		for (const Rml::EventId event : g_events)
 			root.AddEventListener(event, this);
 
-		for (const char* event : {"history.changed", "project.reset"})
+		// quantize.set makes no undo step, so the grid comes with quantize.changed.
+		for (const char* event : {"history.changed", "project.reset", "quantize.changed"})
 			m_subscriptions.push_back(m_binding.on(event,
 				[this, reset = std::string(event) == "project.reset"](const engine::Event&)
 				{
