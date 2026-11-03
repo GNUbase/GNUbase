@@ -257,7 +257,8 @@ namespace gnubase::engine
 
 	void History::removeLast()
 	{
-		GNUBASE_ASSERT(!m_steps.empty() && m_position == m_steps.size());
+		GNUBASE_ASSERT(!m_steps.empty());
+		GNUBASE_ASSERT(m_position == m_steps.size());
 		m_steps.pop_back();
 		m_position = m_steps.size();
 	}
