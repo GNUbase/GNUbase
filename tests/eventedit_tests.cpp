@@ -2,6 +2,7 @@
 // Editing parts and events (#85): the event.* commands on audio events and MIDI parts, shared copies and locks; and
 // range editing (#88), the range.* commands on audio, MIDI and automation.
 // tests/eventediting_tests.cpp drives the same commands through the event display's gestures.
+#include "engine/document/projectmodel.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 
@@ -11,6 +12,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -245,6 +247,109 @@ TEST_CASE("A transaction keeps every shared copy's edit, as one undo step", "[un
 	f.call("history.undo");
 	CHECK(f.midi(original).at("notes") == notes);
 	CHECK(f.midi(copy).at("notes") == notes);
+}
+
+TEST_CASE("A transaction syncs parts that become or stop being shared in it, and leaves other parts alone", "[unit]")
+{
+	Fixture f;
+	const int64_t track = f.track("midi");
+	const int64_t otherTrack = f.track("midi");
+	const int64_t original = f.part(track);
+	const int64_t alone =
+		f.call("event.copy", {{"events", {original}}, {"ticks", 2 * g_bar}}).at("events")[0].get<int64_t>();
+	const int64_t leaving = f.part(otherTrack);
+	const int64_t staying = f.call("event.copy", {{"events", {leaving}}, {"ticks", 2 * g_bar}, {"shared", true}})
+								.at("events")[0]
+								.get<int64_t>();
+	const Json notes = f.midi(original).at("notes");
+	const Json aloneNotes = f.midi(alone).at("notes");
+	const Json stayingNotes = f.midi(staying).at("notes");
+	const auto setPitch = [](int64_t part, const Json& note, int pitch)
+	{
+		return Json{{"command", "note.set"},
+			{"parameters", {{"part", part}, {"notes", {{{"id", note.at("id")}, {"pitch", pitch}}}}}}};
+	};
+	const auto pitches = [&f](int64_t part)
+	{
+		const Json midiPart = f.midi(part);
+		std::vector<int> result;
+		result.reserve(midiPart.at("notes").size());
+		for (const Json& note : midiPart.at("notes"))
+			result.push_back(note.at("pitch").get<int>());
+		return result;
+	};
+	const Json before = f.call("project.get").at("midiParts");
+
+	// The original's first edit is its own; it becomes shared, and its next edit reaches the new copy. Its real copy
+	// keeps its notes and edits only itself. Once one of two copies is a real copy, the other edits only itself too.
+	const Json result = f.call("history.transaction",
+		{{"description", "Edit"},
+			{"commands",
+				{setPitch(original, notes[0], 70),
+					{{"command", "event.copy"},
+						{"parameters", {{"events", {original}}, {"ticks", 4 * g_bar}, {"shared", true}}}},
+					setPitch(original, notes[1], 71), setPitch(alone, aloneNotes[2], 50),
+					{{"command", "event.toRealCopy"}, {"parameters", {{"events", {leaving}}}}},
+					setPitch(staying, stayingNotes[3], 40)}}});
+	const int64_t copy = result.at("results")[1].at("events")[0].get<int64_t>();
+	CHECK(f.midi(original).at("shared") != 0);
+	CHECK(f.midi(copy).at("shared") == f.midi(original).at("shared"));
+	CHECK(pitches(original) == std::vector<int>{70, 71, 62, 63});
+	CHECK(f.midi(copy).at("notes") == f.midi(original).at("notes"));
+	CHECK(f.midi(alone).at("shared") == 0);
+	CHECK(pitches(alone) == std::vector<int>{60, 61, 50, 63});
+	CHECK(f.midi(leaving).at("shared") == 0);
+	CHECK(f.midi(staying).at("shared") == 0);
+	CHECK(pitches(leaving) == std::vector<int>{60, 61, 62, 63});
+	CHECK(pitches(staying) == std::vector<int>{60, 61, 62, 40});
+
+	// The copy, which shares the original's note ids, edits the original in a transaction of its own.
+	f.call("history.transaction", {{"description", "Edit the copy"}, {"commands", {setPitch(copy, notes[2], 72)}}});
+	CHECK(pitches(original) == std::vector<int>{70, 71, 72, 63});
+	CHECK(f.midi(copy).at("notes") == f.midi(original).at("notes"));
+	CHECK(pitches(alone) == std::vector<int>{60, 61, 50, 63});
+
+	// Each transaction is one undo step, and redo brings back the same parts and notes.
+	const Json after = f.call("project.get").at("midiParts");
+	f.call("history.undo");
+	const Json afterFirst = f.call("project.get").at("midiParts");
+	CHECK(pitches(original) == std::vector<int>{70, 71, 62, 63});
+	CHECK(f.midi(copy).at("notes") == f.midi(original).at("notes"));
+	f.call("history.undo");
+	CHECK(f.call("project.get").at("midiParts") == before);
+	f.call("history.redo");
+	CHECK(f.call("project.get").at("midiParts") == afterFirst);
+	f.call("history.redo");
+	CHECK(f.call("project.get").at("midiParts") == after);
+}
+
+TEST_CASE("Only shared parts are copied for comparing shared copies", "[unit]")
+{
+	using gnubase::engine::MidiPart;
+	using gnubase::engine::ObjectId;
+
+	// A dense part that isn't shared, beside a group of two copies.
+	std::map<ObjectId, MidiPart> parts;
+	MidiPart dense;
+	dense.id = 1;
+	for (ObjectId note = 1; note <= 1000; ++note)
+		dense.notes[note].id = note;
+	parts[dense.id] = dense;
+	for (const ObjectId id : {ObjectId{2}, ObjectId{3}})
+	{
+		MidiPart copy;
+		copy.id = id;
+		copy.shared = 7;
+		copy.notes[1].id = 1;
+		parts[id] = copy;
+	}
+
+	const std::map<ObjectId, MidiPart> snapshot = gnubase::engine::sharedPartsOf(parts);
+	REQUIRE(snapshot.size() == 2);
+	CHECK(snapshot.count(1) == 0);
+	CHECK(snapshot.at(2).shared == 7);
+	CHECK(snapshot.at(3).notes.size() == 1);
+	CHECK(gnubase::engine::sharedPartsOf({}).empty());
 }
 
 TEST_CASE("event.resize moves the start or the end, revealing content or moving it", "[unit]")

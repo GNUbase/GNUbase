@@ -55,8 +55,9 @@ same ids. After every command (`ProjectModel::addEdit`, and after each command o
 part of a group whose notes or controllers changed gives them to the others (`syncSharedParts`), so any command that
 edits notes, `note.set` as much as a MIDI function or quantizing, edits all copies, as one undo step. A transaction
 that edits two copies of a group keeps both edits, and a later command in it sees what an earlier one did to another
-copy. A part whose contents change for its own
-sake, by a resize that moves its notes, a split or a glue, first leaves its group with new note ids; so does
+copy. For that, a transaction copies only the shared parts before each of its commands (`sharedPartsOf`), not every
+note of every part: a part that becomes shared in a command gives no edit to its new group anyway. A part whose
+contents change for its own sake, by a resize that moves its notes, a split or a glue, first leaves its group with new note ids; so does
 `event.toRealCopy`. A group's last part is no longer shared. The position, length, name, mute and lock stay each
 part's own. Shared copies are saved in `gnubase.json`; `project.xml` gets them as ordinary clips.
 
@@ -126,8 +127,9 @@ that the arrow keys select into view.
 
 - `tests/eventedit_tests.cpp`: every command on audio events and MIDI parts, in samples and ticks, undo, locks and
   the errors; real and shared copies, edits reaching every shared copy and undone together, real copies and the last
-  copy; resizing both edges in both modes and its limits; splitting at the cursor and the locators, with and without
-  splitting notes; gluing; filling the locators; `event.get`.
+  copy; transactions in which parts become or stop being shared, edit parts that aren't shared, and undo and redo as
+  one step; only shared parts copied for the comparison; resizing both edges in both modes and its limits; splitting
+  at the cursor and the locators, with and without splitting notes; gluing; filling the locators; `event.get`.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): selecting with clicks and Ctrl, moving and copying
   with drags, shared copies with Alt and Shift, onto another track; drags restricted with Ctrl, across and down, moving
   and copying, and Ctrl and a click still deselecting; the drag delay (a drag released at once is a click, one held
