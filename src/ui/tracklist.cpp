@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/tracklist.h"
 
+#include "ui/mixer.h"
 #include "ui/widgets.h"
 
 #include <RmlUi/Core/Context.h>
@@ -543,6 +544,8 @@ namespace gnubase::ui
 				else
 					on = channel != nullptr && channel->value(name, false);
 				setClass(*button, "checked", on);
+				if (name == "solo")
+					setClass(*button, "defeated", channel != nullptr && channel->value("soloDefeat", false));
 				// Read needs automation lanes to read.
 				const bool disabled = name == "read" && lanes.empty();
 				if (disabled != button->HasAttribute("disabled"))
@@ -825,7 +828,8 @@ namespace gnubase::ui
 				if (element->HasAttribute("control"))
 				{
 					if (const Row* row = rowOf(element); row != nullptr && !element->HasAttribute("disabled"))
-						control(*row, element->GetAttribute<Rml::String>("control", ""));
+						control(*row, element->GetAttribute<Rml::String>("control", ""),
+							held(event, "ctrl_key") || held(event, "meta_key"), held(event, "alt_key"));
 					break;
 				}
 			break;
@@ -879,7 +883,7 @@ namespace gnubase::ui
 		}
 	}
 
-	void TrackList::control(const Row& row, const std::string& name)
+	void TrackList::control(const Row& row, const std::string& name, bool exclusive, bool defeat)
 	{
 		const Json& project = m_display.project();
 		if (name == "read")
@@ -911,7 +915,10 @@ namespace gnubase::ui
 		if (channel == nullptr)
 			return;
 		const std::string key = name == "record" ? "recordEnable" : name;
-		m_binding.send("channel.set", {{"channel", row.channel}, {key, !channel->value(key, false)}});
+		Json parameters =
+			key == "solo" ? soloClick(*channel, exclusive, defeat) : Json{{key, !channel->value(key, false)}};
+		parameters["channel"] = row.channel;
+		m_binding.send("channel.set", std::move(parameters));
 	}
 
 	void TrackList::transaction(const std::string& description, Json commands)

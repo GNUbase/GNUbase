@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/fades.h"
 #include "engine/document/document.h"
 
 #include <cstdint>
@@ -59,7 +60,8 @@ namespace gnubase::engine
 		Fade fadeOut;
 		Fade clipFadeIn; // at the media file's start and end
 		Fade clipFadeOut;
-		Crossfade crossfade; // only one that applies (crossfadeApplies)
+		Crossfade crossfade;                // only one that applies (crossfadeApplies)
+		std::vector<GainPoint> volumeCurve; // in the media file's sample frames
 	};
 
 	struct RenderNote
@@ -148,7 +150,8 @@ namespace gnubase::engine
 		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A silent MIDI channel
 		// has no notes or controllers, and a disabled track no events or parts.
 		bool silent = false;
-		AutoFades autoFades;                          // audio tracks: their own settings or the project's
+		bool listen = false; // also plays on the monitoring bus, after its fader (graph::NodeKind::ListenBus)
+		AutoFades autoFades; // audio tracks: their own settings or the project's
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
 		std::vector<RenderNote> notes;                // sorted by start, then pitch
 		std::vector<RenderController> controllers;    // sorted by position

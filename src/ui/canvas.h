@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/fades.h"
 #include "engine/document/document.h"
 
 #include <RmlUi/Core/Element.h>
@@ -202,8 +203,24 @@ namespace gnubase::ui
 		bool in = true;
 	};
 
-	// <fade-lines>: the fades of the event lanes' events as lines in stroke-color, and fade handles, squares at the
-	// top of a lane at the positions given, filled with color.
+	// The volume of an audio event (#139) from start to end: its volume (gain, linear) times its volume curve, points
+	// in its clip's frames, as the engine plays it (engine::curveGain); the clip frame at start is offset, rate its
+	// frames per second. The line goes from silence at the bottom of the lane to g_volumeLineTop at the top.
+	struct VolumeLine
+	{
+		double start = 0.0;
+		double end = 0.0;
+		double rate = 0.0;
+		int64_t offset = 0;
+		double gain = 1.0;
+		std::vector<engine::GainPoint> points;
+		bool handles = false; // squares at the points
+	};
+	inline constexpr double g_volumeLineTop = 1.9952623149688795; // +6 dB, the most an event's volume can be
+
+	// <fade-lines>: the fades and volume lines of the event lanes' events in stroke-color, and handles filled with
+	// color: fade and event volume handles, squares at the top of a lane at the positions given, and a volume line's
+	// points.
 	class FadeLines final : public Canvas
 	{
 	public:
@@ -212,6 +229,7 @@ namespace gnubase::ui
 			float height = 0.0F; // dp
 			std::vector<FadeLine> fades;
 			std::vector<double> handles;
+			std::vector<VolumeLine> volumes;
 		};
 
 		using Canvas::Canvas;

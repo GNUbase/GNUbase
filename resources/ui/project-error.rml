@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Tells that a project command failed (docs/features/project-files.md): ui::ProjectFiles opens it with the error in
      #project-error-message when saving, opening or backing up the project fails, so that a failed save isn't taken for
-     done. -->
+     done, and when an auto save fails, so that the user learns that auto save stopped working. -->
 <rml>
 <head>
 	<title>Project Error</title>

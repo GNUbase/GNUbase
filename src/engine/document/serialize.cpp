@@ -396,6 +396,23 @@ namespace gnubase::engine
 			{"crossfadeShape", fadeShapeName(settings.crossfadeShape)}};
 	}
 
+	Json toJson(const std::vector<VolumePoint>& curve)
+	{
+		Json json = Json::array();
+		for (const VolumePoint& point : curve)
+			json.push_back({{"position", point.position}, {"volume", point.volume}, {"curve", point.curve}});
+		return json;
+	}
+
+	std::vector<VolumePoint> volumeCurveFromJson(const Json& json)
+	{
+		std::vector<VolumePoint> curve;
+		for (const Json& point : json)
+			curve.push_back(
+				{point.at("position").get<time::Samples>(), point.value("volume", 0.0), point.value("curve", 0.0)});
+		return curve;
+	}
+
 	Fade fadeFromJson(const Json& json, const Fade& fallback)
 	{
 		Fade fade = fallback;
@@ -521,7 +538,8 @@ namespace gnubase::engine
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
 			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
 			{"recordEnable", channel.recordEnable}, {"midiInput", channel.midiInput}, {"mute", channel.mute},
-			{"solo", channel.solo}, {"slots", channel.slots}, {"notes", channel.notes}};
+			{"solo", channel.solo}, {"soloDefeat", channel.soloDefeat}, {"listen", channel.listen},
+			{"slots", channel.slots}, {"notes", channel.notes}};
 		json.update(toJson(channel.sections));
 		return json;
 	}
@@ -561,7 +579,7 @@ namespace gnubase::engine
 			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute},
 			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
 			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()},
-			{"color", colorJson(event.color)}, {"part", event.part}};
+			{"color", colorJson(event.color)}, {"part", event.part}, {"volumeCurve", toJson(event.volumeCurve)}};
 	}
 
 	Json toJson(const AudioPart& part)
@@ -1307,6 +1325,8 @@ namespace gnubase::engine
 			channel.midiInput = midi && item.value("midiInput", std::string()) == "none" ? "none" : "all";
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
+			channel.soloDefeat = item.value("soloDefeat", false); // files from before #109 have neither
+			channel.listen = channel.format != ChannelFormat::None && item.value("listen", false);
 			channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none
 			channel.notes = item.value("notes", std::string());           // files from before #89 have none
 			channel.sections = sectionsFromJson(item);                    // files from before #107 have them off
@@ -1398,6 +1418,7 @@ namespace gnubase::engine
 			if (const Json snapPoint = item.value("snapPoint", Json()); !snapPoint.is_null()) // files from before #87
 				event.snapPoint = snapPoint.get<time::Samples>();
 			event.color = eventColorFrom(item);
+			event.volumeCurve = volumeCurveFromJson(item.value("volumeCurve", Json::array())); // files from before #139
 			event.part = item.value("part", ObjectId{0}); // files from before #471 have no audio parts
 			project.audioEvents[event.id] = event;
 		}

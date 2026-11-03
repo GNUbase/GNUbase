@@ -244,6 +244,16 @@
 		decorator: svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
 		color: #ffffff;
 	}
+	button.toggle.listen.checked
+	{
+		decorator: svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+		color: #ffffff;
+	}
+	button.toggle.solo.defeated
+	{
+		decorator: svg-ninepatch(toggle-hover.svg, 6 6 6 6);
+		color: #ffff00;
+	}
 	input.text, input.password, textarea
 	{
 		decorator: svg-ninepatch(field-normal.svg, 6 6 6 6);
@@ -739,6 +749,14 @@
 	button.toggle.monitor.checked:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+	}
+	button.toggle.listen.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+	}
+	button.toggle.solo.defeated:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-hover.svg, 6 6 6 6);
 	}
 	input.checkbox:focus-visible
 	{

@@ -30,21 +30,28 @@ each other.
   commands through the UI's engine client, the UI's own commands in `AppUi`. Buttons with `state` are checked, the
   state class `.checked`, while the transport's value is true; they follow `transport.changed`, whoever changed it.
   Buttons with `hold` run their command when the mouse button goes down and end it, as a key held, when it goes up,
-  the mouse leaves the button or the window loses the keyboard focus.
+  the mouse leaves the button or the window loses the keyboard focus. `ui::TransportControls` checks every control
+  with a `command`, the time display's menu items too, before it attaches (#446): parameters that aren't a JSON object
+  throw `std::invalid_argument`, and so does a command or parameters that `KeyCommands::check` refuses, which `AppUi`
+  passes in. A window whose controls are refused closes again with an error logged, as one whose document doesn't
+  load.
 - **Winding** (pp. 297, 300): Rewind and Forward, and Fast Rewind and Fast Forward on the keys, move the cursor by a
   step at once (1 second, 4 for the fast ones), as a click or a key pressed and released does, and while their button
   or key stays down wind on after 0.3 seconds at four steps a second until it goes up (`ui::Winding`, which sends
   `transport.locate` `by` each frame). A key ends winding when it goes up, whatever modifiers are still down, and so
   does the window losing the keyboard focus ([key-commands.md](key-commands.md)).
 - **The mouse wheel** changes a display's value: up for later, by a beat in Bars+Beats, a frame in Timecode and fps
-  (User), a second in Seconds and Samples, never before the project start. On the locator range it moves the right
-  locator, not before the left one. A display being edited ignores the wheel, and a scroll sideways moves nothing.
+  (User), a second in Seconds and Samples, never before the project start or past the largest project position. On
+  the locator range it moves the right locator, not before the left one. A display being edited ignores the wheel,
+  a scroll sideways moves nothing, and a turn moves at most a billion steps (#457).
 - **Displays** (`time`) show the project cursor, a locator or the locator range in the time format of their slot
   (`format`: `primary`, `secondary`, `timeDisplay`). While playing they read the playback position once a frame, as
   the event display does. They are `<textdisplay>`s ([widgets.md](widgets.md)): a double click edits one, and Enter
   takes what was typed in its format (`ui::parseTime`): "3.2" is bar 3, beat 2, "1:30" a minute and a half,
   "5:12" five seconds and twelve frames; what is left out counts from the start. Text that isn't a position changes
-  nothing, and neither does leaving a display without typing. Typing the position a display shows locates to it: onto
+  nothing, and neither does leaving a display without typing. A position or length that ends past the largest
+  project position (`time::g_maxPosition`, 2^48 samples) goes there, as `transport.locate` `by` stops there, and
+  timecode hours past 2147483647 aren't a position (#457). Typing the position a display shows locates to it: onto
   the display's tick when the cursor was between ticks, and back to it during playback.
 - **The locator range** shows the length from the left to the right locator: in bars and beats counted from zero,
   "1.1.0.0" for a bar and a beat, in the other formats as a time (`ui::formatLength`). A length typed moves the right
@@ -126,10 +133,11 @@ p. 313).
 
 ## Checks
 
-`tests/transport_tests.cpp`: `transport.toggle` with each setting, `transport.locate` `by`, and `project.set` `tempo`
-and `signature` with undo and refused values. `tests/timeformat_tests.cpp`: positions typed in every format read back as
-the engine converts them, partial and invalid text, lengths in bars and beats across a tempo change, and the time
-context from `project.get`. `tests/transportbar_tests.cpp` drives the app's UI (`test::UiApp`,
+`tests/transport_tests.cpp`: `transport.toggle` with each setting, `transport.locate` `by`, also huge amounts both ways
+and from the largest position, and `project.set` `tempo` and `signature` with undo and refused values.
+`tests/timeformat_tests.cpp`: positions typed in every format read back as the engine converts them, partial and invalid
+text, timecode hours past 2147483647, lengths in bars and beats across a tempo change, and the time context from
+`project.get`. `tests/transportbar_tests.cpp` drives the app's UI (`test::UiApp`,
 [ui-tests.md](ui-tests.md)): every button of the transport bar, a window too narrow for the transport bar cutting off
 its last sections, the switches following another client's changes, the marker buttons with and without markers,
 Locators to Selection by button and key, the time format menus, Exchange Time Formats by button and key,
@@ -138,8 +146,11 @@ shows, from between its ticks), the tempo and signature fields with undo, every 
 by F2, by an enter command and again after its window was closed, and the time display window with its context menu;
 Rewind, Forward and Fast Forward winding while their key or button is held and stopping when it goes up, also after
 Shift; Nudge Cursor on bar, beat and second grids and at the project start; the wheel on the position, locator and range
-displays in three formats; a drag and wheel turns on the tempo field as one undo step each; a tempo with more decimals
-than the field shows, kept when the field is left untouched and set when its number is typed; the position typed back
-into the primary display during playback; Show Beat Count Only and the window sizes, kept for the window opened again;
-and the setup panes of the transport bar and the panel, each with its own sections, and Show All.
+displays in three formats, and past the largest project position, where positions, locators and a length typed stop
+too, also for turns far larger than a wheel's; a drag and wheel turns on the tempo field as one undo step each; a
+tempo with more decimals than the field shows, kept when the field is left untouched and set when its number is typed;
+the position typed back into the primary display during playback; Show Beat Count Only and the window sizes, kept for
+the window opened again; and the setup panes of the transport bar and the panel, each with its own sections, and Show
+All. A button or menu item with a command that doesn't exist, parameters it doesn't take or parameters that aren't
+JSON makes `TransportControls` throw; without a check, only the last.
 `tests/keycommands_tests.cpp` checks held keys, `tests/theme_tests.cpp` the themes' time display sizes.

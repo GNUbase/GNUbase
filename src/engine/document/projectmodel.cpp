@@ -7,6 +7,7 @@
 #include "engine/document/editors.h"
 #include "engine/document/mixerviews.h"
 #include "engine/document/serialize.h"
+#include "engine/document/volumecurves.h"
 #include "engine/dsp/timestretch.h"
 #include "engine/graph/graph.h"
 #include "engine/jobs/jobs.h"
@@ -1391,6 +1392,10 @@ namespace gnubase::engine
 			}
 			changed.mute = parameters.value("mute", changed.mute);
 			changed.solo = parameters.value("solo", changed.solo);
+			changed.soloDefeat = parameters.value("soloDefeat", changed.soloDefeat);
+			if (parameters.contains("listen"))
+				require(changed.format != ChannelFormat::None, "a MIDI channel has no listen");
+			changed.listen = parameters.value("listen", changed.listen) && changed.format != ChannelFormat::None;
 			changed.notes = parameters.value("notes", changed.notes);
 			if (parameters.contains("pre") || parameters.contains("eq") || parameters.contains("strip"))
 			{
@@ -1405,9 +1410,40 @@ namespace gnubase::engine
 				}
 			}
 			channel = changed;
+			// Exclusive solo (reference manual p. 466): every other channel's solo goes off.
+			if (parameters.value("exclusive", false))
+				for (auto& [id, other] : project.channels)
+					if (id != channel.id && other.solo)
+					{
+						other.solo = false;
+						context.emit("channel.changed", {{"channel", toJson(other)}});
+					}
 			Json result = {{"channel", toJson(channel)}};
 			context.emit("channel.changed", result);
 			return result;
+		}
+
+		// Deactivate All Mute, Solo or Listen States (reference manual pp. 58, 466). Solo takes solo defeat along.
+		Json deactivateAll(Project& project, CommandContext& context)
+		{
+			const std::string state = context.parameters().at("state").get<std::string>();
+			require(state == "mute" || state == "solo" || state == "listen", "state must be mute, solo or listen");
+			Json channels = Json::array();
+			for (auto& [id, channel] : project.channels)
+			{
+				const Channel before = channel;
+				if (state == "mute")
+					channel.mute = false;
+				else if (state == "listen")
+					channel.listen = false;
+				else
+					channel.solo = channel.soloDefeat = false;
+				if (channel == before)
+					continue;
+				context.emit("channel.changed", {{"channel", toJson(channel)}});
+				channels.push_back(id);
+			}
+			return {{"channels", std::move(channels)}};
 		}
 
 		BusDirection busDirection(const Json& name)
@@ -2395,6 +2431,7 @@ namespace gnubase::engine
 			{"track.remove", "Remove track"},
 			{"track.duplicate", "Duplicate track"},
 			{"channel.set", "Change channel"},
+			{"channel.deactivateAll", "Deactivate all states"},
 			{"parameter.set", "Change parameter"},
 			{"plugin.insert", "Insert plugin"},
 			{"plugin.remove", "Remove plugin"},
@@ -2710,8 +2747,9 @@ namespace gnubase::engine
 			try
 			{
 				// Each command's edit reaches the other shared copies before the next command runs, so that edits of
-				// several copies of a group all stay and a command sees what an earlier one did to another copy.
-				const std::map<ObjectId, MidiPart> parts = project.midiParts;
+				// several copies of a group all stay and a command sees what an earlier one did to another copy. Only
+				// shared parts are compared, so only they are copied, not every note of every part (#426).
+				const std::map<ObjectId, MidiPart> parts = sharedPartsOf(project.midiParts);
 				results.push_back(edit->second.handler(project, inner));
 				syncSharedParts(parts, project, inner);
 			}
@@ -2818,8 +2856,9 @@ namespace gnubase::engine
 			{"graph.get", 1,
 				"The project's audio processing graph: its nodes (busses, then channels in track order, then for each "
 				"channel with plugin slots a channelSource node with what plays on the channel and a pluginSlot node "
-				"per slot, which pass the audio on to the channel's node) with the nodes they receive audio and events "
-				"from, and the order they are processed in. object is the bus, channel or slot id.",
+				"per slot, which pass the audio on to the channel's node, and while channels listen a listenBus node "
+				"that receives them) with the nodes they receive audio and events from, and the order they are "
+				"processed in. object is the bus, channel or slot id.",
 				objectSchema({}), {{"type", "object"}}, true},
 			[this](Project&, CommandContext&) { return graphToJson(graph::describe(m_snapshots.latest())); });
 		addControl(engine,
@@ -3177,7 +3216,12 @@ namespace gnubase::engine
 				"from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. mute silences a channel; "
 				"while any channel is "
 				"soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the "
-				"channels that play into them are heard. Muting and soloing glide over one audio block. notes is the "
+				"channels that play into them are heard; exclusive (with solo) turns every other channel's solo off; "
+				"soloDefeat keeps a channel and the channels it plays through heard while others are soloed. listen "
+				"(not MIDI channels) also plays the channel after its fader on the monitoring bus, the main mix, which "
+				"is turned down to the user setting audio.listenDim while any channel listens; the listening channels "
+				"play there at audio.listenLevel, and their signal flow stays as it is. Muting, soloing and the dim "
+				"glide over one audio block. notes is the "
 				"channel's notepad, the user's text about it. The channel strip's sections (audio channels only; "
 				"each object changes only what it has, as project.get shows them) run before the fader: pre "
 				"{gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or "
@@ -3197,11 +3241,23 @@ namespace gnubase::engine
 						{"midiVolume", {{"type", {"integer", "null"}}}}, {"midiPan", {{"type", {"integer", "null"}}}},
 						{"volume", numberSchema}, {"pan", numberSchema}, {"monitor", booleanSchema},
 						{"recordEnable", booleanSchema}, {"midiInput", enumSchema({"all", "none"})},
-						{"mute", booleanSchema}, {"solo", booleanSchema}, {"notes", stringSchema},
+						{"mute", booleanSchema}, {"solo", booleanSchema}, {"exclusive", booleanSchema},
+						{"soloDefeat", booleanSchema}, {"listen", booleanSchema}, {"notes", stringSchema},
 						{"pre", {{"type", "object"}}}, {"eq", {{"type", "object"}}}, {"strip", {{"type", "object"}}}},
 					{"channel"}),
 				resultSchema({"channel"}), false},
 			setChannel);
+
+		add(engine,
+			{"channel.deactivateAll", 1,
+				"Turns a state off on every channel, as the mixer toolbar's Deactivate All Mute, Solo and Listen "
+				"States buttons do: mute, solo (with solo defeat) or listen. One undo step. Returns the channels "
+				"that changed.",
+				objectSchema({{"state", enumSchema({"mute", "solo", "listen"})}}, {"state"}),
+				Json{{"type", "object"}, {"properties", {{"channels", {{"type", "array"}, {"items", idSchema}}}}},
+					{"required", {"channels"}}},
+				false},
+			deactivateAll);
 
 		add(engine,
 			{"media.add", 1,
@@ -3402,6 +3458,7 @@ namespace gnubase::engine
 		registerRecordingCommands(engine);
 		registerPoolCommands(engine);
 		registerFadeCommands(engine);
+		registerVolumeCurveCommands(*this, engine);
 		registerEventEditCommands(engine);
 		registerSnapCommands(*this, engine);
 		registerMixerCommands(*this, engine);

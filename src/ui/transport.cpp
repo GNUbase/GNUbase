@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/transport.h"
 
+#include "engine/time/tempomap.h"
 #include "platform/log.h"
 #include "ui/widgetutils.h"
 
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <stdexcept>
 #include <utility>
 
 namespace gnubase::ui
@@ -90,15 +92,41 @@ namespace gnubase::ui
 				return std::nullopt;
 			return std::make_pair(static_cast<int>(*numerator), static_cast<int>(*denominator));
 		}
+
+		// Throws std::invalid_argument for a control whose parameters aren't a JSON object, or whose command and
+		// parameters check refuses.
+		void checkControls(Rml::Element& root, const CheckCommand& check)
+		{
+			Rml::ElementList found;
+			root.QuerySelectorAll(found, "[command]");
+			if (root.HasAttribute("command"))
+				found.insert(found.begin(), &root);
+			for (const Rml::Element* control : found)
+			{
+				const std::string command = attribute(*control, "command");
+				const std::string text = attribute(*control, "parameters", "{}");
+				const Json parameters = Json::parse(text, nullptr, false);
+				if (!parameters.is_object())
+				{
+					std::string message = "the parameters of the transport control for ";
+					message.append(command).append(" aren't a JSON object: ").append(text);
+					throw std::invalid_argument(message);
+				}
+				if (check)
+					check(command, parameters);
+			}
+		}
 	}
 
-	TransportControls::TransportControls(
-		engine::Engine& engine, EngineBinding& binding, Rml::Element& root, RunCommand run, ReleaseCommand release)
+	TransportControls::TransportControls(engine::Engine& engine, EngineBinding& binding, Rml::Element& root,
+		RunCommand run, ReleaseCommand release, const CheckCommand& check)
 		: m_engine(engine), m_binding(binding), m_run(std::move(run)), m_release(std::move(release)),
 		  m_root(root.GetObserverPtr()),
 		  m_formats{{"primary", TimeFormat::BarsBeats}, {"secondary", TimeFormat::Timecode},
 			  {"timeDisplay", TimeFormat::BarsBeats}}
 	{
+		// Before it listens to anything, so that a refused control leaves nothing behind.
+		checkControls(root, check);
 		if (Rml::ElementDocument* document = root.GetOwnerDocument())
 			m_document = document->GetObserverPtr();
 		listen(true);
@@ -291,7 +319,11 @@ namespace gnubase::ui
 
 	int64_t TransportControls::samples(double seconds) const
 	{
-		return std::max<int64_t>(0, std::llround(seconds * m_time.sampleRate));
+		// In doubles first, as transport.locate's by: fifteen digits of seconds are more samples than 64 bits hold.
+		const double frames = seconds * m_time.sampleRate;
+		if (!(frames > 0.0)) // also NaN
+			return 0;
+		return std::llround(std::min(frames, static_cast<double>(time::g_maxPosition)));
 	}
 
 	void TransportControls::ProcessEvent(Rml::Event& event)
@@ -427,11 +459,11 @@ namespace gnubase::ui
 	void TransportControls::wheel(Rml::Element& element, float delta)
 	{
 		// Up is later, by as many steps as the wheel turned, at least one. A scroll sideways, as touchpads and tilt
-		// wheels send, has no vertical delta and moves nothing.
-		if (delta == 0.0F)
+		// wheels send, has no vertical delta and moves nothing. More than a billion steps, which only injected input
+		// sends, are a billion: that many fit a long, and that many beats in ticks fit 64 bits (#457).
+		if (!(std::abs(delta) > 0.0F)) // also NaN
 			return;
-		const long turned = std::lround(-delta);
-		long steps = turned;
+		long steps = std::lround(std::clamp(-delta, -1e9F, 1e9F));
 		if (steps == 0)
 			steps = delta < 0.0F ? 1 : -1;
 		const std::string time = attribute(element, "time");

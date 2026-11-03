@@ -561,8 +561,8 @@ namespace gnubase::ui
 		const bool toolModifier = modifiers("select.setCursorPosition") || modifiers("select.splitEvent") ||
 			copyKeys(m_pressed) || copyKeys(withoutCtrl(m_pressed)) ||
 			((atStart || atEnd) && modifiers("sizeObjects.disableSnapping"));
-		// A fade handle (reference manual p. 383).
-		if (!add && !toolModifier && fadeDown(*shown, x, y))
+		// A fade handle (reference manual p. 383), or the event volume handle (p. 401).
+		if (!add && !toolModifier && (fadeDown(*shown, x, y) || volumeDown(*shown, x, y)))
 			return;
 		if (add && !toolModifier)
 		{
@@ -601,9 +601,10 @@ namespace gnubase::ui
 			automationMove(m_pressX + dx, m_pressY + dy);
 			return;
 		}
-		if (m_drag == Drag::FadeIn || m_drag == Drag::FadeOut)
+		if (m_drag == Drag::FadeIn || m_drag == Drag::FadeOut || m_drag == Drag::Volume)
 		{
 			m_dragDx = dx;
+			m_dragDy = dy;
 			showFades();
 			return;
 		}
@@ -679,7 +680,7 @@ namespace gnubase::ui
 			return;
 		}
 		if (drag == Drag::Rectangle || drag == Drag::Range || drag == Drag::DrawPart || drag == Drag::Play ||
-			drag == Drag::Click)
+			drag == Drag::Click || drag == Drag::VolumePoint)
 		{
 			toolUp(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
 				(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
@@ -687,10 +688,15 @@ namespace gnubase::ui
 			m_drag = Drag::None;
 			return;
 		}
-		if (drag == Drag::FadeIn || drag == Drag::FadeOut)
+		if (drag == Drag::FadeIn || drag == Drag::FadeOut || drag == Drag::Volume)
 		{
 			if (m_dragMoved)
-				fadeUp();
+			{
+				if (drag == Drag::Volume)
+					volumeUp();
+				else
+					fadeUp();
+			}
 			m_drag = Drag::None;
 			return;
 		}

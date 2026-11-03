@@ -114,6 +114,13 @@ namespace gnubase::engine::settings
 					Json{{"type", "object"}}, Json{{"input", Json::object()}, {"output", Json::object()}}},
 				{"audio.device", "The audio device's id, or empty for the backend's default device.",
 					Json{{"type", "string"}}, ""},
+				{"audio.listenDim",
+					"How far the main mix is turned down on the monitoring bus while channels listen (channel.set "
+					"listen), in dB from -144 (silence: only the listening channels are heard) to 0.",
+					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 0}}, -144.0},
+				{"audio.listenLevel",
+					"The level at which listening channels play on the monitoring bus, in dB from -144 to 12.",
+					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 12}}, 0.0},
 				{"audio.portSettings",
 					"How the audio devices' ports are shown (audio.setPort), by backend/device id/in or out/system "
 					"name, also for devices that aren't connected: the name shown (showAs) and whether it is "

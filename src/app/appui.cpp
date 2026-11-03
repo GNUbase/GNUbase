@@ -62,7 +62,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 75> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 76> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -100,6 +100,10 @@ namespace gnubase::app
 			{"audio.removeFadeOut", "Removes the fade out of the selected audio events.", nullptr},
 			{"audio.removeFades", "Removes the fades and crossfades of the selected audio events.", nullptr},
 			{"audio.fadeEditor", "Opens the fade dialog for the selected audio events.", nullptr},
+			// Volume curves (docs/features/volume-curves.md).
+			{"audio.removeVolumeCurve",
+				"Resets the volume curves of the audio events in the selection range, or of the selected ones.",
+				nullptr},
 			// Audio parts (docs/features/audio-parts.md).
 			{"audio.eventsToPart", "Puts the selected audio events into an audio part.", nullptr},
 			{"audio.dissolvePart", "Makes the events of the selected audio parts events of their own.", nullptr},
@@ -592,7 +596,8 @@ namespace gnubase::app
 				if (ui::Window* found = m_shell.find(id))
 					m_keys.run(command, parameters, *found, nullptr);
 			},
-			[this](const std::string& command) { m_keys.release(command); });
+			[this](const std::string& command) { m_keys.release(command); },
+			[this](const std::string& command, const engine::Json& parameters) { m_keys.check(command, parameters); });
 	}
 
 	void AppUi::toggle(TransportWindow& shown, const char* file, const char* title, ui::Size size)
@@ -621,10 +626,20 @@ namespace gnubase::app
 			return;
 		}
 		document->Show();
-		shown.window = window.id();
 		// The transport panel's #transport gets the controls, a docking window for its sections; the time display
-		// window has its own, at the size it was given.
-		shown.controls = transportControls(*root, window, root == controls);
+		// window has its own, at the size it was given. Controls with a command that doesn't exist or parameters it
+		// doesn't take (#446) close the window again, as a document that doesn't load does.
+		try
+		{
+			shown.controls = transportControls(*root, window, root == controls);
+		}
+		catch (const std::invalid_argument& error)
+		{
+			m_shell.close(window.id());
+			logging::error("Cannot show {}: {}", path.u8string(), error.what());
+			return;
+		}
+		shown.window = window.id();
 		if (root == controls)
 			m_docking.attach("transportPanel", *document);
 		else
@@ -759,7 +774,12 @@ namespace gnubase::app
 				files.reserve(result.files.size());
 				for (const std::filesystem::path& file : result.files)
 					files.push_back(file.u8string());
-				m_eventDisplay->importFiles(files, std::nullopt, std::nullopt, clipsOnly);
+				// File > Import goes onto the selected track (#480), the pool's Import Medium into the pool only.
+				if (clipsOnly)
+					m_eventDisplay->importFiles(files, std::nullopt, std::nullopt, true);
+				else
+					m_eventDisplay->importToSelection(
+						files, m_trackList ? m_trackList->selection() : std::vector<uint64_t>());
 			});
 	}
 

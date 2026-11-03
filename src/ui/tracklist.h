@@ -116,7 +116,8 @@ namespace gnubase::ui
 		Rml::Element* rowElement(uint64_t track) const;
 		const engine::Json* channelOf(const Row& row) const;
 		std::vector<std::string> controlsOf(const Row& row) const;
-		void control(const Row& row, const std::string& name);
+		// A click on a track control; solo takes Ctrl (exclusive) and Alt (solo defeat), see soloClick.
+		void control(const Row& row, const std::string& name, bool exclusive = false, bool defeat = false);
 		void step(int direction);
 		void reveal(uint64_t track); // scrolls the display so that the track's lane shows
 		void finishRename(bool keep);

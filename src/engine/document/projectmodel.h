@@ -39,6 +39,11 @@ namespace gnubase::engine
 	// longer shared.
 	void syncSharedParts(const std::map<ObjectId, MidiPart>& before, Project& project, CommandContext& context);
 
+	// What syncSharedParts needs of the parts before a command (eventedits.cpp): copies of the shared ones only. It
+	// compares a part with its earlier self only if that was in the same group, so a part that isn't shared yet needn't
+	// be copied: one that becomes shared in the command gives no edit to its new group either way.
+	std::map<ObjectId, MidiPart> sharedPartsOf(const std::map<ObjectId, MidiPart>& parts);
+
 	// What range.copy and range.cut keep for range.paste (eventedits.cpp): the events, parts and automation of a
 	// selection range, cut at its edges, where they were. Not part of the project or of undo.
 	struct RangeClipboard
@@ -152,7 +157,9 @@ namespace gnubase::engine
 		uint64_t m_openedRevision = 0;    // when it was loaded or made: openedRevision
 		const Clock* m_clock = nullptr;   // the engine's, which auto saves go by
 		Clock::TimePoint m_lastSave;      // or auto save, or failed auto save
-		bool m_autoSaveFailed = false;    // the last auto save since the project was saved or opened failed
+		// Why the last auto save failed, without its file, if it did since one succeeded or the project was saved or
+		// opened: a due auto save that fails for the same reason again is quiet.
+		std::optional<std::string> m_autoSaveFailure;
 		std::filesystem::path m_settingsDirectory; // the user settings' folder, empty without one
 		std::shared_ptr<settings::Store> m_recent; // the recent projects
 		bool m_automationFollowsEvents = false;    // a setting, not part of the project
