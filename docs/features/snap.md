@@ -20,12 +20,21 @@ finds the one chosen there before. `snap.set` with a grid type that isn't the fo
 format too; without one (as before #413) it switches to the grid type's format, the frames to `timecode` unless
 `userFrames` is in use. Settings saved before #413 have only `grid`, and load with its format; older builds read
 `grid`, the grid in use. A project from a newer build with a snap type, time format or grid type this build doesn't
-know loads with what it knows; those are left out (and not saved again). The grid follows the project window's
-ruler, which the project keeps. Two things set `format`: the ruler's time format menu (`snap.set`), and a new time
-format in the project setup (`project.set {timeFormat}`, #78, p. 69), which the engine makes the snap format in the
-same command, and again on undo and redo of it, emitting `snap.changed`; the ruler follows. So snapping is the same
-with and without a UI, and a `snap.set {format}` right after it stays. The transport's time displays have formats of
-their own (`ui.timeFormats`), so the ruler and the primary time display can differ.
+know loads with what it knows; those are left out. Its `grids` entries with a time format or a grid type this build
+doesn't know are kept, though (`SnapSettings::newerGrids`, #565): `snap.get` doesn't show them, but saving writes them
+back for the newer build, until a grid type is chosen here for that format. Loading reads a format's grid type from
+`grids`, and `grid` only when `grids` has none for it (settings from before #413). The grid follows the project
+window's ruler, which the project keeps. Two things set `format`: the ruler's time format menu (`snap.set`), and a
+new time format in the project setup (`project.set {timeFormat}`, #78, p. 69), which the engine makes the snap
+format in the same command, and again on undo and redo of it, emitting `snap.changed`; the ruler follows. So the
+project setup's time format sets the ruler, the ruler can choose its own afterwards (pp. 69, 317), and the grid types
+are always the ruler's format's (pp. 105, 109); snapping is the same with and without a UI, and a `snap.set {format}`
+right after it stays. The transport's time displays have formats of their own (`ui.timeFormats`), so the ruler and
+the primary time display can differ.
+
+The frame grids have the project's frame rate (project setup, `project.set {frameRate}`, #78), with its pull-down;
+`userFrames` has the user's, 30 fps until that is a setting of its own (`time::g_userFramesPerSecond`), in the event
+display and in `snap.position` alike.
 
 | Snap type | A position goes to | Reference |
 |---|---|---|
@@ -68,11 +77,15 @@ their own (`ui.timeFormats`), so the ruler and the primary time display can diff
 - **Toolbar** (`resources/ui/project.rml`): the snap toggle `#snap`, the snap type menu `#snap-type-menu` behind
   `#snap-type`, the grid type menu `#grid-type-menu` behind `#grid-type`, and the toggle `#snap-zero-crossing`. The
   buttons show the settings (`.checked`, and the chosen type's name); the grid type menu has the grid types of the
-  ruler's time format (bars and beats, seconds, timecode and fps (User), samples), filled in by the display, the chosen
-  one checked. Every change goes to the engine with `snap.set`; the display follows `snap.changed` and `project.get`.
+  ruler's time format (bars and beats, seconds, timecode and fps (User), samples), filled in by the display from the
+  engine's table (`engine::gridTypes`), the chosen one checked. Every change goes to the engine with `snap.set`; the
+  display follows `snap.changed` and `project.get`. A grid type picked from the menu goes with the format the menu
+  shows, so it is that format's even when the engine has switched to another one meanwhile.
 - **Ruler format.** Choosing the ruler's time format sends it to the engine as the snap settings' `format`, and the
   display snaps with that format's grid at once; the ruler shows the format of the project's snap settings, so a
-  project opens with the ruler format it was saved with.
+  project opens with the ruler format it was saved with. Until the engine has answered a `snap.set` with a format
+  (from the ruler or the grid type menu), settings it sent before, in a `snap.changed` or a `project.get` answer,
+  keep the display's format, so the ruler, the grid type menu and the snap grid never switch back for a moment.
 - **Gestures.** Dragging events snaps the pressed event's snap point or start, and the selection keeps its distance to
   it; the preview shows the snapped place. Resizing snaps the pressed event's edge, Alt and a click splits at the
   snapped position. Events, markers and the cursor attract from 8 dp; the selection doesn't. Moves of events that are
@@ -87,7 +100,8 @@ their own (`ui.timeFormats`), so the ruler and the primary time display can diff
 
 The tools snap too: selection ranges, drawn parts and the split tool ([tools.md](tools.md)).
 
-Not yet: grid lines and snap point lines in the event display, the editors' own grids, and a frame rate of the project's (#78; timecode grids use 25 fps until then).
+Not yet: grid lines and snap point lines in the event display, the editors' own grids, and a user frame rate setting
+(fps (User) is 30 until then).
 
 ## Checks
 
@@ -97,18 +111,22 @@ Not yet: grid lines and snap point lines in the event display, the editors' own 
   and on a linear grid; `snap.get` and `snap.set` saved with the project and not undone; `snap.position` with event
   edges, markers, snap points, the cursor, the zoom's note value, the frame rate and grid relative; a grid type per
   time format, switching formats, grid types of another format refused or choosing their format, and settings from
-  before #413; a new project time format switching the snap format, also on undo and redo, and a format set after
-  it staying; snap points set and
-  refused; shuffling forwards, backwards, to the end and to the front, its errors and a locked neighbour; splitting
+  before #413; each format's grid types (`gridTypes`) exactly those `hasGrid` accepts; a newer build's grids
+  entries kept, written back when saved and replaced by a grid type chosen here, entries that aren't names left out;
+  the frame grids at the project's frame rate, with pull-down, and user frames at 30 fps; a new project time format
+  switching the snap format, also on undo and redo, and a format set after it staying; snap points set and refused; shuffling forwards, backwards, to the end and to the front, its errors and a locked neighbour; splitting
   and resizing at zero crossings of a real file, not when sizing moves the contents or the file is missing; a split
   near an event's start still splits it, and one just outside an event leaves it alone.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): with snap on, a drag, a resize and an Alt click land
   on bars, shuffle swaps two parts, events, a position marker and the cursor attract, a snap point set at the cursor
   snaps to a bar, grid relative moves a beat, nudges move a beat and a bar, and with snap off a drag doesn't snap;
   with the ruler in seconds a drag snaps to 100 ms, back in bars and beats to a bar, and the ruler follows the
-  format of `snap.set`.
+  format of `snap.set`; a new ruler format kept at every step while a `snap.changed` or a `project.get` answer from
+  before it comes in, and after several switches in a row.
 - `tests/uiapp_tests.cpp`: the toolbar's snap and zero crossing buttons and J, the snap type menu checked and shown on
   its button, the grid type menu with the grid types of each ruler format, and back in a format the grid type chosen
-  there shown and checked; the project window's golden image shows the toolbar.
+  there shown and checked; the menu's items the engine's `gridTypes` for every format, and a grid type picked while
+  the engine switches to another format going to the format shown; the project window's golden image shows the
+  toolbar.
 - `tests/dawproject_tests.cpp`: an extension entry with the snap settings as #87 saved them loads with the grid
-  type's format.
+  type's format; a newer build's grid types saved again.

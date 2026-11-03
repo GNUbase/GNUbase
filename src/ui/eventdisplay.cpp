@@ -707,16 +707,7 @@ namespace gnubase::ui
 			grid && *grid != m_snap.format)
 		{
 			m_snap.format = *grid;
-			++m_formatsSent;
-			m_binding.send("snap.set", {{"format", name}},
-				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
-				{
-					if (alive.expired())
-						return;
-					--m_formatsSent;
-					if (!result.ok())
-						logging::warning("The event display can't change the snap settings: {}", result.error);
-				});
+			setSnap({{"format", name}});
 		}
 		showRuler();
 	}

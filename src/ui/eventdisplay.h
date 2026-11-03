@@ -354,7 +354,7 @@ namespace gnubase::ui
 		void showPresets();
 		void showAutoScroll();
 		void showSnap();
-		void setSnap(const engine::Json& settings); // sends snap.set
+		void setSnap(const engine::Json& settings); // sends snap.set; one with a format counts in m_formatsSent
 
 		// Importing files (fileimport.cpp).
 		struct Import
@@ -577,7 +577,7 @@ namespace gnubase::ui
 		std::vector<CycleMarker> m_cycleMarkers;
 		std::vector<int64_t> m_markers; // every marker's position and end, in samples, for snapping
 		engine::SnapSettings m_snap;
-		int m_formatsSent = 0; // snap.set {format} from the ruler that the engine hasn't answered yet
+		int m_formatsSent = 0; // snap.set {format} from the ruler or the grid type menu that isn't answered yet
 		engine::midi::QuantizeSettings m_quantize;
 		Rml::Element* m_snapButton = nullptr;
 		Rml::Element* m_snapTypeButton = nullptr;
