@@ -92,8 +92,10 @@ namespace gnubase::engine
 			if (parameters.contains("tracks"))
 				tracks = parameters.at("tracks").get<std::vector<ObjectId>>();
 			Json events = Json::array();
-			for (auto& [id, event] : project.audioEvents)
+			for (auto& entry : project.audioEvents)
 			{
+				const ObjectId id = entry.first;
+				auto& event = entry.second;
 				if (!tracks.empty() && std::find(tracks.begin(), tracks.end(), event.track) == tracks.end())
 					continue;
 				const EventSpan span = eventSpan(project, event);
