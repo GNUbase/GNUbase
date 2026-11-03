@@ -201,8 +201,9 @@ TEST_CASE("Ctrl+Enter in the info line takes the first part's own value for all,
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "multiple"); }));
 	REQUIRE(window.shows("#info-line textdisplay[field=length]", "1.0.0.0"));
 
-	// The first part's length, unchanged, with Ctrl+Enter: the 2-bar part becomes 1 bar long too.
-	window.type("#info-line textdisplay[field=length]", "1.0.0.0", "Ctrl+Enter");
+	// The first part's length, untouched, with Ctrl+Enter: the 2-bar part becomes 1 bar long too.
+	window.click("#info-line textdisplay[field=length]", ui::MouseButton::Left, 2);
+	window.app.ui().key(std::nullopt, "Ctrl+Enter");
 	REQUIRE(window.app.waitUntil([&] { return window.part(second).at("length") == 4 * g_quarter; }));
 	CHECK(window.part(first).at("length") == 4 * g_quarter);
 
@@ -361,7 +362,8 @@ TEST_CASE("the project window selects events or markers, and the info line shows
 	CHECK(hasClass(window.app, "#info-line", "markers"));
 	CHECK(window.display.selection().empty());
 
-	// Ctrl+Enter on the first marker's own value gives every selected marker that value, and leaves the part.
+	// Ctrl+Enter on the first marker's own value, typed again, gives every selected marker that value, and leaves the
+	// part.
 	window.display.select({part});
 	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Part"));
 	clickMarker(1);

@@ -52,9 +52,9 @@ each other.
 - **Tempo and signature** show the project's first tempo and time signature and set them with `project.set`, one undo
   step each; later tempo and signature changes stay. The tempo field is a `<valuefield>`: a drag on it, or wheel turns
   without a pause of 0.4 seconds, set the tempo once, at the gesture's end, so that the gesture is one undo step;
-  meanwhile the field shows where the gesture took it. It shows three decimals: editing it without typing leaves a
-  tempo with more, such as 130.0001 BPM from a MIDI file, as it is. A signature is typed as "3/4"; the engine refuses denominators
-  other than 1, 2, 4, 8 and 16.
+  meanwhile the field shows where the gesture took it. It shows three decimals: editing it without typing leaves a tempo
+  with more, such as 130.0001 BPM from a MIDI file, as it is. A signature is typed as "3/4"; the engine refuses
+  denominators other than 1, 2, 4, 8 and 16.
 - **Time formats** are the user setting `ui.timeFormats` (`primary`, `secondary`, `timeDisplay`: `barsBeats`,
   `seconds`, `timecode`, `samples` or `userFrames`; Bars+Beats, Timecode and Bars+Beats by default), so every transport
   control shows the same and keeps it after a restart. The menus' items have `slot` and `format`, and the item of the
@@ -127,20 +127,19 @@ p. 313).
 ## Checks
 
 `tests/transport_tests.cpp`: `transport.toggle` with each setting, `transport.locate` `by`, and `project.set` `tempo`
-and `signature` with undo and refused values. `tests/timeformat_tests.cpp`: positions typed in every format read back
-as the engine converts them, partial and invalid text, lengths in bars and beats across a tempo change, and the time
-context from `project.get`. `tests/transportbar_tests.cpp` drives the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)):
-every button of the transport bar, a window too narrow for the transport bar cutting off its last sections, the
-switches following another client's changes, the marker buttons with and
-without markers, Locators to Selection by button and key, the time format menus, Exchange Time Formats by button and
-key, `ui.timeFormats` from the engine, positions, locators and a length typed into the displays (also the position a
-display shows, from between its ticks), the tempo and
-signature fields with undo, every key command, the transport panel opened by F2, by an enter command and again after
-its window was closed, and the time display window with its context menu; Rewind, Forward and Fast Forward winding
-while their key or button is held and stopping when it goes up, also after Shift; Nudge Cursor on bar, beat and second
-grids and at the project start; the wheel on the position, locator and range displays in three formats; a drag and
-wheel turns on the tempo field as one undo step each; a tempo with more decimals than the field shows, kept when the
-field is left untouched and set when its number is typed; the position typed back into the primary display during
-playback; Show Beat Count Only and the window sizes, kept for the window
-opened again; and the setup panes of the transport bar and the panel, each with its own sections, and Show All.
+and `signature` with undo and refused values. `tests/timeformat_tests.cpp`: positions typed in every format read back as
+the engine converts them, partial and invalid text, lengths in bars and beats across a tempo change, and the time
+context from `project.get`. `tests/transportbar_tests.cpp` drives the app's UI (`test::UiApp`,
+[ui-tests.md](ui-tests.md)): every button of the transport bar, a window too narrow for the transport bar cutting off
+its last sections, the switches following another client's changes, the marker buttons with and without markers,
+Locators to Selection by button and key, the time format menus, Exchange Time Formats by button and key,
+`ui.timeFormats` from the engine, positions, locators and a length typed into the displays (also the position a display
+shows, from between its ticks), the tempo and signature fields with undo, every key command, the transport panel opened
+by F2, by an enter command and again after its window was closed, and the time display window with its context menu;
+Rewind, Forward and Fast Forward winding while their key or button is held and stopping when it goes up, also after
+Shift; Nudge Cursor on bar, beat and second grids and at the project start; the wheel on the position, locator and range
+displays in three formats; a drag and wheel turns on the tempo field as one undo step each; a tempo with more decimals
+than the field shows, kept when the field is left untouched and set when its number is typed; the position typed back
+into the primary display during playback; Show Beat Count Only and the window sizes, kept for the window opened again;
+and the setup panes of the transport bar and the panel, each with its own sections, and Show All.
 `tests/keycommands_tests.cpp` checks held keys, `tests/theme_tests.cpp` the themes' time display sizes.

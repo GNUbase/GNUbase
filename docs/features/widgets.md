@@ -47,13 +47,13 @@ The widgets:
 - `<slider>`: horizontal, `.slider-track` filled up to the `.slider-thumb` (`.slider-fill`).
 - `<valuefield>`: the value as text, with `decimals` (2) and a `unit`, drawn like a display. A double click, or Enter
   while it has the focus, edits it as text (state class `.editing`): Enter, or leaving the field, takes the number
-  typed, clamped to the range; Escape, text that isn't a number, or nothing typed keeps the value, so that a value
-  with more decimals than the field shows isn't rounded to them. Typing the number shown takes it. With `autofocus`, it is edited,
-  all of it selected, whenever it gets a visible focus: when its document shows it focused, or Tab moves to it, but
-  not on a click. Keys typed before the next update go into it too. In a dialog it is then the main field, which works
-  like a text field: Enter takes the number typed and clicks OK, Escape cancels. While the user types, the field's
-  text field sends RmlUi's own
-  `change` events with the text; the field's `change`, with the field as its target, has the number.
+  typed, clamped to the range; Escape, text that isn't a number, or nothing typed keeps the value, so that a value with
+  more decimals than the field shows isn't rounded to them. Typing the number shown takes it. With `autofocus`, it is
+  edited, all of it selected, whenever it gets a visible focus: when its document shows it focused, or Tab moves to it,
+  but not on a click. Keys typed before the next update go into it too. In a dialog it is then the main field, which
+  works like a text field: Enter takes the number typed and clicks OK, Escape cancels. While the user types, the field's
+  text field sends RmlUi's own `change` events with the text; the field's `change`, with the field as its target, has
+  the number.
 
 `<textdisplay>` shows text, its `value` attribute, such as a position in a time format; documents give it the look of
 a display with the class `.display`. A double click edits it as text (`.editing`): Enter, or leaving the field, sends

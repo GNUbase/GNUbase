@@ -94,7 +94,8 @@ namespace gnubase::ui
 	{
 		if (!m_root)
 			return;
-		// Ctrl+Enter took the value the field had, so it sent no change: that value goes to all selected the same.
+		// Ctrl+Enter took the value the field had, nothing typed, so it sent no change: that value goes to all selected
+		// the same.
 		if (m_absoluteTake)
 		{
 			const auto [field, text] = *m_absoluteTake;
@@ -214,7 +215,7 @@ namespace gnubase::ui
 		if (event == Rml::EventId::Keydown)
 		{
 			// Ctrl (Cmd) with Enter in the text field of a display or value field: an absolute take, which the field's
-			// change applies, or update when the value didn't change and no change comes.
+			// change applies, or update when nothing was typed and no change comes.
 			const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
 			const auto* input = rmlui_dynamic_cast<const Rml::ElementFormControlInput*>(target);
 			const Rml::Element* field = input != nullptr ? input->GetParentNode() : nullptr;

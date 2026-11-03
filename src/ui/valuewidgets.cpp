@@ -254,6 +254,13 @@ namespace gnubase::ui
 		constexpr std::array<Rml::EventId, 3> g_inputEvents = {
 			Rml::EventId::Blur, Rml::EventId::Keydown, Rml::EventId::Change};
 
+		// Whether a change of the text field is typing, rather than the line break that Enter sends without changing
+		// the text.
+		bool typed(const Rml::Event& change)
+		{
+			return !change.GetParameter("linebreak", false);
+		}
+
 		// <valuefield>: the value as text, with the decimals (2) and the unit that its attributes give. Besides
 		// dragging, a double click, or Enter while it has the focus, edits it as text, with the state class .editing:
 		// Enter or leaving the field takes the number typed, Escape keeps the value, and so does a field nothing was
@@ -299,7 +306,7 @@ namespace gnubase::ui
 					finishEditing(true);
 					break;
 				case Rml::EventId::Change:
-					m_typed = true; // editing starts with it false
+					m_typed = m_typed || typed(event);
 					break;
 				case Rml::EventId::Keydown:
 				{
@@ -377,7 +384,7 @@ namespace gnubase::ui
 				m_editing = true;
 				SetClass("editing", true);
 				m_input->SetValue(format(value(), decimals()));
-				m_typed = false;
+				m_typed = false; // after SetValue, whose text the text field may clean up with a change
 				m_input->Focus(true);
 				m_input->Select();
 			}
@@ -441,7 +448,7 @@ namespace gnubase::ui
 					m_editing = true;
 					SetClass("editing", true);
 					m_input->SetValue(GetAttribute<Rml::String>("value", ""));
-					m_typed = false;
+					m_typed = false; // after SetValue, whose text the text field may clean up with a change
 					m_input->Focus(true);
 					m_input->Select();
 				}
@@ -465,7 +472,7 @@ namespace gnubase::ui
 				}
 				if (event == Rml::EventId::Change)
 				{
-					m_typed = true; // editing starts with it false
+					m_typed = m_typed || typed(event);
 					return;
 				}
 				// Before the text field, which keeps Enter to itself.

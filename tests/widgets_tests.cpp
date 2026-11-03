@@ -402,6 +402,14 @@ TEST_CASE("text displays show their value, and a double click edits it as text",
 	type("5.1.1.0", "Enter");
 	CHECK(count() == 2);
 	CHECK(page.events->changes.back().second.Get<Rml::String>() == "5.1.1.0");
+
+	// A starting text that the text field cleans up, such as one with a tab, isn't typing either.
+	page.document->GetElementById("position")->SetAttribute("value", "a\tb");
+	app.shell().step(std::chrono::milliseconds(0));
+	app.ui().click(std::nullopt, at("#position"), ui::MouseButton::Left, 2, {});
+	app.ui().key(std::nullopt, "Enter");
+	CHECK_FALSE(has(element(app, "#position"), "classes", "editing"));
+	CHECK(count() == 2);
 }
 
 TEST_CASE("value fields change when a number is typed, also the one they show, and not without typing", "[ui]")
