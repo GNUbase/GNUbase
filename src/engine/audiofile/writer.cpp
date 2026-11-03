@@ -20,21 +20,6 @@ namespace gnubase::engine
 		constexpr uint64_t g_ds64Size = 28;      // RF64's ds64 chunk without a table
 		constexpr uint64_t g_bextSize = 602;     // the bext chunk without coding history
 
-		int bitsOf(SampleFormat format)
-		{
-			switch (format)
-			{
-			case SampleFormat::Int16:
-				return 16;
-			case SampleFormat::Int24:
-				return 24;
-			case SampleFormat::Float64:
-				return 64;
-			default:
-				return 32;
-			}
-		}
-
 		bool isFloat(SampleFormat format)
 		{
 			return format == SampleFormat::Float32 || format == SampleFormat::Float64;
@@ -408,12 +393,12 @@ namespace gnubase::engine
 				FLAC__stream_encoder_set_bits_per_sample(m_encoder, static_cast<uint32_t>(m_bits));
 				FLAC__stream_encoder_set_sample_rate(m_encoder, static_cast<uint32_t>(std::lround(options.sampleRate)));
 				FLAC__stream_encoder_set_compression_level(m_encoder, 5);
-				// From here on the encoder owns the file and closes it when it finishes.
+				// From here on the encoder owns the file and closes it when it finishes, or when it is deleted after
+				// rejecting the settings.
 				std::FILE* file = createFile(path).release();
 				if (FLAC__stream_encoder_init_FILE(m_encoder, file, nullptr, nullptr) !=
 					FLAC__STREAM_ENCODER_INIT_STATUS_OK)
 				{
-					std::fclose(file);
 					FLAC__stream_encoder_delete(m_encoder);
 					throw AudioFileError("can't write " + path + ": the FLAC encoder rejected the settings");
 				}

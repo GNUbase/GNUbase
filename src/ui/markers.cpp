@@ -29,6 +29,8 @@ namespace gnubase::ui
 		// A double click, as RmlUi has it: the second click within half a second and 3 dp.
 		constexpr std::chrono::milliseconds g_doubleClickTime{500};
 		constexpr float g_doubleClickDistance = 3.0F;
+		// How close to a position marker's line a click selects it, in dp.
+		constexpr double g_markerReach = 4.0;
 
 		Rml::Property dp(double value)
 		{
@@ -140,6 +142,12 @@ namespace gnubase::ui
 					m_modeKnown = true;
 					show();
 				}
+				if (const auto ids = values.find("ui.markerIds"); ids != values.end() && ids->is_boolean())
+				{
+					m_showIds = ids->get<bool>();
+					m_idsKnown = true;
+					show();
+				}
 			}));
 		m_binding.send("settings.get", {{"key", "ui.markerLines"}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
@@ -147,6 +155,14 @@ namespace gnubase::ui
 				if (alive.expired() || !result.ok() || m_modeKnown) // newer changes win
 					return;
 				m_mode = lineMode(result.value.at("value"));
+				show();
+			});
+		m_binding.send("settings.get", {{"key", "ui.markerIds"}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok() || m_idsKnown || !result.value.at("value").is_boolean())
+					return;
+				m_showIds = result.value.at("value").get<bool>();
 				show();
 			});
 		requestProject();
@@ -200,20 +216,103 @@ namespace gnubase::ui
 		std::sort(lines.begin(), lines.end(), [](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
 		m_lines->setLanes({{g_linesHeight, std::move(lines)}});
 
-		// A label per marker on a marker track, the cycle markers' numbers in brackets as in the reference.
+		// Markers that went are no longer selected.
+		m_selection.erase(std::remove_if(m_selection.begin(), m_selection.end(),
+							  [this](uint64_t id)
+							  {
+								  return std::none_of(m_markers.markers.begin(), m_markers.markers.end(),
+									  [id](const MarkerItem& marker) { return marker.id == id; });
+							  }),
+			m_selection.end());
+
+		// A label per marker on a marker track: with ui.markerIds its number, the cycle markers' in brackets as in
+		// the reference, and its name.
 		std::string labels;
 		for (const MarkerItem& marker : m_markers.markers)
 		{
-			std::string text = marker.cycle ? "[" + std::to_string(marker.number) + "]" : std::to_string(marker.number);
+			std::string text;
+			if (m_showIds)
+				text = marker.cycle ? "[" + std::to_string(marker.number) + "]" : std::to_string(marker.number);
 			if (!marker.name.empty())
-				text += " " + marker.name;
+				text += (text.empty() ? "" : " ") + marker.name;
 			labels += R"(<div class="marker-label)" + std::string(marker.cycle ? " cycle" : "") +
 				(marker.track == m_markers.active ? " active" : "") + R"(" marker=")" + std::to_string(marker.id) +
 				R"(">)" + Rml::StringUtilities::EncodeRml(text) + "</div>";
 		}
 		m_labels->SetInnerRML(labels);
+		showSelection();
 		m_laneTops.clear(); // rebuild the lanes with the new marker events
 		place();
+	}
+
+	void MarkerLines::setSelection(std::vector<uint64_t> markers)
+	{
+		m_selection = std::move(markers);
+		showSelection();
+	}
+
+	void MarkerLines::showSelection()
+	{
+		if (!alive())
+			return;
+		for (int i = 0; i < m_labels->GetNumChildren(); ++i)
+		{
+			Rml::Element* label = m_labels->GetChild(i);
+			const auto id = label->GetAttribute<uint64_t>("marker", 0);
+			label->SetClass("selected", std::find(m_selection.begin(), m_selection.end(), id) != m_selection.end());
+		}
+	}
+
+	// A click selects the marker under the mouse, or none; with Ctrl (Cmd on macOS) it adds or removes it: the marker
+	// whose label it is on, a position marker's line within reach, or else the cycle marker it is in.
+	void MarkerLines::select(Rml::Event& event, const ProjectMarkers::Track& track, double seconds)
+	{
+		uint64_t hit = 0;
+		const Rml::Vector2f mouse = {
+			event.GetParameter<float>("mouse_x", 0.0F), event.GetParameter<float>("mouse_y", 0.0F)};
+		for (int i = 0; i < m_labels->GetNumChildren() && hit == 0; ++i) // the labels let the mouse through
+			if (Rml::Element* label = m_labels->GetChild(i); label->IsVisible() && label->IsPointWithinElement(mouse))
+				hit = label->GetAttribute<uint64_t>("marker", 0);
+		const double reach = g_markerReach * m_display.view().scale;
+		for (const MarkerItem& marker : m_markers.markers)
+			if (hit == 0 && marker.track == track.id && !marker.cycle && std::abs(marker.start - seconds) <= reach)
+				hit = marker.id;
+		for (const MarkerItem& marker : m_markers.markers)
+			if (hit == 0 && marker.track == track.id && marker.cycle && marker.start <= seconds &&
+				seconds <= marker.end)
+				hit = marker.id;
+		std::vector<uint64_t> selection = m_selection;
+		if (event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0)
+		{
+			const auto at = std::find(selection.begin(), selection.end(), hit);
+			if (at != selection.end())
+				selection.erase(at);
+			else if (hit != 0)
+				selection.push_back(hit);
+		}
+		else
+		{
+			selection.clear();
+			if (hit != 0)
+				selection.push_back(hit);
+		}
+		// The project window selects events or markers: a marker clicked deselects the events.
+		if (!selection.empty() && !m_display.selection().empty())
+			m_display.select({});
+		if (selection == m_selection)
+			return;
+		setSelection(std::move(selection));
+		if (m_onSelect)
+			m_onSelect(m_selection);
+	}
+
+	void MarkerLines::deselect()
+	{
+		if (m_selection.empty())
+			return;
+		setSelection({});
+		if (m_onSelect)
+			m_onSelect(m_selection);
 	}
 
 	void MarkerLines::place()
@@ -316,6 +415,8 @@ namespace gnubase::ui
 			// Alt-click adds a position marker, but not on a cycle marker, which Alt and a double click zoom to.
 			if (alt && cycle == nullptr)
 				m_binding.send("marker.add", {{"track", track->id}, {"position", m_markers.position(*track, seconds)}});
+			else if (!alt)
+				select(event, *track, seconds);
 		}
 		else if (cycle != nullptr && alt)
 		{

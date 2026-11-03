@@ -1,0 +1,170 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Auto Fades dialog (#138, docs/features/fades.md, reference manual pp. 396-397): the auto fades and crossfades
+     of the project, or of the audio track in the document's attribute track. app::AppUi opens it (the UI commands
+     project.autoFades and track.autoFades). Its Lua reads the settings when the dialog shows and on OK sends them with
+     autoFades.set; for a track, Use Project Settings goes back to the project's. Cancel drops them. -->
+<rml>
+<head>
+	<title>Auto Fades</title>
+	<style>
+		dialog
+		{
+			width: 420dp;
+		}
+
+		#auto-fades-fields
+		{
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.field
+		{
+			display: flex;
+			align-items: center;
+			height: 28dp;
+		}
+
+		.field .label
+		{
+			width: 180dp;
+		}
+
+		.field select, .field input.text
+		{
+			width: 180dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#auto-fades-message
+		{
+			flex: 1;
+		}
+
+		.row button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		-- The dialog's state, in the UI's Lua: the track it is for, or nil for the project.
+		AutoFades = {}
+		local dialog = AutoFades
+
+		local shapes = {{"linear", "Linear"}, {"exponential", "Exponential"}, {"logarithmic", "Logarithmic"},
+			{"sCurve", "S-Curve"}, {"equalPower", "Equal Power"}}
+		-- Equal gain crossfades mirror their fade in: every shape but equal power.
+		local crossfadeShapes = {table.unpack(shapes, 1, 4)}
+		local modes = {{"equalGain", "Equal Gain"}, {"equalPower", "Equal Power"}}
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local function field(label, control)
+			return '<div class="field"><span class="label">' .. escape(label) .. "</span>" .. control .. "</div>"
+		end
+
+		local function check(id, on)
+			return '<input type="checkbox" id="' .. id .. '"' .. (on and " checked" or "") .. "/>"
+		end
+
+		local function dropDown(id, choices, current)
+			local options = {}
+			for _, choice in ipairs(choices) do
+				options[#options + 1] = '<option value="' .. choice[1] .. '"' .. (choice[1] == current and " selected" or "") ..
+					">" .. escape(choice[2]) .. "</option>"
+			end
+			return '<select id="' .. id .. '">' .. table.concat(options) .. "</select>"
+		end
+
+		local function valueOf(document, id)
+			local value = document:GetElementById(id):GetAttribute("value")
+			return value ~= nil and tostring(value) or ""
+		end
+
+		local function checked(document, id)
+			return document:GetElementById(id):HasAttribute("checked")
+		end
+
+		-- Reads the settings that apply and fills the dialog.
+		function dialog.load(document)
+			dialog.track = tonumber(document:GetAttribute("track"))
+			local project = gnubase.project.get()
+			local settings = project.autoFades
+			local own = false
+			local title = "Auto Fades: Project"
+			for _, track in ipairs(project.tracks) do
+				if track.id == dialog.track then
+					title = "Auto Fades: " .. track.name
+					if type(track.autoFades) == "table" then
+						settings = track.autoFades
+						own = true
+					end
+				end
+			end
+			document:GetElementById("auto-fades-title").inner_rml = escape(title)
+			document:GetElementById("auto-fades-fields").inner_rml =
+				(dialog.track ~= nil and field("Use Project Settings", check("auto-fades-project", not own)) or "") ..
+				field("Auto Fade In", check("auto-fades-in", settings.fadeIn)) ..
+				field("Auto Fade Out", check("auto-fades-out", settings.fadeOut)) ..
+				field("Auto Crossfades", check("auto-fades-crossfades", settings.crossfades)) ..
+				field("Length (ms)", '<input type="text" id="auto-fades-length" value="' .. escape(settings.length) .. '"/>') ..
+				field("Fade In", dropDown("auto-fades-in-shape", shapes, settings.fadeInShape)) ..
+				field("Fade Out", dropDown("auto-fades-out-shape", shapes, settings.fadeOutShape)) ..
+				field("Crossfades", dropDown("auto-fades-crossfade-mode", modes, settings.crossfadeMode)) ..
+				field("Crossfade Curve", dropDown("auto-fades-crossfade-shape", crossfadeShapes, settings.crossfadeShape))
+		end
+
+		-- OK: sends the settings and closes, unless they can't be set.
+		function dialog.ok(document)
+			local parameters = {}
+			if dialog.track ~= nil then
+				parameters.track = dialog.track
+			end
+			local problem = nil
+			if dialog.track ~= nil and checked(document, "auto-fades-project") then
+				parameters.useProject = true
+			else
+				parameters.fadeIn = checked(document, "auto-fades-in")
+				parameters.fadeOut = checked(document, "auto-fades-out")
+				parameters.crossfades = checked(document, "auto-fades-crossfades")
+				parameters.length = tonumber(valueOf(document, "auto-fades-length"))
+				parameters.fadeInShape = valueOf(document, "auto-fades-in-shape")
+				parameters.fadeOutShape = valueOf(document, "auto-fades-out-shape")
+				parameters.crossfadeMode = valueOf(document, "auto-fades-crossfade-mode")
+				parameters.crossfadeShape = valueOf(document, "auto-fades-crossfade-shape")
+				if parameters.length == nil then
+					problem = "Length must be a number of milliseconds, 1 to 500"
+				end
+			end
+			if problem == nil then
+				local ok, failure = pcall(gnubase.autoFades.set, parameters)
+				if not ok then
+					problem = tostring(failure)
+				end
+			end
+			if problem == nil then
+				document:Close()
+			else
+				document:GetElementById("auto-fades-message").inner_rml = escape(problem)
+			end
+		end
+	</script>
+</head>
+<body onshow="AutoFades.load(document)">
+	<dialog id="auto-fades">
+		<div class="dialog-titlebar" id="auto-fades-title">Auto Fades</div>
+		<div id="auto-fades-fields"/>
+		<div class="row">
+			<div id="auto-fades-message"/>
+			<button id="auto-fades-cancel" result="cancel">Cancel</button>
+			<button id="auto-fades-ok" class="primary" onclick="AutoFades.ok(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

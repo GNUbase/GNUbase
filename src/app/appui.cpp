@@ -62,7 +62,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 65> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 73> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -87,6 +87,19 @@ namespace gnubase::app
 			{"edit.repeat", "Opens the Repeat Events dialog for the selected events.", "Mod+K"},
 			{"edit.fillLoop", "Fills the locator range with copies of the selected events.", nullptr},
 			{"edit.toRealCopy", "Converts the selected shared copies to real copies.", nullptr},
+			// Fades and crossfades (docs/features/fades.md), with the reference's key for Crossfade (manual p. 388).
+			{"audio.fadeInToRange", "Fades the audio events in the selection range in up to the range's start.",
+				nullptr},
+			{"audio.fadeOutFromRange", "Fades the audio events in the selection range out from the range's end.",
+				nullptr},
+			{"audio.adjustFadesToRange", "Adjusts the fades of the audio events in the selection range to it.",
+				nullptr},
+			{"audio.crossfade",
+				"Crossfades the selected audio events, or opens the crossfade editor for their crossfade.", "X"},
+			{"audio.removeFadeIn", "Removes the fade in of the selected audio events.", nullptr},
+			{"audio.removeFadeOut", "Removes the fade out of the selected audio events.", nullptr},
+			{"audio.removeFades", "Removes the fades and crossfades of the selected audio events.", nullptr},
+			{"audio.fadeEditor", "Opens the fade dialog for the selected audio events.", nullptr},
 			{"edit.nudgeLeft", "Moves the selected events left.", "Mod+Left"},
 			{"edit.nudgeRight", "Moves the selected events right.", "Mod+Right"},
 			{"edit.nudgeStartLeft", "Moves the start of the selected events left.", "Alt+Left"},
@@ -231,6 +244,13 @@ namespace gnubase::app
 				for (MixerWindow& shown : m_mixers)
 					if (shown.mixer && m_shell.find(shown.window) == nullptr)
 						shown.mixer.reset(); // the user closed its window
+				// The project window selects events or markers: an event selected deselects the markers.
+				if (m_eventDisplay && m_markerLines && m_eventDisplay->selection() != m_eventSelection)
+				{
+					m_eventSelection = m_eventDisplay->selection();
+					if (!m_eventSelection.empty())
+						m_markerLines->deselect();
+				}
 				if (m_infoLine)
 					m_infoLine->update();
 				followSelection();
@@ -368,6 +388,17 @@ namespace gnubase::app
 			}});
 		for (const char* command : {"file.importAudio", "file.importMidi", "pool.import"})
 			m_keys.enableWhen(command, [this](ui::Window&, Rml::Element*) { return m_eventDisplay != nullptr; });
+		// Auto fades (docs/features/fades.md): the project's, or the first selected track's.
+		m_keys.add({"project.autoFades", "Opens the auto fades dialog for the whole project.",
+			[this](ui::Window& window, Rml::Element* /*zone*/) { openAutoFades(window, 0); }});
+		m_keys.add({"track.autoFades", "Opens the auto fades dialog for the first selected audio track.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				if (m_trackList && !m_trackList->selection().empty())
+					openAutoFades(window, m_trackList->selection().front());
+			}});
+		m_keys.enableWhen("track.autoFades",
+			[this](ui::Window&, Rml::Element*) { return m_trackList != nullptr && !m_trackList->selection().empty(); });
 		m_keys.add({"project.addTrack", "Opens the add track dialog.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "add-track.rml"); }});
 		// Project > Project Colors Setup (docs/features/colors.md).
@@ -434,6 +465,30 @@ namespace gnubase::app
 				const auto position = result.value.at("position").get<size_t>();
 				m_canUndo = position > 0;
 				m_canRedo = position < result.value.at("steps").size();
+			});
+
+		// Lock Record (docs/features/recording.md): a stop or punch out that the engine refused because recording is
+		// locked asks whether to stop anyway (lock-record.rml).
+		for (const char* command : {"transport.stop", "transport.toggle", "transport.record"})
+			m_lockRecord.push_back(m_binding.onResult(command,
+				[this](const engine::Result& result)
+				{
+					if (result.ok())
+						return;
+					m_binding.send("transport.get", engine::Json::object(),
+						[this](const engine::Result& status)
+						{
+							if (status.ok() && status.value.at("lockRecord").get<bool>() &&
+								status.value.at("recording").get<bool>())
+								openOnce(m_main, "lock-record.rml", m_lockRecordDialog);
+						});
+				}));
+		// The status line's remaining record time changes as the disk fills up, also by other programs.
+		m_shell.every(std::chrono::seconds(1),
+			[this]
+			{
+				if (m_statusLine)
+					m_statusLine->update();
 			});
 
 		// The transport controls' commands (docs/features/transport-bar.md); the engine's transport commands have
@@ -628,6 +683,15 @@ namespace gnubase::app
 			m_colorMenu = std::make_unique<ui::ColorMenu>(*m_eventDisplay, *m_trackList, m_binding, *document);
 		m_menu = std::make_unique<ui::MainMenu>(m_keys, m_main, *document);
 		m_markerLines = std::make_unique<ui::MarkerLines>(*m_eventDisplay, m_binding);
+		if (m_infoLine)
+			m_infoLine->followMarkers(
+				[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
+		m_markerLines->onSelect(
+			[this](const std::vector<uint64_t>& selection)
+			{
+				if (ui::MarkersWindow* window = markers(); window != nullptr && window->syncsSelection())
+					window->setSelection(selection);
+			});
 		return *m_eventDisplay;
 	}
 
@@ -655,6 +719,15 @@ namespace gnubase::app
 		}
 		document->Show();
 		m_markers = std::make_unique<ui::MarkersWindow>(m_engine, m_binding, *document);
+		// Sync Selection: the markers window's selection is the project window's.
+		m_markers->onSelect(
+			[this](const std::vector<uint64_t>& selection)
+			{
+				if (m_markerLines != nullptr && m_markers != nullptr && m_markers->syncsSelection())
+					m_markerLines->setSelection(selection);
+			});
+		m_markers->syncFrom(
+			[this] { return m_markerLines != nullptr ? m_markerLines->selection() : std::vector<uint64_t>(); });
 		return m_markers.get();
 	}
 
@@ -955,6 +1028,18 @@ namespace gnubase::app
 		Rml::ElementDocument& opened = openDialog(window, name);
 		open = opened.GetObserverPtr();
 		return opened;
+	}
+
+	void AppUi::openAutoFades(ui::Window& window, uint64_t track) const
+	{
+		// Its Lua reads the track when it shows.
+		const std::filesystem::path file = m_resources / "ui" / "auto-fades.rml";
+		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
+		if (document == nullptr)
+			throw std::runtime_error("cannot load the dialog " + file.u8string());
+		if (track != 0)
+			document->SetAttribute("track", std::to_string(track));
+		document->Show(Rml::ModalFlag::Modal);
 	}
 
 	Rml::ElementDocument& AppUi::openDialog(ui::Window& window, const char* name) const

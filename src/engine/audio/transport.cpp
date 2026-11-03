@@ -265,6 +265,7 @@ namespace gnubase::engine
 		}
 
 		const bool cycles = m_settings.cycle && m_settings.left != m_settings.right;
+		const bool punchesOut = m_settings.punchOut && !m_settings.lockRecord; // Lock Record ignores it
 		uint32_t offset = 0;
 		while (offset < frames)
 		{
@@ -294,13 +295,13 @@ namespace gnubase::engine
 				until(m_recordAt);
 			if (!m_recording && m_settings.punchIn)
 				until(m_settings.left);
-			if (m_recording && m_settings.punchOut)
+			if (m_recording && punchesOut)
 				until(m_settings.right);
 			m_segments[m_block.segmentCount++] = {offset, length, m_position, m_recording};
 			m_block.recording = m_block.recording || m_recording;
 			offset += length;
 			m_position += length;
-			if (m_recording && m_settings.punchOut && m_position == m_settings.right)
+			if (m_recording && punchesOut && m_position == m_settings.right)
 			{
 				m_recording = false;
 				if (m_settings.stopAfterPunchOut && !cycles)

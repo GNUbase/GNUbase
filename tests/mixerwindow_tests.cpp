@@ -305,3 +305,54 @@ TEST_CASE("mixer channels show notes and pictures, and a channel dragged onto an
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(order() == std::vector<uint64_t>{a.track, b.track, c.track});
 }
+
+TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner send channel.set", "[ui]")
+{
+	test::UiApp app({1200, 900});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Added piano = addTrack(app, "midi", "Piano");
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 4; }));
+	const auto control = [&](const std::string& param) { return strip(guitar.channel) + " [param=\"" + param + "\"]"; };
+
+	// The fader section has the panner (reference manual p. 465); MIDI channels don't.
+	app.ui().wheel(window, {control("pan"), 0, std::nullopt}, 0.0F, -10.0F);
+	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("pan") > 0.0; }));
+	CHECK(elements(app, window, strip(piano.channel) + " .mixer-pan").empty());
+
+	// Set up Window Layout shows the sections, which are hidden until then; MIDI channels' are empty.
+	click(app, window, "#mixer-layout");
+	for (const std::string section : {"pre", "eq", "strip"})
+	{
+		const std::string inStrip = strip(guitar.channel) + " [section=" + section + "]";
+		CHECK(elements(app, window, "#mixer-layout-pane [setup-section=" + section + "]").size() == 1);
+		CHECK(has(element(app, window, inStrip), "hidden"));
+		click(app, window, "#mixer-layout-pane [setup-section=" + section + "]");
+		REQUIRE(app.waitUntil([&] { return !has(element(app, window, inStrip), "hidden"); }));
+		CHECK(elements(app, window, strip(piano.channel) + " [section=" + section + "] [param]").empty());
+	}
+	app.ui().key(window, "Escape");
+
+	// The toggles and knobs send channel.set.
+	for (const char* param : {"pre.phase", "pre.lowCut.on", "eq.bands.3.on", "strip.compressor.on"})
+		click(app, window, control(param));
+	REQUIRE(
+		app.waitUntil([&] { return channelJson(app, guitar.channel).at("strip").at("compressor").at("on") == true; }));
+	const Json channel = channelJson(app, guitar.channel);
+	CHECK(channel.at("pre").at("phase") == true);
+	CHECK(channel.at("pre").at("lowCut").at("on") == true);
+	CHECK(channel.at("eq").at("bands")[2].at("on") == true);
+	REQUIRE(app.waitUntil([&] { return has(element(app, window, control("pre.phase")), "checked"); }));
+	app.ui().wheel(window, {control("eq.bands.3.gain"), 0, std::nullopt}, 0.0F, -5.0F);
+	REQUIRE(app.waitUntil([&] { return channelJson(app, guitar.channel).at("eq").at("bands")[2].at("gain") > 0.0; }));
+
+	// And they show what the engine has, whoever changed it.
+	app.call("channel.set",
+		{{"channel", guitar.channel}, {"pre", {{"gain", 6.5}, {"phase", false}}},
+			{"eq", {{"bands", {{{"band", 1}, {"frequency", 250.0}}}}}}});
+	REQUIRE(
+		app.waitUntil([&] { return element(app, window, control("pre.gain")).at("attributes").at("value") == "6.5"; }));
+	CHECK(element(app, window, control("eq.bands.1.frequency")).at("attributes").at("value") == "250");
+	CHECK(!has(element(app, window, control("pre.phase")), "checked"));
+}
