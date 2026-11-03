@@ -326,9 +326,8 @@ namespace gnubase::engine
 				lanes.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0, 0}, Kind::Instrument,
 					parameter.id, value, parameter.minimum, parameter.maximum, {}});
 			}
-		for (size_t index = 0; index < channel.slots.size(); ++index)
+		for (const RenderSlot& slot : channel.slots)
 		{
-			const RenderSlot& slot = channel.slots[index];
 			// Other plugins report their parameters once they run (#283).
 			if (const processors::BuiltinInfo* info = processors::findBuiltinPlugin(slot.plugin))
 				for (const processors::ParameterInfo& parameter : info->parameters)
