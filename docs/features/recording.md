@@ -25,9 +25,13 @@ transport's record state and the record mode setting.
 - **Files.** The disk thread writes one file per track, named after the track (`Audio 1.wav`, `Audio 1-2.wav` if
   that is taken; characters that file systems refuse become `_`), into the project's media folder `Audio`; an unsaved
   project records into `Recordings` in the settings folder (the temporary folder without one), and its files are
-  referenced from there. The format comes from one function, `recordFormat`: for now always 32-bit float WAV at the
-  project's sample rate, until the project setup has a record file type and bit depth (#78). A file is a complete
-  WAV once the recording ends; after a crash the frames written so far are in it, as the reference describes (p. 347).
+  referenced from there. The format comes from one function, `recordFormat`: the project setup's record file type and
+  bit depth ([project-setup.md](project-setup.md), p. 342) at the project's sample rate, read when a recording
+  starts. Wave and Broadcast Wave files end in `.wav`, AIFF in `.aif`, FLAC in `.flac`. A Broadcast Wave file has a
+  bext chunk with the track name as its description, GNUbase as its originator, the local date and time the recording
+  started, and as its time reference the position of the file's first frame (pre-recorded input included) plus the
+  project's start time, in samples since midnight. A file is complete once the recording ends; after a crash the
+  frames written so far are in it, as the reference describes (p. 347).
 - **Takes.** A file holds everything recorded from the start of the recording to its end. Each run of consecutive
   project positions is a take: a cycle lap, or what was recorded between punching in and out
   (`transport.record` with `record: false` ends a recording; recording again starts a new one). When the recording
@@ -54,6 +58,6 @@ transport's record state and the record mode setting.
 
 Record folders per track (p. 343); the common record modes (Punch In/Out, Re-Record, starting at the left locator or
 the selection, p. 339); punching in and out at the locators and pre-roll and post-roll (#102); stacking cycle takes in
-lanes and comping; drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); the record file
-type and bit depth of the project setup (#78); MIDI recording (#97); recording the output of a bus or channel (p. 345);
+lanes and comping; drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); setting up the
+Broadcast Wave chunk's description, author and reference; MIDI recording (#97); recording the output of a bus or channel (p. 345);
 adjusting for plugin latency on the input (#71); moving undone recordings' files to the pool's trash.
