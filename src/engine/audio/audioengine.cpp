@@ -343,7 +343,9 @@ namespace gnubase::engine
 		}
 		if (announce && m_engine != nullptr)
 			m_engine->broadcast("audio.changed", status());
-		if (m_device && (m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring))
+		if (m_device &&
+			(m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring ||
+				listenGains() != m_listenGains))
 			rebuild();
 		updateRecorder();
 	}
@@ -394,10 +396,17 @@ namespace gnubase::engine
 		return AutoMonitoring::TapeMachine;
 	}
 
+	AudioEngine::ListenGains AudioEngine::listenGains() const
+	{
+		return {static_cast<float>(volumeGain(m_settings.get(settings::g_audioListenDim))),
+			static_cast<float>(volumeGain(m_settings.get(settings::g_audioListenLevel)))};
+	}
+
 	void AudioEngine::rebuild()
 	{
 		const RenderSnapshot& snapshot = m_snapshots.latest();
 		m_autoMonitoring = autoMonitoring();
+		m_listenGains = listenGains();
 		const audio::DeviceFormat& format = m_device->format();
 		graph::GraphDesc desc = graph::describe(snapshot);
 		m_sourceNodes.clear();
@@ -459,9 +468,18 @@ namespace gnubase::engine
 			if (snapshot.busses[b].mainMix)
 				program->mainPorts = ports[b];
 		for (size_t b = 0; b < snapshot.busses.size(); ++b)
-			if (snapshot.busses[b].parent < 0)
-				(snapshot.busses[b].direction == BusDirection::Input ? program->inputs : program->outputs)
-					.push_back({static_cast<int>(b), std::move(ports[b])});
+		{
+			if (snapshot.busses[b].parent >= 0)
+				continue;
+			if (snapshot.busses[b].mainMix)
+				program->mainOutput = static_cast<int>(program->outputs.size());
+			(snapshot.busses[b].direction == BusDirection::Input ? program->inputs : program->outputs)
+				.push_back({static_cast<int>(b), std::move(ports[b])});
+		}
+		for (size_t n = 0; n < desc.nodes.size(); ++n)
+			if (desc.nodes[n].kind == graph::NodeKind::ListenBus)
+				program->listenNode = static_cast<int>(n);
+		program->listen = m_listenGains;
 		m_revision = snapshot.revision;
 		if (m_programs)
 			m_programs->publish(std::move(program));
@@ -774,21 +792,7 @@ namespace gnubase::engine
 		program.graph.process(block.frames, transport, m_workers.get());
 		m_tap.capture(block.position, program.instruments);
 		m_playback.endBlock();
-		// Outputs start silent; busses that share a port add up there, in bus order.
-		for (const BusLink& link : program.outputs)
-		{
-			float* const* bus = program.graph.audio(link.node);
-			for (size_t c = 0; c < link.ports.size(); ++c)
-			{
-				const int port = link.ports[c];
-				if (port < 0 || port >= format.outputChannels)
-					continue;
-				float* out = block.outputs[port];
-				const float* in = bus[c];
-				for (uint32_t i = 0; i < block.frames; ++i)
-					out[i] += in[i];
-			}
-		}
+		output(block, program);
 		m_audition.process(block.outputs, format.outputChannels, program.mainPorts, block.frames);
 		meterMainMix(block, program.mainPorts, transport.playing);
 
@@ -800,6 +804,53 @@ namespace gnubase::engine
 		m_meter.cycle(busy.count(), block.frames / format.sampleRate, threads.data(), count);
 		publishPerformance(m_meter.data());
 		m_programs->release();
+	}
+
+	void AudioEngine::output(const audio::DeviceBlock& block, const Program& program) noexcept
+	{
+		// Outputs start silent; busses that share a port add up there, in bus order. While channels listen, the main
+		// mix glides to the listen dim over the block, and back once none does.
+		const int outputChannels = m_device->format().outputChannels;
+		const float dimFrom = m_dim;
+		const float dimTo = program.listenNode >= 0 ? program.listen.dim : 1.0f;
+		m_dim = dimTo;
+		for (size_t l = 0; l < program.outputs.size(); ++l)
+		{
+			const BusLink& link = program.outputs[l];
+			const bool dims = static_cast<int>(l) == program.mainOutput && (dimFrom != 1.0f || dimTo != 1.0f);
+			float* const* bus = program.graph.audio(link.node);
+			for (size_t c = 0; c < link.ports.size(); ++c)
+			{
+				const int port = link.ports[c];
+				if (port < 0 || port >= outputChannels)
+					continue;
+				float* out = block.outputs[port];
+				const float* in = bus[c];
+				if (!dims)
+				{
+					for (uint32_t i = 0; i < block.frames; ++i)
+						out[i] += in[i];
+					continue;
+				}
+				const float step = (dimTo - dimFrom) / static_cast<float>(block.frames);
+				for (uint32_t i = 0; i < block.frames; ++i)
+					out[i] += in[i] * (dimFrom + (step * static_cast<float>(i + 1)));
+			}
+		}
+		if (program.listenNode < 0)
+			return;
+		// ponytail: the listening channels come in and go at once; a glide needs the listen bus in every graph.
+		float* const* listen = program.graph.audio(program.listenNode);
+		for (size_t c = 0; c < program.mainPorts.size(); ++c)
+		{
+			const int port = program.mainPorts[c];
+			if (port < 0 || port >= outputChannels)
+				continue;
+			float* out = block.outputs[port];
+			const float* in = listen[c];
+			for (uint32_t i = 0; i < block.frames; ++i)
+				out[i] += in[i] * program.listen.level;
+		}
 	}
 
 	void AudioEngine::meterMainMix(

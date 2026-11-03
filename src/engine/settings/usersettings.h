@@ -26,6 +26,8 @@ namespace gnubase::engine::settings
 	inline constexpr Key<std::string> g_audioFallbackDevice{"audio.fallbackDevice"};
 	inline constexpr Key<double> g_audioSampleRate{"audio.sampleRate"};
 	inline constexpr Key<double> g_audioPreRecordSeconds{"audio.preRecordSeconds"};
+	inline constexpr Key<double> g_audioListenDim{"audio.listenDim"};
+	inline constexpr Key<double> g_audioListenLevel{"audio.listenLevel"};
 	inline constexpr Key<bool> g_audioStopAfterPunchOut{"audio.stopAfterPunchOut"};
 	inline constexpr Key<bool> g_meterResetOnStart{"meter.resetOnStart"};
 	inline constexpr Key<int64_t> g_audioBlockSize{"audio.blockSize"};

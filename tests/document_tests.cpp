@@ -872,6 +872,114 @@ TEST_CASE("muted channels are silent; soloed ones silence the others, except whe
 	CHECK(silentOnes() == std::vector<ObjectId>{group, audio, other});
 }
 
+TEST_CASE("solo reaches through nested groups and effect channels; solo defeat keeps a channel heard; exclusive solo "
+		  "and deactivating all states",
+	"[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId outer = addTrack(client, {{"type", "group"}});
+	const ObjectId inner = addTrack(client, {{"type", "group"}});
+	const ObjectId effect = addTrack(client, {{"type", "effect"}});
+	const ObjectId grouped = addTrack(client, {{"type", "audio"}});
+	const ObjectId direct = addTrack(client, {{"type", "audio"}});
+	const ObjectId other = addTrack(client, {{"type", "audio"}});
+	const auto channel = [&client](ObjectId trackId) { return channelOf(client, trackId).at("id"); };
+	const auto set = [&client, &channel](ObjectId trackId, Json parameters)
+	{
+		parameters["channel"] = channel(trackId);
+		return run(client, "channel.set", parameters).at("channel");
+	};
+	// grouped -> inner -> outer and effect -> outer; direct and other on the main mix.
+	set(inner, {{"output", channel(outer)}});
+	set(effect, {{"output", channel(outer)}});
+	set(grouped, {{"output", channel(inner)}});
+	const std::vector<ObjectId> all = {outer, inner, effect, grouped, direct, other};
+	const auto silentOnes = [&engine, &all]
+	{
+		const RenderSnapshot& snapshot = engine.renderSnapshots().acquire();
+		std::vector<ObjectId> result;
+		for (const ObjectId id : all)
+			if (renderChannel(snapshot, id).silent)
+				result.push_back(id);
+		return result;
+	};
+
+	// Down through both groups, and up from the outer group to everything that plays into it.
+	set(grouped, {{"solo", true}});
+	CHECK(silentOnes() == std::vector<ObjectId>{effect, direct, other});
+	set(grouped, {{"solo", false}});
+	set(outer, {{"solo", true}});
+	CHECK(silentOnes() == std::vector<ObjectId>{direct, other});
+	set(outer, {{"solo", false}});
+	// A soloed effect channel keeps the group it plays through, not that group's other sources.
+	set(effect, {{"solo", true}});
+	CHECK(silentOnes() == std::vector<ObjectId>{inner, grouped, direct, other});
+	set(effect, {{"solo", false}});
+
+	// Solo defeat (reference manual p. 466): the channel and where it plays through stay heard; alone it changes
+	// nothing.
+	CHECK(set(effect, {{"soloDefeat", true}}).at("soloDefeat") == true);
+	CHECK(silentOnes().empty());
+	set(direct, {{"solo", true}});
+	CHECK(silentOnes() == std::vector<ObjectId>{inner, grouped, other});
+
+	// Exclusive solo turns the others' solo off.
+	set(other, {{"solo", true}});
+	CHECK(silentOnes() == std::vector<ObjectId>{inner, grouped});
+	set(grouped, {{"solo", true}, {"exclusive", true}});
+	CHECK(channelOf(client, direct).at("solo") == false);
+	CHECK(channelOf(client, other).at("solo") == false);
+	CHECK(silentOnes() == std::vector<ObjectId>{direct, other});
+
+	// Deactivate all solo states, with solo defeat, in one undo step.
+	set(direct, {{"mute", true}});
+	const Json cleared = run(client, "channel.deactivateAll", {{"state", "solo"}});
+	CHECK(cleared.at("channels") == Json::array({channel(effect), channel(grouped)}));
+	CHECK(channelOf(client, effect).at("soloDefeat") == false);
+	CHECK(silentOnes() == std::vector<ObjectId>{direct});
+	CHECK(run(client, "channel.deactivateAll", {{"state", "mute"}}).at("channels") == Json::array({channel(direct)}));
+	CHECK(silentOnes().empty());
+	run(client, "history.undo", {{"steps", 2}});
+	CHECK(channelOf(client, grouped).at("solo") == true);
+	CHECK(channelOf(client, effect).at("soloDefeat") == true);
+	CHECK(channelOf(client, direct).at("mute") == true);
+	CHECK(run(client, "channel.deactivateAll", {{"state", "listen"}}).at("channels").empty());
+	CHECK_THAT(reject(client, "channel.deactivateAll", {{"state", "monitor"}}), ContainsSubstring("state"));
+}
+
+TEST_CASE("listening channels feed the listen bus; MIDI channels can't listen", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId audio = addTrack(client, {{"type", "audio"}});
+	const ObjectId group = addTrack(client, {{"type", "group"}});
+	const ObjectId midi = addTrack(client, {{"type", "midi"}});
+	const auto channel = [&client](ObjectId trackId) { return channelOf(client, trackId).at("id"); };
+	const auto listenBusses = [&client]
+	{
+		std::vector<Json> nodes;
+		const Json graph = run(client, "graph.get");
+		for (const Json& node : graph.at("nodes"))
+			if (node.at("kind") == "listenBus")
+				nodes.push_back(node);
+		return nodes;
+	};
+	CHECK(channelOf(client, audio).at("listen") == false);
+	CHECK(listenBusses().empty());
+	for (const ObjectId trackId : {audio, group})
+		CHECK(
+			run(client, "channel.set", {{"channel", channel(trackId)}, {"listen", true}}).at("channel").at("listen") ==
+			true);
+	CHECK(renderChannel(engine.renderSnapshots().acquire(), audio).listen);
+	CHECK(listenBusses().size() == 1);
+	CHECK_THAT(
+		reject(client, "channel.set", {{"channel", channel(midi)}, {"listen", true}}), ContainsSubstring("MIDI"));
+	CHECK(run(client, "channel.deactivateAll", {{"state", "listen"}}).at("channels") ==
+		Json::array({channel(audio), channel(group)}));
+	CHECK(listenBusses().empty());
+}
+
 TEST_CASE("disabled tracks play nothing; only audio, instrument and MIDI tracks can be disabled", "[unit]")
 {
 	Engine engine;

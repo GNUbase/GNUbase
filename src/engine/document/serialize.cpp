@@ -520,7 +520,8 @@ namespace gnubase::engine
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
 			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)}, {"monitor", channel.monitor},
 			{"recordEnable", channel.recordEnable}, {"mute", channel.mute}, {"solo", channel.solo},
-			{"slots", channel.slots}, {"notes", channel.notes}};
+			{"soloDefeat", channel.soloDefeat}, {"listen", channel.listen}, {"slots", channel.slots},
+			{"notes", channel.notes}};
 		json.update(toJson(channel.sections));
 		return json;
 	}
@@ -1283,6 +1284,8 @@ namespace gnubase::engine
 			channel.recordEnable = audio && item.value("recordEnable", false);
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
+			channel.soloDefeat = item.value("soloDefeat", false); // files from before #109 have neither
+			channel.listen = channel.format != ChannelFormat::None && item.value("listen", false);
 			channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none
 			channel.notes = item.value("notes", std::string());           // files from before #89 have none
 			channel.sections = sectionsFromJson(item);                    // files from before #107 have them off

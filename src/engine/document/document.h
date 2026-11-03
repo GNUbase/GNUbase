@@ -206,10 +206,13 @@ namespace gnubase::engine
 		// Audio tracks: the monitor and record enable buttons (docs/features/latency-and-monitoring.md).
 		bool monitor = false;
 		bool recordEnable = false;
-		// The mute and solo buttons (docs/features/track-list.md): a muted channel is silent; while any channel is
-		// soloed, only soloed ones, where they play through and what plays into them are heard.
+		// The mute and solo buttons (docs/features/solo-mute-listen.md): a muted channel is silent; while any channel
+		// is soloed, only soloed ones, where they play through and what plays into them are heard, and channels with
+		// solo defeat, with where they play through. A listening channel also plays on the monitoring bus.
 		bool mute = false;
 		bool solo = false;
+		bool soloDefeat = false;
+		bool listen = false;
 		// Audio channels: the plugin slots, from top to bottom; the audio passes through them before the fader.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		std::vector<ObjectId> slots = {};
@@ -670,10 +673,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor, a.recordEnable,
-				   a.mute, a.solo, a.slots, a.notes, a.sections) ==
+				   a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable,
-				b.mute, b.solo, b.slots, b.notes, b.sections);
+				b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)

@@ -46,15 +46,22 @@ namespace gnubase::engine
 		}
 
 		// Mute, solo and disabled tracks: with a channel soloed, only soloed channels, those they play into and those
-		// that play into them are heard (feeds: the channels each channel plays into, by index).
+		// that play into them are heard, and channels with solo defeat with those they play into (feeds: the channels
+		// each channel plays into, by index).
 		void markSilent(const Project& project, const std::vector<std::vector<size_t>>& feeds, RenderSnapshot& snapshot)
 		{
 			const size_t count = snapshot.channels.size();
 			std::vector<bool> heard(count, true);
 			std::vector<size_t> soloed;
+			std::vector<size_t> defeated;
 			for (size_t i = 0; i < count; ++i)
-				if (project.channels.at(snapshot.channels[i].id).solo)
+			{
+				const Channel& channel = project.channels.at(snapshot.channels[i].id);
+				if (channel.solo)
 					soloed.push_back(i);
+				else if (channel.soloDefeat)
+					defeated.push_back(i);
+			}
 			if (!soloed.empty())
 			{
 				std::vector<std::vector<size_t>> fedBy(count);
@@ -62,10 +69,9 @@ namespace gnubase::engine
 					for (const size_t to : feeds[i])
 						fedBy[to].push_back(i);
 				heard.assign(count, false);
-				for (const auto* links : {&feeds, &std::as_const(fedBy)})
+				const auto reach = [&heard](const std::vector<std::vector<size_t>>& links, std::vector<size_t> pending)
 				{
-					std::vector<bool> reached(count, false);
-					std::vector<size_t> pending = soloed;
+					std::vector<bool> reached(links.size(), false);
 					while (!pending.empty())
 					{
 						const size_t i = pending.back();
@@ -74,9 +80,12 @@ namespace gnubase::engine
 							continue;
 						reached[i] = true;
 						heard[i] = true;
-						pending.insert(pending.end(), (*links)[i].begin(), (*links)[i].end());
+						pending.insert(pending.end(), links[i].begin(), links[i].end());
 					}
-				}
+				};
+				reach(feeds, soloed);
+				reach(fedBy, soloed);
+				reach(feeds, defeated);
 			}
 			for (size_t i = 0; i < count; ++i)
 			{
@@ -152,6 +161,7 @@ namespace gnubase::engine
 			render.midiPan = channel.midiPan;
 			render.monitor = channel.monitor;
 			render.recordEnable = channel.recordEnable;
+			render.listen = channel.listen;
 			render.autoFades = track.autoFades.value_or(project.autoFades);
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;
