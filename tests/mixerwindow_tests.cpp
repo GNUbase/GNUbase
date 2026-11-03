@@ -356,3 +356,57 @@ TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner 
 	CHECK(element(app, window, control("eq.bands.1.frequency")).at("attributes").at("value") == "250");
 	CHECK(!has(element(app, window, control("pre.phase")), "checked"));
 }
+
+TEST_CASE(
+	"solo, mute and listen in the mixer: exclusive solo, solo defeat, listen and the Deactivate All buttons", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Added bass = addTrack(app, "audio", "Bass");
+	const Added keys = addTrack(app, "midi", "Keys");
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 5; }));
+	const auto button = [&](const Added& added, const char* control)
+	{ return element(app, window, strip(added.channel) + " button[control=" + control + "]"); };
+	const auto toolbar = [&](const char* state)
+	{ return element(app, window, std::string(".mixer-toolbar button[deactivate=") + state + "]"); };
+	const auto clickWith = [&](const std::string& selector, const char* modifier)
+	{
+		app.ui().click(window, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {modifier});
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+	// Audio channels listen; MIDI channels have no listen button.
+	CHECK(elements(app, window, strip(keys.channel) + " button[control=listen]").empty());
+	CHECK_FALSE(has(toolbar("solo"), "checked"));
+
+	// A click solos, Ctrl-click solos exclusively (reference manual p. 466).
+	click(app, window, strip(guitar.channel) + " button[control=solo]");
+	REQUIRE(app.waitUntil([&] { return has(toolbar("solo"), "checked"); }));
+	CHECK(channelJson(app, guitar.channel).at("solo") == true);
+	clickWith(strip(bass.channel) + " button[control=solo]", "ctrl");
+	REQUIRE(app.waitUntil([&] { return channelJson(app, bass.channel).at("solo") == true; }));
+	CHECK(channelJson(app, guitar.channel).at("solo") == false);
+	// Alt-click switches solo defeat, which the button shows.
+	clickWith(strip(guitar.channel) + " button[control=solo]", "alt");
+	REQUIRE(app.waitUntil([&] { return has(button(guitar, "solo"), "defeated"); }));
+	CHECK(channelJson(app, guitar.channel).at("soloDefeat") == true);
+	CHECK_FALSE(has(button(guitar, "solo"), "checked"));
+	// Deactivate All Solo States takes both.
+	click(app, window, ".mixer-toolbar button[deactivate=solo]");
+	REQUIRE(app.waitUntil([&] { return !has(toolbar("solo"), "checked"); }));
+	CHECK(channelJson(app, bass.channel).at("solo") == false);
+	CHECK(channelJson(app, guitar.channel).at("soloDefeat") == false);
+
+	// Listen and mute, and their Deactivate All buttons.
+	click(app, window, strip(guitar.channel) + " button[control=listen]");
+	click(app, window, strip(keys.channel) + " button[control=mute]");
+	REQUIRE(app.waitUntil([&] { return has(button(guitar, "listen"), "checked") && has(toolbar("mute"), "checked"); }));
+	CHECK(channelJson(app, guitar.channel).at("listen") == true);
+	CHECK(has(toolbar("listen"), "checked"));
+	click(app, window, ".mixer-toolbar button[deactivate=listen]");
+	click(app, window, ".mixer-toolbar button[deactivate=mute]");
+	REQUIRE(app.waitUntil([&] { return !has(toolbar("listen"), "checked") && !has(toolbar("mute"), "checked"); }));
+	CHECK(channelJson(app, guitar.channel).at("listen") == false);
+	CHECK(channelJson(app, keys.channel).at("mute") == false);
+}

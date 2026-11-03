@@ -406,6 +406,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
     ]
     for kind in ("mute", "solo", "record", "monitor"):
         rules.append((f"button.toggle.{kind}.checked", {"decorator": skin(f"toggle-{kind}"), "color": c["text"]}))
+    # Listen is monitoring; solo defeat keeps the solo button off, in the solo color.
+    rules.append(("button.toggle.listen.checked", {"decorator": skin("toggle-monitor"), "color": c["text"]}))
+    rules.append(("button.toggle.solo.defeated", {"decorator": skin("toggle-hover"), "color": c["accent"]}))
     rules += [
         # Text fields
         ("input.text, input.password, textarea", {"decorator": skin("field-normal"), "color": c["text"]}),
