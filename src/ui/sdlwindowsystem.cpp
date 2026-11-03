@@ -44,6 +44,7 @@ namespace gnubase::ui
 			case SDL_EVENT_FINGER_UP:
 			case SDL_EVENT_FINGER_MOTION:
 			case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+			case SDL_EVENT_WINDOW_FOCUS_LOST:
 				return true;
 			default:
 				return false;
@@ -487,6 +488,10 @@ namespace gnubase::ui
 			if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && unused) // one key command per press
 				input.key =
 					KeyPress{RmlSDL::ConvertKey(static_cast<int>(event.key.key)), RmlSDL::GetKeyModifierState()};
+			else if (event.type == SDL_EVENT_KEY_UP)
+				input.keyUp = KeyPress{RmlSDL::ConvertKey(static_cast<int>(event.key.key)), 0};
+			else if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) // a key held then goes up elsewhere
+				input.keyUp = KeyPress{Rml::Input::KI_UNKNOWN, 0};
 			return input;
 		}
 		if (const std::optional<WindowEventKind> kind = kindOf(event.type))

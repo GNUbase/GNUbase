@@ -92,11 +92,11 @@ namespace gnubase::engine
 		// miditap.cpp.
 		void registerCommands(Engine& engine);
 
-		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
-		// The user setting audio.stopAfterPunchOut, for the transport.
+		// Command thread: the user setting audio.stopAfterPunchOut, for the transport.
 		void setStopAfterPunchOut(bool stop);
 		// The user setting meter.resetOnStart.
 		void setMeterResetOnStart(bool reset) { m_meterResetOnStart.store(reset, std::memory_order_relaxed); }
+		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
 		void setChase(const MidiChase& chase);
 
 		// Command thread, after a command changed the user settings audio.portSettings (audioPorts) or
@@ -269,9 +269,9 @@ namespace gnubase::engine
 		// transport command, since monitoring may follow the transport.
 		void routeDirectly(const RenderSnapshot& snapshot, const std::vector<std::vector<int>>& ports);
 		void stopMonitoringDirectly();
-		// Audio thread: the device's input where recording places it (audio.captureInput).
 		// Audio thread: the master meter and the loudness meter on the main mix's device channels.
 		void meterMainMix(const audio::DeviceBlock& block, const std::vector<int>& ports, bool playing) noexcept;
+		// Audio thread: the device's input where recording places it (audio.captureInput).
 		void captureInput(const audio::DeviceBlock& block) noexcept;
 		// Command thread: tells the recorder what the next recording records, if that changed.
 		void updateRecorder();

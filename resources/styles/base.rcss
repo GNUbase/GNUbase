@@ -483,6 +483,11 @@ valuefield.editing .valuefield-text
 	margin-right: 12dp;
 }
 
+.transport-section.hidden
+{
+	display: none;
+}
+
 .transport-section > *
 {
 	margin-right: 2dp;
@@ -498,10 +503,9 @@ valuefield.editing .valuefield-text
 	min-width: 96dp;
 }
 
+/* The time display window's digits; their size at each of the window's sizes (.size-0 to .size-4) is the theme's. */
 .time-display
 {
-	font-size: 48dp;
-	line-height: 96dp;
 	text-align: center;
 }
 

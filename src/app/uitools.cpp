@@ -302,11 +302,26 @@ namespace gnubase::app
 			"Up, Down, Left, Right, Space, . , - +, Alt on its own (which opens the menu bar on Windows and Linux), "
 			"and on the keypad Num0 to Num9, NumEnter, Num* Num/ Num+ Num- Num.; modifiers Mod (the platform's "
 			"command key: Cmd on macOS, Ctrl elsewhere), Ctrl, Shift, Alt and Meta (Cmd). A key that the focused "
-			"element doesn't use runs its key command, e.g. Space starts or stops playback. Keys don't type text: use "
+			"element doesn't use runs its key command, e.g. Space starts or stops playback. With action down the key "
+			"stays pressed until an action up for it, e.g. Num+, Forward, winds until then. Keys don't type text: use "
 			"ui_text for that. Returns the element with the keyboard focus.",
-			object({{"window", windowProperty()}, {"keys", {{"type", "string"}}}}, {"keys"}), focusResult, false,
-			run([](ui::Automation& ui, const Json& arguments)
-				{ return ui.key(windowOf(arguments), arguments.at("keys").get<std::string>()); })});
+			object({{"window", windowProperty()}, {"keys", {{"type", "string"}}},
+					   {"action",
+						   {{"type", "string"}, {"enum", {"press", "down", "up"}},
+							   {"description", "press (the default) presses and releases the key."}}}},
+				{"keys"}),
+			focusResult, false,
+			run(
+				[](ui::Automation& ui, const Json& arguments)
+				{
+					const std::string action = arguments.value("action", std::string("press"));
+					ui::KeyAction keyAction = ui::KeyAction::Press;
+					if (action == "down")
+						keyAction = ui::KeyAction::Down;
+					else if (action == "up")
+						keyAction = ui::KeyAction::Up;
+					return ui.key(windowOf(arguments), arguments.at("keys").get<std::string>(), keyAction);
+				})});
 
 		tools.push_back({"ui_text",
 			"Types text into the element with the keyboard focus, e.g. a text field that ui_click focused. Returns "

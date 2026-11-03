@@ -47,6 +47,20 @@ namespace gnubase::engine
 			m_peakMax.fill(0.0f);
 			m_rmsMax.fill(0.0f);
 		}
+		// Channels that come back, e.g. a mono channel's second side, start without what they measured before.
+		for (int c = m_channels.load(std::memory_order_relaxed); c < channels; ++c)
+		{
+			const auto index = static_cast<size_t>(c);
+			m_windowPeak[index] = 0.0f;
+			m_windowSquares[index] = 0.0;
+			m_squares[index] = {};
+			m_peakMax[index] = 0.0f;
+			m_rmsMax[index] = 0.0f;
+			m_peak[index].store(0.0f, std::memory_order_relaxed);
+			m_rms[index].store(0.0f, std::memory_order_relaxed);
+			m_publishedPeakMax[index].store(0.0f, std::memory_order_relaxed);
+			m_publishedRmsMax[index].store(0.0f, std::memory_order_relaxed);
+		}
 		m_channels.store(channels, std::memory_order_relaxed);
 		for (int c = 0; c < channels; ++c)
 		{
@@ -194,6 +208,7 @@ namespace gnubase::engine
 		m_shortTermMax.reset();
 		m_truePeakMax.fill(0.0f);
 		m_measuredSteps = 0;
+		m_playingSteps = 0;
 	}
 
 	void LoudnessMeter::process(const float* const* audio, int channels, uint32_t frames, bool measuring) noexcept
@@ -206,11 +221,28 @@ namespace gnubase::engine
 		}
 		if (channels != m_channels)
 		{
+			// Channels that come back start without what they measured before.
+			for (size_t c = static_cast<size_t>(std::max(m_channels, 0)); c < static_cast<size_t>(channels); ++c)
+			{
+				m_windowTruePeak[c] = 0.0f;
+				m_truePeakMax[c] = 0.0f;
+				m_truePeak[c].store(0.0f, std::memory_order_relaxed);
+				m_publishedTruePeakMax[c].store(0.0f, std::memory_order_relaxed);
+			}
 			m_channels = channels;
 			m_filterState = {};
 			m_history = {};
 			m_publishedChannels.store(channels, std::memory_order_relaxed);
 		}
+		if (measuring && !m_wasMeasuring)
+		{
+			// Playback starts: a fresh step, so no block or true peak holds audio from while the transport stood.
+			m_stepEnergy = 0.0;
+			m_stepFrames = 0;
+			m_windowTruePeak.fill(0.0f);
+			m_freshSamples = g_taps / 4;
+		}
+		m_wasMeasuring = measuring;
 		const analysis::Biquad& shelf = m_filters[0];
 		const analysis::Biquad& highPass = m_filters[1];
 		constexpr int length = g_taps / 4;
@@ -237,7 +269,8 @@ namespace gnubase::engine
 				history[static_cast<size_t>(m_historyIndex) + static_cast<size_t>(length)] = sample;
 				float peak = std::max(m_windowTruePeak[c], std::abs(sample));
 				const float* newest = history.data() + m_historyIndex + length; // newest[-k] is k samples ago
-				for (int phase = 0; phase < 4; ++phase)
+				// Right after playback starts, the points between the samples would still read audio from before.
+				for (int phase = 0; phase < 4 && m_freshSamples == 0; ++phase)
 				{
 					double interpolated = 0.0;
 					for (int k = 0; k < length; ++k)
@@ -248,6 +281,8 @@ namespace gnubase::engine
 				m_windowTruePeak[c] = peak;
 			}
 			m_historyIndex = (m_historyIndex + 1) % length;
+			if (m_freshSamples > 0)
+				--m_freshSamples;
 			m_stepEnergy += energy;
 			if (++m_stepFrames == m_stepLength)
 				step(measuring);
@@ -275,19 +310,21 @@ namespace gnubase::engine
 		m_momentary.store(momentary > 0.0 ? toLoudness(momentary) : g_nothing, std::memory_order_relaxed);
 		m_shortTerm.store(shortTerm > 0.0 ? toLoudness(shortTerm) : g_nothing, std::memory_order_relaxed);
 
+		m_playingSteps = measuring ? m_playingSteps + 1 : 0;
 		if (measuring)
 		{
 			++m_measuredSteps;
-			// Blocks of 400 ms every 100 ms, and of 3 s every second, from where measuring started.
-			if (m_measuredSteps >= 4 && momentary > 0.0)
+			// Blocks of 400 ms every 100 ms, and of 3 s every second, from where playback started: none holds audio
+			// from while the transport stood.
+			if (m_playingSteps >= 4 && momentary > 0.0)
 			{
 				m_blocks.add(momentary);
 				m_momentaryMax = std::max(m_momentaryMax.value_or(-1e9), toLoudness(momentary));
 			}
-			if (m_measuredSteps >= g_steps && shortTerm > 0.0)
+			if (m_playingSteps >= g_steps && shortTerm > 0.0)
 			{
 				m_shortTermMax = std::max(m_shortTermMax.value_or(-1e9), toLoudness(shortTerm));
-				if ((m_measuredSteps - g_steps) % 10 == 0)
+				if ((m_playingSteps - g_steps) % 10 == 0)
 					m_shortTerms.add(shortTerm);
 			}
 			for (size_t c = 0; c < static_cast<size_t>(m_channels); ++c)

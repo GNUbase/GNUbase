@@ -61,6 +61,7 @@ namespace gnubase::ui
 	//   setup="channel"               a setup pane's list of the set's sections, which the docking system fills with a
 	//                                 toggle button per section (setup-section="eq"); a button dragged onto another
 	//                                 moves its section there
+	//   setup-all="channel"           a button that shows every section of the set (Show All)
 	//
 	// Zones get the state class .hidden when hidden and .focused while the keyboard focus is in them; strips get
 	// .hidden. A tab is dragged onto another to move it there; a right click on the tabs opens the zone's tab menu,

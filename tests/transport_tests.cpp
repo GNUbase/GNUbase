@@ -594,6 +594,52 @@ TEST_CASE("the reply to recording from stop is exact where the pre-roll can't ro
 	CHECK(transport.recording());
 }
 
+TEST_CASE("recording from stop in a skipped range with a pre-roll starts at the left locator", "[unit]")
+{
+	TransportSettings settings = cycle(2000, 1000); // skips from 1000 to 2000
+	settings.preRoll = true;
+	settings.preRollAmount = 1000;
+	Transport transport;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(1500)); // the pre-roll starts at 500 and jumps over 1500
+	REQUIRE(transport.record(true));
+	CHECK(!transport.recording());
+	const std::vector<Samples> recorded = recordedPositions(transport, 1000, 64);
+	REQUIRE(!recorded.empty());
+	CHECK(recorded.front() == 2000);
+	CHECK(transport.sync());
+	CHECK(transport.recording());
+}
+
+TEST_CASE("recording started by hand during the pre-roll doesn't start again later", "[unit]")
+{
+	TransportSettings settings = cycle(1000, 2000);
+	settings.punchOut = true;
+	settings.preRoll = true;
+	settings.preRollAmount = 500;
+	Transport transport;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(1200));
+	REQUIRE(transport.record(true)); // plays from 700, waits for 1200
+	transport.advance(64);
+	REQUIRE(transport.record(true)); // records now, from 764
+	// Punches out at 2000; the laps after it don't record, also not at the old record start.
+	CHECK(recordedPositions(transport, 3000, 64) == range(764, 2000));
+}
+
+TEST_CASE("the transport clamps positions and locators to the largest position", "[unit]")
+{
+	Transport transport;
+	TransportSettings settings;
+	settings.left = -5;
+	settings.right = g_maxPosition + 100;
+	REQUIRE(transport.set(settings));
+	CHECK(transport.settings().left == 0);
+	CHECK(transport.settings().right == g_maxPosition);
+	REQUIRE(transport.locate(g_maxPosition + 1));
+	CHECK(transport.position() == g_maxPosition);
+}
+
 TEST_CASE("the command thread takes over what the audio thread changed only once no request waits", "[unit]")
 {
 	Transport transport;
@@ -701,6 +747,11 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK_THAT(reject(client, "transport.locate"), ContainsSubstring("position, by or target"));
 	CHECK_THAT(reject(client, "transport.locate", {{"target", "nowhere"}}), ContainsSubstring("target"));
 	CHECK_THAT(reject(client, "transport.set", {{"right", -5}}), ContainsSubstring("right"));
+	CHECK_THAT(reject(client, "transport.set", {{"left", g_maxPosition + 1}}), ContainsSubstring("left"));
+	CHECK_THAT(reject(client, "transport.locate", {{"position", g_maxPosition + 1}}), ContainsSubstring("position"));
+	CHECK(run(client, "transport.locate", {{"by", 1e300}}).at("position") == g_maxPosition); // not past the end
+	CHECK(run(client, "transport.locate", {{"position", g_maxPosition}}).at("position") == g_maxPosition);
+	run(client, "transport.locate", {{"position", 0}});
 	CHECK_THAT(reject(client, "transport.set", {{"left", "somewhere"}}), ContainsSubstring("left"));
 	CHECK_THAT(reject(client, "transport.set", {{"startMode", "selection"}}), ContainsSubstring("startMode"));
 	CHECK_THAT(reject(client, "transport.set", {{"preRollAmount", -1}}), ContainsSubstring("preRollAmount"));
@@ -974,6 +1025,12 @@ TEST_CASE("go to project end locates to the end of the last event", "[integratio
 	run(client, "audioEvent.add",
 		{{"track", audio.at("track").at("id")}, {"clip", clip.at("clip").at("id")}, {"position", 12345}});
 	CHECK(run(client, "transport.locate", {{"target", "projectEnd"}}).at("position") == 12345 + 48000);
+
+	// An event past the largest position: the cursor stops there, as do locators set to it.
+	run(client, "audioEvent.add",
+		{{"track", audio.at("track").at("id")}, {"clip", clip.at("clip").at("id")}, {"position", g_maxPosition}});
+	CHECK(run(client, "transport.locate", {{"target", "projectEnd"}}).at("position") == g_maxPosition);
+	CHECK(run(client, "transport.set", {{"right", "cursor"}}).at("right") == g_maxPosition);
 }
 
 TEST_CASE("the engine's transport plays the device's blocks sample-exactly, offline and in cycles", "[integration]")
