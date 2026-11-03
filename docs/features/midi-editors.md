@@ -2,8 +2,8 @@
 
 The MIDI editors' common framework (#126, reference manual pp. 1132-1156): the editor in the project window's lower
 zone and the editor window, which parts they show, the part active for editing, the part editing mode, the Visibility
-tab, the global tracks and Keep Editor Contents. The key editor's note display (#127) and the drum and list editors
-build on it; until then the editors show their parts as rows.
+tab, the global tracks and Keep Editor Contents. The key editor ([key-editor.md](key-editor.md), #127) is the editors'
+content; the drum and list editors will build on the framework too.
 
 ## In the engine
 
@@ -13,7 +13,7 @@ modified and aren't saved, and a new or loaded project closes the editors.
 
 | Command | What it does | Reference |
 |---|---|---|
-| `editor.get` | The view: `open`, `parts`, `activePart`, `activeTrack`, `editingMode`, `editable`, `keepContents`, `globalTracks` | |
+| `editor.get` | The view: `open`, `parts`, `activePart`, `activeTrack`, `editingMode`, `editable`, `keepContents`, `globalTracks`, and the key editor's selection and step and MIDI input ([key-editor.md](key-editor.md)) | |
 | `editor.open` | Opens the editor with MIDI parts, such as those selected in the project window; `activePart`, by default the first | p. 1189 |
 | `editor.set` | Changes an open editor's parts and active part or track, and any editor's editing mode, Keep Editor Contents and global tracks | pp. 1142-1156 |
 | `editor.close` | Closes it: no parts, Keep Editor Contents off | p. 1153 |
@@ -45,12 +45,14 @@ sends `editor.*` commands.
     #editor-active-part             Activate Part for Editing: the active part's name, menu #editor-active-part-menu
     #editor-move                    Open in Separate Window, or in the window Open in Lower Zone (p. 1196)
   .editor-global-tracks             the window's: an .editor-global-track[track] per global track shown
-  .editor-parts                     an .editor-part[part] per part: .active, .editable; a click activates it
+  .key-editor                       the key editor (key-editor.md), with an .editor-part[part] per part: .active,
+                                    .editable; a click activates it
 .editor-visibility                  an .editor-visibility-track[track] per MIDI or instrument track or folder with them;
                                     .active for the active track
   button.editor-visibility-check    .checked while all its parts show, .partial while some do
   .editor-visibility-name           a click activates a shown track, a double click shows it exclusively
 .editor-global-tracks-section       button.editor-global-toggle[track] per global track, .checked while shown
+.editor-chord-editing               the inspector's Chord Editing section (key-editor.md)
 ```
 
 - **Activate Part for Editing** lists the parts under their tracks' names (disabled items `.editor-menu-track`), the
@@ -74,7 +76,7 @@ Visibility tab's checks with the check box skins.
 
 ## Not yet
 
-The key editor's note display, info line and its tools (#127), event colors, the Part Editing Mode's effect on a
+Event colors, the Part Editing Mode's effect on a
 selection rectangle and Show Part Borders, Independent Track Loop, the global tracks' events and editing them, Find
 Tracks, track visibility configurations and agents, the Track Display and its settings, selecting tracks in the
 Visibility tab, the Project/Editor switch of the project window's Visibility tab, the preference Editor Content Follows

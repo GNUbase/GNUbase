@@ -1,0 +1,159 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* The key editor (ui/keyeditor.h, docs/features/key-editor.md): its toolbar and info line, the parts by track, and
+   the note display: the keyboard beside the grid of 128 pitch rows, the notes over it and the step input cursor. Code
+   places the parts, the notes and the cursor in percent of the grid; the rows' height here sets the pitches' height.
+   The keys and rows of black keys get .black, lit keys .selected, notes .selected, .inactive (outside the part
+   editing mode) and .drawing (being drawn), the tools and input buttons .checked; the themes color them. */
+.key-editor
+{
+	flex: 1 1 0;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.key-editor-toolbar
+{
+	flex-shrink: 0;
+	flex-wrap: wrap;
+	height: auto;
+	min-height: 32dp;
+}
+
+.key-editor-toolbar .separator
+{
+	display: inline-block;
+	width: 8dp;
+}
+
+.key-editor-toolbar valuefield
+{
+	width: 40dp;
+}
+
+.key-editor-info
+{
+	flex-shrink: 0;
+	height: 26dp;
+	padding: 0 6dp;
+}
+
+.key-editor .editor-parts
+{
+	flex-shrink: 0;
+	margin-left: 48dp;
+}
+
+.editor-part-row
+{
+	position: relative;
+	height: 18dp;
+}
+
+.key-editor .editor-part
+{
+	position: absolute;
+	top: 1dp;
+	bottom: 1dp;
+	padding: 1dp 4dp;
+	box-sizing: border-box;
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.key-editor-body
+{
+	flex: 1 1 0;
+	display: flex;
+	flex-direction: row;
+	align-items: flex-start;
+	overflow-y: auto;
+	min-height: 0;
+}
+
+.key-editor-keys
+{
+	flex-shrink: 0;
+	width: 48dp;
+}
+
+.key-editor-grid
+{
+	position: relative;
+	flex: 1 1 0;
+}
+
+.key-editor-key, .key-editor-row
+{
+	display: block;
+	height: 10dp;
+	box-sizing: border-box;
+}
+
+.key-editor-key
+{
+	font-size: 8dp;
+	line-height: 10dp;
+	text-align: right;
+	padding-right: 2dp;
+}
+
+.key-editor-key.black
+{
+	margin-right: 16dp;
+}
+
+.key-editor-notes
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.key-note
+{
+	position: absolute;
+	box-sizing: border-box;
+}
+
+.key-editor-step-cursor
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 2dp;
+}
+
+.key-editor-step-cursor.off
+{
+	display: none;
+}
+
+/* The inspector's Chord Editing section (pp. 1215-1218). */
+.editor-chord-editing
+{
+	display: flex;
+	flex-direction: column;
+	padding: 4dp;
+}
+
+.editor-chord-type
+{
+	height: 20dp;
+	margin-bottom: 4dp;
+}
+
+.editor-chords, .editor-voicings
+{
+	display: flex;
+	flex-direction: row;
+	flex-wrap: wrap;
+	margin-bottom: 4dp;
+}
+
+.editor-chord, .editor-voicing
+{
+	margin: 0 2dp 2dp 0;
+}

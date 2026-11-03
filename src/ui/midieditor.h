@@ -3,6 +3,7 @@
 
 #include "engine/engine.h"
 #include "ui/enginebinding.h"
+#include "ui/keyeditor.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
@@ -28,16 +29,17 @@ namespace gnubase::ui
 	{
 		Editor,       // the toolbar and the events
 		Visibility,   // the Visibility tab (reference manual pp. 1148-1153)
-		GlobalTracks, // the inspector's Global Tracks section (pp. 1144-1146), the editor window's only
+		GlobalTracks, // the inspector: Global Tracks (pp. 1144-1146), the editor window's only, and Chord Editing
 	};
 
 	// Fills an element with a part of a MIDI editor and follows the engine's editor view (editor.get, editor.changed)
 	// and the project, whichever client changes them. view is the editor's name in editor.* (lower or window). The
 	// editor's toolbar has Keep Editor Contents, the Part Editing Mode menu, the Activate Part for Editing menu and
-	// Open in Separate Window or Open in Lower Zone; under it the global tracks (window only) and the parts it shows,
-	// the stand-in for the key editor's note display (#127), where a click activates a part. Every change goes to the
-	// engine as editor.* commands. moved, if given, runs once Open in Separate Window or Open in Lower Zone has sent
-	// the parts to the other editor. Use it on the UI thread; the binding must outlive it.
+	// Open in Separate Window or Open in Lower Zone; under it the global tracks (window only) and the key editor
+	// (ui/keyeditor.h), whose parts a click activates. The inspector's Chord Editing section (pp. 1215-1218) shows the
+	// chord of the selected notes and changes it with note.voicing. Every change goes to the engine as editor.*
+	// commands. moved, if given, runs once Open in Separate Window or Open in Lower Zone has sent the parts to the
+	// other editor. Use it on the UI thread; the binding must outlive it.
 	class MidiEditor final : private Rml::EventListener
 	{
 	public:
@@ -51,14 +53,17 @@ namespace gnubase::ui
 
 		// The editor's view as editor.get returns it, once it came.
 		const engine::Json& view() const { return m_view; }
+		// The key editor, of an EditorPart::Editor.
+		KeyEditor* keyEditor() { return m_keys.get(); }
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;
 		void requestProject();
 		void requestView();
 		void show();
-		std::string editorRml() const;
 		std::string visibilityRml() const;
+		std::string chordName() const;
+		void voice(const std::string& key, const std::string& value);
 		std::string globalTracksRml() const;
 		void fillMenus();
 		void set(engine::Json parameters);
@@ -77,6 +82,7 @@ namespace gnubase::ui
 		engine::Json m_view = engine::Json::object();
 		bool m_loading = false;
 		bool m_stale = false;
+		std::unique_ptr<KeyEditor> m_keys;
 		std::vector<Subscription> m_subscriptions;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 	};

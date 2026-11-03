@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/midieditor.h"
 
+#include "engine/midi/chords.h"
+
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
@@ -9,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <map>
 #include <utility>
 
 namespace gnubase::ui
@@ -100,7 +103,8 @@ namespace gnubase::ui
 				(window ? R"(<button id="editor-move" title="Open in Lower Zone">Open in Lower Zone</button>)"
 						: R"(<button id="editor-move" title="Open in Separate Window">Open in Separate Window</button>)") +
 				R"(</div>)" + (window ? R"(<div class="editor-global-tracks"/>)" : "") +
-				R"(<div class="editor-parts"/></div>)");
+				R"(<div class="key-editor"/></div>)");
+			m_keys = std::make_unique<KeyEditor>(m_binding, *root.QuerySelector(".key-editor"), m_name);
 			Rml::ElementDocument* document = root.GetOwnerDocument();
 			for (const char* menu : {"editor-editing-mode-menu", "editor-active-part-menu"})
 			{
@@ -117,8 +121,23 @@ namespace gnubase::ui
 		}
 		else
 		{
+			// Global Tracks, and Chord Editing (pp. 1215-1218): the selected notes' chord, the 3-note and 4-note
+			// chord buttons, Inversions and Drop Notes.
+			std::string chords;
+			for (const engine::midi::ChordType& type : engine::midi::chordTypes())
+				chords += std::string(R"(<button class="editor-chord" chord=")") + type.name + R"(" title=")" +
+					type.name + R"(">)" + (type.suffix[0] == 0 ? "Maj" : type.suffix) + "</button>";
+			std::string voicings;
+			for (const auto& [voicing, label] : std::vector<std::pair<const char*, const char*>>{
+					 {"invertUp", "Inversion Up"}, {"invertDown", "Inversion Down"}, {"drop2", "Drop 2"},
+					 {"drop3", "Drop 3"}, {"drop24", "Drop 2 + 4"}})
+				voicings += std::string(R"(<button class="editor-voicing" voicing=")") + voicing + R"(">)" + label +
+					"</button>";
 			root.SetInnerRML(R"(<div class="editor-global-tracks-section"><div class="section-header">Global )"
-							 R"(Tracks</div><div class="editor-global-track-list"/></div>)");
+							 R"(Tracks</div><div class="editor-global-track-list"/></div>)"
+							 R"(<div class="editor-chord-editing"><div class="section-header">Chord Editing</div>)"
+							 R"(<div class="editor-chord-type display"/><div class="editor-chords">)" +
+				chords + R"(</div><div class="editor-voicings">)" + voicings + "</div></div>");
 		}
 		for (const Rml::EventId event : g_events)
 			root.AddEventListener(event, this);
@@ -240,7 +259,8 @@ namespace gnubase::ui
 					active = part.at("name").get<std::string>();
 			setInner(root->QuerySelector("#editor-active-part"), encode(active.empty() ? "No Part" : active));
 			setInner(root->QuerySelector(".editor-global-tracks"), globalTracksRml());
-			setInner(root->QuerySelector(".editor-parts"), editorRml());
+			if (m_keys)
+				m_keys->show(m_project, m_view);
 			fillMenus();
 		}
 		else if (m_part == EditorPart::Visibility)
@@ -250,30 +270,42 @@ namespace gnubase::ui
 		else
 		{
 			setInner(root->QuerySelector(".editor-global-track-list"), globalTracksRml());
+			setInner(root->QuerySelector(".editor-chord-type"), encode(chordName()));
 		}
 		if (Rml::Context* context = root->GetContext())
 			context->RequestNextUpdate(0);
 	}
 
-	// The stand-in for the note display: a row per part, in the editor's order, the active and the editable ones
-	// marked. Global tracks above it, as their names.
-	std::string MidiEditor::editorRml() const
+	// The chord the selected notes make, as the Chord Editing section's Chord Type field shows it (p. 1216).
+	std::string MidiEditor::chordName() const
 	{
-		std::string rml;
-		const Json& editable = m_view.at("editable");
-		for (const Json& id : m_view.at("parts"))
+		std::vector<int> pitches;
+		for (const Json& selected : m_view.value("selection", Json::array()))
 			for (const Json& part : m_project.at("midiParts"))
-				if (part.at("id") == id)
-				{
-					const Json* owner = track(part.at("track").get<uint64_t>());
-					rml += R"(<div class="editor-part)" + std::string(id == m_view.at("activePart") ? " active" : "") +
-						(contains(editable, id.get<uint64_t>()) ? " editable" : "") + R"(" part=")" + id.dump() +
-						R"("><span class="editor-part-track">)" +
-						encode(owner != nullptr ? owner->at("name").get<std::string>() : "") +
-						R"(</span><span class="editor-part-name">)" + encode(part.at("name").get<std::string>()) +
-						"</span></div>";
-				}
-		return rml;
+				if (part.at("id") == selected.at("part"))
+					for (const Json& note : part.at("notes"))
+						if (note.at("id") == selected.at("note"))
+							pitches.push_back(note.at("pitch").get<int>());
+		if (pitches.empty())
+			return "";
+		const std::optional<engine::midi::Chord> chord = engine::midi::recognizeChord(pitches);
+		return chord ? chord->name() : "No Chord";
+	}
+
+	// A chord type or voicing button: note.voicing on the selected notes of each part, in one undo step.
+	void MidiEditor::voice(const std::string& key, const std::string& value)
+	{
+		std::map<uint64_t, Json> notes;
+		for (const Json& selected : m_view.value("selection", Json::array()))
+			notes[selected.at("part").get<uint64_t>()].push_back(selected.at("note"));
+		Json commands = Json::array();
+		for (auto& [part, ids] : notes)
+			commands.push_back(
+				{{"command", "note.voicing"}, {"parameters", {{"part", part}, {"notes", ids}, {key, value}}}});
+		if (commands.size() == 1)
+			m_binding.send("note.voicing", commands[0].at("parameters"));
+		else if (!commands.empty())
+			m_binding.send("history.transaction", {{"description", "Change chord"}, {"commands", std::move(commands)}});
 	}
 
 	// In the editor window, the global tracks it shows, in the track list's order (p. 1145); in the inspector's
@@ -395,7 +427,15 @@ namespace gnubase::ui
 				toggleTrack(idOf(target, "track", root), true);
 			return;
 		}
-		if (target->HasAttribute("editing-mode"))
+		if (target->HasAttribute("chord"))
+		{
+			voice("chord", attribute(*target, "chord"));
+		}
+		else if (target->HasAttribute("voicing"))
+		{
+			voice("voicing", attribute(*target, "voicing"));
+		}
+		else if (target->HasAttribute("editing-mode"))
 		{
 			set({{"editingMode", attribute(*target, "editing-mode")}});
 		}

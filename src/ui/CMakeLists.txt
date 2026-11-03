@@ -50,6 +50,8 @@ add_library(gnubase-ui STATIC
 	inspector.h
 	keycommands.cpp
 	keycommands.h
+	keyeditor.cpp
+	keyeditor.h
 	livereload.cpp
 	livereload.h
 	mainmenu.cpp
