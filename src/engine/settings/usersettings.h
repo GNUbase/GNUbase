@@ -34,6 +34,9 @@ namespace gnubase::engine::settings
 	inline constexpr Key<bool> g_midiChasePrograms{"midi.chasePrograms"};
 	inline constexpr Key<bool> g_midiChasePitchBend{"midi.chasePitchBend"};
 	inline constexpr Key<bool> g_midiChaseBeyondParts{"midi.chaseBeyondParts"};
+	inline constexpr Key<double> g_midiRecordCatchRange{"midi.recordCatchRange"};
+	inline constexpr Key<bool> g_midiSnapPartsToBars{"midi.snapPartsToBars"};
+	inline constexpr Key<int64_t> g_midiRetrospectiveEvents{"midi.retrospectiveEvents"};
 
 	// settings.json: every user setting, its version and the migrations from its older versions. A new setting
 	// only needs a definition; renaming one or changing what its values mean raises the version and adds a

@@ -25,7 +25,7 @@ namespace gnubase::engine
 	};
 
 	// What a recording does to the events of its track that it overlaps (reference manual p. 345), as recording.add
-	// takes it. MIDI recording (#97) adds its own modes next to it.
+	// takes it. MIDI recording has its own modes, MidiRecordMode.
 	enum class AudioRecordMode : uint8_t
 	{
 		KeepHistory,         // they stay
@@ -35,6 +35,17 @@ namespace gnubase::engine
 
 	// The modes' names, by AudioRecordMode.
 	inline constexpr std::array<const char*, 3> g_audioRecordModes = {"keepHistory", "cycleHistoryReplace", "replace"};
+
+	// What a MIDI recording does to the MIDI parts of its track that it overlaps (reference manual p. 352).
+	enum class MidiRecordMode : uint8_t
+	{
+		NewParts, // they stay; the recording is a part of its own
+		Merge,    // the recorded events go into the first part they overlap
+		Replace,  // ... and replace the events of the parts they overlap in the recorded range
+	};
+
+	// The modes' names, by MidiRecordMode.
+	inline constexpr std::array<const char*, 3> g_midiRecordModes = {"newParts", "merge", "replace"};
 
 	struct TransportSettings
 	{
@@ -54,6 +65,7 @@ namespace gnubase::engine
 		// The transport bar's switch for the metronome click, whose behaviour comes with #101.
 		bool metronome = false;
 		AudioRecordMode audioRecordMode = AudioRecordMode::KeepHistory;
+		MidiRecordMode midiRecordMode = MidiRecordMode::NewParts;
 	};
 
 	// The project cursor, play and stop, recording, and cycle playback. The command thread sends requests; the audio

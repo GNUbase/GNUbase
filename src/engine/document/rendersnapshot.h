@@ -140,8 +140,11 @@ namespace gnubase::engine
 		bool panBypass = false;
 		std::optional<int> midiVolume; // MIDI channels: CC 7 and CC 10 to send, 0 to 127
 		std::optional<int> midiPan;
-		bool monitor = false; // audio tracks: the monitor and record enable buttons
+		bool monitor = false; // the monitor and record enable buttons
 		bool recordEnable = false;
+		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or
+		// are record-enabled and their MIDI input is all MIDI inputs.
+		bool midiThru = false;
 		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A silent MIDI channel
 		// has no notes or controllers, and a disabled track no events or parts.
 		bool silent = false;

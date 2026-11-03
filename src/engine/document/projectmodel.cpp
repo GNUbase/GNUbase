@@ -1286,8 +1286,15 @@ namespace gnubase::engine
 			{
 				if (!parameters.contains(key))
 					continue;
-				require(type == TrackType::Audio, std::string("only audio tracks have ") + key);
+				require(type == TrackType::Audio || type == TrackType::Midi || type == TrackType::Instrument,
+					std::string("only audio, MIDI and instrument tracks have ") + key);
 				*value = parameters.at(key).get<bool>();
+			}
+			if (parameters.contains("midiInput"))
+			{
+				require(type == TrackType::Midi || type == TrackType::Instrument,
+					"only MIDI and instrument tracks have midiInput");
+				changed.midiInput = parameters.at("midiInput").get<std::string>();
 			}
 			changed.mute = parameters.value("mute", changed.mute);
 			changed.solo = parameters.value("solo", changed.solo);
@@ -3019,18 +3026,22 @@ namespace gnubase::engine
 				"are an audio track's buttons: monitor hears the input bus, recordEnable arms the track for recording "
 				"and, by the user setting audio.autoMonitoring, monitors too: manual never, whileRecordEnabled always, "
 				"whileRecording while the transport records, tapeMachine while it stands or records (the default). "
-				"Monitoring glides in and out over one audio block. mute silences a channel; while any channel is "
+				"Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: "
+				"recordEnable arms the track for MIDI recording, and while either is on, the track plays what comes "
+				"from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. mute silences a channel; "
+				"while any channel is "
 				"soloed (solo), only the soloed ones, the channels they play through (groups, instruments) and the "
 				"channels that play into them are heard. Muting and soloing glide over one audio block. notes is the "
 				"channel's notepad, the user's text about it.",
-				objectSchema({{"channel", idSchema}, {"format", formats}, {"channels", integerSchema},
-								 {"input", idSchema}, {"output", idSchema}, {"instrument", stringSchema},
-								 {"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
-								 {"panRight", numberSchema}, {"panBypass", booleanSchema},
-								 {"midiVolume", {{"type", {"integer", "null"}}}},
-								 {"midiPan", {{"type", {"integer", "null"}}}}, {"volume", numberSchema},
-								 {"pan", numberSchema}, {"monitor", booleanSchema}, {"recordEnable", booleanSchema},
-								 {"mute", booleanSchema}, {"solo", booleanSchema}, {"notes", stringSchema}},
+				objectSchema(
+					{{"channel", idSchema}, {"format", formats}, {"channels", integerSchema}, {"input", idSchema},
+						{"output", idSchema}, {"instrument", stringSchema},
+						{"panner", enumSchema({"balance", "combined"})}, {"panLeft", numberSchema},
+						{"panRight", numberSchema}, {"panBypass", booleanSchema},
+						{"midiVolume", {{"type", {"integer", "null"}}}}, {"midiPan", {{"type", {"integer", "null"}}}},
+						{"volume", numberSchema}, {"pan", numberSchema}, {"monitor", booleanSchema},
+						{"recordEnable", booleanSchema}, {"midiInput", enumSchema({"all", "none"})},
+						{"mute", booleanSchema}, {"solo", booleanSchema}, {"notes", stringSchema}},
 					{"channel"}),
 				resultSchema({"channel"}), false},
 			setChannel);

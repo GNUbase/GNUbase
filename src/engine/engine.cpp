@@ -156,9 +156,12 @@ namespace gnubase::engine
 				{
 					const Track& track = project.trackById.at(id);
 					const auto channel = project.channels.find(track.channel);
-					if (track.type == TrackType::Audio && track.enabled && channel != project.channels.end() &&
-						channel->second.recordEnable && channel->second.input != 0)
+					if (!track.enabled || channel == project.channels.end() || !channel->second.recordEnable)
+						continue;
+					if (track.type == TrackType::Audio && channel->second.input != 0)
 						setup.tracks.push_back({id, track.name, {}});
+					else if (track.type == TrackType::Midi || track.type == TrackType::Instrument)
+						setup.midiTracks.push_back({id, track.channel});
 				}
 				return setup;
 			});

@@ -151,6 +151,8 @@ namespace gnubase::engine
 			render.midiPan = channel.midiPan;
 			render.monitor = channel.monitor;
 			render.recordEnable = channel.recordEnable;
+			render.midiThru = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
+				channel.midiInput == "all" && (channel.monitor || channel.recordEnable);
 			render.autoFades = track.autoFades.value_or(project.autoFades);
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;

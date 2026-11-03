@@ -1,7 +1,7 @@
 # Audio recording
 
 Recording audio onto record-enabled tracks (#96, reference manual pp. 335–346). It builds on how input is placed and
-monitored ([latency-and-monitoring.md](latency-and-monitoring.md)); MIDI recording (#97) shares record enable, the
+monitored ([latency-and-monitoring.md](latency-and-monitoring.md)); MIDI recording ([midi-recording.md](midi-recording.md)) shares record enable, the
 transport's record state and the record mode setting.
 
 - **What records.** An audio track records while the transport records (`transport.record`, the transport bar's and
@@ -62,5 +62,5 @@ transport's record state and the record mode setting.
 Record folders per track (p. 343); the common record modes (Punch In/Out, Re-Record, starting at the left locator or
 the selection, p. 339); punch points apart from the locators (p. 319); stacking cycle takes in lanes and comping;
 drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); setting up the Broadcast Wave chunk's
-description, author and reference (#580); MIDI recording (#97); recording the output of a bus or channel (p. 345);
+description, author and reference (#580); recording the output of a bus or channel (p. 345);
 adjusting for plugin latency on the input (#71); moving undone recordings' files to the pool's trash.
