@@ -405,6 +405,7 @@ TEST_CASE("the loudness blocks start where playback starts, not with audio from 
 	const LoudnessReading reading = meter.read();
 	CHECK(reading.integrated.value_or(0.0) == Approx(-30.0).margin(0.1));
 	CHECK(reading.momentaryMax.value_or(0.0) == Approx(-30.0).margin(0.1));
+	CHECK(decibels(reading.truePeakMax[0]) == Approx(-30.0).margin(0.1));
 	CHECK(reading.seconds == Approx(10.0).margin(0.1));
 }
 

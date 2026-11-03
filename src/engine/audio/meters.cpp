@@ -236,9 +236,11 @@ namespace gnubase::engine
 		}
 		if (measuring && !m_wasMeasuring)
 		{
-			// Playback starts: a fresh step, so no block holds audio from while the transport stood.
+			// Playback starts: a fresh step, so no block or true peak holds audio from while the transport stood.
 			m_stepEnergy = 0.0;
 			m_stepFrames = 0;
+			m_windowTruePeak.fill(0.0f);
+			m_freshSamples = g_taps / 4;
 		}
 		m_wasMeasuring = measuring;
 		const analysis::Biquad& shelf = m_filters[0];
@@ -267,7 +269,8 @@ namespace gnubase::engine
 				history[static_cast<size_t>(m_historyIndex) + static_cast<size_t>(length)] = sample;
 				float peak = std::max(m_windowTruePeak[c], std::abs(sample));
 				const float* newest = history.data() + m_historyIndex + length; // newest[-k] is k samples ago
-				for (int phase = 0; phase < 4; ++phase)
+				// Right after playback starts, the points between the samples would still read audio from before.
+				for (int phase = 0; phase < 4 && m_freshSamples == 0; ++phase)
 				{
 					double interpolated = 0.0;
 					for (int k = 0; k < length; ++k)
@@ -278,6 +281,8 @@ namespace gnubase::engine
 				m_windowTruePeak[c] = peak;
 			}
 			m_historyIndex = (m_historyIndex + 1) % length;
+			if (m_freshSamples > 0)
+				--m_freshSamples;
 			m_stepEnergy += energy;
 			if (++m_stepFrames == m_stepLength)
 				step(measuring);

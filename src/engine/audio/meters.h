@@ -135,6 +135,7 @@ namespace gnubase::engine
 		uint64_t m_measuredSteps = 0; // since the last reset
 		uint64_t m_playingSteps = 0;  // since playback last started
 		bool m_wasMeasuring = false;
+		int m_freshSamples = 0; // samples since playback started while the interpolator still holds older ones
 		uint32_t m_resetsSeen = 0;
 		int m_channels = 0;
 
