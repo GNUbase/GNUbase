@@ -75,6 +75,9 @@ namespace gnubase::engine::dsp
 
 		void prepare(double sampleRate, uint32_t maxFrames);
 		void reset() noexcept;
+		// From now on, parameter changes glide, as they do once it has processed: for a host that doesn't run it while
+		// every band is off.
+		void glideChanges() noexcept { m_fresh = false; }
 		void setParameter(uint32_t id, double value) noexcept;
 		void process(float* const* audio, int channels, uint32_t begin, uint32_t end) noexcept;
 

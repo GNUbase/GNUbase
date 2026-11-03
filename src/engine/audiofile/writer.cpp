@@ -20,21 +20,6 @@ namespace gnubase::engine
 		constexpr uint64_t g_ds64Size = 28;      // RF64's ds64 chunk without a table
 		constexpr uint64_t g_bextSize = 602;     // the bext chunk without coding history
 
-		int bitsOf(SampleFormat format)
-		{
-			switch (format)
-			{
-			case SampleFormat::Int16:
-				return 16;
-			case SampleFormat::Int24:
-				return 24;
-			case SampleFormat::Float64:
-				return 64;
-			default:
-				return 32;
-			}
-		}
-
 		bool isFloat(SampleFormat format)
 		{
 			return format == SampleFormat::Float32 || format == SampleFormat::Float64;
