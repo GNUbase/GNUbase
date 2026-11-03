@@ -75,20 +75,21 @@ namespace gnubase::ui
 		{
 			Tool tool;
 			const char* name;
+			const char* title;
 			bool crossHair; // whether the tool uses the cross-hair cursor (reference manual p. 110)
 		};
 
 		constexpr std::array<ToolInfo, 10> g_tools{{
-			{Tool::ObjectSelection, "objectSelection", true},
-			{Tool::RangeSelection, "rangeSelection", true},
-			{Tool::Draw, "draw", true},
-			{Tool::Erase, "erase", false},
-			{Tool::Split, "split", true},
-			{Tool::Glue, "glue", false},
-			{Tool::Mute, "mute", false},
-			{Tool::Zoom, "zoom", false},
-			{Tool::Line, "line", true},
-			{Tool::Play, "play", false},
+			{Tool::ObjectSelection, "objectSelection", "Object Selection", true},
+			{Tool::RangeSelection, "rangeSelection", "Range Selection", true},
+			{Tool::Draw, "draw", "Draw", true},
+			{Tool::Erase, "erase", "Erase", false},
+			{Tool::Split, "split", "Split", true},
+			{Tool::Glue, "glue", "Glue", false},
+			{Tool::Mute, "mute", "Mute", false},
+			{Tool::Zoom, "zoom", "Zoom", false},
+			{Tool::Line, "line", "Line", true},
+			{Tool::Play, "play", "Play", false},
 		}};
 
 		constexpr std::array<const char*, 5> g_lineModes = {"line", "parabola", "sine", "triangle", "square"};
@@ -98,6 +99,11 @@ namespace gnubase::ui
 	const char* toolName(Tool tool)
 	{
 		return g_tools.at(static_cast<size_t>(tool)).name;
+	}
+
+	const char* toolTitle(Tool tool)
+	{
+		return g_tools.at(static_cast<size_t>(tool)).title;
 	}
 
 	std::optional<Tool> toolFromName(const std::string& name)
@@ -121,14 +127,18 @@ namespace gnubase::ui
 		m_gridTypeMenu = m_document->GetElementById("grid-type-menu");
 		m_zeroCrossingButton = m_document->GetElementById("snap-zero-crossing");
 		Rml::ElementList buttons;
-		m_document->QuerySelectorAll(buttons, "button[tool]");
+		m_document->QuerySelectorAll(buttons, "button[tool], menuitem[tool]");
 		m_toolButtons.assign(buttons.begin(), buttons.end());
 		m_combineButton = m_document->GetElementById("combine-selection-tools");
 		m_objectMenu = m_document->GetElementById("object-selection-menu");
 		m_lineMenu = m_document->GetElementById("line-menu");
 		m_playMenu = m_document->GetElementById("play-menu");
+		m_toolbox = m_document->GetElementById("toolbox");
+		m_contextMenu = m_document->GetElementById("event-display-menu");
+		m_notification = m_document->GetElementById("tool-notification");
 		if (m_formatMenu != nullptr)
 			m_ruler->SetAttribute("contextmenu", m_formatMenu->GetId()); // a right click in the ruler opens it
+		showContextMenus();
 	}
 
 	// The cycle markers of the active marker track, for the zoom presets menu; its markers, for snapping.
@@ -160,7 +170,8 @@ namespace gnubase::ui
 
 	void EventDisplay::click(Rml::Element* target)
 	{
-		// A tool button chooses its tool; once it has, a second click opens its menu (showTools).
+		// A tool button chooses its tool; once it has, a second click opens its menu (showTools). So do the tools in
+		// the toolbox and the context menu.
 		if (const Rml::Element* button = closest(target, "button"); button != nullptr && button->HasAttribute("tool"))
 		{
 			if (const std::optional<Tool> tool = toolFromName(button->GetAttribute<Rml::String>("tool", "")))
@@ -170,6 +181,12 @@ namespace gnubase::ui
 		const Rml::Element* item = closest(target, "menuitem");
 		if (item == nullptr || item->HasAttribute("disabled"))
 			return;
+		if (item->HasAttribute("tool"))
+		{
+			if (const std::optional<Tool> tool = toolFromName(item->GetAttribute<Rml::String>("tool", "")))
+				setTool(*tool);
+			return;
+		}
 		const Rml::Element* menu = item->GetParentNode();
 		const std::string& id = item->GetId();
 		if (menu == m_formatMenu)

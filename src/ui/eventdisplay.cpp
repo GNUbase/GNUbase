@@ -145,6 +145,17 @@ namespace gnubase::ui
 					setToolModifiers(*modifiers);
 					m_modifiersKnown = true;
 				}
+				if (const auto toolbox = values.find("ui.toolboxOnRightClick"); toolbox != values.end())
+				{
+					m_toolboxOnRightClick = toolbox->get<bool>();
+					m_toolboxKnown = true;
+					showContextMenus();
+				}
+				if (const auto notifies = values.find("ui.toolSwitchNotification"); notifies != values.end())
+				{
+					m_notifies = notifies->get<bool>();
+					m_notifiesKnown = true;
+				}
 			}));
 		const std::weak_ptr<bool> alive = m_alive;
 		requestProject();
@@ -174,6 +185,20 @@ namespace gnubase::ui
 			{
 				if (!alive.expired() && result.ok() && !m_modifiersKnown) // newer changes win
 					setToolModifiers(result.value.at("value"));
+			});
+		m_binding.send("settings.get", {{"key", "ui.toolboxOnRightClick"}},
+			[this, alive](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok() || m_toolboxKnown)
+					return;
+				m_toolboxOnRightClick = result.value.at("value").get<bool>();
+				showContextMenus();
+			});
+		m_binding.send("settings.get", {{"key", "ui.toolSwitchNotification"}},
+			[this, alive](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok() && !m_notifiesKnown)
+					m_notifies = result.value.at("value").get<bool>();
 			});
 		requestMarkers();
 		showAutoScroll();
@@ -422,6 +447,7 @@ namespace gnubase::ui
 		std::vector<EventLanes::Lane> overview{{10000.0F, std::move(all)}};
 		m_overviewEvents->setLanes(std::move(overview));
 		showFades();
+		showPointer();
 	}
 
 	void EventDisplay::followTransport(const Json& status)
@@ -576,6 +602,7 @@ namespace gnubase::ui
 		view.top = std::clamp(view.top, 0.0, std::max(0.0, m_laneTops.back() - height()));
 		m_view = view;
 		apply();
+		showPointer(); // what's under a mouse that stays where it was
 	}
 
 	void EventDisplay::apply()
@@ -796,6 +823,9 @@ namespace gnubase::ui
 		case Rml::EventId::Mousedown:
 			if (target != nullptr && event.GetParameter<int>("button", 0) == 0)
 				mouseDown(event, *target);
+			else if (event.GetParameter<int>("button", 0) == 1 && inside(target, m_area))
+				areaRightDown(event, dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
+					(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
 			break;
 		case Rml::EventId::Mousemove:
 			if (event.GetCurrentElement() == m_document)
@@ -809,11 +839,16 @@ namespace gnubase::ui
 				const double y = (event.GetParameter<float>("mouse_y", 0.0F) - m_area->GetAbsoluteTop()) / dpRatio();
 				m_crossVertical->SetProperty(Rml::PropertyId::Left, dp(x));
 				m_crossHorizontal->SetProperty(Rml::PropertyId::Top, dp(y));
+				// The mouse pointer for what a press there does.
+				m_mouse = std::make_pair(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
+					(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
+				showPointer();
 			}
 			break;
 		case Rml::EventId::Mouseup:
 			areaUp(event);
 			m_drag = Drag::None;
+			showPointer();
 			break;
 		case Rml::EventId::Dblclick:
 			doubleClick(event);
