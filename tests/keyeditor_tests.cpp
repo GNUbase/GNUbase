@@ -266,11 +266,11 @@ TEST_CASE("chords are recognized and revoiced", "[unit]")
 
 	using engine::midi::revoice;
 	using engine::midi::Voicing;
-	CHECK(*revoice({60, 64, 67}, Voicing::InvertUp) == std::vector<int>{72, 64, 67});
-	CHECK(*revoice({60, 64, 67}, Voicing::InvertDown) == std::vector<int>{60, 64, 55});
-	CHECK(*revoice({60, 64, 67, 71}, Voicing::Drop2) == std::vector<int>{60, 64, 55, 71});
-	CHECK(*revoice({60, 64, 67, 71}, Voicing::Drop3) == std::vector<int>{60, 52, 67, 71});
-	CHECK(*revoice({60, 64, 67, 71}, Voicing::Drop24) == std::vector<int>{48, 64, 55, 71});
+	CHECK(revoice({60, 64, 67}, Voicing::InvertUp) == std::vector<int>{72, 64, 67});
+	CHECK(revoice({60, 64, 67}, Voicing::InvertDown) == std::vector<int>{60, 64, 55});
+	CHECK(revoice({60, 64, 67, 71}, Voicing::Drop2) == std::vector<int>{60, 64, 55, 71});
+	CHECK(revoice({60, 64, 67, 71}, Voicing::Drop3) == std::vector<int>{60, 52, 67, 71});
+	CHECK(revoice({60, 64, 67, 71}, Voicing::Drop24) == std::vector<int>{48, 64, 55, 71});
 	CHECK(!revoice({60, 64, 67}, Voicing::Drop24).has_value());
 	CHECK(!revoice({60}, Voicing::InvertUp).has_value());
 	CHECK(!revoice({120, 124, 127}, Voicing::InvertUp).has_value());
