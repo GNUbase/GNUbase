@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/transport.h"
 
+#include "engine/time/tempomap.h"
 #include "platform/log.h"
 #include "ui/widgetutils.h"
 
@@ -331,7 +332,11 @@ namespace gnubase::ui
 
 	int64_t TransportControls::samples(double seconds) const
 	{
-		return std::max<int64_t>(0, std::llround(seconds * m_time.sampleRate));
+		// In doubles first, as transport.locate's by: fifteen digits of seconds are more samples than 64 bits hold.
+		const double frames = seconds * m_time.sampleRate;
+		if (!(frames > 0.0)) // also NaN
+			return 0;
+		return std::llround(std::min(frames, static_cast<double>(time::g_maxPosition)));
 	}
 
 	void TransportControls::ProcessEvent(Rml::Event& event)
@@ -483,11 +488,11 @@ namespace gnubase::ui
 	void TransportControls::wheel(Rml::Element& element, float delta)
 	{
 		// Up is later, by as many steps as the wheel turned, at least one. A scroll sideways, as touchpads and tilt
-		// wheels send, has no vertical delta and moves nothing.
-		if (delta == 0.0F)
+		// wheels send, has no vertical delta and moves nothing. More than a billion steps, which only injected input
+		// sends, are a billion: that many fit a long, and that many beats in ticks fit 64 bits (#457).
+		if (!(std::abs(delta) > 0.0F)) // also NaN
 			return;
-		const long turned = std::lround(-delta);
-		long steps = turned;
+		long steps = std::lround(std::clamp(-delta, -1e9F, 1e9F));
 		if (steps == 0)
 			steps = delta < 0.0F ? 1 : -1;
 		const std::string time = attribute(element, "time");

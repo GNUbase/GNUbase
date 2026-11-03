@@ -1100,7 +1100,8 @@ TEST_CASE("snap settings saved before #413 load with the time format of their gr
 	CHECK(run(client, "project.get").at("maxVolume") == 12.0);
 }
 
-TEST_CASE("mute, solo, notes and disabled tracks are saved, also in project.xml", "[integration]")
+TEST_CASE("mute, solo, solo defeat, listen, notes and disabled tracks are saved, mute and solo also in project.xml",
+	"[integration]")
 {
 	const test::TempDir dir;
 	Engine engine;
@@ -1108,10 +1109,14 @@ TEST_CASE("mute, solo, notes and disabled tracks are saved, also in project.xml"
 	const Json muted = run(client, "track.add", {{"type", "audio"}, {"name", "Muted"}});
 	const Json soloed = run(client, "track.add", {{"type", "group"}, {"name", "Soloed"}});
 	const Json disabled = run(client, "track.add", {{"type", "midi"}, {"name", "Disabled"}});
-	run(client, "channel.set", {{"channel", idOf(muted, "channel")}, {"mute", true}, {"notes", "Too loud"}});
+	run(client, "channel.set",
+		{{"channel", idOf(muted, "channel")}, {"mute", true}, {"notes", "Too loud"}, {"soloDefeat", true},
+			{"listen", true}});
 	run(client, "channel.set", {{"channel", idOf(soloed, "channel")}, {"solo", true}});
 	run(client, "track.set", {{"track", idOf(disabled, "track")}, {"enabled", false}});
 	const Json before = run(client, "project.get");
+	CHECK(before.at("channels")[0].at("soloDefeat") == true);
+	CHECK(before.at("channels")[0].at("listen") == true);
 	const std::string file = utf8(dir.path() / "song.dawproject");
 	run(client, "project.save", {{"path", file}});
 	run(client, "project.load", {{"path", file}});
@@ -1141,6 +1146,8 @@ TEST_CASE("mute, solo, notes and disabled tracks are saved, also in project.xml"
 	CHECK(loaded.at("channels")[1].at("solo") == true);
 	CHECK(loaded.at("channels")[1].at("mute") == false);
 	CHECK(loaded.at("channels")[0].at("notes") == "Too loud");
+	CHECK(loaded.at("channels")[0].at("soloDefeat") == false); // GNUbase's own
+	CHECK(loaded.at("channels")[0].at("listen") == false);
 	CHECK(loaded.at("channels")[1].at("notes") == "");
 	CHECK(loaded.at("tracks")[2].at("enabled") == false);
 	CHECK(loaded.at("tracks")[0].at("enabled") == true);

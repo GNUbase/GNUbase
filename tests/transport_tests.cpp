@@ -774,6 +774,15 @@ TEST_CASE("transport commands play, stop, locate and set the locators", "[integr
 	CHECK_THAT(reject(client, "transport.locate", {{"position", g_maxPosition + 1}}), ContainsSubstring("position"));
 	CHECK(run(client, "transport.locate", {{"by", 1e300}}).at("position") == g_maxPosition); // not past the end
 	CHECK(run(client, "transport.locate", {{"position", g_maxPosition}}).at("position") == g_maxPosition);
+	// by from the maximum, and huge amounts both ways, as MCP and Lua may send them (#457).
+	CHECK(run(client, "transport.locate", {{"by", 1.0}}).at("position") == g_maxPosition);
+	CHECK(run(client, "transport.locate", {{"by", 1e15}}).at("position") == g_maxPosition);
+	CHECK(run(client, "transport.locate", {{"by", -1.0}}).at("position") == g_maxPosition - 48000);
+	CHECK(run(client, "transport.locate", {{"by", -1e15}}).at("position") == 0);
+	CHECK(run(client, "transport.locate", {{"by", -1e300}}).at("position") == 0);           // from the start: stays
+	CHECK(run(client, "transport.locate", {{"by", 1e15}}).at("position") == g_maxPosition); // from the start
+	CHECK(run(client, "transport.locate", {{"by", -1e300}}).at("position") == 0);           // from the end
+	CHECK_THAT(reject(client, "transport.locate", {{"by", "far"}}), ContainsSubstring("by"));
 	run(client, "transport.locate", {{"position", 0}});
 	CHECK_THAT(reject(client, "transport.set", {{"left", "somewhere"}}), ContainsSubstring("left"));
 	CHECK_THAT(reject(client, "transport.set", {{"startMode", "selection"}}), ContainsSubstring("startMode"));
