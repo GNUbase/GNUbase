@@ -74,6 +74,19 @@ namespace gnubase::engine::settings
 				properties[action] = keys;
 			return {{"type", "object"}, {"properties", properties}, {"additionalProperties", false}};
 		}
+
+		Json markerColumnsSchema()
+		{
+			const Json column = {
+				{"type", "string"}, {"enum", {"number", "type", "position", "end", "length", "description"}}};
+			return {{"type", "object"},
+				{"properties",
+					{{"order", {{"type", "array"}, {"items", column}}},
+						{"widths",
+							{{"type", "object"},
+								{"additionalProperties", {{"type", "number"}, {"minimum", 16}, {"maximum", 2000}}}}},
+						{"sort", column}, {"descending", {{"type", "boolean"}}}}}};
+		}
 	}
 
 	const Format& userFormat()
@@ -216,6 +229,10 @@ namespace gnubase::engine::settings
 					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 100}}, 5},
 				{"project.autoSaveInterval", "Minutes between auto saves.",
 					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 120}}, 15},
+				{"transport.cycleFollowsMarkers",
+					"Locating to a marker sets the left and right locators to it (marker.locate, marker.locateNext, "
+					"marker.locatePrevious): a cycle marker's range, or from a position marker to the next marker.",
+					Json{{"type", "boolean"}}, false},
 				{"ui.folderData",
 					"When folder tracks show the events and parts of the tracks inside them as data blocks in the "
 					"event display: always, never, or hideWhenExpanded (only while the folder is folded).",
@@ -233,6 +250,21 @@ namespace gnubase::engine::settings
 					"Which markers the event display shows as lines across every track: the active marker track's "
 					"(active), every marker track's (all), or none (off).",
 					Json{{"type", "string"}, {"enum", Json::array({"active", "all", "off"})}}, "active"},
+				{"ui.markerColumns",
+					"The markers window's columns: order, the columns after the locate column in order (number, "
+					"type, position, end, length, description); widths, each one's width in dp; sort, the column the "
+					"list is sorted by, and descending. What it leaves out has its default.",
+					markerColumnsSchema(), Json::object()},
+				{"ui.markerIds", "Whether marker events on the marker tracks show their marker ids.",
+					Json{{"type", "boolean"}}, true},
+				{"ui.markersAutoScroll",
+					"Whether the markers window scrolls to keep the marker at the project cursor (its locate arrow) "
+					"in view.",
+					Json{{"type", "boolean"}}, true},
+				{"ui.markersSyncSelection",
+					"Whether the markers window and the project window select the same markers. It pauses while "
+					"recording.",
+					Json{{"type", "boolean"}}, true},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},

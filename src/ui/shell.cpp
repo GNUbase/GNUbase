@@ -197,6 +197,16 @@ namespace gnubase::ui
 		}
 	}
 
+	void Shell::requestQuit()
+	{
+		const auto main =
+			std::find_if(m_open.begin(), m_open.end(), [](const auto& entry) { return entry.second->m_main; });
+		if (m_quitRequest && main != m_open.end())
+			m_quitRequest(*main->second);
+		else
+			quit();
+	}
+
 	void Shell::refresh(Window& window)
 	{
 		const float ratio = m_windows.scale(window.m_id) * m_uiScale;
@@ -228,7 +238,7 @@ namespace gnubase::ui
 		switch (event.kind)
 		{
 		case WindowEventKind::Quit:
-			quit();
+			requestQuit();
 			return;
 		case WindowEventKind::Wake:
 			return; // step runs the posted work
@@ -273,7 +283,7 @@ namespace gnubase::ui
 		case WindowEventKind::CloseRequested:
 			if (window->m_main)
 			{
-				quit();
+				requestQuit();
 			}
 			else
 			{

@@ -1,14 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audiofile/audiofile.h"
+#include "engine/audiofile/file.h"
 #include "engine/engine.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include <dr_flac.h>
+#include <dr_mp3.h>
+#include <dr_wav.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -102,6 +109,25 @@ namespace
 		int sampleRate;
 		float tolerance; // one step of the format, plus float rounding
 	};
+
+	// File callbacks for the decoders like the readers' (src/engine/audiofile/reader.cpp). The read callback has the
+	// same code as the decoders' own for files they open themselves.
+	size_t readCallback(void* file, void* buffer, size_t bytes)
+	{
+		return std::fread(buffer, 1, bytes, static_cast<std::FILE*>(file));
+	}
+
+	template <typename Origin> uint32_t seekCallback(void* file, int offset, Origin origin)
+	{
+		const std::array<int, 3> whence{SEEK_SET, SEEK_CUR, SEEK_END}; // the decoders' origins in their order
+		return detail::seekFile(static_cast<std::FILE*>(file), offset, whence.at(static_cast<size_t>(origin))) ? 1 : 0;
+	}
+
+	template <typename Position> uint32_t tellCallback(void* file, Position* position)
+	{
+		*position = detail::tellFile(static_cast<std::FILE*>(file));
+		return *position >= 0 ? 1 : 0;
+	}
 }
 
 TEST_CASE("every writable format reads back through an independent decoder", "[integration]")
@@ -280,6 +306,47 @@ TEST_CASE("the format is recognized from the content, not the file name", "[inte
 	CHECK(AudioFileReader::open(path)->info().format == AudioFormat::Flac);
 }
 
+TEST_CASE("the decoders leave the files that the readers hand them open", "[integration]")
+{
+	// The decoders close a file at the end if their read callback is the one for files they open themselves, which
+	// they tell by its address. MSVC's identical code folding gives the readers' callback, with the same code, that
+	// address in Release builds: the decoder closed the reader's file, and the reader closed it again, by then maybe a
+	// file that another thread had just opened, which then failed with "invalid argument".
+	const test::TempDir dir;
+	const std::string wav = utf8(dir.path() / "test.wav");
+	const std::string flac = utf8(dir.path() / "test.flac");
+	writeFile(wav, testSignal(1, 48000, 1000), {});
+	WriteOptions flacOptions;
+	flacOptions.format = AudioFormat::Flac;
+	flacOptions.sampleFormat = SampleFormat::Int16;
+	writeFile(flac, testSignal(1, 48000, 1000), flacOptions);
+	const auto stillOpen = [](std::FILE* file) { return detail::seekFile(file, 0, SEEK_SET); };
+	{
+		const detail::File file = detail::openFile(wav, "rb");
+		drwav decoder{};
+		REQUIRE(drwav_init(&decoder, readCallback, seekCallback<drwav_seek_origin>, tellCallback<drwav_int64>,
+					file.get(), nullptr) == DRWAV_TRUE);
+		drwav_uninit(&decoder);
+		CHECK(stillOpen(file.get()));
+	}
+	{
+		const detail::File file = detail::openFile(flac, "rb");
+		drflac* const decoder = drflac_open(
+			readCallback, seekCallback<drflac_seek_origin>, tellCallback<drflac_int64>, file.get(), nullptr);
+		REQUIRE(decoder != nullptr);
+		drflac_close(decoder);
+		CHECK(stillOpen(file.get()));
+	}
+	{
+		const detail::File file = detail::openFile(dataFile("sine440.mp3"), "rb");
+		drmp3 decoder{};
+		REQUIRE(drmp3_init(&decoder, readCallback, seekCallback<drmp3_seek_origin>, tellCallback<drmp3_int64>, nullptr,
+					file.get(), nullptr) == DRMP3_TRUE);
+		drmp3_uninit(&decoder);
+		CHECK(stillOpen(file.get()));
+	}
+}
+
 TEST_CASE("paths with non-ASCII characters work", "[integration]")
 {
 	const test::TempDir dir;
@@ -327,6 +394,12 @@ TEST_CASE("formats and sample formats that can't be written are rejected", "[int
 	WriteOptions noChannels;
 	noChannels.channels = 0;
 	CHECK_THROWS_AS(AudioFileWriter::create(path, noChannels), AudioFileError);
+	// One that only the FLAC encoder rejects, which closes the file then (once: the sanitizers would see a second).
+	WriteOptions tooFast;
+	tooFast.format = AudioFormat::Flac;
+	tooFast.sampleFormat = SampleFormat::Int16;
+	tooFast.sampleRate = 2000000.0;
+	CHECK_THROWS_AS(AudioFileWriter::create(path, tooFast), AudioFileError);
 }
 
 TEST_CASE("media.add reads an audio file's sample rate, channels and length", "[integration]")
