@@ -1160,9 +1160,13 @@ TEST_CASE("plugin parameter automation plays sample-accurately in its slot", "[i
 			return 1.0;
 		double decibels = -12.0;
 		if (position >= 3500)
+		{
 			decibels = -6.0;
+		}
 		else if (position >= 3000)
+		{
 			decibels = 0.0;
+		}
 		else if (position >= 2000)
 		{
 			const int64_t sinceRamp = (position - 2000) / 64 * 64;
