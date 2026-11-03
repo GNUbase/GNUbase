@@ -1,0 +1,187 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The crossfade editor (#138, docs/features/fades.md, reference manual pp. 389-395), in its simple form: the
+     crossfade from the audio event in the document's attribute from into the one in to. ui::EventDisplay opens it
+     (audio.crossfade on events that crossfade). Its Lua reads the crossfade when the dialog shows: its mode, the
+     curves of its fade out and fade in, and their lengths in milliseconds, up to the overlap of the two events. OK
+     sends them with crossfade.set, Remove removes the crossfade (crossfade.remove), Cancel drops the changes. -->
+<rml>
+<head>
+	<title>Crossfade</title>
+	<style>
+		dialog
+		{
+			width: 420dp;
+		}
+
+		#crossfade-fields
+		{
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		.field
+		{
+			display: flex;
+			align-items: center;
+			height: 28dp;
+		}
+
+		.field .label
+		{
+			width: 180dp;
+		}
+
+		.field select, .field input.text
+		{
+			width: 180dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#crossfade-message
+		{
+			flex: 1;
+		}
+
+		.row button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+	<script>
+		-- The dialog's state, in the UI's Lua: the two events, their clips' frames per millisecond and the overlap.
+		Crossfade = {}
+		local dialog = Crossfade
+
+		local shapes = {{"linear", "Linear"}, {"exponential", "Exponential"}, {"logarithmic", "Logarithmic"},
+			{"sCurve", "S-Curve"}, {"equalPower", "Equal Power"}}
+		local modes = {{"equalGain", "Equal Gain"}, {"equalPower", "Equal Power"}, {"custom", "Custom"}}
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local function field(label, control)
+			return '<div class="field"><span class="label">' .. escape(label) .. "</span>" .. control .. "</div>"
+		end
+
+		local function dropDown(id, choices, current)
+			local options = {}
+			for _, choice in ipairs(choices) do
+				options[#options + 1] = '<option value="' .. choice[1] .. '"' .. (choice[1] == current and " selected" or "") ..
+					">" .. escape(choice[2]) .. "</option>"
+			end
+			return '<select id="' .. id .. '">' .. table.concat(options) .. "</select>"
+		end
+
+		local function valueOf(document, id)
+			local value = document:GetElementById(id):GetAttribute("value")
+			return value ~= nil and tostring(value) or ""
+		end
+
+		local function milliseconds(value)
+			return string.format("%.1f", value)
+		end
+
+		-- An audio event's clip's frames per millisecond.
+		local function framesPerMs(project, event)
+			local media = nil
+			for _, clip in ipairs(project.clips) do
+				if clip.id == event.clip then
+					media = clip.media
+				end
+			end
+			for _, file in ipairs(project.media) do
+				if file.id == media then
+					return file.sampleRate / 1000
+				end
+			end
+			return project.sampleRate / 1000
+		end
+
+		function dialog.load(document)
+			dialog.from = tonumber(document:GetAttribute("from"))
+			dialog.to = tonumber(document:GetAttribute("to"))
+			local project = gnubase.project.get()
+			local crossfade = nil
+			for _, event in ipairs(project.audioEvents) do
+				if event.id == dialog.from then
+					dialog.outRate = framesPerMs(project, event)
+				elseif event.id == dialog.to then
+					dialog.inRate = framesPerMs(project, event)
+					crossfade = event.crossfade
+				end
+			end
+			local where = gnubase.event.get{events = {dialog.from, dialog.to}}.events
+			dialog.overlap = (where[1]["end"] - where[2].start) / project.sampleRate * 1000
+			local inLength = crossfade.length > 0 and crossfade.length / dialog.inRate or dialog.overlap
+			local outLength = crossfade.outLength > 0 and crossfade.outLength / dialog.outRate or dialog.overlap
+			document:GetElementById("crossfade-fields").inner_rml =
+				field("Mode", dropDown("crossfade-mode", modes, crossfade.mode)) ..
+				field("Fade Out", dropDown("crossfade-out-shape", shapes, crossfade.outShape)) ..
+				field("Fade Out Length (ms)",
+					'<input type="text" id="crossfade-out-length" value="' .. milliseconds(outLength) .. '"/>') ..
+				field("Fade In", dropDown("crossfade-in-shape", shapes, crossfade.shape)) ..
+				field("Fade In Length (ms)",
+					'<input type="text" id="crossfade-in-length" value="' .. milliseconds(inLength) .. '"/>')
+		end
+
+		local function finish(document, ok, failure)
+			if ok then
+				document:Close()
+			else
+				document:GetElementById("crossfade-message").inner_rml = escape(tostring(failure))
+			end
+		end
+
+		-- A length typed in milliseconds as crossfade.set takes it: clip frames, 0 for the whole overlap.
+		local function frames(document, id, rate)
+			local ms = tonumber(valueOf(document, id))
+			if ms == nil then
+				return nil
+			end
+			if ms >= dialog.overlap - 0.05 then
+				return 0
+			end
+			return math.max(1, math.floor(ms * rate + 0.5))
+		end
+
+		function dialog.ok(document)
+			local parameters = {from = dialog.from, to = dialog.to, mode = valueOf(document, "crossfade-mode")}
+			-- Equal gain crossfades mirror the fade in, equal power ones are quarter sines (crossfade.set).
+			if parameters.mode ~= "equalPower" then
+				parameters.shape = valueOf(document, "crossfade-in-shape")
+			end
+			if parameters.mode == "custom" then
+				parameters.outShape = valueOf(document, "crossfade-out-shape")
+			end
+			parameters.length = frames(document, "crossfade-in-length", dialog.inRate)
+			parameters.outLength = frames(document, "crossfade-out-length", dialog.outRate)
+			if parameters.length == nil or parameters.outLength == nil then
+				finish(document, false, "Lengths must be numbers of milliseconds")
+				return
+			end
+			finish(document, pcall(gnubase.crossfade.set, parameters))
+		end
+
+		function dialog.remove(document)
+			finish(document, pcall(gnubase.crossfade.remove, {event = dialog.to}))
+		end
+	</script>
+</head>
+<body onshow="Crossfade.load(document)">
+	<dialog id="crossfade-editor">
+		<div class="dialog-titlebar">Crossfade</div>
+		<div id="crossfade-fields"/>
+		<div class="row">
+			<div id="crossfade-message"/>
+			<button id="crossfade-remove" onclick="Crossfade.remove(document)">Remove</button>
+			<button id="crossfade-cancel" result="cancel">Cancel</button>
+			<button id="crossfade-ok" class="primary" onclick="Crossfade.ok(document)">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

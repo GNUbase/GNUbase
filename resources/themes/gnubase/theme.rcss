@@ -456,6 +456,12 @@
 		color: #12a4b8;
 		stroke-color: #f1f4ff;
 	}
+	.event-display fade-lines
+	{
+		color: #f1f4ff;
+		stroke-color: #f1f4ff;
+		stroke-width: 1dp;
+	}
 	.event-display event-lanes.folder-data
 	{
 		color: #105163;
