@@ -36,10 +36,17 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   media and don't save the project: it stays modified, and its file stays as it is. `project.load` opens an auto save
   without a file and as modified, and it isn't a recent project, so that saving asks for a path instead of overwriting
   the auto save or making `Auto Saves` the project folder.
-  The engine's ticker thread posts `project.autoSave` with `due` every 30 seconds; that saves only when the user
-  setting `project.autoSave` is on (the default) and `project.autoSaveInterval` minutes (15) have passed since the last
-  save, opening or auto save, and stays out of `engine.commandLog` when it saves nothing. A failed auto save counts as
-  one, so that it is tried again only after the interval instead of every 30 seconds.
+  The engine's clock (`Engine::clock`, `engine/clock.h`) ticks every 30 seconds on a thread of its own, and each tick
+  posts `project.autoSave` with `due`; that saves only when the user setting `project.autoSave` is on (the default)
+  and `project.autoSaveInterval` minutes (15) have passed since the last save, opening or auto save, and stays out of
+  `engine.commandLog` when it saves nothing. Auto saves read the time from the same clock.
+- **Failed auto saves**, such as when `Auto Saves` can't be made or the disk is full, count as auto saves for the
+  interval, so that they are tried again only after it instead of every 30 seconds. Each one emits
+  `project.autoSaveFailed` with the file and the error, although the command fails (`Engine::broadcast`, so the event
+  names no request). A due auto save that fails again, before one succeeded or another project was opened, stays out
+  of `engine.commandLog` and the error log (`CommandContext::leaveOutOfLog`), so that a project that can't be auto
+  saved for days doesn't push the user's own commands out of the log's 256 entries. A client's own `project.autoSave`
+  is always in the log and fails with the reason.
 - **Project folder.** The folder of the project's file. GNUbase puts the media folder `Audio` ([backup.md](backup.md))
   and `Auto Saves` into it; the other folders of the reference (Edits, Images, Track Pictures) come with their
   features.
@@ -75,6 +82,7 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   that a failed save isn't taken for done. Backups fail mostly in their job, so `job.finished` of a failed
   `project.backup` the UI asked for shows it too.
 - The UI knows the project's file from `project.saved` and, after `project.reset`, from `project.location`.
+  It doesn't show `project.autoSaveFailed` yet.
 
 ## Not yet
 
@@ -82,14 +90,17 @@ The reference's hub beyond the start screen (audio settings, user locations, sor
 and its settings dialog); the default project location and folder name, so that a new project asks for its folder;
 renaming and deleting templates, their descriptions and categories; Recent Projects in the File menu; asking whether to
 keep audio recorded since the last save on Revert; Close and several open projects with Activate Project; asking about
-unsaved changes when the OS closes the main window; the time of the last edit in auto save names; Run Setup on Create
+unsaved changes when the OS closes the main window; the time of the last edit in auto save names; showing a failed
+auto save (`project.autoSaveFailed`) in the UI; Run Setup on Create
 New Project and Open Last Project on Startup.
 
 ## Checks
 
 `tests/projectfiles_tests.cpp` covers the engine commands with an engine whose settings folder is temporary: save and
-`modified`, save new version numbering, revert, auto save rotation, opening auto saves, due and failing auto saves
-(`ProjectModel::advanceClock` moves their clock forward), recent projects across restarts, and templates; and in the
-app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a name with a dot) and Save New Version
+`modified`, save new version numbering, revert, auto save rotation, opening auto saves, the engine's own auto saves
+once the interval passed and failing ones with their events and log entries (`Engine::clock().advance` moves the
+clock forward and returns once its tick ran, so no test waits), recent projects across restarts, and templates; and in
+the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a name with a dot) and Save New Version
 through file dialogs, Open and Revert with the unsaved changes dialog, the start screen's buttons and double clicks, Save
 as Template and Back up Project, and the error dialog for a failed save and backup. `tests/uitools_tests.cpp` checks `ui_file_dialog`.
+`tests/clock_tests.cpp` checks the clock's ticks and `advance` on their own.

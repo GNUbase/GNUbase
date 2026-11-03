@@ -126,7 +126,8 @@ namespace gnubase::engine
 				"clients did. Each with its request id (events name it too), the client that sent it (ui, "
 				"mcp, lua, app for the command line, engine for the engine's own commands), the command, "
 				"its parameters, and the error if it failed. Commands the engine ran on its own that changed "
-				"nothing, such as tries to open a lost audio device again, are left out.",
+				"nothing, such as tries to open a lost audio device again, are left out, and so are due auto saves "
+				"that fail again (project.autoSave).",
 				CommandInfo{}.parameters, Json::parse(R"({"type": "object", "properties": {"commands":
 								{"type": "array", "items": {"type": "object", "properties": {"request": {"type":
 								"integer"}, "client": {"type": "string"}, "command": {"type": "string"}, "parameters":
@@ -176,19 +177,9 @@ namespace gnubase::engine
 		m_peaks->registerCommands(*this);
 		applySettings();
 		m_thread = std::thread([this] { run(); });
-		m_ticker = std::thread(
-			[this]
-			{
-				std::unique_lock lock(m_mutex);
-				while (!m_tickerWake.wait_for(lock, g_autoSaveCheck, [this] { return m_stopping; }))
-				{
-					// If the destructor stops the engine meanwhile, the request is queued anyway: harmless, since the
-					// command thread fails the requests it didn't run when it stops.
-					lock.unlock();
-					post("project.autoSave", {{"due", true}});
-					lock.lock();
-				}
-			});
+		// If the destructor stops the engine meanwhile, the request is queued anyway: harmless, since the command
+		// thread fails the requests it didn't run when it stops.
+		m_clock.start(g_autoSaveCheck, [this] { post("project.autoSave", {{"due", true}}); });
 	}
 
 	Engine::~Engine()
@@ -199,8 +190,7 @@ namespace gnubase::engine
 			m_stopping = true;
 		}
 		m_wake.notify_all();
-		m_tickerWake.notify_all();
-		m_ticker.join();
+		m_clock.stop();
 		m_thread.join(); // fails the commands that didn't run, which jobs may wait for
 		m_peaks.reset(); // stops its worker while the clients can still be reached
 		m_jobs.reset();  // no command starts a job anymore; cancels the running ones and waits for them
@@ -446,7 +436,7 @@ namespace gnubase::engine
 			request.sender->post(std::move(result));
 		else if (request.done)
 			request.done(std::move(result));
-		else if (!result.ok())
+		else if (!result.ok() && !context.m_unlogged)
 			logging::error("{} failed: {}", request.command, result.error);
 	}
 
