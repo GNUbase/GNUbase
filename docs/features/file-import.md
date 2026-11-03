@@ -17,8 +17,9 @@ file, while the clip and track keep the name of the file imported. FLAC files st
 file has no media folder yet, so its MP3 and Ogg Vorbis files go where its recordings go: `Recordings` in the settings
 folder, or the temporary folder without one (`unsavedMediaFolder` in `src/engine/media/backup.h`,
 [recording.md](recording.md)), and are referenced from there. Saving the project doesn't move them, as it doesn't move
-recordings; Copy Files to Project Folder and `media.prepareArchive` bring them into the project. That keeps one place
-and one rule for the files an unsaved project makes. Converting only once the project is saved would play the
+recordings; once it is saved, `media.prepareArchive` copies them into the project, like every media file from outside
+its folder. They stay in `Recordings` when the project is closed without saving, as recordings do. That keeps one
+place and one rule for the files an unsaved project makes. Converting only once the project is saved would play the
 compressed file until then and make saving a long conversion; a temporary folder of their own that saving moves into
 the project would be a second such place, with recordings left out.
 
@@ -36,7 +37,7 @@ The options of the reference's Import Options dialog:
   converts in the same pass when both are on, and doesn't go with `track` or `oneTrack`.
 
 With **clipsOnly** the files only go into the pool, as clips without tracks or events (the pool's Import Medium,
-[pool.md](pool.md)). Copying, converting and splitting need a saved project. Files are read, converted and split on the command thread, as
+[pool.md](pool.md)). `copy`, `convert` and `splitChannels` need a saved project. Files are read, converted and split on the command thread, as
 `media.convert` does; the import is one undo step ("Import audio files") made of the `media.add`, `clip.add`,
 `track.add` and `audioEvent.add` a client would send, so it emits their events. If a file fails, nothing is imported
 and the files the import wrote are removed. Undo leaves written files on disk, as for `media.convert`.
@@ -64,7 +65,9 @@ and the files the import wrote are removed. Undo leaves written files on disk, a
 The preferences that skip the dialog (On Import Audio Files, Do not ask again) and the MIDI file import options
 (reference manual pp. 364-365), creating a new project for a MIDI file, the name format of split files, import of
 audio CDs, audio from video and REX files, and the track selection: imports go onto new tracks unless dropped on one,
-until the track list (#81) selects tracks.
+until the track list (#81) selects tracks. Converting as a job: files are converted on the command thread, which waits
+for a long MP3 file (as for `media.convert`). Removing the files an unsaved project made (recordings and converted
+imports) when it is closed without saving.
 
 ## Checks
 
@@ -72,7 +75,8 @@ until the track list (#81) selects tracks.
 MP3) onto new tracks at a position and undoes it in
 one step, lays files out one after another with `oneTrack` and `track`, converts MP3 and Ogg Vorbis files without
 `convert` to WAV files with the signal they decode to (into the media folder, also with `copy` and `clipsOnly`, and in
-an unsaved project into `Recordings`, where they stay after saving) and leaves FLAC files as they are, converts a
+an unsaved project into `Recordings`, where they stay after saving until `media.prepareArchive` copies them, and
+removed again when a later file fails) and leaves FLAC files as they are, converts a
 44.1 kHz WAV file and an MP3 file
 into the media folder and leaves a 48 kHz file where it is, splits stereo and 5.1 files into mono files per speaker,
 copies with one job, and rejects what it can't do, removing converted files when a later file fails.

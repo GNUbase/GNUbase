@@ -382,12 +382,19 @@ TEST_CASE("audioFile.import converts MP3 and Ogg Vorbis files of an unsaved proj
 		dataFile("sine440.mp3"), dataFile("sine440.ogg"), utf8(dir.path() / "take.flac")};
 	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
 	Client client(engine);
-	const Json result = run(client, "audioFile.import", {{"files", files}, {"oneTrack", true}});
-	const Json project = run(client, "project.get");
+	const fs::path recordings = dir.path() / "settings" / "Recordings";
+
+	// A file that fails after an MP3 file was converted: nothing is imported and the converted file is removed.
+	const Json empty = run(client, "project.get");
+	CHECK_THAT(reject(client, "audioFile.import", {{"files", {files[0], utf8(dir.path() / "gone.wav")}}}),
+		ContainsSubstring("gone.wav"));
+	CHECK(run(client, "project.get") == empty);
+	CHECK(!fs::exists(recordings / "sine440.wav"));
 
 	// Like the recordings of an unsaved project, they go into Recordings in the settings folder and are referenced
 	// from there, also once the project is saved.
-	const fs::path recordings = dir.path() / "settings" / "Recordings";
+	const Json result = run(client, "audioFile.import", {{"files", files}, {"oneTrack", true}});
+	const Json project = run(client, "project.get");
 	const std::vector<std::string> names{"sine440.wav", "sine440-2.wav"};
 	for (size_t i = 0; i < names.size(); ++i)
 	{
@@ -405,9 +412,16 @@ TEST_CASE("audioFile.import converts MP3 and Ogg Vorbis files of an unsaved proj
 	CHECK(
 		byId(run(client, "project.get").at("media"), result.at("media")[0]).at("path") == utf8(recordings / names[0]));
 
-	// Undo leaves the converted files on disk, as for media.convert.
-	run(client, "history.undo");
-	CHECK(fs::exists(recordings / names[0]));
+	// media.prepareArchive brings them into the project's media folder; the files in Recordings stay.
+	const Json prepared = run(client, "media.prepareArchive");
+	REQUIRE(waitForJob(client, prepared.at("job").at("id").get<uint64_t>()).at("state") == "done");
+	const Json archived = run(client, "project.get");
+	for (size_t i = 0; i < names.size(); ++i)
+	{
+		INFO(names[i]);
+		CHECK(byId(archived.at("media"), result.at("media")[i]).at("path") == utf8(folder / "Audio" / names[i]));
+		CHECK(fs::exists(recordings / names[i]));
+	}
 }
 
 TEST_CASE("audioFile.import splits channels into mono files on tracks of their own", "[integration]")

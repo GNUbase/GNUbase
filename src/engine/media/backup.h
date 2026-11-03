@@ -20,7 +20,7 @@ namespace gnubase::engine
 	std::filesystem::path mediaFolderFor(const std::filesystem::path& projectFile);
 
 	// Where a project without a file keeps the audio files it makes (recordings, imported files converted to WAV):
-	// "Recordings" in the settings folder, or without one in the temporary folder.
+	// "Recordings" in the settings folder, or without one in the temporary folder; empty if there is none of either.
 	std::filesystem::path unsavedMediaFolder(const std::filesystem::path& settingsDirectory);
 
 	// Whether file is somewhere inside folder. Compares the absolute paths as they are written, without following

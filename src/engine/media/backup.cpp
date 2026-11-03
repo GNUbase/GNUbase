@@ -303,7 +303,8 @@ namespace gnubase::engine
 		if (!settingsDirectory.empty())
 			return settingsDirectory / "Recordings";
 		std::error_code error;
-		return fs::temp_directory_path(error) / "GNUbase Recordings";
+		const fs::path temporary = fs::temp_directory_path(error);
+		return error ? fs::path() : temporary / "GNUbase Recordings";
 	}
 
 	bool isInside(const std::string& file, const fs::path& folder)

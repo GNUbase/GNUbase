@@ -58,6 +58,7 @@ namespace gnubase::engine
 		std::vector<std::string> convertInto(const fs::path& folder, const std::string& path, const AudioFileInfo& info,
 			double sampleRate, bool split, std::vector<std::string>& written)
 		{
+			require(!folder.empty(), "there is no folder to convert " + path + " into: save the project first");
 			std::error_code error;
 			fs::create_directories(folder, error);
 			require(!error, "can't create " + folder.u8string() + ": " + error.message());

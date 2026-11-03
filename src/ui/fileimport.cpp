@@ -60,7 +60,8 @@ namespace gnubase::ui
 		if (audio.empty() || !alive() || m_dialog)
 			return;
 		m_import = {std::move(audio), track, std::max<int64_t>(sample.value_or(m_cursorSample), 0), clipsOnly};
-		// Copying, converting and splitting write into the project folder, which a project has once it is saved.
+		// The copy, convert and splitChannels options write into the project folder, which a project has once it is
+		// saved.
 		m_binding.send("project.location", Json::object(),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
