@@ -3595,12 +3595,17 @@ Result:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required
+- `stopAfterPunchOut`: boolean, required
 
 #### `transport_get`
 
@@ -3616,12 +3621,17 @@ Result:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required
+- `stopAfterPunchOut`: boolean, required
 
 #### `transport_locate`
 
@@ -3643,18 +3653,23 @@ Result:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required
+- `stopAfterPunchOut`: boolean, required
 
 #### `transport_play`
 
 Engine command `transport.play`.
 
-Starts playback from the project cursor, or from the left locator if startMode is cycleStart. Does nothing while playing.
+Starts playback from the project cursor, or from the left locator if startMode is cycleStart, less the pre-roll if preRoll is on (not before the project start). Does nothing while playing.
 
 Result:
 
@@ -3664,18 +3679,23 @@ Result:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required
+- `stopAfterPunchOut`: boolean, required
 
 #### `transport_record`
 
 Engine command `transport.record`.
 
-Starts recording (record true, the default): playback starts as with transport.play if it stood, or recording punches in where it plays. record false punches out and playback goes on. Record-enabled tracks may monitor their input meanwhile, by the user setting audio.autoMonitoring (see channel.set).
+Starts recording (record true, the default): playback starts as with transport.play if it stood, and recording where playback would start without the pre-roll; or recording punches in where it plays. With punchIn before the left locator, recording starts at the left locator instead. record false punches out and playback goes on. Record-enabled tracks may monitor their input meanwhile, by the user setting audio.autoMonitoring (see channel.set).
 
 Arguments:
 
@@ -3689,18 +3709,23 @@ Result:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required
+- `stopAfterPunchOut`: boolean, required
 
 #### `transport_set`
 
 Engine command `transport.set`.
 
-Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started. punchIn, punchOut and metronome are the transport bar's switches; punching in and out at the locators and the click come with recording and the metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see recording.add): keepHistory (the default), cycleHistoryReplace or replace.
+Changes the given settings and keeps the rest. left and right: the locators, in samples, or "cursor" for the cursor position. cycle: cycle playback between the locators; with the right locator before the left one, playback skips the range instead. startMode: cursor or cycleStart (the left locator). returnToStart: on stop, return to where playback started. punchIn: playback that reaches the left locator starts recording there. punchOut: recording that reaches the right locator ends there and playback goes on, or stops with stopAfterPunchOut, unless it cycles. preRoll and preRollAmount (samples): playback starts that much before the cursor. postRoll and postRollAmount (samples): after an automatic punch out with stopAfterPunchOut, playback goes on that much longer before it stops. Recording that punches in or out and playback that stops on their own announce transport.changed. metronome is the transport bar's switch; the click comes with the metronome. audioRecordMode: what a recording does to the events it overlaps on its track (see recording.add): keepHistory (the default), cycleHistoryReplace or replace.
 
 Arguments:
 
@@ -3708,11 +3733,16 @@ Arguments:
 - `cycle`: boolean
 - `left`: integer or string
 - `metronome`: boolean
+- `postRoll`: boolean
+- `postRollAmount`: integer
+- `preRoll`: boolean
+- `preRollAmount`: integer
 - `punchIn`: boolean
 - `punchOut`: boolean
 - `returnToStart`: boolean
 - `right`: integer or string
 - `startMode`: string
+- `stopAfterPunchOut`: boolean
 
 Result:
 
@@ -3722,12 +3752,17 @@ Result:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required
+- `stopAfterPunchOut`: boolean, required
 
 #### `transport_stop`
 
@@ -3743,22 +3778,27 @@ Result:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required
+- `stopAfterPunchOut`: boolean, required
 
 #### `transport_toggle`
 
 Engine command `transport.toggle`.
 
-Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, punchIn, punchOut, metronome (see transport.set), or record (on as transport.record, off punches out).
+Stops playback if it plays, otherwise starts it. With setting, switches that on or off instead: cycle, punchIn, punchOut, preRoll, postRoll, metronome (see transport.set), or record (on as transport.record, off punches out).
 
 Arguments:
 
-- `setting`: one of "cycle" | "punchIn" | "punchOut" | "metronome" | "record"
+- `setting`: one of "cycle" | "punchIn" | "punchOut" | "preRoll" | "postRoll" | "metronome" | "record"
 
 Result:
 
@@ -3768,12 +3808,43 @@ Result:
 - `metronome`: boolean, required
 - `playing`: boolean, required
 - `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
 - `punchIn`: boolean, required
 - `punchOut`: boolean, required
 - `recording`: boolean, required
 - `returnToStart`: boolean, required
 - `right`: integer, required
 - `startMode`: one of "cursor" | "cycleStart", required
+- `stopAfterPunchOut`: boolean, required
+
+#### `transport_update`
+
+Engine command `transport.update`.
+
+Takes over what the audio thread changed on its own: recording that punched in or out at the locators, and playback that stopped after a punch out, and announces it with transport.changed. The engine runs it itself when the audio thread played or recorded differently or applied a request; runs that change nothing stay out of engine.commandLog.
+
+Result:
+
+- `audioRecordMode`: one of "keepHistory" | "cycleHistoryReplace" | "replace", required
+- `cycle`: boolean, required
+- `left`: integer, required
+- `metronome`: boolean, required
+- `playing`: boolean, required
+- `position`: integer, required
+- `postRoll`: boolean, required
+- `postRollAmount`: integer, required
+- `preRoll`: boolean, required
+- `preRollAmount`: integer, required
+- `punchIn`: boolean, required
+- `punchOut`: boolean, required
+- `recording`: boolean, required
+- `returnToStart`: boolean, required
+- `right`: integer, required
+- `startMode`: one of "cursor" | "cycleStart", required
+- `stopAfterPunchOut`: boolean, required
 
 ### ui
 

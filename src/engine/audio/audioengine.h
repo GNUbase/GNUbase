@@ -229,7 +229,9 @@ namespace gnubase::engine
 		void setTransport(const Json& parameters);
 		void locate(const Json& parameters);
 		void sent(bool accepted); // after a transport request
+		bool syncTransport();     // Transport::sync, and the cue thread's copy; whether anything changed
 		void play();
+		void record(bool on);
 		Json transportStatus() const;
 		time::Samples projectEnd() const;
 		void render(audio::DummyDevice& device, uint64_t frames);
