@@ -99,6 +99,8 @@ namespace gnubase::ui
 		const ProjectMarkers& markers() const { return m_markers; }
 		MarkerLineMode mode() const { return m_mode; }
 		bool showsIds() const { return m_showIds; }
+		// Whether the project is being read again: each answer drops the selected markers it no longer has.
+		bool loading() const { return m_loading; }
 
 		// The ids of the selected markers. setSelection selects others; onSelect is told of the user's clicks and of
 		// deselect, which AppUi calls when an event is selected: the project window selects events or markers.

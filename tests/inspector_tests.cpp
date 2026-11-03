@@ -380,7 +380,8 @@ TEST_CASE("the project window selects events or markers, and the info line shows
 	// A selection naming a marker the project no longer has shows nothing.
 	window.call("marker.remove", {{"markers", {verse, intro}}});
 	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("markers").empty(); }));
-	REQUIRE(window.app.waitUntil([&] { return lines.selection().empty(); }));
+	// No reload left that would drop the next selection before the info line sees it.
+	REQUIRE(window.app.waitUntil([&] { return !lines.loading() && lines.selection().empty(); }));
 	REQUIRE(window.app.waitUntil([&] { return !hasClass(window.app, "#info-line", "markers"); }));
 	window.app.appUi().markerLines()->setSelection({verse});
 	// Only showMarkers' branch for markers the project doesn't have sets both.
