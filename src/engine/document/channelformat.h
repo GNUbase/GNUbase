@@ -105,4 +105,6 @@ namespace gnubase::engine
 	};
 
 	Panner pannerFor(ChannelFormat channel, ChannelFormat destination);
+	// What a channel with the panner outputs if it is wider than the channel: stereo for Mono, else None.
+	ChannelFormat pannerOutput(Panner panner);
 }

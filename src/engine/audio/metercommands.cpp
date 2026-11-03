@@ -62,33 +62,45 @@ namespace gnubase::engine
 				"The meters, as the audio thread measured them last; it publishes every 100 ms while the device "
 				"runs. channels: each channel's output after its fader, panner and muting (all channels, or those "
 				"given), per audio channel: peak (the largest sample of the last 100 ms) and rms (averaged over 300 "
-				"ms) in dBFS, and their maxima peakMax and rmsMax since meter.reset; null for silence, empty lists "
-				"for MIDI channels and channels that haven't played yet. main: the same for the main mix's device "
-				"outputs, plus the master meter's truePeak and truePeakMax (4x oversampled, dBTP). loudness: the "
-				"main mix's loudness per EBU R 128 in LUFS: momentary (400 ms), shortTerm (3 s), their maxima, "
-				"integrated (gated) and range (LU), and seconds measured. The maxima, integrated, range and "
-				"seconds only count while the transport plays; null until there is a value. The user setting "
+				"ms) in dBFS, and their maxima peakMax and rmsMax since meter.reset, also while the transport "
+				"stands; null for silence, empty lists for MIDI channels and channels that haven't played yet. "
+				"main: the same for the main mix's first 8 device outputs, plus the master meter's truePeak and "
+				"truePeakMax (4x oversampled, dBTP). loudness: the main mix's loudness per EBU R 128 in LUFS: "
+				"momentary (400 ms), shortTerm (3 s), their maxima, integrated (gated) and range (LU), and seconds "
+				"measured. truePeakMax, the loudness maxima, integrated, range and seconds only count while the "
+				"transport plays, with blocks from where playback started; null until there is a value. The user "
+				"setting "
 				"meter.resetOnStart starts the loudness meter and the main mix's maxima over when playback starts.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "properties": {
 					"channels": {"type": "array", "items": {"type": "integer"}}}})"),
 				meterSchema(), true},
 			[this](CommandContext& context)
 			{
+				// The channels asked for, in that order, or every channel of the project.
 				std::vector<ObjectId> wanted;
-				if (const auto channels = context.parameters().find("channels"); channels != context.parameters().end())
-					wanted = channels->get<std::vector<ObjectId>>();
-				Json channels = Json::array();
-				for (const auto& [id, state] : m_channelStates)
+				if (const auto given = context.parameters().find("channels"); given != context.parameters().end())
 				{
-					if (!wanted.empty() && std::find(wanted.begin(), wanted.end(), id) == wanted.end())
-						continue;
-					Json reading = levels(state->meter.read());
+					wanted = given->get<std::vector<ObjectId>>();
+					for (const ObjectId id : wanted)
+						if (m_channelStates.count(id) == 0 &&
+							std::none_of(m_snapshots.latest().channels.begin(), m_snapshots.latest().channels.end(),
+								[id](const RenderChannel& channel) { return channel.id == id; }))
+							throw CommandError("no channel " + std::to_string(id));
+				}
+				else
+				{
+					for (const RenderChannel& channel : m_snapshots.latest().channels)
+						wanted.push_back(channel.id);
+				}
+				Json channels = Json::array();
+				for (const ObjectId id : wanted)
+				{
+					const auto state = m_channelStates.find(id);
+					Json reading =
+						levels(state != m_channelStates.end() ? state->second->meter.read() : LevelReading{});
 					reading["channel"] = id;
 					channels.push_back(std::move(reading));
 				}
-				for (const ObjectId id : wanted)
-					if (m_channelStates.count(id) == 0)
-						throw CommandError("no channel " + std::to_string(id) + " plays");
 				const LoudnessReading measured = m_loudness.read();
 				Json main = levels(m_mainMeter.read());
 				main["truePeak"] = decibels(measured.truePeak, measured.channels);

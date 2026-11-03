@@ -269,9 +269,9 @@ namespace gnubase::engine
 		// transport command, since monitoring may follow the transport.
 		void routeDirectly(const RenderSnapshot& snapshot, const std::vector<std::vector<int>>& ports);
 		void stopMonitoringDirectly();
-		// Audio thread: the device's input where recording places it (audio.captureInput).
 		// Audio thread: the master meter and the loudness meter on the main mix's device channels.
 		void meterMainMix(const audio::DeviceBlock& block, const std::vector<int>& ports, bool playing) noexcept;
+		// Audio thread: the device's input where recording places it (audio.captureInput).
 		void captureInput(const audio::DeviceBlock& block) noexcept;
 		// Command thread: tells the recorder what the next recording records, if that changed.
 		void updateRecorder();

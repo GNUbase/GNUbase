@@ -160,7 +160,7 @@ TEST_CASE("the loudness meter reads EBU Tech 3341's steady sines exactly", "[uni
 	CHECK(reading.seconds == Approx(20.0));
 }
 
-TEST_CASE("the integrated loudness gates quiet passages as EBU Tech 3341 says", "[unit]")
+TEST_CASE("the integrated loudness gates quiet passages as EBU Tech 3341 says", "[unit][slow]")
 {
 	// Case 3: -36, -23 and -36 dBFS for 10, 60 and 10 s; case 4 adds -72 dBFS around it, below the absolute gate.
 	Signal three;
@@ -178,7 +178,7 @@ TEST_CASE("the integrated loudness gates quiet passages as EBU Tech 3341 says", 
 	CHECK(measure(four).integrated.value_or(0.0) == Approx(-23.0).margin(0.1));
 }
 
-TEST_CASE("the loudness range reads EBU Tech 3342's test signals", "[unit]")
+TEST_CASE("the loudness range reads EBU Tech 3342's test signals", "[unit][slow]")
 {
 	// Cases 1 to 3: 20 s at one level, then 20 s at another: the range is their difference, within 1 LU.
 	const auto [first, second, expected] =
@@ -352,4 +352,90 @@ TEST_CASE("a mono channel's meter reads both sides of its panner, and muting sil
 	CHECK(strip.at("peak").at(0).is_null());
 	CHECK(strip.at("peak").at(1).is_null());
 	CHECK(run(client, "meter.get").at("main").at("peak").at(1).is_null());
+}
+
+TEST_CASE("a level meter channel that comes back starts without what it measured before", "[unit]")
+{
+	LevelMeter meter;
+	Signal loud;
+	loud.sine(1.0, -6.0);
+	loud.play(meter); // stereo
+	const std::vector<float> mono(g_block, 0.0f);
+	for (int block = 0; block < 100; ++block) // mono for a while: the second channel goes away
+	{
+		const std::array<const float*, 1> audio{mono.data()};
+		meter.process(audio.data(), 1, g_block, g_rate);
+	}
+	meter.reset();
+	// It comes back silent: no old peak, RMS or maximum, also before it publishes again.
+	{
+		const std::array<const float*, 2> audio{mono.data(), mono.data()};
+		meter.process(audio.data(), 2, g_block, g_rate);
+		const LevelReading early = meter.read();
+		CHECK(early.peak[1] == 0.0f);
+		CHECK(early.rms[1] == 0.0f);
+		CHECK(early.peakMax[1] == 0.0f);
+		CHECK(early.rmsMax[1] == 0.0f);
+	}
+	const std::vector<float> silence(g_block, 0.0f);
+	for (int block = 0; block < 20; ++block)
+	{
+		const std::array<const float*, 2> audio{silence.data(), silence.data()};
+		meter.process(audio.data(), 2, g_block, g_rate);
+	}
+	const LevelReading reading = meter.read();
+	REQUIRE(reading.channels == 2);
+	CHECK(reading.peak[1] == 0.0f);
+	CHECK(reading.rms[1] == 0.0f);
+	CHECK(reading.peakMax[1] == 0.0f);
+	CHECK(reading.rmsMax[1] == 0.0f);
+}
+
+TEST_CASE("the loudness blocks start where playback starts, not with audio from while it stood", "[unit]")
+{
+	LoudnessMeter meter;
+	meter.prepare(g_rate);
+	Signal quiet;
+	quiet.sine(5.0, -30.0);
+	Signal loud;
+	loud.sine(GENERATE(3.0, 3.05), -10.0); // also ending off the 100 ms grid
+	quiet.play(meter);
+	loud.play(meter, false); // stopped
+	quiet.play(meter);
+	const LoudnessReading reading = meter.read();
+	CHECK(reading.integrated.value_or(0.0) == Approx(-30.0).margin(0.1));
+	CHECK(reading.momentaryMax.value_or(0.0) == Approx(-30.0).margin(0.1));
+	CHECK(decibels(reading.truePeakMax[0]) == Approx(-30.0).margin(0.1));
+	CHECK(reading.seconds == Approx(10.0).margin(0.1));
+}
+
+TEST_CASE("the loudness meter reads a steady sine at 44.1 kHz too", "[unit]")
+{
+	constexpr double rate = 44100.0;
+	LoudnessMeter meter;
+	meter.prepare(rate);
+	const double amplitude = fromDecibels(-23.0);
+	std::vector<float> block(g_block);
+	for (int64_t frame = 0; frame < static_cast<int64_t>(10 * rate); frame += g_block)
+	{
+		for (size_t i = 0; i < block.size(); ++i)
+			block[i] =
+				static_cast<float>(amplitude * std::sin(2.0 * g_pi * 1000.0 * static_cast<double>(frame + i) / rate));
+		const std::array<const float*, 2> audio{block.data(), block.data()};
+		meter.process(audio.data(), 2, g_block, true);
+	}
+	CHECK(meter.read().integrated.value_or(0.0) == Approx(-23.0).margin(0.1));
+	CHECK(decibels(meter.read().truePeakMax[0]) == Approx(-23.0).margin(0.1)); // the level is the peak
+}
+
+TEST_CASE("meter.get lists the channels asked for, also before they played", "[integration]")
+{
+	Engine engine; // no device: nothing played
+	Client client(engine);
+	const auto channel = run(client, "track.add", {{"type", "audio"}}).at("channel").at("id").get<ObjectId>();
+	Json meters = run(client, "meter.get", {{"channels", {channel}}});
+	REQUIRE(meters.at("channels").size() == 1);
+	CHECK(meters.at("channels").at(0).at("peak").empty());
+	CHECK(run(client, "meter.get", {{"channels", Json::array()}}).at("channels").empty());
+	CHECK(run(client, "meter.get").at("channels").size() == 1);
 }
