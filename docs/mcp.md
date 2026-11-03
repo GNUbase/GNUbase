@@ -1364,7 +1364,7 @@ Result:
 
 Engine command `editor.close`.
 
-Closes a MIDI editor: it shows no parts, and Keep Editor Contents goes off (p. 1153). Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+Closes a MIDI editor: it shows no parts, and Keep Editor Contents goes off (p. 1153). Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Arguments:
 
@@ -1378,15 +1378,26 @@ Result:
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
 - `editor`: one of "lower" | "window", required
 - `globalTracks`: array of integer, required
+- `insertVelocity`: number, required
 - `keepContents`: boolean, required
+- `keepNotes`: boolean, required
+- `lengthQuantize`: string, required
+- `midiInput`: boolean, required
+- `moveInsert`: boolean, required
 - `open`: boolean, required
 - `parts`: array of integer, required
+- `recordPitch`: boolean, required
+- `recordReleaseVelocity`: boolean, required
+- `recordVelocity`: boolean, required
+- `selection`: array of object, required
+- `stepInput`: boolean, required
+- `stepPosition`: integer, required
 
 #### `editor_get`
 
 Engine command `editor.get`. Read-only.
 
-What a MIDI editor shows. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+What a MIDI editor shows. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Arguments:
 
@@ -1400,15 +1411,42 @@ Result:
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
 - `editor`: one of "lower" | "window", required
 - `globalTracks`: array of integer, required
+- `insertVelocity`: number, required
 - `keepContents`: boolean, required
+- `keepNotes`: boolean, required
+- `lengthQuantize`: string, required
+- `midiInput`: boolean, required
+- `moveInsert`: boolean, required
 - `open`: boolean, required
 - `parts`: array of integer, required
+- `recordPitch`: boolean, required
+- `recordReleaseVelocity`: boolean, required
+- `recordVelocity`: boolean, required
+- `selection`: array of object, required
+- `stepInput`: boolean, required
+- `stepPosition`: integer, required
+
+#### `editor_input`
+
+Engine command `editor.input`.
+
+Notes played into a key editor, such as a chord from a MIDI keyboard (reference manual pp. 1219-1220): each a pitch 0-127, velocity 0-1 (default the editor's insertVelocity) and releaseVelocity 0-1 (default 0.5). With stepInput, they go into the active part at the step input cursor as notes of the length quantize's length, and the cursor moves on by a step of the quantize grid; moveInsert first moves the part's notes from the cursor on by a step, and without keepNotes the notes that start within the step go. With midiInput (and stepInput off), the first selected note takes the lowest note's pitch, velocity and release velocity, as far as recordPitch, recordVelocity and recordReleaseVelocity say, and the other notes of a chord are added with its position and length; with keepNotes, all of them are added and the selected note stays. Then the next note of its part is selected. Velocities that aren't recorded are insertVelocity's and the default release velocity. One undo step. Returns the part and its notes added or changed.
+
+Arguments:
+
+- `editor`: one of "lower" | "window", required
+- `notes`: array of object, required
+
+Result:
+
+- `notes`: array, required
+- `part`: integer, required
 
 #### `editor_open`
 
 Engine command `editor.open`.
 
-Opens a MIDI editor with MIDI parts, such as the ones selected in the project window, or shows those parts in it if it is open. activePart becomes the part active for editing, by default the first. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+Opens a MIDI editor with MIDI parts, such as the ones selected in the project window, or shows those parts in it if it is open. activePart becomes the part active for editing, by default the first. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Arguments:
 
@@ -1424,15 +1462,26 @@ Result:
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
 - `editor`: one of "lower" | "window", required
 - `globalTracks`: array of integer, required
+- `insertVelocity`: number, required
 - `keepContents`: boolean, required
+- `keepNotes`: boolean, required
+- `lengthQuantize`: string, required
+- `midiInput`: boolean, required
+- `moveInsert`: boolean, required
 - `open`: boolean, required
 - `parts`: array of integer, required
+- `recordPitch`: boolean, required
+- `recordReleaseVelocity`: boolean, required
+- `recordVelocity`: boolean, required
+- `selection`: array of object, required
+- `stepInput`: boolean, required
+- `stepPosition`: integer, required
 
 #### `editor_set`
 
 Engine command `editor.set`.
 
-Changes what an open MIDI editor shows (reference manual pp. 1142-1156); what isn't given stays. parts replaces its parts. Then the Visibility tab's changes: exclusive hides every track first, showTracks shows every MIDI part of these tracks (all tracks in a folder) and activates the last, hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, activePart a part shown. editingMode, keepContents and globalTracks (marker and ruler tracks, the editor window only) also apply to a closed editor. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. View state: no undo steps, not saved, and a new or loaded project closes the editors.
+Changes what an open MIDI editor shows (reference manual pp. 1142-1156); what isn't given stays. parts replaces its parts. Then the Visibility tab's changes: exclusive hides every track first, showTracks shows every MIDI part of these tracks (all tracks in a folder) and activates the last, hideTracks hides theirs; at least one part stays. activeTrack activates the track's first part shown, activePart a part shown. editingMode, keepContents and globalTracks (marker and ruler tracks, the editor window only) also apply to a closed editor. selection replaces the selected notes, of the editable parts. The key editor's settings apply to any editor; turning stepInput on puts the step input cursor at the active part's start unless stepPosition is given. Emits editor.changed. editor: lower (the editor in the project window's lower zone) or window (the editor window). The view: open; parts, the MIDI parts it shows, in the track list's order and by position; activePart, the part active for editing, and activeTrack, its track (0 for none); editingMode, what selecting and editing reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, a note value such as 1/16, 1/8T or 1/4., or link for the quantize grid's (quantize.set). View state: no undo steps, not saved, and a new or loaded project closes the editors.
 
 Arguments:
 
@@ -1443,9 +1492,20 @@ Arguments:
 - `exclusive`: boolean
 - `globalTracks`: array of integer
 - `hideTracks`: array of integer
+- `insertVelocity`: number
 - `keepContents`: boolean
+- `keepNotes`: boolean
+- `lengthQuantize`: string
+- `midiInput`: boolean
+- `moveInsert`: boolean
 - `parts`: array of integer
+- `recordPitch`: boolean
+- `recordReleaseVelocity`: boolean
+- `recordVelocity`: boolean
+- `selection`: array of object
 - `showTracks`: array of integer
+- `stepInput`: boolean
+- `stepPosition`: integer
 
 Result:
 
@@ -1455,9 +1515,20 @@ Result:
 - `editingMode`: one of "allParts" | "activePart" | "activeTrack", required
 - `editor`: one of "lower" | "window", required
 - `globalTracks`: array of integer, required
+- `insertVelocity`: number, required
 - `keepContents`: boolean, required
+- `keepNotes`: boolean, required
+- `lengthQuantize`: string, required
+- `midiInput`: boolean, required
+- `moveInsert`: boolean, required
 - `open`: boolean, required
 - `parts`: array of integer, required
+- `recordPitch`: boolean, required
+- `recordReleaseVelocity`: boolean, required
+- `recordVelocity`: boolean, required
+- `selection`: array of object, required
+- `stepInput`: boolean, required
+- `stepPosition`: integer, required
 
 ### engine
 
@@ -2809,6 +2880,21 @@ Result:
 
 - `notes`: array, required
 
+#### `note_chord`
+
+Engine command `note.chord`. Read-only.
+
+The chord that notes of a MIDI part make, in any octave and order (arpeggiated notes too), as the key editor's Chord Editing section shows it: chord {root, the pitch class (0 is C), type, as note.voicing takes it, and name, such as Cm7}, or null if they make none of the chord types exactly. Of several roots that fit, the lowest note's.
+
+Arguments:
+
+- `notes`: array of integer, required
+- `part`: integer, required
+
+Result:
+
+- `chord`: object or null, required
+
 #### `note_remove`
 
 Engine command `note.remove`.
@@ -2830,6 +2916,23 @@ Arguments:
 
 - `notes`: array of object, required
 - `part`: integer, required
+
+Result:
+
+- `notes`: array, required
+
+#### `note_voicing`
+
+Engine command `note.voicing`.
+
+Transposes notes of a MIDI part as the key editor's Chord Editing section does (reference manual pp. 1215-1217). chord fits them to a chord type (major, minor, diminished, augmented, sus2, sus4; major7, minor7, dominant7, halfDiminished7, diminished7, minorMajor7) on the root of the chord they make, or else of the lowest note: from the lowest up, each moves to the nearest pitch of a chord tone that no lower note took since every tone last had one, down on a tie. voicing changes the voicing: invertUp moves the lowest note up by octaves until it is the highest, invertDown the highest down until it is the lowest, drop2, drop3 and drop24 move the second, the third, or the second and fourth highest notes down an octave. Give chord or voicing. Returns the notes that changed.
+
+Arguments:
+
+- `chord`: one of "major" | "minor" | "diminished" | "augmented" | "sus2" | "sus4" | "major7" | "minor7" | "dominant7" | "halfDiminished7" | "diminished7" | "minorMajor7"
+- `notes`: array of integer, required
+- `part`: integer, required
+- `voicing`: one of "invertUp" | "invertDown" | "drop2" | "drop3" | "drop24"
 
 Result:
 

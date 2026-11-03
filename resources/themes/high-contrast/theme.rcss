@@ -551,8 +551,9 @@
 	.midi-editor .editor-part
 	{
 		color: #c8c8c8;
-		border-bottom-width: 1dp;
-		border-bottom-color: #ffffff;
+		border-width: 1dp;
+		border-color: #ffffff;
+		background-color: #060606;
 	}
 	.midi-editor .editor-part.editable
 	{
@@ -573,6 +574,59 @@
 	.editor-visibility-check.partial
 	{
 		decorator: svg(checkbox-mixed.svg);
+	}
+	.key-editor-key
+	{
+		background-color: #cfcfcf;
+		color: #000000;
+		border-bottom-width: 1px;
+		border-bottom-color: #c8c8c8;
+	}
+	.key-editor-key.black
+	{
+		background-color: #000000;
+		color: #ffffff;
+	}
+	.key-editor-key.selected
+	{
+		background-color: #ffff00;
+	}
+	.key-editor-grid
+	{
+		background-color: #000000;
+	}
+	.key-editor-row
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #808080;
+	}
+	.key-editor-row.black
+	{
+		background-color: #000000;
+	}
+	.key-note
+	{
+		background-color: #9e9e05;
+		border-width: 1px;
+		border-color: #ffff00;
+	}
+	.key-note.selected
+	{
+		background-color: #00ffff;
+		border-color: #ffffff;
+	}
+	.key-note.inactive
+	{
+		background-color: #3c3c3c;
+		border-color: #c8c8c8;
+	}
+	.key-note.drawing
+	{
+		background-color: #ffff0066;
+	}
+	.key-editor-step-cursor
+	{
+		background-color: #ffff00;
 	}
 	.docking [zone]
 	{
