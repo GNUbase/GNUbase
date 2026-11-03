@@ -312,6 +312,7 @@ namespace gnubase::ui
 	{
 		// The dialog that asked may still be closing.
 		m_shell.post(
+			// NOLINTNEXTLINE(bugprone-exception-escape): only MSVC's std::string; out of memory only
 			[this, window, error, autoSave]
 			{
 				Window* showing = m_shell.find(window);
