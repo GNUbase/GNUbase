@@ -980,7 +980,8 @@ TEST_CASE("the dummy device can't be unplugged while it plays as another backend
 	REQUIRE(run(client, "audio.get").at("device").at("backend") == "dummy");
 
 	// Refused, and nothing changes: the fallback plays on and the fake device is still the one that's lost.
-	CHECK_THAT(reject(client, "audio.simulateDeviceLoss", {{"connected", false}}), ContainsSubstring("fallback"));
+	CHECK_THAT(reject(client, "audio.simulateDeviceLoss", {{"connected", false}}),
+		ContainsSubstring("fallback for the lost device Fake interface"));
 	const Json status = run(client, "audio.get");
 	CHECK(status.at("device").at("backend") == "dummy");
 	CHECK(status.at("running") == true);

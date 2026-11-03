@@ -1870,7 +1870,7 @@ namespace gnubase::engine
 				// Unplugged now, it would stay unplugged once the lost device returned, and audio.setDevice couldn't
 				// open it.
 				if (m_lost && m_lost->backend != "dummy")
-					throw CommandError("the dummy device plays as the fallback for the lost device " + m_lost->device +
+					throw CommandError("the dummy device plays as the fallback for the lost device " + m_lost->name +
 						" and can't be unplugged");
 				m_dummyUnplugged = true;
 				if (m_dummy != nullptr && !m_lost)
