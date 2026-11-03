@@ -485,8 +485,8 @@ namespace gnubase::ui
 					};
 					// A piece every 2 pixels, and one to each point, so that jumps stay upright.
 					std::vector<double> xs;
-					for (double x = begin; x < end; x += 2.0)
-						xs.push_back(x);
+					for (int64_t i = 0; begin + (2.0 * static_cast<double>(i)) < end; ++i)
+						xs.push_back(begin + (2.0 * static_cast<double>(i)));
 					for (const engine::GainPoint& point : volume.points)
 					{
 						const double x =
