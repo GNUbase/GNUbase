@@ -3,6 +3,7 @@
 
 #include "engine/audio/audition.h"
 #include "engine/audio/automation.h"
+#include "engine/audio/meters.h"
 #include "engine/audio/midiports.h"
 #include "engine/audio/miditap.h"
 #include "engine/audio/performance.h"
@@ -92,6 +93,8 @@ namespace gnubase::engine
 		void registerCommands(Engine& engine);
 
 		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
+		// The user setting meter.resetOnStart.
+		void setMeterResetOnStart(bool reset) { m_meterResetOnStart.store(reset, std::memory_order_relaxed); }
 		void setChase(const MidiChase& chase);
 
 		// Command thread, after a command changed the user settings audio.portSettings (audioPorts) or
@@ -224,6 +227,7 @@ namespace gnubase::engine
 		audio::DummyDevice& requireDummy();
 		void registerTransportCommands(Engine& engine);
 		void registerAnalysisCommands(Engine& engine); // analysiscommands.cpp
+		void registerMeterCommands(Engine& engine);    // metercommands.cpp
 		void registerMidiTapCommands(Engine& engine);  // miditap.cpp
 		void registerAuditionCommands(Engine& engine); // audition.cpp
 		void setTransport(const Json& parameters);
@@ -262,6 +266,8 @@ namespace gnubase::engine
 		void routeDirectly(const RenderSnapshot& snapshot, const std::vector<std::vector<int>>& ports);
 		void stopMonitoringDirectly();
 		// Audio thread: the device's input where recording places it (audio.captureInput).
+		// Audio thread: the master meter and the loudness meter on the main mix's device channels.
+		void meterMainMix(const audio::DeviceBlock& block, const std::vector<int>& ports, bool playing) noexcept;
 		void captureInput(const audio::DeviceBlock& block) noexcept;
 		// Command thread: tells the recorder what the next recording records, if that changed.
 		void updateRecorder();
@@ -370,6 +376,11 @@ namespace gnubase::engine
 
 		// Performance data: measured by the audio thread, read by the command thread.
 		PerformanceMeter m_meter; // audio thread, or the command thread while the device is stopped
+		// The main mix as the device plays it (docs/features/metering.md).
+		LevelMeter m_mainMeter;
+		LoudnessMeter m_loudness;
+		bool m_meterPlaying = false; // audio thread: whether the last block played, for meter.resetOnStart
+		std::atomic<bool> m_meterResetOnStart{false};
 		rt::TripleBuffer<PerformanceData> m_performance;
 		std::atomic<bool> m_resetPerformance{false};
 		uint64_t m_deviceOverloadsBefore = 0; // the device's overloads when the measurement started

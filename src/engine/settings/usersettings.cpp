@@ -136,6 +136,10 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"},
 						{"enum", {"default", "previous", "previousPlusOne", "lastApplied", "random"}}},
 					"default"},
+				{"meter.resetOnStart",
+					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
+					"playback starts (see meter.get).",
+					Json{{"type", "boolean"}}, false},
 				{"midi.chaseBeyondParts",
 					"Chases controller events from the whole track; off, only from the MIDI parts under the "
 					"position, so none outside parts.",

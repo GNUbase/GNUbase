@@ -511,6 +511,7 @@ namespace gnubase::engine
 		if (m_source)
 			m_source->prepareFor(sampleRate, maxFrames);
 		m_smoothing = static_cast<uint32_t>(std::llround(sampleRate * g_faderSmoothing));
+		m_sampleRate = sampleRate;
 	}
 
 	void ChannelStrip::process(const graph::ProcessContext& context) noexcept
@@ -561,5 +562,6 @@ namespace gnubase::engine
 			{context.audio, context.channels, context.frames, events, m_faderOut, context.transport}, m_panning);
 		if (context.frames > 0)
 			glide(context, m_state->outputGain, m_silent ? 0.0f : 1.0f);
+		m_state->meter.process(context.audio, context.channels, context.frames, m_sampleRate);
 	}
 }
