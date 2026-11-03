@@ -323,6 +323,30 @@ TEST_CASE("A transaction syncs parts that become or stop being shared in it, and
 	CHECK(f.call("project.get").at("midiParts") == after);
 }
 
+TEST_CASE("A shared copy left alone by a removal in a transaction edits only itself", "[unit]")
+{
+	Fixture f;
+	const int64_t original = f.part(f.track("midi"));
+	const int64_t copy = f.call("event.copy", {{"events", {original}}, {"ticks", g_bar}, {"shared", true}})
+							 .at("events")[0]
+							 .get<int64_t>();
+	const Json notes = f.midi(original).at("notes");
+	const Json before = f.call("project.get").at("midiParts");
+
+	f.call("history.transaction",
+		{{"description", "Remove and edit"},
+			{"commands",
+				{{{"command", "event.remove"}, {"parameters", {{"events", {original}}}}},
+					{{"command", "note.set"},
+						{"parameters", {{"part", copy}, {"notes", {{{"id", notes[0].at("id")}, {"pitch", 70}}}}}}}}}});
+	CHECK(f.count("midiParts") == 1);
+	CHECK(f.midi(copy).at("shared") == 0);
+	CHECK(f.midi(copy).at("notes")[0].at("pitch") == 70);
+
+	f.call("history.undo");
+	CHECK(f.call("project.get").at("midiParts") == before);
+}
+
 TEST_CASE("Only shared parts are copied for comparing shared copies", "[unit]")
 {
 	using gnubase::engine::MidiPart;

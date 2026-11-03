@@ -57,9 +57,9 @@ edits notes, `note.set` as much as a MIDI function or quantizing, edits all copi
 that edits two copies of a group keeps both edits, and a later command in it sees what an earlier one did to another
 copy. For that, a transaction copies only the shared parts before each of its commands (`sharedPartsOf`), not every
 note of every part: a part that becomes shared in a command gives no edit to its new group anyway. A part whose
-contents change for its own sake, by a resize that moves its notes, a split or a glue, first leaves its group with new note ids; so does
-`event.toRealCopy`. A group's last part is no longer shared. The position, length, name, mute and lock stay each
-part's own. Shared copies are saved in `gnubase.json`; `project.xml` gets them as ordinary clips.
+contents change for its own sake, by a resize that moves its notes, a split or a glue, first leaves its group with new
+note ids; so does `event.toRealCopy`. A group's last part is no longer shared. The position, length, name, mute and
+lock stay each part's own. Shared copies are saved in `gnubase.json`; `project.xml` gets them as ordinary clips.
 
 ## The event display
 

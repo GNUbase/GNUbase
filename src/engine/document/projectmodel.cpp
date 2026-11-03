@@ -2633,7 +2633,7 @@ namespace gnubase::engine
 			{
 				// Each command's edit reaches the other shared copies before the next command runs, so that edits of
 				// several copies of a group all stay and a command sees what an earlier one did to another copy. Only
-				// the shared parts are copied for that (#426): copying every note of every part made each command slow.
+				// shared parts are compared, so only they are copied, not every note of every part (#426).
 				const std::map<ObjectId, MidiPart> parts = sharedPartsOf(project.midiParts);
 				results.push_back(edit->second.handler(project, inner));
 				syncSharedParts(parts, project, inner);
