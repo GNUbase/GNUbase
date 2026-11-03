@@ -214,8 +214,12 @@ namespace gnubase::engine
 		// command and without waiting: for the UI to read once a frame while playing. Not for audio threads.
 		int64_t playbackPosition() const;
 
-		// The time that the engine's timed work goes by, such as due auto saves; tests move it forward with advance.
-		Clock& clock() { return m_clock; }
+		// The time that the engine's timed work goes by, such as due auto saves. Only the engine starts and stops it.
+		const Clock& clock() const { return m_clock; }
+
+		// For tests: moves the engine's clock forward and returns once its tick ran (Clock::advance), so that whatever
+		// the tick queued, such as a due auto save, is queued before what the test does next.
+		void advanceClock(Clock::Duration by) { m_clock.advance(by); }
 
 	private:
 		friend class Client;

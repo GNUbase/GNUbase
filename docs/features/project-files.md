@@ -39,17 +39,21 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   `project.autoSaveFiles` (5), after which the oldest is overwritten. A project without a file goes to `Auto Saves` in
   the settings folder, named after the project; without a settings folder it isn't auto saved. Auto saves don't copy
   media and don't save the project: it stays modified, and its file stays as it is.
-  The engine's clock (`Engine::clock`, `engine/clock.h`) ticks every 30 seconds on a thread of its own, and each tick
+  The engine's clock (`engine/clock.h`) ticks every 30 seconds on a thread of its own, and each tick
   posts `project.autoSave` with `due`; that saves only when the user setting `project.autoSave` is on (the default)
   and `project.autoSaveInterval` minutes (15) have passed since the last save, opening or auto save, and stays out of
-  `engine.commandLog` when it saves nothing. Auto saves read the time from the same clock.
+  `engine.commandLog` when it saves nothing. Auto saves read the time from the same clock (`Engine::clock`, which
+  others can only read; only the engine starts and stops it, and tests move it with `Engine::advanceClock`).
 - **Failed auto saves**, such as when `Auto Saves` can't be made or the disk is full, count as auto saves for the
   interval, so that they are tried again only after it instead of every 30 seconds. Each one emits
   `project.autoSaveFailed` with the file and the error, although the command fails (`Engine::broadcast`, so the event
-  names no request). A due auto save that fails again, before one succeeded or the project was saved or opened, stays
-  out of `engine.commandLog` and the error log (`CommandContext::failQuietly`), so that a project that can't be auto
-  saved for days doesn't push the user's own commands out of the log's 256 entries. A client's own failing
-  `project.autoSave` without `due` is always in the log and fails with the reason.
+  names no request), and `repeated`: whether the last auto save failed for the same reason, and none succeeded and the
+  project wasn't saved or opened since. The reason is the error without the auto save's file, which the error names
+  and which changes as auto saves take turns. A due auto save whose failure is repeated stays out of
+  `engine.commandLog` and the error log (`CommandContext::failQuietly`), so that a project that can't be auto saved for
+  days doesn't push the user's own commands out of the log's 256 entries, while a new reason, such as a full disk after
+  `Auto Saves` couldn't be made, is logged. A client's own failing `project.autoSave` without `due` is always in the
+  log and fails with the reason.
 - **Opening an auto save.** `project.load` opens an auto save (a `.bak` in a folder `Auto Saves`, in any case on every
   platform, since Windows and macOS open other case as the same file) without a file and as modified, and it isn't a
   recent project (#484). So Save asks for a path instead of overwriting the auto save, there is nothing to revert to,
@@ -96,9 +100,11 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   dialogs that wait and answer one the same way ([ui-automation.md](ui-automation.md)).
 - **Errors.** When saving, opening, reverting or backing up fails, the dialog `project-error.rml` shows the error, so
   that a failed save isn't taken for done. Backups fail mostly in their job, so `job.finished` of a failed
-  `project.backup` the UI asked for shows it too.
+  `project.backup` the UI asked for shows it too. A failed auto save (`project.autoSaveFailed`) shows in the main
+  window, so that the user learns that auto save stopped working: once, not at every interval, and again only when
+  the engine says the failure isn't `repeated`, after a new reason or after an auto save succeeded or the project was
+  saved or opened. If another dialog is open then, the error shows at the next failure instead.
 - The UI knows the project's file from `project.saved` and, after `project.reset`, from `project.location`.
-  It doesn't show `project.autoSaveFailed` yet.
 
 ## Not yet
 
@@ -106,7 +112,7 @@ The reference's hub beyond the start screen (audio settings, user locations, sor
 and its settings dialog); the default project location and folder name, so that a new project asks for its folder;
 renaming and deleting templates, their descriptions and categories; Recent Projects in the File menu; asking whether to
 keep audio recorded since the last save on Revert; Close and several open projects with Activate Project; the time of
-the last edit in auto save names; showing a failed auto save (`project.autoSaveFailed`) in the UI; Run Setup on Create
+the last edit in auto save names; Run Setup on Create
 New Project and Open Last Project on Startup.
 
 ## Checks
@@ -115,11 +121,12 @@ New Project and Open Last Project on Startup.
 `modified`, save new version numbering (also next to versions in other case and of a file saved under a name with a
 dot), revert, auto save rotation, opening auto saves (also of untitled projects and of projects whose file is gone, and
 under paths in other case or with `.`) and where their media and next auto saves go, the engine's own auto saves once
-the interval passed and failing ones with their events and log entries (`Engine::clock().advance` moves the clock
-forward and returns once its tick ran, so no test waits), recent projects across restarts, and templates; and in the
+the interval passed and failing ones with their events and log entries, also when the reason or only the file changes
+(`Engine::advanceClock` moves the clock forward and returns once its tick ran, so no test waits), recent projects across restarts, and templates; and in the
 app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a name with a dot and of one with the
 extension in upper case) and Save New Version after each through file dialogs, Open and Revert with the unsaved changes
 dialog, Save asking for a file after Open of an auto save, quitting through the main window's close button and the OS's
 quit request with and without unsaved changes, the start screen's buttons and double clicks, Save as Template and Back
-up Project, and the error dialog for a failed save and backup. `tests/uitools_tests.cpp` checks `ui_file_dialog`.
+up Project, and the error dialog for a failed save and backup, and for failed auto saves: once per reason, and at
+the next failure if another dialog kept it from showing. `tests/uitools_tests.cpp` checks `ui_file_dialog`.
 `tests/clock_tests.cpp` checks the clock's ticks and `advance` on their own.

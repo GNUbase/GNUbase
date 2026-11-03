@@ -75,7 +75,9 @@ namespace gnubase::ui
 				  const Json& job = event.data.at("job");
 				  if (m_backupWindow && job.at("kind") == "project.backup" && job.at("state") == "failed")
 					  showError(*m_backupWindow, job.at("error").get<std::string>());
-			  }))
+			  })),
+		  m_autoSaveFailed(
+			  binding.on("project.autoSaveFailed", [this](const engine::Event& event) { autoSaveFailed(event.data); }))
 	{
 		readLocation();
 
@@ -295,18 +297,43 @@ namespace gnubase::ui
 	void ProjectFiles::showError(WindowId window, const std::string& error)
 	{
 		logging::warning("Project handling: {}", error);
+		openError(window, error, {});
+	}
+
+	void ProjectFiles::openError(WindowId window, const std::string& error, std::function<void()> shown)
+	{
 		// The dialog that asked may still be closing.
 		m_shell.post(
-			[this, window, error]
+			[this, window, error, shown = std::move(shown)]
 			{
-				Window* shown = m_shell.find(window);
-				Rml::ElementDocument* dialog = shown != nullptr
-					? openDialog(*shown, "project-error.rml", [](Rml::ElementDocument&, const std::string&) {})
+				Window* showing = m_shell.find(window);
+				Rml::ElementDocument* dialog = showing != nullptr
+					? openDialog(*showing, "project-error.rml", [](Rml::ElementDocument&, const std::string&) {})
 					: nullptr;
-				if (Rml::Element* message =
-						dialog != nullptr ? dialog->GetElementById("project-error-message") : nullptr)
+				if (dialog == nullptr)
+					return;
+				if (Rml::Element* message = dialog->GetElementById("project-error-message"))
 					message->SetInnerRML(Rml::StringUtilities::EncodeRml(error));
+				if (shown)
+					shown();
 			});
+	}
+
+	void ProjectFiles::autoSaveFailed(const Json& failure)
+	{
+		// The engine logged the failure already, if it was new.
+		if (!failure.value("repeated", false))
+			m_autoSaveFailureShown = false;
+		if (m_autoSaveFailureShown)
+			return;
+		for (const Window* window : m_shell.windows())
+			if (window->main())
+			{
+				// Shown at the next failure if another dialog keeps it from opening now.
+				openError(window->id(), "The project can't be auto saved: " + failure.at("error").get<std::string>(),
+					[this] { m_autoSaveFailureShown = true; });
+				return;
+			}
 	}
 
 	void ProjectFiles::unlessUnsaved(Window& window, std::function<void()> action)

@@ -127,6 +127,17 @@ namespace gnubase::engine
 				folded(path.parent_path().filename()) == folded(fs::u8path(g_autoSaves));
 		}
 
+		// Why an auto save to file failed, whichever file it went to: the error without the file, which the errors of
+		// saving name, also as part of the temporary file next to it, and which changes as auto saves take turns.
+		std::string failureReason(std::string error, const fs::path& file)
+		{
+			const std::string name = file.u8string();
+			const std::string placeholder = "<auto save>";
+			for (size_t at = error.find(name); at != std::string::npos; at = error.find(name, at + placeholder.size()))
+				error.replace(at, name.size(), placeholder);
+			return error;
+		}
+
 		Json userSetting(CommandContext& context, const char* key)
 		{
 			return context.call("settings.get", {{"key", key}}).at("value");
@@ -149,7 +160,7 @@ namespace gnubase::engine
 		m_autoSavedRevision = m_revision;
 		m_openedRevision = m_revision;
 		m_lastSave = m_clock->now();
-		m_autoSaveFailed = false;
+		m_autoSaveFailure.reset();
 		if (!m_file.empty())
 			remember(m_file);
 	}
@@ -160,7 +171,7 @@ namespace gnubase::engine
 		m_savedRevision = m_revision;
 		m_autoSavedRevision = m_revision;
 		m_lastSave = m_clock->now();
-		m_autoSaveFailed = false; // it may have moved to another folder
+		m_autoSaveFailure.reset(); // it may have moved to another folder
 		remember(file);
 		context.emit("project.saved", {{"file", m_file}});
 	}
@@ -265,9 +276,10 @@ namespace gnubase::engine
 				"engine asks every 30 seconds, only if the user setting project.autoSave is on and "
 				"project.autoSaveInterval minutes have passed since the project was saved, opened or auto saved, or "
 				"an auto save failed. Returns the file, or null if nothing was saved; emits project.autoSaved with "
-				"the file. If it fails, emits project.autoSaveFailed with the file and the error although the "
-				"command fails. A due auto save that fails again, before one succeeded or the project was saved or "
-				"opened, stays out of engine.commandLog and the error log.",
+				"the file. If it fails, emits project.autoSaveFailed with the file, the error and repeated, although "
+				"the command fails: repeated is true if the last auto save failed for the same reason, whatever its "
+				"file, and none succeeded and the project wasn't saved or opened since. A due auto save whose failure "
+				"is repeated stays out of engine.commandLog and the error log, so that only new reasons are logged.",
 				objectSchema({{"due", booleanSchema}}),
 				objectSchema({{"file", {{"type", {"string", "null"}}}}}, {"file"}), false},
 			[this, &engine](CommandContext& context)
@@ -304,15 +316,19 @@ namespace gnubase::engine
 				catch (const std::exception& error)
 				{
 					// Announced although the command fails, so that the user learns that auto save doesn't work. One
-					// that keeps failing is logged only the first time, as the engine's error log and
-					// engine.commandLog keep only so much.
-					engine.broadcast("project.autoSaveFailed", {{"file", file.u8string()}, {"error", error.what()}});
-					if (due && m_autoSaveFailed)
+					// that keeps failing for the same reason is logged only the first time, as the engine's error log
+					// and engine.commandLog keep only so much, but a new reason is logged, such as a full disk after
+					// Auto Saves couldn't be made.
+					std::string reason = failureReason(error.what(), file);
+					const bool repeated = m_autoSaveFailure == reason;
+					engine.broadcast("project.autoSaveFailed",
+						{{"file", file.u8string()}, {"error", error.what()}, {"repeated", repeated}});
+					if (due && repeated)
 						context.failQuietly();
-					m_autoSaveFailed = true;
+					m_autoSaveFailure = std::move(reason);
 					throw CommandError(error.what());
 				}
-				m_autoSaveFailed = false;
+				m_autoSaveFailure.reset();
 				m_autoSavedRevision = m_revision;
 				context.emit("project.autoSaved", {{"file", file.u8string()}});
 				return Json{{"file", file.u8string()}};
