@@ -543,8 +543,8 @@ namespace gnubase::engine
 				automationTargetTypeFromName(json.at("type").get<std::string>());
 			if (!parsed.has_value())
 				throw CommandError(
-					"target.type must be volume, pan, panLeft, panRight, instrument, controller, pitchBend or "
-					"channelPressure");
+					"target.type must be volume, pan, panLeft, panRight, mute, instrument, plugin, controller, "
+					"pitchBend or channelPressure");
 			const AutomationTargetType type = *parsed;
 			AutomationTarget target;
 			target.type = type;
@@ -574,6 +574,11 @@ namespace gnubase::engine
 				only({});
 				require(channel.format != ChannelFormat::None, "a MIDI track has no volume or pan");
 				break;
+			case AutomationTargetType::Mute:
+				only({});
+				// ponytail: a MIDI track's mute would have to silence its notes as they play.
+				require(channel.format != ChannelFormat::None, "a MIDI track's mute isn't automated yet");
+				break;
 			case AutomationTargetType::Instrument:
 			{
 				only({"parameter"});
@@ -589,7 +594,24 @@ namespace gnubase::engine
 				break;
 			}
 			case AutomationTargetType::Plugin:
-				throw CommandError("plugin parameters can't be automated yet (#70)");
+			{
+				only({"slot", "parameter"});
+				require(json.contains("slot") && json.at("slot").is_number_unsigned(),
+					"target.slot must be a slot id (see plugin.list)");
+				target.slot = json.at("slot").get<ObjectId>();
+				require(std::find(channel.slots.begin(), channel.slots.end(), target.slot) != channel.slots.end(),
+					"track " + idText(track.id) + " has no plugin slot " + idText(target.slot));
+				const Slot& slot = project.slots.at(target.slot);
+				const processors::BuiltinInfo* info = processors::findBuiltinPlugin(slot.plugin);
+				// ponytail: other plugins' parameters are known once they report them (#283).
+				require(info != nullptr, "only built-in plugins' parameters can be automated yet, not " + slot.plugin);
+				require(json.contains("parameter"), "target.parameter is required");
+				require(isParameterId(json.at("parameter")) &&
+						processors::findParameter(*info, json.at("parameter").get<uint32_t>()) != nullptr,
+					slot.plugin + " has no parameter " + json.at("parameter").dump());
+				target.parameter = json.at("parameter").get<uint32_t>();
+				break;
+			}
 			case AutomationTargetType::Controller:
 				only({"number", "channel"});
 				require(midi, "MIDI controllers are automated on MIDI and instrument tracks");
@@ -608,6 +630,30 @@ namespace gnubase::engine
 			return target;
 		}
 
+		// The parameter of an instrument or a plugin that a lane automates, or none for the other targets and for
+		// parameters that are gone.
+		const processors::ParameterInfo* automatedParameter(const Project& project, const AutomationLane& lane)
+		{
+			const processors::BuiltinInfo* info = nullptr;
+			if (lane.target.type == AutomationTargetType::Instrument)
+				info =
+					processors::findBuiltin(project.channels.at(project.trackById.at(lane.track).channel).instrument);
+			if (lane.target.type == AutomationTargetType::Plugin)
+			{
+				const auto slot = project.slots.find(lane.target.slot);
+				if (slot != project.slots.end())
+					info = processors::findBuiltinPlugin(slot->second.plugin);
+			}
+			return info != nullptr ? processors::findParameter(*info, lane.target.parameter) : nullptr;
+		}
+
+		// Whether a lane has a step curve: mute and stepped parameters.
+		bool stepCurve(const Project& project, const AutomationLane& lane)
+		{
+			const processors::ParameterInfo* parameter = automatedParameter(project, lane);
+			return lane.target.type == AutomationTargetType::Mute || (parameter != nullptr && parameter->stepped);
+		}
+
 		// The values a lane's points can have, in its target's unit.
 		std::pair<double, double> automationRange(const Project& project, const AutomationLane& lane)
 		{
@@ -619,17 +665,16 @@ namespace gnubase::engine
 			case AutomationTargetType::PanLeft:
 			case AutomationTargetType::PanRight:
 				return {-1.0, 1.0};
+			case AutomationTargetType::Mute:
+				return {0.0, 1.0};
 			case AutomationTargetType::Instrument:
-			{
-				const Channel& channel = project.channels.at(project.trackById.at(lane.track).channel);
-				const processors::BuiltinInfo* info = processors::findBuiltin(channel.instrument);
-				if (const processors::ParameterInfo* parameter =
-						info != nullptr ? processors::findParameter(*info, lane.target.parameter) : nullptr)
+			case AutomationTargetType::Plugin:
+				if (const processors::ParameterInfo* parameter = automatedParameter(project, lane))
 					return {parameter->minimum, parameter->maximum};
-				throw CommandError("the instrument of automation lane " + idText(lane.id) + " has no parameter " +
+				throw CommandError(std::string("the ") +
+					(lane.target.type == AutomationTargetType::Plugin ? "plugin" : "instrument") +
+					" of automation lane " + idText(lane.id) + " has no parameter " +
 					std::to_string(lane.target.parameter) + " any more");
-			}
-			case AutomationTargetType::Plugin: // not automated yet (#70)
 			case AutomationTargetType::Controller:
 			case AutomationTargetType::PitchBend:
 			case AutomationTargetType::ChannelPressure:
@@ -646,8 +691,10 @@ namespace gnubase::engine
 		}
 
 		// Changes a point by what a command gives for it, checked. Positions are in the time base of the lane's track.
+		// On a step curve, points are steps with whole values (reference manual p. 870: step curves for on/off
+		// parameters, such as mute).
 		void changePoint(AutomationPoint& point, const Json& item, const std::string& name, const Track& track,
-			const std::pair<double, double>& range)
+			const std::pair<double, double>& range, bool stepped)
 		{
 			if (item.contains("position"))
 				point.position = position(track, item.at("position"), name + ".position");
@@ -669,6 +716,11 @@ namespace gnubase::engine
 			{
 				point.curve = item.at("curve").get<double>();
 				require(point.curve >= -1.0 && point.curve <= 1.0, name + ".curve must be from -1 to 1");
+			}
+			if (stepped)
+			{
+				point.shape = AutomationShape::Step;
+				point.value = std::round(point.value);
 			}
 			if (point.shape != AutomationShape::Curve)
 				point.curve = 0.0;
@@ -739,13 +791,14 @@ namespace gnubase::engine
 			AutomationLane& lane = find(project.automation, parameters.at("lane").get<ObjectId>(), "automation lane");
 			const Json& items = parameters.at("points");
 			const std::pair<double, double> range = automationRange(project, lane);
+			const bool stepped = stepCurve(project, lane);
 			const Track& track = project.trackById.at(lane.track);
 			std::vector<AutomationPoint> points;
 			for (size_t i = 0; i < items.size(); ++i)
 			{
 				AutomationPoint point;
 				point.position.base = track.timeBase;
-				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range);
+				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range, stepped);
 				points.push_back(point);
 			}
 			for (AutomationPoint& point : points)
@@ -764,6 +817,7 @@ namespace gnubase::engine
 			AutomationLane& lane = find(project.automation, parameters.at("lane").get<ObjectId>(), "automation lane");
 			const Json& items = parameters.at("points");
 			const std::pair<double, double> range = automationRange(project, lane);
+			const bool stepped = stepCurve(project, lane);
 			const Track& track = project.trackById.at(lane.track);
 			std::vector<AutomationPoint> points;
 			for (size_t i = 0; i < items.size(); ++i)
@@ -773,7 +827,7 @@ namespace gnubase::engine
 				require(found != lane.points.end(),
 					"no automation point " + idText(id) + " in automation lane " + idText(lane.id));
 				AutomationPoint point = found->second;
-				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range);
+				changePoint(point, items[i], "points[" + std::to_string(i) + "]", track, range, stepped);
 				points.push_back(point);
 			}
 			for (const AutomationPoint& point : points)
@@ -1069,6 +1123,7 @@ namespace gnubase::engine
 			copy.id = project.newId();
 			copy.parent = parent;
 			copy.children.clear();
+			std::map<ObjectId, ObjectId> slots; // each copied slot's copy
 			if (copy.channel != 0)
 			{
 				Channel channel = project.channels.at(copy.channel);
@@ -1079,6 +1134,7 @@ namespace gnubase::engine
 					Slot slot = project.slots.at(slotId);
 					slot.id = project.newId();
 					slot.channel = channel.id;
+					slots[slotId] = slot.id;
 					slotId = slot.id;
 					project.slots[slot.id] = std::move(slot);
 				}
@@ -1139,6 +1195,8 @@ namespace gnubase::engine
 			{
 				lane.id = project.newId();
 				lane.track = copy.id;
+				if (lane.target.type == AutomationTargetType::Plugin)
+					lane.target.slot = slots.at(lane.target.slot);
 				std::map<ObjectId, AutomationPoint> points;
 				for (const auto& [pointId, point] : lane.points)
 				{
@@ -3236,11 +3294,12 @@ namespace gnubase::engine
 		const Json numberSchema = {{"type", "number"}};
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json noResult = Json::object();
-		const Json target = objectSchema({{"type",
-											  enumSchema({"volume", "pan", "panLeft", "panRight", "instrument",
-												  "controller", "pitchBend", "channelPressure"})},
-											 {"parameter", idSchema}, {"number", idSchema}, {"channel", idSchema}},
-			{"type"});
+		const Json target =
+			objectSchema({{"type",
+							  enumSchema({"volume", "pan", "panLeft", "panRight", "mute", "instrument", "plugin",
+								  "controller", "pitchBend", "channelPressure"})},
+							 {"parameter", idSchema}, {"slot", idSchema}, {"number", idSchema}, {"channel", idSchema}},
+				{"type"});
 		const Json shape = enumSchema({"step", "linear", "curve"});
 		const Json pointsResult = {
 			{"type", "object"}, {"properties", {{"points", {{"type", "array"}}}}}, {"required", {"points"}}};
@@ -3248,10 +3307,13 @@ namespace gnubase::engine
 		add(engine,
 			{"automationLane.add", 1,
 				"Adds an automation lane to a track: the curve of one parameter. target.type says which: volume (the "
-				"channel's fader, in dB), pan, panLeft and panRight (-1 to 1, see channel.set) on tracks with audio "
-				"channels; instrument, a parameter of "
+				"channel's fader, in dB), pan, panLeft and panRight (-1 to 1, see channel.set) and mute (0 off, 1 on; "
+				"a lane that plays overrides the mute button) on tracks with audio channels; instrument, a parameter of "
 				"an instrument track's built-in instrument (target.parameter, an id from processor.list, in its "
-				"range); controller (target.number 0-127), pitchBend (0.5 is no bend) and channelPressure, all 0 to "
+				"range); plugin, a parameter of the built-in plugin in one of the track's slots (target.slot and "
+				"target.parameter, as parameter.list gives them, in its range; the lane goes when the plugin is "
+				"removed or moves to another channel); controller (target.number 0-127), pitchBend (0.5 is no bend) "
+				"and channelPressure, all 0 to "
 				"1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). A track has one lane per "
 				"target. read (default true): the curve plays; without it, or without points, the parameter keeps its "
 				"static value.",
@@ -3283,6 +3345,8 @@ namespace gnubase::engine
 				"automation follows tempo changes; samples on linear ones, so it keeps its time), value in the "
 				"target's unit, shape of the curve to the next point (step, linear or curve; "
 				"default linear) and for curves the bend, curve, from -1 to 1 (above 0 the value moves fast at first). "
+				"Mute and stepped parameters (parameter.list) have step curves: their points are steps with whole "
+				"values. "
 				"Before the first point the curve has its value, after the last point the last one's; points at one "
 				"position make a jump. A ramp of volume moves the gain in a straight line.",
 				objectSchema({{"lane", idSchema}, {"points", arraySchema(point)}}, {"lane", "points"}), pointsResult,

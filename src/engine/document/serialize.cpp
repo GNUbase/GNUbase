@@ -72,6 +72,7 @@ namespace gnubase::engine
 			{AutomationTargetType::PanRight, "panRight"},
 			{AutomationTargetType::Instrument, "instrument"},
 			{AutomationTargetType::Plugin, "plugin"},
+			{AutomationTargetType::Mute, "mute"},
 			{AutomationTargetType::Controller, "controller"},
 			{AutomationTargetType::PitchBend, "pitchBend"},
 			{AutomationTargetType::ChannelPressure, "channelPressure"},
@@ -645,6 +646,7 @@ namespace gnubase::engine
 		case AutomationTargetType::Pan:
 		case AutomationTargetType::PanLeft:
 		case AutomationTargetType::PanRight:
+		case AutomationTargetType::Mute:
 			break;
 		case AutomationTargetType::Instrument:
 			json["parameter"] = target.parameter;
@@ -965,6 +967,7 @@ namespace gnubase::engine
 				static_cast<uint32_t>(checkedInteger(target, "parameter", UINT32_MAX, name + " target"));
 			lane.target.number = static_cast<uint8_t>(checkedInteger(target, "number", 127, name + " target"));
 			lane.target.channel = static_cast<uint8_t>(checkedInteger(target, "channel", 15, name + " target"));
+			lane.target.slot = target.value("slot", ObjectId{0});
 			const bool midi = track.type == TrackType::Midi || track.type == TrackType::Instrument;
 			bool fits = midi;
 			double minimum = 0.0;
@@ -979,9 +982,19 @@ namespace gnubase::engine
 				minimum = lane.target.type == AutomationTargetType::Volume ? g_minChannelVolume : -1.0;
 				maximum = lane.target.type == AutomationTargetType::Volume ? project.maxVolume : 1.0;
 				break;
-			case AutomationTargetType::Plugin:
-				fits = false; // plugin parameters are automated with #70
+			case AutomationTargetType::Mute:
+				fits = project.channels.at(track.channel).format != ChannelFormat::None;
+				maximum = 1.0;
 				break;
+			case AutomationTargetType::Plugin:
+			{
+				// A slot of the track's channel; the plugin's range applies when it plays, like an instrument's.
+				const auto slot = project.slots.find(lane.target.slot);
+				fits = slot != project.slots.end() && slot->second.channel == track.channel;
+				minimum = std::numeric_limits<double>::lowest();
+				maximum = std::numeric_limits<double>::max();
+				break;
+			}
 			case AutomationTargetType::Instrument:
 				// The instrument's range applies when it plays; the instrument may have changed since.
 				fits = track.type == TrackType::Instrument;

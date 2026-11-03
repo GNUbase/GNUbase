@@ -251,7 +251,8 @@ namespace gnubase::engine
 		void attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc, uint64_t generation);
 		// The releases for a new program: those pending that the audio thread hasn't done yet.
 		std::vector<Release> releases();
-		// Puts every channel's processor into a channel strip with the channel's fader and automation.
+		// Puts every channel's processor into a channel strip with the channel's fader and automation, and the
+		// plugins of its slots into slot strips that get their automation; after attachSlots.
 		void attachStrips(const RenderSnapshot& snapshot, graph::GraphDesc& desc);
 		// Brings the slots' plugins in line with the snapshot and gives the slot nodes those that are ready.
 		void attachSlots(const RenderSnapshot& snapshot, graph::GraphDesc& desc);

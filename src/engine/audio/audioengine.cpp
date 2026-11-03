@@ -431,8 +431,8 @@ namespace gnubase::engine
 		m_playback.setTracks(std::move(tracks), std::move(paths), snapshot.sampleRate);
 		const uint64_t generation = ++m_generation;
 		attachMidi(snapshot, desc, generation);
-		attachStrips(snapshot, desc);
 		attachSlots(snapshot, desc);
+		attachStrips(snapshot, desc);
 		std::vector<std::vector<int>> ports = devicePorts(snapshot.busses, m_inputPorts, m_outputPorts);
 		if (m_directMonitoring)
 			monitorDirectly(snapshot, desc, ports);
@@ -595,6 +595,10 @@ namespace gnubase::engine
 	{
 		std::map<ObjectId, std::shared_ptr<ChannelState>> states;
 		const size_t firstChannel = snapshot.busses.size();
+		std::map<ObjectId, size_t> slotNodes;
+		for (size_t n = 0; n < desc.nodes.size(); ++n)
+			if (desc.nodes[n].kind == graph::NodeKind::PluginSlot)
+				slotNodes[desc.nodes[n].object] = n;
 		for (size_t i = 0; i < snapshot.channels.size(); ++i)
 		{
 			const RenderChannel& channel = snapshot.channels[i];
@@ -626,11 +630,19 @@ namespace gnubase::engine
 					std::make_shared<ChannelStrip>(state, node.processor, panning, monitoring, channel.silent);
 				continue;
 			}
-			// Plugin slots between them: the source node plays the source and the automation, the channel's node
-			// fades.
+			// Plugin slots between them: the source node plays the source and the automation, the slot nodes give
+			// their plugins their automation, the channel's node fades.
+			std::vector<const void*> plugins;
+			for (size_t index = 0; index < channel.slots.size(); ++index)
+			{
+				graph::NodeDesc& slot = desc.nodes[slotNodes.at(channel.slots[index].id)];
+				plugins.push_back(slot.processor.get());
+				if (slot.processor)
+					slot.processor = std::make_shared<SlotStrip>(state, slot.processor, static_cast<uint8_t>(index));
+			}
 			graph::NodeDesc& sourceDesc = desc.nodes[source];
-			sourceDesc.processor = std::make_shared<ChannelStrip>(
-				state, sourceDesc.processor, panning, monitoring, channel.silent, StripPart::Source);
+			sourceDesc.processor = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
+				channel.silent, StripPart::Source, std::move(plugins));
 			node.processor =
 				std::make_shared<ChannelStrip>(state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader);
 		}

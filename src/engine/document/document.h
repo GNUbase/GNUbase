@@ -104,8 +104,9 @@ namespace gnubase::engine
 		// Audio tracks: the monitor and record enable buttons (docs/features/latency-and-monitoring.md).
 		bool monitor = false;
 		bool recordEnable = false;
-		// The mute and solo buttons (docs/features/track-list.md): a muted channel is silent; while any channel is
-		// soloed, only soloed ones, where they play through and what plays into them are heard.
+		// The mute and solo buttons (docs/features/track-list.md): a muted channel is silent, unless mute automation
+		// plays (docs/features/automation.md); while any channel is soloed, only soloed ones, where they play through
+		// and what plays into them are heard.
 		bool mute = false;
 		bool solo = false;
 		// Audio channels: the plugin slots, from top to bottom; the audio passes through them before the fader.
@@ -385,6 +386,7 @@ namespace gnubase::engine
 		Pan,             // the channel's pan, -1 to 1
 		PanLeft,         // the combined panner's position of the left channel, -1 to 1
 		PanRight,        // and of the right channel
+		Mute,            // the channel's mute button: 0 off, 1 on; a step curve
 		Instrument,      // a parameter of the channel's built-in instrument, in its range
 		Plugin,          // a parameter of the plugin in one of the channel's slots, in its range: slot and parameter
 		Controller,      // a MIDI control change: number and channel; 0 to 1
