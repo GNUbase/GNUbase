@@ -706,6 +706,67 @@ TEST_CASE("the mouse wheel changes a display's value", "[ui]")
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("right") == 96000; }));
 }
 
+TEST_CASE("positions typed or wheeled past the largest project position stop there (#457)", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.call("settings.set",
+		{{"key", "ui.timeFormats"},
+			{"value", {{"primary", "seconds"}, {"secondary", "samples"}, {"timeDisplay", "barsBeats"}}}});
+	app.call("transport.locate", {{"position", 48000}});
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#secondary-time") == "48000"; }));
+	const std::string maximum = std::to_string(time::g_maxPosition);
+
+	// Fifteen digits of seconds are more samples than 64 bits hold: the cursor goes to the largest position.
+	type(app, "#primary-time", "999999999999999");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == time::g_maxPosition; }));
+	REQUIRE(app.waitUntil([&app, &maximum] { return shows(app, "#secondary-time") == maximum; }));
+
+	// Past the largest position in samples, which the engine would refuse.
+	app.call("transport.locate", {{"position", 48000}});
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 48000; }));
+	type(app, "#secondary-time", "999999999999999");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == time::g_maxPosition; }));
+	REQUIRE(app.waitUntil([&app, &maximum] { return shows(app, "#secondary-time") == maximum; }));
+
+	// The wheel stops there too, and the next turn goes back from there.
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -1);
+	settle(app);
+	CHECK(position(app) == time::g_maxPosition);
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, 1);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == time::g_maxPosition - 48000; }));
+
+	// Turns far larger than a wheel's, as injected input may send, are a billion steps: a billion seconds here.
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -1e13F);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == time::g_maxPosition; }));
+	REQUIRE(app.waitUntil([&app, &maximum] { return shows(app, "#secondary-time") == maximum; }));
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, 1e13F);
+	REQUIRE(waitFor(app,
+		[](const Json& state) { return state.at("position") == time::g_maxPosition - (int64_t{48000} * 1000000000); }));
+
+	// The locators and the range's length.
+	type(app, "#left-locator", "999999999999999");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("left") == time::g_maxPosition; }));
+	app.call("transport.set", {{"left", 48000}, {"right", 96000}});
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("left") == 48000; }));
+	type(app, "#right-locator", "999999999999999");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("right") == time::g_maxPosition; }));
+	app.call("transport.set", {{"right", 96000}});
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("right") == 96000; }));
+	type(app, "#locator-range", "999999999999999");
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("right") == time::g_maxPosition; }));
+
+	// A billion beats in bars and beats: 500 million seconds at 120 BPM.
+	app.call("settings.set",
+		{{"key", "ui.timeFormats"},
+			{"value", {{"primary", "barsBeats"}, {"secondary", "samples"}, {"timeDisplay", "barsBeats"}}}});
+	app.call("transport.locate", {{"position", 0}});
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == 0; }));
+	REQUIRE(app.waitUntil([&app] { return shows(app, "#primary-time") == "1.1.1.0"; }));
+	app.ui().wheel(std::nullopt, at("#primary-time"), 0, -1e13F);
+	REQUIRE(waitFor(app, [](const Json& state) { return state.at("position") == int64_t{24000} * 1000000000; }));
+}
+
 TEST_CASE("a drag or wheel gesture on the tempo field is one undo step", "[ui]")
 {
 	test::UiApp app({1024, 700});

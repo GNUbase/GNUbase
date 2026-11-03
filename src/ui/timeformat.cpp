@@ -365,8 +365,10 @@ namespace gnubase::ui
 
 		std::optional<double> timecodeSeconds(const std::string& text, time::FrameRate rate)
 		{
+			// Hours past what a timecode holds aren't cut to fewer.
 			const auto numbers = fromRight(text, ":;", 4);
-			if (!numbers || (*numbers)[0] >= rate.framesPerSecond || (*numbers)[1] >= 60 || (*numbers)[2] >= 60)
+			if (!numbers || (*numbers)[0] >= rate.framesPerSecond || (*numbers)[1] >= 60 || (*numbers)[2] >= 60 ||
+				(*numbers)[3] > std::numeric_limits<int>::max())
 				return std::nullopt;
 			return time::toSeconds({false, static_cast<int>((*numbers)[3]), static_cast<int>((*numbers)[2]),
 									   static_cast<int>((*numbers)[1]), static_cast<int>((*numbers)[0])},

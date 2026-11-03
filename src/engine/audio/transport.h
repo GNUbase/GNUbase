@@ -13,9 +13,7 @@
 
 namespace gnubase::engine
 {
-	// The largest project position, in samples: about 11 years at 768 kHz, far from where adding a block, a cycle or
-	// a post-roll could overflow.
-	inline constexpr time::Samples g_maxPosition = time::Samples{1} << 48;
+	using time::g_maxPosition; // the largest project position (engine/time/tempomap.h)
 
 	// Where playback starts.
 	enum class StartMode : uint8_t
