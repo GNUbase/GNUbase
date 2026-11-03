@@ -302,6 +302,42 @@ TEST_CASE("audio pre-record keeps the input from before recording started in the
 	CHECK(std::any_of(file.begin(), file.begin() + 2400, [](float sample) { return sample != 0.0f; }));
 }
 
+TEST_CASE("punch recording replaces only the punch range, after the pre-roll and before the post-roll", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	const ObjectId media = idOf(run(client, "media.add", {{"path", writeRamp(setup.dir, 9600)}}), "media");
+	const ObjectId clip = idOf(run(client, "clip.add", {{"media", media}}), "clip");
+	run(client, "audioEvent.add", {{"track", setup.track}, {"clip", clip}, {"position", 0}});
+	run(client, "transport.set",
+		{{"left", 2400}, {"right", 4800}, {"punchIn", true}, {"punchOut", true}, {"stopAfterPunchOut", true},
+			{"preRoll", true}, {"preRollAmount", 1200}, {"postRoll", true}, {"postRollAmount", 960},
+			{"audioRecordMode", "replace"}});
+	run(client, "transport.locate", {{"position", 2400}});
+	const Json started = run(client, "transport.record");
+	CHECK(started.at("playing") == true);
+	CHECK(started.at("recording") == false); // the pre-roll first
+	CHECK(started.at("position") == 1200);
+	run(client, "audio.render", {{"frames", 9600}});
+	REQUIRE(waitForRecording(client).is_object()); // the punch out ended the recording
+	const Json transport = run(client, "transport.get");
+	CHECK(transport.at("playing") == false); // stopped after the post-roll
+	CHECK(transport.at("recording") == false);
+	CHECK(transport.at("position") == 5760);
+
+	// The take replaced the event between the locators and nothing else.
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 3);
+	const auto span = [](const Json& event)
+	{ return std::pair{event.at("position").get<int64_t>(), event.at("length").get<int64_t>()}; };
+	CHECK(span(events[0]) == std::pair<int64_t, int64_t>{0, 2400});
+	CHECK(span(events[1]) == std::pair<int64_t, int64_t>{2400, 2400});
+	CHECK(span(events[2]) == std::pair<int64_t, int64_t>{4800, 4800});
+	const std::vector<float> take = channelOf(pathOf(client, events[1]), 0);
+	REQUIRE(take.size() == 2400);
+	CHECK(take == recorded(client, 0, 2400, 2400));
+}
+
 TEST_CASE("only record-enabled audio tracks record, and nothing records without recording", "[integration]")
 {
 	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});

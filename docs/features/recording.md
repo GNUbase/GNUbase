@@ -30,7 +30,9 @@ transport's record state and the record mode setting.
   WAV once the recording ends; after a crash the frames written so far are in it, as the reference describes (p. 347).
 - **Takes.** A file holds everything recorded from the start of the recording to its end. Each run of consecutive
   project positions is a take: a cycle lap, or what was recorded between punching in and out
-  (`transport.record` with `record: false` ends a recording; recording again starts a new one). When the recording
+  (`transport.record` with `record: false` or a punch out at the right locator ends a recording, and recording again
+  or a punch in at the left locator starts a new one, see [playback.md](playback.md); a cycle lap that punches out at
+  the right locator and in at the left one goes on in the same file). When the recording
   ends, the engine runs `recording.add` with each track's file and takes, one undo step named Record: a media file and
   a clip per file, and an audio event per take at its position, playing its part of the file. `recording.added`
   announces the media files, clips and events; a file that can't be created or written is announced with
@@ -53,7 +55,7 @@ transport's record state and the record mode setting.
 ## Not yet
 
 Record folders per track (p. 343); the common record modes (Punch In/Out, Re-Record, starting at the left locator or
-the selection, p. 339); punching in and out at the locators and pre-roll and post-roll (#102); stacking cycle takes in
+the selection, p. 339); punch points apart from the locators (p. 319); stacking cycle takes in
 lanes and comping; drawing the waveform while recording (`peaks::PeakRecorder` is ready for it); the record file
 type and bit depth of the project setup (#78); MIDI recording (#97); recording the output of a bus or channel (p. 345);
 adjusting for plugin latency on the input (#71); moving undone recordings' files to the pool's trash.
