@@ -1182,7 +1182,7 @@ TEST_CASE("sends are saved, with their destination, type, level and on also in p
 									 .child("Sends");
 	size_t count = 0;
 	for (const pugi::xml_node send : sends.children("Send"))
-		count += send ? 1 : 0;
+		count += send.empty() ? 0 : 1;
 	REQUIRE(count == 2);
 	const pugi::xml_node first = sends.child("Send");
 	CHECK(std::string(first.attribute("type").as_string()) == "post");

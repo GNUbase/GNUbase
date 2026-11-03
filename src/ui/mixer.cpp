@@ -204,9 +204,11 @@ namespace gnubase::ui
 			for (int send = 1; send <= g_sends; ++send)
 			{
 				const std::string path = "sends." + std::to_string(send) + ".";
-				sends += row(toggle(path + "on", "Send on/off", std::to_string(send)) + R"(<select param=")" + path +
-					R"(destination" title="Send Destination"/>)" + toggle(path + "preFader", "Pre-Fader", "Pre") +
-					knob(path + "level", "Send Level", -60.0, 6.0, 0.0));
+				std::string controls = toggle(path + "on", "Send on/off", std::to_string(send));
+				controls += R"(<select param=")" + path + R"(destination" title="Send Destination"/>)";
+				controls += toggle(path + "preFader", "Pre-Fader", "Pre");
+				controls += knob(path + "level", "Send Level", -60.0, 6.0, 0.0);
+				sends += row(controls);
 			}
 			return section("pre", "Pre",
 					   knob("pre.gain", "Pre-Gain", -24.0, 24.0, 0.0) + toggle("pre.phase", "Phase", "Ø") +
@@ -714,10 +716,10 @@ namespace gnubase::ui
 						event.GetParameters().count("value") != 0 ? &event.GetParameters().at("value") : nullptr;
 					if (given == nullptr)
 						break;
-					Json value = given->GetType() == Rml::Variant::BOOL ? Json(given->Get<bool>())
-						: target->GetTagName() == "select" // a send's destination, a channel id
-						? Json(std::stoull(given->Get<Rml::String>("0")))
-						: Json(given->Get<double>());
+					Json value =
+						given->GetType() == Rml::Variant::BOOL ? Json(given->Get<bool>()) : Json(given->Get<double>());
+					if (target->GetTagName() == "select") // a send's destination, a channel id
+						value = std::stoull(given->Get<Rml::String>("0"));
 					Json parameters = paramChange(attribute(*target, "param"), std::move(value));
 					parameters["channel"] = channel->id;
 					m_binding.send("channel.set", std::move(parameters));
