@@ -698,7 +698,8 @@ TEST_CASE("while the device runs, the engine announces punching in and stopping 
 	Client listener(engine);
 	run(client, "audio.setDevice", {{"blockSize", 64}}); // a block every 1.3 ms
 	run(client, "transport.set",
-		{{"left", 24000}, {"right", 48000}, {"punchIn", true}, {"punchOut", true}, {"stopAfterPunchOut", true}});
+		{{"left", 24000}, {"right", 48000}, {"punchIn", true}, {"punchOut", true}, {"stopAfterPunchOut", true},
+			{"postRoll", true}, {"postRollAmount", 24000}});
 	run(client, "audio.start");
 	run(client, "transport.play");
 	// Waits up to 10 s for a transport.changed that matches; keeps the requests of all it sees.
@@ -719,10 +720,11 @@ TEST_CASE("while the device runs, the engine announces punching in and stopping 
 		return false;
 	};
 	CHECK(waitFor(true, true));   // the punch in at 0.5 s
-	CHECK(waitFor(false, false)); // the stop at the punch out at 1 s
+	CHECK(waitFor(true, false));  // the punch out at 1 s
+	CHECK(waitFor(false, false)); // the stop after the post-roll at 1.5 s
 	const Json state = run(client, "transport.get");
 	CHECK(state.at("playing") == false);
-	CHECK(state.at("position") == 48000);
+	CHECK(state.at("position") == 72000);
 	run(client, "audio.stop");
 
 	// The engine's runs of transport.update that changed nothing stay out of the command log.
@@ -734,7 +736,7 @@ TEST_CASE("while the device runs, the engine announces punching in and stopping 
 			++updates;
 			CHECK(announced.count(entry.at("request").get<RequestId>()) == 1);
 		}
-	CHECK(updates == 2);
+	CHECK(updates == 3);
 }
 
 TEST_CASE("toggle switches cycle, punch in and out, the metronome and recording", "[integration]")
