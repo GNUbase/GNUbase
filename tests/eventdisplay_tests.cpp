@@ -863,6 +863,22 @@ TEST_CASE("the ruler shows the chosen time format", "[unit]")
 	CHECK(fixture.display.rulerFormat() == ui::TimeFormat::Seconds);
 	CHECK(fixture.call("snap.get").at("format") == "seconds");
 	CHECK(fixture.call("project.get").at("timeFormat") == "timecode");
+
+	// Folding a folder track or another folder data mode shows the project again; the ruler keeps the snap
+	// settings' format, which snap.set changed after the last project.get.
+	fixture.display.setRulerFormat(ui::TimeFormat::Samples);
+	REQUIRE(fixture.waitUntil([&fixture] { return fixture.call("snap.get").at("format") == "samples"; }));
+	fixture.step();
+	fixture.display.setHiddenTracks({1});
+	fixture.step();
+	CHECK(fixture.display.rulerFormat() == ui::TimeFormat::Samples);
+	CHECK(fixture.display.snap().format == engine::GridFormat::Samples);
+	fixture.call("settings.set", {{"key", "ui.folderData"}, {"value", "hideWhenExpanded"}});
+	for (int i = 0; i < 10; ++i)
+		fixture.step();
+	CHECK(fixture.display.rulerFormat() == ui::TimeFormat::Samples);
+	CHECK(fixture.display.snap().format == engine::GridFormat::Samples);
+	fixture.call("settings.set", {{"key", "ui.folderData"}, {"value", "always"}});
 }
 
 TEST_CASE("the event display's actions are commands by name, for key commands", "[unit]")
