@@ -174,6 +174,7 @@ namespace gnubase::app
 		ui::WindowId m_markersWindow = 0;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
 		std::unique_ptr<ui::MarkerLines> m_markerLines;   // and before the display
+		std::vector<uint64_t> m_eventSelection;           // the display's, as the last step saw it
 		std::unique_ptr<ui::TransportControls> m_transportBar;
 		TransportWindow m_transportPanel;
 		TransportWindow m_timeDisplay;

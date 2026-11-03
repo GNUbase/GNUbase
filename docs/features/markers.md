@@ -35,7 +35,8 @@ The reference's defaults (`ui::defaultKeyMap`, [key-commands.md](key-commands.md
   color them; code places the labels. The user setting `ui.markerIds` (Show Marker IDs on Marker Track, on by
   default) leaves out the numbers when it is off.
 - **Mouse** on a marker track's lane: a click selects the marker under the mouse (its label, a position marker's line
-  within 4 dp, or the cycle marker it is in) and Ctrl-click adds or removes it, its label getting `.selected`, and the info line shows and edits the selected markers ([inspector.md](inspector.md), p. 430);
+  within 4 dp, or the cycle marker it is in) and Ctrl-click adds or removes it, its label getting `.selected`, and the info line shows and edits the selected markers ([inspector.md](inspector.md), p. 430); selecting
+  a marker deselects the events and selecting an event the markers;
   Alt-click adds a position marker there (but not on a cycle marker); a double click on a cycle marker sets the
   locators to it (`marker.setLocators`), with Alt it zooms to it (p. 424). The event
   display stops mouse downs, so RmlUi sends no `dblclick`: two clicks within half a second and 3 dp make one.

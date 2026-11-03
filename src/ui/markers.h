@@ -100,9 +100,11 @@ namespace gnubase::ui
 		MarkerLineMode mode() const { return m_mode; }
 		bool showsIds() const { return m_showIds; }
 
-		// The ids of the selected markers. setSelection selects others; onSelect is told of the user's clicks.
+		// The ids of the selected markers. setSelection selects others; onSelect is told of the user's clicks and of
+		// deselect, which AppUi calls when an event is selected: the project window selects events or markers.
 		const std::vector<uint64_t>& selection() const { return m_selection; }
 		void setSelection(std::vector<uint64_t> markers);
+		void deselect();
 		void onSelect(std::function<void(const std::vector<uint64_t>&)> handler) { m_onSelect = std::move(handler); }
 
 	private:

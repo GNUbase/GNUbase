@@ -296,9 +296,21 @@ namespace gnubase::ui
 			if (hit != 0)
 				selection.push_back(hit);
 		}
+		// The project window selects events or markers: a marker clicked deselects the events.
+		if (!selection.empty() && !m_display.selection().empty())
+			m_display.select({});
 		if (selection == m_selection)
 			return;
 		setSelection(std::move(selection));
+		if (m_onSelect)
+			m_onSelect(m_selection);
+	}
+
+	void MarkerLines::deselect()
+	{
+		if (m_selection.empty())
+			return;
+		setSelection({});
 		if (m_onSelect)
 			m_onSelect(m_selection);
 	}

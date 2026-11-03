@@ -9,7 +9,12 @@
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
+#include "ui/markers.h"
 #include "ui/tracklist.h"
+
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -308,6 +313,75 @@ TEST_CASE(
 	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Part"));
 	CHECK_FALSE(hasClass(window.app, "#info-line", "markers"));
 	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=mute]", "hidden"));
+}
+
+TEST_CASE("the project window selects events or markers, and the info line shows the ones selected", "[ui]")
+{
+	Window window;
+	window.addTrack({{"type", "marker"}});
+	const auto add = [&window](const Json& parameters)
+	{ return window.call("marker.add", parameters).at("marker").at("id").get<uint64_t>(); };
+	const uint64_t intro = add({{"position", g_quarter}, {"name", "Intro"}});
+	const uint64_t verse =
+		add({{"type", "cycle"}, {"position", 4 * g_quarter}, {"end", 8 * g_quarter}, {"name", "Verse"}});
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t part = window.addPart(midi, 0, 4 * g_quarter, "Part");
+	const auto marker = [&window](uint64_t id) { return window.find("markers", id); };
+	REQUIRE(window.app.waitUntil([&] { return elements(window.app, ".marker-label").size() == 2; }));
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 1; }));
+	const ui::MarkerLines& lines = *window.app.appUi().markerLines();
+	const auto clickMarker = [&window](int index, const std::vector<std::string>& modifiers = {})
+	{
+		window.app.ui().click(
+			std::nullopt, {".marker-label", index, std::nullopt}, ui::MouseButton::Left, 1, modifiers);
+		window.app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// A marker clicked again after an event was selected shows again: selecting an event deselects the markers.
+	clickMarker(1);
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Verse"));
+	window.display.select({part});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Part"));
+	REQUIRE(window.app.waitUntil([&] { return lines.selection().empty(); }));
+	CHECK(!hasClass(window.app, ".marker-label[marker=" + std::to_string(verse) + "]", "selected"));
+	// On the cycle marker beside its label: a click in the same place this soon would be a double click.
+	Rml::ElementList labels;
+	Rml::Context& context = window.app.main().context();
+	for (int i = 0; i < context.GetNumDocuments() && labels.empty(); ++i)
+		context.GetDocument(i)->QuerySelectorAll(labels, ".marker-label");
+	REQUIRE(labels.size() == 2);
+	Rml::Element& label = *labels[1];
+	window.app.ui().click(std::nullopt,
+		{"", 0,
+			ui::Point{static_cast<int>(label.GetAbsoluteLeft() + label.GetOffsetWidth() + 20.0F),
+				static_cast<int>(label.GetAbsoluteTop() + (label.GetOffsetHeight() / 2.0F))}},
+		ui::MouseButton::Left, 1, {});
+	REQUIRE(window.app.waitUntil([&] { return lines.selection() == std::vector<uint64_t>{verse}; }));
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Verse"));
+	CHECK(hasClass(window.app, "#info-line", "markers"));
+	CHECK(window.display.selection().empty());
+
+	// Ctrl+Enter on the first marker's own value gives every selected marker that value, and leaves the part.
+	window.display.select({part});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Part"));
+	clickMarker(1);
+	clickMarker(0, {"ctrl"});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Intro"));
+	REQUIRE(hasClass(window.app, "#info-line", "multiple"));
+	const size_t steps = window.call("history.get").at("steps").size();
+	window.type("#info-line textdisplay[field=start]", "1.2.1.0", "Ctrl+Enter");
+	REQUIRE(window.app.waitUntil([&] { return marker(verse).at("position") == g_quarter; }));
+	CHECK(marker(verse).at("end") == 5 * g_quarter);
+	CHECK(marker(intro).at("position") == g_quarter);
+	CHECK(window.part(part).at("position") == 0);
+	CHECK(window.part(part).at("name") == "Part");
+	CHECK(window.call("history.get").at("steps").size() == steps + 1);
+
+	// A selection naming a marker the project no longer has shows nothing.
+	window.call("marker.remove", {{"markers", {verse, intro}}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("markers").empty(); }));
+	window.app.appUi().markerLines()->setSelection({verse});
+	CHECK(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "empty"); }));
 }
 
 TEST_CASE("the inspector shows the selected track, and its controls change the track's channel", "[ui]")

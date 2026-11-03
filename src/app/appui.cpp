@@ -224,6 +224,13 @@ namespace gnubase::app
 				for (MixerWindow& shown : m_mixers)
 					if (shown.mixer && m_shell.find(shown.window) == nullptr)
 						shown.mixer.reset(); // the user closed its window
+				// The project window selects events or markers: an event selected deselects the markers.
+				if (m_eventDisplay && m_markerLines && m_eventDisplay->selection() != m_eventSelection)
+				{
+					m_eventSelection = m_eventDisplay->selection();
+					if (!m_eventSelection.empty())
+						m_markerLines->deselect();
+				}
 				if (m_infoLine)
 					m_infoLine->update();
 				// The inspector shows the first selected track.

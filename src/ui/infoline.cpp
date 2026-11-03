@@ -103,7 +103,10 @@ namespace gnubase::ui
 			if (shows() && (field != "volume" || number))
 			{
 				m_absolute = true;
-				edit(field, text, number.value_or(0.0F));
+				if (m_showsMarkers)
+					editMarkers(field, text);
+				else
+					edit(field, text, number.value_or(0.0F));
 				m_absolute = false;
 			}
 		}
@@ -129,6 +132,7 @@ namespace gnubase::ui
 		m_format = format;
 		if (m_showsMarkers)
 		{
+			m_events = Json::array(); // asked for again when the events show
 			show();
 			return;
 		}
@@ -239,7 +243,13 @@ namespace gnubase::ui
 	void InfoLine::showMarkers()
 	{
 		Rml::Element& root = *m_root.get();
-		setClass(root, "empty", false);
+		// None of them in the display's project: removed, before the marker lines drop them from their selection.
+		setClass(root, "empty", m_markers.empty());
+		if (m_markers.empty())
+		{
+			setClass(root, "multiple", false);
+			return;
+		}
 		setClass(root, "multiple", m_markers.size() > 1);
 		const MarkerItem& first = m_markers.front();
 		const TimeContext context = projectTime(m_display.project());
