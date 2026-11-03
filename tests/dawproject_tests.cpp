@@ -1153,6 +1153,62 @@ TEST_CASE("mute, solo, solo defeat, listen, notes and disabled tracks are saved,
 	CHECK(loaded.at("tracks")[0].at("enabled") == true);
 }
 
+TEST_CASE("sends are saved, with their destination, type, level and on also in project.xml", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const Json audio = run(client, "track.add", {{"type", "audio"}, {"name", "Audio"}});
+	const Json reverb = run(client, "track.add", {{"type", "effect"}, {"name", "Reverb"}});
+	const Json group = run(client, "track.add", {{"type", "group"}, {"name", "Group"}});
+	run(client, "channel.set",
+		{{"channel", idOf(audio, "channel")},
+			{"sends",
+				{{{"send", 1}, {"destination", idOf(reverb, "channel")}, {"on", true}, {"level", -6.0}},
+					{{"send", 3}, {"destination", idOf(group, "channel")}, {"preFader", true}, {"level", -144.0}}}}});
+	const Json before = run(client, "project.get");
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "project.get") == before);
+
+	std::map<std::string, std::string> entries = readZip(file);
+	pugi::xml_document xml;
+	REQUIRE(xml.load_string(entries.at("project.xml").c_str()));
+	const pugi::xml_node sends = xml.child("Project")
+									 .child("Structure")
+									 .find_child_by_attribute("Track", "name", "Audio")
+									 .child("Channel")
+									 .child("Sends");
+	size_t count = 0;
+	for (const pugi::xml_node send : sends.children("Send"))
+		count += send ? 1 : 0;
+	REQUIRE(count == 2);
+	const pugi::xml_node first = sends.child("Send");
+	CHECK(std::string(first.attribute("type").as_string()) == "post");
+	CHECK(std::abs(first.child("Volume").attribute("value").as_double() - std::pow(10.0, -6.0 / 20.0)) < 1e-9);
+	CHECK(first.child("Enable").attribute("value").as_bool());
+	CHECK(std::string(first.next_sibling("Send").attribute("type").as_string()) == "pre");
+
+	// From project.xml alone the sends come one after the other, with the right destinations.
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	const std::string other = utf8(dir.path() / "other.dawproject");
+	writeZip(other, entries);
+	run(client, "project.load", {{"path", other}});
+	const Json loaded = run(client, "project.get");
+	REQUIRE(loaded.at("channels").size() == 3);
+	const Json& loadedSends = loaded.at("channels")[0].at("sends");
+	CHECK(loadedSends[0].at("destination") == loaded.at("channels")[1].at("id"));
+	CHECK(loadedSends[0].at("on") == true);
+	CHECK(std::abs(loadedSends[0].at("level").get<double>() + 6.0) < 1e-9);
+	CHECK(loadedSends[0].at("preFader") == false);
+	CHECK(loadedSends[1].at("destination") == loaded.at("channels")[2].at("id"));
+	CHECK(loadedSends[1].at("on") == false);
+	CHECK(loadedSends[1].at("level") == -144.0);
+	CHECK(loadedSends[1].at("preFader") == true);
+	CHECK(loadedSends[2].at("destination") == 0);
+}
+
 TEST_CASE("track, event and part colors and the color set are saved; the colors also in project.xml", "[integration]")
 {
 	const test::TempDir dir;

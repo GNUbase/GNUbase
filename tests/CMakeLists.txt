@@ -99,6 +99,7 @@ add_executable(gnubase-tests
 	quantize_tests.cpp
 	recording_tests.cpp
 	rmlui_tests.cpp
+	routing_tests.cpp
 	rt_tests.cpp
 	scripting_tests.cpp
 	sequencing_tests.cpp
