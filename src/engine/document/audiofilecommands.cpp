@@ -58,6 +58,7 @@ namespace gnubase::engine
 		std::vector<std::string> convertInto(const fs::path& folder, const std::string& path, const AudioFileInfo& info,
 			double sampleRate, bool split, std::vector<std::string>& written)
 		{
+			require(!folder.empty(), "there is no folder to convert " + path + " into: save the project first");
 			std::error_code error;
 			fs::create_directories(folder, error);
 			require(!error, "can't create " + folder.u8string() + ": " + error.message());
@@ -96,9 +97,11 @@ namespace gnubase::engine
 				"it, with its channels; with oneTrack, they go one after another on one new track, and with track, "
 				"one after another on that audio track. copy copies files from outside the project folder into its "
 				"media folder (see project.location) as a job, returned as job (null without one) with the result "
-				"media.add's copy job has; the media are pointed at the copies as an undo step of its own. convert "
-				"writes files at another sample rate than the project's, and MP3 and Ogg Vorbis files, into the "
-				"media folder as 32-bit float WAV files at the project's sample rate. splitChannels writes each "
+				"media.add's copy job has; the media are pointed at the copies as an undo step of its own. MP3 and "
+				"Ogg Vorbis files are always written into the media folder as 32-bit float WAV files (FLAC files "
+				"stay as they are); in a project without a file, into the folder its recordings go to. convert "
+				"writes files at another sample rate than the project's into the media folder as 32-bit float WAV "
+				"files at the project's sample rate, MP3 and Ogg Vorbis files included. splitChannels writes each "
 				"channel of a file with several into the media folder as a mono WAV file, named after the file and "
 				"its speaker (such as take-L.wav), on a new mono track of its own. copy, convert and splitChannels "
 				"need a saved project. clipsOnly adds the media files and clips to the pool without tracks or events "
@@ -142,6 +145,9 @@ namespace gnubase::engine
 		const fs::path mediaFolder = m_file.empty() ? fs::path() : mediaFolderFor(fs::u8path(m_file));
 		require(!mediaFolder.empty() || (!copy && !convert && !split),
 			"save the project first: imported files are copied and converted into the folder of its project file");
+		// Where files are converted and split: the media folder, or for a project without a file (which only converts
+		// MP3 and Ogg Vorbis files) the folder its recordings go to.
+		const fs::path writeFolder = mediaFolder.empty() ? unsavedMediaFolder(m_settingsDirectory) : mediaFolder;
 
 		const auto run = [this, &project, &context](const char* command, const Json& commandParameters)
 		{
@@ -160,14 +166,14 @@ namespace gnubase::engine
 			for (const std::string& path : files)
 			{
 				const AudioFileInfo info = readInfo(path);
-				const bool converts = convert &&
-					(info.sampleRate != project.sampleRate || info.format == AudioFormat::Mp3 ||
-						info.format == AudioFormat::OggVorbis);
+				const bool converts = convert && info.sampleRate != project.sampleRate;
 				const bool splits = split && info.channels > 1;
+				// Compressed files other than FLAC always become WAV files, whatever the options say.
+				const bool compressed = info.format == AudioFormat::Mp3 || info.format == AudioFormat::OggVorbis;
 				std::vector<std::string> paths{path};
-				if (converts || splits)
+				if (converts || splits || compressed)
 					paths = convertInto(
-						mediaFolder, path, info, converts ? project.sampleRate : info.sampleRate, splits, written);
+						writeFolder, path, info, converts ? project.sampleRate : info.sampleRate, splits, written);
 
 				time::Samples length = 0;
 				for (const std::string& file : paths)

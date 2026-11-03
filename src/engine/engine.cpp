@@ -15,7 +15,6 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
-#include <system_error>
 #include <utility>
 
 namespace gnubase::engine
@@ -76,15 +75,6 @@ namespace gnubase::engine
 		constexpr size_t g_commandLogSize = 256;
 		// How often the engine asks whether an auto save is due (project.autoSave, docs/features/project-files.md).
 		constexpr std::chrono::seconds g_autoSaveCheck{30};
-
-		// Where unsaved projects record: "Recordings" in the settings folder, or without one in the temporary folder.
-		std::filesystem::path recordingsFolder(const std::filesystem::path& settingsDirectory)
-		{
-			if (!settingsDirectory.empty())
-				return settingsDirectory / "Recordings";
-			std::error_code error;
-			return std::filesystem::temp_directory_path(error) / "GNUbase Recordings";
-		}
 
 		Json toJson(const CommandInfo& info)
 		{
@@ -152,7 +142,7 @@ namespace gnubase::engine
 		m_audio->setSlotDescriber(
 			[this](ObjectId slot) { return m_project->describeSlot(m_project->project(), slot); });
 		m_audio->setRecordSetup(
-			[this, recordings = recordingsFolder(settingsDirectory)]
+			[this, recordings = unsavedMediaFolder(settingsDirectory)]
 			{
 				// Into the project's media folder, or for an unsaved project a folder of the user's.
 				const Project& project = m_project->project();

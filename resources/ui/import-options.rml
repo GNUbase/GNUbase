@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Import options for audio files (docs/features/file-import.md, reference manual pp. 357-359): ui::EventDisplay
      opens it for audio files chosen with File > Import > Audio File or dropped on it, and on OK imports them with
-     audioFile.import and these options. Copying, converting and splitting are disabled until the project is saved;
+     audioFile.import and these options. Copy, Convert and Split Channels are disabled until the project is saved;
      #import-one-track is disabled for a single file and for files dropped on a track. -->
 <rml>
 <head>
