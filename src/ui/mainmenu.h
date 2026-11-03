@@ -28,7 +28,9 @@ namespace gnubase::ui
 	class MainMenu final : private Rml::EventListener
 	{
 	public:
-		// Throws std::invalid_argument for an item whose parameters aren't a JSON object.
+		// Throws std::invalid_argument, leaving the document as it was, for an item whose parameters aren't a JSON
+		// object, or whose command and parameters KeyCommands::check refuses: a command that doesn't exist, or
+		// parameters the command doesn't take.
 		MainMenu(KeyCommands& keys, Window& window, Rml::ElementDocument& document);
 		~MainMenu() override;
 		MainMenu(const MainMenu&) = delete;

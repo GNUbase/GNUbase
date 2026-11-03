@@ -1823,6 +1823,15 @@ namespace gnubase::engine
 		}
 	}
 
+	std::map<ObjectId, MidiPart> sharedPartsOf(const std::map<ObjectId, MidiPart>& parts)
+	{
+		std::map<ObjectId, MidiPart> shared;
+		for (const auto& [id, part] : parts)
+			if (part.shared != 0)
+				shared.emplace_hint(shared.end(), id, part);
+		return shared;
+	}
+
 	void ProjectModel::registerEventEditCommands(Engine& engine)
 	{
 		const Json shift = {{"delta", integer()}, {"ticks", integer()}};

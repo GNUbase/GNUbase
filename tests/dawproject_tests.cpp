@@ -1068,7 +1068,33 @@ TEST_CASE("snap settings saved before #413 load with the time format of their gr
 	// Older builds read the grid type in use.
 	run(client, "snap.set", {{"format", "seconds"}});
 	run(client, "project.save", {{"path", file}});
-	CHECK(Json::parse(readZip(file).at("gnubase.json")).at("project").at("snap").at("grid") == "100ms");
+	Json saved = Json::parse(readZip(file).at("gnubase.json")).at("project").at("snap");
+	CHECK(saved.at("grid") == "100ms");
+	// The newer build's grid types are written back for it (#565), not a grid type of another format.
+	CHECK(saved.at("grids") ==
+		Json{{"barsBeats", "bar"}, {"seconds", "5ms"}, {"timecode", "frame"}, {"samples", "10samples"},
+			{"userFrames", "frame"}, {"feetFrames", "1foot"}});
+	CHECK(run(client, "project.get").at("snap").at("grids").at("seconds") == "100ms");
+	// Until this build chooses one for that format.
+	run(client, "snap.set", {{"grid", "1ms"}});
+	run(client, "project.save", {{"path", file}});
+	saved = Json::parse(readZip(file).at("gnubase.json")).at("project").at("snap");
+	CHECK(saved.at("grids").at("seconds") == "1ms");
+	CHECK(saved.at("grids").at("feetFrames") == "1foot");
+
+	// Damaged settings leave out what is damaged, not the extension entry.
+	extension.at("project")["snap"] = {{"on", 1}, {"format", "samples"}};
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "snap.get").at("format") == "samples");
+	CHECK(run(client, "snap.get").at("on") == false);
+	extension.at("project")["snap"] = 5;
+	extension.at("project")["maxVolume"] = 12.0;
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "project.get").at("maxVolume") == 12.0);
 }
 
 TEST_CASE("mute, solo, notes and disabled tracks are saved, also in project.xml", "[integration]")
