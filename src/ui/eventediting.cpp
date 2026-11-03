@@ -252,7 +252,7 @@ namespace gnubase::ui
 			return [this, direction]
 			{
 				const engine::SnapGrid grid = snapGrid();
-				const time::Position step = engine::gridStep(m_snap.grid, grid, m_cursorSample);
+				const time::Position step = engine::gridStep(m_snap.grid(), grid, m_cursorSample);
 				int64_t to = m_cursorSample + (direction * step.value);
 				if (step.base == time::TimeBase::Musical)
 					to = grid.tempo.toSamples(
