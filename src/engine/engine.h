@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/clock.h"
 #include "engine/schema.h"
 #include "platform/audio/device.h"
 #include "platform/midi/port.h"
@@ -127,6 +128,15 @@ namespace gnubase::engine
 				m_unlogged = true;
 		}
 
+		// If the command fails, leaves the failure out of engine.commandLog and the error log: for a command that the
+		// engine runs on its own and whose failure was reported already, such as a due auto save that fails again.
+		// Inside another command, the outer one decides.
+		void failQuietly()
+		{
+			if (m_outer == nullptr)
+				m_quietFailure = true;
+		}
+
 	private:
 		friend class Engine;
 
@@ -134,7 +144,8 @@ namespace gnubase::engine
 		CommandContext* m_outer = nullptr;
 		Engine* m_engine = nullptr; // set on the outermost context
 		std::vector<Event> m_events;
-		bool m_unlogged = false; // leaveOutOfLog
+		bool m_unlogged = false;     // leaveOutOfLog
+		bool m_quietFailure = false; // failQuietly
 	};
 
 	using CommandHandler = std::function<Json(CommandContext& context)>;
@@ -203,6 +214,9 @@ namespace gnubase::engine
 		// command and without waiting: for the UI to read once a frame while playing. Not for audio threads.
 		int64_t playbackPosition() const;
 
+		// The time that the engine's timed work goes by, such as due auto saves; tests move it forward with advance.
+		Clock& clock() { return m_clock; }
+
 	private:
 		friend class Client;
 		friend class CommandContext;
@@ -240,7 +254,7 @@ namespace gnubase::engine
 		RequestId m_nextRequest = 1;
 		bool m_stopping = false;
 		std::condition_variable m_wake;
-		std::condition_variable m_tickerWake;            // wakes the ticker to stop
+		Clock m_clock;                                   // ticks to ask for due auto saves (project.autoSave)
 		std::unique_ptr<Jobs> m_jobs;                    // background work such as backups
 		std::unique_ptr<plugins::HostManager> m_plugins; // outlives the audio engine, whose graphs may hold plugins
 		std::unique_ptr<ProjectModel> m_project;         // only the command thread touches the document
@@ -248,7 +262,6 @@ namespace gnubase::engine
 		std::unique_ptr<AudioEngine> m_audio;            // plays the project; only the command thread changes it
 		std::unique_ptr<peaks::PeakCache> m_peaks;       // waveform overviews of the project's media files
 		std::thread m_thread;
-		std::thread m_ticker; // asks for due auto saves (project.autoSave)
 	};
 
 	// A connection to the engine. Receives the results of its own commands and every event, in order.
