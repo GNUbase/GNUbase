@@ -51,8 +51,8 @@ namespace gnubase::engine::graph
 				bus.id, bus.format, nullptr});
 		const int firstChannel = static_cast<int>(snapshot.busses.size());
 		for (const RenderChannel& channel : snapshot.channels)
-			graph.nodes.push_back({NodeKind::Channel, channel.id, channel.format, nullptr,
-				channel.panner == Panner::Mono ? ChannelFormat::Stereo : ChannelFormat::None});
+			graph.nodes.push_back(
+				{NodeKind::Channel, channel.id, channel.format, nullptr, pannerOutput(channel.panner)});
 		graph.centerGain = panGains(snapshot.panLaw, 0.0).first;
 		for (size_t i = 0; i < snapshot.busses.size(); ++i)
 		{

@@ -7,7 +7,7 @@
 #include <atomic>
 #include <cstdint>
 #include <optional>
-#include <vector>
+#include <utility>
 
 // Level meters and the loudness meter (reference manual pp. 533-540, docs/features/metering.md). The audio thread
 // measures, without allocating or locking, and publishes through atomics every 100 ms; any thread reads.
@@ -132,7 +132,8 @@ namespace gnubase::engine
 		std::optional<double> m_shortTermMax;
 		std::array<float, g_maxMeterChannels> m_windowTruePeak{};
 		std::array<float, g_maxMeterChannels> m_truePeakMax{};
-		uint64_t m_measuredSteps = 0;
+		uint64_t m_measuredSteps = 0; // since the last reset
+		uint64_t m_playingSteps = 0;  // since playback last started
 		uint32_t m_resetsSeen = 0;
 		int m_channels = 0;
 
