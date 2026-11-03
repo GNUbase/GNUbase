@@ -279,11 +279,12 @@ TEST_CASE("audioFile.import lays files out one after another on one track", "[in
 		CHECK(project.at("tracks")[0].at("name") == "a");
 	}
 
-	SECTION("on a track that is there, in its time base")
+	SECTION("on a track that is there with oneTrack, in its time base")
 	{
 		const Json track =
 			run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"name", "Drums"}}).at("track");
-		const Json result = run(client, "audioFile.import", {{"files", files}, {"track", track.at("id")}});
+		const Json result =
+			run(client, "audioFile.import", {{"files", files}, {"track", track.at("id")}, {"oneTrack", true}});
 		CHECK(result.at("tracks").empty());
 		const Json project = run(client, "project.get");
 		REQUIRE(project.at("tracks").size() == 1);
@@ -294,6 +295,32 @@ TEST_CASE("audioFile.import lays files out one after another on one track", "[in
 			CHECK(event.at("track") == track.at("id"));
 			CHECK(event.at("position") == starts[i]);
 		}
+	}
+
+	SECTION("the first on a track that is there, the others on new tracks, all at position")
+	{
+		const Json track =
+			run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"name", "Drums"}}).at("track");
+		const Json result =
+			run(client, "audioFile.import", {{"files", files}, {"track", track.at("id")}, {"position", 48000}});
+		REQUIRE(result.at("tracks").size() == 2);
+		Json project = run(client, "project.get");
+		REQUIRE(project.at("tracks").size() == 3);
+		CHECK(project.at("tracks")[1].at("name") == "b");
+		CHECK(project.at("tracks")[2].at("name") == "c");
+		const Json onTracks = {track.at("id"), result.at("tracks")[0], result.at("tracks")[1]};
+		for (size_t i = 0; i < 3; ++i)
+		{
+			const Json event = byId(project.at("audioEvents"), result.at("events")[i]);
+			CHECK(event.at("track") == onTracks[i]);
+			CHECK(event.at("position") == (i == 0 ? int64_t{48000} : ticksAt(48000))); // new tracks are musical
+		}
+
+		// One undo step takes the events and the new tracks.
+		run(client, "history.undo");
+		project = run(client, "project.get");
+		CHECK(project.at("tracks").size() == 1);
+		CHECK(project.at("audioEvents").empty());
 	}
 }
 

@@ -713,7 +713,12 @@ namespace gnubase::app
 				files.reserve(result.files.size());
 				for (const std::filesystem::path& file : result.files)
 					files.push_back(file.u8string());
-				m_eventDisplay->importFiles(files, std::nullopt, std::nullopt, clipsOnly);
+				// File > Import goes onto the selected track (#480), the pool's Import Medium into the pool only.
+				if (clipsOnly)
+					m_eventDisplay->importFiles(files, std::nullopt, std::nullopt, true);
+				else
+					m_eventDisplay->importToSelection(
+						files, m_trackList ? m_trackList->selection() : std::vector<uint64_t>());
 			});
 	}
 

@@ -7,9 +7,10 @@ by dropping them from the OS's file manager onto the event display.
 
 `audioFile.import` (`src/engine/document/audiofilecommands.cpp`) imports audio files in every format the engine reads:
 WAV (also RF64 and Wave64), AIFF, FLAC, Ogg Vorbis and MP3. Each file becomes a media file, a clip named after it and an
-audio event at `position` (sample frames from the project start, rebased to the track's time base), on a new audio
-track named after the file with its channel format (stereo beyond 8 channels). With `oneTrack` the files go one after
-another on one new track; with `track`, one after another on that audio track.
+audio event at `position` (sample frames from the project start, rebased to the track's time base), each on an audio
+track of its own: the first on `track` if given, the others on new audio tracks named after them with their channel
+format (stereo beyond 8 channels), all at `position`. With `oneTrack` the files go one after another on one track:
+`track`, or a new one.
 
 MP3 and Ogg Vorbis files are always converted, whatever the options say (reference manual p. 360): each is written as
 a 32-bit float WAV file at its own sample rate into the media folder, and the media file, clip and event use the WAV
@@ -50,24 +51,37 @@ and the files the import wrote are removed. Undo leaves written files on disk, a
 
 - **File > Import > Audio File...** (`file.importAudio`) opens the OS's file dialog for audio files, several at once,
   and **MIDI File...** (`file.importMidi`) for a MIDI file (`app::AppUi`). What the user chooses goes to
-  `ui::EventDisplay::importFiles` (`src/ui/fileimport.cpp`), at the project cursor.
+  `ui::EventDisplay::importToSelection` (`src/ui/fileimport.cpp`), at the project cursor, with the track list's
+  selection (#480).
+- **The selected track** (reference manual p. 360): audio files go onto the selected track, and onto new tracks only
+  when no track is selected. For the other cases GNUbase follows the Import Options dialog (p. 358) and the pool's
+  Insert into Project (p. 745):
+  - With several tracks selected, the first of them, top to bottom, takes the files (p. 745).
+  - With several files, the selected track takes the first one and the others go onto new tracks, all at the project
+    cursor, as Import Files on One Track off means "each on a track of its own" (p. 358); with it on, they all go
+    onto the selected track, one after another.
+  - A selected track that isn't an audio track (MIDI, instrument, folder, group, effect) takes no audio: the files go
+    onto new tracks, as without a selected track (the Pool's insert puts a clip "on the selected track or on a new
+    audio track").
+  - Split Channels puts every channel onto a new mono track of its own (p. 358, "events on separate tracks"), whatever
+    is selected.
+  - New tracks go to the end of the project, as Add Track's do; below the selected track comes with #448.
 - **Drag and drop**: files dropped on the event display (the shell's `filedrop` event) go to the track of the lane
   under the mouse if it is an audio track, else to new tracks, at the time under the mouse (dropped outside the lanes:
   at the project cursor). Agents and UI tests drop files with `ui_drop` (`ui::Automation::drop`).
 - MIDI files (`.mid`, `.midi`, `.smf`) are imported at once with `midiFile.import`'s defaults. Audio files open the
   **Import Options** dialog (`resources/ui/import-options.rml`): Copy Files to Project Folder, Convert to Project
   Sample Rate, Split Channels and Import Files on One Track. The first three are disabled while the project has no
-  file (`project.location`), the last for a single file and for files dropped on a track. The dialog remembers its
-  choices while GNUbase runs; OK sends `audioFile.import`.
+  file (`project.location`), the last for a single file and for files dropped on a track, which all go on it. The
+  dialog remembers its choices while GNUbase runs; OK sends `audioFile.import`.
 
 ## Not yet
 
 The preferences that skip the dialog (On Import Audio Files, Do not ask again) and the MIDI file import options
 (reference manual pp. 364-365), creating a new project for a MIDI file, the name format of split files, import of
-audio CDs, audio from video and REX files, and the track selection: imports go onto new tracks unless dropped on one,
-until the track list (#81) selects tracks. Converting as a job: files are converted on the command thread, which waits
-for a long MP3 file (as for `media.convert`). Removing the files an unsaved project made (recordings and converted
-imports) when it is closed without saving.
+audio CDs, audio from video and REX files. New tracks below the selected track (#448). Converting as a job: files are
+converted on the command thread, which waits for a long MP3 file (as for `media.convert`). Removing the files an
+unsaved project made (recordings and converted imports) when it is closed without saving.
 
 ## Checks
 
@@ -79,7 +93,11 @@ an unsaved project into `Recordings`, where they stay after saving until `media.
 removed again when a later file fails) and leaves FLAC files as they are, converts a
 44.1 kHz WAV file and an MP3 file
 into the media folder and leaves a 48 kHz file where it is, splits stereo and 5.1 files into mono files per speaker,
-copies with one job, and rejects what it can't do, removing converted files when a later file fails.
+copies with one job, puts the first file on a given track and the others on new tracks (one undo step), and rejects
+what it can't do, removing converted files when a later file fails.
 `tests/fileimport_tests.cpp` drives the app's UI through the automation API: the File > Import items, the Import Options dialog with its disabled
-options, Cancel and Import Files on One Track at the project cursor, an audio file dropped on an audio track's lane,
-and MIDI files of type 0 and 1 dropped below the tracks.
+options, Cancel and Import Files on One Track at the project cursor; File > Import > Audio File with the file dialog
+answered as the user would, onto the selected audio track (the first file, all of them with Import Files on One Track,
+the first of several selected tracks), onto new tracks with no track or a MIDI track first in the selection, and with
+Split Channels onto new tracks whatever is selected, each one undo step; audio files dropped on an audio track's lane,
+one and two of them, and MIDI files of type 0 and 1 dropped below the tracks.
