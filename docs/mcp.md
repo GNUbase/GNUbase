@@ -955,6 +955,20 @@ Result:
 
 - `lane`: object, required
 
+#### `automationLane_targets`
+
+Engine command `automationLane.targets`. Read-only.
+
+What a track's automation lanes can automate, in the order automation tracks offer them: its channel's parameters as parameter.list returns them, then on MIDI and instrument tracks pitch bend, channel pressure and controllers 0 to 127 (MIDI channel 0, from 0 to 1, pitch bend's default 0.5). Each also has group (Channel, the instrument's or plugin's name, or MIDI) and lane, the id of the track's automation lane for it, or 0. Tracks without a channel have none.
+
+Arguments:
+
+- `track`: integer, required
+
+Result:
+
+- `targets`: array, required
+
 ### automationPoint
 
 #### `automationPoint_add`
