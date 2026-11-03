@@ -123,6 +123,8 @@ namespace gnubase::ui
 
 		// The selected tracks without those inside other selected folders.
 		std::vector<uint64_t> topSelection() const;
+		// The tracks Remove Empty Tracks removes, with those that are only empty once the others went.
+		std::set<uint64_t> emptyTracks() const;
 		// Runs the commands as one undo step.
 		void transaction(const std::string& description, engine::Json commands);
 

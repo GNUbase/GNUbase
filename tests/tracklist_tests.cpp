@@ -357,10 +357,16 @@ TEST_CASE(
 	const uint64_t outer = tracks.add({{"type", "folder"}});
 	const uint64_t inner = tracks.add({{"type", "folder"}, {"parent", outer}});
 	tracks.add({{"type", "midi"}, {"parent", inner}});
-	tracks.rows(6);
+	// A group track stays, even when only an empty track plays through it.
+	const uint64_t group = tracks.add({{"type", "group"}});
+	tracks.add({{"type", "audio"}, {"output", tracks.track(group).at("channel")}}); // empty, goes
+	tracks.rows(8);
 
 	tracks.app.keys().run("track.removeEmpty", Json::object(), tracks.app.main(), nullptr);
-	REQUIRE(tracks.app.waitUntil([&] { return tracks.order() == std::vector<uint64_t>{folder, full}; }));
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.order() == std::vector<uint64_t>{folder, full, group}; }));
+	tracks.app.call("history.undo");
+	tracks.rows(8);
+	CHECK(tracks.track(inner).at("parent") == outer);
 }
 
 TEST_CASE("the track controls settings dialog chooses and orders each track type's controls", "[ui]")
