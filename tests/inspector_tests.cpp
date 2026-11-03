@@ -451,7 +451,9 @@ TEST_CASE("an untouched Ctrl+Enter on a marker's start gives every selected mark
 	const uint64_t intro = add({{"position", 2 * g_quarter}, {"name", "Intro"}});
 	const uint64_t verse =
 		add({{"type", "cycle"}, {"position", 4 * g_quarter}, {"end", 8 * g_quarter}, {"name", "Verse"}});
-	const uint64_t outro = add({{"position", 10 * g_quarter}, {"name", "Outro"}});
+	// Every label in view: CI's screens make the window 1024 pixels wide, where the timeline beside the inspector shows
+	// less than 10 quarters.
+	const uint64_t outro = add({{"position", 6 * g_quarter}, {"name", "Outro"}});
 	const auto marker = [&window](uint64_t id) { return window.find("markers", id); };
 	REQUIRE(window.app.waitUntil([&] { return elements(window.app, ".marker-label").size() == 3; }));
 	const auto clickMarker = [&window](int index, const std::vector<std::string>& modifiers = {})
@@ -484,7 +486,7 @@ TEST_CASE("an untouched Ctrl+Enter on a marker's start gives every selected mark
 	// As one undo step.
 	CHECK(window.historyPosition() == position + 1);
 	window.call("history.undo");
-	REQUIRE(window.app.waitUntil([&] { return marker(outro).at("position") == 10 * g_quarter; }));
+	REQUIRE(window.app.waitUntil([&] { return marker(outro).at("position") == 6 * g_quarter; }));
 	CHECK(marker(verse).at("position") == 4 * g_quarter);
 	CHECK(marker(verse).at("end") == 8 * g_quarter);
 	CHECK(marker(intro).at("position") == 2 * g_quarter);
