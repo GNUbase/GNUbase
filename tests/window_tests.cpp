@@ -38,6 +38,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 using namespace gnubase;
 using std::chrono::milliseconds;
@@ -658,6 +659,42 @@ TEST_CASE("closing the main window or a quit request ends the shell", "[ui]")
 	CHECK_FALSE(gpu.shell->running());
 	CHECK(gpu.shell->windows().empty());
 	CHECK(ui::SdlWindowSystem::sdlWindow(main) == nullptr);
+}
+
+TEST_CASE("a quit request handler decides when closing the main window or a quit request ends the shell", "[ui]")
+{
+	Gpu gpu;
+	const ui::WindowId main = gpu.open("boxes.rml").id();
+	gpu.open("other.rml");
+	gpu.shell->step(milliseconds(0));
+	std::vector<ui::WindowId> asked;
+	bool agree = false;
+	gpu.shell->onQuitRequest(
+		[&](ui::Window& window)
+		{
+			asked.push_back(window.id());
+			if (agree)
+				gpu.shell->quit();
+		});
+
+	SDL_Event close{};
+	close.type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
+	close.window.windowID = main;
+	SDL_Event quit{};
+	quit.type = SDL_EVENT_QUIT;
+	push(close);
+	push(quit);
+	gpu.shell->step(milliseconds(0));
+	CHECK(asked == std::vector<ui::WindowId>{main, main}); // both with the main window
+	REQUIRE(gpu.shell->running());
+	CHECK(gpu.shell->windows().size() == 2);
+
+	agree = true;
+	push(close);
+	CHECK(gpu.shell->run() == 0);
+	CHECK(gpu.shell->windows().empty());
+
+	gpu.shell->onQuitRequest({});
 }
 
 TEST_CASE("files dropped on a window reach the element under the mouse", "[ui]")

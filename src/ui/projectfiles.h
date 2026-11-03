@@ -29,8 +29,8 @@ namespace gnubase::ui
 	// file.quit. They ask through the OS's file dialogs (Shell::showFileDialog) and GNUbase's own (the documents
 	// start-screen.rml, save-template.rml, discard-changes.rml and project-error.rml in folder), and do everything with
 	// engine commands. Opening another project, reverting and quitting ask first if the project has unsaved changes,
-	// and a command that fails shows its error. Use it on the UI thread; the key commands, the binding and the shell
-	// must outlive it.
+	// also quitting through the OS or the main window's close button (Shell::onQuitRequest), and a command that fails
+	// shows its error. Use it on the UI thread; the key commands, the binding and the shell must outlive it.
 	class ProjectFiles final : private Rml::EventListener
 	{
 	public:
@@ -59,6 +59,8 @@ namespace gnubase::ui
 		void showError(WindowId window, const std::string& error);
 		// Runs action now if the project has no unsaved changes, or else once the user agreed to discard them.
 		void unlessUnsaved(Window& window, std::function<void()> action);
+		// Quits GNUbase unless the user wants to keep unsaved changes, asking in the window.
+		void quit(Window& window);
 		void open(Window& window);
 		void saveAs(Window& window);
 		void showStartScreen(Rml::ElementDocument& dialog, const engine::Json& templates, const engine::Json& recent);

@@ -63,7 +63,9 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
 
 - **Unsaved changes.** Opening a project (Open, the start screen), creating one, reverting and quitting first ask
   `project.revision`; if the project is modified, the dialog `discard-changes.rml` asks whether to discard the changes,
-  and only Discard goes on.
+  and only Discard goes on. Quitting asks the same however it is asked for: File > Quit, the main window's close button
+  or Alt+F4, and the OS's quit request (the macOS app menu's Quit, SIGTERM), which `Shell::onQuitRequest` hands to
+  `ProjectFiles` instead of quitting at once.
 - **Start screen.** `start-screen.rml`, the minimal version of the reference's hub: the templates with Create, Create
   Empty Project, the recent projects that are still there with Open, and Open Other..., which asks for a file. A double
   click on a row does what its button does. File > New Project opens it, and the app at its start when no project was
@@ -81,9 +83,8 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
 The reference's hub beyond the start screen (audio settings, user locations, sorting, project previews, web content
 and its settings dialog); the default project location and folder name, so that a new project asks for its folder;
 renaming and deleting templates, their descriptions and categories; Recent Projects in the File menu; asking whether to
-keep audio recorded since the last save on Revert; Close and several open projects with Activate Project; asking about
-unsaved changes when the OS closes the main window; the time of the last edit in auto save names; Run Setup on Create
-New Project and Open Last Project on Startup.
+keep audio recorded since the last save on Revert; Close and several open projects with Activate Project; the time of
+the last edit in auto save names; Run Setup on Create New Project and Open Last Project on Startup.
 
 ## Checks
 
@@ -91,5 +92,6 @@ New Project and Open Last Project on Startup.
 `modified`, save new version numbering, revert, auto save rotation, opening auto saves, due and failing auto saves
 (`ProjectModel::advanceClock` moves their clock forward), recent projects across restarts, and templates; and in the
 app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a name with a dot) and Save New Version
-through file dialogs, Open and Revert with the unsaved changes dialog, the start screen's buttons and double clicks, Save
+through file dialogs, Open and Revert with the unsaved changes dialog, quitting through the main window's close
+button and the OS's quit request with and without unsaved changes, the start screen's buttons and double clicks, Save
 as Template and Back up Project, and the error dialog for a failed save and backup. `tests/uitools_tests.cpp` checks `ui_file_dialog`.
