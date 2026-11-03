@@ -329,8 +329,10 @@ namespace gnubase::ui
 		// <splitter>: between two elements of a flex row or column, dragging it moves the boundary between them. It
 		// sets the size of the element before it, or with resize="next" of the element after it (its width or height
 		// in a row or a column, without padding and borders), between its min-width or min-height and taking all of
-		// the other element down to that one's minimum, and sends a change event with that size in dp, e.g. for a
-		// workspace to keep. A splitter in a column has the state class .column; the theme's grip shows the direction.
+		// the row's or column's flexible elements (flex-grow) down to their minimums, or of the other element next to
+		// it if none is flexible, and sends a change event with that size in dp, e.g. for a workspace to keep. So a
+		// zone next to another fixed one, such as the Channel zone next to the left zone, takes its room from the main
+		// zone. A splitter in a column has the state class .column; the theme's grip shows the direction.
 		class Splitter final : public Rml::Element
 		{
 		public:
@@ -355,10 +357,24 @@ namespace gnubase::ui
 					m_start = mouse;
 					m_size = size(*sized, column, Rml::BoxArea::Content);
 					m_least = least(*sized, column);
-					// Its size can grow by what the other element has, padding and borders included, down to its
-					// minimum.
-					m_most =
-						std::max(m_least, m_size + size(*other, column, Rml::BoxArea::Border) - least(*other, column));
+					// Its size can grow by what the flexible elements have, padding and borders included, down to
+					// their minimums.
+					float room = 0.0F;
+					bool flexible = false;
+					for (int i = 0; i < GetParentNode()->GetNumChildren(); ++i)
+					{
+						Rml::Element* child = GetParentNode()->GetChild(i);
+						const Rml::Style::ComputedValues& values = child->GetComputedValues();
+						if (child != this && child != sized && values.display() != Rml::Style::Display::None &&
+							values.flex_grow() > 0.0F)
+						{
+							room += size(*child, column, Rml::BoxArea::Border) - least(*child, column);
+							flexible = true;
+						}
+					}
+					if (!flexible)
+						room = size(*other, column, Rml::BoxArea::Border) - least(*other, column);
+					m_most = std::max(m_least, m_size + room);
 				}
 				else if (event == Rml::EventId::Drag)
 				{

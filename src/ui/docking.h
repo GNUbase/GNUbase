@@ -44,15 +44,16 @@ namespace gnubase::ui
 	// settings.set through the binding and follows settings.changed, so MCP and Lua change the layout the same way.
 	// A document becomes a docking window with attach; its elements say what they are by attributes:
 	//
-	//   zone="main|left|right|lower"  a zone; every zone but main gets a <tabset> with its panels. size="240" and
+	//   zone="main|channel|left|..."  a zone; every zone but main gets a <tabset> with its panels. size="240" and
 	//                                 hidden give its default size in dp and visibility. Its size is its width, or
-	//                                 its height in a flex column.
+	//                                 its height in a flex column. tabbar="bottom" puts its tabs at its bottom.
 	//   splitter for="left"           the splitter that sizes that zone (resize="next" for zones after it); hidden
 	//                                 with the zone, and a double click hides the zone
 	//   strip="infoLine"              a strip, such as the info line; hidden gives its default. The body has the
 	//                                 class no-<strip> while it is hidden, for strips that are part of other elements
 	//                                 such as the event display's overview line
 	//   toggle="left|infoLine"        a button or menu item that shows or hides the zone or strip; checked follows it
+	//   hide="lower"                  a button that hides the zone or strip, such as Close Lower Zone
 	//   sections="channel"            a container of sections of that set, such as each of the mixer's channels; its
 	//                                 children with section="eq" (label="EQ", default="hidden") are the sections, in
 	//                                 the user's order and hidden with the class .hidden. The first container says
