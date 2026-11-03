@@ -44,13 +44,15 @@ namespace gnubase::engine
 		std::vector<ObjectChange<AutomationPoint>> points;
 	};
 
-	// The parts of a project that are not objects with ids, or keep their order: name, sample rate, tempo, time
-	// signatures, auto fades, the color set, busses, the top-level tracks and the active marker track.
+	// The parts of a project that are not objects with ids, or keep their order: name, sample rate, tempo and tempo
+	// mode, time signatures, auto fades, the color set, busses, the top-level tracks and the active marker track.
 	struct ProjectSettings
 	{
 		std::string name;
 		double sampleRate = 48000.0;
 		time::TempoMap tempo{120.0};
+		bool tempoTrackActive = false;
+		time::TempoMap otherTempo{120.0};
 		time::SignatureMap signatures;
 		AutoFades autoFades;
 		PanLaw panLaw = PanLaw::Minus3;

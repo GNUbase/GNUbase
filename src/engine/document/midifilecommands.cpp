@@ -120,7 +120,8 @@ namespace gnubase::engine
 				"instrument tracks, one part per track from the bar of its first event to the bar after its last. A "
 				"type 0 file gets a track per MIDI channel; the sequences of a type 2 file are laid out one after "
 				"another, each from a bar start. Names that aren't UTF-8 are read as Windows-1252. Unless tempo is "
-				"false, the file's tempo and time signatures replace the project's; unless markers is false, its "
+				"false, the file's tempo and time signatures replace the project's (tempo changes on the tempo track, "
+				"which becomes active); unless markers is false, its "
 				"markers are added to the active marker track (one is added if there is none). One undo step. Returns "
 				"the new tracks and parts.",
 				{{"type", "object"}, {"additionalProperties", false},
@@ -156,13 +157,16 @@ namespace gnubase::engine
 
 		if (parameters.value("tempo", true))
 		{
+			// Tempo changes go on the tempo track and make it active; a single tempo is the tempo of the mode in use.
+			if (imported.tempo.points().size() > 1 && !project.tempoTrackActive)
+			{
+				project.otherTempo = project.tempo;
+				project.tempoTrackActive = true;
+			}
 			project.tempo = imported.tempo;
 			project.signatures = imported.signatures;
 			context.emit("project.changed", {{"name", project.name}, {"sampleRate", project.sampleRate}});
-			// A cycle marker in ticks can get shorter than a sample at a faster tempo.
-			for (auto& [id, marker] : project.markers)
-				if (keepMinimumLength(project, marker))
-					context.emit("marker.changed", {{"marker", toJson(marker)}});
+			tempoChanged(project, context);
 		}
 		if (parameters.value("markers", true) && !imported.markers.empty())
 		{
