@@ -88,7 +88,7 @@ context menu, and its own modifier setting (Preferences, Editing - Tool Modifier
 (track versions, chords, articulations, MIDI inserts and modifiers, equalizer, fader, cue sends, remote controls),
 sends (#108), the MIDI tracks' MIDI volume and pan, the folder track inspector's list of the tracks inside, the
 editor tab and the tempo, signature and marker track inspectors, Show All, Reset All and presets in Set up Sections,
-Expand Sections Exclusively, and the Channel zone (#380).
+Expand Sections Exclusively, and the Channel zone's channel strip (#107).
 
 ## Checks
 

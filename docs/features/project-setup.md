@@ -38,8 +38,10 @@ so MCP and Lua scripts can do all it does.
   seconds, timecode and user frames and the bar offset to bars, and the ruler's marks do the same
   (`src/ui/timeformat.h`). Lengths (`formatLength`, `parseLength`) count from zero. A typed position before the
   project start is no position. Samples count from the project start.
-- **The event display's ruler** starts with the project's time format and follows it when it changes; its menu picks
-  one of its own meanwhile ([event-display.md](event-display.md)). Zoom Full and the overview line show the project's
+- **The event display's ruler** follows the project's time format when it changes: `project.set` (and undo and
+  redo of it) makes a new time format the snap settings' format, and emits `snap.changed`; the ruler's menu picks one
+  of its own meanwhile. The ruler's format is the snap settings' `format`, so a project opens with the one it was saved with
+  ([event-display.md](event-display.md), [snap.md](snap.md)). Zoom Full and the overview line show the project's
   length, or up to the end of the last event if that is later.
 - **The status line** shows the record format, e.g. "Record: 48 kHz - 24 bit", and a click on it opens the dialog.
 

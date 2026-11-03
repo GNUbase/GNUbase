@@ -2152,6 +2152,20 @@ namespace gnubase::engine
 			return json;
 		}
 
+		// The ruler follows a new project time format (#78, reference manual p. 69), and its grid with it (#413): the
+		// snap settings take that format, here rather than in the UI, so that snapping is the same with and without
+		// one.
+		void followTimeFormat(Project& project, const std::string& before, CommandContext& context)
+		{
+			if (project.setup.timeFormat == before)
+				return;
+			const std::optional<GridFormat> format = gridFormatFromName(project.setup.timeFormat);
+			if (!format || *format == project.snap.format)
+				return;
+			project.snap.format = *format;
+			context.emit("snap.changed", toJson(project.snap));
+		}
+
 		Json setProject(Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
@@ -2205,7 +2219,9 @@ namespace gnubase::engine
 					require(isColor(item.at("color").get<std::string>()), "colors must be #rrggbb");
 				project.colors = colorsFromJson(parameters.at("colors"));
 			}
+			const std::string timeFormat = project.setup.timeFormat;
 			project.setup = std::move(setup);
+			followTimeFormat(project, timeFormat, context);
 			// Faders above a lower maximum come down to it.
 			for (auto& [id, channel] : project.channels)
 				if (channel.volume > maxVolume)
@@ -2501,12 +2517,14 @@ namespace gnubase::engine
 		require(available > 0, undo ? "nothing to undo" : "nothing to redo");
 		require(static_cast<size_t>(steps) <= available,
 			"only " + std::to_string(available) + (undo ? " steps can be undone" : " steps can be redone"));
+		const std::string timeFormat = m_project.setup.timeFormat;
 		for (int64_t i = 0; i < steps; ++i)
 		{
 			const HistoryStep& step = undo ? m_history.undo() : m_history.redo();
 			apply(m_project, step.change, direction);
 			announce(*this, m_project, step.change, direction, context);
 		}
+		followTimeFormat(m_project, timeFormat, context);
 		announceHistory(context);
 		publish();
 		return {{"position", m_history.position()}};
@@ -2761,7 +2779,8 @@ namespace gnubase::engine
 				"(default 25). startTime (seconds, under 24 hours) is the time shown at the project start, length "
 				"(seconds, up to 24 hours, default 600) how long the project is, barOffset (-9999 to 9999) is added "
 				"to the bar numbers shown, and timeFormat is the primary time format of rulers and position "
-				"displays.",
+				"displays. A new timeFormat, also by undo or redo, is the snap settings' format too (see snap.set; "
+				"emits snap.changed).",
 				objectSchema({{"name", stringSchema}, {"sampleRate", numberSchema},
 					{"panLaw", enumSchema(panLawNames())}, {"maxVolume", numberSchema}, {"tempo", numberSchema},
 					{"colors",

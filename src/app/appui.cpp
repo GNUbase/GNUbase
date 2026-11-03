@@ -43,7 +43,8 @@ namespace gnubase::app
 			const char* zone;
 		};
 
-		constexpr std::array<ProjectPanel, 5> g_projectPanels{{
+		constexpr std::array<ProjectPanel, 6> g_projectPanels{{
+			{"channel", "Channel", "channel"},
 			{"inspector", "Inspector", "left"},
 			{"visibility", "Visibility", "left"},
 			{"editor", "Editor", "lower"},
@@ -261,8 +262,8 @@ namespace gnubase::app
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleMarkers(); }); }});
 		m_keys.bind({"Mod+M", "window.markers"});
 
-		// The project window's panels (reference manual pp. 54, 75-98), which their tickets fill: the inspector
-		// (docs/features/inspector.md) shows the selected track.
+		// The project window's panels (reference manual pp. 54, 73, 75-98), which their tickets fill: the inspector
+		// (docs/features/inspector.md) shows the selected track, the Channel zone's will show its channel strip (#107).
 		for (const ProjectPanel& panel : g_projectPanels)
 		{
 			ui::Panel added{panel.id, panel.title, "project", panel.zone, {}};
@@ -395,11 +396,12 @@ namespace gnubase::app
 				m_keys.add({command.id, command.description,
 					[this](ui::Window& window, Rml::Element* /*zone*/) { openDialog(window, "track-controls.rml"); }});
 			else
-				m_keys.add({command.id, command.description, [this, id](ui::Window&, Rml::Element*)
-					{
-						if (m_trackList)
-							m_trackList->actions().at(id)();
-					}});
+				m_keys.add(
+					{command.id, command.description, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
+						{
+							if (m_trackList)
+								m_trackList->actions().at(id)();
+						}});
 			// The commands for selected tracks wait for a selection, Enable and Disable Group Channel for a selected
 			// folder they change.
 			const bool selected =
