@@ -165,7 +165,7 @@ TEST_CASE("every theme dims the edit history's undone steps, details too, and dr
 	// The edit history panel's elements (ui/historypanel.h, docs/features/edit-history.md).
 	Rml::ElementDocument* document = window.context().LoadDocumentFromMemory(R"(<rml><body>
 		<listview class="history"><table><tbody><tr id="done"><td class="action">Add track</td></tr></tbody></table>
-		<div class="history-separator" id="separator"/>
+		<div class="history-grip"><div class="history-separator" id="separator"/></div>
 		<table><tbody><tr id="undone" class="undone"><td class="action">Add track</td>
 			<td class="details"><input type="text" id="details" value="note"/></td></tr></tbody></table></listview>
 	</body></rml>)");

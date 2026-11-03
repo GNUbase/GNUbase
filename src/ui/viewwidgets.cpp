@@ -31,7 +31,8 @@ namespace gnubase::ui
 		constexpr float g_indent = 16.0F;
 
 		// <listview>: a list, tree or table of rows that the user selects. Its rows are its <listitem> descendants,
-		// or else the rows (<tr>) of a table in it, but not those of its <thead>; each has a value attribute.
+		// or else the rows (<tr>) of the tables in it, but not those of their <thead>s, in the document's order; each
+		// has a value attribute.
 		//
 		// A click selects a row. With the multiple attribute, Ctrl-click (Cmd-click on macOS) adds or removes a row
 		// and Shift-click selects the rows from the last one clicked. Up and Down move the selection (Shift extends
@@ -84,17 +85,30 @@ namespace gnubase::ui
 				return false;
 			}
 
+			// The rows in the document's order, also from several tables at different depths (RmlUi's
+			// GetElementsByTagName goes breadth first).
 			std::vector<Rml::Element*> rows()
 			{
-				Rml::ElementList found;
-				GetElementsByTagName(found, "listitem");
+				std::vector<Rml::Element*> found;
+				collect(*this, "listitem", found);
 				if (!found.empty())
 					return found;
-				GetElementsByTagName(found, "tr");
+				collect(*this, "tr", found);
 				found.erase(std::remove_if(found.begin(), found.end(),
 								[](const Rml::Element* row) { return row->GetParentNode()->GetTagName() == "thead"; }),
 					found.end());
 				return found;
+			}
+
+			static void collect(Rml::Element& parent, const Rml::String& tag, std::vector<Rml::Element*>& found)
+			{
+				for (int i = 0; i < parent.GetNumChildren(); ++i)
+				{
+					Rml::Element* child = parent.GetChild(i);
+					if (child->GetTagName() == tag)
+						found.push_back(child);
+					collect(*child, tag, found);
+				}
 			}
 
 			// The row that the event's target is in, or null.

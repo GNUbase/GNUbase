@@ -1153,6 +1153,28 @@ TEST_CASE("table views select their body's rows", "[ui]")
 	CHECK(selected(app, "#row-verse"));
 }
 
+TEST_CASE("table views with several tables go through their rows in the document's order", "[ui]")
+{
+	test::UiApp app;
+	const ViewsPage page(app);
+	// The first table is deeper than the second: the rows' order isn't the order of their depths.
+	page.document->GetElementById("table")->SetInnerRML(
+		R"(<div><table><tbody><tr id="first" value="first"><td>First</td></tr>)"
+		R"(<tr id="second" value="second"><td>Second</td></tr></tbody></table></div>)"
+		R"(<table><tbody><tr id="third" value="third"><td>Third</td></tr></tbody></table>)");
+
+	click(app, "#first");
+	app.ui().key(std::nullopt, "Down");
+	CHECK(selected(app, "#second"));
+	app.ui().key(std::nullopt, "Down");
+	CHECK(selected(app, "#third"));
+	app.ui().key(std::nullopt, "Home");
+	CHECK(selected(app, "#first"));
+	app.ui().key(std::nullopt, "End");
+	CHECK(selected(app, "#third"));
+	CHECK(element(app, "#table").at("attributes").at("value") == "third");
+}
+
 TEST_CASE("table views keep the selection of rows rebuilt twice between two updates", "[ui]")
 {
 	test::UiApp app;

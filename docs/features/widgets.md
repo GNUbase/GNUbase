@@ -142,8 +142,10 @@ The theme draws them; the widget library adds nothing.
 
 ## List, tree and table views
 
-`<listview>` is a list, tree or table of rows that the user selects: its `<listitem>`s, or the rows (`<tr>`) of a
-`<table>` in it, except those of the `<thead>`. Each row has a `value` attribute (without commas).
+`<listview>` is a list, tree or table of rows that the user selects: its `<listitem>`s, or the rows (`<tr>`) of the
+`<table>`s in it, except those of their `<thead>`s. A list view can hold several tables, also at different depths, such
+as the edit history's done and undone steps with a separator between them ([edit-history.md](edit-history.md)): its
+rows are in the document's order. Each row has a `value` attribute (without commas).
 
 - **Selection.** A click selects a row. With the `multiple` attribute, Ctrl-click (Cmd-click on macOS) adds or removes
   a row and Shift-click selects the rows from the last one clicked. Up and Down move the selection, Shift extends it,
@@ -203,6 +205,6 @@ Dialogs open in the middle, move by their title bar, and close with Enter, Escap
 a value field with autofocus is edited as its dialog opens, even by keys typed before the next update, and Enter
 there clicks OK, while another value field keeps Enter.
 Tabs show their panels. List views select with clicks, Ctrl, Shift and the keys, and follow their data; trees expand
-and collapse by click and keys, with indents by level; tables select body rows only; splitters move the boundary in a
-row and in a column, never below nothing. The color picker picks from its field, its hue strip and its numbers,
-draws the old and the new color, and follows its data.
+and collapse by click and keys, with indents by level; tables select body rows only, and the keys go through several
+tables in the document's order; splitters move the boundary in a row and in a column, never below nothing. The color
+picker picks from its field, its hue strip and its numbers, draws the old and the new color, and follows its data.
