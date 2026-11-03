@@ -36,6 +36,7 @@ namespace gnubase::ui
 
 		// A panel in a window of its own opens this big, centred on the primary monitor, until the user moves it.
 		constexpr Size g_panelWindowSize{800, 500};
+		constexpr double g_mostSize = 100000.0; // dp a zone or resizable element can have, whatever ui.layout says
 
 		// The nearest element from element up that has the attribute, or null.
 		Rml::Element* closestWith(Rml::Element* element, const char* attribute)
@@ -414,6 +415,17 @@ namespace gnubase::ui
 		return json;
 	}
 
+	Json& Docking::size(const std::string& window, const std::string& name)
+	{
+		// A zone's, also before the window is attached.
+		if (element(window, "[resizable=" + name + "]") == nullptr)
+			return zone(window, name)["size"];
+		Json& sizes = m_layout["windows"][window]["sizes"];
+		if (!sizes.is_object())
+			sizes = Json::object();
+		return sizes[name];
+	}
+
 	Rml::Element* Docking::element(const std::string& window, const std::string& selector) const
 	{
 		const auto it = m_windows.find(window);
@@ -455,7 +467,7 @@ namespace gnubase::ui
 
 	void Docking::setSize(const std::string& window, const std::string& name, double dp)
 	{
-		zone(window, name)["size"] = std::max(dp, 0.0);
+		size(window, name) = std::max(dp, 0.0);
 		save();
 		apply();
 	}
@@ -687,6 +699,23 @@ namespace gnubase::ui
 			save();
 	}
 
+	void Docking::applySize(Rml::Element& element, const Json* saved)
+	{
+		const double dp =
+			saved != nullptr && saved->is_number() ? saved->get<double>() : element.GetAttribute<double>("size", -1.0);
+		if (!(dp >= 0.0)) // NaN too
+			return;
+		const Rml::Element* parent = element.GetParentNode();
+		const bool column = parent != nullptr &&
+			(parent->GetComputedValues().flex_direction() == Rml::Style::FlexDirection::Column ||
+				parent->GetComputedValues().flex_direction() == Rml::Style::FlexDirection::ColumnReverse);
+		const Rml::Property length(static_cast<float>(std::min(dp, g_mostSize)), Rml::Unit::DP);
+		if (column)
+			element.SetProperty(Rml::PropertyId::Height, length);
+		else
+			element.SetProperty(Rml::PropertyId::Width, length);
+	}
+
 	void Docking::apply()
 	{
 		applyFloating(false);
@@ -713,20 +742,11 @@ namespace gnubase::ui
 					main->Focus();
 			for (Rml::Element* splitter : elements(*document, "splitter[for=" + zoneName + "]"))
 				splitter->SetClass("hidden", !shown);
-			const Json* size = find(m_layout, {"windows", window, "zones", zoneName, "size"});
-			const double dp =
-				size != nullptr && size->is_number() ? size->get<double>() : zone->GetAttribute<double>("size", -1.0);
-			const Rml::Element* parent = zone->GetParentNode();
-			const bool column = parent != nullptr &&
-				(parent->GetComputedValues().flex_direction() == Rml::Style::FlexDirection::Column ||
-					parent->GetComputedValues().flex_direction() == Rml::Style::FlexDirection::ColumnReverse);
-			const Rml::Property length(static_cast<float>(dp), Rml::Unit::DP);
-			if (dp >= 0.0 && column)
-				zone->SetProperty(Rml::PropertyId::Height, length);
-			else if (dp >= 0.0)
-				zone->SetProperty(Rml::PropertyId::Width, length);
+			applySize(*zone, find(m_layout, {"windows", window, "zones", zoneName, "size"}));
 			applyTabs(attached, *zone, window, zoneName);
 		}
+		for (Rml::Element* sized : elements(*document, "[resizable]"))
+			applySize(*sized, find(m_layout, {"windows", window, "sizes", attribute(*sized, "resizable")}));
 		for (Rml::Element* strip : elements(*document, "[strip]"))
 			strip->SetClass("hidden", !visible(window, attribute(*strip, "strip")));
 		for (const char* strip : {"toolbar", "infoLine", "overviewLine", "statusLine", "transportBar"})
@@ -989,15 +1009,17 @@ namespace gnubase::ui
 				later([this, id = attribute(*target, "tab"), on = event.GetParameter("value", false)]
 					{ setTabHidden(id, !on); });
 			else if (target->GetTagName() == "splitter" && target->HasAttribute("for") && !window.empty())
-				zone(window, attribute(*target, "for"))["size"] = event.GetParameter("value", 0.0F); // saved on dragend
+				size(window, attribute(*target, "for")) = event.GetParameter("value", 0.0F); // saved on dragend
 			break;
 		case Rml::EventId::Dragend:
 			if (target->GetTagName() == "splitter" && target->HasAttribute("for"))
 				save();
 			break;
 		case Rml::EventId::Dblclick:
-			if (const Rml::Element* splitter = closestWith(target, "for");
-				splitter != nullptr && splitter->GetTagName() == "splitter" && !window.empty())
+			// A zone's splitter hides it; an element that isn't a zone, such as the track list, stays.
+			if (const Rml::Element* splitter = closestWith(target, "for"); splitter != nullptr &&
+				splitter->GetTagName() == "splitter" && !window.empty() &&
+				element(window, "[zone=" + attribute(*splitter, "for") + "]") != nullptr)
 				later([this, window = std::move(window), name = attribute(*splitter, "for")]
 					{ setVisible(window, name, false); });
 			break;

@@ -24,7 +24,8 @@ transport's record state and the record mode setting.
   every 2 ms, since the audio thread can't wake it; the pool holds over a second of input.
 - **Files.** The disk thread writes one file per track, named after the track (`Audio 1.wav`, `Audio 1-2.wav` if
   that is taken; characters that file systems refuse become `_`), into the project's media folder `Audio`; an unsaved
-  project records into `Recordings` in the settings folder (the temporary folder without one), and its files are
+  project records into `Recordings` in the settings folder (the temporary folder without one; `unsavedMediaFolder`,
+  where its imported MP3 and Ogg Vorbis files are converted too, [file-import.md](file-import.md)), and its files are
   referenced from there. The format comes from one function, `recordFormat`: the project setup's record file type and
   bit depth ([project-setup.md](project-setup.md), p. 342) at the project's sample rate, read when a recording
   starts. Wave and Broadcast Wave files end in `.wav`, AIFF in `.aif`, FLAC in `.flac`. A Broadcast Wave file has a

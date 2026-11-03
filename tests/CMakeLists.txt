@@ -33,6 +33,7 @@ add_executable(gnubase-tests
 	bus_tests.cpp
 	canvas_tests.cpp
 	channelformat_tests.cpp
+	clock_tests.cpp
 	color_tests.cpp
 	coverage_tests.cpp
 	dawproject_tests.cpp
@@ -124,6 +125,7 @@ target_link_libraries(gnubase-tests PRIVATE
 	cpp-httplib
 	gnubase-app
 	gnubase-app-ui
+	gnubase-decoders
 	gnubase-engine
 	gnubase-ipc
 	gnubase-mcp

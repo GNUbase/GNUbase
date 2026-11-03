@@ -207,7 +207,7 @@ TEST_CASE("audioFile.import puts files of every supported format on new tracks a
 	files.push_back(dataFile("sine440.ogg"));
 	files.push_back(dataFile("sine440.mp3"));
 
-	Engine engine;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
 	Client client(engine);
 	const Json result = run(client, "audioFile.import", {{"files", files}, {"position", 96000}});
 	REQUIRE(result.at("tracks").size() == files.size());
@@ -221,7 +221,15 @@ TEST_CASE("audioFile.import puts files of every supported format on new tracks a
 	{
 		INFO(files[i]);
 		const Json media = byId(project.at("media"), result.at("media")[i]);
-		CHECK(media.at("path") == files[i]); // without copy, the file stays where it is
+		// Without copy, the file stays where it is; the Ogg Vorbis and MP3 files become WAV files in the folder that
+		// unsaved projects record into.
+		const fs::path recordings = dir.path() / "settings" / "Recordings";
+		if (i == files.size() - 2)
+			CHECK(media.at("path") == utf8(recordings / "sine440.wav"));
+		else if (i == files.size() - 1)
+			CHECK(media.at("path") == utf8(recordings / "sine440-2.wav"));
+		else
+			CHECK(media.at("path") == files[i]);
 		const Json track = byId(project.at("tracks"), result.at("tracks")[i]);
 		CHECK(track.at("type") == "audio");
 		CHECK(track.at("name") == fs::u8path(files[i]).stem().u8string());
@@ -314,6 +322,106 @@ TEST_CASE("audioFile.import converts files into the media folder at the project'
 	// The clips keep the names of the files imported.
 	CHECK(byId(project.at("clips"), byId(project.at("audioEvents"), result.at("events")[2]).at("clip")).at("name") ==
 		"sine440");
+}
+
+TEST_CASE("audioFile.import always converts MP3 and Ogg Vorbis files to WAV files in the media folder", "[integration]")
+{
+	SavedProject song;
+	fs::create_directories(song.library);
+	fs::copy_file(dataFile("sine440.mp3"), song.library / "song.mp3");
+	fs::copy_file(dataFile("sine440.ogg"), song.library / "loop.ogg");
+	writeFile(song.library / "take.flac", 4410, 2, 44100.0, AudioFormat::Flac, SampleFormat::Int16);
+	const std::vector<std::string> files{
+		utf8(song.library / "song.mp3"), utf8(song.library / "loop.ogg"), utf8(song.library / "take.flac")};
+	const Json result = run(song.client, "audioFile.import", {{"files", files}});
+	const Json project = run(song.client, "project.get");
+
+	// Without convert, the MP3 and the Ogg Vorbis file become 32-bit float WAV files at their own sample rate, with
+	// the signal they decode to; the clips and tracks keep the names of the files imported.
+	for (size_t i = 0; i < 2; ++i)
+	{
+		const std::string stem = fs::u8path(files[i]).stem().u8string();
+		INFO(stem);
+		const std::string wav = utf8(song.media / (stem + ".wav"));
+		const Json media = byId(project.at("media"), result.at("media")[i]);
+		CHECK(media.at("path") == wav);
+		CHECK(media.at("sampleRate") == 44100.0);
+		const AudioFileInfo info = AudioFileReader::open(wav)->info();
+		CHECK(info.format == AudioFormat::Wav);
+		CHECK(info.sampleFormat == SampleFormat::Float32);
+		CHECK(info.sampleRate == 44100.0);
+		CHECK(readAll(wav) == readAll(files[i]));
+		const Json event = byId(project.at("audioEvents"), result.at("events")[i]);
+		CHECK(byId(project.at("clips"), event.at("clip")).at("name") == stem);
+		CHECK(byId(project.at("tracks"), result.at("tracks")[i]).at("name") == stem);
+	}
+	// FLAC stays as it is.
+	CHECK(byId(project.at("media"), result.at("media")[2]).at("path") == files[2]);
+	CHECK(!fs::exists(song.media / "take.wav"));
+
+	// With copy, a converted file isn't copied as well; with convert, it also goes to the project's sample rate.
+	const Json copied = run(song.client, "audioFile.import", {{"files", {files[0]}}, {"copy", true}});
+	CHECK(copied.at("job").is_null());
+	CHECK(byId(run(song.client, "project.get").at("media"), copied.at("media")[0]).at("path") ==
+		utf8(song.media / "song-2.wav"));
+	const Json converted = run(song.client, "audioFile.import", {{"files", {files[1]}}, {"convert", true}});
+	CHECK(byId(run(song.client, "project.get").at("media"), converted.at("media")[0]).at("sampleRate") == 48000.0);
+
+	// So does the pool's Import Medium.
+	const Json pooled = run(song.client, "audioFile.import", {{"files", {files[0]}}, {"clipsOnly", true}});
+	CHECK(byId(run(song.client, "project.get").at("media"), pooled.at("media")[0]).at("path") ==
+		utf8(song.media / "song-3.wav"));
+}
+
+TEST_CASE("audioFile.import converts MP3 and Ogg Vorbis files of an unsaved project into its recordings folder",
+	"[integration]")
+{
+	const test::TempDir dir;
+	writeFile(dir.path() / "take.flac", 4410, 2, 44100.0, AudioFormat::Flac, SampleFormat::Int16);
+	const std::vector<std::string> files{
+		dataFile("sine440.mp3"), dataFile("sine440.ogg"), utf8(dir.path() / "take.flac")};
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const fs::path recordings = dir.path() / "settings" / "Recordings";
+
+	// A file that fails after an MP3 file was converted: nothing is imported and the converted file is removed.
+	const Json empty = run(client, "project.get");
+	CHECK_THAT(reject(client, "audioFile.import", {{"files", {files[0], utf8(dir.path() / "gone.wav")}}}),
+		ContainsSubstring("gone.wav"));
+	CHECK(run(client, "project.get") == empty);
+	CHECK(!fs::exists(recordings / "sine440.wav"));
+
+	// Like the recordings of an unsaved project, they go into Recordings in the settings folder and are referenced
+	// from there, also once the project is saved.
+	const Json result = run(client, "audioFile.import", {{"files", files}, {"oneTrack", true}});
+	const Json project = run(client, "project.get");
+	const std::vector<std::string> names{"sine440.wav", "sine440-2.wav"};
+	for (size_t i = 0; i < names.size(); ++i)
+	{
+		INFO(names[i]);
+		CHECK(byId(project.at("media"), result.at("media")[i]).at("path") == utf8(recordings / names[i]));
+		const AudioFileInfo info = AudioFileReader::open(utf8(recordings / names[i]))->info();
+		CHECK(info.format == AudioFormat::Wav);
+		CHECK(info.sampleRate == 44100.0);
+	}
+	CHECK(byId(project.at("media"), result.at("media")[2]).at("path") == files[2]);
+
+	const fs::path folder = dir.path() / "project";
+	fs::create_directories(folder);
+	run(client, "project.save", {{"path", utf8(folder / "Song.dawproject")}, {"embedMedia", false}});
+	CHECK(
+		byId(run(client, "project.get").at("media"), result.at("media")[0]).at("path") == utf8(recordings / names[0]));
+
+	// media.prepareArchive brings them into the project's media folder; the files in Recordings stay.
+	const Json prepared = run(client, "media.prepareArchive");
+	REQUIRE(waitForJob(client, prepared.at("job").at("id").get<uint64_t>()).at("state") == "done");
+	const Json archived = run(client, "project.get");
+	for (size_t i = 0; i < names.size(); ++i)
+	{
+		INFO(names[i]);
+		CHECK(byId(archived.at("media"), result.at("media")[i]).at("path") == utf8(folder / "Audio" / names[i]));
+		CHECK(fs::exists(recordings / names[i]));
+	}
 }
 
 TEST_CASE("audioFile.import splits channels into mono files on tracks of their own", "[integration]")

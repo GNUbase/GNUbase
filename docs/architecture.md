@@ -79,6 +79,7 @@ flowchart TD
 |---|---|---|
 | UI (main thread) | SDL event loop, RmlUi layout and rendering, Lua UI scripts | Sends commands, renders from events, never blocks on the engine |
 | Engine command thread | Every command: document changes, undo, building render snapshots, user settings | The only thread that writes the document and the user settings |
+| Engine clock | Posts the check for a due auto save every 30 seconds (`Clock` in `src/engine/clock.h`, whose time tests move forward) | Only posts commands |
 | Audio thread | The device callback, one processing cycle at a time | Real-time rules |
 | Audio workers | Track chains in parallel (#212) | Real-time rules, real-time priority |
 | Prefetch threads | Nodes without live input, ahead of the device in larger blocks (#23) | Real-time rules, real-time priority below the audio workers |
@@ -302,7 +303,7 @@ On the engine's side (`src/plugin/remote`, `src/engine/plugins`):
 
 The UI runs on the main thread (#48, `src/ui/shell.h`).
 
-- **Windows.** GNUbase's windows are separate top-level windows (CLAUDE.md, rule 10), each with its own RmlUi context. The first window opened is the main window: closing it, or a quit request (Cmd+Q, SIGTERM), closes every window and ends the app. Other windows only close, after `Shell::onCloseRequest`'s handler, through which
+- **Windows.** GNUbase's windows are separate top-level windows (CLAUDE.md, rule 10), each with its own RmlUi context. The first window opened is the main window: closing it, or a quit request (Cmd+Q, SIGTERM), closes every window and ends the app, once `Shell::onQuitRequest`'s handler agrees (the unsaved changes question). Other windows only close, after `Shell::onCloseRequest`'s handler, through which
 the docking system docks the panel such a window shows ([features/docking.md](features/docking.md)).
 - **Scale.** RmlUi lays out in dp. A window's dp ratio is its monitor's scale as SDL reports it for the window (`SDL_GetWindowDisplayScale`: 2 on a Retina display, whether the OS counts the window's size in points or pixels), times the user's UI scale (the user setting `ui.scale`, which the UI applies when it starts and whenever it changes, [features/themes.md](features/themes.md)). When a window moves to a monitor with another scale, or its monitor changes its scale, the shell gives the window's context the new ratio and pixel size, and RmlUi lays it out again.
 - **Monitors.** A window stays where it is as long as the user can reach it: a strip of its top edge, where the title bar is, at least 64 by 24 units, lies in a monitor's usable area (the monitor without task bars, docks and menu bars). Otherwise it goes to the middle of the primary monitor, shrunk to fit. That happens to windows on a monitor that is disconnected, and to windows that open where a monitor used to be, such as windows restored from a workspace (#163). A window opened without a size takes 80 % of the primary monitor.

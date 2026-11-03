@@ -15,7 +15,6 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
-#include <system_error>
 #include <utility>
 
 namespace gnubase::engine
@@ -77,15 +76,6 @@ namespace gnubase::engine
 		// How often the engine asks whether an auto save is due (project.autoSave, docs/features/project-files.md).
 		constexpr std::chrono::seconds g_autoSaveCheck{30};
 
-		// Where unsaved projects record: "Recordings" in the settings folder, or without one in the temporary folder.
-		std::filesystem::path recordingsFolder(const std::filesystem::path& settingsDirectory)
-		{
-			if (!settingsDirectory.empty())
-				return settingsDirectory / "Recordings";
-			std::error_code error;
-			return std::filesystem::temp_directory_path(error) / "GNUbase Recordings";
-		}
-
 		Json toJson(const CommandInfo& info)
 		{
 			return {{"name", info.name}, {"version", info.version}, {"description", info.description},
@@ -126,7 +116,8 @@ namespace gnubase::engine
 				"clients did. Each with its request id (events name it too), the client that sent it (ui, "
 				"mcp, lua, app for the command line, engine for the engine's own commands), the command, "
 				"its parameters, and the error if it failed. Commands the engine ran on its own that changed "
-				"nothing, such as tries to open a lost audio device again, are left out.",
+				"nothing, such as tries to open a lost audio device again, are left out, and so are due auto saves "
+				"that fail again (project.autoSave).",
 				CommandInfo{}.parameters, Json::parse(R"({"type": "object", "properties": {"commands":
 								{"type": "array", "items": {"type": "object", "properties": {"request": {"type":
 								"integer"}, "client": {"type": "string"}, "command": {"type": "string"}, "parameters":
@@ -152,7 +143,7 @@ namespace gnubase::engine
 		m_audio->setSlotDescriber(
 			[this](ObjectId slot) { return m_project->describeSlot(m_project->project(), slot); });
 		m_audio->setRecordSetup(
-			[this, recordings = recordingsFolder(settingsDirectory)]
+			[this, recordings = unsavedMediaFolder(settingsDirectory)]
 			{
 				// Into the project's media folder, or for an unsaved project a folder of the user's.
 				const Project& project = m_project->project();
@@ -176,19 +167,9 @@ namespace gnubase::engine
 		m_peaks->registerCommands(*this);
 		applySettings();
 		m_thread = std::thread([this] { run(); });
-		m_ticker = std::thread(
-			[this]
-			{
-				std::unique_lock lock(m_mutex);
-				while (!m_tickerWake.wait_for(lock, g_autoSaveCheck, [this] { return m_stopping; }))
-				{
-					// If the destructor stops the engine meanwhile, the request is queued anyway: harmless, since the
-					// command thread fails the requests it didn't run when it stops.
-					lock.unlock();
-					post("project.autoSave", {{"due", true}});
-					lock.lock();
-				}
-			});
+		// If the destructor stops the engine meanwhile, the request is queued anyway: harmless, since the command
+		// thread fails the requests it didn't run when it stops.
+		m_clock.start(g_autoSaveCheck, [this] { post("project.autoSave", {{"due", true}}); });
 	}
 
 	Engine::~Engine()
@@ -199,8 +180,7 @@ namespace gnubase::engine
 			m_stopping = true;
 		}
 		m_wake.notify_all();
-		m_tickerWake.notify_all();
-		m_ticker.join();
+		m_clock.stop();
 		m_thread.join(); // fails the commands that didn't run, which jobs may wait for
 		m_peaks.reset(); // stops its worker while the clients can still be reached
 		m_jobs.reset();  // no command starts a job anymore; cancels the running ones and waits for them
@@ -412,7 +392,7 @@ namespace gnubase::engine
 			result.error = error.what();
 			context.m_events.clear(); // a failed command changes nothing
 		}
-		if (!query && !context.m_unlogged)
+		if (!query && !context.m_unlogged && (result.ok() || !context.m_quietFailure))
 		{
 			Json entry = {{"request", request.id}, {"client", request.sender ? request.sender->name : "engine"},
 				{"command", request.command}, {"parameters", request.parameters}};
@@ -446,7 +426,7 @@ namespace gnubase::engine
 			request.sender->post(std::move(result));
 		else if (request.done)
 			request.done(std::move(result));
-		else if (!result.ok())
+		else if (!result.ok() && !context.m_quietFailure)
 			logging::error("{} failed: {}", request.command, result.error);
 	}
 
