@@ -33,9 +33,16 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   the folder `Auto Saves` of its project folder as `<name>-01.bak`, `<name>-02.bak` and so on, up to the user setting
   `project.autoSaveFiles` (5), after which the oldest is overwritten. A project without a file goes to `Auto Saves` in
   the settings folder, named after the project; without a settings folder it isn't auto saved. Auto saves don't copy
-  media and don't save the project: it stays modified, and its file stays as it is. `project.load` opens an auto save
-  without a file and as modified, and it isn't a recent project, so that saving asks for a path instead of overwriting
-  the auto save or making `Auto Saves` the project folder.
+  media and don't save the project: it stays modified, and its file stays as it is.
+- **Opening an auto save.** `project.load` opens an auto save (a `.bak` in a folder `Auto Saves`, in any case, as the
+  file systems of Windows and macOS allow) without a file and as modified, and it isn't a recent project (#484). So
+  Save asks for a path instead of overwriting the auto save, there is nothing to revert to, `project.location` has no
+  folder and no media folder (media aren't copied to `Auto Saves/Audio`), and its next auto saves go to the settings
+  folder's `Auto Saves` like those of other untitled projects instead of `Auto Saves/Auto Saves`. Saving it
+  as the project's file, after the user chose one, makes that its file and project folder again. The reference manual
+  doesn't say what opening an auto save does; it calls auto saves copies of the project file (pp. 134, 1608), and
+  going on as the project file next to `Auto Saves` would overwrite that file on Save with what may be an older copy
+  that the user only wanted to look at. A `.bak` elsewhere isn't an auto save and opens as the project's file.
   The engine's clock (`Engine::clock`, `engine/clock.h`) ticks every 30 seconds on a thread of its own, and each tick
   posts `project.autoSave` with `due`; that saves only when the user setting `project.autoSave` is on (the default)
   and `project.autoSaveInterval` minutes (15) have passed since the last save, opening or auto save, and stays out of
@@ -97,10 +104,12 @@ New Project and Open Last Project on Startup.
 ## Checks
 
 `tests/projectfiles_tests.cpp` covers the engine commands with an engine whose settings folder is temporary: save and
-`modified`, save new version numbering, revert, auto save rotation, opening auto saves, the engine's own auto saves
-once the interval passed and failing ones with their events and log entries (`Engine::clock().advance` moves the
-clock forward and returns once its tick ran, so no test waits), recent projects across restarts, and templates; and in
-the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a name with a dot) and Save New Version
-through file dialogs, Open and Revert with the unsaved changes dialog, the start screen's buttons and double clicks, Save
-as Template and Back up Project, and the error dialog for a failed save and backup. `tests/uitools_tests.cpp` checks `ui_file_dialog`.
+`modified`, save new version numbering, revert, auto save rotation, opening auto saves (also of untitled projects and of
+projects whose file is gone, and under paths in other case or with `.`) and where their media and next auto saves go,
+the engine's own auto saves once the interval passed and failing ones with their events and log entries
+(`Engine::clock().advance` moves the clock forward and returns once its tick ran, so no test waits), recent projects
+across restarts, and templates; and in the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a
+name with a dot) and Save New Version through file dialogs, Open and Revert with the unsaved changes dialog, and Save
+asking for a file after Open of an auto save, the start screen's buttons and double clicks, Save as Template and Back up
+Project, and the error dialog for a failed save and backup. `tests/uitools_tests.cpp` checks `ui_file_dialog`.
 `tests/clock_tests.cpp` checks the clock's ticks and `advance` on their own.
