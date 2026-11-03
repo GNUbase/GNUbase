@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -145,13 +146,15 @@ namespace
 	}
 
 	// A saved project (recordings go into its media folder) with a record-enabled stereo audio track on the main
-	// input bus, which doesn't monitor: the loopback would feed it back.
+	// input bus, which doesn't monitor: the loopback would feed it back. It records 32-bit float files, which hold
+	// the input exactly.
 	struct Setup
 	{
 		explicit Setup(const Json& device)
 		{
 			run(client, "audio.setDevice", device);
 			run(client, "settings.set", {{"key", "audio.autoMonitoring"}, {"value", "manual"}});
+			run(client, "project.set", {{"recordBitDepth", "float32"}});
 			run(client, "project.save", {{"path", (dir.path() / "take.dawproject").u8string()}});
 			const Json added = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 2}});
 			track = idOf(added, "track");
@@ -225,6 +228,82 @@ TEST_CASE("recording through the dummy device matches its input sample-exactly",
 	CHECK(run(client, "history.get").at("steps").back().at("action") == "Record");
 	run(client, "history.undo");
 	CHECK(eventsOn(client, setup.track).empty());
+}
+
+TEST_CASE("recordings are written in the project setup's record file type and bit depth", "[integration]")
+{
+	using gnubase::engine::AudioFormat;
+	using gnubase::engine::SampleFormat;
+	struct Case
+	{
+		const char* type;
+		const char* depth;
+		AudioFormat format;
+		SampleFormat sampleFormat;
+		const char* extension;
+		float tolerance; // the quantization step
+	};
+	const Case cases[] = {
+		{"wav", "int16", AudioFormat::Wav, SampleFormat::Int16, ".wav", 1.0f / 32768.0f},
+		{"wav", "float64", AudioFormat::Wav, SampleFormat::Float64, ".wav", 0.0f},
+		{"aiff", "int24", AudioFormat::Aiff, SampleFormat::Int24, ".aif", 1.0f / 8388608.0f},
+		{"aiff", "int32", AudioFormat::Aiff, SampleFormat::Int32, ".aif", 1.0f / 8388608.0f},
+		{"flac", "int16", AudioFormat::Flac, SampleFormat::Int16, ".flac", 1.0f / 32768.0f},
+		{"broadcastWav", "float32", AudioFormat::Wav, SampleFormat::Float32, ".wav", 0.0f},
+	};
+	for (const Case& each : cases)
+	{
+		DYNAMIC_SECTION(each.type << " " << each.depth)
+		{
+			Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+			Client& client = setup.client;
+			run(client, "project.set", {{"recordFileType", each.type}, {"recordBitDepth", each.depth}});
+			run(client, "transport.record");
+			run(client, "audio.render", {{"frames", 2000}});
+			REQUIRE(setup.stop().is_object());
+
+			const std::vector<Json> events = eventsOn(client, setup.track);
+			REQUIRE(events.size() == 1);
+			const std::string path = pathOf(client, events[0]);
+			CHECK(std::filesystem::u8path(path).extension() == each.extension);
+			const auto reader = AudioFileReader::open(path);
+			CHECK(reader->info().format == each.format);
+			CHECK(reader->info().sampleFormat == each.sampleFormat);
+			CHECK(reader->info().broadcast.has_value() == (std::string(each.type) == "broadcastWav"));
+			const std::vector<float> file = channelOf(path, 0);
+			const std::vector<float> input = recorded(client, 0, 0, 2000);
+			REQUIRE(file.size() == input.size());
+			for (size_t f = 0; f < file.size(); ++f)
+				if (std::abs(file[f] - input[f]) > each.tolerance)
+					FAIL("frame " << f << ": " << file[f] << " instead of " << input[f]);
+		}
+	}
+}
+
+TEST_CASE("Broadcast Wave recordings describe the track and where the file starts", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	run(client, "track.set", {{"track", setup.track}, {"name", "Lead vocals"}});
+	run(client, "project.set",
+		{{"recordFileType", "broadcastWav"}, {"recordBitDepth", "int24"}, {"startTime", 3600.0}});
+	run(client, "transport.locate", {{"position", 48000}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 1000}});
+	REQUIRE(setup.stop().is_object());
+
+	const std::vector<Json> events = eventsOn(client, setup.track);
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].at("position") == 48000);
+	const auto reader = AudioFileReader::open(pathOf(client, events[0]));
+	CHECK(reader->info().sampleFormat == gnubase::engine::SampleFormat::Int24);
+	REQUIRE(reader->info().broadcast.has_value());
+	const gnubase::engine::BroadcastInfo info = reader->info().broadcast.value_or(gnubase::engine::BroadcastInfo{});
+	CHECK(info.description == "Lead vocals");
+	CHECK(info.originator == "GNUbase");
+	CHECK(info.originationDate.size() == 10);
+	CHECK(info.originationTime.size() == 8);
+	CHECK(info.timeReference == 3601ULL * 48000); // the project start shows 1:00:00, and the file starts 1 s later
 }
 
 TEST_CASE("cycle recording makes a take per lap, all in one file", "[integration]")

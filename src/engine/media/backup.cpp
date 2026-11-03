@@ -164,11 +164,12 @@ namespace gnubase::engine
 		}
 
 		// Whether a minimized file keeps what matters of the source: every sample, read as 32-bit float, and the
-		// metadata that refers to its frames. 32-bit integers don't fit into a float, and a Broadcast Wave time
-		// reference counts from the first frame, which minimizing moves; such files are copied whole.
+		// metadata that refers to its frames. 32-bit integers and 64-bit floats don't fit into a float, and a Broadcast
+		// Wave time reference counts from the first frame, which minimizing moves; such files are copied whole.
 		bool canMinimize(const AudioFileInfo& info)
 		{
-			return info.sampleFormat != SampleFormat::Int32 && !info.broadcast;
+			return info.sampleFormat != SampleFormat::Int32 && info.sampleFormat != SampleFormat::Float64 &&
+				!info.broadcast;
 		}
 
 		// The format of a minimized file: the source's where GNUbase writes it and the samples survive unchanged
