@@ -47,6 +47,11 @@ namespace gnubase::engine
 	// longer shared.
 	void syncSharedParts(const std::map<ObjectId, MidiPart>& before, Project& project, CommandContext& context);
 
+	// What syncSharedParts needs of the parts before a command (eventedits.cpp): copies of the shared ones only. It
+	// compares a part with its earlier self only if that was in the same group, so a part that isn't shared yet needn't
+	// be copied: one that becomes shared in the command gives no edit to its new group either way.
+	std::map<ObjectId, MidiPart> sharedPartsOf(const std::map<ObjectId, MidiPart>& parts);
+
 	// What range.copy and range.cut keep for range.paste (eventedits.cpp): the events, parts and automation of a
 	// selection range, cut at its edges, where they were. Not part of the project or of undo.
 	struct RangeClipboard

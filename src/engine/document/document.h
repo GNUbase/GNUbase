@@ -343,6 +343,17 @@ namespace gnubase::engine
 		ObjectId parent = 0; // 0: in the pool's Audio folder
 	};
 
+	// A point of an audio event's volume curve (#139): where in the clip it is (its sample frames, so the curve moves
+	// with the event and stays with the audio when the event is resized or split), the volume there in dB
+	// (g_minEventVolume to g_maxEventVolume), and how the curve bends on its way to the next point (-1 to 1, as
+	// AutomationShape::Curve bends).
+	struct VolumePoint
+	{
+		time::Samples position = 0;
+		double volume = 0.0;
+		double curve = 0.0;
+	};
+
 	// Plays a section of a clip on an audio track.
 	struct AudioEvent
 	{
@@ -362,6 +373,9 @@ namespace gnubase::engine
 		// event: its start.
 		std::optional<time::Samples> snapPoint;
 		std::string color; // "#rrggbb", or empty to follow the track's color
+		// Its volume curve by position, on top of volume: level with the first point before it and with the last one
+		// after it; without points, 0 dB. Points at the same position make a jump.
+		std::vector<VolumePoint> volumeCurve;
 		// The audio part it is in, on the same track, or 0 for none. It keeps its position on the track: it plays
 		// only where the part is, and moves, splits and goes with the part.
 		ObjectId part = 0;
@@ -756,12 +770,17 @@ namespace gnubase::engine
 		return std::tie(a.id, a.name, a.parent) == std::tie(b.id, b.name, b.parent);
 	}
 
+	inline bool operator==(const VolumePoint& a, const VolumePoint& b)
+	{
+		return std::tie(a.position, a.volume, a.curve) == std::tie(b.position, b.volume, b.curve);
+	}
+
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
-				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part) ==
+				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.volumeCurve) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
-				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part);
+				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.volumeCurve);
 	}
 
 	inline bool operator==(const AudioPart& a, const AudioPart& b)

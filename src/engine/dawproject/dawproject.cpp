@@ -1662,6 +1662,7 @@ namespace gnubase::engine
 		const std::string xml = exporter.projectXml();
 		Json document = toJson(project);
 		document["nextId"] = project.nextId;
+		document["snap"] = toJson(project.snap, true); // with a newer build's grid types
 		Json media = Json::object();
 		for (const auto& [id, mediaPath] : exporter.mediaPaths())
 			media[std::to_string(id)] = mediaPath;

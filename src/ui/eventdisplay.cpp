@@ -107,6 +107,7 @@ namespace gnubase::ui
 			{"view.autoScroll", [this] { setAutoScroll(!m_autoScroll); }}};
 		addEditActions();
 		addFadeActions();
+		addVolumeActions();
 		addToolActions();
 		setToolModifiers(Json::object());
 
@@ -729,16 +730,7 @@ namespace gnubase::ui
 			grid && *grid != m_snap.format)
 		{
 			m_snap.format = *grid;
-			++m_formatsSent;
-			m_binding.send("snap.set", {{"format", name}},
-				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
-				{
-					if (alive.expired())
-						return;
-					--m_formatsSent;
-					if (!result.ok())
-						logging::warning("The event display can't change the snap settings: {}", result.error);
-				});
+			setSnap({{"format", name}});
 		}
 		showRuler();
 	}
@@ -1009,6 +1001,8 @@ namespace gnubase::ui
 		case Drag::Click:
 		case Drag::FadeIn:
 		case Drag::FadeOut:
+		case Drag::Volume:
+		case Drag::VolumePoint:
 			areaMove(dx, dy, restricts(event));
 			return;
 		case Drag::None:

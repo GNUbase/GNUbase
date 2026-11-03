@@ -304,6 +304,8 @@
 				<menuitem command="audio.fadeEditor">Open Fade Editor(s)</menuitem>
 			</menu>
 		</menuitem>
+		<!-- Volume curves (reference manual p. 401, docs/features/volume-curves.md) -->
+		<menuitem command="audio.removeVolumeCurve">Remove Volume Curve</menuitem>
 	</menu>
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
