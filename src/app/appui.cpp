@@ -454,6 +454,30 @@ namespace gnubase::app
 				m_canRedo = position < result.value.at("steps").size();
 			});
 
+		// Lock Record (docs/features/recording.md): a stop or punch out that the engine refused because recording is
+		// locked asks whether to stop anyway (lock-record.rml).
+		for (const char* command : {"transport.stop", "transport.toggle", "transport.record"})
+			m_lockRecord.push_back(m_binding.onResult(command,
+				[this](const engine::Result& result)
+				{
+					if (result.ok())
+						return;
+					m_binding.send("transport.get", engine::Json::object(),
+						[this](const engine::Result& status)
+						{
+							if (status.ok() && status.value.at("lockRecord").get<bool>() &&
+								status.value.at("recording").get<bool>())
+								openOnce(m_main, "lock-record.rml", m_lockRecordDialog);
+						});
+				}));
+		// The status line's remaining record time changes as the disk fills up, also by other programs.
+		m_shell.every(std::chrono::seconds(1),
+			[this]
+			{
+				if (m_statusLine)
+					m_statusLine->update();
+			});
+
 		// The transport controls' commands (docs/features/transport-bar.md); the engine's transport commands have
 		// their keys in the default key map.
 		m_keys.add({"window.transportPanel", "Shows or hides the transport panel.",

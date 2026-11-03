@@ -104,6 +104,118 @@ namespace gnubase::ui
 					[](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; });
 		}
 
+		// The path of a strip control's value in the channel's JSON, by dots: pre.lowCut.on, or for an EQ band
+		// eq.bands.<band>.gain.
+		std::vector<std::string> paramPath(const std::string& param)
+		{
+			std::vector<std::string> keys;
+			std::istringstream text(param);
+			for (std::string key; std::getline(text, key, '.');)
+				keys.push_back(key);
+			return keys;
+		}
+
+		// A strip control's value in the channel's JSON, or null.
+		Json paramValue(const Json& channel, const std::string& param)
+		{
+			const Json* value = &channel;
+			for (const std::string& key : paramPath(param))
+			{
+				if (value->is_array() && !key.empty() && std::isdigit(static_cast<unsigned char>(key[0])) != 0)
+				{
+					const size_t index = std::stoul(key) - 1; // EQ bands count from 1
+					if (index >= value->size())
+						return nullptr;
+					value = &value->at(index);
+				}
+				else if (value->is_object() && value->contains(key))
+				{
+					value = &value->at(key);
+				}
+				else
+				{
+					return nullptr;
+				}
+			}
+			return *value;
+		}
+
+		// The parameters of channel.set that give a strip control the value.
+		Json paramChange(const std::string& param, Json value)
+		{
+			const std::vector<std::string> keys = paramPath(param);
+			for (size_t i = keys.size(); i-- > 0;)
+			{
+				if (i > 0 && keys[i - 1] == "bands")
+				{
+					value["band"] = std::stoi(keys[i]); // eq.bands.<band>: one band's object in the array
+					value = Json::array({std::move(value)});
+					continue;
+				}
+				value = Json({{keys[i], std::move(value)}});
+			}
+			return value;
+		}
+
+		// The pre section, the equalizer and the strip's dynamics (reference manual pp. 473-489). Every strip has the
+		// sections, so that the docking system learns them from the first one; only audio channels have controls.
+		std::string sectionsRml(bool audio)
+		{
+			const auto number = [](double value) { return widgets::format(static_cast<float>(value)); };
+			const auto knob = [&number](
+								  const std::string& param, const char* title, double min, double max, double fallback)
+			{
+				return R"(<knob param=")" + param + R"(" title=")" + title + R"(" min=")" + number(min) + R"(" max=")" +
+					number(max) + R"(" default=")" + number(fallback) + R"(" step=")" + number((max - min) / 200.0) +
+					R"("/>)";
+			};
+			const auto toggle = [](const std::string& param, const char* title, const std::string& label)
+			{
+				return R"(<button type="toggle" class="toggle" param=")" + param + R"(" title=")" + title + R"(">)" +
+					label + "</button>";
+			};
+			const auto frequency = [&number](const std::string& param, const char* title, double min, double fallback)
+			{
+				return R"(<valuefield param=")" + param + R"(" title=")" + title + R"(" min=")" + number(min) +
+					R"(" max="20000" default=")" + number(fallback) + R"(" step="10" decimals="0" unit="Hz"/>)";
+			};
+			const auto row = [](const std::string& controls)
+			{ return R"(<div class="mixer-row">)" + controls + "</div>"; };
+			const auto section = [audio](const char* id, const char* label, const std::string& controls)
+			{
+				return std::string(R"(<div class="mixer-section mixer-)") + id + R"(" section=")" + id +
+					R"(" label=")" + label + R"(" default="hidden">)" + (audio ? controls : "") + "</div>";
+			};
+
+			std::string eq = toggle("eq.bypass", "Equalizers Bypass", "Bypass");
+			const std::array<double, 4> frequencies = {100.0, 500.0, 2000.0, 8000.0};
+			for (int band = 1; band <= 4; ++band)
+			{
+				const std::string path = "eq.bands." + std::to_string(band) + ".";
+				eq += row(toggle(path + "on", "EQ Band on/off", std::to_string(band)) +
+					knob(path + "gain", "Gain", -24.0, 24.0, 0.0) +
+					frequency(path + "frequency", "Frequency", 20.0, frequencies[static_cast<size_t>(band - 1)]) +
+					knob(path + "q", "Q-Factor", 0.1, 12.0, 1.0));
+			}
+			return section("pre", "Pre",
+					   knob("pre.gain", "Pre-Gain", -24.0, 24.0, 0.0) + toggle("pre.phase", "Phase", "Ø") +
+						   row(toggle("pre.lowCut.on", "Low-Cut Filter", "LC") +
+							   frequency("pre.lowCut.frequency", "Low-Cut Frequency", 20.0, 20.0)) +
+						   row(toggle("pre.highCut.on", "High-Cut Filter", "HC") +
+							   frequency("pre.highCut.frequency", "High-Cut Frequency", 50.0, 20000.0))) +
+				section("eq", "Equalizer", eq) +
+				section("strip", "Strip",
+					row(toggle("strip.gate.on", "Noise Gate", "Gate") +
+						knob("strip.gate.threshold", "Threshold", -80.0, 0.0, -40.0) +
+						knob("strip.gate.range", "Range", -80.0, 0.0, -80.0)) +
+						row(toggle("strip.compressor.on", "Compressor", "Comp") +
+							knob("strip.compressor.threshold", "Threshold", -60.0, 0.0, -20.0) +
+							knob("strip.compressor.ratio", "Ratio", 1.0, 20.0, 4.0) +
+							knob("strip.compressor.makeup", "MakeUp Gain", 0.0, 24.0, 0.0)) +
+						row(toggle("strip.limiter.on", "Limiter", "Limit") +
+							knob("strip.limiter.threshold", "Threshold", -30.0, 0.0, 0.0)));
+		}
+
 		constexpr std::array<Rml::EventId, 5> g_rootEvents = {Rml::EventId::Click, Rml::EventId::Dblclick,
 			Rml::EventId::Change, Rml::EventId::Mousedown, Rml::EventId::Mouseup};
 	}
@@ -321,11 +433,14 @@ namespace gnubase::ui
 		{
 			const bool audio = channel->channel != nullptr && channel->channel->at("format") != "none";
 			std::string rml = R"(<div class="mixer-channel-name"/>)"
-							  R"(<div class="mixer-picture" section="picture" label="Pictures" default="hidden"/>)"
-							  R"(<div class="mixer-notes" section="notes" label="Notepad" default="hidden">)";
+							  R"(<div class="mixer-picture" section="picture" label="Pictures" default="hidden"/>)";
+			rml += sectionsRml(audio);
+			rml += R"(<div class="mixer-notes" section="notes" label="Notepad" default="hidden">)";
 			if (channel->channel != nullptr)
 				rml += R"(<textarea class="mixer-notes-field" rows="4"/>)";
 			rml += R"(</div><div class="mixer-fader" section="fader" label="Fader">)";
+			if (audio) // the panner (reference manual p. 465)
+				rml += R"(<knob class="mixer-pan" param="pan" title="Pan" min="-1" max="1" default="0" step="0.01"/>)";
 			if (channel->channel != nullptr)
 				rml +=
 					R"(<div class="mixer-buttons"><button class="toggle mute" control="mute" title="Mute">M</button>)"
@@ -374,6 +489,22 @@ namespace gnubase::ui
 		for (const char* control : {"mute", "solo"})
 			if (Rml::Element* button = strip.QuerySelector(std::string("button[control=") + control + "]"))
 				button->SetClass("checked", json.at(control).get<bool>());
+		Rml::ElementList controls;
+		strip.QuerySelectorAll(controls, "[param]");
+		for (Rml::Element* control : controls)
+		{
+			const Json value = paramValue(json, attribute(*control, "param"));
+			if (value.is_boolean())
+			{
+				setChecked(*control, value.get<bool>());
+			}
+			else if (value.is_number())
+			{
+				const std::string text = widgets::format(value.get<float>());
+				if (attribute(*control, "value") != text)
+					control->SetAttribute("value", text);
+			}
+		}
 		if (Rml::Element* fader = strip.QuerySelector("fader"))
 		{
 			const double volume = json.at("volume").get<double>();
@@ -481,13 +612,34 @@ namespace gnubase::ui
 		{
 		case Rml::EventId::Change:
 			if (target->HasAttribute("channel-type"))
+			{
 				setTypeHidden(attribute(*target, "channel-type"), !event.GetParameter("value", true));
+			}
 			else if (target->HasAttribute("visibility"))
+			{
 				setHidden(idAttribute(*target, "visibility"), !event.GetParameter("value", true));
+			}
 			else if (target->GetTagName() == "fader")
+			{
 				if (const MixerChannel* channel = channelOf(target))
 					m_binding.send(
 						"channel.set", {{"channel", channel->id}, {"volume", event.GetParameter("value", 0.0F)}});
+			}
+			else if (target->HasAttribute("param"))
+			{
+				if (const MixerChannel* channel = channelOf(target); channel != nullptr && channel->channel != nullptr)
+				{
+					const Rml::Variant* given =
+						event.GetParameters().count("value") != 0 ? &event.GetParameters().at("value") : nullptr;
+					if (given == nullptr)
+						break;
+					Json value =
+						given->GetType() == Rml::Variant::BOOL ? Json(given->Get<bool>()) : Json(given->Get<double>());
+					Json parameters = paramChange(attribute(*target, "param"), std::move(value));
+					parameters["channel"] = channel->id;
+					m_binding.send("channel.set", std::move(parameters));
+				}
+			}
 			break;
 		case Rml::EventId::Click:
 			if (attribute(*target, "agent") == "showAll")
