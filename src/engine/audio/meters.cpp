@@ -56,6 +56,10 @@ namespace gnubase::engine
 			m_squares[index] = {};
 			m_peakMax[index] = 0.0f;
 			m_rmsMax[index] = 0.0f;
+			m_peak[index].store(0.0f, std::memory_order_relaxed);
+			m_rms[index].store(0.0f, std::memory_order_relaxed);
+			m_publishedPeakMax[index].store(0.0f, std::memory_order_relaxed);
+			m_publishedRmsMax[index].store(0.0f, std::memory_order_relaxed);
 		}
 		m_channels.store(channels, std::memory_order_relaxed);
 		for (int c = 0; c < channels; ++c)
@@ -222,12 +226,21 @@ namespace gnubase::engine
 			{
 				m_windowTruePeak[c] = 0.0f;
 				m_truePeakMax[c] = 0.0f;
+				m_truePeak[c].store(0.0f, std::memory_order_relaxed);
+				m_publishedTruePeakMax[c].store(0.0f, std::memory_order_relaxed);
 			}
 			m_channels = channels;
 			m_filterState = {};
 			m_history = {};
 			m_publishedChannels.store(channels, std::memory_order_relaxed);
 		}
+		if (measuring && !m_wasMeasuring)
+		{
+			// Playback starts: a fresh step, so no block holds audio from while the transport stood.
+			m_stepEnergy = 0.0;
+			m_stepFrames = 0;
+		}
+		m_wasMeasuring = measuring;
 		const analysis::Biquad& shelf = m_filters[0];
 		const analysis::Biquad& highPass = m_filters[1];
 		constexpr int length = g_taps / 4;

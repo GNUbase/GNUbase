@@ -367,7 +367,16 @@ TEST_CASE("a level meter channel that comes back starts without what it measured
 		meter.process(audio.data(), 1, g_block, g_rate);
 	}
 	meter.reset();
-	// It comes back silent: no old peak, RMS or maximum.
+	// It comes back silent: no old peak, RMS or maximum, also before it publishes again.
+	{
+		const std::array<const float*, 2> audio{mono.data(), mono.data()};
+		meter.process(audio.data(), 2, g_block, g_rate);
+		const LevelReading early = meter.read();
+		CHECK(early.peak[1] == 0.0f);
+		CHECK(early.rms[1] == 0.0f);
+		CHECK(early.peakMax[1] == 0.0f);
+		CHECK(early.rmsMax[1] == 0.0f);
+	}
 	const std::vector<float> silence(g_block, 0.0f);
 	for (int block = 0; block < 20; ++block)
 	{
@@ -389,14 +398,14 @@ TEST_CASE("the loudness blocks start where playback starts, not with audio from 
 	Signal quiet;
 	quiet.sine(5.0, -30.0);
 	Signal loud;
-	loud.sine(3.0, -10.0);
+	loud.sine(GENERATE(3.0, 3.05), -10.0); // also ending off the 100 ms grid
 	quiet.play(meter);
 	loud.play(meter, false); // stopped
 	quiet.play(meter);
 	const LoudnessReading reading = meter.read();
 	CHECK(reading.integrated.value_or(0.0) == Approx(-30.0).margin(0.1));
 	CHECK(reading.momentaryMax.value_or(0.0) == Approx(-30.0).margin(0.1));
-	CHECK(reading.seconds == Approx(10.0));
+	CHECK(reading.seconds == Approx(10.0).margin(0.1));
 }
 
 TEST_CASE("the loudness meter reads a steady sine at 44.1 kHz too", "[unit]")
