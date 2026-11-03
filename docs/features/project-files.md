@@ -34,15 +34,6 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   `project.autoSaveFiles` (5), after which the oldest is overwritten. A project without a file goes to `Auto Saves` in
   the settings folder, named after the project; without a settings folder it isn't auto saved. Auto saves don't copy
   media and don't save the project: it stays modified, and its file stays as it is.
-- **Opening an auto save.** `project.load` opens an auto save (a `.bak` in a folder `Auto Saves`, in any case, as the
-  file systems of Windows and macOS allow) without a file and as modified, and it isn't a recent project (#484). So
-  Save asks for a path instead of overwriting the auto save, there is nothing to revert to, `project.location` has no
-  folder and no media folder (media aren't copied to `Auto Saves/Audio`), and its next auto saves go to the settings
-  folder's `Auto Saves` like those of other untitled projects instead of `Auto Saves/Auto Saves`. Saving it
-  as the project's file, after the user chose one, makes that its file and project folder again. The reference manual
-  doesn't say what opening an auto save does; it calls auto saves copies of the project file (pp. 134, 1608), and
-  going on as the project file next to `Auto Saves` would overwrite that file on Save with what may be an older copy
-  that the user only wanted to look at. A `.bak` elsewhere isn't an auto save and opens as the project's file.
   The engine's clock (`Engine::clock`, `engine/clock.h`) ticks every 30 seconds on a thread of its own, and each tick
   posts `project.autoSave` with `due`; that saves only when the user setting `project.autoSave` is on (the default)
   and `project.autoSaveInterval` minutes (15) have passed since the last save, opening or auto save, and stays out of
@@ -54,6 +45,16 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   out of `engine.commandLog` and the error log (`CommandContext::failQuietly`), so that a project that can't be auto
   saved for days doesn't push the user's own commands out of the log's 256 entries. A client's own failing
   `project.autoSave` without `due` is always in the log and fails with the reason.
+- **Opening an auto save.** `project.load` opens an auto save (a `.bak` in a folder `Auto Saves`, in any case on every
+  platform, since Windows and macOS open other case as the same file) without a file and as modified, and it isn't a
+  recent project (#484). So Save asks for a path instead of overwriting the auto save, there is nothing to revert to,
+  `project.location` has no folder and no media folder (media aren't copied to `Auto Saves/Audio`), and its next auto
+  saves go to the settings folder's `Auto Saves` like those of other untitled projects instead of
+  `Auto Saves/Auto Saves`. Saving it as the project's file, after the user chose one, makes that its file and project
+  folder again. The reference manual doesn't say what opening an auto save does; it calls auto saves copies of the
+  project file (pp. 134, 1608), and going on as the project file next to `Auto Saves` would overwrite that file on Save
+  with what may be an older copy that the user only wanted to look at. A `.bak` elsewhere isn't an auto save and opens
+  as the project's file.
 - **Project folder.** The folder of the project's file. GNUbase puts the media folder `Audio` ([backup.md](backup.md))
   and `Auto Saves` into it; the other folders of the reference (Edits, Images, Track Pictures) come with their
   features.

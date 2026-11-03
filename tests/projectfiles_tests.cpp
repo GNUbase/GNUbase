@@ -703,6 +703,7 @@ TEST_CASE("File > Open and Revert ask before unsaved changes are discarded", "[u
 	REQUIRE(app.waitUntil([&app] { return !disabled(app, "menuitem[command=\"file.revert\"]"); }));
 	app.call("track.add", {{"type", "audio"}});
 	const fs::path autoSave = fs::u8path(app.call("project.autoSave").at("file").get<std::string>());
+	const fs::file_time_type autoSaved = fs::last_write_time(autoSave);
 	fileMenu(app, "file.open");
 	answer(app, {autoSave});
 	click(app, "#discard-changes");
@@ -711,6 +712,7 @@ TEST_CASE("File > Open and Revert ask before unsaved changes are discarded", "[u
 	fileMenu(app, "file.save");
 	CHECK(answer(app, {}).kind == gnubase::ui::FileDialogKind::Save);
 	CHECK(location(app).is_null());
+	CHECK(fs::last_write_time(autoSave) == autoSaved);
 }
 
 TEST_CASE("the start screen creates projects, from templates too, and opens recent ones", "[ui]")
