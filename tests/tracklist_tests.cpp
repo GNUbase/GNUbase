@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <chrono>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -366,6 +367,254 @@ TEST_CASE("the track controls settings dialog chooses and orders each track type
 	// Switch Time Base switches the track's time base.
 	tracks.click(row(audio) + " button.timeBase");
 	REQUIRE(tracks.app.waitUntil([&] { return tracks.track(audio).at("timeBase") == "linear"; }));
+}
+
+TEST_CASE("the divider beside the track list sizes it, and the width comes back after a restart", "[ui]")
+{
+	test::UiApp app({1000, 500});
+	app.setDpRatio(1.0F);
+	app.appUi().showProject();
+	const uint64_t audio = app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+	REQUIRE(app.waitUntil([&] { return elements(app, row(audio)).size() == 1; }));
+	app.shell().step(std::chrono::milliseconds(0));
+	const auto box = [&app](const std::string& selector)
+	{
+		const Json found = elements(app, selector);
+		REQUIRE(found.size() == 1);
+		return found[0].at("box");
+	};
+	const auto x = [&box](const std::string& selector) { return box(selector).at("x").get<int>(); };
+	const auto width = [&box](const std::string& selector) { return box(selector).at("width").get<int>(); };
+	const int lanes = x("event-lanes.events") - x("#event-display");
+	// The track list, its rows, the divider and the event display with its lanes, which takes the rest of the main
+	// zone.
+	const auto follows = [&](int expected)
+	{
+		CHECK(width("#track-list") == expected);
+		CHECK(width(row(audio)) == expected);
+		CHECK(x("splitter[for=trackList]") == x("#track-list") + expected);
+		CHECK(x("#event-display") == x("splitter[for=trackList]") + width("splitter[for=trackList]"));
+		CHECK(x("#event-display") + width("#event-display") == x("#main-zone") + width("#main-zone"));
+		CHECK(x("event-lanes.events") - x("#event-display") == lanes);
+	};
+	const auto project = [&app]
+	{
+		const Json layout = app.call("settings.get", {{"key", "ui.layout"}}).at("value");
+		return layout.value("windows", Json::object()).value("project", Json::object());
+	};
+	const auto saved = [&project] { return project().value("sizes", Json::object()).value("trackList", 0.0); };
+	const auto layout = [&app](const Json& sizes)
+	{ app.call("settings.set", {{"key", "ui.layout"}, {"value", {{"windows", {{"project", {{"sizes", sizes}}}}}}}}); };
+	const auto drag = [&](int dx)
+	{
+		const Json splitter = box("splitter[for=trackList]");
+		const ui::Point from{splitter.at("x").get<int>() + (splitter.at("width").get<int>() / 2),
+			splitter.at("y").get<int>() + (splitter.at("height").get<int>() / 2)};
+		app.ui().drag(std::nullopt, {"", 0, from}, {"", 0, ui::Point{from.x + dx, from.y}});
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+	follows(280);
+
+	// Dragging the divider sizes the track list; the event display follows, and ui.layout keeps the width.
+	drag(60);
+	follows(340);
+	REQUIRE(app.waitUntil([&] { return saved() == 340.0; }));
+	drag(-25);
+	follows(315);
+	REQUIRE(app.waitUntil([&] { return saved() == 315.0; }));
+
+	// Not below the track list's minimum, nor so far that the event display goes below its own.
+	const int most = width("#main-zone") - width("splitter[for=trackList]") - 72;
+	drag(-1000);
+	follows(120);
+	drag(2000);
+	follows(most);
+
+	// A double click doesn't hide the track list, as it hides a zone.
+	const Json splitter = box("splitter[for=trackList]");
+	app.ui().click(std::nullopt,
+		{"", 0,
+			ui::Point{splitter.at("x").get<int>() + (splitter.at("width").get<int>() / 2),
+				splitter.at("y").get<int>() + (splitter.at("height").get<int>() / 2)}},
+		ui::MouseButton::Left, 2, {});
+	app.shell().step(std::chrono::milliseconds(0));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(elements(app, "#track-list").at(0).at("visible").get<bool>());
+	follows(most);
+	CHECK(!project().value("strips", Json::object()).contains("trackList"));
+
+	// ui.layout from another client sizes it too, as Docking::setSize does; a size too large for the window is held
+	// where the event display keeps its minimum.
+	layout({{"trackList", 300}});
+	REQUIRE(app.waitUntil([&] { return width("#track-list") == 300; }));
+	app.shell().step(std::chrono::milliseconds(0));
+	follows(300);
+	app.appUi().docking().setSize("project", "trackList", 333);
+	app.shell().step(std::chrono::milliseconds(0));
+	follows(333);
+	CHECK(app.appUi().docking().layout().at("windows").at("project").at("sizes").at("trackList") == 333.0);
+	layout({{"trackList", 1e300}});
+	REQUIRE(app.waitUntil([&] { return width("#track-list") == most; }));
+	app.shell().step(std::chrono::milliseconds(0));
+	follows(most);
+
+	// A window too narrow for both takes the room from the track list once the event display is at its minimum.
+	layout({{"trackList", 600}});
+	REQUIRE(app.waitUntil([&] { return width("#track-list") == 600; }));
+	const ui::Rect bounds = app.shell().bounds(app.main().id());
+	app.shell().setBounds(app.main().id(), {bounds.x, bounds.y, 500, bounds.height});
+	REQUIRE(app.waitUntil([&] { return width("#main-zone") == 500; }));
+	app.shell().step(std::chrono::milliseconds(0));
+	follows(500 - width("splitter[for=trackList]") - 72);
+	app.shell().setBounds(app.main().id(), bounds);
+	REQUIRE(app.waitUntil([&] { return width("#main-zone") == 1000; }));
+	app.shell().step(std::chrono::milliseconds(0));
+	follows(600);
+
+	// Squeezed by a side zone, the main zone keeps the column's 200 dp, which the track list at its minimum, the
+	// divider and the event display at its minimum fill.
+	app.appUi().docking().setVisible("project", "left", true);
+	app.appUi().docking().setSize("project", "left", 900);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(width("#main-zone") == 200);
+	follows(120);
+
+	// It is in dp, so a larger UI scale makes it wider in pixels.
+	app.appUi().docking().setVisible("project", "left", false);
+	layout({{"trackList", 300}});
+	REQUIRE(app.waitUntil([&] { return width("#track-list") == 300; }));
+	app.setDpRatio(2.0F);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(width("#track-list") == 600);
+	app.setDpRatio(1.0F);
+	app.shell().step(std::chrono::milliseconds(0));
+
+	// The width dragged last comes back after a restart, with a new project.
+	drag(20);
+	follows(320);
+	REQUIRE(app.waitUntil([&] { return saved() == 320.0; }));
+	app.restart();
+	app.setDpRatio(1.0F);
+	app.appUi().showProject();
+	const uint64_t again = app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+	REQUIRE(app.waitUntil([&] { return elements(app, row(again)).size() == 1; }));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(width("#track-list") == 320);
+	CHECK(width(row(again)) == 320);
+	CHECK(x("#event-display") == x("splitter[for=trackList]") + width("splitter[for=trackList]"));
+}
+
+TEST_CASE("the track name width and each track type's controls area width come from the settings dialog", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t audio = tracks.add({{"type", "audio"}});
+	const uint64_t midi = tracks.add({{"type", "midi"}});
+	// An audio track two folders deep.
+	const uint64_t outer = tracks.add({{"type", "folder"}});
+	const uint64_t inner = tracks.add({{"type", "folder"}, {"parent", outer}});
+	const uint64_t deep = tracks.add({{"type", "audio"}, {"parent", inner}});
+	tracks.rows(5);
+	const auto width = [&tracks](const std::string& selector) { return tracks.box(selector).at("width").get<int>(); };
+	const auto right = [&tracks](const std::string& selector)
+	{
+		const Json box = tracks.box(selector);
+		return box.at("x").get<int>() + box.at("width").get<int>();
+	};
+	// The lines a row's controls take, by their buttons' tops.
+	const auto lines = [&tracks](uint64_t track)
+	{
+		std::set<int> tops;
+		for (const Json& button : elements(tracks.app, row(track) + " button[control]"))
+			tops.insert(button.at("box").at("y").get<int>());
+		return tops.size();
+	};
+	const auto trackList = [&tracks](int dp)
+	{
+		tracks.app.call("settings.set",
+			{{"key", "ui.layout"}, {"value", {{"windows", {{"project", {{"sizes", {{"trackList", dp}}}}}}}}}});
+		REQUIRE(tracks.app.waitUntil([&] { return tracks.box("#track-list").at("width") == dp; }));
+		tracks.app.shell().step(std::chrono::milliseconds(0));
+	};
+	// By default names and controls areas are 120 dp wide, with audio's five controls on one line. Two folders deep,
+	// the name gives way, so that the controls still show whole.
+	CHECK(width(row(audio) + " .track-name") == 120);
+	CHECK(width(row(midi) + " .track-name") == 120);
+	CHECK(width(row(audio) + " .track-controls") == 120);
+	CHECK(lines(audio) == 1);
+	CHECK(width(row(deep) + " .track-name") < 120);
+	CHECK(width(row(deep) + " .track-controls") == 120);
+	CHECK(right(row(deep) + " .track-controls") <= right(row(deep)));
+	CHECK(lines(deep) == 1);
+
+	// The dialog keeps what it doesn't know of the setting, e.g. from a later GNUbase.
+	tracks.app.call("settings.set",
+		{{"key", "ui.trackWidths"},
+			{"value", {{"name", 120}, {"controls", {{"audio", 120}, {"chord", 200}}}, {"channel", 60}}}});
+
+	const auto open = [&tracks] { return !elements(tracks.app, "#track-controls-dialog").empty(); };
+	const auto type = [&tracks](const std::string& selector, const std::string& text)
+	{
+		tracks.click(selector, {}, 2);
+		tracks.app.ui().key(std::nullopt, "Ctrl+A");
+		tracks.app.ui().text(std::nullopt, text);
+		tracks.app.ui().key(std::nullopt, "Enter");
+		tracks.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto value = [&tracks](const std::string& selector)
+	{ return elements(tracks.app, selector).at(0).at("attributes").value("value", ""); };
+	tracks.click("#track-controls-settings");
+	REQUIRE(tracks.app.waitUntil(open));
+	CHECK(value("#track-name-width") == "120");
+	CHECK(value("#controls-area-width") == "120");
+	// Track Name Width is global; Controls Area Width is the selected type's, here audio's.
+	type("#track-name-width", "130");
+	type("#controls-area-width", "48");
+	// MIDI's own width, which Reset sets back to its default.
+	tracks.click("#controls-types > [value=midi]");
+	CHECK(value("#controls-area-width") == "120");
+	type("#controls-area-width", "60");
+	tracks.click("#controls-reset");
+	CHECK(value("#controls-area-width") == "120");
+	tracks.click("#controls-types > [value=audio]");
+	CHECK(value("#controls-area-width") == "48");
+	// Out of range, it is held at the field's limits; Ctrl-click sets the default.
+	type("#track-name-width", "5000");
+	CHECK(value("#track-name-width") == "400");
+	tracks.click("#track-name-width", {"ctrl"});
+	CHECK(value("#track-name-width") == "120");
+	type("#track-name-width", "130");
+	tracks.click("#controls-ok");
+	REQUIRE(tracks.app.waitUntil([&] { return !open(); }));
+
+	const Json saved = tracks.app.call("settings.get", {{"key", "ui.trackWidths"}}).at("value");
+	CHECK(saved.at("name") == 130);
+	CHECK(saved.at("controls").at("audio") == 48);
+	CHECK(saved.at("controls").at("midi") == 120);
+	CHECK(saved.at("controls").at("chord") == 200);
+	CHECK(saved.at("channel") == 60);
+	REQUIRE(tracks.app.waitUntil([&] { return width(row(audio) + " .track-name") == 130; }));
+	CHECK(width(row(midi) + " .track-name") == 130);
+
+	// Each controls area is as wide as its type's width, whatever the track list's: audio's five controls wrap onto
+	// three lines of two, MIDI's three fit on one. In a narrow track list the names give way.
+	CHECK(width(row(audio) + " .track-controls") == 48);
+	CHECK(lines(audio) == 3);
+	CHECK(lines(midi) == 1);
+	trackList(500);
+	CHECK(width(row(audio) + " .track-controls") == 48);
+	CHECK(lines(audio) == 3);
+	trackList(200);
+	CHECK(width(row(audio) + " .track-controls") == 48);
+	CHECK(width(row(midi) + " .track-controls") == 120);
+	CHECK(width(row(midi) + " .track-name") < 130);
+	CHECK(right(row(midi) + " .track-controls") <= right(row(midi)));
+
+	// From another client: a type left out has the default controls area width.
+	tracks.app.call("settings.set", {{"key", "ui.trackWidths"}, {"value", {{"name", 90}}}});
+	trackList(300);
+	REQUIRE(tracks.app.waitUntil([&] { return width(row(audio) + " .track-name") == 90; }));
+	CHECK(width(row(audio) + " .track-controls") == 120);
+	CHECK(lines(audio) == 1);
 }
 
 TEST_CASE("folder tracks: new folders for the selected tracks, group channels and data blocks", "[ui]")
