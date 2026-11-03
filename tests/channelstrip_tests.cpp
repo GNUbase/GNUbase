@@ -13,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -68,6 +69,20 @@ namespace
 		double peakDb()
 		{
 			const double peak = measure().at("peak").get<double>();
+			return peak > 0.0 ? 20.0 * std::log10(peak) : -200.0;
+		}
+
+		// Renders frames and returns the left output's peak in dB from frame `from` to `to` of them.
+		double renderPeakDb(int64_t frames, int64_t from, int64_t to)
+		{
+			const auto start = run(client, "audio.analyze", {{"channels", {0}}}).at("frames").get<int64_t>() + from;
+			run(client, "audio.render", {{"frames", frames}});
+			const double peak =
+				run(client, "audio.analyze", {{"channels", {0}}, {"start", start}, {"frames", to - from}})
+					.at("channels")
+					.at(0)
+					.at("peak")
+					.get<double>();
 			return peak > 0.0 ? 20.0 * std::log10(peak) : -200.0;
 		}
 
@@ -215,6 +230,95 @@ TEST_CASE("the equalizer's bands boost and cut, and its bypass turns them off", 
 		{{"bands",
 			{{{"band", 1}, {"on", false}}, {{"band", 4}, {"on", true}, {"type", "highCut"}, {"frequency", 62.5}}}}}}});
 	CHECK_THAT(strip.peakDb(), WithinAbs(-12.0 - 48.0, 1.5)); // 4 octaves at 12 dB per octave
+}
+
+TEST_CASE("an equalizer band or cut filter turned on from all-off glides in", "[integration]")
+{
+	Strip strip(1000.0, -12.0);
+	run(strip.client, "audio.render", {{"frames", g_block}});
+	// A 1 kHz sine has its peak in every 48 frames: in the first millisecond after the change, 1/20 of the glide, the
+	// level has barely moved.
+	const auto glidesIn = [&strip](const Json& on, double target)
+	{
+		INFO(on.dump());
+		strip.set(on);
+		CHECK_THAT(strip.renderPeakDb(g_block, 0, 48), WithinAbs(-12.0, 1.0));
+		CHECK_THAT(strip.peakDb(), WithinAbs(target, 1.0));
+	};
+	const Json bell = {{"eq", {{"bands", {{{"band", 3}, {"on", true}, {"frequency", 1000.0}, {"gain", 12.0}}}}}}};
+	const Json bellOff = {{"eq", {{"bands", {{{"band", 3}, {"on", false}}}}}}};
+	const Json cut = {{"pre", {{"lowCut", {{"on", true}, {"frequency", 2000.0}, {"slope", 12}}}}}};
+	const Json cutOff = {{"pre", {{"lowCut", {{"on", false}}}}}};
+	// Each equalizer the first time, the second once the cut has glided out but goes on running for its tail.
+	glidesIn(cut, -12.0 - 12.0); // an octave at 12 dB per octave
+	strip.set(cutOff);
+	run(strip.client, "audio.render", {{"frames", g_block / 2}});
+	glidesIn(bell, 0.0);
+	strip.set(bellOff);
+	// After an idle spell, longer than the filters' tail, too.
+	run(strip.client, "audio.render", {{"frames", 3 * g_block}});
+	glidesIn(cut, -12.0 - 12.0);
+	strip.set(cutOff);
+	run(strip.client, "audio.render", {{"frames", 3 * g_block}});
+	glidesIn(bell, 0.0);
+}
+
+TEST_CASE("the equalizer's Q sets a bell's width, and band 1 can be a low cut", "[integration]")
+{
+	Strip strip(1000.0, -12.0);
+	// A bell an octave above the sine lifts it more when it is wide than when it is narrow.
+	strip.set({{"eq", {{"bands", {{{"band", 3}, {"on", true}, {"frequency", 2000.0}, {"gain", 12.0}, {"q", 0.5}}}}}}});
+	const double wide = strip.peakDb();
+	strip.set({{"eq", {{"bands", {{{"band", 3}, {"q", 8.0}}}}}}});
+	const double narrow = strip.peakDb();
+	CHECK(wide > -12.0 + 6.0);
+	CHECK(narrow < -12.0 + 1.0);
+	strip.set({{"eq", {{"bands", {{{"band", 3}, {"on", false}}}}}}});
+
+	// Band 1 as a low cut far above the sine takes it down, at 12 dB per octave.
+	strip.set({{"eq", {{"bands", {{{"band", 1}, {"on", true}, {"type", "lowCut"}, {"frequency", 8000.0}}}}}}});
+	CHECK(strip.peakDb() < -12.0 - 30.0);
+}
+
+TEST_CASE("the strip's dynamics follow their attack and release times", "[integration]")
+{
+	// The pre gain, before the dynamics, steps the level, gliding with a time constant of 20 ms. Returns the peak 20
+	// to 40 ms after a step up, which crosses the threshold at once, or 80 to 100 ms after a step down, which crosses
+	// it later, with the time at `fast` and at `slow`.
+	const auto compare =
+		[](const char* section, const char* time, double fast, double slow, Json settings, double from, double to)
+	{
+		settings["on"] = true;
+		const int64_t start = to > from ? 960 : 3840;
+		const auto afterStep = [&](double value)
+		{
+			settings[time] = value;
+			Strip strip(1000.0, -6.0);
+			strip.set({{"pre", {{"gain", from}}}, {"strip", {{section, settings}}}});
+			strip.peakDb();
+			strip.set({{"pre", {{"gain", to}}}});
+			return strip.renderPeakDb(g_block, start, start + 960);
+		};
+		return std::make_pair(afterStep(fast), afterStep(slow));
+	};
+
+	// The gate opens over its attack and closes over its release.
+	const Json gate = {{"threshold", -20.0}, {"range", -60.0}};
+	auto [quick, late] = compare("gate", "attack", 0.01, 100.0, gate, -24.0, 0.0);
+	CHECK(quick > late + 6.0);
+	std::tie(quick, late) = compare("gate", "release", 1.0, 4000.0, gate, 0.0, -24.0);
+	CHECK(quick < late - 6.0);
+
+	// The compressor takes the level down over its attack and lets it up over its release.
+	const Json compressor = {{"threshold", -24.0}, {"ratio", 8.0}};
+	std::tie(quick, late) = compare("compressor", "attack", 0.1, 100.0, compressor, -24.0, 0.0);
+	CHECK(quick < late - 6.0);
+	std::tie(quick, late) = compare("compressor", "release", 10.0, 2000.0, compressor, 0.0, -24.0);
+	CHECK(quick > late + 6.0);
+
+	// The limiter lets the level up over its release; it has no attack, it looks ahead.
+	std::tie(quick, late) = compare("limiter", "release", 1.0, 1000.0, {{"threshold", -20.0}}, 12.0, -20.0);
+	CHECK(quick > late + 6.0);
 }
 
 TEST_CASE("the strip's gate, compressor and limiter shape the dynamics", "[integration]")

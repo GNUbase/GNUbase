@@ -1086,10 +1086,11 @@ namespace gnubase::engine
 				return;
 			// Bands 2 and 3 are always bells; band 1 can be a low shelf or cut, band 4 a high one.
 			const Json& type = json.at("type");
-			const auto found = std::find(
-				g_eqBandTypes.begin(), g_eqBandTypes.end(), type.is_string() ? type.get<std::string>() : std::string());
-			const auto index = static_cast<EqBandType>(found - g_eqBandTypes.begin());
-			const bool fits = found != g_eqBandTypes.end() &&
+			const auto position = static_cast<size_t>(std::find(g_eqBandTypes.begin(), g_eqBandTypes.end(),
+														  type.is_string() ? type.get<std::string>() : std::string()) -
+				g_eqBandTypes.begin());
+			const auto index = static_cast<EqBandType>(position);
+			const bool fits = position < g_eqBandTypes.size() &&
 				(index == EqBandType::Bell ||
 					(number == 1 && (index == EqBandType::LowShelf || index == EqBandType::LowCut)) ||
 					(number == 4 && (index == EqBandType::HighShelf || index == EqBandType::HighCut)));

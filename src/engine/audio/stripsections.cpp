@@ -67,6 +67,11 @@ namespace gnubase::engine
 		m_gain.setTime(dsp::g_smoothingSeconds, sampleRate);
 		m_cuts.core.prepare(sampleRate, maxFrames);
 		m_eq.core.prepare(sampleRate, maxFrames);
+		if (!m_fresh)
+		{
+			m_cuts.core.glideChanges();
+			m_eq.core.glideChanges();
+		}
 		m_gate.prepare(sampleRate, maxFrames);
 		m_compressor.prepare(sampleRate, maxFrames);
 		m_limiter.prepare(sampleRate, maxFrames);
@@ -129,6 +134,9 @@ namespace gnubase::engine
 
 		m_applied = settings;
 		m_fresh = false;
+		// Only the first settings apply at once, even to an equalizer that hasn't processed yet.
+		m_cuts.core.glideChanges();
+		m_eq.core.glideChanges();
 	}
 
 	void StripSections::Filters::process(
@@ -136,12 +144,8 @@ namespace gnubase::engine
 	{
 		if (!on && tail == 0)
 			return;
-		if (!on)
-			tail -= std::min(tail, frames);
-		else if (tail == 0)
-			core.reset(); // coming back after it stopped: what its filters held then is long gone
-		if (on)
-			tail = tailFrames;
+		// Coming back after it stopped needs no reset: a band clears the filter sections it starts to use.
+		tail = on ? tailFrames : tail - std::min(tail, frames);
 		core.process(audio, channels, 0, frames);
 	}
 
