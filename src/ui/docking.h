@@ -47,8 +47,10 @@ namespace gnubase::ui
 	//   zone="main|channel|left|..."  a zone; every zone but main gets a <tabset> with its panels. size="240" and
 	//                                 hidden give its default size in dp and visibility. Its size is its width, or
 	//                                 its height in a flex column. tabbar="bottom" puts its tabs at its bottom.
-	//   splitter for="left"           the splitter that sizes that zone (resize="next" for zones after it); hidden
-	//                                 with the zone, and a double click hides the zone
+	//   splitter for="left"           the splitter that sizes that zone or resizable element (resize="next" for one
+	//                                 after it); hidden with the zone, and a double click hides the zone
+	//   resizable="trackList"         an element inside a zone that a splitter sizes, such as the track list; size
+	//                                 gives its default size in dp, its width, or its height in a flex column
 	//   strip="infoLine"              a strip, such as the info line; hidden gives its default. The body has the
 	//                                 class no-<strip> while it is hidden, for strips that are part of other elements
 	//                                 such as the event display's overview line
@@ -99,6 +101,7 @@ namespace gnubase::ui
 		// name is a zone, or a strip.
 		void setVisible(const std::string& window, const std::string& name, bool visible);
 		bool visible(const std::string& window, const std::string& name) const;
+		// name is a zone, or a resizable element.
 		void setSize(const std::string& window, const std::string& name, double dp);
 		void showTab(const std::string& id);
 		void stepTab(const std::string& window, const std::string& name, int step); // +1 the next, -1 the previous
@@ -162,6 +165,8 @@ namespace gnubase::ui
 
 		const Panel* panel(const std::string& id) const;
 		engine::Json& zone(const std::string& window, const std::string& zone);
+		// Where ui.layout has the size of a zone or a resizable element.
+		engine::Json& size(const std::string& window, const std::string& name);
 		Rml::Element* element(const std::string& window, const std::string& selector) const;
 		std::string windowOf(const Rml::Element& element) const; // the docking window it is in
 		std::string windowIn(Window& window) const;              // the docking window shown there
@@ -182,6 +187,8 @@ namespace gnubase::ui
 		void apply();
 		void applyWindow(const std::string& window, Attached& attached);
 		void applyTabs(Attached& attached, Rml::Element& zone, const std::string& window, const std::string& zoneName);
+		// Gives a zone or resizable element its size from ui.layout, or its default.
+		static void applySize(Rml::Element& element, const engine::Json* saved);
 		void applySections(const std::string& window, const Attached& attached, Rml::Element& root);
 		// Runs change in the shell's next step, unless the docking system is gone by then.
 		void later(std::function<void()> change);

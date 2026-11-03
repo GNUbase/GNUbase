@@ -28,8 +28,9 @@ namespace gnubase::ui
 {
 	// Fills an element of a document with a row per track of the event display's project, at its lanes' heights and
 	// scrolled with them: a <listview multiple> with a tree row (<listitem>) per track, whose value is the track's id,
-	// with its name (.track-name) and its controls (button.toggle with a control attribute), in the order and choice
-	// of the user setting ui.trackControls. The controls send engine commands; whichever client changes the project,
+	// with its name (.track-name) and its controls (button.toggle with a control attribute) in its controls area
+	// (.track-controls), in the order and choice of the user setting ui.trackControls, and the name and the controls
+	// area as wide as ui.trackWidths says. The controls send engine commands; whichever client changes the project,
 	// the rows show it. Use it on the UI thread; the display and the binding must outlive it. If the element goes,
 	// the list shows nothing more.
 	//
@@ -101,6 +102,7 @@ namespace gnubase::ui
 		void place();     // heights and scrolling, from the display's lanes
 		void hide();      // tells the display which tracks folded folders hide
 		void loadControls(const engine::Json& value);
+		void loadWidths(const engine::Json& value);
 
 		const Row* rowOf(Rml::Element* element) const;
 		Rml::Element* rowElement(uint64_t track) const;
@@ -134,6 +136,7 @@ namespace gnubase::ui
 		std::map<uint64_t, size_t> m_index;
 		std::set<uint64_t> m_folded;
 		engine::Json m_controls = engine::Json::object(); // ui.trackControls
+		engine::Json m_widths = engine::Json::object();   // ui.trackWidths
 		uint64_t m_loads = 0;                             // the display's, when the rows were last built
 		bool m_layingOut = false;
 		uint64_t m_renaming = 0;
