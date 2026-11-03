@@ -633,16 +633,18 @@ namespace gnubase::engine
 			// Plugin slots between them: the source node plays the source and the automation, the slot nodes give
 			// their plugins their automation, the channel's node fades.
 			std::vector<const void*> plugins;
+			std::vector<ObjectId> slotIds;
 			for (size_t index = 0; index < channel.slots.size(); ++index)
 			{
 				graph::NodeDesc& slot = desc.nodes[slotNodes.at(channel.slots[index].id)];
 				plugins.push_back(slot.processor.get());
+				slotIds.push_back(channel.slots[index].id);
 				if (slot.processor)
 					slot.processor = std::make_shared<SlotStrip>(state, slot.processor, static_cast<uint8_t>(index));
 			}
 			graph::NodeDesc& sourceDesc = desc.nodes[source];
 			sourceDesc.processor = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
-				channel.silent, StripPart::Source, std::move(plugins));
+				channel.silent, StripPart::Source, std::move(plugins), std::move(slotIds));
 			node.processor =
 				std::make_shared<ChannelStrip>(state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader);
 		}

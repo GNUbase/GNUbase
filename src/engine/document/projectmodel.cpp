@@ -3308,15 +3308,14 @@ namespace gnubase::engine
 			{"automationLane.add", 1,
 				"Adds an automation lane to a track: the curve of one parameter. target.type says which: volume (the "
 				"channel's fader, in dB), pan, panLeft and panRight (-1 to 1, see channel.set) and mute (0 off, 1 on; "
-				"a lane that plays overrides the mute button) on tracks with audio channels; instrument, a parameter of "
-				"an instrument track's built-in instrument (target.parameter, an id from processor.list, in its "
+				"a lane that plays overrides the mute button) on tracks with audio channels; instrument, a parameter "
+				"of an instrument track's built-in instrument (target.parameter, an id from processor.list, in its "
 				"range); plugin, a parameter of the built-in plugin in one of the track's slots (target.slot and "
 				"target.parameter, as parameter.list gives them, in its range; the lane goes when the plugin is "
 				"removed or moves to another channel); controller (target.number 0-127), pitchBend (0.5 is no bend) "
-				"and channelPressure, all 0 to "
-				"1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). A track has one lane per "
-				"target. read (default true): the curve plays; without it, or without points, the parameter keeps its "
-				"static value.",
+				"and channelPressure, all 0 to 1, on MIDI and instrument tracks, with target.channel 0-15 (default 0). "
+				"A track has one lane per target. read (default true): the curve plays; without it, or without points, "
+				"the parameter keeps its static value.",
 				objectSchema({{"track", idSchema}, {"target", target}, {"read", booleanSchema}}, {"track", "target"}),
 				resultSchema({"lane"}), false},
 			addAutomationLane);

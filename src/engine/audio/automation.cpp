@@ -93,6 +93,7 @@ namespace gnubase::engine
 			graph::EventBuffer& fader;
 			graph::EventBuffer& plugins;
 			uint32_t declick = 0; // how many frames mute glides
+			uint8_t key = 0;      // a plugin lane's: its slot's index in the program that plays
 
 			graph::EventBuffer& of(const PlayedLane& lane) const noexcept
 			{
@@ -182,7 +183,7 @@ namespace gnubase::engine
 				event.parameter = lane.parameter;
 				event.parameterValue = value;
 				event.ramp = lane.target.type == AutomationTargetType::Mute ? std::max(ramp, out.declick) : ramp;
-				event.key = lane.slot;
+				event.key = out.key;
 				out.of(lane).add(event);
 				return;
 			}
@@ -334,9 +335,8 @@ namespace gnubase::engine
 				{
 					const auto set = slot.parameters.find(parameter.id);
 					const double value = set != slot.parameters.end() ? set->second : parameter.defaultValue;
-					lanes.push_back(
-						{{AutomationTargetType::Plugin, parameter.id, 0, 0, slot.id}, Kind::Plugin, parameter.id, value,
-							parameter.minimum, parameter.maximum, {}, false, static_cast<uint8_t>(index)});
+					lanes.push_back({{AutomationTargetType::Plugin, parameter.id, 0, 0, slot.id}, Kind::Plugin,
+						parameter.id, value, parameter.minimum, parameter.maximum, {}});
 				}
 		}
 		const bool midi = channel.type == TrackType::Midi || channel.type == TrackType::Instrument;
@@ -358,9 +358,9 @@ namespace gnubase::engine
 
 	bool PlayedLane::operator==(const PlayedLane& other) const
 	{
-		return std::tie(target, kind, parameter, staticValue, minimum, maximum, points, slot) ==
+		return std::tie(target, kind, parameter, staticValue, minimum, maximum, points) ==
 			std::tie(other.target, other.kind, other.parameter, other.staticValue, other.minimum, other.maximum,
-				other.points, other.slot);
+				other.points);
 	}
 
 	double automationValue(const std::vector<RenderAutomationPoint>& points, int64_t position)
@@ -386,10 +386,23 @@ namespace gnubase::engine
 	}
 
 	void AutomationPlayer::play(const graph::TransportBlock& transport, const std::vector<const void*>& processors,
-		graph::EventBuffer& source, graph::EventBuffer& fader, graph::EventBuffer& plugins, uint32_t smoothing) noexcept
+		const std::vector<ObjectId>& slots, graph::EventBuffer& source, graph::EventBuffer& fader,
+		graph::EventBuffer& plugins, uint32_t smoothing) noexcept
 	{
 		const ChannelAutomation& automation = m_automation.acquire();
-		const Outputs out{source, fader, plugins, smoothing};
+		// Where a lane's events go: a plugin lane's are keyed by its slot's index in the program that plays, and go
+		// nowhere when that program doesn't have its slot (yet, or any more).
+		const auto outputs = [&](const PlayedLane& lane) noexcept -> std::optional<Outputs>
+		{
+			Outputs out{source, fader, plugins, smoothing};
+			if (lane.kind != Kind::Plugin)
+				return out;
+			const auto slot = std::find(slots.begin(), slots.end(), lane.target.slot);
+			if (slot == slots.end())
+				return std::nullopt;
+			out.key = static_cast<uint8_t>(slot - slots.begin());
+			return out;
+		};
 		// New automation, or a new source processor (e.g. another instrument) or plugin that hasn't had the values
 		// yet: the automation may have reached the audio thread before the graph with the new processor.
 		const size_t count = std::min(processors.size(), m_processors.size());
@@ -408,9 +421,10 @@ namespace gnubase::engine
 		{
 			if (changed || m_next >= 0 || transport.position != m_stoppedAt)
 				for (const PlayedLane& lane : automation.lanes)
-					emit(lane, 0,
-						lane.points.empty() ? lane.staticValue : automationValue(lane.points, transport.position),
-						glide(lane), out);
+					if (const std::optional<Outputs> out = outputs(lane))
+						emit(lane, 0,
+							lane.points.empty() ? lane.staticValue : automationValue(lane.points, transport.position),
+							glide(lane), *out);
 			m_stoppedAt = transport.position;
 			m_next = -1;
 			return;
@@ -421,7 +435,8 @@ namespace gnubase::engine
 			const graph::TransportSegment& segment = transport.segments[s];
 			const bool jump = changed || segment.position != m_next;
 			for (const PlayedLane& lane : automation.lanes)
-				playLane(lane, segment, jump, out, changed ? glide(lane) : 0);
+				if (const std::optional<Outputs> out = outputs(lane))
+					playLane(lane, segment, jump, *out, changed ? glide(lane) : 0);
 			changed = false;
 			m_next = segment.position + segment.frames;
 		}
@@ -546,10 +561,11 @@ namespace gnubase::engine
 
 	ChannelStrip::ChannelStrip(std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source,
 		Panning panning, std::optional<Monitoring> monitoring, bool silent, StripPart part,
-		std::vector<const void*> slots)
+		std::vector<const void*> slots, std::vector<ObjectId> slotIds)
 		: m_state(std::move(state)), m_source(std::move(source)), m_panning(panning), m_monitoring(monitoring),
-		  m_silent(silent), m_part(part), m_processors(std::move(slots)), m_sourceEvents(graph::g_maxEventsPerBlock),
-		  m_faderEvents(graph::g_maxEventsPerBlock), m_faderOut(graph::g_maxEventsPerBlock)
+		  m_silent(silent), m_part(part), m_processors(std::move(slots)), m_slots(std::move(slotIds)),
+		  m_sourceEvents(graph::g_maxEventsPerBlock), m_faderEvents(graph::g_maxEventsPerBlock),
+		  m_faderOut(graph::g_maxEventsPerBlock)
 	{
 		m_processors.insert(m_processors.begin(), m_source.get());
 	}
@@ -576,8 +592,8 @@ namespace gnubase::engine
 			m_sourceEvents.add(event);
 		m_sourceEvents.nextSource();
 		m_state->pluginEvents.clear();
-		m_state->automation.play(
-			context.transport, m_processors, m_sourceEvents, m_faderEvents, m_state->pluginEvents, m_smoothing);
+		m_state->automation.play(context.transport, m_processors, m_slots, m_sourceEvents, m_faderEvents,
+			m_state->pluginEvents, m_smoothing);
 
 		if (m_monitoring && context.frames > 0)
 		{

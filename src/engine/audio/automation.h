@@ -53,7 +53,6 @@ namespace gnubase::engine
 		// A fader lane whose static value changed while it has no points: it glides there over g_faderSmoothing.
 		// Not compared: it only says how the new value arrives.
 		bool smooth = false;
-		uint8_t slot = 0; // Plugin: the slot's index in the channel, top to bottom
 
 		bool operator==(const PlayedLane& other) const;
 	};
@@ -101,13 +100,15 @@ namespace gnubase::engine
 		const ChannelAutomation& latest() const { return m_automation.latest(); }
 
 		// Audio thread: adds the block's events for the fader to fader, those for the plugins in the slots to plugins
-		// with the slot's index as their key, and the others to source. processors are the source processor and the
-		// slots' plugins, top to bottom (only compared, to send every value again to new ones). New automation's
-		// smooth lanes glide to their values over smoothing frames, and mute glides over them from the sample where
-		// it changes, so it doesn't click.
+		// with the slot's index in slots as their key, and the others to source. processors are the source processor
+		// and the slots' plugins, top to bottom (only compared, to send every value again to new ones), and slots the
+		// slots' ids in the same order: those of the program that plays, which may be older or newer than the
+		// automation, so plugin lanes whose slot isn't in it are left out. New automation's smooth lanes glide to their
+		// values over smoothing frames, and mute glides over them from the sample where it changes, so it doesn't
+		// click.
 		void play(const graph::TransportBlock& transport, const std::vector<const void*>& processors,
-			graph::EventBuffer& source, graph::EventBuffer& fader, graph::EventBuffer& plugins,
-			uint32_t smoothing = 0) noexcept;
+			const std::vector<ObjectId>& slots, graph::EventBuffer& source, graph::EventBuffer& fader,
+			graph::EventBuffer& plugins, uint32_t smoothing = 0) noexcept;
 
 	private:
 		rt::SnapshotPublisher<ChannelAutomation> m_automation;
@@ -189,7 +190,7 @@ namespace gnubase::engine
 		// when plugin slots are between them; the source node always runs first.
 		graph::EventBuffer faderEvents{graph::g_maxEventsPerBlock};
 		// Audio thread: the automation events of the block for the plugins in the slots, from the source node to the
-		// slot nodes (SlotStrip), keyed by the slot's index.
+		// slot nodes (SlotStrip), keyed by the slot's index in the program that plays.
 		graph::EventBuffer pluginEvents{graph::g_maxEventsPerBlock};
 		LevelMeter meter; // the channel's output after the fader, the panner and muting
 	};
@@ -232,10 +233,11 @@ namespace gnubase::engine
 	{
 	public:
 		// slots: the processors of the channel's slot nodes, top to bottom, none while a plugin isn't ready; only
-		// compared, so that new plugins get every automation value.
+		// compared, so that new plugins get every automation value. slotIds: the slots' ids in the same order, those
+		// of this strip's program, whose SlotStrips have their index in it.
 		ChannelStrip(std::shared_ptr<ChannelState> state, std::shared_ptr<graph::Processor> source,
 			Panning panning = {}, std::optional<Monitoring> monitoring = std::nullopt, bool silent = false,
-			StripPart part = StripPart::Whole, std::vector<const void*> slots = {});
+			StripPart part = StripPart::Whole, std::vector<const void*> slots = {}, std::vector<ObjectId> slotIds = {});
 
 		void process(const graph::ProcessContext& context) noexcept override;
 		uint32_t latency() const override { return m_source ? m_source->latency() : 0; }
@@ -257,6 +259,7 @@ namespace gnubase::engine
 		bool m_silent = false;
 		StripPart m_part = StripPart::Whole;
 		std::vector<const void*> m_processors; // the source and the slots' plugins
+		std::vector<ObjectId> m_slots;         // the slots' ids
 		uint32_t m_smoothing = 0;              // g_faderSmoothing in frames
 		double m_sampleRate = 48000.0;
 		graph::EventBuffer m_sourceEvents;
@@ -274,7 +277,7 @@ namespace gnubase::engine
 		void process(const graph::ProcessContext& context) noexcept override;
 		uint32_t latency() const override { return m_plugin->latency(); }
 		uint32_t tail() const override { return m_plugin->tail(); }
-		void reset() noexcept override { m_plugin->reset(); }
+		void reset() noexcept override { (*m_plugin).reset(); } // the plugin's reset, not the pointer's
 
 	protected:
 		void prepare(double sampleRate, uint32_t maxFrames) override { m_plugin->prepareFor(sampleRate, maxFrames); }
@@ -282,7 +285,7 @@ namespace gnubase::engine
 	private:
 		std::shared_ptr<ChannelState> m_state;
 		std::shared_ptr<graph::Processor> m_plugin;
-		uint8_t m_slot = 0; // its index in the channel
+		uint8_t m_slot = 0; // its index in the slots of its program's source strip
 		graph::EventBuffer m_events;
 	};
 }
