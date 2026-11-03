@@ -203,9 +203,12 @@ namespace gnubase::engine
 		// the members above with default values.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::map<uint32_t, double> instrumentParameters = {};
-		// Audio tracks: the monitor and record enable buttons (docs/features/latency-and-monitoring.md).
+		// Audio, MIDI and instrument tracks: the monitor and record enable buttons
+		// (docs/features/latency-and-monitoring.md, docs/features/midi-recording.md).
 		bool monitor = false;
 		bool recordEnable = false;
+		// MIDI and instrument tracks: where their MIDI input comes from, "all" (all MIDI inputs) or "none".
+		std::string midiInput = "all";
 		// The mute and solo buttons (docs/features/track-list.md): a muted channel is silent, unless mute automation
 		// plays (docs/features/automation.md); while any channel is soloed, only soloed ones, where they play through
 		// and what plays into them are heard.
@@ -690,10 +693,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor, a.recordEnable,
-				   a.mute, a.solo, a.slots, a.notes, a.sections) ==
+				   a.midiInput, a.mute, a.solo, a.slots, a.notes, a.sections) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable,
-				b.mute, b.solo, b.slots, b.notes, b.sections);
+				b.midiInput, b.mute, b.solo, b.slots, b.notes, b.sections);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
