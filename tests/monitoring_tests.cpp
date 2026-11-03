@@ -148,8 +148,8 @@ TEST_CASE("monitoring follows punching in and out at the locators and the stop a
 	Client& client = setup.client;
 	run(client, "settings.set", {{"key", "audio.autoMonitoring"}, {"value", "whileRecording"}});
 	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", true}});
-	run(client, "transport.set",
-		{{"left", 1280}, {"right", 2560}, {"punchIn", true}, {"punchOut", true}, {"stopAfterPunchOut", true}});
+	run(client, "settings.set", {{"key", "audio.stopAfterPunchOut"}, {"value", true}});
+	run(client, "transport.set", {{"left", 1280}, {"right", 2560}, {"punchIn", true}, {"punchOut", true}});
 	run(client, "transport.play");
 	CHECK(!setup.hears()); // 0 to 640
 	CHECK(!setup.hears()); // 640 to 1280

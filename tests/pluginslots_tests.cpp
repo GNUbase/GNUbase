@@ -125,6 +125,8 @@ namespace
 
 		std::vector<double> values; // -1 until it gets one
 		std::atomic<size_t> changes{0};
+		std::array<gnubase::plugin::TransportSegment, 4> transport{}; // of the last block
+		uint32_t transportCount = 0;
 
 		const gnubase::plugin::Descriptor& descriptor() const override { return m_descriptor; }
 		bool init() override { return m_initializes; }
@@ -135,6 +137,8 @@ namespace
 		void reset() noexcept override {}
 		gnubase::plugin::ProcessStatus process(const gnubase::plugin::Process& process) noexcept override
 		{
+			transportCount = std::min(process.transportCount, static_cast<uint32_t>(transport.size()));
+			std::copy_n(process.transport, transportCount, transport.begin());
 			for (const gnubase::plugin::Event& event : process.eventsIn)
 				if (event.type == gnubase::plugin::EventType::ParamValue && event.param < values.size())
 				{
@@ -434,6 +438,33 @@ TEST_CASE("bypassing a plugin with latency delays the input by as much, so the t
 	for (size_t i = latency; i < played.size(); ++i)
 		largest = std::max(largest, std::abs(played[i] - input[i - latency]));
 	CHECK(largest < 1e-3f); // 0.23 where the undelayed input comes in
+}
+
+TEST_CASE("a plugin sees which segments of a block record", "[unit]")
+{
+	auto made = std::make_unique<CountingPlugin>(0, true);
+	CountingPlugin& plugin = *made;
+	plugins::PluginSlot slot(std::move(made));
+	REQUIRE(slot.activate(48000.0, 128));
+	const std::array<graph::TransportSegment, 2> segments{{{0, 64, 1000, false}, {64, 64, 1064, true}}};
+	graph::TransportBlock transport;
+	transport.playing = true;
+	transport.recording = true;
+	transport.position = 1000;
+	transport.segments = segments.data();
+	transport.segmentCount = segments.size();
+	const graph::EventBuffer eventsIn(4);
+	graph::EventBuffer eventsOut(4);
+	std::vector<float> left(128);
+	std::vector<float> right(128);
+	const std::array<float*, 2> audio{left.data(), right.data()};
+	slot.process({audio.data(), 2, 128, eventsIn, eventsOut, transport});
+	REQUIRE(plugin.transportCount == 2);
+	using gnubase::plugin::Transport;
+	CHECK(plugin.transport[0].transport.flags == Transport::Playing);
+	CHECK(plugin.transport[1].transport.flags == (Transport::Playing | Transport::Recording));
+	CHECK(plugin.transport[1].offset == 64);
+	CHECK(plugin.transport[1].transport.position == 1064);
 }
 
 TEST_CASE("more parameter changes than a block has room for reach the plugin in the next blocks", "[unit]")

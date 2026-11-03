@@ -408,10 +408,10 @@ TEST_CASE("punch recording replaces only the punch range, after the pre-roll and
 	const ObjectId media = idOf(run(client, "media.add", {{"path", writeRamp(setup.dir, 9600)}}), "media");
 	const ObjectId clip = idOf(run(client, "clip.add", {{"media", media}}), "clip");
 	run(client, "audioEvent.add", {{"track", setup.track}, {"clip", clip}, {"position", 0}});
+	run(client, "settings.set", {{"key", "audio.stopAfterPunchOut"}, {"value", true}});
 	run(client, "transport.set",
-		{{"left", 2400}, {"right", 4800}, {"punchIn", true}, {"punchOut", true}, {"stopAfterPunchOut", true},
-			{"preRoll", true}, {"preRollAmount", 1200}, {"postRoll", true}, {"postRollAmount", 960},
-			{"audioRecordMode", "replace"}});
+		{{"left", 2400}, {"right", 4800}, {"punchIn", true}, {"punchOut", true}, {"preRoll", true},
+			{"preRollAmount", 1200}, {"postRoll", true}, {"postRollAmount", 960}, {"audioRecordMode", "replace"}});
 	run(client, "transport.locate", {{"position", 2400}});
 	const Json started = run(client, "transport.record");
 	CHECK(started.at("playing") == true);
