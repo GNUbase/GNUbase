@@ -471,6 +471,28 @@ namespace gnubase::ui
 		return lane;
 	}
 
+	int EventDisplay::edgeAt(const Shown& shown, double x) const
+	{
+		const double left = (shown.start - m_view.start) / m_view.scale;
+		const double right = (shown.end - m_view.start) / m_view.scale;
+		if (right - left <= 3.0 * g_edge) // too narrow to have edges
+			return 0;
+		if (x - left <= g_edge)
+			return -1;
+		return right - x <= g_edge ? 1 : 0;
+	}
+
+	void EventDisplay::areaRightDown(Rml::Event& event, double x, double y)
+	{
+		const bool modified =
+			held(event, "ctrl_key") || held(event, "meta_key") || held(event, "shift_key") || held(event, "alt_key");
+		if (modified != m_toolboxOnRightClick) // the toolbox, which chooses a tool and leaves the selection
+			return;
+		const Shown* shown = eventAt(x, y);
+		if (shown != nullptr && !std::binary_search(m_selection.begin(), m_selection.end(), shown->id))
+			select({shown->id});
+	}
+
 	void EventDisplay::areaDown(Rml::Event& event, double x, double y)
 	{
 		m_dragMoved = false;
@@ -497,11 +519,9 @@ namespace gnubase::ui
 		}
 		m_dragEvent = shown->id;
 		const bool selected = std::binary_search(m_selection.begin(), m_selection.end(), shown->id);
-		const double left = (shown->start - m_view.start) / m_view.scale;
-		const double right = (shown->end - m_view.start) / m_view.scale;
-		const bool wide = right - left > 3.0 * g_edge;
-		const bool atStart = wide && x - left <= g_edge;
-		const bool atEnd = wide && !atStart && right - x <= g_edge;
+		const int edge = edgeAt(*shown, x);
+		const bool atStart = edge < 0;
+		const bool atEnd = edge > 0;
 		// The tool modifiers for a press on an event (Set Cursor Position, Split Event, Copy, Shared Copy, and Disable
 		// Snapping at an edge) act on it rather than adding it to the selection, whatever keys they are set to; so
 		// does a copy's with Ctrl, a restricted copy.

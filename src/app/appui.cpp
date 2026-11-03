@@ -226,6 +226,7 @@ namespace gnubase::app
 		  m_files(m_keys, m_binding, m_shell, resources / "ui")
 	{
 		ui::registerWidgets(m_rmlui);
+		m_rmlui.loadCursors(resources / "cursors");
 		lua_State* state = m_lua.state();
 		lua_getglobal(state, "print");
 		Rml::Lua::Initialise(state);   // until Rml::Shutdown
