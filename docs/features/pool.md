@@ -41,7 +41,8 @@ the pool and conforming files to the project's sample rate. The engine commands 
   project and is one undo step. Converting runs as a job (see below); `media.relinkResampled` then points the media
   files at the new files and scales what plays them. That command takes the new file's sample rate and length,
   refuses a file of another channel count or without sample frames and a media file given twice, and skips an entry
-  whose media file was removed or no longer has `from`'s path or `fromSampleRate`'s rate.
+  whose media file was removed or no longer has `from`'s path or `fromSampleRate`'s rate, and every entry if the
+  project is no longer at `projectSampleRate`.
 - **Import.** `audioFile.import` with `clipsOnly` adds the files to the pool without tracks or events, with copy,
   convert and split channels as for any import ([file-import.md](file-import.md)).
 - **Jobs.** `media.locate` and `media.conform` would hold up every other command while they look through a large
@@ -49,16 +50,19 @@ the pool and conforming files to the project's sample rate. The engine commands 
   copying media does. The command checks its parameters (the folder is there; the project is saved), copies what the
   job needs (the missing media files' ids, paths, sample rates, channel counts and lengths; the files to convert)
   and returns the job at once. `media.locate`'s job walks the folder, stopping between entries when cancelled, with
-  `job.progress` naming the folder it looks in (at most every 50 ms, measured in the folder's own entries), then
-  opens the candidates, and relinks the ones found with one `media.relink` in a transaction ("Locate missing
-  files"), whose `from` makes it skip media files relinked or removed meanwhile. Its result is `relinked`, `missing`
-  and `changed` (found, but changed meanwhile). `media.conform`'s job converts into files it creates exclusively in
-  the media folder, with `job.progress` in sample frames read and the file's name, stopping between pieces when
-  cancelled; on cancel or failure it removes the files it wrote (and the media folder if it made it and it is empty),
-  so the project and the folder stay as they were. Then `media.relinkResampled` runs on the command thread, one
-  undo step that skips media files whose path or sample rate changed meanwhile, and their new files are removed.
-  Its result is `media` (conformed) and `changed`. A transaction is one step on the command thread and can't wait
-  for a job, so in a `history.transaction` `media.conform` converts there and returns `media`: the project setup
+  `job.progress` naming the folder it looks in (at most every 50 ms, measured in the folder's own entries), and
+  keeps only the files named like a media file it looks for, so a whole drive doesn't fill the memory. Then it
+  opens the candidates, with `job.progress` naming each media file, and relinks the ones found with one
+  `media.relink` in a transaction ("Locate missing files"), whose `from` makes it skip media files relinked or
+  removed meanwhile. Its result is `relinked`, `missing` and `changed` (found, but changed meanwhile).
+  `media.conform`'s job converts into files it creates exclusively in the media folder, with `job.progress` in
+  sample frames read and the file's name, stopping between pieces when cancelled; on cancel or failure it removes
+  the files it wrote, so the project and the folder's files stay as they were (the folder itself stays, since other
+  jobs and recordings may write into it). Then `media.relinkResampled` runs on the command thread, one undo step
+  that skips media files whose path or sample rate changed meanwhile, and all of them if the project's sample rate
+  changed meanwhile, and their new files are removed. Its result is `media` (conformed) and `changed`. Being jobs,
+  neither can be part of a `history.transaction`, with one exception: a transaction is one step on the command
+  thread and can't wait for a job, so in one `media.conform` converts there and returns `media`. The project setup
   dialog changes the sample rate and conforms the files that way, as one undo step
   ([project-setup.md](project-setup.md)); whether it should conform with a job too is left open. None of this runs
   on an audio thread; the render snapshot follows the new paths as it does for `media.relink`.
@@ -125,11 +129,15 @@ has `media.locate` skip a same-named file of another length, prefer the same spe
 letters in any case but not Ö for ö, and look for a media file given twice once. Both run as jobs, which the tests
 wait for: `transport.locate` sent right behind `media.locate` on a folder of 2500 files is answered before the job
 ends, whose progress names the folder; `job.cancel` stops `media.locate` and `media.conform` with nothing changed
-and no file left in the media folder; a missing file removed while `media.locate` looks for it, and a media file
-relinked by hand while `media.conform` converts it, keep the edit, and the conformed file is removed; and
-`media.relinkResampled` refuses unknown media files, files of another channel count, missing or empty files and a
-media file given twice, and skips entries whose `from` or `fromSampleRate` no longer fit.
-`tests/poolpanel_tests.cpp` drives the panel in the app's UI with `ui::Automation`: Media > Open Pool Window and its key, the rows and columns, renaming
+and no file left in the media folder; a missing file removed while `media.locate` looks for it, a media file
+relinked by hand while `media.conform` converts it, and a new project sample rate set meanwhile keep the edit, and
+the conformed file is removed; `media.relinkResampled` refuses unknown media files, files of another channel count,
+missing or empty files and a media file given twice, and skips entries whose `from`, `fromSampleRate` or
+`projectSampleRate` no longer fit; and `media.conform` in a transaction converts at once, in its undo step. The
+commands that must run while a job works are sent behind a `media.convert` of a long file, which keeps the command
+thread busy, so they run right after the command that started the job, however the test's thread is scheduled.
+`tests/poolpanel_tests.cpp` drives the panel in the app's UI with `ui::Automation`: Media > Open Pool Window and its
+key, the rows and columns, renaming
 by typing, dragging a clip onto a folder, New Folder and Remove Unused Media with its message, undo from another
 client, Import Medium through the Import Options dialog; names sorted in any case, a clip let go outside the panel not
 moved by a click on a folder's name or a drag from outside, a name typed away kept, no reading while another tab

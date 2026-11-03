@@ -206,10 +206,12 @@ namespace gnubase::engine
 		// The share of media.locate's progress that walking the folder takes; checking the files found takes the rest.
 		constexpr double g_walkShare = 0.9;
 
-		// The files in folder and the folders inside it by their names with ASCII letters in lower case. Stops between
-		// entries when the job is cancelled. Its progress is measured in the folder's own entries, and it says which
-		// folder it looks in.
-		std::multimap<std::string, fs::path> filesInside(const fs::path& folder, JobContext& job)
+		// The files in folder and the folders inside it with one of names, by their names with ASCII letters in lower
+		// case (names are in lower case too), so that a whole drive doesn't fill the memory. Stops between entries when
+		// the job is cancelled. Its progress is measured in the folder's own entries, and it says which folder it looks
+		// in.
+		std::multimap<std::string, fs::path> filesInside(
+			const fs::path& folder, const std::set<std::string>& names, JobContext& job)
 		{
 			constexpr auto options = fs::directory_options::skip_permission_denied;
 			std::error_code error;
@@ -227,8 +229,9 @@ namespace gnubase::engine
 				if (entry.depth() == 0)
 					++begun;
 				std::error_code ignored; // a file that can't be looked at isn't one to relink
-				if (entry->is_regular_file(ignored))
-					files.emplace(lower(entry->path().filename().u8string()), entry->path());
+				if (std::string name = lower(entry->path().filename().u8string());
+					names.count(name) != 0 && entry->is_regular_file(ignored))
+					files.emplace(std::move(name), entry->path());
 				if (throttle.due())
 				{
 					const auto done = static_cast<double>(std::max<size_t>(begun, 1) - 1);
@@ -243,8 +246,11 @@ namespace gnubase::engine
 		// transaction, one undo step that skips media files relinked or removed meanwhile.
 		Json locateFiles(const std::vector<Sought>& sought, const fs::path& folder, JobContext& job)
 		{
+			std::set<std::string> names;
+			for (const Sought& media : sought)
+				names.insert(lower(fs::u8path(media.path).filename().u8string()));
 			const std::multimap<std::string, fs::path> files =
-				sought.empty() ? std::multimap<std::string, fs::path>() : filesInside(folder, job);
+				sought.empty() ? std::multimap<std::string, fs::path>() : filesInside(folder, names, job);
 			Json relink = Json::array();
 			Json missing = Json::array();
 			std::vector<ObjectId> found;
@@ -340,14 +346,23 @@ namespace gnubase::engine
 		// media.relinkResampled.
 		Json relinkResampled(Project& project, CommandContext& context)
 		{
+			const Json& parameters = context.parameters();
+			// Files conformed to another project sample rate than the project's now don't conform it.
+			const bool rateChanged = parameters.contains("projectSampleRate") &&
+				parameters.at("projectSampleRate").get<double>() != project.sampleRate;
 			std::map<ObjectId, Rescale> rescales;
 			Json relinked = Json::array();
 			Json skipped = Json::array();
-			for (const Json& entry : context.parameters().at("files"))
+			for (const Json& entry : parameters.at("files"))
 			{
 				const auto id = entry.at("media").get<ObjectId>();
 				const auto path = entry.at("path").get<std::string>();
 				const auto found = project.media.find(id);
+				if (rateChanged)
+				{
+					skipped.push_back(id);
+					continue;
+				}
 				if (entry.contains("from") &&
 					(found == project.media.end() || found->second.path != entry.at("from").get<std::string>()))
 				{
@@ -386,25 +401,19 @@ namespace gnubase::engine
 		}
 
 		// media.conform's job: writes each file at sampleRate into folder, then points the media at the new files with
-		// media.relinkResampled, one undo step that skips media files changed meanwhile. Removes the files it wrote
-		// if it fails or is cancelled before, and afterwards the ones of media files skipped.
+		// media.relinkResampled, one undo step that skips media files changed meanwhile, and all of them if the
+		// project's sample rate changed. Removes the files it wrote if it fails or is cancelled before, and afterwards
+		// the ones of media files skipped. The media folder stays, since other writers may use it too.
 		Json conformFiles(
 			const std::vector<Conversion>& files, const fs::path& folder, double sampleRate, JobContext& job)
 		{
 			if (files.empty())
 				return Json{{"media", Json::array()}, {"changed", Json::array()}};
-			std::error_code error;
-			const bool madeFolder = !fs::exists(folder, error);
-			const auto removeFolder = [&folder, madeFolder]
-			{
-				std::error_code ignored;
-				if (madeFolder)
-					fs::remove(folder, ignored); // only if it is empty
-			};
 			std::vector<std::string> written;
 			Json result;
 			try
 			{
+				std::error_code error;
 				fs::create_directories(folder, error);
 				if (error)
 					throw std::runtime_error("can't create " + folder.u8string() + ": " + error.message());
@@ -435,12 +444,12 @@ namespace gnubase::engine
 						{{"media", file.id}, {"path", path}, {"from", file.path}, {"fromSampleRate", file.sampleRate}});
 				}
 				job.checkCancelled();
-				result = job.command("media.relinkResampled", {{"files", std::move(relink)}});
+				result = job.command(
+					"media.relinkResampled", {{"files", std::move(relink)}, {"projectSampleRate", sampleRate}});
 			}
 			catch (...)
 			{
 				removeFiles(written);
-				removeFolder();
 				throw;
 			}
 
@@ -461,8 +470,6 @@ namespace gnubase::engine
 				unused.push_back(written[i]);
 			}
 			removeFiles(unused);
-			if (conformed.empty())
-				removeFolder();
 			return Json{{"media", std::move(conformed)}, {"changed", std::move(changed)}};
 		}
 	}
@@ -669,11 +676,12 @@ namespace gnubase::engine
 				"dialog's Browse Folder, reference manual pp. 750-752): a file with the same name, the same spelling "
 				"first, else with ASCII letters in another case (other letters must match exactly), and the media "
 				"file's sample rate, channel count and length. media limits it to those media files (default: every "
-				"missing one). It runs as a job: this returns at once, job.progress events say which folder it looks "
-				"in, job.cancel stops it, and once it is done the files found are relinked as one undo step, which "
-				"skips media files relinked or removed meanwhile. The job's result is {relinked, missing, changed}: "
-				"the media files relinked, the ones it didn't find, and the ones it found but that changed meanwhile "
-				"and keep what they have now.",
+				"missing one). It runs as a job, so it can't be part of a history.transaction: this returns at once, "
+				"job.progress events say which folder it looks in and then which media file it checks, job.cancel "
+				"stops it, and once it is done the files found are relinked as one undo step, which skips media "
+				"files relinked or removed meanwhile. The job's result is {relinked, missing, changed}: the media "
+				"files relinked, the ones it didn't find, and the ones it found but that changed meanwhile and keep "
+				"what they have now.",
 				objectSchema({{"folder", string}, {"media", ids}}, {"folder"}),
 				objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
 			[this, &jobs](CommandContext& context)
@@ -815,9 +823,11 @@ namespace gnubase::engine
 				"frames, so events play the same section. Each new file must be an audio file with the media file's "
 				"channel count and at least one sample frame, and each media file can be given once. An entry with "
 				"from applies only if the media file is still there and still points at from, one with "
-				"fromSampleRate only if the media file is still at that sample rate; otherwise it is skipped. "
-				"Returns the media files relinked and the ones skipped.",
-				objectSchema({{"files", {{"type", "array"}, {"items", relinkEntry}}}}, {"files"}),
+				"fromSampleRate only if the media file is still at that sample rate; otherwise it is skipped. With "
+				"projectSampleRate, every entry is skipped unless the project is still at that sample rate. Returns "
+				"the media files relinked and the ones skipped.",
+				objectSchema(
+					{{"files", {{"type", "array"}, {"items", relinkEntry}}}, {"projectSampleRate", number}}, {"files"}),
 				objectSchema({{"relinked", ids}, {"skipped", ids}}, {"relinked", "skipped"}), false},
 			"Conform files", relinkResampled);
 	}
