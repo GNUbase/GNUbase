@@ -9,6 +9,10 @@
 #include "ui/automation.h"
 #include "uiapp.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/ObserverPtr.h>
 #include <SDL3/SDL.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -618,6 +622,29 @@ namespace
 	{
 		return app.call("project.location").at("file");
 	}
+
+	// The unsaved changes question in the main window, or null.
+	Rml::Element* question(test::UiApp& app)
+	{
+		Rml::Context& context = app.main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (Rml::Element* dialog = context.GetDocument(i)->GetElementById("discard-changes-dialog"))
+				return dialog;
+		return nullptr;
+	}
+
+	// What SDL sends when the user closes the last visible window (SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE): the window's
+	// close request, and then its own quit request, which GNUbase handles in the same step.
+	void closeLastWindow(test::UiApp& app)
+	{
+		SDL_Event close{};
+		close.type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
+		close.window.windowID = app.main().id();
+		SDL_Event quit{};
+		quit.type = SDL_EVENT_QUIT;
+		REQUIRE(SDL_PushEvent(&close));
+		REQUIRE(SDL_PushEvent(&quit));
+	}
 }
 
 TEST_CASE("File > Save As, Save and Save New Version save the project through file dialogs", "[ui]")
@@ -785,6 +812,46 @@ TEST_CASE("closing the main window or quitting through the OS asks before unsave
 		click(app, "#discard-changes");
 		REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
 	}
+}
+
+TEST_CASE(
+	"closing the last window asks one question for SDL's close and quit requests, and for requests after them", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "audio"}});
+
+	closeLastWindow(app);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	Rml::Element* first = question(app);
+	const Rml::ObserverPtr<Rml::Element> asked =
+		first != nullptr ? first->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>();
+	REQUIRE(asked.get() != nullptr);
+	// Asking again while the question is open, by closing the window or through MCP's ui_close, keeps it as it is.
+	closeLastWindow(app);
+	app.ui().close(std::nullopt, true);
+	app.ui().close(std::nullopt, false);
+	app.call("project.revision"); // after the engine answered whatever these asked
+	for (int i = 0; i < 5; ++i)
+		app.shell().step(std::chrono::milliseconds(0));
+	CHECK(elements(app, "#discard-changes-dialog").size() == 1);
+	CHECK(asked.get() != nullptr);
+	CHECK(asked.get() == question(app));
+
+	// Cancel keeps GNUbase running with the changes.
+	click(app, "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
+	for (int i = 0; i < 5; ++i)
+		app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(app.shell().running());
+	CHECK(question(app) == nullptr);
+	CHECK(app.call("project.get").at("tracks").size() == 1);
+	CHECK(app.call("project.revision").at("modified").get<bool>());
+
+	// The next request asks again, and Discard quits.
+	closeLastWindow(app);
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
 }
 
 TEST_CASE("the start screen creates projects, from templates too, and opens recent ones", "[ui]")

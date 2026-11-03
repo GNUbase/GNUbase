@@ -207,6 +207,21 @@ namespace gnubase::ui
 			quit();
 	}
 
+	void Shell::requestClose(WindowId id)
+	{
+		Window* window = find(id);
+		if (window == nullptr)
+			return;
+		if (window->m_main)
+		{
+			requestQuit();
+			return;
+		}
+		if (m_closeRequest)
+			m_closeRequest(*window); // may close it
+		close(id);
+	}
+
 	void Shell::refresh(Window& window)
 	{
 		const float ratio = m_windows.scale(window.m_id) * m_uiScale;
@@ -281,16 +296,7 @@ namespace gnubase::ui
 		switch (event.kind)
 		{
 		case WindowEventKind::CloseRequested:
-			if (window->m_main)
-			{
-				requestQuit();
-			}
-			else
-			{
-				if (m_closeRequest)
-					m_closeRequest(*window); // may close it
-				close(event.window);
-			}
+			requestClose(event.window);
 			break;
 		case WindowEventKind::Moved:
 		case WindowEventKind::Resized:

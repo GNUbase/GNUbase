@@ -309,10 +309,10 @@ namespace gnubase::ui
 			});
 	}
 
-	void ProjectFiles::unlessUnsaved(Window& window, std::function<void()> action)
+	void ProjectFiles::unlessUnsaved(Window& window, std::function<void()> action, std::function<void()> kept)
 	{
 		m_binding.send("project.revision", Json::object(),
-			[this, id = window.id(), action = std::move(action)](const engine::Result& result)
+			[this, id = window.id(), action = std::move(action), kept = std::move(kept)](const engine::Result& result)
 			{
 				if (!result.ok() || !result.value.at("modified").get<bool>())
 				{
@@ -321,29 +321,36 @@ namespace gnubase::ui
 				}
 				// The dialog that asked may still be closing.
 				m_shell.post(
-					[this, id, action]
+					[this, id, action, kept]
 					{
-						if (Window* asking = m_shell.find(id))
+						Window* asking = m_shell.find(id);
+						const bool asked = asking != nullptr &&
 							openDialog(*asking, "discard-changes.rml",
-								[action](Rml::ElementDocument&, const std::string& answer)
+								[action, kept](Rml::ElementDocument&, const std::string& answer)
 								{
 									if (answer == "ok")
 										action();
-								});
+									else if (kept)
+										kept();
+								}) != nullptr;
+						if (!asked && kept)
+							kept();
 					});
 			});
 	}
 
 	void ProjectFiles::quit(Window& window)
 	{
+		// SDL follows the main window's close request with its own quit request when that is the last window, and
+		// the user may ask again while the question is open: the question that is coming or open answers them all.
+		if (m_quitting)
+			return;
 		// A dialog that is open, such as the start screen, would keep the question from opening: quitting cancels it.
 		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get()))
-		{
-			dialog->DispatchEvent(g_dialogCloseEvent, {{"result", Rml::Variant(std::string("cancel"))}});
-			dialog->Close();
-		}
+			closeDialog(*dialog, "cancel");
+		m_quitting = true;
 		// Quitting closes every window, so it waits until the event that asked for it is done with them.
-		unlessUnsaved(window, [this] { m_shell.post([this] { m_shell.quit(); }); });
+		unlessUnsaved(window, [this] { m_shell.post([this] { m_shell.quit(); }); }, [this] { m_quitting = false; });
 	}
 
 	void ProjectFiles::open(Window& window)

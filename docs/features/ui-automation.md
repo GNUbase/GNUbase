@@ -13,7 +13,8 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
   by value, since it may still run after the caller gave up. When the shell quits, work it hasn't run yet is dropped,
   and whoever waits for it gets an error at once.
 - **MCP tools.** `app::addUiTools` adds `ui_windows`, `ui_dom`, `ui_screenshot`, `ui_wait`, `ui_move`, `ui_click`,
-  `ui_drag`, `ui_drop`, `ui_wheel`, `ui_key`, `ui_text` and `ui_file_dialog`, which answers file dialogs (`Shell::answerFileDialog`), to the MCP server; the windowed app serves them with `--mcp-http`, next
+  `ui_drag`, `ui_drop`, `ui_wheel`, `ui_key`, `ui_text`, `ui_close`, which asks to close a window or to quit as the
+  OS does, and `ui_file_dialog`, which answers file dialogs (`Shell::answerFileDialog`), to the MCP server; the windowed app serves them with `--mcp-http`, next
   to the engine's tools and `script_run`. Headless GNUbase has no UI and no UI tools. A screenshot comes back as MCP
   image content, a PNG: a tool returns the PNG as `Json::binary`, which `mcp::Server` sends as an image. PNG encoding
   runs on the server's thread. `app::addUiFunctions` adds the same tools to the UI's Lua as `gnubase.ui.click` and so
@@ -35,5 +36,12 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
   sends as text input, as the OS's text input does after a key press. A key that no element uses runs its key command,
   as the user's does ([key-commands.md](key-commands.md)). Each input tool answers with the element under
   the mouse or with the focus, so a client sees what it hit.
+- **Closing and quitting.** The window system's requests come from outside RmlUi, so input can't make them: `ui_close`
+  asks to close a window as its title bar's close button or Alt+F4 does (`Shell::requestClose`): a panel's own window
+  docks the panel again ([docking.md](docking.md)), and the main window asks to quit. With `quit` it asks to quit as
+  the OS does (`Shell::requestQuit`): the macOS app menu's and the Dock's Quit, SDL's quit request after the last
+  window closed, a signal. Both ask the unsaved changes question first ([project-files.md](project-files.md)). The
+  request is posted and runs in the UI's next step, as the OS's arrive, so that it never closes a window under the
+  event handler or Lua script that asked; `ui_wait` then waits for what it opens.
 - **Waiting.** `ui_wait` asks the UI thread every 20 ms whether an element that a selector matches is visible (with a
   given text), or that none is, for at most 60 seconds.

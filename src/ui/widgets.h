@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <string>
+
+namespace Rml
+{
+	class ElementDocument;
+}
+
 namespace gnubase::ui
 {
 	class RmlUi;
@@ -8,6 +15,11 @@ namespace gnubase::ui
 	// The event a <dialog> sends when it closes, with the parameter "result": "cancel" for Escape, or the result
 	// attribute of what closed it.
 	inline constexpr const char* g_dialogCloseEvent = "close";
+
+	// Closes the document's <dialog> with the result, as its buttons and Escape do: the close event with the result,
+	// then the document closes. Returns false, and does nothing, if the document has no <dialog> or it is closing
+	// already, so that a dialog never closes twice, e.g. when the app cancels it while the user's Escape closes it.
+	bool closeDialog(Rml::ElementDocument& document, const std::string& result);
 
 	// The event a <listview> sends when the user expands or collapses a tree row, with the parameters "value" (the
 	// row's value) and "expanded".
