@@ -3,12 +3,13 @@
 # Runs clang-tidy on the C++ files a branch changes, so that most of CI's clang-tidy findings turn up before a push:
 # the changed and new .cpp files under src/ and tests/, and the .cpp file next to each changed header. It reports only
 # findings on the lines the branch changed, since the rest passed CI already (and Windows' headers bring a few findings
-# that CI's don't). It needs a compile database, not a build: the first run configures one in build/tidy. CI checks
-# more (every line of every file that includes a changed header) on Linux, where libstdc++ and the non-Windows #ifdef
-# branches can bring findings that Windows doesn't see, so CI still has the last word.
+# that CI's don't). It needs a compile database, not a build: it configures one in build/tidy, again when a changed
+# file isn't in it yet. CI checks more (every line of every file that includes a changed header) on Linux, where
+# libstdc++ and the non-Windows #ifdef branches can bring findings that Windows doesn't see, so CI has the last word.
 # Usage: tools/tidy-changed.sh [base]    base: where the branch starts from (default origin/main)
-# Windows (Git Bash) uses Visual Studio 2026's Ninja, compiler and clang-tidy; Linux and macOS a clang-tidy 22 on the
-# PATH (CONTRIBUTING.md). CLANG_TIDY overrides the clang-tidy to use. Exit status: 0 no findings, 1 findings, 2 error.
+# Windows (Git Bash) uses Visual Studio 2026's Ninja, compiler and clang-tidy; Linux a clang-tidy 22 on the PATH
+# (CONTRIBUTING.md). Not macOS yet: its universal build gives every file two -arch flags, which clang-tidy refuses.
+# CLANG_TIDY overrides the clang-tidy to use. Exit status: 0 no findings, 1 findings, 2 error.
 set -u
 root=$(git rev-parse --show-toplevel) || exit 2
 cd "$root" || exit 2
@@ -30,45 +31,56 @@ MINGW* | MSYS* | CYGWIN*)
 		printf 'cmake --preset windows-x64-ninja -B %s %s\r\n' "$build" "$options" >> "$script"
 		cmd //c "$(cygpath -w "$script")"
 	}
-	# clang-tidy matches the line filter's names against Windows paths.
-	nativeNames() { sed 's#/#\\\\#g'; }
+	# clang-tidy matches the line filter's names as suffixes of the paths clang uses: a source file's has backslashes;
+	# a header's is the include folder (src or tests) with backslashes, then the #include's path as written.
+	names() { printf '%s\n' "${1//\//\\\\}" "${1#*/}"; }
+	;;
+Linux)
+	tidy=${CLANG_TIDY:-clang-tidy}
+	# shellcheck disable=SC2086 # $options holds several arguments
+	configure() { cmake --preset linux-clang -B "$build" $options; }
+	names() { printf '%s\n' "$1"; }
 	;;
 *)
-	tidy=${CLANG_TIDY:-clang-tidy}
-	preset=linux-clang
-	[ "$(uname -s)" = Darwin ] && preset=macos
-	# shellcheck disable=SC2086 # $options holds several arguments
-	configure() { cmake --preset "$preset" -B "$build" $options; }
-	nativeNames() { cat; }
+	echo "Only Windows and Linux for now; CI checks the pull request."
+	exit 2
 	;;
 esac
+if ! "$tidy" --version 2>/dev/null | grep -q 'version 22\.'; then
+	echo "No clang-tidy 22 at $tidy (CONTRIBUTING.md says how to install it, CLANG_TIDY where it is)."
+	exit 2
+fi
 
-if [ ! -f "$build/compile_commands.json" ]; then
+reconfigure()
+{
 	echo "Configuring $build for its compile database"
 	mkdir -p "$build" && configure > "$build/configure.log" 2>&1 || { echo "Configuring failed, see $build/configure.log"; exit 2; }
-fi
+}
+[ -f "$build/compile_commands.json" ] || reconfigure
 
-# Only files the compile database knows: others belong to another platform or to no GNUbase target.
-mapfile -t files < <(
+# The diff with fixed prefixes, whatever the user's git configuration says.
+changes() { git diff --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ "$@" "$start" -- src tests; }
+mapfile -t candidates < <(
 	{
-		git diff --name-only --diff-filter=d "$start" -- src tests
+		changes --name-only --diff-filter=d
 		git ls-files --others --exclude-standard -- src tests
-	} | sed -n -e 's/\.h$/.cpp/p' -e '/\.cpp$/p' | sort -u |
-		while IFS= read -r file; do
-			[ -f "$file" ] && grep -qF "/$file\"" "$build/compile_commands.json" && echo "$file"
-		done
+	} | sed -n -e 's/\.h$/.cpp/p' -e '/\.cpp$/p' | sort -u | while IFS= read -r file; do [ -f "$file" ] && echo "$file"; done
 )
-if [ ${#files[@]} -eq 0 ]; then
-	echo "No changed C++ files to check."
-	exit 0
-fi
-echo "clang-tidy on ${#files[@]} file(s): ${files[*]}"
+inDatabase() { grep -qF "/$1\"" "$build/compile_commands.json"; }
+for file in "${candidates[@]}"; do
+	inDatabase "$file" || { reconfigure; break; } # a file new to CMake since the last configure
+done
+files=() skipped=()
+for file in "${candidates[@]}"; do
+	if inDatabase "$file"; then files+=("$file"); else skipped+=("$file"); fi
+done
+[ ${#skipped[@]} -gt 0 ] && echo "Not checked, in no target of this platform: ${skipped[*]}"
 
 # The changed lines as clang-tidy's line filter: {"name": file, "lines": [[first, last], ...]} per file; a new file
 # without "lines" counts with all of them.
 filter=$(
 	{
-		git diff -U0 --no-color "$start" -- src tests | awk '
+		changes -U0 | awk '
 			/^\+\+\+ b\// { file = substr($0, 7) }
 			/^@@ / {
 				split(substr($3, 2), range, ",")
@@ -78,10 +90,20 @@ filter=$(
 					lines[file] = lines[file] separator "[" range[1] "," (range[1] + count - 1) "]"
 				}
 			}
-			END { for (file in lines) print "{\"name\":\"" file "\",\"lines\":[" lines[file] "]}" }'
-		git ls-files --others --exclude-standard -- src tests | sed 's/.*/{"name":"&"}/'
-	} | nativeNames | paste -s -d, -
+			END { for (file in lines) print file "\t" lines[file] }'
+		git ls-files --others --exclude-standard -- src tests | sed 's/$/\t/'
+	} | while IFS=$'\t' read -r file lines; do
+		names "$file" | while IFS= read -r name; do
+			if [ -n "$lines" ]; then echo "{\"name\":\"$name\",\"lines\":[$lines]}"; else echo "{\"name\":\"$name\"}"; fi
+		done
+	done | paste -s -d, -
 )
+# Nothing but deletions: no line to check (an empty filter would let clang-tidy report every line).
+if [ ${#files[@]} -eq 0 ] || [ -z "$filter" ]; then
+	echo "No changed C++ lines to check."
+	exit 0
+fi
+echo "clang-tidy on ${#files[@]} file(s): ${files[*]}"
 
 # One clang-tidy per file and hardware thread; each prints its findings in one piece when it's done.
 printf '%s\n' "${files[@]}" | xargs -P "$(nproc)" -I{} bash -c \
