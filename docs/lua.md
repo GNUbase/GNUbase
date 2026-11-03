@@ -1739,7 +1739,7 @@ Returns:
 
 #### `gnubase.media.conform`
 
-Conforms media files to the project's sample rate (Convert Files with New + Replace in Pool, reference manual pp. 759-760): writes each one at another sample rate into the media folder as a 32-bit float WAV file at the project's sample rate and points the media file at it, as one undo step. The clip fades, offsets, lengths, fades, crossfades and snap points of what plays it move with the new sample frames, so events play the same section. The original files stay on disk. media limits it to those media files (default: every one that isn't missing). The project must have been saved. Returns the media files conformed.
+Conforms media files to the project's sample rate (Convert Files with New + Replace in Pool, reference manual pp. 759-760): writes each one at another sample rate into the media folder as a 32-bit float WAV file at the project's sample rate and points the media file at it with media.relinkResampled, as one undo step. The clip fades, offsets, lengths, fades, crossfades and snap points of what plays it move with the new sample frames, so events play the same section. The original files stay on disk. media limits it to those media files, which must not be missing (default: every one that isn't missing). The project must have been saved. It runs as a job: this returns at once, job.progress events say which file it converts, and job.cancel stops it and removes the files it wrote. Media files whose path or sample rate changed meanwhile, or that were removed, keep what they have, and their new files are removed. The job's result is {media, changed}: the media files conformed and the ones that changed meanwhile. In a history.transaction, which is one step on the command thread (the project setup dialog's), it converts there instead and returns {media}.
 
 Parameters:
 
@@ -1747,7 +1747,7 @@ Parameters:
 
 Returns:
 
-- `media`: array of integer, required
+- `job`: object, required
 
 #### `gnubase.media.convert`
 
@@ -1765,7 +1765,7 @@ Returns:
 
 #### `gnubase.media.locate`
 
-Looks for missing media files in folder and the folders inside it (the Resolve Missing Files dialog's Browse Folder, reference manual pp. 750-752): a file with the same name, the same spelling first, else with ASCII letters in another case (other letters must match exactly), and the media file's sample rate, channel count and length. The files found are relinked as one undo step. media limits it to those media files (default: every missing one). Returns the media files relinked and the ones still missing.
+Looks for missing media files in folder and the folders inside it (the Resolve Missing Files dialog's Browse Folder, reference manual pp. 750-752): a file with the same name, the same spelling first, else with ASCII letters in another case (other letters must match exactly), and the media file's sample rate, channel count and length. media limits it to those media files (default: every missing one). It runs as a job: this returns at once, job.progress events say which folder it looks in, job.cancel stops it, and once it is done the files found are relinked as one undo step, which skips media files relinked or removed meanwhile. The job's result is {relinked, missing, changed}: the media files relinked, the ones it didn't find, and the ones it found but that changed meanwhile and keep what they have now.
 
 Parameters:
 
@@ -1774,8 +1774,7 @@ Parameters:
 
 Returns:
 
-- `missing`: array of integer, required
-- `relinked`: array of integer, required
+- `job`: object, required
 
 #### `gnubase.media.peakStatus`
 
@@ -1825,6 +1824,19 @@ Returns:
 #### `gnubase.media.relink`
 
 Points media files at other files, such as copies, as one undo step. Each new file must be an audio file with the media file's sample rate and channel count. An entry with from applies only if the media file is still there and still points at from; otherwise it is skipped. Returns the media files it relinked and the ones it skipped.
+
+Parameters:
+
+- `files`: array of object, required
+
+Returns:
+
+- `relinked`: array of integer, required
+- `skipped`: array of integer, required
+
+#### `gnubase.media.relinkResampled`
+
+Points media files at files of theirs at another sample rate, such as the ones media.conform writes, as one undo step: each media file takes its new file's sample rate and length, and the clip fades, offsets, lengths, fades, crossfades and snap points of what plays it move with the new sample frames, so events play the same section. Each new file must be an audio file with the media file's channel count and at least one sample frame, and each media file can be given once. An entry with from applies only if the media file is still there and still points at from, one with fromSampleRate only if the media file is still at that sample rate; otherwise it is skipped. Returns the media files relinked and the ones skipped.
 
 Parameters:
 

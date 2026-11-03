@@ -16,9 +16,12 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase::engine;
@@ -133,6 +136,96 @@ namespace
 		for (const auto& entry : fs::directory_iterator(folder))
 			count += entry.is_regular_file() ? 1 : 0;
 		return count;
+	}
+
+	// Waits for the job's job.finished event and returns the job. Progress events go to progress, if given.
+	Json waitForJob(Client& client, uint64_t job, std::vector<Json>* progress = nullptr)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+		Json finished; // null until the job finishes
+		while (finished.is_null() && std::chrono::steady_clock::now() < deadline)
+		{
+			const std::optional<Message> message = client.wait(std::chrono::milliseconds(100));
+			if (!message)
+			{
+				// Its events may have been taken by an earlier wait: once none are left, job.get tells.
+				if (Json state = run(client, "job.get", {{"job", job}}).at("job"); state.at("state") != "running")
+					finished = std::move(state);
+				continue;
+			}
+			const auto* event = std::get_if<Event>(&*message);
+			if (event == nullptr)
+				continue;
+			if (event->name == "job.progress" && event->data.at("job") == job && progress != nullptr)
+				progress->push_back(event->data);
+			if (event->name == "job.finished" && event->data.at("job").at("id") == job)
+				finished = event->data.at("job");
+		}
+		INFO("job " << job << " didn't finish");
+		REQUIRE(!finished.is_null());
+		return finished;
+	}
+
+	// Runs a command that starts a job (media.locate, media.conform), waits for the job and returns its result; the
+	// job must succeed.
+	Json runJob(Client& client, const std::string& command, Json parameters = Json::object(),
+		std::vector<Json>* progress = nullptr)
+	{
+		const Json started = run(client, command, std::move(parameters)).at("job");
+		CHECK(started.at("kind") == command);
+		const Json finished = waitForJob(client, started.at("id").get<uint64_t>(), progress);
+		INFO(finished.dump());
+		REQUIRE(finished.at("state") == "done");
+		return finished.at("result");
+	}
+
+	// Empty files for media.locate to look through: count folders in folder with count files each.
+	void fillFolder(const fs::path& folder, int count)
+	{
+		for (int i = 0; i < count; ++i)
+		{
+			const fs::path inside = folder / ("folder" + std::to_string(i));
+			fs::create_directories(inside);
+			for (int j = 0; j < count; ++j)
+				std::ofstream(inside / ("take" + std::to_string(j) + ".wav")).put('x');
+		}
+	}
+
+	// The id of the job that the command sent as request started, once its result came. Other messages that come
+	// first are dropped; waitForJob asks job.get for a job whose events went with them.
+	uint64_t startedJob(Client& client, RequestId request)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		uint64_t job = 0;
+		while (job == 0 && std::chrono::steady_clock::now() < deadline)
+		{
+			const std::optional<Message> message = client.wait(std::chrono::milliseconds(100));
+			const auto* result = message ? std::get_if<Result>(&*message) : nullptr;
+			if (result == nullptr || result->request != request)
+				continue;
+			INFO(result->error);
+			REQUIRE(result->ok());
+			job = result->value.at("job").at("id").get<uint64_t>();
+		}
+		INFO("no result for request " << request);
+		REQUIRE(job != 0);
+		return job;
+	}
+
+	// Sends a command that starts a job and, right behind it, job.cancel for that job, so that the job is cancelled
+	// before it gets far; returns the job once it ended. Job ids count from 1 in each engine, so the engine must not
+	// have started a job before.
+	Json cancelJob(Client& client, const std::string& command, Json parameters = Json::object())
+	{
+		REQUIRE(run(client, "job.list").at("jobs").empty());
+		client.send(command, std::move(parameters));
+		client.send("job.cancel", {{"job", 1}});
+		return waitForJob(client, 1);
+	}
+
+	size_t steps(Client& client)
+	{
+		return run(client, "history.get").at("steps").size();
 	}
 }
 
@@ -355,9 +448,10 @@ TEST_CASE("media.locate finds missing files in a folder by name and relinks them
 	CHECK(byId(pool.at("clips"), here).at("missing") == false);
 	CHECK(pool.at("missingFiles") == 2);
 
-	const Json located = run(song.client, "media.locate", {{"folder", utf8(moved)}});
+	const Json located = runJob(song.client, "media.locate", {{"folder", utf8(moved)}});
 	CHECK(located.at("relinked") == Json::array({song.mediaOf(kick)}));
 	CHECK(located.at("missing") == Json::array({song.mediaOf(pad)}));
+	CHECK(located.at("changed").empty());
 	pool = run(song.client, "pool.get");
 	const Json kickClip = byId(pool.at("clips"), kick);
 	CHECK(kickClip.at("missing") == false);
@@ -381,10 +475,10 @@ TEST_CASE("media.locate finds missing files in a folder by name and relinks them
 	song.settle();
 	fs::rename(moved / "drums" / "KICK.wav", other / "kick.wav");
 	CHECK(byId(run(song.client, "pool.get").at("clips"), kick).at("missing") == true);
-	CHECK(run(song.client, "media.locate", {{"folder", utf8(other)}, {"media", {song.mediaOf(pad)}}})
+	CHECK(runJob(song.client, "media.locate", {{"folder", utf8(other)}, {"media", {song.mediaOf(pad)}}})
 			.at("relinked")
 			.empty());
-	CHECK(run(song.client, "media.locate", {{"folder", utf8(other)}}).at("relinked").size() == 1);
+	CHECK(runJob(song.client, "media.locate", {{"folder", utf8(other)}}).at("relinked").size() == 1);
 	CHECK(byId(run(song.client, "pool.get").at("clips"), kick).at("missing") == false);
 	CHECK(run(song.client, "history.get").at("steps").back().at("action") == "Locate missing files");
 	run(song.client, "history.undo");
@@ -424,7 +518,7 @@ TEST_CASE("media.locate takes a file of the same length, the same spelling first
 	writeFile(moved / fs::u8path("\xC3\xB6l.wav"), 480);
 	song.reopen();
 
-	const Json located = run(song.client, "media.locate", {{"folder", utf8(moved)}});
+	const Json located = runJob(song.client, "media.locate", {{"folder", utf8(moved)}});
 	CHECK(located.at("relinked") == Json::array({kick, aergerMedia}));
 	CHECK(located.at("missing") == Json::array({snare, oelMedia}));
 	const Json media = run(song.client, "project.get").at("media");
@@ -434,7 +528,7 @@ TEST_CASE("media.locate takes a file of the same length, the same spelling first
 
 	// A media file given twice is looked for and relinked once.
 	run(song.client, "history.undo");
-	const Json twice = run(song.client, "media.locate", {{"folder", utf8(moved)}, {"media", {kick, kick}}});
+	const Json twice = runJob(song.client, "media.locate", {{"folder", utf8(moved)}, {"media", {kick, kick}}});
 	CHECK(twice.at("relinked") == Json::array({kick}));
 	CHECK(twice.at("missing").empty());
 }
@@ -512,8 +606,18 @@ TEST_CASE("media.conform converts files to the project's sample rate and keeps w
 						   .at("id");
 	const uint64_t slowMedia = song.mediaOf(slow);
 
-	const Json conformed = run(song.client, "media.conform");
+	std::vector<Json> progress;
+	const Json conformed = runJob(song.client, "media.conform", Json::object(), &progress);
 	CHECK(conformed.at("media") == Json::array({slowMedia}));
+	CHECK(conformed.at("changed").empty());
+	// The job says which file it converts.
+	REQUIRE(!progress.empty());
+	for (const Json& step : progress)
+	{
+		CHECK(step.at("detail") == "slow.wav");
+		CHECK(step.at("progress").get<double>() >= 0.0);
+		CHECK(step.at("progress").get<double>() <= 1.0);
+	}
 	const Json pool = run(song.client, "pool.get");
 	const Json slowClip = byId(pool.at("clips"), slow);
 	CHECK(slowClip.at("sampleRate") == 48000.0);
@@ -555,7 +659,7 @@ TEST_CASE("media.conform converts a media file given twice once", "[integration]
 						   .at("id");
 	const uint64_t media = song.mediaOf(slow);
 
-	CHECK(run(song.client, "media.conform", {{"media", {media, media}}}).at("media") == Json::array({media}));
+	CHECK(runJob(song.client, "media.conform", {{"media", {media, media}}}).at("media") == Json::array({media}));
 	CHECK(filesIn(song.media) == 1);
 	CHECK(byId(run(song.client, "pool.get").at("clips"), slow).at("sampleRate") == 48000.0);
 	CHECK(song.event(event).at("offset") == 4800);
@@ -591,7 +695,7 @@ TEST_CASE(
 	run(song.client, "crossfade.set", {{"from", second}, {"to", third}, {"length", 4410}, {"outLength", 4800}});
 	const auto snapPoint = song.event(first).at("snapPoint").get<int64_t>();
 
-	run(song.client, "media.conform");
+	runJob(song.client, "media.conform");
 	CHECK(byId(run(song.client, "project.get").at("clips"), slow).at("fadeOut").at("length") == 2400);
 	const Json a = song.event(first);
 	CHECK(a.at("offset") == 4800);
@@ -613,6 +717,229 @@ TEST_CASE(
 	CHECK(song.event(first).at("snapPoint") == snapPoint);
 	CHECK(song.event(second).at("crossfade").at("outLength") == 8820);
 	CHECK(song.event(third).at("crossfade").at("length") == 4410);
+}
+
+TEST_CASE("media.conform in a transaction converts at once, in the transaction's undo step", "[integration]")
+{
+	SavedProject song;
+	writeFile(song.library / "fast.wav", 4800, 1);
+	const uint64_t media = song.mediaOf(song.clip(song.library / "fast.wav"));
+
+	// As the project setup dialog does: a new sample rate and the files conformed to it.
+	const Json done = run(song.client, "history.transaction",
+		{{"description", "Project Setup"},
+			{"commands",
+				Json::array({{{"command", "project.set"}, {"parameters", {{"sampleRate", 44100.0}}}},
+					{{"command", "media.conform"}}})}});
+	CHECK(done.at("results").at(1).at("media") == Json::array({media}));
+	CHECK(run(song.client, "job.list").at("jobs").empty());
+	const Json conformed = byId(run(song.client, "project.get").at("media"), media);
+	CHECK(conformed.at("sampleRate") == 44100.0);
+	CHECK(conformed.at("length") == 4410);
+	CHECK(fs::u8path(conformed.at("path").get<std::string>()).parent_path() == song.media);
+	run(song.client, "history.undo");
+	CHECK(run(song.client, "project.get").at("sampleRate") == 48000.0);
+	CHECK(byId(run(song.client, "project.get").at("media"), media).at("sampleRate") == 48000.0);
+}
+
+TEST_CASE("media.locate looks through a folder as a job, while other commands are answered", "[integration]")
+{
+	SavedProject song;
+	writeFile(song.library / "kick.wav", 4800, 1);
+	const uint64_t kick = song.mediaOf(song.clip(song.library / "kick.wav"));
+	song.save();
+	song.settle();
+	// A few thousand files to look through, and the missing one among them.
+	const fs::path moved = song.dir.path() / "moved";
+	fillFolder(moved, 50);
+	fs::rename(song.library / "kick.wav", moved / "folder49" / "kick.wav");
+	song.reopen();
+
+	// transport.locate, sent right behind it, is answered before the job is done.
+	const RequestId locate = song.client.send("media.locate", {{"folder", utf8(moved)}});
+	const RequestId transport = song.client.send("transport.locate", {{"position", 0}});
+	bool answered = false;
+	Json finished;
+	std::vector<Json> progress;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+	while (finished.is_null() && std::chrono::steady_clock::now() < deadline)
+	{
+		const std::optional<Message> message = song.client.wait(std::chrono::milliseconds(100));
+		if (!message)
+			continue;
+		if (const auto* result = std::get_if<Result>(&*message))
+		{
+			INFO(result->error);
+			REQUIRE(result->ok());
+			if (result->request == locate)
+				CHECK(result->value.at("job").at("kind") == "media.locate");
+			if (result->request == transport)
+				answered = true;
+			continue;
+		}
+		const auto& event = std::get<Event>(*message);
+		if (event.name == "job.progress" && event.data.at("kind") == "media.locate")
+			progress.push_back(event.data);
+		if (event.name == "job.finished" && event.data.at("job").at("kind") == "media.locate")
+		{
+			CHECK(answered);
+			finished = event.data.at("job");
+		}
+	}
+	REQUIRE(!finished.is_null());
+	INFO(finished.dump());
+	REQUIRE(finished.at("state") == "done");
+	CHECK(finished.at("result").at("relinked") == Json::array({kick}));
+	CHECK(finished.at("result").at("missing").empty());
+	CHECK(fs::equivalent(
+		fs::u8path(byId(run(song.client, "project.get").at("media"), kick).at("path").get<std::string>()),
+		moved / "folder49" / "kick.wav"));
+	// It says where it looks.
+	REQUIRE(!progress.empty());
+	CHECK(progress.front().at("detail").get<std::string>().find(utf8(moved)) == 0);
+	CHECK(run(song.client, "history.get").at("steps").back().at("action") == "Locate missing files");
+}
+
+TEST_CASE("job.cancel stops media.locate, which then changes nothing", "[integration]")
+{
+	SavedProject song;
+	writeFile(song.library / "kick.wav", 4800, 1);
+	const uint64_t kick = song.mediaOf(song.clip(song.library / "kick.wav"));
+	song.save();
+	song.settle();
+	const fs::path moved = song.dir.path() / "moved";
+	fillFolder(moved, 50);
+	fs::rename(song.library / "kick.wav", moved / "folder49" / "kick.wav");
+	song.reopen();
+	const size_t before = steps(song.client);
+
+	const Json cancelled = cancelJob(song.client, "media.locate", {{"folder", utf8(moved)}});
+	CHECK(cancelled.at("state") == "cancelled");
+	CHECK(run(song.client, "pool.get").at("missingFiles") == 1);
+	CHECK(byId(run(song.client, "project.get").at("media"), kick).at("path") == utf8(song.library / "kick.wav"));
+	CHECK(steps(song.client) == before);
+}
+
+TEST_CASE("job.cancel stops media.conform, which then leaves no file behind and changes nothing", "[integration]")
+{
+	SavedProject song;
+	writeFile(song.library / "slow.wav", 441000, 2, 44100.0); // ten seconds
+	const uint64_t slow = song.mediaOf(song.clip(song.library / "slow.wav"));
+	const size_t before = steps(song.client);
+
+	const Json cancelled = cancelJob(song.client, "media.conform");
+	CHECK(cancelled.at("state") == "cancelled");
+	CHECK((!fs::exists(song.media) || filesIn(song.media) == 0));
+	const Json media = byId(run(song.client, "project.get").at("media"), slow);
+	CHECK(media.at("path") == utf8(song.library / "slow.wav"));
+	CHECK(media.at("sampleRate") == 44100.0);
+	CHECK(steps(song.client) == before);
+}
+
+TEST_CASE("an edit made while media.locate or media.conform runs is kept", "[integration]")
+{
+	SECTION("a missing file removed while media.locate looks for it")
+	{
+		SavedProject song;
+		writeFile(song.library / "kick.wav", 4800, 1);
+		const uint64_t kick = song.mediaOf(song.clip(song.library / "kick.wav"));
+		song.save();
+		song.settle();
+		const fs::path moved = song.dir.path() / "moved";
+		fillFolder(moved, 50);
+		fs::rename(song.library / "kick.wav", moved / "folder49" / "kick.wav");
+		song.reopen();
+
+		const RequestId locate = song.client.send("media.locate", {{"folder", utf8(moved)}});
+		run(song.client, "media.removeMissing"); // runs while the job looks
+		const Json finished = waitForJob(song.client, startedJob(song.client, locate));
+		INFO(finished.dump());
+		REQUIRE(finished.at("state") == "done");
+		CHECK(finished.at("result").at("relinked").empty());
+		CHECK(finished.at("result").at("changed") == Json::array({kick}));
+		CHECK(run(song.client, "project.get").at("media").empty());
+		CHECK(run(song.client, "history.get").at("steps").back().at("action") == "Remove missing files");
+	}
+	SECTION("a media file relinked by hand while media.conform converts it")
+	{
+		SavedProject song;
+		writeFile(song.library / "slow.wav", 441000, 2, 44100.0);
+		writeFile(song.library / "other.wav", 4410, 2, 44100.0);
+		const uint64_t slow = song.mediaOf(song.clip(song.library / "slow.wav"));
+
+		const RequestId conform = song.client.send("media.conform");
+		run(song.client, "media.relink",
+			{{"files", Json::array({{{"media", slow}, {"path", utf8(song.library / "other.wav")}}})}});
+		const Json finished = waitForJob(song.client, startedJob(song.client, conform));
+		INFO(finished.dump());
+		REQUIRE(finished.at("state") == "done");
+		CHECK(finished.at("result").at("media").empty());
+		CHECK(finished.at("result").at("changed") == Json::array({slow}));
+		const Json media = byId(run(song.client, "project.get").at("media"), slow);
+		CHECK(media.at("path") == utf8(song.library / "other.wav"));
+		CHECK(media.at("sampleRate") == 44100.0);
+		CHECK((!fs::exists(song.media) || filesIn(song.media) == 0));
+		CHECK(run(song.client, "history.get").at("steps").back().at("action") == "Relink media files");
+	}
+}
+
+TEST_CASE("media.relinkResampled points media files at files at another rate and checks them", "[integration]")
+{
+	SavedProject song;
+	writeFile(song.library / "slow.wav", 44100, 1, 44100.0);
+	writeFile(song.library / "fast.wav", 48000, 1);
+	writeFile(song.library / "stereo.wav", 48000, 2);
+	writeFile(song.library / "empty.wav", 0, 1);
+	const uint64_t slow = song.clip(song.library / "slow.wav");
+	const uint64_t media = song.mediaOf(slow);
+	const auto track = run(song.client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id");
+	const auto event = run(song.client, "audioEvent.add",
+		{{"track", track}, {"clip", slow}, {"position", 0}, {"offset", 4410}, {"length", 22050}})
+						   .at("event")
+						   .at("id");
+	const auto relink = [&song](Json file)
+	{ return song.client.call("media.relinkResampled", {{"files", Json::array({std::move(file)})}}); };
+	const std::string fast = utf8(song.library / "fast.wav");
+	const std::string from = utf8(song.library / "slow.wav");
+	const size_t before = steps(song.client);
+
+	// Files that don't fit, and media files that aren't there, are refused and change nothing.
+	CHECK_THAT(relink({{"media", 999}, {"path", fast}}).error, ContainsSubstring("999"));
+	CHECK_THAT(
+		relink({{"media", media}, {"path", utf8(song.library / "stereo.wav")}}).error, ContainsSubstring("channels"));
+	CHECK(!relink({{"media", media}, {"path", utf8(song.library / "nowhere.wav")}}).ok());
+	CHECK_THAT(relink({{"media", media}, {"path", utf8(song.library / "empty.wav")}}).error,
+		ContainsSubstring("no sample frames"));
+	CHECK_THAT(reject(song.client, "media.relinkResampled",
+				   {{"files", Json::array({{{"media", media}, {"path", fast}}, {{"media", media}, {"path", fast}}})}}),
+		ContainsSubstring("twice"));
+	CHECK(steps(song.client) == before);
+
+	// A media file that moved on, was removed or is at another rate meanwhile is skipped.
+	Json skipped = run(song.client, "media.relinkResampled",
+		{{"files",
+			Json::array(
+				{{{"media", media}, {"path", fast}, {"from", fast}}, {{"media", 999}, {"path", fast}, {"from", from}},
+					{{"media", media}, {"path", fast}, {"from", from}, {"fromSampleRate", 48000.0}}})}});
+	CHECK(skipped.at("relinked").empty());
+	CHECK(skipped.at("skipped") == Json::array({media, 999, media}));
+	CHECK(steps(song.client) == before);
+
+	// What plays it moves with the new sample frames, as one undo step.
+	const Json relinked = run(song.client, "media.relinkResampled",
+		{{"files", Json::array({{{"media", media}, {"path", fast}, {"from", from}, {"fromSampleRate", 44100.0}}})}});
+	CHECK(relinked.at("relinked") == Json::array({media}));
+	CHECK(relinked.at("skipped").empty());
+	const Json changed = byId(run(song.client, "project.get").at("media"), media);
+	CHECK(changed.at("path") == fast);
+	CHECK(changed.at("sampleRate") == 48000.0);
+	CHECK(changed.at("length") == 48000);
+	CHECK(song.event(event).at("offset") == 4800);
+	CHECK(song.event(event).at("length") == 24000);
+	CHECK(run(song.client, "history.get").at("steps").back().at("action") == "Conform files");
+	run(song.client, "history.undo");
+	CHECK(song.event(event).at("offset") == 4410);
+	CHECK(byId(run(song.client, "project.get").at("media"), media).at("path") == from);
 }
 
 TEST_CASE("audioFile.import with clipsOnly adds files to the pool without tracks or events", "[integration]")

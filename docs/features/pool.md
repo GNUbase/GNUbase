@@ -26,9 +26,9 @@ the pool and conforming files to the project's sample rate. The engine commands 
   spelling first, else one whose ASCII letters (A to Z) differ in case; other letters, such as Ä and ä, must match
   exactly, since folding them would need Unicode's case tables. It takes a file only if it has the media file's
   sample rate, channel count and length, so a same-named file of another take (a common kick.wav) isn't relinked
-  with events pointing past its end, and relinks the ones found with `media.relink`, as one undo step. `media`
-  limits it to some media files, each looked for once however often it is given. A single file is relinked with
-  `media.relink` ([backup.md](backup.md)).
+  with events pointing past its end. `media` limits it to some media files, each looked for once however often it is
+  given. Since the folder can be large (a whole drive), it runs as a job (see below). A single file is relinked
+  with `media.relink` ([backup.md](backup.md)).
 - **`media.removeMissing`** removes the missing media files with their clips and the audio events that play them
   (`audioEvent.remove`, so crossfades from them go too), as one undo step.
 - **`media.conform`** writes each media file at another sample rate than the project's into the media folder as a
@@ -37,12 +37,31 @@ the pool and conforming files to the project's sample rate. The engine commands 
   snap points of the events that play it, are in the file's sample frames, so they are scaled to the new rate and
   events play the same section. A crossfade's `length` is in the frames of the event it goes into and its
   `outLength` in those of the event it comes from, so each scales with its own file. A media file given twice in
-  `media` is conformed once. The originals stay on disk; it needs a saved project and is one undo step.
+  `media` is conformed once; one given that is missing is refused. The originals stay on disk; it needs a saved
+  project and is one undo step. Converting runs as a job (see below); `media.relinkResampled` then points the media
+  files at the new files and scales what plays them. That command takes the new file's sample rate and length,
+  refuses a file of another channel count or without sample frames and a media file given twice, and skips an entry
+  whose media file was removed or no longer has `from`'s path or `fromSampleRate`'s rate.
 - **Import.** `audioFile.import` with `clipsOnly` adds the files to the pool without tracks or events, with copy,
   convert and split channels as for any import ([file-import.md](file-import.md)).
-- `media.locate` and `media.conform` read and write files on the command thread, as `media.convert` does; running
-  them as jobs with progress and cancel is #498. None of this runs on an audio thread; the render snapshot follows
-  the new paths as it does for `media.relink`.
+- **Jobs.** `media.locate` and `media.conform` would hold up every other command while they look through a large
+  folder or convert long files, so they run as jobs (#498, `Jobs` in [architecture.md](../architecture.md)), as
+  copying media does. The command checks its parameters (the folder is there; the project is saved), copies what the
+  job needs (the missing media files' ids, paths, sample rates, channel counts and lengths; the files to convert)
+  and returns the job at once. `media.locate`'s job walks the folder, stopping between entries when cancelled, with
+  `job.progress` naming the folder it looks in (at most every 50 ms, measured in the folder's own entries), then
+  opens the candidates, and relinks the ones found with one `media.relink` in a transaction ("Locate missing
+  files"), whose `from` makes it skip media files relinked or removed meanwhile. Its result is `relinked`, `missing`
+  and `changed` (found, but changed meanwhile). `media.conform`'s job converts into files it creates exclusively in
+  the media folder, with `job.progress` in sample frames read and the file's name, stopping between pieces when
+  cancelled; on cancel or failure it removes the files it wrote (and the media folder if it made it and it is empty),
+  so the project and the folder stay as they were. Then `media.relinkResampled` runs on the command thread, one
+  undo step that skips media files whose path or sample rate changed meanwhile, and their new files are removed.
+  Its result is `media` (conformed) and `changed`. A transaction is one step on the command thread and can't wait
+  for a job, so in a `history.transaction` `media.conform` converts there and returns `media`: the project setup
+  dialog changes the sample rate and conforms the files that way, as one undo step
+  ([project-setup.md](project-setup.md)); whether it should conform with a job too is left open. None of this runs
+  on an audio thread; the render snapshot follows the new paths as it does for `media.relink`.
 
 ## Pool panel
 
@@ -62,8 +81,11 @@ the pool and conforming files to the project's sample rate. The engine commands 
   failed, with the state class `.error`, which the themes color as danger. The app hears the results of
   `pool.removeUnused`, `media.locate`, `media.removeMissing` and `media.conform` from the toolbar, the Media menu and
   the folder dialog alike (`EngineBinding::onResult`, [ui-engine-binding.md](ui-engine-binding.md)) and opens the
-  pool to show them, so Conform Files on a project that was never saved says to save it first. A rename, a move or
-  New Folder that fails says so there too.
+  pool to show them, so Conform Files on a project that was never saved says to save it first. For Find Missing
+  Files and Conform Files the result is a job: the line follows its `job.progress` (e.g. "Conform Files: 42 %,
+  slow.wav") and shows what it did from its `job.finished`, or that it failed or was cancelled. A job that ended
+  before its command's result came is asked for with `job.get`. A rename, a move or New Folder that fails says so
+  there too.
 - **Editing.** The names of folders and clips are fields: what is typed renames them (`poolFolder.set`, `clip.set`)
   with Enter or when the field loses the focus; a name typed away keeps the old one. Clips dragged onto a folder's
   row move into it (`clip.set`, several selected clips in one `history.transaction`). A drag lasts only while the
@@ -100,10 +122,17 @@ saved project's files are moved into another folder while it is closed, the load
 `media.locate` finds one in a subfolder under another letter case and skips one whose channel count doesn't fit, the
 event plays the same section, the saved project keeps the new path, and undo brings back the old one. Another test
 has `media.locate` skip a same-named file of another length, prefer the same spelling over another case, match ASCII
-letters in any case but not Ö for ö, and look for a media file given twice once. `tests/poolpanel_tests.cpp` drives
-the panel in the app's UI with `ui::Automation`: Media > Open Pool Window and its key, the rows and columns, renaming
+letters in any case but not Ö for ö, and look for a media file given twice once. Both run as jobs, which the tests
+wait for: `transport.locate` sent right behind `media.locate` on a folder of 2500 files is answered before the job
+ends, whose progress names the folder; `job.cancel` stops `media.locate` and `media.conform` with nothing changed
+and no file left in the media folder; a missing file removed while `media.locate` looks for it, and a media file
+relinked by hand while `media.conform` converts it, keep the edit, and the conformed file is removed; and
+`media.relinkResampled` refuses unknown media files, files of another channel count, missing or empty files and a
+media file given twice, and skips entries whose `from` or `fromSampleRate` no longer fit.
+`tests/poolpanel_tests.cpp` drives the panel in the app's UI with `ui::Automation`: Media > Open Pool Window and its key, the rows and columns, renaming
 by typing, dragging a clip onto a folder, New Folder and Remove Unused Media with its message, undo from another
 client, Import Medium through the Import Options dialog; names sorted in any case, a clip let go outside the panel not
 moved by a click on a folder's name or a drag from outside, a name typed away kept, no reading while another tab
-shows; and Conform Files from the Media menu on a project that was never saved opening the pool with the error.
+shows; Conform Files from the Media menu on a project that was never saved opening the pool with the error, and on a
+saved one showing the job's result once it is done.
 `tests/docking_tests.cpp` checks `Docking::showing`, `tests/enginebinding_tests.cpp` `EngineBinding::onResult`.

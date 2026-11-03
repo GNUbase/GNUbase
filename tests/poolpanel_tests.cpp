@@ -257,3 +257,24 @@ TEST_CASE("the pool panel shows why Conform Files from the Media menu failed", "
 	CHECK(has(elements(app, "#pool-message").at(0), "error"));
 	CHECK(app.waitUntil([&app] { return elements(app, "#pool").at(0).at("visible") == true; }));
 }
+
+TEST_CASE("the pool panel shows what the Conform Files job did once it is done", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	std::filesystem::create_directories(dir.path() / "project");
+	app.call(
+		"project.save", {{"path", (dir.path() / "project" / "Song.dawproject").u8string()}, {"embedMedia", false}});
+	test::writeWav(dir.path() / "slow.wav", {std::vector<float>(44100, 0.25f), 1, 44100});
+	const uint64_t slow = addClip(app, (dir.path() / "slow.wav").u8string());
+
+	// Conform Files starts a job; the message line follows it to its result.
+	click(app, "#menu-bar button[menu=media-menu]");
+	click(app, "#media-menu menuitem[command=\"media.conform\"]");
+	REQUIRE(app.waitUntil(
+		[&app] { return message(app) == "Conformed 1 file to the project's sample rate."; }, std::chrono::seconds(30)));
+	CHECK(!has(elements(app, "#pool-message").at(0), "error"));
+	CHECK(app.call("pool.get").at("clips").at(0).at("id") == slow);
+	CHECK(app.call("pool.get").at("clips").at(0).at("sampleRate") == 48000.0);
+}
