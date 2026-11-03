@@ -548,6 +548,32 @@
 		border-right-width: 1dp;
 		border-right-color: #ffffff;
 	}
+	.midi-editor .editor-part
+	{
+		color: #c8c8c8;
+		border-bottom-width: 1dp;
+		border-bottom-color: #ffffff;
+	}
+	.midi-editor .editor-part.editable
+	{
+		color: #ffffff;
+	}
+	.midi-editor .editor-part.active, .editor-visibility-track.active
+	{
+		color: #ffff00;
+	}
+	.editor-visibility-check
+	{
+		decorator: svg(checkbox-off.svg);
+	}
+	.editor-visibility-check.checked
+	{
+		decorator: svg(checkbox-on.svg);
+	}
+	.editor-visibility-check.partial
+	{
+		decorator: svg(checkbox-mixed.svg);
+	}
 	.docking [zone]
 	{
 		background-color: #000000;

@@ -20,6 +20,8 @@ add_library(gnubase-ui STATIC
 	colormenu.cpp
 	colormenu.h
 	colorwidgets.cpp
+	cursors.cpp
+	cursors.h
 	datamodel.cpp
 	datamodel.h
 	displays.cpp
@@ -57,6 +59,8 @@ add_library(gnubase-ui STATIC
 	markers.cpp
 	markers.h
 	markerswindow.cpp
+	midieditor.cpp
+	midieditor.h
 	mixer.cpp
 	mixer.h
 	poolpanel.cpp
@@ -95,5 +99,5 @@ add_library(gnubase-ui STATIC
 	windowsystem.h)
 target_link_libraries(gnubase-ui
 	PUBLIC gnubase-engine RmlUi::RmlUi
-	PRIVATE Freetype::Freetype gnubase-ui-thirdparty SDL3::SDL3)
+	PRIVATE Freetype::Freetype gnubase-ui-thirdparty lunasvg::lunasvg SDL3::SDL3)
 gnubase_target_defaults(gnubase-ui)

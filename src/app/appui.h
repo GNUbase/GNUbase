@@ -13,6 +13,7 @@
 #include "ui/keycommands.h"
 #include "ui/mainmenu.h"
 #include "ui/markers.h"
+#include "ui/midieditor.h"
 #include "ui/mixer.h"
 #include "ui/poolpanel.h"
 #include "ui/projectfiles.h"
@@ -90,6 +91,15 @@ namespace gnubase::app
 		ui::Mixer* mixer(int number);
 		ui::WindowId mixerWindow(int number) const { return m_mixers.at(static_cast<size_t>(number - 1)).window; }
 		ui::Mixer* lowerZoneMixer() { return m_lowerMixer.lock().get(); }
+		// The MIDI editors (#126, docs/features/midi-editors.md): the editor window (resources/ui/editor.rml), which
+		// opens and closes as the engine's editor view window does (editor.open, editor.close), and the project
+		// window's Editor panel in the lower zone, which shows as the view lower opens. Null while they don't show.
+		ui::MidiEditor* editorWindow()
+		{
+			return m_shell.find(m_editor.window) != nullptr ? m_editor.editor.get() : nullptr;
+		}
+		ui::WindowId editorWindowId() const { return m_editor.window; }
+		ui::MidiEditor* lowerZoneEditor() { return m_lowerEditor.lock().get(); }
 
 		// Opens the studio setup dialog (resources/ui/studio-setup.rml, #79) in the window, modal: the UI command
 		// window.studioSetup, which the main menu's Studio menu runs. While it is open, this brings it to the front
@@ -144,6 +154,14 @@ namespace gnubase::app
 		void chooseMissingFolder(ui::Window& window);
 		// The lower zone's mixer panel, the mixer windows' Visibility tabs and their UI commands.
 		void addMixers();
+		// The editors' panels and UI commands, and the windows and zones that follow the engine's editor views.
+		void addEditors();
+		// Shows or closes the editor window or the lower zone's editor as the engine's view says.
+		void followEditor(const engine::Json& view);
+		// The selected MIDI parts open in the editors that follow the project window's selection (p. 1153).
+		void followSelection();
+		// The MIDI parts selected in the project window's event display.
+		std::vector<uint64_t> selectedParts() const;
 		// The OS's file dialog for a track's picture in the mixer, then track.set.
 		void choosePicture(uint64_t track);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
@@ -206,5 +224,15 @@ namespace gnubase::app
 		};
 		std::array<MixerWindow, 4> m_mixers;
 		std::weak_ptr<ui::Mixer> m_lowerMixer; // the docking system owns it while it is there
+		struct EditorWindow
+		{
+			ui::WindowId window = 0;
+			std::unique_ptr<ui::MidiEditor> editor;
+		};
+		EditorWindow m_editor;
+		std::weak_ptr<ui::MidiEditor> m_lowerEditor;         // the docking system owns it while it is there
+		engine::Json m_editorViews = engine::Json::object(); // the engine's, by editor
+		std::vector<uint64_t> m_followed;                    // the selection the editors last followed
+		std::vector<ui::Subscription> m_editorSubscriptions;
 	};
 }

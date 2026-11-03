@@ -516,6 +516,15 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".track-list .drop-line", {"background-color": c["accent"]}),
         # The mixer (docs/features/mixer-window.md): a line between the channel strips
         (".mixer-channel", {"border-right-width": f"{widths['hairline']}dp", "border-right-color": c["border"]}),
+        # The MIDI editors (docs/features/midi-editors.md): parts outside the part editing mode dimmed, the active part
+        # and track lit, and the Visibility tab's checks: a check mark, or a rectangle while some parts show
+        (".midi-editor .editor-part", {"color": c["textMuted"], "border-bottom-width": f"{widths['hairline']}dp",
+                                       "border-bottom-color": c["border"]}),
+        (".midi-editor .editor-part.editable", {"color": c["text"]}),
+        (".midi-editor .editor-part.active, .editor-visibility-track.active", {"color": c["accent"]}),
+        (".editor-visibility-check", {"decorator": skin("checkbox-off")}),
+        (".editor-visibility-check.checked", {"decorator": skin("checkbox-on")}),
+        (".editor-visibility-check.partial", {"decorator": skin("checkbox-mixed")}),
         # Docking windows (docs/features/docking.md): zones, the frame of the zone with the keyboard focus, and strips
         (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
         (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),

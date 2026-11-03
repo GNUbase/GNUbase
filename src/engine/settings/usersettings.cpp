@@ -270,6 +270,15 @@ namespace gnubase::engine::settings
 					"(alt), sizeObjects.disableSnapping (ctrl) and split.splitRepeated (alt). What it leaves out has "
 					"its default.",
 					toolModifiersSchema(), Json::object()},
+				{"ui.toolSwitchNotification",
+					"Whether choosing a project window tool with a key command shows the tool's name for a moment in "
+					"the event display (docs/features/tools.md).",
+					Json{{"type", "boolean"}}, true},
+				{"ui.toolboxOnRightClick",
+					"Whether a right click in the event display opens the toolbox, the toolbar's tools at the mouse, "
+					"and a right click with a modifier key the context menu; when off, the other way round "
+					"(docs/features/tools.md).",
+					Json{{"type", "boolean"}}, false},
 				{"ui.trackControls",
 					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
 					"folder, marker, ruler), in order: mute, solo, record, monitor (audio tracks), read (automation) "
