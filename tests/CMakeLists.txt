@@ -40,6 +40,7 @@ add_executable(gnubase-tests
 	device_tests.cpp
 	docking_tests.cpp
 	document_tests.cpp
+	editors_tests.cpp
 	effects_tests.cpp
 	engine_tests.cpp
 	enginebinding_tests.cpp
@@ -68,6 +69,7 @@ add_executable(gnubase-tests
 	midi_tests.cpp
 	mididevice_tests.cpp
 	midiedit_tests.cpp
+	midieditor_tests.cpp
 	midifile_tests.cpp
 	midifunctions_tests.cpp
 	miditap_tests.cpp
