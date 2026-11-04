@@ -342,6 +342,38 @@ TEST_CASE("a backup names its project and file", "[integration]")
 	CHECK(run(client, "project.get").at("name") == "Final");
 }
 
+TEST_CASE("a backup's default name is one that files can have on every platform", "[integration]")
+{
+	const test::TempDir dir;
+	Song song;
+
+	// After a project named as a device on Windows, the file gets a name of its own, while names that only begin like
+	// one are file names like any other.
+	int folder = 0;
+	const std::vector<std::pair<std::string, std::string>> projects{{"CON", "_CON.dawproject"},
+		{"lpt1.mix", "_lpt1.mix.dawproject"}, {"CONSOLE", "CONSOLE.dawproject"}, {"COM10", "COM10.dawproject"},
+		{"Song. .", "Song.dawproject"}};
+	for (const auto& [name, file] : projects)
+	{
+		INFO(name);
+		run(song.client, "project.set", {{"name", name}});
+		const fs::path into = dir.path() / std::to_string(++folder);
+		CHECK(backup(song.client, {{"folder", utf8(into)}}).at("file") == utf8(into / fs::u8path(file)));
+	}
+
+	// After a project file, its whole name without the .dawproject extension, and without the dots and spaces at its
+	// end and the extension before them, which project.save keeps on Linux and macOS while Windows drops them (#706).
+	const std::vector<std::pair<std::string, std::string>> files{{"Take v2.1", "Take v2.1.dawproject"},
+		{"Session.dawproject.", "Session.dawproject"}, {"Mix.DAWPROJECT .", "Mix.dawproject"}};
+	for (const auto& [name, file] : files)
+	{
+		INFO(name);
+		run(song.client, "project.save", {{"path", utf8(dir.path() / fs::u8path(name))}});
+		const fs::path into = dir.path() / std::to_string(++folder);
+		CHECK(backup(song.client, {{"folder", utf8(into)}}).at("file") == utf8(into / fs::u8path(file)));
+	}
+}
+
 TEST_CASE("minimized audio files keep the used ranges with their handles, sample for sample", "[integration]")
 {
 	const test::TempDir dir;
@@ -502,7 +534,8 @@ TEST_CASE("a backup goes into an empty folder", "[integration]")
 	CHECK_THAT(
 		reject(song.client, "project.backup", {{"folder", utf8(dir.path() / "full")}}), ContainsSubstring("empty"));
 	CHECK_THAT(reject(song.client, "project.backup", {{"folder", ""}}), ContainsSubstring("folder"));
-	for (const char* name : {"", "a/b", "a\\b", "..", "x:y"})
+	for (const char* name :
+		{"", "a/b", "a\\b", "..", "x:y", "Song.", "Song ", "CON", "nul", "Aux.mix", "com1 .x", "LPT9", "COM\xC2\xB9"})
 	{
 		INFO(name);
 		CHECK_THAT(reject(song.client, "project.backup", {{"folder", utf8(dir.path() / "new")}, {"name", name}}),

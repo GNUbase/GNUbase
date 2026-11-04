@@ -30,15 +30,20 @@ namespace gnubase::ui
 		}
 
 		// A file chosen to save a project as, with the DAWproject extension unless it has it already, in any case:
-		// "Song.DAWPROJECT" stays as it is, "Song v1.2" becomes "Song v1.2.dawproject", and "Song.", as the dialogs of
-		// Linux return the name as typed, "Song.dawproject" rather than "Song..dawproject".
+		// "Song.DAWPROJECT" stays as it is and "Song v1.2" becomes "Song v1.2.dawproject". The dots and spaces at the
+		// end of the name, which Windows drops and the dialogs of Linux return as typed, go first, so that "Song." and
+		// "Song.dawproject." are "Song.dawproject" rather than "Song..dawproject" and "Song.dawproject.dawproject"
+		// (#706). A name of nothing else is "Untitled".
 		std::filesystem::path withProjectExtension(const std::filesystem::path& file)
 		{
-			if (Rml::StringUtilities::ToLower(file.extension().u8string()) == ".dawproject")
-				return file;
 			std::string name = file.filename().u8string();
-			if (name.size() > 1 && name.back() == '.' && name != "..")
+			while (!name.empty() && (name.back() == '.' || name.back() == ' '))
 				name.pop_back();
+			if (name.empty())
+				name = "Untitled";
+			const std::filesystem::path named = file.parent_path() / std::filesystem::u8path(name);
+			if (Rml::StringUtilities::ToLower(named.extension().u8string()) == ".dawproject")
+				return named;
 			return file.parent_path() / std::filesystem::u8path(name + ".dawproject");
 		}
 

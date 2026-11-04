@@ -57,11 +57,20 @@ namespace gnubase::engine
 	// Removes files, ignoring errors, e.g. copies that a job made and doesn't need.
 	void removeFiles(const std::vector<std::string>& files);
 
-	// Why name can't be the name of a project file on every platform, or an empty string if it can.
+	// Why name can't be the name of a project file on every platform, or an empty string if it can: names with
+	// characters that file names can't have, names that end in a dot or a space, which Windows drops, and names that
+	// Windows keeps for devices, also with an extension ("CON", "nul.mix").
 	std::string fileNameProblem(const std::string& name);
 
-	// name with the characters that file names can't have replaced, for a default file name.
+	// name made one that fileNameProblem has nothing against, for a default file name: the characters that file names
+	// can't have replaced, the dots and spaces at the end dropped, "_" before a device's name, and "Untitled" if
+	// nothing is left.
 	std::string safeFileName(const std::string& name);
+
+	// The name of a project file that the files named after it take, such as its versions, auto saves and backups:
+	// its whole name without the dots and spaces at its end, which Windows drops and project.save keeps elsewhere, and
+	// then without the extension .dawproject in any case. "Song.dawproject." is "Song", "Song v2.1" stays as it is.
+	std::string projectFileStem(const std::filesystem::path& file);
 
 	struct BackupOptions
 	{

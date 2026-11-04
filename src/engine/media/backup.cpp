@@ -48,6 +48,24 @@ namespace gnubase::engine
 			return text;
 		}
 
+		// Whether Windows keeps name for a device: CON, PRN, AUX, NUL, COM0 to COM9 and LPT0 to LPT9, also with a
+		// superscript 1, 2 or 3, in any case. Before Windows 11 they are devices with an extension too, and with spaces
+		// before it ("nul.mix", "CON .x"), so a project file named so would be one there.
+		bool isDeviceName(const std::string& name)
+		{
+			std::string device = name.substr(0, name.find('.'));
+			while (!device.empty() && device.back() == ' ')
+				device.pop_back();
+			device = folded(fs::u8path(device));
+			if (device == "con" || device == "prn" || device == "aux" || device == "nul")
+				return true;
+			if (device.compare(0, 3, "com") != 0 && device.compare(0, 3, "lpt") != 0)
+				return false;
+			const std::string number = device.substr(3);
+			return (number.size() == 1 && number[0] >= '0' && number[0] <= '9') || number == "\xC2\xB9" ||
+				number == "\xC2\xB2" || number == "\xC2\xB3";
+		}
+
 		fs::path numbered(const fs::path& name, int number)
 		{
 			if (number == 1)
@@ -462,6 +480,8 @@ namespace gnubase::engine
 				return "the name can't contain " + std::string(1, c) + ", which file names can't have";
 		if (name.back() == ' ' || name.back() == '.')
 			return "the name can't end with a space or a dot";
+		if (isDeviceName(name))
+			return "the name can't be " + name + ", which Windows keeps for a device";
 		return {};
 	}
 
@@ -473,7 +493,21 @@ namespace gnubase::engine
 				c = '_';
 		while (!safe.empty() && (safe.back() == ' ' || safe.back() == '.'))
 			safe.pop_back();
-		return safe.empty() ? "Untitled" : safe;
+		if (safe.empty())
+			return "Untitled";
+		return isDeviceName(safe) ? "_" + safe : safe;
+	}
+
+	std::string projectFileStem(const fs::path& file)
+	{
+		constexpr std::string_view extension = ".dawproject";
+		std::string name = file.filename().u8string();
+		while (!name.empty() && (name.back() == ' ' || name.back() == '.'))
+			name.pop_back();
+		if (name.size() > extension.size() &&
+			folded(fs::u8path(name.substr(name.size() - extension.size()))) == extension)
+			name.resize(name.size() - extension.size());
+		return name.empty() ? "Untitled" : name;
 	}
 
 	Json backupProject(Project project, const BackupOptions& options, JobContext& job)

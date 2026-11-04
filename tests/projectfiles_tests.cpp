@@ -221,6 +221,13 @@ TEST_CASE("save new version saves under the next free number and goes on with it
 	run(client, "project.save", {{"path", utf8(dir.path() / "Mix-03.DAWPROJECT")}});
 	CHECK(run(client, "project.saveNewVersion").at("file") == utf8(fs::absolute(dir.path() / "Mix-04.dawproject")));
 
+	// Dots and spaces at the end of a file's name, which project.save keeps on Linux and macOS while Windows drops
+	// them, aren't part of its versions' name, nor is the extension before them (#706).
+	run(client, "project.save", {{"path", utf8(dir.path() / "Take.dawproject.")}});
+	CHECK(run(client, "project.saveNewVersion").at("file") == utf8(fs::absolute(dir.path() / "Take-01.dawproject")));
+	run(client, "project.save", {{"path", utf8(dir.path() / "Take. .")}});
+	CHECK(run(client, "project.saveNewVersion").at("file") == utf8(fs::absolute(dir.path() / "Take-02.dawproject")));
+
 	// The folder scan folds ASCII letters only, but the file systems of Windows and macOS also fold others: "übung-01"
 	// is "Übung-01" there, so the next version steps past it instead of overwriting it. On Linux they are two files,
 	// and "Übung-01" is free.
@@ -305,6 +312,24 @@ TEST_CASE(
 	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null()); // just loaded
 	run(client, "settings.set", {{"key", "project.autoSave"}, {"value", false}});
 	CHECK(run(client, "project.autoSave", {{"due", true}}).at("file").is_null());
+}
+
+TEST_CASE("auto saves are named after the project file as its versions are", "[integration]")
+{
+	// After the whole name of a file without the .dawproject extension, so that "Mix v2.1" and "Mix v2.2" don't share
+	// theirs, and without dots and spaces at its end and the extension before them (#706), as Save New Version does.
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const std::vector<std::pair<std::string, std::string>> named{
+		{"Mix v2.1", "Mix v2.1-01.bak"}, {"Mix v2.2", "Mix v2.2-01.bak"}, {"Take.DAWPROJECT. ", "Take-01.bak"}};
+	for (const auto& [name, autoSave] : named)
+	{
+		INFO(name);
+		run(client, "project.save", {{"path", utf8(dir.path() / fs::u8path(name))}});
+		run(client, "track.add", {{"type", "audio"}});
+		CHECK(run(client, "project.autoSave").at("file") == utf8(dir.path() / "Auto Saves" / fs::u8path(autoSave)));
+	}
 }
 
 TEST_CASE("a project opened from an auto save goes on untitled, outside Auto Saves, until it is saved as a file",
@@ -623,6 +648,13 @@ TEST_CASE("templates are projects in the settings folder that new projects start
 	CHECK(modified(client)); // saving a template doesn't save the project
 	CHECK(run(client, "project.location").at("file").is_null());
 	CHECK_THAT(reject(client, "project.saveTemplate", {{"name", "a/b"}}), ContainsSubstring("name"));
+	// Nor names that Windows keeps for devices, which before Windows 11 are devices with an extension too, or names
+	// that end in a dot or a space, which Windows drops.
+	for (const char* name : {"NUL", "con", "Com1", "LPT9.mix", "aux .x", "Band.", "Band "})
+	{
+		INFO(name);
+		CHECK_THAT(reject(client, "project.saveTemplate", {{"name", name}}), ContainsSubstring("name"));
+	}
 
 	const Json templates = run(client, "project.templates").at("templates");
 	REQUIRE(templates.size() == 1);
@@ -784,6 +816,29 @@ TEST_CASE("File > Save As, Save and Save New Version save the project through fi
 	answer(app, {dir.path() / "Take."});
 	const std::string take = utf8(fs::absolute(dir.path() / "Take.dawproject"));
 	REQUIRE(app.waitUntil([&app, &take] { return location(app) == take; }));
+
+	// Dots and spaces at the end go before the extension is checked, which Windows drops anyway, so that a name ending
+	// in the extension and then a dot or a space gets it once (#706).
+	const std::vector<std::pair<std::string, std::string>> typed{{"Final.dawproject.", "Final.dawproject"},
+		{"Live.DAWPROJECT ", "Live.DAWPROJECT"}, {"Demo . .", "Demo.dawproject"}};
+	for (const auto& [name, saved] : typed)
+	{
+		INFO(name);
+		fileMenu(app, "file.saveAs");
+		answer(app, {dir.path() / fs::u8path(name)});
+		const std::string expected = utf8(fs::absolute(dir.path() / fs::u8path(saved)));
+		REQUIRE(app.waitUntil([&app, &expected] { return location(app) == expected; }));
+		CHECK(fs::is_regular_file(dir.path() / fs::u8path(saved)));
+	}
+	CHECK(!fs::exists(dir.path() / "Final.dawproject.dawproject"));
+
+	// A name that Windows keeps for a device is the user's to choose: with the extension it is a file like any other on
+	// Linux, macOS and Windows 11.
+	fileMenu(app, "file.saveAs");
+	answer(app, {dir.path() / "NUL"});
+	const std::string device = utf8(fs::absolute(dir.path() / "NUL.dawproject"));
+	REQUIRE(app.waitUntil([&app, &device] { return location(app) == device; }));
+	CHECK(fs::is_regular_file(dir.path() / "NUL.dawproject"));
 }
 
 TEST_CASE("a save or backup that fails shows its error", "[ui]")
