@@ -520,7 +520,10 @@ namespace gnubase::engine
 		Json json = {{"id", track.id}, {"type", trackTypeName(track.type)}, {"name", track.name},
 			{"color", colorJson(track.color)}, {"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent},
 			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)},
-			{"enabled", track.enabled}, {"picture", track.picture}};
+			{"enabled", track.enabled}, {"picture", track.picture}, {"frozen", nullptr}};
+		if (track.frozen)
+			json["frozen"] = {{"path", track.frozen->path}, {"sampleRate", track.frozen->sampleRate},
+				{"channels", track.frozen->channels}, {"length", track.frozen->length}};
 		if (track.type == TrackType::Ruler)
 			json["timeFormat"] = track.timeFormat;
 		return json;
@@ -1311,7 +1314,15 @@ namespace gnubase::engine
 			track.channel = item.at("channel").get<ObjectId>();
 			// Files from before disabled tracks have every track enabled; only some types can be disabled.
 			track.enabled = !canDisable(track.type) || item.value("enabled", true);
-			track.picture = item.value("picture", std::string()); // files from before #106 have none
+			track.picture = item.value("picture", std::string());                    // files from before #106 have none
+			if (const Json frozen = item.value("frozen", Json()); !frozen.is_null()) // and before #116 none
+			{
+				track.frozen = Freeze{frozen.at("path").get<std::string>(), frozen.at("sampleRate").get<double>(),
+					frozen.at("channels").get<int>(), frozen.at("length").get<time::Samples>()};
+				if ((track.type != TrackType::Audio && track.type != TrackType::Instrument) ||
+					!(track.frozen->sampleRate > 0.0) || track.frozen->channels < 1 || track.frozen->length < 0)
+					throw std::invalid_argument("track " + std::to_string(track.id) + " can't be frozen like that");
+			}
 			if (const Json autoFades = item.value("autoFades", Json()); !autoFades.is_null())
 				track.autoFades = autoFadesFromJson(autoFades);
 			if (track.type == TrackType::Ruler)

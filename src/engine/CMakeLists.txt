@@ -125,6 +125,7 @@ add_library(gnubase-engine STATIC
 	document/slotcommands.cpp
 	document/projectmodel.cpp document/projectmodel.h
 	document/recording.cpp
+	document/renderinplace.cpp
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/sampleeditor.cpp document/sampleeditor.h
 	document/serialize.cpp document/serialize.h
