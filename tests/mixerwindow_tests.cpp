@@ -540,7 +540,9 @@ TEST_CASE("mixer controls changed while the engine answers late follow the mouse
 		context.ProcessMouseButtonUp(0, 0);
 		REQUIRE(app.waitUntil([&] { return channel().at("volume") == Catch::Approx(dragged).margin(0.001); }));
 		CHECK(valueOf(app, window, fader) == Catch::Approx(dragged).margin(0.001));
-		CHECK(sent() - before <= 11); // not one for each of the 30 moves
+		// Not one for each of the 30 moves: at most two for each round of three, one sent at once if nothing was in
+		// flight, and the waiting one, the newest of the round, once the engine answered.
+		CHECK(sent() - before <= 20);
 		CHECK(historyPosition(app) == position + 1);
 	}
 
