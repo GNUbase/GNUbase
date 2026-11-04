@@ -2,6 +2,7 @@
 #include "engine/engine.h"
 #include "platform/audio/dummydevice.h"
 #include "platform/hosttime.h"
+#include "platform/log.h"
 #include "platform/midi/dummyport.h"
 #include "platform/rt/realtime.h"
 #include "testutils/testutils.h"
@@ -1105,6 +1106,9 @@ TEST_CASE(
 
 TEST_CASE("audio.setDevice falls back to the dummy device if asked to, and audio.get says what failed", "[integration]")
 {
+	const gnubase::test::TempDir dir;
+	const std::filesystem::path logFile = dir.path() / "gnubase.log";
+	const gnubase::logging::Session session(logFile);
 	const auto driver = std::make_shared<FakeDriver>();
 	Engine engine(fakeBackends(driver));
 	Client client(engine);
@@ -1122,6 +1126,11 @@ TEST_CASE("audio.setDevice falls back to the dummy device if asked to, and audio
 		status.at("failed") == Json{{"backend", "fake"}, {"device", "fake-1"}, {"reason", "fake-1 is not connected"}});
 	CHECK(run(client, "audio.get").at("failed") == status.at("failed"));
 	CHECK(run(client, "audio.capture", {{"channel", 0}, {"start", 0}, {"frames", 1}}).at("samples").empty());
+	// The log says which device couldn't be used and why.
+	gnubase::logging::flush();
+	CHECK_THAT(gnubase::test::readText(logFile),
+		ContainsSubstring("Cannot use the audio device (fake fake-1), playing on the dummy device instead: "
+						  "fake-1 is not connected"));
 
 	// A backend this build doesn't have, and a device that opens but doesn't start, fall back the same way.
 	status = run(client, "audio.setDevice", {{"backend", "asio-from-another-pc"}, {"fallBackToDummy", true}});
