@@ -449,7 +449,9 @@ namespace gnubase::app
 						if (m_eventDisplay)
 							m_eventDisplay->actions().at(id)();
 					}});
-			m_keys.enableWhen(command.id, [this](ui::Window&, Rml::Element*) { return m_eventDisplay != nullptr; });
+			// Those that only edit the selection range wait for one (EventDisplay::canRun).
+			m_keys.enableWhen(command.id, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
+				{ return m_eventDisplay != nullptr && m_eventDisplay->canRun(id); });
 			if (command.keys != nullptr)
 				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
 		}

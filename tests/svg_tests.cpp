@@ -7,6 +7,7 @@
 #include "testutils/fakeui.h"
 #include "testutils/testutils.h"
 #include "ui/cursors.h"
+#include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
 #include "uiapp.h"
@@ -459,6 +460,40 @@ TEST_CASE("a pointer whose picture or manifest can't be read is the OS's arrow",
 	CHECK(!ui::Cursors(folder.path()).has("broken"));
 }
 
+TEST_CASE("the pointer RmlUi names is reported as the one that shows: none for the OS's arrow", "[unit]")
+{
+	const test::TempDir folder;
+	write(folder.path() / "cursors.json", R"({"broken": {"hotspot": [1, 1]}, "good": {"hotspot": [1, 1]}})");
+	write(folder.path() / "broken.svg", "<svg");
+	write(folder.path() / "good.svg",
+		R"(<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>)");
+	test::FakeWindowSystem windows({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}});
+	ui::SystemInterface system(windows);
+	system.setCursors(ui::Cursors(folder.path()));
+	// As MCP's ui_windows reports it (ui/automation.h): the name of the pointer that shows.
+	const auto shown = [&system, &windows](const std::string& name)
+	{
+		system.SetMouseCursor(name);
+		CHECK(windows.cursor().name == system.cursor());
+		return system.cursor();
+	};
+	CHECK(shown("good") == "good");
+	CHECK(!windows.cursor().images.empty());
+	// A picture that doesn't load, RmlUi's own autoscroll pointers and other names the OS doesn't have: its arrow.
+	CHECK(shown("broken").empty());
+	CHECK(shown("rmlui-scroll-idle").empty());
+	CHECK(shown("rmlui-scroll-up").empty());
+	CHECK(shown("no-such-pointer").empty());
+	CHECK(shown("").empty());
+	// The OS's own, by their CSS names.
+	for (const char* name : ui::g_systemCursors)
+	{
+		INFO(name);
+		CHECK(shown(name) == name);
+		CHECK(windows.cursor().images.empty());
+	}
+}
+
 TEST_CASE("GNUbase's pointers become SDL cursors, made once, the OS's arrow for none", "[ui]")
 {
 	test::useTestDisplay();
@@ -481,4 +516,12 @@ TEST_CASE("GNUbase's pointers become SDL cursors, made once, the OS's arrow for 
 	CHECK(SDL_GetCursor() == draw);
 	windows.setCursor(cursors.get(""));
 	CHECK(SDL_GetCursor() == SDL_GetDefaultCursor());
+	// Every one of the OS's pointers that the names stand for.
+	for (const char* name : ui::g_systemCursors)
+	{
+		INFO(name);
+		windows.setCursor(cursors.get(name));
+		CHECK((SDL_GetCursor() != SDL_GetDefaultCursor()) == systemCursors);
+		windows.setCursor(cursors.get(""));
+	}
 }

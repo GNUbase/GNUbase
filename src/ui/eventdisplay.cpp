@@ -38,10 +38,11 @@ namespace gnubase::ui
 		constexpr double g_overviewEdge = 4.0;      // dp either side of the overview rectangle's edges
 
 		// What the display listens to in its root element and in its document.
-		constexpr std::array<Rml::EventId, 4> g_rootEvents = {
-			Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mousescroll, Rml::EventId::Dblclick};
-		constexpr std::array<Rml::EventId, 5> g_documentEvents = {Rml::EventId::Mousemove, Rml::EventId::Mouseup,
-			Rml::EventId::Resize, Rml::EventId::Click, Rml::EventId::Change};
+		constexpr std::array<Rml::EventId, 5> g_rootEvents = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
+			Rml::EventId::Mouseout, Rml::EventId::Mousescroll, Rml::EventId::Dblclick};
+		constexpr std::array<Rml::EventId, 7> g_documentEvents = {Rml::EventId::Mousemove, Rml::EventId::Mouseup,
+			Rml::EventId::Resize, Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Keydown,
+			Rml::EventId::Keyup};
 
 		Rml::Element& add(Rml::Element& parent, const char* tag, const char* classes)
 		{
@@ -871,11 +872,21 @@ namespace gnubase::ui
 				const double y = (event.GetParameter<float>("mouse_y", 0.0F) - m_area->GetAbsoluteTop()) / dpRatio();
 				m_crossVertical->SetProperty(Rml::PropertyId::Left, dp(x));
 				m_crossHorizontal->SetProperty(Rml::PropertyId::Top, dp(y));
-				// The mouse pointer for what a press there does.
+				// The mouse pointer for what a press there does, with the modifier keys held.
 				m_mouse = std::make_pair(dpFrom(*m_lanes, event.GetParameter<float>("mouse_x", 0.0F)),
 					(event.GetParameter<float>("mouse_y", 0.0F) - m_lanes->GetAbsoluteTop()) / dpRatio());
+				heldKeys(event);
 				showPointer();
 			}
+			break;
+		case Rml::EventId::Mouseout:
+			// Left the event lanes: their changes don't change the pointer until the mouse is back.
+			if (target == m_area)
+				m_mouse.reset();
+			break;
+		case Rml::EventId::Keydown:
+		case Rml::EventId::Keyup:
+			heldKeys(event); // a modifier key may change what a press does
 			break;
 		case Rml::EventId::Mouseup:
 			areaUp(event);

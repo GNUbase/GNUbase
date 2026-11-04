@@ -9,6 +9,7 @@
 
 #include <RmlUi/Core/TextInputHandler.h> // needs Header.h and Types.h above
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -107,9 +108,12 @@ namespace gnubase::ui
 		Point hotspot;
 	};
 
+	// The CSS names of the OS's own pointers that the window systems show.
+	inline constexpr std::array<const char*, 11> g_systemCursors = {"crosshair", "ew-resize", "move", "nesw-resize",
+		"not-allowed", "ns-resize", "nwse-resize", "pointer", "progress", "text", "wait"};
+
 	// A mouse pointer as the style sheets name it with RmlUi's cursor property (ui/cursors.h): the OS's arrow for no
-	// name, one of the OS's own by its CSS name (text, pointer, move, crosshair, not-allowed, wait, progress,
-	// ew-resize, ns-resize, nwse-resize, nesw-resize), or GNUbase's own with its pictures.
+	// name, one of the OS's own by its CSS name (g_systemCursors), or GNUbase's own with its pictures.
 	struct Cursor
 	{
 		std::string name;
