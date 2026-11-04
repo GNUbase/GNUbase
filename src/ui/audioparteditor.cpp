@@ -24,7 +24,7 @@ namespace gnubase::ui
 
 	namespace
 	{
-		constexpr double g_laneHeight = 48.0; // dp, each lane of the part display
+		constexpr double g_laneHeight = 48.0;   // dp, each lane of the part display
 		constexpr double g_dragThreshold = 3.0; // dp the mouse moves before a press becomes a drag
 
 		constexpr std::array<std::pair<AudioPartTool, const char*>, 7> g_tools = {{
