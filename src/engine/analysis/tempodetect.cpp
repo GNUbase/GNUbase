@@ -187,8 +187,9 @@ namespace gnubase::engine::analysis
 
 	std::vector<double> smoothBeats(const std::vector<double>& beats)
 	{
-		if (beats.size() < 2)
-			return beats;
+		// No early `return beats;` for fewer than two beats: GCC 13's -Warray-bounds misreads that copy.
+		if (beats.empty())
+			return {};
 		const auto count = static_cast<double>(beats.size());
 		double sumX = 0.0;
 		double sumY = 0.0;
@@ -202,7 +203,8 @@ namespace gnubase::engine::analysis
 			sumXX += x * x;
 			sumXY += x * beats[i];
 		}
-		const double slope = ((count * sumXY) - (sumX * sumY)) / ((count * sumXX) - (sumX * sumX));
+		const double slope =
+			beats.size() < 2 ? 0.0 : ((count * sumXY) - (sumX * sumY)) / ((count * sumXX) - (sumX * sumX));
 		const double start = (sumY - (slope * sumX)) / count;
 		std::vector<double> smoothed;
 		smoothed.reserve(beats.size());
