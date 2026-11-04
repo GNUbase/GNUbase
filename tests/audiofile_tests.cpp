@@ -350,8 +350,8 @@ TEST_CASE("the decoders leave the files that the readers hand them open", "[inte
 
 namespace
 {
-	// Found by ordinary lookup, while argument-dependent lookup also finds dr_libs' file functions in the global
-	// namespace, if its header declares them. A declared one is a better match than these, which take anything.
+	// Stand-ins that a call from the global namespace finds together with dr_libs' file functions, if its headers
+	// declare them. A declared one is a better match than these, which take anything.
 	struct NotDeclared
 	{
 	};
