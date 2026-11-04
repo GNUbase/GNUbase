@@ -59,6 +59,7 @@ namespace gnubase::engine
 			{TrackType::Marker, "marker", "Marker"},
 			{TrackType::Ruler, "ruler", "Ruler"},
 			{TrackType::Tempo, "tempo", "Tempo"},
+			{TrackType::Signature, "signature", "Signature"},
 		};
 
 		const TrackTypeName& trackTypeEntry(TrackType type)
@@ -372,6 +373,7 @@ namespace gnubase::engine
 			Track& track = find(project.trackById, id, "track");
 			require(track.type != TrackType::Marker || parent == 0, "marker tracks can't be inside a folder");
 			require(track.type != TrackType::Tempo || parent == 0, "the tempo track can't be inside a folder");
+			require(track.type != TrackType::Signature || parent == 0, "the signature track can't be inside a folder");
 			const std::vector<ObjectId> moved = subtree(project, id);
 			require(std::find(moved.begin(), moved.end(), parent) == moved.end(),
 				"can't move a folder into itself or a folder inside it");
@@ -540,6 +542,8 @@ namespace gnubase::engine
 				return "Markers";
 			if (type == TrackType::Tempo)
 				return "Tempo";
+			if (type == TrackType::Signature)
+				return "Signature";
 			const std::string number = std::to_string(type == TrackType::Marker ? count : count + 1);
 			return trackTypeEntry(type).defaultName + std::string(number.size() < 2 ? " 0" : " ") + number;
 		}
@@ -974,8 +978,14 @@ namespace gnubase::engine
 				require(parent == 0, "the tempo track can't be inside a folder");
 				require(countTracks(project, TrackType::Tempo) == 0, "a project has one tempo track at most");
 			}
-			const bool hasChannel = (type != TrackType::Folder && type != TrackType::Marker &&
-										type != TrackType::Ruler && type != TrackType::Tempo) ||
+			if (type == TrackType::Signature)
+			{
+				require(parent == 0, "the signature track can't be inside a folder");
+				require(countTracks(project, TrackType::Signature) == 0, "a project has one signature track at most");
+			}
+			const bool hasChannel =
+				(type != TrackType::Folder && type != TrackType::Marker && type != TrackType::Ruler &&
+					type != TrackType::Tempo && type != TrackType::Signature) ||
 				groupChannel;
 			const bool hasAudio = hasChannel && type != TrackType::Midi;
 			require(hasAudio || (!parameters.contains("channels") && !parameters.contains("format")),
@@ -1274,6 +1284,7 @@ namespace gnubase::engine
 			require(track.type != TrackType::Marker || countTracks(project, TrackType::Marker) < g_maxMarkerTracks,
 				"a project has at most " + std::to_string(g_maxMarkerTracks) + " marker tracks");
 			require(track.type != TrackType::Tempo, "a project has one tempo track at most");
+			require(track.type != TrackType::Signature, "a project has one signature track at most");
 			const ObjectId parent = track.parent;
 			std::map<ObjectId, ObjectId> channels;
 			std::vector<std::pair<std::string, Json>> added;
@@ -2528,6 +2539,9 @@ namespace gnubase::engine
 			{"tempo.set", "Change tempo events"},
 			{"tempo.remove", "Remove tempo events"},
 			{"tempo.tap", "Tap tempo"},
+			{"signature.add", "Add time signature event"},
+			{"signature.set", "Change time signature events"},
+			{"signature.remove", "Remove time signature events"},
 			{"marker.activateTrack", "Activate marker track"},
 			{"automationLane.add", "Add automation lane"},
 			{"automationLane.set", "Change automation lane"},
@@ -2901,8 +2915,8 @@ namespace gnubase::engine
 		const Json stringSchema = {{"type", "string"}};
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json noResult = Json::object();
-		const Json trackTypes =
-			enumSchema({"audio", "instrument", "midi", "folder", "group", "effect", "marker", "ruler", "tempo"});
+		const Json trackTypes = enumSchema(
+			{"audio", "instrument", "midi", "folder", "group", "effect", "marker", "ruler", "tempo", "signature"});
 		const Json timeBases = enumSchema({"musical", "linear"});
 		const Json timeFormats =
 			enumSchema(std::vector<std::string>(g_rulerTimeFormats.begin(), g_rulerTimeFormats.end()));
@@ -3199,7 +3213,8 @@ namespace gnubase::engine
 				"project has at most 10, and a new one becomes the active marker track. Ruler tracks have no channel "
 				"either; timeFormat is the time format their ruler shows (default barsBeats). The tempo track shows "
 				"and "
-				"edits the project's tempo (tempo.*): a project has one at most, without a channel, at the top level.",
+				"edits the project's tempo (tempo.*), the signature track its time signatures (signature.*): a "
+				"project has one of each at most, without a channel, at the top level.",
 				objectSchema({{"type", trackTypes}, {"name", stringSchema}, {"color", color}, {"parent", idSchema},
 								 {"index", integerSchema}, {"format", formats}, {"channels", integerSchema},
 								 {"timeBase", timeBases}, {"groupChannel", booleanSchema}, {"input", idSchema},
@@ -3529,6 +3544,7 @@ namespace gnubase::engine
 		registerMidiEditCommands(engine);
 		registerMarkerCommands(engine);
 		registerTempoCommands(engine);
+		registerSignatureCommands(engine);
 		registerAutomationCommands(engine);
 		registerParameterCommands(engine);
 		registerSlotCommands(engine);

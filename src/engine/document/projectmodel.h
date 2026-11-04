@@ -117,6 +117,7 @@ namespace gnubase::engine
 		void registerMidiEditCommands(Engine& engine);                // midiedits.cpp: note.set and controller.set
 		void registerMarkerCommands(Engine& engine);                  // markers.cpp: marker.*
 		void registerTempoCommands(Engine& engine);                   // tempo.cpp: tempo.*
+		void registerSignatureCommands(Engine& engine);               // signature.cpp: signature.*
 		void registerMidiFileCommands(Engine& engine); // midifilecommands.cpp: midiFile.export and midiFile.import
 		Json importMidiFile(Project& project, CommandContext& context);
 		void registerAudioFileCommands(Engine& engine, Jobs& jobs); // audiofilecommands.cpp: audioFile.import

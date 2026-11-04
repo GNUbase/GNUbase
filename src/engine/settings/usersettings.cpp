@@ -336,7 +336,8 @@ namespace gnubase::engine::settings
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
 						{"effect", {"mute", "solo", "read"}}, {"folder", {"mute", "solo", "read"}},
-						{"marker", Json::array()}, {"ruler", Json::array()}, {"tempo", {"tempoTrack"}}}},
+						{"marker", Json::array()}, {"ruler", Json::array()}, {"tempo", {"tempoTrack"}},
+						{"signature", Json::array()}}},
 				{"ui.trackWidths",
 					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
 					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "
@@ -351,7 +352,8 @@ namespace gnubase::engine::settings
 					Json{{"name", 120},
 						{"controls",
 							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
-								{"folder", 120}, {"marker", 120}, {"ruler", 120}, {"tempo", 120}}}}},
+								{"folder", 120}, {"marker", 120}, {"ruler", 120}, {"tempo", 120},
+								{"signature", 120}}}}},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "
 					"seconds the view shows.",
