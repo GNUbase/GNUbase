@@ -158,10 +158,15 @@ rows are in the document's order. Each row has a `value` attribute (without comm
 
 - **Selection.** A click selects a row. With the `multiple` attribute, Ctrl-click (Cmd-click on macOS) adds or removes
   a row and Shift-click selects the rows from the last one clicked. Up and Down move the selection, Shift extends it,
-  Page Up and Page Down move it by one row less than the view shows, Home and End go to the first and last row. Selected rows have the state class `.selected`. The view's `value`
-  attribute is the selected rows' values separated by commas, and `change` sends it, so `data-value` binds the
-  selection both ways, also when `data-for` makes the rows. Clicks and keys in a form control in a row, such as a text
-  field, are the control's and don't change the selection.
+  Page Up and Page Down move it by one row less than the view shows, Home and End go to the first and last row.
+  Selected rows have the state class `.selected`. The view's `value` attribute is the selected rows' values separated
+  by commas, and `change` sends it, so `data-value` binds the selection both ways, also when `data-for` makes the rows.
+  Rows that code adds, removes or replaces with new elements, all of them or only some, keep the selection that the
+  view's `value` gives, also with as many rows and the same value; the keys and Shift-click then go from the first
+  selected row. A click or a key before the next update finds the view caught up as well: with the new rows selected
+  and shaped as a tree, and with a `value` that code set. Not yet: a row that keeps its element but gets another
+  `value`, as when `data-for` reorders its items. Clicks and keys in a form control in a row, such as a text field,
+  are the control's and don't change the selection.
 - **Scrolling while dragging.** With the `dragscroll` attribute, a drag of an element in the view (`drag: drag`)
   scrolls the view while the mouse is above or below it, by ten times as far as the mouse is past the edge each second,
   also while the mouse is held still. The drag's end, the button going up or the view losing the focus stop it. The
@@ -220,6 +225,9 @@ and with `ui::closeDialog`, once, also when closed again from its own close even
 there clicks OK, while another value field keeps Enter.
 Tabs show their panels. List views select with clicks, Ctrl, Shift and the keys, and follow their data; trees expand and
 collapse by click and keys, with indents by level; tables select body rows only, and the keys go through several tables
-in the document's order; a drag held past a view's edge scrolls it with `dragscroll` only; splitters move the boundary
-in a row and in a column, never below nothing. The color picker picks from its field, its hue strip and its numbers,
-draws the old and the new color, and follows its data.
+in the document's order. Rows rebuilt by code keep the selection given by the view's `value`: all rows rebuilt twice
+between two updates, a single row replaced, and rows rebuilt or a `value` set just before a key or a click, after which
+Down skips a collapsed parent's children, Right and Left expand and collapse, and Shift+Down, Shift-click and
+Ctrl-click extend the rebuilt selection; a drag held past a view's edge scrolls it with `dragscroll` only; splitters
+move the boundary in a row and in a column, never below nothing. The color picker picks from its field, its hue strip
+and its numbers, draws the old and the new color, and follows its data.
