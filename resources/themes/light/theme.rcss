@@ -577,6 +577,10 @@
 	{
 		color: #566273;
 	}
+	.track-list listitem.frozen
+	{
+		color: #566273;
+	}
 	.track-list .drop-line
 	{
 		background-color: #0969da;

@@ -198,6 +198,34 @@ namespace gnubase::ui
 					hide();
 				}},
 		};
+		// Freeze and render in place (docs/features/render-in-place.md), with the settings the commands default to.
+		const auto renderable = [this]
+		{
+			std::vector<uint64_t> tracks;
+			for (const uint64_t track : selection())
+				if (const std::string& type = m_tracks[m_index.at(track)].type; type == "audio" || type == "instrument")
+					tracks.push_back(track);
+			return tracks;
+		};
+		m_actions["track.freezeSelected"] = [this, renderable]
+		{
+			// Unfreezes them if every one is frozen, else freezes those that aren't.
+			const Json& project = m_display.project();
+			std::vector<uint64_t> unfrozen;
+			std::vector<uint64_t> frozen;
+			for (const uint64_t track : renderable())
+				(project.at("tracks").at(m_index.at(track)).at("frozen").is_null() ? unfrozen : frozen)
+					.push_back(track);
+			if (!unfrozen.empty())
+				m_binding.send("track.freeze", {{"tracks", unfrozen}});
+			else if (!frozen.empty())
+				m_binding.send("track.unfreeze", {{"tracks", frozen}});
+		};
+		m_actions["track.renderSelected"] = [this, renderable]
+		{
+			if (const std::vector<uint64_t> tracks = renderable(); !tracks.empty())
+				m_binding.send("track.renderInPlace", {{"tracks", tracks}});
+		};
 		for (const bool enabled : {false, true})
 			m_actions[enabled ? "track.enableSelected" : "track.disableSelected"] = [this, enabled]
 			{
@@ -485,6 +513,7 @@ namespace gnubase::ui
 			const Row& row = m_tracks[static_cast<size_t>(i)];
 			const Json& track = tracks[static_cast<size_t>(i)];
 			setClass(*element, "disabled", !track.at("enabled").get<bool>());
+			setClass(*element, "frozen", !track.value("frozen", Json()).is_null());
 			const bool expanded = !folded(row.id);
 			if (expanded != element->HasAttribute("expanded"))
 			{
