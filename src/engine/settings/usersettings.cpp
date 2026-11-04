@@ -177,6 +177,29 @@ namespace gnubase::engine::settings
 					"timeFormat) is barsBeats, linear with any other. Folder, ruler, tempo and signature tracks, "
 					"which hold no events of their own, are musical.",
 					Json{{"type", "string"}, {"enum", {"musical", "linear", "followTimeFormat"}}}, "musical"},
+				{"editing.importAudioConvert",
+					"Use Settings imports audio files with Convert to Project Sample Rate (audioFile.import convert; "
+					"see editing.onImportAudio).",
+					Json{{"type", "boolean"}}, true},
+				{"editing.importAudioCopy",
+					"Use Settings imports audio files with Copy Files to Project Folder (audioFile.import copy).",
+					Json{{"type", "boolean"}}, true},
+				{"editing.importAudioNameFormat",
+					"The names of the files Split Channels writes (audioFile.import nameFormat): dash (take-L.wav), "
+					"underscore (take_L.wav), dot (take.L.wav) or space (take L.wav).",
+					Json{{"type", "string"}, {"enum", {"dash", "underscore", "dot", "space"}}}, "dash"},
+				{"editing.importAudioOneTrack",
+					"Use Settings imports several audio files one after another on one track (audioFile.import "
+					"oneTrack).",
+					Json{{"type", "boolean"}}, false},
+				{"editing.importAudioSplitChannels",
+					"Use Settings imports audio files with Split Channels (audioFile.import splitChannels).",
+					Json{{"type", "boolean"}}, false},
+				{"editing.onImportAudio",
+					"What importing audio files in the project window does (reference manual p. 357): "
+					"openOptionsDialog opens the Import Options dialog, useSettings imports at once with the "
+					"editing.importAudio* settings. The dialog's Do not ask again switches to useSettings.",
+					Json{{"type", "string"}, {"enum", {"openOptionsDialog", "useSettings"}}}, "openOptionsDialog"},
 				{"editing.tempoType",
 					"The type of new tempo events (reference manual p. 1448): ramp changes the tempo gradually from "
 					"the event before, step jumps, auto takes the type of the event before (tempo.add, tempo.tap).",

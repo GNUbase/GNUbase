@@ -36,9 +36,11 @@ The options of the reference's Import Options dialog:
   at the project's sample rate (`convertSampleRate` in `resampler.h`), the format `media.convert` writes; MP3 and Ogg
   Vorbis files then go to the project's sample rate as well. There is no project bit depth to convert to yet.
 - **splitChannels** writes each channel of a file with several channels into the media folder as a mono WAV file named
-  after the file and its speaker (`take-L.wav`, `take-R.wav`; numbers beyond 8 channels), each on a new mono track at
-  `position`. It converts in the same pass when both are on. Mono files aren't split and go where `track` and
-  `oneTrack` say.
+  after the file and its speaker (numbers beyond 8 channels), each on a new mono track at `position`. **nameFormat**
+  (the dialog's Name Format, #477) says what goes between the two, for other applications that expect their own
+  names: `dash` (`take-L.wav`, `take-R.wav`, the default), `underscore` (`take_L.wav`), `dot` (`take.L.wav`) or
+  `space` (`take L.wav`). It converts in the same pass when both are on. Mono files aren't split and go where `track`
+  and `oneTrack` say.
 
 With **clipsOnly** the files only go into the pool, as clips without tracks or events (the pool's Import Medium,
 [pool.md](pool.md)). `copy`, `convert` and `splitChannels` need a saved project. Files are read, converted and split on the command thread, as
@@ -78,13 +80,36 @@ and the files the import wrote are removed. Undo leaves written files on disk, a
 - MIDI files (`.mid`, `.midi`, `.smf`) are imported at once with `midiFile.import`'s defaults. Audio files open the
   **Import Options** dialog (`resources/ui/import-options.rml`): Copy Files to Project Folder, Convert to Project
   Sample Rate, Split Channels and Import Files on One Track. The first three are disabled while the project has no
-  file (`project.location`), the last for a single file and for files dropped on a track, which all go on it. The
-  dialog remembers its choices while GNUbase runs; OK sends `audioFile.import`.
+  file (`project.location`), the last for a single file and for files dropped on a track, which all go on it. Split
+  Channels has the Name Format pop-up (`nameFormat`), disabled with it. OK sends `audioFile.import`.
+
+## Import preferences
+
+The user settings of the Editing > Audio preferences (reference manual pp. 357-359, #477) decide whether the dialog
+opens:
+
+- `editing.onImportAudio`: `openOptionsDialog` (the default) opens the Import Options dialog for every audio import
+  in the project window, by File > Import > Audio File, by dropping files and by the pool's Import Medium;
+  `useSettings` imports at once with the options in the settings below.
+- `editing.importAudioCopy`, `editing.importAudioConvert`, `editing.importAudioSplitChannels`,
+  `editing.importAudioNameFormat` and `editing.importAudioOneTrack`: the options. Copy, Convert and Split Channels
+  apply once the project has a file, as in the dialog, and Import Files on One Track where the dialog would offer it.
+  The manual's preferences have no Import Files on One Track; GNUbase keeps it with the others, so that Do not ask
+  again (below) doesn't drop that choice.
+- The dialog starts from these settings, and OK keeps the options it could choose in them (the disabled ones stay as
+  they were). The dialog and Use Settings so share one set of options, which also survives a restart; before #477 the
+  dialog only remembered its choices while GNUbase ran.
+- **Do not ask again** in the dialog sets `editing.onImportAudio` to `useSettings` after keeping the dialog's
+  choices, so the next imports run without it. `settings.set` or `settings.reset` of `editing.onImportAudio` brings
+  it back; the preferences dialog (#162) will show the settings on its Editing > Audio page.
+
+The event display reads the settings with `settings.list` for each import, so a change through MCP or Lua applies to
+the next import.
 
 ## Not yet
 
-The preferences that skip the dialog (On Import Audio Files, Do not ask again) and the MIDI file import options
-(reference manual pp. 364-365), creating a new project for a MIDI file, the name format of split files, import of
+The Editing > Audio page of the preferences dialog (#162), which shows the import preferences. The MIDI file import
+options (reference manual pp. 364-365), creating a new project for a MIDI file, import of
 audio CDs, audio from video and REX files. New tracks below the selected track (#448). Converting as a job: files are
 converted on the command thread, which waits for a long MP3 file (as for `media.convert`). Removing the files an
 unsaved project made (recordings and converted imports) when it is closed without saving.
@@ -99,7 +124,7 @@ an unsaved project into `Recordings`, where they stay after saving until `media.
 removed again when a later file fails) and leaves FLAC files as they are, converts a
 44.1 kHz WAV file and an MP3 file
 into the media folder and leaves a 48 kHz file where it is, splits stereo and 5.1 files into mono files per speaker,
-copies with one job, puts the first file on a given track and the others on new tracks (one undo step), places only
+names split files as each `nameFormat` says, copies with one job, puts the first file on a given track and the others on new tracks (one undo step), places only
 the files that aren't split with `track`, and rejects what it can't do, removing converted files when a later file
 fails.
 `tests/fileimport_tests.cpp` drives the app's UI through the automation API: the File > Import items, the Import Options dialog with its disabled
@@ -108,4 +133,7 @@ answered as the user would, onto the selected musical audio track (the first fil
 One Track, the first of several selected tracks, one inside a folded folder), onto new tracks with no track or a MIDI
 track first in the selection, and with Split Channels a stereo file onto new tracks and a mono file onto the selected
 track, each one undo step; audio files dropped on an audio track's lane, one and two of them, and MIDI files of type 0
-and 1 dropped below the tracks.
+and 1 dropped below the tracks. For the import preferences: Use Settings imports without the dialog with the stored
+options (on one track in an unsaved project; split with a name format and copied in a saved one), the dialog starts
+from the settings and keeps its choices in them, Do not ask again skips the dialog next time and after a restart
+until the setting is reset, and each Name Format chosen in the dialog names the split files.
