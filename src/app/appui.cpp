@@ -1043,7 +1043,7 @@ namespace gnubase::app
 
 	std::vector<uint64_t> AppUi::selectedParts() const
 	{
-		std::vector<uint64_t> parts = selected("midiParts");
+		const std::vector<uint64_t> parts = selected("midiParts");
 		return parts.empty() ? selected("audioParts") : parts;
 	}
 

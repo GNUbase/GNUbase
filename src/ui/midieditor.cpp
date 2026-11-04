@@ -305,18 +305,22 @@ namespace gnubase::ui
 		for (const char* name : {".key-editor", ".list-editor", ".audio-part-editor"})
 			if (Rml::Element* old = editor->QuerySelector(name))
 				editor->RemoveChild(old);
-		Rml::ElementPtr content = editor->GetOwnerDocument()->CreateElement("div");
-		content->SetClass(shown == "list" ? "list-editor"
-				: shown == "audioPart"    ? "audio-part-editor"
-										  : "key-editor",
-			true);
-		Rml::Element* added = editor->AppendChild(std::move(content));
+		Rml::Element* added = editor->AppendChild(editor->GetOwnerDocument()->CreateElement("div"));
 		if (shown == "list")
+		{
+			added->SetClass("list-editor", true);
 			m_list = std::make_unique<ListEditor>(m_binding, *added, m_name);
+		}
 		else if (shown == "audioPart")
+		{
+			added->SetClass("audio-part-editor", true);
 			m_audio = std::make_unique<AudioPartEditor>(m_binding, *added, m_name);
+		}
 		else
+		{
+			added->SetClass("key-editor", true);
 			m_keys = std::make_unique<KeyEditor>(m_binding, *added, m_name);
+		}
 	}
 
 	// The chord the selected notes make, as the Chord Editing section's Chord Type field shows it (p. 1216).

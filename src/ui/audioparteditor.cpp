@@ -151,7 +151,15 @@ namespace gnubase::ui
 		if (Rml::Element* document = m_document.get())
 			document->RemoveEventListener(Rml::EventId::Resize, this);
 		if (m_gesture == Gesture::Audition)
-			m_binding.send("audition.stop");
+		{
+			try
+			{
+				m_binding.send("audition.stop"); // what the play or scrub tool auditions ends with the editor
+			}
+			catch (const std::exception&) // NOLINT(bugprone-empty-catch): nothing to do about it while it goes
+			{
+			}
+		}
 	}
 
 	void AudioPartEditor::setTool(AudioPartTool tool)
@@ -523,7 +531,7 @@ namespace gnubase::ui
 
 	void AudioPartEditor::ProcessEvent(Rml::Event& event)
 	{
-		Rml::Element* target = event.GetTargetElement();
+		const Rml::Element* target = event.GetTargetElement();
 		if (target == nullptr || m_view.empty())
 			return;
 		switch (event.GetId())
@@ -722,17 +730,19 @@ namespace gnubase::ui
 			select(std::move(events));
 			return;
 		}
-		std::vector<const Event*> moved = selectedEvents();
+		// The selected events, or with Ctrl the pressed one if it isn't selected: each with its lane.
+		std::vector<std::pair<uint64_t, int>> moved;
+		for (const Event* each : selectedEvents())
+			moved.emplace_back(each->id, each->lane);
 		if (gesture == Gesture::MoveVertical && !selected(*m_pressed))
-			moved = {&*std::find_if(
-				m_events.begin(), m_events.end(), [&](const Event& each) { return each.id == m_pressed->id; })};
+			moved = {{m_pressed->id, m_pressed->lane}};
 		Json ids = Json::array();
 		std::map<int, Json> lanes; // the events by the lane they go to
-		for (const Event* each : moved)
+		for (const auto& [id, from] : moved)
 		{
-			ids.push_back(each->id);
+			ids.push_back(id);
 			if (dl != 0)
-				lanes[std::max(each->lane + dl, 0)].push_back(each->id);
+				lanes[std::max(from + dl, 0)].push_back(id);
 		}
 		Json commands = Json::array();
 		if (samples(dt) != 0)
