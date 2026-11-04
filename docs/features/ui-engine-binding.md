@@ -58,10 +58,9 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   results reach `onResult` handlers for the UI's own commands only; watched values arrive once an update, only when
   they changed; a gesture's steps go one at a time, the newest replacing those that wait, as one undo step, without
   holding up another control's, and steps without a gesture or of another gesture are kept, also after a refused one.
-  `tests/mixerwindow_tests.cpp` and `tests/inspector_tests.cpp` drag faders, knobs and value fields and turn the wheel
-  while the engine answers late (`test::LateDrag`, `test::lateSteps` in `tests/uiapp.h`): the control never goes back
-  toward an earlier step, and the engine and the control agree at the end. The last test changes the transport through MCP and
-  checks a document shows it, then clicks the document's button and finds the command in `engine.commandLog`, sent by
-  `ui`.
-  `tests/engine_tests.cpp` checks the command log and the clients' wake-up, `tests/shell_tests.cpp` the step tasks
+  `tests/mixerwindow_tests.cpp` and `tests/inspector_tests.cpp` drag faders, knobs and value fields (the inspector's
+  and the info line's) and turn the wheel while the engine answers late (`test::LateDrag`, `test::lateSteps` in
+  `tests/uiapp.h`): the control never goes back toward an earlier step, and the engine and the control agree at the
+  end. The last test changes the transport through MCP and checks a document shows it, then clicks the document's
+  button and finds the command in `engine.commandLog`, sent by `ui`. `tests/engine_tests.cpp` checks the command log and the clients' wake-up, `tests/shell_tests.cpp` the step tasks
   and the frame rate.

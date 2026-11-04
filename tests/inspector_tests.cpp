@@ -712,6 +712,50 @@ TEST_CASE("the inspector's volume and pan fields dragged while the engine answer
 	CHECK(window.shows(".inspector valuefield[control=pan]", "25"));
 }
 
+TEST_CASE("the info line's volume turned or dragged while the engine answers late follows the mouse", "[ui]")
+{
+	Window window;
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"timeBase", "linear"}});
+	const Json media =
+		window.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+			.at("media");
+	const Json clip = window.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const uint64_t event =
+		window
+			.call("audioEvent.add", {{"track", audio}, {"clip", clip.at("id")}, {"position", 96000}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 1; }));
+	window.display.select({event});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "take"));
+	const std::string field = "#info-line valuefield[field=volume]";
+	const auto volume = [&] { return window.find("audioEvents", event).at("volume").get<double>(); };
+
+	// Wheel turns, which the field doesn't hold as it holds a drag: the project read after each step's history.changed
+	// is older than the step that came after it (#716).
+	int64_t position = window.historyPosition();
+	const double turned = test::lateSteps(window.app, std::nullopt, field, 10, 1,
+		[&] { window.app.ui().wheel(std::nullopt, {field, 0, std::nullopt}, 0.0F, 1.0F); });
+	REQUIRE(window.app.waitUntil([&] { return volume() == Catch::Approx(turned).margin(1e-5); }));
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(test::controlValue(window.app, std::nullopt, field) == Catch::Approx(turned).margin(1e-5));
+	CHECK(window.historyPosition() == position + 1);
+
+	// A drag.
+	window.app.ui().move(
+		std::nullopt, {"#info-line textdisplay[field=name]", 0, std::nullopt}); // the wheel's gesture ends
+	position = window.historyPosition();
+	test::LateDrag drag(window.app, std::nullopt, field);
+	const double dragged = drag.move(15, 1);
+	CHECK(dragged < turned);
+	drag.release();
+	REQUIRE(window.app.waitUntil([&] { return volume() == Catch::Approx(dragged).margin(1e-5); }));
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
+	CHECK(window.historyPosition() == position + 1);
+}
+
 TEST_CASE("the inspector shows the channel as it is when a change is refused", "[ui]")
 {
 	Window window;
