@@ -41,9 +41,10 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   events or JSON (docs/architecture.md, "Engine API"). `watch(shows, read, apply)` reads such a value in every update
   and calls `apply` only when it changed: the UI sees the newest value once a frame, and values in between are
   skipped. `shows` is the element that shows the value: after `apply`, its window draws in that step
-  (`Rml::Context::RequestNextUpdate`), and no other window does for it. While the transport plays, the windows that
-  show the position (the project window, the time display, the markers window) draw once a frame, and the others
-  stay idle. While the binding watches values, the shell steps at least once a frame (`ui::g_framePeriod`, 16 ms)
+  (`Rml::Context::RequestNextUpdate`), and no other window does for it. A view whose element changes less often than
+  the value passes null and asks for its window itself when it changed something: the markers window follows the
+  position but draws only when its locate arrow moves to another marker. While the transport plays, the windows that
+  show the position (the project window, the time display) draw once a frame, and the others stay idle. While the binding watches values, the shell steps at least once a frame (`ui::g_framePeriod`, 16 ms)
   even without events, but draws only what changed; without watches it sleeps. `Engine::playbackPosition` reads the
   project cursor without a command and without waiting; the meters follow with #111. MCP and Lua get the same values
   through queries (`transport.get`).
@@ -57,11 +58,15 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   they changed. One test changes the transport through MCP and
   checks a document shows it, then clicks the document's button and finds the command in `engine.commandLog`, sent by
   `ui`. Two more check drawing without input: a watched value draws its own window in the step it changed in, and no
-  other window; events from MCP, results and posted work draw every window once in the step they reach handlers,
-  events or results that nothing takes draw nothing, and a quiet query draws only the window its `done` asks for.
+  other window; events from MCP, results (a command's `done` or an `onResult` handler) and posted work draw every
+  window once in the step they reach handlers, events or results that nothing takes draw nothing, and a quiet query
+  draws only the window its `done` asks for.
   `tests/transportbar_tests.cpp` plays the transport in the app's UI with no input and checks that the project
   cursor, the transport bar's and the time display window's time displays are drawn in every step they change in,
   also for a position set through Lua, and that a mixer window doesn't draw at all, idle or during playback.
+  `tests/markers_ui_tests.cpp` plays across markers with no input: the markers window draws in the steps its arrow
+  moves in and in no other. `tests/statusline_tests.cpp` checks that the project window draws the record time in the
+  step its text changes in.
   `tests/scripting_tests.cpp` checks that `dispatchEvents` tells whether a Lua handler ran. `tests/engine_tests.cpp`
   checks the command log and the clients' wake-up, `tests/shell_tests.cpp` the step tasks, the frame rate, and that
   posted work and file dialog answers, the OS's and automation's, draw.

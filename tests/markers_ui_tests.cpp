@@ -538,6 +538,55 @@ namespace
 			app.appUi().markers()->markers()[1].id);
 	}
 
+	TEST_CASE("during playback the markers window draws in the steps its arrow moves in, and in no other", "[ui]")
+	{
+		test::UiApp app;
+		app.call("track.add", {{"type", "marker"}});
+		app.call("marker.add", {{"position", 2 * g_quarter}}); // one second
+		app.call("marker.add", {{"position", 3 * g_quarter}});
+		openMarkers(app, 2);
+		const ui::Window* window = app.shell().find(app.appUi().markersWindow());
+		REQUIRE(window != nullptr);
+		Rml::ElementDocument& document = markersDocument(app);
+		const auto arrow = [&document]
+		{
+			const Rml::Element* row = document.QuerySelector("#marker-rows tr.at-cursor");
+			return row != nullptr ? row->GetAttribute<uint64_t>("value", 0) : uint64_t{0};
+		};
+		app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+		app.call("audio.start");
+		app.call("transport.play");
+		REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("playing") == true; }));
+		settle(app); // what the transport's events changed
+		REQUIRE(arrow() == 0);
+
+		// No input from here on: the window follows the playback position, but its document changes only when the
+		// arrow moves to the next marker.
+		int moved = 0;
+		int still = 0;
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		while (moved < 2 && std::chrono::steady_clock::now() < deadline)
+		{
+			const uint64_t before = arrow();
+			const uint64_t frames = window->frames();
+			app.shell().step(milliseconds(20));
+			if (arrow() != before)
+			{
+				++moved;
+				CHECK(window->frames() == frames + 1);
+			}
+			else
+			{
+				++still;
+				CHECK(window->frames() == frames);
+			}
+		}
+		CHECK(moved == 2);
+		CHECK(still > 10);
+		app.call("transport.stop");
+		app.call("audio.stop");
+	}
+
 	TEST_CASE("the markers window's lengths don't count from the project's start time", "[ui]")
 	{
 		test::UiApp app;

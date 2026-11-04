@@ -369,6 +369,22 @@ TEST_CASE("events, results and posted work draw every window in the step they re
 	REQUIRE(answered);
 	drewOnce();
 
+	// A result that only an onResult handler takes, as the pool's reports of its commands do.
+	{
+		const ui::Subscription reported =
+			binding.onResult("transport.get", [state](const engine::Result&) { state->SetInnerRML("reported"); });
+		binding.send("transport.get");
+		while (binding.waiting("transport.get") > 0 && std::chrono::steady_clock::now() < deadline)
+		{
+			frames = window.frames();
+			otherFrames = other.frames();
+			fake.shell.step(milliseconds(1));
+		}
+		REQUIRE(binding.waiting("transport.get") == 0);
+		CHECK(state->GetInnerRML() == "reported");
+		drewOnce();
+	}
+
 	// Work posted to the UI thread.
 	fake.shell.post([state] { state->SetInnerRML("posted"); });
 	fake.shell.step(milliseconds(0));
