@@ -132,7 +132,7 @@ namespace gnubase::ui
 			[job = std::move(job)]() mutable
 			{
 				(*job)();
-				job.reset();
+				job = nullptr;
 			});
 		if (result.wait_for(timeout) != std::future_status::ready)
 			throw std::runtime_error("the UI didn't answer within " + std::to_string(timeout.count()) + " ms");
