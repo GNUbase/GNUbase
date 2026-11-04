@@ -57,7 +57,7 @@ namespace
 		}
 
 		// Adds notes a sixteenth long at the positions, pitch 60 + their index, velocity 0.5; returns their ids.
-		std::vector<uint64_t> notes(const std::vector<int64_t>& positions, Json extra = Json::object())
+		std::vector<uint64_t> notes(const std::vector<int64_t>& positions, const Json& extra = Json::object())
 		{
 			Json items = Json::array();
 			for (size_t i = 0; i < positions.size(); ++i)
@@ -160,6 +160,7 @@ TEST_CASE("playback leaves out notes by their probability and varies velocities,
 {
 	Fixture f;
 	std::vector<int64_t> positions;
+	positions.reserve(64);
 	for (int i = 0; i < 64; ++i)
 		positions.push_back(i * (g_bar / 64));
 	const std::vector<uint64_t> never = f.notes({0}, {{"probability", 0.0}});
@@ -189,7 +190,7 @@ TEST_CASE("playback leaves out notes by their probability and varies velocities,
 	for (const engine::RenderNote& note : f.rendered())
 	{
 		CHECK(note.velocity >= base - 1.0);
-		CHECK(note.velocity <= base * 1.5 + 1.0);
+		CHECK(note.velocity <= (base * 1.5) + 1.0);
 		varied = varied || std::abs(note.velocity - base) > 2.0;
 	}
 	CHECK(varied);
@@ -208,6 +209,7 @@ TEST_CASE("note.apply makes play probability and velocity variance permanent as 
 {
 	Fixture f;
 	std::vector<int64_t> positions;
+	positions.reserve(32);
 	for (int i = 0; i < 32; ++i)
 		positions.push_back(i * (g_bar / 32));
 	const std::vector<uint64_t> ids = f.notes(positions, {{"probability", 0.5}, {"velocityVariance", 0.5}});
@@ -267,7 +269,7 @@ TEST_CASE("controller.line draws controller events along a line, a parabola or a
 		{{"part", f.part}, {"lane", lane}, {"mode", "line"}, {"from", {{"position", 0}, {"value", 0.0}}},
 			{"to", {{"position", 2 * g_quarter}, {"value", 1.0}}}, {"density", g_quarter / 2}});
 	CHECK(result.at("removed").size() == 1);
-	std::vector<Json> events = f.controllers();
+	const std::vector<Json> events = f.controllers();
 	REQUIRE(events.size() == 7); // 0, 1/8, ... 2/4 and the two that stay
 	std::vector<std::pair<int64_t, double>> seven;
 	for (const Json& event : events)
@@ -352,7 +354,7 @@ TEST_CASE("controller.line on a note lane changes the notes in its range", "[uni
 {
 	Fixture f;
 	const std::vector<uint64_t> ids = f.notes({0, g_quarter, 2 * g_quarter, 3 * g_quarter});
-	const auto line = [&](const Json& lane, double from, double to, Json extra = Json::object())
+	const auto line = [&](const Json& lane, double from, double to, const Json& extra = Json::object())
 	{
 		Json parameters = {{"part", f.part}, {"lane", lane}, {"mode", "line"},
 			{"from", {{"position", 0}, {"value", from}}}, {"to", {{"position", 2 * g_quarter}, {"value", to}}}};

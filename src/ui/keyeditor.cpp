@@ -258,7 +258,7 @@ namespace gnubase::ui
 				button->RemoveAttribute("menu");
 		}
 		root->SetAttribute("tool", keyToolName(tool));
-		if (Rml::Element* menu = m_menus.size() > 1 ? m_menus[1].get() : nullptr)
+		if (const Rml::Element* menu = m_menus.size() > 1 ? m_menus[1].get() : nullptr)
 			for (int i = 0; i < menu->GetNumChildren(); ++i)
 				if (Rml::Element* item = menu->GetChild(i);
 					(attribute(*item, "line-mode") == m_lineMode) != item->HasAttribute("checked"))

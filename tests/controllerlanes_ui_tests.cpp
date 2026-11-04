@@ -53,7 +53,7 @@ namespace
 
 		Json box(const std::string& selector) { return elements(selector).at(0).at("box"); }
 
-		std::string area(int lane) { return ".controller-lane-area[lane=\"" + std::to_string(lane) + "\"]"; }
+		static std::string area(int lane) { return R"(.controller-lane-area[lane=")" + std::to_string(lane) + R"("])"; }
 
 		// Adds notes a sixteenth long at the sixteenths, velocity 0.5; returns their ids.
 		std::vector<uint64_t> add(const std::vector<int>& sixteenths)
@@ -151,7 +151,7 @@ TEST_CASE("the velocity lane shows the notes' velocities as bars that the tools 
 	CHECK(f.elements(".controller-lane-type").at(0).at("text") == "Velocity");
 	const std::vector<uint64_t> ids = f.add({0, 4, 8, 12});
 	// Each bar at its note's time, as high as its velocity.
-	const Json lane = f.box(f.area(0));
+	const Json lane = f.box(Fixture::area(0));
 	const Json second = f.box(".controller-bar[note=\"" + std::to_string(ids[1]) + "\"]");
 	CHECK(std::abs(second.at("x").get<double>() - lane.at("x").get<double>() - (lane.at("width").get<double>() / 4)) <=
 		1);
@@ -183,11 +183,10 @@ TEST_CASE("controller lanes come from the menus and the tools add, select, chang
 	Fixture f;
 	f.add({0});
 	// Create Controller Lane adds a lane of the type chosen.
-	f.choose(
-		"#controller-lane-create", "#controller-create-menu menuitem[lane-type=\"controller\"][lane-number=\"1\"]");
+	f.choose("#controller-lane-create", R"(#controller-create-menu menuitem[lane-type="controller"][lane-number="1"])");
 	REQUIRE(f.app.waitUntil([&] { return f.lanes().size() == 2; }));
 	CHECK(f.lanes()[1] == Json{{"type", "controller"}, {"number", 1}});
-	REQUIRE(f.app.waitUntil([&] { return f.elements(f.area(1)).size() == 1; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(1)).size() == 1; }));
 	CHECK(f.elements(".controller-lane-type").at(1).at("text") == "Modulation (CC 1)");
 
 	// The draw tool adds an event at the snapped position, with the value at the mouse.
@@ -198,13 +197,13 @@ TEST_CASE("controller lanes come from the menus and the tools add, select, chang
 	CHECK(event.at("number") == 1);
 	CHECK(event.at("position") == 4 * g_sixteenth);
 	CHECK(event.at("value").get<double>() == Approx(0.5).margin(0.03));
-	REQUIRE(f.app.waitUntil([&] { return f.elements(f.area(1) + " .controller-step").size() == 1; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(1) + " .controller-step").size() == 1; }));
 	// A drag paints an event every length quantize step, replacing those there.
 	f.drag(f.at(1, 2.5, 0.25), f.at(1, 6.5, 0.25));
 	REQUIRE(f.app.waitUntil([&] { return f.controllers().size() == 5; }));
 	for (const Json& each : f.controllers())
 		CHECK(each.at("value").get<double>() == Approx(0.25).margin(0.03));
-	REQUIRE(f.app.waitUntil([&] { return f.elements(f.area(1) + " .controller-step").size() == 5; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(1) + " .controller-step").size() == 5; }));
 
 	// Object selection: a click selects an event, a drag changes the selected events' values.
 	f.tool("objectSelection");
@@ -263,7 +262,7 @@ TEST_CASE("the lane menus change and remove lanes, select their events and apply
 					{{"position", g_quarter}, {"type", "channelPressure"}, {"value", 0.5}}}}});
 	f.app.call(
 		"editor.set", {{"editor", "window"}, {"lanes", {{{"type", "velocity"}}, {{"type", "channelPressure"}}}}});
-	REQUIRE(f.app.waitUntil([&] { return f.elements(f.area(1) + " .controller-step").size() == 1; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(1) + " .controller-step").size() == 1; }));
 	// Show Used Controllers adds a lane for every kind of event used that has none.
 	f.choose("#controller-lane-create", "#controller-create-menu menuitem[lane-action=showUsed]");
 	REQUIRE(f.app.waitUntil([&] { return f.lanes().size() == 3; }));
@@ -280,14 +279,14 @@ TEST_CASE("the lane menus change and remove lanes, select their events and apply
 	CHECK(f.lanes()[1].at("type") == "probability");
 
 	// Play probability drawn on its lane, then applied: notes of probability 0 go.
-	REQUIRE(f.app.waitUntil([&] { return f.elements(f.area(1) + " .controller-bar").size() == 2; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(1) + " .controller-bar").size() == 2; }));
 	f.tool("draw");
 	f.click(f.at(1, 4.1, 0.0));
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[1]).value("probability", 1.0) < 0.05; }));
 	f.choose(".controller-lane-type[lane-menu=\"1\"]", "#controller-lane-menu menuitem[lane-action=applyProbability]");
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[1]).is_null(); }));
 	CHECK_FALSE(f.note(ids[0]).is_null());
-	REQUIRE(f.app.waitUntil([&] { return f.elements(f.area(1) + " .controller-bar").size() == 1; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(Fixture::area(1) + " .controller-bar").size() == 1; }));
 	// Reset sets it back to 100 %.
 	f.app.call("note.set", {{"part", f.part}, {"notes", {{{"id", ids[0]}, {"probability", 0.5}}}}});
 	f.choose(".controller-lane-type[lane-menu=\"1\"]", "#controller-lane-menu menuitem[lane-action=resetProbability]");

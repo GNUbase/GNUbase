@@ -94,7 +94,7 @@ namespace gnubase::ui
 		std::optional<size_t> laneAt(Rml::Element* target) const;
 		std::pair<double, double> at(const Rml::Event& event, size_t lane) const;
 		int64_t snap(double ticks, bool off) const;
-		int64_t cell(double ticks, int64_t step) const; // the start of the step the ticks are in
+		static int64_t cell(double ticks, int64_t step); // the start of the step the ticks are in
 		int64_t grid() const;
 		int64_t lengthQuantize() const;
 		const Part* partAt(int64_t ticks) const;
@@ -102,9 +102,9 @@ namespace gnubase::ui
 		bool noteSelected(uint64_t part, uint64_t note) const;
 
 		// Edits: the field a note lane changes from a display value, and the change of a controller event to one.
-		engine::Json noteChange(const Lane& lane, uint64_t note, double value) const;
-		engine::Json controllerChange(const Lane& lane, uint64_t controller, double value) const;
-		engine::Json laneSpec(const Lane& lane) const;
+		static engine::Json noteChange(const Lane& lane, uint64_t note, double value);
+		static engine::Json controllerChange(const Lane& lane, uint64_t controller, double value);
+		static engine::Json laneSpec(const Lane& lane);
 		void edit(const std::string& description, engine::Json commands);
 		void setLanes(const std::vector<Lane>& lanes);
 		void setView(engine::Json parameters);

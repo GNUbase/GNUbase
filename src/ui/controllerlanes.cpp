@@ -280,10 +280,9 @@ namespace gnubase::ui
 
 	bool ControllerLanes::noteSelected(uint64_t part, uint64_t note) const
 	{
-		for (const Json& selected : m_view.value("selection", Json::array()))
-			if (selected.at("part") == part && selected.at("note") == note)
-				return true;
-		return false;
+		const Json selection = m_view.value("selection", Json::array());
+		return std::any_of(selection.begin(), selection.end(),
+			[&](const Json& selected) { return selected.at("part") == part && selected.at("note") == note; });
 	}
 
 	// The lane's bars or steps, by part and position.
@@ -344,11 +343,17 @@ namespace gnubase::ui
 			const Lane& lane = m_lanes[i];
 			const std::string index = std::to_string(i);
 			const bool notes = isNoteLane(lane.type);
-			rml += R"(<div class="controller-lane" lane=")" + index + R"(" lane-kind=")" + lane.type +
-				R"("><div class="controller-lane-header"><button class="controller-lane-type" lane-menu=")" + index +
-				R"(" menu="controller-lane-menu">)" +
-				Rml::StringUtilities::EncodeRml(laneName(lane.type, lane.number)) +
-				R"(</button></div><div class="controller-lane-area" lane=")" + index + R"(">)";
+			rml += R"(<div class="controller-lane" lane=")";
+			rml += index;
+			rml += R"(" lane-kind=")";
+			rml += lane.type;
+			rml += R"("><div class="controller-lane-header"><button class="controller-lane-type" lane-menu=")";
+			rml += index;
+			rml += R"(" menu="controller-lane-menu">)";
+			rml += Rml::StringUtilities::EncodeRml(laneName(lane.type, lane.number));
+			rml += R"(</button></div><div class="controller-lane-area" lane=")";
+			rml += index;
+			rml += R"(">)";
 			laneItems.push_back(items(lane));
 			for (const Item& item : laneItems.back())
 				rml += std::string(R"(<div class=")") + (notes ? "controller-bar" : "controller-step") +
@@ -366,7 +371,7 @@ namespace gnubase::ui
 		const auto range = static_cast<double>(m_to - m_from);
 		for (size_t i = 0; list != nullptr && i < laneItems.size(); ++i)
 		{
-			Rml::Element* area = list->QuerySelector(".controller-lane-area[lane=\"" + std::to_string(i) + "\"]");
+			const Rml::Element* area = list->QuerySelector(".controller-lane-area[lane=\"" + std::to_string(i) + "\"]");
 			for (int child = 0;
 				area != nullptr && child < area->GetNumChildren() && static_cast<size_t>(child) < laneItems[i].size();
 				++child)
@@ -390,8 +395,16 @@ namespace gnubase::ui
 			for (const Json& preset : m_presets)
 			{
 				const std::string name = Rml::StringUtilities::EncodeRml(preset.value("name", std::string()));
-				presets += R"(<menuitem lane-preset=")" + name + R"(">)" + name + "</menuitem>";
-				removes += R"(<menuitem remove-preset=")" + name + R"(">)" + name + "</menuitem>";
+				presets.append(R"(<menuitem lane-preset=")")
+					.append(name)
+					.append(R"(">)")
+					.append(name)
+					.append("</menuitem>");
+				removes.append(R"(<menuitem remove-preset=")")
+					.append(name)
+					.append(R"(">)")
+					.append(name)
+					.append("</menuitem>");
 			}
 			const std::string items = presets + (presets.empty() ? "" : "<menuseparator/>") +
 				actionItem("addPreset", "Add Preset...") +
@@ -441,7 +454,7 @@ namespace gnubase::ui
 		return std::llround(std::round(ticks / step) * step);
 	}
 
-	int64_t ControllerLanes::cell(double ticks, int64_t step) const
+	int64_t ControllerLanes::cell(double ticks, int64_t step)
 	{
 		return std::llround(std::floor(ticks / static_cast<double>(step)) * static_cast<double>(step));
 	}
@@ -464,12 +477,12 @@ namespace gnubase::ui
 		return found;
 	}
 
-	Json ControllerLanes::laneSpec(const Lane& lane) const
+	Json ControllerLanes::laneSpec(const Lane& lane)
 	{
 		return {{"type", lane.type}, {"number", lane.number}};
 	}
 
-	Json ControllerLanes::noteChange(const Lane& lane, uint64_t note, double value) const
+	Json ControllerLanes::noteChange(const Lane& lane, uint64_t note, double value)
 	{
 		static const std::map<std::string, const char*> fields = {{"velocity", "velocity"},
 			{"offVelocity", "releaseVelocity"}, {"probability", "probability"},
@@ -477,7 +490,7 @@ namespace gnubase::ui
 		return {{"id", note}, {fields.at(lane.type), fieldValue(lane.type, std::clamp(value, 0.0, 1.0))}};
 	}
 
-	Json ControllerLanes::controllerChange(const Lane& lane, uint64_t controller, double value) const
+	Json ControllerLanes::controllerChange(const Lane& lane, uint64_t controller, double value)
 	{
 		value = std::clamp(value, 0.0, 1.0);
 		if (lane.type == "program")
@@ -598,11 +611,17 @@ namespace gnubase::ui
 		}
 		const std::string action = attribute(item, "lane-action");
 		if (action == "velocityOnly")
+		{
 			setLanes({{"velocity", 0}});
+		}
 		else if (action == "toggle")
+		{
 			setView({{"showLanes", !m_view.value("showLanes", true)}});
+		}
 		else if (action == "addPreset")
+		{
 			openPresetDialog();
+		}
 		else if (action == "showUsed")
 		{
 			// Every lane that has controller events, after the lanes shown (p. 1162).
@@ -660,10 +679,12 @@ namespace gnubase::ui
 				if (notes.empty())
 					continue;
 				if (action.rfind("apply", 0) == 0)
+				{
 					commands.push_back({{"command", "note.apply"},
 						{"parameters",
 							{{"part", part.id}, {"notes", notes},
 								{"what", probability ? "probability" : "velocityVariance"}}}});
+				}
 				else
 				{
 					Json changes = Json::array();
@@ -681,7 +702,7 @@ namespace gnubase::ui
 	// Add Preset (p. 1166): the dialog names the lanes shown as a preset.
 	void ControllerLanes::openPresetDialog()
 	{
-		Rml::Element* root = m_root.get();
+		const Rml::Element* root = m_root.get();
 		if (m_dialog || root == nullptr || root->GetContext() == nullptr)
 			return;
 		const std::string path = std::filesystem::u8path(root->GetOwnerDocument()->GetSourceURL())
@@ -700,7 +721,7 @@ namespace gnubase::ui
 
 	void ControllerLanes::dialogEvent(Rml::Event& event)
 	{
-		Rml::Element* element = event.GetTargetElement();
+		const Rml::Element* element = event.GetTargetElement();
 		while (element != nullptr && !element->HasAttribute("result"))
 			element = element->GetParentNode();
 		if (element == nullptr || attribute(*element, "result") != "ok")
@@ -760,20 +781,21 @@ namespace gnubase::ui
 					setView({{"controllerSelection", Json::array()}});
 				return;
 			}
-			if (!notes && (shift || m_snapOff || !m_pressed->selected))
+			Item& pressed = *m_pressed;
+			if (!notes && (shift || m_snapOff || !pressed.selected))
 			{
 				// A click selects the event, Shift or Ctrl (Cmd) and a click adds or removes it.
 				Json selection = Json::array();
 				if (shift || m_snapOff)
 					for (const Json& each : m_view.value("controllerSelection", Json::array()))
-						if (each.at("part") != m_pressed->part || each.at("controller") != m_pressed->id)
+						if (each.at("part") != pressed.part || each.at("controller") != pressed.id)
 							selection.push_back(each);
-				if (!(shift || m_snapOff) || !m_pressed->selected)
-					selection.push_back({{"part", m_pressed->part}, {"controller", m_pressed->id}});
+				if (!(shift || m_snapOff) || !pressed.selected)
+					selection.push_back({{"part", pressed.part}, {"controller", pressed.id}});
 				setView({{"controllerSelection", selection}});
 				if (shift || m_snapOff)
 					return;
-				m_pressed->selected = true;
+				pressed.selected = true;
 			}
 			m_gesture = Gesture::Value;
 		}
@@ -810,14 +832,18 @@ namespace gnubase::ui
 			return;
 		const std::pair<double, double> end = at(event, m_lane);
 		if (gesture == Gesture::Value)
+		{
 			finishValue(m_lane, end.second);
+		}
 		else if (gesture == Gesture::Paint)
 		{
 			m_painted.emplace_back(std::llround(end.first), end.second);
 			finishPaint(m_lane);
 		}
 		else
+		{
 			finishLine(m_lane, end, m_snapOff);
+		}
 	}
 
 	// A drag of a value moves the pressed item's value, and with a selected one the values of all selected ones

@@ -541,7 +541,7 @@ namespace gnubase::engine
 					{
 						const std::string name = "lanes[" + std::to_string(i) + "]";
 						const std::string type = lanes[i].at("type").get<std::string>();
-						require(midi::isLaneType(type), name + ".type must be a lane type, not " + type);
+						require(midi::isLaneType(type), name + ".type must be a lane type, not " += type);
 						const int number = lanes[i].value("number", 0);
 						require(number >= 0 && number <= 127, name + ".number must be 0 to 127");
 						view.lanes.emplace_back(type, number);

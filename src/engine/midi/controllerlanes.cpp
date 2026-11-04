@@ -80,7 +80,9 @@ namespace gnubase::engine::midi
 				if (what == "probability")
 				{
 					if (!notePlays(note, part.id))
+					{
 						removed.push_back(id);
+					}
 					else if (note.probability != 1.0)
 					{
 						note.probability = 1.0;
@@ -238,7 +240,7 @@ namespace gnubase::engine::midi
 			require(number >= 0 && number <= 127, "lane.number must be 0 to 127");
 			require(channel >= 0 && channel <= 15, "lane.channel must be 0 to 15");
 			const double minimum = type == "velocityVariance" ? -1.0 : 0.0;
-			Shape shape{parameters.at("mode").get<std::string>(), pointFrom(parameters, "from", minimum),
+			const Shape shape{parameters.at("mode").get<std::string>(), pointFrom(parameters, "from", minimum),
 				pointFrom(parameters, "to", minimum), parameters.value("reverse", false),
 				parameters.value("period", project.quantize.grid.ticks())};
 			require(shape.from.position <= shape.to.position, "from.position must not be after to.position");
