@@ -95,7 +95,8 @@ namespace gnubase::app
 		{
 			QuantizeTarget target;
 			const Json view = m_editorViews.value(editor, Json::object());
-			if (!view.value("open", false))
+			// The audio part editor's parts have no notes to quantize.
+			if (!view.value("open", false) || view.value("content", std::string()) == "audioPart")
 				return target;
 			std::map<uint64_t, std::vector<uint64_t>> notes;
 			for (const Json& note : view.value("selection", Json::array()))
