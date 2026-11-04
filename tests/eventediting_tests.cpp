@@ -1692,6 +1692,8 @@ TEST_CASE("the draw tool moves a curve point drawn clipped at the lane's top fro
 	f.call("audioEvent.setVolumeCurve", {{"event", f.event}, {"points", {{{"position", 9600}, {"volume", 6.0}}}}});
 	REQUIRE(shows(6.0));
 	f.display.setTool(ui::Tool::Draw);
+	// A drag up leaves the point as it is and makes no undo step.
+	f.drag(220, 4, 220, 0);
 	// 4 dp down a 40 dp lane takes a tenth of the lane off its real height: +8.36 dB in all, the point +5.36 dB, not
 	// a tenth below the top (+2.1 dB).
 	f.drag(220, 1, 220, 5);
@@ -1701,6 +1703,18 @@ TEST_CASE("the draw tool moves a curve point drawn clipped at the lane's top fro
 	// The display has the change before the undo, so the next drag starts from the point as the undo leaves it.
 	REQUIRE(shows(pointVolume()));
 	f.call("history.undo");
+	REQUIRE(shows(6.0));
+	CHECK(pointVolume() == 6.0);
+	// The next undo step is the curve the test set: the drag up made none.
+	f.call("history.undo");
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").empty(); }));
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			const std::vector<ui::FadeLines::Lane>& lanes = fadeLines(f).lanes();
+			return !lanes.empty() && lanes[0].volumes.size() == 1 && lanes[0].volumes[0].points.empty();
+		}));
+	f.call("history.redo");
 	REQUIRE(shows(6.0));
 	// 20 dp down: half the lane off 1.41, +5.2 dB in all, the point +2.2 dB.
 	f.drag(220, 1, 220, 21);

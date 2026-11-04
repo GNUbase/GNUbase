@@ -135,6 +135,7 @@ namespace gnubase::ui
 		// drag's movement (reference manual p. 400: a click only selects it): inside the event.
 		double fromX = m_pressX;
 		double fraction = volumeFraction(*shown, m_pressY + m_dragDy);
+		bool keepsVolume = m_dragDy == 0.0; // a sideways drag keeps the volume exactly
 		if (m_dragPoint)
 		{
 			const engine::VolumePoint& point = curve[*m_dragPoint];
@@ -142,9 +143,10 @@ namespace gnubase::ui
 			const double at = shown->start + (static_cast<double>(point.position - fades.offset) / fades.rate);
 			fromX = (at - m_view.start) / m_view.scale;
 			// From the point's own volume, which can be above the line's top where the point is drawn at the top
-			// (#683): there a drag down lowers it by the drag's distance, and a drag up takes it no higher.
+			// (#683): there a drag down lowers it by the drag's distance, and a drag up leaves it as it is.
 			const double from = gain(fades.volume) * gain(point.volume) / g_volumeLineTop;
 			fraction = std::clamp(from - (height > 0.0 ? m_dragDy / height : 0.0), 0.0, std::max(from, 1.0));
+			keepsVolume = keepsVolume || fraction == from;
 		}
 		const double seconds = m_view.start + ((fromX + m_dragDx) * m_view.scale);
 		const int64_t frame =
@@ -153,7 +155,7 @@ namespace gnubase::ui
 		if (m_dragPoint)
 		{
 			curve[*m_dragPoint].position = frame;
-			if (m_dragDy != 0.0) // a sideways drag keeps the volume exactly
+			if (!keepsVolume)
 				curve[*m_dragPoint].volume = volume;
 		}
 		else
@@ -167,11 +169,15 @@ namespace gnubase::ui
 
 	void EventDisplay::curveUp()
 	{
-		// A click on a point, without moving it, changes nothing.
-		const bool clicked = m_dragPoint && m_dragDx == 0.0 && m_dragDy == 0.0;
-		if (m_fades.count(m_dragEvent) != 0 && !clicked)
-			edit("audioEvent.setVolumeCurve",
-				{{"event", m_dragEvent}, {"points", engine::toJson(draggedCurve(m_dragEvent))}});
+		// A click on a point, or a drag that leaves it where it is, changes nothing and makes no undo step.
+		if (const auto fades = m_fades.find(m_dragEvent); fades != m_fades.end())
+		{
+			const std::vector<engine::VolumePoint> curve = draggedCurve(m_dragEvent);
+			const auto same = [](const engine::VolumePoint& a, const engine::VolumePoint& b)
+			{ return a.position == b.position && a.volume == b.volume && a.curve == b.curve; };
+			if (!std::equal(curve.begin(), curve.end(), fades->second.curve.begin(), fades->second.curve.end(), same))
+				edit("audioEvent.setVolumeCurve", {{"event", m_dragEvent}, {"points", engine::toJson(curve)}});
+		}
 		m_dragPoint.reset();
 		m_dragDx = 0.0;
 		m_dragDy = 0.0;
