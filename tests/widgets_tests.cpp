@@ -737,11 +737,12 @@ TEST_CASE("Tab and Shift+Tab move between an open menu's items and don't leave t
 	CHECK(focused(app, "#lock"));
 	app.ui().key(std::nullopt, "Shift+Tab");
 	CHECK(focused(app, "#color"));
-	app.ui().key(std::nullopt, "Ctrl+Tab");
+	app.ui().key(std::nullopt, "Ctrl+Tab"); // with a modifier too
 	CHECK(focused(app, "#lock"));
+	app.ui().key(std::nullopt, "Alt+Shift+Tab");
+	CHECK(focused(app, "#color"));
 
 	// In a submenu that keys opened, they step through the submenu's items.
-	app.ui().key(std::nullopt, "Shift+Tab");
 	app.ui().key(std::nullopt, "Right");
 	REQUIRE(focused(app, "#red"));
 	app.ui().key(std::nullopt, "Tab");

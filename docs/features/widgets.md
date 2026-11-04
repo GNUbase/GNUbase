@@ -215,10 +215,10 @@ decimals than they show when nothing was typed. Text displays send the text type
 started with, and nothing with Escape or when nothing was typed. Meters show their level and peak at the right heights.
 Menus open under their button and at the mouse, inside the window, show submenus on hover, close on an item, a click
 elsewhere and Escape, skip disabled items, and work with the keys; items with a submenu show an arrow, and Right and
-Left go into and out of the submenu, but not into one with nothing to focus; Tab, Shift+Tab and Ctrl+Tab step through
-a menu's and a submenu's items and round their ends without leaving the open menu, also in the project window's menu
-bar (`tests/docking_tests.cpp`). In a menu bar the mouse and Right and
-Left move between the open menus, also from a submenu, skipping a disabled title, and Alt alone opens the first menu,
+Left go into and out of the submenu, but not into one with nothing to focus; Tab and Shift+Tab, also with Ctrl or Alt,
+step through a menu's and a submenu's items and round their ends without leaving the open menu, also in the project
+window's menu bar (`tests/docking_tests.cpp`). In a menu bar the mouse and Right and Left move between the open menus,
+also from a submenu, skipping a disabled title, and Alt alone opens the first menu,
 closing a context menu, and closes it, leaving the focus out of the closed menu (not on macOS, nor with another key,
 a click, a mouse button going up or the wheel, nor when SDL releases Alt as the window loses the keyboard or
 presses it as the window gets it, nor behind a modal dialog). A right click with each modifier key opens the
