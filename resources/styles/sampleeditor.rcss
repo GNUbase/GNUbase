@@ -2,8 +2,9 @@
 /* The sample editor (ui/sampleeditor.h, docs/features/sample-editor.md): the toolbar, the info line, the overview,
    the inspector beside the waveform display and the regions list. Code places the event's edges, the selection, the
    snap point and the region shown in dp from the display's left, and the overview's in percent of the clip. The root
-   gets .empty without an event and .no-info, .no-overview and .no-regions for the parts the window layout hides;
-   the tools and switches get .checked, regions in the list .selected, and what isn't there .off. The themes color
+   gets .empty without an event, .no-info, .no-overview and .no-regions for the parts the window layout hides, and
+   .edit-hitpoints while Edit Hitpoints is on; the tools and switches get .checked, regions in the list .selected,
+   and what isn't there .off. The themes color
    them. */
 .sample-editor
 {
@@ -116,6 +117,73 @@
 .sample-editor[tool=play] .se-display, .sample-editor[tool=scrub] .se-display
 {
 	cursor: tool-play;
+}
+
+/* The hitpoints: a line across the display each, easy to grab, with a handle at the top that locks it. Code places
+   each at its frame; .locked and .disabled are for the themes. */
+.se-hitpoints
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.se-hitpoint
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 7dp;
+	margin-left: -3dp;
+}
+
+.se-hitpoint-line
+{
+	position: absolute;
+	left: 3dp;
+	top: 0;
+	bottom: 0;
+	width: 1dp;
+}
+
+.se-hitpoint-handle
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 7dp;
+	height: 7dp;
+}
+
+.sample-editor.edit-hitpoints .se-display
+{
+	cursor: tool-play;
+}
+
+.sample-editor.edit-hitpoints .se-hitpoint
+{
+	cursor: resize;
+}
+
+.se-filter
+{
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	margin-bottom: 2dp;
+}
+
+.se-filter-label
+{
+	width: 90dp;
+	flex-shrink: 0;
+}
+
+.se-filter slider, .se-filter valuefield
+{
+	flex: 1 1 0;
 }
 
 /* The snap point's handle: a line across the display that is easy to grab. */

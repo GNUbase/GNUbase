@@ -1300,11 +1300,7 @@ namespace gnubase::engine
 						continue;
 					const bool bus = std::any_of(m_project.busses.begin(), m_project.busses.end(),
 						[&target](const Bus& b) { return b.id == target->second; });
-					const auto channel = m_project.channels.find(target->second);
-					const bool group = channel != m_project.channels.end() &&
-						(m_project.trackById.at(channel->second.track).type == TrackType::Group ||
-							m_project.trackById.at(channel->second.track).type == TrackType::Folder);
-					if (bus || group)
+					if (bus || isSendDestination(m_project, target->second)) // a group or an effect channel
 						m_project.channels.at(channelId).output = target->second;
 				}
 				// A group routed into a group must not close a loop; such outputs fall back to the main output.
@@ -1628,7 +1624,7 @@ namespace gnubase::engine
 				}
 				media.channels = std::clamp(media.channels, 1, g_maxAudioChannels);
 				m_project.media[media.id] = media;
-				const Clip clip{m_project.newId(), pathOf(xmlPath).stem().u8string(), media.id, {}, {}, 0, {}};
+				const Clip clip{m_project.newId(), pathOf(xmlPath).stem().u8string(), media.id, {}, {}, 0, {}, {}, {}};
 				m_project.clips[clip.id] = clip;
 				return m_clips[xmlPath] = clip.id;
 			}

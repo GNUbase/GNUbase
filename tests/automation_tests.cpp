@@ -1429,3 +1429,192 @@ TEST_CASE("volume automation plays its static value in virgin territory and gaps
 	}
 	checkGains(mixer, expected, positions(0, 5000));
 }
+
+namespace
+{
+	// The lane of a track with a target of this type: its id and its points as (position, value) pairs in the order
+	// they play; 0 and none if the track has no such lane.
+	struct LanePoints
+	{
+		ObjectId id = 0;
+		std::vector<std::pair<int64_t, double>> points;
+	};
+
+	LanePoints lanePoints(Client& client, ObjectId track, const std::string& type)
+	{
+		LanePoints found;
+		const Json lanes = run(client, "automationLane.list", {{"track", track}}).at("lanes");
+		for (const Json& lane : lanes)
+			if (lane.at("target").at("type") == type)
+			{
+				found.id = lane.at("id").get<ObjectId>();
+				for (const Json& point : lane.at("points"))
+					found.points.emplace_back(point.at("position").get<int64_t>(), point.at("value").get<double>());
+			}
+		return found;
+	}
+
+	std::vector<ObjectId> sortedIds(const Json& ids)
+	{
+		auto sorted = ids.get<std::vector<ObjectId>>();
+		std::sort(sorted.begin(), sorted.end());
+		return sorted;
+	}
+}
+
+TEST_CASE("automation.copy and automation.paste copy automation between tracks with other parameters", "[unit]")
+{
+	using Points = std::vector<std::pair<int64_t, double>>;
+	Engine engine;
+	Client client(engine);
+	const auto addTrack = [&](const char* type)
+	{
+		const ObjectId track = idOf(run(client, "track.add", {{"type", type}}), "track");
+		run(client, "track.set", {{"track", track}, {"timeBase", "linear"}}); // points in samples
+		return track;
+	};
+	const auto addLane = [&](ObjectId track, const Json& target, const Json& points)
+	{
+		const ObjectId id = idOf(run(client, "automationLane.add", {{"track", track}, {"target", target}}), "lane");
+		run(client, "automationPoint.add", {{"lane", id}, {"points", points}});
+		return id;
+	};
+	// The source tracks: an audio track with Gain and pan and Gate in its slots, and an instrument track.
+	const ObjectId audio = addTrack("audio");
+	const Json gainPan = insertPlugin(client, channelOf(client, audio), "builtin:gainPan");
+	const Json gate = insertPlugin(client, channelOf(client, audio), "builtin:gate");
+	const ObjectId volume = addLane(audio, {{"type", "volume"}},
+		{{{"position", 0}, {"value", -6.0}}, {{"position", 48000}, {"value", 0.0}},
+			{{"position", 96000}, {"value", -12.0}, {"shape", "step"}}});
+	const ObjectId pan =
+		addLane(audio, {{"type", "pan"}}, {{{"position", 0}, {"value", -1.0}}, {{"position", 96000}, {"value", 1.0}}});
+	addLane(audio, pluginTarget(gainPan, 0), {{{"position", 0}, {"value", -10.0}}});
+	addLane(audio, pluginTarget(gate, 0), {{{"position", 0}, {"value", -40.0}}});
+	const ObjectId instrument = addTrack("instrument");
+	run(client, "channel.set", {{"channel", channelOf(client, instrument)}, {"instrument", "testSynth"}});
+	addLane(instrument, {{"type", "volume"}}, {{{"position", 0}, {"value", -3.0}}});
+	addLane(instrument, {{"type", "instrument"}, {"parameter", gnubase::engine::processors::TestSynth::Level}},
+		{{{"position", 0}, {"value", 0.5}}});
+	addLane(instrument, {{"type", "controller"}, {"number", 1}}, {{{"position", 0}, {"value", 0.25}}});
+	// The target tracks: an audio track with Gain and pan and Delay, a MIDI track and another audio track.
+	const ObjectId target = addTrack("audio");
+	const Json targetGainPan = insertPlugin(client, channelOf(client, target), "builtin:gainPan");
+	insertPlugin(client, channelOf(client, target), "builtin:delay");
+	addLane(target, {{"type", "volume"}}, {{{"position", 0}, {"value", -20.0}, {"shape", "step"}}});
+	const ObjectId midi = addTrack("midi");
+	const ObjectId other = addTrack("audio");
+
+	// Copy Automation of Selected Tracks (Locator Range): the automation between the locators.
+	run(client, "transport.set", {{"left", 0}, {"right", 96000}});
+	CHECK(run(client, "automation.copy", {{"tracks", {audio, instrument}}}) == Json{{"lanes", 7}});
+	// Pasted onto the selected tracks in order, between the locators: the parameters each track has get it, and it
+	// replaces the automation there. A plugin's lane needs the same plugin in the slot at the same place (reference
+	// manual p. 878): Gain and pan's goes onto the target's, Gate's not onto Delay. The MIDI track takes the
+	// instrument track's controller, but not its volume or its instrument's parameter.
+	run(client, "transport.set", {{"left", 192000}, {"right", 288000}});
+	const size_t steps = run(client, "history.get").at("steps").size();
+	const Json before = run(client, "project.get");
+	const Json pasted = run(client, "automation.paste", {{"tracks", {target, midi}}}).at("lanes");
+	CHECK(pasted.size() == 4);
+	CHECK(run(client, "history.get").at("steps").size() == steps + 1);
+	CHECK(run(client, "history.get").at("steps").back().at("action") == "Paste Automation");
+	const LanePoints targetVolume = lanePoints(client, target, "volume");
+	CHECK(targetVolume.points ==
+		Points{{0, -20.0}, {192000, -20.0}, {192000, -6.0}, {240000, 0.0}, {288000, -12.0}, {288000, -20.0}});
+	CHECK(lanePoints(client, target, "pan").points == Points{{192000, -1.0}, {288000, 1.0}});
+	const Json targetLanes = run(client, "automationLane.list", {{"track", target}}).at("lanes");
+	REQUIRE(targetLanes.size() == 3);
+	CHECK(targetLanes[2].at("target") == pluginTarget(targetGainPan, 0));
+	CHECK(targetLanes[2].at("points")[0].at("value") == -10.0);
+	const Json midiLanes = run(client, "automationLane.list", {{"track", midi}}).at("lanes");
+	REQUIRE(midiLanes.size() == 1);
+	CHECK(midiLanes[0].at("target").at("type") == "controller");
+	CHECK(midiLanes[0].at("target").at("number") == 1);
+	CHECK(sortedIds(pasted) ==
+		sortedIds(Json{
+			targetVolume.id, lanePoints(client, target, "pan").id, targetLanes[2].at("id"), midiLanes[0].at("id")}));
+	// One undo step.
+	run(client, "history.undo");
+	CHECK(run(client, "project.get") == before);
+	run(client, "history.redo");
+
+	// A shorter range shortens the copy, at the curve's value there; in a longer one its last value holds up to the
+	// right locator (reference manual p. 879).
+	run(client, "automation.paste", {{"tracks", {other}}, {"start", 0}, {"end", 48000}});
+	CHECK(lanePoints(client, other, "volume").points == Points{{0, -6.0}, {48000, 0.0}});
+	CHECK(lanePoints(client, other, "pan").points == Points{{0, -1.0}, {48000, 0.0}});
+	run(client, "automation.paste", {{"tracks", {other}}, {"start", 400000}, {"end", 600000}});
+	CHECK(lanePoints(client, other, "volume").points ==
+		Points{{0, -6.0}, {48000, 0.0}, {400000, 0.0}, {400000, -6.0}, {448000, 0.0}, {496000, -12.0}, {600000, -12.0},
+			{600000, 0.0}});
+
+	// Copy Automation of Selected Parameters: one parameter onto the selected lanes of the same parameter.
+	CHECK(run(client, "automation.copy", {{"lanes", {pan}}, {"start", 0}, {"end", 96000}}) == Json{{"lanes", 1}});
+	const ObjectId otherPan = lanePoints(client, other, "pan").id;
+	const ObjectId otherVolume = lanePoints(client, other, "volume").id;
+	const Json onto =
+		run(client, "automation.paste", {{"lanes", {otherPan, otherVolume}}, {"start", 96000}, {"end", 192000}});
+	CHECK(onto.at("lanes") == Json{otherPan});
+	const Points otherPanPoints = lanePoints(client, other, "pan").points;
+	REQUIRE(otherPanPoints.size() >= 6);
+	CHECK(Points(otherPanPoints.begin(), otherPanPoints.begin() + 6) ==
+		Points{{0, -1.0}, {48000, 0.0}, {96000, 0.0}, {96000, -1.0}, {192000, 1.0}, {192000, 0.0}});
+	// One copied track goes onto every selected track; a track without the parameter takes nothing.
+	CHECK(run(client, "automation.paste", {{"tracks", {midi, target}}, {"start", 0}, {"end", 96000}}).at("lanes") ==
+		Json{lanePoints(client, target, "pan").id});
+
+	// Copy Automation of All Tracks, pasted onto all tracks: each lane onto its own track, here later.
+	run(client, "automation.copy", {{"start", 0}, {"end", 96000}});
+	run(client, "automation.paste", {{"start", 960000}, {"end", 1056000}});
+	const LanePoints source = lanePoints(client, audio, "volume");
+	CHECK(source.id == volume);
+	CHECK(std::count(source.points.begin(), source.points.end(), std::pair<int64_t, double>{1008000, 0.0}) == 1);
+
+	// Checks.
+	Engine fresh;
+	Client empty(fresh);
+	CHECK_THAT(reject(empty, "automation.paste", Json::object()), ContainsSubstring("nothing to paste"));
+	CHECK_THAT(
+		reject(client, "automation.paste", {{"tracks", {target}}, {"lanes", {pan}}}), ContainsSubstring("not both"));
+	CHECK_THAT(reject(client, "automation.paste", {{"start", 100}, {"end", 100}}), ContainsSubstring("empty"));
+	CHECK_THAT(reject(client, "automation.copy", {{"lanes", {12345}}}), ContainsSubstring("no automation lane 12345"));
+	CHECK_THAT(reject(client, "automation.paste", {{"tracks", {12345}}}), ContainsSubstring("no track 12345"));
+}
+
+TEST_CASE("automation.paste pastes VCA faders' volume, and a new project has nothing to paste", "[unit]")
+{
+	using Points = std::vector<std::pair<int64_t, double>>;
+	Engine engine;
+	Client client(engine);
+	const auto addVca = [&]
+	{
+		const ObjectId track = idOf(run(client, "track.add", {{"type", "vca"}}), "track");
+		run(client, "track.set", {{"track", track}, {"timeBase", "linear"}}); // points in samples
+		return track;
+	};
+	const ObjectId vca = addVca();
+	const ObjectId other = addVca();
+	const ObjectId lane =
+		idOf(run(client, "automationLane.add", {{"track", vca}, {"target", {{"type", "volume"}}}}), "lane");
+	run(client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", -6.0}, {"shape", "step"}}, {{"position", 96000}, {"value", -12.0}}}}});
+
+	// Copy Automation of All Tracks, pasted onto all tracks: the VCA fader's volume goes onto its own lane.
+	run(client, "automation.copy", {{"start", 0}, {"end", 96000}});
+	CHECK(run(client, "automation.paste", {{"start", 192000}, {"end", 288000}}).at("lanes") == Json{lane});
+	CHECK(lanePoints(client, vca, "volume").points ==
+		Points{{0, -6.0}, {96000, -12.0}, {192000, -12.0}, {192000, -6.0}, {288000, -12.0}, {288000, -12.0}});
+	// And onto another VCA track.
+	const Json pasted = run(client, "automation.paste", {{"tracks", {other}}, {"start", 0}, {"end", 96000}});
+	const LanePoints otherVolume = lanePoints(client, other, "volume");
+	CHECK(pasted.at("lanes") == Json{otherVolume.id});
+	CHECK(otherVolume.points == Points{{0, -6.0}, {96000, -12.0}});
+
+	// The clipboard holds this project's track ids, which a new project hands out again.
+	run(client, "automation.copy", {{"start", 0}, {"end", 96000}});
+	run(client, "project.new");
+	addVca();
+	CHECK_THAT(reject(client, "automation.paste", Json::object()), ContainsSubstring("nothing to paste"));
+}

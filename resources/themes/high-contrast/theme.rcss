@@ -590,6 +590,10 @@
 		border-top-width: 1dp;
 		border-top-color: #ffffff;
 	}
+	.track-list .automation-row.selected
+	{
+		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
+	}
 	.event-display .automation-lane
 	{
 		background-color: #00000080;
@@ -702,6 +706,46 @@
 	{
 		background-color: #ffff00;
 	}
+	.ape-display
+	{
+		background-color: #000000;
+	}
+	.ape-lane
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #808080;
+	}
+	.ape-event
+	{
+		background-color: #565609;
+		border-width: 1px;
+		border-color: #ffff00;
+	}
+	.ape-event.selected
+	{
+		background-color: #068686;
+		border-color: #ffffff;
+	}
+	.ape-event.muted, .ape-event.inactive
+	{
+		background-color: #3c3c3c;
+		border-color: #c8c8c8;
+	}
+	.audio-part-editor .editor-part
+	{
+		color: #c8c8c8;
+		border-width: 1dp;
+		border-color: #ffffff;
+		background-color: #060606;
+	}
+	.audio-part-editor .editor-part.editable
+	{
+		color: #ffffff;
+	}
+	.audio-part-editor .editor-part.active
+	{
+		color: #ffff00;
+	}
 	.se-overview, .se-display
 	{
 		background-color: #000000;
@@ -736,6 +780,18 @@
 	.se-region.selected
 	{
 		background-color: #666600;
+	}
+	.se-hitpoint-line, .se-hitpoint-handle
+	{
+		background-color: #ffff00;
+	}
+	.se-hitpoint.locked .se-hitpoint-handle
+	{
+		background-color: #00ffff;
+	}
+	.se-hitpoint.disabled .se-hitpoint-line, .se-hitpoint.disabled .se-hitpoint-handle
+	{
+		background-color: #c8c8c866;
 	}
 	.list-editor-header
 	{

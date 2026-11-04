@@ -359,6 +359,31 @@ namespace gnubase::engine
 		time::Samples end = 0;
 	};
 
+	// A position in a clip where a sound starts (#143, reference manual pp. 636-641): its clip frame, the peak level
+	// of the sound there in dBFS and its intensity, how sharply its level rises (0 to 1, 1 for the sharpest of the
+	// clip's detected ones), as clip.detectHitpoints finds them; whether it is locked, so that the filters keep it,
+	// as hitpoints inserted or moved by hand are; and whether it is disabled, so that it counts for nothing.
+	struct Hitpoint
+	{
+		time::Samples position = 0;
+		double peak = 0.0;
+		double intensity = 0.0;
+		bool locked = false;
+		bool disabled = false;
+	};
+
+	inline constexpr double g_minHitpointThreshold = -60.0; // dBFS
+
+	// The Hitpoints section's filters (p. 638): the hitpoints that count are those that aren't disabled and are
+	// locked, or have a peak of threshold dBFS or more and an intensity of intensity (0 to 1) or more, and start
+	// minimumLength clip frames or more after the one before that counts.
+	struct HitpointFilter
+	{
+		double threshold = g_minHitpointThreshold; // g_minHitpointThreshold to 0
+		double intensity = 0.0;
+		time::Samples minimumLength = 0;
+	};
+
 	// What audio events play: for now, a whole media file. Its fades apply to every event that plays it, at the
 	// file's start and end.
 	struct Clip
@@ -370,7 +395,12 @@ namespace gnubase::engine
 		Fade fadeOut;
 		ObjectId folder = 0;             // the pool folder it is in; 0: the pool's Audio folder itself
 		std::vector<ClipRegion> regions; // by start, then id
+		std::vector<Hitpoint> hitpoints; // by position, one at most at each
+		HitpointFilter hitpointFilter;
 	};
+
+	// Which of a clip's hitpoints count, as its filters leave them (hitpoints.cpp): one for each of them.
+	std::vector<bool> activeHitpoints(const Clip& clip);
 
 	// A folder of the pool that clips are organized in (#93, reference manual p. 757). It only organizes the pool:
 	// the files stay where they are.
@@ -866,10 +896,23 @@ namespace gnubase::engine
 		return std::tie(a.id, a.name, a.start, a.end) == std::tie(b.id, b.name, b.start, b.end);
 	}
 
+	inline bool operator==(const Hitpoint& a, const Hitpoint& b)
+	{
+		return std::tie(a.position, a.peak, a.intensity, a.locked, a.disabled) ==
+			std::tie(b.position, b.peak, b.intensity, b.locked, b.disabled);
+	}
+
+	inline bool operator==(const HitpointFilter& a, const HitpointFilter& b)
+	{
+		return std::tie(a.threshold, a.intensity, a.minimumLength) ==
+			std::tie(b.threshold, b.intensity, b.minimumLength);
+	}
+
 	inline bool operator==(const Clip& a, const Clip& b)
 	{
-		return std::tie(a.id, a.name, a.media, a.fadeIn, a.fadeOut, a.folder, a.regions) ==
-			std::tie(b.id, b.name, b.media, b.fadeIn, b.fadeOut, b.folder, b.regions);
+		return std::tie(
+				   a.id, a.name, a.media, a.fadeIn, a.fadeOut, a.folder, a.regions, a.hitpoints, a.hitpointFilter) ==
+			std::tie(b.id, b.name, b.media, b.fadeIn, b.fadeOut, b.folder, b.regions, b.hitpoints, b.hitpointFilter);
 	}
 
 	inline bool operator==(const PoolFolder& a, const PoolFolder& b)

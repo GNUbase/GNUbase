@@ -71,6 +71,8 @@ places a point and where a moved point lands ([snap.md](snap.md)).
 - **Automation event editor** (p. 876): with two or more points of one ramp curve selected, a box around them. Its
   top border's middle scales them vertically from the box's bottom, its top corners tilt the left or right part, the
   rest of its top moves them up or down, and its bottom border stretches them in time from the box's left.
+- **Copying automation to other tracks** (pp. 878–879) selects automation tracks in the track list and copies
+  their automation, or that of tracks, between the locators: [copy-automation.md](copy-automation.md).
 - **Delete** (`edit.delete`, Backspace) removes the selected points (p. 878). Selecting events deselects the points,
   and the other way round. The selection is the display's (`EventDisplay::selectedPoints()`), also in the display's
   attribute `automation-selection` as `lane:point` pairs.
@@ -80,7 +82,7 @@ places a point and where a moved point lands ([snap.md](snap.md)).
 Write automation (#122), automation track heights of their own, the automation panel and its settings (Reduction
 Level, Reveal Parameter on Write), bézier handles and quick vertical scaling of one segment (pp. 874, 877), the
 editor's compress, relative and absolute centre scaling, Range Selection on automation tracks with its added points,
-copying automation to other tracks (pp. 878–879), Alt with the object selection tool to draw, Shift to set the line
+Alt with the object selection tool to draw, Shift to set the line
 tool's period, the most recent parameters at the top of the selector, Open Plugin Editor, the gaps of virgin
 territory and terminators ([virgin-territory.md](virgin-territory.md)), and automation of the channel strip's sections
 (#658).
