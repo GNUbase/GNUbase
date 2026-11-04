@@ -75,8 +75,8 @@
 		}
 	],
 	"buildPresets": [
-		{ "name": "windows-x64", "configurePreset": "windows-x64" },
-		{ "name": "windows-arm64", "configurePreset": "windows-arm64" },
+		{ "name": "windows-x64", "configurePreset": "windows-x64", "jobs": 4 },
+		{ "name": "windows-arm64", "configurePreset": "windows-arm64", "jobs": 4 },
 		{ "name": "windows-x64-ninja", "configurePreset": "windows-x64-ninja" },
 		{ "name": "windows-arm64-ninja", "configurePreset": "windows-arm64-ninja" },
 		{ "name": "macos", "configurePreset": "macos" },

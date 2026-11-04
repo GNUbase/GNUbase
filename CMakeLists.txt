@@ -36,6 +36,12 @@ if(GNUBASE_CLANG_TIDY)
 	endif()
 endif()
 
+# MSBuild compiles a project's files one at a time without /MP. Ninja runs one cl per file already, and sccache can't
+# cache /MP compiles, so the Ninja presets don't get it.
+if(MSVC AND CMAKE_GENERATOR MATCHES "^Visual Studio")
+	add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/MP>)
+endif()
+
 if(GNUBASE_LTO)
 	include(CheckIPOSupported)
 	check_ipo_supported(RESULT GNUBASE_IPO_SUPPORTED)
