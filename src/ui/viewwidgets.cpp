@@ -51,8 +51,8 @@ namespace gnubase::ui
 		// row. Selected rows have the state class .selected. The view's
 		// value attribute is the selected rows' values, separated by commas, and each change sends a change event
 		// with it, so data-value binds the selection; setting the attribute selects the rows. Rows that code adds,
-		// removes or rebuilds, all or some of them, are selected by the value too, also when a click or a key comes
-		// before the next update.
+		// removes or replaces with new elements, all or some of them, are selected by the value too, also when a
+		// click or a key comes before the next update.
 		//
 		// Rows with a level attribute (0 at the top) make a tree: the rows that follow a row with a higher level are
 		// its children, shown while it has the expanded attribute. The view gives tree rows an indent and a

@@ -1133,7 +1133,6 @@ namespace
 		return *element;
 	}
 
-	// Rebuilds the tracks list's rows as they were, with new elements whose ids have the prefix, as a panel does.
 	// Appends a row for rebuilt rows: a <listitem> with the prefix and the name as its id, the value and further
 	// attributes, and the name as its text.
 	void appendRow(std::string& rml, const std::string& prefix, const std::string& name, const std::string& value,
@@ -1151,6 +1150,7 @@ namespace
 		rml += "</listitem>";
 	}
 
+	// Rebuilds the tracks list's rows as they were, with new elements whose ids have the prefix, as a panel does.
 	void rebuildTracks(const ViewsPage& page, const std::string& prefix)
 	{
 		std::string rml;
@@ -1371,9 +1371,7 @@ TEST_CASE("table views keep the selection of rows rebuilt twice between two upda
 	body.SetInnerRML(R"(<tr value="verse"><td>Verse</td><td>16 bars</td></tr>)");
 	body.SetInnerRML(R"(<tr id="last-intro" value="intro"><td>Intro</td><td>8 bars</td></tr>)"
 					 R"(<tr id="last-verse" value="verse"><td>Verse</td><td>16 bars</td></tr>)");
-	Rml::Dictionary down;
-	down["key_identifier"] = static_cast<int>(Rml::Input::KI_DOWN);
-	page.document->GetElementById("table")->DispatchEvent(Rml::EventId::Keydown, down);
+	keyNow(byId(page, "table"), Rml::Input::KI_DOWN);
 	CHECK(selected(app, "#last-verse"));
 	CHECK(!selected(app, "#last-intro"));
 }
@@ -1504,8 +1502,7 @@ TEST_CASE("list views select a row that code replaced on its own, with as many r
 	row->SetId("new-vocals");
 	row->SetAttribute("value", "4");
 	row->SetInnerRML("Vocals");
-	const Rml::ElementPtr gone = tracks.ReplaceChild(std::move(row), &byId(page, "vocals"));
-	REQUIRE(gone != nullptr);
+	REQUIRE(tracks.ReplaceChild(std::move(row), &byId(page, "vocals")) != nullptr); // the old row is destroyed
 	CHECK(app.waitUntil([&app] { return selected(app, "#new-vocals"); }));
 	CHECK(selected(app, "#bass"));
 	CHECK(tracksValue(page) == "2,4");
