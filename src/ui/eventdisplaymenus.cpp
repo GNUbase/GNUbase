@@ -282,6 +282,12 @@ namespace gnubase::ui
 	{
 		Rml::Element* dialog = event.GetCurrentElement();
 		Rml::Element* target = event.GetTargetElement();
+		if (dialog->GetElementById("tempo-detection-dialog") != nullptr)
+		{
+			if (const Rml::Element* button = closest(target, "button"); button != nullptr && !button->GetId().empty())
+				detectTempo(button->GetId());
+			return;
+		}
 		if (resultOf(target) != "ok")
 		{
 			// A row's Delete button marks the row deleted, for the dialog's style sheet to hide it.
@@ -295,6 +301,15 @@ namespace gnubase::ui
 			const Rml::Element* shared = dialog->GetElementById("repeat-shared");
 			repeat(static_cast<int>(std::lround(count->GetAttribute<float>("value", 1.0F))),
 				shared != nullptr && shared->HasAttribute("checked"));
+		}
+		else if (Rml::Element* distance = dialog->GetElementById("calculate-tempo-distance"))
+		{
+			const Rml::Element* barStart = dialog->GetElementById("calculate-tempo-bar-start");
+			const std::vector<uint64_t> parts = selectedMidi();
+			if (!parts.empty())
+				edit("tempo.fromMidi",
+					{{"parts", parts}, {"distance", std::stoll(valueOf(distance))},
+						{"beginAtBarStart", barStart != nullptr && barStart->HasAttribute("checked")}});
 		}
 		else if (dialog->GetElementById("import-copy") != nullptr)
 		{
@@ -324,6 +339,41 @@ namespace gnubase::ui
 			m_presets = std::move(presets);
 			savePresets();
 		}
+	}
+
+	// The Tempo Detection dialog's buttons (reference manual pp. 1460-1461): Analyze detects the tempo afresh, the
+	// factors, Offbeat Correction and Smooth Tempo detect it again with them, Reset removes what it made.
+	void EventDisplay::detectTempo(const std::string& button)
+	{
+		TempoDetection& detection = m_detection;
+		Json parameters = {{"event", detection.event}};
+		if (button == "tempo-detection-reset")
+		{
+			detection = TempoDetection{detection.event};
+			parameters["reset"] = true;
+			edit("tempo.detect", std::move(parameters));
+			return;
+		}
+		if (button == "tempo-detection-analyze")
+			detection = TempoDetection{detection.event};
+		else if (button == "tempo-detection-double")
+			detection.factor *= 2.0;
+		else if (button == "tempo-detection-halve")
+			detection.factor /= 2.0;
+		else if (button == "tempo-detection-four-thirds")
+			detection.factor *= 4.0 / 3.0;
+		else if (button == "tempo-detection-three-quarters")
+			detection.factor *= 3.0 / 4.0;
+		else if (button == "tempo-detection-offbeat")
+			detection.offbeat = !detection.offbeat;
+		else if (button == "tempo-detection-smooth")
+			detection.smooth = true;
+		else
+			return;
+		parameters["factor"] = detection.factor;
+		parameters["offbeat"] = detection.offbeat;
+		parameters["smooth"] = detection.smooth;
+		edit("tempo.detect", std::move(parameters));
 	}
 
 	void EventDisplay::showFormat()

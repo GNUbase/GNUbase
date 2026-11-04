@@ -530,6 +530,10 @@ namespace gnubase::ui
 		bool openCrossfadeAt(const Shown& shown, double seconds); // whether there is one
 		// The selected audio events, by id.
 		std::vector<uint64_t> selectedAudio() const;
+		// The selected MIDI parts, by id.
+		std::vector<uint64_t> selectedMidi() const;
+		// A click on one of the Tempo Detection dialog's buttons: tempo.detect with what they say.
+		void detectTempo(const std::string& button);
 		// Opens a dialog of the display's document folder whose Lua reads the attributes when it shows.
 		void openFadeDialog(const char* file, const std::vector<std::pair<std::string, std::string>>& attributes);
 
@@ -760,7 +764,16 @@ namespace gnubase::ui
 		Rml::Element* m_gridTypeMenu = nullptr;
 		Rml::Element* m_zeroCrossingButton = nullptr;
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the dialog document open now
-		engine::Json m_organized;                // the presets that the organize dialog lists, by index
+		// What the Tempo Detection dialog analyzes, and how its buttons changed the result.
+		struct TempoDetection
+		{
+			uint64_t event = 0; // an audio event or a MIDI part
+			double factor = 1.0;
+			bool offbeat = false;
+			bool smooth = false;
+		};
+		TempoDetection m_detection;
+		engine::Json m_organized; // the presets that the organize dialog lists, by index
 		Import m_import;
 		bool m_importCopy = true; // the import options chosen last
 		bool m_importConvert = true;
