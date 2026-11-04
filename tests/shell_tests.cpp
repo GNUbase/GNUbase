@@ -327,6 +327,31 @@ TEST_CASE("a quit request handler decides when closing the main window or a quit
 	CHECK(ui.windows.windowCount() == 0);
 }
 
+TEST_CASE("requestClose and requestQuit do what the window system's close and quit requests do", "[unit]")
+{
+	std::vector<ui::WindowId> closing;
+	std::vector<ui::WindowId> quitting;
+	Ui ui({primary()});
+	const ui::WindowId main = ui.shell.open(at({100, 100, 800, 600})).id();
+	const ui::WindowId other = ui.shell.open(at({200, 200, 400, 300})).id();
+	ui.shell.onCloseRequest([&closing](ui::Window& window) { closing.push_back(window.id()); });
+	ui.shell.onQuitRequest([&quitting](ui::Window& window) { quitting.push_back(window.id()); });
+
+	ui.shell.requestClose(other + main + 1); // not open
+	ui.shell.requestClose(other);
+	CHECK(closing == std::vector<ui::WindowId>{other});
+	CHECK(ui.shell.find(other) == nullptr);
+	ui.shell.requestClose(other); // closed already
+	CHECK(closing.size() == 1);
+
+	ui.shell.requestClose(main);
+	ui.shell.requestQuit();
+	CHECK(quitting == std::vector<ui::WindowId>{main, main});
+	CHECK(closing.size() == 1);
+	CHECK(ui.shell.running());
+	CHECK(ui.shell.find(main) != nullptr);
+}
+
 TEST_CASE("windows are drawn only when something changed", "[unit]")
 {
 	Ui ui({primary()});

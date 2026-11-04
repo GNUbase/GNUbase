@@ -48,7 +48,7 @@ the pool and conforming files to the project's sample rate. The engine commands 
 
 - **Opening it.** Media > Open Pool Window and Ctrl+P (Cmd+P on macOS; the reference's key, p. 1567) run the UI command
   `window.pool`, which shows the panel Pool in the project window's lower zone; like every panel it can open in a
-  window of its own ([docking.md](docking.md)).
+  window of its own ([docking.md](docking.md)), which the command then brings to the front with the focus.
 - **What it shows.** A toolbar, the message line, the info line (Audio Files, Used, Total Size, External Files,
   Missing) and a tree (`<listview id="pool">`, [widgets.md](widgets.md)) with the Audio folder, its folders and their
   clips, folders first and each by name, ASCII letters in either case alike (alpha before Bass), in the columns Media,
@@ -62,7 +62,7 @@ the pool and conforming files to the project's sample rate. The engine commands 
   failed, with the state class `.error`, which the themes color as danger. The app hears the results of
   `pool.removeUnused`, `media.locate`, `media.removeMissing` and `media.conform` from the toolbar, the Media menu and
   the folder dialog alike (`EngineBinding::onResult`, [ui-engine-binding.md](ui-engine-binding.md)) and opens the
-  pool to show them, so Conform Files on a project that was never saved says to save it first. A rename, a move or
+  pool to show them, bringing its window to the front if it is in one of its own, so Conform Files on a project that was never saved says to save it first. A rename, a move or
   New Folder that fails says so there too.
 - **Editing.** The names of folders and clips are fields: what is typed renames them (`poolFolder.set`, `clip.set`)
   with Enter or when the field loses the focus; a name typed away keeps the old one. Clips dragged onto a folder's

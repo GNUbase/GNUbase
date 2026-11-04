@@ -452,6 +452,20 @@ namespace gnubase::ui
 					close(button->GetAttribute<Rml::String>("result", ""));
 			}
 
+			// Sends the close event with the result and closes the document, once: a dialog that is closing already
+			// stays as it is (closeDialog).
+			bool close(const std::string& result)
+			{
+				if (m_closed)
+					return false;
+				m_closed = true;
+				Rml::Dictionary parameters;
+				parameters["result"] = result;
+				DispatchEvent(g_dialogCloseEvent, parameters);
+				GetOwnerDocument()->Close();
+				return true;
+			}
+
 			// A key pressed anywhere in the dialog's document, before text fields keep Enter to themselves.
 			void key(Rml::Event& event)
 			{
@@ -514,17 +528,6 @@ namespace gnubase::ui
 				default:
 					break;
 				}
-			}
-
-			void close(const std::string& result)
-			{
-				if (m_closed)
-					return;
-				m_closed = true;
-				Rml::Dictionary parameters;
-				parameters["result"] = result;
-				DispatchEvent(g_dialogCloseEvent, parameters);
-				GetOwnerDocument()->Close();
 			}
 
 			Listener m_listener{[this](Rml::Event& event) { listen(event); }};
@@ -771,6 +774,12 @@ namespace gnubase::ui
 			Listener m_listener{[this](Rml::Event& event) { handle(event); }};
 			bool m_alt = false; // Alt is held alone, so releasing it toggles the menu bar
 		};
+	}
+
+	bool closeDialog(Rml::ElementDocument& document, const std::string& result)
+	{
+		auto* dialog = dynamic_cast<Dialog*>(document.QuerySelector("dialog"));
+		return dialog != nullptr && dialog->close(result);
 	}
 
 	void registerPopupWidgets(RmlUi& rmlui)

@@ -131,6 +131,10 @@ namespace gnubase::ui
 		virtual Rect bounds(WindowId window) const = 0;
 		virtual void setBounds(WindowId window, const Rect& bounds) = 0;
 
+		// Brings the window in front of the others with the keyboard focus, restoring it first if it is minimized. The
+		// OS may refuse the focus, e.g. to an application that isn't active. A hidden window stays hidden.
+		virtual void raise(WindowId window) = 0;
+
 		// The size of what the window shows, in pixels.
 		virtual Size pixelSize(WindowId window) const = 0;
 

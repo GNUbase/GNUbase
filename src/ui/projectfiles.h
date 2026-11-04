@@ -69,10 +69,13 @@ namespace gnubase::ui
 		// at every interval, until it fails for another reason or after an auto save succeeded or the project was
 		// saved or opened, as the engine says with repeated.
 		void autoSaveFailed(const engine::Json& failure);
-		// Runs action now if the project has no unsaved changes, or else once the user agreed to discard them.
-		void unlessUnsaved(Window& window, std::function<void()> action);
+		// Runs action now if the project has no unsaved changes, or else once the user agreed to discard them. asked,
+		// if given, runs once the engine said whether to ask: with the question's document when it opened, else null.
+		void unlessUnsaved(Window& window, std::function<void()> action,
+			std::function<void(Rml::ElementDocument* question)> asked = {});
 		// Quits GNUbase unless the user wants to keep unsaved changes, asking in the window. A dialog that is open
-		// closes as cancelled first.
+		// closes as cancelled first (closeDialog). Further quit requests while the question is coming or open do
+		// nothing, so that one question answers them; once it is answered or gone, the next one asks again.
 		void quit(Window& window);
 		void open(Window& window);
 		void saveAs(Window& window);
@@ -91,7 +94,9 @@ namespace gnubase::ui
 		std::optional<WindowId> m_backupWindow;  // where the last backup was asked for, which shows if it fails
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the open dialog's document
 		Closed m_closed;
-		std::vector<std::string> m_templates; // the start screen's templates, by name
-		std::vector<std::string> m_recent;    // and its recent projects, by file
+		bool m_quitting = false;                       // a quit request waits for the engine to say whether to ask
+		Rml::ObserverPtr<Rml::Element> m_quitQuestion; // and then for the question, while it is m_dialog
+		std::vector<std::string> m_templates;          // the start screen's templates, by name
+		std::vector<std::string> m_recent;             // and its recent projects, by file
 	};
 }

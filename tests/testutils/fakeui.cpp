@@ -3,6 +3,7 @@
 
 #include <RmlUi/Core/Context.h>
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -44,12 +45,45 @@ namespace gnubase::test
 		window.bounds = spec.bounds.value_or(ui::Rect{0, 0, spec.size.width, spec.size.height});
 		if (const ui::Display* display = ui::displayOf(window.bounds, m_displays))
 			window.scale = display->scale;
+		if (!spec.hidden) // hidden windows aren't in the order
+		{
+			m_stack.push_back(id);
+			m_focused = id;
+		}
 		return id;
 	}
 
 	void FakeWindowSystem::destroyWindow(ui::WindowId window)
 	{
 		m_windows.erase(window);
+		m_stack.erase(std::remove(m_stack.begin(), m_stack.end(), window), m_stack.end());
+		if (m_focused == window)
+			m_focused = 0;
+	}
+
+	void FakeWindowSystem::raise(ui::WindowId window)
+	{
+		FakeWindow& fake = m_windows.at(window);
+		const bool restored = fake.minimized;
+		fake.minimized = false;
+		if (fake.spec.hidden)
+			return;
+		if (restored)
+			m_events.emplace_back(ui::WindowEventKind::Exposed, window);
+		m_stack.erase(std::remove(m_stack.begin(), m_stack.end(), window), m_stack.end());
+		m_stack.push_back(window);
+		m_focused = window;
+	}
+
+	void FakeWindowSystem::minimize(ui::WindowId window)
+	{
+		m_windows.at(window).minimized = true;
+		if (m_focused != window)
+			return;
+		m_focused = 0;
+		for (auto it = m_stack.rbegin(); it != m_stack.rend() && m_focused == 0; ++it)
+			if (!m_windows.at(*it).minimized)
+				m_focused = *it;
 	}
 
 	void FakeWindowSystem::setBounds(ui::WindowId window, const ui::Rect& bounds)
