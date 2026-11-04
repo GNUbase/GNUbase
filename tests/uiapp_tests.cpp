@@ -19,6 +19,7 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/Property.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -216,6 +217,74 @@ TEST_CASE("the project window shows events and the project cursor where the engi
 	CHECK(display.view().scale < 0.01);
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(element(".project-cursor").at("box").at("x").get<int>() - lanes.at("box").at("x").get<int>() == 150);
+}
+
+TEST_CASE("the project cursor and the cross-hair cursor are drawn only inside the event display's time area", "[ui]")
+{
+	// CI's window size, with the track list left of the event display and the right zone right of it (#731).
+	test::UiApp app({1024, 600});
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.ui().key(std::nullopt, "Mod+Alt+R");
+	app.call("track.add", {{"type", "midi"}});
+	app.call("transport.locate", {{"position", 72000}}); // 1.5 seconds: 150 dp into the view at 0.01 seconds per dp
+	REQUIRE(app.waitUntil([&app, &display]
+		{ return visible(app, "#right-zone") && count(app, ".track-list listitem") == 1 && display.cursor() == 1.5; }));
+	app.shell().step(std::chrono::milliseconds(0));
+	const auto x = [&app](const char* selector) { return element(app, selector).at("box").at("x").get<int>(); };
+	const int timelineLeft = x(".event-display .timeline");
+	const int timelineRight = timelineLeft + element(app, ".event-display .timeline").at("box").at("width").get<int>();
+	CHECK(x(".project-cursor") - timelineLeft == 150);
+
+	// The zones beside the event display as they look with the cursor inside the view; it must never change them.
+	const ui::Image trackList = app.ui().screenshot(std::nullopt, selector("#track-list"));
+	const ui::Image rightZone = app.ui().screenshot(std::nullopt, selector("#right-zone"));
+	const auto unchanged = [&app, &trackList, &rightZone]
+	{
+		app.shell().step(std::chrono::milliseconds(0));
+		for (const auto& [zone, before] :
+			{std::make_pair("#track-list", &trackList), std::make_pair("#right-zone", &rightZone)})
+		{
+			const test::ImageDiff diff =
+				test::compareImages(app.ui().screenshot(std::nullopt, selector(zone)), *before, {});
+			INFO(zone << ": " << diff.report);
+			CHECK(diff.equal);
+		}
+	};
+
+	// The view scrolled right past the cursor: 100 dp left of the view's start, it would be over the track list.
+	display.scrollTo(2.5);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(x(".project-cursor") == timelineLeft - 100);
+	unchanged();
+
+	// The cursor 100 dp right of the view's end, where it would be over the right zone.
+	display.scrollTo(0.0);
+	const double end = display.visibleLength() + 1.0;
+	app.call("transport.locate", {{"position", std::llround(end * 48000.0)}});
+	REQUIRE(app.waitUntil([&display, end] { return std::abs(display.cursor() - end) < 1e-6; }));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(x(".project-cursor") == timelineRight + 100);
+	unchanged();
+
+	// The vertical cross-hair cursor shows over the event lanes. Nothing moves it outside them, but if anything did,
+	// it would be clipped as the project cursor is: left of the lanes over the track list, right of them over the
+	// right zone.
+	const Json lanes = element(app, "event-lanes.events").at("box");
+	app.ui().move(std::nullopt, {"", 0, ui::Point{lanes.at("x").get<int>() + 50, lanes.at("y").get<int>() + 10}});
+	app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(visible(app, ".cross-hair-vertical"));
+	CHECK(x(".cross-hair-vertical") == timelineLeft + 50);
+	Rml::Element* vertical = app.main().context().GetDocument(0)->QuerySelector(".cross-hair-vertical");
+	REQUIRE(vertical != nullptr);
+	for (const int left : {-100, timelineRight - timelineLeft + 100})
+	{
+		INFO(left);
+		vertical->SetProperty(Rml::PropertyId::Left, Rml::Property(static_cast<float>(left), Rml::Unit::DP));
+		app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(visible(app, ".cross-hair-vertical"));
+		unchanged();
+	}
 }
 
 TEST_CASE("the ruler's time format menu opens from its arrow button and with a right click in the ruler", "[ui]")
