@@ -351,14 +351,15 @@ TEST_CASE("the decoders leave the files that the readers hand them open", "[inte
 namespace
 {
 	// Stand-ins that a call from the global namespace finds together with dr_libs' file functions, if its headers
-	// declare them. A declared one is a better match than these, which take anything.
+	// declare them. A declared one is a better match than these, which take anything. Only ever named in decltype, so
+	// never defined: [[maybe_unused]] keeps Clang from reporting that they won't be emitted.
 	struct NotDeclared
 	{
 	};
 	// NOLINTBEGIN(readability-identifier-naming): the names of the dr_libs functions these stand in for
-	NotDeclared drwav_init_file(...);
-	NotDeclared drflac_open_file(...);
-	NotDeclared drmp3_init_file(...);
+	[[maybe_unused]] NotDeclared drwav_init_file(...);
+	[[maybe_unused]] NotDeclared drflac_open_file(...);
+	[[maybe_unused]] NotDeclared drmp3_init_file(...);
 	// NOLINTEND(readability-identifier-naming)
 }
 
