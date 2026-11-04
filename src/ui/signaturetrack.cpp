@@ -202,6 +202,9 @@ namespace gnubase::ui
 		}
 		if (m_editing)
 			m_field->SetProperty(Rml::PropertyId::Left, left(*m_editing));
+		// Answers arrive outside input handling: ask the window to update and draw them.
+		if (Rml::Context* context = m_element->GetContext())
+			context->RequestNextUpdate(0);
 	}
 
 	void SignatureRow::ProcessEvent(Rml::Event& event)
@@ -407,7 +410,11 @@ namespace gnubase::ui
 		const bool shown = m_track != 0 && lane != tracks.end();
 		element->SetClass("hidden", !shown);
 		if (!shown)
+		{
+			if (Rml::Context* context = element->GetContext())
+				context->RequestNextUpdate(0);
 			return;
+		}
 		const auto index = static_cast<size_t>(lane - tracks.begin());
 		element->SetProperty(Rml::PropertyId::Top, dp(tops[index] - view.top));
 		element->SetProperty(Rml::PropertyId::Height, dp(tops[index + 1] - tops[index]));
