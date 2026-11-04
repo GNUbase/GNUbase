@@ -652,6 +652,10 @@ namespace gnubase::ui
 		for (Rml::Element* control : controls)
 		{
 			const std::string param = attribute(*control, "param");
+			// A send level's Ctrl-click value follows the default send level, also while its knob is ahead.
+			const std::string level = widgets::format(static_cast<float>(m_defaultSendLevel));
+			if (param.rfind("sends.", 0) == 0 && endsWith(param, ".level") && attribute(*control, "default") != level)
+				control->SetAttribute("default", level);
 			if (control->HasAttribute("value") && m_binding.sending(stepKey(channel.id, param)))
 				continue; // the control is ahead of the engine
 			const Json value = paramValue(json, param);
@@ -671,10 +675,6 @@ namespace gnubase::ui
 				if (attribute(*control, "value") != text)
 					control->SetAttribute("value", text);
 			}
-			const std::string param = attribute(*control, "param");
-			const std::string level = widgets::format(static_cast<float>(m_defaultSendLevel));
-			if (param.rfind("sends.", 0) == 0 && endsWith(param, ".level") && attribute(*control, "default") != level)
-				control->SetAttribute("default", level);
 		}
 		m_updating = false;
 		if (Rml::Element* fader = strip.QuerySelector("fader"))
