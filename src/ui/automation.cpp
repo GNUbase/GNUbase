@@ -383,4 +383,21 @@ namespace gnubase::ui
 		shown.requestRender();
 		return {{"focus", nodeOrNull(context.GetFocusElement())}};
 	}
+
+	Json Automation::close(std::optional<WindowId> window, bool quit)
+	{
+		if (quit && window)
+			throw std::invalid_argument("quit asks GNUbase to quit, not one window to close: leave window out");
+		const WindowId id = resolve(window).id();
+		Shell& shell = m_shell;
+		shell.post(
+			[&shell, id, quit]
+			{
+				if (quit)
+					shell.requestQuit();
+				else
+					shell.requestClose(id);
+			});
+		return Json::object();
+	}
 }

@@ -332,6 +332,19 @@ namespace gnubase::app
 			run([](ui::Automation& ui, const Json& arguments)
 				{ return ui.text(windowOf(arguments), arguments.at("text").get<std::string>()); })});
 
+		tools.push_back({"ui_close",
+			"Asks to close a window as its title bar's close button does: a panel's own window docks the panel again, "
+			"and the main window asks to quit, which asks about unsaved changes first. With quit, asks GNUbase to quit "
+			"as the OS does, e.g. the macOS app menu's Quit or a signal, without a window. The request runs in the "
+			"UI's next step, as the OS's do: use ui_wait for what it opens, such as the unsaved changes question.",
+			object({{"window", windowProperty()},
+				{"quit",
+					{{"type", "boolean"},
+						{"description", "True to ask GNUbase to quit, without window; false if left out."}}}}),
+			object(Json::object()), false,
+			run([](ui::Automation& ui, const Json& arguments)
+				{ return ui.close(windowOf(arguments), arguments.value("quit", false)); })});
+
 		tools.push_back({"ui_file_dialog",
 			"Lists the file dialogs that wait for an answer, e.g. after File > Open: each with its id, kind (open, "
 			"save or folder), title, filters and the location it starts in. With dialog, first answers that one as "

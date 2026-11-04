@@ -134,6 +134,14 @@ namespace gnubase::ui
 		void quit();
 		bool running() const { return m_running; }
 
+		// What the window system's requests do, for automation (ui_close) as for the OS: requestClose like a window's
+		// close button, which runs onCloseRequest's handler and closes a window other than the main window, and asks
+		// to quit for the main window; requestQuit like the OS's quit request, which runs onQuitRequest's handler, or
+		// quits. requestClose does nothing for a window that isn't open. Don't call them inside a window's own event
+		// handlers, which closing it would pull the window from under: post them.
+		void requestClose(WindowId id);
+		void requestQuit();
+
 		// The window's content as it is now, drawn offscreen at its pixel size.
 		std::optional<Image> screenshot(WindowId id);
 
@@ -194,8 +202,6 @@ namespace gnubase::ui
 		};
 
 		void handle(const WindowEvent& event);
-		// The main window's close button or the OS's quit request: asks onQuitRequest's handler, or quits.
-		void requestQuit();
 		void refresh(Window& window);
 		void draw(Window& window);
 		// When the window needs updating next, also for updates its context requested since it was drawn, e.g. by an

@@ -339,11 +339,9 @@ namespace gnubase::ui
 
 	void ProjectFiles::closeDialog(const std::string& result)
 	{
+		// As its buttons close it, so that it closes once (ui::closeDialog).
 		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get()))
-		{
-			dialog->DispatchEvent(g_dialogCloseEvent, {{"result", Rml::Variant(result)}});
-			dialog->Close();
-		}
+			ui::closeDialog(*dialog, result);
 	}
 
 	void ProjectFiles::autoSaveFailed(const Json& failure)
@@ -362,37 +360,56 @@ namespace gnubase::ui
 			}
 	}
 
-	void ProjectFiles::unlessUnsaved(Window& window, std::function<void()> action)
+	void ProjectFiles::unlessUnsaved(
+		Window& window, std::function<void()> action, std::function<void(Rml::ElementDocument*)> asked)
 	{
 		m_binding.send("project.revision", Json::object(),
-			[this, id = window.id(), action = std::move(action)](const engine::Result& result)
+			[this, id = window.id(), action = std::move(action), asked = std::move(asked)](const engine::Result& result)
 			{
 				if (!result.ok() || !result.value.at("modified").get<bool>())
 				{
+					if (asked)
+						asked(nullptr);
 					action();
 					return;
 				}
 				// The dialog that asked may still be closing.
 				m_shell.post(
-					[this, id, action]
+					[this, id, action, asked]
 					{
-						if (Window* asking = m_shell.find(id))
-							openDialog(*asking, "discard-changes.rml",
-								[action](Rml::ElementDocument&, const std::string& answer)
-								{
-									if (answer == "ok")
-										action();
-								});
+						Window* asking = m_shell.find(id);
+						Rml::ElementDocument* question = asking != nullptr
+							? openDialog(*asking, "discard-changes.rml",
+								  [action](Rml::ElementDocument&, const std::string& answer)
+								  {
+									  if (answer == "ok")
+										  action();
+								  })
+							: nullptr;
+						if (asked)
+							asked(question);
 					});
 			});
 	}
 
 	void ProjectFiles::quit(Window& window)
 	{
+		// SDL follows the main window's close request with its own quit request when that is the last window, and
+		// the user may ask again while the question is open: the question that is coming or open answers them all.
+		// A question that was answered, or went with its window, is no longer the open dialog: the request asks again.
+		if (m_quitting || (m_quitQuestion.get() != nullptr && m_quitQuestion.get() == m_dialog.get()))
+			return;
 		// A dialog that is open, such as the start screen, would keep the question from opening: quitting cancels it.
 		closeDialog("cancel");
+		m_quitting = true;
 		// Quitting closes every window, so it waits until the event that asked for it is done with them.
-		unlessUnsaved(window, [this] { m_shell.post([this] { m_shell.quit(); }); });
+		unlessUnsaved(
+			window, [this] { m_shell.post([this] { m_shell.quit(); }); },
+			[this](Rml::ElementDocument* question)
+			{
+				m_quitting = false;
+				m_quitQuestion = question != nullptr ? question->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>();
+			});
 	}
 
 	void ProjectFiles::open(Window& window)

@@ -938,7 +938,7 @@ namespace
 	};
 
 	// Loads the dialog from tests/data/ui and shows it modal over the main window's documents.
-	void openDialog(test::UiApp& app, Closes& closes)
+	Rml::ElementDocument& openDialog(test::UiApp& app, Closes& closes)
 	{
 		Rml::ElementDocument* dialog =
 			app.main().context().LoadDocument(std::string(GNUBASE_TEST_DATA_DIR) + "/ui/dialog.rml");
@@ -946,6 +946,7 @@ namespace
 		dialog->AddEventListener(ui::g_dialogCloseEvent, &closes);
 		dialog->Show(Rml::ModalFlag::Modal);
 		app.shell().step(std::chrono::milliseconds(0));
+		return *dialog;
 	}
 
 	bool dialogOpen(test::UiApp& app)
@@ -987,6 +988,41 @@ TEST_CASE("dialogs open in the middle, move by their title bar, and close with E
 	click(app, "#cancel");
 	CHECK(app.waitUntil([&app] { return !dialogOpen(app); }));
 	CHECK(closes.results == std::vector<std::string>{"ok", "cancel", "cancel"});
+}
+
+namespace
+{
+	// Closes the dialog again from its own close event, and remembers what that returned.
+	struct CloseAgain final : Rml::EventListener
+	{
+		void ProcessEvent(Rml::Event& event) override
+		{
+			if (auto* document = dynamic_cast<Rml::ElementDocument*>(event.GetCurrentElement()))
+				results.push_back(ui::closeDialog(*document, "again"));
+		}
+
+		std::vector<bool> results;
+	};
+}
+
+TEST_CASE("the app closes a dialog with a result as its buttons do, and only once", "[ui]")
+{
+	Closes closes;
+	CloseAgain again;
+	test::UiApp app;
+	Rml::ElementDocument& page = app.show("popups.rml");
+	CHECK(!ui::closeDialog(page, "cancel")); // no <dialog> in it
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(page.IsVisible());
+
+	// Closing already, also while its close event is on its way, it doesn't close again.
+	Rml::ElementDocument& dialog = openDialog(app, closes);
+	dialog.AddEventListener(ui::g_dialogCloseEvent, &again);
+	CHECK(ui::closeDialog(dialog, "discard"));
+	CHECK(again.results == std::vector<bool>{false});
+	CHECK(!ui::closeDialog(dialog, "cancel"));
+	CHECK(app.waitUntil([&app] { return !dialogOpen(app); }));
+	CHECK(closes.results == std::vector<std::string>{"discard"});
 }
 
 TEST_CASE("Alt leaves a menu bar behind a modal dialog closed", "[ui]")
