@@ -85,6 +85,9 @@ namespace gnubase::engine
 		// Registers a command defined in another file, such as quantize.* (#132). A command that changes the project
 		// is one undo step named action, like the commands here, and transactions can run it.
 		void addEdit(Engine& engine, CommandInfo info, std::string action, Handler handler);
+		// Runs a command registered with addEdit as part of the command running, as transactions run them: on its
+		// project, with its events going out with that command's and its changes in that command's undo step.
+		Json runEdit(const std::string& command, Project& project, const Json& parameters, CommandContext& context);
 
 		// The project, for commands defined in other files that read it. Only on the command thread.
 		const Project& project() const { return m_project; }
