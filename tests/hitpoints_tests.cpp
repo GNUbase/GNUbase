@@ -553,6 +553,16 @@ TEST_CASE("hitpoints inserted or moved by hand get the peak and intensity of the
 		return *found;
 	};
 
+	// The sharpest one moved by a frame: locked, at most 1, so that the next ones are measured against a detected one.
+	size_t sharpest = 0;
+	for (size_t i = 0; i < detected.size(); ++i)
+		if (detected.at(i).at("intensity") == 1.0)
+			sharpest = i;
+	REQUIRE(sharpest != g_ghost);
+	const auto top = detected.at(sharpest).at("position").get<int64_t>();
+	f.call("clip.setHitpoint", {{"clip", f.clip}, {"position", top}, {"moveTo", top + 1}});
+	CHECK(find(top + 1).at("intensity").get<double>() <= 1.0);
+
 	// Moved into the decay 50 ms later, it is quieter and its level doesn't rise there.
 	f.call("clip.setHitpoint", {{"clip", f.clip}, {"position", at}, {"moveTo", at + 2400}});
 	const Json moved = find(at + 2400);
@@ -581,13 +591,7 @@ TEST_CASE("hitpoints inserted or moved by hand get the peak and intensity of the
 	CHECK(velocity > 2.0 / 127.0);
 	CHECK(velocity < 0.3);
 
-	// Moving the sharpest one measures it against the next sharpest: back where it was, it is the sharpest again.
-	size_t sharpest = 0;
-	for (size_t i = 0; i < detected.size(); ++i)
-		if (detected.at(i).at("intensity") == 1.0)
-			sharpest = i;
-	const auto top = detected.at(sharpest).at("position").get<int64_t>();
-	f.call("clip.setHitpoint", {{"clip", f.clip}, {"position", top}, {"moveTo", top + 1}});
+	// Moved back, the sharpest one is measured against the next sharpest detected one: it is the sharpest again.
 	f.call("clip.setHitpoint", {{"clip", f.clip}, {"position", top + 1}, {"moveTo", top}});
 	CHECK(find(top).at("intensity") == 1.0);
 	CHECK(std::abs(find(top).at("peak").get<double>() - detected.at(sharpest).at("peak").get<double>()) < 0.5);
@@ -607,7 +611,10 @@ TEST_CASE("clip.setHitpoints sets a clip's hitpoints as given and checks them", 
 	CHECK(result.at("hitpoints").at(1).at("locked") == true);
 	CHECK(f.call("history.get").at("steps").back().at("action") == "Set hitpoints");
 	// They can be given back as they come.
-	CHECK(f.call("clip.setHitpoints", {{"clip", f.clip}, {"hitpoints", result.at("hitpoints")}}) == result);
+	const auto opened = f.call("project.revision").at("project").get<uint64_t>();
+	CHECK(f.call("clip.setHitpoints",
+			  {{"clip", f.clip}, {"hitpoints", result.at("hitpoints")}, {"project", opened}, {"path", f.file}}) ==
+		result);
 
 	const auto set = [&f](const Json& hitpoint)
 	{ return f.fails("clip.setHitpoints", {{"clip", f.clip}, {"hitpoints", Json::array({hitpoint})}}); };
@@ -621,6 +628,11 @@ TEST_CASE("clip.setHitpoints sets a clip's hitpoints as given and checks them", 
 		ContainsSubstring("two hitpoints at 5"));
 	CHECK_THAT(
 		f.fails("clip.setHitpoints", {{"clip", 999}, {"hitpoints", Json::array()}}), ContainsSubstring("no clip 999"));
+	// A job's hitpoints go only to the clip and file it detected them in.
+	CHECK_THAT(f.fails("clip.setHitpoints", {{"clip", f.clip}, {"hitpoints", Json::array()}, {"project", opened + 1}}),
+		ContainsSubstring("another project was opened"));
+	CHECK_THAT(f.fails("clip.setHitpoints", {{"clip", f.clip}, {"hitpoints", Json::array()}, {"path", "other.wav"}}),
+		ContainsSubstring("relinked"));
 	CHECK(f.clipJson().at("hitpoints") == result.at("hitpoints")); // nothing changed
 }
 
@@ -650,6 +662,15 @@ TEST_CASE("detecting hitpoints runs as a job, which can be cancelled and fails w
 		f.call("job.cancel", {{"job", started.at("job").at("id")}});
 		CHECK(f.waitForJob(started).at("state") == "cancelled");
 		CHECK(f.call("history.get").at("steps").size() == steps);
+	}
+	SECTION("another project opened meanwhile fails the job")
+	{
+		const Json started = f.call("clip.detectHitpoints", {{"clip", clip}});
+		f.call("project.new");
+		const Json finished = f.waitForJob(started);
+		CHECK(finished.at("state") == "failed");
+		CHECK_THAT(finished.at("error").get<std::string>(), ContainsSubstring("another project was opened"));
+		CHECK(f.call("project.get").at("clips").empty());
 	}
 	SECTION("a clip removed meanwhile fails the job")
 	{

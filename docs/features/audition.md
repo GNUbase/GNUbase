@@ -43,8 +43,9 @@ Each returns and announces `audition.changed`: the auditioned `track` (0 for non
 ## Checks
 
 - `tests/playback_tests.cpp`: auditioning on the dummy device plays exactly the track's samples from the position,
-  and up to an end, for two block sizes, with its channel turned down and muted and another track silent, then nothing once stopped,
-  and the transport unchanged; the errors without a device, for a MIDI track and a negative position; scrubbing back
-  at normal speed and forwards at twice the speed, sample by sample, and the cursor following.
+  and up to an end, for two block sizes, with its channel turned down and muted and another track silent, then
+  nothing once stopped, and the transport unchanged; the errors without a device, for a MIDI track, a negative
+  position and an end before the position; scrubbing back at normal speed and forwards at twice the speed, sample by
+  sample, and the cursor following.
 - `tests/eventediting_tests.cpp` and `tests/uiapp_tests.cpp`: the play tool on an audio lane, on a MIDI lane, and
   scrubbing ([tools.md](tools.md)).

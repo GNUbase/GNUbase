@@ -172,16 +172,22 @@ namespace gnubase::engine
 
 		// Gives a hitpoint inserted or moved by hand the peak and intensity of the sound where it is, so that the
 		// filters and MIDI notes' velocities treat it as if detected there (#753). The intensity is relative to the
-		// sharpest the detection found: the rise at the clip's other hitpoint of the highest intensity, divided by
-		// that intensity; without one, the hitpoint is the sharpest if its level rises at all.
+		// sharpest the detection found: the rise at the clip's other hitpoint of the highest intensity, preferring
+		// detected (unlocked) ones, whose intensity isn't capped at 1, divided by that intensity; without one, the
+		// hitpoint is the sharpest if its level rises at all.
 		void measureHitpoint(const Project& project, const Clip& clip, Hitpoint& hitpoint)
 		{
 			const MediaFile& media = project.media.at(clip.media);
 			const analysis::Onset sound = measure(media, hitpoint.position);
+			const auto better = [](const Hitpoint& other, const Hitpoint* than)
+			{
+				if (than == nullptr || other.locked != than->locked)
+					return than == nullptr || !other.locked;
+				return other.intensity > than->intensity;
+			};
 			const Hitpoint* reference = nullptr;
 			for (const Hitpoint& other : clip.hitpoints)
-				if (&other != &hitpoint && other.intensity > 0.0 &&
-					(reference == nullptr || other.intensity > reference->intensity))
+				if (&other != &hitpoint && other.intensity > 0.0 && better(other, reference))
 					reference = &other;
 			double sharpest = 0.0;
 			if (reference != nullptr)
@@ -252,8 +258,8 @@ namespace gnubase::engine
 				"restores the hitpoints found this way after Remove All. It reads the clip's whole file, so it runs "
 				"as a job and can't be part of a history.transaction: this returns at once, job.progress events say "
 				"how much of the file it read, job.cancel stops it, and once it is done it sets them with "
-				"clip.setHitpoints, one undo step, whose result is the job's result. A clip removed meanwhile fails "
-				"the job.",
+				"clip.setHitpoints, one undo step, whose result is the job's result. A clip removed meanwhile, another "
+				"project opened or the clip's media file relinked fails the job.",
 				objectSchema({{"clip", integer}}, {"clip"}), objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
 			[&model, &engine](CommandContext& context)
 			{
@@ -263,14 +269,16 @@ namespace gnubase::engine
 				require(found != project.clips.end(), "no clip " + std::to_string(id));
 				return Json{{"job",
 					engine.jobs().start("clip.detectHitpoints",
-						[id, media = project.media.at(found->second.media)](JobContext& job)
+						[id, media = project.media.at(found->second.media), opened = model.openedRevision()](
+							JobContext& job)
 						{
 							Json hitpoints = Json::array();
 							for (const Hitpoint& hitpoint : detect(media, job))
 								hitpoints.push_back({{"position", hitpoint.position}, {"peak", hitpoint.peak},
 									{"intensity", hitpoint.intensity}});
-							return job.command(
-								"clip.setHitpoints", {{"clip", id}, {"hitpoints", std::move(hitpoints)}});
+							return job.command("clip.setHitpoints",
+								{{"clip", id}, {"hitpoints", std::move(hitpoints)}, {"project", opened},
+									{"path", media.path}});
 						})}};
 			});
 
@@ -279,10 +287,12 @@ namespace gnubase::engine
 				"Makes hitpoints a clip's hitpoints, in place of those it had: what clip.detectHitpoints found, or "
 				"hitpoints from elsewhere. Each has its position (a clip frame, each one once), peak (dBFS) and "
 				"intensity (0-1), and may say whether it is locked and disabled (default false); active is ignored, "
-				"so that a clip's hitpoints can be given as they come. " +
+				"so that a clip's hitpoints can be given as they come. With project (project.revision's), it fails if "
+				"another project was opened since; with path, if the clip's media file has another path now (it was "
+				"relinked), so that a job's hitpoints never go to another clip or file. " +
 					hitpointsText,
 				objectSchema(
-					{{"clip", integer},
+					{{"clip", integer}, {"project", integer}, {"path", {{"type", "string"}}},
 						{"hitpoints",
 							{{"type", "array"},
 								{"items",
@@ -292,10 +302,16 @@ namespace gnubase::engine
 					{"clip", "hitpoints"}),
 				resultSchema, false},
 			"Set hitpoints",
-			[](Project& project, CommandContext& context)
+			[&model](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
+				require(!parameters.contains("project") ||
+						parameters.at("project").get<uint64_t>() == model.openedRevision(),
+					"another project was opened meanwhile");
 				Clip& clip = clipOf(project, parameters);
+				require(!parameters.contains("path") ||
+						parameters.at("path").get<std::string>() == project.media.at(clip.media).path,
+					"clip " + std::to_string(clip.id) + "'s media file was relinked meanwhile");
 				const time::Samples length = clipLength(project, clip);
 				std::vector<Hitpoint> hitpoints;
 				for (const Json& given : parameters.at("hitpoints"))
@@ -356,7 +372,7 @@ namespace gnubase::engine
 				"manual p. 640). It is locked, so that it counts whatever the filters, and gets the peak and "
 				"intensity of the sound there, measured from the clip's file as the detection measures those it "
 				"finds, the intensity relative to the sharpest the detection found (the rise at the hitpoint of the "
-				"highest intensity, measured again). " +
+				"highest intensity, detected ones first, measured again). Fails if the clip's file can't be read. " +
 					hitpointsText,
 				objectSchema({{"clip", integer}, {"position", integer}}, {"clip", "position"}), resultSchema, false},
 			"Insert hitpoint",
@@ -375,7 +391,8 @@ namespace gnubase::engine
 			{"clip.setHitpoint", 1,
 				"Edits the hitpoint of a clip at position (reference manual p. 640): moveTo moves it to that clip "
 				"frame, which locks it unless locked is given and measures its peak and intensity there as "
-				"clip.addHitpoint does; locked locks or unlocks it (Lock Hitpoint), disabled "
+				"clip.addHitpoint does (failing if the file can't be read); locked locks or unlocks it (Lock "
+				"Hitpoint), disabled "
 				"disables or enables it (Disable Hitpoint); both false reset it (Enable/Unlock Hitpoints). What isn't "
 				"given stays. " +
 					hitpointsText,

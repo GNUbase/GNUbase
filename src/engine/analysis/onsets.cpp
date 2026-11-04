@@ -93,7 +93,8 @@ namespace gnubase::engine::analysis
 	{
 		OnsetDetector detector(sampleRate, channels);
 		const size_t width = detector.m_last.size();
-		const size_t end = std::min(count, at + static_cast<size_t>(detector.m_window));
+		// To where the detection measures an onset it finds: at + m_window, inclusive (m_open).
+		const size_t end = std::min(count, at + static_cast<size_t>(detector.m_window) + 1);
 		Onset onset;
 		onset.frame = static_cast<int64_t>(at);
 		onset.rise = -std::numeric_limits<double>::infinity();

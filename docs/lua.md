@@ -1085,7 +1085,7 @@ Returns:
 
 #### `gnubase.clip.addHitpoint`
 
-Inserts a hitpoint into a clip at position, a clip frame (Alt-click with Edit Hitpoints, reference manual p. 640). It is locked, so that it counts whatever the filters, and gets the peak and intensity of the sound there, measured from the clip's file as the detection measures those it finds, the intensity relative to the sharpest the detection found (the rise at the hitpoint of the highest intensity, measured again). A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
+Inserts a hitpoint into a clip at position, a clip frame (Alt-click with Edit Hitpoints, reference manual p. 640). It is locked, so that it counts whatever the filters, and gets the peak and intensity of the sound there, measured from the clip's file as the detection measures those it finds, the intensity relative to the sharpest the detection found (the rise at the hitpoint of the highest intensity, detected ones first, measured again). Fails if the clip's file can't be read. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
 
 Parameters:
 
@@ -1115,7 +1115,7 @@ Returns:
 
 #### `gnubase.clip.detectHitpoints`
 
-Finds where sounds start in a clip (calculating hitpoints, reference manual p. 637) and makes them its hitpoints, in place of those it has then: where the level, or that of the high frequencies, rises by 6 dB or more within 5 ms from at least -60 dBFS, 20 ms apart at least. Edit Hitpoints restores the hitpoints found this way after Remove All. It reads the clip's whole file, so it runs as a job and can't be part of a history.transaction: this returns at once, job.progress events say how much of the file it read, job.cancel stops it, and once it is done it sets them with clip.setHitpoints, one undo step, whose result is the job's result. A clip removed meanwhile fails the job.
+Finds where sounds start in a clip (calculating hitpoints, reference manual p. 637) and makes them its hitpoints, in place of those it has then: where the level, or that of the high frequencies, rises by 6 dB or more within 5 ms from at least -60 dBFS, 20 ms apart at least. Edit Hitpoints restores the hitpoints found this way after Remove All. It reads the clip's whole file, so it runs as a job and can't be part of a history.transaction: this returns at once, job.progress events say how much of the file it read, job.cancel stops it, and once it is done it sets them with clip.setHitpoints, one undo step, whose result is the job's result. A clip removed meanwhile, another project opened or the clip's media file relinked fails the job.
 
 Parameters:
 
@@ -1189,7 +1189,7 @@ Returns:
 
 #### `gnubase.clip.setHitpoint`
 
-Edits the hitpoint of a clip at position (reference manual p. 640): moveTo moves it to that clip frame, which locks it unless locked is given and measures its peak and intensity there as clip.addHitpoint does; locked locks or unlocks it (Lock Hitpoint), disabled disables or enables it (Disable Hitpoint); both false reset it (Enable/Unlock Hitpoints). What isn't given stays. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
+Edits the hitpoint of a clip at position (reference manual p. 640): moveTo moves it to that clip frame, which locks it unless locked is given and measures its peak and intensity there as clip.addHitpoint does (failing if the file can't be read); locked locks or unlocks it (Lock Hitpoint), disabled disables or enables it (Disable Hitpoint); both false reset it (Enable/Unlock Hitpoints). What isn't given stays. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
 
 Parameters:
 
@@ -1222,12 +1222,14 @@ Returns:
 
 #### `gnubase.clip.setHitpoints`
 
-Makes hitpoints a clip's hitpoints, in place of those it had: what clip.detectHitpoints found, or hitpoints from elsewhere. Each has its position (a clip frame, each one once), peak (dBFS) and intensity (0-1), and may say whether it is locked and disabled (default false); active is ignored, so that a clip's hitpoints can be given as they come. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
+Makes hitpoints a clip's hitpoints, in place of those it had: what clip.detectHitpoints found, or hitpoints from elsewhere. Each has its position (a clip frame, each one once), peak (dBFS) and intensity (0-1), and may say whether it is locked and disabled (default false); active is ignored, so that a clip's hitpoints can be given as they come. With project (project.revision's), it fails if another project was opened since; with path, if the clip's media file has another path now (it was relinked), so that a job's hitpoints never go to another clip or file. A clip's hitpoints are in its hitpoints, by position: each with its position in the clip's sample frames, its peak (dBFS, the loudest sample in the 20 ms from there) and intensity (0-1, how sharply the level rises there, 1 for the sharpest the detection found), whether it is locked and disabled, and active, whether it counts: not disabled, and locked or let through by the clip's hitpointFilter (clip.setHitpointFilter). Emits clip.changed. Returns the clip's id and its hitpoints.
 
 Parameters:
 
 - `clip`: integer, required
 - `hitpoints`: array of object, required
+- `path`: string
+- `project`: integer
 
 Returns:
 

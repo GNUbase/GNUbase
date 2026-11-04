@@ -211,7 +211,10 @@ TEST_CASE("Edit Hitpoints' gestures lock, disable, reset, insert and move hitpoi
 	CHECK(f.hitpoints().at(3).at("locked") == true);
 
 	// A click between two hitpoints plays that slice from its start to its end (p. 639): the engine's audition stops
-	// at the end (tests/playback_tests.cpp), so releasing the mouse doesn't stop it.
+	// at the end (tests/playback_tests.cpp), so releasing the mouse doesn't stop it. A disabled hitpoint doesn't end
+	// it.
+	f.click(f.at(second), {"shift"});
+	REQUIRE(f.app.waitUntil([&] { return f.has(".se-hitpoint:nth-child(2)", "disabled"); }));
 	ui::EngineBinding binding(f.app.engine());
 	std::vector<std::string> modes;
 	const ui::Subscription subscription = binding.on("audition.changed",
@@ -226,6 +229,15 @@ TEST_CASE("Edit Hitpoints' gestures lock, disable, reset, insert and move hitpoi
 	f.app.call("project.get"); // after whatever the click and the release sent
 	binding.update();
 	CHECK(modes == std::vector<std::string>{"play"});
+	Json started;
+	const Json log = f.app.call("engine.commandLog");
+	for (const Json& command : log.at("commands"))
+		if (command.at("command") == "audition.start")
+			started = command.at("parameters");
+	const Json hitpoints = f.hitpoints();
+	CHECK(started ==
+		Json{{"track", f.track}, {"position", g_second + hitpoints.at(0).at("position").get<int64_t>()},
+			{"end", g_second + hitpoints.at(2).at("position").get<int64_t>()}});
 }
 
 TEST_CASE("the Hitpoints section's Create section makes MIDI notes and slices", "[ui]")

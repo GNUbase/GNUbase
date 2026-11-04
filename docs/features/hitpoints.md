@@ -8,7 +8,9 @@ Where sounds start in a clip (#143, reference manual pp. 636-647): detecting the
 `clip.detectHitpoints` runs as a job (`job.progress`, `job.cancel`, [architecture](../architecture.md), "Jobs"),
 since a long recording takes seconds: `analysis::OnsetDetector` (`src/engine/analysis/onsets.h`) reads the clip's
 file in blocks on the job's thread, and the job then sets the hitpoints with `clip.setHitpoints`, one undo step. A
-clip removed meanwhile fails the job. Each channel's peak level is followed by two envelopes, one of the samples and one of their differences (the high
+clip removed meanwhile, another project opened or the clip's file relinked fails the job.
+
+Each channel's peak level is followed by two envelopes, one of the samples and one of their differences (the high
 frequencies, so that a hi-hat stands out over a kick drum's decay), which jump up with the signal and fall with a
 50 ms time constant. Where either rises by 6 dB or more within 5 ms, from at least -60 dBFS, a sound starts: at the
 first frame there more than 1 dB above where the envelope was. The next one can start 20 ms later. Each onset has its
@@ -16,11 +18,11 @@ peak, the loudest sample in the 20 ms from there, and its rise; the intensity is
 sharpest.
 
 A hitpoint inserted or moved by hand is measured the same way where it goes (`OnsetDetector::measure`), from half a
-second of the file before it, by when anything earlier has decayed below -60 dBFS, so that it gets the peak and
-rise the detection would have given it there. Its intensity is relative to the sharpest the detection found: the
-rise at the clip's other hitpoint of the highest intensity, measured again, divided by that intensity. So a hit the
-detection missed and the user added gets a MIDI note's velocity as loud as it is, and the filters treat it as a
-detected one once it is unlocked.
+second of the file before it, by when anything earlier has decayed below -60 dBFS, so that it gets the peak and rise
+the detection would have given it there. Its intensity is relative to the sharpest the detection found: the rise at
+the clip's other hitpoint of the highest intensity, preferring detected (unlocked) ones, measured again and divided by
+that intensity. So a hit the detection missed and the user added gets a MIDI note's velocity as loud as it is, and the
+filters treat it as a detected one once it is unlocked. Inserting or moving one fails if the file can't be read.
 
 ## In the engine
 
@@ -84,19 +86,19 @@ display's gestures edit hitpoints instead of the tool's (pp. 636, 639-640):
 | Ctrl (Cmd on macOS), Alt and a click on its line | Enable/Unlock Hitpoints: resets it |
 | A drag of its line | Move Hitpoint, which locks it |
 | Alt and a click elsewhere | Insert Hitpoint |
-| A click between two | Play back Slice: auditions the slice from the hitpoint that counts before to the one after (`audition.start` with `end`) |
+| A click between two | Play back Slice: plays the slice, from the hitpoint that counts before to the one after |
 
 `resources/styles/sampleeditor.rcss` lays them out; the themes color them (`tools/skin/generate.py`).
 
 ## Not yet
 
 Automatic detection when audio is imported or recorded (the Editing - Audio preference, which can start the same job)
-and the hitpoints of the selected event in the project window; the Beats filter and warp markers, which need the clip's musical definition and
-warping (#144); Tab to the next slice; Alt+N and Alt+B to locate to hitpoints; Divide Audio Events at Hitpoints for
-folder tracks; the MIDI notes' destinations First Selected Track in the UI (the engine takes `track`), which replaces
-the parts of earlier conversions, and Project Clipboard; Close Gaps and Delete Overlaps for slices. The detection is
-checked on synthesized loops only; recorded drum loops with hand-annotated onsets (room sound, bleed, flams) are yet
-to come.
+and the hitpoints of the selected event in the project window; the Beats filter and warp markers, which need the
+clip's musical definition and warping (#144); Tab to the next slice; Alt+N and Alt+B to locate to hitpoints; Divide
+Audio Events at Hitpoints for folder tracks; the MIDI notes' destinations First Selected Track in the UI (the engine
+takes `track`), which replaces the parts of earlier conversions, and Project Clipboard; Close Gaps and Delete Overlaps
+for slices. The detection is checked on synthesized loops only; recorded drum loops with hand-annotated onsets (room
+sound, bleed, flams) are yet to come.
 
 ## Checks
 
