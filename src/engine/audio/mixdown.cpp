@@ -87,14 +87,15 @@ namespace gnubase::engine
 		{
 			FileFormat result;
 			const std::string format = parameters.value("format", std::string("wav"));
-			result.format = format == "aiff" ? AudioFormat::Aiff
-				: format == "flac"           ? AudioFormat::Flac
-											 : AudioFormat::Wav;
+			if (format == "aiff")
+				result.format = AudioFormat::Aiff;
+			else if (format == "flac")
+				result.format = AudioFormat::Flac;
 			const std::string samples = parameters.value("sampleFormat", std::string("int24"));
-			constexpr std::array<std::pair<const char*, SampleFormat>, 5> g_names = {
+			constexpr std::array<std::pair<const char*, SampleFormat>, 5> names = {
 				{{"int16", SampleFormat::Int16}, {"int24", SampleFormat::Int24}, {"int32", SampleFormat::Int32},
 					{"float32", SampleFormat::Float32}, {"float64", SampleFormat::Float64}}};
-			for (const auto& [name, value] : g_names)
+			for (const auto& [name, value] : names)
 				if (samples == name)
 					result.sampleFormat = value;
 			const bool floating =

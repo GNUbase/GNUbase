@@ -95,7 +95,8 @@ TEST_CASE("File > Export > Audio Mixdown exports the checked channels over the l
 		if (bus.at("mainMix") == true)
 			mainMix = bus.at("id").get<uint64_t>();
 	CHECK(element(app, "#mixdown-channel-" + std::to_string(mainMix)).at("attributes").contains("checked"));
-	CHECK_FALSE(element(app, "#mixdown-channel-" + std::to_string(channel)).at("attributes").contains("checked"));
+	// Not CHECK_FALSE: Catch2's ContinueOnFailure | FalseTest trips clang-analyzer's EnumCastOutOfRange check
+	CHECK(!element(app, "#mixdown-channel-" + std::to_string(channel)).at("attributes").contains("checked"));
 	CHECK(element(app, "#mixdown-format").at("value") == "wav");
 	CHECK(element(app, "#mixdown-bit-depth").at("value") == "int24");
 	CHECK(element(app, "#mixdown-sample-rate").at("value") == "48000");
