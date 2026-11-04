@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <utility>
@@ -282,18 +283,35 @@ TEST_CASE("the key editor's keyboard is a piano keyboard aligned with the grid's
 	CHECK(pitchAt(right, 10.1) == 69); // A3, up to 72/7 rows
 	CHECK(pitchAt(right, 10.5) == 71); // B3
 
-	// The keyboard as it looks in the default theme: the two octaves from C2 to B3.
+	// The keyboard as it looks in the default theme, a black and a white key lit for selected notes: the two octaves
+	// from C2 to B3.
+	const std::vector<uint64_t> ids = f.add({{0, 61, g_quarter}, {g_quarter, 64, g_quarter}});
+	// Selected through the engine: a click would leave the focus, and its ring, in the note display.
+	f.app.call("editor.set",
+		{{"editor", "window"},
+			{"selection", Json::array({{{"part", f.part}, {"note", ids[0]}}, {{"part", f.part}, {"note", ids[1]}}})}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.has(".key-editor-key[pitch=\"61\"]", "selected") &&
+				f.has(".key-editor-key[pitch=\"64\"]", "selected");
+		}));
+	f.scroll(60);
 	const Json body = f.box(".key-editor-body");
-	const auto from = static_cast<int>(std::lround(top + ((127 - 71) * row)));
-	const auto to = static_cast<int>(std::lround(top + ((128 - 48) * row)));
+	// The inspector's sections change with the selection, which could move the note display.
+	const auto shownTop = f.box(".key-editor-grid").at("y").get<double>();
+	const auto shownX = f.box(".key-editor-keys").at("x").get<int>();
+	const auto from = static_cast<int>(std::lround(shownTop + ((127 - 71) * row)));
+	const auto to = static_cast<int>(std::lround(shownTop + ((128 - 48) * row)));
 	REQUIRE(from >= body.at("y").get<int>());
 	REQUIRE(to <= body.at("y").get<int>() + body.at("height").get<int>());
 	const ui::Image shown = f.app.ui().screenshot(f.window, {});
-	REQUIRE(x + width <= shown.width);
+	REQUIRE(shownX >= 0);
+	REQUIRE(shownX + width <= shown.width);
 	ui::Image keys{width, to - from, {}};
 	for (int y = from; y < to; ++y)
 	{
-		const auto begin = shown.pixels.begin() + (((static_cast<ptrdiff_t>(y) * shown.width) + x) * 4);
+		const auto begin = shown.pixels.begin() + (((static_cast<ptrdiff_t>(y) * shown.width) + shownX) * 4);
 		keys.pixels.insert(keys.pixels.end(), begin, begin + (static_cast<ptrdiff_t>(width) * 4));
 	}
 	test::UiApp::checkGolden("key-editor-keyboard", keys);

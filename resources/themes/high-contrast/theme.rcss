@@ -666,6 +666,10 @@
 	{
 		background-color: #ffff00;
 	}
+	.key-editor-key.black.selected
+	{
+		border-bottom-color: #ffff00;
+	}
 	.key-editor-grid
 	{
 		background-color: #000000;

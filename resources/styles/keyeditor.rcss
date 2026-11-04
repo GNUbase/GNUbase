@@ -87,6 +87,7 @@
 	flex: 1 1 0;
 }
 
+/* The row height: .key-editor-keys is 128 of them high. */
 .key-editor-row
 {
 	display: block;
@@ -94,7 +95,8 @@
 	box-sizing: border-box;
 }
 
-/* A C key's name sits at the right, level with its own row: the bottom 10dp of the key's 120/7dp. */
+/* A C key's name sits at the right, level with its own row (the bottom 10dp of the key's 120/7dp) but 1dp higher, clear
+   of the key's bottom border. */
 .key-editor-key
 {
 	position: absolute;
@@ -105,7 +107,7 @@
 	font-size: 8dp;
 	line-height: 10dp;
 	text-align: right;
-	padding-top: 7dp;
+	padding-top: 6dp;
 	padding-right: 2dp;
 }
 

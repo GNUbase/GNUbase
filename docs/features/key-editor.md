@@ -127,8 +127,9 @@ Length section's functions (#133); the key editor's context menu.
 - `tests/keyeditor_ui_tests.cpp` drives the app with `ui::Automation`: the keyboard and notes at their time and pitch,
   keys lit for selected notes; the piano keyboard at 1024x600: white keys of equal height across the keyboard, black
   keys narrower on their rows, the mouse on the right part of a white key beside a black key over the white key, and
-  a golden image of two octaves (`tests/golden/ui/key-editor-keyboard.png`); the object selection tool selecting, deselecting, moving, resizing, inserting and
-  deleting; the draw tool with Quantize Link and an eighth from the Length Quantize menu; the erase, trim (and with
-  Alt), split and glue tools; the transpose palette and typing a pitch on the info line; step input with its cursor,
-  a click moving it, and MIDI input selecting the next note; the Chord Editing section naming and changing a chord;
-  the toolbox with the setting on and off, with and without a modifier key, choosing tools.
+  a golden image of two octaves with a black and a white key lit (`tests/golden/ui/key-editor-keyboard.png`); the
+  object selection tool selecting, deselecting, moving, resizing, inserting and deleting; the draw tool with Quantize
+  Link and an eighth from the Length Quantize menu; the erase, trim (and with Alt), split and glue tools; the
+  transpose palette and typing a pitch on the info line; step input with its cursor, a click moving it, and MIDI input
+  selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with the setting on and
+  off, with and without a modifier key, choosing tools.

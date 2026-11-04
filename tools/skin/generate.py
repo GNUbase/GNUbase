@@ -563,6 +563,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".key-editor-key.black", {"background-color": c["background"], "color": c["text"],
                                    "border-bottom-color": c["background"]}),
         (".key-editor-key.selected", {"background-color": c["accent"]}),
+        (".key-editor-key.black.selected", {"border-bottom-color": c["accent"]}),
         (".key-editor-grid", {"background-color": c["surface"]}),
         (".key-editor-row", {"border-bottom-width": f"{widths['hairline']}px",
                              "border-bottom-color": mix(c["surface"], c["border"], .5)}),
