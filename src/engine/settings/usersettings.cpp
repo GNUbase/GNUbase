@@ -2,8 +2,11 @@
 #include "engine/settings/usersettings.h"
 
 #include "engine/engine.h"
+#include "engine/midi/controllerlanes.h"
 
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace gnubase::engine::settings
 {
@@ -378,6 +381,31 @@ namespace gnubase::engine::settings
 					"an event or part is selected they also select the first one on the newly selected track "
 					"(reference manual p. 218).",
 					Json{{"type", "boolean"}}, false},
+				{"ui.controllerLanePresets",
+					"The controller lane presets of the MIDI editors (#128, reference manual p. 1166): each a name and "
+					"the lanes it shows, as editor.set takes them.",
+					Json{{"type", "array"},
+						{"items",
+							{{"type", "object"},
+								{"properties",
+									{{"name", {{"type", "string"}}},
+										{"lanes",
+											{{"type", "array"},
+												{"items",
+													{{"type", "object"}, {"additionalProperties", false},
+														{"required", Json::array({"type"})},
+														{"properties",
+															{{"type",
+																 {{"type", "string"},
+																	 {"enum",
+																		 std::vector<std::string>(
+																			 midi::g_laneTypes.begin(),
+																			 midi::g_laneTypes.end())}}},
+																{"number",
+																	{{"type", "integer"}, {"minimum", 0},
+																		{"maximum", 127}}}}}}}}}}},
+								{"required", Json::array({"name", "lanes"})}}}},
+					Json::array()},
 				{"ui.zoomPresets",
 					"The horizontal zoom presets of the event display, for every project: each a name and the "
 					"seconds the view shows.",
