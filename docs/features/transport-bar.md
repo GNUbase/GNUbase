@@ -155,5 +155,8 @@ tempo with more decimals than the field shows, kept when the field is left untou
 the position typed back into the primary display during playback; Show Beat Count Only and the window sizes, kept for
 the window opened again; and the setup panes of the transport bar and the panel, each with its own sections, and Show
 All. A button or menu item with a command that doesn't exist, parameters it doesn't take or parameters that aren't
-JSON makes `TransportControls` throw; without a check, only the last.
+JSON makes `TransportControls` throw; without a check, only the last. `tests/mainmenu_tests.cpp` opens the transport
+panel and the time display window from a copy of the resources with a control that is refused: the window closes
+again, also when it is opened a second time, `transportPanel()` or `timeDisplay()` stays null, and the other window
+still opens.
 `tests/keycommands_tests.cpp` checks held keys, `tests/theme_tests.cpp` the themes' time display sizes.

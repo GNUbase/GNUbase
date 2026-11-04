@@ -3,7 +3,11 @@
 // tools drive it: opening it, the part display with its lanes, events and waveforms, every tool, the info line and
 // opening an event in the sample editor. tests/audioparteditor_tests.cpp checks the engine's side.
 #include "ui/enginebinding.h"
+#include "ui/keycommands.h"
 #include "uiapp.h"
+
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -208,6 +212,38 @@ TEST_CASE("Open/Close Editor opens selected audio parts in the audio part editor
 	f.app.keys().run("window.lowerZoneEditor", Json::object(), f.app.main(), nullptr);
 	REQUIRE(
 		f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "lower"}}).at("content") == "audioPart"; }));
+}
+
+TEST_CASE("the quantize commands are disabled in the audio part editor as it has no notes", "[ui]")
+{
+	Fixture f;
+	f.open();
+	f.app.keys().run("window.lowerZoneEditor", Json::object(), f.app.main(), nullptr);
+	REQUIRE(
+		f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "lower"}}).at("content") == "audioPart"; }));
+	ui::Window* window = f.app.shell().find(f.window);
+	REQUIRE(window != nullptr);
+	Rml::Element* editorZone = window->context().GetDocument(0)->GetElementById("main-zone");
+	Rml::Element* lowerZone = f.app.main().context().GetDocument(0)->GetElementById("lower-zone");
+	REQUIRE(editorZone != nullptr);
+	REQUIRE(lowerZone != nullptr);
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json shown = f.app.ui().dom(std::nullopt, "#lower-zone .ape-display", 0).at("elements");
+			return !shown.empty() && shown[0].at("visible").get<bool>();
+		}));
+	for (const char* command : {"edit.quantize", "edit.resetQuantize", "edit.createGrooveQuantize"})
+	{
+		INFO(command);
+		CHECK(!f.app.keys().canRun(command, *window, editorZone));
+		CHECK(!f.app.keys().canRun(command, f.app.main(), lowerZone));
+	}
+	// Q there sends nothing, and the events stay where they are.
+	const Json before = f.app.call("project.get").at("audioParts");
+	f.app.ui().key(f.window, "Q");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.app.call("project.get").at("audioParts") == before);
 }
 
 TEST_CASE("the object selection tool selects events and moves them in time and across lanes", "[ui]")
