@@ -416,7 +416,15 @@ namespace gnubase::engine
 		// only where the part is, and moves, splits and goes with the part.
 		ObjectId part = 0;
 		int lane = 0; // the track's lane it is on, from 0: cycle recordings put their takes on lanes (#98)
+		// Where it is in the stack of its track's events (#99): where events overlap, the one whose frontOf is highest
+		// plays. 0 orders it by its id, so an event added later is in front; event.toFront gives it a new id here.
+		ObjectId front = 0;
 	};
+
+	inline ObjectId frontOf(const AudioEvent& event)
+	{
+		return event.front != 0 ? event.front : event.id;
+	}
 
 	// A container of audio events on an audio track (#471, reference manual p. 250). Its events are the audio events
 	// whose part it is; they play only within it.
@@ -838,9 +846,9 @@ namespace gnubase::engine
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
-				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.lane, a.volumeCurve) ==
+				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.lane, a.volumeCurve, a.front) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
-				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.lane, b.volumeCurve);
+				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.lane, b.volumeCurve, b.front);
 	}
 
 	inline bool operator==(const AudioPart& a, const AudioPart& b)

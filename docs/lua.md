@@ -548,7 +548,7 @@ Builds the processing graph again with the plugins of the slots as they are now.
 
 #### `gnubase.audioEvent.add`
 
-Adds an audio event that plays a section of a clip on an audio track. position is in the track's time base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track plays one event at a time: where events overlap, the one added last plays, unless they crossfade.
+Adds an audio event that plays a section of a clip on an audio track. position is in the track's time base (ticks or samples); offset and length are in the clip's sample frames, length defaulting to the rest of the clip. volume is in dB, from -144 to 6 (default 0); a muted event doesn't play. A track plays one event at a time: where events overlap, the one added last plays, unless they crossfade; event.toFront brings another one to the front.
 
 Parameters:
 
@@ -1387,6 +1387,21 @@ Returns:
 
 ### event
 
+#### `gnubase.event.comp`
+
+Comps a track's takes (the comp tool's drag on a lane): splits every unlocked audio event and part and MIDI part on track at start and end (project samples), then brings what lies on lane between them to the front, as event.toFront does. Returns the events brought to the front.
+
+Parameters:
+
+- `end`: integer, required
+- `lane`: integer, required
+- `start`: integer, required
+- `track`: integer, required
+
+Returns:
+
+- `events`: array of integer, required
+
 #### `gnubase.event.copy`
 
 Copies audio events and MIDI parts, moved by delta project samples or by ticks and onto track as event.move moves them. Copies of audio events play the same clip; shared copies of MIDI parts share their notes and controllers with the original, so that editing one edits all. Returns the copies.
@@ -1600,6 +1615,18 @@ Parameters:
 - `positions`: array of integer, required
 - `splitNotes`: boolean
 - `zeroCrossing`: boolean
+
+Returns:
+
+- `events`: array of integer, required
+
+#### `gnubase.event.toFront`
+
+Brings takes to the front (To Front, the comp tool's click): audio events, and the audio events of audio parts, play where they overlap other events on their track, as if added last (their front in project.get); MIDI parts are unmuted, and the MIDI parts on their track's other lanes that they overlap are muted. Returns the events.
+
+Parameters:
+
+- `events`: array of integer, required
 
 Returns:
 
