@@ -35,6 +35,7 @@ namespace gnubase::engine::graph
 		Builtin,       // one of GNUbase's own processors
 		PluginSlot,    // a plugin, built in or in a plugin host process (plugins::PluginSlot)
 		ListenBus,     // what the listening channels play on the monitoring bus; read after processing
+		Send,          // a channel's send to a group or effect channel: its share of the channel's audio
 	};
 
 	const char* toString(NodeKind kind);
@@ -82,7 +83,10 @@ namespace gnubase::engine::graph
 	// to their instrument channel instead. Output child busses add their channels to their parent's, input child
 	// busses take theirs from their parent's. A channel with plugin slots also has a source node, which takes what
 	// plays into the channel, and a node per slot after it, from top to bottom (#282); these come after the channels.
-	// While channels listen, a listen bus in the main mix's format comes last and receives them after their faders.
+	// Then a node per send with a destination, by channel and send number: a post-fader send receives its channel's
+	// output in that format; a pre-fader send, in the channel's format, only follows its channel, whose strip hands it
+	// the audio before the fader (ChannelStrip). Each sends to its destination's first node. While channels listen, a
+	// listen bus in the main mix's format comes last and receives them after their faders.
 	GraphDesc describe(const RenderSnapshot& snapshot);
 
 	// The order in which nodes are processed: every node after the nodes it receives audio or events from, and

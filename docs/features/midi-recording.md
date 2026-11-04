@@ -7,7 +7,8 @@ undo step.
 
 - **Record enable, monitor and MIDI input.** MIDI and instrument tracks have the record enable and monitor buttons
   (`channel.set` with `recordEnable` and `monitor`, in the track list and the inspector) and a MIDI input, `midiInput`:
-  `all` (all MIDI inputs, the default: every input port whose `inAllInputs` is on, see `midi.setPort`) or `none`.
+  `all` (all MIDI inputs, the default: every input port whose `inAllInputs` is on, see `midi.setPort`, and the
+  on-screen keyboard, [onscreen-keyboard.md](onscreen-keyboard.md)) or `none`.
   While a track monitors or is record-enabled, it plays what comes from its MIDI input (MIDI thru), after what
   `midi.inject` played into it ([midi-injection.md](midi-injection.md)); injected MIDI always reaches it, as if it came
   from its input.

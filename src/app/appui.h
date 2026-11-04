@@ -15,6 +15,7 @@
 #include "ui/markers.h"
 #include "ui/midieditor.h"
 #include "ui/mixer.h"
+#include "ui/onscreenkeyboard.h"
 #include "ui/poolpanel.h"
 #include "ui/projectfiles.h"
 #include "ui/rmlui.h"
@@ -80,6 +81,18 @@ namespace gnubase::app
 		// The markers window while it is open, or null.
 		ui::MarkersWindow* markers() { return m_shell.find(m_markersWindow) != nullptr ? m_markers.get() : nullptr; }
 		ui::WindowId markersWindow() const { return m_markersWindow; }
+		// Opens the on-screen keyboard (#103, docs/features/onscreen-keyboard.md) in a window of its own
+		// (resources/ui/onscreen-keyboard.rml), hidden like the main window, or closes it if it is open: the UI
+		// command window.onScreenKeyboard, Alt+K, which the Studio menu runs. While it is open, it takes the keys
+		// that no element used before the key commands. Returns it, or null when it closed it. Throws
+		// std::runtime_error if the document can't be loaded.
+		ui::OnScreenKeyboard* toggleKeyboard();
+		// The on-screen keyboard while it is open, or null.
+		ui::OnScreenKeyboard* keyboard()
+		{
+			return m_shell.find(m_keyboardWindow) != nullptr ? m_keyboard.get() : nullptr;
+		}
+		ui::WindowId keyboardWindow() const { return m_keyboardWindow; }
 		// The markers in the project window's event display, null before showProject.
 		ui::MarkerLines* markerLines() { return m_markerLines.get(); }
 
@@ -205,6 +218,9 @@ namespace gnubase::app
 		bool m_hidden = false; // the main window, and so the others
 		std::unique_ptr<ui::MarkersWindow> m_markers;
 		ui::WindowId m_markersWindow = 0;
+		ui::OnScreenKeyboard::Settings m_keyboardSettings; // kept while its window is closed
+		std::unique_ptr<ui::OnScreenKeyboard> m_keyboard;
+		ui::WindowId m_keyboardWindow = 0;
 		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
 		std::unique_ptr<ui::MarkerLines> m_markerLines;   // and before the display
 		std::unique_ptr<ui::TempoLane> m_tempoLane;       // as well

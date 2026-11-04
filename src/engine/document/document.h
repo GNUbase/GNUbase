@@ -177,6 +177,24 @@ namespace gnubase::engine
 			std::tie(b.gain, b.phase, b.lowCut, b.highCut, b.eqBypass, b.eq, b.gate, b.compressor, b.limiter);
 	}
 
+	// One of an audio channel's sends (reference manual pp. 552-557): a share of its audio, before or after its fader,
+	// for a group or effect channel.
+	struct Send
+	{
+		ObjectId destination = 0; // a group or effect channel, or 0
+		bool on = false;
+		double level = 0.0;    // dB, from g_minChannelVolume (silence) to the project's maximum volume
+		bool preFader = false; // before the fader, so it doesn't follow the fader or the mute button
+	};
+
+	inline bool operator==(const Send& a, const Send& b)
+	{
+		return std::tie(a.destination, a.on, a.level, a.preFader) == std::tie(b.destination, b.on, b.level, b.preFader);
+	}
+
+	// An audio channel has this many sends (reference manual p. 542).
+	inline constexpr size_t g_maxSends = 8;
+
 	// The mixer channel of a track. MIDI tracks have a MIDI channel: no audio channels, and their output is an
 	// instrument track's channel.
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
@@ -228,6 +246,9 @@ namespace gnubase::engine
 		// the dynamics after them.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		ChannelSections sections = {};
+		// Audio channels: the sends, in the order of their numbers 1 to 8.
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		std::array<Send, g_maxSends> sends = {};
 	};
 
 	// A channel has at most this many plugin slots (reference manual p. 544).
@@ -705,6 +726,14 @@ namespace gnubase::engine
 	// excluded: false for a folder that isn't there, one in a loop, and excluded or a folder inside it.
 	bool poolFolderOutside(const Project& project, ObjectId folder, ObjectId excluded);
 
+	// Whether a channel can be a send's destination: a group or effect channel, or a folder's group channel.
+	bool isSendDestination(const Project& project, ObjectId channel);
+
+	// Whether audio from a channel to another one, through an output or a send, would come back to it: whether
+	// channel is to or is reached from it through outputs and the destinations of sends, on or off. Routing never
+	// closes a loop, so the processing graph has no feedback.
+	bool routingLoops(const Project& project, ObjectId channel, ObjectId to);
+
 	// Equality compares every member; the undo history uses it to find what a command changed.
 	inline bool operator==(const ProjectSetup& a, const ProjectSetup& b)
 	{
@@ -723,10 +752,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.instrumentParameters, a.monitor, a.recordEnable,
-				   a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections) ==
+				   a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections, a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.instrumentParameters, b.monitor, b.recordEnable,
-				b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections);
+				b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections, b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)

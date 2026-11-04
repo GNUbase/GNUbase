@@ -122,6 +122,15 @@ namespace gnubase::engine
 		std::shared_ptr<const std::vector<uint8_t>> state; // its state from a file, or none
 	};
 
+	// A send with a destination (graph::NodeKind::Send).
+	struct RenderSend
+	{
+		int number = 0;      // 0 to 7, its index in Channel::sends
+		int destination = 0; // an index into RenderSnapshot::channels
+		float gain = 0.0f;   // linear; 0 while it is off or silenced
+		bool preFader = false;
+	};
+
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct RenderChannel
 	{
@@ -159,6 +168,7 @@ namespace gnubase::engine
 		std::vector<RenderAutomationLane> automation; // in the order of the lanes' ids
 		std::vector<RenderSlot> slots;                // from top to bottom
 		ChannelSections sections;                     // the strip's sections before the fader
+		std::vector<RenderSend> sends;                // those with a destination, by number
 	};
 
 	// A channel volume in dB as a linear gain; the fader's bottom, g_minChannelVolume, is silence.

@@ -361,6 +361,48 @@ TEST_CASE("the channel strip's pre, equalizer and strip sections and the panner 
 }
 
 TEST_CASE(
+	"the sends section picks a send's destination, switches it on and before the fader and sets its level", "[ui]")
+{
+	test::UiApp app({1200, 900});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Added reverb = addTrack(app, "effect", "Reverb");
+	const Window window = openMixer(app, 1);
+	REQUIRE(app.waitUntil([&] { return strips(app, window).size() == 4; }));
+	const auto control = [&](uint64_t channel, const std::string& param)
+	{ return strip(channel) + " [param=\"" + param + "\"]"; };
+	click(app, window, "#mixer-layout");
+	click(app, window, "#mixer-layout-pane [setup-section=sends]");
+	REQUIRE(app.waitUntil(
+		[&] { return !has(element(app, window, strip(guitar.channel) + " [section=sends]"), "hidden"); }));
+	app.ui().key(window, "Escape");
+	const auto send = [&] { return channelJson(app, guitar.channel).at("sends")[1]; };
+
+	// The destinations are No Destination and the group and effect channels: Reverb comes next.
+	click(app, window, control(guitar.channel, "sends.2.destination"));
+	app.ui().key(window, "Down");
+	click(app, window, control(guitar.channel, "sends.2.destination"));
+	REQUIRE(app.waitUntil([&] { return send().at("destination") == reverb.channel; }));
+	click(app, window, control(guitar.channel, "sends.2.on"));
+	click(app, window, control(guitar.channel, "sends.2.preFader"));
+	REQUIRE(app.waitUntil([&] { return send().at("preFader") == true; }));
+	CHECK(send().at("on") == true);
+	app.ui().wheel(window, {control(guitar.channel, "sends.2.level"), 0, std::nullopt}, 0.0F, 5.0F);
+	REQUIRE(app.waitUntil([&] { return send().at("level") < 0.0; }));
+
+	// What another client changes shows.
+	app.call(
+		"channel.set", {{"channel", guitar.channel}, {"sends", {{{"send", 2}, {"destination", 0}, {"on", false}}}}});
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return element(app, window, control(guitar.channel, "sends.2.destination")).at("attributes").at("value") ==
+				"0";
+		}));
+	CHECK(!has(element(app, window, control(guitar.channel, "sends.2.on")), "checked"));
+}
+
+TEST_CASE(
 	"solo, mute and listen in the mixer: exclusive solo, solo defeat, listen and the Deactivate All buttons", "[ui]")
 {
 	test::UiApp app({1200, 700});

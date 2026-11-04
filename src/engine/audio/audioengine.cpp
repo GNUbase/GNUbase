@@ -631,6 +631,7 @@ namespace gnubase::engine
 		for (size_t n = 0; n < desc.nodes.size(); ++n)
 			if (desc.nodes[n].kind == graph::NodeKind::PluginSlot)
 				slotNodes[desc.nodes[n].object] = n;
+		size_t sendNode = 0;
 		for (size_t i = 0; i < snapshot.channels.size(); ++i)
 		{
 			const RenderChannel& channel = snapshot.channels[i];
@@ -656,29 +657,49 @@ namespace gnubase::engine
 				monitoring = Monitoring{channel.monitor, channel.recordEnable, m_autoMonitoring};
 			graph::NodeDesc& node = desc.nodes[firstChannel + i];
 			const auto source = static_cast<size_t>(sourceNode(channel.id));
+			std::shared_ptr<ChannelStrip> fader;
 			if (source == firstChannel + i)
 			{
-				node.processor = std::make_shared<ChannelStrip>(
+				fader = std::make_shared<ChannelStrip>(
 					state, node.processor, panning, monitoring, channel.silent, StripPart::Whole, channel.sections);
-				continue;
 			}
-			// Plugin slots between them: the source node plays the source and the automation, the slot nodes give
-			// their plugins their automation, the channel's node fades.
-			std::vector<const void*> plugins;
-			std::vector<ObjectId> slotIds;
-			for (size_t index = 0; index < channel.slots.size(); ++index)
+			else
 			{
-				graph::NodeDesc& slot = desc.nodes[slotNodes.at(channel.slots[index].id)];
-				plugins.push_back(slot.processor.get());
-				slotIds.push_back(channel.slots[index].id);
-				if (slot.processor)
-					slot.processor = std::make_shared<SlotStrip>(state, slot.processor, static_cast<uint8_t>(index));
+				// Plugin slots between them: the source node plays the source and the automation, the slot nodes
+				// give their plugins their automation, the channel's node fades.
+				std::vector<const void*> plugins;
+				std::vector<ObjectId> slotIds;
+				for (size_t index = 0; index < channel.slots.size(); ++index)
+				{
+					graph::NodeDesc& slot = desc.nodes[slotNodes.at(channel.slots[index].id)];
+					plugins.push_back(slot.processor.get());
+					slotIds.push_back(channel.slots[index].id);
+					if (slot.processor)
+						slot.processor =
+							std::make_shared<SlotStrip>(state, slot.processor, static_cast<uint8_t>(index));
+				}
+				graph::NodeDesc& sourceDesc = desc.nodes[source];
+				sourceDesc.processor = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
+					channel.silent, StripPart::Source, channel.sections, std::move(plugins), std::move(slotIds));
+				fader = std::make_shared<ChannelStrip>(
+					state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, channel.sections);
 			}
-			graph::NodeDesc& sourceDesc = desc.nodes[source];
-			sourceDesc.processor = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
-				channel.silent, StripPart::Source, channel.sections, std::move(plugins), std::move(slotIds));
-			node.processor = std::make_shared<ChannelStrip>(
-				state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, channel.sections);
+			node.processor = fader;
+
+			// The send nodes come in the order of the channels and their sends (graph::describe).
+			std::shared_ptr<PreFaderTap> tap;
+			for (const RenderSend& send : channel.sends)
+			{
+				if (send.preFader && !tap)
+				{
+					tap = std::make_shared<PreFaderTap>(channelCount(channel.format));
+					fader->tapPreFader(tap);
+				}
+				while (desc.nodes[sendNode].kind != graph::NodeKind::Send)
+					++sendNode;
+				desc.nodes[sendNode++].processor =
+					std::make_shared<SendStrip>(state, send.number, send.gain, send.preFader ? tap : nullptr);
+			}
 		}
 		m_channelStates = std::move(states);
 	}
