@@ -37,6 +37,15 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
   tempo track as a track. `project.xml` has the tempo the project plays, so other applications play it the same; a
   project read from `project.xml` alone follows its tempo changes if it has any. Older GNUbase files without the mode
   do too. A MIDI file's tempo changes go on the tempo track and make it active.
+- **Tempo track files** (#160, p. 1462): `tempo.export` writes the tempo track's events, also in fixed tempo mode,
+  and the time signature events into an XML file, which `tempo.import` reads into another project: its events replace
+  the tempo track's and the time signature events, as one undo step. A file with tempo changes makes the tempo track
+  active, as a MIDI file's does; the fixed tempo stays. The file says what `project.xml` says about them, in the same
+  DAWproject elements (`src/engine/dawproject/dawproject.h`, `saveTempoTrack` and `loadTempoTrack`): a `Transport`
+  with the first tempo and signature and an `Arrangement` with the `TempoAutomation` and `TimeSignatureAutomation`,
+  under a `TempoTrack` element instead of a `Project`. So both share one writer and reader, and the tempo track
+  survives the round trip exactly: positions are whole ticks as beats, tempos written at full precision. The file
+  ends in `.xml`: the reference's own tempo track files have a format of their own, which GNUbase doesn't read.
 
 ## UI
 
@@ -64,17 +73,19 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
   binds one, opens `resources/ui/insert-tempo.rml` with the tempo at the cursor; OK adds a tempo event with the tempo
   typed at the cursor (`tempo.add` `position: "cursor"`).
 - **Activate Tempo Track** (p. 162): the tempo track's control `tempoTrack` in the track list (the user setting
-  `ui.trackControls`, its only one) and the transport bar's `#tempo-track` button switch the mode, checked in tempo track
-  mode; also the UI command `tempo.toggleTrack` in Project > Tempo Track.
+  `ui.trackControls`) and the transport bar's `#tempo-track` button switch the mode, checked in tempo track mode; also
+  the UI command `tempo.toggleTrack` in Project > Tempo Track.
 - **Tap Tempo** (pp. 1455-1458): the transport bar's `#tap-tempo` button. Clicks on it within two seconds of each other
   are a run; meanwhile the tempo field shows the tempo they beat (`ui::tappedTempo`: the average time between them),
   and two seconds after the last one it goes to `tempo.tap`, by the user setting `transport.tapTempoMode`, with the
   start of the project window's selection range or selected events and parts as `selection`
   (`EventDisplay::selectionStart`). The times are RmlUi's clock, which tests stop and move on. While tapping the button
   is `.tapping` and each tap shows where the tempo goes (`ui::tapTempoMessage`, p. 1455) in `#tap-tempo-message`, a
-  notification over the event display (over the transport panel's right end in the panel). A right click on
-  it opens the Tap Tempo Mode pop-up menu (p. 1458), `menuitem[tap-mode]`, which sets
-  `transport.tapTempoMode` and is checked by it.
+  notification over the event display (over the transport panel's right end in the panel). A right click on it opens
+  the Tap Tempo Mode pop-up menu (p. 1458), `menuitem[tap-mode]`, which sets `transport.tapTempoMode` and is checked by
+  it.
+- **File > Export > Tempo Track...** (`file.exportTempo`) and **File > Import > Tempo Track...** (`file.importTempo`)
+  choose the file in the OS's file dialog; an exported file without an extension gets `.xml`.
 - The track list's Remove Empty Tracks, Duplicate Tracks, Move Selected Tracks to New Folder and drags into folders
   leave the tempo track out: the project has one, at the top level.
 - **The tempo track editor** (`ui::TempoEditor`, `resources/ui/tempo-editor.rml`, pp. 1447-1449, 1455): Mod+T (the
@@ -93,21 +104,24 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
 The tempo event editor's smart controls for tilting, compressing and scaling a selection of events (p. 1450), drawing
 several events in one drag with the draw tool, snapping new and moved events to the grid, the editor's zoom and
 auto-scroll, visible tempo limits of the user's own, Lock, tempo recording (p. 1453) and the Process Tempo and Process
-Bars dialogs (pp. 1463-1464), tempo detection (#157) and time warp. The selected events on the tempo track's lane are
-removed with the erase tool, not with Backspace, which deletes the selected events and parts. The key command for Tap
-Tempo (Shift and Space) is not bound. Current Tempo on the tempo track and in the tempo track editor follows the cursor
-when it is moved, not yet during playback, as the transport bar's does.
+Bars dialogs (pp. 1463-1464), reading the reference's own tempo track files, tempo detection (#157) and time warp. The
+selected events on the tempo track's lane are removed with the erase tool, not with Backspace, which deletes the
+selected events and parts. The key command for Tap Tempo (Shift and Space) is not bound. Current Tempo on the tempo
+track and in the tempo track editor follows the cursor when it is moved, not yet during playback, as the transport
+bar's does.
 
 ## Tests
 
 `tests/tempo_tests.cpp`: the tempo track's limits, both modes keeping their tempo and undo, musical events moving and
 linear ones staying when tempo events are added, moved and removed, ramps, the first event, simultaneous moves, events
-at the cursor, `editing.tempoType`, every tap tempo mode and saving and loading. `tests/transport_tests.cpp`: the
-playback start in `transport.get`. `tests/tempotrack_ui_tests.cpp`: the visible tempos, the tapped tempo, the curve on
-the tempo track's lane with clicks that add, drag and erase events, the tempo track editor with Mod+T, its toolbar, info
-line and tools, Activate Tempo Track in the track list and the transport bar, and Tap Tempo, also at a selected part.
-`tests/tracklist_tests.cpp`: the track list's commands leaving the tempo track out. `tests/tempocontrols_ui_tests.cpp`
-(#680): Current Tempo and the command that changes it, the Tap Tempo message for every mode, the fixed tempo line,
-selecting events with Shift, Ctrl and a rectangle, the transport bar's tempo at the cursor, the Tap Tempo Mode menu with
-the message and `.tapping` while tapping, the tempo track's Current Tempo and Type of New Tempo Points, Insert Tempo
-Event at Cursor and Select All Events.
+at the cursor, `editing.tempoType`, every tap tempo mode, saving and loading, and tempo track files: the round trip with
+time signature events from fixed tempo mode, the tempo modes after an import, undo, the same file exported again, and
+files that aren't tempo track files. `tests/transport_tests.cpp`: the playback start in `transport.get`.
+`tests/tempotrack_ui_tests.cpp`: the visible tempos, the tapped tempo, the curve on the tempo track's lane with clicks
+that add, drag and erase events, the tempo track editor with Mod+T, its toolbar, info line and tools, Activate Tempo
+Track in the track list and the transport bar, Tap Tempo, also at a selected part, and File > Export and File > Import >
+Tempo Track through the file dialog. `tests/tracklist_tests.cpp`: the track list's commands leaving the tempo track out.
+`tests/tempocontrols_ui_tests.cpp` (#680): Current Tempo and the command that changes it, the Tap Tempo message for
+every mode, the fixed tempo line, selecting events with Shift, Ctrl and a rectangle, the transport bar's tempo at the
+cursor, the Tap Tempo Mode menu with the message and `.tapping` while tapping, the tempo track's Current Tempo and Type
+of New Tempo Points, Insert Tempo Event at Cursor and Select All Events.

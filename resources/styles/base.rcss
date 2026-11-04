@@ -1645,11 +1645,24 @@ splitter.column .splitter-grip-horizontal
 	nav: none;
 }
 
+.inspector-header
+{
+	display: flex;
+	align-items: center;
+}
+
 .inspector-header textdisplay
 {
 	display: block;
-	width: 100%;
+	flex: 1 1 0;
+	min-width: 0;
 	text-align: left;
+}
+
+.inspector-edit
+{
+	flex-shrink: 0;
+	margin-left: 4dp;
 }
 
 .inspector-empty, .inspector.empty .inspector-header, .inspector.empty .inspector-sections,

@@ -728,6 +728,24 @@
 	{
 		background-color: #5ea7b3;
 	}
+	.controller-lane-area
+	{
+		background-color: #1e2022;
+		border-bottom-width: 1px;
+		border-bottom-color: #484c50;
+	}
+	.controller-bar, .controller-step
+	{
+		background-color: #49767e;
+	}
+	.controller-bar.selected, .controller-step.selected
+	{
+		background-color: #7896bd;
+	}
+	.controller-bar.inactive, .controller-step.inactive
+	{
+		background-color: #4c4e51;
+	}
 	.ape-display
 	{
 		background-color: #1e2022;
