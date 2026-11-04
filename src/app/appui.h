@@ -38,6 +38,7 @@
 #include <iosfwd>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Rml
@@ -206,7 +207,9 @@ namespace gnubase::app
 		// The OS's file dialog for a track's picture in the mixer, then track.set.
 		void choosePicture(uint64_t track);
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
-		Rml::ElementDocument& openDialog(ui::Window& window, const char* name) const;
+		// attributes go on the document before it shows, for its Lua.
+		Rml::ElementDocument& openDialog(ui::Window& window, const char* name,
+			const std::vector<std::pair<std::string, std::string>>& attributes = {}) const;
 		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
 		void openAutoFades(ui::Window& window, uint64_t track) const;
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
