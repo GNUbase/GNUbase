@@ -102,9 +102,8 @@ namespace gnubase::ui
 				R"(<div class="spacer"/>)" +
 				(window ? R"(<button id="editor-move" title="Open in Lower Zone">Open in Lower Zone</button>)"
 						: R"(<button id="editor-move" title="Open in Separate Window">Open in Separate Window</button>)") +
-				R"(</div>)" + (window ? R"(<div class="editor-global-tracks"/>)" : "") +
-				R"(<div class="key-editor"/></div>)");
-			m_keys = std::make_unique<KeyEditor>(m_binding, *root.QuerySelector(".key-editor"), m_name);
+				R"(</div>)" + (window ? R"(<div class="editor-global-tracks"/>)" : "") + R"(</div>)");
+			showContent();
 			Rml::ElementDocument* document = root.GetOwnerDocument();
 			for (const char* menu : {"editor-editing-mode-menu", "editor-active-part-menu"})
 			{
@@ -260,8 +259,11 @@ namespace gnubase::ui
 					active = part.at("name").get<std::string>();
 			setInner(root->QuerySelector("#editor-active-part"), encode(active.empty() ? "No Part" : active));
 			setInner(root->QuerySelector(".editor-global-tracks"), globalTracksRml());
+			showContent();
 			if (m_keys)
 				m_keys->show(m_project, m_view);
+			if (m_list)
+				m_list->show(m_project, m_view);
 			fillMenus();
 		}
 		else if (m_part == EditorPart::Visibility)
@@ -275,6 +277,26 @@ namespace gnubase::ui
 		}
 		if (Rml::Context* context = root->GetContext())
 			context->RequestNextUpdate(0);
+	}
+
+	void MidiEditor::showContent()
+	{
+		const bool list = m_view.value("content", std::string("key")) == "list";
+		Rml::Element* editor = m_root.get() != nullptr ? m_root.get()->QuerySelector(".midi-editor") : nullptr;
+		if (editor == nullptr || (list ? m_list != nullptr : m_keys != nullptr))
+			return;
+		m_keys.reset();
+		m_list.reset();
+		for (const char* name : {".key-editor", ".list-editor"})
+			if (Rml::Element* old = editor->QuerySelector(name))
+				editor->RemoveChild(old);
+		Rml::ElementPtr content = editor->GetOwnerDocument()->CreateElement("div");
+		content->SetClass(list ? "list-editor" : "key-editor", true);
+		Rml::Element* added = editor->AppendChild(std::move(content));
+		if (list)
+			m_list = std::make_unique<ListEditor>(m_binding, *added, m_name);
+		else
+			m_keys = std::make_unique<KeyEditor>(m_binding, *added, m_name);
 	}
 
 	// The chord the selected notes make, as the Chord Editing section's Chord Type field shows it (p. 1216).
@@ -455,7 +477,7 @@ namespace gnubase::ui
 				return;
 			m_binding.send("editor.open",
 				{{"editor", m_name == "window" ? "lower" : "window"}, {"parts", m_view.at("parts")},
-					{"activePart", m_view.at("activePart")}});
+					{"activePart", m_view.at("activePart")}, {"content", m_view.value("content", "key")}});
 			m_binding.send("editor.close", {{"editor", m_name}});
 			if (m_moved)
 				m_moved();

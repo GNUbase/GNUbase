@@ -753,6 +753,9 @@ meter .meter-peak
 	bottom: 0;
 	overflow: hidden;
 	clip: always; /* RmlUi clips only content that overflows in flow, not the absolute parts */
+	/* A press in the lanes is a drag for RmlUi, which then shows the area's pointer wherever the mouse goes until the
+	   button is up: the drag's own, not that of what the mouse passes over. */
+	drag: drag;
 }
 
 /* Without the overview line, a strip of docking windows (docs/features/docking.md). */

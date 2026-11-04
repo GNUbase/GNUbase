@@ -384,6 +384,22 @@ TEST_CASE("automation points are selected, moved, scaled and deleted with the ob
 	CHECK(selection().empty());
 }
 
+TEST_CASE(
+	"with the selection tools combined, an automation track's pointer is the tool chosen, as a press uses it", "[ui]")
+{
+	Automation f;
+	const Json volume = f.show();
+	f.display.setCombineSelectionTools(true);
+	const auto pointer = [&f] { return elements(f.app, ".event-area").at(0).at("attributes").value("pointer", ""); };
+	// In the upper half, where an event lane's pointer is the range selection tool's.
+	f.app.ui().move(std::nullopt, {"", 0, ui::Point{f.x(1.0), f.y(volume, 0.9)}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.app.waitUntil([&] { return pointer() == "objectSelection"; }));
+	f.app.ui().move(std::nullopt, {"", 0, ui::Point{f.x(1.0) + 1, f.y(volume, 0.9)}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(pointer() == "objectSelection");
+}
+
 TEST_CASE("a Ctrl-drag moves the selected automation points in one direction, and the editor tilts and stretches them",
 	"[ui]")
 {

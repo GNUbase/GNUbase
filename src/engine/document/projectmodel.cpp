@@ -735,6 +735,8 @@ namespace gnubase::engine
 				point.curve = item.at("curve").get<double>();
 				require(point.curve >= -1.0 && point.curve <= 1.0, name + ".curve must be from -1 to 1");
 			}
+			if (item.contains("terminator"))
+				point.terminator = item.at("terminator").get<bool>();
 			if (stepped)
 			{
 				point.shape = AutomationShape::Step;
@@ -3595,9 +3597,9 @@ namespace gnubase::engine
 				{{"type", "object"}, {"properties", {{"lanes", {{"type", "array"}}}}}, {"required", {"lanes"}}}, true},
 			[](Project& project, CommandContext& context) { return listAutomationLanes(project, context); });
 
-		const Json point =
-			objectSchema({{"position", idSchema}, {"value", numberSchema}, {"shape", shape}, {"curve", numberSchema}},
-				{"position", "value"});
+		const Json point = objectSchema({{"position", idSchema}, {"value", numberSchema}, {"shape", shape},
+											{"curve", numberSchema}, {"terminator", booleanSchema}},
+			{"position", "value"});
 		add(engine,
 			{"automationPoint.add", 1,
 				"Adds points to an automation lane: position in the track's time base (ticks on musical tracks, so "
@@ -3607,15 +3609,19 @@ namespace gnubase::engine
 				"Mute and stepped parameters (parameter.list) have step curves: their points are steps with whole "
 				"values. "
 				"Before the first point the curve has its value, after the last point the last one's; points at one "
-				"position make a jump. A ramp of volume moves the gain in a straight line.",
+				"position make a jump. A ramp of volume moves the gain in a straight line. terminator (default false) "
+				"ends the curve at the point: up to the next point the parameter has its static value, a gap. With "
+				"virgin territory (automation.set) there are gaps before the first and after the last point too.",
 				objectSchema({{"lane", idSchema}, {"points", arraySchema(point)}}, {"lane", "points"}), pointsResult,
 				false},
 			addAutomationPoints);
 		const Json change = objectSchema({{"id", idSchema}, {"position", idSchema}, {"value", numberSchema},
-											 {"shape", shape}, {"curve", numberSchema}},
+											 {"shape", shape}, {"curve", numberSchema}, {"terminator", booleanSchema}},
 			{"id"});
 		add(engine,
-			{"automationPoint.set", 1, "Changes points of an automation lane: their position, value, shape or curve.",
+			{"automationPoint.set", 1,
+				"Changes points of an automation lane: their position, value, shape, curve or terminator (see "
+				"automationPoint.add).",
 				objectSchema({{"lane", idSchema}, {"points", arraySchema(change)}}, {"lane", "points"}), pointsResult,
 				false},
 			setAutomationPoints);
@@ -3625,23 +3631,32 @@ namespace gnubase::engine
 				false},
 			removeAutomationPoints);
 
-		const Json settings = {
-			{"type", "object"}, {"properties", {{"followsEvents", booleanSchema}}}, {"required", {"followsEvents"}}};
+		const Json settings = objectSchema({{"followsEvents", booleanSchema}, {"virginTerritory", booleanSchema}},
+			{"followsEvents", "virginTerritory"});
+		const auto settingsJson = [this]()
+		{ return Json{{"followsEvents", m_automationFollowsEvents}, {"virginTerritory", m_project.virginTerritory}}; };
 		addControl(engine,
 			{"automation.get", 1,
 				"The automation settings. followsEvents (default false): when an audio event or MIDI part moves, the "
-				"automation of its track in its range moves with it and replaces the points where it lands.",
+				"automation of its track in its range moves with it and replaces the points where it lands. "
+				"virginTerritory (default false; reference manual p. 881): automation lanes have no curve before "
+				"their first and after their last point, where their parameters have their static values, as between "
+				"a terminator point and the next one; without it they have initial values, the first point's before "
+				"it and the last point's after it.",
 				objectSchema({}), settings, true},
-			[this](CommandContext&) { return Json{{"followsEvents", m_automationFollowsEvents}}; });
-		addControl(engine,
+			[settingsJson](CommandContext&) { return settingsJson(); });
+		addEdit(engine,
 			{"automation.set", 1,
-				"Changes the automation settings (see automation.get). A setting, so it stays when a new project "
-				"starts.",
-				objectSchema({{"followsEvents", booleanSchema}}), settings, false},
-			[this](CommandContext& context)
+				"Changes the automation settings (see automation.get). followsEvents is a setting, so it stays when a "
+				"new project starts; virginTerritory is saved with the project. Neither is an undo step.",
+				objectSchema({{"followsEvents", booleanSchema}, {"virginTerritory", booleanSchema}}), settings, false},
+			"Change automation settings",
+			[this, settingsJson](Project& project, CommandContext& context)
 			{
-				m_automationFollowsEvents = context.parameters().value("followsEvents", m_automationFollowsEvents);
-				Json result = {{"followsEvents", m_automationFollowsEvents}};
+				const Json& parameters = context.parameters();
+				m_automationFollowsEvents = parameters.value("followsEvents", m_automationFollowsEvents);
+				project.virginTerritory = parameters.value("virginTerritory", project.virginTerritory);
+				Json result = settingsJson();
 				context.emit("automation.changed", result);
 				return result;
 			});

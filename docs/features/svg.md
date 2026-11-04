@@ -18,9 +18,10 @@ library PlutoVG that comes with it.
   window system makes an OS pointer of them once, each scale with its own hotspot. They follow the monitor's scale, not
   the UI scale: SDL shows the scale nearest to the monitor's on Windows, macOS and Wayland, and the first on X11. At
   most 128 × 128 at 100 %, and a hotspot outside the picture points at its nearest edge. A `cursor` name that
-  isn't there is one of the OS's pointers by its CSS name (`text`, `pointer`, `move`, `ew-resize`, ...), an empty one
-  or a pointer that can't be read the OS's arrow. RmlUi's system interface (`ui/rmlui.h`) passes the name for the
-  element under the mouse to the window system, and MCP's `ui_windows` reports it as `cursor`.
+  isn't there is one of the OS's pointers by its CSS name (`ui::g_systemCursors`: `text`, `pointer`, `move`,
+  `ew-resize`, ...); an empty one, any other name (such as RmlUi's autoscroll pointers) and a pointer that can't be
+  read are the OS's arrow. RmlUi's system interface (`ui/rmlui.h`) passes the pointer for the element under the mouse
+  to the window system, and MCP's `ui_windows` reports the name of the one that shows as `cursor`, empty for the arrow.
 - **Use.** A document shows a graphic with the `<svg>` element, `<svg src="icons/transport-play.svg"/>`, or as a
   background with the decorator `decorator: svg(file)`. The element's size comes from the style sheet in `dp`, else
   from the file's `width` and `height`, taken as dp. Themes draw their 9-slice skins with `svg-ninepatch`
@@ -50,7 +51,9 @@ library PlutoVG that comes with it.
     rasters;
   - every mouse pointer has a hotspot in `cursors.json`, rasterizes at each scale at its size with something to see
     and a transparent corner, its hotspot inside it, once; a broken picture or manifest, or a missing hotspot, leaves
-    the OS's arrow.
+    the OS's arrow; RmlUi's system interface reports the pointer that shows, none for a broken one, RmlUi's
+    autoscroll pointers and other names the OS doesn't have, and every one of the OS's pointers by its name, which
+    SDL makes into a pointer of its own.
 
   `tests/window_tests.cpp` draws icons in several sizes and colors and theme graphics through SDL_GPU at 100 %, 150 %
   and 200 % UI scale, compares them with golden images on every platform, and checks that a solid icon shows exactly

@@ -257,3 +257,61 @@ TEST_CASE("the pool panel shows why Conform Files from the Media menu failed", "
 	CHECK(has(elements(app, "#pool-message").at(0), "error"));
 	CHECK(app.waitUntil([&app] { return elements(app, "#pool").at(0).at("visible") == true; }));
 }
+
+TEST_CASE("the pool panel shows what the Conform Files job did once it is done", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	std::filesystem::create_directories(dir.path() / "project");
+	app.call(
+		"project.save", {{"path", (dir.path() / "project" / "Song.dawproject").u8string()}, {"embedMedia", false}});
+	test::writeWav(dir.path() / "slow.wav", {std::vector<float>(44100, 0.25f), 1, 44100});
+	const uint64_t slow = addClip(app, (dir.path() / "slow.wav").u8string());
+
+	// Conform Files starts a job; the message line follows it to its result.
+	click(app, "#menu-bar button[menu=media-menu]");
+	click(app, "#media-menu menuitem[command=\"media.conform\"]");
+	REQUIRE(app.waitUntil(
+		[&app] { return message(app) == "Conformed 1 file to the project's sample rate."; }, std::chrono::seconds(30)));
+	CHECK(!has(elements(app, "#pool-message").at(0), "error"));
+	CHECK(app.call("pool.get").at("clips").at(0).at("id") == slow);
+	CHECK(app.call("pool.get").at("clips").at(0).at("sampleRate") == 48000.0);
+}
+
+TEST_CASE("the pool panel shows the Conform Files job's progress and that it was cancelled", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({1024, 600});
+	app.appUi().showProject();
+	std::filesystem::create_directories(dir.path() / "project");
+	app.call(
+		"project.save", {{"path", (dir.path() / "project" / "Song.dawproject").u8string()}, {"embedMedia", false}});
+	// A minute of stereo at 44.1 kHz into a 192 kHz project keeps even a Release build converting for a while.
+	app.call("project.set", {{"sampleRate", 192000.0}});
+	const std::filesystem::path slow = dir.path() / "slow.wav";
+	test::writeWav(slow, {std::vector<float>(size_t{44100} * 60 * 2, 0.25f), 2, 44100});
+	addClip(app, slow.u8string());
+
+	// While it converts, the message line says how far it got and with which file.
+	click(app, "#menu-bar button[menu=media-menu]");
+	click(app, "#media-menu menuitem[command=\"media.conform\"]");
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const std::string text = message(app);
+			return text.rfind("Conform Files: ", 0) == 0 && text.find(" %, slow.wav") != std::string::npos;
+		},
+		std::chrono::seconds(30)));
+	const Json jobs = app.call("job.list").at("jobs");
+	REQUIRE(jobs.size() == 1);
+	CHECK(jobs.at(0).at("kind") == "media.conform");
+	app.call("job.cancel", {{"job", jobs.at(0).at("id")}});
+
+	// Cancelled, it says so and leaves the media file as it was.
+	REQUIRE(app.waitUntil([&app] { return message(app) == "Conform Files was cancelled."; }, std::chrono::seconds(30)));
+	CHECK(!has(elements(app, "#pool-message").at(0), "error"));
+	const Json media = app.call("project.get").at("media").at(0);
+	CHECK(media.at("path") == slow.u8string());
+	CHECK(media.at("sampleRate") == 44100.0);
+}

@@ -228,7 +228,8 @@ namespace gnubase::ui
 		// off. A tool chosen with its command (actions()) shows its name in the notification #tool-notification,
 		// unless the user setting ui.toolSwitchNotification is off. Over the lanes, the attribute pointer of the
 		// event area names the mouse pointer for the style sheets: the tool's name, the range selection tool's in a
-		// lane's upper half with the selection tools combined, or resize at an event's edge that a drag resizes.
+		// lane's upper half with the selection tools combined, or resize at an event's edge that a drag resizes; with
+		// the modifier keys held, what a press with them does, such as split with the tool modifier Split Event.
 		void setTool(Tool tool);
 		Tool tool() const { return m_tool; }
 		void setCombineSelectionTools(bool on);
@@ -278,6 +279,10 @@ namespace gnubase::ui
 		// tools: tool.objectSelection, tool.rangeSelection, tool.draw, tool.erase, tool.split, tool.glue, tool.mute,
 		// tool.zoom, tool.line, tool.play, tool.next, tool.previous and tool.combineSelectionTools (on or off).
 		const std::map<std::string, std::function<void()>>& actions() const { return m_actions; }
+		// Whether the action can do something now, for menus and keys to disable it: the actions that only edit the
+		// selection range (edit.cut, edit.copy, edit.cutTime, edit.deleteTime, edit.insertSilence, edit.cropRange and
+		// edit.splitRange) need a range, all but edit.splitRange one with a length. The others always can.
+		bool canRun(const std::string& action) const;
 
 		// Automation tracks (#121, automationtracks.cpp, docs/features/automation-tracks.md): lanes of their own below
 		// their track's lane, each showing one of the track's automation lanes (automationLane.*) as a curve with its
@@ -551,16 +556,19 @@ namespace gnubase::ui
 		// The tool a press y dp down the event lanes uses: the range selection tool in a lane's upper half when the
 		// selection tools are combined, else the tool.
 		Tool toolAt(double y) const;
-		// The mouse pointer over the lanes at x and y dp, as the event area's attribute pointer names it; showPointer
-		// shows the one where the mouse was last, unless a drag goes on.
-		std::string pointerAt(double x, double y) const;
+		// The mouse pointer over the lanes at x and y dp for a press with the modifier keys held (as modifiersOf
+		// joins them), as the event area's attribute pointer names it; showPointer shows the one where the mouse is,
+		// with the keys held now, unless a drag goes on. heldKeys follows the modifier keys going down and up.
+		std::string pointerAt(double x, double y, const std::string& keys) const;
 		void showPointer();
+		void heldKeys(Rml::Event& event);
 		// The menus that a right click in the lanes opens, without and with a modifier key.
 		void showContextMenus();
 		// The notification for a tool chosen with a key command.
 		void notify(const std::string& text);
-		// Whether the pressed modifiers are the ones the user setting ui.toolModifiers gives the action.
-		bool modifiers(const char* action) const;
+		// Whether the pressed modifiers, or the keys, are the ones the user setting ui.toolModifiers gives the action.
+		bool modifiers(const char* action) const { return modifiers(action, m_pressed); }
+		bool modifiers(const char* action, const std::string& keys) const;
 		// What a press at x and y dp in the event lanes does with the tool, unless the object selection tool takes it.
 		bool toolDown(double x, double y);
 		void toolMove(double x, double y);
@@ -737,7 +745,9 @@ namespace gnubase::ui
 		bool m_toolboxKnown = false;        // changed since it was asked for
 		bool m_notifies = true;             // ui.toolSwitchNotification
 		bool m_notifiesKnown = false;
-		std::optional<std::pair<double, double>> m_mouse; // over the lanes, in dp, when the mouse was there last
+		std::optional<std::pair<double, double>> m_mouse; // over the lanes, in dp, while the mouse is there
+		std::string m_held;           // the modifier keys held, as modifiersOf joins them, for the pointer
+		std::set<int> m_modifierKeys; // the modifier keys seen going down and not up (Rml::Input::KeyIdentifier)
 		std::vector<CycleMarker> m_cycleMarkers;
 		std::vector<int64_t> m_markers; // every marker's position and end, in samples, for snapping
 		engine::SnapSettings m_snap;
@@ -774,6 +784,7 @@ namespace gnubase::ui
 		std::map<uint64_t, std::set<uint64_t>> m_pointsBase; // the selection a rectangle with Ctrl or Shift adds to
 
 		std::map<std::string, std::function<void()>> m_actions;
+		std::map<std::string, bool> m_rangeActions; // the actions that need a range (canRun), whether with a length
 		std::vector<std::function<void()>> m_viewListeners;
 		std::vector<Subscription> m_subscriptions;
 		std::optional<Subscription> m_position; // while playing

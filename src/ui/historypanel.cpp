@@ -257,8 +257,7 @@ namespace gnubase::ui
 		}
 		place(m_dragging ? m_dragTo : m_position);
 		view->SetAttribute("value", std::to_string(m_position));
-		// Answers arrive outside input handling: ask the window to update and draw, also so that the list view moves
-		// its selection before the next key.
+		// Answers arrive outside input handling: ask the window to update and draw them.
 		if (context != nullptr)
 			context->RequestNextUpdate(0);
 	}

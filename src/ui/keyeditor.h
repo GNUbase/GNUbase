@@ -37,9 +37,12 @@ namespace gnubase::ui
 	// input, length quantize), the info line of the first selected note, the parts it shows by track (a click
 	// activates one, as MidiEditor handles it) and the note display, a piano keyboard beside a grid of 128 pitches
 	// with the notes as boxes and the step input cursor. The notes' time axis fits the parts' range into the width.
-	// show() gives it the project and the engine's editor view whenever they change; the selection is the view's
-	// (editor.set selection), and every edit goes to the engine as note.* commands, those of several parts in one
-	// history.transaction. Use it on the UI thread; the binding must outlive it.
+	// A right click in the note display opens the toolbox #key-editor-toolbox, the toolbar's tools at the mouse, as
+	// in the event display (reference manual p. 65): with the user setting ui.toolboxOnRightClick, else with a
+	// modifier key; the key editor has no context menu yet. show() gives it the project and the engine's editor view
+	// whenever they change; the selection is the view's (editor.set selection), and every edit goes to the engine as
+	// note.* commands, those of several parts in one history.transaction. Use it on the UI thread; the binding must
+	// outlive it.
 	class KeyEditor final : private Rml::EventListener
 	{
 	public:
@@ -98,6 +101,9 @@ namespace gnubase::ui
 		void release(Rml::Event& event);
 		void doubleClick(Rml::Event& event);
 		void toolbar(Rml::Element& target);
+		// The note display opens the toolbox on a right click with the user setting ui.toolboxOnRightClick, else on
+		// one with a modifier key.
+		void showToolbox();
 
 		void render();
 		void renderInfo();
@@ -143,8 +149,12 @@ namespace gnubase::ui
 		std::pair<double, int> m_pressedAt;
 		std::optional<Note> m_pressed; // the note pressed, as it was
 		bool m_snapOff = false;
-		Rml::ObserverPtr<Rml::Element> m_drawn; // the note a draw drags out
-		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
+		Rml::ObserverPtr<Rml::Element> m_drawn;              // the note a draw drags out
+		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus; // the length quantize menu, then the toolbox
+		bool m_toolboxOnRightClick = false;                  // ui.toolboxOnRightClick
+		bool m_toolboxKnown = false;                         // changed since it was asked for
+		std::vector<Subscription> m_subscriptions;
+		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
 	};
 
 	const char* keyToolName(KeyTool tool);
