@@ -2,8 +2,9 @@
 // The pool (#93, docs/features/pool.md): every clip and media file of the project, the folders that organize them,
 // and media management. pool.get is a query; the others change the project, so each is one undo step and changes
 // nothing if it fails (ProjectModel::add). media.locate and media.conform look through folders and convert files, so
-// they run as jobs (#498), which change the project at the end with one command on the command thread. Steps that
-// consist of other commands run them through m_edits, so they emit their events.
+// they run as jobs (#498), which change the project at the end with one command on the command thread, for the
+// project that was open when they started only. Steps that consist of other commands run them through m_edits, so
+// they emit their events.
 #include "engine/audiofile/audiofile.h"
 #include "engine/audiofile/resampler.h"
 #include "engine/document/document.h"
@@ -246,8 +247,9 @@ namespace gnubase::engine
 		}
 
 		// media.locate's job: looks for the media files in folder, then relinks the ones found with media.relink in a
-		// transaction, one undo step that skips media files relinked or removed meanwhile.
-		Json locateFiles(const std::vector<Sought>& sought, const fs::path& folder, JobContext& job)
+		// transaction, one undo step for project, the project open when it started. It skips media files relinked or
+		// removed meanwhile, and files found that changed or went since.
+		Json locateFiles(const std::vector<Sought>& sought, const fs::path& folder, uint64_t project, JobContext& job)
 		{
 			std::set<std::string> names;
 			for (const Sought& media : sought)
@@ -292,7 +294,8 @@ namespace gnubase::engine
 					missing.push_back(media.id);
 					continue;
 				}
-				relink.push_back({{"media", media.id}, {"path", fits->u8string()}, {"from", media.path}});
+				relink.push_back(
+					{{"media", media.id}, {"path", fits->u8string()}, {"from", media.path}, {"length", media.length}});
 				found.push_back(media.id);
 			}
 
@@ -300,7 +303,8 @@ namespace gnubase::engine
 			std::set<ObjectId> skipped;
 			if (!relink.empty())
 			{
-				const Json command = {{"command", "media.relink"}, {"parameters", {{"files", relink}}}};
+				const Json command = {
+					{"command", "media.relink"}, {"parameters", {{"files", relink}, {"project", project}}}};
 				const Json result = job.command("history.transaction",
 					{{"description", "Locate missing files"}, {"commands", Json::array({command})}});
 				for (const Json& media : result.at("results").at(0).at("skipped"))
@@ -346,11 +350,21 @@ namespace gnubase::engine
 			return files;
 		}
 
-		// media.relinkResampled.
-		Json relinkResampled(Project& project, CommandContext& context)
+		// media.relinkResampled; openedProject is the open project's ProjectModel::openedRevision.
+		Json relinkResampled(Project& project, CommandContext& context, uint64_t openedProject)
 		{
 			const Json& parameters = context.parameters();
-			// Files conformed to another project sample rate than the project's now don't conform it.
+			// Each media file once, whether its entry applies or not: a second one would rescale what the first did.
+			std::set<ObjectId> given;
+			for (const Json& entry : parameters.at("files"))
+			{
+				const auto id = entry.at("media").get<ObjectId>();
+				require(given.insert(id).second, "media file " + idText(id) + " is given twice");
+			}
+			// Files conformed for another project, or to another project sample rate than the project's now, don't
+			// conform it.
+			const bool otherProject =
+				parameters.contains("project") && parameters.at("project").get<uint64_t>() != openedProject;
 			const bool rateChanged = parameters.contains("projectSampleRate") &&
 				parameters.at("projectSampleRate").get<double>() != project.sampleRate;
 			std::map<ObjectId, Rescale> rescales;
@@ -361,7 +375,7 @@ namespace gnubase::engine
 				const auto id = entry.at("media").get<ObjectId>();
 				const auto path = entry.at("path").get<std::string>();
 				const auto found = project.media.find(id);
-				if (rateChanged)
+				if (otherProject || rateChanged)
 				{
 					skipped.push_back(id);
 					continue;
@@ -378,7 +392,6 @@ namespace gnubase::engine
 					skipped.push_back(id);
 					continue;
 				}
-				require(rescales.count(id) == 0, "media file " + idText(id) + " is given twice");
 				AudioFileInfo info;
 				try
 				{
@@ -403,13 +416,24 @@ namespace gnubase::engine
 			return Json{{"relinked", std::move(relinked)}, {"skipped", std::move(skipped)}};
 		}
 
-		// media.conform's job: writes each file at sampleRate into folder, then points the media at the new files with
-		// media.relinkResampled, one undo step that skips media files changed meanwhile, and all of them if the
-		// project's sample rate changed. Removes the files it wrote if it fails or is cancelled before, and afterwards
-		// the ones of media files skipped. The media folder stays, since other writers may use it too.
-		Json conformFiles(
-			const std::vector<Conversion>& files, const fs::path& folder, double sampleRate, JobContext& job)
+		// Where media.conform's job writes and how it changes the project.
+		struct ConformTarget
 		{
+			fs::path folder;
+			double sampleRate = 0.0; // the project's when it started
+			uint64_t project = 0;    // the project open when it started (ProjectModel::openedRevision)
+			std::string merge;       // the merge key of its undo step, or empty
+		};
+
+		// media.conform's job: writes each file at the target's sample rate into its folder, then points the media at
+		// the new files with media.relinkResampled in a transaction, one undo step for the target's project that skips
+		// media files changed meanwhile, and all of them if the project's sample rate changed. Removes the files it
+		// wrote if it fails or is cancelled before, and afterwards the ones of media files skipped. The media folder
+		// stays, since other writers may use it too.
+		Json conformFiles(const std::vector<Conversion>& files, const ConformTarget& target, JobContext& job)
+		{
+			const fs::path& folder = target.folder;
+			const double sampleRate = target.sampleRate;
 			if (files.empty())
 				return Json{{"media", Json::array()}, {"changed", Json::array()}};
 			std::vector<std::string> written;
@@ -447,8 +471,15 @@ namespace gnubase::engine
 						{{"media", file.id}, {"path", path}, {"from", file.path}, {"fromSampleRate", file.sampleRate}});
 				}
 				job.checkCancelled();
-				result = job.command(
-					"media.relinkResampled", {{"files", std::move(relink)}, {"projectSampleRate", sampleRate}});
+				Json transaction = {{"description", "Conform files"},
+					{"commands",
+						Json::array({{{"command", "media.relinkResampled"},
+							{"parameters",
+								{{"files", std::move(relink)}, {"projectSampleRate", sampleRate},
+									{"project", target.project}}}}})}};
+				if (!target.merge.empty())
+					transaction["merge"] = target.merge;
+				result = job.command("history.transaction", transaction).at("results").at(0);
 			}
 			catch (...)
 			{
@@ -477,9 +508,8 @@ namespace gnubase::engine
 		}
 	}
 
-	void ProjectModel::registerPoolCommands(Engine& engine)
+	void ProjectModel::registerPoolCommands(Engine& engine, Jobs& jobs)
 	{
-		Jobs& jobs = engine.jobs();
 		const Json integer = {{"type", "integer"}};
 		const Json number = {{"type", "number"}};
 		const Json boolean = {{"type", "boolean"}};
@@ -682,7 +712,8 @@ namespace gnubase::engine
 				"missing one). It runs as a job, so it can't be part of a history.transaction: this returns at once, "
 				"job.progress events say which folder it looks in and then which media file it checks, job.cancel "
 				"stops it, and once it is done the files found are relinked as one undo step, which skips media "
-				"files relinked or removed meanwhile. The job's result is {relinked, missing, changed}: the media "
+				"files relinked or removed meanwhile, files found that changed or went since, and every one if "
+				"another project was opened meanwhile. The job's result is {relinked, missing, changed}: the media "
 				"files relinked, the ones it didn't find, and the ones it found but that changed meanwhile and keep "
 				"what they have now.",
 				objectSchema({{"folder", string}, {"media", ids}}, {"folder"}),
@@ -698,8 +729,9 @@ namespace gnubase::engine
 					if (const MediaFile& media = m_project.media.at(id); missing(media))
 						sought.push_back({id, media.path, media.sampleRate, media.channels, media.length});
 				return Json{{"job",
-					jobs.start("media.locate", [sought = std::move(sought), folder = std::move(folder)](JobContext& job)
-						{ return locateFiles(sought, folder, job); })}};
+					jobs.start("media.locate",
+						[sought = std::move(sought), folder = std::move(folder), project = m_openedRevision](
+							JobContext& job) { return locateFiles(sought, folder, project, job); })}};
 			});
 
 		add(engine,
@@ -747,75 +779,45 @@ namespace gnubase::engine
 				return Json{{"media", std::move(media)}, {"clips", std::move(clips)}, {"events", std::move(events)}};
 			});
 
-		const CommandInfo conformInfo = {"media.conform", 1,
-			"Conforms media files to the project's sample rate (Convert Files with New + Replace in Pool, "
-			"reference manual pp. 759-760): writes each one at another sample rate into the media folder as a "
-			"32-bit float WAV file at the project's sample rate and points the media file at it with "
-			"media.relinkResampled, as one undo step. The clip fades, offsets, lengths, fades, crossfades, snap "
-			"points and volume curves of what plays it move with the new sample frames, so events play the same "
-			"section. The "
-			"original files stay on disk. media limits it to those media files, which must not be missing "
-			"(default: every one that isn't missing). The project must have been saved. It runs as a job: this "
-			"returns at once, job.progress events say which file it converts, and job.cancel stops it and "
-			"removes the files it wrote. Media files whose path or sample rate changed meanwhile, or that were "
-			"removed, keep what they have, and their new files are removed. The job's result is {media, "
-			"changed}: the media files conformed and the ones that changed meanwhile. In a history.transaction, "
-			"which is one step on the command thread (the project setup dialog's), it converts there instead and "
-			"returns {media}.",
-			objectSchema({{"media", ids}}), objectSchema({{"job", Jobs::schema()}}, {"job"}), false};
-		const auto conformFolder = [this]
-		{
-			require(!m_file.empty(), "save the project first: files are conformed into the folder of its project file");
-			return mediaFolderFor(fs::u8path(m_file));
-		};
-		addControl(engine, conformInfo,
-			[this, &jobs, conformFolder](CommandContext& context)
+		addControl(engine,
+			{"media.conform", 1,
+				"Conforms media files to the project's sample rate (Convert Files with New + Replace in Pool, "
+				"reference manual pp. 759-760): writes each one at another sample rate into the media folder as a "
+				"32-bit float WAV file at the project's sample rate and points the media file at it with "
+				"media.relinkResampled, as one undo step. The clip fades, offsets, lengths, fades, crossfades, snap "
+				"points and volume curves of what plays it move with the new sample frames, so events play the same "
+				"section. The original files stay on disk. media limits it to those media files, which must not be "
+				"missing (default: every one that isn't missing). The project must have been saved. It runs as a "
+				"job, so it can't be part of a history.transaction: this returns at once, job.progress events say "
+				"which file it converts, and job.cancel stops it and removes the files it wrote. Media files whose "
+				"path or sample rate changed meanwhile, or that were removed, keep what they have, and their new "
+				"files are removed; so do all of them if the project's sample rate changed or another project was "
+				"opened meanwhile. With merge, the undo step is a history.transaction with that merge key: it joins "
+				"the last step if that one has the key and nothing was undone since, as the project setup dialog's "
+				"new sample rate does. The job's result is {media, changed}: the media files conformed and the ones "
+				"that changed meanwhile.",
+				objectSchema({{"media", ids}, {"merge", string}}), objectSchema({{"job", Jobs::schema()}}, {"job"}),
+				false},
+			[this, &jobs](CommandContext& context)
 			{
-				std::vector<Conversion> files = conversionsOf(m_project, context.parameters());
-				const fs::path folder = files.empty() ? fs::path() : conformFolder();
+				const Json& parameters = context.parameters();
+				std::vector<Conversion> files = conversionsOf(m_project, parameters);
+				ConformTarget target;
+				if (!files.empty())
+				{
+					require(!m_file.empty(),
+						"save the project first: files are conformed into the folder of its project file");
+					target.folder = mediaFolderFor(fs::u8path(m_file));
+				}
+				target.sampleRate = m_project.sampleRate;
+				target.project = m_openedRevision;
+				target.merge = parameters.value("merge", std::string());
+				fs::path folder = target.folder;
 				return Json{{"job",
 					jobs.start(
-						"media.conform",
-						[files = std::move(files), target = folder, sampleRate = m_project.sampleRate](JobContext& job)
-						{ return conformFiles(files, target, sampleRate, job); }, folder)}};
+						"media.conform", [files = std::move(files), target = std::move(target)](JobContext& job)
+						{ return conformFiles(files, target, job); }, std::move(folder))}};
 			});
-		// A transaction can't wait for a job.
-		// ponytail: the project setup dialog conforms in its transaction, so that one undo step takes back the sample
-		// rate and the files together; as a job it would need its own step or a merge key (#498).
-		m_edits["media.conform"] = {conformInfo, [conformFolder](Project& project, CommandContext& context)
-			{
-				const std::vector<Conversion> files = conversionsOf(project, context.parameters());
-				Json conformed = Json::array();
-				if (files.empty())
-					return Json{{"media", std::move(conformed)}};
-				const fs::path folder = conformFolder();
-				std::vector<std::string> written;
-				try
-				{
-					std::error_code error;
-					fs::create_directories(folder, error);
-					require(!error, "can't create " + folder.u8string() + ": " + error.message());
-					Json relink = Json::array();
-					for (const Conversion& file : files)
-					{
-						const fs::path name = fs::u8path(fs::u8path(file.path).stem().u8string() + ".wav");
-						const std::string path = createFreeFile(folder, name).u8string();
-						written.push_back(path);
-						convertSampleRate(file.path, {path}, project.sampleRate);
-						relink.push_back({{"media", file.id}, {"path", path}});
-						conformed.push_back(file.id);
-					}
-					const Json parameters = {{"files", std::move(relink)}};
-					CommandContext inner(parameters, &context);
-					relinkResampled(project, inner);
-				}
-				catch (const std::exception& problem)
-				{
-					removeFiles(written);
-					throw CommandError(problem.what());
-				}
-				return Json{{"media", std::move(conformed)}};
-			}};
 
 		const Json relinkEntry = objectSchema(
 			{{"media", integer}, {"path", string}, {"from", string}, {"fromSampleRate", number}}, {"media", "path"});
@@ -826,14 +828,17 @@ namespace gnubase::engine
 				"offsets, lengths, fades, crossfades, snap points and volume curves of what plays it move with the new "
 				"sample frames, so events play the same section. Each new file must be an audio file with the media "
 				"file's "
-				"channel count and at least one sample frame, and each media file can be given once. An entry with "
-				"from applies only if the media file is still there and still points at from, one with "
-				"fromSampleRate only if the media file is still at that sample rate; otherwise it is skipped. With "
-				"projectSampleRate, every entry is skipped unless the project is still at that sample rate. Returns "
-				"the media files relinked and the ones skipped.",
-				objectSchema(
-					{{"files", {{"type", "array"}, {"items", relinkEntry}}}, {"projectSampleRate", number}}, {"files"}),
+				"channel count and at least one sample frame, and each media file can be given once, whether its entry "
+				"applies or not. An entry with from applies only if the media file is still there and still points at "
+				"from, one with fromSampleRate only if the media file is still at that sample rate; otherwise it is "
+				"skipped. With projectSampleRate, every entry is skipped unless the project is still at that sample "
+				"rate, and with project unless that project is still open (project.revision's project). Returns the "
+				"media files relinked and the ones skipped.",
+				objectSchema({{"files", {{"type", "array"}, {"items", relinkEntry}}}, {"projectSampleRate", number},
+								 {"project", integer}},
+					{"files"}),
 				objectSchema({{"relinked", ids}, {"skipped", ids}}, {"relinked", "skipped"}), false},
-			"Conform files", relinkResampled);
+			"Conform files", [this](Project& project, CommandContext& context)
+			{ return relinkResampled(project, context, m_openedRevision); });
 	}
 }

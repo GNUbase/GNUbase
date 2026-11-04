@@ -48,11 +48,12 @@ namespace gnubase::engine
 	void copyMedia(std::vector<MediaCopy>& files, const std::filesystem::path& folder, JobContext& job);
 
 	// Copies media files into the media folder as a job, then points the media at their copies with one
-	// command, a transaction named action, so that it is one undo step. Media whose path changed while the job
-	// copied, or that were removed, keep their path, and their copies are removed. The job's result is
-	// {copied: [{media, from, to}], missing: [{media, path}], changed: [media]}. Returns the job.
-	Json startMediaCopy(
-		Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder, std::string action);
+	// command, a transaction named action, so that it is one undo step of project, the project open when it started
+	// (ProjectModel::openedRevision). Media whose path changed while the job copied, or that were removed, keep their
+	// path, and their copies are removed; so are all of them if another project was opened meanwhile. The job's result
+	// is {copied: [{media, from, to}], missing: [{media, path}], changed: [media]}. Returns the job.
+	Json startMediaCopy(Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder,
+		std::string action, uint64_t project);
 
 	// Removes files, ignoring errors, e.g. copies that a job made and doesn't need.
 	void removeFiles(const std::vector<std::string>& files);

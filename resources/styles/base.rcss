@@ -1764,7 +1764,8 @@ listview.history
 
 /* The pool (ui/poolpanel.h): a toolbar, the message line, the info line, the column headers and a tree of folders and
    clips that fills the rest of its panel. The Media column takes the room the others leave. Rows have the state
-   classes .folder or .clip, and clips .missing and .unused; the message line has .error for a failure. */
+   classes .folder or .clip, and clips .missing and .unused; the message line has .error for a failure, and its row
+   .running while a job of a pool command runs, which shows Stop. */
 .pool
 {
 	position: absolute;
@@ -1794,10 +1795,28 @@ listview.history
 	margin-right: 16dp;
 }
 
+.pool-status
+{
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	padding: 2dp 10dp 0 10dp;
+}
+
 .pool-message
 {
-	flex-shrink: 0;
-	padding: 2dp 10dp 0 10dp;
+	flex: 1;
+}
+
+.pool-status button
+{
+	display: none;
+	margin-left: 8dp;
+}
+
+.pool-status.running button
+{
+	display: block;
 }
 
 listview.pool-list

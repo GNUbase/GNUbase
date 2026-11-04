@@ -390,11 +390,12 @@ namespace gnubase::engine
 		}
 	}
 
-	Json startMediaCopy(
-		Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder, std::string action)
+	Json startMediaCopy(Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder,
+		std::string action, uint64_t project)
 	{
 		return jobs.start(std::move(kind),
-			[files = std::move(files), folder = std::move(folder), action = std::move(action)](JobContext& job) mutable
+			[files = std::move(files), folder = std::move(folder), action = std::move(action), project](
+				JobContext& job) mutable
 			{
 				copyMedia(files, folder, job);
 				Json relink = Json::array();
@@ -417,7 +418,8 @@ namespace gnubase::engine
 					job.checkCancelled();
 					if (!relink.empty())
 					{
-						const Json command = {{"command", "media.relink"}, {"parameters", {{"files", relink}}}};
+						const Json command = {
+							{"command", "media.relink"}, {"parameters", {{"files", relink}, {"project", project}}}};
 						const Json result = job.command(
 							"history.transaction", {{"description", action}, {"commands", Json::array({command})}});
 						for (const Json& media : result.at("results").at(0).at("skipped"))

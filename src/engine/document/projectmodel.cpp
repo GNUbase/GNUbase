@@ -2211,15 +2211,25 @@ namespace gnubase::engine
 				require(!sameFile(path, media.path), "path is media file " + idText(id) + "; choose a new file");
 		}
 
-		Json relinkMedia(Project& project, CommandContext& context)
+		// media.relink; openedProject is the open project's ProjectModel::openedRevision.
+		Json relinkMedia(Project& project, CommandContext& context, uint64_t openedProject)
 		{
+			const Json& parameters = context.parameters();
+			// Files found or copied for another project don't belong to this one.
+			const bool otherProject =
+				parameters.contains("project") && parameters.at("project").get<uint64_t>() != openedProject;
 			Json relinked = Json::array();
 			Json skipped = Json::array();
-			for (const Json& entry : context.parameters().at("files"))
+			for (const Json& entry : parameters.at("files"))
 			{
 				const ObjectId id = entry.at("media").get<ObjectId>();
 				const std::string path = entry.at("path").get<std::string>();
 				require(!path.empty(), "path must not be empty");
+				if (otherProject)
+				{
+					skipped.push_back(id);
+					continue;
+				}
 				if (entry.contains("from"))
 				{
 					const auto found = project.media.find(id);
@@ -2230,6 +2240,8 @@ namespace gnubase::engine
 					}
 				}
 				MediaFile& media = find(project.media, id, "media file");
+				// An entry with length is skipped, not refused, if its file went or doesn't fit (any more).
+				const bool checked = entry.contains("length");
 				AudioFileInfo info;
 				try
 				{
@@ -2237,7 +2249,17 @@ namespace gnubase::engine
 				}
 				catch (const AudioFileError& error)
 				{
-					throw CommandError(error.what());
+					if (!checked)
+						throw CommandError(error.what());
+					skipped.push_back(id);
+					continue;
+				}
+				if (checked &&
+					(info.sampleRate != media.sampleRate || info.channels != media.channels ||
+						info.frames != entry.at("length").get<int64_t>()))
+				{
+					skipped.push_back(id);
+					continue;
 				}
 				require(info.sampleRate == media.sampleRate && info.channels == media.channels,
 					path + " has " + std::to_string(info.channels) + " channels at " +
@@ -2818,9 +2840,7 @@ namespace gnubase::engine
 			{"poolFolder.set", "Change pool folder"},
 			{"poolFolder.remove", "Remove pool folder"},
 			{"pool.removeUnused", "Remove unused media"},
-			{"media.locate", "Locate missing files"},
 			{"media.removeMissing", "Remove missing files"},
-			{"media.conform", "Conform files"},
 		};
 
 		// Empty for commands without a fixed name, such as transactions.
@@ -3666,25 +3686,29 @@ namespace gnubase::engine
 				const MediaFile& media = project.media.at(result.at("media").at("id").get<ObjectId>());
 				if (context.parameters().value("copy", false) && !isInside(media.path, mediaFolder.parent_path()))
 					result["job"] = startMediaCopy(jobs, "media.add", {MediaCopy{media.id, media.path, {}}},
-						mediaFolder, "Copy media file into the project");
+						mediaFolder, "Copy media file into the project", m_openedRevision);
 				return result;
 			});
 		add(engine,
 			{"media.relink", 1,
 				"Points media files at other files, such as copies, as one undo step. Each new file must be an audio "
 				"file with the media file's sample rate and channel count. An entry with from applies only if the "
-				"media file is still there and still points at from; otherwise it is skipped. Returns the media "
-				"files it relinked and the ones it skipped.",
-				objectSchema(
-					{{"files",
-						arraySchema(objectSchema({{"media", idSchema}, {"path", stringSchema}, {"from", stringSchema}},
-							{"media", "path"}))}},
+				"media file is still there and still points at from; one with length only if its new file can be "
+				"read, fits and has that many sample frames; otherwise it is skipped. With project, every entry is "
+				"skipped unless that project is still open (project.revision's project). Returns the media files it "
+				"relinked and the ones it skipped.",
+				objectSchema({{"files",
+								  arraySchema(objectSchema({{"media", idSchema}, {"path", stringSchema},
+															   {"from", stringSchema}, {"length", integerSchema}},
+									  {"media", "path"}))},
+								 {"project", integerSchema}},
 					{"files"}),
 				{{"type", "object"},
 					{"properties", {{"relinked", arraySchema(idSchema)}, {"skipped", arraySchema(idSchema)}}},
 					{"required", {"relinked", "skipped"}}},
 				false},
-			relinkMedia);
+			[this](Project& project, CommandContext& context)
+			{ return relinkMedia(project, context, m_openedRevision); });
 		add(engine,
 			{"media.convert", 1,
 				"Converts a media file to another sample rate (by default the project's), writes the result to path as "
@@ -3847,7 +3871,7 @@ namespace gnubase::engine
 		registerAudioFileCommands(engine, jobs);
 		registerRecordingCommands(engine);
 		registerRenderCommands(engine);
-		registerPoolCommands(engine);
+		registerPoolCommands(engine, jobs);
 		registerFadeCommands(engine);
 		registerVolumeCurveCommands(*this, engine);
 		registerEventEditCommands(engine);
@@ -4024,8 +4048,8 @@ namespace gnubase::engine
 					if (!isInside(media.path, file.parent_path()))
 						files.push_back({id, media.path, {}});
 				return Json{{"job",
-					startMediaCopy(
-						jobs, "media.prepareArchive", std::move(files), mediaFolderFor(file), "Prepare archive")}};
+					startMediaCopy(jobs, "media.prepareArchive", std::move(files), mediaFolderFor(file),
+						"Prepare archive", m_openedRevision)}};
 			});
 		addControl(engine,
 			{"project.revision", 1,

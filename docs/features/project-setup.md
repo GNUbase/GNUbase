@@ -25,8 +25,8 @@ so MCP and Lua scripts can do all it does.
   writes it); files from before have the defaults. Undo and redo restore them with the other project settings
   (`ProjectSettings` in `history.h`) and announce them with `project.changed`.
 - **A new sample rate** keeps linear positions at their time, as before; media files keep their sample rate and play
-  at the wrong speed until they are conformed with `media.conform` ([pool.md](pool.md)). The dialog does both in one
-  `history.transaction` (below).
+  at the wrong speed until they are conformed with `media.conform` ([pool.md](pool.md)). The dialog does both, as
+  one undo step (below).
 - **The record bit depth** is in the render snapshot, so `audio.get` has it as `recordBitDepth` next to
   `projectSampleRate`, and `audio.changed` announces a new one, also after undo, for the status line's record format
   ([status-line.md](status-line.md)). The audio thread doesn't read it.
@@ -59,10 +59,13 @@ so MCP and Lua scripts can do all it does.
   Setup; Cancel and Escape drop it. Timecodes are read at the frame rate chosen in the dialog; a Start or Length that
   isn't a timecode, a Bar Offset that isn't a whole number and what the engine refuses (for example FLAC at 32 bit
   float) keep the dialog open with the message in `#project-setup-message`.
-- **Conform Audio Files** (on by default): with a new sample rate, the transaction also runs `media.conform`, so the
-  media files are converted to it (p. 128: audio files must be converted to a new sample rate to play back properly),
-  and undo takes back both. Conforming needs a saved project; if it fails, nothing changes and the dialog says why.
-  Off, the files keep their rate.
+- **Conform Audio Files** (on by default): with a new sample rate and media files at another rate, the dialog's
+  transaction has a merge key of its own (`Project Setup <revision>`), and then it starts `media.conform`'s job with
+  that key through the UI's binding (`gnubase.ui.command`), so the media files are converted to the new rate (p. 128:
+  audio files must be converted to a new sample rate to play back properly) without holding up other commands. The
+  pool opens and shows how the job goes, with Stop. The job's undo step joins the dialog's, so undo takes back both,
+  unless something else was done before it ended. Conforming needs a saved project: without a project file, the
+  dialog says so and nothing changes. Off, the files keep their rate.
 - **Timecodes in Lua.** The dialog's Lua formats and reads timecodes with `gnubase.ui.formatTimecode{seconds,
   frameRate}` (returns `text`) and `gnubase.ui.parseTimecode{text, frameRate}` (returns `seconds`, or nothing for text
   that isn't a timecode), which `app::AppUi` adds to the UI's Lua next to `gnubase.ui.command`, so it converts exactly
@@ -82,6 +85,7 @@ so MCP and Lua scripts can do all it does.
 with the project; combinations recording can't write and values out of range are refused; the time displays follow the
 frame rate, start time and bar offset. In the app, the dialog shows the defaults and OK sends a changed bit depth,
 frame rate, start, length, bar offset, pan law and maximum volume as one undo step; Cancel drops a change and an
-unreadable length keeps it open with the message; a new sample rate conforms a saved project's audio file, undone in
-one step, and doesn't with Conform Audio Files off; the status line shows a new record bit depth, follows undo and opens
+unreadable length keeps it open with the message; a new sample rate keeps the dialog open on an unsaved project
+with media, and conforms a saved project's audio file with the pool's job, which the pool shows, undone in one step,
+and doesn't with Conform Audio Files off; the status line shows a new record bit depth, follows undo and opens
 the dialog with a click. `tests/eventdisplay_tests.cpp` checks Zoom Full and the overview line with the project's length.
