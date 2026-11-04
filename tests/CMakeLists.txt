@@ -65,6 +65,8 @@ add_executable(gnubase-tests
 	keyeditor_tests.cpp
 	keyeditor_ui_tests.cpp
 	latency_tests.cpp
+	listeditor_tests.cpp
+	listeditor_ui_tests.cpp
 	lockrecord_tests.cpp
 	log_tests.cpp
 	mainmenu_tests.cpp
@@ -82,6 +84,8 @@ add_executable(gnubase-tests
 	midifunctions_tests.cpp
 	midirecording_tests.cpp
 	miditap_tests.cpp
+	mixdown_tests.cpp
+	mixdown_ui_tests.cpp
 	mixer_tests.cpp
 	mixerviews_tests.cpp
 	mixerwindow_tests.cpp
