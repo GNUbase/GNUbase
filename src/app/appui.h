@@ -20,6 +20,7 @@
 #include "ui/rmlui.h"
 #include "ui/sdlwindowsystem.h"
 #include "ui/shell.h"
+#include "ui/signaturetrack.h"
 #include "ui/statusline.h"
 #include "ui/tempotrack.h"
 #include "ui/themes.h"
@@ -94,6 +95,8 @@ namespace gnubase::app
 		ui::WindowId tempoWindow() const { return m_tempoWindow; }
 		// The tempo curve on the tempo track's lane in the project window, null before showProject.
 		ui::TempoLane* tempoLane() { return m_tempoLane.get(); }
+		// The time signature events on the signature track's lane in the project window, null before showProject.
+		ui::SignatureLane* signatureLane() { return m_signatureLane.get(); }
 
 		// The mixers (#106, docs/features/mixer-window.md): mixer window number 1 to 4 opens in a window of its own
 		// (resources/ui/mixer.rml), hidden like the main window, or closes if it is open: the UI commands window.mixer
@@ -205,9 +208,10 @@ namespace gnubase::app
 		bool m_hidden = false; // the main window, and so the others
 		std::unique_ptr<ui::MarkersWindow> m_markers;
 		ui::WindowId m_markersWindow = 0;
-		std::unique_ptr<ui::EventDisplay> m_eventDisplay; // goes before the binding
-		std::unique_ptr<ui::MarkerLines> m_markerLines;   // and before the display
-		std::unique_ptr<ui::TempoLane> m_tempoLane;       // as well
+		std::unique_ptr<ui::EventDisplay> m_eventDisplay;   // goes before the binding
+		std::unique_ptr<ui::MarkerLines> m_markerLines;     // and before the display
+		std::unique_ptr<ui::TempoLane> m_tempoLane;         // as well
+		std::unique_ptr<ui::SignatureLane> m_signatureLane; // as well
 		std::unique_ptr<ui::TempoEditor> m_tempoEditor;
 		ui::WindowId m_tempoWindow = 0;
 		std::vector<uint64_t> m_eventSelection; // the display's, as the last step saw it

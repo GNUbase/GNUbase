@@ -30,6 +30,7 @@ namespace Rml
 namespace gnubase::ui
 {
 	class Curve;
+	class SignatureRow;
 
 	// The project's tempo as project.get returns it.
 	struct ProjectTempo
@@ -152,8 +153,10 @@ namespace gnubase::ui
 	// events (the user setting editing.tempoType); #current-tempo the fixed tempo, or in tempo track mode the tempo at
 	// the project cursor. #tempo-curve-area holds the tempo curve of the whole project, #tempo-ruler a bars and beats
 	// ruler over it and #tempo-scale the tempos, as .tempo-scale-label elements. The info line shows the first selected
-	// event: #tempo-position, #tempo-value (its tempo, typed) and #tempo-ramp (ramp or jump). Backspace and Delete
-	// remove the selected events. Use it on the UI thread; the binding must outlive it.
+	// event: #tempo-position, #tempo-value (its tempo, typed) and #tempo-ramp (ramp or jump). #signature-area under the
+	// ruler is the time signature display, a ui::SignatureRow with the editor's tools (pp. 1468-1469); #signature-info
+	// shows its first selected event instead: #signature-position (its bar) and #signature-value (its signature,
+	// typed). Backspace and Delete remove the selected events. Use it on the UI thread; the binding must outlive it.
 	class TempoEditor final : private Rml::EventListener
 	{
 	public:
@@ -165,6 +168,7 @@ namespace gnubase::ui
 		TempoEditor& operator=(TempoEditor&&) = delete;
 
 		TempoCurve* curve() { return m_curve.get(); }
+		SignatureRow* signatures() { return m_signatures.get(); }
 		TempoTool tool() const { return m_tool; }
 
 	private:
@@ -177,6 +181,7 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_document;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 		std::unique_ptr<TempoCurve> m_curve;
+		std::unique_ptr<SignatureRow> m_signatures;
 		TempoTool m_tool = TempoTool::Select;
 		std::string m_type = "auto";
 		bool m_showing = false; // setting the fields' values

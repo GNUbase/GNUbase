@@ -3,6 +3,7 @@
 #include "ui/tempotrack.h"
 
 #include "ui/canvas.h"
+#include "ui/signaturetrack.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
@@ -470,7 +471,26 @@ namespace gnubase::ui
 		{
 			m_curve = std::make_unique<TempoCurve>(binding, *area);
 			m_curve->setTool([this] { return m_tool; });
-			m_curve->onSelect([this] { show(); });
+			m_curve->onSelect(
+				[this]
+				{
+					// The info line shows a tempo or a time signature event.
+					if (m_signatures && !m_curve->selection().empty())
+						m_signatures->setSelection({});
+					show();
+				});
+		}
+		if (Rml::Element* area = document.GetElementById("signature-area"))
+		{
+			m_signatures = std::make_unique<SignatureRow>(binding, *area);
+			m_signatures->setTool([this] { return m_tool; });
+			m_signatures->onSelect(
+				[this]
+				{
+					if (m_curve && !m_signatures->selection().empty())
+						m_curve->setSelection({});
+					show();
+				});
 		}
 		for (const Rml::EventId id :
 			{Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Keydown, Rml::EventId::Resize})
@@ -515,6 +535,7 @@ namespace gnubase::ui
 	TempoEditor::~TempoEditor()
 	{
 		m_curve.reset();
+		m_signatures.reset();
 		if (Rml::Element* document = m_document.get())
 			for (const Rml::EventId id :
 				{Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Keydown, Rml::EventId::Resize})
@@ -537,6 +558,8 @@ namespace gnubase::ui
 				m_loading = false;
 				if (result.ok() && m_curve)
 					m_curve->setTempo(readTempo(result.value));
+				if (result.ok() && m_signatures)
+					m_signatures->setTime(projectTime(result.value));
 				show();
 				if (std::exchange(m_stale, false))
 					requestProject();
@@ -589,6 +612,28 @@ namespace gnubase::ui
 			set("tempo-value", bpmText(first->bpm));
 			set("tempo-ramp", first->ramp ? "ramp" : "jump");
 		}
+		// Or the first selected time signature event: its bar as the ruler counts them, and its signature.
+		std::optional<time::SignatureChange> signature;
+		if (m_signatures)
+			for (const time::SignatureChange& change : tempo.time.signatures.changes())
+				if (!signature &&
+					std::find(m_signatures->selection().begin(), m_signatures->selection().end(), change.bar) !=
+						m_signatures->selection().end())
+					signature = change;
+		if (Rml::Element* info = document->GetElementById("signature-info"))
+			info->SetClass("hidden", !signature);
+		if (signature)
+		{
+			if (Rml::Element* position = document->GetElementById("signature-position"))
+			{
+				const std::string text = std::to_string(signature->bar + 1 + tempo.time.barOffset);
+				if (position->GetInnerRML() != text)
+					position->SetInnerRML(text);
+			}
+			set("signature-value",
+				std::to_string(signature->signature.numerator) + "/" +
+					std::to_string(signature->signature.denominator));
+		}
 		place();
 	}
 
@@ -606,6 +651,8 @@ namespace gnubase::ui
 		const double scale = tempo.length / width;
 		const double start = -g_editorEdge * scale;
 		m_curve->setView(start, scale);
+		if (m_signatures)
+			m_signatures->setView(start, scale);
 		if (auto* ruler = dynamic_cast<Ruler*>(document->GetElementById("tempo-ruler")))
 		{
 			ruler->setScale(rulerScale(TimeFormat::BarsBeats, tempo.time));
@@ -648,7 +695,11 @@ namespace gnubase::ui
 		{
 			const auto key = static_cast<Rml::Input::KeyIdentifier>(event.GetParameter<int>("key_identifier", 0));
 			if ((key == Rml::Input::KI_BACK || key == Rml::Input::KI_DELETE) && target->GetTagName() != "input")
+			{
 				m_curve->removeSelected();
+				if (m_signatures)
+					m_signatures->removeSelected();
+			}
 			return;
 		}
 		const ProjectTempo& tempo = m_curve->tempo();
@@ -702,6 +753,19 @@ namespace gnubase::ui
 				if (point.position <= at)
 					position = point.position;
 			m_binding.send("tempo.set", {{"events", {{{"position", position}, {"bpm", rounded(bpm)}}}}});
+			return;
+		}
+		if (id == "signature-value" && entered && m_signatures)
+		{
+			if (const auto signature = parseSignature(value))
+			{
+				Json events = Json::array();
+				for (const int64_t bar : m_signatures->selection())
+					events.push_back(
+						{{"bar", bar}, {"numerator", signature->first}, {"denominator", signature->second}});
+				if (!events.empty())
+					m_binding.send("signature.set", {{"events", events}});
+			}
 			return;
 		}
 		const std::vector<int64_t>& selection = m_curve->selection();

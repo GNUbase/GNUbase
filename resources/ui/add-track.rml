@@ -86,6 +86,7 @@
 			marker = {"name", "count"},
 			ruler = {"timeFormat", "count"},
 			tempo = {}, -- one per project (reference manual p. 162)
+			signature = {}, -- one per project (reference manual p. 163)
 		}
 
 		local timeFormatNames = {barsBeats = "Bars+Beats", seconds = "Seconds", timecode = "Timecode",
@@ -308,6 +309,7 @@
 				<listitem id="type-marker" value="marker">Marker</listitem>
 				<listitem id="type-ruler" value="ruler">Ruler</listitem>
 				<listitem id="type-tempo" value="tempo">Tempo</listitem>
+				<listitem id="type-signature" value="signature">Signature</listitem>
 			</listview>
 			<div id="track-fields"/>
 		</div>
