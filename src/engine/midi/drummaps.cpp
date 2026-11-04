@@ -226,7 +226,7 @@ namespace gnubase::engine::midi
 	std::string writeDrumMapFile(const DrumMap& map)
 	{
 		pugi::xml_document document;
-		pugi::xml_node root = document.append_child("DrumMap");
+		const pugi::xml_node root = document.append_child("DrumMap");
 		addValue(root, "string", "Name", map.name);
 		std::vector<NoteValue> snaps;
 		std::vector<std::string> outputs = {""};
@@ -240,14 +240,14 @@ namespace gnubase::engine::midi
 		pugi::xml_node quantize = addList(root, "Quantize", "list");
 		for (const NoteValue& snap : snaps)
 		{
-			pugi::xml_node item = quantize.append_child("item");
+			const pugi::xml_node item = quantize.append_child("item");
 			addValue(item, "int", "Grid", std::to_string(snap.denominator));
 			addValue(item, "int", "Type", std::to_string(static_cast<int>(snap.kind)));
 		}
 		pugi::xml_node sounds = addList(root, "Map", "list");
 		for (const DrumSound& sound : map.sounds)
 		{
-			pugi::xml_node item = sounds.append_child("item");
+			const pugi::xml_node item = sounds.append_child("item");
 			addValue(item, "int", "INote", std::to_string(sound.iNote));
 			addValue(item, "int", "ONote", std::to_string(sound.oNote));
 			addValue(item, "int", "Channel", std::to_string(sound.channel));
@@ -283,9 +283,10 @@ namespace gnubase::engine::midi
 			NoteValue snap;
 			snap.denominator = named(item, "int", "Grid").attribute("value").as_int(16);
 			const int kind = named(item, "int", "Type").attribute("value").as_int(0);
-			snap.kind = kind == 1 ? NoteValueKind::Triplet
-				: kind == 2       ? NoteValueKind::Dotted
-								  : NoteValueKind::Straight;
+			if (kind == 1)
+				snap.kind = NoteValueKind::Triplet;
+			else if (kind == 2)
+				snap.kind = NoteValueKind::Dotted;
 			snaps.push_back(noteValueFromString(toString(snap)).value_or(NoteValue{}));
 		}
 		std::vector<std::string> outputs;
@@ -314,17 +315,20 @@ namespace gnubase::engine::midi
 			const auto port = static_cast<size_t>(named(item, "int", "PortIndex").attribute("value").as_int(0));
 			sound.output = port > 0 && port < outputs.size() ? outputs[port] : "";
 		}
-		Json order = Json::array();
+		// An order that isn't each pitch once leaves the pitch order.
+		std::vector<int> order;
+		std::array<bool, g_drumSounds> seen{};
 		for (const pugi::xml_node item : named(root, "list", "Order").children("item"))
-			order.push_back(item.attribute("value").as_int(-1));
-		try
 		{
-			map = drumMapFromJson({{"order", order}}, map);
+			const int value = item.attribute("value").as_int(-1);
+			if (value < 0 || value >= g_drumSounds || seen.at(static_cast<size_t>(value)))
+				break;
+			seen.at(static_cast<size_t>(value)) = true;
+			order.push_back(value);
 		}
-		catch (const std::invalid_argument&)
-		{
-			// ponytail: an order that isn't each pitch once is dropped for the pitch order, not repaired
-		}
+		if (order.size() == map.order.size())
+			for (size_t row = 0; row < order.size(); ++row)
+				map.order.at(row) = static_cast<uint8_t>(order[row]);
 		return map;
 	}
 
