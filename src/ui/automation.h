@@ -125,7 +125,15 @@ namespace gnubase::ui
 		using Result = decltype(task());
 		auto job = std::make_shared<std::packaged_task<Result()>>(std::move(task));
 		std::future<Result> result = job->get_future();
-		shell.post([job = std::move(job)] { (*job)(); }); // dropped unrun, it breaks the promise
+		// Dropped unrun, the job breaks the promise. Once run, the UI thread lets go of it at once rather than at the
+		// end of its step: what the task threw is shared with the caller through the exception's own reference count,
+		// which ThreadSanitizer doesn't see, so the caller is left the last one to hold it.
+		shell.post(
+			[job = std::move(job)]() mutable
+			{
+				(*job)();
+				job.reset();
+			});
 		if (result.wait_for(timeout) != std::future_status::ready)
 			throw std::runtime_error("the UI didn't answer within " + std::to_string(timeout.count()) + " ms");
 		try

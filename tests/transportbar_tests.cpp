@@ -1080,8 +1080,9 @@ TEST_CASE(
 	app.call("transport.stop");
 	app.call("audio.stop");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("playing") == false; }));
-	REQUIRE(
-		app.waitUntil([&display, &app] { return display.cursor() * 48000.0 == static_cast<double>(position(app)); }));
+	// The cursor is in seconds: sample / 48000 * 48000 doesn't give every sample back exactly.
+	REQUIRE(app.waitUntil([&display, &app]
+		{ return std::llround(display.cursor() * 48000.0) == static_cast<long long>(position(app)); }));
 
 	// A change made through Lua, as through any other engine client: the windows draw it in the step it arrives in.
 	app.shell().step(std::chrono::milliseconds(0));
