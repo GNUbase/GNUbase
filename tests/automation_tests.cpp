@@ -1352,20 +1352,43 @@ TEST_CASE("in virgin territory and after terminators a lane plays its static val
 	}
 	SECTION("MIDI lanes' gaps")
 	{
-		// MIDI lanes without a static value of the channel have those of automationLane.targets.
+		// A controller lane without a static value of the channel sends nothing in its gaps, like a lane that doesn't
+		// read: here before 100, from the terminator at 300 up to 400 and after 500. After a gap its value is sent
+		// even where it is the gap point's.
+		using Type = graph::ProcessEvent::Type;
+		const auto gap = [](int64_t position)
+		{ return RenderAutomationPoint{position, 0.0, AutomationShape::Step, 0.0, true}; };
 		RenderChannel midi;
 		midi.type = TrackType::Midi;
 		midi.format = ChannelFormat::None;
-		const auto gapped = [](AutomationTargetType type, uint8_t number)
+		midi.automation = {{{AutomationTargetType::Controller, 0, 11, 0, 0},
+			{gap(100), {100, 0.5, AutomationShape::Linear, 0.0}, {300, 1.0, AutomationShape::Step, 0.0}, gap(300),
+				{400, 0.0, AutomationShape::Step, 0.0}, {500, 0.0, AutomationShape::Step, 0.0}, gap(500)}}};
+		AutomationPlayer player;
+		player.setAutomation(channelAutomation(midi, 6.0));
+		std::vector<int64_t> sent;
+		for (const PlayedEvent& event : playInBlocks(player, 1000, 1000))
 		{
-			return RenderAutomationLane{{type, 0, number, 0, 0},
-				{{100, 1.0, AutomationShape::Step, 0.0}, {100, 1.0, AutomationShape::Step, 0.0, true}}};
-		};
-		midi.automation = {gapped(AutomationTargetType::PitchBend, 0), gapped(AutomationTargetType::Controller, 1)};
-		const std::unique_ptr<ChannelAutomation> automation = channelAutomation(midi, 6.0);
-		REQUIRE(automation->lanes.size() == 2);
-		CHECK(automationValue(automation->lanes[0].points, 200) == 0.5);
-		CHECK(automationValue(automation->lanes[1].points, 200) == 0.0);
+			CHECK(event.type == Type::Controller);
+			sent.push_back(event.position);
+		}
+		CHECK(sent == std::vector<int64_t>{100, 164, 228, 292, 300, 400});
+
+		// Nor at a locate into a gap, or stopped in one.
+		graph::EventBuffer source(graph::g_maxEventsPerBlock);
+		graph::EventBuffer fader(graph::g_maxEventsPerBlock);
+		graph::EventBuffer plugins(graph::g_maxEventsPerBlock);
+		const graph::TransportSegment intoGap{0, 50, 320};
+		player.play({true, 320, &intoGap, 1}, {}, {}, source, fader, plugins);
+		CHECK(source.empty());
+		for (const int64_t position : {50, 350, 600})
+		{
+			player.play({false, position, nullptr, 0}, {}, {}, source, fader, plugins);
+			CHECK(source.empty());
+		}
+		player.play({false, 450, nullptr, 0}, {}, {}, source, fader, plugins);
+		REQUIRE(source.size() == 1);
+		CHECK(source[0].value == 0);
 	}
 }
 

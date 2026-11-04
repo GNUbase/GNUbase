@@ -97,7 +97,8 @@ namespace gnubase::engine
 		AutomationShape shape = AutomationShape::Linear;
 		double curve = 0.0;
 		// A gap from here to the next point (virgin territory, or after a terminator): the lane's static value, which
-		// channelAutomation() gives it; a mute lane's has the mute button's value already.
+		// channelAutomation() gives it; a mute lane's has the mute button's value already. A MIDI lane without a static
+		// value of the channel sends nothing there.
 		bool gap = false;
 
 		bool operator==(const RenderAutomationPoint& other) const

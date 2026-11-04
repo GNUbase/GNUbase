@@ -1411,14 +1411,15 @@ namespace gnubase::engine
 		}
 
 		// A point without an id, shaped like shape, or else a step.
-		AutomationPoint makePoint(
-			time::TimeBase base, int64_t at, double value, const std::optional<AutomationPoint>& shape)
+		AutomationPoint makePoint(time::TimeBase base, int64_t at, double value,
+			const std::optional<AutomationPoint>& shape, bool terminator = false)
 		{
 			AutomationPoint point;
 			point.position = {base, at};
 			point.value = value;
 			point.shape = shape ? shape->shape : AutomationShape::Step;
 			point.curve = shape ? shape->curve : 0.0;
+			point.terminator = terminator;
 			return point;
 		}
 
@@ -1435,9 +1436,23 @@ namespace gnubase::engine
 				{ return entry.second.position.value >= from && entry.second.position.value < to; });
 		}
 
+		// Whether a lane has no curve at a position, a gap (reference manual p. 881): from a terminator up to the next
+		// point, and with virgin territory before the first and after the last point. fromLeft: where the curve
+		// arrives there from, else where it goes on from there. An edge of an edit in a gap gets no point with a value.
+		bool inGap(const Project& project, const AutomationLane& lane, int64_t at, bool fromLeft)
+		{
+			const std::optional<AutomationPoint> point = shapingPoint(lane, at, !fromLeft);
+			if (!point)
+				return project.virginTerritory;
+			return point->terminator ||
+				(project.virginTerritory &&
+					!anyPoint(lane, fromLeft ? at : at + 1, std::numeric_limits<int64_t>::max()));
+		}
+
 		// Takes the automation between from and to out of a lane and keeps the curve outside: the value it arrives
-		// at from with holds up to to, where the curve goes on. Closing the gap moves the points after it back
-		// instead. Points at to make way for one that has their value and shape.
+		// at from with holds up to to, where the curve goes on. With virgin territory the range becomes a gap instead
+		// (reference manual p. 881): the point at from is a terminator. Closing the gap moves the points after it back
+		// instead. Points at to make way for one that has their value and shape. Edges in gaps stay in them.
 		// ponytail: a curve shaped point at an edge keeps its bend over the shorter rest of its segment.
 		void cutAutomation(
 			Project& project, AutomationLane& lane, int64_t from, int64_t to, bool close, CommandContext& context)
@@ -1448,6 +1463,8 @@ namespace gnubase::engine
 			const double left = valueAt(lane, from, true);
 			const double right = valueAt(lane, to, false);
 			const std::optional<AutomationPoint> shape = shapingPoint(lane, to, true);
+			const bool leftGap = inGap(project, lane, from, true);
+			const bool rightGap = inGap(project, lane, to, false);
 			for (auto point = lane.points.begin(); point != lane.points.end();)
 			{
 				int64_t& at = point->second.position.value;
@@ -1460,13 +1477,18 @@ namespace gnubase::engine
 					at -= to - from;
 				++point;
 			}
-			addPoint(project, lane, makePoint(base, from, left, std::nullopt));
-			addPoint(project, lane, makePoint(base, close ? from : to, right, shape));
+			if (!leftGap)
+				addPoint(project, lane,
+					makePoint(base, from, left, std::nullopt, close ? rightGap : project.virginTerritory));
+			if (!rightGap)
+				addPoint(project, lane, makePoint(base, close ? from : to, right, shape));
+			else if (!leftGap && !close && !project.virginTerritory)
+				addPoint(project, lane, makePoint(base, to, left, std::nullopt, true)); // the held value ends there
 			context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 		}
 
 		// Makes room of a length at a position in a lane: the value the curve arrives there with holds over it, then
-		// the curve goes on.
+		// the curve goes on. In a gap the gap goes on over it.
 		void openAutomation(Project& project, AutomationLane& lane, int64_t at, int64_t length, CommandContext& context)
 		{
 			if (!anyPoint(lane, at, std::numeric_limits<int64_t>::max()))
@@ -1476,30 +1498,40 @@ namespace gnubase::engine
 			const double right = valueAt(lane, at, false);
 			const std::optional<AutomationPoint> shape = shapingPoint(lane, at, false);
 			const bool pointThere = anyPoint(lane, at, at + 1);
+			const bool leftGap = inGap(project, lane, at, true);
+			const bool rightGap = inGap(project, lane, at, false);
 			for (auto& [id, point] : lane.points)
 				if (point.position.value >= at)
 					point.position.value += length;
-			addPoint(project, lane, makePoint(base, at, left, std::nullopt));
-			if (!pointThere)
+			if (!leftGap)
+				addPoint(project, lane, makePoint(base, at, left, std::nullopt));
+			if (!pointThere && !rightGap)
 				addPoint(project, lane, makePoint(base, at + length, right, shape));
 			context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 		}
 
 		// The automation between from and to in a lane, as the clipboard keeps it: the points there, with the curve's
-		// values at both edges. The points' ids only keep their order.
+		// values at both edges, and its gaps: edges in gaps are terminators, and with virgin territory the lane's last
+		// point is one. The points' ids only keep their order.
 		AutomationLane automationWithin(const Project& project, const AutomationLane& lane, int64_t from, int64_t to)
 		{
 			const time::TimeBase base = project.trackById.at(lane.track).timeBase;
+			const std::optional<AutomationPoint> last = shapingPoint(lane, std::numeric_limits<int64_t>::max(), true);
 			std::vector<AutomationPoint> points;
 			for (const auto& [id, point] : lane.points)
 				if (point.position.value >= from && point.position.value < to)
+				{
 					points.push_back(point);
+					points.back().terminator |= project.virginTerritory && last && last->id == id;
+				}
 			std::stable_sort(points.begin(), points.end(),
 				[](const AutomationPoint& a, const AutomationPoint& b) { return a.position.value < b.position.value; });
 			if (!anyPoint(lane, from, from + 1))
-				points.insert(
-					points.begin(), makePoint(base, from, valueAt(lane, from, false), shapingPoint(lane, from, false)));
-			points.push_back(makePoint(base, to, valueAt(lane, to, true), std::nullopt));
+				points.insert(points.begin(),
+					makePoint(base, from, valueAt(lane, from, false), shapingPoint(lane, from, false),
+						inGap(project, lane, from, false)));
+			points.push_back(
+				makePoint(base, to, valueAt(lane, to, true), std::nullopt, inGap(project, lane, to, true)));
 			AutomationLane copy = lane;
 			copy.points.clear();
 			ObjectId id = 0;
@@ -1512,7 +1544,7 @@ namespace gnubase::engine
 		}
 
 		// Pastes copied automation into a lane, moved by shift: it replaces the curve from its first to its last
-		// point, and the curve outside stays.
+		// point, and the curve outside stays, with its gaps.
 		void pasteAutomation(Project& project, AutomationLane& lane, const AutomationLane& copied, const Gap& shift,
 			CommandContext& context)
 		{
@@ -1535,16 +1567,18 @@ namespace gnubase::engine
 			const double left = had ? valueAt(lane, from, true) : 0.0;
 			const double right = had ? valueAt(lane, to, false) : 0.0;
 			const std::optional<AutomationPoint> shape = shapingPoint(lane, to, true);
+			const bool leftGap = had && inGap(project, lane, from, true);
+			const bool rightGap = had && inGap(project, lane, to, false);
 			for (auto point = lane.points.begin(); point != lane.points.end();)
 				point = point->second.position.value >= from && point->second.position.value <= to
 					? lane.points.erase(point)
 					: std::next(point);
-			if (had)
+			if (had && !leftGap)
 				addPoint(project, lane, makePoint(base, from, left, std::nullopt));
 			for (const AutomationPoint& point : points)
 				addPoint(project, lane, point);
 			if (had)
-				addPoint(project, lane, makePoint(base, to, right, shape));
+				addPoint(project, lane, makePoint(base, to, right, shape, rightGap));
 			context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 		}
 
