@@ -213,6 +213,8 @@ namespace gnubase::ui
 		void showCursor();
 		void scrollToArrow();
 		void click(Rml::Element* target);
+		std::optional<HeaderDrag> grab(Rml::Element* target, float x) const;
+		float dpRatio() const;
 		void header(Rml::Event& event);
 		void saveColumns();
 		void commit(Rml::Element& field);
