@@ -117,7 +117,7 @@ tempo changes, comes with the tempo track (#155).
   the ruler moves it there (`transport.locate`). Before the view's start or after its end it isn't drawn: like the
   events, it is clipped to the timeline (`clip: always`, since RmlUi doesn't clip absolutely positioned children
   otherwise), never drawn over the track list or the zones beside the display.
-- **Cross-hair cursor.** Two lines through the mouse while it is over the lanes, clipped to the lanes the same way.
+- **Cross-hair cursor.** Two lines through the mouse while it is over the lanes; the lanes (`.event-area`) clip them.
 - **Auto-scroll** (`setAutoScroll`, `setAutoScrollMode`) keeps the cursor in view while playing: *page* turns the
   view a page when the cursor leaves it, *stationary* keeps the cursor in the middle. With
   `setSuspendAutoScrollWhenEditing`, a click in the lanes while playing suspends it until playback stops or

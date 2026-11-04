@@ -260,9 +260,9 @@ TEST_CASE("the project cursor and the cross-hair cursor are drawn only inside th
 
 	// The cursor 100 dp right of the view's end, where it would be over the right zone.
 	display.scrollTo(0.0);
-	const double end = display.visibleLength() + 1.0;
-	app.call("transport.locate", {{"position", std::llround(end * 48000.0)}});
-	REQUIRE(app.waitUntil([&display, end] { return std::abs(display.cursor() - end) < 1e-6; }));
+	const int64_t end = std::llround((display.visibleLength() + 1.0) * 48000.0);
+	app.call("transport.locate", {{"position", end}});
+	REQUIRE(app.waitUntil([&display, end] { return display.cursor() == static_cast<double>(end) / 48000.0; }));
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(x(".project-cursor") == timelineRight + 100);
 	unchanged();
