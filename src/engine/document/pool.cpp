@@ -176,6 +176,14 @@ namespace gnubase::engine
 			}
 		}
 
+		// Whether project (ProjectModel::openedRevision) is still the open one, asked before a job's final command:
+		// one opened meanwhile isn't sent the command, which would skip every entry but still count as a change of
+		// it (project.revision). The command checks it again, for a project opened right after this.
+		bool stillOpen(JobContext& job, uint64_t project)
+		{
+			return job.command("project.revision", Json::object()).at("project").get<uint64_t>() == project;
+		}
+
 		// Lets a job announce its progress at most every 50 ms, so that walking a folder with many small folders in
 		// it doesn't send an event for each.
 		class Throttle
@@ -301,7 +309,11 @@ namespace gnubase::engine
 
 			job.checkCancelled();
 			std::set<ObjectId> skipped;
-			if (!relink.empty())
+			if (!relink.empty() && !stillOpen(job, project))
+			{
+				skipped.insert(found.begin(), found.end());
+			}
+			else if (!relink.empty())
 			{
 				const Json command = {
 					{"command", "media.relink"}, {"parameters", {{"files", relink}, {"project", project}}}};
@@ -471,15 +483,25 @@ namespace gnubase::engine
 						{{"media", file.id}, {"path", path}, {"from", file.path}, {"fromSampleRate", file.sampleRate}});
 				}
 				job.checkCancelled();
-				Json transaction = {{"description", "Conform files"},
-					{"commands",
-						Json::array({{{"command", "media.relinkResampled"},
-							{"parameters",
-								{{"files", std::move(relink)}, {"projectSampleRate", sampleRate},
-									{"project", target.project}}}}})}};
-				if (!target.merge.empty())
-					transaction["merge"] = target.merge;
-				result = job.command("history.transaction", transaction).at("results").at(0);
+				if (stillOpen(job, target.project))
+				{
+					Json transaction = {{"description", "Conform files"},
+						{"commands",
+							Json::array({{{"command", "media.relinkResampled"},
+								{"parameters",
+									{{"files", std::move(relink)}, {"projectSampleRate", sampleRate},
+										{"project", target.project}}}}})}};
+					if (!target.merge.empty())
+						transaction["merge"] = target.merge;
+					result = job.command("history.transaction", transaction).at("results").at(0);
+				}
+				else
+				{
+					Json ids = Json::array();
+					for (const Conversion& file : files)
+						ids.push_back(file.id);
+					result = Json{{"relinked", Json::array()}, {"skipped", std::move(ids)}};
+				}
 			}
 			catch (...)
 			{
@@ -812,11 +834,11 @@ namespace gnubase::engine
 				target.sampleRate = m_project.sampleRate;
 				target.project = m_openedRevision;
 				target.merge = parameters.value("merge", std::string());
-				fs::path folder = target.folder;
+				const fs::path folder = target.folder;
 				return Json{{"job",
 					jobs.start(
 						"media.conform", [files = std::move(files), target = std::move(target)](JobContext& job)
-						{ return conformFiles(files, target, job); }, std::move(folder))}};
+						{ return conformFiles(files, target, job); }, folder)}};
 			});
 
 		const Json relinkEntry = objectSchema(

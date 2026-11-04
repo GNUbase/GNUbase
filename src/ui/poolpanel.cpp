@@ -327,7 +327,7 @@ namespace gnubase::ui
 
 	void PoolPanel::showRunning()
 	{
-		if (Rml::Element* line = m_root ? m_root->GetElementById("pool-message") : nullptr)
+		if (const Rml::Element* line = m_root ? m_root->GetElementById("pool-message") : nullptr)
 			line->GetParentNode()->SetClass("running", !m_jobs.empty());
 	}
 

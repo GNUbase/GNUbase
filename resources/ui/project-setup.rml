@@ -208,10 +208,15 @@
 			return changed, errors
 		end
 
-		-- Whether the project has a media file at another sample rate than sampleRate, for Conform Audio Files.
+		-- Whether the project has a media file at another sample rate than sampleRate that isn't missing, which Conform
+		-- Audio Files converts.
 		local function otherRates(sampleRate)
+			local missing = {}
+			for _, clip in ipairs(gnubase.pool.get().clips) do
+				missing[clip.media] = clip.missing
+			end
 			for _, media in ipairs(gnubase.project.get().media) do
-				if media.sampleRate ~= sampleRate then
+				if media.sampleRate ~= sampleRate and not missing[media.id] then
 					return true
 				end
 			end

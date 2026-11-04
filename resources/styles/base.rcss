@@ -1808,15 +1808,16 @@ listview.history
 	flex: 1;
 }
 
+/* Hidden rather than left out, so that the row keeps its height and the list doesn't move when a job starts. */
 .pool-status button
 {
-	display: none;
+	visibility: hidden;
 	margin-left: 8dp;
 }
 
 .pool-status.running button
 {
-	display: block;
+	visibility: visible;
 }
 
 listview.pool-list

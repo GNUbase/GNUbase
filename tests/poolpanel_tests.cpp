@@ -387,10 +387,16 @@ TEST_CASE("the pool panel asks how a job ended that ended before its command's r
 	test::writeWav(dir.path() / "found" / "kick.wav", {std::vector<float>(48000, 0.25f), 1, 48000});
 
 	// The job ends, and its job.finished goes by, before the panel hears that media.locate started it.
+	bool finished = false;
+	const ui::Subscription heard = binding.on("job.finished", [&finished](const engine::Event&) { finished = true; });
 	const Json job = app.call("media.locate", {{"folder", (dir.path() / "found").u8string()}}).at("job");
 	REQUIRE(app.waitUntil(
-		[&app, &job] { return app.call("job.get", {{"job", job.at("id")}}).at("job").at("state") == "done"; }));
-	binding.update();
+		[&binding, &finished]
+		{
+			binding.update();
+			return finished;
+		}));
+	CHECK(app.call("job.get", {{"job", job.at("id")}}).at("job").at("state") == "done");
 	panel.report("media.locate", {0, {{"job", job}}, {}});
 	CHECK(line() == "Find Missing Files...");
 	CHECK(running());

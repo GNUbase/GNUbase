@@ -75,9 +75,11 @@ the pool and conforming files to the project's sample rate. The engine commands 
   media copy jobs (`startMediaCopy`, [backup.md](backup.md)), gives `project`: `ProjectModel::openedRevision` when
   the job started, as `recording.add` does. If another project was opened meanwhile, e.g. another version of the
   same song with the same media ids and paths, `media.relink` and `media.relinkResampled` skip every entry, so
-  nothing in it changes; the job reports the media files as `changed` and removes the files it wrote or copied. Like
-  every edit command, the skipped command still counts for `project.revision`. None of this runs on an audio thread;
-  the render snapshot follows the new paths as it does for `media.relink`.
+  nothing in it changes; the job reports the media files as `changed` and removes the files it wrote or copied.
+  Since every edit command counts for `project.revision` even when it changes nothing, the job first asks
+  `project.revision` and sends its command only if its project is still open, so a project opened meanwhile isn't
+  even marked modified; the guard in the command is for one opened between the two. None of this runs on an audio
+  thread; the render snapshot follows the new paths as it does for `media.relink`.
 
 ## Pool panel
 
@@ -102,7 +104,8 @@ the pool and conforming files to the project's sample rate. The engine commands 
   follows its `job.progress` (e.g. "Conform Files: 42 %, slow.wav") and shows what it did from its `job.finished`,
   or that it failed or was cancelled. A job that ended before its command's result came is asked for with `job.get`.
   While a job runs, the line's row (`.pool-status`) has the state class `.running`, which shows Stop (`#pool-stop`,
-  as the reference's file search dialog has, p. 751); Stop sends `job.cancel` for it.
+  as the reference's file search dialog has, p. 751); Stop sends `job.cancel` for it. Stop is only hidden otherwise
+  (`visibility`), so the row keeps its height and the list doesn't move when a job starts.
   A rename, a move or New Folder that fails says so there too.
 - **Editing.** The names of folders and clips are fields: what is typed renames them (`poolFolder.set`, `clip.set`)
   with Enter or when the field loses the focus; a name typed away keeps the old one. Clips dragged onto a folder's
@@ -152,8 +155,8 @@ missing or empty files and a media file given twice, and skips entries whose `fr
 joins the last step only if that one has the key; `media.relink` skips entries with `length` whose file went, has
 another length or doesn't fit, relinking the others, and every entry for another project; and a project opened
 while `media.locate`, `media.conform` or `media.prepareArchive` runs (another version of the song, same media ids
-and paths) is left as it was, the job's files removed. Peak files that the peak worker writes next to conformed
-files whenever it gets to them don't count as files in the media folder. The
+and paths) is left as it was and unmodified, the job's files removed. Only WAV files count as files in the media
+folder, not the peak files the peak worker writes next to conformed files whenever it gets to them. The
 commands that must run while a job works are sent behind a `media.convert` of a long file, which keeps the command
 thread busy, so they run right after the command that started the job, however the test's thread is scheduled.
 `tests/poolpanel_tests.cpp` drives the panel in the app's UI with `ui::Automation`: Media > Open Pool Window and its

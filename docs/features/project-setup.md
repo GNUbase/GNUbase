@@ -64,8 +64,12 @@ so MCP and Lua scripts can do all it does.
   that key through the UI's binding (`gnubase.ui.command`), so the media files are converted to the new rate (p. 128:
   audio files must be converted to a new sample rate to play back properly) without holding up other commands. The
   pool opens and shows how the job goes, with Stop. The job's undo step joins the dialog's, so undo takes back both,
-  unless something else was done before it ended. Conforming needs a saved project: without a project file, the
-  dialog says so and nothing changes. Off, the files keep their rate.
+  unless something else was done before it ended. Conforming needs a saved project: without a project file and with
+  a media file at another rate that isn't missing (`pool.get`), the dialog says so and nothing changes. Once the
+  dialog closed, the new sample rate stays whatever the job does: if it fails or is stopped, the files keep their
+  rate and can be conformed later with the pool's Conform Files; if the dialog's step is undone while it runs, the
+  project is no longer at the rate the files were converted to, so the job changes nothing and removes its files,
+  and a redo brings back the rate alone. Off, the files keep their rate.
 - **Timecodes in Lua.** The dialog's Lua formats and reads timecodes with `gnubase.ui.formatTimecode{seconds,
   frameRate}` (returns `text`) and `gnubase.ui.parseTimecode{text, frameRate}` (returns `seconds`, or nothing for text
   that isn't a timecode), which `app::AppUi` adds to the UI's Lua next to `gnubase.ui.command`, so it converts exactly

@@ -416,7 +416,16 @@ namespace gnubase::engine
 				try
 				{
 					job.checkCancelled();
-					if (!relink.empty())
+					// A project opened meanwhile isn't sent the command, which would skip every entry but still
+					// count as a change of it (project.revision); the command checks again, for one opened right
+					// after this.
+					if (!relink.empty() &&
+						job.command("project.revision", Json::object()).at("project").get<uint64_t>() != project)
+					{
+						for (const Json& entry : relink)
+							skipped.insert(entry.at("media").get<ObjectId>());
+					}
+					else if (!relink.empty())
 					{
 						const Json command = {
 							{"command", "media.relink"}, {"parameters", {{"files", relink}, {"project", project}}}};

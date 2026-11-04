@@ -150,13 +150,13 @@ namespace
 		int holds = 0;
 	};
 
-	// The audio files in folder. The peak files that the peak worker writes next to them, whenever it gets to them,
-	// don't count.
+	// The WAV files in folder. The peak files that the peak worker writes next to them whenever it gets to them, and
+	// the temporary files it writes them through, don't count.
 	size_t filesIn(const fs::path& folder)
 	{
 		size_t count = 0;
 		for (const auto& entry : fs::directory_iterator(folder))
-			count += entry.is_regular_file() && entry.path().extension() != ".gbpeaks" ? 1 : 0;
+			count += entry.is_regular_file() && entry.path().extension() == ".wav" ? 1 : 0;
 		return count;
 	}
 
@@ -1008,7 +1008,7 @@ TEST_CASE("media.relinkResampled points media files at files at another rate and
 	CHECK(steps(song.client) == before);
 
 	// A media file that moved on, was removed or is at another rate meanwhile is skipped.
-	const auto skippedBy = [&song, &fast](const Json& file)
+	const auto skippedBy = [&song](const Json& file)
 	{ return run(song.client, "media.relinkResampled", {{"files", Json::array({file})}}).at("skipped"); };
 	CHECK(skippedBy({{"media", media}, {"path", fast}, {"from", fast}}) == Json::array({media}));
 	CHECK(skippedBy({{"media", 999}, {"path", fast}, {"from", from}}) == Json::array({999}));
@@ -1154,6 +1154,7 @@ TEST_CASE("a job's final command leaves a project opened while the job runs alon
 	}
 	CHECK(run(song.client, "project.location").at("file") == utf8(other));
 	CHECK(steps(song.client) == 0);
+	CHECK(!run(song.client, "project.revision").at("modified").get<bool>());
 }
 
 TEST_CASE("audioFile.import with clipsOnly adds files to the pool without tracks or events", "[integration]")
