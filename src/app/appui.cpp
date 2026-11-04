@@ -62,7 +62,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 76> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 77> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -153,6 +153,7 @@ namespace gnubase::app
 			{"tool.draw", "Chooses the draw tool in the project window.", "8"},
 			{"tool.play", "Chooses the play tool in the project window.", "9"},
 			{"tool.line", "Chooses the line tool in the project window.", nullptr},
+			{"tool.comp", "Chooses the comp tool in the project window.", nullptr},
 			{"tool.previous", "Chooses the project window's previous tool.", "F9"},
 			{"tool.next", "Chooses the project window's next tool.", "F10"},
 			{"tool.combineSelectionTools", "Switches combining the selection tools on or off.", "Alt+Shift+1"},
@@ -191,7 +192,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 26> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 27> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected.", "Up"},
 			{"track.selectNext",
@@ -232,6 +233,9 @@ namespace gnubase::app
 				"Pastes the copied automation onto the selected automation tracks of the same parameters, between the "
 				"locators.",
 				nullptr},
+			// Lanes (docs/features/comping.md).
+			{"track.toggleLanesSelected",
+				"Shows the lanes of the selected tracks, or hides them if every one shows them.", nullptr},
 		}};
 	}
 

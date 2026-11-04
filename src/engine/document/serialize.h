@@ -93,6 +93,9 @@ namespace gnubase::engine
 	Json toJson(const AutomationPoint& point);
 	Json toJson(const AutomationLane& lane); // with its points, sorted by position
 	Json toJson(const MixerView& view);      // {"hidden": [ids], "hiddenTypes": [types]}
+	// {id, name, channels, volume, pan, mute, record, vca}; linkGroupFromJson leaves what the JSON doesn't have.
+	Json toJson(const LinkGroup& group);
+	LinkGroup linkGroupFromJson(const Json& json, const LinkGroup& fallback = {});
 	// [{"position": ticks, "bpm": ..., "ramp": ...}], and back; tempoFromJson throws std::invalid_argument for points a
 	// tempo map can't have.
 	Json toJson(const time::TempoMap& tempo);

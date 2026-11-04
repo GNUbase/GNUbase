@@ -136,6 +136,11 @@ namespace gnubase::ui
 		std::pair<uint64_t, uint64_t> dropAt(float y) const;
 		void move(uint64_t parent, uint64_t before);
 
+		// Whether a display lane is a track's own, not one of its lanes (#99) or automation tracks; the display lane
+		// after a track's row, which reaches over its lanes and automation tracks.
+		bool ownLane(size_t lane) const;
+		size_t rowEnd(size_t lane) const;
+
 		// Automation tracks (#121): the rows below a track's own, at its automation lanes' heights.
 		void showAutomationRows(Rml::Element& row, size_t lane, size_t end); // display lanes lane+1 to end
 		const engine::Json* laneOf(uint64_t lane) const;                     // as project.get has it

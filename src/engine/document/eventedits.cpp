@@ -313,6 +313,7 @@ namespace gnubase::engine
 			{
 				AudioEvent copy = *item.audio;
 				copy.id = project.newId();
+				copy.front = 0; // in front, as added last
 				copy.lock = false;
 				copy.crossfade = Crossfade();
 				return audioItem(project.audioEvents[copy.id] = copy);
@@ -521,6 +522,7 @@ namespace gnubase::engine
 					return {};
 				AudioEvent right = event;
 				right.id = project.newId();
+				right.front = frontOf(event); // the piece after the split stays where the event is in the stack
 				right.position = rebased(project, {time::TimeBase::Linear, at}, event.position.base);
 				right.offset += frames;
 				right.length -= frames;
@@ -1681,6 +1683,75 @@ namespace gnubase::engine
 			return {{"events", idsOf(added)}};
 		}
 
+		// Lanes and comping (#99, reference manual pp. 225-228).
+
+		// Brings a take to the front: an audio event plays where it overlaps others on its track, as do an audio part's
+		// events; a MIDI part is unmuted, and the MIDI parts on its track's other lanes that it overlaps are muted.
+		void toFront(Project& project, const Item& item, CommandContext& context)
+		{
+			if (item.audio != nullptr)
+			{
+				item.audio->front = project.newId();
+			}
+			else if (item.audioPart != nullptr)
+			{
+				for (AudioEvent* event : eventsIn(project, item.audioPart->id))
+					event->front = project.newId();
+			}
+			else
+			{
+				MidiPart& part = *item.part;
+				part.mute = false;
+				const time::Samples start = samples(project, part.position);
+				const time::Samples end = samples(project, endOf(project, item));
+				for (auto& [id, other] : project.midiParts)
+				{
+					const Item overlapping{nullptr, &other};
+					if (other.track != part.track || other.lane == part.lane || other.mute ||
+						samples(project, other.position) >= end ||
+						samples(project, endOf(project, overlapping)) <= start)
+						continue;
+					other.mute = true;
+					announce(project, context, overlapping, "changed");
+				}
+			}
+			announce(project, context, item, "changed");
+		}
+
+		Json bringToFront(Project& project, CommandContext& context)
+		{
+			const std::vector<Item> items = itemsFrom(project, context.parameters(), false);
+			for (const Item& item : items)
+				toFront(project, item, context);
+			return {{"events", idsOf(items)}};
+		}
+
+		// The comp tool's drag on a lane (p. 228): every take on the track splits at the range's edges, and the takes
+		// of the lane within it come to the front.
+		Json comp(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			const auto track = parameters.at("track").get<ObjectId>();
+			const auto lane = parameters.at("lane").get<int>();
+			const auto start = parameters.at("start").get<time::Samples>();
+			const auto end = parameters.at("end").get<time::Samples>();
+			require(project.trackById.count(track) != 0, "no track " + std::to_string(track));
+			require(start >= 0 && end > start, "the range is empty");
+			for (const time::Samples at : {start, end})
+				splitTracks(project, {track}, at, false, false, context);
+			// The splits leave locked takes whole: those are taken only when they lie wholly in the range.
+			std::vector<Item> taken;
+			for (const Item& item : within(project, {track}, start, end, true))
+				if (item.lane() == lane &&
+					(!item.locked() ||
+						(samples(project, item.position()) >= start && samples(project, endOf(project, item)) <= end)))
+					taken.push_back(item);
+			require(!taken.empty(), "lane " + std::to_string(lane) + " has nothing from start to end");
+			for (const Item& item : taken)
+				toFront(project, item, context);
+			return {{"events", idsOf(taken)}};
+		}
+
 		// Crop (reference manual p. 293): what crosses an edge loses what lies outside.
 		Json cropRange(Project& project, CommandContext& context)
 		{
@@ -1788,6 +1859,7 @@ namespace gnubase::engine
 				require(project.clips.count(copied.clip) != 0, "the clip of a copied audio event is gone");
 				AudioEvent event = copied;
 				event.id = project.newId();
+				event.front = 0;
 				event.lock = false;
 				event.crossfade = Crossfade();
 				const auto part = parts.find(copied.part);
@@ -2189,6 +2261,26 @@ namespace gnubase::engine
 					{"events"}),
 				eventsResult(), false},
 			"Change events", setEvents);
+
+		addEdit(engine,
+			{"event.toFront", 1,
+				"Brings takes to the front (To Front, the comp tool's click): audio events, and the audio events of "
+				"audio parts, play where they overlap other events on their track, as if added last (their front in "
+				"project.get); MIDI parts are unmuted, and the MIDI parts on their track's other lanes that they "
+				"overlap are muted. Returns the events.",
+				schema({{"events", events()}}, {"events"}), eventsResult(), false},
+			"To Front", bringToFront);
+
+		addEdit(engine,
+			{"event.comp", 1,
+				"Comps a track's takes (the comp tool's drag on a lane): splits every unlocked audio event and part "
+				"and MIDI part on track at start and end (project samples), then brings what lies on lane between "
+				"them to the front, as event.toFront does. Returns the events brought to the front.",
+				schema({{"track", integer()}, {"lane", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000}}},
+						   {"start", integer()}, {"end", integer()}},
+					{"track", "lane", "start", "end"}),
+				eventsResult(), false},
+			"Comp", comp);
 
 		addEdit(engine,
 			{"event.remove", 1, "Removes audio events and MIDI parts. Locked ones can't be removed.",
