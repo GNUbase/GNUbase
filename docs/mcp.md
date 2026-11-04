@@ -2762,7 +2762,7 @@ Arguments:
 
 Engine command `midiPart.set`.
 
-Changes a MIDI part's name, position or length.
+Changes a MIDI part's name, position or length, or how its notes play: transpose (semitones) and velocity (added to MIDI 1.0 velocities), each -127 to 127 and added to the track's MIDI modifiers (channel.set modifiers), also while they are bypassed. The notes themselves stay as they are.
 
 Arguments:
 
@@ -2770,6 +2770,8 @@ Arguments:
 - `name`: string
 - `part`: integer, required
 - `position`: integer
+- `transpose`: integer
+- `velocity`: integer
 
 Result:
 

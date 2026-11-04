@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <set>
 #include <string>
@@ -101,6 +102,7 @@ namespace
 	std::vector<int> pitches(const std::vector<RenderNote>& notes)
 	{
 		std::vector<int> result;
+		result.reserve(notes.size());
 		for (const RenderNote& note : notes)
 			result.push_back(note.pitch);
 		return result;
@@ -109,6 +111,7 @@ namespace
 	std::vector<int> velocities(const std::vector<RenderNote>& notes)
 	{
 		std::vector<int> result;
+		result.reserve(notes.size());
 		for (const RenderNote& note : notes)
 			result.push_back(midi::velocityToMidi1(note.velocity));
 		return result;
@@ -338,7 +341,7 @@ TEST_CASE(
 TEST_CASE("random modifiers vary each note of a part, the same on every playback", "[integration]")
 {
 	ModifiedTrack track;
-	std::vector<std::pair<int, int>> notes(4, {60, 64});
+	const std::vector<std::pair<int, int>> notes(4, {60, 64});
 	track.add(notes);
 	track.add(notes);
 	track.modify({{"random",
@@ -347,15 +350,15 @@ TEST_CASE("random modifiers vary each note of a part, the same on every playback
 	const std::vector<RenderNote> first = track.notes();
 	REQUIRE(first.size() == 8);
 	std::set<int64_t> starts;
-	for (size_t i = 0; i < first.size(); ++i)
+	for (const RenderNote& note : first)
 	{
-		const int64_t beat = (first[i].start + (g_beat / 2)) / g_beat * g_beat;
-		CHECK(first[i].start >= std::max<int64_t>(0, beat - (g_beat / 4)));
-		CHECK(first[i].start <= beat + (g_beat / 4));
-		const int64_t length = first[i].end - first[i].start;
+		const int64_t beat = (note.start + (g_beat / 2)) / g_beat * g_beat;
+		CHECK(note.start >= std::max<int64_t>(0, beat - (g_beat / 4)));
+		CHECK(note.start <= beat + (g_beat / 4));
+		const int64_t length = note.end - note.start;
 		CHECK(length >= g_beat / 2);
 		CHECK(length <= (g_beat / 2) + (g_beat / 4));
-		starts.insert(first[i].start);
+		starts.insert(note.start);
 	}
 	CHECK(starts.size() > 4); // the notes on one beat vary too
 
@@ -466,6 +469,14 @@ TEST_CASE("a part's transpose and velocity add to the track's modifiers, also wh
 	run(track.client, "history.undo");
 	CHECK(pitches(track.notes()) == std::vector<int>{60, 64});
 	CHECK(run(track.client, "project.get").at("midiParts")[0].at("transpose") == 0);
+	// Both halves of a split part keep them.
+	run(track.client, "history.redo");
+	run(track.client, "event.split", {{"events", {track.part}}, {"positions", {g_beat}}});
+	const Json split = run(track.client, "project.get");
+	REQUIRE(split.at("midiParts").size() == 2);
+	for (const Json& half : split.at("midiParts"))
+		CHECK(half.at("transpose") == 2);
+	CHECK(pitches(track.notes()) == std::vector<int>{62, 66});
 	CHECK_THAT(reject(track.client, "midiPart.set", {{"part", track.part}, {"transpose", 128}}),
 		ContainsSubstring("transpose"));
 	CHECK_THAT(reject(track.client, "midiPart.set", {{"part", track.part}, {"velocity", -128}}),
