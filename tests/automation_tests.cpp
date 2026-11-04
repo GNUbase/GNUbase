@@ -1374,6 +1374,16 @@ TEST_CASE("in virgin territory and after terminators a lane plays its static val
 		}
 		CHECK(sent == std::vector<int64_t>{100, 164, 228, 292, 300, 400});
 
+		// A first point of 0 after virgin territory, e.g. the sustain pedal up, is sent too.
+		RenderChannel pedal = midi;
+		pedal.automation[0].points = {gap(100), {100, 0.0, AutomationShape::Step, 0.0}};
+		AutomationPlayer pedalPlayer;
+		pedalPlayer.setAutomation(channelAutomation(pedal, 6.0));
+		const std::vector<PlayedEvent> pedalEvents = playInBlocks(pedalPlayer, 1000, 1000);
+		REQUIRE(pedalEvents.size() == 1);
+		CHECK(pedalEvents[0].position == 100);
+		CHECK(pedalEvents[0].value == 0);
+
 		// Nor at a locate into a gap, or stopped in one.
 		graph::EventBuffer source(graph::g_maxEventsPerBlock);
 		graph::EventBuffer fader(graph::g_maxEventsPerBlock);

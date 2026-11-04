@@ -252,7 +252,9 @@ namespace gnubase::engine
 					while (last > first && points[last - 1].gap)
 						--last;
 					const bool fromRamp = first > 0 && points[first - 1].shape != AutomationShape::Step;
-					const bool fromGap = first > 0 && points[first - 1].gap; // nothing was sent there
+					// Nothing was sent in a gap, also in virgin territory before the first point, whose gap point is
+					// points[0].
+					const bool fromGap = points[first == 0 ? 0 : first - 1].gap;
 					const double approached = first == 0 || fromRamp ? points[first].value : points[first - 1].value;
 					if (last > first && (points[last - 1].value != approached || (fromRamp && !glides) || fromGap))
 						emit(lane, offset(at), points[last - 1].value, 0, out);
