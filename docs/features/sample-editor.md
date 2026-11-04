@@ -79,6 +79,8 @@ Waveforms come from `media.peaks` ([peaks.md](peaks.md)), one question for each 
 - **Range section** (pp. 618-619): Select All, Select None, Select in Loop and Select Event; Set Locators to Selection
   Range and Locate Selection, of the selection range or else of the event.
 - **Process section** (p. 620): Event or Range as Region.
+- **Hitpoints section** (pp. 636-647): detecting, filtering and editing hitpoints and making slices and more of them,
+  in [hitpoints.md](hitpoints.md).
 - **Regions list** (pp. 624-626): Add Region makes one of the selection range or else of the event, Remove Region
   removes the one selected in the list, Select Region (or a double click on it) selects its section and zooms to it;
   the display shows the selected region.
@@ -94,7 +96,7 @@ zoom tool and the overview; the Zoom submenu; Solo Editor, Audition, auto-scroll
 toolbar's context menu; positions in the project's time format, and typing them; the Draw tool's volume curve and
 sample editing; renaming regions and moving their edges with the mouse, Play Region and dragging regions into the
 project window; the clip's snap point when opened from the pool. Hooks for other tickets: the Process section's Cut,
-Copy, Paste, Delete, Insert Silence and offline processing (#141), the Hitpoints section (#143), the Definition,
+Copy, Paste, Delete, Insert Silence and offline processing (#141), the Definition,
 warping, musical mode and the Time Warp tool (#144), and making a sampler track of the range.
 
 ## Checks
