@@ -151,11 +151,11 @@ namespace gnubase::ui
 			return *value;
 		}
 
-		// What a strip control's gesture changes, as EngineBinding::sendStep names it, e.g. "channel 5 volume", as the
-		// inspector does too.
-		std::string stepKey(uint64_t channel, const std::string& param)
+		// What a strip control's gesture changes, as EngineBinding::sendStep names it: the mixer's step owner, then
+		// e.g. "channel 5 volume". Each mixer has an owner of its own, so the others follow its steps (#716).
+		std::string stepKey(const std::string& owner, uint64_t channel, const std::string& param)
 		{
-			return "channel " + std::to_string(channel) + " " + param;
+			return owner + "channel " + std::to_string(channel) + " " + param;
 		}
 
 		// The parameters of channel.set that give a strip control the value.
@@ -332,8 +332,8 @@ namespace gnubase::ui
 
 	Mixer::Mixer(EngineBinding& binding, Docking& docking, Rml::Element& root, std::string view, MixerKind kind,
 		MixerActions actions)
-		: m_binding(binding), m_docking(docking), m_root(root.GetObserverPtr()), m_view(std::move(view)), m_kind(kind),
-		  m_actions(std::move(actions))
+		: m_binding(binding), m_stepOwner(binding.stepOwner("mixer")), m_docking(docking),
+		  m_root(root.GetObserverPtr()), m_view(std::move(view)), m_kind(kind), m_actions(std::move(actions))
 	{
 		Rml::ElementDocument* document = root.GetOwnerDocument();
 		const bool settings = m_kind == MixerKind::ChannelSettings;
@@ -689,7 +689,7 @@ namespace gnubase::ui
 			const std::string level = widgets::format(static_cast<float>(m_defaultSendLevel));
 			if (param.rfind("sends.", 0) == 0 && endsWith(param, ".level") && attribute(*control, "default") != level)
 				control->SetAttribute("default", level);
-			if (control->HasAttribute("value") && m_binding.sending(stepKey(channel.id, param)))
+			if (control->HasAttribute("value") && m_binding.sending(stepKey(m_stepOwner, channel.id, param)))
 				continue; // the control is ahead of the engine
 			const Json value = paramValue(json, param);
 			if (control->GetTagName() == "select")
@@ -720,7 +720,7 @@ namespace gnubase::ui
 			// Not while the fader is ahead of the engine; a strip made again shows the engine's volume at once.
 			const std::string value = widgets::format(static_cast<float>(volume));
 			if (attribute(*fader, "value") != value &&
-				!(fader->HasAttribute("value") && m_binding.sending(stepKey(channel.id, "volume"))))
+				!(fader->HasAttribute("value") && m_binding.sending(stepKey(m_stepOwner, channel.id, "volume"))))
 				fader->SetAttribute("value", value);
 			showVolume(*fader);
 		}
@@ -913,7 +913,7 @@ namespace gnubase::ui
 				{
 					const float volume = event.GetParameter("value", 0.0F);
 					showVolume(*target); // with the fader, ahead of the engine
-					m_binding.sendStep(event.GetParameter("gesture", 0), stepKey(channel->id, "volume"),
+					m_binding.sendStep(event.GetParameter("gesture", 0), stepKey(m_stepOwner, channel->id, "volume"),
 						"Change Volume",
 						Json::array({Json{{"command", "channel.set"},
 							{"parameters", {{"channel", channel->id}, {"volume", volume}}}}}),
@@ -951,7 +951,7 @@ namespace gnubase::ui
 					// A knob's or a value field's drag, wheel turns or held arrow key: one undo step.
 					Json parameters = paramChange(param, given->Get<double>());
 					parameters["channel"] = channel->id;
-					m_binding.sendStep(event.GetParameter("gesture", 0), stepKey(channel->id, param),
+					m_binding.sendStep(event.GetParameter("gesture", 0), stepKey(m_stepOwner, channel->id, param),
 						"Change " + attribute(*target, "title"),
 						Json::array({Json{{"command", "channel.set"}, {"parameters", std::move(parameters)}}}),
 						whenRefused());

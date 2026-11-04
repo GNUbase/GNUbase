@@ -109,16 +109,17 @@ namespace gnubase::ui
 			return options;
 		}
 
-		// What a field's gesture changes, as EngineBinding::sendStep names it, e.g. "channel 5 volume", as the mixer
-		// does too.
-		std::string stepKey(const Json& channel, const std::string& name)
+		// What a field's gesture changes, as EngineBinding::sendStep names it: the inspector's step owner, then e.g.
+		// "channel 5 volume". The mixers have owners of their own, so they follow its steps (#716).
+		std::string stepKey(const std::string& owner, const Json& channel, const std::string& name)
 		{
-			return "channel " + channel.dump() + " " + name;
+			return owner + "channel " + channel.dump() + " " + name;
 		}
 	}
 
 	Inspector::Inspector(EngineBinding& binding, Rml::Element& root, std::function<void(uint64_t track)> editChannel)
-		: m_binding(binding), m_root(root.GetObserverPtr()), m_editChannel(std::move(editChannel)),
+		: m_binding(binding), m_stepOwner(binding.stepOwner("inspector")), m_root(root.GetObserverPtr()),
+		  m_editChannel(std::move(editChannel)),
 		  // Another project replaces the edits in progress: the ids they were for may be the new project's too.
 		  m_reset(binding.on("project.reset", [this](const engine::Event&) { dropEdits(); }))
 	{
@@ -233,7 +234,7 @@ namespace gnubase::ui
 				}
 			// Not while the project is older than the fields' own steps (#716).
 			const auto sending = [this, channel](const char* name)
-			{ return m_binding.ahead(stepKey(channel->at("id"), name), m_read); };
+			{ return m_binding.ahead(stepKey(m_stepOwner, channel->at("id"), name), m_read); };
 			if (Rml::Element* volume = element("valuefield[control=volume]"); volume != nullptr && (audio || vca))
 			{
 				volume->SetAttribute("max", widgets::format(m_project->value("maxVolume", 6.0F)));
@@ -334,7 +335,7 @@ namespace gnubase::ui
 			const Json channel = m_channel.at("id");
 			const Json step = {{"command", "channel.set"},
 				{"parameters", {{"channel", channel}, {name, name == "volume" ? number : number / 100.0}}}};
-			m_binding.sendStep(event.GetParameter<int>("gesture", 0), stepKey(channel, name),
+			m_binding.sendStep(event.GetParameter<int>("gesture", 0), stepKey(m_stepOwner, channel, name),
 				name == "volume" ? "Change Volume" : "Change Pan", Json::array({step}), whenRefused());
 			return;
 		}

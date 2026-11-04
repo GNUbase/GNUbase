@@ -127,6 +127,7 @@ namespace gnubase::ui
 		const MixerChannel* channelOf(Rml::Element* element) const;
 
 		EngineBinding& m_binding;
+		const std::string m_stepOwner; // begins the whats of its steps (EngineBinding::stepOwner)
 		Docking& m_docking;
 		Rml::ObserverPtr<Rml::Element> m_root;
 		Rml::ObserverPtr<Rml::Element> m_strips;             // the fader section

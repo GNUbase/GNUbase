@@ -80,6 +80,12 @@ namespace gnubase::ui
 		// that answer. A refused step changes nothing, so it doesn't count.
 		bool ahead(const std::string& what, uint64_t read) const;
 
+		// A name for one view to begin the whats of its steps with, e.g. "mixer 3 ", a new one for each call. Views
+		// that show the same value, such as two mixers and the inspector, send their steps under names of their own,
+		// so only the view whose control sends leaves that control as it is, and the others show each step the engine
+		// took (#716).
+		std::string stepOwner(const std::string& view) { return view + " " + std::to_string(++m_owners) + " "; }
+
 		// How many commands of that name were sent and their results not handed on yet, e.g. for tests of how many
 		// queries a view keeps open.
 		size_t waiting(const std::string& command) const;
@@ -163,6 +169,7 @@ namespace gnubase::ui
 		std::map<std::string, Steps> m_steps; // sendStep's, by what they change; entries are never erased
 		std::set<std::string> m_queries;      // the engine's commands that only read
 		uint64_t m_handed = 0;
+		uint64_t m_owners = 0; // stepOwner's
 		uint64_t m_nextId = 1;
 	};
 }

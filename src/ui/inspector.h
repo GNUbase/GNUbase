@@ -55,6 +55,7 @@ namespace gnubase::ui
 		void dropEdits();
 
 		EngineBinding& m_binding;
+		const std::string m_stepOwner; // begins the whats of its steps (EngineBinding::stepOwner)
 		Rml::ObserverPtr<Rml::Element> m_root;
 		std::function<void(uint64_t track)> m_editChannel;
 		uint64_t m_track = 0;

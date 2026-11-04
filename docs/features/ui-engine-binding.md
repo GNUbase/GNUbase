@@ -17,11 +17,11 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   ([pool.md](pool.md)).
 - **Gestures** (#716). `sendStep(gesture, what, description, commands, done)` sends a step of a value widget's
   gesture, a drag, wheel turns or a held arrow key ([widgets.md](widgets.md)), as a `history.transaction` merged with
-  the gesture's other steps into one undo step. The steps of one `what` (`channel 5 volume`, the same name in the
-  mixer and the inspector) go one at a time: while one is in flight the next waits, and a newer step of the same
-  gesture replaces the one waiting, so a fast drag sends its newest value whenever the engine has answered instead of
-  piling up commands. Steps of other gestures and steps without one (gesture 0) are never replaced. A command sent
-  with `send` that isn't a query sends the waiting steps first, so that an undo right after a drag undoes all of it.
+  the gesture's other steps into one undo step. The steps of one `what` (`mixer 3 channel 5 volume`) go one at a
+  time: while one is in flight the next waits, and a newer step of the same gesture replaces the one waiting, so a
+  fast drag sends its newest value whenever the engine has answered instead of piling up commands. Steps of other
+  gestures and steps without one (gesture 0) are never replaced. A command sent with `send` that isn't a query sends
+  the waiting steps first, so that an undo right after a drag undoes all of it.
 - **Controls ahead of the engine.** Views read the project again after each undo step, and an answer that the engine
   gave before it had a control's newest step is older than the control. `sending(what)` is true while a step of
   `what` is in flight or waiting; a view that shows an answer in its handler, such as the mixer, doesn't set the
@@ -31,7 +31,9 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   after the last step's `history.changed` comes after that step's result, so the view shows the engine's value then.
   A refused step changes nothing, so the project read before it shows again. Values that other clients change (MCP,
   Lua, automation) show at once while no step of the control is under way; during a drag the widget itself keeps the
-  drag's value until it ends.
+  drag's value until it ends. Each view begins its `what`s with a name of its own, `stepOwner(view)` (`mixer 3 `,
+  `inspector 7 `), so only the view whose control sends waits: the other mixers and the inspector that show the same
+  channel follow each step the engine took, also during the drag.
 - **Events.** `on(name, handler)` calls `handler` with every event of that name, from whichever client caused it: a
   change made through MCP, Lua or another window reaches the UI the same way as the UI's own. The returned
   `Subscription` ends the handler when it goes, so a view that closes stops listening; subscriptions must not outlive
@@ -61,6 +63,7 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   `tests/mixerwindow_tests.cpp` and `tests/inspector_tests.cpp` drag faders, knobs and value fields (the inspector's
   and the info line's) and turn the wheel while the engine answers late (`test::LateDrag`, `test::lateSteps` in
   `tests/uiapp.h`): the control never goes back toward an earlier step, and the engine and the control agree at the
-  end. The last test changes the transport through MCP and checks a document shows it, then clicks the document's
-  button and finds the command in `engine.commandLog`, sent by `ui`. `tests/engine_tests.cpp` checks the command log and the clients' wake-up, `tests/shell_tests.cpp` the step tasks
-  and the frame rate.
+  end; while a control moves faster than the engine answers, the other mixers and the inspector that show its channel
+  follow its steps. The last test changes the transport through MCP and checks a document shows it, then clicks the
+  document's button and finds the command in `engine.commandLog`, sent by `ui`. `tests/engine_tests.cpp` checks the
+  command log and the clients' wake-up, `tests/shell_tests.cpp` the step tasks and the frame rate.

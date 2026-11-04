@@ -212,13 +212,16 @@ namespace gnubase::test
 		m_context.ProcessMouseButtonDown(0, 0);
 	}
 
-	double LateDrag::move(int steps, int direction)
+	double LateDrag::move(int steps, int direction, int perAnswer)
 	{
 		return lateSteps(m_app, m_window, m_selector, steps, direction,
-			[this, direction]
+			[this, direction, perAnswer]
 			{
-				m_moved += 2 * direction;
-				m_context.ProcessMouseMove(m_at.x, m_at.y + m_moved, 0);
+				for (int step = 0; step < perAnswer; ++step)
+				{
+					m_moved += 2 * direction;
+					m_context.ProcessMouseMove(m_at.x, m_at.y + m_moved, 0);
+				}
 			});
 	}
 

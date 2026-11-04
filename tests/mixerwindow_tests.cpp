@@ -4,6 +4,7 @@
 #include "ui/automation.h"
 #include "ui/renderer.h"
 #include "ui/shell.h"
+#include "ui/tracklist.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -619,6 +621,56 @@ TEST_CASE("a mixer control shows what another client sets at once, and during a 
 	REQUIRE(app.waitUntil([&] { return valueOf(app, window, fader) == -20.0; }));
 	CHECK(channelJson(app, guitar.channel).at("volume") == -20.0);
 	CHECK(element(app, window, strip(guitar.channel) + " .mixer-volume").at("text") == "-20.0");
+}
+
+TEST_CASE("the other views of a channel follow a control dragged while the engine answers late", "[ui]")
+{
+	test::UiApp app({1024, 600});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	app.appUi().docking().open("inspector");
+	app.appUi().trackList()->select({guitar.track});
+	const Window first = openMixer(app, 1);
+	const Window second = openMixer(app, 2);
+	const Window main = std::nullopt;
+	const std::string fader = strip(guitar.channel) + " fader";
+	const std::string field = ".inspector valuefield[control=volume]";
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return elements(app, first, fader).size() == 1 && elements(app, second, fader).size() == 1 &&
+				elements(app, main, field).size() == 1;
+		}));
+	using View = std::pair<Window, std::string>;
+
+	// Only the control that sends waits for the engine. Moved faster than the engine answers, it always has a step on
+	// its way, and the other views still show the steps the engine took during the drag (#716).
+	const auto drag = [&](const View& dragged, const std::vector<View>& others)
+	{
+		const double before = valueOf(app, dragged.first, dragged.second);
+		test::LateDrag drag(app, dragged.first, dragged.second);
+		const double moved = drag.move(5, 1, 3);
+		REQUIRE(moved < before);
+		for (const View& other : others)
+		{
+			INFO(other.second);
+			CHECK(valueOf(app, other.first, other.second) < before);
+		}
+		drag.release();
+		REQUIRE(app.waitUntil(
+			[&] { return channelJson(app, guitar.channel).at("volume") == Catch::Approx(moved).margin(1e-4); }));
+		for (const View& other : others)
+			CHECK(app.waitUntil(
+				[&] { return valueOf(app, other.first, other.second) == Catch::Approx(moved).margin(1e-4); }));
+	};
+	SECTION("the inspector's volume")
+	{
+		drag({main, field}, {{first, fader}, {second, fader}});
+	}
+	SECTION("a mixer's fader")
+	{
+		drag({first, fader}, {{second, fader}, {main, field}});
+	}
 }
 
 TEST_CASE("a VCA strip has a fader and buttons and picks the link group it controls; strips show their group", "[ui]")
