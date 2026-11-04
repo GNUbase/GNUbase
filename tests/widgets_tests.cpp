@@ -722,7 +722,8 @@ TEST_CASE("Tab and Shift+Tab move between an open menu's items and don't leave t
 	REQUIRE(visible(app, "#track-menu"));
 	moveAway(app);
 
-	// Tab steps forwards over the disabled item and from the last item round to the first, as Down does.
+	// Tab steps forwards over the disabled item and from the last shown item round to the first, past the hidden
+	// one, as Down does.
 	app.ui().key(std::nullopt, "Tab");
 	CHECK(focused(app, "#rename"));
 	app.ui().key(std::nullopt, "Tab");
@@ -732,14 +733,20 @@ TEST_CASE("Tab and Shift+Tab move between an open menu's items and don't leave t
 	app.ui().key(std::nullopt, "Tab");
 	CHECK(focused(app, "#rename"));
 
-	// Shift+Tab steps backwards, from the first item round to the last, as Up does.
+	// Shift+Tab steps backwards, from the first item round to the last shown one, as Up does.
 	app.ui().key(std::nullopt, "Shift+Tab");
 	CHECK(focused(app, "#lock"));
-	app.ui().key(std::nullopt, "Shift+Tab");
-	CHECK(focused(app, "#color"));
-	app.ui().key(std::nullopt, "Ctrl+Tab"); // with a modifier too
+	app.ui().key(std::nullopt, "Down");
+	CHECK(focused(app, "#rename"));
+	app.ui().key(std::nullopt, "Up");
 	CHECK(focused(app, "#lock"));
+
+	// With a modifier too, round the ends.
+	app.ui().key(std::nullopt, "Ctrl+Tab");
+	CHECK(focused(app, "#rename"));
 	app.ui().key(std::nullopt, "Alt+Shift+Tab");
+	CHECK(focused(app, "#lock"));
+	app.ui().key(std::nullopt, "Shift+Tab");
 	CHECK(focused(app, "#color"));
 
 	// In a submenu that keys opened, they step through the submenu's items.
