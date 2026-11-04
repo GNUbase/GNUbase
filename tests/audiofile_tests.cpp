@@ -348,18 +348,16 @@ TEST_CASE("the decoders leave the files that the readers hand them open", "[inte
 	}
 }
 
-namespace
+// Stand-ins for dr_libs' file functions, which take anything and return nothing: a declared dr_libs function is a
+// better match, and it returns something. They are only ever named in decltype, so they are never defined, and they
+// have external linkage: compilers warn about an internal function that is never defined or emitted, but not about an
+// external one.
+namespace stand_ins
 {
-	// Stand-ins that a call from the global namespace finds together with dr_libs' file functions, if its headers
-	// declare them. A declared one is a better match than these, which take anything. Only ever named in decltype, so
-	// never defined: [[maybe_unused]] keeps Clang from reporting that they won't be emitted.
-	struct NotDeclared
-	{
-	};
 	// NOLINTBEGIN(readability-identifier-naming): the names of the dr_libs functions these stand in for
-	[[maybe_unused]] NotDeclared drwav_init_file(...);
-	[[maybe_unused]] NotDeclared drflac_open_file(...);
-	[[maybe_unused]] NotDeclared drmp3_init_file(...);
+	void drwav_init_file(...);
+	void drflac_open_file(...);
+	void drmp3_init_file(...);
 	// NOLINTEND(readability-identifier-naming)
 }
 
@@ -367,12 +365,13 @@ TEST_CASE("every file sees dr_libs without its file functions", "[unit]")
 {
 	// The decoders library compiles dr_libs without its stdio functions (see the previous test), and its configuration
 	// is part of the library's interface: the readers and these tests see the same headers, so calling one of the
-	// file functions fails to compile at the line that makes it, not only when linking.
-	STATIC_REQUIRE(std::is_same_v<decltype(drwav_init_file(static_cast<drwav*>(nullptr), "", nullptr)), NotDeclared>);
+	// file functions fails to compile at the line that makes it, not only when linking. The using-directive makes a
+	// call here find the stand-ins together with the dr_libs functions in the global namespace.
+	using namespace stand_ins;
+	STATIC_REQUIRE(std::is_void_v<decltype(drwav_init_file(static_cast<drwav*>(nullptr), "", nullptr))>);
 	STATIC_REQUIRE(
-		std::is_same_v<decltype(drflac_open_file("", static_cast<const drflac_allocation_callbacks*>(nullptr))),
-			NotDeclared>);
-	STATIC_REQUIRE(std::is_same_v<decltype(drmp3_init_file(static_cast<drmp3*>(nullptr), "", nullptr)), NotDeclared>);
+		std::is_void_v<decltype(drflac_open_file("", static_cast<const drflac_allocation_callbacks*>(nullptr)))>);
+	STATIC_REQUIRE(std::is_void_v<decltype(drmp3_init_file(static_cast<drmp3*>(nullptr), "", nullptr))>);
 }
 
 TEST_CASE("paths with non-ASCII characters work", "[integration]")
