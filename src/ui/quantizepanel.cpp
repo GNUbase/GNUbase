@@ -177,11 +177,11 @@ namespace gnubase::ui
 		if (layout == Layout::Toolbar)
 		{
 			element.SetInnerRML(
-				R"(<button id="toolbar-quantize-apply" action="apply" title="Apply Quantize">Q</button>)"
-				R"(<button id="toolbar-quantize-presets" menu="toolbar-quantize-presets-menu" title="Quantize Presets"/>)"
-				R"(<button id="toolbar-quantize-soft" type="toggle" action="soft" title="Soft Quantize On/Off">)"
-				R"(Soft</button><button id="toolbar-quantize-panel" action="panel" title="Open Quantize Panel">)"
-				R"(...</button>)");
+				R"(<button id="toolbar-quantize-apply" class="icon-only" action="apply" title="Apply Quantize">)"
+				R"(Q</button><button id="toolbar-quantize-presets" menu="toolbar-quantize-presets-menu" )"
+				R"(title="Quantize Presets"/><button id="toolbar-quantize-soft" type="toggle" action="soft" )"
+				R"(title="Soft Quantize On/Off">Soft</button><button id="toolbar-quantize-panel" class="icon-only" )"
+				R"(action="panel" title="Open Quantize Panel">...</button>)");
 		}
 		else
 		{
@@ -337,8 +337,8 @@ namespace gnubase::ui
 				m_run("edit.resetQuantize");
 			else if (action == "panel")
 				m_run("window.quantizePanel");
-			else if (action == "soft")
-				set({{"settings", {{"soft", !m_settings.value("soft", false)}}}});
+			else if (action == "soft") // the toggle's state before this click: m_settings may not have caught up yet
+				set({{"settings", {{"soft", !button->HasAttribute("checked")}}}});
 			else if (action == "save" || action == "rename")
 				savePreset(action == "rename");
 			else if (action == "remove" && isUserPreset(currentPreset()))

@@ -178,7 +178,7 @@ namespace
 
 		size_t lines() { return elements("#quantize-panel .quantize-line").size(); }
 
-		test::UiApp app{{1400, 900}};
+		test::UiApp app{{1024, 720}}; // as large as CI runners' displays give, where the toolbar is tight
 		ui::EventDisplay& display;
 		uint64_t track = 0;
 		uint64_t part = 0;
