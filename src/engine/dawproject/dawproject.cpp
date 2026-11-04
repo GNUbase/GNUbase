@@ -448,9 +448,11 @@ namespace gnubase::engine
 
 			void writeTrack(pugi::xml_node parent, const Track& track)
 			{
-				// Markers go into the arrangement, the tempo into the transport and the tempo automation; ruler and
-				// tempo tracks only into GNUbase's entry.
-				if (track.type == TrackType::Marker || track.type == TrackType::Ruler || track.type == TrackType::Tempo)
+				// Markers go into the arrangement, the tempo into the transport and the tempo automation, the
+				// signatures into the time signature automation; ruler, tempo and signature tracks only into
+				// GNUbase's entry.
+				if (track.type == TrackType::Marker || track.type == TrackType::Ruler ||
+					track.type == TrackType::Tempo || track.type == TrackType::Signature)
 					return;
 				pugi::xml_node node = parent.append_child("Track");
 				node.append_attribute("id") = xmlId("t", track.id).c_str();

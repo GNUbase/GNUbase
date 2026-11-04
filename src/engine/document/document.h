@@ -60,6 +60,7 @@ namespace gnubase::engine
 		Marker, // holds markers; has no channel and stays at the top level
 		Ruler,  // shows a ruler in a time format of its own; has no channel
 		Tempo,  // shows and edits the project's tempo track; has no channel, stays at the top level, at most one
+		Signature, // shows and edits the project's time signatures; has no channel, stays at the top level, at most one
 	};
 
 	// The time formats of ruler tracks, as the event display's ruler names them.

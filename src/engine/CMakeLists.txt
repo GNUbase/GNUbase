@@ -126,6 +126,7 @@ add_library(gnubase-engine STATIC
 	document/recording.cpp
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/serialize.cpp document/serialize.h
+	document/signature.cpp
 	document/snap.cpp document/snap.h
 	document/tempo.cpp
 	document/volumecurves.cpp document/volumecurves.h
