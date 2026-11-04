@@ -133,7 +133,21 @@ namespace gnubase::ui
 	PoolPanel::PoolPanel(EngineBinding& binding, Rml::Element& element, Run run, std::function<bool()> shown)
 		: m_binding(binding), m_run(std::move(run)), m_shown(std::move(shown)),
 		  m_changed(binding.on("history.changed", [this](const engine::Event&) { poolChanged(); })),
-		  m_saved(binding.on("project.saved", [this](const engine::Event&) { poolChanged(); }))
+		  m_saved(binding.on("project.saved", [this](const engine::Event&) { poolChanged(); })),
+		  m_jobProgress(binding.on("job.progress",
+			  [this](const engine::Event& event)
+			  {
+				  const auto job = m_jobs.find(event.data.at("job").get<uint64_t>());
+				  if (job == m_jobs.end())
+					  return;
+				  const auto percent = static_cast<int>(event.data.at("progress").get<double>() * 100.0);
+				  std::string text = actionOf(job->second) + ": " + std::to_string(percent) + " %";
+				  if (const auto& detail = event.data.at("detail").get_ref<const std::string&>(); !detail.empty())
+					  text += ", " + detail;
+				  showMessage(text, false);
+			  })),
+		  m_jobFinished(
+			  binding.on("job.finished", [this](const engine::Event& event) { jobEnded(event.data.at("job")); }))
 	{
 		std::string rml = R"(<div class="pool"><div class="toolbar pool-toolbar">)";
 		for (const Button& button : g_buttons)
@@ -244,11 +258,25 @@ namespace gnubase::ui
 			return;
 		}
 		const Json& value = result.value;
+		if (value.contains("job"))
+		{
+			// The job's events tell how it goes on. It may have ended before its command's result came: job.get tells.
+			const auto id = value.at("job").at("id").get<uint64_t>();
+			m_jobs[id] = command;
+			showMessage(actionOf(command) + "...", false);
+			m_binding.send("job.get", {{"job", id}},
+				[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& state)
+				{
+					if (!alive.expired() && state.ok() && state.value.at("job").at("state") != "running")
+						jobEnded(state.value.at("job"));
+				});
+			return;
+		}
 		std::string text;
 		if (command == "media.locate")
 		{
 			const size_t found = value.at("relinked").size();
-			const size_t looked = found + value.at("missing").size();
+			const size_t looked = found + value.at("missing").size() + value.at("changed").size();
 			text = looked == 0 ? "No files are missing."
 							   : "Found " + std::to_string(found) + " of " + counted(looked, "missing file") + ".";
 		}
@@ -267,6 +295,22 @@ namespace gnubase::ui
 			text = "Conformed " + counted(value.at("media").size(), "file") + " to the project's sample rate.";
 		}
 		showMessage(text, false);
+	}
+
+	void PoolPanel::jobEnded(const Json& job)
+	{
+		const auto found = m_jobs.find(job.at("id").get<uint64_t>());
+		if (found == m_jobs.end())
+			return;
+		const std::string command = found->second;
+		m_jobs.erase(found);
+		const Json& state = job.at("state");
+		if (state == "done")
+			report(command, {0, job.at("result"), {}});
+		else if (state == "cancelled")
+			showMessage(actionOf(command) + " was cancelled.", false);
+		else if (const Json& error = job.at("error"); error.is_string())
+			report(command, {0, nullptr, error.get<std::string>()});
 	}
 
 	void PoolPanel::showMessage(const std::string& text, bool error)
