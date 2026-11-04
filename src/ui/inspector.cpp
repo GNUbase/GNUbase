@@ -24,7 +24,7 @@ namespace gnubase::ui
 		// The track's name above the sections, which the docking system shows, hides and orders (sections="inspector").
 		const char* const g_rml =
 			R"(<div class="inspector-header"><textdisplay class="display inspector-name" control="name")"
-			R"( title="Track Name"/></div>)"
+			R"( title="Track Name"/><button class="inspector-edit" title="Edit Channel Settings">e</button></div>)"
 			R"(<div class="inspector-empty">No Track Selected</div>)"
 			R"(<div class="inspector-sections" sections="inspector">)"
 			R"(<div class="inspector-section" section="basics" label="Basics">)"
@@ -117,8 +117,8 @@ namespace gnubase::ui
 		}
 	}
 
-	Inspector::Inspector(EngineBinding& binding, Rml::Element& root)
-		: m_binding(binding), m_root(root.GetObserverPtr()),
+	Inspector::Inspector(EngineBinding& binding, Rml::Element& root, std::function<void(uint64_t track)> editChannel)
+		: m_binding(binding), m_root(root.GetObserverPtr()), m_editChannel(std::move(editChannel)),
 		  // Another project replaces the edits in progress: the ids they were for may be the new project's too.
 		  m_reset(binding.on("project.reset", [this](const engine::Event&) { dropEdits(); }))
 	{
@@ -204,6 +204,7 @@ namespace gnubase::ui
 			available("[section=" + std::string(section) + "]",
 				channel != nullptr && (!vca || std::string(section) != "routing"));
 		available("[section=inserts]", audio);
+		available(".inspector-edit", channel != nullptr && m_editChannel);
 		const bool records = type == "audio" || type == "instrument" || type == "midi" || vca;
 		available("button[control=record]", records);
 		available("button[control=monitor]", records);
@@ -275,6 +276,8 @@ namespace gnubase::ui
 		switch (event.GetId())
 		{
 		case Rml::EventId::Click:
+			if (target->IsClassSet("inspector-edit") && m_editChannel && m_track != 0)
+				m_editChannel(m_track); // Edit Channel Settings (reference manual p. 500)
 			// A section's header opens and closes it.
 			for (const Rml::Element* up = target; up != nullptr && up != m_root.get(); up = up->GetParentNode())
 				if (up->IsClassSet("section-header") && up->GetParentNode() != nullptr)

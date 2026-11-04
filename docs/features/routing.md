@@ -69,8 +69,10 @@ The mixer's strips have a Sends section (`.mixer-sends`, docking set `channel`, 
 up Window Layout), with a row per send: its on switch, its destination (a drop-down list of No Destination and the
 other group and effect channels), Pre for a pre-fader send and a knob for its level, whose drag is one undo step
 (#716). They send `channel.set` and show the engine's values after every undo step, as the strip's other sections do
-([channel-strip.md](channel-strip.md)). Ctrl-click on a send's knob sets the default send level. Output lists in the
-inspector and the add track dialog offer effect channels too.
+([channel-strip.md](channel-strip.md)). Ctrl-click on a send's knob sets the default send level. The destination list
+ends with Add Effect Track to Send (p. 554), which opens the add track dialog's effect page for that send, as in the
+channel settings window ([channel-settings.md](channel-settings.md)). Output lists in the inspector and the add track
+dialog offer effect channels too.
 
 The track list's context menu has Group Track to Selected Tracks and Effect Track to Selected Tracks
 (`track.addGroupToSelected`, `track.addEffectToSelected`): they open the add track dialog on the group or effect page,
@@ -81,8 +83,8 @@ and its Add Track passes the selected tracks as `tracks`. The group and effect p
 
 The audio connections window (pp. 35–53), whose commands are the `bus.*` ones ([busses.md](busses.md)); direct
 routing, an output with several destinations of which one or a sum plays (pp. 492–494); send panners and Link
-Panners (p. 556); automation of the sends; Add Effect Track to Send in the UI, which comes with the sends in the
-inspector and the channel settings window (#112), where the reference has it (`track.add` `send` does it already).
+Panners (p. 556); automation of the sends; the sends in the inspector, and Add Effect Track to Send in a send slot's
+context menu, where the reference has it.
 
 ## Checks
 

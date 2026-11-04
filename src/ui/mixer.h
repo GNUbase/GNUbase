@@ -45,6 +45,29 @@ namespace gnubase::ui
 	// the output busses.
 	std::vector<MixerChannel> mixerChannels(const engine::Json& project);
 
+	// Where a mixer shows: in the project window's lower zone, in a mixer window, or in the channel settings window
+	// (#112, docs/features/channel-settings.md), which shows one channel with all its sections.
+	enum class MixerKind : uint8_t
+	{
+		LowerZone,
+		Window,
+		ChannelSettings,
+	};
+
+	// What a mixer asks the app to do; each may be empty.
+	struct MixerActions
+	{
+		// A double click on a channel's picture section: choose its track's picture.
+		std::function<void(uint64_t track)> choosePicture;
+		// Edit Channel Settings (reference manual p. 500): open the channel settings window for the track's channel.
+		std::function<void(uint64_t track)> editChannel;
+		// Add Effect Track to Send (p. 554): the add track dialog for an effect track that the send goes to, in the
+		// window of the element.
+		std::function<void(Rml::Element& from, uint64_t track, int send)> addEffectTrack;
+		// The channel settings window went to another track's channel by itself (previous, next, Go to Output).
+		std::function<void(uint64_t track)> wentTo;
+	};
+
 	// Fills an element with a mixer: a toolbar and the fader section, a strip per channel that the mixer shows, which
 	// follows the project whichever client changes it. view is the mixer's name in mixer.get and mixer.set (lower,
 	// window1 to window4), which keep what it hides: the toolbar's channel type filter (#mixer-filter-menu) and
@@ -52,14 +75,20 @@ namespace gnubase::ui
 	// showVisibility fills. Each strip (.mixer-channel, with the channel's id in channel and its type in type) is a
 	// container of the docking system's set of sections "channel": the picture, the notepad and the fader, which the
 	// Set up Window Layout pane (#mixer-layout-pane) shows, hides and reorders. A channel name dragged onto another
-	// channel moves its track there with track.move; busses keep their places. choosePicture runs on a double click on
-	// a channel's picture section, to choose its track's picture. Use it on the UI thread; the binding and the docking
-	// system must outlive it.
+	// channel moves its track there with track.move; busses keep their places. Each strip of a track's channel has
+	// Edit Channel Settings (button.mixer-edit), and its sends' destination lists Add Effect Track to Send.
+	//
+	// As the channel settings window's (MixerKind::ChannelSettings, view unused) it shows one track's channel, with the
+	// pre section, the equalizer, the strip, the sends and the fader shown by default, and a toolbar of its own: Go to
+	// Previous and Next Mixer Channel (#settings-previous, #settings-next), the channel's name (.settings-name), Go to
+	// Output (#settings-output) and the Functions menu (#settings-functions-menu) with Copy and Paste Channel Settings
+	// and Follow Edit Buttons or Selection Changes. Use it on the UI thread; the binding and the docking system must
+	// outlive it.
 	class Mixer final : private Rml::EventListener
 	{
 	public:
-		Mixer(EngineBinding& binding, Docking& docking, Rml::Element& root, std::string view, bool window,
-			std::function<void(uint64_t track)> choosePicture);
+		Mixer(EngineBinding& binding, Docking& docking, Rml::Element& root, std::string view, MixerKind kind,
+			MixerActions actions);
 		~Mixer() override;
 		Mixer(const Mixer&) = delete;
 		Mixer& operator=(const Mixer&) = delete;
@@ -72,6 +101,12 @@ namespace gnubase::ui
 
 		// The ids of the channels the strips show, in order.
 		std::vector<uint64_t> shown() const { return m_shown; }
+
+		// The channel settings window's: shows the track's channel, or nothing for a track without one.
+		void showTrack(uint64_t track);
+		uint64_t track() const { return m_track; }
+		// Whether it follows the Edit Channel Settings buttons and the track selection (on by default).
+		bool follows() const { return m_follows; }
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;
@@ -87,6 +122,8 @@ namespace gnubase::ui
 		void setTypeHidden(const std::string& type, bool hidden);
 		void sendView(engine::Json parameters);
 		void drop(uint64_t onto);
+		void showSettingsToolbar();
+		void goTo(uint64_t track);
 		const MixerChannel* channelOf(Rml::Element* element) const;
 
 		EngineBinding& m_binding;
@@ -97,8 +134,10 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_visibility;         // the Visibility tab's element
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus; // in the document's body
 		std::string m_view;
-		bool m_window = false;
-		std::function<void(uint64_t track)> m_choosePicture;
+		MixerKind m_kind = MixerKind::LowerZone;
+		MixerActions m_actions;
+		uint64_t m_track = 0;  // the channel settings window's
+		bool m_follows = true; // the channel settings window's Follow
 
 		engine::Json m_project = engine::Json::object();
 		std::vector<MixerChannel> m_channels;

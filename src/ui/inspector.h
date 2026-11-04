@@ -25,11 +25,12 @@ namespace gnubase::ui
 	// volume and pan value fields), routing (input and output drop-down lists), inserts (the channel's plugin slots)
 	// and notepad (the channel's notes in a <textarea>). A click on a section's header closes or opens it (.collapsed);
 	// what a track doesn't have gets the class unavailable. The controls send engine commands. The element has the
-	// class empty without a track. Use it on the UI thread; the binding must outlive it.
+	// class empty without a track. Beside the name, Edit Channel Settings (button.inspector-edit) runs editChannel
+	// with the track, for tracks with a channel. Use it on the UI thread; the binding must outlive it.
 	class Inspector final : private Rml::EventListener
 	{
 	public:
-		Inspector(EngineBinding& binding, Rml::Element& root);
+		Inspector(EngineBinding& binding, Rml::Element& root, std::function<void(uint64_t track)> editChannel = {});
 		~Inspector() override;
 		Inspector(const Inspector&) = delete;
 		Inspector& operator=(const Inspector&) = delete;
@@ -55,6 +56,7 @@ namespace gnubase::ui
 
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_root;
+		std::function<void(uint64_t track)> m_editChannel;
 		uint64_t m_track = 0;
 		uint64_t m_loads = 0;
 		uint64_t m_read = 0;

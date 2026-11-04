@@ -996,6 +996,14 @@ Returns:
 
 ### channel
 
+#### `gnubase.channel.copySettings`
+
+Copies a channel's settings for channel.pasteSettings (Copy Channel Settings, reference manual pp. 461, 503): the pre section, the equalizer, the strip, the sends and the inserts (the plugin slots with their plugins' settings); not the fader, the pan, the buttons, the routing or the notes. MIDI and VCA channels have none. Changes nothing in the project.
+
+Parameters:
+
+- `channel`: integer, required
+
 #### `gnubase.channel.deactivateAll`
 
 Turns a state off on every channel, as the mixer toolbar's Deactivate All Mute, Solo and Listen States buttons do: mute, solo (with solo defeat) or listen. One undo step. Returns the channels that changed.
@@ -1003,6 +1011,18 @@ Turns a state off on every channel, as the mixer toolbar's Deactivate All Mute, 
 Parameters:
 
 - `state`: one of "mute" | "solo" | "listen", required
+
+Returns:
+
+- `channels`: array of integer, required
+
+#### `gnubase.channel.pasteSettings`
+
+Pastes what channel.copySettings copied onto channels, in one undo step (Paste Channel Settings): the pre section, the equalizer, the strip, the sends and the inserts (the plugin slots with their plugins' settings). Their inserts are replaced by copies of the copied ones, the automation of the plugins they had goes with them. A send keeps its destination only if the channel may send there, so not to itself and never in a loop. Emits channel.changed, plugin.removed and plugin.added. Returns the channels.
+
+Parameters:
+
+- `channels`: array of integer, required
 
 Returns:
 
@@ -1901,15 +1921,18 @@ Returns:
 
 #### `gnubase.linkGroup.add`
 
-Links channels in a new link group (reference manual pp. 457-459), named Link Group N unless name is given; by default it links the volume, or with a VCA fader nothing. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in. What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.added.
+Links channels in a new link group (reference manual pp. 457-459), named Link Group N unless name is given; by default it links the volume and the sends, or with a VCA fader the sends. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in. What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor), eq (the equalizer's changes), dynamics (the strip's: gate, compressor and limiter), sends (the sends' changes, on by default; a channel that can't take one, such as a send to itself, keeps its own). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.added.
 
 Parameters:
 
 - `channels`: array of integer, required
+- `dynamics`: boolean
+- `eq`: boolean
 - `mute`: boolean
 - `name`: string
 - `pan`: boolean
 - `record`: boolean
+- `sends`: boolean
 - `vca`: integer
 - `volume`: boolean
 
@@ -1927,16 +1950,19 @@ Parameters:
 
 #### `gnubase.linkGroup.set`
 
-Changes a link group: what isn't given stays. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in. What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.changed.
+Changes a link group: what isn't given stays. channels: the linked channels; a channel is in one link group at most, so they leave the groups they were in. What a change to one of them passes on to the others (channel.set, unless linked is false): volume (the fader, by as much as it moved), pan (likewise), mute (the mute, solo and listen buttons), record (record enable and monitor), eq (the equalizer's changes), dynamics (the strip's: gate, compressor and limiter), sends (the sends' changes, on by default; a channel that can't take one, such as a send to itself, keeps its own). vca: the channel of a VCA track that controls the group, or 0; it leaves the group it controlled. The VCA fader's volume adds to each channel's, its automation to theirs, and its buttons pass on to them; VCA faders can be in groups that other VCA faders control, but never control themselves. A group with a VCA fader doesn't link the volume: giving it one turns volume off, taking it away turns it on, unless volume is given. Emits linkGroup.changed.
 
 Parameters:
 
 - `channels`: array of integer
+- `dynamics`: boolean
+- `eq`: boolean
 - `group`: integer, required
 - `mute`: boolean
 - `name`: string
 - `pan`: boolean
 - `record`: boolean
+- `sends`: boolean
 - `vca`: integer
 - `volume`: boolean
 
@@ -2726,7 +2752,7 @@ Returns:
 
 #### `gnubase.mixdown.export`
 
-Exports an audio mixdown (reference manual pp. 1479-1502): renders the range from start to end, in project samples (default: the left to the right locator), offline as transport.locate, transport.play and audio.render would, without cycle, pre-roll and click, and writes what each of channels (output busses and audio, instrument, group and effect channels, after their fader and panner; default: the main mix) puts out into a file of its own in folder, which is created if needed. The file is called name, or name - <channel name> for several channels, with the format's extension. format: wav (the default), aiff or flac. sampleFormat: int16, int24 (the default), int32, float32 or float64; AIFF takes the integer ones, FLAC int16 and int24. sampleRate: the file's, converted from the project's (the default). dither: TPDF dither for int16 and int24. normalize: the file's peak in dBFS (-60 to 0). conflicts: unique (the default) adds a number to a name that is taken, overwrite replaces the file. The transport and its settings are as before afterwards; a device that runs stops meanwhile, and plugins render in offline mode. Refused while the device runs at another sample rate than the project. Returns the files written, each with its channel, name, absolute path and frames.
+Exports an audio mixdown (reference manual pp. 1479-1502): renders the range from start to end, in project samples (default: the left to the right locator), offline as transport.locate, transport.play and audio.render would, without cycle, pre-roll and click, and writes what each of channels (output busses and audio, instrument, group and effect channels, after their fader and panner; default: the main mix) puts out into a file of its own in folder, which is created if needed. The file is called name, or name - <channel name> for several channels, with the format's extension. format: wav (the default), aiff or flac. sampleFormat: int16, int24 (the default), int32, float32 or float64; AIFF takes the integer ones, FLAC int16 and int24. sampleRate: the file's, converted from the project's (the default). dither: TPDF dither for int16 and int24. normalize: the file's peak in dBFS (-60 to 0). conflicts: unique (the default) adds a number to a name that is taken, overwrite replaces the file. point renders channels from inside their strip instead of after the fader and panner (output, the default), in the channel's format, as render in place and freeze do: source is what plays on the channel, before its pre section and plugin slots; inserts is after the slots, before the strip's other sections; strip is after those, before the fader. tail renders up to that many seconds (0 to 60) after end, ending after the last sample a 24-bit file doesn't hold as silence. The transport and its settings are as before afterwards; a device that runs stops meanwhile, and plugins render in offline mode. Refused while the device runs at another sample rate than the project. Returns the files written, each with its channel, name, absolute path and frames.
 
 Parameters:
 
@@ -2738,9 +2764,11 @@ Parameters:
 - `format`: one of "wav" | "aiff" | "flac"
 - `name`: string, required
 - `normalize`: number
+- `point`: one of "output" | "strip" | "inserts" | "source"
 - `sampleFormat`: one of "int16" | "int24" | "int32" | "float32" | "float64"
 - `sampleRate`: number
 - `start`: integer
+- `tail`: number
 
 Returns:
 
@@ -3982,6 +4010,19 @@ Returns:
 
 - `track`: object, required
 
+#### `gnubase.track.freeze`
+
+Freezes audio and instrument tracks (reference manual pp. 219-220): renders what each plays after its plugin slots, before the strip's other sections (the instrument, the events, the pre section and the inserts), offline from the project's start to the end of its last event or note, with up to tail seconds more (0 to 60, default 30) that end after the last sample a 24-bit file doesn't hold as silence, into a 32-bit float WAV file named after the track in the Freeze folder of the project's folder (for a project without a file, of the folder its recordings go to). The track then plays the file from the project's start instead of its events, parts, instrument, pre section and slots, which stay as they are; the strip's other sections, the fader, pan, mute and sends still play, with their automation. Renders as mixdown.export does, and is refused when it is, for a frozen or disabled track and for one with nothing to play. One undo step. Returns the tracks.
+
+Parameters:
+
+- `tail`: number
+- `tracks`: array of integer, required
+
+Returns:
+
+- `tracks`: array, required
+
 #### `gnubase.track.move`
 
 Moves a track, with what it contains, into a folder (parent, 0 for the top level) at index among its tracks. Where the group channel of the nearest folder around a moved track changes, its audio and that of the tracks inside it follows: into a folder with a group channel it plays through that, out of it through the next group channel up, or the main output. Channels routed elsewhere by hand or disconnected, and routes that would make a loop, stay as they are. With the user setting editing.applyFolderColor, tracks moved into a folder with a color take it.
@@ -3999,6 +4040,27 @@ Removes a track with its channel, events, parts or markers; a folder also remove
 Parameters:
 
 - `track`: integer, required
+
+#### `gnubase.track.renderInPlace`
+
+Renders audio and instrument tracks in place (reference manual pp. 1471-1477): what each plays from start to end, in project samples (a range selection; default: from the start of its first event or note to the end of its last), with up to tail seconds more (0 to 60, default 0) that end after the last sample a 24-bit file doesn't hold as silence, into a WAV file (sampleFormat as in mixdown.export, default float32) in the project's media folder (for a project without a file, the folder its recordings go to), named name or after the track, and puts it as one event at start on a new audio track below the track, named after it with (Rendered), which plays through the same output. processing: dry renders what plays on the channel, before its pre section and plugin slots, and the new track gets the channel's slots, strip, fader, pan and sends; channelSettings (the default) renders after the slots and the strip, before the fader, and the new track gets the fader, pan and sends; completeSignalPath renders after the fader and panner, in the output's format, and the new track gets no settings. sourceTracks: keep (the default), mute, disable or remove the tracks rendered. Renders as mixdown.export does, and is refused when it is. One undo step. Returns the new tracks, media files and events, in the order of tracks.
+
+Parameters:
+
+- `end`: integer
+- `name`: string
+- `processing`: one of "dry" | "channelSettings" | "completeSignalPath"
+- `sampleFormat`: one of "int16" | "int24" | "int32" | "float32" | "float64"
+- `sourceTracks`: one of "keep" | "mute" | "disable" | "remove"
+- `start`: integer
+- `tail`: number
+- `tracks`: array of integer, required
+
+Returns:
+
+- `events`: array of integer, required
+- `media`: array of integer, required
+- `tracks`: array of integer, required
 
 #### `gnubase.track.set`
 
@@ -4018,6 +4080,18 @@ Parameters:
 Returns:
 
 - `track`: object, required
+
+#### `gnubase.track.unfreeze`
+
+Unfreezes frozen tracks: they play their events, instrument and plugin slots again. Their freeze files stay, so the step can be undone. One undo step. Returns the tracks.
+
+Parameters:
+
+- `tracks`: array of integer, required
+
+Returns:
+
+- `tracks`: array, required
 
 ### transport
 
