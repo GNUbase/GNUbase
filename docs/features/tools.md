@@ -104,7 +104,16 @@ setting, and the widget library opens the one the keys ask for ([widgets.md](wid
   the selection range, as the Edit menu runs them ([main-menu.md](main-menu.md)): Cut, Copy, Paste, Delete, Split at
   Cursor, Split Range, Crop Range, Glue, Duplicate, Repeat, Select All, Select None, Mute, Unmute, Lock and Unlock.
   A right click that opens it on an event that isn't selected selects that event first, so that they act on it; on a
-  selected event, or on nothing, the selection stays. The toolbox leaves the selection as it is.
+  selected event, or on nothing, the selection stays. On an event it also ends a range, as a press there does with
+  the selection tools combined, so the commands act on the event. Where a press selects a range (the range selection
+  tool, and a lane's upper half with the selection tools combined) the right click leaves the events alone, and the
+  commands act on the range. Cut, Copy, Split Range and Crop Range only edit the selection range, so they are shown
+  disabled while there is none (all but Split Range also while it has no length), here and in the Edit menu; so
+  are Cut Time, Delete Time and Insert Silence (`EventDisplay::canRun`). Their keys still run them, and without a range
+  they do nothing. The toolbox leaves the selection as it is.
+
+The key editor has a toolbox of its own, `#key-editor-toolbox` with its toolbar's tools, which a right click in its
+note display opens by the same setting ([key-editor.md](key-editor.md)).
 
 ## Mouse pointers
 
@@ -115,17 +124,29 @@ RmlUi's `cursor` property; the pointers are SVG files in `resources/cursors` ([s
 | `pointer` | Where | Pointer |
 |---|---|---|
 | `objectSelection` | The object selection tool | The OS's arrow |
-| `resize` | The object selection tool at an event's left or right edge, where a drag resizes it (6 dp, on events wider than 18 dp), except on a fade handle ([fades.md](fades.md)) | `resize` |
+| `resize` | The object selection tool at an event's left or right edge, where a drag resizes it (6 dp, on events wider than 18 dp), except on a fade handle ([fades.md](fades.md)), and except with Ctrl or Shift held unless they are a tool modifier (they add to the selection then) | `resize` |
+| `split` | The object selection tool on an event with the tool modifier Split Event held (Alt), where a click splits it (p. 268) | `tool-split` |
+| `draw` | The object selection tool on an empty spot of an audio, MIDI or instrument lane with Split Event held, where a drag draws a part (p. 250) | `tool-draw` |
 | `rangeSelection` | The range selection tool, and with the selection tools combined a lane's upper half (p. 253) | `tool-range` |
 | `draw`, `erase`, `split`, `glue`, `mute`, `zoom`, `line`, `play` | That tool | `tool-<name>`, the play tool's `tool-play` |
 
-The pointer changes as the mouse moves, and at once when a tool is chosen or the view scrolls or zooms while the mouse
-rests; over the event lanes a drag keeps the one it started with (outside them, the pointer of what's under the mouse).
-MCP's `ui_windows` reports the pointer shown, as `cursor`.
+On an automation track the pointer is the chosen tool's, also with the selection tools combined, as a press there
+edits points with that tool ([automation-tracks.md](automation-tracks.md)).
+
+The pointer is the one for a press with the modifier keys held, by the user setting `ui.toolModifiers`. It changes as
+the mouse moves, and at once when a tool is chosen, the view scrolls or zooms, or a modifier key goes down or up while
+the mouse rests over the lanes; a modifier stays held while another key of it is down (the other Shift key, or Cmd for
+Ctrl). Once the mouse has left the lanes, also for a menu opened over them, it no longer follows; it follows again
+when the mouse is back, also without moving, as when a tool chosen in the toolbox closes it. A drag keeps the one it started
+with, also where it leaves the lanes: the event area has RCSS `drag: drag`, and RmlUi shows a drag's element's pointer
+until the button is up. MCP's `ui_windows` reports the pointer shown, as `cursor`: empty for the OS's arrow, also where
+a pointer's picture didn't load or RmlUi names one the OS doesn't have, such as its autoscroll pointers.
 
 Not yet: the time warp, comp and color tools, the drumstick tool, resizing an event's edge with the scrub tool,
 which scrubs as it resizes (p. 268), and pointers of their own for the sizing modes; the rest of the reference's context
-menu, with the Audio and MIDI menus' functions, follows with those menus. The Preferences dialog's Editing - Tools page
+menu, with the Audio and MIDI menus' functions, follows with those menus. Cut and Copy of selected events without a
+range (the event clipboard) wait for a ticket of their own. On X11, SDL shows only a pointer's scale-1 picture. The
+audio editor gets its toolbox when it comes. The Preferences dialog's Editing - Tools page
 (#162) will show the two settings, which `settings.get` and `settings.set` reach until then.
 
 ## Checks
@@ -138,14 +159,20 @@ menu, with the Audio and MIDI menus' functions, follows with those menus. The Pr
   snapped, by dragging and with a click, none on audio tracks or with the line tool; auditioning the audio lane's
   track on the dummy device while the mouse is pressed, nothing on a MIDI lane, and scrubbing with a drag; ranges by dragging, clicking and double clicking on events and gaps, with Shift, snapped and on
   every track, and the events they select when another tool takes over; the combined selection tools; the pointer
-  per tool, at events' edges and in a combined lane's upper half, also when a tool is chosen while the mouse rests.
+  per tool, at events' edges and in a combined lane's upper half, also when a tool is chosen while the mouse rests;
+  the pointer with tool modifiers held, also when Alt goes down and up while the mouse rests, with both Alt keys and
+  with Cmd and Ctrl, and with the modifiers changed through `settings.set`; a drag's pointer over the ruler, and the pointer not following changes once the
+  mouse has left the lanes; a right click selecting events only where a press selects them, and ending a range.
 - `tests/uiapp_tests.cpp`: the toolbar's tool buttons, the keys 1 to 9, F9, F10 and Alt+Shift+1 in the app's project
   window, the object selection tool's, the line tool's and the play tool's mode menus on a second click; scrubbing an
   audio track with the mouse; the split tool and the range
   tool driven with the mouse as MCP's UI tools drive it; the toolbox and the context menu on right clicks with and
-  without modifiers, with the setting on and off, a tool chosen from each, a right click selecting the event for the context menu; the notification after a key, not after a
-  button or with the setting off; the pointer as `ui_windows` reports it. The project window's golden image shows the
+  without modifiers, with the setting on and off, a tool chosen from each, a right click selecting the event for the context menu; the context menu's range commands
+  disabled without a range and cutting with one, after a right click that leaves the event unselected; the
+  notification after a key, not after a button or with the setting off, on RmlUi's frozen clock; the pointer as
+  `ui_windows` reports it, also right after a tool is chosen in the toolbox. `tests/automationtracks_tests.cpp`: an
+  automation track's pointer with the selection tools combined. `tests/keyeditor_ui_tests.cpp`: the key editor's toolbox by the setting and modifiers. The project window's golden image shows the
   toolbar.
 - `tests/widgets_tests.cpp`: `modifiercontextmenu` with each modifier key, and notifications.
   `tests/svg_tests.cpp`: every pointer rasterizes at each scale with its hotspot inside it, and broken ones fall back
-  to the OS's arrow.
+  to the OS's arrow, which RmlUi's system interface then reports as no pointer, as it does names the OS doesn't have.

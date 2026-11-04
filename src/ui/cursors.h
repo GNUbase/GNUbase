@@ -20,7 +20,8 @@ namespace gnubase::ui
 
 	// The pointers in a folder: resources/cursors/cursors.json names each one, {"<name>": {"hotspot": [x, y]}}, and
 	// <name>.svg next to it is its picture, as many pixels big at scale 1 as the SVG's width and height say, pointing
-	// at the hotspot in those units. A name the folder doesn't have is one of the OS's pointers.
+	// at the hotspot in those units. A name the folder doesn't have is one of the OS's pointers (g_systemCursors), or
+	// else the OS's arrow.
 	class Cursors
 	{
 	public:
@@ -28,7 +29,7 @@ namespace gnubase::ui
 		explicit Cursors(std::filesystem::path folder = {});
 
 		// The pointer for the name, its pictures rasterized at g_cursorScales the first time it is asked for. A
-		// picture that can't be read is logged, and the OS's arrow shows instead.
+		// picture that can't be read is logged, and the OS's arrow shows instead: a pointer without a name.
 		const Cursor& get(const std::string& name);
 
 		// Whether the folder has a pointer of that name.

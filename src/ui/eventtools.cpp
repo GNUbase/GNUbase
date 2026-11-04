@@ -84,10 +84,10 @@ namespace gnubase::ui
 					m_toolModifiers[action] = keys.get<std::string>();
 	}
 
-	bool EventDisplay::modifiers(const char* action) const
+	bool EventDisplay::modifiers(const char* action, const std::string& keys) const
 	{
 		const auto found = m_toolModifiers.find(action);
-		return found != m_toolModifiers.end() && !found->second.empty() && found->second == m_pressed;
+		return found != m_toolModifiers.end() && !found->second.empty() && found->second == keys;
 	}
 
 	void EventDisplay::addToolActions()
@@ -174,21 +174,11 @@ namespace gnubase::ui
 		return m_tool;
 	}
 
-	std::string EventDisplay::pointerAt(double x, double y) const
-	{
-		const Tool tool = toolAt(y);
-		if (tool == Tool::ObjectSelection)
-			if (const Shown* shown = eventAt(x, y);
-				shown != nullptr && edgeAt(*shown, x) != 0 && fadeHandleAt(*shown, x, y) == 0) // a press drags a fade
-				return "resize";
-		return toolName(tool);
-	}
-
 	void EventDisplay::showPointer()
 	{
 		if (!alive() || !m_mouse || m_drag != Drag::None)
 			return;
-		const std::string pointer = pointerAt(m_mouse->first, m_mouse->second);
+		const std::string pointer = pointerAt(m_mouse->first, m_mouse->second, m_held);
 		if (m_area->GetAttribute<Rml::String>("pointer", "") == pointer)
 			return;
 		m_area->SetAttribute("pointer", pointer);
