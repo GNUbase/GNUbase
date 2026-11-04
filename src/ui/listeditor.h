@@ -84,7 +84,8 @@ namespace gnubase::ui
 		void begin(Rml::Event& event);
 		// Ends the gesture without its effect. Returns whether the value display showed values of it.
 		bool cancel();
-		// Hears the mouseup in the root's document while a gesture goes on, or stops hearing it.
+		// Hears the mouseup and, in the capture phase, the mousedown in the root's document while a gesture goes on,
+		// or stops hearing them.
 		void listen(bool document);
 		void drag(Rml::Event& event);
 		void release(Rml::Event& event);

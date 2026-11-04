@@ -824,8 +824,18 @@ namespace gnubase::ui
 			m_ctrl = ctrl;
 			break;
 		case Rml::EventId::Mousedown:
-			if (event.GetParameter("button", 0) == 0)
-				press(event);
+			if (event.GetParameter("button", 0) != 0)
+				break;
+			if (event.GetCurrentElement() == m_document.get())
+			{
+				// A left press anywhere in the document while a gesture goes on: the gesture's mouseup never came, as
+				// when the mouse went up outside the window. It ends without its effect before anything hears the
+				// press. Only the bars change, so render() keeps the rows' elements, the press's target among them.
+				if (cancel())
+					render();
+				break;
+			}
+			press(event);
 			break;
 		case Rml::EventId::Mousemove:
 			drag(event);
@@ -851,7 +861,8 @@ namespace gnubase::ui
 
 	void ListEditor::press(Rml::Event& event)
 	{
-		// A gesture whose mouseup never came, such as one released outside the window, ends here without its effect.
+		// The document's mousedown (ProcessEvent) has normally ended a gesture whose mouseup never came already; this
+		// ends one that went on while the root moved to another document.
 		const bool stale = cancel();
 		begin(event);
 		if (m_gesture != Gesture::None)
@@ -872,12 +883,17 @@ namespace gnubase::ui
 	void ListEditor::listen(bool document)
 	{
 		if (Rml::Element* listened = m_document.get())
+		{
 			listened->RemoveEventListener(Rml::EventId::Mouseup, this);
+			listened->RemoveEventListener(Rml::EventId::Mousedown, this, true);
+		}
 		m_document.reset();
 		if (const Rml::Element* root = m_root.get(); document && root != nullptr)
 			if (Rml::ElementDocument* owner = root->GetOwnerDocument())
 			{
 				owner->AddEventListener(Rml::EventId::Mouseup, this);
+				// In the capture phase: before the press reaches the root or anything else in the document.
+				owner->AddEventListener(Rml::EventId::Mousedown, this, true);
 				m_document = owner->GetObserverPtr();
 			}
 	}
