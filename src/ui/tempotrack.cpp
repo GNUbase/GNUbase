@@ -369,7 +369,9 @@ namespace gnubase::ui
 		// The select tool, as on automation tracks: Ctrl or Shift adds to the selection.
 		const bool adds = event.GetParameter<int>("ctrl_key", 0) != 0 || event.GetParameter<int>("meta_key", 0) != 0 ||
 			event.GetParameter<int>("shift_key", 0) != 0;
-		Drag drag{mouse, visibleTempo(m_tempo)};
+		Drag drag;
+		drag.from = mouse;
+		drag.range = visibleTempo(m_tempo);
 		if (on)
 		{
 			// A press selects the event, and a drag moves the selected ones.
