@@ -692,10 +692,12 @@ namespace gnubase::engine
 			graph::NodeDesc& node = desc.nodes[firstChannel + i];
 			const auto source = static_cast<size_t>(sourceNode(channel.id));
 			std::shared_ptr<ChannelStrip> fader;
+			std::shared_ptr<ChannelStrip> sourceStrip; // the strip that runs the source
 			if (source == firstChannel + i)
 			{
 				fader = std::make_shared<ChannelStrip>(
 					state, node.processor, panning, monitoring, channel.silent, StripPart::Whole, channel.sections);
+				sourceStrip = fader;
 			}
 			else
 			{
@@ -713,12 +715,16 @@ namespace gnubase::engine
 							std::make_shared<SlotStrip>(state, slot.processor, static_cast<uint8_t>(index));
 				}
 				graph::NodeDesc& sourceDesc = desc.nodes[source];
-				sourceDesc.processor = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
+				sourceStrip = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
 					channel.silent, StripPart::Source, channel.sections, std::move(plugins), std::move(slotIds));
+				sourceDesc.processor = sourceStrip;
 				fader = std::make_shared<ChannelStrip>(
 					state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, channel.sections);
 			}
 			node.processor = fader;
+			if (const auto tap = m_renderTaps.find(channel.id); tap != m_renderTaps.end())
+				(tap->second.point == RenderPoint::Source ? sourceStrip : fader)
+					->tapRender(tap->second.tap, tap->second.point);
 
 			// The send nodes come in the order of the channels and their sends (graph::describe).
 			std::shared_ptr<PreFaderTap> tap;

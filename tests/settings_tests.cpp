@@ -830,6 +830,25 @@ TEST_CASE("an engine without a settings folder keeps its settings in memory", "[
 	CHECK(list.at("load").at("status") == "inMemory");
 }
 
+TEST_CASE("settings.set refuses controller lane presets whose lanes have no lane type", "[unit]")
+{
+	gnubase::engine::Engine engine;
+	gnubase::engine::Client client(engine);
+	const auto setLanes = [&client](const Json& lanes)
+	{
+		return client.call("settings.set",
+			{{"key", "ui.controllerLanePresets"}, {"value", Json::array({{{"name", "x"}, {"lanes", lanes}}})}});
+	};
+	CHECK(setLanes(Json::parse(R"([{"type": "velocity"}, {"type": "controller", "number": 7}])")).ok());
+	CHECK_FALSE(setLanes(Json::parse(R"([{}])")).ok());
+	CHECK_FALSE(setLanes(Json::parse(R"([{"type": "unknown"}])")).ok());
+	CHECK_FALSE(setLanes(Json::parse(R"([{"type": 1}])")).ok());
+	CHECK_FALSE(setLanes(Json::parse(R"([{"type": "controller", "number": "7"}])")).ok());
+	CHECK_FALSE(setLanes(Json::parse(R"([{"type": "controller", "number": 128}])")).ok());
+	CHECK(client.call("settings.get", {{"key", "ui.controllerLanePresets"}}).value.at("value") ==
+		Json::parse(R"([{"name": "x", "lanes": [{"type": "velocity"}, {"type": "controller", "number": 7}]}])"));
+}
+
 TEST_CASE("MCP clients read and change settings with the settings tools", "[integration]")
 {
 	const TempDir dir;

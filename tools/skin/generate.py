@@ -525,6 +525,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".track-list listitem", {"border-bottom-width": f"{widths['hairline']}dp",
                                   "border-bottom-color": c["border"]}),
         (".track-list listitem.disabled", {"color": c["textMuted"]}),
+        (".track-list listitem.frozen", {"color": c["textMuted"]}),
         (".track-list .drop-line", {"background-color": c["accent"]}),
         # Automation tracks (docs/features/automation-tracks.md): their rows and lanes below their track's, the
         # curve with its points, grayed out while it doesn't read, the static value line and the automation event
@@ -574,6 +575,15 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                 "border-color": c["textMuted"]}),
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # The controller lanes (docs/features/controller-lanes.md): the lanes' areas like the note display, a line
+        # between lanes, the bars and steps in the notes' colors, selected ones in the second accent, those outside
+        # the part editing mode dimmed
+        (".controller-lane-area", {"background-color": c["surface"], "border-bottom-width": f"{widths['hairline']}px",
+                                   "border-bottom-color": c["border"]}),
+        (".controller-bar, .controller-step", {"background-color": mix(c["surfaceRaised"], c["accent"], .6)}),
+        (".controller-bar.selected, .controller-step.selected", {"background-color": c["accent2"]}),
+        (".controller-bar.inactive, .controller-step.inactive",
+         {"background-color": mix(c["surface"], c["textMuted"], .3)}),
         # The audio part editor (docs/features/audio-part-editor.md): lines between the lanes, the events, selected
         # ones in the second accent, muted ones and those outside the part editing mode dimmed
         (".ape-display", {"background-color": c["surface"]}),
