@@ -85,6 +85,7 @@ endif()
 add_library(gnubase-engine STATIC
 	analysis/analysis.cpp analysis/analysis.h
 	analysis/onsets.cpp analysis/onsets.h
+	analysis/tempodetect.cpp analysis/tempodetect.h
 	audio/analysiscommands.cpp
 	audio/audioengine.cpp audio/audioengine.h
 	audio/audition.cpp audio/audition.h

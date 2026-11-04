@@ -106,38 +106,6 @@ namespace gnubase::engine
 			return {{"clip", clip.id}, {"hitpoints", std::move(hitpoints)}};
 		}
 
-		// The onsets of a media file as hitpoints, intensities relative to the sharpest.
-		std::vector<Hitpoint> detect(const MediaFile& media)
-		{
-			std::vector<analysis::Onset> onsets;
-			try
-			{
-				const std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(media.path);
-				const int channels = reader->info().channels;
-				analysis::OnsetDetector detector(media.sampleRate, channels);
-				std::vector<float> buffer(g_readFrames * static_cast<size_t>(std::max(channels, 1)));
-				for (size_t read = g_readFrames; read == g_readFrames;)
-				{
-					read = reader->read(buffer.data(), g_readFrames);
-					detector.feed(buffer.data(), read);
-				}
-				onsets = detector.finish();
-			}
-			catch (const AudioFileError& error)
-			{
-				throw CommandError("can't read " + media.path + ": " + error.what());
-			}
-			double sharpest = 0.0;
-			for (const analysis::Onset& onset : onsets)
-				sharpest = std::max(sharpest, onset.rise);
-			std::vector<Hitpoint> hitpoints;
-			for (const analysis::Onset& onset : onsets)
-				if (onset.frame < media.length)
-					hitpoints.push_back(
-						{onset.frame, onset.peak, sharpest > 0.0 ? onset.rise / sharpest : 0.0, false, false});
-			return hitpoints;
-		}
-
 		// The hitpoints that count from frame from to before to, by position.
 		std::vector<const Hitpoint*> counting(const Clip& clip, time::Samples from, time::Samples to)
 		{
@@ -170,6 +138,38 @@ namespace gnubase::engine
 		}
 	}
 
+	// The onsets of a media file as hitpoints, intensities relative to the sharpest.
+	std::vector<Hitpoint> detectHitpoints(const MediaFile& media)
+	{
+		std::vector<analysis::Onset> onsets;
+		try
+		{
+			const std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(media.path);
+			const int channels = reader->info().channels;
+			analysis::OnsetDetector detector(media.sampleRate, channels);
+			std::vector<float> buffer(g_readFrames * static_cast<size_t>(std::max(channels, 1)));
+			for (size_t read = g_readFrames; read == g_readFrames;)
+			{
+				read = reader->read(buffer.data(), g_readFrames);
+				detector.feed(buffer.data(), read);
+			}
+			onsets = detector.finish();
+		}
+		catch (const AudioFileError& error)
+		{
+			throw CommandError("can't read " + media.path + ": " + error.what());
+		}
+		double sharpest = 0.0;
+		for (const analysis::Onset& onset : onsets)
+			sharpest = std::max(sharpest, onset.rise);
+		std::vector<Hitpoint> hitpoints;
+		for (const analysis::Onset& onset : onsets)
+			if (onset.frame < media.length)
+				hitpoints.push_back(
+					{onset.frame, onset.peak, sharpest > 0.0 ? onset.rise / sharpest : 0.0, false, false});
+		return hitpoints;
+	}
+
 	void registerHitpointCommands(ProjectModel& model, Engine& engine)
 	{
 		const Json integer = {{"type", "integer"}};
@@ -200,7 +200,7 @@ namespace gnubase::engine
 			[](Project& project, CommandContext& context)
 			{
 				Clip& clip = clipOf(project, context.parameters());
-				clip.hitpoints = detect(project.media.at(clip.media));
+				clip.hitpoints = detectHitpoints(project.media.at(clip.media));
 				return hitpointsResult(clip, context);
 			});
 

@@ -4508,6 +4508,25 @@ Result:
 - `position`: integer
 - `tempo`: object, required
 
+#### `tempo_detect`
+
+Engine command `tempo.detect`.
+
+Detects the tempo of an audio event or a MIDI part (event, its id) of at least 7 seconds with discernible beats (Tempo Detection) and makes the tempo track follow it: where its sounds start (the hitpoints of the clip's section, or the notes) give the beats, which may drift, and a step tempo event at each beat but the last, a quarter apart, replaces the tempo events from the first beat to the last, which keeps its position. factor (default 1) makes the beats that many times as fast: 2 (Multiply by 2), 0.5 (Divide by 2), 4/3 or 3/4. offbeat moves them by half a beat (Offbeat Correction), smooth puts them on one steady tempo (Smooth Tempo). Every musical track that holds events, parts, markers or automation becomes linear first, so nothing moves in time. reset removes the tempo events inside the event instead (Reset the analysis result). Makes the tempo track active. One undo step. Returns the tempo as tempo.changed reports it and the number of beats.
+
+Arguments:
+
+- `event`: integer, required
+- `factor`: number
+- `offbeat`: boolean
+- `reset`: boolean
+- `smooth`: boolean
+
+Result:
+
+- `beats`: integer, required
+- `tempo`: object, required
+
 #### `tempo_export`
 
 Engine command `tempo.export`. Read-only.
@@ -4522,6 +4541,24 @@ Result:
 
 - `signatureEvents`: integer, required
 - `tempoEvents`: integer, required
+
+#### `tempo_fromMidi`
+
+Engine command `tempo.fromMidi`.
+
+Calculates the tempo from MIDI notes tapped to freely played material (Calculate Tempo from MIDI Events): the notes of parts (MIDI part ids), or the selected ones among them (notes), are distance ticks apart (Distance of Notes, default a quarter). Notes that start within 30 ms of each other are one. A step tempo event at each note but the last replaces the tempo events from the first note to the last, so that each note is distance after the one before and keeps its time; the first one keeps its position, or with beginAtBarStart moves to the nearest bar start after the project start, where a tempo event at the bar before puts it. Notes on linear tracks stay at their time, those on musical ones follow the tempo. Makes the tempo track active; its events come from the tempo the project played. Returns the tempo as tempo.changed reports it.
+
+Arguments:
+
+- `beginAtBarStart`: boolean
+- `distance`: integer
+- `notes`: array of integer
+- `parts`: array of integer, required
+
+Result:
+
+- `position`: integer
+- `tempo`: object, required
 
 #### `tempo_import`
 
