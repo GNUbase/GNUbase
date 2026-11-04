@@ -38,9 +38,10 @@ namespace gnubase::engine
 	// the tempo track is active, the tempo track's events and the fixed tempo.
 	Json tempoJson(const Project& project);
 
-	// After the tempo or the tempo mode changed (tempo.cpp): lengthens cycle markers that got shorter than a sample and
-	// announces tempo.changed.
-	void tempoChanged(Project& project, CommandContext& context);
+	// After the tempo or the tempo mode changed from before (tempo.cpp): keeps the notes and controllers of MIDI parts
+	// on linear tracks at their time, lengthens cycle markers that got shorter than a sample and announces
+	// tempo.changed.
+	void tempoChanged(Project& project, const time::TempoMap& before, CommandContext& context);
 
 	// After a command, and after each command of a transaction (eventedits.cpp): the first shared copy of a MIDI part
 	// whose notes or controllers changed since before gives them to its other copies, and a copy without others is no
