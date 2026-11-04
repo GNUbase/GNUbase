@@ -582,6 +582,18 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".controller-bar.selected, .controller-step.selected", {"background-color": c["accent2"]}),
         (".controller-bar.inactive, .controller-step.inactive",
          {"background-color": mix(c["surface"], c["textMuted"], .3)}),
+        # The sample editor (docs/features/sample-editor.md): the overview with the event, the selection and what
+        # the display shows, the display's audio outside the event shaded, the selection range, the region selected in
+        # the list, the snap point, and the selected region's row
+        (".se-overview, .se-display", {"background-color": c["surface"]}),
+        (".se-overview-event", {"background-color": c["text"] + "1a"}),
+        (".se-overview-selection, .se-selection", {"background-color": c["text"] + "33"}),
+        (".se-overview-view", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent"]}),
+        (".se-overview-snap, .se-snap-point", {"background-color": c["accent2"]}),
+        (".se-outside", {"background-color": c["background"] + "99"}),
+        (".se-region-shown", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent2"],
+                              "background-color": c["accent2"] + "1a"}),
+        (".se-region.selected", {"background-color": mix(c["surface"], c["accent"], .4)}),
         # The list editor (docs/features/list-editor.md): lines between the rows, the selected rows lit, those
         # outside the part editing mode dimmed, the events in the event display and the bars of the value display
         (".list-editor-header", {"color": c["textMuted"], "border-bottom-width": f"{widths['hairline']}px",

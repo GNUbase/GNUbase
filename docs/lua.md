@@ -1031,11 +1031,40 @@ Returns:
 
 - `clip`: object, required
 
+#### `gnubase.clip.addRegion`
+
+Adds a region to a clip (Add Region, Event or Range as Region, reference manual pp. 620, 624-625): a named section of its audio, from start to end in the clip's sample frames, start before end; name defaults to Region and its number. A clip's regions are in its regions, by start. Emits clip.changed. Returns the clip's id and the region.
+
+Parameters:
+
+- `clip`: integer, required
+- `end`: integer, required
+- `name`: string
+- `start`: integer, required
+
+Returns:
+
+- `clip`: integer, required
+- `region`: object, required
+
 #### `gnubase.clip.remove`
 
 Removes a clip that no audio event uses.
 
 Parameters:
+
+- `clip`: integer, required
+
+#### `gnubase.clip.removeRegion`
+
+Removes a region from a clip (Remove Region, reference manual p. 626). Emits clip.changed.
+
+Parameters:
+
+- `clip`: integer, required
+- `region`: integer, required
+
+Returns:
 
 - `clip`: integer, required
 
@@ -1066,6 +1095,23 @@ Parameters:
 Returns:
 
 - `clip`: object, required
+
+#### `gnubase.clip.setRegion`
+
+Renames a clip's region or moves its start or end (clip frames; reference manual p. 625); what isn't given stays. Emits clip.changed. Returns the clip's id and the region.
+
+Parameters:
+
+- `clip`: integer, required
+- `end`: integer
+- `name`: string
+- `region`: integer, required
+- `start`: integer
+
+Returns:
+
+- `clip`: integer, required
+- `region`: object, required
 
 ### controller
 
@@ -3429,6 +3475,97 @@ Returns:
 - `channels`: integer, required
 - `folder`: string, required
 - `seconds`: number or null, required
+
+### sampleEditor
+
+#### `gnubase.sampleEditor.close`
+
+Closes the sample editor. Emits sampleEditor.changed. The view: open; event, the audio event it shows, with its clip, track and media file (0 while it shows none, or its event is gone: an undo brings it back); length, the clip's length in sample frames; offset and eventLength, the section of the clip the event plays (clip frames); clipStart, the project sample where the clip's frame 0 would play, and ratio, project samples per clip frame, so frame f plays at clipStart + f * ratio; selectionStart and selectionEnd, the selection range in clip frames, none while they are the same. View state: no undo steps, not saved, and a new or loaded project closes it.
+
+Returns:
+
+- `clip`: integer, required
+- `clipStart`: integer, required
+- `event`: integer, required
+- `eventLength`: integer, required
+- `length`: integer, required
+- `media`: integer, required
+- `offset`: integer, required
+- `open`: boolean, required
+- `ratio`: number, required
+- `selectionEnd`: integer, required
+- `selectionStart`: integer, required
+- `track`: integer, required
+
+#### `gnubase.sampleEditor.get`
+
+What the sample editor shows. The view: open; event, the audio event it shows, with its clip, track and media file (0 while it shows none, or its event is gone: an undo brings it back); length, the clip's length in sample frames; offset and eventLength, the section of the clip the event plays (clip frames); clipStart, the project sample where the clip's frame 0 would play, and ratio, project samples per clip frame, so frame f plays at clipStart + f * ratio; selectionStart and selectionEnd, the selection range in clip frames, none while they are the same. View state: no undo steps, not saved, and a new or loaded project closes it.
+
+Only reads; changes nothing.
+
+Returns:
+
+- `clip`: integer, required
+- `clipStart`: integer, required
+- `event`: integer, required
+- `eventLength`: integer, required
+- `length`: integer, required
+- `media`: integer, required
+- `offset`: integer, required
+- `open`: boolean, required
+- `ratio`: number, required
+- `selectionEnd`: integer, required
+- `selectionStart`: integer, required
+- `track`: integer, required
+
+#### `gnubase.sampleEditor.open`
+
+Opens the sample editor (reference manual p. 613) with an audio event, such as the one double-clicked or selected in the project window, or shows that event in it if it is open; the selection range goes. Emits sampleEditor.changed. The view: open; event, the audio event it shows, with its clip, track and media file (0 while it shows none, or its event is gone: an undo brings it back); length, the clip's length in sample frames; offset and eventLength, the section of the clip the event plays (clip frames); clipStart, the project sample where the clip's frame 0 would play, and ratio, project samples per clip frame, so frame f plays at clipStart + f * ratio; selectionStart and selectionEnd, the selection range in clip frames, none while they are the same. View state: no undo steps, not saved, and a new or loaded project closes it.
+
+Parameters:
+
+- `event`: integer, required
+
+Returns:
+
+- `clip`: integer, required
+- `clipStart`: integer, required
+- `event`: integer, required
+- `eventLength`: integer, required
+- `length`: integer, required
+- `media`: integer, required
+- `offset`: integer, required
+- `open`: boolean, required
+- `ratio`: number, required
+- `selectionEnd`: integer, required
+- `selectionStart`: integer, required
+- `track`: integer, required
+
+#### `gnubase.sampleEditor.set`
+
+Changes the open sample editor's selection range (reference manual pp. 618, 635). select: all (the whole clip), none, event (the section the event plays) or loop (between the locators, within the clip; none if they are outside it). Or selectionStart and selectionEnd, in clip frames, from 0 to the clip's length; one of them alone keeps the other. With zeroCrossing (Snap to Zero Crossing), both ends move to the nearest frame within 50 ms where the audio crosses zero. Emits sampleEditor.changed. The view: open; event, the audio event it shows, with its clip, track and media file (0 while it shows none, or its event is gone: an undo brings it back); length, the clip's length in sample frames; offset and eventLength, the section of the clip the event plays (clip frames); clipStart, the project sample where the clip's frame 0 would play, and ratio, project samples per clip frame, so frame f plays at clipStart + f * ratio; selectionStart and selectionEnd, the selection range in clip frames, none while they are the same. View state: no undo steps, not saved, and a new or loaded project closes it.
+
+Parameters:
+
+- `select`: one of "all" | "none" | "event" | "loop"
+- `selectionEnd`: integer
+- `selectionStart`: integer
+- `zeroCrossing`: boolean
+
+Returns:
+
+- `clip`: integer, required
+- `clipStart`: integer, required
+- `event`: integer, required
+- `eventLength`: integer, required
+- `length`: integer, required
+- `media`: integer, required
+- `offset`: integer, required
+- `open`: boolean, required
+- `ratio`: number, required
+- `selectionEnd`: integer, required
+- `selectionStart`: integer, required
+- `track`: integer, required
 
 ### settings
 

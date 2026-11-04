@@ -111,6 +111,8 @@ add_executable(gnubase-tests
 	rmlui_tests.cpp
 	routing_tests.cpp
 	rt_tests.cpp
+	sampleeditor_tests.cpp
+	sampleeditor_ui_tests.cpp
 	scripting_tests.cpp
 	sequencing_tests.cpp
 	settings_tests.cpp

@@ -69,6 +69,7 @@ namespace gnubase::engine
 	ChannelSections sectionsFromJson(const Json& json, const ChannelSections& fallback = {});
 	Json toJson(const Slot& slot); // its state as base64
 	Json toJson(const MediaFile& media);
+	Json toJson(const ClipRegion& region);
 	Json toJson(const Clip& clip);
 	Json toJson(const PoolFolder& folder);
 	Json toJson(const AudioEvent& event);

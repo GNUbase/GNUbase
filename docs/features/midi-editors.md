@@ -70,9 +70,10 @@ sends `editor.*` commands.
 - **Following the selection** (p. 1153): when the project window's selection changes, its MIDI parts open in every
   open editor that doesn't keep its contents.
 - **Commands**: `editor.openClose` (Mod+E and Return in the project window, Edit > Open/Close Editor, p. 1189) opens
-  the selected MIDI parts in the editor window, or closes it when none is selected; `window.lowerZoneEditor` (Edit >
-  Open Editor in Lower Zone) does the same in the lower zone. `editor.openList` (Mod+G, Edit > Open List Editor,
-  p. 1243) opens them in the editor window's list editor.
+  the selected MIDI parts in the editor window, or closes it when none is selected; with audio events but no MIDI parts
+  selected it opens the first in the sample editor ([sample-editor.md](sample-editor.md)), and without either it closes
+  that too. `window.lowerZoneEditor` (Edit > Open Editor in Lower Zone) does the same for MIDI parts in the lower zone.
+  `editor.openList` (Mod+G, Edit > Open List Editor, p. 1243) opens them in the editor window's list editor.
 
 `resources/styles/midieditor.rcss` lays the editors out; the themes color the states (`tools/skin/generate.py`), the
 Visibility tab's checks with the check box skins.

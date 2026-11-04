@@ -570,10 +570,18 @@ namespace gnubase::engine
 			{"length", media.length}};
 	}
 
+	Json toJson(const ClipRegion& region)
+	{
+		return {{"id", region.id}, {"name", region.name}, {"start", region.start}, {"end", region.end}};
+	}
+
 	Json toJson(const Clip& clip)
 	{
+		Json regions = Json::array();
+		for (const ClipRegion& region : clip.regions)
+			regions.push_back(toJson(region));
 		return {{"id", clip.id}, {"name", clip.name}, {"media", clip.media}, {"fadeIn", toJson(clip.fadeIn)},
-			{"fadeOut", toJson(clip.fadeOut)}, {"folder", clip.folder}};
+			{"fadeOut", toJson(clip.fadeOut)}, {"folder", clip.folder}, {"regions", std::move(regions)}};
 	}
 
 	Json toJson(const PoolFolder& folder)
@@ -1423,9 +1431,18 @@ namespace gnubase::engine
 		for (const Json& item : json.at("clips"))
 		{
 			const auto id = item.at("id").get<ObjectId>();
+			// Files from before regions (#140) have none; regions that aren't sections of the clip are left out.
+			std::vector<ClipRegion> regions;
+			for (const Json& region : item.value("regions", Json::array()))
+			{
+				ClipRegion read{region.at("id").get<ObjectId>(), region.value("name", std::string()),
+					region.at("start").get<time::Samples>(), region.at("end").get<time::Samples>()};
+				if (read.start >= 0 && read.start < read.end)
+					regions.push_back(std::move(read));
+			}
 			project.clips[id] = {id, item.at("name").get<std::string>(), item.at("media").get<ObjectId>(),
 				fadeFromJson(item.value("fadeIn", Json::object())), fadeFromJson(item.value("fadeOut", Json::object())),
-				item.value("folder", ObjectId{0})};
+				item.value("folder", ObjectId{0}), std::move(regions)};
 		}
 		// Files from before the pool's folders have none. Folders inside folders that aren't there go to the top, and
 		// of each loop of folders inside each other the first one; clips in folders that aren't there go to the

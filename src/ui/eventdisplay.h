@@ -517,7 +517,7 @@ namespace gnubase::ui
 		double draggedFade(uint64_t event, bool in) const;
 		void showFades(); // the fade lines and the selected audio events' handles
 		// A double click on an event at seconds: in a crossfade's zone, opens the crossfade editor.
-		void openCrossfadeAt(const Shown& shown, double seconds);
+		bool openCrossfadeAt(const Shown& shown, double seconds); // whether there is one
 		// The selected audio events, by id.
 		std::vector<uint64_t> selectedAudio() const;
 		// Opens a dialog of the display's document folder whose Lua reads the attributes when it shows.
