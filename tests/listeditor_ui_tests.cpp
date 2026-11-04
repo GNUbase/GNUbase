@@ -224,7 +224,7 @@ namespace
 		// outside the window leaves it, where RmlUi has no element to send the mouseup to.
 		Rml::Context& context()
 		{
-			ui::Window* shown = app.shell().find(app.appUi().editorWindowId());
+			const ui::Window* shown = app.shell().find(app.appUi().editorWindowId());
 			if (shown == nullptr)
 				throw std::logic_error("the editor window doesn't show");
 			return shown->context();
