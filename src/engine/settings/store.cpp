@@ -5,6 +5,7 @@
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 
+#include <algorithm>
 #include <optional>
 #include <set>
 #include <system_error>
@@ -156,6 +157,43 @@ namespace gnubase::engine::settings
 				});
 		}
 		m_values[setting.key] = std::move(value);
+		return changed;
+	}
+
+	std::vector<std::string> Store::set(const Json& values)
+	{
+		rt::assertNotRealtime("settings::Store::set");
+		if (!values.is_object())
+			throw SettingsError("the settings to change must be an object of values by key");
+		std::vector<const Definition*> settings;
+		std::vector<std::string> changed;
+		for (const auto& [key, value] : values.items())
+		{
+			const Definition& setting = definition(key);
+			if (const std::string problem = validate(value, setting.schema, setting.key); !problem.empty())
+				throw SettingsError(problem);
+			settings.push_back(&setting);
+			if (m_values.find(setting.key)->second != value)
+				changed.push_back(setting.key);
+		}
+		if (!m_file.empty() && !m_report.readOnly)
+		{
+			update(
+				[&settings, &values](Json& fileValues)
+				{
+					for (const Definition* setting : settings)
+					{
+						const Json& value = values.at(setting->key);
+						if (value == setting->defaultValue)
+							fileValues.erase(setting->key);
+						else
+							fileValues[setting->key] = value;
+					}
+				});
+		}
+		for (const Definition* setting : settings)
+			m_values[setting->key] = values.at(setting->key);
+		std::sort(changed.begin(), changed.end());
 		return changed;
 	}
 

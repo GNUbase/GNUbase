@@ -104,7 +104,12 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"},
 						{"enum", {"manual", "whileRecordEnabled", "whileRecording", "tapeMachine"}}},
 					"tapeMachine"},
-				{"audio.backend", "The audio backend, such as wasapi or coreaudio, or empty for the preferred one.",
+				{"audio.backend",
+					"The backend of the audio device that the windowed app opens when it starts, such as asio, wasapi "
+					"or "
+					"coreaudio, or empty for the platform's default backend (see audio.setDevice). audio.setDevice "
+					"with remember saves it, as Studio Setup does; a backend this build doesn't have opens the dummy "
+					"device instead.",
 					Json{{"type", "string"}}, ""},
 				{"audio.blockSize", "Frames per audio block.",
 					Json{{"type", "integer"}, {"minimum", 16}, {"maximum", 8192}}, 256},
@@ -112,7 +117,11 @@ namespace gnubase::engine::settings
 					"The user's own bus presets, per direction (input, output) by name: each a list of busses with "
 					"their name, format, ports and child busses (bus.savePreset).",
 					Json{{"type", "object"}}, Json{{"input", Json::object()}, {"output", Json::object()}}},
-				{"audio.device", "The audio device's id, or empty for the backend's default device.",
+				{"audio.device",
+					"The id of the audio device that the windowed app opens when it starts (see audio.backend), or "
+					"empty "
+					"for the backend's default device. If it can't be opened, the app starts on the dummy device and "
+					"Studio Setup says why.",
 					Json{{"type", "string"}}, ""},
 				{"audio.listenDim",
 					"How far the main mix is turned down on the monitoring bus while channels listen (channel.set "

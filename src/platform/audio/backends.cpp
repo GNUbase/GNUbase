@@ -34,4 +34,17 @@ namespace gnubase::audio
 		backends.push_back(std::make_unique<DummyBackend>());
 		return backends;
 	}
+
+	std::string defaultBackend()
+	{
+#if defined(_WIN32)
+		return "wasapi";
+#elif defined(__APPLE__)
+		return "coreaudio";
+#elif defined(__linux__)
+		return "pipewire";
+#else
+		return "dummy";
+#endif
+	}
 }

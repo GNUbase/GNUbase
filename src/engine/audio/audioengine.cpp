@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <exception>
 #include <functional>
 #include <map>
 #include <set>
@@ -59,9 +60,12 @@ namespace gnubase::engine
 				"lost": {"type": ["object", "null"], "properties": {"backend": {"type": "string"},
 					"device": {"type": "string"}, "name": {"type": "string"}, "reason": {"type": "string"},
 					"restart": {"type": "boolean"}},
-					"required": ["backend", "device", "name", "reason", "restart"]}},
+					"required": ["backend", "device", "name", "reason", "restart"]},
+				"failed": {"type": ["object", "null"], "properties": {"backend": {"type": "string"},
+					"device": {"type": "string"}, "reason": {"type": "string"}},
+					"required": ["backend", "device", "reason"]}},
 			"required": ["device", "running", "position", "projectSampleRate", "recordBitDepth", "capturedFrames",
-				"droppedFrames", "playbackDropouts", "processing", "lost"]})");
+				"droppedFrames", "playbackDropouts", "processing", "lost", "failed"]})");
 		}
 
 		bool supports(const audio::DeviceInfo& info, double sampleRate)
@@ -970,6 +974,59 @@ namespace gnubase::engine
 		m_waitingForDevice = false;
 	}
 
+	void AudioEngine::replaceDevice(CommandContext& context)
+	{
+		Json parameters = context.parameters();
+		const bool remember = parameters.value("remember", false);
+		const bool fallBack = parameters.value("fallBackToDummy", false);
+		const bool start = parameters.value("start", m_device ? m_device->running() : m_lost && m_lost->restart);
+		// What the command does with the device, not what audio.reset opens it again with.
+		for (const char* key : {"remember", "fallBackToDummy", "start"})
+			parameters.erase(key);
+		const std::string chosen = parameters.value("backend", std::string("dummy")); // as remember saves it
+		if (chosen.empty())
+		{
+			const std::string platform = audio::defaultBackend();
+			const bool has = std::any_of(m_backends.begin(), m_backends.end(),
+				[&platform](const std::unique_ptr<audio::Backend>& backend) { return backend->name() == platform; });
+			parameters["backend"] = has || m_backends.empty() ? platform : m_backends.front()->name();
+		}
+		const std::string backend = parameters.value("backend", std::string("dummy"));
+		const std::string device = parameters.value("device", std::string());
+		m_failed = nullptr;
+		try
+		{
+			setDevice(parameters);
+			if (start)
+				startDevice();
+		}
+		catch (const std::exception& error)
+		{
+			if (!fallBack || backend == "dummy")
+				throw;
+			const std::exception_ptr failure = std::current_exception();
+			logging::warning("Cannot use the audio device ({} {}), playing on the dummy device instead: {}", backend,
+				device, error.what());
+			Json failed = {{"backend", backend}, {"device", device}, {"reason", error.what()}};
+			closeDevice(); // one that opened but didn't start
+			try
+			{
+				setDevice({{"backend", "dummy"}, {"captureSeconds", 0}});
+				if (start)
+					startDevice();
+			}
+			catch (const std::exception& fallbackError)
+			{
+				logging::warning("Cannot play on the dummy device either: {}", fallbackError.what());
+				std::rethrow_exception(failure);
+			}
+			m_failed = std::move(failed);
+			return;
+		}
+		if (remember)
+			m_engine->setSettings(context, {{"audio.backend", chosen}, {"audio.device", device}});
+	}
+
 	void AudioEngine::setDevice(const Json& parameters)
 	{
 		const auto name = parameters.value("backend", std::string("dummy"));
@@ -1565,7 +1622,8 @@ namespace gnubase::engine
 		{
 			return {{"device", nullptr}, {"running", false}, {"position", 0}, {"projectSampleRate", projectRate},
 				{"recordBitDepth", recordBitDepth}, {"capturedFrames", 0}, {"droppedFrames", 0},
-				{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", std::move(lost)}};
+				{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", std::move(lost)},
+				{"failed", m_failed}};
 		}
 		const audio::DeviceFormat& format = m_device->format();
 		const audio::DeviceLatency latency = m_device->latency();
@@ -1579,7 +1637,8 @@ namespace gnubase::engine
 			{"projectSampleRate", projectRate}, {"recordBitDepth", recordBitDepth},
 			{"capturedFrames", m_dummy != nullptr ? m_dummy->capturedFrames() : 0},
 			{"droppedFrames", m_dummy != nullptr ? m_dummy->droppedFrames() : 0},
-			{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", std::move(lost)}};
+			{"playbackDropouts", m_playback.dropouts()}, {"processing", processing}, {"lost", std::move(lost)},
+			{"failed", m_failed}};
 	}
 
 	void AudioEngine::publishPerformance(const PerformanceData& data)
@@ -1685,16 +1744,26 @@ namespace gnubase::engine
 					"captureSeconds": {"type": "number"}, "inputLatency": {"type": "integer"},
 					"outputLatency": {"type": "integer"}, "loopback": {"type": "boolean"},
 					"input": {"type": "object", "additionalProperties": false, "required": ["processor"],
-						"properties": {"processor": {"type": "string"}, "parameters": {"type": "object"}}}}})");
+						"properties": {"processor": {"type": "string"}, "parameters": {"type": "object"}}},
+					"start": {"type": "boolean"}, "fallBackToDummy": {"type": "boolean"},
+					"remember": {"type": "boolean"}}})");
 		engine.registerCommand(
 			{"audio.setDevice", 1,
-				"Replaces the audio device. backend: one from audio.devices, by default \"dummy\". device: its id, by "
-				"default the backend's default device. sampleRate: by default the project's if the device supports "
-				"it, otherwise the driver's current rate; when the project's sample rate changes, the device follows "
-				"it where it can. blockSize: by default the driver's preferred size. clockSource: a name from the "
-				"device's clockSources. The device starts "
-				"stopped at position 0. Another backend's device is closed before the new one opens, since drivers "
-				"often allow only one; if opening fails, there is no device.\n"
+				"Replaces the audio device. backend: one from audio.devices, by default \"dummy\"; empty for the "
+				"platform's default backend, whose default device the OS plays on (wasapi, coreaudio or pipewire), or "
+				"the preferred one if this build lacks it. device: its id, by default the backend's default device. "
+				"sampleRate: by default the project's if the device supports it, otherwise the driver's current rate; "
+				"when the project's sample rate changes, the device follows it where it can. blockSize: by default "
+				"the driver's preferred size. clockSource: a name from the device's clockSources. The device starts "
+				"at position 0, running if start says so, by default if the device it replaces ran (or, lost, was to "
+				"start again). Another backend's device is closed before the new one opens, since drivers often "
+				"allow only one; if opening fails, there is no device, and if starting fails, the device stays open "
+				"and stopped. With fallBackToDummy, a device that can't be opened or started is replaced by the dummy "
+				"device without capture memory, started if start says so, and failed in audio.get says what failed "
+				"and why, until the next audio.setDevice; the windowed app opens its device like that. remember: "
+				"once the device runs as asked (not the fallback), saves backend and device as given as the user "
+				"settings audio.backend and audio.device, which the windowed app opens when it starts, and sends "
+				"settings.changed.\n"
 				"Recorded input goes where the transport played the device's input + output latency before it "
 				"arrived, so what is played along to or looped back lines up with what played (recordOffset in "
 				"audio.get). recordShift (frames, -65536 to 65536) moves recordings that much later, for drivers that "
@@ -1718,19 +1787,20 @@ namespace gnubase::engine
 				deviceSchema, statusSchema(), false},
 			[this, announcingFailure](CommandContext& context)
 			{
-				announcingFailure([this, &context] { setDevice(context.parameters()); });
+				announcingFailure([this, &context] { replaceDevice(context); });
 				Json result = status();
 				context.emit("audio.changed", result);
 				return result;
 			});
 		Json settingsSchema = deviceSchema;
-		settingsSchema.at("properties").erase("backend");
-		settingsSchema.at("properties").erase("device");
+		for (const char* key : {"backend", "device", "start", "fallBackToDummy", "remember"})
+			settingsSchema.at("properties").erase(key);
 		engine.registerCommand(
 			{"audio.set", 1,
 				"Changes the audio device's settings and keeps the others: the parameters of audio.setDevice except "
-				"backend and device, e.g. sampleRate, blockSize, clockSource, recordShift or directMonitoring. The "
-				"device opens again with them, as for audio.reset, and runs on if it ran. If it can't open with them, "
+				"backend, device, start, fallBackToDummy and remember, e.g. sampleRate, blockSize, clockSource, "
+				"recordShift or directMonitoring. The device opens again with them, as for audio.reset, and runs on if "
+				"it ran. If it can't open with them, "
 				"it opens again with the settings it had and the command fails; if those fail too, there is no device. "
 				"Fails while a fallback plays for a lost device (see audio.reset). "
 				"Sends audio.changed, also when it fails after the device closed: with the device opened again with "
