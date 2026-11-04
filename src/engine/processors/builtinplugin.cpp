@@ -299,6 +299,12 @@ namespace gnubase::engine::processors
 
 	graph::TransportBlock BuiltinPlugin::convert(const plugin::Process& process) noexcept
 	{
+		return toTransportBlock(process, m_segments);
+	}
+
+	graph::TransportBlock toTransportBlock(
+		const plugin::Process& process, std::vector<graph::TransportSegment>& segments) noexcept
+	{
 		const plugin::Transport& first = process.transport[0].transport;
 		graph::TransportBlock block;
 		block.position = first.position;
@@ -312,14 +318,16 @@ namespace gnubase::engine::processors
 		block.playing = start < total;
 		if (!block.playing)
 			return block;
-		const size_t count = std::min<size_t>(total - start, m_segments.size());
+		const size_t count = std::min<size_t>(total - start, segments.size());
 		for (size_t i = 0; i < count; ++i)
 		{
 			const plugin::TransportSegment& segment = process.transport[start + i];
 			const uint32_t end = i + 1 < count ? process.transport[start + i + 1].offset : process.frames;
-			m_segments[i] = {segment.offset, end - segment.offset, segment.transport.position};
+			const bool recording = (segment.transport.flags & plugin::Transport::Recording) != 0;
+			segments[i] = {segment.offset, end - segment.offset, segment.transport.position, recording};
+			block.recording = block.recording || recording;
 		}
-		block.segments = m_segments.data();
+		block.segments = segments.data();
 		block.segmentCount = count;
 		return block;
 	}

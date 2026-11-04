@@ -17,6 +17,11 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 option(GNUBASE_WARNINGS_AS_ERRORS "Treat compiler warnings in GNUbase code as errors" ON)
 set(GNUBASE_SANITIZERS "" CACHE STRING "Sanitizers for GNUbase code (GCC/Clang), e.g. address,undefined or thread")
 option(GNUBASE_CLANG_TIDY "Run clang-tidy on GNUbase code while compiling" OFF)
+# CI keeps clang-tidy's passes here and checks only files whose input changed (tools/clang-tidy-cache.sh, Linux).
+set(GNUBASE_CLANG_TIDY_CACHE "" CACHE PATH "Folder for clang-tidy's passes to reuse; empty: check every file")
+# Release builds are optimized across files, as they ship. tools/ci-local.sh turns it off: it makes every link of the
+# tests take minutes.
+option(GNUBASE_LTO "Link-time optimization in Release builds, where the compiler supports it" ON)
 option(GNUBASE_TEST_PLUGINS "Build the test plugins (tests/plugins) and the tests that load them" ON)
 option(GNUBASE_RENDER_SPIKE "Build the render backend spike (spikes/render-backend, #47)" OFF)
 
@@ -25,12 +30,24 @@ if(GNUBASE_SANITIZERS AND MSVC)
 endif()
 if(GNUBASE_CLANG_TIDY)
 	find_program(GNUBASE_CLANG_TIDY_EXE NAMES clang-tidy REQUIRED)
+	set(clangTidy "${GNUBASE_CLANG_TIDY_EXE};--warnings-as-errors=*")
+	if(GNUBASE_CLANG_TIDY_CACHE)
+		list(PREPEND clangTidy "${PROJECT_SOURCE_DIR}/tools/clang-tidy-cache.sh" "${GNUBASE_CLANG_TIDY_CACHE}")
+	endif()
 endif()
 
-include(CheckIPOSupported)
-check_ipo_supported(RESULT GNUBASE_IPO_SUPPORTED)
-if(GNUBASE_IPO_SUPPORTED)
-	set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+# MSBuild compiles a project's files one at a time without /MP. Ninja runs one cl per file already, and sccache can't
+# cache /MP compiles, so the Ninja presets don't get it.
+if(MSVC AND CMAKE_GENERATOR MATCHES "^Visual Studio")
+	add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/MP>)
+endif()
+
+if(GNUBASE_LTO)
+	include(CheckIPOSupported)
+	check_ipo_supported(RESULT GNUBASE_IPO_SUPPORTED)
+	if(GNUBASE_IPO_SUPPORTED)
+		set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+	endif()
 endif()
 
 # Third-party code: static libraries, no tests or samples. SYSTEM keeps their warnings out of our builds.
@@ -61,6 +78,20 @@ set(LUNASVG_BUILD_EXAMPLES OFF CACHE BOOL "Set by GNUbase for LunaSVG")
 add_subdirectory(ext/lunasvg EXCLUDE_FROM_ALL SYSTEM)
 set(CMAKE_DISABLE_FIND_PACKAGE_lunasvg ON) # RmlUi takes the target above, never a LunaSVG installed on the system
 set(RMLUI_SVG_PLUGIN ON CACHE BOOL "Enable plugin for SVG images" FORCE)
+# Lua 5.4 for scripting. Compiled as C++, so a Lua error unwinds C++ code with an exception instead of longjmp and
+# destructors run. Everything else is the official build: the library without the lua program and the test library.
+file(GLOB luaSources ${PROJECT_SOURCE_DIR}/ext/lua/l*.c)
+list(FILTER luaSources EXCLUDE REGEX "/(lua|ltests)[.]c$")
+set_source_files_properties(${luaSources} PROPERTIES LANGUAGE CXX)
+add_library(lua STATIC ${luaSources})
+target_include_directories(lua SYSTEM PUBLIC ${PROJECT_SOURCE_DIR}/ext/lua)
+target_compile_definitions(lua PRIVATE $<$<NOT:$<PLATFORM_ID:Windows>>:LUA_USE_POSIX>)
+# RmlUi's Lua plugin runs UI scripts on that Lua (#208): RmlUi takes the target below, never a Lua installed on the
+# system.
+add_library(Lua::Lua INTERFACE IMPORTED)
+target_link_libraries(Lua::Lua INTERFACE lua)
+set(RMLUI_LUA_BINDINGS ON CACHE BOOL "Build Lua bindings" FORCE)
+set(RMLUI_LUA_BINDINGS_LIBRARY "lua_as_cxx" CACHE STRING "Lua library for the Lua bindings" FORCE)
 add_subdirectory(ext/RmlUi EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/Catch2 EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/json EXCLUDE_FROM_ALL SYSTEM)
@@ -77,14 +108,6 @@ add_subdirectory(ext/miniz EXCLUDE_FROM_ALL SYSTEM)
 # miniz adds /Zi: its files share one .pdb, which compiles through sccache can't write in parallel. Four small files,
 # so they skip the compiler cache.
 set_target_properties(miniz PROPERTIES C_COMPILER_LAUNCHER "")
-# Lua 5.4 for scripting. Compiled as C++, so a Lua error unwinds C++ code with an exception instead of longjmp and
-# destructors run. Everything else is the official build: the library without the lua program and the test library.
-file(GLOB luaSources ${PROJECT_SOURCE_DIR}/ext/lua/l*.c)
-list(FILTER luaSources EXCLUDE REGEX "/(lua|ltests)[.]c$")
-set_source_files_properties(${luaSources} PROPERTIES LANGUAGE CXX)
-add_library(lua STATIC ${luaSources})
-target_include_directories(lua SYSTEM PUBLIC ${PROJECT_SOURCE_DIR}/ext/lua)
-target_compile_definitions(lua PRIVATE $<$<NOT:$<PLATFORM_ID:Windows>>:LUA_USE_POSIX>)
 # cpp-httplib for the MCP server's HTTP transport: header-only, without TLS or compression.
 add_library(cpp-httplib INTERFACE)
 target_include_directories(cpp-httplib SYSTEM INTERFACE ${PROJECT_SOURCE_DIR}/ext/cpp-httplib)
@@ -153,7 +176,7 @@ function(gnubase_target_defaults target)
 		target_link_options(${target} PRIVATE -fsanitize=${GNUBASE_SANITIZERS})
 	endif()
 	if(GNUBASE_CLANG_TIDY)
-		set_target_properties(${target} PROPERTIES CXX_CLANG_TIDY "${GNUBASE_CLANG_TIDY_EXE};--warnings-as-errors=*")
+		set_target_properties(${target} PROPERTIES CXX_CLANG_TIDY "${clangTidy}")
 	endif()
 endfunction()
 

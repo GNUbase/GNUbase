@@ -369,6 +369,20 @@ TEST_CASE("values are checked against their JSON schema", "[unit]")
 	CHECK(validate(Json::parse(R"({"name": "a", "tags": ["x", 2]})"), schema) == "parameters.tags[1] must be string");
 	CHECK(validate(Json::parse(R"({"name": "a", "level": 3})"), schema) == "parameters.level is not allowed");
 	CHECK(validate(Json::parse("[]"), schema, "result") == "result must be object");
+
+	// additionalProperties as a schema: a map whose members all fit it.
+	const Json map = Json::parse(R"({"type": "object", "additionalProperties": {"type": "boolean"}})");
+	CHECK(validate(Json::parse(R"({"a": true, "b": false})"), map).empty());
+	CHECK(validate(Json::parse(R"({"a": true, "b": 1})"), map) == "parameters.b must be boolean");
+}
+
+TEST_CASE("properties that the schema doesn't name are checked against additionalProperties", "[unit]")
+{
+	const Json schema = Json::parse(R"({"type": "object", "properties": {"name": {"type": "string"}},
+		"additionalProperties": {"type": "object", "properties": {"size": {"type": "number"}}}})");
+	CHECK(validate(Json::parse(R"({"name": "a", "left": {"size": 240}, "right": {}})"), schema).empty());
+	CHECK(validate(Json::parse(R"({"left": 3})"), schema) == "parameters.left must be object");
+	CHECK(validate(Json::parse(R"({"left": {"size": "big"}})"), schema) == "parameters.left.size must be number");
 }
 
 TEST_CASE("numbers are checked against the schema's minimum and maximum", "[unit]")

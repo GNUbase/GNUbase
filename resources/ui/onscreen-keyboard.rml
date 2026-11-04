@@ -1,0 +1,126 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The on-screen keyboard (docs/features/onscreen-keyboard.md, reference manual pp. 332-334), in a window of its own.
+     ui::OnScreenKeyboard fills #white-keys and #black-keys with the keys, a black key in each .black-slot between two
+     white keys, and follows the octave and velocity sliders. -->
+<rml>
+<head>
+	<title>On-Screen Keyboard</title>
+	<style>
+		body
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+
+		#keyboard-controls
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			height: 32dp;
+			box-sizing: border-box;
+			padding: 4dp 8dp;
+			display: flex;
+			align-items: center;
+		}
+
+		#keyboard-controls slider
+		{
+			width: 120dp;
+			margin: 0 8dp;
+		}
+
+		#keyboard-controls .keyboard-value
+		{
+			width: 32dp;
+			margin-right: 16dp;
+		}
+
+		#keys
+		{
+			position: absolute;
+			left: 8dp;
+			top: 36dp;
+			right: 8dp;
+			bottom: 8dp;
+		}
+
+		#white-keys
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+			display: flex;
+		}
+
+		.white-key
+		{
+			flex: 1;
+			box-sizing: border-box;
+			position: relative;
+			border-width: 1px;
+		}
+
+		/* 17 slots as wide as the white keys, shifted by half a key, so each slot's middle is where two white keys
+		   meet. */
+		#black-keys
+		{
+			position: absolute;
+			left: 2.941%;
+			top: 0;
+			width: 100%;
+			height: 60%;
+			display: flex;
+			pointer-events: none; /* the white keys get the clicks between the black keys */
+		}
+
+		.black-slot
+		{
+			flex: 1;
+			position: relative;
+		}
+
+		.black-key
+		{
+			position: absolute;
+			left: 20%;
+			top: 0;
+			right: 20%;
+			bottom: 0;
+			box-sizing: border-box;
+			border-width: 1px;
+			pointer-events: auto;
+		}
+
+		/* The computer key that plays the key, at its bottom. */
+		.key-label
+		{
+			position: absolute;
+			left: 0;
+			right: 0;
+			bottom: 4dp;
+			text-align: center;
+		}
+	</style>
+</head>
+<body class="onscreen-keyboard">
+	<div id="keyboard-controls" class="toolbar">
+		<span class="text-label">Octave</span>
+		<slider id="octave" min="0" max="6" step="1" default="3" value="3"></slider>
+		<span id="octave-value" class="keyboard-value"></span>
+		<span class="text-label">Velocity</span>
+		<slider id="velocity" min="1" max="127" step="1" default="100" value="100"></slider>
+		<span id="velocity-value" class="keyboard-value"></span>
+	</div>
+	<div id="keys">
+		<div id="white-keys"></div>
+		<div id="black-keys"></div>
+	</div>
+</body>
+</rml>

@@ -6,6 +6,7 @@
 #include "ui/shell.h"
 
 #include <chrono>
+#include <filesystem>
 #include <future>
 #include <memory>
 #include <optional>
@@ -36,6 +37,15 @@ namespace gnubase::ui
 		Middle,
 	};
 
+	// What key does with a key: press and release it, or only press it (down) or release it (up), e.g. to hold
+	// Forward, which winds while its key is down.
+	enum class KeyAction : uint8_t
+	{
+		Press,
+		Down,
+		Up,
+	};
+
 	// Reads windows, documents and elements as JSON and injects input into a window's RmlUi context, the way the
 	// window system delivers the user's. Coordinates and boxes are in the window's pixels, as in its screenshots. A
 	// window that isn't given is the main window. Call every function on the UI thread (onUiThread runs them from
@@ -46,7 +56,8 @@ namespace gnubase::ui
 		explicit Automation(Shell& shell) : m_shell(shell) {}
 
 		// {"windows": [...]}: each window's id, whether it's the main window, its pixel size, its dp ratio and its
-		// documents (title, source, visible, modal).
+		// documents (title, source, visible, modal); and "cursor", the mouse pointer the style sheets name for the
+		// element under the mouse (ui/cursors.h), empty for the OS's arrow.
 		engine::Json windows();
 
 		// {"elements": [...]}: the window's documents, or the elements the CSS selector matches in them, as trees of
@@ -66,21 +77,38 @@ namespace gnubase::ui
 		engine::Json click(std::optional<WindowId> window, const Target& target, MouseButton button, int count,
 			const std::vector<std::string>& modifiers);
 
-		// Presses the left button at from, moves to to in steps and releases it there. Returns the element under the
-		// mouse at the end.
-		engine::Json drag(std::optional<WindowId> window, const Target& from, const Target& to);
+		// Presses the left button at from, moves to to in steps and releases it there, holding the modifiers. RmlUi's
+		// clock (ui/rmlui.h) moves on by a second between the press and the first step, as if the button were held
+		// that long, so that presses that become drags only after a delay do. Returns the element under the mouse at
+		// the end.
+		engine::Json drag(std::optional<WindowId> window, const Target& from, const Target& to,
+			const std::vector<std::string>& modifiers = {});
 
-		// Turns the mouse wheel by dx and dy lines (positive is right and down) at the target, or where the mouse is.
-		engine::Json wheel(std::optional<WindowId> window, const Target& at, float dx, float dy);
+		// Turns the mouse wheel by dx and dy lines (positive is right and down) at the target, or where the mouse is,
+		// holding the modifiers.
+		engine::Json wheel(std::optional<WindowId> window, const Target& at, float dx, float dy,
+			const std::vector<std::string>& modifiers = {});
 
-		// Presses and releases a key with modifiers, written like "Enter", "Ctrl+S" or "Shift+Alt+F5": letters,
-		// digits, F1 to F24, Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, Up, Down,
-		// Left, Right, Space; modifiers Ctrl, Shift, Alt and Meta (or Cmd). Returns {"focus": ...}, the element with
-		// the keyboard focus, or null.
-		engine::Json key(std::optional<WindowId> window, const std::string& keys);
+		// Drops files from elsewhere, such as the OS's file manager, on the target, as the window system delivers the
+		// user's drops (ui::dropFiles). Returns the element they were dropped on, as move does.
+		engine::Json drop(
+			std::optional<WindowId> window, const Target& target, const std::vector<std::filesystem::path>& files);
+
+		// Presses and releases a key with modifiers, written like "Enter", "Ctrl+S", "Mod+Z" or "Shift+Alt+F5" (keys
+		// and modifiers as ui::parseKeys reads them), or only presses or releases it. A key that no element uses runs
+		// its key command (ui/keycommands.h); a command that runs while its key is held stops when the key goes up,
+		// whatever the modifiers then. Returns {"focus": ...}, the element with the keyboard focus, or null.
+		engine::Json key(std::optional<WindowId> window, const std::string& keys, KeyAction action = KeyAction::Press);
 
 		// Types the UTF-8 text into the element with the focus. Returns the focus, as key does.
 		engine::Json text(std::optional<WindowId> window, const std::string& text);
+
+		// Asks to close the window as its close button does (Shell::requestClose): the main window asks to quit, a
+		// panel's own window docks its panel again. With quit, asks GNUbase to quit as the OS does
+		// (Shell::requestQuit), which names no window. The request is posted and runs in the shell's next step, as the
+		// window system's do, so that it doesn't close a window under the event handler that asked. Returns an empty
+		// object.
+		engine::Json close(std::optional<WindowId> window, bool quit);
 
 	private:
 		// The window, or the main window.

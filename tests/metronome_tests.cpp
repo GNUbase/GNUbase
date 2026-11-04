@@ -165,7 +165,7 @@ TEST_CASE("metronome.set changes the given settings, checks them and is no undo 
 	Engine engine;
 	Client client(engine);
 	const Json defaults = run(client, "metronome.get");
-	CHECK(defaults.at("click") == false);
+	CHECK(!defaults.contains("click")); // the switch is transport.set metronome
 	CHECK(defaults.at("audio").at("outputs") == Json::array());
 	CHECK(defaults.at("countIn").at("bars") == 1);
 	CHECK(defaults.at("patterns") == Json::array());
@@ -176,7 +176,7 @@ TEST_CASE("metronome.set changes the given settings, checks them and is no undo 
 	const ObjectId instrument = channelOf(client, track);
 	const size_t steps = run(client, "history.get").at("steps").size();
 	const Json set = run(client, "metronome.set",
-		{{"click", true}, {"whilePlaying", false},
+		{{"whilePlaying", false},
 			{"audio",
 				{{"outputs", {output}}, {"level", -3.0}, {"sounds", "samples"},
 					{"beeps", {Json::object(), {{"frequency", 440.0}}}}}},
@@ -186,7 +186,6 @@ TEST_CASE("metronome.set changes the given settings, checks them and is no undo 
 					{"customSignature", {{"numerator", 7}, {"denominator", 8}}}}},
 			{"patterns", {{{"numerator", 4}, {"denominator", 4}, {"accents", {1, 0, 3, 4}}}}}});
 	CHECK(set == run(client, "metronome.get"));
-	CHECK(set.at("click") == true);
 	CHECK(set.at("whilePlaying") == false);
 	CHECK(set.at("whileRecording") == true);
 	CHECK(set.at("audio").at("outputs") == Json::array({output}));
@@ -220,7 +219,7 @@ TEST_CASE("metronome.set changes the given settings, checks them and is no undo 
 	const Json before = run(client, "metronome.get");
 	const auto input = run(client, "project.get").at("busses")[0].at("id").get<ObjectId>();
 	const auto audioTrack = run(client, "track.add", {{"type", "audio"}}).at("track").at("id").get<ObjectId>();
-	CHECK_THAT(reject(client, "metronome.set", {{"click", false}, {"audio", {{"outputs", {input}}}}}),
+	CHECK_THAT(reject(client, "metronome.set", {{"whilePlaying", true}, {"audio", {{"outputs", {input}}}}}),
 		ContainsSubstring("no output bus"));
 	CHECK_THAT(reject(client, "metronome.set", {{"midi", {{"destination", channelOf(client, audioTrack)}}}}),
 		ContainsSubstring("not an instrument channel"));
@@ -266,14 +265,14 @@ TEST_CASE("the metronome settings are saved with the project, and files without 
 	Engine engine;
 	Client client(engine);
 	run(client, "metronome.set",
-		{{"click", true}, {"audio", {{"level", -6.0}, {"beeps", {{{"frequency", 2000.0}}}}}},
+		{{"whileRecording", false}, {"audio", {{"level", -6.0}, {"beeps", {{{"frequency", 2000.0}}}}}},
 			{"countIn", {{"enabled", true}, {"bars", 3}, {"signature", "project"}}}});
 	run(client, "metronome.setPattern", {{"numerator", 7}, {"denominator", 8}, {"accents", {1, 3, 3, 2, 3, 2, 3}}});
 	const Json saved = run(client, "metronome.get");
 	const std::string path = (dir.path() / "song.dawproject").u8string();
 	run(client, "project.save", {{"path", path}});
 	run(client, "project.new");
-	CHECK(run(client, "metronome.get").at("click") == false);
+	CHECK(run(client, "metronome.get").at("whileRecording") == true);
 	run(client, "project.load", {{"path", path}});
 	CHECK(run(client, "metronome.get") == saved);
 
@@ -287,7 +286,6 @@ TEST_CASE("the metronome settings are saved with the project, and files without 
 			{{{"numerator", 3}, {"denominator", 4}, {"accents", {1, 9}}},
 				{{"numerator", 5}, {"denominator", 4}, {"accents", {1, 2, 2, 2, 2}}}}}};
 	const metronome::MetronomeSettings loaded = projectFromJson(project).metronome;
-	CHECK(loaded.click);
 	CHECK(loaded.level == 0.0);
 	CHECK(loaded.outputs.empty());
 	CHECK(loaded.countInBars == 1);
@@ -305,7 +303,8 @@ TEST_CASE("the click follows tempo and signature changes and the click patterns:
 	Client& client = session.client;
 	importTempo(
 		client, dir, {{0, 240.0}, {4800, 300.0}}, {{0, 4, 4}, {1920, 3, 4}, {3360, 6, 8}, {4800, 5, 4}, {7200, 7, 8}});
-	run(client, "metronome.set", {{"click", true}, {"audio", {{"level", -3.0}}}});
+	run(client, "transport.set", {{"metronome", true}});
+	run(client, "metronome.set", {{"audio", {{"level", -3.0}}}});
 	run(client, "metronome.setPattern", {{"numerator", 6}, {"denominator", 8}, {"accents", {1, 0, 0, 2, 0, 0}}});
 	run(client, "metronome.setPattern", {{"numerator", 5}, {"denominator", 4}, {"accents", {1, 2, 2, 4, 2}}});
 	run(client, "metronome.setPattern", {{"numerator", 7}, {"denominator", 8}, {"accents", {1, 3, 3, 2, 3, 2, 3}}});
@@ -338,11 +337,12 @@ TEST_CASE("the click is the same for every block size and number of threads", "[
 		run(client, "audio.setProcessing", {{"multiProcessing", threads > 1}, {"threads", threads}});
 		run(client, "track.add", {{"type", "audio"}});
 		importTempo(client, dir, {{0, 240.0}, {2400, 251.0}}, {{0, 4, 4}, {1920, 5, 8}});
-		run(client, "metronome.set", {{"click", true}, {"countIn", {{"enabled", true}, {"signature", "project"}}}});
+		run(client, "transport.set", {{"metronome", true}});
+		run(client, "metronome.set", {{"countIn", {{"enabled", true}, {"signature", "project"}}}});
 		run(client, "metronome.setPattern", {{"numerator", 4}, {"denominator", 4}, {"accents", {1, 3, 2, 3, 2, 3}}});
 		run(client, "transport.set", {{"left", 9000}, {"right", 25000}, {"cycle", true}});
 		run(client, "transport.locate", {{"position", 5000}});
-		run(client, "transport.play", {{"countIn", true}});
+		run(client, "transport.record");
 		run(client, "audio.render", {{"frames", 60000}});
 		return capture(client, 0, 60000);
 	};
@@ -361,12 +361,13 @@ TEST_CASE("a count-in clicks its bars, then playback starts at the exact sample 
 	Client& client = session.client;
 	countInProject(session, dir);
 	run(client, "transport.locate", {{"position", 28000}}); // bar 2
-	const auto countIn = [&client, blockSize](const Json& settings, int64_t frames)
+	const auto countIn = [&client, blockSize](const Json& settings, int64_t frames, bool click = false)
 	{
 		run(client, "audio.setDevice",
 			{{"sampleRate", g_rate}, {"blockSize", blockSize}, {"inputChannels", 0}, {"captureSeconds", 6}});
 		run(client, "metronome.set", settings);
-		run(client, "transport.play", {{"countIn", true}});
+		run(client, "transport.set", {{"metronome", click}});
+		run(client, "transport.record");
 		run(client, "audio.render", {{"frames", frames}});
 		const std::vector<Onset> clicks = onsets(capture(client, 0, frames));
 		const auto position = run(client, "transport.get").at("position").get<int64_t>();
@@ -384,8 +385,7 @@ TEST_CASE("a count-in clicks its bars, then playback starts at the exact sample 
 	}
 	SECTION("the click plays on after the count-in if it is on")
 	{
-		const auto [clicks, position] =
-			countIn({{"click", true}, {"countIn", {{"enabled", true}, {"bars", 2}}}}, 36000);
+		const auto [clicks, position] = countIn({{"countIn", {{"enabled", true}, {"bars", 2}}}}, 36000, true);
 		CHECK(framesOf(clicks) == std::vector<int64_t>{0, 4000, 8000, 12000, 16000, 20000, 24000, 28000, 32000});
 		CHECK(position == 28000 + 4000);
 	}
@@ -399,7 +399,7 @@ TEST_CASE("a count-in clicks its bars, then playback starts at the exact sample 
 	{
 		run(client, "transport.locate", {{"position", 30000}});
 		const auto [clicks, position] =
-			countIn({{"click", true}, {"countIn", {{"enabled", true}, {"signature", "project"}}}}, 20000);
+			countIn({{"countIn", {{"enabled", true}, {"signature", "project"}}}}, 20000, true);
 		CHECK(framesOf(clicks) == std::vector<int64_t>{0, 4000, 8000, 12000, 16000});
 		CHECK(position == 30000 + 6000);
 	}
@@ -423,7 +423,7 @@ TEST_CASE("a count-in clicks its bars, then playback starts at the exact sample 
 	SECTION("stop ends it, and the cursor stays")
 	{
 		run(client, "metronome.set", {{"countIn", {{"enabled", true}}}});
-		run(client, "transport.play", {{"countIn", true}});
+		run(client, "transport.record");
 		run(client, "audio.render", {{"frames", 5000}});
 		run(client, "transport.stop");
 		run(client, "audio.render", {{"frames", 20000}});
@@ -443,8 +443,9 @@ TEST_CASE("the MIDI click plays its notes on the destination instrument", "[inte
 	const auto track = run(client, "track.add", {{"type", "instrument"}}).at("track").at("id").get<ObjectId>();
 	const ObjectId instrument = channelOf(client, track);
 	run(client, "channel.set", {{"channel", instrument}, {"instrument", "noteProbe"}});
+	run(client, "transport.set", {{"metronome", true}});
 	run(client, "metronome.set",
-		{{"click", true}, {"audio", {{"enabled", false}}},
+		{{"audio", {{"enabled", false}}},
 			{"midi", {{"enabled", true}, {"destination", instrument}, {"notes", {{{"note", 60}}, {{"note", 62}}}}}}});
 	run(client, "transport.play");
 	run(client, "audio.render", {{"frames", 20000}});
@@ -480,7 +481,7 @@ TEST_CASE("the audio click plays through the chosen output busses", "[integratio
 	Client& client = session.client;
 	const auto click =
 		run(client, "bus.add", {{"direction", "output"}, {"name", "Click"}}).at("bus").at("id").get<ObjectId>();
-	run(client, "metronome.set", {{"click", true}});
+	run(client, "transport.set", {{"metronome", true}});
 	run(client, "transport.play");
 	run(client, "audio.render", {{"frames", 16000}});
 	CHECK(framesOf(onsets(capture(client, 0, 16000))) == std::vector<int64_t>{0, 8000}); // 120 BPM
@@ -516,6 +517,15 @@ TEST_CASE("the audio click plays through the chosen output busses", "[integratio
 		run(client, "audio.render", {{"frames", 16000}});
 		CHECK(onsets(capture(client, 0, 32000)).size() == 2);
 	}
+	SECTION("the metronome switch off")
+	{
+		run(client, "transport.set", {{"metronome", false}});
+		run(client, "audio.render", {{"frames", 16000}});
+		CHECK(onsets(capture(client, 0, 32000)).size() == 2);
+		run(client, "transport.set", {{"metronome", true}});
+		run(client, "audio.render", {{"frames", 16000}});
+		CHECK(framesOf(onsets(capture(client, 0, 48000))) == std::vector<int64_t>{0, 8000, 32000, 40000});
+	}
 	SECTION("not while playing")
 	{
 		run(client, "metronome.set", {{"whilePlaying", false}});
@@ -542,11 +552,11 @@ TEST_CASE("sample files are click sounds; a missing one plays the beep", "[integ
 	const std::filesystem::path dcFile = dir.path() / "dc.wav";
 	test::writeWav(dcFile, dc);
 
+	run(client, "transport.set", {{"metronome", true}});
 	run(client, "metronome.set",
-		{{"click", true},
-			{"audio",
-				{{"sounds", "samples"},
-					{"samples", {{{"path", rampFile.u8string()}, {"level", -6.0}}, {{"path", dcFile.u8string()}}}}}}});
+		{{"audio",
+			{{"sounds", "samples"},
+				{"samples", {{{"path", rampFile.u8string()}, {"level", -6.0}}, {{"path", dcFile.u8string()}}}}}}});
 	run(client, "transport.play");
 	run(client, "audio.render", {{"frames", 16000}});
 	const std::vector<float> out = capture(client, 0, 16000);
@@ -607,4 +617,64 @@ TEST_CASE("clicks are the same however a range is split", "[unit]")
 	clicksIn(ConstantTimeline{133.0, {5, 4}, 48000.0}, patterns, 0, 480000,
 		[&constant](int64_t at, int accent) { constant.emplace_back(at, accent); });
 	CHECK(constant == project);
+}
+
+TEST_CASE("the click sounds while playing or recording, as whilePlaying and whileRecording say", "[integration]")
+{
+	Session session;
+	Client& client = session.client;
+	run(client, "transport.set", {{"metronome", true}});
+	int64_t rendered = 0;
+	const auto clicks = [&client, &rendered](const char* command)
+	{
+		run(client, "transport.stop");
+		run(client, "transport.locate", {{"position", 0}});
+		run(client, command);
+		run(client, "audio.render", {{"frames", 16000}});
+		rendered += 16000;
+		const std::vector<float> all = capture(client, 0, rendered);
+		return onsets(std::vector<float>(all.end() - 16000, all.end())).size();
+	};
+	CHECK(clicks("transport.play") == 2);
+	CHECK(clicks("transport.record") == 2);
+	run(client, "metronome.set", {{"whileRecording", false}});
+	CHECK(clicks("transport.play") == 2);
+	CHECK(clicks("transport.record") == 0);
+	run(client, "metronome.set", {{"whileRecording", true}, {"whilePlaying", false}});
+	CHECK(clicks("transport.play") == 0);
+	CHECK(clicks("transport.record") == 2);
+}
+
+TEST_CASE("only recording from stop counts in", "[integration]")
+{
+	Session session;
+	Client& client = session.client;
+	run(client, "metronome.set", {{"countIn", {{"enabled", true}}}});
+	run(client, "transport.play");
+	run(client, "audio.render", {{"frames", 16000}});
+	CHECK(onsets(capture(client, 0, 16000)).empty());
+	CHECK(run(client, "transport.get").at("position") == 16000);
+
+	// Recording while playing punches in at once.
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 8000}});
+	CHECK(onsets(capture(client, 0, 24000)).empty());
+	const Json transport = run(client, "transport.get");
+	CHECK(transport.at("recording") == true);
+	CHECK(transport.at("position") == 24000);
+}
+
+TEST_CASE("a pickup bar clicks its beats, and the next bar starts with accent 1", "[integration]")
+{
+	Session session;
+	Client& client = session.client;
+	run(client, "signature.add", {{"bar", 0}, {"numerator", 1}, {"denominator", 4}});
+	run(client, "signature.add", {{"bar", 1}, {"numerator", 4}, {"denominator", 4}});
+	run(client, "transport.set", {{"metronome", true}});
+	run(client, "transport.play");
+	run(client, "audio.render", {{"frames", 48000}});
+	const std::vector<Onset> clicks = onsets(capture(client, 0, 48000));
+	REQUIRE(framesOf(clicks) == std::vector<int64_t>{0, 8000, 16000, 24000, 32000, 40000}); // 120 BPM
+	CHECK(clicks[1].peak > 1.5f * clicks[2].peak);                                          // bar 1's first beat
+	CHECK(clicks[5].peak > 1.5f * clicks[4].peak);                                          // bar 2's
 }

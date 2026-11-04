@@ -15,6 +15,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 // The application shell (#48): GNUbase's top-level windows, each with its own RmlUi context, and the event loop that
@@ -68,6 +69,11 @@ namespace gnubase::ui
 		bool cancelled() const { return files.empty() && error.empty(); }
 	};
 
+	// Tells the element under the point, in the window's pixels, that the files were dropped on it: a g_fileDropEvent
+	// (ui/rmlui.h) with the files as UTF-8 lines in "files", their "count", and "mouse_x" and "mouse_y". The shell
+	// calls it for the window system's drops, and ui::Automation for the files it drops.
+	void dropFiles(Window& window, Point at, const std::vector<std::filesystem::path>& files);
+
 	class Shell
 	{
 	public:
@@ -87,6 +93,23 @@ namespace gnubase::ui
 		Window* find(WindowId id);
 		std::vector<Window*> windows();
 
+		// Where the window is on the desktop, and moving it there (onto a connected monitor if it isn't on one).
+		Rect bounds(WindowId id) const { return m_windows.bounds(id); }
+		void setBounds(WindowId id, const Rect& bounds);
+
+		// Brings the window in front of the others with the keyboard focus, restoring it if it is minimized
+		// (WindowSystem::raise).
+		void raise(WindowId id);
+
+		// Runs handler when the user asks to close a window other than the main window, before the shell closes it,
+		// e.g. to dock the panel it shows again (ui/docking.h). The handler may close the window itself.
+		void onCloseRequest(std::function<void(Window&)> handler) { m_closeRequest = std::move(handler); }
+
+		// Runs handler, with the main window, instead of quitting when the user closes the main window or asks to quit
+		// through the OS (Cmd+Q in the macOS app menu, SIGTERM), e.g. to ask about unsaved changes first
+		// (ui/projectfiles.h). The handler calls quit() once GNUbase may quit. Without a handler they quit at once.
+		void onQuitRequest(std::function<void(Window& main)> handler) { m_quitRequest = std::move(handler); }
+
 		// The user's UI scale (the user setting ui.scale, #53), on top of each monitor's scale.
 		void setUiScale(float scale);
 		float uiScale() const { return m_uiScale; }
@@ -101,7 +124,7 @@ namespace gnubase::ui
 		void post(std::function<void()> task);
 
 		// Handles the events that arrive within timeout (all that are waiting, without timeout), then updates and
-		// draws every window that needs it.
+		// draws every window that needs it. Throws std::logic_error inside a step, e.g. from an event handler.
 		void step(std::optional<std::chrono::milliseconds> timeout);
 
 		// Steps until the shell quits, sleeping while no window needs drawing. Returns the exit code, 0.
@@ -111,12 +134,29 @@ namespace gnubase::ui
 		void quit();
 		bool running() const { return m_running; }
 
+		// What the window system's requests do, for automation (ui_close) as for the OS: requestClose like a window's
+		// close button, which runs onCloseRequest's handler and closes a window other than the main window, and asks
+		// to quit for the main window; requestQuit like the OS's quit request, which runs onQuitRequest's handler, or
+		// quits. requestClose does nothing for a window that isn't open. Don't call them inside a window's own event
+		// handlers, which closing it would pull the window from under: post them.
+		void requestClose(WindowId id);
+		void requestQuit();
+
 		// The window's content as it is now, drawn offscreen at its pixel size.
 		std::optional<Image> screenshot(WindowId id);
 
 		// Shows the OS's file dialog. done runs later on the UI thread, in a step, with what the user chose. Dialogs
 		// still open when the shell is destroyed never call done.
 		void showFileDialog(const FileDialog& dialog, std::function<void(const FileDialogResult&)> done);
+
+		// The file dialogs shown and not answered yet, by id, and answering one as the user would, for UI tests and
+		// MCP's ui_file_dialog: done runs at once with the files, none for a cancel. The OS's dialog, if it shows one,
+		// stays open until the user closes it, and its answer is ignored. Returns false for a dialog that isn't open.
+		std::map<uint64_t, FileDialog> fileDialogs() const;
+		bool answerFileDialog(uint64_t id, std::vector<std::filesystem::path> files);
+
+		// Whether showFileDialog shows the OS's dialog; when off, as in UI tests, dialogs wait for answerFileDialog.
+		void showOsFileDialogs(bool shown) { m_osFileDialogs = shown; }
 
 		// Runs task in the steps after each interval has passed, e.g. to look for changed files.
 		void every(std::chrono::milliseconds interval, std::function<void()> task);
@@ -125,6 +165,24 @@ namespace gnubase::ui
 		// (ui/enginebinding.h). While it returns true, because it follows values that change without events such as
 		// the playback position, the shell steps at least once a frame (g_framePeriod).
 		void eachStep(std::function<bool()> task);
+
+		// Runs handler for every key pressed in a window that none of its elements used, e.g. for key commands
+		// (ui/keycommands.h). Elements that use a key stop its propagation.
+		void onUnusedKey(std::function<void(Window&, const KeyPress&)> handler) { m_unusedKey = std::move(handler); }
+
+		// Hands a key that no element of the window used to that handler. The shell calls it for the window system's
+		// input, and ui::Automation for the keys it presses.
+		void unusedKey(Window& window, const KeyPress& keys);
+
+		// Runs handler for every key released in a window, e.g. for key commands that run while their key is held;
+		// a key of KI_UNKNOWN is every key, as when the window lost the keyboard focus.
+		void onKeyReleased(std::function<void(Window&, const KeyPress&)> handler)
+		{
+			m_keyReleased = std::move(handler);
+		}
+		// Hands a released key to that handler; the shell calls it for the window system's input, and ui::Automation
+		// for the keys it releases.
+		void keyReleased(Window& window, const KeyPress& keys);
 
 		// From any thread: makes the shell step soon, e.g. when the engine sent the UI something.
 		void wake() { m_windows.wake(); }
@@ -156,12 +214,23 @@ namespace gnubase::ui
 		float m_uiScale = 1.0F;
 		std::string m_theme;
 		bool m_running = true;
-		std::map<uint64_t, std::function<void(const FileDialogResult&)>> m_dialogs; // open file dialogs by id
+		bool m_stepping = false;
+		struct OpenFileDialog
+		{
+			FileDialog dialog;
+			std::function<void(const FileDialogResult&)> done;
+		};
+		std::map<uint64_t, OpenFileDialog> m_dialogs; // open file dialogs by id
+		bool m_osFileDialogs = true;
 		uint64_t m_nextDialog = 1;
 		std::vector<Task> m_tasks;
 		std::mutex m_postedMutex; // guards m_posted, which other threads add to
 		std::vector<std::function<void()>> m_posted;
 		std::vector<std::function<bool()>> m_stepTasks;
 		Clock::time_point m_nextFrame = Clock::time_point::max(); // when a step task that follows values runs again
+		std::function<void(Window&, const KeyPress&)> m_unusedKey;
+		std::function<void(Window&, const KeyPress&)> m_keyReleased;
+		std::function<void(Window&)> m_closeRequest;
+		std::function<void(Window&)> m_quitRequest;
 	};
 }

@@ -210,6 +210,11 @@ namespace gnubase::engine
 		return {left, right};
 	}
 
+	ChannelFormat pannerOutput(Panner panner)
+	{
+		return panner == Panner::Mono ? ChannelFormat::Stereo : ChannelFormat::None;
+	}
+
 	Panner pannerFor(ChannelFormat channel, ChannelFormat destination)
 	{
 		if (channel == ChannelFormat::Mono && destination == ChannelFormat::Stereo)

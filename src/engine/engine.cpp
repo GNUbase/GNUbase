@@ -2,8 +2,10 @@
 #include "engine/engine.h"
 
 #include "engine/audio/audioengine.h"
+#include "engine/document/channelformat.h"
 #include "engine/document/projectmodel.h"
 #include "engine/jobs/jobs.h"
+#include "engine/media/backup.h"
 #include "engine/peaks/peakcache.h"
 #include "engine/plugins/hostmanager.h"
 #include "engine/processors/builtin.h"
@@ -12,6 +14,10 @@
 #include "platform/rt/realtime.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <filesystem>
+#include <system_error>
 #include <utility>
 
 namespace gnubase::engine
@@ -70,6 +76,8 @@ namespace gnubase::engine
 	{
 		// How many commands engine.commandLog keeps.
 		constexpr size_t g_commandLogSize = 256;
+		// How often the engine asks whether an auto save is due (project.autoSave, docs/features/project-files.md).
+		constexpr std::chrono::seconds g_autoSaveCheck{30};
 
 		Json toJson(const CommandInfo& info)
 		{
@@ -105,17 +113,20 @@ namespace gnubase::engine
 					list.push_back(toJson(info));
 				return Json{{"commands", list}};
 			});
-		registerCommand({"engine.commandLog", 1,
-							"The last 256 commands that ran, oldest first, without queries: what the UI and other "
-							"clients did. Each with its request id (events name it too), the client that sent it (ui, "
-							"mcp, lua, app for the command line, engine for the engine's own commands), the command, "
-							"its parameters, and the error if it failed.",
-							CommandInfo{}.parameters, Json::parse(R"({"type": "object", "properties": {"commands":
+		registerCommand(
+			{"engine.commandLog", 1,
+				"The last 256 commands that ran, oldest first, without queries: what the UI and other "
+				"clients did. Each with its request id (events name it too), the client that sent it (ui, "
+				"mcp, lua, app for the command line, engine for the engine's own commands), the command, "
+				"its parameters, and the error if it failed. Commands the engine ran on its own that changed "
+				"nothing, such as tries to open a lost audio device again, are left out, and so are due auto saves "
+				"that fail again (project.autoSave).",
+				CommandInfo{}.parameters, Json::parse(R"({"type": "object", "properties": {"commands":
 								{"type": "array", "items": {"type": "object", "properties": {"request": {"type":
 								"integer"}, "client": {"type": "string"}, "command": {"type": "string"}, "parameters":
 								{}, "error": {"type": "string"}}, "required": ["request", "client", "command",
 								"parameters"]}}}, "required": ["commands"]})"),
-							true},
+				true},
 			[this](CommandContext&) { return Json{{"commands", Json(m_commandLog)}}; });
 		processors::registerCommands(*this);
 		m_plugins = std::make_unique<plugins::HostManager>();
@@ -125,14 +136,80 @@ namespace gnubase::engine
 		m_jobs->registerCommands(*this);
 		m_project = std::make_unique<ProjectModel>();
 		m_project->registerCommands(*this, *m_jobs);
-		m_audio = std::make_unique<AudioEngine>(m_project->snapshots(), std::move(backends), std::move(midiBackends));
+		m_settings = std::make_unique<settings::Store>(settings::userFormat(), settingsDirectory);
+		settings::registerCommands(*this, *m_settings,
+			[this](CommandContext& context, const std::vector<std::string>& keys) { settingsChanged(context, keys); });
+		m_audio = std::make_unique<AudioEngine>(
+			m_project->snapshots(), *m_settings, std::move(backends), std::move(midiBackends));
 		m_audio->registerCommands(*this);
+		m_project->setSlotStatus([this](ObjectId slot) { return m_audio->slotStatus(slot); });
+		m_audio->setSlotDescriber(
+			[this](ObjectId slot) { return m_project->describeSlot(m_project->project(), slot); });
+		const auto recordSetup = [this, recordings = unsavedMediaFolder(settingsDirectory)]
+		{
+			// Into the project's media folder, or for an unsaved project a folder of the user's.
+			const Project& project = m_project->project();
+			RecordSetup setup;
+			setup.project = m_project->openedRevision();
+			setup.format = recordFormat(project);
+			const std::string& file = m_project->file();
+			setup.folder = file.empty() ? recordings : mediaFolderFor(std::filesystem::u8path(file));
+			for (const ObjectId id : project.trackOrder())
+			{
+				const Track& track = project.trackById.at(id);
+				const auto channel = project.channels.find(track.channel);
+				if (!track.enabled || channel == project.channels.end() || !channel->second.recordEnable)
+					continue;
+				if (track.type == TrackType::Audio && channel->second.input != 0)
+					setup.tracks.push_back({id, track.name, {}});
+				else if (track.type == TrackType::Midi || track.type == TrackType::Instrument)
+					setup.midiTracks.push_back({id, track.channel});
+			}
+			return setup;
+		};
+		m_audio->setRecordSetup(recordSetup);
+		registerCommand({"recording.remainingTime", 1,
+							"The remaining record time (reference manual p. 356): how many seconds the record-enabled "
+							"audio tracks can record before the disk with the record folder is full, at the project's "
+							"sample rate and record bit depth; null while no track would record. With the space "
+							"available there in bytes, the channels that would record and the record folder: the "
+							"project's media folder Audio, or for an unsaved project a folder of the user's.",
+							CommandInfo{}.parameters,
+							Json::parse(R"({"type": "object", "properties": {"seconds": {"type": ["number", "null"]},
+								"availableBytes": {"type": "integer"}, "channels": {"type": "integer"},
+								"folder": {"type": "string"}},
+								"required": ["seconds", "availableBytes", "channels", "folder"]})"),
+							true},
+			[this, recordSetup](CommandContext&)
+			{
+				const RecordSetup setup = recordSetup();
+				const Project& project = m_project->project();
+				int channels = 0;
+				for (const RecordTrack& track : setup.tracks)
+					channels += channelCount(project.channels.at(project.trackById.at(track.track).channel).format);
+				// The folder may not be there yet: the nearest folder above it that is lies on the same disk.
+				std::filesystem::path existing = setup.folder;
+				std::error_code error;
+				while (!existing.empty() && !std::filesystem::exists(existing, error) && existing.has_parent_path() &&
+					existing.parent_path() != existing)
+					existing = existing.parent_path();
+				const std::filesystem::space_info space = std::filesystem::space(existing, error);
+				const uintmax_t available = error ? 0 : space.available;
+				Json seconds = nullptr;
+				if (channels > 0)
+					seconds = static_cast<double>(available) /
+						(setup.format.sampleRate * (bitsOf(setup.format.sampleFormat) / 8.0) * channels);
+				return Json{{"seconds", seconds}, {"availableBytes", available}, {"channels", channels},
+					{"folder", setup.folder.u8string()}};
+			});
 		m_peaks = std::make_unique<peaks::PeakCache>(
 			[this](const std::string& name, const Json& data) { broadcast(name, data); });
 		m_peaks->registerCommands(*this);
-		m_settings = std::make_unique<settings::Store>(settings::userFormat(), settingsDirectory);
-		settings::registerCommands(*this, *m_settings);
+		applySettings();
 		m_thread = std::thread([this] { run(); });
+		// If the destructor stops the engine meanwhile, the request is queued anyway: harmless, since the command
+		// thread fails the requests it didn't run when it stops.
+		m_clock.start(g_autoSaveCheck, [this] { post("project.autoSave", {{"due", true}}); });
 	}
 
 	Engine::~Engine()
@@ -143,9 +220,45 @@ namespace gnubase::engine
 			m_stopping = true;
 		}
 		m_wake.notify_all();
+		m_clock.stop();
 		m_thread.join(); // fails the commands that didn't run, which jobs may wait for
 		m_peaks.reset(); // stops its worker while the clients can still be reached
 		m_jobs.reset();  // no command starts a job anymore; cancels the running ones and waits for them
+	}
+
+	void Engine::applySettings()
+	{
+		MidiChase chase;
+		chase.notes = m_settings->get(settings::g_midiChaseNotes);
+		chase.controllers = m_settings->get(settings::g_midiChaseControllers);
+		chase.programs = m_settings->get(settings::g_midiChasePrograms);
+		chase.pitchBend = m_settings->get(settings::g_midiChasePitchBend);
+		chase.beyondParts = m_settings->get(settings::g_midiChaseBeyondParts);
+		m_audio->setChase(chase);
+		m_audio->setStopAfterPunchOut(m_settings->get(settings::g_audioStopAfterPunchOut));
+		m_audio->setMeterResetOnStart(m_settings->get(settings::g_meterResetOnStart));
+	}
+
+	void Engine::settingsChanged(CommandContext& context, const std::vector<std::string>& keys)
+	{
+		applySettings();
+		const auto changed = [&keys](std::string_view key)
+		{ return std::find(keys.begin(), keys.end(), key) != keys.end(); };
+		m_audio->portSettingsChanged(context, changed("audio.portSettings"), changed("midi.portSettings"));
+	}
+
+	Json Engine::modifySetting(
+		CommandContext& context, std::string_view key, const std::function<Json(const Json& value)>& change)
+	{
+		rt::assertNotRealtime("engine::Engine::modifySetting");
+		const Json before = m_settings->value(key);
+		Json value = m_settings->modify(key, change);
+		if (value != before)
+		{
+			context.emit("settings.changed", {{"values", {{std::string(key), value}}}});
+			settingsChanged(context, {std::string(key)});
+		}
+		return value;
 	}
 
 	void Engine::registerCommand(CommandInfo info, CommandHandler handler)
@@ -206,6 +319,11 @@ namespace gnubase::engine
 	plugins::HostManager& Engine::pluginHosts()
 	{
 		return *m_plugins;
+	}
+
+	Jobs& Engine::jobs()
+	{
+		return *m_jobs;
 	}
 
 	int64_t Engine::playbackPosition() const
@@ -319,7 +437,7 @@ namespace gnubase::engine
 			result.error = error.what();
 			context.m_events.clear(); // a failed command changes nothing
 		}
-		if (!query)
+		if (!query && !context.m_unlogged && (result.ok() || !context.m_quietFailure))
 		{
 			Json entry = {{"request", request.id}, {"client", request.sender ? request.sender->name : "engine"},
 				{"command", request.command}, {"parameters", request.parameters}};
@@ -353,7 +471,7 @@ namespace gnubase::engine
 			request.sender->post(std::move(result));
 		else if (request.done)
 			request.done(std::move(result));
-		else if (!result.ok())
+		else if (!result.ok() && !context.m_quietFailure)
 			logging::error("{} failed: {}", request.command, result.error);
 	}
 

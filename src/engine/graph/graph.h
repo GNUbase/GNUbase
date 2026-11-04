@@ -28,11 +28,14 @@ namespace gnubase::engine::graph
 {
 	enum class NodeKind : uint8_t
 	{
-		InputBus,   // audio from the device; written into the node's buffer before processing
-		OutputBus,  // audio for the device; read from the node's buffer after processing
-		Channel,    // a track's mixer channel; sums its inputs
-		Builtin,    // one of GNUbase's own processors
-		PluginSlot, // a plugin, built in or in a plugin host process (plugins::PluginSlot)
+		InputBus,      // audio from the device; written into the node's buffer before processing
+		OutputBus,     // audio for the device; read from the node's buffer after processing
+		Channel,       // a track's mixer channel; sums its inputs
+		ChannelSource, // what plays on a channel with plugin slots, before them: its inputs, track player, instrument
+		Builtin,       // one of GNUbase's own processors
+		PluginSlot,    // a plugin, built in or in a plugin host process (plugins::PluginSlot)
+		ListenBus,     // what the listening channels play on the monitoring bus; read after processing
+		Send,          // a channel's send to a group or effect channel: its share of the channel's audio
 	};
 
 	const char* toString(NodeKind kind);
@@ -78,7 +81,12 @@ namespace gnubase::engine::graph
 	// The graph of a render snapshot: a node per bus in bus order, then a node per channel in track order. Channels
 	// receive audio from their input bus and send it to their output bus or group channel; MIDI channels send events
 	// to their instrument channel instead. Output child busses add their channels to their parent's, input child
-	// busses take theirs from their parent's.
+	// busses take theirs from their parent's. A channel with plugin slots also has a source node, which takes what
+	// plays into the channel, and a node per slot after it, from top to bottom (#282); these come after the channels.
+	// Then a node per send with a destination, by channel and send number: a post-fader send receives its channel's
+	// output in that format; a pre-fader send, in the channel's format, only follows its channel, whose strip hands it
+	// the audio before the fader (ChannelStrip). Each sends to its destination's first node. While channels listen, a
+	// listen bus in the main mix's format comes last and receives them after their faders.
 	GraphDesc describe(const RenderSnapshot& snapshot);
 
 	// The order in which nodes are processed: every node after the nodes it receives audio or events from, and
@@ -116,8 +124,11 @@ namespace gnubase::engine::graph
 		// uses at most this many threads.
 		size_t width() const { return m_width; }
 
-		// The index of the node for a bus or channel, or -1.
+		// The index of the node for a bus or channel, or -1. A channel's node is the one with its fader.
 		int find(ObjectId object) const;
+
+		// How many audio channels the node sends on: the first of its audio buffers.
+		int outputChannels(int node) const { return m_nodes[static_cast<size_t>(node)].outputChannels; }
 
 		// Samples of delay on the longest path from the graph's sources to the node's output.
 		uint32_t pathLatency(int node) const { return m_nodes[static_cast<size_t>(node)].pathLatency; }

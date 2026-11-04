@@ -15,6 +15,7 @@
 #include <cmath>
 #include <filesystem>
 #include <map>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -163,6 +164,8 @@ namespace
 			{{"track", markers}, {"position", 16 * g_ticksPerQuarter}, {"name", "Bridge"}, {"number", 5}});
 		run(client, "marker.add", {{"track", linear}, {"position", 44100}, {"name", "Take"}}); // 2 beats
 		run(client, "marker.activateTrack", {{"track", markers}});
+		// A ruler track, which only GNUbase's entry keeps.
+		run(client, "track.add", {{"type", "ruler"}, {"timeFormat", "timecode"}});
 		// Channel volume and pan, and automation of each kind.
 		run(client, "channel.set", {{"channel", vocals.at("channel").at("id")}, {"volume", -4.5}});
 		run(client, "channel.set", {{"channel", piano.at("channel").at("id")}, {"volume", 3.0}, {"pan", -0.25}});
@@ -434,12 +437,12 @@ TEST_CASE("without GNUbase's entry, a project is read from project.xml", "[integ
 
 	run(client, "project.load", {{"path", other}});
 	const Json after = run(client, "project.get");
-	// Tracks, their order, types, folders and colors. Marker tracks aren't DAWproject tracks.
+	// Tracks, their order, types, folders and colors. Marker and ruler tracks aren't DAWproject tracks.
 	const auto withoutMarkerTracks = [](const Json& list)
 	{
 		Json tracks = Json::array();
 		for (const Json& track : list)
-			if (track.at("type") != "marker")
+			if (track.at("type") != "marker" && track.at("type") != "ruler")
 				tracks.push_back(track);
 		return tracks;
 	};
@@ -796,6 +799,9 @@ TEST_CASE(
 	run(client, "audioEvent.setFades",
 		{{"event", c}, {"fadeIn", {{"length", 4410}, {"shape", "sCurve"}}}, {"fadeOut", {{"length", 2205}}}});
 	run(client, "clip.setFades", {{"clip", clip}, {"fadeIn", {{"length", 441}, {"shape", "exponential"}}}});
+	// The volume curve is GNUbase-only too (#139).
+	run(client, "audioEvent.setVolumeCurve",
+		{{"event", c}, {"points", {{{"position", 1000}, {"volume", -12.5}, {"curve", 0.25}}, {{"position", 9000}}}}});
 	run(client, "autoFades.set", {{"crossfades", true}, {"length", 3.0}});
 	run(client, "autoFades.set", {{"track", track}, {"fadeIn", true}, {"crossfadeMode", "equalPower"}});
 	const Json before = run(client, "project.get");
@@ -1024,6 +1030,321 @@ TEST_CASE("saving keeps the history, loading starts a new one", "[integration]")
 	CHECK(run(client, "project.get").at("tracks").size() == 1);
 }
 
+TEST_CASE("snap settings saved before #413 load with the time format of their grid type", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+
+	// An entry as GNUbase wrote it before #413: a single grid type, no time format.
+	std::map<std::string, std::string> entries = readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	extension.at("project")["snap"] = {
+		{"on", true}, {"type", "grid"}, {"grid", "quarterFrame"}, {"zeroCrossing", false}};
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+
+	run(client, "project.load", {{"path", file}});
+	const Json snap = run(client, "snap.get");
+	CHECK(snap.at("on") == true);
+	CHECK(snap.at("format") == "timecode");
+	CHECK(snap.at("grid") == "quarterFrame");
+	CHECK(snap.at("grids") ==
+		Json{{"barsBeats", "bar"}, {"seconds", "100ms"}, {"timecode", "quarterFrame"}, {"samples", "100samples"},
+			{"userFrames", "frame"}});
+	// A newer build's names keep the defaults, the rest loads.
+	extension.at("project")["snap"] = {{"on", true}, {"type", "wobble"}, {"format", "feetFrames"}, {"grid", "5ms"},
+		{"grids", {{"seconds", "5ms"}, {"samples", "10samples"}, {"timecode", "bar"}, {"feetFrames", "1foot"}}},
+		{"zeroCrossing", true}};
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "snap.get") ==
+		Json{{"on", true}, {"type", "grid"}, {"format", "barsBeats"}, {"grid", "bar"},
+			{"grids",
+				{{"barsBeats", "bar"}, {"seconds", "100ms"}, {"timecode", "frame"}, {"samples", "10samples"},
+					{"userFrames", "frame"}}},
+			{"zeroCrossing", true}});
+
+	// Older builds read the grid type in use.
+	run(client, "snap.set", {{"format", "seconds"}});
+	run(client, "project.save", {{"path", file}});
+	Json saved = Json::parse(readZip(file).at("gnubase.json")).at("project").at("snap");
+	CHECK(saved.at("grid") == "100ms");
+	// The newer build's grid types are written back for it (#565), not a grid type of another format.
+	CHECK(saved.at("grids") ==
+		Json{{"barsBeats", "bar"}, {"seconds", "5ms"}, {"timecode", "frame"}, {"samples", "10samples"},
+			{"userFrames", "frame"}, {"feetFrames", "1foot"}});
+	CHECK(run(client, "project.get").at("snap").at("grids").at("seconds") == "100ms");
+	// Until this build chooses one for that format.
+	run(client, "snap.set", {{"grid", "1ms"}});
+	run(client, "project.save", {{"path", file}});
+	saved = Json::parse(readZip(file).at("gnubase.json")).at("project").at("snap");
+	CHECK(saved.at("grids").at("seconds") == "1ms");
+	CHECK(saved.at("grids").at("feetFrames") == "1foot");
+
+	// Damaged settings leave out what is damaged, not the extension entry.
+	extension.at("project")["snap"] = {{"on", 1}, {"format", "samples"}};
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "snap.get").at("format") == "samples");
+	CHECK(run(client, "snap.get").at("on") == false);
+	extension.at("project")["snap"] = 5;
+	extension.at("project")["maxVolume"] = 12.0;
+	entries["gnubase.json"] = extension.dump();
+	writeZip(file, entries);
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "project.get").at("maxVolume") == 12.0);
+}
+
+TEST_CASE("mute, solo, solo defeat, listen, notes and disabled tracks are saved, mute and solo also in project.xml",
+	"[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const Json muted = run(client, "track.add", {{"type", "audio"}, {"name", "Muted"}});
+	const Json soloed = run(client, "track.add", {{"type", "group"}, {"name", "Soloed"}});
+	const Json disabled = run(client, "track.add", {{"type", "midi"}, {"name", "Disabled"}});
+	run(client, "channel.set",
+		{{"channel", idOf(muted, "channel")}, {"mute", true}, {"notes", "Too loud"}, {"soloDefeat", true},
+			{"listen", true}});
+	run(client, "channel.set", {{"channel", idOf(soloed, "channel")}, {"solo", true}});
+	run(client, "track.set", {{"track", idOf(disabled, "track")}, {"enabled", false}});
+	const Json before = run(client, "project.get");
+	CHECK(before.at("channels")[0].at("soloDefeat") == true);
+	CHECK(before.at("channels")[0].at("listen") == true);
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "project.get") == before);
+
+	std::map<std::string, std::string> entries = readZip(file);
+	pugi::xml_document xml;
+	REQUIRE(xml.load_string(entries.at("project.xml").c_str()));
+	const pugi::xml_node structure = xml.child("Project").child("Structure");
+	const auto trackNode = [&structure](const char* name)
+	{ return structure.find_child_by_attribute("Track", "name", name); };
+	CHECK(trackNode("Muted").child("Channel").child("Mute").attribute("value").as_bool());
+	CHECK_FALSE(trackNode("Soloed").child("Channel").child("Mute").attribute("value").as_bool(true));
+	CHECK(trackNode("Soloed").child("Channel").attribute("solo").as_bool());
+	CHECK(std::string(trackNode("Muted").child("Channel").attribute("comment").as_string()) == "Too loud");
+	CHECK_FALSE(trackNode("Soloed").child("Channel").attribute("comment"));
+	CHECK_FALSE(trackNode("Disabled").attribute("loaded").as_bool(true));
+	CHECK(trackNode("Muted").attribute("loaded").as_bool());
+
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	const std::string other = utf8(dir.path() / "other.dawproject");
+	writeZip(other, entries);
+	run(client, "project.load", {{"path", other}});
+	const Json loaded = run(client, "project.get");
+	REQUIRE(loaded.at("tracks").size() == 3);
+	CHECK(loaded.at("channels")[0].at("mute") == true);
+	CHECK(loaded.at("channels")[1].at("solo") == true);
+	CHECK(loaded.at("channels")[1].at("mute") == false);
+	CHECK(loaded.at("channels")[0].at("notes") == "Too loud");
+	CHECK(loaded.at("channels")[0].at("soloDefeat") == false); // GNUbase's own
+	CHECK(loaded.at("channels")[0].at("listen") == false);
+	CHECK(loaded.at("channels")[1].at("notes") == "");
+	CHECK(loaded.at("tracks")[2].at("enabled") == false);
+	CHECK(loaded.at("tracks")[0].at("enabled") == true);
+}
+
+TEST_CASE("sends are saved, with their destination, type, level and on also in project.xml", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const Json audio = run(client, "track.add", {{"type", "audio"}, {"name", "Audio"}});
+	const Json reverb = run(client, "track.add", {{"type", "effect"}, {"name", "Reverb"}});
+	const Json group = run(client, "track.add", {{"type", "group"}, {"name", "Group"}});
+	run(client, "channel.set",
+		{{"channel", idOf(audio, "channel")},
+			{"sends",
+				{{{"send", 1}, {"destination", idOf(reverb, "channel")}, {"on", true}, {"level", -6.0}},
+					{{"send", 3}, {"destination", idOf(group, "channel")}, {"preFader", true}, {"level", -144.0}}}}});
+	const Json before = run(client, "project.get");
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "project.get") == before);
+
+	std::map<std::string, std::string> entries = readZip(file);
+	pugi::xml_document xml;
+	REQUIRE(xml.load_string(entries.at("project.xml").c_str()));
+	const pugi::xml_node sends = xml.child("Project")
+									 .child("Structure")
+									 .find_child_by_attribute("Track", "name", "Audio")
+									 .child("Channel")
+									 .child("Sends");
+	size_t count = 0;
+	for (const pugi::xml_node send : sends.children("Send"))
+		count += send.empty() ? 0 : 1;
+	REQUIRE(count == 2);
+	const pugi::xml_node first = sends.child("Send");
+	CHECK(std::string(first.attribute("type").as_string()) == "post");
+	CHECK(std::abs(first.child("Volume").attribute("value").as_double() - std::pow(10.0, -6.0 / 20.0)) < 1e-9);
+	CHECK(first.child("Enable").attribute("value").as_bool());
+	CHECK(std::string(first.next_sibling("Send").attribute("type").as_string()) == "pre");
+
+	// From project.xml alone the sends come one after the other, with the right destinations.
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	const std::string other = utf8(dir.path() / "other.dawproject");
+	writeZip(other, entries);
+	run(client, "project.load", {{"path", other}});
+	const Json loaded = run(client, "project.get");
+	REQUIRE(loaded.at("channels").size() == 3);
+	const Json& loadedSends = loaded.at("channels")[0].at("sends");
+	CHECK(loadedSends[0].at("destination") == loaded.at("channels")[1].at("id"));
+	CHECK(loadedSends[0].at("on") == true);
+	CHECK(std::abs(loadedSends[0].at("level").get<double>() + 6.0) < 1e-9);
+	CHECK(loadedSends[0].at("preFader") == false);
+	CHECK(loadedSends[1].at("destination") == loaded.at("channels")[2].at("id"));
+	CHECK(loadedSends[1].at("on") == false);
+	CHECK(loadedSends[1].at("level") == -144.0);
+	CHECK(loadedSends[1].at("preFader") == true);
+	CHECK(loadedSends[2].at("destination") == 0);
+}
+
+TEST_CASE(
+	"loading clears sends to what can't take them and sends that close a loop, from either entry", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const ObjectId audio = idOf(run(client, "track.add", {{"type", "audio"}, {"name", "Audio"}}), "channel");
+	const ObjectId other = idOf(run(client, "track.add", {{"type", "audio"}, {"name", "Other"}}), "channel");
+	const ObjectId first = idOf(run(client, "track.add", {{"type", "effect"}, {"name", "First"}}), "channel");
+	const ObjectId second = idOf(run(client, "track.add", {{"type", "effect"}, {"name", "Second"}}), "channel");
+	const ObjectId bus = run(client, "project.get").at("busses")[1].at("id").get<ObjectId>();
+	Json toFirst = Json::array();
+	for (int s = 1; s <= 4; ++s)
+		toFirst.push_back({{"send", s}, {"destination", first}});
+	run(client, "channel.set", {{"channel", audio}, {"sends", toFirst}});
+	run(client, "channel.set", {{"channel", first}, {"sends", {{{"send", 1}, {"destination", second}}}}});
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}});
+	const std::map<std::string, std::string> saved = readZip(file);
+
+	// Audio sends to an audio channel, a bus and nothing there; Second sends back to First.
+	const auto check = [&client](const std::string& path)
+	{
+		run(client, "project.load", {{"path", path}});
+		const Json project = run(client, "project.get");
+		const auto sendsOf = [&project](const std::string& name)
+		{
+			for (const Json& track : project.at("tracks"))
+				if (track.at("name") == name)
+					for (const Json& channel : project.at("channels"))
+						if (channel.at("id") == track.at("channel"))
+							return channel.at("sends");
+			return Json(); // no such track: the checks below fail
+		};
+		const Json audioSends = sendsOf("Audio");
+		const Json firstSends = sendsOf("First");
+		const Json secondSends = sendsOf("Second");
+		CHECK(audioSends[0].at("destination") != 0);
+		CHECK(audioSends[1].at("destination") == 0);
+		CHECK(audioSends[2].at("destination") == 0);
+		CHECK(audioSends[3].at("destination") == 0);
+		// Of the two sends that make a loop, one loses its destination.
+		CHECK((firstSends[0].at("destination") == 0) != (secondSends[0].at("destination") == 0));
+		const Json graph = run(client, "graph.get");
+		CHECK(graph.at("order").size() == graph.at("nodes").size());
+	};
+
+	// GNUbase's entry.
+	std::map<std::string, std::string> entries = saved;
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	for (Json& channel : extension.at("project").at("channels"))
+	{
+		if (channel.at("id") == audio)
+		{
+			channel.at("sends")[1]["destination"] = other;
+			channel.at("sends")[2]["destination"] = bus;
+			channel.at("sends")[3]["destination"] = 999999;
+		}
+		if (channel.at("id") == second)
+			channel.at("sends")[0]["destination"] = first;
+	}
+	entries["gnubase.json"] = extension.dump();
+	const std::string fromJson = utf8(dir.path() / "json.dawproject");
+	writeZip(fromJson, entries);
+	check(fromJson);
+
+	// project.xml alone.
+	entries = saved;
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	pugi::xml_document xml;
+	REQUIRE(xml.load_string(entries.at("project.xml").c_str()));
+	const pugi::xml_node structure = xml.child("Project").child("Structure");
+	const auto channelNamed = [&structure](const char* name)
+	{ return structure.find_child_by_attribute("Track", "name", name).child("Channel"); };
+	const pugi::xml_node audioChannel = channelNamed("Audio");
+	pugi::xml_node send = audioChannel.child("Sends").child("Send").next_sibling("Send");
+	send.attribute("destination") = channelNamed("Other").attribute("id").as_string();
+	send = send.next_sibling("Send");
+	send.attribute("destination") = audioChannel.attribute("destination").as_string(); // the main output
+	send = send.next_sibling("Send");
+	send.attribute("destination") = "nothing";
+	const pugi::xml_node firstSends = channelNamed("First").child("Sends");
+	REQUIRE(firstSends);
+	const pugi::xml_node secondSends = channelNamed("Second").append_copy(firstSends);
+	secondSends.child("Send").attribute("destination") = channelNamed("First").attribute("id").as_string();
+	std::ostringstream text;
+	xml.save(text);
+	entries["project.xml"] = text.str();
+	const std::string xmlOnly = utf8(dir.path() / "xml.dawproject");
+	writeZip(xmlOnly, entries);
+	check(xmlOnly);
+}
+
+TEST_CASE("track, event and part colors and the color set are saved; the colors also in project.xml", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const ObjectId audio = idOf(run(client, "track.add", {{"type", "audio"}, {"color", "#102030"}}), "track");
+	const ObjectId midi = idOf(run(client, "track.add", {{"type", "midi"}}), "track");
+	const std::string wav = utf8(dir.path() / "tone.wav");
+	writeWav(wav, 48000.0, 1, 48000);
+	const ObjectId media = idOf(run(client, "media.add", {{"path", wav}}), "media");
+	const ObjectId clip = idOf(run(client, "clip.add", {{"media", media}}), "clip");
+	const ObjectId event =
+		idOf(run(client, "audioEvent.add", {{"track", audio}, {"clip", clip}, {"position", 0}}), "event");
+	run(client, "audioEvent.add", {{"track", audio}, {"clip", clip}, {"position", 7680}});
+	const ObjectId part =
+		idOf(run(client, "midiPart.add", {{"track", midi}, {"position", 0}, {"length", 1920}}), "part");
+	run(client, "event.set", {{"events", {event, part}}, {"color", "#c08040"}});
+	run(client, "project.set", {{"colors", {{{"name", "Mine"}, {"color", "#abcdef"}}}}});
+	const Json before = run(client, "project.get");
+	const std::string file = utf8(dir.path() / "colors.dawproject");
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+	run(client, "project.load", {{"path", file}});
+	CHECK(run(client, "project.get") == before);
+
+	// project.xml has the track and clip colors; the color set and "follows its track" are GNUbase's.
+	std::map<std::string, std::string> entries = readZip(file);
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	const std::string other = utf8(dir.path() / "other.dawproject");
+	writeZip(other, entries);
+	run(client, "project.load", {{"path", other}});
+	const Json loaded = run(client, "project.get");
+	CHECK(loaded.at("tracks")[0].at("color") == "#102030");
+	REQUIRE(loaded.at("audioEvents").size() == 2);
+	std::vector<Json> eventColors;
+	for (const Json& item : loaded.at("audioEvents"))
+		eventColors.push_back(item.at("color"));
+	CHECK(std::count(eventColors.begin(), eventColors.end(), Json("#c08040")) == 1);
+	CHECK(std::count_if(eventColors.begin(), eventColors.end(), [](const Json& c) { return c.is_null(); }) == 1);
+	REQUIRE(loaded.at("midiParts").size() == 1);
+	CHECK(loaded.at("midiParts")[0].at("color") == "#c08040");
+	CHECK(loaded.at("colors").size() == 16); // the factory set
+}
+
 TEST_CASE("automation on linear tracks is written in seconds; numbers that aren't finite don't load", "[integration]")
 {
 	const test::TempDir dir;
@@ -1096,4 +1417,76 @@ TEST_CASE("automation on linear tracks is written in seconds; numbers that aren'
 		for (const Json& point : points)
 			CHECK(std::isfinite(point.at("value").get<double>()));
 	}
+}
+
+TEST_CASE("built-in plugins in slots are devices in project.xml, and come back from it", "[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	const Json audio = run(client, "track.add", {{"type", "audio"}, {"name", "Audio"}});
+	const ObjectId channel = idOf(audio, "channel");
+	const ObjectId gain =
+		idOf(run(client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:gainPan"}}), "slot");
+	run(client, "parameter.set",
+		{{"channel", channel}, {"target", {{"type", "plugin"}, {"slot", gain}, {"parameter", 0}}}, {"value", -3.0}});
+	run(client, "plugin.set", {{"slot", gain}, {"bypass", true}});
+	const ObjectId eq = idOf(run(client, "plugin.insert", {{"channel", channel}, {"plugin", "builtin:eq"}}), "slot");
+	run(client, "plugin.set", {{"slot", eq}, {"active", false}});
+	const std::string file = utf8(dir.path() / "slots.dawproject");
+	run(client, "project.save", {{"path", file}});
+
+	std::map<std::string, std::string> entries = readZip(file);
+	pugi::xml_document xml;
+	REQUIRE(xml.load_string(entries.at("project.xml").c_str()));
+	pugi::xml_node devices = xml.child("Project")
+								 .child("Structure")
+								 .find_child_by_attribute("Track", "name", "Audio")
+								 .child("Channel")
+								 .child("Devices");
+	CHECK(devices == devices.parent().first_child()); // a Channel's first element
+	const pugi::xml_node first = devices.child("BuiltinDevice");
+	CHECK(std::string(first.attribute("deviceID").as_string()) == "builtin:gainPan");
+	CHECK(std::string(first.attribute("deviceRole").as_string()) == "audioFX");
+	CHECK(first.attribute("loaded").as_bool());
+	CHECK(!first.child("Enabled").attribute("value").as_bool(true));
+	const pugi::xml_node parameter = first.child("Parameters").child("RealParameter");
+	CHECK(parameter.attribute("parameterID").as_uint(99) == 0);
+	CHECK(parameter.attribute("value").as_double() == -3.0);
+	CHECK(std::string(parameter.attribute("unit").as_string()) == "decibel"); // required by the format
+	for (const pugi::xml_node device : devices.children())
+		for (const pugi::xml_node real : device.child("Parameters").children("RealParameter"))
+			CHECK(!std::string(real.attribute("unit").as_string()).empty());
+	CHECK(!first.next_sibling("BuiltinDevice").attribute("loaded").as_bool(true));
+
+	// Another application's file: its own devices and ones this build doesn't have are left out, values stop at
+	// their parameter's range, and a channel takes at most 16.
+	pugi::xml_node unknown = devices.append_child("BuiltinDevice");
+	unknown.append_attribute("deviceID") = "builtin:nothing";
+	devices.append_child("Vst3Plugin").append_attribute("deviceID") = "0123456789ABCDEF0123456789ABCDEF";
+	for (int i = 0; i < 20; ++i)
+	{
+		pugi::xml_node extra = devices.append_child("BuiltinDevice");
+		extra.append_attribute("deviceID") = "builtin:gainPan";
+		pugi::xml_node real = extra.append_child("Parameters").append_child("RealParameter");
+		real.append_attribute("parameterID") = 0;
+		real.append_attribute("value") = 1000.0;
+	}
+	std::ostringstream changed;
+	xml.save(changed);
+	entries["project.xml"] = changed.str();
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	const std::string other = utf8(dir.path() / "other.dawproject");
+	writeZip(other, entries);
+	run(client, "project.load", {{"path", other}});
+	const Json loaded = run(client, "project.get");
+	const Json slots = run(client, "plugin.list", {{"channel", loaded.at("channels")[0].at("id")}}).at("slots");
+	REQUIRE(slots.size() == 16);
+	CHECK(slots[0].at("plugin") == "builtin:gainPan");
+	CHECK(slots[0].at("name") == "Gain and pan");
+	CHECK(slots[0].at("bypass") == true);
+	CHECK(slots[0].at("parameters") == Json::array({{{"parameter", 0}, {"value", -3.0}}}));
+	CHECK(slots[1].at("plugin") == "builtin:eq");
+	CHECK(slots[1].at("active") == false);
+	CHECK(slots[2].at("parameters") == Json::array({{{"parameter", 0}, {"value", 12.0}}}));
 }

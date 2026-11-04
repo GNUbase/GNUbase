@@ -78,7 +78,7 @@ TEST_CASE("GNUbase's themes are the folders in resources/themes with a theme sty
 {
 	const test::FakeUi fake{{{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}}};
 	const ui::Themes themes(resources());
-	CHECK(themes.names() == std::vector<std::string>{"dark", "gnubase", "light"});
+	CHECK(themes.names() == std::vector<std::string>{"dark", "gnubase", "high-contrast", "light"});
 	CHECK(themes.has(ui::g_defaultTheme));
 	CHECK(themes.has("light"));
 	CHECK(!themes.has("neon"));
@@ -125,7 +125,7 @@ TEST_CASE("every document gets the design system and the active theme's colors, 
 		window.requestRender();
 		fake.shell.step(milliseconds(0));
 	};
-	for (const std::string theme : {"gnubase", "dark", "light", "gnubase"})
+	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast", "gnubase"})
 	{
 		INFO("theme " << theme);
 		fake.shell.setTheme(theme);
@@ -153,6 +153,45 @@ TEST_CASE("every document gets the design system and the active theme's colors, 
 		// The design system's layout, and the document's own, which comes last.
 		CHECK(ok->GetComputedValues().padding_left().value == 10.0F);
 		CHECK(wide->GetComputedValues().padding_left().value == 40.0F);
+	}
+}
+
+TEST_CASE("every theme dims the edit history's undone steps, details too, and draws its separator", "[unit]")
+{
+	test::FakeUi fake{{{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}}};
+	ui::Fonts(resources() / "fonts").load();
+	const ui::Themes themes(resources());
+	ui::Window& window = fake.shell.open(spec());
+	// The edit history panel's elements (ui/historypanel.h, docs/features/edit-history.md).
+	Rml::ElementDocument* document = window.context().LoadDocumentFromMemory(R"(<rml><body>
+		<listview class="history"><table><tbody><tr id="done"><td class="action">Add track</td></tr></tbody></table>
+		<div class="history-grip"><div class="history-separator" id="separator"/></div>
+		<table><tbody><tr id="undone" class="undone"><td class="action">Add track</td>
+			<td class="details"><input type="text" id="details" value="note"/></td></tr></tbody></table></listview>
+	</body></rml>)");
+	REQUIRE(document != nullptr);
+	document->Show();
+	Rml::Element* done = document->GetElementById("done");
+	Rml::Element* undone = document->GetElementById("undone");
+	Rml::Element* separator = document->GetElementById("separator");
+	Rml::Element* details = document->GetElementById("details");
+	REQUIRE(done != nullptr);
+	REQUIRE(details != nullptr);
+	REQUIRE(undone != nullptr);
+	REQUIRE(separator != nullptr);
+
+	for (const std::string theme : {"gnubase", "dark", "light"})
+	{
+		INFO("theme " << theme);
+		fake.shell.setTheme(theme);
+		window.requestRender();
+		fake.shell.step(milliseconds(0));
+		const nlohmann::json token = tokens(theme);
+		CHECK(done->GetComputedValues().color() == color(token.at("text")));
+		CHECK(undone->GetComputedValues().color() == color(token.at("textMuted")));
+		CHECK(details->GetComputedValues().color() == color(token.at("textMuted")));
+		CHECK(separator->GetComputedValues().background_color() == color(token.at("accent")));
+		CHECK(separator->GetBox().GetSize().y > 0.0F);
 	}
 }
 

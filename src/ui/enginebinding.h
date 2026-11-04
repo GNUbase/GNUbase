@@ -52,8 +52,23 @@ namespace gnubase::ui
 		void send(std::string command, engine::Json parameters = engine::Json::object(),
 			std::function<void(const engine::Result&)> done = {});
 
+		// Sends document commands ({"command", "parameters"} each) as a step of a value widget's gesture (the
+		// "gesture" parameter of its change event, ui/widgets.h): a history.transaction named description whose merge
+		// key is what the gesture changes (e.g. "channel 5 volume") and the gesture, so that a drag, wheel turns or a
+		// held arrow key are one undo step. With gesture 0 the commands are a step of their own.
+		void sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,
+			std::function<void(const engine::Result&)> done = {});
+
+		// How many commands of that name were sent and their results not handed on yet, e.g. for tests of how many
+		// queries a view keeps open.
+		size_t waiting(const std::string& command) const;
+
 		// Calls handler in update() with every event of that name while the subscription exists.
 		[[nodiscard]] Subscription on(std::string event, std::function<void(const engine::Event&)> handler);
+
+		// Calls handler in update() with the result of every command of that name sent through the binding, after
+		// the sender's done, while the subscription exists: e.g. to show what a command run from a menu did.
+		[[nodiscard]] Subscription onResult(std::string command, std::function<void(const engine::Result&)> handler);
 
 		// Calls apply in update() with what read returns, the first time and whenever it changed since: for values
 		// that change faster than the UI draws, such as the playback position and meters, which the UI reads once a
@@ -101,6 +116,7 @@ namespace gnubase::ui
 		engine::Client m_client;
 		std::map<engine::RequestId, Waiting> m_waiting; // commands sent, until their results arrive
 		std::map<uint64_t, Handler> m_handlers;
+		std::map<uint64_t, Waiting> m_resultHandlers; // onResult's, by subscription
 		std::map<uint64_t, std::function<void()>> m_watches;
 		uint64_t m_nextId = 1;
 	};

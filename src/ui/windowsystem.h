@@ -4,15 +4,18 @@
 #include "ui/displays.h"
 
 #include <RmlUi/Core/Header.h>
+#include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/Types.h>
 
-#include <RmlUi/Core/TextInputHandler.h> // needs the two above
+#include <RmlUi/Core/TextInputHandler.h> // needs Header.h and Types.h above
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 // What the shell needs from the operating system's windowing: monitors, top-level windows and their events. SDL3
@@ -27,6 +30,19 @@ namespace gnubase::ui
 		Size size{1280, 800};       // in desktop coordinates; used if bounds is empty
 		std::optional<Rect> bounds; // where to open it, e.g. from a workspace (#163); centred on the primary otherwise
 		bool hidden = false;        // tests and offscreen screenshots
+	};
+
+	// A key pressed with the modifiers held, as RmlUi has them: Rml::Input::KeyModifier flags.
+	struct KeyPress
+	{
+		Rml::Input::KeyIdentifier key = Rml::Input::KI_UNKNOWN;
+		int modifiers = 0;
+
+		bool operator==(const KeyPress& other) const { return key == other.key && modifiers == other.modifiers; }
+		bool operator<(const KeyPress& other) const
+		{
+			return std::make_pair(key, modifiers) < std::make_pair(other.key, other.modifiers);
+		}
 	};
 
 	enum class WindowEventKind : uint8_t
@@ -54,6 +70,8 @@ namespace gnubase::ui
 		std::vector<std::filesystem::path> files; // FilesDropped: the files; FileDialogClosed: what the user chose
 		uint64_t dialog = 0;                      // FileDialogClosed: the id showFileDialog was given
 		std::string error;                        // FileDialogClosed: why the dialog failed; empty if it didn't
+		std::optional<KeyPress> key;              // Input: a key pressed that no element used, for key commands
+		std::optional<KeyPress> keyUp; // Input: a key released; KI_UNKNOWN for every key, as when the focus went
 	};
 
 	enum class FileDialogKind : uint8_t
@@ -79,6 +97,29 @@ namespace gnubase::ui
 		WindowId parent = 0;             // the window the dialog belongs to, if the OS supports that
 	};
 
+	// A mouse pointer's picture at a display scale: 8-bit RGBA, not premultiplied, top row first, with the point it
+	// points with in its pixels.
+	struct CursorImage
+	{
+		float scale = 1.0F;
+		int width = 0;
+		int height = 0;
+		std::vector<uint8_t> pixels; // width * height * 4 bytes
+		Point hotspot;
+	};
+
+	// The CSS names of the OS's own pointers that the window systems show.
+	inline constexpr std::array<const char*, 11> g_systemCursors = {"crosshair", "ew-resize", "move", "nesw-resize",
+		"not-allowed", "ns-resize", "nwse-resize", "pointer", "progress", "text", "wait"};
+
+	// A mouse pointer as the style sheets name it with RmlUi's cursor property (ui/cursors.h): the OS's arrow for no
+	// name, one of the OS's own by its CSS name (g_systemCursors), or GNUbase's own with its pictures.
+	struct Cursor
+	{
+		std::string name;
+		std::vector<CursorImage> images; // by scale, the first at 1; empty for the OS's pointers
+	};
+
 	class WindowSystem
 	{
 	public:
@@ -93,6 +134,10 @@ namespace gnubase::ui
 
 		virtual Rect bounds(WindowId window) const = 0;
 		virtual void setBounds(WindowId window, const Rect& bounds) = 0;
+
+		// Brings the window in front of the others with the keyboard focus, restoring it first if it is minimized. The
+		// OS may refuse the focus, e.g. to an application that isn't active. A hidden window stays hidden.
+		virtual void raise(WindowId window) = 0;
 
 		// The size of what the window shows, in pixels.
 		virtual Size pixelSize(WindowId window) const = 0;
@@ -112,6 +157,9 @@ namespace gnubase::ui
 		// The system clipboard, as text.
 		virtual std::string clipboardText() const = 0;
 		virtual void setClipboardText(const std::string& text) = 0;
+
+		// The mouse pointer over GNUbase's windows. A name the OS doesn't have shows its arrow.
+		virtual void setCursor(const Cursor& cursor) = 0;
 
 		// Shows the OS's file dialog without waiting for it. What the user chooses, or why the dialog failed, comes
 		// later as a FileDialogClosed event with the given id.

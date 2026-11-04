@@ -8,6 +8,7 @@
 #include "testutils/fakeui.h"
 #include "ui/fonts.h"
 #include "ui/renderer.h"
+#include "ui/rmlui.h"
 #include "ui/shell.h"
 
 #include <RmlUi/Core/Context.h>
@@ -207,7 +208,8 @@ TEST_CASE("the UI tools are listed, those that only read marked read-only", "[un
 		readOnly[tool.at("name").get<std::string>()] = tool.at("annotations").at("readOnlyHint");
 	for (const char* name : {"ui_windows", "ui_dom", "ui_screenshot", "ui_wait"})
 		CHECK(readOnly.value(name, false));
-	for (const char* name : {"ui_move", "ui_click", "ui_drag", "ui_wheel", "ui_key", "ui_text"})
+	for (const char* name :
+		{"ui_move", "ui_click", "ui_drag", "ui_drop", "ui_wheel", "ui_key", "ui_text", "ui_close", "ui_file_dialog"})
 		CHECK(readOnly.value(name, true) == false);
 }
 
@@ -348,6 +350,23 @@ TEST_CASE("ui_move hovers, ui_wheel scrolls and ui_drag drops one element on ano
 	CHECK(recorder.events.at("dragdrop").at("target") == "target");
 }
 
+TEST_CASE("ui_drop drops files on an element, as the window system does", "[unit]")
+{
+	Fixture fixture;
+	Recorder recorder;
+	fixture.main->AddEventListener(ui::g_fileDropEvent, &recorder);
+	const Json dropped = fixture.call("ui_drop", {{"selector", "#target"}, {"files", {"a.wav", "b.mid"}}});
+	CHECK(dropped.at("element").at("id") == "target");
+	const Json& event = recorder.events.at(ui::g_fileDropEvent);
+	CHECK(event.at("target") == "target");
+	CHECK(event.at("files") == "a.wav\nb.mid");
+	CHECK(event.at("count") == "2");
+	CHECK(event.at("mouse_x") == "290"); // the centre of #target, 250 to 330 by 100 to 180
+	CHECK(event.at("mouse_y") == "140");
+	CHECK_THAT(
+		fixture.fail("ui_drop", {{"selector", "#target"}, {"files", Json::array()}}), ContainsSubstring("needs files"));
+}
+
 TEST_CASE("ui_screenshot returns a PNG of a window or of one element", "[unit]")
 {
 	Fixture fixture;
@@ -416,4 +435,77 @@ TEST_CASE("a UI tool fails at once when the UI quits before running it", "[unit]
 	const Json result = Json::parse(answer.get().value_or("{}")).at("result");
 	CHECK(result.at("isError") == true);
 	CHECK_THAT(result.at("content")[0].at("text").get<std::string>(), ContainsSubstring("closed"));
+}
+
+TEST_CASE("ui_close asks to close a window, or to quit, as the OS does, in the UI's next step", "[unit]")
+{
+	std::vector<ui::WindowId> closing;  // before the fixture, whose shell holds the handlers
+	std::vector<ui::WindowId> quitting; // that record into them
+	Fixture fixture;
+	ui::Shell& shell = fixture.ui.shell;
+	const ui::WindowId main = fixture.window->id();
+	const ui::WindowId other = fixture.open({800, 100, 400, 300}, "boxes.rml")->id();
+	shell.onCloseRequest([&closing](ui::Window& window) { closing.push_back(window.id()); });
+	shell.onQuitRequest([&quitting](ui::Window& window) { quitting.push_back(window.id()); });
+	const auto stepUntil = [&shell](const auto& done)
+	{
+		for (int i = 0; i < 100 && !done(); ++i)
+			shell.step(milliseconds(1));
+		return done();
+	};
+
+	// A window other than the main window: its handler runs, and it closes.
+	fixture.call("ui_close", {{"window", other}});
+	CHECK(stepUntil([&shell, other] { return shell.find(other) == nullptr; }));
+	CHECK(closing == std::vector<ui::WindowId>{other});
+
+	// The main window, as the default, and quit ask the quit request handler, which decides.
+	fixture.call("ui_close");
+	CHECK(stepUntil([&quitting] { return quitting.size() == 1; }));
+	fixture.call("ui_close", {{"quit", true}});
+	CHECK(stepUntil([&quitting] { return quitting.size() == 2; }));
+	CHECK(quitting == std::vector<ui::WindowId>{main, main});
+	CHECK(closing.size() == 1);
+	CHECK(shell.running());
+
+	CHECK_THAT(fixture.fail("ui_close", {{"window", 99}}), ContainsSubstring("no window 99"));
+	CHECK_THAT(fixture.fail("ui_close", {{"window", main}, {"quit", true}}), ContainsSubstring("leave window out"));
+	CHECK_THAT(fixture.fail("ui_close", {{"quit", "yes"}}), ContainsSubstring("quit"));
+
+	// Without a handler, quit quits.
+	shell.onQuitRequest({});
+	fixture.call("ui_close", {{"quit", true}});
+	CHECK(stepUntil([&shell] { return !shell.running(); }));
+}
+
+TEST_CASE("ui_file_dialog lists the file dialogs that wait and answers them as the user would", "[unit]")
+{
+	Fixture fixture;
+	CHECK(fixture.call("ui_file_dialog").at("dialogs").empty());
+	std::vector<ui::FileDialogResult> results;
+	const auto record = [&results](const ui::FileDialogResult& result) { results.push_back(result); };
+	ui::FileDialog open;
+	open.title = "Open Project";
+	open.filters = {{"DAWproject", "dawproject"}};
+	fixture.ui.shell.showFileDialog(open, record);
+	ui::FileDialog folder;
+	folder.kind = ui::FileDialogKind::Folder;
+	fixture.ui.shell.showFileDialog(folder, record);
+
+	const Json dialogs = fixture.call("ui_file_dialog").at("dialogs");
+	REQUIRE(dialogs.size() == 2);
+	CHECK(dialogs[0].at("kind") == "open");
+	CHECK(dialogs[0].at("title") == "Open Project");
+	CHECK(dialogs[0].at("filters") == Json::parse(R"([{"name": "DAWproject", "extensions": "dawproject"}])"));
+	CHECK(dialogs[1].at("kind") == "folder");
+
+	const Json left =
+		fixture.call("ui_file_dialog", {{"dialog", dialogs[0].at("id")}, {"files", {"song.dawproject"}}}).at("dialogs");
+	CHECK(left.size() == 1);
+	REQUIRE(results.size() == 1);
+	CHECK(results[0].files == std::vector<std::filesystem::path>{"song.dawproject"});
+	CHECK(fixture.call("ui_file_dialog", {{"dialog", dialogs[1].at("id")}}).at("dialogs").empty());
+	REQUIRE(results.size() == 2);
+	CHECK(results[1].cancelled());
+	CHECK_THAT(fixture.fail("ui_file_dialog", {{"dialog", 99}}), ContainsSubstring("99"));
 }

@@ -3,6 +3,7 @@
 
 #include "engine/schema.h"
 #include "platform/audio/device.h"
+#include "platform/hosttime.h"
 #include "platform/midi/inputqueue.h"
 #include "platform/midi/port.h"
 #include "platform/rt/spscqueue.h"
@@ -17,17 +18,25 @@
 
 namespace gnubase::engine
 {
+	class CommandContext;
 	class Engine;
 
+	namespace settings
+	{
+		class Store;
+	}
+
 	// The ports of every MIDI backend, with their settings: the name they are shown as, whether they are visible, and
-	// whether an input belongs to "all MIDI inputs". The first midi command lists the ports and opens the visible
-	// inputs, so an engine that never uses MIDI leaves the hardware alone. Their messages reach the audio thread, which
-	// places them in its blocks. A port that disappears keeps its settings and opens again when it comes back. Only the
-	// command thread changes ports; outputs open once something sends to them.
+	// whether an input belongs to "all MIDI inputs". The settings are the user setting midi.portSettings, so they last
+	// across restarts and wait for ports that aren't connected. The first midi command lists the ports and opens the
+	// visible inputs, so an engine that never uses MIDI leaves the hardware alone. Their messages reach the audio
+	// thread, which places them in its blocks. A port that disappears is listed as not present and opens again when it
+	// comes back. Only the command thread changes ports; outputs open once something sends to them.
 	class MidiPorts
 	{
 	public:
-		explicit MidiPorts(std::vector<std::unique_ptr<gnubase::midi::Backend>> backends);
+		// The user settings are the engine's; only the command thread reads them.
+		MidiPorts(const settings::Store& settings, std::vector<std::unique_ptr<gnubase::midi::Backend>> backends);
 		~MidiPorts(); // closes the ports
 		MidiPorts(const MidiPorts&) = delete;
 		MidiPorts& operator=(const MidiPorts&) = delete;
@@ -39,13 +48,19 @@ namespace gnubase::engine
 		// Lists the ports again, opens new and returning visible inputs, closes the others. True if anything changed.
 		bool refresh();
 
-		// Changes a port's settings as midi.setPort does and returns the port. Lists the ports first if they never
-		// were.
-		Json setPort(const Json& parameters);
+		// After a command changed midi.portSettings: the listed ports follow their settings, opening or closing inputs,
+		// without listing the hardware again, and the command emits them as midi.changed. A port that appeared
+		// meanwhile waits for the midi.refresh its backend posted, which reports it; this never adds ports, so
+		// midi.setPort keeps its port across the change. Nothing while unlisted.
+		void applySettings(CommandContext& context);
 
 		// Audio thread, once per block: the messages that arrived for this block go into allInputs if their port
 		// belongs to all MIDI inputs, and to the monitor (midi.monitor) at their frame position.
 		void take(const audio::DeviceBlock& block, double sampleRate, audio::MidiBuffer& allInputs) noexcept;
+
+		// Any thread but an audio thread: a message from the on-screen keyboard (midi.keyboard), which belongs to all
+		// MIDI inputs and arrives now, as a port's would. False if the input queue is full.
+		bool play(const audio::MidiMessage& message) { return m_queue.push(g_keyboardSlot, message, hostTime()); }
 
 		// Drops the input that waits for the audio thread. Only while no audio thread takes.
 		void clear() { m_queue.clear(); }
@@ -54,13 +69,11 @@ namespace gnubase::engine
 		static constexpr size_t g_maxInputs = 256;
 
 	private:
+		static constexpr int g_keyboardSlot = -1; // the on-screen keyboard's in the input queue
 		struct Port
 		{
 			gnubase::midi::Backend* backend = nullptr;
 			gnubase::midi::PortInfo info;
-			std::string showAs; // empty: the system name
-			bool visible = true;
-			bool inAllInputs = true;
 			bool present = true;
 			int slot = -1; // an input's index in m_allInputs and in the input queue
 			std::unique_ptr<gnubase::midi::Input> input;
@@ -76,10 +89,18 @@ namespace gnubase::engine
 
 		void open(Port& port);
 		void listOnce();
-		Port& find(const Json& parameters);
-		static Json toJson(const Port& port);
+		bool listHardware();   // adds new ports, marks the others present or not; true if that changed any
+		bool followSettings(); // opens and closes inputs, sets the all-inputs flags; true if an input opened or closed
+		size_t find(const Json& parameters) const;             // the port's index in m_ports
+		Json setPort(Engine& engine, CommandContext& context); // midi.setPort
+		static std::string key(const Port& port);              // in midi.portSettings: backend/in or out/id
+		Json setting(const Port& port) const;                  // its entry there; empty while it has the defaults
+		bool visible(const Port& port) const { return setting(port).value("visible", true); }
+		bool inAllInputs(const Port& port) const { return port.info.input && setting(port).value("inAllInputs", true); }
+		Json toJson(const Port& port) const;
 		Json list() const;
 
+		const settings::Store& m_settings;
 		std::vector<std::unique_ptr<gnubase::midi::Backend>> m_backends;
 		std::vector<Port> m_ports;
 		bool m_listed = false;

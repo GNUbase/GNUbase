@@ -54,11 +54,10 @@ namespace
 	Json bus(Client& client, ObjectId id)
 	{
 		const Json busses = projectList(client, "busses");
-		const auto found =
-			std::find_if(busses.begin(), busses.end(), [id](const Json& entry) { return entry.at("id") == id; });
-		INFO("bus " << id);
-		REQUIRE(found != busses.end());
-		return *found;
+		const auto entry = std::find_if(busses.begin(), busses.end(), [id](const Json& b) { return b.at("id") == id; });
+		INFO("no bus " << id);
+		REQUIRE(entry != busses.end());
+		return *entry;
 	}
 
 	std::vector<ObjectId> busIds(Client& client, const char* direction)
@@ -86,12 +85,12 @@ namespace
 				{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 441.0}, {"Level", 0.1}}}}}});
 	}
 
-	// An audio track on the first input bus, which passes the sine on to output (a bus id).
+	// An audio track on the first input bus, which monitors the sine on output (a bus id).
 	ObjectId addTrack(Client& client, ObjectId output, const char* format = "stereo")
 	{
 		const Json track = run(client, "track.add", {{"type", "audio"}, {"format", format}});
 		const ObjectId channel = track.at("channel").at("id").get<ObjectId>();
-		run(client, "channel.set", {{"channel", channel}, {"output", output}});
+		run(client, "channel.set", {{"channel", channel}, {"output", output}, {"monitor", true}});
 		return channel;
 	}
 
@@ -371,10 +370,13 @@ TEST_CASE("audio.ports lists the device's ports with their busses, and missing p
 
 	const Json ports = run(client, "audio.ports");
 	REQUIRE(ports.at("inputs").size() == 2);
-	CHECK(ports.at("inputs")[0] == Json{{"name", "Input 1"}, {"busses", {stereoIn}}});
+	CHECK(ports.at("inputs")[0] ==
+		Json{{"name", "Input 1"}, {"showAs", "Input 1"}, {"visible", true}, {"busses", {stereoIn}}});
 	REQUIRE(ports.at("outputs").size() == 4);
-	CHECK(ports.at("outputs")[0] == Json{{"name", "Output 1"}, {"busses", {stereoOut, cue}}});
-	CHECK(ports.at("outputs")[2] == Json{{"name", "Output 3"}, {"busses", Json::array()}});
+	CHECK(ports.at("outputs")[0] ==
+		Json{{"name", "Output 1"}, {"showAs", "Output 1"}, {"visible", true}, {"busses", {stereoOut, cue}}});
+	CHECK(ports.at("outputs")[2] ==
+		Json{{"name", "Output 3"}, {"showAs", "Output 3"}, {"visible", true}, {"busses", Json::array()}});
 	CHECK(ports.at("busses") ==
 		Json::array({{{"bus", stereoIn}, {"ports", names({"Input 1", "Input 2"})}},
 			{{"bus", stereoOut}, {"ports", names({"Output 1", "Output 2"})}},
@@ -506,11 +508,11 @@ TEST_CASE("bus presets: standard, from the device's ports, and the user's own", 
 	{ return run(client, "bus.presets", {{"direction", direction}}).at("presets"); };
 	const auto preset = [](const Json& list, const std::string& name)
 	{
-		const auto found =
-			std::find_if(list.begin(), list.end(), [&name](const Json& entry) { return entry.at("name") == name; });
-		INFO("preset " << name);
-		REQUIRE(found != list.end());
-		return *found;
+		const auto entry =
+			std::find_if(list.begin(), list.end(), [&name](const Json& p) { return p.at("name") == name; });
+		INFO("no preset " << name);
+		REQUIRE(entry != list.end());
+		return *entry;
 	};
 
 	const Json inputs = presets("input");
@@ -566,6 +568,44 @@ TEST_CASE("bus presets: standard, from the device's ports, and the user's own", 
 		reject(client, "bus.removePreset", {{"direction", "input"}, {"name", "Stereo"}}), ContainsSubstring("user"));
 	CHECK_THAT(
 		reject(client, "bus.applyPreset", {{"direction", "input"}, {"name", "Default"}}), ContainsSubstring("Default"));
+}
+
+TEST_CASE("two GNUbase processes on one settings folder each save bus presets and keep the other's", "[integration]")
+{
+	const test::TempDir dir;
+	Engine first(gnubase::audio::makeBackends(), dir.path());
+	Engine second(gnubase::audio::makeBackends(), dir.path());
+	Client one(first);
+	Client two(second);
+	const auto names = [&dir]
+	{
+		const Json presets =
+			Json::parse(test::readText(dir.path() / "settings.json")).at("values").at("audio.busPresets");
+		std::vector<std::string> result;
+		for (const char* direction : {"input", "output"})
+		{
+			const Json mine = presets.value(direction, Json::object());
+			for (const auto& item : mine.items())
+				result.push_back(std::string(direction) + " " + item.key());
+		}
+		return result;
+	};
+
+	// Each changes the presets that the file has now, not those it read when it started.
+	run(one, "bus.savePreset", {{"direction", "input"}, {"name", "One"}});
+	run(two, "bus.savePreset", {{"direction", "output"}, {"name", "Two"}});
+	run(one, "bus.savePreset", {{"direction", "input"}, {"name", "Three"}});
+	CHECK(names() == std::vector<std::string>{"input One", "input Three", "output Two"});
+	run(two, "bus.removePreset", {{"direction", "input"}, {"name", "Three"}});
+	CHECK(names() == std::vector<std::string>{"input One", "output Two"});
+	CHECK_THAT(reject(two, "bus.removePreset", {{"direction", "input"}, {"name", "Three"}}),
+		ContainsSubstring("no user bus preset Three"));
+
+	// Both use what the file has once they changed it.
+	const Json presets = run(two, "bus.presets", {{"direction", "input"}}).at("presets");
+	CHECK(std::any_of(presets.begin(), presets.end(), [](const Json& p) { return p.at("name") == "One"; }));
+	run(one, "bus.savePreset", {{"direction", "output"}, {"name", "Four"}});
+	CHECK(run(one, "settings.get", {{"key", "audio.busPresets"}}).at("value").at("output").contains("Two"));
 }
 
 TEST_CASE("a Default bus preset that doesn't work leaves new projects their standard busses", "[unit]")

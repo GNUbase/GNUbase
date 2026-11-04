@@ -1,13 +1,13 @@
 # Themes
 
 GNUbase's look is a theme that can be switched while GNUbase runs: `gnubase` (the default), `dark` and `light` to start
-with (#53). Code never styles the UI. C++ and Lua change an element's classes and pseudo-classes, and style sheets decide
+with (#53), and `high-contrast` ([accessibility.md](accessibility.md), #60). Code never styles the UI. C++ and Lua change an element's classes and pseudo-classes, and style sheets decide
 how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/themes.h`, `src/ui/uisettings.h` and
 `Shell::setTheme`.
 
 - **Design system.** The shared style sheets in `resources/styles` lay out every widget in `dp`: sizes, padding, the
   parts of drop-down lists, sliders, scroll bars and tabs. RmlUi has no default style sheet, so they also make `div`,
-  `p` and the like blocks. They hold no colors, fonts or skins.
+  `p` and the like blocks. They hold no colors, fonts, font sizes or skins (`tests/theme_tests.cpp` checks the sizes).
 - **Themes.** A theme is a folder in `resources/themes` with its skins (SVG), `manifest.json`, `tokens.json` and
   `theme.rcss`. `tools/skin/generate.py` makes all of them from one table of tokens per theme (colors, radii, border
   widths, font sizes and families), so the skins and the style sheet always agree; change the generator and run it
@@ -19,6 +19,8 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
   keep their size, the edges stretch along one axis and the middle along both, as with CSS's `border-image`. Fixed
   graphics (check marks, the slider's thumb, the knob, the fader cap, the meter) use `decorator: svg(<file>)`, which
   rasterizes at the element's size ([svg.md](svg.md)). Both find a file relative to the style sheet that names it.
+  A widget that the keyboard focused (`:focus-visible`) gets the theme's focus ring over the skin of its state, a
+  second decorator that the generator adds to each such rule ([accessibility.md](accessibility.md)).
   The default theme's glows are part of its skins, so they cost no extra render passes.
 - **Every document gets them.** While a `ui::Themes` exists, every document RmlUi loads gets the shared style sheets
   and every theme's style sheet ahead of its own style (an RmlUi plugin, on document load). Documents name neither a
@@ -40,17 +42,24 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   `.text-small`, `.text-muted`, `.text-accent`, and `.counter` for time and counter displays in the counter font.
 - **Icons:** `svg.icon` (resources/icons) in the text color, `.accent`, `.muted` or `.danger`; icons in buttons follow
   the button's state.
-- **Buttons:** `button` with `:hover`, `:active`, `:disabled`, `:focus-visible` and the state class `.checked`;
-  `button.primary`; `button.icon-only`; toggle buttons `button.toggle` with `.mute`, `.solo`, `.record` or `.monitor`
+- **Buttons:** `button` with `:hover`, `:active`, `:disabled`, `:focus-visible` and the state classes `.checked` and
+  `.suspended` (a switch that is on but paused, such as auto-scroll while editing); `button.primary`; `button.icon-only`; toggle buttons `button.toggle` with `.mute`, `.solo`, `.record` or `.monitor`
   and `.checked` when on.
 - **Fields and choices:** `input.text`, `input.password`, `textarea` (`:focus`, `:disabled`), `select` (`:hover`;
   `:focus` while open or focused), `input.checkbox` (`:checked`, `.mixed`), `input.radio`, `input.range`, `progress`,
   and the scroll bars.
-- **Containers:** `.dialog`, `.dialog-titlebar`, `.panel`, `.panel-header`, `.toolbar`, `.display`, `.tooltip`,
-  `.menu` with `.menu-item` and `.menu-separator`, `.list` with `.list-item` (`.selected`), `tabset` with its tabs.
-- **Mixer and editor parts** for the widget library (#54): `.knob`, `.knob-pointer`, `.fader`, `.fader-cap`, `.meter`,
-  `.meter-fill`, `.meter-peak`, `.splitter-grip-vertical`, `.splitter-grip-horizontal`, `.dropdown-arrow`,
+- **Containers:** `.dialog` (and `dialog`), `.dialog-titlebar`, `.panel`, `.panel-header`, `.toolbar`, `.display`,
+  `.tooltip` (and `tooltip`), `.menu` with `.menu-item` and `.menu-separator` (and `menu`, `menuitem` with `:hover`,
+  `:focus-visible`, `:disabled` and `.checked`, `menuseparator`), `.list` with `.list-item` (`.selected`) (and
+  `listview` with `listitem` and table rows, `.tree-toggle`), `tabset` with its tabs.
+- **Mixer and editor parts**, which the widget library's elements are made of ([widgets.md](widgets.md)): `.knob`,
+  `.knob-pointer`, `.fader`, `.fader-cap`, `.slider-track`, `.slider-fill`, `.slider-thumb`, `valuefield`, `.meter`,
+  `.meter-fill`, `.meter-peak`, the color picker's `.color-field`, `.color-hue` and their thumbs, `.splitter-grip-vertical`, `.splitter-grip-horizontal`, `.dropdown-arrow`,
   `.focus-ring`.
+- **Canvas elements** ([canvas.md](canvas.md)) by their tags: `event-lanes`, `waveform`, `curve` and `ruler`, with
+  `color` and the canvas properties `stroke-color` and `stroke-width`.
+- **Event display** ([event-display.md](event-display.md)): `.event-display` with `.overview`, `.overview-view`,
+  `.project-cursor`, `.cross-hair-vertical` and `.cross-hair-horizontal`.
 
 ## Checks
 
@@ -64,7 +73,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
 - `tests/svg_tests.cpp`: a 9-slice skin keeps its corners at their size at 100, 150 and 200 %, and is rasterized once
   per scale for any number of widgets of any size; decorators find their files next to the style sheet.
 - `tests/theme_tests.cpp`: every theme's style sheet uses all its skins and styles the same widgets and states as the
-  others.
+  others, draws the focus ring on every focusable widget in each of its states, and the high contrast theme meets
+  WCAG's contrast ratios.
 - `tests/stylerules_tests.cpp`: C++ and Lua code (`src`, `resources`, `tests/lua`) never sets a style property other
   than geometry from data (position, size, transform), and documents and shared style sheets never name a theme.
 - `tests/window_tests.cpp`: a page of widgets (`tests/data/ui/widgets.rml`) in every theme, and in the default theme

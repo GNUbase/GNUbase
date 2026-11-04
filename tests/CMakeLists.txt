@@ -5,6 +5,11 @@ add_library(gnubase-testutils STATIC
 	testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	target_sources(gnubase-testutils PRIVATE
+		testutils/fakertkit.cpp testutils/fakertkit.h)
+	target_link_libraries(gnubase-testutils PRIVATE PkgConfig::DBUS)
+endif()
 target_compile_definitions(gnubase-testutils PRIVATE
 	GNUBASE_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden"
 	GNUBASE_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/output"
@@ -16,70 +21,125 @@ set(settingsEnvironment "GNUBASE_SETTINGS_DIR=${CMAKE_CURRENT_BINARY_DIR}/output
 
 # One file per line, sorted, so that pull requests adding tests rarely touch the same lines.
 add_executable(gnubase-tests
+	accessibility_tests.cpp
+	addtrack_tests.cpp
 	analysis_tests.cpp
 	app_tests.cpp
 	audio_tests.cpp
 	audiofile_tests.cpp
+	audioimport_tests.cpp
+	audiopart_tests.cpp
 	automation_tests.cpp
+	automationtracks_tests.cpp
 	backup_tests.cpp
 	bus_tests.cpp
+	canvas_tests.cpp
 	channelformat_tests.cpp
+	channelstrip_tests.cpp
+	clock_tests.cpp
+	color_tests.cpp
 	coverage_tests.cpp
 	dawproject_tests.cpp
 	debugreports.cpp
 	device_tests.cpp
+	docking_tests.cpp
 	document_tests.cpp
+	editors_tests.cpp
 	effects_tests.cpp
 	engine_tests.cpp
 	enginebinding_tests.cpp
+	eventdisplay_tests.cpp
+	eventedit_tests.cpp
+	eventediting_tests.cpp
 	fade_tests.cpp
+	fades_ui_tests.cpp
+	fileimport_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
 	history_tests.cpp
+	historypanel_tests.cpp
+	inspector_tests.cpp
 	ipc_process_tests.cpp
 	ipc_tests.cpp
+	keycommands_tests.cpp
+	keyeditor_tests.cpp
+	keyeditor_ui_tests.cpp
 	latency_tests.cpp
+	listeditor_tests.cpp
+	listeditor_ui_tests.cpp
+	lockrecord_tests.cpp
 	log_tests.cpp
+	mainmenu_tests.cpp
 	marker_tests.cpp
+	markers_ui_tests.cpp
 	mcp_tests.cpp
 	mcpevents_tests.cpp
 	mcptools_tests.cpp
+	meter_tests.cpp
 	metronome_tests.cpp
 	midi_tests.cpp
 	mididevice_tests.cpp
 	midiedit_tests.cpp
+	midieditor_tests.cpp
 	midifile_tests.cpp
 	midifunctions_tests.cpp
+	midirecording_tests.cpp
+	miditap_tests.cpp
+	mixdown_tests.cpp
+	mixdown_ui_tests.cpp
 	mixer_tests.cpp
+	mixerviews_tests.cpp
+	mixerwindow_tests.cpp
+	monitoring_tests.cpp
 	multicore_tests.cpp
+	onscreenkeyboard_tests.cpp
 	parameter_tests.cpp
+	plugincommands_tests.cpp
+	pluginslots_tests.cpp
 	peaks_tests.cpp
 	performance_tests.cpp
 	playback_tests.cpp
 	plugin_api_tests.cpp
+	pool_tests.cpp
+	poolpanel_tests.cpp
 	processor_tests.cpp
+	projectfiles_tests.cpp
+	projectsetup_tests.cpp
 	quantize_tests.cpp
+	recording_tests.cpp
 	rmlui_tests.cpp
+	routing_tests.cpp
 	rt_tests.cpp
 	scripting_tests.cpp
 	sequencing_tests.cpp
 	settings_tests.cpp
 	shell_tests.cpp
+	signature_tests.cpp
+	signaturetrack_ui_tests.cpp
+	snap_tests.cpp
+	statusline_tests.cpp
 	streaming_tests.cpp
+	studiosetup_tests.cpp
 	stylerules_tests.cpp
 	svg_tests.cpp
+	tempo_tests.cpp
+	tempotrack_ui_tests.cpp
 	testing_tests.cpp
 	testutils_tests.cpp
 	theme_tests.cpp
 	time_tests.cpp
+	timeformat_tests.cpp
 	timestretch_tests.cpp
+	tracklist_tests.cpp
 	transport_tests.cpp
+	transportbar_tests.cpp
 	uiapp.cpp
 	uiapp.h
 	uiapp_tests.cpp
 	uisettings_tests.cpp
 	uithemes_tests.cpp
 	uitools_tests.cpp
+	volumecurve_tests.cpp
 	widgets_tests.cpp
 	window_tests.cpp)
 target_link_libraries(gnubase-tests PRIVATE
@@ -87,6 +147,7 @@ target_link_libraries(gnubase-tests PRIVATE
 	cpp-httplib
 	gnubase-app
 	gnubase-app-ui
+	gnubase-decoders
 	gnubase-engine
 	gnubase-ipc
 	gnubase-mcp
@@ -147,6 +208,11 @@ endif()
 add_executable(gnubase-bench bench/bench.cpp)
 target_link_libraries(gnubase-bench PRIVATE gnubase-engine)
 gnubase_target_defaults(gnubase-bench)
+# The canvas benchmark (#55): needs a display and a GPU, so it's run by hand (docs/features/canvas.md).
+add_executable(gnubase-canvas-bench bench/canvas_bench.cpp)
+target_link_libraries(gnubase-canvas-bench PRIVATE gnubase-ui SDL3::SDL3)
+target_compile_definitions(gnubase-canvas-bench PRIVATE GNUBASE_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources")
+gnubase_target_defaults(gnubase-canvas-bench)
 
 # ThreadSanitizer defines its own operator new/delete, which the RT checker replaces; every other build runs it.
 if(NOT GNUBASE_SANITIZERS MATCHES "thread")
@@ -178,6 +244,16 @@ foreach(luaTest IN LISTS luaTests)
 		"GNUBASE_GOLDEN_DIR=${CMAKE_CURRENT_SOURCE_DIR}/golden;GNUBASE_TEST_OUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/output;${settingsEnvironment}")
 endforeach()
 
+# Every tests/lua/ui/*.lua is a UI test in Lua (#208), which gnubase-tests runs in the app's UI (tests/uiapp_tests.cpp),
+# in the source folder like the other Lua tests. Catch2 exits with 4 when it skips the test: no SDL_GPU device.
+file(GLOB luaUiTests CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/lua/ui/*.lua")
+foreach(luaTest IN LISTS luaUiTests)
+	file(RELATIVE_PATH script "${PROJECT_SOURCE_DIR}" "${luaTest}")
+	add_test(NAME "${script}" COMMAND gnubase-tests "[lua-ui]" WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+	set_tests_properties("${script}" PROPERTIES LABELS "ui;lua" TIMEOUT 300 SKIP_RETURN_CODE 4 ENVIRONMENT
+		"GNUBASE_LUA_UI_TEST=${script};${settingsEnvironment}")
+endforeach()
+
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERSION}"
 	GNUBASE_DOCS_DIR="${PROJECT_SOURCE_DIR}/docs"
 	GNUBASE_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources"
@@ -186,6 +262,16 @@ target_compile_definitions(gnubase-tests PRIVATE GNUBASE_VERSION="${PROJECT_VERS
 if(WIN32)
 	target_sources(gnubase-tests PRIVATE asio_tests.cpp devicecontract.h)
 	target_include_directories(gnubase-tests SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/ext/asio/common)
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	# The JACK tests load libjack to add a client with physical ports, as a sound card has them.
+	find_package(PkgConfig REQUIRED)
+	pkg_check_modules(JACK REQUIRED jack)
+	target_include_directories(gnubase-tests SYSTEM PRIVATE ${JACK_INCLUDE_DIRS})
+	target_link_libraries(gnubase-tests PRIVATE ${CMAKE_DL_LIBS})
+	# The ALSA sequencer test makes a sequencer client of its own as a loopback.
+	pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
+	target_link_libraries(gnubase-tests PRIVATE PkgConfig::ALSA)
 endif()
 gnubase_target_defaults(gnubase-tests)
 # Sanitizer builds are too slow for benchmarks.
@@ -197,7 +283,13 @@ endif()
 # PRE_TEST discovery lets cross-compiled builds (e.g. Windows ARM64 on x64) configure and build.
 include(Catch)
 # A test that hangs fails after five minutes instead of blocking the run.
-catch_discover_tests(gnubase-tests DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS PROPERTIES TIMEOUT 300 ENVIRONMENT "${settingsEnvironment}")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	# The PipeWire tests share one daemon, whose graph some of them change: they never run at the same time (#423).
+	catch_discover_tests(gnubase-tests TEST_SPEC "~[pipewire]" DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS PROPERTIES TIMEOUT 300 ENVIRONMENT "${settingsEnvironment}")
+	catch_discover_tests(gnubase-tests TEST_SPEC "[pipewire]" DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS PROPERTIES TIMEOUT 300 RESOURCE_LOCK pipewire ENVIRONMENT "${settingsEnvironment}")
+else()
+	catch_discover_tests(gnubase-tests DISCOVERY_MODE PRE_TEST ADD_TAGS_AS_LABELS PROPERTIES TIMEOUT 300 ENVIRONMENT "${settingsEnvironment}")
+endif()
 
 # Shell tests for the scripts in tools/. They use the sh next to Git, which on Windows is the one Git runs hooks with
 # (Git/bin, found from Git/cmd or Git/mingw64/bin).
@@ -208,6 +300,7 @@ function(gnubase_add_shell_test name script)
 	add_test(NAME "${name}" COMMAND "${GNUBASE_SH}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/${script}" "${PROJECT_SOURCE_DIR}")
 	set_tests_properties("${name}" PROPERTIES LABELS integration)
 endfunction()
+gnubase_add_shell_test("the clang-tidy cache reruns clang-tidy only when an input changed" clang_tidy_cache_tests.sh)
 gnubase_add_shell_test("the keyword guard blocks private keywords in commits and pull requests" keyword_guard_tests.sh)
 gnubase_add_shell_test("the license header check lists files without the SPDX header" spdx_check_tests.sh)
 

@@ -19,37 +19,50 @@ env:
   # software Vulkan driver (lavapipe), which the window tests draw through (tests/window_tests.cpp).
   LINUX_PACKAGES: >-
     ninja-build ccache
-    libasound2-dev libpulse-dev libpipewire-0.3-dev libjack-dev
+    libasound2-dev libpulse-dev libpipewire-0.3-dev libjack-jackd2-dev
     libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev
     libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev
     libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev
     libdbus-1-dev libibus-1.0-dev libudev-dev libfribidi-dev libthai-dev
     libvulkan1 mesa-vulkan-drivers
+  # Compiler caches: only pushes to main save them, and pull requests restore main's. A pull request's own would only
+  # push main's out of the repository's 10 GB of Actions cache, as no other pull request can restore them. Each job caps
+  # its cache (CCACHE_MAXSIZE, SCCACHE_CACHE_SIZE) at about one and a half of its builds, so that main's caches take
+  # about half of the 10 GB. SDL and RmlUi compile with precompiled headers, which neither ccache nor sccache can cache,
+  # so CI builds without them.
   CCACHE_DIR: ${{ github.workspace }}/.ccache
-  CCACHE_LAUNCHER: -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+  CCACHE_LAUNCHER: >-
+    -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
   # Windows caches with sccache, in the same folder and cache entry as ccache elsewhere.
   SCCACHE_DIR: ${{ github.workspace }}/.ccache
-  SCCACHE_LAUNCHER: -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+  SCCACHE_LAUNCHER: >-
+    -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
 
 jobs:
   build:
     timeout-minutes: 60
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
+    env:
+      CCACHE_MAXSIZE: ${{ matrix.cache }}
+      SCCACHE_CACHE_SIZE: ${{ matrix.cache }}
     strategy:
       fail-fast: false
       matrix:
         include:
           # Ninja instead of the Visual Studio generator, which ignores compiler launchers, so sccache can cache.
-          - { name: windows-x64, runner: windows-2025, preset: windows-x64-ninja, arch: x64 }
-          - { name: windows-arm64, runner: windows-11-arm, preset: windows-arm64-ninja, arch: arm64 }
-          # ponytail: Intel runner because hosted macOS arm64 runners often never pick jobs up (they are cancelled after
-          # 15 minutes). Builds both slices, tests the x86_64 one; the window tests run on Apple Silicon in ui-macos.yml.
+          - { name: windows-x64, runner: windows-2025, preset: windows-x64-ninja, arch: x64, cache: 800M }
+          - { name: linux-x64-gcc, runner: ubuntu-24.04, preset: linux-gcc, cache: 1500M }
+          # ponytail: paused while many pull requests are open at once, so each run takes fewer of GitHub's 20 concurrent
+          # jobs; macOS still builds in ui-macos.yml, Clang in the sanitizer and clang-tidy jobs. To restore, uncomment
+          # them and add their names back to the required checks of the ruleset "main: CI must pass".
+          # - { name: windows-arm64, runner: windows-11-arm, preset: windows-arm64-ninja, arch: arm64, cache: 800M }
+          # Intel runner because hosted macOS arm64 runners often never pick jobs up (they are cancelled after 15
+          # minutes). Builds both slices, tests the x86_64 one; the window tests run on Apple Silicon in ui-macos.yml.
           # Move back to macos-15 (arm64) before Intel images retire in 2027.
-          - { name: macos-universal, runner: macos-15-intel, preset: macos }
-          - { name: linux-x64-gcc, runner: ubuntu-24.04, preset: linux-gcc }
-          - { name: linux-x64-clang, runner: ubuntu-24.04, preset: linux-clang }
-          - { name: linux-arm64-gcc, runner: ubuntu-24.04-arm, preset: linux-gcc }
+          # - { name: macos-universal, runner: macos-15-intel, preset: macos, cache: 1500M }
+          # - { name: linux-x64-clang, runner: ubuntu-24.04, preset: linux-clang, cache: 1G }
+          # - { name: linux-arm64-gcc, runner: ubuntu-24.04-arm, preset: linux-gcc, cache: 1500M }
     steps:
       - uses: actions/checkout@v7
         with:
@@ -88,16 +101,20 @@ jobs:
         with:
           version: v0.19.0
 
-      - name: Compiler cache
-        uses: actions/cache@v6
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v6
         with:
           path: .ccache
           key: ccache-${{ matrix.name }}-${{ github.sha }}
           restore-keys: ccache-${{ matrix.name }}-
 
+      # No link-time optimization: its link steps took most of the Release builds (about 13 of 18 minutes on Windows),
+      # and no compiler cache can skip them. Pull requests restore main's cache, so main builds without it too.
       - name: Configure
         shell: bash
-        run: cmake --preset ${{ matrix.preset }} ${{ runner.os == 'Windows' && env.SCCACHE_LAUNCHER || env.CCACHE_LAUNCHER }}
+        run: >-
+          cmake --preset ${{ matrix.preset }} -DGNUBASE_LTO=OFF
+          ${{ runner.os == 'Windows' && env.SCCACHE_LAUNCHER || env.CCACHE_LAUNCHER }}
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }} --config Release
@@ -106,6 +123,55 @@ jobs:
       - name: Stop sccache (Windows)
         if: runner.os == 'Windows'
         run: sccache --stop-server
+
+      # Before the tests, so that a failing test doesn't lose the build's cache.
+      - name: Save the compiler cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.name }}-${{ github.sha }}
+
+      # A headless sound server with a null sink and source, so that the PipeWire tests open real devices here, and
+      # its JACK layer (pipewire-jack) for the JACK tests. GNUBASE_REQUIRE_PIPEWIRE makes them fail instead of skipping
+      # when it can't be reached. Other jobs skip them.
+      - name: Start PipeWire (Linux)
+        if: matrix.name == 'linux-x64-gcc'
+        timeout-minutes: 5
+        run: |
+          sudo apt-get install -y --no-install-recommends pipewire pipewire-bin pipewire-jack wireplumber dbus-daemon
+          tools/start-pipewire.sh >> "$GITHUB_ENV"
+          echo "GNUBASE_REQUIRE_PIPEWIRE=1" >> "$GITHUB_ENV"
+
+      # jackd2 with its dummy driver, for the JACK tests. GNUBASE_REQUIRE_JACK makes them fail instead of skipping when
+      # it can't be reached. Other jobs skip them.
+      - name: Start JACK (Linux)
+        if: matrix.name == 'linux-x64-gcc'
+        timeout-minutes: 5
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jackd2
+          tools/start-jack.sh
+          echo "GNUBASE_REQUIRE_JACK=1" >> "$GITHUB_ENV"
+
+      # The ALSA sequencer for the ALSA MIDI tests: snd-seq-dummy loads it and adds the Midi Through port. The runner's
+      # kernel has them in linux-modules-extra. GNUBASE_REQUIRE_ALSA_SEQ makes the tests fail instead of skipping once
+      # it is loaded; where it can't be, they skip with a warning here. Other jobs skip them.
+      - name: Load the ALSA sequencer (Linux)
+        if: matrix.name == 'linux-x64-gcc'
+        timeout-minutes: 5
+        run: |
+          if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              "linux-modules-extra-$(uname -r)" && sudo modprobe snd-seq-dummy; then
+            for _ in $(seq 50); do [ -e /dev/snd/seq ] && break; sleep 0.1; done
+            if [ -e /dev/snd/seq ]; then
+              sudo chmod a+rw /dev/snd/seq
+              echo "GNUBASE_REQUIRE_ALSA_SEQ=1" >> "$GITHUB_ENV"
+            else
+              echo "::warning::/dev/snd/seq didn't appear after loading snd-seq-dummy: the ALSA MIDI tests are skipped"
+            fi
+          else
+            echo "::warning::The ALSA sequencer can't be loaded on this runner: the ALSA MIDI tests are skipped"
+          fi
 
       - name: Test
         # The window tests need SDL_GPU. Every runner has it except the macOS Intel one, whose virtual GPU doesn't meet
@@ -155,9 +221,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: asan-ubsan, sanitizers: "address,undefined" }
-          - { name: tsan, sanitizers: thread }
+          - { name: asan-ubsan, sanitizers: "address,undefined", cache: 1300M }
+          - { name: tsan, sanitizers: thread, cache: 1G }
     env:
+      CCACHE_MAXSIZE: ${{ matrix.cache }}
       ASAN_OPTIONS: detect_leaks=1
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
       TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1:suppressions=${{ github.workspace }}/tools/tsan-suppressions.txt
@@ -181,8 +248,8 @@ jobs:
       - name: Allow sanitizer memory layout
         run: sudo sysctl vm.mmap_rnd_bits=28 # newer kernels randomize more address bits than ASan/TSan support
 
-      - name: Compiler cache
-        uses: actions/cache@v6
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v6
         with:
           path: .ccache
           key: ccache-${{ matrix.name }}-${{ github.sha }}
@@ -194,6 +261,13 @@ jobs:
       - name: Build tests
         run: cmake --build --preset linux-clang --target gnubase-tests
 
+      - name: Save the compiler cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.name }}-${{ github.sha }}
+
       - name: Test
         env:
           GNUBASE_REQUIRE_GPU: 1
@@ -202,6 +276,8 @@ jobs:
   clang-tidy:
     timeout-minutes: 60
     runs-on: ubuntu-24.04
+    env:
+      CCACHE_MAXSIZE: 400M
     steps:
       - uses: actions/checkout@v7
         with:
@@ -218,18 +294,36 @@ jobs:
           sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES
           pipx install clang-tidy==22.1.8 # same major version as Visual Studio 2026 bundles
 
-      - name: Compiler cache
-        uses: actions/cache@v6
+      # The compiler cache and clang-tidy's passes, so that it checks only what changed (tools/clang-tidy-cache.sh).
+      - name: Restore the caches
+        uses: actions/cache/restore@v6
         with:
-          path: .ccache
+          path: |
+            .ccache
+            .tidy-cache
           key: ccache-clang-tidy-${{ github.sha }}
           restore-keys: ccache-clang-tidy-
 
       - name: Configure
-        run: cmake --preset linux-clang -DGNUBASE_CLANG_TIDY=ON $CCACHE_LAUNCHER
+        run: >-
+          cmake --preset linux-clang -DGNUBASE_CLANG_TIDY=ON -DGNUBASE_CLANG_TIDY_CACHE=$PWD/.tidy-cache
+          $CCACHE_LAUNCHER
 
+      # Keeps only the passes this build used, so the cache doesn't grow with every push.
       - name: Build with clang-tidy
-        run: cmake --build --preset linux-clang
+        run: |
+          touch "$RUNNER_TEMP/build-start"
+          cmake --build --preset linux-clang
+          find .tidy-cache -type f ! -newer "$RUNNER_TEMP/build-start" -delete
+
+      - name: Save the caches
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            .ccache
+            .tidy-cache
+          key: ccache-clang-tidy-${{ github.sha }}
 
   format:
     runs-on: ubuntu-24.04

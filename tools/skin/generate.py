@@ -30,6 +30,7 @@ THEMES = {
         "radii": {"small": 3, "control": 5, "panel": 6, "round": 999},
         "borderWidths": {"hairline": 1, "control": 1, "focus": 2},
         "fontSizes": {"small": 11, "body": 13, "label": 12, "title": 15, "display": 20},
+        "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": True,
     },
@@ -48,6 +49,7 @@ THEMES = {
         "radii": {"small": 3, "control": 4, "panel": 5, "round": 999},
         "borderWidths": {"hairline": 1, "control": 1, "focus": 2},
         "fontSizes": {"small": 11, "body": 13, "label": 12, "title": 15, "display": 20},
+        "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
     },
@@ -66,10 +68,37 @@ THEMES = {
         "radii": {"small": 3, "control": 5, "panel": 6, "round": 999},
         "borderWidths": {"hairline": 1, "control": 1, "focus": 2},
         "fontSizes": {"small": 11, "body": 13, "label": 12, "title": 15, "display": 20},
+        "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
     },
+    # Black, white and bright colors that meet WCAG's enhanced contrast (7:1) for text, white borders around every
+    # control and a thicker focus ring (docs/features/accessibility.md).
+    "high-contrast": {
+        "colors": {
+            "background": "#000000", "surface": "#000000", "surfaceRaised": "#0d0d0d",
+            "border": "#ffffff", "text": "#ffffff", "textMuted": "#c8c8c8",
+            "accent": "#ffff00", "accent2": "#00ffff", "danger": "#ff8c8c",
+            "warning": "#ffb000", "success": "#40ff80",
+            "meterGradientStops": [
+                {"offset": 0, "color": "#40ff80"}, {"offset": 0.72, "color": "#40ff80"},
+                {"offset": 0.9, "color": "#ffff00"}, {"offset": 1, "color": "#ff8c8c"},
+            ],
+            "trackPalette": ["#ff80ff", "#00ffff", "#c0a0ff", "#40ffd0", "#ffd040", "#ff8c8c", "#a0a0ff", "#80c0ff"],
+        },
+        "radii": {"small": 2, "control": 3, "panel": 3, "round": 999},
+        "borderWidths": {"hairline": 1, "control": 1, "focus": 3},
+        "fontSizes": {"small": 11, "body": 13, "label": 12, "title": 15, "display": 20},
+        "timeDisplaySizes": [32, 48, 64, 96, 128],
+        "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
+        "glow": False,
+        "focusRing": 2,
+    },
 }
+
+# The widgets that take the keyboard focus and draw a skin of their own: each rule that gives one a skin gets a
+# :focus-visible twin that adds the focus ring over it, so every state still shows while the widget has the focus.
+FOCUSABLE = ("button", "listview", "valuefield", "input.checkbox", "input.radio")
 
 NINE_NAMES = [
     "dialog", "dialog-titlebar", "panel", "panel-header", "toolbar", "display", "tooltip", "focus-ring",
@@ -161,8 +190,13 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
     elif name == "tooltip":
         bg = mix(c["surfaceRaised"], c["background"], .25); border = mix(c["border"], c["textMuted"], .25)
     elif name == "focus-ring":
-        bg = "none"; border = accent
-        extra = glow_rect(w, h, accent, r) if theme["glow"] else ""
+        # Drawn over the widget's skin: the accent ring, and inside it a line in the background color, which shows on
+        # skins filled with the accent, such as primary buttons and checked check boxes.
+        ring = theme.get("focusRing", 1)
+        body = (rect(w, h, "none", accent, r, ring, None, ring / 2) +
+                rect(w, h, "none", c["background"], max(1, r - ring), 1, None, ring + .5))
+        if theme["glow"]: body += glow_rect(w, h, accent, r)
+        return w, h, svg_doc(w, h, body), {"left": inset, "top": inset, "right": inset, "bottom": inset}
     elif name.startswith("button-primary"):
         if name.endswith("normal"): bg = accent
         elif name.endswith("hover"): bg = mix(accent, "#ffffff", .16)
@@ -275,6 +309,7 @@ def tokens_for(theme: dict) -> dict:
     result["cornerRadii"] = theme["radii"]
     result["borderWidths"] = theme["borderWidths"]
     result["fontSizes"] = theme["fontSizes"]
+    result["timeDisplaySizes"] = theme["timeDisplaySizes"]
     result["fontFamilies"] = theme["fontFamilies"]
     return result
 
@@ -296,6 +331,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
     c = theme["colors"]
     sizes = theme["fontSizes"]
     fonts = theme["fontFamilies"]
+    widths = theme["borderWidths"]
     assets = manifest["assets"]
     # Text on an accent-colored fill: dark on a light accent, white on a dark one.
     on_accent = c["background"] if luminance(c["accent"]) > 0.4 else "#ffffff"
@@ -324,22 +360,27 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("svg.icon.muted", {"image-color": c["textMuted"]}),
         ("svg.icon.danger", {"image-color": c["danger"]}),
         # Containers
-        (".dialog", {"decorator": skin("dialog")}),
+        (".dialog, dialog", {"decorator": skin("dialog")}),
         (".dialog-titlebar", {"decorator": skin("dialog-titlebar"), "font-weight": "600"}),
         (".panel", {"decorator": skin("panel")}),
         (".panel-header", {"decorator": skin("panel-header"), "color": c["textMuted"],
                            "font-size": f"{sizes['label']}dp"}),
         (".toolbar", {"decorator": skin("toolbar")}),
-        (".display", {"decorator": skin("display"), "font-family": fonts["counter"], "color": c["text"]}),
-        (".tooltip", {"decorator": skin("tooltip"), "font-size": f"{sizes['small']}dp"}),
+        (".display, valuefield", {"decorator": skin("display"), "font-family": fonts["counter"], "color": c["text"]}),
+        (".tooltip, tooltip", {"decorator": skin("tooltip"), "font-size": f"{sizes['small']}dp"}),
         (".focus-ring", {"decorator": skin("focus-ring")}),
         # Menus and lists, the drop-down list's too
-        (".menu, select selectbox", {"decorator": skin("menu")}),
-        (".menu-item:hover, select selectbox option:hover", {"decorator": skin("menu-item-hover")}),
-        (".menu-separator", {"decorator": skin("menu-separator")}),
-        (".list", {"decorator": skin("list")}),
-        (".list-item:hover", {"decorator": skin("list-item-hover")}),
-        (".list-item.selected, select selectbox option:checked", {"decorator": skin("list-item-selected")}),
+        (".menu, menu, select selectbox", {"decorator": skin("menu")}),
+        (".menu-item:hover, menuitem:hover, menuitem:focus-visible, select selectbox option:hover",
+         {"decorator": skin("menu-item-hover")}),
+        ("menuitem:disabled", {"color": c["textMuted"]}),
+        ("menuitem.checked", {"color": c["accent"]}),
+        (".menu-separator, menuseparator", {"decorator": skin("menu-separator")}),
+        (".list, listview", {"decorator": skin("list")}),
+        (".list-item:hover, listitem:hover, listview tbody tr:hover", {"decorator": skin("list-item-hover")}),
+        (".list-item.selected, listitem.selected, listview tr.selected, select selectbox option:checked",
+         {"decorator": skin("list-item-selected")}),
+        ("listview thead td.sorted", {"color": c["accent"]}),
         # Tabs
         ("tabset tabs", {"decorator": skin("tabbar")}),
         ("tabset tab", {"decorator": skin("tab-normal"), "color": c["textMuted"]}),
@@ -350,12 +391,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("button:hover", {"decorator": skin("button-hover")}),
         ("button:active", {"decorator": skin("button-pressed")}),
         ("button.checked", {"decorator": skin("button-checked")}),
+        ("button.suspended", {"decorator": skin("button-normal"), "color": c["warning"]}),
         ("button:disabled", {"decorator": skin("button-disabled"), "color": c["textMuted"]}),
         ("button.primary", {"decorator": skin("button-primary-normal"), "color": on_accent}),
         ("button.primary:hover", {"decorator": skin("button-primary-hover")}),
         ("button.primary:active", {"decorator": skin("button-primary-pressed")}),
-        ("button:focus-visible", {"decorator": f"{skin('button-normal')}, {skin('focus-ring')}"}),
-        ("button.primary:focus-visible", {"decorator": f"{skin('button-primary-normal')}, {skin('focus-ring')}"}),
         ("button svg.icon", {"image-color": c["text"]}),
         ("button:disabled svg.icon", {"image-color": c["textMuted"]}),
         ("button.primary svg.icon", {"image-color": on_accent}),
@@ -366,6 +406,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
     ]
     for kind in ("mute", "solo", "record", "monitor"):
         rules.append((f"button.toggle.{kind}.checked", {"decorator": skin(f"toggle-{kind}"), "color": c["text"]}))
+    # Listen is monitoring; solo defeat keeps the solo button off, in the solo color.
+    rules.append(("button.toggle.listen.checked", {"decorator": skin("toggle-monitor"), "color": c["text"]}))
+    rules.append(("button.toggle.solo.defeated", {"decorator": skin("toggle-hover"), "color": c["accent"]}))
     rules += [
         # Text fields
         ("input.text, input.password, textarea", {"decorator": skin("field-normal"), "color": c["text"]}),
@@ -388,9 +431,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("input.radio:checked", {"decorator": skin("radio-on")}),
         ("input.checkbox:disabled, input.radio:disabled", {"opacity": "0.5"}),
         # Sliders and progress bars
-        ("input.range slidertrack, progress", {"decorator": skin("slider-track")}),
-        ("input.range sliderprogress, progress fill", {"decorator": skin("slider-fill")}),
-        ("input.range sliderbar", {"decorator": skin("slider-thumb")}),
+        ("input.range slidertrack, progress, .slider-track", {"decorator": skin("slider-track")}),
+        ("input.range sliderprogress, progress fill, .slider-fill", {"decorator": skin("slider-fill")}),
+        ("input.range sliderbar, .slider-thumb", {"decorator": skin("slider-thumb")}),
         # Scroll bars
         ("scrollbarvertical slidertrack", {"decorator": skin("scrollbar-track-vertical")}),
         ("scrollbarvertical sliderbar", {"decorator": skin("scrollbar-thumb-vertical")}),
@@ -409,10 +452,179 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".meter", {"decorator": skin("meter-background")}),
         (".meter-fill", {"decorator": skin("meter-fill")}),
         (".meter-peak", {"decorator": skin("meter-peak")}),
+        (".tree-toggle", {"decorator": skin("dropdown-arrow")}),
+        # Widgets whose parts have the skins: the focus ring around them
+        ("knob:focus-visible, fader:focus-visible, slider:focus-visible, input.range:focus-visible",
+         {"decorator": skin("focus-ring")}),
+        # The color picker: saturation left to right and value bottom to top over the field's hue, which code sets,
+        # and the hues top to bottom
+        ("colorpicker .color-field",
+         {"decorator": "linear-gradient(to bottom, #00000000, #000000), linear-gradient(to right, #ffffff, #ffffff00)"}),
+        ("colorpicker .color-hue",
+         {"decorator": "linear-gradient(to bottom, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)"}),
+        ("colorpicker .color-field-thumb, colorpicker .color-hue-thumb", {"decorator": skin("slider-thumb")}),
         (".splitter-grip-vertical", {"decorator": skin("splitter-grip-vertical")}),
         (".splitter-grip-horizontal", {"decorator": skin("splitter-grip-horizontal")}),
+        # Canvas elements (docs/features/canvas.md): events and notes, waveforms, automation curves and rulers
+        ("event-lanes", {"color": mix(c["surfaceRaised"], c["accent"], .35), "stroke-color": c["accent"],
+                         "stroke-width": f"{widths['hairline']}dp"}),
+        ("waveform", {"color": c["accent"]}),
+        ("curve", {"stroke-color": c["accent2"], "stroke-width": f"{widths['focus']}dp"}),
+        ("ruler", {"color": c["textMuted"], "stroke-color": c["border"], "stroke-width": f"{widths['hairline']}dp",
+                   "font-size": f"{sizes['small']}dp"}),
+        # The event display (docs/features/event-display.md): overview line, ruler, lanes and cursors
+        (".event-display", {"background-color": c["background"]}),
+        (".event-display .overview", {"background-color": c["surface"]}),
+        (".event-display .overview event-lanes", {"color": mix(c["surface"], c["accent"], .45),
+                                                  "stroke-color": "transparent"}),
+        (".event-display .overview-view", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent"],
+                                           "background-color": c["accent"] + "26"}),
+        # Parts and events (docs/features/parts-and-events.md): muted ones greyed out, selected ones lit, over the rest
+        (".event-display event-lanes.muted-events", {"color": mix(c["surface"], c["textMuted"], .25),
+                                                     "stroke-color": mix(c["background"], c["textMuted"], .5)}),
+        (".event-display event-lanes.selected-events", {"color": mix(c["surfaceRaised"], c["accent"], .7),
+                                                        "stroke-color": c["text"]}),
+        # Fades (docs/features/fades.md): fade lines over the waveforms, and the selected events' fade handles
+        (".event-display fade-lines", {"color": c["text"], "stroke-color": c["text"],
+                                       "stroke-width": f"{widths['hairline']}dp"}),
+        # Folder tracks (docs/features/folder-tracks.md): the data blocks of the events of the tracks inside them
+        (".event-display event-lanes.folder-data", {"color": mix(c["surface"], c["accent"], .3),
+                                                    "stroke-color": "transparent"}),
+        (".event-display ruler", {"background-color": c["surface"]}),
+        (".event-display .project-cursor", {"background-color": c["text"]}),
+        (".event-display .cross-hair-vertical, .event-display .cross-hair-horizontal",
+         {"background-color": mix(c["background"], c["textMuted"], .5)}),
+        # Markers (docs/features/markers.md): lines behind the events, marker events and labels on marker tracks
+        (".event-display .marker-lines", {"stroke-color": mix(c["background"], c["accent2"], .5),
+                                          "stroke-width": f"{widths['hairline']}dp"}),
+        (".event-display .marker-events", {"color": c["accent2"] + "40", "stroke-color": c["accent2"],
+                                           "stroke-width": f"{widths['hairline']}dp"}),
+        (".event-display .marker-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        (".event-display .marker-label.active", {"color": c["text"]}),
+        (".event-display .marker-label.selected", {"color": c["background"], "background-color": c["accent2"]}),
+        # The tempo track (docs/features/tempo-track.md): the tempo curve, muted in fixed tempo mode, and its points
+        (".tempo-curve .tempo-line", {"stroke-color": c["accent"], "stroke-width": f"{widths['focus']}dp"}),
+        (".tempo-curve.inactive .tempo-line", {"stroke-color": c["textMuted"]}),
+        (".tempo-curve .tempo-point", {"background-color": c["accent"]}),
+        (".tempo-curve.inactive .tempo-point", {"background-color": c["textMuted"]}),
+        (".tempo-curve .tempo-point.selected", {"background-color": c["text"]}),
+        (".tempo-editor .tempo-scale-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        # The signature track (docs/features/signature-track.md): a time signature event at the start of its bar
+        (".signature-row .signature-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
+                                             "border-left-width": f"{widths['hairline']}dp",
+                                             "border-left-color": c["accent2"]}),
+        (".signature-row .signature-event.selected", {"color": c["background"], "background-color": c["accent2"]}),
+        # The tools (docs/features/tools.md): the selection range and the rectangle a tool drags
+        (".event-display .range-selection", {"border-width": f"{widths['hairline']}dp", "border-color": c["text"],
+                                             "background-color": c["text"] + "33"}),
+        (".event-display .tool-rectangle", {"border-width": f"{widths['hairline']}dp", "border-color": c["accent"],
+                                            "background-color": c["accent"] + "1a"}),
+        # The track list (docs/features/track-list.md): rows beside the lanes, disabled tracks dimmed, and the line
+        # where dragged tracks go
+        (".track-list", {"background-color": c["surface"]}),
+        (".track-list listitem", {"border-bottom-width": f"{widths['hairline']}dp",
+                                  "border-bottom-color": c["border"]}),
+        (".track-list listitem.disabled", {"color": c["textMuted"]}),
+        (".track-list .drop-line", {"background-color": c["accent"]}),
+        # Automation tracks (docs/features/automation-tracks.md): their rows and lanes below their track's, the
+        # curve with its points, grayed out while it doesn't read, the static value line and the automation event
+        # editor around selected points
+        (".track-list .automation-rows", {"background-color": mix(c["surface"], c["background"], .5)}),
+        (".track-list .automation-row", {"border-top-width": f"{widths['hairline']}dp",
+                                         "border-top-color": c["border"]}),
+        (".event-display .automation-lane", {"background-color": c["surface"] + "80",
+                                             "border-top-width": f"{widths['hairline']}dp",
+                                             "border-top-color": c["border"]}),
+        (".event-display .automation-curve", {"color": c["text"], "stroke-color": c["accent2"]}),
+        (".event-display .automation-lane.off .automation-curve", {"color": c["textMuted"],
+                                                                   "stroke-color": c["textMuted"]}),
+        (".event-display .static-value", {"stroke-color": c["text"], "stroke-width": f"{widths['hairline']}dp"}),
+        (".event-display .automation-editor", {"border-width": f"{widths['hairline']}dp",
+                                               "border-color": c["accent2"],
+                                               "background-color": c["accent2"] + "1a"}),
+        # The mixer (docs/features/mixer-window.md): a line between the channel strips
+        (".mixer-channel", {"border-right-width": f"{widths['hairline']}dp", "border-right-color": c["border"]}),
+        # The MIDI editors (docs/features/midi-editors.md): parts outside the part editing mode dimmed, the active part
+        # and track lit, and the Visibility tab's checks: a check mark, or a rectangle while some parts show
+        (".midi-editor .editor-part", {"color": c["textMuted"], "border-width": f"{widths['hairline']}dp",
+                                       "border-color": c["border"],
+                                       "background-color": mix(c["surface"], c["surfaceRaised"], .5)}),
+        (".midi-editor .editor-part.editable", {"color": c["text"]}),
+        (".midi-editor .editor-part.active, .editor-visibility-track.active", {"color": c["accent"]}),
+        (".editor-visibility-check", {"decorator": skin("checkbox-off")}),
+        (".editor-visibility-check.checked", {"decorator": skin("checkbox-on")}),
+        (".editor-visibility-check.partial", {"decorator": skin("checkbox-mixed")}),
+        # The key editor (docs/features/key-editor.md): the keyboard's white and black keys, the keys of selected
+        # notes lit, the grid's rows of black keys darker, the notes, selected ones in the second accent, those
+        # outside the part editing mode dimmed, the note being drawn, and the step input cursor
+        (".key-editor-key", {"background-color": mix(c["surfaceRaised"], c["text"], .8), "color": c["background"],
+                             "border-bottom-width": f"{widths['hairline']}px",
+                             "border-bottom-color": c["textMuted"]}),
+        (".key-editor-key.black", {"background-color": c["background"], "color": c["text"]}),
+        (".key-editor-key.selected", {"background-color": c["accent"]}),
+        (".key-editor-grid", {"background-color": c["surface"]}),
+        (".key-editor-row", {"border-bottom-width": f"{widths['hairline']}px",
+                             "border-bottom-color": mix(c["surface"], c["border"], .5)}),
+        (".key-editor-row.black", {"background-color": mix(c["background"], c["surface"], .5)}),
+        (".key-note", {"background-color": mix(c["surfaceRaised"], c["accent"], .6),
+                       "border-width": f"{widths['hairline']}px", "border-color": c["accent"]}),
+        (".key-note.selected", {"background-color": c["accent2"], "border-color": c["text"]}),
+        (".key-note.inactive", {"background-color": mix(c["surface"], c["textMuted"], .3),
+                                "border-color": c["textMuted"]}),
+        (".key-note.drawing", {"background-color": c["accent"] + "66"}),
+        (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # The list editor (docs/features/list-editor.md): lines between the rows, the selected rows lit, those
+        # outside the part editing mode dimmed, the events in the event display and the bars of the value display
+        (".list-editor-header", {"color": c["textMuted"], "border-bottom-width": f"{widths['hairline']}px",
+                                 "border-bottom-color": c["border"]}),
+        (".list-editor-rows .list-row", {"border-bottom-width": f"{widths['hairline']}px",
+                                         "border-bottom-color": mix(c["surface"], c["border"], .5)}),
+        (".list-editor-body", {"background-color": c["surface"]}),
+        (".list-row.selected", {"background-color": mix(c["surface"], c["accent"], .25)}),
+        (".list-row.inactive", {"color": c["textMuted"]}),
+        (".list-event", {"background-color": mix(c["surfaceRaised"], c["accent"], .6),
+                         "border-width": f"{widths['hairline']}px", "border-color": c["accent"]}),
+        (".list-row.selected .list-event", {"background-color": c["accent2"], "border-color": c["text"]}),
+        (".list-value", {"background-color": c["accent"]}),
+        (".list-row.selected .list-value", {"background-color": c["accent2"]}),
+        # Docking windows (docs/features/docking.md): zones, the frame of the zone with the keyboard focus, and strips
+        (".docking [zone]", {"background-color": mix(c["background"], c["surface"], .5)}),
+        (".docking .zone-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),
+        (".docking .strip", {"background-color": c["surface"]}),
+        # The status line (docs/features/status-line.md): a sample rate mismatch and a lost audio device stand out
+        (".status-line .status-field", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        (".status-line .mismatch", {"color": c["warning"]}),
+        ("#lost-device", {"color": c["danger"]}),
+        # The info line and the inspector (docs/features/inspector.md): the info line's values in another color with
+        # several events selected, bypassed and deactivated inserts dimmed
+        (".info-line.multiple .info-field", {"color": c["accent"]}),
+        (".info-line .info-label, .inspector-label", {"color": c["textMuted"]}),
+        (".inspector .insert.bypassed, .inspector .insert.inactive", {"color": c["textMuted"]}),
+        # The pool's message line (docs/features/pool.md): why a pool command failed stands out
+        (".pool-message.error", {"color": c["danger"]}),
+        # The edit history (docs/features/edit-history.md): undone steps dimmed, and the separator after the done ones
+        (".history tr.undone, .history tr.undone input.text", {"color": c["textMuted"]}),
+        (".history .history-separator", {"background-color": c["accent"]}),
+        # The on-screen keyboard (docs/features/onscreen-keyboard.md): white and black keys, lit while they sound
+        (".onscreen-keyboard .white-key", {"background-color": c["text"], "color": c["background"],
+                                           "border-color": c["border"]}),
+        (".onscreen-keyboard .black-key", {"background-color": c["background"], "color": c["textMuted"],
+                                           "border-color": c["border"]}),
+        (".onscreen-keyboard .white-key.pressed, .onscreen-keyboard .black-key.pressed",
+         {"background-color": c["accent"]}),
+        # Menu bars (docs/features/main-menu.md): flat menu titles, lit under the mouse, the items' keys, and the arrows
+        # of items with a submenu
+        ("menubar", {"background-color": c["surface"]}),
+        ("menubar button", {"decorator": "none", "color": c["text"]}),
+        ("menubar button:hover", {"decorator": skin("menu-item-hover")}),
+        ("menuitem .menu-keys", {"color": c["textMuted"]}),
+        ("menuitem > .menu-arrow", {"decorator": skin("dropdown-arrow")}),
     ]
+    # The time display window's digits at each of its sizes (docs/features/transport-bar.md), a line twice as high.
+    rules.extend((f".time-display.size-{i}", {"font-size": f"{size}dp", "line-height": f"{2 * size}dp"})
+                 for i, size in enumerate(theme["timeDisplaySizes"]))
 
+    rules = with_focus_rings(rules, skin("focus-ring"))
     lines = ["/* SPDX-License-Identifier: GPL-3.0-or-later */",
              f"/* The {name} theme: colors, fonts and skins of GNUbase's widgets (docs/features/themes.md). Generated by",
              "   tools/skin/generate.py: change the generator and run it again rather than editing this file. */",
@@ -424,6 +636,27 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         lines.append("	}")
     lines.append("}")
     return "\n".join(lines) + "\n"
+
+
+def focusable(selector: str) -> bool:
+    """Whether a selector's last part is a FOCUSABLE widget in a state other than hovered, pressed or focused."""
+    widget, *states = selector.split(" ")[-1].split(":")
+    return any(widget == f or widget.startswith(f + ".") for f in FOCUSABLE) and all(s == "checked" for s in states)
+
+
+def with_focus_rings(rules: list, ring: str) -> list:
+    """The rules, then for each that gives a FOCUSABLE widget a skin its :focus-visible twin with the ring.
+
+    The twins come last, so the ring also shows on a hovered widget. The ring is the first decorator, because RmlUi
+    draws the first one on top.
+    """
+    twins = []
+    for selector, declarations in rules:
+        decorator = declarations.get("decorator")
+        parts = [part + ":focus-visible" for part in selector.split(", ") if focusable(part)]
+        if decorator is not None and parts:
+            twins.append((", ".join(parts), {"decorator": ring if decorator == "none" else f"{ring}, {decorator}"}))
+    return rules + twins
 
 
 def write_theme(root: Path, name: str, theme: dict) -> dict:
@@ -501,7 +734,7 @@ Generated by `python tools/skin/generate.py resources/themes`. The generator is 
 
 ## Layout and naming
 
-Each theme (`gnubase`, `dark`, `light`) contains {count} SVG assets, `manifest.json`, `tokens.json`, and `theme.rcss`. Stateful assets use `<component>-<state>.svg`. Manifest dimensions and slice insets are dp at 1×. Fixed assets omit `slice`.
+Each theme (`gnubase`, `dark`, `light`, `high-contrast`) contains {count} SVG assets, `manifest.json`, `tokens.json`, and `theme.rcss`. Stateful assets use `<component>-<state>.svg`. Manifest dimensions and slice insets are dp at 1×. Fixed assets omit `slice`.
 
 `theme.rcss` is the theme's style sheet: the colors, fonts, and skins of every widget state, all inside `@media (theme: <name>)`. GNUbase gives every document the shared style sheets in `resources/styles` and every theme's style sheet, and activates the theme the user chose; see `docs/features/themes.md`.
 
@@ -516,7 +749,7 @@ Use the manifest's `left`, `top`, `right`, and `bottom` inset values. Corners ar
 - SVG user units are dp and match each file's `viewBox`, `width`, and `height`.
 - Artwork uses the LunaSVG-safe subset: basic shapes and paths, groups, definitions, gradients, clipping/masking, opacity, and transforms. It contains no text, CSS, filters, scripts, raster images, or external references.
 - Hairlines are aligned to half pixels where practical. Rounded controls use tokenized 3–6 dp radii.
-- Soft default-theme glows are made from stacked translucent vector strokes; there are no blur filters. Dark is restrained and light has no glow.
+- Soft default-theme glows are made from stacked translucent vector strokes; there are no blur filters. Dark is restrained, and light and high contrast have no glow.
 - UI labels belong in RmlUi, not in the skin SVGs. Fixed layers such as `knob-pointer.svg` are intended to be transformed by application code around their center.
 - `meter-fill.svg` is a full-height bottom-to-top gradient. Clip or crop it from the top to show the current level; overlay `meter-peak.svg` at the held peak.
 - Colors, radii, border widths, and font sizes are in `tokens.json`. Track palette order is magenta, cyan, purple, teal, amber, coral, violet, blue.

@@ -1,0 +1,39 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The editor window (docs/features/midi-editors.md, reference manual pp. 1132-1156): a docking window
+     (docs/features/docking.md) with the left zone, whose Visibility tab lists the tracks whose parts it can show and
+     whose Inspector has the Global Tracks section, and the main zone, which ui::MidiEditor fills with its toolbar, the
+     global tracks and the parts (#midi-editor). app::AppUi opens and closes it as the engine's editor view window
+     opens and closes (editor.open, editor.close). -->
+<rml>
+<head>
+	<title>Editor</title>
+	<style>
+		body
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+
+		#midi-editor
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+	</style>
+</head>
+<body class="docking">
+	<div class="zones">
+		<div id="left-zone" zone="left" focuszone="left" size="200"/>
+		<splitter for="left"/>
+		<div id="main-zone" zone="main" focuszone="editor">
+			<div id="midi-editor"/>
+		</div>
+	</div>
+</body>
+</rml>

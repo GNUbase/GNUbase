@@ -3,6 +3,7 @@
 
 #include "platform/log.h"
 
+#include <algorithm>
 #include <variant>
 #include <vector>
 
@@ -54,10 +55,33 @@ namespace gnubase::ui
 		m_waiting.emplace(id, Waiting{std::move(name), std::move(done)});
 	}
 
+	void EngineBinding::sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,
+		std::function<void(const engine::Result&)> done)
+	{
+		send("history.transaction",
+			{{"description", std::move(description)},
+				{"merge", gesture != 0 ? what + " " + std::to_string(gesture) : std::string()},
+				{"commands", std::move(commands)}},
+			std::move(done));
+	}
+
+	size_t EngineBinding::waiting(const std::string& command) const
+	{
+		return static_cast<size_t>(std::count_if(m_waiting.begin(), m_waiting.end(),
+			[&command](const auto& waiting) { return waiting.second.command == command; }));
+	}
+
 	Subscription EngineBinding::on(std::string event, std::function<void(const engine::Event&)> handler)
 	{
 		const uint64_t id = m_nextId++;
 		m_handlers.emplace(id, Handler{std::move(event), std::move(handler)});
+		return {*this, id};
+	}
+
+	Subscription EngineBinding::onResult(std::string command, std::function<void(const engine::Result&)> handler)
+	{
+		const uint64_t id = m_nextId++;
+		m_resultHandlers.emplace(id, Waiting{std::move(command), std::move(handler)});
 		return {*this, id};
 	}
 
@@ -71,6 +95,7 @@ namespace gnubase::ui
 	void EngineBinding::end(uint64_t id) noexcept
 	{
 		m_handlers.erase(id);
+		m_resultHandlers.erase(id);
 		m_watches.erase(id);
 	}
 
@@ -113,6 +138,21 @@ namespace gnubase::ui
 			waiting.done(result);
 		else if (!result.ok())
 			logging::warning("{} from the UI failed: {}", waiting.command, result.error);
+		// As in dispatch, each handler is taken out while it runs.
+		std::vector<uint64_t> ids;
+		for (const auto& [id, handler] : m_resultHandlers)
+			if (handler.command == waiting.command)
+				ids.push_back(id);
+		for (const uint64_t id : ids)
+		{
+			auto handler = m_resultHandlers.find(id);
+			if (handler == m_resultHandlers.end())
+				continue;
+			std::function<void(const engine::Result&)> call = std::move(handler->second.done);
+			call(result);
+			if (handler = m_resultHandlers.find(id); handler != m_resultHandlers.end())
+				handler->second.done = std::move(call);
+		}
 	}
 
 	void EngineBinding::dispatch(const engine::Event& event)

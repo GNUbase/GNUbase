@@ -33,10 +33,16 @@ namespace gnubase::engine::graph
 			return "outputBus";
 		case NodeKind::Channel:
 			return "channel";
+		case NodeKind::ChannelSource:
+			return "channelSource";
 		case NodeKind::Builtin:
 			return "builtin";
 		case NodeKind::PluginSlot:
 			return "pluginSlot";
+		case NodeKind::ListenBus:
+			return "listenBus";
+		case NodeKind::Send:
+			return "send";
 		}
 		return "unknown";
 	}
@@ -49,8 +55,8 @@ namespace gnubase::engine::graph
 				bus.id, bus.format, nullptr});
 		const int firstChannel = static_cast<int>(snapshot.busses.size());
 		for (const RenderChannel& channel : snapshot.channels)
-			graph.nodes.push_back({NodeKind::Channel, channel.id, channel.format, nullptr,
-				channel.panner == Panner::Mono ? ChannelFormat::Stereo : ChannelFormat::None});
+			graph.nodes.push_back(
+				{NodeKind::Channel, channel.id, channel.format, nullptr, pannerOutput(channel.panner)});
 		graph.centerGain = panGains(snapshot.panLaw, 0.0).first;
 		for (size_t i = 0; i < snapshot.busses.size(); ++i)
 		{
@@ -72,12 +78,34 @@ namespace gnubase::engine::graph
 			graph.channelMaps.push_back({bus.parent, child, std::move(channels)});
 		}
 
+		// A channel with plugin slots: its source node, then a node per slot, then the channel's node with the fader.
+		// What plays into the channel reaches its source node.
+		std::vector<int> entry(snapshot.channels.size());
+		for (size_t i = 0; i < snapshot.channels.size(); ++i)
+		{
+			const RenderChannel& channel = snapshot.channels[i];
+			entry[i] = firstChannel + static_cast<int>(i);
+			if (channel.slots.empty())
+				continue;
+			int previous = static_cast<int>(graph.nodes.size());
+			graph.nodes.push_back({NodeKind::ChannelSource, channel.id, channel.format, nullptr});
+			entry[i] = previous;
+			for (const RenderSlot& slot : channel.slots)
+			{
+				const int node = static_cast<int>(graph.nodes.size());
+				graph.nodes.push_back({NodeKind::PluginSlot, slot.id, channel.format, nullptr});
+				graph.audio.push_back({previous, node});
+				previous = node;
+			}
+			graph.audio.push_back({previous, firstChannel + static_cast<int>(i)});
+		}
+
 		for (size_t i = 0; i < snapshot.channels.size(); ++i)
 		{
 			const RenderChannel& channel = snapshot.channels[i];
 			const int node = firstChannel + static_cast<int>(i);
 			if (channel.input >= 0)
-				graph.audio.push_back({channel.input, node});
+				graph.audio.push_back({channel.input, entry[i]});
 			switch (channel.output.kind)
 			{
 			case RenderTarget::Kind::None:
@@ -87,9 +115,38 @@ namespace gnubase::engine::graph
 				break;
 			case RenderTarget::Kind::Channel:
 				(channel.type == TrackType::Midi ? graph.events : graph.audio)
-					.push_back({node, firstChannel + channel.output.index});
+					.push_back({node, entry[static_cast<size_t>(channel.output.index)]});
 				break;
 			}
+		}
+
+		for (size_t i = 0; i < snapshot.channels.size(); ++i)
+		{
+			const RenderChannel& channel = snapshot.channels[i];
+			const int from = firstChannel + static_cast<int>(i);
+			const ChannelFormat output = pannerOutput(channel.panner);
+			for (const RenderSend& send : channel.sends)
+			{
+				const int node = static_cast<int>(graph.nodes.size());
+				graph.nodes.push_back({NodeKind::Send, channel.id,
+					send.preFader || output == ChannelFormat::None ? channel.format : output, nullptr});
+				(send.preFader ? graph.events : graph.audio).push_back({from, node});
+				graph.audio.push_back({node, entry[static_cast<size_t>(send.destination)]});
+			}
+		}
+
+		const auto mainMix = std::find_if(
+			snapshot.busses.begin(), snapshot.busses.end(), [](const RenderBus& bus) { return bus.mainMix; });
+		const auto listens = [](const RenderChannel& channel)
+		{ return channel.listen && channel.format != ChannelFormat::None; };
+		if (mainMix != snapshot.busses.end() &&
+			std::any_of(snapshot.channels.begin(), snapshot.channels.end(), listens))
+		{
+			const int listen = static_cast<int>(graph.nodes.size());
+			graph.nodes.push_back({NodeKind::ListenBus, 0, mainMix->format, nullptr});
+			for (size_t i = 0; i < snapshot.channels.size(); ++i)
+				if (listens(snapshot.channels[i]))
+					graph.audio.push_back({firstChannel + static_cast<int>(i), listen});
 		}
 		return graph;
 	}
@@ -368,8 +425,12 @@ namespace gnubase::engine::graph
 	{
 		if (object == 0)
 			return -1;
-		const auto node =
-			std::find_if(m_nodes.begin(), m_nodes.end(), [object](const Node& n) { return n.object == object; });
+		const auto node = std::find_if(m_nodes.begin(), m_nodes.end(),
+			[object](const Node& n)
+			{
+				return n.object == object &&
+					(n.kind == NodeKind::InputBus || n.kind == NodeKind::OutputBus || n.kind == NodeKind::Channel);
+			});
 		return node != m_nodes.end() ? static_cast<int>(node - m_nodes.begin()) : -1;
 	}
 

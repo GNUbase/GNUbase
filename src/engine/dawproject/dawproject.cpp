@@ -7,13 +7,16 @@
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "engine/processors/builtin.h"
 
 #include <miniz.h>
 #include <pugixml.hpp>
 
 #include <algorithm>
 #include <cctype>
+#include <climits>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <iomanip>
@@ -21,6 +24,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <string>
 #include <system_error>
 #include <tuple>
 #include <utility>
@@ -65,12 +69,35 @@ namespace gnubase::engine
 			return false;
 		}
 
-		// Automation lanes DAWproject can describe: the fader and MIDI controllers. Instrument parameters stay in
-		// GNUbase's entry until plugin slots are written as devices (#72).
+		// Automation lanes DAWproject can describe: the fader and MIDI controllers. Instrument and plugin parameters
+		// and mute stay in GNUbase's entry until plugin slots are written as devices (#72).
 		bool exportable(const AutomationTarget& target)
 		{
-			return target.type != AutomationTargetType::Instrument && target.type != AutomationTargetType::PanLeft &&
-				target.type != AutomationTargetType::PanRight;
+			return target.type != AutomationTargetType::Instrument && target.type != AutomationTargetType::Plugin &&
+				target.type != AutomationTargetType::PanLeft && target.type != AutomationTargetType::PanRight &&
+				target.type != AutomationTargetType::Mute;
+		}
+
+		// The built-in effect a slot's plugin id names, or nullptr.
+		const processors::BuiltinInfo* builtinPlugin(const std::string& plugin)
+		{
+			const processors::BuiltinInfo* info = processors::findBuiltinPlugin(plugin);
+			return info != nullptr && !info->instrument ? info : nullptr;
+		}
+
+		// A built-in parameter's unit as a DAWproject unit, which RealParameter requires; "linear" for the values that
+		// have none there, such as milliseconds.
+		const char* dawprojectUnit(const std::string& unit)
+		{
+			if (unit == "dB")
+				return "decibel";
+			if (unit == "Hz")
+				return "hertz";
+			if (unit == "s")
+				return "seconds";
+			if (unit == "%")
+				return "percent";
+			return "linear";
 		}
 
 		// DAWproject has only a channel count: the format for it, the widest one for more than 8 channels.
@@ -351,8 +378,7 @@ namespace gnubase::engine
 
 				pugi::xml_node structure = root.append_child("Structure");
 				for (const ObjectId id : m_project.tracks)
-					if (m_project.trackById.at(id).type != TrackType::Marker) // markers go into the arrangement
-						writeTrack(structure, m_project.trackById.at(id));
+					writeTrack(structure, m_project.trackById.at(id));
 				// The main mix first: other applications take the first master channel as their main output.
 				std::vector<const Bus*> masters;
 				for (const Bus& bus : m_project.busses)
@@ -422,13 +448,19 @@ namespace gnubase::engine
 
 			void writeTrack(pugi::xml_node parent, const Track& track)
 			{
+				// Markers go into the arrangement, the tempo into the transport and the tempo automation, the
+				// signatures into the time signature automation; ruler, tempo and signature tracks only into
+				// GNUbase's entry.
+				if (track.type == TrackType::Marker || track.type == TrackType::Ruler ||
+					track.type == TrackType::Tempo || track.type == TrackType::Signature)
+					return;
 				pugi::xml_node node = parent.append_child("Track");
 				node.append_attribute("id") = xmlId("t", track.id).c_str();
 				node.append_attribute("name") = track.name.c_str();
 				if (!track.color.empty())
 					node.append_attribute("color") = track.color.c_str();
 				node.append_attribute("contentType") = contentType(track.type);
-				node.append_attribute("loaded") = true;
+				node.append_attribute("loaded") = track.enabled; // a disabled track isn't loaded
 				if (track.channel != 0)
 				{
 					const Channel& channel = m_project.channels.at(track.channel);
@@ -439,6 +471,14 @@ namespace gnubase::engine
 					// A MIDI track's output is an instrument, which DAWproject's audio routing can't describe.
 					if (channel.format != ChannelFormat::None && channel.output != 0)
 						element.append_attribute("destination") = destination(channel.output).c_str();
+					if (channel.solo)
+						element.append_attribute("solo") = true;
+					if (!channel.notes.empty())
+						element.append_attribute("comment") = channel.notes.c_str();
+					pugi::xml_node mute = element.append_child("Mute");
+					mute.append_attribute("id") = xmlId("cm", channel.id).c_str();
+					mute.append_attribute("name") = "Mute";
+					mute.append_attribute("value") = channel.mute;
 					if (channel.format != ChannelFormat::None && track.type != TrackType::Midi)
 					{
 						pugi::xml_node pan = element.append_child("Pan");
@@ -455,10 +495,84 @@ namespace gnubase::engine
 						volume.append_attribute("min") = 0.0;
 						volume.append_attribute("max") = volumeToGain(m_project.maxVolume);
 						volume.append_attribute("value") = volumeToGain(channel.volume);
+						writeSends(element, channel);
+						writeDevices(element, channel);
 					}
 				}
 				for (const ObjectId child : track.children)
 					writeTrack(node, m_project.trackById.at(child));
+			}
+
+			// The sends with a destination, with their level as a linear gain. Their numbers are in GNUbase's entry.
+			void writeSends(pugi::xml_node channelNode, const Channel& channel) const
+			{
+				pugi::xml_node sends;
+				for (size_t s = 0; s < channel.sends.size(); ++s)
+				{
+					const Send& send = channel.sends[s];
+					if (send.destination == 0)
+						continue;
+					if (!sends)
+						sends = channelNode.append_child("Sends");
+					const std::string id = xmlId("cs", channel.id) + "_" + std::to_string(s + 1);
+					pugi::xml_node node = sends.append_child("Send");
+					node.append_attribute("id") = id.c_str();
+					node.append_attribute("destination") = xmlId("c", send.destination).c_str();
+					node.append_attribute("type") = send.preFader ? "pre" : "post";
+					pugi::xml_node volume = node.append_child("Volume");
+					volume.append_attribute("id") = (id + "v").c_str();
+					volume.append_attribute("name") = "Send Level";
+					volume.append_attribute("unit") = "linear";
+					volume.append_attribute("min") = 0.0;
+					volume.append_attribute("max") = volumeToGain(m_project.maxVolume);
+					volume.append_attribute("value") = volumeToGain(send.level);
+					pugi::xml_node enable = node.append_child("Enable");
+					enable.append_attribute("id") = (id + "e").c_str();
+					enable.append_attribute("name") = "Send On";
+					enable.append_attribute("value") = send.on;
+				}
+			}
+
+			// The built-in plugins of a channel's slots as devices, with the values set on their parameters. Plugins
+			// of other formats stay in GNUbase's entry until their states are written in the formats' own files (#72).
+			void writeDevices(pugi::xml_node channelNode, const Channel& channel) const
+			{
+				pugi::xml_node devices;
+				for (const ObjectId id : channel.slots)
+				{
+					const Slot& slot = m_project.slots.at(id);
+					const processors::BuiltinInfo* info = builtinPlugin(slot.plugin);
+					if (info == nullptr)
+						continue;
+					if (devices.empty())
+						devices = channelNode.prepend_child("Devices"); // the first of a Channel's elements
+					pugi::xml_node device = devices.append_child("BuiltinDevice");
+					device.append_attribute("id") = xmlId("d", slot.id).c_str();
+					device.append_attribute("name") = info->name.c_str();
+					device.append_attribute("deviceID") = slot.plugin.c_str();
+					device.append_attribute("deviceName") = info->name.c_str();
+					device.append_attribute("deviceRole") = "audioFX";
+					device.append_attribute("loaded") = slot.active;
+					pugi::xml_node parameters = device.append_child("Parameters");
+					for (const auto& [parameter, value] : slot.parameters)
+					{
+						const processors::ParameterInfo* found = processors::findParameter(*info, parameter);
+						if (found == nullptr)
+							continue;
+						pugi::xml_node real = parameters.append_child("RealParameter");
+						real.append_attribute("id") = (xmlId("d", slot.id) + "p" + std::to_string(parameter)).c_str();
+						real.append_attribute("name") = found->name.c_str();
+						real.append_attribute("parameterID") = parameter;
+						real.append_attribute("unit") = dawprojectUnit(found->unit);
+						real.append_attribute("min") = found->minimum;
+						real.append_attribute("max") = found->maximum;
+						real.append_attribute("value") = value;
+					}
+					pugi::xml_node enabled = device.append_child("Enabled");
+					enabled.append_attribute("id") = (xmlId("d", slot.id) + "e").c_str();
+					enabled.append_attribute("name") = "On/Off";
+					enabled.append_attribute("value") = !slot.bypass;
+				}
 			}
 
 			// A position or length in the lane's time unit: beats on musical tracks, seconds on linear ones.
@@ -488,8 +602,11 @@ namespace gnubase::engine
 					pugi::xml_node clips = trackLanes.append_child("Clips");
 					clips.append_attribute("id") = xmlId("cl", track.id).c_str();
 					for (const auto& [id, event] : m_project.audioEvents)
-						if (event.track == track.id)
+						if (event.track == track.id && event.part == 0)
 							writeAudioClip(clips, track, event);
+					for (const auto& [id, part] : m_project.audioParts)
+						if (part.track == track.id)
+							writeAudioPart(clips, track, part);
 					for (const auto& [id, part] : m_project.midiParts)
 						if (part.track == track.id)
 							writeMidiClip(clips, track, part);
@@ -532,8 +649,10 @@ namespace gnubase::engine
 					element.append_attribute("channel") = target.channel;
 					break;
 				case AutomationTargetType::Instrument:
+				case AutomationTargetType::Plugin:
 				case AutomationTargetType::PanLeft:
 				case AutomationTargetType::PanRight:
+				case AutomationTargetType::Mute:
 					break;
 				}
 				const auto value = [&target](double v)
@@ -577,7 +696,30 @@ namespace gnubase::engine
 				}
 			}
 
-			void writeAudioClip(pugi::xml_node clips, const Track& track, const AudioEvent& event)
+			// An audio part as a clip whose content is its events' clips, which count from its start in the lane's unit
+			// and play only within it.
+			void writeAudioPart(pugi::xml_node clips, const Track& track, const AudioPart& part)
+			{
+				pugi::xml_node element = clips.append_child("Clip");
+				element.append_attribute("time") = laneTime(track, part.position.value);
+				element.append_attribute("duration") = laneTime(track, part.length);
+				element.append_attribute("playStart") = 0.0;
+				element.append_attribute("contentTimeUnit") =
+					track.timeBase == time::TimeBase::Musical ? "beats" : "seconds";
+				if (part.mute)
+					element.append_attribute("enable") = false;
+				element.append_attribute("name") = part.name.c_str();
+				if (!part.color.empty())
+					element.append_attribute("color") = part.color.c_str();
+				pugi::xml_node content = element.append_child("Clips");
+				content.append_attribute("id") = xmlId("pc", part.id).c_str();
+				for (const auto& [id, event] : m_project.audioEvents)
+					if (event.part == part.id)
+						writeAudioClip(content, track, event, laneTime(track, part.position.value));
+			}
+
+			// An audio event's clip; origin is where the clips it is among start on the lane.
+			void writeAudioClip(pugi::xml_node clips, const Track& track, const AudioEvent& event, double origin = 0.0)
 			{
 				const Clip& clip = m_project.clips.at(event.clip);
 				const MediaFile& media = m_project.media.at(clip.media);
@@ -589,7 +731,7 @@ namespace gnubase::engine
 					duration = toBeats(m_project.tempo.toTicks(start + seconds) - event.position.value);
 				}
 				pugi::xml_node element = clips.append_child("Clip");
-				element.append_attribute("time") = laneTime(track, event.position.value);
+				element.append_attribute("time") = laneTime(track, event.position.value) - origin;
 				element.append_attribute("duration") = duration;
 				element.append_attribute("playStart") = static_cast<double>(event.offset) / media.sampleRate;
 				element.append_attribute("contentTimeUnit") = "seconds";
@@ -605,6 +747,8 @@ namespace gnubase::engine
 					element.append_attribute("fadeOutTime") = fadeOut;
 				}
 				element.append_attribute("name") = clip.name.c_str();
+				if (!event.color.empty())
+					element.append_attribute("color") = event.color.c_str();
 				pugi::xml_node audio = element.append_child("Audio");
 				audio.append_attribute("id") = xmlId("a", event.id).c_str();
 				audio.append_attribute("channels") = media.channels;
@@ -668,7 +812,11 @@ namespace gnubase::engine
 				element.append_attribute("duration") = laneTime(track, part.length);
 				element.append_attribute("playStart") = 0.0;
 				element.append_attribute("contentTimeUnit") = "beats";
+				if (part.mute)
+					element.append_attribute("enable") = false;
 				element.append_attribute("name") = part.name.c_str();
+				if (!part.color.empty())
+					element.append_attribute("color") = part.color.c_str();
 				// Notes alone, or a lane each for the notes and every controller.
 				pugi::xml_node content = element;
 				if (!part.controllers.empty())
@@ -894,8 +1042,10 @@ namespace gnubase::engine
 				bool seconds = false; // the time unit is seconds rather than beats
 				double origin = 0.0;  // where the content's time 0 is on the lane
 				bool enabled = true;  // false inside a disabled (muted) clip
+				ObjectId part = 0;    // the audio part that the clip's audio goes into, or 0
 				double fadeIn = 0.0;  // seconds, of the innermost clip with fades
 				double fadeOut = 0.0;
+				std::string color; // of the innermost clip with a color, or empty
 			};
 
 			time::Ticks toTicks(double time, bool seconds) const
@@ -949,6 +1099,10 @@ namespace gnubase::engine
 				try
 				{
 					m_project.tempo = time::TempoMap(tempo);
+					// Tempo changes play from the tempo track; fixed tempo mode keeps the first tempo.
+					m_project.tempoTrackActive = tempo.size() > 1;
+					m_project.otherTempo =
+						m_project.tempoTrackActive ? time::TempoMap(tempo.front().bpm) : m_project.tempo;
 					m_project.signatures = time::SignatureMap(changes);
 				}
 				catch (const std::invalid_argument& error)
@@ -1005,6 +1159,7 @@ namespace gnubase::engine
 				const std::string color = node.attribute("color").as_string("");
 				track.color = validColor(color) ? color : std::string();
 				track.parent = parent;
+				track.enabled = !canDisable(type) || node.attribute("loaded").as_bool(true);
 				if (type != TrackType::Folder || !channelNode.empty())
 				{
 					Channel channel;
@@ -1038,11 +1193,18 @@ namespace gnubase::engine
 							m_parameters[pan.attribute("id").as_string()] = {track.id, AutomationTargetType::Pan};
 						}
 					}
+					channel.mute = channelNode.child("Mute").attribute("value").as_bool(false);
+					channel.solo = channelNode.attribute("solo").as_bool(false);
+					channel.notes = channelNode.attribute("comment").as_string();
+					if (type != TrackType::Midi)
+						readDevices(channelNode.child("Devices"), channel);
 					track.channel = channel.id;
 					m_project.channels[channel.id] = channel;
 					m_channels[channelNode.attribute("id").as_string()] = channel.id;
 					if (const pugi::xml_attribute destination = channelNode.attribute("destination"))
 						m_destinations.emplace_back(channel.id, destination.as_string());
+					if (type != TrackType::Midi)
+						readSends(channelNode.child("Sends"), m_project.channels.at(channel.id));
 				}
 				(parent == 0 ? m_project.tracks : m_project.trackById.at(parent).children).push_back(track.id);
 				m_project.trackById[track.id] = track;
@@ -1051,9 +1213,71 @@ namespace gnubase::engine
 					readTrack(child, track.id);
 			}
 
+			// GNUbase's built-in devices, which another application may have kept, into the channel's slots: their
+			// parameters as far as the plugin has them, within their ranges. Other devices are left out until plugins
+			// of other formats are written as devices (#72).
+			void readDevices(pugi::xml_node devices, Channel& channel)
+			{
+				for (const pugi::xml_node device : devices.children("BuiltinDevice"))
+				{
+					const std::string plugin = device.attribute("deviceID").as_string("");
+					const processors::BuiltinInfo* info = builtinPlugin(plugin);
+					if (info == nullptr || channel.slots.size() >= g_maxSlots)
+						continue;
+					Slot slot;
+					slot.id = m_project.newId();
+					slot.channel = channel.id;
+					slot.plugin = plugin;
+					slot.name = info->name;
+					slot.active = device.attribute("loaded").as_bool(true);
+					slot.bypass = !device.child("Enabled").attribute("value").as_bool(true);
+					for (const pugi::xml_node parameter : device.child("Parameters").children("RealParameter"))
+					{
+						const processors::ParameterInfo* found =
+							processors::findParameter(*info, parameter.attribute("parameterID").as_uint(UINT32_MAX));
+						if (found == nullptr)
+							continue;
+						double value = std::clamp(finiteNumber(parameter.attribute("value"), found->defaultValue),
+							found->minimum, found->maximum);
+						if (found->stepped)
+							value = std::round(value);
+						slot.parameters[found->id] = value;
+					}
+					channel.slots.push_back(slot.id);
+					m_project.slots[slot.id] = std::move(slot);
+				}
+			}
+
+			// The first eight sends, whose destinations are found once every channel is there.
+			void readSends(pugi::xml_node sends, Channel& channel)
+			{
+				size_t index = 0;
+				for (const pugi::xml_node node : sends.children("Send"))
+				{
+					if (index == g_maxSends)
+						break;
+					Send& send = channel.sends[index];
+					send.preFader = std::string(node.attribute("type").as_string("post")) == "pre";
+					send.on = node.child("Enable").attribute("value").as_bool(true);
+					const pugi::xml_node volume = node.child("Volume");
+					const double value = finiteNumber(volume.attribute("value"), 1.0);
+					send.level = std::string(volume.attribute("unit").as_string("linear")) == "decibel"
+						? std::clamp(value, g_minChannelVolume, m_project.maxVolume)
+						: gainToVolume(value, m_project.maxVolume);
+					m_sendDestinations.push_back({channel.id, index++, node.attribute("destination").as_string()});
+				}
+			}
+
 			// Outputs to busses and group channels; other destinations stay on the main output.
 			void resolveDestinations()
 			{
+				// Sends to group and effect channels that don't close a loop; others lose their destination.
+				for (const auto& [channelId, index, destination] : m_sendDestinations)
+				{
+					const auto target = m_channels.find(destination);
+					if (target != m_channels.end() && isSendDestination(m_project, target->second))
+						m_project.channels.at(channelId).sends[index].destination = target->second;
+				}
 				for (const auto& [channelId, destination] : m_destinations)
 				{
 					const auto target = m_channels.find(destination);
@@ -1080,6 +1304,13 @@ namespace gnubase::engine
 							break;
 						}
 				}
+				for (auto& [id, channel] : m_project.channels)
+					for (Send& send : channel.sends)
+					{
+						const ObjectId destination = std::exchange(send.destination, 0);
+						if (destination != 0 && !routingLoops(m_project, id, destination))
+							send.destination = destination;
+					}
 			}
 
 			void readLanes(const pugi::xml_node& lanes, Context context)
@@ -1172,6 +1403,8 @@ namespace gnubase::engine
 						point.value = normalizedToPan(value);
 						break;
 					case AutomationTargetType::Instrument:
+					case AutomationTargetType::Plugin:
+					case AutomationTargetType::Mute:
 					case AutomationTargetType::Controller:
 					case AutomationTargetType::PitchBend:
 					case AutomationTargetType::ChannelPressure:
@@ -1199,14 +1432,38 @@ namespace gnubase::engine
 					content.seconds = std::string(unit.as_string()) == "seconds";
 				content.origin = content.seconds == context.seconds ? start - playStart : 0.0;
 				content.enabled = context.enabled && clip.attribute("enable").as_bool(true);
+				if (const std::string color = clip.attribute("color").as_string(""); validColor(color))
+					content.color = color;
 				if (!clip.attribute("fadeInTime").empty() || !clip.attribute("fadeOutTime").empty())
 					readFades(clip, context, start, duration, content);
 				const TrackType type = m_project.trackById.at(context.track).type;
+				// On an audio track, a clip of clips is an audio part (#471), which mutes rather than its events.
+				if (type == TrackType::Audio && context.part == 0 && !clip.child("Clips").empty())
+				{
+					AudioPart part;
+					part.id = m_project.newId();
+					part.track = context.track;
+					part.name = clip.attribute("name").as_string("");
+					if (part.name.empty())
+						part.name = m_project.trackById.at(context.track).name;
+					const time::Ticks position = toTicks(start, context.seconds);
+					part.position = {time::TimeBase::Musical, position};
+					part.length = std::max<time::Ticks>(1, toTicks(start + duration, context.seconds) - position);
+					part.mute = !clip.attribute("enable").as_bool(true);
+					part.color = content.color;
+					m_project.audioParts[part.id] = part;
+					content.part = part.id;
+					content.enabled = context.enabled;
+				}
 				MidiPart* part = nullptr;
 				const auto partFor = [&]() -> MidiPart&
 				{
 					if (part == nullptr)
+					{
 						part = &addPart(context, start, duration, clip.attribute("name").as_string(""));
+						part->mute = !content.enabled;
+						part->color = content.color;
+					}
 					return *part;
 				};
 				readContent(clip, context, content, start, duration, playStart, type, partFor);
@@ -1356,7 +1613,7 @@ namespace gnubase::engine
 				}
 				media.channels = std::clamp(media.channels, 1, g_maxAudioChannels);
 				m_project.media[media.id] = media;
-				const Clip clip{m_project.newId(), pathOf(xmlPath).stem().u8string(), media.id, {}, {}};
+				const Clip clip{m_project.newId(), pathOf(xmlPath).stem().u8string(), media.id, {}, {}, 0};
 				m_project.clips[clip.id] = clip;
 				return m_clips[xmlPath] = clip.id;
 			}
@@ -1395,6 +1652,9 @@ namespace gnubase::engine
 				event.track = lane.track;
 				event.clip = clipId;
 				event.mute = mute;
+				event.color = content.color;
+				event.part = content.part;
+
 				event.position = {time::TimeBase::Musical, toTicks(start, lane.seconds)};
 				event.offset = std::clamp<time::Samples>(
 					std::llround(offset * media.sampleRate), 0, std::max<time::Samples>(0, media.length - 1));
@@ -1457,6 +1717,13 @@ namespace gnubase::engine
 			std::map<std::string, ObjectId> m_tracks;   // project.xml track id -> track
 			std::map<std::string, ObjectId> m_channels; // project.xml channel id -> channel or bus
 			std::vector<std::pair<ObjectId, std::string>> m_destinations;
+			struct SendDestination
+			{
+				ObjectId channel = 0;
+				size_t index = 0;
+				std::string destination;
+			};
+			std::vector<SendDestination> m_sendDestinations;
 			std::map<std::string, ObjectId> m_clips; // media path in project.xml -> clip
 			// project.xml parameter id -> the track whose channel has it, and which one it is
 			std::map<std::string, std::pair<ObjectId, AutomationTargetType>> m_parameters;
@@ -1471,6 +1738,7 @@ namespace gnubase::engine
 		const std::string xml = exporter.projectXml();
 		Json document = toJson(project);
 		document["nextId"] = project.nextId;
+		document["snap"] = toJson(project.snap, true); // with a newer build's grid types
 		Json media = Json::object();
 		for (const auto& [id, mediaPath] : exporter.mediaPaths())
 			media[std::to_string(id)] = mediaPath;

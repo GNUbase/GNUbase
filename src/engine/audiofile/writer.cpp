@@ -20,17 +20,9 @@ namespace gnubase::engine
 		constexpr uint64_t g_ds64Size = 28;      // RF64's ds64 chunk without a table
 		constexpr uint64_t g_bextSize = 602;     // the bext chunk without coding history
 
-		int bitsOf(SampleFormat format)
+		bool isFloat(SampleFormat format)
 		{
-			switch (format)
-			{
-			case SampleFormat::Int16:
-				return 16;
-			case SampleFormat::Int24:
-				return 24;
-			default:
-				return 32;
-			}
+			return format == SampleFormat::Float32 || format == SampleFormat::Float64;
 		}
 
 		// Scales to the integer range like the decoders that read it back (dividing by 2^(bits-1)), rounds and clips.
@@ -72,6 +64,14 @@ namespace gnubase::engine
 					uint32_t bits = 0;
 					std::memcpy(&bits, &value, sizeof bits);
 					integer(bits, 4);
+					return;
+				}
+				if (format == SampleFormat::Float64)
+				{
+					const auto wide = static_cast<double>(value);
+					uint64_t bits = 0;
+					std::memcpy(&bits, &wide, sizeof bits);
+					integer(bits, 8);
 					return;
 				}
 				const int bits = bitsOf(format);
@@ -164,7 +164,7 @@ namespace gnubase::engine
 				if (options.broadcast)
 					broadcastChunk(header, *options.broadcast);
 				formatChunk(header);
-				if (options.sampleFormat == SampleFormat::Float32)
+				if (isFloat(options.sampleFormat))
 				{
 					header.text("fact");
 					header.integer(4, 4);
@@ -242,7 +242,7 @@ namespace gnubase::engine
 		private:
 			void formatChunk(Bytes& header) const
 			{
-				const bool isFloat = m_options.sampleFormat == SampleFormat::Float32;
+				const bool floating = isFloat(m_options.sampleFormat);
 				const int bits = bitsOf(m_options.sampleFormat);
 				const auto channels = static_cast<uint64_t>(m_options.channels);
 				const auto rate = static_cast<uint64_t>(std::lround(m_options.sampleRate));
@@ -251,7 +251,7 @@ namespace gnubase::engine
 				const bool extensible = m_options.channels > 2;
 				header.text("fmt ");
 				header.integer(extensible ? 40 : 16, 4);
-				uint64_t formatTag = isFloat ? 3 : 1; // WAVE_FORMAT_IEEE_FLOAT or WAVE_FORMAT_PCM
+				uint64_t formatTag = floating ? 3 : 1; // WAVE_FORMAT_IEEE_FLOAT or WAVE_FORMAT_PCM
 				if (extensible)
 					formatTag = 0xfffe; // WAVE_FORMAT_EXTENSIBLE
 				header.integer(formatTag, 2);
@@ -266,7 +266,7 @@ namespace gnubase::engine
 					header.integer(static_cast<uint64_t>(bits), 2); // valid bits per sample
 					header.integer(0, 4);                           // speaker positions not assigned
 					// KSDATAFORMAT_SUBTYPE_PCM or _IEEE_FLOAT: {0000000x-0000-0010-8000-00aa00389b71}
-					header.integer(isFloat ? 3 : 1, 4);
+					header.integer(floating ? 3 : 1, 4);
 					const std::array<uint64_t, 12> guid{
 						0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71};
 					for (const uint64_t byte : guid)
@@ -393,12 +393,12 @@ namespace gnubase::engine
 				FLAC__stream_encoder_set_bits_per_sample(m_encoder, static_cast<uint32_t>(m_bits));
 				FLAC__stream_encoder_set_sample_rate(m_encoder, static_cast<uint32_t>(std::lround(options.sampleRate)));
 				FLAC__stream_encoder_set_compression_level(m_encoder, 5);
-				// From here on the encoder owns the file and closes it when it finishes.
+				// From here on the encoder owns the file and closes it when it finishes, or when it is deleted after
+				// rejecting the settings.
 				std::FILE* file = createFile(path).release();
 				if (FLAC__stream_encoder_init_FILE(m_encoder, file, nullptr, nullptr) !=
 					FLAC__STREAM_ENCODER_INIT_STATUS_OK)
 				{
-					std::fclose(file);
 					FLAC__stream_encoder_delete(m_encoder);
 					throw AudioFileError("can't write " + path + ": the FLAC encoder rejected the settings");
 				}
@@ -461,8 +461,8 @@ namespace gnubase::engine
 			case AudioFormat::Wav:
 				break;
 			case AudioFormat::Aiff:
-				if (options.sampleFormat == SampleFormat::Float32)
-					rejected("32-bit float AIFF files; AIFF stores integers");
+				if (isFloat(options.sampleFormat))
+					rejected("float AIFF files; AIFF stores integers");
 				break;
 			case AudioFormat::Flac:
 				if (options.sampleFormat != SampleFormat::Int16 && options.sampleFormat != SampleFormat::Int24)

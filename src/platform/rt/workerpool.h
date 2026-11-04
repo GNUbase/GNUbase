@@ -92,14 +92,18 @@ namespace gnubase::rt
 	//
 	// Every job runs in its caller's floating-point mode on every thread (rounding, flush to zero, denormals are
 	// zero), so a job's results don't depend on which thread computed them. On Linux workers take SCHED_FIFO priority
-	// one below their caller's (workerPriority) once a real-time thread runs a job.
+	// one below their caller's (workerPriority) once a real-time thread runs a job. Where the OS refuses them, as
+	// without RLIMIT_RTPRIO, they ask rtkit over the system bus, which gives them SCHED_RR one below the highest
+	// priority it grants; from there they can only lower it to follow their caller.
 	class WorkerPool
 	{
 	public:
 		// Starts workers threads, at most g_maxWorkers, with real-time priority for periods of about periodSeconds and
-		// waits until each has tried to get it. Throws std::invalid_argument for more workers, and std::system_error
-		// if a thread can't be started, after ending the ones that were.
-		explicit WorkerPool(size_t workers, double periodSeconds = 0.005);
+		// waits until each has tried to get it. Each worker also joins workgroup, the audio workgroup of the device
+		// whose audio thread it helps (Device::workgroup, macOS only), which must outlive the pool. Throws
+		// std::invalid_argument for more workers, and std::system_error if a thread can't be started, after ending the
+		// ones that were.
+		explicit WorkerPool(size_t workers, double periodSeconds = 0.005, void* workgroup = nullptr);
 		static constexpr size_t g_maxWorkers = 64;
 		~WorkerPool(); // joins the workers
 		WorkerPool(const WorkerPool&) = delete;
@@ -111,13 +115,16 @@ namespace gnubase::rt
 		size_t realtimeWorkers() const { return m_realtime.load(std::memory_order_acquire); }
 		bool realtime() const { return realtimeWorkers() == m_threads.size(); }
 
+		// The workers that joined the workgroup. Final once the constructor returned.
+		size_t workgroupWorkers() const { return m_joined.load(std::memory_order_acquire); }
+
 		// Runs the job on the calling thread (thread 0) and on up to helpers workers (threads 1 to workers()). Wakes
 		// no more sleeping workers than that. Real-time safe: it neither allocates, locks nor blocks; it spins until
 		// the last worker has left the job.
 		void run(ParallelJob& job, size_t helpers = SIZE_MAX) noexcept;
 
 	private:
-		void loop(size_t thread, double periodSeconds);
+		void loop(size_t thread, double periodSeconds, void* workgroup);
 		uint64_t waitForJob(size_t worker, uint64_t seen, bool spin) noexcept; // returns the new generation
 		bool admit(uint64_t generation) noexcept;
 		void wake(size_t count) noexcept;
@@ -135,6 +142,7 @@ namespace gnubase::rt
 		std::atomic<uint64_t> m_sleeping{0};   // a bit per worker that sleeps or is about to
 		std::atomic<size_t> m_inside{0};       // workers inside the current job
 		std::atomic<size_t> m_realtime{0};
+		std::atomic<size_t> m_joined{0}; // workers in the workgroup
 		std::atomic<bool> m_stop{false};
 		std::thread::id m_caller; // the thread that ran the last job; on Linux the workers follow its priority
 		std::vector<std::thread> m_threads;
@@ -148,6 +156,8 @@ namespace gnubase::rt
 		size_t threadLimit = SIZE_MAX; // starting more worker threads than this throws std::system_error
 		bool refuseRealtime = false;   // no worker gets real-time priority
 		bool pretendRealtime = false;  // every worker counts as real-time (realtime()), whatever priority it got
+		// Linux: workers may not take real-time priority themselves, as without RLIMIT_RTPRIO; rtkit may give it.
+		bool refuseDirectRealtime = false;
 	};
 	void setWorkerPoolFaults(const WorkerPoolFaults& faults) noexcept;
 }

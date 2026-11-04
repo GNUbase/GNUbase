@@ -7,8 +7,10 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
+struct SDL_Cursor;
 struct SDL_Window;
 union SDL_Event;
 
@@ -33,12 +35,14 @@ namespace gnubase::ui
 		void destroyWindow(WindowId window) override;
 		Rect bounds(WindowId window) const override;
 		void setBounds(WindowId window, const Rect& bounds) override;
+		void raise(WindowId window) override;
 		Size pixelSize(WindowId window) const override;
 		float scale(WindowId window) const override;
 		void setInputTarget(WindowId window, Rml::Context* context) override;
 		Rml::TextInputHandler* textInputHandler(WindowId window) override;
 		std::string clipboardText() const override;
 		void setClipboardText(const std::string& text) override;
+		void setCursor(const Cursor& cursor) override;
 		void showFileDialog(uint64_t id, const FileDialog& dialog) override;
 		std::optional<WindowEvent> nextEvent(std::optional<std::chrono::milliseconds> timeout) override;
 		void wake() override;
@@ -59,10 +63,19 @@ namespace gnubase::ui
 
 		std::optional<WindowEvent> translate(SDL_Event& event);
 
+		struct DestroyCursor
+		{
+			void operator()(SDL_Cursor* cursor) const;
+		};
+
 		std::map<WindowId, Rml::Context*> m_inputTargets;
 		std::map<WindowId, std::unique_ptr<SdlTextInput>> m_textInputs;
 		std::map<WindowId, Drop> m_drops;
-		uint32_t m_dialogEvent = 0; // the SDL event type that brings file dialog results to the main thread
-		uint32_t m_wakeEvent = 0;   // the SDL event type that wake pushes
+		std::map<std::string, std::unique_ptr<SDL_Cursor, DestroyCursor>> m_cursors; // made once per name; null: arrow
+		uint32_t m_dialogEvent = 0;      // the SDL event type that brings file dialog results to the main thread
+		uint32_t m_wakeEvent = 0;        // the SDL event type that wake pushes
+		WindowId m_keyboardGained = 0;   // the window that just got the keyboard, until an event other than a key-down
+		uint64_t m_keyboardGainedAt = 0; // when, in SDL's nanoseconds
+		WindowId m_altHeldOnGaining = 0; // the window whose Alt was held as it got the keyboard, until Alt is released
 	};
 }

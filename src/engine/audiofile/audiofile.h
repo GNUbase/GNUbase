@@ -30,7 +30,24 @@ namespace gnubase::engine
 		Int24,
 		Int32,
 		Float32,
+		Float64, // WAV only
 	};
+
+	// The bits a sample takes in the format.
+	constexpr int bitsOf(SampleFormat format)
+	{
+		switch (format)
+		{
+		case SampleFormat::Int16:
+			return 16;
+		case SampleFormat::Int24:
+			return 24;
+		case SampleFormat::Float64:
+			return 64;
+		default:
+			return 32;
+		}
+	}
 
 	// The Broadcast Wave description chunk ("bext", EBU Tech 3285).
 	struct BroadcastInfo

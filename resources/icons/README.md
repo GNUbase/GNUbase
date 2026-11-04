@@ -16,6 +16,8 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `transport-punch-in.svg` — Punch into recording at the left boundary.
 - `transport-punch-out.svg` — Punch out of recording at the right boundary.
 - `transport-metronome.svg` — Toggle the metronome.
+- `transport-tempo-track.svg` — Activate the tempo track (a tempo curve).
+- `transport-tap-tempo.svg` — Tap the tempo.
 - `tool-pointer.svg` — Select and move objects.
 - `tool-range.svg` — Select a time range.
 - `tool-split.svg` — Split events with scissors.
@@ -40,6 +42,7 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `track-group.svg` — Group tracks into one bus.
 - `track-effect.svg` — Effect track (`fx`).
 - `track-marker.svg` — Marker track.
+- `layout-channel-zone.svg` — Show or hide the Channel zone.
 - `layout-left-zone.svg` — Show or hide the left zone.
 - `layout-lower-zone.svg` — Show or hide the lower zone.
 - `layout-right-zone.svg` — Show or hide the right zone.
@@ -53,10 +56,13 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `general-search.svg` — Search.
 - `general-menu.svg` — Open the menu.
 - `general-more.svg` — Show more actions.
+- `general-arrow-down.svg` — Open a pop-up menu of settings.
 - `general-undo.svg` — Undo the last action.
 - `general-redo.svg` — Redo the last undone action.
 - `general-save.svg` — Save the project.
 - `general-open.svg` — Open a project or file.
 - `general-snap.svg` — Toggle snapping to the grid.
+- `general-zero-crossing.svg` — Toggle snapping to zero crossings.
+- `general-color.svg` — Choose a color for the selected tracks or events.
 - `general-lock.svg` — Lock the selected item.
 - `general-link.svg` — Link selected items.

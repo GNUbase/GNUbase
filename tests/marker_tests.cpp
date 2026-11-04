@@ -418,6 +418,53 @@ TEST_CASE("locating to the next and previous marker and to marker N", "[unit]")
 	CHECK(run(client, "history.get").at("steps").size() == steps);
 }
 
+TEST_CASE("with transport.cycleFollowsMarkers, locating to a marker sets the locators to it", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	addMarkerTrack(client);
+	const Json one = addPosition(client, 2, "One");
+	const Json verse = addCycle(client, 4, 8, "Verse");
+	addPosition(client, 10, "Two");
+	run(client, "transport.set", {{"left", 1}, {"right", 2}});
+	const auto locators = [&client]
+	{
+		const Json transport = run(client, "transport.get");
+		return std::make_pair(transport.at("left").get<int64_t>(), transport.at("right").get<int64_t>());
+	};
+
+	// Off by default: the locators stay.
+	run(client, "marker.locate", {{"number", 1}, {"type", "cycle"}});
+	CHECK(locators() == std::make_pair<int64_t, int64_t>(1, 2));
+
+	// A cycle marker's range; a position marker up to the next marker after it on its track.
+	run(client, "settings.set", {{"key", "transport.cycleFollowsMarkers"}, {"value", true}});
+	run(client, "marker.locate", {{"marker", idOf(verse)}});
+	CHECK(locators() == std::make_pair(4 * g_quarterSamples, 8 * g_quarterSamples));
+	run(client, "marker.locate", {{"marker", idOf(one)}});
+	CHECK(locators() == std::make_pair(2 * g_quarterSamples, 4 * g_quarterSamples));
+	CHECK(cursor(client) == 2 * g_quarterSamples);
+
+	// Locating to the next and previous marker too; the last marker has nothing after it, the locators stay.
+	run(client, "marker.locateNext");
+	CHECK(locators() == std::make_pair(4 * g_quarterSamples, 8 * g_quarterSamples));
+	run(client, "marker.locateNext"); // the cycle marker's end
+	CHECK(locators() == std::make_pair(4 * g_quarterSamples, 8 * g_quarterSamples));
+	run(client, "marker.locateNext");
+	CHECK(cursor(client) == 10 * g_quarterSamples);
+	CHECK(locators() == std::make_pair(4 * g_quarterSamples, 8 * g_quarterSamples));
+	run(client, "marker.locatePrevious");
+	run(client, "marker.locatePrevious");
+	run(client, "marker.locatePrevious");
+	CHECK(cursor(client) == 2 * g_quarterSamples);
+	CHECK(locators() == std::make_pair(2 * g_quarterSamples, 4 * g_quarterSamples));
+
+	// Off again, they stay.
+	run(client, "settings.set", {{"key", "transport.cycleFollowsMarkers"}, {"value", false}});
+	run(client, "marker.locate", {{"marker", idOf(verse)}});
+	CHECK(locators() == std::make_pair(2 * g_quarterSamples, 4 * g_quarterSamples));
+}
+
 TEST_CASE("marker commands see a locate that the running audio device has not applied yet", "[integration]")
 {
 	Engine engine;
@@ -487,6 +534,47 @@ TEST_CASE("cycle markers set the locators, and markers bound range selections", 
 	CHECK(result.at("end") == 8 * g_quarterSamples);
 	CHECK_THAT(reject(client, "marker.range", {{"position", g_quarterSamples}}), ContainsSubstring("before"));
 	CHECK_THAT(reject(client, "marker.range", {{"position", 21 * g_quarterSamples}}), ContainsSubstring("after"));
+}
+
+TEST_CASE("marker.put puts position marker N at the cursor, moving it or adding it", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+
+	// Without a marker track it adds one, then the marker with that number at the cursor, in one undo step.
+	run(client, "transport.locate", {{"position", 2 * g_quarterSamples}});
+	const auto steps = run(client, "history.get").at("steps").size();
+	Json three = run(client, "marker.put", {{"number", 3}}).at("marker");
+	CHECK(three.at("number") == 3);
+	CHECK(three.at("type") == "position");
+	CHECK(three.at("position") == 2 * g_ticksPerQuarter);
+	CHECK(run(client, "history.get").at("steps").size() == steps + 1);
+	CHECK(run(client, "project.get").at("activeMarkerTrack") == three.at("track"));
+
+	// Again elsewhere, the same marker moves there and keeps its name; another number adds another marker.
+	run(client, "marker.set", {{"marker", idOf(three)}, {"name", "Bridge"}});
+	run(client, "transport.locate", {{"position", 6 * g_quarterSamples}});
+	const Json moved = run(client, "marker.put", {{"number", 3}}).at("marker");
+	CHECK(idOf(moved) == idOf(three));
+	CHECK(moved.at("position") == 6 * g_ticksPerQuarter);
+	CHECK(moved.at("name") == "Bridge");
+	const Json one = run(client, "marker.put", {{"number", 1}}).at("marker");
+	CHECK(idOf(one) != idOf(three));
+	CHECK(one.at("position") == 6 * g_ticksPerQuarter);
+	CHECK(markerNames(client).size() == 2);
+
+	// Cycle markers with the number don't count; on another marker track (the active one now) it adds one there.
+	addCycle(client, 0, 1);
+	run(client, "transport.locate", {{"position", 8 * g_quarterSamples}});
+	CHECK(idOf(run(client, "marker.put", {{"number", 1}}).at("marker")) == idOf(one));
+	const ObjectId other = addMarkerTrack(client);
+	const Json added = run(client, "marker.put", {{"number", 1}}).at("marker");
+	CHECK(added.at("track") == other);
+	CHECK(idOf(added) != idOf(one));
+	const ObjectId first = one.at("track").get<ObjectId>();
+	CHECK(idOf(run(client, "marker.put", {{"number", 1}, {"track", first}}).at("marker")) == idOf(one));
+	CHECK_THAT(reject(client, "marker.put", {{"number", 0}}), ContainsSubstring("number"));
+	CHECK_THAT(reject(client, "marker.put"), ContainsSubstring("number"));
 }
 
 TEST_CASE("every marker edit is one undo step that undo announces", "[unit]")

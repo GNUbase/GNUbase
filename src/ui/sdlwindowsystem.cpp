@@ -8,7 +8,10 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -44,10 +47,43 @@ namespace gnubase::ui
 			case SDL_EVENT_FINGER_UP:
 			case SDL_EVENT_FINGER_MOTION:
 			case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+			case SDL_EVENT_WINDOW_FOCUS_LOST:
 				return true;
 			default:
 				return false;
 			}
+		}
+
+		// The OS's pointers for the CSS names in g_systemCursors, in the same order.
+		constexpr std::array<SDL_SystemCursor, g_systemCursors.size()> g_sdlCursors = {SDL_SYSTEM_CURSOR_CROSSHAIR,
+			SDL_SYSTEM_CURSOR_EW_RESIZE, SDL_SYSTEM_CURSOR_MOVE, SDL_SYSTEM_CURSOR_NESW_RESIZE,
+			SDL_SYSTEM_CURSOR_NOT_ALLOWED, SDL_SYSTEM_CURSOR_NS_RESIZE, SDL_SYSTEM_CURSOR_NWSE_RESIZE,
+			SDL_SYSTEM_CURSOR_POINTER, SDL_SYSTEM_CURSOR_PROGRESS, SDL_SYSTEM_CURSOR_TEXT, SDL_SYSTEM_CURSOR_WAIT};
+		static_assert(g_sdlCursors.back() != SDL_SYSTEM_CURSOR_DEFAULT, "a pointer for every name in g_systemCursors");
+
+		// The OS's pointer for a CSS cursor name.
+		std::optional<SDL_SystemCursor> systemCursor(const std::string& name)
+		{
+			for (size_t index = 0; index < g_systemCursors.size(); ++index)
+				if (name == g_systemCursors.at(index))
+					return g_sdlCursors.at(index);
+			return std::nullopt;
+		}
+
+		// An SDL surface over the picture's pixels, which SDL only reads.
+		SDL_Surface* surfaceOf(const CursorImage& image)
+		{
+			// NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast): SDL's surfaces take non-const pixels
+			auto* pixels = const_cast<uint8_t*>(image.pixels.data());
+			SDL_Surface* surface =
+				SDL_CreateSurfaceFrom(image.width, image.height, SDL_PIXELFORMAT_RGBA32, pixels, image.width * 4);
+			if (surface == nullptr)
+				return nullptr;
+			// Each scale's own hotspot, which SDL takes for that scale's picture (else the first one's, unscaled).
+			const SDL_PropertiesID properties = SDL_GetSurfaceProperties(surface);
+			SDL_SetNumberProperty(properties, SDL_PROP_SURFACE_HOTSPOT_X_NUMBER, image.hotspot.x);
+			SDL_SetNumberProperty(properties, SDL_PROP_SURFACE_HOTSPOT_Y_NUMBER, image.hotspot.y);
+			return surface;
 		}
 
 		// A file dialog that is open: what SDL needs until the dialog calls back.
@@ -192,6 +228,8 @@ namespace gnubase::ui
 
 	SdlWindowSystem::SdlWindowSystem()
 	{
+		// On Windows, mouse pointers with pictures for several scales show the one for the monitor's scale.
+		SDL_SetHint(SDL_HINT_MOUSE_DPI_SCALE_CURSORS, "1");
 		if (!SDL_InitSubSystem(SDL_INIT_VIDEO))
 			throw sdlError("SDL cannot start its video subsystem");
 		m_dialogEvent = SDL_RegisterEvents(1);
@@ -204,6 +242,8 @@ namespace gnubase::ui
 		SDL_Event event;
 		while (m_dialogEvent != 0 && SDL_PeepEvents(&event, 1, SDL_GETEVENT, m_dialogEvent, m_dialogEvent) == 1)
 			const std::unique_ptr<DialogResult> unused(static_cast<DialogResult*>(event.user.data1));
+		SDL_SetCursor(SDL_GetDefaultCursor());
+		m_cursors.clear();
 		SDL_QuitSubSystem(SDL_INIT_VIDEO);
 	}
 
@@ -293,6 +333,17 @@ namespace gnubase::ui
 		SDL_SetWindowSize(sdl, bounds.width, bounds.height);
 	}
 
+	void SdlWindowSystem::raise(WindowId window)
+	{
+		SDL_Window* sdl = sdlWindow(window);
+		if (sdl == nullptr)
+			return;
+		// Only a minimized one: restoring a maximized window would make it smaller.
+		if ((SDL_GetWindowFlags(sdl) & SDL_WINDOW_MINIMIZED) != 0 && !SDL_RestoreWindow(sdl))
+			logging::warning("SDL cannot restore a window: {}", SDL_GetError());
+		SDL_RaiseWindow(sdl);
+	}
+
 	Size SdlWindowSystem::pixelSize(WindowId window) const
 	{
 		Size result;
@@ -331,6 +382,46 @@ namespace gnubase::ui
 	void SdlWindowSystem::setClipboardText(const std::string& text)
 	{
 		SDL_SetClipboardText(text.c_str());
+	}
+
+	void SdlWindowSystem::DestroyCursor::operator()(SDL_Cursor* cursor) const
+	{
+		SDL_DestroyCursor(cursor);
+	}
+
+	void SdlWindowSystem::setCursor(const Cursor& cursor)
+	{
+		auto found = m_cursors.find(cursor.name);
+		if (found == m_cursors.end())
+		{
+			SDL_Cursor* made = nullptr;
+			if (!cursor.images.empty())
+			{
+				// The picture at scale 1, with the others for HiDPI monitors, of which SDL takes the nearest to the
+				// monitor's scale (Windows, macOS, Wayland; X11 shows the first).
+				SDL_Surface* base = surfaceOf(cursor.images.front());
+				for (size_t i = 1; base != nullptr && i < cursor.images.size(); ++i)
+					if (SDL_Surface* scaled = surfaceOf(cursor.images[i]))
+					{
+						SDL_AddSurfaceAlternateImage(base, scaled);
+						SDL_DestroySurface(scaled); // the base keeps a reference
+					}
+				if (base != nullptr)
+				{
+					const Point hotspot = cursor.images.front().hotspot;
+					made = SDL_CreateColorCursor(base, hotspot.x, hotspot.y);
+					SDL_DestroySurface(base);
+				}
+			}
+			else if (const std::optional<SDL_SystemCursor> system = systemCursor(cursor.name))
+			{
+				made = SDL_CreateSystemCursor(*system);
+			}
+			if (made == nullptr && !cursor.name.empty())
+				logging::debug("The mouse pointer {} is the OS's arrow: {}", cursor.name, SDL_GetError());
+			found = m_cursors.emplace(cursor.name, std::unique_ptr<SDL_Cursor, DestroyCursor>(made)).first;
+		}
+		SDL_SetCursor(found->second != nullptr ? found->second.get() : SDL_GetDefaultCursor());
 	}
 
 	void SdlWindowSystem::showFileDialog(uint64_t id, const FileDialog& dialog)
@@ -449,13 +540,49 @@ namespace gnubase::ui
 			break;
 		}
 
+		if (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED)
+		{
+			m_keyboardGained = id;
+			m_keyboardGainedAt = event.window.timestamp;
+		}
 		if (isInput(event.type))
 		{
 			const auto target = m_inputTargets.find(id);
 			if (target == m_inputTargets.end())
 				return std::nullopt;
-			RmlSDL::InputEventHandler(target->second, window, event);
-			return WindowEvent{WindowEventKind::Input, id};
+			// A hidden window has no mouse to lose: the OS may still say so, e.g. for UI tests' windows, which would
+			// take the hover from what the tests point at.
+			if (event.type == SDL_EVENT_WINDOW_MOUSE_LEAVE && (SDL_GetWindowFlags(window) & SDL_WINDOW_HIDDEN) != 0)
+				return std::nullopt;
+			// Alt pressed and released alone opens the menu bar (ui/widgets.h), but not when SDL presses or releases
+			// it for a change of the keyboard focus. When the window loses the keyboard, e.g. to Alt+Tab, SDL releases
+			// the keys still held. When it gets the keyboard, e.g. by a window manager's Alt+J, SDL presses the keys
+			// held for it on Linux, right after the focus event: that Alt's press and release don't count.
+			const bool alt = (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) &&
+				(event.key.key == SDLK_LALT || event.key.key == SDLK_RALT);
+			const bool pressedForFocus = alt && event.type == SDL_EVENT_KEY_DOWN && id == m_keyboardGained &&
+				event.key.timestamp < m_keyboardGainedAt + 100'000'000;
+			if (event.type != SDL_EVENT_KEY_DOWN || alt)
+				m_keyboardGained = 0;
+			if (alt && event.type == SDL_EVENT_KEY_DOWN)
+				m_altHeldOnGaining = pressedForFocus ? id : 0;
+			if (pressedForFocus)
+				return std::nullopt;
+			if (alt && event.type == SDL_EVENT_KEY_UP && (SDL_GetKeyboardFocus() != window || m_altHeldOnGaining == id))
+			{
+				m_altHeldOnGaining = 0;
+				return std::nullopt;
+			}
+			const bool unused = RmlSDL::InputEventHandler(target->second, window, event);
+			WindowEvent input{WindowEventKind::Input, id};
+			if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && unused) // one key command per press
+				input.key =
+					KeyPress{RmlSDL::ConvertKey(static_cast<int>(event.key.key)), RmlSDL::GetKeyModifierState()};
+			else if (event.type == SDL_EVENT_KEY_UP)
+				input.keyUp = KeyPress{RmlSDL::ConvertKey(static_cast<int>(event.key.key)), 0};
+			else if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) // a key held then goes up elsewhere
+				input.keyUp = KeyPress{Rml::Input::KI_UNKNOWN, 0};
+			return input;
 		}
 		if (const std::optional<WindowEventKind> kind = kindOf(event.type))
 			return WindowEvent{*kind, id};

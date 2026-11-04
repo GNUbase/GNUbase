@@ -113,7 +113,8 @@ namespace gnubase::engine::metronome
 		const time::SignatureMap& signatures, double projectRate, double deviceRate, SoundLibrary& sounds)
 	{
 		auto config = std::make_unique<ClickConfig>();
-		config->clickWhilePlaying = settings.click && settings.whilePlaying;
+		config->whilePlaying = settings.whilePlaying;
+		config->whileRecording = settings.whileRecording;
 		config->sampleRate = projectRate;
 		config->tempo = tempo;
 		config->signatures = signatures;
@@ -279,10 +280,13 @@ namespace gnubase::engine::metronome
 				clicksIn(ConstantTimeline{countIn.bpm, {countIn.numerator, countIn.denominator}, config.sampleRate},
 					config.patterns, begin, begin + frames, at);
 		}
-		if (transport.playing && config.clickWhilePlaying)
+		// With the metronome switch on, segments click as they play or record.
+		if (transport.playing && transport.click)
 			for (size_t s = 0; s < transport.segmentCount; ++s)
 			{
 				const graph::TransportSegment& segment = transport.segments[s];
+				if (!(segment.recording ? config.whileRecording : config.whilePlaying))
+					continue;
 				clicksIn(project, config.patterns, segment.position, segment.position + segment.frames,
 					[&emit, &segment](time::Samples position, int accent)
 					{ emit(segment.offset + static_cast<uint32_t>(position - segment.position), accent); });

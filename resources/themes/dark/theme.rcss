@@ -67,7 +67,7 @@
 	{
 		image-color: #d76a73;
 	}
-	.dialog
+	.dialog, dialog
 	{
 		decorator: svg-ninepatch(dialog.svg, 6 6 6 6);
 	}
@@ -90,13 +90,13 @@
 	{
 		decorator: svg-ninepatch(toolbar.svg, 6 6 6 6);
 	}
-	.display
+	.display, valuefield
 	{
 		decorator: svg-ninepatch(display.svg, 6 6 6 6);
 		font-family: JetBrains Mono;
 		color: #f3f4f5;
 	}
-	.tooltip
+	.tooltip, tooltip
 	{
 		decorator: svg-ninepatch(tooltip.svg, 6 6 6 6);
 		font-size: 11dp;
@@ -105,29 +105,41 @@
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
 	}
-	.menu, select selectbox
+	.menu, menu, select selectbox
 	{
 		decorator: svg-ninepatch(menu.svg, 6 6 6 6);
 	}
-	.menu-item:hover, select selectbox option:hover
+	.menu-item:hover, menuitem:hover, menuitem:focus-visible, select selectbox option:hover
 	{
 		decorator: svg-ninepatch(menu-item-hover.svg, 6 6 6 6);
 	}
-	.menu-separator
+	menuitem:disabled
+	{
+		color: #b7bbc0;
+	}
+	menuitem.checked
+	{
+		color: #5ea7b3;
+	}
+	.menu-separator, menuseparator
 	{
 		decorator: svg-ninepatch(menu-separator.svg, 2 2 2 2);
 	}
-	.list
+	.list, listview
 	{
 		decorator: svg-ninepatch(list.svg, 6 6 6 6);
 	}
-	.list-item:hover
+	.list-item:hover, listitem:hover, listview tbody tr:hover
 	{
 		decorator: svg-ninepatch(list-item-hover.svg, 6 6 6 6);
 	}
-	.list-item.selected, select selectbox option:checked
+	.list-item.selected, listitem.selected, listview tr.selected, select selectbox option:checked
 	{
 		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
+	}
+	listview thead td.sorted
+	{
+		color: #5ea7b3;
 	}
 	tabset tabs
 	{
@@ -165,6 +177,11 @@
 	{
 		decorator: svg-ninepatch(button-checked.svg, 6 6 6 6);
 	}
+	button.suspended
+	{
+		decorator: svg-ninepatch(button-normal.svg, 6 6 6 6);
+		color: #cda85f;
+	}
 	button:disabled
 	{
 		decorator: svg-ninepatch(button-disabled.svg, 6 6 6 6);
@@ -182,14 +199,6 @@
 	button.primary:active
 	{
 		decorator: svg-ninepatch(button-primary-pressed.svg, 6 6 6 6);
-	}
-	button:focus-visible
-	{
-		decorator: svg-ninepatch(button-normal.svg, 6 6 6 6), svg-ninepatch(focus-ring.svg, 6 6 6 6);
-	}
-	button.primary:focus-visible
-	{
-		decorator: svg-ninepatch(button-primary-normal.svg, 6 6 6 6), svg-ninepatch(focus-ring.svg, 6 6 6 6);
 	}
 	button svg.icon
 	{
@@ -234,6 +243,16 @@
 	{
 		decorator: svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
 		color: #f3f4f5;
+	}
+	button.toggle.listen.checked
+	{
+		decorator: svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+		color: #f3f4f5;
+	}
+	button.toggle.solo.defeated
+	{
+		decorator: svg-ninepatch(toggle-hover.svg, 6 6 6 6);
+		color: #5ea7b3;
 	}
 	input.text, input.password, textarea
 	{
@@ -300,15 +319,15 @@
 	{
 		opacity: 0.5;
 	}
-	input.range slidertrack, progress
+	input.range slidertrack, progress, .slider-track
 	{
 		decorator: svg-ninepatch(slider-track.svg, 1 1 1 1);
 	}
-	input.range sliderprogress, progress fill
+	input.range sliderprogress, progress fill, .slider-fill
 	{
 		decorator: svg-ninepatch(slider-fill.svg, 1 1 1 1);
 	}
-	input.range sliderbar
+	input.range sliderbar, .slider-thumb
 	{
 		decorator: svg(slider-thumb.svg);
 	}
@@ -368,6 +387,26 @@
 	{
 		decorator: svg(meter-peak.svg);
 	}
+	.tree-toggle
+	{
+		decorator: svg(dropdown-arrow.svg);
+	}
+	knob:focus-visible, fader:focus-visible, slider:focus-visible, input.range:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
+	}
+	colorpicker .color-field
+	{
+		decorator: linear-gradient(to bottom, #00000000, #000000), linear-gradient(to right, #ffffff, #ffffff00);
+	}
+	colorpicker .color-hue
+	{
+		decorator: linear-gradient(to bottom, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+	}
+	colorpicker .color-field-thumb, colorpicker .color-hue-thumb
+	{
+		decorator: svg(slider-thumb.svg);
+	}
 	.splitter-grip-vertical
 	{
 		decorator: svg(splitter-grip-vertical.svg);
@@ -375,5 +414,522 @@
 	.splitter-grip-horizontal
 	{
 		decorator: svg(splitter-grip-horizontal.svg);
+	}
+	event-lanes
+	{
+		color: #3c575d;
+		stroke-color: #5ea7b3;
+		stroke-width: 1dp;
+	}
+	waveform
+	{
+		color: #5ea7b3;
+	}
+	curve
+	{
+		stroke-color: #7896bd;
+		stroke-width: 2dp;
+	}
+	ruler
+	{
+		color: #b7bbc0;
+		stroke-color: #484c50;
+		stroke-width: 1dp;
+		font-size: 11dp;
+	}
+	.event-display
+	{
+		background-color: #151617;
+	}
+	.event-display .overview
+	{
+		background-color: #1e2022;
+	}
+	.event-display .overview event-lanes
+	{
+		color: #3b5d63;
+		stroke-color: transparent;
+	}
+	.event-display .overview-view
+	{
+		border-width: 1dp;
+		border-color: #5ea7b3;
+		background-color: #5ea7b326;
+	}
+	.event-display event-lanes.muted-events
+	{
+		color: #44474a;
+		stroke-color: #66686c;
+	}
+	.event-display event-lanes.selected-events
+	{
+		color: #4e828b;
+		stroke-color: #f3f4f5;
+	}
+	.event-display fade-lines
+	{
+		color: #f3f4f5;
+		stroke-color: #f3f4f5;
+		stroke-width: 1dp;
+	}
+	.event-display event-lanes.folder-data
+	{
+		color: #31484e;
+		stroke-color: transparent;
+	}
+	.event-display ruler
+	{
+		background-color: #1e2022;
+	}
+	.event-display .project-cursor
+	{
+		background-color: #f3f4f5;
+	}
+	.event-display .cross-hair-vertical, .event-display .cross-hair-horizontal
+	{
+		background-color: #66686c;
+	}
+	.event-display .marker-lines
+	{
+		stroke-color: #46566a;
+		stroke-width: 1dp;
+	}
+	.event-display .marker-events
+	{
+		color: #7896bd40;
+		stroke-color: #7896bd;
+		stroke-width: 1dp;
+	}
+	.event-display .marker-label
+	{
+		color: #b7bbc0;
+		font-size: 11dp;
+	}
+	.event-display .marker-label.active
+	{
+		color: #f3f4f5;
+	}
+	.event-display .marker-label.selected
+	{
+		color: #151617;
+		background-color: #7896bd;
+	}
+	.tempo-curve .tempo-line
+	{
+		stroke-color: #5ea7b3;
+		stroke-width: 2dp;
+	}
+	.tempo-curve.inactive .tempo-line
+	{
+		stroke-color: #b7bbc0;
+	}
+	.tempo-curve .tempo-point
+	{
+		background-color: #5ea7b3;
+	}
+	.tempo-curve.inactive .tempo-point
+	{
+		background-color: #b7bbc0;
+	}
+	.tempo-curve .tempo-point.selected
+	{
+		background-color: #f3f4f5;
+	}
+	.tempo-editor .tempo-scale-label
+	{
+		color: #b7bbc0;
+		font-size: 11dp;
+	}
+	.signature-row .signature-event
+	{
+		color: #f3f4f5;
+		font-size: 11dp;
+		border-left-width: 1dp;
+		border-left-color: #7896bd;
+	}
+	.signature-row .signature-event.selected
+	{
+		color: #151617;
+		background-color: #7896bd;
+	}
+	.event-display .range-selection
+	{
+		border-width: 1dp;
+		border-color: #f3f4f5;
+		background-color: #f3f4f533;
+	}
+	.event-display .tool-rectangle
+	{
+		border-width: 1dp;
+		border-color: #5ea7b3;
+		background-color: #5ea7b31a;
+	}
+	.track-list
+	{
+		background-color: #1e2022;
+	}
+	.track-list listitem
+	{
+		border-bottom-width: 1dp;
+		border-bottom-color: #484c50;
+	}
+	.track-list listitem.disabled
+	{
+		color: #b7bbc0;
+	}
+	.track-list .drop-line
+	{
+		background-color: #5ea7b3;
+	}
+	.track-list .automation-rows
+	{
+		background-color: #1a1b1c;
+	}
+	.track-list .automation-row
+	{
+		border-top-width: 1dp;
+		border-top-color: #484c50;
+	}
+	.event-display .automation-lane
+	{
+		background-color: #1e202280;
+		border-top-width: 1dp;
+		border-top-color: #484c50;
+	}
+	.event-display .automation-curve
+	{
+		color: #f3f4f5;
+		stroke-color: #7896bd;
+	}
+	.event-display .automation-lane.off .automation-curve
+	{
+		color: #b7bbc0;
+		stroke-color: #b7bbc0;
+	}
+	.event-display .static-value
+	{
+		stroke-color: #f3f4f5;
+		stroke-width: 1dp;
+	}
+	.event-display .automation-editor
+	{
+		border-width: 1dp;
+		border-color: #7896bd;
+		background-color: #7896bd1a;
+	}
+	.mixer-channel
+	{
+		border-right-width: 1dp;
+		border-right-color: #484c50;
+	}
+	.midi-editor .editor-part
+	{
+		color: #b7bbc0;
+		border-width: 1dp;
+		border-color: #484c50;
+		background-color: #242628;
+	}
+	.midi-editor .editor-part.editable
+	{
+		color: #f3f4f5;
+	}
+	.midi-editor .editor-part.active, .editor-visibility-track.active
+	{
+		color: #5ea7b3;
+	}
+	.editor-visibility-check
+	{
+		decorator: svg(checkbox-off.svg);
+	}
+	.editor-visibility-check.checked
+	{
+		decorator: svg(checkbox-on.svg);
+	}
+	.editor-visibility-check.partial
+	{
+		decorator: svg(checkbox-mixed.svg);
+	}
+	.key-editor-key
+	{
+		background-color: #cbcccd;
+		color: #151617;
+		border-bottom-width: 1px;
+		border-bottom-color: #b7bbc0;
+	}
+	.key-editor-key.black
+	{
+		background-color: #151617;
+		color: #f3f4f5;
+	}
+	.key-editor-key.selected
+	{
+		background-color: #5ea7b3;
+	}
+	.key-editor-grid
+	{
+		background-color: #1e2022;
+	}
+	.key-editor-row
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #333639;
+	}
+	.key-editor-row.black
+	{
+		background-color: #1a1b1c;
+	}
+	.key-note
+	{
+		background-color: #49767e;
+		border-width: 1px;
+		border-color: #5ea7b3;
+	}
+	.key-note.selected
+	{
+		background-color: #7896bd;
+		border-color: #f3f4f5;
+	}
+	.key-note.inactive
+	{
+		background-color: #4c4e51;
+		border-color: #b7bbc0;
+	}
+	.key-note.drawing
+	{
+		background-color: #5ea7b366;
+	}
+	.key-editor-step-cursor
+	{
+		background-color: #5ea7b3;
+	}
+	.list-editor-header
+	{
+		color: #b7bbc0;
+		border-bottom-width: 1px;
+		border-bottom-color: #484c50;
+	}
+	.list-editor-rows .list-row
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #333639;
+	}
+	.list-editor-body
+	{
+		background-color: #1e2022;
+	}
+	.list-row.selected
+	{
+		background-color: #2e4246;
+	}
+	.list-row.inactive
+	{
+		color: #b7bbc0;
+	}
+	.list-event
+	{
+		background-color: #49767e;
+		border-width: 1px;
+		border-color: #5ea7b3;
+	}
+	.list-row.selected .list-event
+	{
+		background-color: #7896bd;
+		border-color: #f3f4f5;
+	}
+	.list-value
+	{
+		background-color: #5ea7b3;
+	}
+	.list-row.selected .list-value
+	{
+		background-color: #7896bd;
+	}
+	.docking [zone]
+	{
+		background-color: #1a1b1c;
+	}
+	.docking .zone-frame
+	{
+		border-width: 2dp;
+		border-color: #5ea7b3;
+	}
+	.docking .strip
+	{
+		background-color: #1e2022;
+	}
+	.status-line .status-field
+	{
+		color: #b7bbc0;
+		font-size: 11dp;
+	}
+	.status-line .mismatch
+	{
+		color: #cda85f;
+	}
+	#lost-device
+	{
+		color: #d76a73;
+	}
+	.info-line.multiple .info-field
+	{
+		color: #5ea7b3;
+	}
+	.info-line .info-label, .inspector-label
+	{
+		color: #b7bbc0;
+	}
+	.inspector .insert.bypassed, .inspector .insert.inactive
+	{
+		color: #b7bbc0;
+	}
+	.pool-message.error
+	{
+		color: #d76a73;
+	}
+	.history tr.undone, .history tr.undone input.text
+	{
+		color: #b7bbc0;
+	}
+	.history .history-separator
+	{
+		background-color: #5ea7b3;
+	}
+	.onscreen-keyboard .white-key
+	{
+		background-color: #f3f4f5;
+		color: #151617;
+		border-color: #484c50;
+	}
+	.onscreen-keyboard .black-key
+	{
+		background-color: #151617;
+		color: #b7bbc0;
+		border-color: #484c50;
+	}
+	.onscreen-keyboard .white-key.pressed, .onscreen-keyboard .black-key.pressed
+	{
+		background-color: #5ea7b3;
+	}
+	menubar
+	{
+		background-color: #1e2022;
+	}
+	menubar button
+	{
+		decorator: none;
+		color: #f3f4f5;
+	}
+	menubar button:hover
+	{
+		decorator: svg-ninepatch(menu-item-hover.svg, 6 6 6 6);
+	}
+	menuitem .menu-keys
+	{
+		color: #b7bbc0;
+	}
+	menuitem > .menu-arrow
+	{
+		decorator: svg(dropdown-arrow.svg);
+	}
+	.time-display.size-0
+	{
+		font-size: 32dp;
+		line-height: 64dp;
+	}
+	.time-display.size-1
+	{
+		font-size: 48dp;
+		line-height: 96dp;
+	}
+	.time-display.size-2
+	{
+		font-size: 64dp;
+		line-height: 128dp;
+	}
+	.time-display.size-3
+	{
+		font-size: 96dp;
+		line-height: 192dp;
+	}
+	.time-display.size-4
+	{
+		font-size: 128dp;
+		line-height: 256dp;
+	}
+	valuefield:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(display.svg, 6 6 6 6);
+	}
+	listview:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(list.svg, 6 6 6 6);
+	}
+	button:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-normal.svg, 6 6 6 6);
+	}
+	button.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	button.suspended:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-normal.svg, 6 6 6 6);
+	}
+	button.primary:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-primary-normal.svg, 6 6 6 6);
+	}
+	button.toggle:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-off.svg, 6 6 6 6);
+	}
+	button.toggle.mute.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-mute.svg, 6 6 6 6);
+	}
+	button.toggle.solo.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-solo.svg, 6 6 6 6);
+	}
+	button.toggle.record.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-record.svg, 6 6 6 6);
+	}
+	button.toggle.monitor.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+	}
+	button.toggle.listen.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-monitor.svg, 6 6 6 6);
+	}
+	button.toggle.solo.defeated:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(toggle-hover.svg, 6 6 6 6);
+	}
+	input.checkbox:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(checkbox-off.svg);
+	}
+	input.checkbox:checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(checkbox-on.svg);
+	}
+	input.checkbox.mixed:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(checkbox-mixed.svg);
+	}
+	input.radio:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(radio-off.svg);
+	}
+	input.radio:checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(radio-on.svg);
+	}
+	menubar button:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
 	}
 }

@@ -14,6 +14,7 @@
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 namespace gnubase::scripting
 {
@@ -74,7 +75,13 @@ namespace gnubase::scripting
 					lua_setfield(state, -2, key.c_str());
 				}
 				break;
-			default: // null, and the binary type JSON text never has
+			case Json::value_t::binary:
+			{
+				const auto& bytes = value.get_binary();
+				lua_pushlstring(state, reinterpret_cast<const char*>(bytes.data()), bytes.size());
+				break;
+			}
+			default: // null
 				lua_pushnil(state);
 				break;
 			}
@@ -171,6 +178,27 @@ namespace gnubase::scripting
 			lua_pop(state, 1);
 		}
 
+		// Pushes the table that gnubase.<area>.<name> goes in, made if it's new: the area's, or for a name without area
+		// the gnubase table, which is at the top of the stack. Returns the name in that table.
+		std::string pushArea(lua_State* state, const std::string& name)
+		{
+			const size_t dot = name.find('.');
+			if (dot == std::string::npos)
+			{
+				lua_pushvalue(state, -1);
+				return name;
+			}
+			const std::string area = name.substr(0, dot);
+			if (lua_getfield(state, -1, area.c_str()) != LUA_TTABLE)
+			{
+				lua_pop(state, 1);
+				lua_newtable(state);
+				lua_pushvalue(state, -1);
+				lua_setfield(state, -3, area.c_str());
+			}
+			return name.substr(dot + 1);
+		}
+
 		// The message handler for run: adds a traceback to the error.
 		int traceback(lua_State* state)
 		{
@@ -253,27 +281,34 @@ namespace gnubase::scripting
 		for (const engine::CommandInfo& info : engine.commands())
 		{
 			// "track.add" becomes gnubase.track.add; a name without area sits in gnubase itself.
-			const size_t dot = info.name.find('.');
-			const bool hasArea = dot != std::string::npos;
-			if (hasArea)
-			{
-				const std::string area = info.name.substr(0, dot);
-				if (lua_getfield(state, -1, area.c_str()) != LUA_TTABLE)
-				{
-					lua_pop(state, 1);
-					lua_newtable(state);
-					lua_pushvalue(state, -1);
-					lua_setfield(state, -3, area.c_str());
-				}
-			}
+			const std::string field = pushArea(state, info.name);
 			lua_pushlightuserdata(state, this);
 			lua_pushlstring(state, info.name.data(), info.name.size());
 			lua_pushcclosure(state, &Runtime::callCommand, 2);
-			lua_setfield(state, -2, hasArea ? info.name.c_str() + dot + 1 : info.name.c_str());
-			if (hasArea)
-				lua_pop(state, 1);
+			lua_setfield(state, -2, field.c_str());
+			lua_pop(state, 1);
 		}
 		lua_setglobal(state, "gnubase");
+	}
+
+	void Runtime::addFunction(const std::string& name, Function function)
+	{
+		lua_State* state = m_state.get();
+		const int top = lua_gettop(state);
+		lua_getglobal(state, "gnubase");
+		const std::string field = pushArea(state, name);
+		if (lua_getfield(state, -1, field.c_str()) != LUA_TNIL)
+		{
+			lua_settop(state, top);
+			throw std::logic_error("gnubase." + name + " exists already");
+		}
+		lua_pop(state, 1);
+		m_functions.push_back(std::make_unique<Function>(std::move(function)));
+		lua_pushlightuserdata(state, this);
+		lua_pushlightuserdata(state, m_functions.back().get());
+		lua_pushcclosure(state, &Runtime::callFunction, 2);
+		lua_setfield(state, -2, field.c_str());
+		lua_settop(state, top);
 	}
 
 	void Runtime::loadTestFramework()
@@ -381,6 +416,44 @@ namespace gnubase::scripting
 		}
 		runtime.takeEvents(state); // a failed command has no events, but others may have arrived
 		return luaL_error(state, "%s", error.c_str());
+	}
+
+	int Runtime::callFunction(lua_State* state)
+	{
+		Runtime& runtime = self(state);
+		const Function& function = *static_cast<const Function*>(lua_touserdata(state, lua_upvalueindex(2)));
+		std::string error;
+		try
+		{
+			const Json result = function(lua_isnoneornil(state, 1) ? Json::object() : toJson(state, 1, 0));
+			runtime.takeEvents(state);
+			push(state, result);
+			return 1;
+		}
+		catch (const std::exception& exception)
+		{
+			error = exception.what();
+		}
+		runtime.takeEvents(state);
+		return luaL_error(state, "%s", error.c_str());
+	}
+
+	std::optional<std::string> Runtime::dispatchEvents()
+	{
+		lua_State* state = m_state.get();
+		const int top = lua_gettop(state);
+		lua_pushcfunction(state, traceback);
+		lua_pushcfunction(state,
+			[](lua_State* inner)
+			{
+				(*static_cast<Runtime**>(lua_getextraspace(inner)))->takeEvents(inner);
+				return 0;
+			});
+		std::optional<std::string> error;
+		if (lua_pcall(state, 0, 0, top + 1) != LUA_OK)
+			error = lua_tostring(state, -1) != nullptr ? lua_tostring(state, -1) : "(the error is not a string)";
+		lua_settop(state, top);
+		return error;
 	}
 
 	int Runtime::print(lua_State* state)

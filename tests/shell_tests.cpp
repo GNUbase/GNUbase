@@ -19,6 +19,7 @@
 #include <chrono>
 #include <filesystem>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -298,6 +299,59 @@ TEST_CASE("a quit request closes every window", "[unit]")
 	CHECK(ui.windows.windowCount() == 0);
 }
 
+TEST_CASE("a quit request handler decides when closing the main window or a quit request ends the shell", "[unit]")
+{
+	std::vector<ui::WindowId> asked; // before the shell, which would outlive them otherwise
+	bool agree = false;
+	Ui ui({primary()});
+	const ui::WindowId main = ui.shell.open(at({100, 100, 800, 600})).id();
+	ui.shell.open(at({200, 200, 400, 300}));
+	ui.shell.onQuitRequest(
+		[&](ui::Window& window)
+		{
+			asked.push_back(window.id());
+			if (agree)
+				ui.shell.quit();
+		});
+
+	ui.windows.push({ui::WindowEventKind::CloseRequested, main});
+	ui.windows.push({ui::WindowEventKind::Quit, 0});
+	ui.shell.step(milliseconds(0));
+	CHECK(asked == std::vector<ui::WindowId>{main, main}); // both with the main window
+	REQUIRE(ui.shell.running());
+	CHECK(ui.windows.windowCount() == 2);
+
+	agree = true;
+	ui.windows.push({ui::WindowEventKind::CloseRequested, main});
+	CHECK(ui.shell.run() == 0);
+	CHECK(ui.windows.windowCount() == 0);
+}
+
+TEST_CASE("requestClose and requestQuit do what the window system's close and quit requests do", "[unit]")
+{
+	std::vector<ui::WindowId> closing;
+	std::vector<ui::WindowId> quitting;
+	Ui ui({primary()});
+	const ui::WindowId main = ui.shell.open(at({100, 100, 800, 600})).id();
+	const ui::WindowId other = ui.shell.open(at({200, 200, 400, 300})).id();
+	ui.shell.onCloseRequest([&closing](ui::Window& window) { closing.push_back(window.id()); });
+	ui.shell.onQuitRequest([&quitting](ui::Window& window) { quitting.push_back(window.id()); });
+
+	ui.shell.requestClose(other + main + 1); // not open
+	ui.shell.requestClose(other);
+	CHECK(closing == std::vector<ui::WindowId>{other});
+	CHECK(ui.shell.find(other) == nullptr);
+	ui.shell.requestClose(other); // closed already
+	CHECK(closing.size() == 1);
+
+	ui.shell.requestClose(main);
+	ui.shell.requestQuit();
+	CHECK(quitting == std::vector<ui::WindowId>{main, main});
+	CHECK(closing.size() == 1);
+	CHECK(ui.shell.running());
+	CHECK(ui.shell.find(main) != nullptr);
+}
+
 TEST_CASE("windows are drawn only when something changed", "[unit]")
 {
 	Ui ui({primary()});
@@ -524,6 +578,28 @@ TEST_CASE("work posted from any thread runs on the UI thread in the shell's next
 	CHECK(ranOn == uiThread);
 	ui.shell.step(milliseconds(0));
 	CHECK(runs == 1); // once
+}
+
+TEST_CASE("the shell doesn't step inside one of its steps, e.g. for a script that waits in an event handler", "[unit]")
+{
+	Ui ui{{primary()}};
+	ui.shell.open(at({100, 100, 800, 600}));
+	bool refused = false;
+	ui.shell.post(
+		[&]
+		{
+			try
+			{
+				ui.shell.step(milliseconds(0));
+			}
+			catch (const std::logic_error&)
+			{
+				refused = true;
+			}
+		});
+	ui.shell.step(milliseconds(0));
+	CHECK(refused);
+	ui.shell.step(milliseconds(0)); // steps as before once the step ended
 }
 
 TEST_CASE("the theme applies in every window, also in windows opened later, without loading documents again", "[unit]")

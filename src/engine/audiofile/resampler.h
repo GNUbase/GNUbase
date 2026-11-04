@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -56,7 +57,10 @@ namespace gnubase::engine
 		int64_t m_outputFrames = 0;
 	};
 
-	// Writes the audio file at input to output as a 32-bit float WAV file at sampleRate and returns what was
-	// written. Throws AudioFileError.
-	AudioFileInfo convertSampleRate(const std::string& input, const std::string& output, double sampleRate);
+	// Writes the audio file at input as 32-bit float WAV files at sampleRate: to one output with every channel, or
+	// to one output per channel, each a mono file (splitting channels). Returns what was written to each output.
+	// progress, if given, is called after each piece with the part of the input read so far, from 0 to 1; what it
+	// throws ends the conversion and leaves the outputs as far as they got. Throws AudioFileError.
+	AudioFileInfo convertSampleRate(const std::string& input, const std::vector<std::string>& outputs,
+		double sampleRate, const std::function<void(double fraction)>& progress = {});
 }

@@ -1,0 +1,130 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* The list editor (ui/listeditor.h, docs/features/list-editor.md): its toolbar and filters bar, then a row per event
+   with the event list's columns, the event display and the value display, and under the rows an empty row that
+   drawing can start in. Code places the events in percent of the event display and sets the value bars' width. Rows
+   get .selected and .inactive (outside the part editing mode), the tools and filters .checked; the themes color
+   them. */
+.list-editor
+{
+	flex: 1 1 0;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.list-editor-toolbar, .list-editor-filters
+{
+	flex-shrink: 0;
+	flex-wrap: wrap;
+	height: auto;
+	min-height: 32dp;
+}
+
+.list-editor-toolbar .separator
+{
+	display: inline-block;
+	width: 8dp;
+}
+
+.list-editor-toolbar valuefield
+{
+	width: 40dp;
+}
+
+.list-editor-body
+{
+	flex: 1 1 0;
+	display: flex;
+	flex-direction: column;
+	overflow-y: auto;
+	min-height: 0;
+}
+
+.list-editor-rows
+{
+	flex-shrink: 0;
+}
+
+.list-row
+{
+	display: flex;
+	flex-direction: row;
+	flex-shrink: 0;
+	height: 20dp;
+	line-height: 20dp;
+}
+
+.list-editor-header
+{
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.list-row.list-filler
+{
+	flex: 1 1 auto;
+	min-height: 40dp;
+}
+
+.list-type
+{
+	flex: 0 0 80dp;
+	padding: 0 4dp;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.list-cell
+{
+	flex: 0 0 44dp;
+	padding: 0 2dp;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.list-cell[field=start], .list-cell[field=end], .list-cell[field=length]
+{
+	flex-basis: 64dp;
+}
+
+.list-cell[field=attributes]
+{
+	flex-basis: 100dp;
+}
+
+.list-event-lane
+{
+	position: relative;
+	flex: 1 1 0;
+	min-width: 80dp;
+}
+
+.list-event
+{
+	position: absolute;
+	top: 4dp;
+	bottom: 4dp;
+	min-width: 4dp;
+	box-sizing: border-box;
+}
+
+.list-value-lane
+{
+	position: relative;
+	flex: 0 0 100dp;
+}
+
+.list-value
+{
+	position: absolute;
+	left: 0;
+	top: 5dp;
+	bottom: 5dp;
+}
+
+.list-row textdisplay
+{
+	min-width: 0;
+	height: 20dp;
+	padding: 0 2dp;
+}

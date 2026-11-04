@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/clock.h"
 #include "engine/schema.h"
 #include "platform/audio/device.h"
 #include "platform/midi/port.h"
@@ -18,6 +19,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <variant>
 #include <vector>
@@ -118,6 +120,23 @@ namespace gnubase::engine
 		// the project record their own undo step, so call only commands outside the document this way.
 		Json call(const std::string& command, const Json& parameters = Json::object());
 
+		// Leaves the command out of engine.commandLog: for a command that the engine runs on its own and that changed
+		// nothing, such as a try to open a lost audio device again. Inside another command, the outer one decides.
+		void leaveOutOfLog()
+		{
+			if (m_outer == nullptr)
+				m_unlogged = true;
+		}
+
+		// If the command fails, leaves the failure out of engine.commandLog and the error log: for a command that the
+		// engine runs on its own and whose failure was reported already, such as a due auto save that fails again.
+		// Inside another command, the outer one decides.
+		void failQuietly()
+		{
+			if (m_outer == nullptr)
+				m_quietFailure = true;
+		}
+
 	private:
 		friend class Engine;
 
@@ -125,6 +144,8 @@ namespace gnubase::engine
 		CommandContext* m_outer = nullptr;
 		Engine* m_engine = nullptr; // set on the outermost context
 		std::vector<Event> m_events;
+		bool m_unlogged = false;     // leaveOutOfLog
+		bool m_quietFailure = false; // failQuietly
 	};
 
 	using CommandHandler = std::function<Json(CommandContext& context)>;
@@ -177,13 +198,31 @@ namespace gnubase::engine
 		// The plugin host processes and the plugins that run in them.
 		plugins::HostManager& pluginHosts();
 
+		// The background jobs (jobs/jobs.h), for commands that start one, such as media.locate.
+		Jobs& jobs();
+
 		// The folder of the user settings; empty when they are kept in memory only. Features whose user settings
 		// have files of their own, such as the quantize presets, keep them there.
 		const std::filesystem::path& settingsDirectory() const { return m_settingsDirectory; }
 
+		// Changes a user setting that holds a collection as part of a command, such as one port's entry of
+		// audio.portSettings: change gets the value that the settings file has now (settings::Store::modify), so what
+		// another GNUbase process saved meanwhile stays. If the value changed, emits settings.changed and applies the
+		// settings, as settings.set does, which sends the ports of changed port settings (audio.portsChanged,
+		// midi.changed). Returns the new value; throws like settings.set. Command thread only.
+		Json modifySetting(
+			CommandContext& context, std::string_view key, const std::function<Json(const Json& value)>& change);
+
 		// The project cursor in samples, where the audio thread last moved it or a locate puts it, read without a
 		// command and without waiting: for the UI to read once a frame while playing. Not for audio threads.
 		int64_t playbackPosition() const;
+
+		// The time that the engine's timed work goes by, such as due auto saves. Only the engine starts and stops it.
+		const Clock& clock() const { return m_clock; }
+
+		// For tests: moves the engine's clock forward and returns once its tick ran (Clock::advance), so that whatever
+		// the tick queued, such as a due auto save, is queued before what the test does next.
+		void advanceClock(Clock::Duration by) { m_clock.advance(by); }
 
 	private:
 		friend class Client;
@@ -209,6 +248,9 @@ namespace gnubase::engine
 		void execute(Request& request);
 		std::shared_ptr<const Command> find(const std::string& name) const; // throws CommandError if unknown
 		Json runInside(const std::string& command, const Json& parameters, CommandContext& outer);
+		void applySettings(); // hands the user settings to the parts of the engine that use them
+		// After a command changed the user settings with these keys: applies them and emits the events that follow.
+		void settingsChanged(CommandContext& context, const std::vector<std::string>& keys);
 
 		const std::filesystem::path m_settingsDirectory;
 		mutable std::mutex m_mutex; // guards everything below except the thread
@@ -219,11 +261,12 @@ namespace gnubase::engine
 		RequestId m_nextRequest = 1;
 		bool m_stopping = false;
 		std::condition_variable m_wake;
+		Clock m_clock;                                   // ticks to ask for due auto saves (project.autoSave)
 		std::unique_ptr<Jobs> m_jobs;                    // background work such as backups
 		std::unique_ptr<plugins::HostManager> m_plugins; // outlives the audio engine, whose graphs may hold plugins
 		std::unique_ptr<ProjectModel> m_project;         // only the command thread touches the document
-		std::unique_ptr<AudioEngine> m_audio;            // plays the project; only the command thread changes it
 		std::unique_ptr<settings::Store> m_settings;     // the user settings; only the command thread uses them
+		std::unique_ptr<AudioEngine> m_audio;            // plays the project; only the command thread changes it
 		std::unique_ptr<peaks::PeakCache> m_peaks;       // waveform overviews of the project's media files
 		std::thread m_thread;
 	};

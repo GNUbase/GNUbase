@@ -1,0 +1,42 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The time display window (reference manual pp. 312-313): the project cursor in a window of its own, in the time
+     format that its context menu picks (the slot timeDisplay of ui.timeFormats), or only the beat in its bar, at one of
+     five sizes (ui.timeDisplay). ui::TransportControls drives the document. -->
+<rml>
+<head>
+	<title>Time Display</title>
+	<style>
+		body
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+
+		#time-display
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+	</style>
+</head>
+<body>
+	<div id="time-display" class="display time-display" time="position" format="timeDisplay" contextmenu="time-display-menu"/>
+	<menu id="time-display-menu">
+		<menuitem slot="timeDisplay" format="barsBeats">Bars+Beats</menuitem>
+		<menuitem slot="timeDisplay" format="seconds">Seconds</menuitem>
+		<menuitem slot="timeDisplay" format="timecode">Timecode</menuitem>
+		<menuitem slot="timeDisplay" format="samples">Samples</menuitem>
+		<menuitem slot="timeDisplay" format="userFrames">fps (User)</menuitem>
+		<menuseparator/>
+		<menuitem id="beat-count-only" option="beatCountOnly" command="timeDisplay.beatCountOnly">Show Beat Count Only</menuitem>
+		<menuitem id="increase-size" command="timeDisplay.increaseSize">Increase Window Size</menuitem>
+		<menuitem id="decrease-size" command="timeDisplay.decreaseSize">Decrease Window Size</menuitem>
+	</menu>
+</body>
+</rml>

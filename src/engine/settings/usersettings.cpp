@@ -31,6 +31,62 @@ namespace gnubase::engine::settings
 				description.pop_back(); // the settings are separated by semicolons
 			return text + ", default " + definition.defaultValue.dump() + "): " + description;
 		}
+
+		// ui.layout: the windows' zones, strips, sections and the sizes of other elements that splitters size, and the
+		// panels in windows of their own (docs/features/docking.md).
+		Json layoutSchema()
+		{
+			const Json strings = {{"type", "array"}, {"items", {{"type", "string"}}}};
+			const Json zone = {{"type", "object"},
+				{"properties",
+					{{"visible", {{"type", "boolean"}}}, {"size", {{"type", "number"}, {"minimum", 0}}},
+						{"active", {{"type", "string"}}}, {"tabs", strings}, {"hidden", strings}}}};
+			const Json sections = {{"type", "object"}, {"properties", {{"order", strings}, {"hidden", strings}}}};
+			const Json window = {{"type", "object"},
+				{"properties",
+					{{"zones", {{"type", "object"}, {"additionalProperties", zone}}},
+						{"strips", {{"type", "object"}, {"additionalProperties", {{"type", "boolean"}}}}},
+						{"sections", {{"type", "object"}, {"additionalProperties", sections}}},
+						{"sizes",
+							{{"type", "object"}, {"additionalProperties", {{"type", "number"}, {"minimum", 0}}}}}}}};
+			const Json integer = {{"type", "integer"}};
+			const Json size = {{"type", "integer"}, {"minimum", 1}};
+			const Json bounds = {{"type", "object"},
+				{"properties", {{"x", integer}, {"y", integer}, {"width", size}, {"height", size}}},
+				{"required", Json::array({"x", "y", "width", "height"})}};
+			const Json panel = {
+				{"type", "object"}, {"properties", {{"floating", {{"type", "boolean"}}}, {"bounds", bounds}}}};
+			return {{"type", "object"},
+				{"properties",
+					{{"windows", {{"type", "object"}, {"additionalProperties", window}}},
+						{"panels", {{"type", "object"}, {"additionalProperties", panel}}}}}};
+		}
+
+		// ui.toolModifiers: by action, the modifier keys (docs/features/tools.md).
+		Json toolModifiersSchema()
+		{
+			const Json keys = {{"type", "string"},
+				{"enum", {"", "ctrl", "alt", "shift", "ctrl+alt", "ctrl+shift", "alt+shift", "ctrl+alt+shift"}}};
+			Json properties = Json::object();
+			for (const char* action : {"dragDrop.copy", "dragDrop.sharedCopy", "erase.deleteLaterEvents",
+					 "glue.glueAllFollowing", "range.selectFullVertical", "select.setCursorPosition",
+					 "select.splitEvent", "sizeObjects.disableSnapping", "split.splitRepeated"})
+				properties[action] = keys;
+			return {{"type", "object"}, {"properties", properties}, {"additionalProperties", false}};
+		}
+
+		Json markerColumnsSchema()
+		{
+			const Json column = {
+				{"type", "string"}, {"enum", {"number", "type", "position", "end", "length", "description"}}};
+			return {{"type", "object"},
+				{"properties",
+					{{"order", {{"type", "array"}, {"items", column}}},
+						{"widths",
+							{{"type", "object"},
+								{"additionalProperties", {{"type", "number"}, {"minimum", 16}, {"maximum", 2000}}}}},
+						{"sort", column}, {"descending", {{"type", "boolean"}}}}}};
+		}
 	}
 
 	const Format& userFormat()
@@ -41,6 +97,13 @@ namespace gnubase::engine::settings
 			result.name = "settings";
 			result.version = 1;
 			result.definitions = {
+				{"audio.autoMonitoring",
+					"When record-enabled audio tracks monitor their input, besides the monitor button: manual never, "
+					"whileRecordEnabled always, whileRecording while the transport records, tapeMachine while it "
+					"stands or records.",
+					Json{{"type", "string"},
+						{"enum", {"manual", "whileRecordEnabled", "whileRecording", "tapeMachine"}}},
+					"tapeMachine"},
 				{"audio.backend", "The audio backend, such as wasapi or coreaudio, or empty for the preferred one.",
 					Json{{"type", "string"}}, ""},
 				{"audio.blockSize", "Frames per audio block.",
@@ -51,18 +114,281 @@ namespace gnubase::engine::settings
 					Json{{"type", "object"}}, Json{{"input", Json::object()}, {"output", Json::object()}}},
 				{"audio.device", "The audio device's id, or empty for the backend's default device.",
 					Json{{"type", "string"}}, ""},
+				{"audio.listenDim",
+					"How far the main mix is turned down on the monitoring bus while channels listen (channel.set "
+					"listen), in dB from -144 (silence: only the listening channels are heard) to 0.",
+					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 0}}, -144.0},
+				{"audio.listenLevel",
+					"The level at which listening channels play on the monitoring bus, in dB from -144 to 12.",
+					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 12}}, 0.0},
+				{"audio.portSettings",
+					"How the audio devices' ports are shown (audio.setPort), by backend/device id/in or out/system "
+					"name, also for devices that aren't connected: the name shown (showAs) and whether it is "
+					"visible. Ports without an entry show their system name and are visible. Members of an entry that "
+					"this GNUbase doesn't know, from a later one, stay.",
+					Json{{"type", "object"},
+						{"additionalProperties",
+							{{"type", "object"},
+								{"properties",
+									{{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}}}}}}},
+					Json::object()},
+				{"audio.fallbackDevice",
+					"The device that plays while the chosen audio device is lost, until it returns: none, default (the "
+					"lost device's backend's default device, or the dummy device if that doesn't open), or dummy (the "
+					"dummy device: no sound, but the transport moves and the project plays on). The engine switches "
+					"back once the lost device returns.",
+					Json{{"type", "string"}, {"enum", {"none", "default", "dummy"}}}, "none"},
+				{"audio.preRecordSeconds",
+					"Audio pre-record: how many seconds of input from before recording starts go into the files of "
+					"record-enabled audio tracks, 0 to 60 (0: none). The events start where recording started; "
+					"resizing an event's start to the left brings out what was played before.",
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 60}}, 0.0},
+				{"audio.stopAfterPunchOut",
+					"Stop after automatic punch out: playback stops when recording punches out at the right locator, "
+					"after the post-roll if it's on (see transport.set), unless it cycles.",
+					Json{{"type", "boolean"}}, false},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
+				{"editing.applyFolderColor",
+					"Folder tracks give their color to the tracks inside them: when the folder's color changes and "
+					"when tracks are added or moved into it.",
+					Json{{"type", "boolean"}}, false},
+				{"editing.autoTrackColor",
+					"The color new tracks get when none is given (reference manual p. 1621): default (the default "
+					"color), previous (the color of the track above), previousPlusOne (the color after that one in "
+					"the project's color set, or its first color), lastApplied (the color last given to events or "
+					"parts) or random (a color of the set). With editing.applyFolderColor, a folder's color wins "
+					"inside it.",
+					Json{{"type", "string"},
+						{"enum", {"default", "previous", "previousPlusOne", "lastApplied", "random"}}},
+					"default"},
+				{"editing.tempoType",
+					"The type of new tempo events (reference manual p. 1448): ramp changes the tempo gradually from "
+					"the event before, step jumps, auto takes the type of the event before (tempo.add, tempo.tap).",
+					Json{{"type", "string"}, {"enum", {"ramp", "step", "auto"}}}, "auto"},
+				{"meter.resetOnStart",
+					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
+					"playback starts (see meter.get).",
+					Json{{"type", "boolean"}}, false},
+				{"midi.chaseBeyondParts",
+					"Chases controller events from the whole track; off, only from the MIDI parts under the "
+					"position, so none outside parts.",
+					Json{{"type", "boolean"}}, true},
+				{"midi.chaseControllers",
+					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each control "
+					"change's last value before that position.",
+					Json{{"type", "boolean"}}, true},
+				{"midi.chaseNotes",
+					"Where playback starts or jumps, MIDI tracks start the notes that sound at that position.",
+					Json{{"type", "boolean"}}, true},
+				{"midi.chasePitchBend",
+					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "
+					"channel's last pitch bend before that position.",
+					Json{{"type", "boolean"}}, true},
+				{"midi.chasePrograms",
+					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "
+					"channel's last program change before that position.",
+					Json{{"type", "boolean"}}, true},
+				{"midi.portSettings",
+					"The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't "
+					"connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to "
+					"all MIDI inputs (inAllInputs). Ports without an entry show their system name, are visible and "
+					"belong to all MIDI inputs. Members of an entry that this GNUbase doesn't know, from a later one, "
+					"stay.",
+					Json{{"type", "object"},
+						{"additionalProperties",
+							{{"type", "object"},
+								{"properties",
+									{{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}},
+										{"inAllInputs", {{"type", "boolean"}}}}}}}},
+					Json::object()},
+				{"midi.recordCatchRange",
+					"MIDI record catch range in ms, 0 to 1000: MIDI input that comes this long before a recording "
+					"starts is recorded at its start, so that the very start isn't lost.",
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 1000}}, 0.0},
+				{"midi.recordFilter",
+					"What MIDI recording leaves out (it still plays): types, of notes, controllers, pitchBend, "
+					"channelPressure, polyPressure and programs; channels, MIDI channels 1 to 16; controllers, "
+					"controller numbers 0 to 127.",
+					Json{{"type", "object"},
+						{"properties",
+							{{"types",
+								 {{"type", "array"},
+									 {"items",
+										 {{"type", "string"},
+											 {"enum",
+												 {"notes", "controllers", "pitchBend", "channelPressure",
+													 "polyPressure", "programs"}}}}}},
+								{"channels",
+									{{"type", "array"},
+										{"items", {{"type", "integer"}, {"minimum", 1}, {"maximum", 16}}}}},
+								{"controllers",
+									{{"type", "array"},
+										{"items", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}}}}}}},
+					Json::object()},
+				{"midi.retrospectiveEvents",
+					"How many MIDI events each MIDI or instrument track's retrospective buffer keeps of what came "
+					"from its MIDI input while it didn't record (midi.insertRetrospective); 0 keeps none.",
+					Json{{"type", "integer"}, {"minimum", 0}, {"maximum", 100000}}, 10000},
+				{"midi.snapPartsToBars", "Recorded MIDI parts start and end at whole bars.", Json{{"type", "boolean"}},
+					true},
+				{"project.autoSave",
+					"Saves a copy of a project with unsaved changes every project.autoSaveInterval minutes into the "
+					"folder Auto Saves of its project folder (see project.autoSave).",
+					Json{{"type", "boolean"}}, true},
+				{"project.autoSaveFiles", "How many auto saves a project keeps; the next one overwrites the oldest.",
+					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 100}}, 5},
+				{"project.autoSaveInterval", "Minutes between auto saves.",
+					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 120}}, 15},
+				{"transport.cycleFollowsMarkers",
+					"Locating to a marker sets the left and right locators to it (marker.locate, marker.locateNext, "
+					"marker.locatePrevious): a cycle marker's range, or from a position marker to the next marker.",
+					Json{{"type", "boolean"}}, false},
+				{"transport.tapTempoMode",
+					"Where a tapped tempo goes (Tap Tempo Mode, reference manual p. 1458; see tempo.tap): auto, "
+					"selection, playbackStart, cursor, project or display.",
+					Json{{"type", "string"},
+						{"enum", {"auto", "selection", "playbackStart", "cursor", "project", "display"}}},
+					"auto"},
+				{"ui.folderData",
+					"When folder tracks show the events and parts of the tracks inside them as data blocks in the "
+					"event display: always, never, or hideWhenExpanded (only while the folder is folded).",
+					Json{{"type", "string"}, {"enum", {"always", "never", "hideWhenExpanded"}}}, "always"},
+				{"ui.layout",
+					"The layout of the windows with zones: under windows, by window (project), its zones (left, "
+					"right, lower) with whether each is visible, its size in dp, the order of its tabs, the tabs "
+					"hidden and the active one, and its strips (toolbar, infoLine, overviewLine, statusLine, "
+					"transportBar) with whether each is shown, and its sets of sections (such as a mixer channel's) "
+					"with the order of their sections and those hidden, and the sizes in dp of other elements that "
+					"splitters size (trackList: the track list's width); under panels, by panel, whether it is in a "
+					"window of its own and that window's bounds. What it leaves out has its default.",
+					layoutSchema(), Json::object()},
+				{"ui.markerLines",
+					"Which markers the event display shows as lines across every track: the active marker track's "
+					"(active), every marker track's (all), or none (off).",
+					Json{{"type", "string"}, {"enum", Json::array({"active", "all", "off"})}}, "active"},
+				{"ui.markerColumns",
+					"The markers window's columns: order, the columns after the locate column in order (number, "
+					"type, position, end, length, description); widths, each one's width in dp; sort, the column the "
+					"list is sorted by, and descending. What it leaves out has its default.",
+					markerColumnsSchema(), Json::object()},
+				{"ui.markerIds", "Whether marker events on the marker tracks show their marker ids.",
+					Json{{"type", "boolean"}}, true},
+				{"ui.markersAutoScroll",
+					"Whether the markers window scrolls to keep the marker at the project cursor (its locate arrow) "
+					"in view.",
+					Json{{"type", "boolean"}}, true},
+				{"ui.markersSyncSelection",
+					"Whether the markers window and the project window select the same markers. It pauses while "
+					"recording.",
+					Json{{"type", "boolean"}}, true},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
+				{"ui.timeDisplay",
+					"The time display window's options: beatCountOnly shows only the beat in its bar, size is the "
+					"window's and its digits' size from 0 (smallest) to 4.",
+					Json{{"type", "object"},
+						{"properties",
+							{{"beatCountOnly", {{"type", "boolean"}}},
+								{"size", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4}}}}}},
+					Json{{"beatCountOnly", false}, {"size", 1}}},
+				{"ui.timeFormats",
+					"The time formats of the transport controls' displays: primary and secondary in the transport bar "
+					"and panel, timeDisplay in the time display window; each barsBeats, seconds, timecode, samples or "
+					"userFrames.",
+					Json{{"type", "object"},
+						{"additionalProperties",
+							{{"type", "string"},
+								{"enum", {"barsBeats", "seconds", "timecode", "samples", "userFrames"}}}}},
+					Json{{"primary", "barsBeats"}, {"secondary", "timecode"}, {"timeDisplay", "barsBeats"}}},
+				{"ui.toolModifiers",
+					"The modifier keys of the project window's tools, by action (docs/features/tools.md), each ctrl "
+					"(Cmd on macOS), alt and shift joined with +, or empty for none: dragDrop.copy (default alt), "
+					"dragDrop.sharedCopy (alt+shift), erase.deleteLaterEvents (alt), glue.glueAllFollowing (alt), "
+					"range.selectFullVertical (alt+shift), select.setCursorPosition (alt+shift), select.splitEvent "
+					"(alt), sizeObjects.disableSnapping (ctrl) and split.splitRepeated (alt). What it leaves out has "
+					"its default.",
+					toolModifiersSchema(), Json::object()},
+				{"ui.toolSwitchNotification",
+					"Whether choosing a project window tool with a key command shows the tool's name for a moment in "
+					"the event display (docs/features/tools.md).",
+					Json{{"type", "boolean"}}, true},
+				{"ui.toolboxOnRightClick",
+					"Whether a right click in the event display opens the toolbox, the toolbar's tools at the mouse, "
+					"and a right click with a modifier key the context menu; when off, the other way round "
+					"(docs/features/tools.md).",
+					Json{{"type", "boolean"}}, false},
+				{"ui.trackControls",
+					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
+					"folder, marker, ruler, tempo), in order: mute, solo, record, monitor (audio, instrument and MIDI "
+					"tracks), read (automation), timeBase and tempoTrack (the tempo track's Activate Tempo Track). "
+					"Mute and solo always show on tracks with a channel; a type left out shows none.",
+					Json{{"type", "object"},
+						{"additionalProperties",
+							{{"type", "array"},
+								{"items",
+									{{"type", "string"},
+										{"enum",
+											{"mute", "solo", "record", "monitor", "read", "timeBase",
+												"tempoTrack"}}}}}}},
+					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
+						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
+						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
+						{"effect", {"mute", "solo", "read"}}, {"folder", {"mute", "solo", "read"}},
+						{"marker", Json::array()}, {"ruler", Json::array()}, {"tempo", {"tempoTrack"}},
+						{"signature", Json::array()}}},
+				{"ui.trackWidths",
+					"The widths in the track list's rows, in dp: name, the track name's for every track type (20 to "
+					"400), and controls, by track type, the width of its controls area (0 to 800), whose controls go "
+					"onto more lines when they don't fit. A width left out is 120.",
+					Json{{"type", "object"},
+						{"properties",
+							{{"name", {{"type", "number"}, {"minimum", 20}, {"maximum", 400}}},
+								{"controls",
+									{{"type", "object"},
+										{"additionalProperties",
+											{{"type", "number"}, {"minimum", 0}, {"maximum", 800}}}}}}}},
+					Json{{"name", 120},
+						{"controls",
+							{{"audio", 120}, {"instrument", 120}, {"midi", 120}, {"group", 120}, {"effect", 120},
+								{"folder", 120}, {"marker", 120}, {"ruler", 120}, {"tempo", 120},
+								{"signature", 120}}}}},
+				{"ui.zoomPresets",
+					"The horizontal zoom presets of the event display, for every project: each a name and the "
+					"seconds the view shows.",
+					Json{{"type", "array"},
+						{"items",
+							{{"type", "object"},
+								{"properties",
+									{{"name", {{"type", "string"}}},
+										{"seconds", {{"type", "number"}, {"minimum", 0}}}}},
+								{"required", Json::array({"name", "seconds"})}}}},
+					Json::array()},
 			};
 			return result;
 		}();
 		return format;
 	}
 
-	void registerCommands(Engine& engine, Store& store)
+	Json changeEntry(Json map, const std::string& key, const Json& changes, const Json& defaults)
+	{
+		Json& entry = map[key];
+		if (entry.is_null())
+			entry = Json::object();
+		for (const auto& [name, value] : changes.items())
+		{
+			if (value == defaults.at(name))
+				entry.erase(name);
+			else
+				entry[name] = value;
+		}
+		if (entry.empty())
+			map.erase(key);
+		return map;
+	}
+
+	void registerCommands(Engine& engine, Store& store, Changed changed)
 	{
 		Json keys = Json::array();
 		std::string list;
@@ -98,12 +424,15 @@ namespace gnubase::engine::settings
 							{"value", {{"description", "The new value; it must fit the setting's schema."}}}}},
 					{"required", Json::array({"key", "value"})}, {"additionalProperties", false}},
 				keyAndValue, false},
-			[&store](CommandContext& context)
+			[&store, changed](CommandContext& context)
 			{
 				const std::string name = context.parameters().at("key").get<std::string>();
 				const Json& value = context.parameters().at("value");
 				if (store.set(name, value))
+				{
 					context.emit("settings.changed", {{"values", {{name, value}}}});
+					changed(context, {name});
+				}
 				return Json{{"key", name}, {"value", store.value(name)}};
 			});
 
@@ -116,25 +445,32 @@ namespace gnubase::engine::settings
 				{{"type", "object"}, {"properties", {{"values", {{"type", "object"}}}}},
 					{"required", Json::array({"values"})}},
 				false},
-			[&store](CommandContext& context)
+			[&store, changed = std::move(changed)](CommandContext& context)
 			{
-				Json changed = Json::object();
+				Json reset = Json::object();
 				Json values = Json::object();
 				if (const auto name = context.parameters().find("key"); name != context.parameters().end())
 				{
 					const std::string setting = name->get<std::string>();
 					if (store.reset(setting))
-						changed[setting] = store.value(setting);
+						reset[setting] = store.value(setting);
 					values[setting] = store.value(setting);
 				}
 				else
 				{
 					for (const std::string& setting : store.reset())
-						changed[setting] = store.value(setting);
+						reset[setting] = store.value(setting);
 					values = store.values();
 				}
-				if (!changed.empty())
-					context.emit("settings.changed", {{"values", std::move(changed)}});
+				if (!reset.empty())
+				{
+					std::vector<std::string> keys;
+					keys.reserve(reset.size());
+					for (const auto& entry : reset.items())
+						keys.push_back(entry.key());
+					context.emit("settings.changed", {{"values", std::move(reset)}});
+					changed(context, keys);
+				}
 				return Json{{"values", std::move(values)}};
 			});
 

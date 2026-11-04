@@ -7,6 +7,9 @@
 #include <algorithm>
 #include <chrono>
 #include <climits>
+#include <cstdint>
+#include <cstdlib>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -24,12 +27,19 @@
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <mach/thread_policy.h>
+#include <os/workgroup.h>
 #include <pthread.h>
 #else
 #include <cerrno>
 #include <pthread.h>
 #include <sched.h>
 #include <semaphore.h>
+#endif
+
+#ifdef __linux__
+#include <dbus/dbus.h>
+#include <sys/resource.h>
+#include <unistd.h>
 #endif
 
 #if defined(_M_X64) || defined(__x86_64__)
@@ -189,6 +199,7 @@ namespace gnubase::rt
 		std::atomic<size_t> g_threadLimit{SIZE_MAX};
 		std::atomic<bool> g_refuseRealtime{false};
 		std::atomic<bool> g_pretendRealtime{false};
+		std::atomic<bool> g_refuseDirectRealtime{false};
 
 		// The tickets of the job of a generation, for count more workers; see WorkerPool::admit.
 		constexpr uint64_t tickets(uint64_t generation, size_t count) noexcept
@@ -200,6 +211,9 @@ namespace gnubase::rt
 		// worker sleeps.
 		constexpr auto g_minSpin = std::chrono::microseconds(20);
 		constexpr auto g_maxSpin = std::chrono::microseconds(200);
+#ifdef __linux__
+		constexpr auto g_maxAwake = std::chrono::milliseconds(50); // a worker sleeps at least this often
+#endif
 
 		// Linux: the workers' priority for the calling thread; 0 for their initial one if it has no real-time priority.
 		int prioritySuitingCaller() noexcept
@@ -207,12 +221,119 @@ namespace gnubase::rt
 #ifdef __linux__
 			// Once per thread that runs jobs: these are short system calls that never block.
 			sched_param param{};
-			const int policy = sched_getscheduler(0);
+			const int policy = sched_getscheduler(0) & ~SCHED_RESET_ON_FORK; // rtkit's threads have the flag
 			if ((policy == SCHED_FIFO || policy == SCHED_RR) && sched_getparam(0, &param) == 0)
 				return workerPriority(param.sched_priority, sched_get_priority_min(SCHED_FIFO));
 #endif
 			return 0;
 		}
+
+#ifdef __linux__
+		struct DBusDeleter
+		{
+			void operator()(DBusConnection* connection) const noexcept
+			{
+				dbus_connection_close(connection);
+				dbus_connection_unref(connection);
+			}
+			void operator()(DBusMessage* message) const noexcept { dbus_message_unref(message); }
+		};
+		using DBusConnectionPtr = std::unique_ptr<DBusConnection, DBusDeleter>;
+		using DBusMessagePtr = std::unique_ptr<DBusMessage, DBusDeleter>;
+
+		constexpr const char* g_rtkit = "org.freedesktop.RealtimeKit1";
+		constexpr const char* g_rtkitPath = "/org/freedesktop/RealtimeKit1";
+		constexpr int g_rtkitTimeoutMs = 3000; // the bus may have to start rtkit first
+
+		// rtkit's reply to call, or nullptr for an error or none.
+		DBusMessagePtr callRtkit(DBusConnection* bus, DBusMessage* call) noexcept
+		{
+			DBusError error;
+			dbus_error_init(&error);
+			DBusMessagePtr reply(dbus_connection_send_with_reply_and_block(bus, call, g_rtkitTimeoutMs, &error));
+			dbus_error_free(&error);
+			return reply;
+		}
+
+		// One of rtkit's integer properties, or nothing.
+		std::optional<int64_t> rtkitProperty(DBusConnection* bus, const char* name) noexcept
+		{
+			const DBusMessagePtr call(
+				dbus_message_new_method_call(g_rtkit, g_rtkitPath, DBUS_INTERFACE_PROPERTIES, "Get"));
+			if (!call ||
+				dbus_message_append_args(
+					call.get(), DBUS_TYPE_STRING, &g_rtkit, DBUS_TYPE_STRING, &name, DBUS_TYPE_INVALID) == 0)
+				return std::nullopt;
+			const DBusMessagePtr reply = callRtkit(bus, call.get());
+			DBusMessageIter iter{};
+			DBusMessageIter variant{};
+			if (!reply || dbus_message_iter_init(reply.get(), &iter) == 0 ||
+				dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_VARIANT)
+				return std::nullopt;
+			dbus_message_iter_recurse(&iter, &variant);
+			if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_INT32)
+			{
+				dbus_int32_t value = 0;
+				dbus_message_iter_get_basic(&variant, &value);
+				return value;
+			}
+			if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_INT64)
+			{
+				dbus_int64_t value = 0;
+				dbus_message_iter_get_basic(&variant, &value);
+				return value;
+			}
+			return std::nullopt;
+		}
+
+		// Asks rtkit, which desktops run to hand out real-time priority to users without RLIMIT_RTPRIO, to make the
+		// calling thread real-time: SCHED_RR one below the highest priority rtkit grants, which the audio threads that
+		// ask it for more get, such as PipeWire's (workerPriority). False without a system bus or rtkit, or if rtkit
+		// refuses. Blocks for up to seconds, so never on an audio thread.
+		bool makeRealtimeThroughRtkit() noexcept
+		{
+			// libdbus sets up its global locks on first use, racing when several workers start at once; once per
+			// process instead, before any of them touches the bus.
+			static const bool threadsReady = dbus_threads_init_default() != 0;
+			if (!threadsReady)
+				return false;
+			// Where libdbus finds the system bus, read each time rather than once per process as libdbus does.
+			const char* address = std::getenv("DBUS_SYSTEM_BUS_ADDRESS");
+			DBusError error;
+			dbus_error_init(&error);
+			const DBusConnectionPtr bus(dbus_connection_open_private(
+				address != nullptr ? address : "unix:path=/var/run/dbus/system_bus_socket", &error));
+			const bool registered = bus && dbus_bus_register(bus.get(), &error) != 0;
+			dbus_error_free(&error);
+			if (!registered)
+				return false;
+			const std::optional<int64_t> maxPriority = rtkitProperty(bus.get(), "MaxRealtimePriority");
+			const std::optional<int64_t> maxRttime = rtkitProperty(bus.get(), "RTTimeUSecMax");
+			if (!maxPriority || !maxRttime || *maxPriority < 1 || *maxRttime < 1)
+				return false;
+			// rtkit only serves processes whose real-time threads the kernel stops once they run longer than its
+			// maximum without sleeping, which audio threads never do.
+			rlimit limit{};
+			if (getrlimit(RLIMIT_RTTIME, &limit) != 0)
+				return false;
+			const auto maxLimit = static_cast<rlim_t>(*maxRttime);
+			if (limit.rlim_max == RLIM_INFINITY || limit.rlim_max > maxLimit)
+			{
+				limit.rlim_cur = maxLimit;
+				limit.rlim_max = maxLimit;
+				if (setrlimit(RLIMIT_RTTIME, &limit) != 0)
+					return false;
+			}
+			const DBusMessagePtr call(
+				dbus_message_new_method_call(g_rtkit, g_rtkitPath, g_rtkit, "MakeThreadRealtime"));
+			const auto thread = static_cast<dbus_uint64_t>(gettid());
+			const auto priority = static_cast<dbus_uint32_t>(workerPriority(static_cast<int>(*maxPriority), 1));
+			return call &&
+				dbus_message_append_args(
+					call.get(), DBUS_TYPE_UINT64, &thread, DBUS_TYPE_UINT32, &priority, DBUS_TYPE_INVALID) != 0 &&
+				callRtkit(bus.get(), call.get()) != nullptr;
+		}
+#endif
 	}
 
 	void setWorkerPoolFaults(const WorkerPoolFaults& faults) noexcept
@@ -220,9 +341,10 @@ namespace gnubase::rt
 		g_threadLimit.store(faults.threadLimit);
 		g_refuseRealtime.store(faults.refuseRealtime);
 		g_pretendRealtime.store(faults.pretendRealtime);
+		g_refuseDirectRealtime.store(faults.refuseDirectRealtime);
 	}
 
-	WorkerPool::WorkerPool(size_t workers, double periodSeconds)
+	WorkerPool::WorkerPool(size_t workers, double periodSeconds, void* workgroup)
 		: m_spin(std::clamp(std::chrono::duration_cast<std::chrono::steady_clock::duration>(
 								std::chrono::duration<double>(periodSeconds / 16.0)),
 			  std::chrono::duration_cast<std::chrono::steady_clock::duration>(g_minSpin),
@@ -240,7 +362,7 @@ namespace gnubase::rt
 				if (i >= g_threadLimit.load())
 					throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again),
 						"starting worker thread " + std::to_string(i + 1));
-				m_threads.emplace_back([this, i, periodSeconds] { loop(i + 1, periodSeconds); });
+				m_threads.emplace_back([this, i, periodSeconds, workgroup] { loop(i + 1, periodSeconds, workgroup); });
 			}
 		}
 		catch (...)
@@ -337,26 +459,56 @@ namespace gnubase::rt
 		m_priority.store(prioritySuitingCaller(), std::memory_order_relaxed); // published by the new generation
 	}
 
-	void WorkerPool::loop(size_t thread, double periodSeconds)
+	void WorkerPool::loop(size_t thread, double periodSeconds, void* workgroup)
 	{
 		// A refused worker runs at normal priority, as on Linux without real-time privileges.
 		std::optional<ScopedRealtimePriority> priority;
-		if (!g_refuseRealtime.load())
+		if (!g_refuseRealtime.load() && !g_refuseDirectRealtime.load())
 			priority.emplace(periodSeconds);
-		const bool realtime = priority && priority->active();
+		bool realtime = priority && priority->active();
+#ifdef __linux__
+		if (!realtime && !g_refuseRealtime.load())
+			realtime = makeRealtimeThroughRtkit();
+		// The policy and priority it got, to follow its caller's in jobs. rtkit's are SCHED_RR with
+		// SCHED_RESET_ON_FORK, which the thread must keep, and without RLIMIT_RTPRIO it may only lower its priority.
+		const int ownPolicy = sched_getscheduler(0);
+		sched_param initialPriority{};
+		sched_getparam(0, &initialPriority);
+#endif
 		if (realtime || g_pretendRealtime.load())
 			m_realtime.fetch_add(1, std::memory_order_release);
+#ifdef __APPLE__
+		// The device's workgroup tells the scheduler that this thread works for its audio thread's deadline.
+		auto* const group = static_cast<os_workgroup_t>(workgroup);
+		os_workgroup_join_token_s token{};
+		const bool joined = group != nullptr && os_workgroup_join(group, &token) == 0;
+		if (joined)
+			m_joined.fetch_add(1, std::memory_order_release);
+#else
+		(void)workgroup;
+#endif
 		m_started.release();
 
 		const uint64_t initialMode = floatMode();
 		uint64_t mode = initialMode;
 #ifdef __linux__
 		int ownPriority = 0;
+		auto slept = std::chrono::steady_clock::now();
 #endif
 		uint64_t seen = 0;
 		bool tookPart = false;
 		for (;;)
 		{
+#ifdef __linux__
+			// RLIMIT_RTTIME, which rtkit requires, kills a real-time thread that runs for longer than its limit (200 ms
+			// by default) without sleeping, as a worker that spins from one job to the next might. Long enough to sleep
+			// rather than to find the timer expired, and short enough to miss little of a job.
+			if (const auto now = std::chrono::steady_clock::now(); tookPart && now - slept > g_maxAwake)
+			{
+				std::this_thread::sleep_for(std::chrono::microseconds(50));
+				slept = now;
+			}
+#endif
 			seen = waitForJob(thread - 1, seen, tookPart);
 			tookPart = false;
 			if (m_stop.load(std::memory_order_seq_cst))
@@ -374,10 +526,12 @@ namespace gnubase::rt
 					if (const int wanted = m_priority.load(std::memory_order_relaxed);
 						realtime && wanted != ownPriority)
 					{
-						// Rarely: when another real-time thread starts running jobs.
+						// Rarely: when another real-time thread starts running jobs. A worker that got its priority
+						// from rtkit can't raise it again: it keeps the lower one, which never outranks the audio
+						// thread.
 						sched_param param{};
-						param.sched_priority = wanted != 0 ? wanted : sched_get_priority_min(SCHED_FIFO);
-						sched_setscheduler(0, SCHED_FIFO, &param);
+						param.sched_priority = wanted != 0 ? wanted : initialPriority.sched_priority;
+						sched_setscheduler(0, ownPolicy, &param);
 						ownPriority = wanted;
 					}
 #endif
@@ -388,6 +542,10 @@ namespace gnubase::rt
 			m_inside.fetch_sub(1, std::memory_order_seq_cst);
 		}
 		setFloatMode(initialMode);
+#ifdef __APPLE__
+		if (joined)
+			os_workgroup_leave(group, &token);
+#endif
 	}
 
 	uint64_t WorkerPool::waitForJob(size_t worker, uint64_t seen, bool spin) noexcept

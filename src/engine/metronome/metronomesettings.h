@@ -68,9 +68,9 @@ namespace gnubase::engine::metronome
 
 	struct MetronomeSettings
 	{
-		bool click = false;         // the metronome click is on
-		bool whilePlaying = true;   // it clicks during playback
-		bool whileRecording = true; // it clicks while recording (#96, #97)
+		// When the click sounds while the metronome switch (transport.set metronome) is on.
+		bool whilePlaying = true;   // during playback
+		bool whileRecording = true; // while recording
 
 		bool audio = true;             // the audio click
 		std::vector<ObjectId> outputs; // the output busses it plays through; none: the main mix

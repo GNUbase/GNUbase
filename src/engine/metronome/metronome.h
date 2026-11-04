@@ -27,7 +27,8 @@ namespace gnubase::engine::metronome
 	// the device's sample rate. Immutable once published.
 	struct ClickConfig
 	{
-		bool clickWhilePlaying = false;
+		bool whilePlaying = false;   // segments that play click
+		bool whileRecording = false; // segments that record click
 		double sampleRate = 48000.0; // the project's: transport positions are in its samples
 		time::TempoMap tempo{120.0};
 		time::SignatureMap signatures;

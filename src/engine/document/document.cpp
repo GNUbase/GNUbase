@@ -2,6 +2,10 @@
 #include "engine/document/document.h"
 
 #include <algorithm>
+#include <cctype>
+#include <map>
+#include <set>
+#include <utility>
 
 namespace gnubase::engine
 {
@@ -17,12 +21,45 @@ namespace gnubase::engine
 		}
 	}
 
+	std::vector<ProjectColor> factoryColors()
+	{
+		return {{"Red", "#d0453e"}, {"Orange", "#e07a35"}, {"Amber", "#e0a834"}, {"Yellow", "#d8cf3c"},
+			{"Lime", "#9ccc3e"}, {"Green", "#4caf50"}, {"Mint", "#3fbf8f"}, {"Teal", "#2fa8a8"}, {"Cyan", "#3ab4d8"},
+			{"Sky", "#4a90e0"}, {"Blue", "#4a62d8"}, {"Indigo", "#6a52cc"}, {"Violet", "#9050c8"},
+			{"Magenta", "#c04cb4"}, {"Pink", "#d84c86"}, {"Grey", "#8c8c8c"}};
+	}
+
+	bool isColor(const std::string& text)
+	{
+		return text.size() == 7 && text[0] == '#' &&
+			std::all_of(
+				text.begin() + 1, text.end(), [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; });
+	}
+
 	std::vector<ObjectId> Project::trackOrder() const
 	{
 		std::vector<ObjectId> order;
 		order.reserve(trackById.size());
 		appendTracks(*this, tracks, order);
 		return order;
+	}
+
+	void renumber(Project& project, MidiPart& part)
+	{
+		std::map<ObjectId, Note> notes;
+		for (auto& [id, note] : part.notes)
+		{
+			note.id = project.newId();
+			notes[note.id] = note;
+		}
+		part.notes = std::move(notes);
+		std::map<ObjectId, Controller> controllers;
+		for (auto& [id, controller] : part.controllers)
+		{
+			controller.id = project.newId();
+			controllers[controller.id] = std::move(controller);
+		}
+		part.controllers = std::move(controllers);
 	}
 
 	Project newProject()
@@ -111,5 +148,49 @@ namespace gnubase::engine
 		while (!hasMinimumLength(project, marker))
 			++marker.end.value;
 		return true;
+	}
+
+	bool poolFolderOutside(const Project& project, ObjectId folder, ObjectId excluded)
+	{
+		// More steps than there are folders means a loop.
+		for (size_t steps = 0; steps <= project.poolFolders.size(); ++steps)
+		{
+			if (folder == 0)
+				return true;
+			const auto found = project.poolFolders.find(folder);
+			if (folder == excluded || found == project.poolFolders.end())
+				return false;
+			folder = found->second.parent;
+		}
+		return false;
+	}
+
+	bool isSendDestination(const Project& project, ObjectId channel)
+	{
+		const auto found = project.channels.find(channel);
+		if (found == project.channels.end())
+			return false;
+		const TrackType type = project.trackById.at(found->second.track).type;
+		return type == TrackType::Group || type == TrackType::Effect || type == TrackType::Folder;
+	}
+
+	bool routingLoops(const Project& project, ObjectId channel, ObjectId to)
+	{
+		std::vector<ObjectId> pending{to};
+		std::set<ObjectId> seen;
+		while (!pending.empty())
+		{
+			const ObjectId next = pending.back();
+			pending.pop_back();
+			if (next == channel)
+				return true;
+			const auto found = project.channels.find(next);
+			if (found == project.channels.end() || !seen.insert(next).second)
+				continue;
+			pending.push_back(found->second.output);
+			for (const Send& send : found->second.sends)
+				pending.push_back(send.destination);
+		}
+		return false;
 	}
 }

@@ -26,6 +26,12 @@ svg.icon
 	height: 16dp;
 }
 
+/* Canvas elements (docs/features/canvas.md): documents give them their size. */
+event-lanes, waveform, curve, ruler
+{
+	display: block;
+}
+
 /* Buttons, also with an icon, and the small toggle buttons of tracks and channels (mute, solo, record, monitor). */
 button
 {
@@ -37,6 +43,13 @@ button
 	text-align: center;
 	tab-index: auto;
 	nav: auto;
+}
+
+/* Toolbar and transport buttons are for the mouse: a click focuses them, but Tab skips them and Space and Enter go to
+   the key commands, so Space still starts and stops playback (#456, docs/features/widgets.md). */
+.toolbar button, .transport button
+{
+	tab-index: none;
 }
 
 /* A disabled button lets clicks pass and takes no focus (ui/widgets.h). */
@@ -133,6 +146,17 @@ select selectbox option
 {
 	width: auto;
 	padding: 3dp 12dp;
+}
+
+/* Form controls take the focus with Tab and Shift+Tab, disabled ones don't (docs/features/accessibility.md). */
+input.text, input.password, textarea, input.checkbox, input.radio, input.range, select
+{
+	tab-index: auto;
+}
+
+input:disabled, textarea:disabled, select:disabled
+{
+	tab-index: none;
 }
 
 /* Sliders and progress bars */
@@ -308,3 +332,1595 @@ tabset tab
 .splitter-grip-vertical { display: block; width: 8dp; height: 24dp; }
 .splitter-grip-horizontal { display: block; width: 24dp; height: 8dp; }
 .focus-ring { display: block; }
+
+/* Widgets with a number (ui/widgets.h). They take the focus for the arrow keys and get the mouse's drags. Code
+   positions their parts from the value: the knob's pointer, the fader's cap, the slider's fill and thumb, the meter's
+   level and peak. */
+knob, fader, slider, valuefield
+{
+	tab-index: auto;
+	drag: drag;
+}
+
+knob
+{
+	display: inline-block;
+	position: relative;
+	width: 40dp;
+	height: 40dp;
+}
+
+knob .knob, knob .knob-pointer
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+}
+
+fader
+{
+	display: inline-block;
+	position: relative;
+	width: 24dp;
+	height: 120dp;
+}
+
+fader .fader
+{
+	position: absolute;
+	left: 6dp;
+	top: 0;
+	height: 100%;
+}
+
+/* Where the cap's centre goes: half a cap from either end. */
+fader .fader-travel
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 6dp;
+	bottom: 6dp;
+}
+
+fader .fader-cap
+{
+	position: absolute;
+	left: 1dp;
+	margin-top: -6dp;
+}
+
+slider
+{
+	display: inline-block;
+	position: relative;
+	width: 120dp;
+	height: 16dp;
+	vertical-align: -3dp;
+}
+
+slider .slider-track
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 4dp;
+	height: 8dp;
+}
+
+slider .slider-fill
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	height: 100%;
+}
+
+/* Where the thumb's centre goes: half a thumb from either end. */
+slider .slider-travel
+{
+	position: absolute;
+	left: 8dp;
+	right: 8dp;
+	top: 0;
+	bottom: 0;
+}
+
+slider .slider-thumb
+{
+	position: absolute;
+	top: 0;
+	width: 16dp;
+	height: 16dp;
+	margin-left: -8dp;
+}
+
+valuefield
+{
+	display: inline-block;
+	position: relative;
+	box-sizing: border-box;
+	width: 80dp;
+	height: 24dp;
+	padding: 4dp 8dp;
+	text-align: right;
+	white-space: nowrap;
+}
+
+/* A double click edits the value in a text field over the widget. */
+valuefield input.text
+{
+	display: none;
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+	text-align: right;
+}
+
+valuefield.editing
+{
+	drag: none;
+}
+
+valuefield.editing input.text
+{
+	display: block;
+}
+
+valuefield.editing .valuefield-text
+{
+	visibility: hidden;
+}
+
+/* The transport controls (docs/features/transport-bar.md): sections in a row, the time display window's big
+   display. The sections keep their contents' width, so a window too narrow for them cuts off the last ones at the
+   right edge rather than drawing sections over each other. */
+.transport
+{
+	display: flex;
+	align-items: center;
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.docking .strip.transport
+{
+	height: 32dp;
+	padding: 0 6dp;
+}
+
+.transport-section
+{
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	margin-right: 12dp;
+}
+
+.transport-section.hidden
+{
+	display: none;
+}
+
+.transport-section > *
+{
+	margin-right: 2dp;
+}
+
+.transport textdisplay
+{
+	min-width: 72dp;
+}
+
+.transport .primary-time
+{
+	min-width: 96dp;
+}
+
+/* The time display window's digits; their size at each of the window's sizes (.size-0 to .size-4) is the theme's. */
+.time-display
+{
+	text-align: center;
+}
+
+/* Text such as a position, edited the same way; documents give it the look of a .display. */
+textdisplay
+{
+	display: inline-block;
+	position: relative;
+	box-sizing: border-box;
+	min-width: 80dp;
+	height: 24dp;
+	padding: 4dp 8dp;
+	text-align: right;
+	white-space: nowrap;
+}
+
+textdisplay input.text
+{
+	display: none;
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+	text-align: right;
+}
+
+textdisplay.editing input.text
+{
+	display: block;
+}
+
+textdisplay.editing .textdisplay-text
+{
+	visibility: hidden;
+}
+
+meter
+{
+	display: inline-block;
+	position: relative;
+	width: 12dp;
+	height: 120dp;
+	overflow: hidden;
+	clip: always; /* RmlUi clips only content that overflows in flow, not the absolute parts */
+}
+
+meter .meter
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	height: 100%;
+}
+
+meter .meter-level
+{
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	width: 100%;
+	overflow: hidden;
+	clip: always;
+}
+
+meter .meter-fill
+{
+	position: absolute;
+	left: 0;
+	bottom: 0;
+}
+
+/* The peak's top edge marks the level; at the bottom the meter hides it. */
+meter .meter-peak
+{
+	position: absolute;
+	left: 0;
+	margin-bottom: -4dp;
+}
+
+/* The event display (docs/features/event-display.md): the overview line, then the ruler over the event lanes, with
+   the project cursor across both. Code sets only where the cursors and the overview's rectangle are; the cross-hair
+   cursor shows while the mouse is over the lanes. */
+.event-display
+{
+	position: relative;
+	overflow: hidden;
+}
+
+.event-display .overview
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 20dp;
+	overflow: hidden;
+}
+
+.event-display .overview event-lanes, .event-display .event-area event-lanes
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+}
+
+/* The waveforms of audio events (#83): code puts each over its event's lane. */
+.event-display .waveforms
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+/* The fades of audio events and their handles (#138), over the waveforms. */
+.event-display .event-area fade-lines
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+/* Automation tracks' lanes (#121): code puts each at its lane, with its curve and static value line across it, and
+   the automation event editor around the selected points. */
+.event-display .automation-lanes
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .automation-lane
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	box-sizing: border-box;
+	pointer-events: none;
+}
+
+.event-display .automation-lane curve
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .automation-editor
+{
+	position: absolute;
+	display: none;
+	box-sizing: border-box;
+	pointer-events: none;
+}
+
+.event-display .automation-editor.shown
+{
+	display: block;
+}
+
+.event-display .waveforms waveform
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	box-sizing: border-box;
+	padding: 2dp 0;
+	pointer-events: none;
+}
+
+.event-display .overview-view
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	box-sizing: border-box;
+}
+
+.event-display .timeline
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 20dp;
+	bottom: 0;
+	overflow: hidden;
+}
+
+.event-display ruler
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 24dp;
+}
+
+/* A document's button at the ruler's right end, for the ruler's time format menu. */
+.event-display .ruler-format
+{
+	position: absolute;
+	top: 20dp;
+	right: 0;
+	z-index: 1;
+}
+
+.event-display .event-area
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 24dp;
+	bottom: 0;
+	overflow: hidden;
+	clip: always; /* RmlUi clips only content that overflows in flow, not the absolute parts */
+	/* A press in the lanes is a drag for RmlUi, which then shows the area's pointer wherever the mouse goes until the
+	   button is up: the drag's own, not that of what the mouse passes over. */
+	drag: drag;
+}
+
+/* Without the overview line, a strip of docking windows (docs/features/docking.md). */
+.no-overviewLine .event-display .overview
+{
+	display: none;
+}
+
+.no-overviewLine .event-display .timeline
+{
+	top: 0;
+}
+
+.no-overviewLine .event-display .ruler-format
+{
+	top: 0;
+}
+
+.event-display .project-cursor, .event-display .cross-hair-vertical
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 1dp;
+	pointer-events: none;
+}
+
+.event-display .cross-hair-horizontal
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 1dp;
+	pointer-events: none;
+}
+
+.event-display .cross-hair-vertical, .event-display .cross-hair-horizontal
+{
+	display: none;
+}
+
+/* Markers (docs/features/markers.md): the marker lines and marker events are event lanes like the events; code
+   places the labels where their markers are. */
+.event-display .marker-labels
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .marker-label.hidden
+{
+	display: none;
+}
+
+.event-display .marker-label
+{
+	position: absolute;
+	padding-left: 3dp;
+	white-space: nowrap;
+}
+
+/* The tempo track (docs/features/tempo-track.md): the tempo curve over the tempo track's lane, or filling the tempo
+   track editor's curve area, with a point per tempo event. Code places the curve on its lane and the points where their
+   events are. */
+.tempo-curve
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 100%;
+}
+
+.tempo-curve.hidden
+{
+	display: none;
+}
+
+.tempo-curve .tempo-line, .tempo-curve .tempo-points
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.tempo-curve .tempo-point
+{
+	position: absolute;
+	width: 7dp;
+	height: 7dp;
+	margin-left: -3.5dp;
+	margin-top: -3.5dp;
+}
+
+/* The signature track (docs/features/signature-track.md): the time signature events over the signature track's lane,
+   or filling the tempo track editor's time signature display, and the field that edits one. Code places the row on
+   its lane, the events at their bars and the field over the event it edits. */
+.signature-row
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 100%;
+}
+
+.signature-row.hidden, .signature-row .signature-field
+{
+	display: none;
+}
+
+.signature-row .signature-events
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.signature-row .signature-event
+{
+	position: absolute;
+	top: 0;
+	padding: 2dp 3dp;
+	white-space: nowrap;
+}
+
+.signature-row .signature-field.shown
+{
+	display: block;
+	position: absolute;
+	top: 0;
+	width: 48dp;
+}
+
+/* The tools (docs/features/tools.md): the selection range, at least a line wide, and the rectangle a tool drags. Code
+   sets where they are and the state class .shown. */
+.event-display .range-selection, .event-display .tool-rectangle
+{
+	display: none;
+	position: absolute;
+	box-sizing: border-box;
+	pointer-events: none;
+}
+
+.event-display .range-selection.shown, .event-display .tool-rectangle.shown
+{
+	display: block;
+}
+
+.event-display.cross-hair .event-area:hover .cross-hair-vertical,
+.event-display.cross-hair .event-area:hover .cross-hair-horizontal
+{
+	display: block;
+}
+
+/* The mouse pointer over the event lanes (docs/features/tools.md): code names it in the event area's attribute
+   pointer, by the tool and where the mouse is; the object selection tool has the OS's arrow. The pointers are
+   resources/cursors. */
+.event-display .event-area[pointer=rangeSelection]
+{
+	cursor: tool-range;
+}
+
+.event-display .event-area[pointer=draw]
+{
+	cursor: tool-draw;
+}
+
+.event-display .event-area[pointer=erase]
+{
+	cursor: tool-erase;
+}
+
+.event-display .event-area[pointer=split]
+{
+	cursor: tool-split;
+}
+
+.event-display .event-area[pointer=glue]
+{
+	cursor: tool-glue;
+}
+
+.event-display .event-area[pointer=mute]
+{
+	cursor: tool-mute;
+}
+
+.event-display .event-area[pointer=zoom]
+{
+	cursor: tool-zoom;
+}
+
+.event-display .event-area[pointer=line]
+{
+	cursor: tool-line;
+}
+
+.event-display .event-area[pointer=play]
+{
+	cursor: tool-play;
+}
+
+.event-display .event-area[pointer=resize]
+{
+	cursor: resize;
+}
+
+/* The name of a tool chosen with a key command, for a moment, at the top of the event lanes; the document gives it
+   the tooltip's look. */
+.event-display .tool-notification
+{
+	position: absolute;
+	z-index: 10;
+	top: 64dp;
+	left: 50%;
+	width: 200dp;
+	margin-left: -100dp;
+	text-align: center;
+}
+
+/* The track list (docs/features/track-list.md): the global track controls over a row per track, level with the
+   event display's lanes under its overview line and ruler. Code sets the rows' heights from the tracks' and where the
+   list is scrolled to; the line where dragged tracks go shows while they are dragged. */
+.track-list
+{
+	overflow: hidden;
+}
+
+.track-list .track-list-header
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 44dp;
+	padding: 2dp 4dp;
+	box-sizing: border-box;
+}
+
+.track-list .track-list-header button
+{
+	margin-right: 2dp;
+}
+
+.track-list .track-rows
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 44dp;
+	bottom: 0;
+	overflow: hidden;
+	clip: always;
+}
+
+.no-overviewLine .track-list .track-list-header
+{
+	height: 24dp;
+}
+
+.no-overviewLine .track-list .track-rows
+{
+	top: 24dp;
+}
+
+.track-list listview
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	padding: 0;
+	overflow: visible;
+}
+
+.track-list listitem
+{
+	display: flex;
+	flex-direction: row;
+	align-items: flex-start;
+	padding: 3dp 4dp 0 4dp;
+	overflow: hidden;
+	position: relative;
+}
+
+/* The track's color (#94), which code gives it as user data; without one it shows nothing. */
+.track-list .track-color
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 4dp;
+}
+
+/* The name and the controls area: code gives each the width of the user setting ui.trackWidths. The controls go onto
+   more lines when they don't fit the controls area; in a row too narrow for both, e.g. deep in folders, the name gives
+   way. */
+.track-list .track-name
+{
+	flex: 0 1 auto;
+	overflow: hidden;
+	white-space: nowrap;
+	height: 18dp;
+}
+
+.track-list .track-name-field,
+.track-list listitem.renaming .track-name
+{
+	display: none;
+}
+
+.track-list listitem.renaming .track-name-field
+{
+	display: block;
+	flex: 0 1 auto;
+	height: 18dp;
+}
+
+.track-list .track-controls
+{
+	display: flex;
+	flex-wrap: wrap;
+	flex: 0 0 auto;
+}
+
+.track-list .track-controls button
+{
+	width: 22dp;
+	height: 18dp;
+	margin-left: 2dp;
+	padding: 0;
+	text-align: center;
+}
+
+.track-list .track-controls svg.icon
+{
+	width: 14dp;
+	height: 14dp;
+}
+
+.track-list .drop-line
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 2dp;
+	display: none;
+	pointer-events: none;
+}
+
+.track-list .drop-line.shown
+{
+	display: block;
+}
+
+/* Automation tracks (docs/features/automation-tracks.md): Show/Hide Automation in a track's lower left corner and
+   the automation tracks' rows below the track's own. Code sets where the corner and the rows are, and each row's
+   height, from the event display's lanes. */
+.track-list .automation-toggle
+{
+	position: absolute;
+	left: 6dp;
+	width: 16dp;
+	height: 16dp;
+	padding: 0;
+	text-align: center;
+}
+
+.track-list .automation-toggle svg.icon, .track-list .automation-row svg.icon
+{
+	width: 12dp;
+	height: 12dp;
+}
+
+.track-list .automation-rows
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.track-list .automation-row
+{
+	display: flex;
+	flex-direction: row;
+	align-items: flex-start;
+	padding: 3dp 4dp 0 24dp;
+	box-sizing: border-box;
+	overflow: hidden;
+}
+
+.track-list .automation-parameter
+{
+	flex: 0 1 auto;
+	width: 120dp;
+	height: 18dp;
+	padding: 0 4dp;
+	overflow: hidden;
+	white-space: nowrap;
+	text-align: left;
+}
+
+.track-list .automation-row .automation-read, .track-list .automation-row .automation-append
+{
+	flex: 0 0 auto;
+	width: 22dp;
+	height: 18dp;
+	margin-left: 2dp;
+	padding: 0;
+	text-align: center;
+}
+
+/* The parameter selector's search field, and the parameters it leaves out. */
+menu input.automation-search
+{
+	display: block;
+	width: 200dp;
+	margin: 2dp 4dp;
+}
+
+menu menuitem.hidden
+{
+	display: none;
+}
+
+/* Menus (ui/widgets.h): hidden until they open, over the document. A menu inside an item is its submenu, shown
+   beside the item while the mouse is over it. */
+menu
+{
+	display: none;
+	position: absolute;
+	z-index: 100;
+	min-width: 160dp;
+	padding: 4dp 0;
+}
+
+menu.open, menuitem:hover > menu
+{
+	display: block;
+}
+
+menuitem
+{
+	display: block;
+	position: relative;
+	padding: 3dp 12dp;
+	white-space: nowrap;
+	tab-index: auto;
+}
+
+menuitem:disabled
+{
+	pointer-events: none;
+	tab-index: none;
+}
+
+menuitem > menu
+{
+	left: 100%;
+	top: -4dp;
+}
+
+menuseparator
+{
+	display: block;
+	height: 8dp;
+}
+
+/* An item's arrow to its submenu, on its right: the theme's dropdown arrow, turned to point right. */
+menuitem > .menu-arrow
+{
+	float: right;
+	width: 12dp;
+	height: 8dp;
+	margin: 5dp -2dp 0 16dp;
+	transform: rotate(-90deg);
+}
+
+/* A menu bar (docs/features/main-menu.md): the menus' titles in a row, and an item's key on its right. */
+menubar
+{
+	display: flex;
+	align-items: center;
+	height: 24dp;
+	padding: 0 4dp;
+	box-sizing: border-box;
+}
+
+menubar button
+{
+	min-width: 0;
+	height: 22dp;
+	padding: 3dp 8dp;
+}
+
+/* The toolbox (docs/features/tools.md): the toolbar's tools as a row of icons at the mouse. */
+menu.toolbox
+{
+	min-width: 0;
+	padding: 4dp;
+	white-space: nowrap;
+}
+
+menu.toolbox menuitem
+{
+	display: inline-block;
+	padding: 4dp;
+}
+
+menu.toolbox svg.icon
+{
+	display: block;
+	width: 20dp;
+	height: 20dp;
+}
+
+menuitem .menu-keys
+{
+	float: right;
+	padding-left: 24dp;
+}
+
+/* A color of the project's color set before its name (docs/features/colors.md); code gives it the color. */
+.color-swatch
+{
+	display: inline-block;
+	width: 12dp;
+	height: 12dp;
+	margin-right: 6dp;
+	vertical-align: middle;
+}
+
+/* Every document's tooltip, under the mouse; it lets the mouse through. */
+tooltip
+{
+	display: none;
+	position: absolute;
+	z-index: 1000;
+	padding: 4dp 8dp;
+	pointer-events: none;
+	white-space: nowrap;
+}
+
+tooltip.shown
+{
+	display: block;
+}
+
+/* A notification shows only while it has a message, also with a class such as .tooltip for its look; it lets the
+   mouse through. */
+notification
+{
+	padding: 4dp 8dp;
+	pointer-events: none;
+}
+
+notification:not(.shown)
+{
+	display: none;
+}
+
+notification.shown
+{
+	display: block;
+}
+
+/* Dialogs open in the middle of the window, and their title bar moves them. */
+dialog
+{
+	display: block;
+	position: absolute;
+	padding-bottom: 12dp;
+}
+
+dialog .dialog-titlebar
+{
+	drag: drag;
+}
+
+/* List, tree and table views (ui/widgets.h). Rows inside a collapsed tree row are hidden; a tree row starts with its
+   indent, which code sizes from its level, and its toggle, turned to point right while the row is collapsed. */
+listview
+{
+	display: block;
+	padding: 4dp 0;
+	overflow-y: auto;
+	tab-index: auto;
+}
+
+listitem
+{
+	display: block;
+	box-sizing: border-box;
+	height: 22dp;
+	padding: 3dp 10dp 0 10dp;
+	white-space: nowrap;
+}
+
+listitem.hidden, listview tr.hidden
+{
+	display: none;
+}
+
+.tree-indent
+{
+	display: inline-block;
+	height: 1dp;
+}
+
+.tree-toggle
+{
+	display: inline-block;
+	width: 12dp;
+	height: 8dp;
+	margin-right: 4dp;
+	visibility: hidden;
+	transform: rotate(-90deg);
+}
+
+listitem.parent > .tree-toggle, tr.parent .tree-toggle
+{
+	visibility: visible;
+}
+
+listitem.expanded > .tree-toggle, tr.expanded .tree-toggle
+{
+	transform: none;
+}
+
+table
+{
+	display: table;
+	width: 100%;
+}
+
+thead, tbody, tfoot
+{
+	display: table-row-group;
+}
+
+tr
+{
+	display: table-row;
+}
+
+td
+{
+	display: table-cell;
+	padding: 3dp 10dp;
+	white-space: nowrap;
+}
+
+/* Splitters between the elements of a flex row or column; the grip shows which way they move. */
+splitter
+{
+	display: flex;
+	flex: 0 0 8dp;
+	align-items: center;
+	justify-content: center;
+	drag: drag;
+}
+
+splitter .splitter-grip-horizontal, splitter.column .splitter-grip-vertical
+{
+	display: none;
+}
+
+splitter.column .splitter-grip-horizontal
+{
+	display: block;
+}
+
+/* Docking windows (docs/features/docking.md): strips above and below a row of zones, where the main zone takes what
+   the left, right and lower zones leave. Code sets the zones' sizes and hides zones, their splitters and strips. */
+.docking
+{
+	display: flex;
+	flex-direction: column;
+}
+
+.docking .zones
+{
+	display: flex;
+	flex: 1 1 0;
+	min-height: 0;
+}
+
+.docking .zone-column
+{
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 0;
+	min-width: 200dp;
+}
+
+.docking [zone]
+{
+	position: relative;
+	flex: 0 0 auto;
+	overflow: hidden;
+	min-width: 120dp;
+	min-height: 80dp;
+}
+
+.docking [zone=main]
+{
+	flex: 1 1 0;
+	min-width: 0;
+}
+
+.docking .hidden
+{
+	display: none;
+}
+
+/* The frame of the zone with the keyboard focus, over what the zone shows. */
+.docking .zone-frame
+{
+	display: none;
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 10;
+	pointer-events: none;
+}
+
+.docking .focused > .zone-frame
+{
+	display: block;
+}
+
+.docking .strip
+{
+	height: 24dp;
+}
+
+.docking [zone] tabset
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.docking [zone] tabset tab
+{
+	drag: drag-drop;
+}
+
+.docking [zone] tabset panels, .docking [zone] tabset panel
+{
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 0;
+}
+
+/* A zone with tabbar="bottom", such as the lower zone, has its tabs at its bottom, with room on their left for its
+   Close button (.zone-close, such as Close Lower Zone), which sits over the tab group. */
+.docking [tabbar=bottom] > tabset
+{
+	flex-direction: column-reverse;
+}
+
+.docking [tabbar=bottom] > tabset > tabs
+{
+	padding: 0 4dp 2dp 32dp;
+}
+
+.docking .zone-close
+{
+	position: absolute;
+	left: 4dp;
+	bottom: 2dp;
+	height: 24dp;
+	z-index: 1;
+}
+
+.docking .panel-content
+{
+	position: relative;
+	flex: 1 1 0;
+}
+
+/* A setup pane: a menu of toggle buttons that stays open while they are clicked; those of sections are dragged onto
+   each other to reorder the sections. */
+.setup-pane button
+{
+	display: block;
+	margin: 2dp 8dp;
+}
+
+.setup-pane [setup-section]
+{
+	drag: drag-drop;
+}
+
+/* The info line (docs/features/inspector.md): the first selected event's fields in a row; without a selection only
+   its message. */
+.info-line
+{
+	display: flex;
+	align-items: center;
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.docking .strip.info-line
+{
+	height: 32dp;
+	padding: 0 6dp;
+}
+
+.info-field
+{
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	margin-right: 12dp;
+}
+
+.info-label
+{
+	margin-right: 4dp;
+}
+
+.info-line textdisplay[field=name]
+{
+	min-width: 120dp;
+	text-align: left;
+}
+
+.info-empty, .info-line.empty .info-field
+{
+	display: none;
+}
+
+.info-line.empty .info-empty
+{
+	display: inline;
+}
+
+/* The inspector (docs/features/inspector.md): the track's name over its sections, each a header that opens and
+   closes it. What the track doesn't have is unavailable. */
+.inspector
+{
+	overflow-y: auto;
+	padding: 4dp;
+}
+
+/* The notepad and the name keep their arrow keys, also at the first and last line: they move the focus to no other
+   control, and no key command runs for them (ui::KeyCommands::press). */
+.inspector textarea.notepad, .inspector-name input
+{
+	nav: none;
+}
+
+.inspector-header textdisplay
+{
+	display: block;
+	width: 100%;
+	text-align: left;
+}
+
+.inspector-empty, .inspector.empty .inspector-header, .inspector.empty .inspector-sections,
+.inspector .unavailable, .inspector-section.collapsed .section-body
+{
+	display: none;
+}
+
+.inspector.empty .inspector-empty
+{
+	display: block;
+	padding: 8dp;
+}
+
+.inspector-section .section-header
+{
+	display: block;
+	width: 100%;
+	margin-top: 4dp;
+	text-align: left;
+}
+
+.section-body
+{
+	padding: 4dp 0;
+}
+
+.inspector-buttons
+{
+	display: flex;
+	margin-bottom: 4dp;
+}
+
+.inspector-buttons button
+{
+	margin-right: 2dp;
+}
+
+.inspector-row
+{
+	display: flex;
+	align-items: center;
+	margin-bottom: 2dp;
+}
+
+.inspector-label
+{
+	width: 56dp;
+	flex-shrink: 0;
+}
+
+.inspector-row select, .inspector-row valuefield
+{
+	flex: 1 1 0;
+	width: auto;
+}
+
+.insert
+{
+	padding: 2dp 6dp;
+}
+
+.inspector textarea.notepad
+{
+	width: 100%;
+}
+
+/* The edit history panel (ui/historypanel.h): a table of the undo steps that fills its panel, cut by the separator
+   after the done steps into a table of those and one of the undone steps, whose rows have the state class .undone.
+   The separator is dragged up to undo and down to redo. */
+listview.history
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.history td
+{
+	padding: 3dp 4dp;
+	overflow: hidden;
+}
+
+.history td.time
+{
+	width: 60dp;
+}
+
+.history td.state
+{
+	width: 56dp;
+}
+
+.history td.details input
+{
+	width: 100%;
+	box-sizing: border-box;
+}
+
+/* The separator's line is in a grip that is dragged, as tall as a splitter: it reaches over the rows on both sides,
+   and is positioned so that it is in front of them. A press on it leaves the focus to the list. */
+.history .history-grip
+{
+	position: relative;
+	padding: 3dp 0;
+	margin: -3dp 0;
+	drag: drag;
+	focus: none;
+}
+
+.history .history-separator
+{
+	height: 2dp;
+}
+
+/* The pool (ui/poolpanel.h): a toolbar, the message line, the info line, the column headers and a tree of folders and
+   clips that fills the rest of its panel. The Media column takes the room the others leave. Rows have the state
+   classes .folder or .clip, and clips .missing and .unused; the message line has .error for a failure. */
+.pool
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.pool-toolbar button
+{
+	margin-right: 4dp;
+}
+
+.pool-info, .pool-header
+{
+	display: flex;
+	flex-shrink: 0;
+	padding: 2dp 10dp;
+	white-space: nowrap;
+}
+
+.pool-info span
+{
+	margin-right: 16dp;
+}
+
+.pool-message
+{
+	flex-shrink: 0;
+	padding: 2dp 10dp 0 10dp;
+}
+
+listview.pool-list
+{
+	flex: 1;
+}
+
+.pool-list listitem
+{
+	display: flex;
+	padding-top: 1dp;
+}
+
+.pool-header span, .pool-list listitem span
+{
+	display: block;
+	padding-top: 1dp;
+	flex-shrink: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	padding-right: 6dp;
+}
+
+.pool-header span.name, .pool-list listitem span.name
+{
+	flex: 1;
+	min-width: 80dp;
+}
+
+.pool-list span.name input
+{
+	width: 100%;
+	height: 20dp;
+	padding-top: 2dp;
+	padding-bottom: 2dp;
+}
+
+.pool-header span.used, .pool-list span.used
+{
+	width: 40dp;
+}
+
+.pool-header span.status, .pool-list span.status
+{
+	width: 64dp;
+}
+
+.pool-header span.info, .pool-list span.info
+{
+	width: 160dp;
+}
+
+.pool-header span.path, .pool-list span.path
+{
+	width: 260dp;
+}
+
+/* The color picker: the saturation and value field, the hue strip, the old and new colors' swatches, and the value
+   fields with their labels. Code places the thumbs and gives the field and the swatches their data's colors. */
+colorpicker
+{
+	display: block;
+	position: relative;
+	width: 336dp;
+	height: 200dp;
+}
+
+colorpicker .color-field
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 200dp;
+	height: 200dp;
+	drag: drag;
+}
+
+colorpicker .color-hue
+{
+	position: absolute;
+	left: 208dp;
+	top: 0;
+	width: 16dp;
+	height: 200dp;
+	drag: drag;
+}
+
+colorpicker .color-field-thumb, colorpicker .color-hue-thumb
+{
+	position: absolute;
+	width: 16dp;
+	height: 16dp;
+	margin: -8dp 0 0 -8dp;
+}
+
+colorpicker .color-hue-thumb
+{
+	left: 50%;
+}
+
+colorpicker .color-swatches
+{
+	position: absolute;
+	left: 236dp;
+	top: 0;
+	width: 100dp;
+	height: 24dp;
+	display: flex;
+}
+
+colorpicker .color-old, colorpicker .color-new
+{
+	flex: 1;
+}
+
+colorpicker .color-values
+{
+	position: absolute;
+	left: 236dp;
+	top: 30dp;
+	width: 100dp;
+}
+
+colorpicker .color-value
+{
+	display: flex;
+	align-items: center;
+	margin-bottom: 4dp;
+}
+
+colorpicker .color-value-label
+{
+	width: 16dp;
+}
+
+colorpicker valuefield
+{
+	width: 84dp;
+}

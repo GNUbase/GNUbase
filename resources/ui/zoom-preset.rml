@@ -1,0 +1,45 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Names a new horizontal zoom preset (docs/features/event-display.md): ui::EventDisplay opens it from the zoom
+     presets menu's Add item, and adds the view's zoom under the name in #zoom-preset-name when it closes with OK. -->
+<rml>
+<head>
+	<title>Save Preset</title>
+	<style>
+		dialog
+		{
+			width: 300dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#zoom-preset-name
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="zoom-preset-dialog">
+		<div class="dialog-titlebar">Save Preset</div>
+		<div class="row"><input type="text" id="zoom-preset-name" autofocus="autofocus"/></div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

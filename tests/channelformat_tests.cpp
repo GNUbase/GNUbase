@@ -255,6 +255,7 @@ TEST_CASE("a 5.1 track plays its downmix on the stereo output, through the engin
 			{{"blockSize", 64}, {"inputChannels", 8}, {"captureSeconds", 1},
 				{"input", {{"processor", "sine"}, {"parameters", {{"Frequency", 441.0}, {"Level", 0.1}}}}}});
 		const Json track = run(client, "track.add", {{"type", "audio"}, {"format", format}});
+		run(client, "channel.set", {{"channel", track.at("channel").at("id")}, {"monitor", true}});
 		if (std::string(format) == "5.1")
 		{
 			const Json bus = run(client, "bus.add", {{"direction", "input"}, {"name", "5.1 In"}, {"format", "5.1"}});

@@ -86,12 +86,19 @@ add_library(gnubase-engine STATIC
 	analysis/analysis.cpp analysis/analysis.h
 	audio/analysiscommands.cpp
 	audio/audioengine.cpp audio/audioengine.h
+	audio/audition.cpp audio/audition.h
 	audio/automation.cpp audio/automation.h
 	audio/fades.cpp audio/fades.h
+	audio/metercommands.cpp
+	audio/meters.cpp audio/meters.h
 	audio/midiports.cpp audio/midiports.h
+	audio/miditap.cpp audio/miditap.h
+	audio/mixdown.cpp
 	audio/performance.cpp audio/performance.h
 	audio/playback.cpp audio/playback.h
+	audio/recorder.cpp audio/recorder.h
 	audio/sequencer.cpp audio/sequencer.h
+	audio/stripsections.cpp audio/stripsections.h
 	audio/transport.cpp audio/transport.h
 	audiofile/audiofile.h
 	audiofile/diskstream.cpp audiofile/diskstream.h
@@ -99,18 +106,31 @@ add_library(gnubase-engine STATIC
 	audiofile/reader.cpp
 	audiofile/resampler.cpp audiofile/resampler.h
 	audiofile/writer.cpp
+	clock.cpp clock.h
 	dawproject/dawproject.cpp dawproject/dawproject.h
+	document/audiofilecommands.cpp
 	document/channelformat.cpp document/channelformat.h
 	document/document.cpp document/document.h
+	document/editors.cpp document/editors.h
+	document/eventedits.cpp
 	document/fadeedits.cpp
 	document/history.cpp document/history.h
 	document/markers.cpp
 	document/midiedits.cpp
 	document/midifilecommands.cpp
+	document/mixerviews.cpp document/mixerviews.h
 	document/parameters.cpp
+	document/pool.cpp
+	document/projectfiles.cpp
+	document/slotcommands.cpp
 	document/projectmodel.cpp document/projectmodel.h
+	document/recording.cpp
 	document/rendersnapshot.cpp document/rendersnapshot.h
 	document/serialize.cpp document/serialize.h
+	document/signature.cpp
+	document/snap.cpp document/snap.h
+	document/tempo.cpp
+	document/volumecurves.cpp document/volumecurves.h
 	dsp/biquad.cpp dsp/biquad.h
 	dsp/delay.cpp dsp/delay.h
 	dsp/dither.cpp dsp/dither.h
@@ -129,6 +149,7 @@ add_library(gnubase-engine STATIC
 	metronome/metronome.cpp metronome/metronome.h
 	metronome/metronomecommands.cpp metronome/metronomecommands.h
 	metronome/metronomesettings.cpp metronome/metronomesettings.h
+	midi/chords.cpp midi/chords.h
 	midi/functioncommands.cpp midi/functioncommands.h
 	midi/functions.cpp midi/functions.h
 	midi/midivalues.cpp midi/midivalues.h
@@ -141,6 +162,7 @@ add_library(gnubase-engine STATIC
 	peaks/peaks.cpp peaks/peaks.h
 	plugins/hostmanager.cpp plugins/hostmanager.h
 	plugins/pluginslot.cpp plugins/pluginslot.h
+	plugins/slotinstances.cpp plugins/slotinstances.h
 	processors/builtin.cpp processors/builtin.h
 	processors/builtinplugin.cpp processors/builtinplugin.h
 	processors/effects.h

@@ -1,0 +1,23 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The canvas elements (#55), 400 dp wide, one below the other: a ruler (0 to 20 dp), event lanes (20 to 120 dp), a
+     waveform (120 to 160 dp) and a curve (160 to 200 dp), at 10 timeline units per dp. tests/window_tests.cpp fills
+     them with data. -->
+<rml>
+<head>
+	<title>Canvas</title>
+	<style>
+		body { display: block; position: absolute; left: 0; top: 0; right: 0; bottom: 0; margin: 0; background-color: #000000; }
+		ruler, event-lanes, waveform, curve { display: block; width: 400dp; }
+		ruler { height: 20dp; font-family: Inter; font-size: 11dp; color: #ffffff; stroke-color: #ffff00; stroke-width: 1dp; }
+		event-lanes { height: 100dp; color: #ff0000; stroke-color: #0000ff; stroke-width: 2dp; }
+		waveform { height: 40dp; color: #00ff00; }
+		curve { height: 40dp; stroke-color: #ffffff; stroke-width: 2dp; }
+	</style>
+</head>
+<body>
+	<ruler id="ruler" scale="10"/>
+	<event-lanes id="lanes" scale="10"/>
+	<waveform id="wave" scale="10"/>
+	<curve id="curve" scale="10"/>
+</body>
+</rml>

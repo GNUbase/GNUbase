@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/audio/fades.h"
 #include "engine/document/document.h"
 
 #include <cstdint>
@@ -20,6 +21,7 @@ namespace gnubase::engine
 		std::vector<std::string> ports; // as in Bus
 		int parent = -1;                // child busses: an index into RenderSnapshot::busses
 		std::vector<int> parentChannels;
+		bool mainMix = false; // the default output
 	};
 
 	struct RenderMedia
@@ -58,7 +60,8 @@ namespace gnubase::engine
 		Fade fadeOut;
 		Fade clipFadeIn; // at the media file's start and end
 		Fade clipFadeOut;
-		Crossfade crossfade; // only one that applies (crossfadeApplies)
+		Crossfade crossfade;                // only one that applies (crossfadeApplies)
+		std::vector<GainPoint> volumeCurve; // in the media file's sample frames
 	};
 
 	struct RenderNote
@@ -78,6 +81,13 @@ namespace gnubase::engine
 		uint32_t value = 0;
 		uint8_t channel = 0;
 		std::vector<uint8_t> data; // SysEx
+		int32_t part = -1;         // the index of its MIDI part in the channel's midiParts
+	};
+
+	struct RenderPart
+	{
+		time::Samples start = 0;
+		time::Samples end = 0;
 	};
 
 	struct RenderAutomationPoint
@@ -86,18 +96,44 @@ namespace gnubase::engine
 		double value = 0.0; // in the target's unit; volume as a linear gain
 		AutomationShape shape = AutomationShape::Linear;
 		double curve = 0.0;
+		// A gap from here to the next point (virgin territory, or after a terminator): the lane's static value, which
+		// channelAutomation() gives it; a mute lane's has the mute button's value already. A MIDI lane without a static
+		// value of the channel sends nothing there.
+		bool gap = false;
 
 		bool operator==(const RenderAutomationPoint& other) const
 		{
-			return position == other.position && value == other.value && shape == other.shape && curve == other.curve;
+			return position == other.position && value == other.value && shape == other.shape && curve == other.curve &&
+				gap == other.gap;
 		}
 	};
 
-	// A lane that plays: read-enabled and with points.
+	// A lane that plays: read-enabled and with points, and with gap points where it has gaps.
 	struct RenderAutomationLane
 	{
 		AutomationTarget target;
 		std::vector<RenderAutomationPoint> points; // sorted by position; points at one position in the order added
+	};
+
+	// A plugin slot of a channel, as the engine makes and runs its plugin.
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
+	struct RenderSlot
+	{
+		ObjectId id = 0;
+		std::string plugin; // "<format>:<id>"
+		bool bypass = false;
+		bool active = true;
+		std::map<uint32_t, double> parameters;             // the values set on top of its state
+		std::shared_ptr<const std::vector<uint8_t>> state; // its state from a file, or none
+	};
+
+	// A send with a destination (graph::NodeKind::Send).
+	struct RenderSend
+	{
+		int number = 0;      // 0 to 7, its index in Channel::sends
+		int destination = 0; // an index into RenderSnapshot::channels
+		float gain = 0.0f;   // linear; 0 while it is off or silenced
+		bool preFader = false;
 	};
 
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
@@ -120,11 +156,24 @@ namespace gnubase::engine
 		bool panBypass = false;
 		std::optional<int> midiVolume; // MIDI channels: CC 7 and CC 10 to send, 0 to 127
 		std::optional<int> midiPan;
-		AutoFades autoFades;                          // audio tracks: their own settings or the project's
+		bool monitor = false; // the monitor and record enable buttons
+		bool recordEnable = false;
+		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or
+		// are record-enabled and their MIDI input is all MIDI inputs.
+		bool midiThru = false;
+		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A silent MIDI channel
+		// has no notes or controllers, and a disabled track no events or parts.
+		bool silent = false;
+		bool listen = false; // also plays on the monitoring bus, after its fader (graph::NodeKind::ListenBus)
+		AutoFades autoFades; // audio tracks: their own settings or the project's
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
 		std::vector<RenderNote> notes;                // sorted by start, then pitch
 		std::vector<RenderController> controllers;    // sorted by position
+		std::vector<RenderPart> midiParts;            // sorted by start
 		std::vector<RenderAutomationLane> automation; // in the order of the lanes' ids
+		std::vector<RenderSlot> slots;                // from top to bottom
+		ChannelSections sections;                     // the strip's sections before the fader
+		std::vector<RenderSend> sends;                // those with a destination, by number
 	};
 
 	// A channel volume in dB as a linear gain; the fader's bottom, g_minChannelVolume, is silence.
@@ -141,7 +190,8 @@ namespace gnubase::engine
 		time::SignatureMap signatures;
 		metronome::MetronomeSettings metronome;
 		PanLaw panLaw = PanLaw::Minus3;
-		double maxVolume = 6.0; // dB
+		double maxVolume = 6.0;               // dB
+		std::string recordBitDepth = "int24"; // the project's, for audio.get; not read on the audio thread
 		std::vector<RenderBus> busses;
 		std::vector<RenderMedia> media;
 		std::vector<RenderChannel> channels; // in track order

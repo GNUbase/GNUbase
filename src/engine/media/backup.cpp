@@ -164,11 +164,12 @@ namespace gnubase::engine
 		}
 
 		// Whether a minimized file keeps what matters of the source: every sample, read as 32-bit float, and the
-		// metadata that refers to its frames. 32-bit integers don't fit into a float, and a Broadcast Wave time
-		// reference counts from the first frame, which minimizing moves; such files are copied whole.
+		// metadata that refers to its frames. 32-bit integers and 64-bit floats don't fit into a float, and a Broadcast
+		// Wave time reference counts from the first frame, which minimizing moves; such files are copied whole.
 		bool canMinimize(const AudioFileInfo& info)
 		{
-			return info.sampleFormat != SampleFormat::Int32 && !info.broadcast;
+			return info.sampleFormat != SampleFormat::Int32 && info.sampleFormat != SampleFormat::Float64 &&
+				!info.broadcast;
 		}
 
 		// The format of a minimized file: the source's where GNUbase writes it and the samples survive unchanged
@@ -297,6 +298,15 @@ namespace gnubase::engine
 		return fs::absolute(projectFile).parent_path() / "Audio";
 	}
 
+	fs::path unsavedMediaFolder(const fs::path& settingsDirectory)
+	{
+		if (!settingsDirectory.empty())
+			return settingsDirectory / "Recordings";
+		std::error_code error;
+		const fs::path temporary = fs::temp_directory_path(error);
+		return error ? fs::path() : temporary / "GNUbase Recordings";
+	}
+
 	bool isInside(const std::string& file, const fs::path& folder)
 	{
 		std::error_code error;
@@ -378,6 +388,67 @@ namespace gnubase::engine
 			removeFiles(made);
 			throw;
 		}
+	}
+
+	Json startMediaCopy(
+		Jobs& jobs, std::string kind, std::vector<MediaCopy> files, std::filesystem::path folder, std::string action)
+	{
+		return jobs.start(std::move(kind),
+			[files = std::move(files), folder = std::move(folder), action = std::move(action)](JobContext& job) mutable
+			{
+				copyMedia(files, folder, job);
+				Json relink = Json::array();
+				Json missing = Json::array();
+				std::vector<std::string> made;
+				for (const MediaCopy& file : files)
+				{
+					if (file.to.empty())
+					{
+						missing.push_back({{"media", file.media}, {"path", file.from}});
+						continue;
+					}
+					relink.push_back({{"media", file.media}, {"from", file.from}, {"path", file.to}});
+					made.push_back(file.to);
+				}
+
+				std::set<ObjectId> skipped;
+				try
+				{
+					job.checkCancelled();
+					if (!relink.empty())
+					{
+						const Json command = {{"command", "media.relink"}, {"parameters", {{"files", relink}}}};
+						const Json result = job.command(
+							"history.transaction", {{"description", action}, {"commands", Json::array({command})}});
+						for (const Json& media : result.at("results").at(0).at("skipped"))
+							skipped.insert(media.get<ObjectId>());
+					}
+				}
+				catch (...)
+				{
+					removeFiles(made);
+					throw;
+				}
+
+				Json copied = Json::array();
+				Json changed = Json::array();
+				std::vector<std::string> unused;
+				for (const MediaCopy& file : files)
+				{
+					if (file.to.empty())
+						continue;
+					if (skipped.count(file.media) != 0)
+					{
+						changed.push_back(file.media);
+						unused.push_back(file.to);
+						continue;
+					}
+					copied.push_back({{"media", file.media}, {"from", file.from}, {"to", file.to}});
+				}
+				removeFiles(unused);
+				return Json{
+					{"copied", std::move(copied)}, {"missing", std::move(missing)}, {"changed", std::move(changed)}};
+			});
 	}
 
 	std::string fileNameProblem(const std::string& name)

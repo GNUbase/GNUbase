@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Markers (#91): position and cycle markers on marker tracks, and locating with them. marker.add, marker.set,
-// marker.remove, marker.renumber and marker.activateTrack change the project, so each is one undo step and changes
-// nothing if it fails (ProjectModel::add). marker.list and marker.range are queries. marker.locate,
+// Markers (#91): position and cycle markers on marker tracks, and locating with them. marker.add, marker.put,
+// marker.set, marker.remove, marker.renumber and marker.activateTrack change the project, so each is one undo step and
+// changes nothing if it fails (ProjectModel::add). marker.list and marker.range are queries. marker.locate,
 // marker.locateNext, marker.locatePrevious and marker.setLocators move the transport through transport.locate and
 // transport.set: what key commands for markers call.
 #include "engine/document/document.h"
@@ -404,6 +404,27 @@ namespace gnubase::engine
 		}
 
 		// Moves the cursor to the next marker after it, or the previous one before it. Without one it stays.
+		// With the user setting transport.cycleFollowsMarkers, locating to a marker sets the locators to it: a cycle
+		// marker's range, or from a position marker to the next marker after it on its track (none: they stay).
+		void followMarker(const Project& project, CommandContext& context, const Marker& marker)
+		{
+			if (!context.call("settings.get", {{"key", "transport.cycleFollowsMarkers"}}).at("value").get<bool>())
+				return;
+			const time::Samples left = samples(project, marker.position);
+			std::optional<time::Samples> right;
+			if (marker.type == MarkerType::Cycle)
+				right = samples(project, marker.end);
+			else
+				for (const Point& point : points(project, marker.track))
+					if (point.position > left)
+					{
+						right = point.position;
+						break;
+					}
+			if (right)
+				context.call("transport.set", {{"left", left}, {"right", *right}});
+		}
+
 		Json locateNeighbour(const Project& project, CommandContext& context, bool next)
 		{
 			const time::Samples cursor = context.call("transport.get").at("position").get<time::Samples>();
@@ -422,6 +443,7 @@ namespace gnubase::engine
 			if (!target)
 				return {{"marker", nullptr}, {"position", cursor}};
 			context.call("transport.locate", {{"position", target->position}});
+			followMarker(project, context, *target->marker);
 			return {{"marker", toJson(*target->marker)}, {"position", target->position}};
 		}
 	}
@@ -464,6 +486,38 @@ namespace gnubase::engine
 					track = m_edits.at("track.add").handler(project, inner).at("track").at("id").get<ObjectId>();
 				}
 				return addMarker(project, context, track);
+			});
+		add(engine,
+			{"marker.put", 1,
+				"Puts position marker number N of a marker track (default: the active one; without a marker track one "
+				"is added) at the cursor: moves it there, or adds it with that number. What the key commands Set "
+				"Marker 1 to 9 do.",
+				objectSchema({{"number", integerSchema}, {"track", idSchema}}, {"number"}), markerResult, false},
+			[this](Project& project, CommandContext& context)
+			{
+				ObjectId track = trackFor(project, context.parameters());
+				if (track == 0)
+				{
+					const Json parameters = {{"type", "marker"}};
+					CommandContext inner(parameters, &context);
+					track = m_edits.at("track.add").handler(project, inner).at("track").at("id").get<ObjectId>();
+				}
+				const auto number = context.parameters().at("number").get<int64_t>();
+				const auto found = std::find_if(project.markers.begin(), project.markers.end(),
+					[track, number](const auto& entry)
+					{
+						const Marker& marker = entry.second;
+						return marker.track == track && marker.type == MarkerType::Position && marker.number == number;
+					});
+				if (found != project.markers.end())
+				{
+					const Json parameters = {{"marker", found->first}, {"position", "cursor"}};
+					CommandContext inner(parameters, &context);
+					return setMarker(project, inner);
+				}
+				const Json parameters = {{"number", number}};
+				CommandContext inner(parameters, &context);
+				return addMarker(project, inner, track);
 			});
 		add(engine,
 			{"marker.set", 1,
@@ -517,7 +571,8 @@ namespace gnubase::engine
 			{"marker.locateNext", 1,
 				"Moves the project cursor to the next marker after it on a marker track (default: the active one): "
 				"position markers and the start and end of cycle markers. Without one the cursor stays and marker is "
-				"null. Returns the marker and the cursor in samples.",
+				"null. With the user setting transport.cycleFollowsMarkers it also sets the locators to the marker, "
+				"as marker.locate does. Returns the marker and the cursor in samples.",
 				neighbourParameters, locateResult, false},
 			[this](CommandContext& context) { return locateNeighbour(m_project, context, true); });
 		addControl(engine,
@@ -529,7 +584,9 @@ namespace gnubase::engine
 		addControl(engine,
 			{"marker.locate", 1,
 				"Moves the project cursor to a marker, given by id (marker) or by its number on a marker track "
-				"(default: the active one) and type (default: position). Cycle markers locate to their start.",
+				"(default: the active one) and type (default: position). Cycle markers locate to their start. With "
+				"the user setting transport.cycleFollowsMarkers it also sets the locators to the marker: a cycle "
+				"marker's range, or from a position marker to the next marker after it on its track, if there is one.",
 				objectSchema(
 					{{"marker", idSchema}, {"number", integerSchema}, {"type", typeSchema}, {"track", idSchema}}),
 				locateResult, false},
@@ -538,6 +595,7 @@ namespace gnubase::engine
 				const Marker& marker = namedMarker(m_project, context.parameters(), markerType(context.parameters()));
 				const time::Samples position = samples(m_project, marker.position);
 				context.call("transport.locate", {{"position", position}});
+				followMarker(m_project, context, marker);
 				return Json{{"marker", toJson(marker)}, {"position", position}};
 			});
 		addControl(engine,

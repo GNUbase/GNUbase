@@ -468,3 +468,51 @@ TEST_CASE("a new project starts with an empty history", "[unit]")
 	CHECK(history.at("maxSteps") == 10); // a setting, not part of the project
 	CHECK_THAT(reject(client, "history.undo"), ContainsSubstring("nothing to undo"));
 }
+
+TEST_CASE("transactions with the same merge key join one undo step, like a fader drag", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = addTrack(client);
+	const Json channel = run(client, "project.get").at("channels")[0].at("id");
+	const auto volume = [&client, &channel](double to, const std::string& merge)
+	{
+		run(client, "history.transaction",
+			{{"description", "Change Volume"}, {"merge", merge},
+				{"commands", {{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {"volume", to}}}}}}});
+	};
+	const auto volumeNow = [&client] { return run(client, "project.get").at("channels")[0].at("volume"); };
+	const int64_t start = position(client);
+
+	// One gesture: every step joins the first one, so one undo goes back to where the gesture started.
+	volume(-1.0, "fader:1");
+	volume(-2.0, "fader:1");
+	volume(-3.0, "fader:1");
+	CHECK(position(client) == start + 1);
+	CHECK(run(client, "history.get").at("steps").back().at("action") == "Change Volume");
+	run(client, "history.undo");
+	CHECK(volumeNow() == 0.0);
+	run(client, "history.redo");
+	CHECK(volumeNow() == -3.0);
+
+	// Another key is another step; so is the same key after another step or after an undo.
+	volume(-4.0, "fader:2");
+	CHECK(position(client) == start + 2);
+	run(client, "track.set", {{"track", track}, {"name", "Vox"}});
+	volume(-5.0, "fader:2");
+	CHECK(position(client) == start + 4);
+	run(client, "history.undo");
+	volume(-6.0, "fader:2");
+	CHECK(position(client) == start + 4);
+	run(client, "history.undo");
+	CHECK(volumeNow() == -4.0);
+	run(client, "history.redo");
+
+	// A gesture that ends where it started leaves no step; one without a key never joins.
+	volume(-7.0, "fader:3");
+	volume(-6.0, "fader:3");
+	CHECK(position(client) == start + 4);
+	volume(-7.0, "");
+	volume(-8.0, "");
+	CHECK(position(client) == start + 6);
+}

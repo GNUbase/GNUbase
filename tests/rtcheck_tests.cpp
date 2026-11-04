@@ -509,6 +509,53 @@ TEST_CASE("the built-in plugins process, flush parameters and reset without allo
 	CHECK(g_violations == 0);
 }
 
+TEST_CASE("a plugin slot takes parameter values and bypass while it processes, without allocating or locking", "[unit]")
+{
+	using namespace gnubase;
+	class NullHost final : public plugin::Host
+	{
+	public:
+		void requestRestart() override {}
+		void requestProcess() override {}
+		void requestCallback() override {}
+		void* extension(std::string_view /*id*/) override { return nullptr; }
+	};
+	NullHost host;
+	std::unique_ptr<plugin::Plugin> limiter = engine::processors::BuiltinFactory().create("builtin:limiter", host);
+	REQUIRE(limiter->init());
+	engine::plugins::PluginSlot slot(std::move(limiter));
+	REQUIRE(slot.activate(48000.0, 128));
+	CHECK(slot.activeFor(48000.0, 128));
+	CHECK(slot.latency() == 48); // 1 ms look-ahead
+
+	std::vector<float> left(128);
+	std::vector<float> right(128);
+	const std::array<float*, 2> audio{left.data(), right.data()};
+	const engine::graph::EventBuffer eventsIn(4);
+	engine::graph::EventBuffer eventsOut(4);
+	const engine::graph::TransportBlock transport;
+	const RecordViolations record;
+	for (int i = 0; i < 100; ++i)
+	{
+		// The command thread's calls, between blocks.
+		slot.setParameters({{1, i % 2 == 0 ? -12.0 : -0.3}}); // the ceiling
+		slot.setBypass(i % 3 == 0 || i == 98);
+		std::fill(left.begin(), left.end(), 0.5f);
+		std::fill(right.begin(), right.end(), -0.5f);
+		const ScopedRealtimeContext realtime;
+		slot.process({audio.data(), 2, 128, eventsIn, eventsOut, transport});
+		eventsOut.clear();
+	}
+	CHECK(g_violations == 0);
+	CHECK(!slot.failed());
+	CHECK(left[0] == 0.5f); // the last blocks, 98 and 99, were bypassed: no crossfade in 99
+	CHECK(right[127] == -0.5f);
+	CHECK(slot.latency() == 48); // bypassed too: its input is delayed by as much
+	slot.deactivate();
+	CHECK(!slot.activeFor(48000.0, 128));
+	CHECK(slot.latency() == 0);
+}
+
 TEST_CASE("rendering a project through the dummy device passes the RT checker", "[unit]")
 {
 	using gnubase::engine::Json;
@@ -530,6 +577,72 @@ TEST_CASE("rendering a project through the dummy device passes the RT checker", 
 	run("audio.render", {{"frames", 4800}});
 	run("track.add", {{"type", "audio"}}); // a new graph, swapped in between blocks
 	run("audio.render", {{"frames", 4800}});
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("recording audio, with cycle laps and a punch out, passes the RT checker", "[integration]")
+{
+	using gnubase::engine::Json;
+	const gnubase::test::TempDir dir;
+	gnubase::engine::Engine engine;
+	gnubase::engine::Client client(engine);
+	const auto run = [&client](const std::string& command, const Json& parameters)
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	run("audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 1}, {"input", {{"processor", "noise"}}}});
+	run("project.save", {{"path", (dir.path() / "rt.dawproject").u8string()}});
+	run("settings.set", {{"key", "audio.preRecordSeconds"}, {"value", 0.01}});
+	const Json channel = run("track.add", {{"type", "audio"}}).at("channel").at("id");
+	run("channel.set", {{"channel", channel}, {"recordEnable", true}});
+	run("transport.set", {{"left", 0}, {"right", 2000}, {"cycle", true}});
+
+	const RecordViolations record;
+	run("audio.render", {{"frames", 640}});
+	run("transport.record", Json::object());
+	run("audio.render", {{"frames", 4800}});
+	run("transport.record", {{"record", false}});
+	run("audio.render", {{"frames", 640}});
+	run("channel.set", {{"channel", channel}, {"recordEnable", false}});
+	run("audio.render", {{"frames", 640}});
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("MIDI injected into tracks and captured from instruments passes the RT checker", "[unit]")
+{
+	using gnubase::engine::Json;
+	gnubase::engine::Engine engine;
+	gnubase::engine::Client client(engine);
+	const auto run = [&client](const std::string& command, const Json& parameters)
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	run("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	const Json instrument = run("track.add", {{"type", "instrument"}}).at("channel").at("id");
+	const Json midi = run("track.add", {{"type", "midi"}}).at("channel").at("id");
+	run("channel.set", {{"channel", instrument}, {"instrument", "testSynth"}});
+	run("channel.set", {{"channel", midi}, {"output", instrument}});
+	Json messages = Json::array();
+	for (int i = 0; i < 64; ++i)
+	{
+		messages.push_back({{"position", i * 50}, {"bytes", {0x90, 48 + i, 100}}});
+		messages.push_back({{"position", (i * 50) + 300}, {"bytes", {0x80, 48 + i, 0}}});
+		messages.push_back({{"position", i * 50}, {"bytes", {0xB0, 1, i}}});
+	}
+	run("midi.inject", {{"channel", instrument}, {"messages", messages}});
+	run("midi.inject", {{"channel", midi}, {"messages", messages}});
+
+	const RecordViolations record;
+	run("audio.render", {{"frames", 2400}});
+	run("track.add", {{"type", "midi"}}); // a new graph, swapped in between blocks
+	run("audio.render", {{"frames", 2400}});
+	run("midi.capture", Json::object());
 	CHECK(g_violations == 0);
 }
 
@@ -697,15 +810,20 @@ TEST_CASE("playing MIDI parts through an instrument, with edits, stops and cycle
 		{{"part", parts[1]},
 			{"notes", {{{"position", 0}, {"length", quarter / 2}, {"pitch", 72}, {"velocity", 1.0}}}}});
 	run("audio.render", {{"frames", 4800}});
-	run("transport.locate", {{"position", 3000}}); // a locate ends the sounding notes
+	run("transport.locate", {{"position", 3000}}); // a locate ends the sounding notes and chases the held ones
 	run("audio.render", {{"frames", 4800}});
 	run("transport.stop", Json::object());
+	run("audio.render", {{"frames", 960}});
+	run("settings.set", {{"key", "midi.chaseBeyondParts"}, {"value", false}});
+	run("transport.locate", {{"position", 2000}}); // chases the controllers while stopped
+	run("audio.render", {{"frames", 960}});
+	run("transport.play", Json::object());
 	run("audio.render", {{"frames", 960}});
 	CHECK(g_violations == 0);
 }
 
-TEST_CASE(
-	"playing automation of volume, pan, instrument parameters and controllers passes the RT checker", "[integration]")
+TEST_CASE("playing automation of volume, pan, instrument and plugin parameters and controllers passes the RT checker",
+	"[integration]")
 {
 	using gnubase::engine::Json;
 	gnubase::engine::Engine engine;
@@ -741,6 +859,19 @@ TEST_CASE(
 			{"points", points({{0, -30.0}, {2000, 0.0}, {5000, -6.0}, {9000, -60.0}}, "linear")}});
 	run("automationPoint.add",
 		{{"lane", lane(audio, {{"type", "pan"}})}, {"points", points({{0, -1.0}, {4000, 1.0}, {8000, 0.0}}, "curve")}});
+	const Json slot = run("plugin.insert", {{"channel", audio.at("channel").at("id")}, {"plugin", "builtin:gainPan"}})
+						  .at("slot")
+						  .at("id");
+	const auto active = [&run, &slot]()
+	{ return run("plugin.get", {{"slot", slot}}).at("slot").at("status") == "active"; };
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (!active() && std::chrono::steady_clock::now() < deadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	REQUIRE(active());
+	run("audio.updatePlugins", Json::object());
+	run("automationPoint.add",
+		{{"lane", lane(audio, {{"type", "plugin"}, {"slot", slot}, {"parameter", 0}})},
+			{"points", points({{0, -12.0}, {3000, 0.0}, {6000, -6.0}}, "linear")}});
 	run("automationPoint.add",
 		{{"lane", lane(instrument, {{"type", "instrument"}, {"parameter", 0}})},
 			{"points", points({{0, 0.0}, {3000, 1.0}, {6000, 0.5}}, "linear")}});

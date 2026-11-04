@@ -86,6 +86,11 @@ namespace gnubase::engine::processors
 		std::vector<graph::TransportSegment> m_segments;
 	};
 
+	// The plugin transport of a block as the graph's, for a built-in processor behind the plugin wrapper, with the
+	// segments in segments: as many as the process has, up to its size.
+	graph::TransportBlock toTransportBlock(
+		const plugin::Process& process, std::vector<graph::TransportSegment>& segments) noexcept;
+
 	// The built-in processors as a plugin factory: ids "builtin:<processor id>", ports with the given channels.
 	class BuiltinFactory final : public plugin::Factory
 	{

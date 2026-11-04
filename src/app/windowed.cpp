@@ -15,6 +15,7 @@
 #include "ui/shell.h"
 
 #include <chrono>
+#include <exception>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -32,6 +33,14 @@ namespace gnubase::app
 #else
 		constexpr bool g_liveReload = false;
 #endif
+
+		// The UI couldn't be shown: says why, for the exit code g_exitSetup.
+		int cannotShow(std::ostream& err, const std::exception& error)
+		{
+			err << "gnubase: cannot show the UI: " << error.what() << '\n';
+			logging::error("Cannot show the UI: {}", error.what());
+			return g_exitSetup;
+		}
 	}
 
 	int runWindowed(const Options& options, std::ostream& out, std::ostream& err)
@@ -53,13 +62,18 @@ namespace gnubase::app
 		{
 			ui::WindowSpec main;
 			main.size = {}; // 80 % of the primary monitor
-			appUi = std::make_unique<AppUi>(engine, *resources, main);
+			appUi = std::make_unique<AppUi>(engine, *resources, main, out);
+			appUi->showProject();
+			if (options.project.empty())
+				appUi->openStartScreen();
 		}
 		catch (const std::runtime_error& error)
 		{
-			err << "gnubase: cannot show the UI: " << error.what() << '\n';
-			logging::error("Cannot show the UI: {}", error.what());
-			return g_exitSetup;
+			return cannotShow(err, error);
+		}
+		catch (const std::invalid_argument& error) // e.g. a menu item with a command that doesn't exist (#446)
+		{
+			return cannotShow(err, error);
 		}
 		ui::Shell& shell = appUi->shell();
 		if (g_liveReload)

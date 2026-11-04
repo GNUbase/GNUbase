@@ -1,0 +1,522 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The project window: a docking window (docs/features/docking.md) with the main menu bar, whose items
+     ui::MainMenu runs (docs/features/main-menu.md), the toolbar, the info line, the zones (Channel, left, main, lower,
+     right) and their splitters, the status line and the transport bar. The main zone shows the track list (#81) beside
+     the event display (#84), with the divider that sizes the track list between them (#493). ui::Docking lays out the
+     elements with zone, splitter for, resizable, strip, toggle and hide attributes and fills the other zones with their
+     panels' tabs. ui::EventDisplay fills the element #event-display and drives the controls and menus with these ids
+     (docs/features/event-display.md): the ruler's arrow button .ruler-format, #ruler-format-menu, #zoom-presets-menu,
+     #auto-scroll and #auto-scroll-menu, and the snap controls #snap, #snap-type, #snap-type-menu, #grid-type,
+     #grid-type-menu (which the display fills with the ruler format's grid types) and #snap-zero-crossing
+     (docs/features/snap.md). Its dialogs are zoom-preset.rml, zoom-presets.rml and repeat-events.rml, next to this
+     file. ui::TrackList fills #track-list under its global track controls (docs/features/track-list.md): #add-track
+     opens the add track dialog (add-track.rml), #track-controls-settings the track controls settings dialog
+     (track-controls.rml); #track-list-menu is its context menu.
+     app::AppUi fills the transport bar with the transport controls (transport.rml).
+     The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md), which the
+     display drives too, with the toolbox #toolbox, the context menu #event-display-menu and #tool-notification, and
+     #select-color with #color-menu, which ui::ColorMenu fills with the project's colors (docs/features/colors.md).
+     ui::StatusLine fills #record-format, #record-time and #lost-device (docs/features/status-line.md). ui::InfoLine fills
+     #info-line; #inspector-setup is the inspector's Set up Sections pane (docs/features/inspector.md).
+     The focus zone "project" has the project window's key commands, such as zooming with H and G. -->
+<rml>
+<head>
+	<title>Project</title>
+	<style>
+		body
+		{
+			position: absolute;
+			left: 0;
+			top: 0;
+			right: 0;
+			bottom: 0;
+		}
+
+		#toolbar button
+		{
+			margin-right: 2dp;
+		}
+
+		#toolbar #auto-scroll-settings, #toolbar #play-tool
+		{
+			margin-right: 12dp;
+		}
+
+		#toolbar .spacer
+		{
+			flex: 1 1 0;
+		}
+
+		.status-line
+		{
+			display: flex;
+			align-items: center;
+			padding: 0 6dp;
+		}
+
+		.status-field
+		{
+			margin-right: 16dp;
+		}
+
+		/* The track list, as wide as ui.layout or its size attribute says, the divider that sizes it, and the event
+		   display, which takes the rest. A narrow window takes the room from the track list once the event display is
+		   at its minimum. The minimums and the divider fill the 200 dp that the zones' column keeps (base.rcss). */
+		#main-zone
+		{
+			display: flex;
+			flex-direction: row;
+		}
+
+		#track-list
+		{
+			position: relative;
+			flex: 0 1 auto;
+			min-width: 120dp;
+		}
+
+		#event-display
+		{
+			flex: 1 1 0;
+			min-width: 72dp;
+		}
+	</style>
+</head>
+<body class="docking" focuszone="project">
+	<!-- The main menus (reference manual p. 55, docs/features/main-menu.md): an item with a command attribute runs that
+	     engine or UI command, with the JSON object in its parameters attribute, and shows its key. -->
+	<menubar id="menu-bar" strip="menuBar">
+		<button menu="file-menu">File</button>
+		<button menu="edit-menu">Edit</button>
+		<button menu="media-menu">Media</button>
+		<button menu="project-menu">Project</button>
+		<button menu="audio-menu">Audio</button>
+		<button menu="transport-menu">Transport</button>
+		<button menu="studio-menu">Studio</button>
+	</menubar>
+	<div id="toolbar" class="toolbar" strip="toolbar">
+		<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
+		<button tool="objectSelection" tool-menu="object-selection-menu" class="icon-only" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
+		<button tool="rangeSelection" class="icon-only" title="Range Selection"><svg class="icon" src="../icons/tool-range.svg"/></button>
+		<button tool="draw" class="icon-only" title="Draw"><svg class="icon" src="../icons/tool-draw.svg"/></button>
+		<button tool="erase" class="icon-only" title="Erase"><svg class="icon" src="../icons/tool-erase.svg"/></button>
+		<button tool="split" class="icon-only" title="Split"><svg class="icon" src="../icons/tool-split.svg"/></button>
+		<button tool="glue" class="icon-only" title="Glue"><svg class="icon" src="../icons/tool-glue.svg"/></button>
+		<button tool="mute" class="icon-only" title="Mute"><svg class="icon" src="../icons/tool-mute.svg"/></button>
+		<button tool="zoom" class="icon-only" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
+		<button tool="line" tool-menu="line-menu" class="icon-only" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></button>
+		<button id="play-tool" tool="play" tool-menu="play-menu" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
+		<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
+		<button id="auto-scroll-settings" class="icon-only" menu="auto-scroll-menu" title="Select Auto-Scroll Settings"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
+		<button id="zoom-presets" class="icon-only" menu="zoom-presets-menu" title="Horizontal Zoom Presets"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
+		<button id="snap" type="toggle" class="icon-only" title="Snap On/Off"><svg class="icon" src="../icons/general-snap.svg"/></button>
+		<button id="snap-type" menu="snap-type-menu" title="Snap Type">Grid</button>
+		<button id="grid-type" menu="grid-type-menu" title="Grid Type">Bar</button>
+		<button id="snap-zero-crossing" type="toggle" class="icon-only" title="Snap to Zero Crossing"><svg class="icon" src="../icons/general-zero-crossing.svg"/></button>
+		<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
+		<div class="spacer"/>
+		<button id="show-channel-zone" type="toggle" toggle="channel" class="icon-only" title="Show/Hide Channel"><svg class="icon" src="../icons/layout-channel-zone.svg"/></button>
+		<button id="show-left-zone" type="toggle" toggle="left" class="icon-only" title="Show/Hide Left Zone"><svg class="icon" src="../icons/layout-left-zone.svg"/></button>
+		<button id="show-lower-zone" type="toggle" toggle="lower" class="icon-only" title="Show/Hide Lower Zone"><svg class="icon" src="../icons/layout-lower-zone.svg"/></button>
+		<button id="show-right-zone" type="toggle" toggle="right" class="icon-only" title="Show/Hide Right Zone"><svg class="icon" src="../icons/layout-right-zone.svg"/></button>
+		<button id="window-layout" class="icon-only" menu="window-layout-menu" title="Set up Window Layout"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
+	</div>
+	<div id="info-line" class="strip info-line" strip="infoLine" default="hidden"/>
+	<div class="zones">
+		<div id="channel-zone" zone="channel" focuszone="channel" size="200" default="hidden"/>
+		<splitter for="channel"/>
+		<div id="left-zone" zone="left" focuszone="left" size="240" default="hidden"/>
+		<splitter for="left"/>
+		<div class="zone-column">
+			<div id="main-zone" zone="main" focuszone="project">
+				<div id="track-list" class="track-list" contextmenu="track-list-menu" resizable="trackList" size="280">
+					<!-- The global track controls (reference manual p. 67) -->
+					<div class="track-list-header">
+						<button id="add-track" class="icon-only" title="Add Track" onclick="gnubase.ui.command{command = 'project.addTrack'}"><svg class="icon" src="../icons/general-add.svg"/></button>
+						<button id="track-controls-settings" class="icon-only" title="Open Track Controls Settings Dialog" onclick="gnubase.ui.command{command = 'track.controlsSettings'}"><svg class="icon" src="../icons/general-settings.svg"/></button>
+					</div>
+				</div>
+				<splitter for="trackList"/>
+				<div id="event-display" class="event-display">
+					<button class="ruler-format icon-only" menu="ruler-format-menu" title="Ruler Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
+					<notification id="tool-notification" class="tool-notification tooltip"/>
+				</div>
+			</div>
+			<splitter for="lower" resize="next"/>
+			<!-- Its tabs are at its bottom, with Close Lower Zone to their left (reference manual p. 83). -->
+			<div id="lower-zone" zone="lower" focuszone="lower" size="240" default="hidden" tabbar="bottom">
+				<button id="close-lower-zone" class="zone-close icon-only" hide="lower" title="Close Lower Zone"><svg class="icon" src="../icons/general-close.svg"/></button>
+			</div>
+		</div>
+		<splitter for="right" resize="next"/>
+		<div id="right-zone" zone="right" focuszone="right" size="240" default="hidden"/>
+	</div>
+	<div id="status-line" class="strip status-line" strip="statusLine" default="hidden">
+		<span id="record-format" class="status-field" title="Record Format" onclick="gnubase.ui.command{command = 'window.projectSetup'}"/>
+		<span id="record-time" class="status-field" title="Max. Record Time"/>
+		<span id="lost-device" class="status-field hidden"/>
+	</div>
+	<div id="transport-bar" class="strip transport" strip="transportBar" default="hidden" sections="transport" contextmenu="transport-setup"/>
+
+	<menu id="file-menu">
+		<menuitem command="file.new">New Project</menuitem>
+		<menuitem command="file.open">Open...</menuitem>
+		<menuseparator/>
+		<menuitem command="file.save">Save</menuitem>
+		<menuitem command="file.saveAs">Save As...</menuitem>
+		<menuitem command="file.backup">Back up Project...</menuitem>
+		<menuitem command="file.saveTemplate">Save as Template...</menuitem>
+		<menuitem command="file.saveNewVersion">Save New Version</menuitem>
+		<menuitem command="file.revert">Revert</menuitem>
+		<menuseparator/>
+		<menuitem id="import-submenu">Import
+			<menu>
+				<menuitem command="file.importAudio">Audio File...</menuitem>
+				<menuitem command="file.importMidi">MIDI File...</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem id="export-submenu">Export
+			<menu>
+				<menuitem command="file.exportMixdown">Audio Mixdown...</menuitem>
+				<menuitem command="file.quickExport">Quick Audio Export...</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
+		<menuitem command="file.quit">Quit</menuitem>
+	</menu>
+	<menu id="media-menu">
+		<menuitem command="window.pool">Open Pool Window</menuitem>
+		<menuseparator/>
+		<menuitem command="pool.import">Import Medium...</menuitem>
+		<menuitem command="poolFolder.add">Create Folder</menuitem>
+		<menuseparator/>
+		<menuitem command="pool.removeUnused">Remove Unused Media</menuitem>
+		<menuitem command="pool.findMissing">Find Missing Files...</menuitem>
+		<menuitem command="media.removeMissing">Remove Missing Files</menuitem>
+		<menuitem command="media.conform">Conform Files</menuitem>
+	</menu>
+	<menu id="edit-menu">
+		<menuitem command="history.undo">Undo</menuitem>
+		<menuitem command="history.redo">Redo</menuitem>
+		<menuseparator/>
+		<menuitem command="edit.cut">Cut</menuitem>
+		<menuitem command="edit.copy">Copy</menuitem>
+		<menuitem command="edit.paste">Paste</menuitem>
+		<menuitem command="edit.delete">Delete</menuitem>
+		<menuseparator/>
+		<menuitem id="range-submenu">Range
+			<menu>
+				<menuitem command="edit.globalCopy">Global Copy</menuitem>
+				<menuitem command="edit.cutTime">Cut Time</menuitem>
+				<menuitem command="edit.deleteTime">Delete Time</menuitem>
+				<menuitem command="edit.pasteTime">Paste Time</menuitem>
+				<menuseparator/>
+				<menuitem command="edit.splitRange">Split</menuitem>
+				<menuitem command="edit.cropRange">Crop</menuitem>
+				<menuseparator/>
+				<menuitem command="edit.insertSilence">Insert Silence</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem id="functions-submenu">Functions
+			<menu>
+				<menuitem command="edit.splitAtCursor">Split at Cursor</menuitem>
+				<menuitem command="edit.splitLoop">Split Loop</menuitem>
+				<menuseparator/>
+				<menuitem command="edit.duplicate">Duplicate</menuitem>
+				<menuitem command="edit.repeat">Repeat...</menuitem>
+				<menuitem command="edit.fillLoop">Fill Loop</menuitem>
+				<menuseparator/>
+				<menuitem command="edit.toRealCopy">Convert to Real Copy</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem id="select-submenu">Select
+			<menu>
+				<menuitem command="edit.selectAll">All</menuitem>
+				<menuitem command="edit.selectNone">None</menuitem>
+				<menuitem command="edit.invertSelection">Invert</menuitem>
+				<menuitem command="edit.selectInLoop">In Loop</menuitem>
+				<menuitem command="edit.selectFromStartToCursor">From Start to Cursor</menuitem>
+				<menuitem command="edit.selectFromCursorToEnd">From Cursor to End</menuitem>
+				<menuitem command="edit.selectUnderCursor">Events under Cursor</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem id="move-submenu">Move
+			<menu>
+				<menuitem command="edit.moveStartToCursor">Event Start to Cursor</menuitem>
+				<menuitem command="edit.moveEndToCursor">Event End to Cursor</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
+		<menuitem command="edit.mute">Mute</menuitem>
+		<menuitem command="edit.unmute">Unmute</menuitem>
+		<menuitem command="edit.lock">Lock</menuitem>
+		<menuitem command="edit.unlock">Unlock</menuitem>
+		<menuseparator/>
+		<!-- The MIDI editors (docs/features/midi-editors.md) -->
+		<menuitem command="editor.openClose">Open/Close Editor</menuitem>
+		<menuitem command="window.lowerZoneEditor">Open Editor in Lower Zone</menuitem>
+		<menuitem command="editor.openList">Open List Editor</menuitem>
+	</menu>
+	<!-- Track handling (reference manual pp. 213-225) -->
+	<menu id="color-menu"/>
+	<menu id="project-menu">
+		<menuitem command="project.addTrack">Add Track...</menuitem>
+		<menuseparator/>
+		<menuitem command="project.colorsSetup">Project Colors Setup...</menuitem>
+		<menuseparator/>
+		<!-- The tempo track (reference manual pp. 1447, 1451, docs/features/tempo-track.md) -->
+		<menuitem id="tempo-track-submenu">Tempo Track
+			<menu>
+				<menuitem command="window.tempoTrack">Open Tempo Track Editor</menuitem>
+				<menuitem command="tempo.toggleTrack">Activate Tempo Track</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
+		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
+		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
+		<menuitem command="track.duplicateSelected">Duplicate Tracks</menuitem>
+		<menuseparator/>
+		<menuitem id="track-folding-submenu">Track Folding
+			<menu>
+				<menuitem command="track.toggleFolding">Toggle Selected Track</menuitem>
+				<menuitem command="track.foldAll">Fold Tracks</menuitem>
+				<menuitem command="track.unfoldAll">Unfold Tracks</menuitem>
+				<menuitem command="track.flipFolding">Flip Fold States</menuitem>
+				<menuseparator/>
+				<menuitem command="track.moveSelectedToNewFolder">Move Selected Tracks to New Folder</menuitem>
+				<menuitem command="track.moveSelectedToNewFolderWithGroupChannel">Move Selected Tracks to New Folder with Group Channel</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
+		<menuitem command="project.autoFades">Auto Fades Settings...</menuitem>
+		<menuitem command="window.projectSetup">Project Setup...</menuitem>
+	</menu>
+	<!-- Audio parts (reference manual p. 250, docs/features/audio-parts.md), fades and crossfades (reference manual
+	     pp. 381-397, docs/features/fades.md) -->
+	<menu id="audio-menu">
+		<menuitem command="audio.eventsToPart">Events to Part</menuitem>
+		<menuitem command="audio.dissolvePart">Dissolve Part</menuitem>
+		<menuseparator/>
+		<menuitem id="fades-submenu">Fades
+			<menu>
+				<menuitem command="audio.fadeInToRange">Fade In to Range Start</menuitem>
+				<menuitem command="audio.fadeOutFromRange">Fade Out from Range End</menuitem>
+				<menuitem command="audio.adjustFadesToRange">Adjust Fades to Range</menuitem>
+				<menuitem command="audio.crossfade">Crossfade</menuitem>
+				<menuseparator/>
+				<menuitem command="audio.removeFadeIn">Remove Fade In</menuitem>
+				<menuitem command="audio.removeFadeOut">Remove Fade Out</menuitem>
+				<menuitem command="audio.removeFades">Remove Fades</menuitem>
+				<menuseparator/>
+				<menuitem command="audio.fadeEditor">Open Fade Editor(s)</menuitem>
+			</menu>
+		</menuitem>
+		<!-- Volume curves (reference manual p. 401, docs/features/volume-curves.md) -->
+		<menuitem command="audio.removeVolumeCurve">Remove Volume Curve</menuitem>
+	</menu>
+	<menu id="track-list-menu">
+		<menuitem command="project.addTrack">Add Track...</menuitem>
+		<menuitem command="track.duplicateSelected">Duplicate Tracks</menuitem>
+		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
+		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
+		<menuseparator/>
+		<menuitem command="track.disableSelected">Disable Selected Tracks</menuitem>
+		<menuitem command="track.enableSelected">Enable Selected Tracks</menuitem>
+		<menuseparator/>
+		<!-- Automation tracks (reference manual p. 880) -->
+		<menuitem command="track.toggleAutomationSelected">Show/Hide Automation</menuitem>
+		<menuitem command="track.showUsedAutomation">Show All Used Automation</menuitem>
+		<menuitem command="track.hideAllAutomation">Hide All Automation</menuitem>
+		<menuseparator/>
+		<!-- Folder tracks (reference manual pp. 222-224) -->
+		<menuitem command="track.enableSelectedGroupChannels">Enable Group Channel</menuitem>
+		<menuitem command="track.disableSelectedGroupChannels">Disable Group Channel</menuitem>
+		<menuitem id="folder-data-submenu">Show Data on Folder Tracks
+			<menu>
+				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "always"}'>Always Show Data</menuitem>
+				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "never"}'>Never Show Data</menuitem>
+				<menuitem command="settings.set" parameters='{"key": "ui.folderData", "value": "hideWhenExpanded"}'>Hide Data When Expanded</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
+		<menuitem command="track.autoFades">Auto Fades Settings...</menuitem>
+		<menuitem command="track.controlsSettings">Track Controls Settings...</menuitem>
+	</menu>
+	<!-- The parameter selector of an automation track, which ui::TrackList fills (reference manual p. 880) -->
+	<menu id="automation-parameter-menu"/>
+	<menu id="transport-menu">
+		<menuitem command="transport.play">Start</menuitem>
+		<menuitem command="transport.stop">Stop</menuitem>
+		<menuitem command="transport.toggle">Start/Stop</menuitem>
+		<menuitem command="transport.record">Record</menuitem>
+		<menuitem id="lock-record" command="transport.set" parameters='{"lockRecord": true}'>Lock Record</menuitem>
+		<menuitem id="unlock-record" command="transport.set" parameters='{"lockRecord": false}'>Unlock Record</menuitem>
+		<menuseparator/>
+		<menuitem id="audio-record-mode-submenu">Audio Record Mode
+			<menu>
+				<menuitem command="transport.set" parameters='{"audioRecordMode": "keepHistory"}'>Keep History</menuitem>
+				<menuitem command="transport.set" parameters='{"audioRecordMode": "cycleHistoryReplace"}'>Cycle History + Replace</menuitem>
+				<menuitem id="audio-record-mode-replace" command="transport.set" parameters='{"audioRecordMode": "replace"}'>Replace</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem id="midi-record-mode-submenu">MIDI Record Mode
+			<menu>
+				<menuitem command="transport.set" parameters='{"midiRecordMode": "newParts"}'>New Parts</menuitem>
+				<menuitem id="midi-record-mode-merge" command="transport.set" parameters='{"midiRecordMode": "merge"}'>Merge</menuitem>
+				<menuitem command="transport.set" parameters='{"midiRecordMode": "replace"}'>Replace</menuitem>
+				<menuseparator/>
+				<menuitem command="transport.set" parameters='{"midiCycleRecordMode": "mix"}'>Mix</menuitem>
+				<menuitem command="transport.set" parameters='{"midiCycleRecordMode": "overwrite"}'>Overwrite</menuitem>
+				<menuitem command="transport.set" parameters='{"midiCycleRecordMode": "keepLast"}'>Keep Last</menuitem>
+				<menuitem id="midi-cycle-record-mode-stacked" command="transport.set" parameters='{"midiCycleRecordMode": "stacked"}'>Stacked</menuitem>
+				<menuitem command="transport.set" parameters='{"midiCycleRecordMode": "mixStacked"}'>Mix-Stacked (No Mute)</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
+		<menuitem command="transport.locate" parameters='{"target": "projectStart"}'>Go to Project Start</menuitem>
+		<menuseparator/>
+		<menuitem id="locators-submenu">Locators
+			<menu>
+				<menuitem command="transport.locate" parameters='{"target": "leftLocator"}'>Go to Left Locator Position</menuitem>
+				<menuitem id="locate-right-locator" command="transport.locate" parameters='{"target": "rightLocator"}'>Go to Right Locator Position</menuitem>
+				<menuitem command="transport.set" parameters='{"left": "cursor"}'>Set Left Locator to Project Cursor Position</menuitem>
+				<menuitem command="transport.set" parameters='{"right": "cursor"}'>Set Right Locator to Project Cursor Position</menuitem>
+				<menuitem command="transport.exchangeLocators">Exchange Left &amp; Right Locator Positions</menuitem>
+			</menu>
+		</menuitem>
+		<menuitem id="cursor-submenu">Set Project Cursor Position
+			<menu>
+				<menuitem command="marker.locateNext">Locate Next Marker</menuitem>
+				<menuitem command="marker.locatePrevious">Locate Previous Marker</menuitem>
+			</menu>
+		</menuitem>
+	</menu>
+	<menu id="studio-menu">
+		<menuitem command="window.mixer">Mixer</menuitem>
+		<menuitem command="window.lowerZoneMixer">Mixer in Project Window</menuitem>
+		<menuitem command="window.mixer2">Mixer 2</menuitem>
+		<menuitem command="window.mixer3">Mixer 3</menuitem>
+		<menuitem command="window.mixer4">Mixer 4</menuitem>
+		<menuseparator/>
+		<menuitem command="window.onScreenKeyboard">On-Screen Keyboard</menuitem>
+		<menuitem command="window.studioSetup">Studio Setup...</menuitem>
+	</menu>
+
+	<!-- Set up Window Layout (reference manual p. 65), and Show Menu Bar (p. 55) -->
+	<menu id="window-layout-menu">
+		<menuitem type="toggle" toggle="menuBar">Menu Bar</menuitem>
+		<menuseparator/>
+		<menuitem type="toggle" toggle="channel">Channel</menuitem>
+		<menuitem type="toggle" toggle="left">Left Zone</menuitem>
+		<menuitem type="toggle" toggle="lower">Lower Zone</menuitem>
+		<menuitem type="toggle" toggle="right">Right Zone</menuitem>
+		<menuseparator/>
+		<menuitem type="toggle" toggle="infoLine">Info Line</menuitem>
+		<menuitem type="toggle" toggle="overviewLine">Overview Line</menuitem>
+		<menuitem type="toggle" toggle="statusLine">Status Line</menuitem>
+		<menuitem type="toggle" toggle="transportBar">Transport Bar</menuitem>
+	</menu>
+	<!-- The inspector's Set up Sections pane (reference manual p. 167), its context menu -->
+	<menu id="inspector-setup" class="setup-pane">
+		<div setup="inspector"/>
+	</menu>
+	<menu id="ruler-format-menu">
+		<menuitem format="barsBeats">Bars+Beats</menuitem>
+		<menuitem format="seconds">Seconds</menuitem>
+		<menuitem format="timecode">Timecode</menuitem>
+		<menuitem format="samples">Samples</menuitem>
+		<menuitem format="userFrames">fps (User)</menuitem>
+	</menu>
+	<!-- The presets come before Zoom Full, the project's cycle markers after it. -->
+	<menu id="zoom-presets-menu">
+		<menuitem id="zoom-full">Zoom Full</menuitem>
+		<menuseparator/>
+		<menuitem id="zoom-preset-add">Add...</menuitem>
+		<menuitem id="zoom-presets-organize">Organize...</menuitem>
+	</menu>
+	<menu id="snap-type-menu">
+		<menuitem snap-type="grid">Grid</menuitem>
+		<menuitem snap-type="gridRelative">Grid Relative</menuitem>
+		<menuitem snap-type="events">Events</menuitem>
+		<menuitem snap-type="shuffle">Shuffle</menuitem>
+		<menuitem snap-type="cursor">Cursor</menuitem>
+		<menuitem snap-type="gridCursor">Grid + Cursor</menuitem>
+		<menuitem snap-type="eventsCursor">Events + Cursor</menuitem>
+		<menuitem snap-type="eventsGridCursor">Events + Grid + Cursor</menuitem>
+	</menu>
+	<menu id="grid-type-menu"/>
+	<!-- The tools' modes, which a second click on the tool's button opens (reference manual pp. 252, 265, 873) -->
+	<menu id="object-selection-menu">
+		<menuitem sizing="normal">Normal Sizing</menuitem>
+		<menuitem sizing="moveContents">Sizing Moves Contents</menuitem>
+		<menuitem disabled="">Sizing Applies Time Stretch</menuitem>
+	</menu>
+	<menu id="line-menu">
+		<menuitem line-mode="line">Line</menuitem>
+		<menuitem line-mode="parabola">Parabola</menuitem>
+		<menuitem line-mode="sine">Sine</menuitem>
+		<menuitem line-mode="triangle">Triangle</menuitem>
+		<menuitem line-mode="square">Square</menuitem>
+	</menu>
+	<menu id="play-menu">
+		<menuitem play-mode="play">Play</menuitem>
+		<menuitem play-mode="scrub">Scrub</menuitem>
+	</menu>
+	<!-- A right click in the event lanes opens the toolbox or, with a modifier key, the context menu, or the other way
+	     round (reference manual pp. 65, 1602) -->
+	<menu id="toolbox" class="toolbox">
+		<menuitem tool="objectSelection" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></menuitem>
+		<menuitem tool="rangeSelection" title="Range Selection"><svg class="icon" src="../icons/tool-range.svg"/></menuitem>
+		<menuitem tool="draw" title="Draw"><svg class="icon" src="../icons/tool-draw.svg"/></menuitem>
+		<menuitem tool="erase" title="Erase"><svg class="icon" src="../icons/tool-erase.svg"/></menuitem>
+		<menuitem tool="split" title="Split"><svg class="icon" src="../icons/tool-split.svg"/></menuitem>
+		<menuitem tool="glue" title="Glue"><svg class="icon" src="../icons/tool-glue.svg"/></menuitem>
+		<menuitem tool="mute" title="Mute"><svg class="icon" src="../icons/tool-mute.svg"/></menuitem>
+		<menuitem tool="zoom" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></menuitem>
+		<menuitem tool="line" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></menuitem>
+		<menuitem tool="play" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></menuitem>
+	</menu>
+	<menu id="event-display-menu">
+		<menuitem id="tools-submenu">Tools
+			<menu>
+				<menuitem tool="objectSelection">Object Selection</menuitem>
+				<menuitem tool="rangeSelection">Range Selection</menuitem>
+				<menuitem tool="draw">Draw</menuitem>
+				<menuitem tool="erase">Erase</menuitem>
+				<menuitem tool="split">Split</menuitem>
+				<menuitem tool="glue">Glue</menuitem>
+				<menuitem tool="mute">Mute</menuitem>
+				<menuitem tool="zoom">Zoom</menuitem>
+				<menuitem tool="line">Line</menuitem>
+				<menuitem tool="play">Play</menuitem>
+			</menu>
+		</menuitem>
+		<menuseparator/>
+		<menuitem command="edit.cut">Cut</menuitem>
+		<menuitem command="edit.copy">Copy</menuitem>
+		<menuitem command="edit.paste">Paste</menuitem>
+		<menuitem command="edit.delete">Delete</menuitem>
+		<menuseparator/>
+		<menuitem command="edit.splitAtCursor">Split at Cursor</menuitem>
+		<menuitem command="edit.splitRange">Split Range</menuitem>
+		<menuitem command="edit.cropRange">Crop Range</menuitem>
+		<menuitem command="edit.glue">Glue</menuitem>
+		<menuitem command="edit.duplicate">Duplicate</menuitem>
+		<menuitem command="edit.repeat">Repeat...</menuitem>
+		<menuseparator/>
+		<menuitem command="edit.selectAll">Select All</menuitem>
+		<menuitem command="edit.selectNone">Select None</menuitem>
+		<menuseparator/>
+		<menuitem command="edit.mute">Mute</menuitem>
+		<menuitem command="edit.unmute">Unmute</menuitem>
+		<menuitem command="edit.lock">Lock</menuitem>
+		<menuitem command="edit.unlock">Unlock</menuitem>
+	</menu>
+	<menu id="auto-scroll-menu">
+		<menuitem id="page-scroll">Page Scroll</menuitem>
+		<menuitem id="stationary-cursor">Stationary Cursor</menuitem>
+		<menuseparator/>
+		<menuitem id="suspend-auto-scroll">Suspend Auto-Scroll when Editing</menuitem>
+	</menu>
+</body>
+</rml>

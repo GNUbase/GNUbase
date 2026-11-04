@@ -2,6 +2,7 @@
 #include "ui/rmlui.h"
 
 #include "platform/log.h"
+#include "ui/canvas.h"
 #include "ui/windowsystem.h"
 
 #include <RmlUi/Core/Core.h>
@@ -32,7 +33,23 @@ namespace gnubase::ui
 
 	double SystemInterface::GetElapsedTime()
 	{
-		return std::chrono::duration<double>(std::chrono::steady_clock::now() - m_start).count();
+		if (m_frozen)
+			return *m_frozen + m_advanced;
+		return std::chrono::duration<double>(std::chrono::steady_clock::now() - m_start).count() + m_advanced;
+	}
+
+	void SystemInterface::freeze(bool frozen)
+	{
+		const double now = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_start).count();
+		if (frozen && !m_frozen)
+		{
+			m_frozen = now;
+		}
+		else if (!frozen && m_frozen)
+		{
+			m_advanced -= now - *m_frozen; // runs on from where it stood
+			m_frozen.reset();
+		}
 	}
 
 	bool SystemInterface::LogMessage(Rml::Log::Type type, const Rml::String& message)
@@ -65,6 +82,15 @@ namespace gnubase::ui
 	void SystemInterface::GetClipboardText(Rml::String& text)
 	{
 		text = m_windows.clipboardText();
+	}
+
+	void SystemInterface::SetMouseCursor(const Rml::String& name)
+	{
+		// The name of the pointer that shows: none for the OS's arrow, also where it stands in for one that didn't
+		// load.
+		const Cursor& cursor = m_cursors.get(name);
+		m_cursor = cursor.name;
+		m_windows.setCursor(cursor);
 	}
 
 	void SystemInterface::JoinPath(
@@ -185,6 +211,7 @@ namespace gnubase::ui
 		if (!Rml::Initialise())
 			throw std::runtime_error("RmlUi cannot start");
 		Rml::RegisterEventType(g_fileDropEvent, true, true, Rml::DefaultActionPhase::None);
+		registerCanvas(*this);
 	}
 
 	RmlUi::~RmlUi()
@@ -201,5 +228,11 @@ namespace gnubase::ui
 	{
 		Rml::Factory::RegisterElementInstancer(tag, instancer.get());
 		m_instancers.push_back(std::move(instancer));
+	}
+
+	void RmlUi::registerPlugin(std::unique_ptr<Rml::Plugin> plugin)
+	{
+		Rml::RegisterPlugin(plugin.get());
+		m_plugins.push_back(std::move(plugin));
 	}
 }

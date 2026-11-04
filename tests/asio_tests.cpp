@@ -238,19 +238,22 @@ namespace
 	};
 
 	// Drivers by name.
-	AsioDrivers fakes(const std::map<std::string, FakeDriver*>& drivers)
+	AsioDrivers fakes(const std::map<std::string, FakeDriver*>& byName)
 	{
+		// Shared: the closures get copied, and copying a map can throw, copying a shared pointer can't.
+		const auto drivers = std::make_shared<const std::map<std::string, FakeDriver*>>(byName);
 		return {[drivers]
 			{
 				std::vector<std::string> names;
-				for (const auto& driver : drivers)
+				names.reserve(drivers->size());
+				for (const auto& driver : *drivers)
 					names.push_back(driver.first);
 				return names;
 			},
 			[drivers](const std::string& name)
 			{
-				const auto found = drivers.find(name);
-				if (found == drivers.end())
+				const auto found = drivers->find(name);
+				if (found == drivers->end())
 					return static_cast<IASIO*>(nullptr);
 				found->second->AddRef();
 				return static_cast<IASIO*>(found->second);
@@ -322,6 +325,17 @@ TEST_CASE("the ASIO backend converts the driver's samples and passes its request
 	driver.callbacks->asioMessage(kAsioBufferSizeChange, 0, nullptr, nullptr);
 	driver.callbacks->sampleRateDidChange(44100.0);
 	CHECK(resets == 3);
+
+	// An overload is a dropout; a resync is one the driver recovers from with a reset. Resets for settings changes
+	// are none.
+	CHECK(device->overloads() == 0);
+	CHECK(driver.callbacks->asioMessage(kAsioSelectorSupported, kAsioOverload, nullptr, nullptr) == 1);
+	CHECK(driver.callbacks->asioMessage(kAsioOverload, 0, nullptr, nullptr) == 1);
+	CHECK(device->overloads() == 1);
+	CHECK(resets == 3);
+	driver.callbacks->asioMessage(kAsioResyncRequest, 0, nullptr, nullptr);
+	CHECK(resets == 4);
+	CHECK(device->overloads() == 2);
 
 	device->openControlPanel();
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -498,7 +512,7 @@ TEST_CASE("the ASIO backend lists drivers it couldn't open or start as unavailab
 			result[info.id] = info.unavailableReason;
 		return result;
 	};
-	const auto openAndStart = [&backend](const std::string& name)
+	const auto starts = [&backend](const std::string& name)
 	{
 		DeviceConfig config;
 		config.device = name;
@@ -506,16 +520,19 @@ TEST_CASE("the ASIO backend lists drivers it couldn't open or start as unavailab
 		try
 		{
 			backend->open(config)->start(copy);
+			return true;
 		}
 		catch (const DeviceError&) // listed as unavailable from now on
 		{
+			return false;
 		}
 	};
 	// The backend learns about a driver only by loading it.
 	CHECK(reasons() == std::map<std::string, std::string>{{"Silent", ""}, {"Unplugged", ""}, {"Working", ""}});
 
-	for (const char* name : {"Unplugged", "Silent", "Working"})
-		openAndStart(name);
+	CHECK(!starts("Unplugged"));
+	CHECK(!starts("Silent"));
+	CHECK(starts("Working"));
 	std::map<std::string, std::string> unavailable = reasons();
 	CHECK_THAT(unavailable["Unplugged"], Catch::Matchers::ContainsSubstring("No device is connected to the PC"));
 	CHECK_THAT(unavailable["Silent"], Catch::Matchers::ContainsSubstring("doesn't process audio"));
@@ -524,8 +541,8 @@ TEST_CASE("the ASIO backend lists drivers it couldn't open or start as unavailab
 	// Their hardware was plugged in.
 	unplugged.initFails = false;
 	silent.silent = false;
-	openAndStart("Unplugged");
-	openAndStart("Silent");
+	CHECK(starts("Unplugged"));
+	CHECK(starts("Silent"));
 	CHECK(reasons() == std::map<std::string, std::string>{{"Silent", ""}, {"Unplugged", ""}, {"Working", ""}});
 	CHECK(unplugged.references + silent.references + working.references == 0);
 }

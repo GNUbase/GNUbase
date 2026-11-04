@@ -4,10 +4,13 @@
 #include "engine/settings/store.h"
 
 #include <cstdint>
+#include <functional>
 #include <string>
+#include <vector>
 
 namespace gnubase::engine
 {
+	class CommandContext;
 	class Engine;
 }
 
@@ -17,16 +20,39 @@ namespace gnubase::engine::settings
 	// feature lives; the preferences dialog (#162) shows them all.
 	inline constexpr Key<double> g_uiScale{"ui.scale"};
 	inline constexpr Key<std::string> g_uiTheme{"ui.theme"};
+	inline constexpr Key<std::string> g_audioAutoMonitoring{"audio.autoMonitoring"};
 	inline constexpr Key<std::string> g_audioBackend{"audio.backend"};
 	inline constexpr Key<std::string> g_audioDevice{"audio.device"};
+	inline constexpr Key<std::string> g_audioFallbackDevice{"audio.fallbackDevice"};
 	inline constexpr Key<double> g_audioSampleRate{"audio.sampleRate"};
+	inline constexpr Key<double> g_audioPreRecordSeconds{"audio.preRecordSeconds"};
+	inline constexpr Key<double> g_audioListenDim{"audio.listenDim"};
+	inline constexpr Key<double> g_audioListenLevel{"audio.listenLevel"};
+	inline constexpr Key<bool> g_audioStopAfterPunchOut{"audio.stopAfterPunchOut"};
+	inline constexpr Key<bool> g_meterResetOnStart{"meter.resetOnStart"};
 	inline constexpr Key<int64_t> g_audioBlockSize{"audio.blockSize"};
+	inline constexpr Key<bool> g_midiChaseNotes{"midi.chaseNotes"};
+	inline constexpr Key<bool> g_midiChaseControllers{"midi.chaseControllers"};
+	inline constexpr Key<bool> g_midiChasePrograms{"midi.chasePrograms"};
+	inline constexpr Key<bool> g_midiChasePitchBend{"midi.chasePitchBend"};
+	inline constexpr Key<bool> g_midiChaseBeyondParts{"midi.chaseBeyondParts"};
+	inline constexpr Key<double> g_midiRecordCatchRange{"midi.recordCatchRange"};
+	inline constexpr Key<bool> g_midiSnapPartsToBars{"midi.snapPartsToBars"};
+	inline constexpr Key<int64_t> g_midiRetrospectiveEvents{"midi.retrospectiveEvents"};
 
 	// settings.json: every user setting, its version and the migrations from its older versions. A new setting
 	// only needs a definition; renaming one or changing what its values mean raises the version and adds a
 	// migration, and tests/data/settings gets a file of the new version.
 	const Format& userFormat();
 
+	// A setting that maps keys to objects, such as audio.portSettings, with the entry for key changed: members of
+	// changes that equal their defaults are removed, the others set, and an entry left empty is removed, so the file
+	// keeps only what the user changed.
+	Json changeEntry(Json map, const std::string& key, const Json& changes, const Json& defaults);
+
 	// settings.get, settings.set, settings.reset and settings.list for the store, which only the command thread uses.
-	void registerCommands(Engine& engine, Store& store);
+	// changed runs after settings.set or settings.reset changed values and emitted settings.changed, with the command
+	// and the keys of the settings that changed, so it can emit the events that follow from them.
+	using Changed = std::function<void(CommandContext& context, const std::vector<std::string>& keys)>;
+	void registerCommands(Engine& engine, Store& store, Changed changed);
 }

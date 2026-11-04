@@ -178,8 +178,8 @@ namespace gnubase::engine::metronome
 		{ return x.note == y.note && x.velocity == y.velocity; };
 		const auto pattern = [](const ClickPattern& x, const ClickPattern& y)
 		{ return x.signature == y.signature && x.accents == y.accents; };
-		return a.click == b.click && a.whilePlaying == b.whilePlaying && a.whileRecording == b.whileRecording &&
-			a.audio == b.audio && a.outputs == b.outputs && a.level == b.level && a.sounds == b.sounds &&
+		return a.whilePlaying == b.whilePlaying && a.whileRecording == b.whileRecording && a.audio == b.audio &&
+			a.outputs == b.outputs && a.level == b.level && a.sounds == b.sounds &&
 			std::equal(a.beeps.begin(), a.beeps.end(), b.beeps.begin(), beep) &&
 			std::equal(a.samples.begin(), a.samples.end(), b.samples.begin(), sample) && a.midi == b.midi &&
 			a.destination == b.destination && a.channel == b.channel &&
@@ -223,8 +223,7 @@ namespace gnubase::engine::metronome
 			item["accents"] = pattern.accents;
 			patterns.push_back(std::move(item));
 		}
-		return {{"click", settings.click}, {"whilePlaying", settings.whilePlaying},
-			{"whileRecording", settings.whileRecording},
+		return {{"whilePlaying", settings.whilePlaying}, {"whileRecording", settings.whileRecording},
 			{"audio",
 				{{"enabled", settings.audio}, {"outputs", settings.outputs}, {"level", settings.level},
 					{"sounds", soundsName(settings.sounds)}, {"beeps", std::move(beeps)},
@@ -249,7 +248,7 @@ namespace gnubase::engine::metronome
 		{ return Json{{"type", "object"}, {"additionalProperties", false}, {"properties", std::move(properties)}}; };
 		const auto array = [](Json items) { return Json{{"type", "array"}, {"items", std::move(items)}}; };
 		const Json signature = object({{"numerator", integer}, {"denominator", integer}});
-		return object({{"click", boolean}, {"whilePlaying", boolean}, {"whileRecording", boolean},
+		return object({{"whilePlaying", boolean}, {"whileRecording", boolean},
 			{"audio",
 				object({{"enabled", boolean}, {"outputs", array(integer)}, {"level", number},
 					{"sounds", {{"type", "string"}, {"enum", {"beeps", "samples"}}}},
@@ -270,7 +269,6 @@ namespace gnubase::engine::metronome
 	{
 		const Reader read(strict);
 		MetronomeSettings result = settings;
-		read.boolean(json, "click", result.click);
 		read.boolean(json, "whilePlaying", result.whilePlaying);
 		read.boolean(json, "whileRecording", result.whileRecording);
 

@@ -72,11 +72,10 @@ namespace gnubase::engine::metronome
 		const Json integer = {{"type", "integer"}};
 		const Json settingsResult = {{"type", "object"},
 			{"properties",
-				{{"click", {{"type", "boolean"}}}, {"whilePlaying", {{"type", "boolean"}}},
-					{"whileRecording", {{"type", "boolean"}}}, {"audio", {{"type", "object"}}},
-					{"midi", {{"type", "object"}}}, {"countIn", {{"type", "object"}}},
+				{{"whilePlaying", {{"type", "boolean"}}}, {"whileRecording", {{"type", "boolean"}}},
+					{"audio", {{"type", "object"}}}, {"midi", {{"type", "object"}}}, {"countIn", {{"type", "object"}}},
 					{"patterns", {{"type", "array"}}}}},
-			{"required", {"click", "whilePlaying", "whileRecording", "audio", "midi", "countIn", "patterns"}}};
+			{"required", {"whilePlaying", "whileRecording", "audio", "midi", "countIn", "patterns"}}};
 
 		engine.registerCommand(
 			{"metronome.get", 1, "The project's metronome settings and click patterns (see metronome.set).",
@@ -84,18 +83,20 @@ namespace gnubase::engine::metronome
 			[&model](CommandContext&) { return toJson(model.project().metronome); });
 		model.addEdit(engine,
 			{"metronome.set", 1,
-				"Changes the given metronome settings and keeps the rest. click: the metronome clicks; whilePlaying, "
-				"whileRecording: when it does (recording comes with #96 and #97). audio: the audio click; enabled, "
+				"Changes the given metronome settings and keeps the rest. The metronome switch, transport.set "
+				"metronome, turns the click on; whilePlaying, whileRecording: when it sounds then. audio: the audio "
+				"click; enabled, "
 				"outputs (the output busses it plays through; empty: the main mix), level (dB, -144 to 6, on "
 				"top of each accent's), sounds (beeps, or samples: sample files where an accent has one) and per "
 				"accent "
 				"1 to 4 by index, beeps [{frequency (Hz, 20-20000), level}] and samples [{path (an audio file, up to "
 				"10 s are played, or null), level}]. midi: the MIDI click; enabled, destination (an instrument "
 				"channel, or null), channel (1-16) and per accent notes [{note (0-127), velocity (0-1)}]. countIn: "
-				"enabled (starts that count in do: transport.play with countIn, and recording), bars (1-16) and "
-				"signature: start (the signature and tempo at the start position), project (the bars before the start "
-				"as the project has them) or custom (customSignature {numerator, denominator} at the tempo at the "
-				"start). patterns replaces every click pattern (see metronome.setPattern). Accent 1 is the sound of a "
+				"enabled (transport.record from stop counts in first, whether the click is on or not), bars (1-16) "
+				"and signature: start (the signature and tempo where recording starts), project (the bars before "
+				"where playback starts, as the project has them) or custom (customSignature {numerator, "
+				"denominator} at the tempo where recording starts). patterns replaces every click pattern (see "
+				"metronome.setPattern). Accent 1 is the sound of a "
 				"bar's first beat. Settings are not undo steps; they are saved with the project.",
 				settingsSchema(), settingsResult, false},
 			"Change metronome settings",

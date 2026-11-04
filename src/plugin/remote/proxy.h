@@ -174,6 +174,7 @@ namespace gnubase::plugin::remote
 		bool create(Binding& binding, PluginInfo& info, std::string& error);
 		bool describeIn(Binding& binding, PluginInfo& info, std::string& error) const;
 		bool activateIn(Binding& binding, PluginInfo& info, std::string& error);
+		bool applyMode(Binding& binding, std::chrono::milliseconds timeout); // under m_callMutex
 		bool loadIn(Binding& binding, const std::vector<uint8_t>& state, PluginInfo& info, std::string& error);
 		void release(Binding& binding);
 		void publish(Binding* binding);
@@ -217,7 +218,7 @@ namespace gnubase::plugin::remote
 		std::function<void()> m_onDestroy;
 
 		// Serializes the slow main-thread calls, which are never meant to overlap.
-		std::mutex m_callMutex;
+		std::timed_mutex m_callMutex;
 		// Guards the binding pointer, the cached info and the parameter index; never held while waiting for the host.
 		mutable std::mutex m_mutex;
 		std::shared_ptr<Binding> m_binding;
@@ -226,7 +227,9 @@ namespace gnubase::plugin::remote
 		double m_sampleRate = 0.0;
 		uint32_t m_minFrames = 0;
 		uint32_t m_maxFrames = 0;
-		ProcessMode m_mode = ProcessMode::Realtime;
+		ProcessMode m_mode = ProcessMode::Realtime; // the instance's, under m_callMutex
+		// What setProcessMode() asked for last: the instance gets it when it activates, if not before.
+		std::atomic<ProcessMode> m_wantedMode{ProcessMode::Realtime};
 		std::atomic<uint32_t> m_tail{0};
 		std::function<void()> m_onNotification;
 

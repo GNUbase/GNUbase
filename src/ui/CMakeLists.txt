@@ -15,19 +15,67 @@ target_link_libraries(gnubase-ui-thirdparty PUBLIC RmlUi::RmlUi SDL3::SDL3)
 add_library(gnubase-ui STATIC
 	automation.cpp
 	automation.h
+	automationtracks.cpp
+	canvas.cpp
+	canvas.h
+	colormenu.cpp
+	colormenu.h
+	colorwidgets.cpp
+	cursors.cpp
+	cursors.h
 	datamodel.cpp
 	datamodel.h
 	displays.cpp
 	displays.h
+	docking.cpp
+	docking.h
 	enginebinding.cpp
 	enginebinding.h
+	eventdisplay.cpp
+	eventdisplay.h
+	eventdisplaymenus.cpp
+	eventediting.cpp
+	eventfades.cpp
+	eventtools.cpp
+	eventvolume.cpp
+	eventwaveforms.cpp
+	eventwaveforms.h
+	fileimport.cpp
 	fonts.cpp
 	fonts.h
 	gpurenderer.cpp
 	gpurenderer.h
+	historypanel.cpp
+	historypanel.h
 	image.cpp
+	infoline.cpp
+	infoline.h
+	inspector.cpp
+	inspector.h
+	keycommands.cpp
+	keycommands.h
+	keyeditor.cpp
+	keyeditor.h
+	listeditor.cpp
+	listeditor.h
 	livereload.cpp
 	livereload.h
+	mainmenu.cpp
+	mainmenu.h
+	markers.cpp
+	markers.h
+	markerswindow.cpp
+	midieditor.cpp
+	midieditor.h
+	mixer.cpp
+	mixer.h
+	onscreenkeyboard.cpp
+	onscreenkeyboard.h
+	poolpanel.cpp
+	poolpanel.h
+	popupwidgets.cpp
+	projectfiles.cpp
+	projectfiles.h
 	pseudolocale.cpp
 	pseudolocale.h
 	renderer.h
@@ -37,16 +85,31 @@ add_library(gnubase-ui STATIC
 	sdlwindowsystem.h
 	shell.cpp
 	shell.h
+	signaturetrack.cpp
+	signaturetrack.h
+	statusline.cpp
+	statusline.h
+	tempotrack.cpp
+	tempotrack.h
 	themes.cpp
 	themes.h
+	timeformat.cpp
+	timeformat.h
+	tracklist.cpp
+	tracklist.h
+	transport.cpp
+	transport.h
 	ui.cpp
 	ui.h
 	uisettings.cpp
 	uisettings.h
+	valuewidgets.cpp
+	viewwidgets.cpp
 	widgets.cpp
 	widgets.h
+	widgetutils.h
 	windowsystem.h)
 target_link_libraries(gnubase-ui
 	PUBLIC gnubase-engine RmlUi::RmlUi
-	PRIVATE Freetype::Freetype gnubase-ui-thirdparty SDL3::SDL3)
+	PRIVATE Freetype::Freetype gnubase-ui-thirdparty lunasvg::lunasvg SDL3::SDL3)
 gnubase_target_defaults(gnubase-ui)

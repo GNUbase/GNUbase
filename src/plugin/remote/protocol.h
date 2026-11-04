@@ -98,7 +98,8 @@ namespace gnubase::plugin::remote
 	};
 
 	// Flags of ProcessInfo. The proxy sends Start and Stop in blocks of 0 frames of their own, right when the engine
-	// calls startProcessing and stopProcessing, and waits for the answer, whose status says whether it worked.
+	// calls startProcessing and stopProcessing, and waits for the answer, whose status says whether it worked. A Start
+	// whose answer came too late, or that the host couldn't take, goes with the next block instead.
 	enum ProcessFlags : uint8_t
 	{
 		Start = 1, // call startProcessing
@@ -134,13 +135,17 @@ namespace gnubase::plugin::remote
 	static_assert(sizeof(ProcessInfo) == 16 && sizeof(ProcessResult) == 8);
 	static_assert(std::is_trivially_copyable_v<TransportSegment> && sizeof(TransportSegment) == 72);
 
-	// The most audio ports a remote plugin has per direction, and the largest audio message.
+	// The most audio ports a remote plugin has per direction.
 	inline constexpr uint32_t g_maxPorts = 64;
-	inline constexpr size_t g_maxAudioMessage = 65536;
 	// Capacities of the event lists on both sides of the audio path.
 	inline constexpr size_t g_maxEvents = 2048;
 	inline constexpr size_t g_maxSysexBytes = 65536;
 	inline constexpr size_t g_maxTransportSegments = 64;
+	// The largest audio message: a sysex event's bytes, which go as one message. A block's info and result with their
+	// ports' constant masks are much smaller.
+	inline constexpr size_t g_maxAudioMessage = g_maxSysexBytes;
+	static_assert(sizeof(ProcessInfo) + (g_maxPorts * sizeof(uint64_t)) <= g_maxAudioMessage &&
+		sizeof(ProcessResult) + (g_maxPorts * sizeof(uint64_t)) <= g_maxAudioMessage);
 
 	// The audio connection of an instance with these ports and block size.
 	ipc::Config audioConfig(uint32_t inputChannels, uint32_t outputChannels, uint32_t maxFrames);
