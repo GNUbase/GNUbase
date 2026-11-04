@@ -702,6 +702,46 @@
 	{
 		background-color: #ffff00;
 	}
+	.ape-display
+	{
+		background-color: #000000;
+	}
+	.ape-lane
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #808080;
+	}
+	.ape-event
+	{
+		background-color: #565609;
+		border-width: 1px;
+		border-color: #ffff00;
+	}
+	.ape-event.selected
+	{
+		background-color: #068686;
+		border-color: #ffffff;
+	}
+	.ape-event.muted, .ape-event.inactive
+	{
+		background-color: #3c3c3c;
+		border-color: #c8c8c8;
+	}
+	.audio-part-editor .editor-part
+	{
+		color: #c8c8c8;
+		border-width: 1dp;
+		border-color: #ffffff;
+		background-color: #060606;
+	}
+	.audio-part-editor .editor-part.editable
+	{
+		color: #ffffff;
+	}
+	.audio-part-editor .editor-part.active
+	{
+		color: #ffff00;
+	}
 	.se-overview, .se-display
 	{
 		background-color: #000000;
