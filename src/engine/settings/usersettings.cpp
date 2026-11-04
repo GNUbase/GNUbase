@@ -170,6 +170,13 @@ namespace gnubase::engine::settings
 					Json{{"type", "string"},
 						{"enum", {"default", "previous", "previousPlusOne", "lastApplied", "random"}}},
 					"default"},
+				{"editing.defaultTimeBase",
+					"The time base of new tracks when track.add gives none (Default Track Time Type, reference manual "
+					"pp. 230, 1595): musical (bars and beats, so their events follow tempo changes), linear (time, so "
+					"they stay), or followTimeFormat: musical while the project's primary time format (project.set "
+					"timeFormat) is barsBeats, linear with any other. Folder, ruler, tempo and signature tracks, "
+					"which hold no events of their own, are musical.",
+					Json{{"type", "string"}, {"enum", {"musical", "linear", "followTimeFormat"}}}, "musical"},
 				{"editing.tempoType",
 					"The type of new tempo events (reference manual p. 1448): ramp changes the tempo gradually from "
 					"the event before, step jumps, auto takes the type of the event before (tempo.add, tempo.tap).",

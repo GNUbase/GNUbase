@@ -35,7 +35,9 @@ namespace gnubase::ui
 			R"(<button type="toggle" class="toggle record" control="record" title="Record Enable">)"
 			R"(<svg class="icon" src="../icons/track-record-arm.svg"/></button>)"
 			R"(<button type="toggle" class="toggle monitor" control="monitor" title="Monitor">)"
-			R"(<svg class="icon" src="../icons/track-monitor.svg"/></button></div>)"
+			R"(<svg class="icon" src="../icons/track-monitor.svg"/></button>)"
+			R"(<button type="toggle" class="toggle timeBase" control="timeBase" title="Switch Time Base">L</button>)"
+			R"(</div>)"
 			R"(<div class="inspector-row" row="volume"><span class="inspector-label">Volume</span>)"
 			R"(<valuefield control="volume" min="-144" max="6" default="0" step="0.5" decimals="1" unit="dB"/></div>)"
 			R"(<div class="inspector-row" row="pan"><span class="inspector-label">Pan</span>)"
@@ -198,6 +200,15 @@ namespace gnubase::ui
 		const bool records = type == "audio" || type == "instrument" || type == "midi" || vca;
 		available("button[control=record]", records);
 		available("button[control=monitor]", records);
+		// Switch Time Base (reference manual pp. 179-181, 229), checked when linear.
+		available("button[control=timeBase]", records || type == "group" || type == "effect");
+		if (Rml::Element* button = element("button[control=timeBase]"))
+		{
+			if (track->at("timeBase") == "linear")
+				button->SetAttribute("checked", "");
+			else
+				button->RemoveAttribute("checked");
+		}
 		available("[row=volume]", audio || vca);
 		available("[row=pan]", audio);
 		available("[row=input]", type == "audio");
@@ -289,6 +300,15 @@ namespace gnubase::ui
 		if (name == "name")
 		{
 			m_binding.send("track.set", {{"track", m_track}, {"name", event.GetParameter<Rml::String>("value", "")}});
+			return;
+		}
+		if (name == "timeBase")
+		{
+			const bool linear = event.GetParameter<bool>("value", false);
+			const Json* track = findIn(m_project, "tracks", m_track);
+			if (track != nullptr && (track->at("timeBase") == "linear") != linear)
+				m_binding.send(
+					"track.set", {{"track", m_track}, {"timeBase", linear ? "linear" : "musical"}}, whenRefused());
 			return;
 		}
 		if (!m_channel.is_object())

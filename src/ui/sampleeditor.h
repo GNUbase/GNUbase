@@ -33,10 +33,11 @@ namespace gnubase::ui
 
 	// Fills an element with the sample editor of the engine's sampleEditor view: the toolbar with the tools, Snap to
 	// Zero Crossing and the window layout's switches, the info line, the overview of the whole clip, the inspector's
-	// Range and Process sections, the waveform display with the event's edges, the selection range and the snap
-	// point, and the regions list. Its time axis is the clip's sample frames; the display shows m_start on from the
-	// left at m_scale frames per dp, and first fits the whole clip. Every change goes to the engine (sampleEditor.set,
-	// clip.*Region, event.setSnapPoint, audition.*, transport.*). Use it on the UI thread; the binding must outlive it.
+	// Range, Process and Hitpoints sections, the waveform display with the event's edges, the selection range, the
+	// snap point and the hitpoints, and the regions list. Its time axis is the clip's sample frames; the display shows
+	// m_start on from the left at m_scale frames per dp, and first fits the whole clip. Every change goes to the engine
+	// (sampleEditor.set, clip.*Region, clip.*Hitpoint*, event.fromHitpoints, event.setSnapPoint, audition.*,
+	// transport.*). Use it on the UI thread; the binding must outlive it.
 	class SampleEditor final : private Rml::EventListener
 	{
 	public:
@@ -63,6 +64,7 @@ namespace gnubase::ui
 			Play,
 			Scrub,
 			Overview,
+			Hitpoint,
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -76,6 +78,10 @@ namespace gnubase::ui
 		void show();
 		void render();
 		void renderRegions();
+		void renderHitpoints();
+		bool clickHitpoints(Rml::Element& target, const std::string& id);
+		void pressHitpoint(Rml::Event& event, Rml::Element& target, double frame);
+		void changed(Rml::Event& event, Rml::Element& target);
 		void ask(bool overview);
 		void zoom(double factor, double around);
 		void fit(double from, double to);
@@ -87,6 +93,8 @@ namespace gnubase::ui
 		bool hasEvent() const { return m_length > 0; }
 		std::pair<int64_t, int64_t> rangeOrEvent() const; // the selection range, or the event's section
 		const engine::Json* region(uint64_t id) const;
+		const engine::Json* clip() const;
+		double sampleRate() const;
 
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_root;
@@ -114,6 +122,9 @@ namespace gnubase::ui
 		uint64_t m_fitted = 0;                         // the event it fitted
 		uint64_t m_region = 0;                         // the region selected in the list
 		std::string m_regionRows;                      // the regions list's rows, as last built
+		bool m_editHitpoints = false;                  // Edit Hitpoints: the display's gestures edit them
+		std::string m_hitpointRows;                    // the hitpoints shown, as last built
+		int64_t m_hitpoint = 0;                        // the hitpoint dragged, by position
 		std::array<bool, 2> m_asking = {false, false}; // media.peaks in flight: the display's, the overview's
 		std::array<bool, 2> m_again = {false, false};  // asked again meanwhile
 
