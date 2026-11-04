@@ -70,8 +70,9 @@ namespace gnubase::engine
 				require(points[i].position != points[i - 1].position,
 					"two tempo events at " + std::to_string(points[i].position));
 			points.front().ramp = false; // nothing to ramp from
+			const time::TempoMap before = project.tempo;
 			project.tempoTrack() = time::TempoMap(points);
-			tempoChanged(project, context);
+			tempoChanged(project, before, context);
 		}
 
 		// Whether a new tempo event ramps: the user setting editing.tempoType, with auto the type of the event before
@@ -204,8 +205,9 @@ namespace gnubase::engine
 			// The project tempo: the first tempo event in tempo track mode, the fixed tempo otherwise.
 			std::vector<time::TempoPoint> points = project.tempo.points();
 			points.front().bpm = bpm;
+			const time::TempoMap before = project.tempo;
 			project.tempo = time::TempoMap(points);
-			tempoChanged(project, context);
+			tempoChanged(project, before, context);
 			result["applied"] = "project";
 			return result;
 		}
@@ -217,8 +219,38 @@ namespace gnubase::engine
 			{"tempoTrack", toJson(project.tempoTrack())}, {"fixedTempo", project.fixedTempo()}};
 	}
 
-	void tempoChanged(Project& project, CommandContext& context)
+	void tempoChanged(Project& project, const time::TempoMap& before, CommandContext& context)
 	{
+		// A linear part stays where it is in samples, and its notes and controllers, in ticks from its start, stay at
+		// their time with it (reference manual p. 1446). The parts' shared copies follow (syncSharedParts).
+		if (project.tempo != before)
+			for (auto& [id, part] : project.midiParts)
+			{
+				if (part.position.base != time::TimeBase::Linear)
+					continue;
+				const time::Ticks startBefore = before.toTicks(part.position.value, project.sampleRate);
+				const time::Ticks start = project.tempo.toTicks(part.position.value, project.sampleRate);
+				const auto retime = [&](time::Ticks position)
+				{ return project.tempo.toTicks(before.toSeconds(startBefore + position)) - start; };
+				const auto retimeNote = [&retime](time::Ticks& position, time::Ticks& length)
+				{
+					const time::Ticks end = retime(position + length);
+					position = retime(position);
+					length = std::max<time::Ticks>(length > 0 ? 1 : 0, end - position);
+				};
+				for (auto& [noteId, note] : part.notes)
+				{
+					retimeNote(note.position, note.length);
+					if (note.origin)
+					{
+						retimeNote(note.origin->original.position, note.origin->original.length);
+						retimeNote(note.origin->quantized.position, note.origin->quantized.length);
+					}
+				}
+				for (auto& [controllerId, controller] : part.controllers)
+					controller.position = retime(controller.position);
+				context.emit("midiPart.changed", {{"part", toJson(part)}});
+			}
 		// A cycle marker in ticks can get shorter than a sample at a faster tempo.
 		for (auto& [id, marker] : project.markers)
 			if (keepMinimumLength(project, marker))

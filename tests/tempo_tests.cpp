@@ -172,6 +172,168 @@ TEST_CASE("editing the tempo moves musical-time events and keeps linear-time eve
 	CHECK(starts() == std::vector<int64_t>{8 * g_quarterSamples, 8 * g_quarterSamples, 8 * g_quarterSamples});
 }
 
+TEST_CASE("notes and controllers in parts on linear tracks keep their time when the tempo changes", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
+	const ObjectId musical = addTrack(client, {{"type", "midi"}});
+	const auto addPart = [&client](ObjectId track, int64_t position, int64_t length)
+	{
+		const ObjectId part =
+			run(client, "midiPart.add", {{"track", track}, {"position", position}, {"length", length}})
+				.at("part")
+				.at("id")
+				.get<ObjectId>();
+		run(client, "note.add",
+			{{"part", part},
+				{"notes",
+					{{{"position", g_ticksPerQuarter}, {"length", g_ticksPerQuarter}, {"pitch", 60},
+						{"velocity", 1.0}}}}});
+		run(client, "controller.add",
+			{{"part", part}, {"controllers", {{{"position", 2 * g_ticksPerQuarter}, {"number", 7}, {"value", 1.0}}}}});
+		return part;
+	};
+	// A part from the eighth quarter, four quarters long: in samples on the linear track, in ticks on the other.
+	addPart(linear, 8 * g_quarterSamples, 4 * g_quarterSamples);
+	addPart(musical, 8 * g_ticksPerQuarter, 4 * g_ticksPerQuarter);
+
+	// Where the note starts and ends and the controller is, in samples.
+	const auto times = [&engine](ObjectId track)
+	{
+		const RenderChannel& channel = renderChannel(engine.renderSnapshots().acquire(), track);
+		REQUIRE(channel.notes.size() == 1);
+		REQUIRE(channel.controllers.size() == 1);
+		return std::vector<int64_t>{
+			channel.notes.at(0).start, channel.notes.at(0).end, channel.controllers.at(0).position};
+	};
+	const std::vector<int64_t> before{9 * g_quarterSamples, 10 * g_quarterSamples, 10 * g_quarterSamples};
+	CHECK(times(linear) == before);
+	CHECK(times(musical) == before);
+
+	// Half the tempo from the fourth quarter, and a ramp inside the parts: the linear part's notes and controllers stay
+	// where they were, the musical one's follow the tempo.
+	run(client, "tempo.add", point(4, 60.0));
+	run(client, "tempo.add", point(7, 90.0, true));
+	const auto near = [](const std::vector<int64_t>& a, const std::vector<int64_t>& b)
+	{
+		return std::equal(
+			a.begin(), a.end(), b.begin(), b.end(), [](int64_t x, int64_t y) { return std::abs(x - y) <= 1; });
+	};
+	CHECK(near(times(linear), before));
+	CHECK_FALSE(near(times(musical), before));
+	run(client, "project.set", {{"tempo", 200.0}});
+	run(client, "tempo.set", {{"events", {{{"position", 7 * g_ticksPerQuarter}, {"bpm", 45.0}}}}});
+	CHECK(near(times(linear), before));
+	run(client, "tempo.remove", {{"positions", {4 * g_ticksPerQuarter}}});
+	run(client, "project.set", {{"tempoTrackActive", false}});
+	CHECK(near(times(linear), before));
+	CHECK(times(musical) == before); // the fixed 120 BPM again
+
+	// Undo puts the notes back as they were with each tempo.
+	run(client, "history.undo");
+	run(client, "history.undo");
+	CHECK(near(times(linear), before));
+}
+
+TEST_CASE("a track's events, parts, markers and automation keep their time when its time base switches, and then "
+		  "follow the tempo or not",
+	"[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	const ObjectId media = run(client, "media.add",
+		{{"path", "/audio/loop.wav"}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 192000}})
+							   .at("media")
+							   .at("id")
+							   .get<ObjectId>();
+	const ObjectId clip = run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+	const ObjectId audio = addTrack(client, {{"type", "audio"}});
+	const ObjectId midi = addTrack(client, {{"type", "midi"}});
+	const ObjectId markers = addTrack(client, {{"type", "marker"}});
+	run(client, "audioEvent.add", {{"track", audio}, {"clip", clip}, {"position", 8 * g_ticksPerQuarter}});
+	const ObjectId part = run(client, "midiPart.add",
+		{{"track", midi}, {"position", 8 * g_ticksPerQuarter}, {"length", 4 * g_ticksPerQuarter}})
+							  .at("part")
+							  .at("id")
+							  .get<ObjectId>();
+	run(client, "note.add",
+		{{"part", part},
+			{"notes", {{{"position", 0}, {"length", g_ticksPerQuarter}, {"pitch", 60}, {"velocity", 1.0}}}}});
+	run(client, "marker.add", {{"track", markers}, {"position", 8 * g_ticksPerQuarter}});
+	const ObjectId lane = run(client, "automationLane.add", {{"track", audio}, {"target", {{"type", "volume"}}}})
+							  .at("lane")
+							  .at("id")
+							  .get<ObjectId>();
+	run(client, "automationPoint.add",
+		{{"lane", lane}, {"points", {{{"position", 8 * g_ticksPerQuarter}, {"value", -6.0}}}}});
+
+	// Where the audio event, the note, the marker and the automation point are, in samples.
+	const auto times = [&]
+	{
+		const RenderSnapshot& snapshot = engine.renderSnapshots().acquire();
+		const RenderChannel& channel = renderChannel(snapshot, audio);
+		return std::vector<int64_t>{channel.audioEvents.at(0).start, renderChannel(snapshot, midi).notes.at(0).start,
+			run(client, "marker.list", {{"track", markers}}).at("markers").at(0).at("positionSamples").get<int64_t>(),
+			channel.automation.at(0).points.at(0).position};
+	};
+	const std::vector<int64_t> at8(4, 8 * g_quarterSamples);
+	CHECK(times() == at8);
+
+	// Linear: switching keeps them where they are, and a slower tempo before them leaves them there.
+	for (const ObjectId track : {audio, midi, markers})
+		run(client, "track.set", {{"track", track}, {"timeBase", "linear"}});
+	CHECK(times() == at8);
+	run(client, "tempo.add", point(4, 60.0));
+	CHECK(times() == at8);
+
+	// Musical again: they stay at their time, two quarters of 60 BPM after the fourth quarter, and follow the tempo.
+	for (const ObjectId track : {audio, midi, markers})
+		run(client, "track.set", {{"track", track}, {"timeBase", "musical"}});
+	CHECK(times() == at8);
+	run(client, "tempo.remove", {{"positions", {4 * g_ticksPerQuarter}}});
+	CHECK(times() == std::vector<int64_t>(4, 6 * g_quarterSamples));
+}
+
+TEST_CASE("new tracks get the time base of the user setting editing.defaultTimeBase", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const auto timeBase = [&client](const std::string& type, Json parameters = Json::object())
+	{
+		parameters["type"] = type;
+		return run(client, "track.add", parameters).at("track").at("timeBase").get<std::string>();
+	};
+	CHECK(run(client, "settings.get", {{"key", "editing.defaultTimeBase"}}).at("value") == "musical");
+	CHECK(timeBase("audio") == "musical");
+
+	run(client, "settings.set", {{"key", "editing.defaultTimeBase"}, {"value", "linear"}});
+	for (const char* type : {"audio", "instrument", "midi", "group", "effect", "marker"})
+	{
+		INFO(type);
+		CHECK(timeBase(type) == "linear");
+	}
+	// Tracks without events of their own have none.
+	for (const char* type : {"folder", "ruler", "tempo", "signature"})
+	{
+		INFO(type);
+		CHECK(timeBase(type) == "musical");
+	}
+	CHECK(timeBase("audio", {{"timeBase", "musical"}}) == "musical"); // a time base given wins
+
+	// Following the primary time format: bars and beats make musical tracks, any other format linear ones.
+	run(client, "settings.set", {{"key", "editing.defaultTimeBase"}, {"value", "followTimeFormat"}});
+	CHECK(timeBase("midi") == "musical");
+	run(client, "project.set", {{"timeFormat", "seconds"}});
+	CHECK(timeBase("midi") == "linear");
+	run(client, "project.set", {{"timeFormat", "barsBeats"}});
+	CHECK(timeBase("midi") == "musical");
+	CHECK_THAT(reject(client, "settings.set", {{"key", "editing.defaultTimeBase"}, {"value", "seconds"}}),
+		ContainsSubstring("defaultTimeBase"));
+}
+
 TEST_CASE("tempo events ramp or jump, and the first one stays", "[unit]")
 {
 	Engine engine;

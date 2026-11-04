@@ -958,6 +958,20 @@ namespace gnubase::engine
 			}
 		}
 
+		// A new track's time base without one given: the user setting editing.defaultTimeBase (reference manual
+		// p. 230) for tracks that hold events, parts, markers or automation.
+		time::TimeBase defaultTimeBase(const Project& project, TrackType type, CommandContext& context)
+		{
+			if (type == TrackType::Folder || type == TrackType::Ruler || type == TrackType::Tempo ||
+				type == TrackType::Signature)
+				return time::TimeBase::Musical;
+			const std::string setting =
+				context.call("settings.get", {{"key", "editing.defaultTimeBase"}}).at("value").get<std::string>();
+			const bool linear =
+				setting == "followTimeFormat" ? project.setup.timeFormat != "barsBeats" : setting == "linear";
+			return linear ? time::TimeBase::Linear : time::TimeBase::Musical;
+		}
+
 		// Commands.
 
 		Json addTrack(Project& project, CommandContext& context)
@@ -1006,7 +1020,9 @@ namespace gnubase::engine
 			track.name = parameters.value("name", defaultTrackName(project, type));
 			track.color =
 				parameters.contains("color") ? color(parameters, {}) : autoTrackColor(project, parent, index, context);
-			track.timeBase = timeBaseFromName(parameters.value("timeBase", "musical"));
+			track.timeBase = parameters.contains("timeBase")
+				? timeBaseFromName(parameters.at("timeBase").get<std::string>())
+				: defaultTimeBase(project, type, context);
 			track.parent = parent;
 			if (type == TrackType::Ruler)
 				track.timeFormat = parameters.value("timeFormat", g_rulerTimeFormats[0]);
@@ -2438,7 +2454,7 @@ namespace gnubase::engine
 			project.tempo = tempoMap;
 			project.signatures = signatureMap;
 			if (project.tempo != tempoBefore || project.tempoTrackActive != tempoModeBefore)
-				tempoChanged(project, context);
+				tempoChanged(project, tempoBefore, context);
 			project.name = parameters.value("name", project.name);
 			if (parameters.contains("panLaw"))
 				project.panLaw = panLawFromName(parameters.at("panLaw").get<std::string>()).value_or(project.panLaw);
@@ -3205,7 +3221,9 @@ namespace gnubase::engine
 			{"track.add", 1,
 				"Adds a track and its channel. Tracks go into a folder with parent, at index among its tracks "
 				"(default: last). Audio channels default to stereo; format or channels set another format, as in "
-				"bus.add. Folders get a channel only with groupChannel. New channels play through the main output, "
+				"bus.add. timeBase is musical (positions in ticks, which follow tempo changes) or linear (in "
+				"samples, which keep their time); without it the user setting editing.defaultTimeBase decides. "
+				"Folders get a channel only with groupChannel. New channels play through the main output, "
 				"or through the group channel of the nearest folder around them that has one, and audio tracks record "
 				"from the first input bus; input, output and instrument set them as channel.set does. tracks moves "
 				"those tracks, each listed once, into a new folder, in that order, as track.move does (Move Selected "
@@ -3230,7 +3248,9 @@ namespace gnubase::engine
 		add(engine,
 			{"track.set", 1,
 				"Changes a track's name, color (#rrggbb, or null for the default), time base or, for ruler tracks, "
-				"time format. A new time base keeps its events, parts and markers at the same time. enabled false "
+				"time format. A new time base keeps its events, parts, markers and automation at the same time; on "
+				"a linear track they keep their time when the tempo changes too, the notes in its MIDI parts with "
+				"them. enabled false "
 				"disables an audio, instrument or MIDI track: it keeps its events and channel settings but plays "
 				"nothing and is silent. groupChannel turns a folder's group channel on or off: a new one is stereo "
 				"and plays through the next group channel up, or the main output; the audio of the tracks inside "
