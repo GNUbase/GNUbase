@@ -73,7 +73,9 @@ namespace gnubase::engine
 		// The next version of a project file: the same name with the next number after the highest one of that name in
 		// its folder and its own, "Song-01.dawproject" for "Song.dawproject" and "Song v2.1-01.dawproject" for a file
 		// "Song v2.1" that project.save saved as named. Versions count whatever case their name and extension are in,
-		// so that the next one doesn't overwrite one of them where case doesn't tell files apart.
+		// so that the next one doesn't overwrite one of them where case doesn't tell files apart. As folded only
+		// knows ASCII letters, a number whose file the file system says is there all the same is skipped: on Windows
+		// and macOS "Übung-01" is "übung-01", which the scan doesn't count for "Übung".
 		fs::path nextVersion(const fs::path& file)
 		{
 			static const std::regex version(R"((.*)-(\d{1,9}))"); // longer numbers aren't versions
@@ -94,7 +96,12 @@ namespace gnubase::engine
 					folded(fs::u8path(match[1].str())) == key)
 					highest = std::max(highest, std::stoi(match[2].str()));
 			}
-			return file.parent_path() / fs::u8path(numbered(name, highest + 1) + g_extension);
+			for (int number = highest + 1;; ++number)
+			{
+				const fs::path next = file.parent_path() / fs::u8path(numbered(name, number) + g_extension);
+				if (!fs::exists(next, error)) // also if it can't tell: saving then fails or saves there
+					return next;
+			}
 		}
 
 		// Where the next auto save of a project named name goes: the first of name-01.bak to name-<count>.bak that

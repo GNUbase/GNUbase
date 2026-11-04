@@ -147,6 +147,11 @@ namespace gnubase::engine
 		m_queue.take(block.time, sampleRate, block.frames,
 			[this, &block, &allInputs](int slot, const audio::MidiMessage& message)
 			{
+				if (slot == g_keyboardSlot)
+				{
+					allInputs.add(message); // not a port, so not for the monitor
+					return;
+				}
 				if (m_allInputs[static_cast<size_t>(slot)].load(std::memory_order_relaxed))
 					allInputs.add(message);
 				if (!m_monitor.tryPush(Received{slot, block.position + message.offset, message}))

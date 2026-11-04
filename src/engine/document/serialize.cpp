@@ -542,6 +542,12 @@ namespace gnubase::engine
 			{"solo", channel.solo}, {"soloDefeat", channel.soloDefeat}, {"listen", channel.listen},
 			{"slots", channel.slots}, {"notes", channel.notes}};
 		json.update(toJson(channel.sections));
+		Json sends = Json::array();
+		if (channel.format != ChannelFormat::None)
+			for (const Send& send : channel.sends)
+				sends.push_back({{"destination", send.destination}, {"on", send.on}, {"level", send.level},
+					{"preFader", send.preFader}});
+		json["sends"] = std::move(sends);
 		return json;
 	}
 
@@ -588,13 +594,15 @@ namespace gnubase::engine
 			{"offset", event.offset}, {"length", event.length}, {"volume", event.volume}, {"mute", event.mute},
 			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
 			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()},
-			{"color", colorJson(event.color)}, {"part", event.part}, {"volumeCurve", toJson(event.volumeCurve)}};
+			{"color", colorJson(event.color)}, {"part", event.part}, {"lane", event.lane},
+			{"volumeCurve", toJson(event.volumeCurve)}};
 	}
 
 	Json toJson(const AudioPart& part)
 	{
 		return {{"id", part.id}, {"track", part.track}, {"name", part.name}, {"position", part.position.value},
-			{"length", part.length}, {"mute", part.mute}, {"lock", part.lock}, {"color", colorJson(part.color)}};
+			{"length", part.length}, {"mute", part.mute}, {"lock", part.lock}, {"color", colorJson(part.color)},
+			{"lane", part.lane}};
 	}
 
 	Json toJson(const Note& note)
@@ -661,7 +669,7 @@ namespace gnubase::engine
 	{
 		return {{"id", part.id}, {"track", part.track}, {"name", part.name}, {"position", part.position.value},
 			{"length", part.length}, {"mute", part.mute}, {"lock", part.lock}, {"shared", part.shared},
-			{"color", colorJson(part.color)}, {"notes", toJsonArray(part.notes)},
+			{"color", colorJson(part.color)}, {"lane", part.lane}, {"notes", toJsonArray(part.notes)},
 			{"controllers", toJsonArray(part.controllers)}};
 	}
 
@@ -1356,6 +1364,17 @@ namespace gnubase::engine
 			channel.slots = item.value("slots", std::vector<ObjectId>()); // files from before #282 have none
 			channel.notes = item.value("notes", std::string());           // files from before #89 have none
 			channel.sections = sectionsFromJson(item);                    // files from before #107 have them off
+			// Files from before #108 have no sends; destinations are checked once every channel is there.
+			const Json sends =
+				channel.format != ChannelFormat::None ? item.value("sends", Json::array()) : Json::array();
+			for (size_t s = 0; s < std::min(sends.size(), g_maxSends); ++s)
+			{
+				const Json& send = sends[s];
+				channel.sends[s] = {send.value("destination", ObjectId{0}), send.value("on", false),
+					checkedNumber(
+						send.value("level", Json(0.0)), g_minChannelVolume, project.maxVolume, name + " send level"),
+					send.value("preFader", false)};
+			}
 			project.channels[id] = std::move(channel);
 		}
 		// Every slot is in the list of its channel, which has audio, once, and no channel lists more than it may.
@@ -1386,6 +1405,15 @@ namespace gnubase::engine
 		}
 		if (listed != project.slots.size())
 			throw std::invalid_argument("a slot is in no channel's list");
+		// Sends to channels that aren't there or can't take them, and those that would close a loop, lose their
+		// destination.
+		for (auto& [id, channel] : project.channels)
+			for (Send& send : channel.sends)
+			{
+				const ObjectId destination = std::exchange(send.destination, 0);
+				if (isSendDestination(project, destination) && !routingLoops(project, id, destination))
+					send.destination = destination;
+			}
 		for (const Json& item : json.at("media"))
 		{
 			const auto id = item.at("id").get<ObjectId>();
@@ -1454,7 +1482,8 @@ namespace gnubase::engine
 				event.snapPoint = snapPoint.get<time::Samples>();
 			event.color = eventColorFrom(item);
 			event.volumeCurve = volumeCurveFromJson(item.value("volumeCurve", Json::array())); // files from before #139
-			event.part = item.value("part", ObjectId{0}); // files from before #471 have no audio parts
+			event.part = item.value("part", ObjectId{0});    // files from before #471 have no audio parts
+			event.lane = std::max(0, item.value("lane", 0)); // files from before #98 have no lanes
 			project.audioEvents[event.id] = event;
 		}
 		for (const Json& item : json.value("audioParts", Json::array()))
@@ -1468,6 +1497,7 @@ namespace gnubase::engine
 			part.mute = item.value("mute", false);
 			part.lock = item.value("lock", false);
 			part.color = eventColorFrom(item);
+			part.lane = std::max(0, item.value("lane", 0));
 			project.audioParts[part.id] = part;
 		}
 		// An event in a part that isn't there, or on another track, is an event of its own.
@@ -1487,6 +1517,7 @@ namespace gnubase::engine
 			part.lock = item.value("lock", false);
 			part.shared = item.value("shared", ObjectId{0});
 			part.color = eventColorFrom(item);
+			part.lane = std::max(0, item.value("lane", 0));
 			for (const Json& n : item.at("notes"))
 			{
 				Note note;

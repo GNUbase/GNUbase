@@ -100,6 +100,7 @@ namespace gnubase::engine
 			copy.lock = part->lock;
 			copy.shared = part->shared;
 			copy.color = part->color;
+			copy.lane = part->lane;
 			return copy;
 		}
 
@@ -218,6 +219,7 @@ namespace gnubase::engine
 			part.lock = target->lock;
 			part.shared = target->shared;
 			part.color = target->color;
+			part.lane = target->lane;
 			applyObjects(part.notes, partChange.notes, direction);
 			applyObjects(part.controllers, partChange.controllers, direction);
 		}

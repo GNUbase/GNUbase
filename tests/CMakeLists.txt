@@ -65,6 +65,8 @@ add_executable(gnubase-tests
 	keyeditor_tests.cpp
 	keyeditor_ui_tests.cpp
 	latency_tests.cpp
+	listeditor_tests.cpp
+	listeditor_ui_tests.cpp
 	lockrecord_tests.cpp
 	log_tests.cpp
 	mainmenu_tests.cpp
@@ -87,6 +89,7 @@ add_executable(gnubase-tests
 	mixerwindow_tests.cpp
 	monitoring_tests.cpp
 	multicore_tests.cpp
+	onscreenkeyboard_tests.cpp
 	parameter_tests.cpp
 	plugincommands_tests.cpp
 	pluginslots_tests.cpp
@@ -102,6 +105,7 @@ add_executable(gnubase-tests
 	quantize_tests.cpp
 	recording_tests.cpp
 	rmlui_tests.cpp
+	routing_tests.cpp
 	rt_tests.cpp
 	sampleeditor_tests.cpp
 	sampleeditor_ui_tests.cpp

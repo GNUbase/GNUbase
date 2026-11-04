@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 // What the widget library's source files share (ui/widgets.h).
 namespace gnubase::ui::widgets
@@ -23,6 +24,12 @@ namespace gnubase::ui::widgets
 
 	// A part of a widget, which the themes draw by its class, e.g. a knob's pointer.
 	Rml::Element* appendPart(Rml::Element& parent, const std::string& className);
+
+	// A drop-down list's choices: each option's value and text.
+	using Options = std::vector<std::pair<std::string, std::string>>;
+
+	// Fills a drop-down list (a select) with the options, unless it has them, and selects the value.
+	void fill(Rml::Element& element, const Options& options, const std::string& value);
 
 	// Hands events to a function: a widget listens with a member, since an element can't be its own listener
 	// without a second base class. Listeners must go before the elements they listen to, so a widget removes them in

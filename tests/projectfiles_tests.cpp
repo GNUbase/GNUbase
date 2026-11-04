@@ -221,6 +221,17 @@ TEST_CASE("save new version saves under the next free number and goes on with it
 	run(client, "project.save", {{"path", utf8(dir.path() / "Mix-03.DAWPROJECT")}});
 	CHECK(run(client, "project.saveNewVersion").at("file") == utf8(fs::absolute(dir.path() / "Mix-04.dawproject")));
 
+	// The folder scan folds ASCII letters only, but the file systems of Windows and macOS also fold others: "übung-01"
+	// is "Übung-01" there, so the next version steps past it instead of overwriting it. On Linux they are two files,
+	// and "Übung-01" is free.
+	const fs::path lower = dir.path() / fs::u8path(u8"übung-01.dawproject");
+	fs::copy_file(file, lower);
+	const bool folds = fs::exists(dir.path() / fs::u8path(u8"Übung-01.dawproject"));
+	run(client, "project.save", {{"path", utf8(dir.path() / fs::u8path(u8"Übung.dawproject"))}});
+	CHECK(run(client, "project.saveNewVersion").at("file") ==
+		utf8(fs::absolute(dir.path() / fs::u8path(folds ? u8"Übung-02.dawproject" : u8"Übung-01.dawproject"))));
+	CHECK(test::readText(lower) == test::readText(file)); // not overwritten
+
 	// Each version has the project as it was.
 	run(client, "project.load", {{"path", utf8(file)}});
 	CHECK(trackCount(client) == 0);
@@ -767,6 +778,12 @@ TEST_CASE("File > Save As, Save and Save New Version save the project through fi
 	fileMenu(app, "file.saveNewVersion");
 	const std::string upperVersion = utf8(fs::absolute(dir.path() / "Mix-01.dawproject"));
 	REQUIRE(app.waitUntil([&app, &upperVersion] { return location(app) == upperVersion; }));
+
+	// A name that ends in a dot, as the dialogs of Linux return it as typed, is saved without a second dot.
+	fileMenu(app, "file.saveAs");
+	answer(app, {dir.path() / "Take."});
+	const std::string take = utf8(fs::absolute(dir.path() / "Take.dawproject"));
+	REQUIRE(app.waitUntil([&app, &take] { return location(app) == take; }));
 }
 
 TEST_CASE("a save or backup that fails shows its error", "[ui]")

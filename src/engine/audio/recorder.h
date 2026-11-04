@@ -72,11 +72,14 @@ namespace gnubase::engine
 		"notes", "controllers", "pitchBend", "channelPressure", "polyPressure", "programs", "sysEx"};
 
 	// Turns MIDI input at project positions into the notes and controller events recording.add takes: a note-on and
-	// the next note-off of its pitch and channel make a note, a note-on of a pitch that sounds ends it first.
+	// the next note-off of its pitch and channel make a note, a note-on of a pitch that sounds ends it first. Each
+	// note and controller event says which take it was recorded in ("take"), for the MIDI cycle record modes.
 	class MidiTakeBuilder
 	{
 	public:
 		void add(time::Samples position, const graph::ProcessEvent& event);
+		// What comes from now on belongs to the take with this index; end the notes that sound first.
+		void setTake(size_t take) { m_take = take; }
 		// Ends the notes that sound at position.
 		void endNotes(time::Samples position);
 		bool empty() const { return m_notes.empty() && m_controllers.empty(); }
@@ -96,6 +99,7 @@ namespace gnubase::engine
 		Json m_notes = Json::array();
 		Json m_controllers = Json::array();
 		time::Samples m_last = -1;
+		size_t m_take = 0;
 	};
 
 	// The format of the project's record files: the project setup's record file type and bit depth at the project's
@@ -114,6 +118,7 @@ namespace gnubase::engine
 		// MIDI recording (docs/features/midi-recording.md).
 		std::vector<MidiRecordTrack> midiTracks;
 		MidiRecordMode midiMode = MidiRecordMode::NewParts;
+		MidiCycleRecordMode midiCycleMode = MidiCycleRecordMode::Mix;
 		MidiRecordFilter midiFilter;
 		bool snapToBars = true;   // midi.snapPartsToBars
 		int64_t catchFrames = 0;  // midi.recordCatchRange, in device frames
@@ -128,9 +133,9 @@ namespace gnubase::engine
 				format.sampleFormat == other.format.sampleFormat && format.sampleRate == other.format.sampleRate &&
 				timeReference(format) == timeReference(other.format) && mode == other.mode &&
 				preRecordFrames == other.preRecordFrames && tracks == other.tracks && midiTracks == other.midiTracks &&
-				midiMode == other.midiMode && midiFilter == other.midiFilter && snapToBars == other.snapToBars &&
-				catchFrames == other.catchFrames && retrospective == other.retrospective &&
-				pauseFrames == other.pauseFrames;
+				midiMode == other.midiMode && midiCycleMode == other.midiCycleMode && midiFilter == other.midiFilter &&
+				snapToBars == other.snapToBars && catchFrames == other.catchFrames &&
+				retrospective == other.retrospective && pauseFrames == other.pauseFrames;
 		}
 	};
 

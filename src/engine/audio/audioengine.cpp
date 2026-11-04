@@ -82,10 +82,12 @@ namespace gnubase::engine
 				"metronome": {"type": "boolean"},
 				"audioRecordMode": {"type": "string", "enum": ["keepHistory", "cycleHistoryReplace", "replace"]},
 				"midiRecordMode": {"type": "string", "enum": ["newParts", "merge", "replace"]},
+				"midiCycleRecordMode": {"type": "string",
+					"enum": ["mix", "overwrite", "keepLast", "stacked", "mixStacked"]},
 				"lockRecord": {"type": "boolean"}},
 			"required": ["playing", "recording", "position", "start", "left", "right", "cycle", "startMode",
 				"returnToStart", "punchIn", "punchOut", "preRoll", "preRollAmount", "postRoll", "postRollAmount",
-				"metronome", "audioRecordMode", "midiRecordMode", "lockRecord"]})");
+				"metronome", "audioRecordMode", "midiRecordMode", "midiCycleRecordMode", "lockRecord"]})");
 		}
 
 		Json noParameters()
@@ -363,6 +365,7 @@ namespace gnubase::engine
 		setup.preRecordFrames =
 			std::llround(std::clamp(m_settings.get(settings::g_audioPreRecordSeconds), 0.0, 60.0) * deviceRate);
 		setup.midiMode = m_transport.settings().midiRecordMode;
+		setup.midiCycleMode = m_transport.settings().midiCycleRecordMode;
 		setup.midiFilter = MidiRecordFilter::fromJson(m_settings.value("midi.recordFilter"));
 		setup.snapToBars = m_settings.get(settings::g_midiSnapPartsToBars);
 		setup.catchFrames = std::llround(
@@ -631,6 +634,7 @@ namespace gnubase::engine
 		for (size_t n = 0; n < desc.nodes.size(); ++n)
 			if (desc.nodes[n].kind == graph::NodeKind::PluginSlot)
 				slotNodes[desc.nodes[n].object] = n;
+		size_t sendNode = 0;
 		for (size_t i = 0; i < snapshot.channels.size(); ++i)
 		{
 			const RenderChannel& channel = snapshot.channels[i];
@@ -656,29 +660,49 @@ namespace gnubase::engine
 				monitoring = Monitoring{channel.monitor, channel.recordEnable, m_autoMonitoring};
 			graph::NodeDesc& node = desc.nodes[firstChannel + i];
 			const auto source = static_cast<size_t>(sourceNode(channel.id));
+			std::shared_ptr<ChannelStrip> fader;
 			if (source == firstChannel + i)
 			{
-				node.processor = std::make_shared<ChannelStrip>(
+				fader = std::make_shared<ChannelStrip>(
 					state, node.processor, panning, monitoring, channel.silent, StripPart::Whole, channel.sections);
-				continue;
 			}
-			// Plugin slots between them: the source node plays the source and the automation, the slot nodes give
-			// their plugins their automation, the channel's node fades.
-			std::vector<const void*> plugins;
-			std::vector<ObjectId> slotIds;
-			for (size_t index = 0; index < channel.slots.size(); ++index)
+			else
 			{
-				graph::NodeDesc& slot = desc.nodes[slotNodes.at(channel.slots[index].id)];
-				plugins.push_back(slot.processor.get());
-				slotIds.push_back(channel.slots[index].id);
-				if (slot.processor)
-					slot.processor = std::make_shared<SlotStrip>(state, slot.processor, static_cast<uint8_t>(index));
+				// Plugin slots between them: the source node plays the source and the automation, the slot nodes
+				// give their plugins their automation, the channel's node fades.
+				std::vector<const void*> plugins;
+				std::vector<ObjectId> slotIds;
+				for (size_t index = 0; index < channel.slots.size(); ++index)
+				{
+					graph::NodeDesc& slot = desc.nodes[slotNodes.at(channel.slots[index].id)];
+					plugins.push_back(slot.processor.get());
+					slotIds.push_back(channel.slots[index].id);
+					if (slot.processor)
+						slot.processor =
+							std::make_shared<SlotStrip>(state, slot.processor, static_cast<uint8_t>(index));
+				}
+				graph::NodeDesc& sourceDesc = desc.nodes[source];
+				sourceDesc.processor = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
+					channel.silent, StripPart::Source, channel.sections, std::move(plugins), std::move(slotIds));
+				fader = std::make_shared<ChannelStrip>(
+					state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, channel.sections);
 			}
-			graph::NodeDesc& sourceDesc = desc.nodes[source];
-			sourceDesc.processor = std::make_shared<ChannelStrip>(state, sourceDesc.processor, panning, monitoring,
-				channel.silent, StripPart::Source, channel.sections, std::move(plugins), std::move(slotIds));
-			node.processor = std::make_shared<ChannelStrip>(
-				state, nullptr, panning, std::nullopt, channel.silent, StripPart::Fader, channel.sections);
+			node.processor = fader;
+
+			// The send nodes come in the order of the channels and their sends (graph::describe).
+			std::shared_ptr<PreFaderTap> tap;
+			for (const RenderSend& send : channel.sends)
+			{
+				if (send.preFader && !tap)
+				{
+					tap = std::make_shared<PreFaderTap>(channelCount(channel.format));
+					fader->tapPreFader(tap);
+				}
+				while (desc.nodes[sendNode].kind != graph::NodeKind::Send)
+					++sendNode;
+				desc.nodes[sendNode++].processor =
+					std::make_shared<SendStrip>(state, send.number, send.gain, send.preFader ? tap : nullptr);
+			}
 		}
 		m_channelStates = std::move(states);
 	}
@@ -2141,6 +2165,7 @@ namespace gnubase::engine
 			{"postRollAmount", settings.postRollAmount}, {"metronome", settings.metronome},
 			{"audioRecordMode", g_audioRecordModes.at(static_cast<size_t>(settings.audioRecordMode))},
 			{"midiRecordMode", g_midiRecordModes.at(static_cast<size_t>(settings.midiRecordMode))},
+			{"midiCycleRecordMode", g_midiCycleRecordModes.at(static_cast<size_t>(settings.midiCycleRecordMode))},
 			{"lockRecord", settings.lockRecord}};
 	}
 
@@ -2292,6 +2317,16 @@ namespace gnubase::engine
 			require(index < g_midiRecordModes.size(), "midiRecordMode must be newParts, merge or replace");
 			settings.midiRecordMode = static_cast<MidiRecordMode>(index);
 		}
+		if (const auto mode = parameters.find("midiCycleRecordMode"); mode != parameters.end())
+		{
+			const auto name = mode->get<std::string>();
+			const auto index =
+				static_cast<size_t>(std::find(g_midiCycleRecordModes.begin(), g_midiCycleRecordModes.end(), name) -
+					g_midiCycleRecordModes.begin());
+			require(index < g_midiCycleRecordModes.size(),
+				"midiCycleRecordMode must be mix, overwrite, keepLast, stacked or mixStacked");
+			settings.midiCycleRecordMode = static_cast<MidiCycleRecordMode>(index);
+		}
 		sent(m_transport.set(settings));
 	}
 
@@ -2420,7 +2455,8 @@ namespace gnubase::engine
 			"events it overlaps on its track (see "
 			"recording.add): keepHistory (the default), cycleHistoryReplace or replace. midiRecordMode: what a MIDI "
 			"recording does to the MIDI parts it overlaps (see recording.add): newParts (the default), merge or "
-			"replace. lockRecord: Lock Record, which "
+			"replace. midiCycleRecordMode: what a MIDI cycle recording makes of its laps (see recording.add): mix "
+			"(the default), overwrite, keepLast, stacked or mixStacked. lockRecord: Lock Record, which "
 			"keeps a recording from stopping or punching out by accident: transport.stop stops it only with "
 			"confirmed, transport.record and transport.toggle don't end it, and recording ignores the punch out at "
 			"the right locator; it stays on until it is set off.",
@@ -2432,6 +2468,7 @@ namespace gnubase::engine
 				"preRollAmount": {"type": "integer"}, "postRoll": {"type": "boolean"},
 				"postRollAmount": {"type": "integer"}, "metronome": {"type": "boolean"},
 				"audioRecordMode": {"type": "string"}, "midiRecordMode": {"type": "string"},
+				"midiCycleRecordMode": {"type": "string"},
 				"lockRecord": {"type": "boolean"}}})",
 			[this](const Json& parameters) { setTransport(parameters); });
 		command("transport.exchangeLocators", "Swaps the left and right locators.", nullptr,

@@ -38,6 +38,7 @@ namespace gnubase::ui
 		}};
 
 		constexpr double g_silence = -144.0; // engine::g_minChannelVolume
+		constexpr int g_sends = 8;           // engine::g_maxSends
 
 		std::string encode(const std::string& text)
 		{
@@ -105,7 +106,7 @@ namespace gnubase::ui
 		}
 
 		// The path of a strip control's value in the channel's JSON, by dots: pre.lowCut.on, or for an EQ band
-		// eq.bands.<band>.gain.
+		// eq.bands.<band>.gain and for a send sends.<send>.level.
 		std::vector<std::string> paramPath(const std::string& param)
 		{
 			std::vector<std::string> keys;
@@ -146,9 +147,10 @@ namespace gnubase::ui
 			const std::vector<std::string> keys = paramPath(param);
 			for (size_t i = keys.size(); i-- > 0;)
 			{
-				if (i > 0 && keys[i - 1] == "bands")
+				if (i > 0 && (keys[i - 1] == "bands" || keys[i - 1] == "sends"))
 				{
-					value["band"] = std::stoi(keys[i]); // eq.bands.<band>: one band's object in the array
+					// eq.bands.<band> and sends.<send>: one band's or send's object in the array
+					value[keys[i - 1] == "bands" ? "band" : "send"] = std::stoi(keys[i]);
 					value = Json::array({std::move(value)});
 					continue;
 				}
@@ -157,8 +159,9 @@ namespace gnubase::ui
 			return value;
 		}
 
-		// The pre section, the equalizer and the strip's dynamics (reference manual pp. 473-489). Every strip has the
-		// sections, so that the docking system learns them from the first one; only audio channels have controls.
+		// The pre section, the equalizer and the strip's dynamics (reference manual pp. 473-489), and the sends
+		// (pp. 552-557). Every strip has the sections, so that the docking system learns them from the first one; only
+		// audio channels have controls.
 		std::string sectionsRml(bool audio)
 		{
 			const auto number = [](double value) { return widgets::format(static_cast<float>(value)); };
@@ -197,6 +200,16 @@ namespace gnubase::ui
 					frequency(path + "frequency", "Frequency", 20.0, frequencies[static_cast<size_t>(band - 1)]) +
 					knob(path + "q", "Q-Factor", 0.1, 12.0, 1.0));
 			}
+			std::string sends;
+			for (int send = 1; send <= g_sends; ++send)
+			{
+				const std::string path = "sends." + std::to_string(send) + ".";
+				std::string controls = toggle(path + "on", "Send on/off", std::to_string(send));
+				controls += R"(<select param=")" + path + R"(destination" title="Send Destination"/>)";
+				controls += toggle(path + "preFader", "Pre-Fader", "Pre");
+				controls += knob(path + "level", "Send Level", -60.0, 6.0, 0.0);
+				sends += row(controls);
+			}
 			return section("pre", "Pre",
 					   knob("pre.gain", "Pre-Gain", -24.0, 24.0, 0.0) + toggle("pre.phase", "Phase", "Ø") +
 						   row(toggle("pre.lowCut.on", "Low-Cut Filter", "LC") +
@@ -213,7 +226,19 @@ namespace gnubase::ui
 							knob("strip.compressor.ratio", "Ratio", 1.0, 20.0, 4.0) +
 							knob("strip.compressor.makeup", "MakeUp Gain", 0.0, 24.0, 0.0)) +
 						row(toggle("strip.limiter.on", "Limiter", "Limit") +
-							knob("strip.limiter.threshold", "Threshold", -30.0, 0.0, 0.0)));
+							knob("strip.limiter.threshold", "Threshold", -30.0, 0.0, 0.0))) +
+				section("sends", "Sends", sends);
+		}
+
+		// Where a channel's sends can go: no destination, or the group and effect channels other than its own.
+		widgets::Options sendDestinations(const std::vector<MixerChannel>& channels, uint64_t own)
+		{
+			widgets::Options options{{"0", "No Destination"}};
+			for (const MixerChannel& channel : channels)
+				if (channel.id != own && channel.channel != nullptr &&
+					(channel.type == "group" || channel.type == "effect"))
+					options.emplace_back(std::to_string(channel.id), channel.name);
+			return options;
 		}
 
 		// The toolbar's Deactivate All buttons (reference manual p. 447), by the state they turn off.
@@ -538,10 +563,17 @@ namespace gnubase::ui
 			solo->SetClass("defeated", json.at("soloDefeat").get<bool>());
 		Rml::ElementList controls;
 		strip.QuerySelectorAll(controls, "[param]");
+		m_updating = true; // filling a drop-down list sends a change
 		for (Rml::Element* control : controls)
 		{
 			const Json value = paramValue(json, attribute(*control, "param"));
-			if (value.is_boolean())
+			if (control->GetTagName() == "select")
+			{
+				if (value.is_number())
+					widgets::fill(
+						*control, sendDestinations(m_channels, channel.id), std::to_string(value.get<uint64_t>()));
+			}
+			else if (value.is_boolean())
 			{
 				setChecked(*control, value.get<bool>());
 			}
@@ -552,6 +584,7 @@ namespace gnubase::ui
 					control->SetAttribute("value", text);
 			}
 		}
+		m_updating = false;
 		if (Rml::Element* fader = strip.QuerySelector("fader"))
 		{
 			const double volume = json.at("volume").get<double>();
@@ -675,7 +708,7 @@ namespace gnubase::ui
 							{"parameters",
 								{{"channel", channel->id}, {"volume", event.GetParameter("value", 0.0F)}}}}}));
 			}
-			else if (target->HasAttribute("param"))
+			else if (target->HasAttribute("param") && !m_updating)
 			{
 				if (const MixerChannel* channel = channelOf(target); channel != nullptr && channel->channel != nullptr)
 				{
@@ -685,6 +718,8 @@ namespace gnubase::ui
 						break;
 					Json value =
 						given->GetType() == Rml::Variant::BOOL ? Json(given->Get<bool>()) : Json(given->Get<double>());
+					if (target->GetTagName() == "select") // a send's destination, a channel id
+						value = std::stoull(given->Get<Rml::String>("0"));
 					Json parameters = paramChange(attribute(*target, "param"), std::move(value));
 					parameters["channel"] = channel->id;
 					m_binding.send("channel.set", std::move(parameters));
