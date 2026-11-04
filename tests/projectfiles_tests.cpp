@@ -227,6 +227,11 @@ TEST_CASE("save new version saves under the next free number and goes on with it
 	CHECK(run(client, "project.saveNewVersion").at("file") == utf8(fs::absolute(dir.path() / "Take-01.dawproject")));
 	run(client, "project.save", {{"path", utf8(dir.path() / "Take. .")}});
 	CHECK(run(client, "project.saveNewVersion").at("file") == utf8(fs::absolute(dir.path() / "Take-02.dawproject")));
+	// A name whose last characters before where the extension would be aren't all ASCII: the comparison mustn't cut
+	// one of them in two, which Windows can't take for a path.
+	run(client, "project.save", {{"path", utf8(dir.path() / fs::u8path(u8"Für Elise v2"))}});
+	CHECK(run(client, "project.saveNewVersion").at("file") ==
+		utf8(fs::absolute(dir.path() / fs::u8path(u8"Für Elise v2-01.dawproject"))));
 
 	// The folder scan folds ASCII letters only, but the file systems of Windows and macOS also fold others: "übung-01"
 	// is "Übung-01" there, so the next version steps past it instead of overwriting it. On Linux they are two files,
@@ -321,8 +326,9 @@ TEST_CASE("auto saves are named after the project file as its versions are", "[i
 	const test::TempDir dir;
 	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
 	Client client(engine);
-	const std::vector<std::pair<std::string, std::string>> named{
-		{"Mix v2.1", "Mix v2.1-01.bak"}, {"Mix v2.2", "Mix v2.2-01.bak"}, {"Take.DAWPROJECT. ", "Take-01.bak"}};
+	const std::vector<std::pair<std::string, std::string>> named{{"Mix v2.1", "Mix v2.1-01.bak"},
+		{"Mix v2.2", "Mix v2.2-01.bak"}, {"Take.DAWPROJECT. ", "Take-01.bak"},
+		{u8"Für Elise v2", u8"Für Elise v2-01.bak"}};
 	for (const auto& [name, autoSave] : named)
 	{
 		INFO(name);
@@ -674,6 +680,12 @@ TEST_CASE("templates are projects in the settings folder that new projects start
 	// Only templates in Project Templates: a name that isn't a file name is refused.
 	fs::copy_file(fs::u8path(saved.at("file").get<std::string>()), dir.path() / "settings" / "x.dawproject");
 	CHECK_THAT(reject(client, "project.new", {{"template", "../x"}}), ContainsSubstring("name"));
+	// A template named as a device on Windows, which earlier builds saved and Linux, macOS and Windows 11 keep as a
+	// file, still opens, although no template can be saved under such a name any more.
+	fs::copy_file(fs::u8path(saved.at("file").get<std::string>()),
+		dir.path() / "settings" / "Project Templates" / "Aux.dawproject");
+	run(client, "project.new", {{"template", "Aux"}});
+	CHECK(trackCount(client) == 2);
 }
 
 TEST_CASE("without a settings folder there are no templates, recent projects or untitled auto saves", "[integration]")
@@ -833,7 +845,7 @@ TEST_CASE("File > Save As, Save and Save New Version save the project through fi
 	CHECK(!fs::exists(dir.path() / "Final.dawproject.dawproject"));
 
 	// A name that Windows keeps for a device is the user's to choose: with the extension it is a file like any other on
-	// Linux, macOS and Windows 11.
+	// Linux, macOS and Windows 11 (on Windows 10 it is still the device, and this fails).
 	fileMenu(app, "file.saveAs");
 	answer(app, {dir.path() / "NUL"});
 	const std::string device = utf8(fs::absolute(dir.path() / "NUL.dawproject"));

@@ -62,6 +62,11 @@ namespace gnubase::engine
 	// Windows keeps for devices, also with an extension ("CON", "nul.mix").
 	std::string fileNameProblem(const std::string& name);
 
+	// fileNameProblem without the device names: why name can't be a file name in a folder of GNUbase's own on some
+	// platform, for opening a file that an earlier build may have saved under a device's name, which is a file on
+	// Linux, macOS and Windows 11.
+	std::string pathNameProblem(const std::string& name);
+
 	// name made one that fileNameProblem has nothing against, for a default file name: the characters that file names
 	// can't have replaced, the dots and spaces at the end dropped, "_" before a device's name, and "Untitled" if
 	// nothing is left.

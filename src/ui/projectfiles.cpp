@@ -41,10 +41,9 @@ namespace gnubase::ui
 				name.pop_back();
 			if (name.empty())
 				name = "Untitled";
-			const std::filesystem::path named = file.parent_path() / std::filesystem::u8path(name);
-			if (Rml::StringUtilities::ToLower(named.extension().u8string()) == ".dawproject")
-				return named;
-			return file.parent_path() / std::filesystem::u8path(name + ".dawproject");
+			if (Rml::StringUtilities::ToLower(std::filesystem::u8path(name).extension().u8string()) != ".dawproject")
+				name += ".dawproject";
+			return file.parent_path() / std::filesystem::u8path(name);
 		}
 
 		// The rows of a start screen list: value is the row's index in the list, text what it shows.

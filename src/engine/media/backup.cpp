@@ -471,6 +471,16 @@ namespace gnubase::engine
 
 	std::string fileNameProblem(const std::string& name)
 	{
+		const std::string problem = pathNameProblem(name);
+		if (!problem.empty())
+			return problem;
+		if (isDeviceName(name))
+			return "the name can't be " + name + ", which Windows keeps for a device";
+		return {};
+	}
+
+	std::string pathNameProblem(const std::string& name)
+	{
 		if (name.empty())
 			return "the name must not be empty";
 		if (name == "." || name == "..")
@@ -480,8 +490,6 @@ namespace gnubase::engine
 				return "the name can't contain " + std::string(1, c) + ", which file names can't have";
 		if (name.back() == ' ' || name.back() == '.')
 			return "the name can't end with a space or a dot";
-		if (isDeviceName(name))
-			return "the name can't be " + name + ", which Windows keeps for a device";
 		return {};
 	}
 
@@ -504,8 +512,13 @@ namespace gnubase::engine
 		std::string name = file.filename().u8string();
 		while (!name.empty() && (name.back() == ' ' || name.back() == '.'))
 			name.pop_back();
+		// Compared byte by byte: the bytes where the extension would be may begin inside a character, which isn't a
+		// path that Windows can convert.
+		const auto sameLetter = [](char a, char b)
+		{ return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b)); };
 		if (name.size() > extension.size() &&
-			folded(fs::u8path(name.substr(name.size() - extension.size()))) == extension)
+			std::equal(extension.begin(), extension.end(), name.end() - static_cast<std::ptrdiff_t>(extension.size()),
+				sameLetter))
 			name.resize(name.size() - extension.size());
 		return name.empty() ? "Untitled" : name;
 	}

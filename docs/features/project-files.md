@@ -41,7 +41,8 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   their media where they are instead of copying them (the reference asks to remove the clips from the pool first). The
   project itself, its file and whether it is saved don't change. A template name must be a file name on every
   platform, as a backup's name must ([backup.md](backup.md)): not ending in a dot or a space and not a name that Windows
-  keeps for a device (`NUL`, `com1.mix`).
+  keeps for a device (`NUL`, `com1.mix`). Opening a template doesn't refuse such a name, so that one saved before
+  they were refused still opens.
 - **Auto save.** `project.autoSave` saves a copy of a project that changed since it was last saved or auto saved into
   the folder `Auto Saves` of its project folder as `<name>-01.bak`, `<name>-02.bak` and so on, up to the user setting
   `project.autoSaveFiles` (5), after which the oldest is overwritten. The name is the one versions take: `Song` for

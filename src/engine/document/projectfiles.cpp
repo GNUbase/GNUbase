@@ -208,7 +208,7 @@ namespace gnubase::engine
 
 	Project ProjectModel::loadTemplate(const std::string& name) const
 	{
-		const std::string problem = fileNameProblem(name);
+		const std::string problem = pathNameProblem(name); // a template saved before device names were refused opens
 		require(problem.empty(), problem);
 		const fs::path file = m_settingsDirectory / g_templates / fs::u8path(name + g_extension);
 		std::error_code error;

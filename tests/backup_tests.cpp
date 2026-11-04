@@ -364,7 +364,8 @@ TEST_CASE("a backup's default name is one that files can have on every platform"
 	// After a project file, its whole name without the .dawproject extension, and without the dots and spaces at its
 	// end and the extension before them, which project.save keeps on Linux and macOS while Windows drops them (#706).
 	const std::vector<std::pair<std::string, std::string>> files{{"Take v2.1", "Take v2.1.dawproject"},
-		{"Session.dawproject.", "Session.dawproject"}, {"Mix.DAWPROJECT .", "Mix.dawproject"}};
+		{"Session.dawproject.", "Session.dawproject"}, {"Mix.DAWPROJECT .", "Mix.dawproject"},
+		{u8"Für Elise v2", u8"Für Elise v2.dawproject"}};
 	for (const auto& [name, file] : files)
 	{
 		INFO(name);
